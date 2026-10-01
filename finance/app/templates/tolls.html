@@ -1,0 +1,427 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% import "_toll_macros.html" as m %}
+{% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
+{% block title %}E-470{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% if tab == "upload" %}
+{{ nav.upload_tabs("toll", acting_qs, request.state.features) }}
+{% include "_ai_missing.html" %}
+<h1>Upload</h1>
+{% else %}
+{{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
+<h1>E-470</h1>
+{{ m.subtabs(tab, acting_qs) }}
+{% endif %}
+
+{% if tab == "upload" %}
+{# ------------------------------------------------------------------ Upload tab #}
+{% set active_cars = cars|rejectattr("archived_at")|list %}
+{% set archived_cars = cars|selectattr("archived_at")|list %}
+{% set unassigned = devices|selectattr("car_id", "none")|list %}
+
+<details class="fold" id="toll-cars"{% if open_cars %} open{% endif %}>
+<summary><span class="fold-title">Cars</span> <span class="fold-count">{{ active_cars|length }}{% if archived_cars %} + {{ archived_cars|length }} archived{% endif %}</span></summary>
+<p class="hint">Create a car for each vehicle you want to track, then give it its devices in the Devices list below. A car can have several devices over time, and its plate can change: the plate is kept on the device and is updated automatically when a newer statement shows a different one. Archive a car you no longer use &mdash; it leaves this list and the pickers&rsquo; main list, but its past tolls still count in every total. Deleting a car keeps its devices and tolls; they just become &ldquo;not assigned&rdquo;.</p>
+{% if car_error %}<p class="hint" style="color: var(--danger);" role="alert">{{ car_error }}</p>{% endif %}
+<details class="new-car" id="toll-car-add"{% if car_error %} open{% endif %}>
+    <summary>+ New car</summary>
+    <form method="post" action="toll-car-add{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form" id="toll-car-add-form">
+        <label>
+            Car name
+            <input type="text" name="name" maxlength="60" placeholder="e.g. Honda Civic" required>
+        </label>
+        <button type="submit">Add car</button>
+    </form>
+</details>
+{% macro car_table(rows, archived) %}
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table" data-no-sort>
+        <thead>
+            <tr><th>Car</th><th>Devices</th><th>First toll</th><th>Last toll</th><th>Passes</th><th>Total</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for c in rows %}
+            <tr>
+                <td data-label="Car">
+                    <form method="post" action="toll-car-update{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+                        <input type="hidden" name="id" value="{{ c.id }}">
+                        <input type="text" name="name" value="{{ c.name }}" maxlength="60" required aria-label="Name of {{ c.name }}">
+                        <button type="submit" class="btn-secondary">Rename</button>
+                    </form>
+                </td>
+                <td data-label="Devices">{% for d in c.devices %}<div>{{ d.label }}</div>{% else %}<span class="hint">none yet &mdash; assign one in Devices below</span>{% endfor %}</td>
+                <td data-label="First toll">{{ c.first_date or "—" }}</td>
+                <td data-label="Last toll">{{ c.last_date or "—" }}</td>
+                <td data-label="Passes">{{ c.pass_count }}</td>
+                <td data-label="Total">{{ "%.2f"|format(c.total) }}</td>
+                <td data-label="">
+                    <form method="post" action="toll-car-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+                        <input type="hidden" name="id" value="{{ c.id }}">
+                        <input type="hidden" name="archived" value="{{ '0' if archived else '1' }}">
+                        <button type="submit" class="btn-secondary">{{ "Restore" if archived else "Archive" }}</button>
+                    </form>
+                    <form method="post" action="toll-car-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form"
+                          onsubmit="return confirm('Delete this car? Its devices and tolls are kept and become not assigned.');">
+                        <input type="hidden" name="id" value="{{ c.id }}">
+                        <button type="submit" class="restart-btn">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endmacro %}
+{% if active_cars %}
+{{ car_table(active_cars, false) }}
+{% elif not archived_cars %}
+<p class="empty-state">No cars yet &mdash; open &ldquo;+ New car&rdquo; above.</p>
+{% else %}
+<p class="empty-state">No active cars &mdash; every car is archived.</p>
+{% endif %}
+{% if archived_cars %}
+<details class="chart-table" id="archived-cars">
+    <summary>{{ archived_cars|length }} archived car{{ "s" if archived_cars|length != 1 else "" }}</summary>
+    {{ car_table(archived_cars, true) }}
+</details>
+{% endif %}
+
+</details>
+
+<details class="fold" id="toll-devices"{% if open_devices %} open{% endif %}>
+<summary><span class="fold-title">Devices</span> <span class="fold-count">{{ devices|length }}</span>{% if unassigned %} <span class="fold-warn">{{ unassigned|length }} not assigned to a car</span>{% endif %}</summary>
+<p class="hint">A device is what the statement prints as &ldquo;Device #&rdquo; (with its plate). Devices are added here automatically as they are found while a statement is read, so there is nothing to type. Choose the car each one belongs to; until you do, its tolls show under the device itself.</p>
+{% if unassigned %}
+<p class="hint" id="unassigned-hint"><strong>{{ unassigned|length }} device{{ "s" if unassigned|length != 1 else "" }} not assigned to a car yet.</strong>{% if not (active_cars or archived_cars) %} Add a car above first (&ldquo;+ New car&rdquo;).{% endif %}</p>
+{% endif %}
+{% if devices %}
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table" data-no-sort>
+        <thead>
+            <tr><th>Device #</th><th>Plate</th><th>Car</th><th>First toll</th><th>Last toll</th><th>Passes</th><th>Total</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for d in devices %}
+            <tr>
+                <td data-label="Device #">{{ d.device_id or "—" }}</td>
+                <td data-label="Plate">{{ d.plate or "—" }}{% if d.plate_state %}-{{ d.plate_state }}{% endif %}</td>
+                <td data-label="Car">
+                    <form method="post" action="toll-device-assign{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+                        <input type="hidden" name="id" value="{{ d.id }}">
+                        <select name="car_id" onchange="this.form.submit()" aria-label="Car for {{ d.label }}">
+                            <option value="">Not assigned</option>
+                            {% for c in active_cars %}<option value="{{ c.id }}" {{ "selected" if d.car_id == c.id else "" }}>{{ c.name }}</option>{% endfor %}
+                            {% if archived_cars %}<optgroup label="Archived cars">
+                                {% for c in archived_cars %}<option value="{{ c.id }}" {{ "selected" if d.car_id == c.id else "" }}>{{ c.name }}</option>{% endfor %}
+                            </optgroup>{% endif %}
+                        </select>
+                        <noscript><button type="submit" class="btn-secondary">Save</button></noscript>
+                    </form>
+                </td>
+                <td data-label="First toll">{{ d.first_date or "—" }}</td>
+                <td data-label="Last toll">{{ d.last_date or "—" }}</td>
+                <td data-label="Passes">{{ d.pass_count }}</td>
+                <td data-label="Total">{{ "%.2f"|format(d.total) }}</td>
+                <td data-label="">
+                    {% if not d.any_rows %}
+                    <form method="post" action="toll-device-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form"
+                          onsubmit="return confirm('Remove this device? It has no toll passes.');">
+                        <input type="hidden" name="id" value="{{ d.id }}">
+                        <button type="submit" class="restart-btn">Remove</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<p class="empty-state">No devices yet &mdash; they appear when the first statement is read.</p>
+{% endif %}
+</details>
+
+<h2 id="toll-upload">Upload E-470 statement(s)</h2>
+<form id="toll-upload-form" enctype="multipart/form-data" class="add-account-form">
+    <label>
+        PDF(s)
+        <input type="file" name="files" id="toll-file-input" accept="application/pdf" multiple required>
+    </label>
+    <button type="submit" id="toll-upload-btn">Upload</button>
+</form>
+<p class="hint">
+    One statement can hold several devices &mdash; each one is added automatically the first time it appears; you then assign it to a car in the Devices list above.
+    The passes on the statement are read twice (text and AI) and their total is checked against the statement&rsquo;s
+    <strong>Grand Totals</strong>; anything that doesn&rsquo;t agree is held for review.
+</p>
+<div id="toll-upload-result"></div>
+<script>
+(function () {
+    const form = document.getElementById("toll-upload-form");
+    const fileInput = document.getElementById("toll-file-input");
+    const btn = document.getElementById("toll-upload-btn");
+    const resultEl = document.getElementById("toll-upload-result");
+    const qs = "{{ acting_qs or '' }}";
+
+    form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        btn.disabled = true;
+        btn.textContent = "Uploading…";
+        resultEl.textContent = "Uploading and starting extraction…";
+        let failed = false;
+        try {
+            const resp = await fetch("toll-upload" + (qs ? "?" + qs : ""), { method: "POST", body: new FormData(form) });
+            let data = null;
+            try { data = await resp.json(); } catch (err) { /* not JSON: an expired session or a server error page */ }
+            if (data === null) {
+                throw new Error("The server did not accept that (status " + resp.status + "). Reload the page and try again.");
+            }
+            const results = data.results || [];
+            resultEl.textContent = "";
+            if (data.error) {
+                resultEl.textContent = data.error;
+            } else if (results.length === 0) {
+                resultEl.textContent = "No files uploaded.";
+            } else {
+                results.forEach(function (r) {
+                    const p = document.createElement("p");
+                    if (r.duplicate_of) p.textContent = r.filename + ": " + r.message;
+                    else if (r.toll_statement_id) p.textContent = r.filename + ": uploaded, processing…";
+                    else p.textContent = r.filename + ": " + (r.error || "unknown error");
+                    resultEl.appendChild(p);
+                });
+            }
+        } catch (err) {
+            resultEl.textContent = "Upload failed: " + err.message;
+            failed = true;
+        } finally {
+            fileInput.value = "";
+            btn.disabled = false;
+            btn.textContent = "Upload";
+            // A failure keeps the page (and its message) so it can be read; success stays on this tab.
+            if (!failed) setTimeout(function () {
+                window.location.href = "tolls?tab=upload" + (qs ? "&" + qs : "");
+            }, 1200);
+        }
+    });
+    window.addEventListener("pageshow", function () { fileInput.value = ""; });
+})();
+</script>
+
+<h2>Upload history</h2>
+<p class="hint">Every statement you&rsquo;ve uploaded, newest first.</p>
+{% if history_view.total %}
+{{ mobile_sort(history_view, history_columns) }}
+<div class="table-scroll">
+<table class="statements-table" data-no-sort>
+    <thead>
+        <tr>
+            {{ sort_th(history_view, "file", "File") }}{{ sort_th(history_view, "uploaded", "Uploaded") }}
+            {{ sort_th(history_view, "period", "Period") }}{{ sort_th(history_view, "tags", "Devices") }}
+            {{ sort_th(history_view, "passes", "Passes") }}{{ sort_th(history_view, "total", "Total tolls") }}
+            {{ sort_th(history_view, "status", "Status") }}{% if is_admin %}<th></th>{% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in statements %}
+        <tr>
+            <td data-label="File">{{ s.original_filename or "—" }}</td>
+            <td data-label="Uploaded">{{ s.uploaded_at }}</td>
+            <td data-label="Period">{% if s.period_start_date %}{{ s.period_start_date }} &ndash; {{ s.period_end_date }}{% else %}—{% endif %}</td>
+            <td data-label="Devices">{{ s.car_count or "—" }}{% if s.notes %}<div class="hint">{{ s.notes }}</div>{% endif %}</td>
+            <td data-label="Passes">{{ s.pass_count if s.pass_count else "—" }}{% if s.skipped_duplicates %}<div class="hint">{{ s.skipped_duplicates }} already imported</div>{% endif %}</td>
+            <td data-label="Total tolls">
+                {% if s.pass_count %}{{ "%.2f"|format(s.passes_total) }}{% else %}—{% endif %}
+                {% if s.status in ("complete", "pending_review") %}
+                    {% if s.total_tolls_printed is none %}<div class="hint">No printed total to check</div>
+                    {% elif s.printed_matches %}<div class="hint">Statement says {{ "%.2f"|format(s.total_tolls_printed) }} &#10003;</div>
+                    {% else %}<div class="hint">Statement says {{ "%.2f"|format(s.total_tolls_printed) }}, passes add up to {{ "%.2f"|format(s.passes_total) }}</div>{% endif %}
+                {% endif %}
+                {% if s.review_note %}<div class="hint">{{ s.review_note }}</div>{% endif %}
+            </td>
+            <td data-label="Status">{% with row=s, acting_qs=acting_qs, is_admin=is_admin %}{% include "_toll_status_fragment.html" %}{% endwith %}</td>
+            {% if is_admin %}<td data-label=""><a href="toll-debug?id={{ s.id }}" class="debug-link">debug</a></td>{% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{{ pager(history_view, always=true) }}
+{% else %}
+<p class="empty-state">No E-470 statements uploaded yet.</p>
+{% endif %}
+
+
+{% else %}
+{# ------------------------------------------------------------------ Dashboard tab #}
+<form id="toll-filters" method="get" action="tolls" class="add-account-form">
+    <input type="hidden" name="tab" value="dashboard">
+    {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
+    <label>
+        Car
+        <select name="car_id" onchange="this.form.submit()">
+            {{ m.car_options(all_cars, selected_car_id, unassigned_devices) }}
+        </select>
+    </label>
+    <label>
+        Period
+        <select name="period" onchange="this.form.submit()">{{ m.period_options(period, months, years, month_labels) }}</select>
+    </label>
+</form>
+
+{% if pending_statements %}
+<p class="hint">{{ pending_statements }} statement{{ "s" if pending_statements != 1 else "" }} waiting for review &mdash; their passes are not counted until confirmed.
+    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}">Open Upload &rarr; E-470 statement</a>.</p>
+{% endif %}
+
+{% if unassigned_devices and selected_car_id != "none" %}
+<p class="hint">{{ unassigned_devices }} device{{ "s" if unassigned_devices != 1 else "" }} with tolls {{ "isn&rsquo;t" if unassigned_devices == 1 else "aren&rsquo;t" }} assigned to a car yet &mdash; their tolls show under the device.
+    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}&open=devices#toll-devices">Assign them on Upload &rarr; E-470 statement</a>.</p>
+{% endif %}
+
+{% if figures.passes %}
+<div class="card">
+    <h3>Total tolls{% if selected_car %} &mdash; {{ selected_car }}{% endif %}</h3>
+    <p class="dashboard-figure">{{ "%.2f"|format(figures.cost) }}</p>
+    <p class="hint">{{ figures.trips }} trip{{ "s" if figures.trips != 1 else "" }} &middot; {{ figures.passes }} toll pass{{ "es" if figures.passes != 1 else "" }}</p>
+</div>
+
+<h2>Tagged and not tagged</h2>
+<p class="hint">Regular trips you have tagged on the <a href="toll-analyze{% if acting_qs %}?{{ acting_qs }}{% endif %}">Analyze</a> tab, against everything else. Tagged plus not tagged is the total.</p>
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table totals-table" data-no-sort>
+        <thead>
+            <tr><th></th><th class="num">Trips</th><th class="num">Passes</th><th class="num">Cost</th><th class="num">Average per trip</th></tr>
+        </thead>
+        <tbody>
+            {% for t in figures.tag_display_rows %}
+            <tr>
+                <td data-label=""><a href="{{ tag_link_base }}&tag={{ 'g' if t.kind == 'group' else '' }}{{ t.id }}#toll-list">{{ t.name }}</a></td>
+                <td data-label="Trips" class="num">{{ t.trips }}</td>
+                <td data-label="Passes" class="num">{{ t.passes }}</td>
+                <td data-label="Cost" class="num">{{ "%.2f"|format(t.cost) }}</td>
+                <td data-label="Average per trip" class="num">{{ "%.2f"|format(t.average) }}</td>
+            </tr>
+            {% endfor %}
+            {% if figures.tag_display_rows|length > 1 %}
+            <tr class="subtotal-row">
+                <td data-label=""><em>All tagged</em></td>
+                <td data-label="Trips" class="num">{{ figures.tag_display_rows|sum(attribute="trips") }}</td>
+                <td data-label="Passes" class="num">{{ figures.tag_display_rows|sum(attribute="passes") }}</td>
+                <td data-label="Cost" class="num">{{ "%.2f"|format(figures.tag_display_rows|sum(attribute="cost")) }}</td>
+                <td data-label="Average per trip" class="num">{{ "%.2f"|format(figures.tag_display_rows|sum(attribute="cost") / figures.tag_display_rows|sum(attribute="trips")) }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+                <td data-label=""><a href="{{ tag_link_base }}&tag=untagged#toll-list">Not tagged</a></td>
+                <td data-label="Trips" class="num">{{ figures.untagged.trips }}</td>
+                <td data-label="Passes" class="num">{{ figures.untagged.passes }}</td>
+                <td data-label="Cost" class="num">{{ "%.2f"|format(figures.untagged.cost) }}</td>
+                <td data-label="Average per trip" class="num">{% if figures.untagged.trips %}{{ "%.2f"|format(figures.untagged.cost / figures.untagged.trips) }}{% else %}—{% endif %}</td>
+            </tr>
+        </tbody>
+        <tfoot>
+            <tr>
+                <td>Total</td>
+                <td class="num">{{ figures.trips }}</td>
+                <td class="num">{{ figures.passes }}</td>
+                <td class="num">{{ "%.2f"|format(figures.cost) }}</td>
+                <td class="num">{% if figures.trips %}{{ "%.2f"|format(figures.cost / figures.trips) }}{% else %}—{% endif %}</td>
+            </tr>
+        </tfoot>
+    </table>
+    </div>
+    {% if not figures.tag_display_rows %}<p class="hint">Nothing is tagged yet. Use <a href="toll-analyze{% if acting_qs %}?{{ acting_qs }}{% endif %}">Analyze</a> to find your regular trips (for example the morning trip to work).</p>{% endif %}
+</div>
+
+{% if not selected_car_id and figures.by_car|length > 1 %}
+<h2>By car</h2>
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table" data-no-sort>
+        <thead><tr><th>Car</th><th class="num">Passes</th><th class="num">Cost</th><th class="num">Share</th></tr></thead>
+        <tbody>
+            {% for c in figures.by_car %}
+            <tr>
+                <td data-label="Car"><a href="tolls?tab=dashboard&period={{ period | urlencode }}&car_id={{ c.filter }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">{{ c.label }}</a></td>
+                <td data-label="Passes" class="num">{{ c.passes }}</td>
+                <td data-label="Cost" class="num">{{ "%.2f"|format(c.cost) }}</td>
+                <td data-label="Share" class="num">{{ "%.1f"|format(c.cost / figures.cost * 100 if figures.cost else 0) }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+
+{% if chart %}
+<h2>Tolls per month</h2>
+<div class="card">
+    <figure class="chart-figure">
+        <figcaption>Total tolls per month</figcaption>
+        {{ chart }}
+    </figure>
+    <p class="hint">Hover, tap or tab to a column for its exact figures.</p>
+    <details class="chart-table">
+        <summary>Show as a table</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>Month</th><th>Passes</th><th>Cost</th></tr>
+            {% for r in chart_rows|reverse %}
+            <tr><td>{{ r.month }}</td><td>{{ r.passes }}</td><td>{{ "%.2f"|format(r.cost) }}</td></tr>
+            {% endfor %}
+        </table>
+        </div>
+    </details>
+</div>
+{% endif %}
+
+<h2 id="toll-list">Toll passes</h2>
+{% if tag_filter %}
+<p class="hint">Showing {{ "untagged passes" if tag_filter == "untagged" else "one tag only" }} &mdash;
+    <a href="{{ tag_link_base }}#toll-list">show all passes</a></p>
+{% endif %}
+{% if list_view.total %}
+{{ mobile_sort(list_view, list_columns) }}
+<div class="table-scroll">
+<table class="statements-table" data-no-sort>
+    <thead>
+        <tr>
+            {{ sort_th(list_view, "when", "Date and time") }}{{ sort_th(list_view, "car", "Car") }}
+            {{ sort_th(list_view, "plaza", "Plaza") }}{{ sort_th(list_view, "lane", "Lane") }}
+            {{ sort_th(list_view, "amount", "Amount") }}{{ sort_th(list_view, "tag", "Tag") }}
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in toll_rows %}
+        <tr>
+            <td data-label="Date and time">{{ r.occurred_at }}</td>
+            <td data-label="Car">{{ r.car_name }}</td>
+            <td data-label="Plaza">{{ r.plaza or "—" }}{% if r.road %} <span class="hint">({{ r.road }})</span>{% endif %}</td>
+            <td data-label="Lane">{{ r.lane or "—" }} {{ r.direction or "" }}</td>
+            <td data-label="Amount" class="num">{{ "%.2f"|format(r.amount) }}</td>
+            <td data-label="Tag">{{ r.tag_name or "—" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{{ pager(list_view) }}
+{% else %}
+<p class="empty-state">No toll passes {{ period_label }}{{ " for " + selected_car if selected_car else "" }}.</p>
+{% endif %}
+
+{% else %}
+<p class="empty-state">No tolls {{ period_label }}{{ " for " + selected_car if selected_car else "" }}.
+    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}">Upload a statement</a> to get started.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Accounts — latest transactions{% endblock %}
+{% block content %}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+{{ nav.transactions_tabs("accounts", acting_qs) }}
+<h1>Accounts</h1>
+<p class="hint">The newest transaction in each account, oldest first &mdash; the ones at the top are the ones due a new
+    statement. Archived accounts aren't listed.</p>
+{% if accounts %}
+<table class="accounts-table">
+    <thead>
+        <tr><th>Account</th><th>Type</th><th>Latest transaction</th><th>Transactions</th><th>Preferred upload</th><th data-no-sort>Website</th><th data-no-sort></th></tr>
+    </thead>
+    <tbody>
+        {% for a in accounts %}
+        <tr>
+            <td data-label="Account">{{ a.name }}{% if a.bank_name or a.account_number_last4 %}
+                <span class="hint">{{ a.bank_name or "" }}{% if a.account_number_last4 %} ····{{ a.account_number_last4 }}{% endif %}</span>{% endif %}</td>
+            <td data-label="Type"><span class="type-badge type-{{ a.type }}">{{ a.type.replace('_', ' ') }}</span></td>
+            <td data-label="Latest transaction">{{ a.latest_txn_date or "—" }}</td>
+            <td data-label="Transactions">{{ a.txn_count }}</td>
+            <td data-label="Preferred upload">
+                {% if a.preferred_upload_method == "pdf" %}PDF only
+                {% elif a.preferred_upload_method == "csv" %}CSV only
+                {% else %}Either{% endif %}
+            </td>
+            <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
+            <td data-label="">
+                <a href="transactions?searched=1&account_id={{ a.id }}{{ amp }}" class="btn-secondary">Transactions</a>
+                <a href="uploads{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">Upload</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No accounts yet. Add one under Setup &rarr; Accounts.</p>
+{% endif %}
+{% endblock %}

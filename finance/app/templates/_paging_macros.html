@@ -1,0 +1,40 @@
+{# Server-sorted, paged tables (see app/paging.py). tv is a TableView. #}
+
+{# A header cell that sorts the WHOLE table server-side; the arrow shows the direction. #}
+{% macro sort_th(tv, key, label) -%}
+<th class="sortable{% if tv.sort == key %} sort-{{ tv.direction }}{% endif %}"
+    {%- if tv.sort == key %} aria-sort="{{ 'ascending' if tv.direction == 'asc' else 'descending' }}"{% endif %}>
+    <a href="{{ tv.sort_url(key) }}">{{ label }}</a></th>
+{%- endmacro %}
+
+{# Phones hide <thead>, so the same choice is offered as a select + direction link. #}
+{% macro mobile_sort(tv, columns) -%}
+<div class="sort-bar">
+    <select aria-label="Sort by" onchange="window.location.href = this.value">
+        {% for key, label in columns %}
+        <option value="{{ tv.sort_url(key) }}" {{ "selected" if key == tv.sort else "" }}>Sort: {{ label }}</option>
+        {% endfor %}
+    </select>
+    <a href="{{ tv.direction_url() }}" class="btn-secondary">{{ "▼ Descending" if tv.direction == "desc" else "▲ Ascending" }}</a>
+</div>
+{%- endmacro %}
+
+{% macro pager(tv, always=false) -%}
+{% if tv.show_pager or (always and tv.total) %}
+<div class="pager">
+    <span class="pager-info">Showing {{ tv.first }}&ndash;{{ tv.last }} of {{ tv.total }}</span>
+    <label class="pager-size">Rows per page
+        <select onchange="window.location.href = this.value">
+            {% for s in tv.sizes %}
+            <option value="{{ tv.size_url(s) }}" {{ "selected" if s == tv.size else "" }}>{{ "All" if s == "all" else s }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <span class="pager-nav">
+        {% if tv.page > 1 %}<a href="{{ tv.page_url(tv.page - 1) }}" class="btn-secondary">&larr; Previous</a>{% endif %}
+        <span>Page {{ tv.page }} of {{ tv.pages }}</span>
+        {% if tv.page < tv.pages %}<a href="{{ tv.page_url(tv.page + 1) }}" class="btn-secondary">Next &rarr;</a>{% endif %}
+    </span>
+</div>
+{% endif %}
+{%- endmacro %}

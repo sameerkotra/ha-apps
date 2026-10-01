@@ -1,0 +1,661 @@
+/* ---------- theming ----------
+   Every theme defines the same set of custom properties; the rest of this
+   stylesheet only ever reads them via var(...). Adding a theme is a copy
+   of one block below with new hex values. See app.js for the bootstrap
+   script (applies the saved theme before first paint) and the
+   #theme-select change handler. Paper is also the :root default. */
+:root {
+  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root, [data-theme="paper"] {
+  --paper: #171915;
+  --paper-dim: #21241E;
+  --ink: #EDEAE0;
+  --ink-soft: #9BA79A;
+  --moss: #4F9468;
+  --moss-dark: #7DC492;
+  --rust: #E28259;
+  --gold: #D8AC4E;
+  --line: #34372F;
+  --line-strong: #474B41;
+  color-scheme: dark;
+}
+
+[data-theme="slate"] {
+  --paper: #12161c;
+  --paper-dim: #1a212b;
+  --ink: #e8edf3;
+  --ink-soft: #93a3b8;
+  --moss: #4fb894;
+  --moss-dark: #7dd9b8;
+  --rust: #e2735f;
+  --gold: #d4b25a;
+  --line: #263041;
+  --line-strong: #34415a;
+  color-scheme: dark;
+}
+
+[data-theme="daylight"] {
+  --paper: #f7f4ec;
+  --paper-dim: #efe9da;
+  --ink: #2b2a24;
+  --ink-soft: #6b6a5e;
+  --moss: #3f7d55;
+  --moss-dark: #2f6142;
+  --rust: #b5603a;
+  --gold: #96731f;
+  --line: #ddd6c2;
+  --line-strong: #c9c0a5;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+}
+
+/* Plain flexbox row: .sidebar and .main-col/main are laid out side by
+   side by flex itself (like Calorie Tracker's #app/.sidebar/.main-col) —
+   deliberately NOT position:fixed-sidebar-plus-manual-padding-left. The
+   fixed+padding approach needs .app's padding to stay perfectly in sync
+   with whatever width the sidebar currently is, and any ancestor that
+   establishes a new containing block (a transform, for instance — which
+   is exactly what an embedding context like Home Assistant's ingress
+   iframe can add outside of this document) can make "fixed" resolve
+   against the wrong box, decoupling the two. A normal flex row has no
+   such failure mode: the sidebar's width simply IS the space it takes up. */
+.app { display: flex; min-height: 100vh; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  transition: width 0.15s ease;
+}
+
+/* Collapse toggle — a small round button pinned to the sidebar's own right
+   edge, so it reads as "grab this to shrink the panel it's attached to"
+   regardless of which state the sidebar is currently in. */
+.sidebar-collapse-btn {
+  position: absolute;
+  top: 18px;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  color: var(--ink-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+  z-index: 5;
+}
+.sidebar-collapse-btn:hover { background: var(--paper-dim); color: var(--ink); }
+
+.brand { display: flex; align-items: baseline; gap: 8px; padding: 0 20px 18px; }
+.brand-mark { color: var(--rust); font-size: 14px; }
+.brand-name {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: 0.01em;
+}
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px;
+}
+.tab {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: none;
+  border: none;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  padding: 11px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.tab-icon { width: 19px; height: 19px; flex-shrink: 0; }
+.tab:hover { color: var(--ink); background: var(--paper-dim); }
+.tab.active { color: var(--moss-dark); background: var(--paper-dim); border-left-color: var(--moss-dark); }
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 14px 20px 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sidebar-footer .whoami { flex-direction: column; align-items: stretch; gap: 4px; }
+.sidebar-footer .whoami select { width: 100%; }
+
+/* user chip -> "How the app sees you" (a <button>, so reset its chrome) */
+.sidebar-user {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; padding: 8px 10px; margin: 0;
+  font: inherit; text-align: left; cursor: pointer;
+  background: none; color: var(--ink-soft);
+  border: 1px solid transparent; border-radius: 4px;
+}
+.sidebar-user:hover { background: var(--paper-dim); border-color: var(--line); }
+.sidebar-user-label { font-size: 11px; color: var(--ink-soft); }
+.sidebar-user-name { font-size: 14px; font-weight: 600; color: var(--moss-dark); overflow-wrap: anywhere; }
+
+.whoami { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); }
+.whoami select {
+  font-family: var(--font-body);
+  font-size: 14px;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ---------- collapsed sidebar (icons only) ----------
+   Driven by [data-sidebar="collapsed"] on <html> (not a class on .sidebar
+   itself) so a bootstrap <script> in <head> can apply it before first
+   paint, avoiding a flash of the expanded layout on reload. See
+   index.html's <head> script + app.js's sidebarCollapseBtn handler. */
+[data-sidebar="collapsed"] .sidebar { width: 68px; }
+[data-sidebar="collapsed"] .brand-name,
+[data-sidebar="collapsed"] .tab-label,
+[data-sidebar="collapsed"] .sidebar-footer {
+  display: none;
+}
+[data-sidebar="collapsed"] .brand { justify-content: center; padding: 0 0 18px; }
+[data-sidebar="collapsed"] .tabs { padding: 0 10px; }
+[data-sidebar="collapsed"] .tab { justify-content: center; gap: 0; padding: 11px 0; }
+
+/* ---------- layout ---------- */
+main { flex: 1; min-width: 0; padding: 36px 32px 64px; max-width: 880px; width: 100%; margin: 0 auto; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 0 18px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.topbar-right { display: flex; gap: 8px; align-items: center; }
+.topbar-right select { width: auto; min-width: 150px; }
+
+.whoami-btn { padding: 8px 12px; line-height: 1; }
+
+/* "How the app sees you" rows */
+.kv { border-top: 1px solid var(--line); margin-bottom: 16px; max-width: 60ch; }
+.kv-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.kv-label { color: var(--ink-soft); font-size: 13px; }
+.kv-value { display: flex; align-items: center; gap: 8px; font-weight: 600; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.btn.kv-copy { padding: 2px 8px; font-size: 13px; line-height: 1.4; }
+.whoami-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+
+.view { display: none; }
+.view.active { display: block; }
+
+.ledger-panel h1 {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.ledger-panel h2 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 28px 0 12px;
+  color: var(--moss-dark);
+}
+.hint { color: var(--ink-soft); margin: 0 0 22px; max-width: 60ch; line-height: 1.5; }
+
+.back-link {
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 0 14px;
+}
+.back-link:hover { color: var(--moss-dark); }
+/* ---------- forms ---------- */
+.stack-form { display: flex; flex-direction: column; gap: 12px; max-width: 480px; margin-bottom: 8px; }
+
+input[type="text"], input[type="number"], input[type="date"], select {
+  font-family: var(--font-body);
+  font-size: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  width: 100%;
+}
+input:focus, select:focus, button:focus-visible {
+  outline: 2px solid var(--moss);
+  outline-offset: 1px;
+}
+
+.field { display: flex; flex-direction: column; gap: 5px; flex: 1; }
+.field label { font-size: 12px; color: var(--ink-soft); font-weight: 500; }
+.field-row { display: flex; gap: 12px; }
+
+.btn {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  /* so an <a> (e.g. the admin DB-download link) styled with .btn renders
+     button-shaped instead of browser-default link styling. */
+  display: inline-block;
+  text-decoration: none;
+}
+.btn.primary { background: var(--moss); color: var(--paper); }
+.btn.primary:hover { background: var(--moss-dark); }
+.btn.ghost { background: none; border-color: var(--line-strong); color: var(--ink); }
+.btn.ghost:hover { border-color: var(--ink-soft); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--line-strong); }
+.btn.danger-text { background: none; border: none; color: var(--rust); font-weight: 500; cursor: pointer; padding: 4px 6px; }
+.btn.danger-text:hover { text-decoration: underline; }
+
+.error { color: var(--rust); font-size: 13px; min-height: 18px; }
+
+
+/* chip picker for choosing members */
+.chip-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  padding: 7px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--paper);
+  color: var(--ink-soft);
+  user-select: none;
+}
+.chip.selected { background: var(--moss); border-color: var(--moss); color: var(--paper); }
+
+.split-toggle { display: flex; gap: 6px; }
+.split-btn {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  color: var(--ink-soft);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  font-size: 13px;
+}
+.split-btn.active { background: var(--moss-dark); border-color: var(--moss-dark); color: var(--paper); }
+
+.custom-splits { display: flex; flex-direction: column; gap: 6px; }
+.custom-split-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.custom-split-row span { flex: 1; }
+.custom-split-row input { width: 100px; }
+
+/* ---------- lists / ledger rows ---------- */
+.row-list { list-style: none; margin: 0; padding: 0; }
+.row-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--line);
+  gap: 12px;
+}
+.row-list li:first-child { border-top: 1px solid var(--line); }
+.row-list .row-main { display: flex; flex-direction: column; gap: 2px; }
+.row-list .row-title { font-weight: 500; }
+.row-list .row-sub { font-size: 12px; color: var(--ink-soft); }
+.row-list .row-amount { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* "Paid by" colours: one per person — app.js gives each payer
+   .payer.pcN by the order people were added. The name is coloured and the
+   row gets a matching left edge. Each theme sets its own readable set. */
+:root, [data-theme="paper"], [data-theme="slate"] {
+  --pc0: #7fb8f0; --pc1: #f0a35e; --pc2: #b89cf2; --pc3: #6fcf97;
+  --pc4: #f27ea9; --pc5: #e8cf5a; --pc6: #5fd0d0; --pc7: #d9a0e0;
+}
+[data-theme="daylight"] {
+  --pc0: #1f5fa8; --pc1: #b0520d; --pc2: #6a3fb8; --pc3: #237a45;
+  --pc4: #b8285e; --pc5: #7d6508; --pc6: #0f7373; --pc7: #8f3a99;
+}
+.payer { font-weight: 600; color: var(--payer, var(--ink)); }
+.row-list li.payer-row { border-left: 3px solid var(--payer, transparent); padding-left: 10px; }
+.pc0 { --payer: var(--pc0); } .pc1 { --payer: var(--pc1); } .pc2 { --payer: var(--pc2); } .pc3 { --payer: var(--pc3); }
+.pc4 { --payer: var(--pc4); } .pc5 { --payer: var(--pc5); } .pc6 { --payer: var(--pc6); } .pc7 { --payer: var(--pc7); }
+
+.empty-note { color: var(--ink-soft); font-size: 13px; padding: 14px 4px; }
+
+.group-link { background: none; border: none; text-align: left; cursor: pointer; padding: 0; font: inherit; color: inherit; flex: 1; }
+.group-link:hover .row-title { color: var(--moss-dark); }
+
+.group-head { margin-bottom: 8px; }
+.group-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.group-head-row h1 { margin: 0; }
+.default-toggle-btn.is-default { color: var(--gold); border-color: var(--gold); }
+.member-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* star toggle in the groups list */
+.star-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 6px;
+  color: var(--ink-soft);
+  flex-shrink: 0;
+}
+.star-btn:hover { color: var(--gold); }
+.star-btn.is-default { color: var(--gold); }
+.default-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--gold);
+  border: 1px solid var(--gold);
+  border-radius: 20px;
+  padding: 1px 7px;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.member-pill {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--paper-dim);
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+}
+
+.two-col { display: flex; gap: 40px; flex-wrap: wrap; margin-top: 8px; }
+.two-col .col { flex: 1; min-width: 280px; }
+
+/* ---------- balances ---------- */
+.balances-box { display: flex; flex-direction: column; gap: 14px; }
+.balance-net-row { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+.balance-net-row .amt.positive { color: var(--moss-dark); font-variant-numeric: tabular-nums; }
+.balance-net-row .amt.negative { color: var(--rust); font-variant-numeric: tabular-nums; }
+.balance-net-row .amt.zero { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+.settle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--paper-dim);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.settle-row .arrow { color: var(--ink-soft); }
+.settle-row .amt { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--rust); }
+.all-settled { color: var(--moss-dark); font-size: 13px; }
+
+/* ---------- dashboard ---------- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 14px;
+  background: var(--paper-dim);
+  border-radius: 6px;
+}
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--moss-dark);
+  font-variant-numeric: tabular-nums;
+}
+.stat-label { font-size: 12px; color: var(--ink-soft); }
+
+.period-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.period-bar .split-toggle { max-width: 220px; }
+.period-nav { display: flex; align-items: center; gap: 10px; }
+.period-nav .btn.ghost { padding: 6px 12px; }
+.period-label { font-size: 13px; font-weight: 500; color: var(--ink); min-width: 150px; text-align: center; }
+
+.period-summary { font-size: 13px; color: var(--ink-soft); margin: 10px 0 16px; }
+.period-summary strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.bar-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.bar-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.bar-row .bar-label { width: 84px; flex-shrink: 0; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-track { flex: 1; height: 10px; background: var(--paper-dim); border-radius: 5px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--moss); border-radius: 5px; min-width: 2px; }
+.bar-row .bar-amt { width: 68px; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+
+.event-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.event-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.event-list li:first-child { border-top: 1px solid var(--line); }
+.event-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; background: var(--line-strong); }
+.event-dot.expense_added { background: var(--moss); }
+.event-dot.expense_deleted { background: var(--rust); }
+.event-dot.expense_edited { background: var(--gold); }
+.event-dot.payment_recorded { background: var(--moss); }
+.event-dot.group_created, .event-dot.member_added, .event-dot.user_enabled { background: var(--gold); }
+.event-dot.group_deleted, .event-dot.user_disabled { background: var(--rust); }
+.event-body { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.event-message { color: var(--ink); }
+.event-time { font-size: 11px; color: var(--ink-soft); }
+
+@media (max-width: 640px) {
+  .brand-name { font-size: 19px; }
+  .whoami { font-size: 12px; gap: 6px; }
+  .whoami label { display: none; }
+  .whoami select { padding: 8px 10px; }
+
+  main { padding: 20px 16px 92px; }
+  .topbar { padding: 0 0 14px; }
+  .topbar-right { width: 100%; }
+  .topbar-right select { flex: 1; width: auto; min-width: 0; }
+  .kv-row { flex-wrap: wrap; }
+  .btn.whoami-btn { padding: 10px 14px; }
+  .field-row { flex-direction: column; }
+
+  /* Nav becomes a fixed, icon-led bottom bar on mobile — the standard app
+     pattern. Collapse is a desktop-only affordance (there's no room to
+     save here), so any saved collapsed state is ignored below. */
+  .app { flex-direction: column; }
+  .sidebar, [data-sidebar="collapsed"] .sidebar {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    border-right: none;
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.35);
+    z-index: 50;
+  }
+  .sidebar-collapse-btn,
+  .sidebar .brand,
+  .sidebar-footer {
+    display: none;
+  }
+  .tabs {
+    flex: 1;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+  }
+  .tab {
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    font-size: 10.5px;
+    padding: 8px 2px;
+    gap: 4px;
+    border-radius: 8px;
+    border-left: none;
+  }
+  [data-sidebar="collapsed"] .tab-label { display: block; }
+  .tab.active { border-left: none; }
+  .tab-icon { width: 21px; height: 21px; }
+
+  /* Bigger tap targets throughout */
+  .btn { padding: 12px 18px; }
+  .chip { padding: 9px 15px; }
+  .split-btn { padding: 11px; }
+  input[type="text"], input[type="number"], input[type="date"], select { font-size: 16px; padding: 11px 12px; }
+  .row-list li { padding: 14px 4px; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .period-bar { flex-direction: column; align-items: stretch; }
+  .bar-row .bar-label { width: 60px; }
+}
+
+/* Edit / settle-up */
+.form-actions { display: flex; gap: 10px; align-items: center; }
+.settle-row .settle-btn { margin-left: 8px; padding: 4px 10px; font-size: 12px; }
+.payment-row .row-title { font-style: italic; }
+[hidden] { display: none !important; }
+.group-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Admin area (App settings | Users | Storage) */
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 6px 0 22px;
+  box-shadow: inset 0 -1px 0 var(--line);
+  overflow-x: auto;          /* scrolls sideways rather than overflowing on a phone */
+  scrollbar-width: none;
+}
+.admin-tabs::-webkit-scrollbar { display: none; }
+.admin-tab {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 14px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.admin-tab:hover { color: var(--ink); }
+.admin-tab.active { color: var(--moss-dark); border-bottom-color: var(--moss-dark); }
+.ledger-panel h2.first { margin-top: 0; }
+.field-help { font-size: 12px; color: var(--ink-soft); line-height: 1.45; max-width: 60ch; }
+.field-help code, .row-sub code, #adminDenied code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
+.settings-form { gap: 18px; }
+.settings-form #setCurrency { text-transform: uppercase; max-width: 160px; letter-spacing: 0.04em; }
+.settings-form #setSyncInterval { max-width: 160px; }
+.form-status { font-size: 13px; color: var(--moss-dark); }
+.link-btn { background: none; border: none; padding: 0; font: inherit; color: var(--moss-dark); text-decoration: underline; cursor: pointer; }
+.restore-row { align-items: center; flex-wrap: wrap; }
+.restore-row input[type="file"] { min-width: 0; max-width: 100%; color: var(--ink-soft); font-size: 13px; }
+.row-list .row-sub { overflow-wrap: anywhere; }
+.event-dot.settings_changed { background: var(--gold); }
+@media (max-width: 640px) {
+  .restore-row { align-items: flex-start; }
+}
+
+/* Sensor sync switch */
+.check-row { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px !important; color: var(--ink) !important; font-weight: 500; }
+.check-row input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--moss); cursor: pointer; }
+.field.is-disabled label, .field.is-disabled input { opacity: 0.5; }
+.field.is-disabled input { cursor: not-allowed; }
+.field-help.warn { color: var(--gold); }
+
+/* Custom split by percentage */
+.split-toggle.sub-toggle { max-width: 300px; }
+.split-toggle.sub-toggle .split-btn { padding: 6px 8px; font-size: 12.5px; }
+.custom-split-row .custom-split-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.custom-split-row .custom-split-share { flex: 0 0 auto; color: var(--ink-soft); font-variant-numeric: tabular-nums; font-size: 12.5px; }
+.custom-split-row .pct-input { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+.custom-split-row .pct-input input { width: 90px; }
+.custom-split-row .pct-suffix { flex: 0 0 auto; color: var(--ink-soft); }
+.split-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.split-total { font-variant-numeric: tabular-nums; color: var(--moss-dark); }
+.split-total.off { color: var(--rust); }
+.btn.split-rest-btn { padding: 5px 10px; font-size: 12.5px; }
+@media (max-width: 640px) {
+  .split-toggle.sub-toggle .split-btn { padding: 9px 8px; }
+  .btn.split-rest-btn { padding: 8px 12px; }
+}
+
+/* First run: "No admin yet" banner (admin_users is empty), on every page */
+.setup-banner {
+  margin: 0 0 18px;
+  padding: 12px 16px;
+  border: 1px solid var(--gold);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--gold) 12%, transparent);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.setup-banner code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }

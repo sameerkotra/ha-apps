@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Check reports{% endblock %}
+{% block content %}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+<p><a href="reports{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Reports</a></p>
+<h1>Check reports</h1>
+<p class="hint">Every report run with its default values on {{ user.name }}'s data.</p>
+<div class="table-scroll">
+<table class="q-table" data-no-sort>
+    <thead><tr><th>Report</th><th>Result</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+    <tr>
+        <td>{{ row.report.name }}</td>
+        <td>{% if row.ok %}<span class="q-ok">Runs</span> &middot; {{ row.message }}{% elif row.ok is none %}<span class="hint">{{ row.message }}</span>{% else %}<span class="q-error-inline">Fails:</span> {{ row.message }}{% endif %}</td>
+        <td><a href="admin-storage?tab=query&report={{ row.report.id }}{{ amp }}">Edit</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% endblock %}

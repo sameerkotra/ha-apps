@@ -1,0 +1,47 @@
+name: "Calorie Tracker"
+version: "2.0.0"
+slug: calorie_tracker
+description: >-
+  A food, macro, weight and goal tracker for everyone in your household, using
+  their Home Assistant logins. Optional AI calorie estimates and a nutrition
+  chat through your own Ollama, an OpenAI-compatible service or Anthropic Claude.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: true
+
+# Ingress-only: no ports are published to the host or LAN. The only way to
+# reach this app is through the Supervisor's authenticated ingress proxy,
+# which is what makes "authentication via Home Assistant" actually hold —
+# see "Who can see what" in DOCS.md.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:food-apple
+panel_title: Calorie Tracker
+# false = visible to every Home Assistant user, not just admins, since this
+# is meant to be used by the whole household.
+panel_admin: false
+
+# Lets the app call the Home Assistant Core REST API (via
+# http://supervisor/core/api/, using the auto-injected SUPERVISOR_TOKEN) so
+# it can publish each user's daily-calories sensor and read HA's time zone.
+# No other Supervisor API access is requested.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+
+# admin_users (who is an admin) is the only option. Everything else — the AI
+# provider, address, model and access key, and the daily-calories sensor
+# switch — is set in the app under Admin → App settings (app/settings.py).
+options:
+  admin_users: []
+
+schema:
+  admin_users:
+    - "str"

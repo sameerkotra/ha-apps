@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Import results{% endblock %}
+{% block content %}
+<h1>Import results</h1>
+
+{% for r in results %}
+<div class="card">
+    <h3>{{ r.filename or "CSV file" }}</h3>
+    {% if r.needs_date_column %}
+    <p class="empty-state">
+        This file has more than one date column ({{ r.date_column_candidates|join(", ") }}) and none is
+        clearly the transaction date &mdash; nothing was imported. Rename the column you want used to
+        &ldquo;Date&rdquo; and re-upload, or use the Upload page with JavaScript enabled, which lets you
+        pick the column directly.
+    </p>
+    {% elif r.fatal_error %}
+    <p class="empty-state">{{ r.fatal_error }}</p>
+    {% else %}
+    <p class="hint">
+        Imported {{ r.imported }} transaction{{ "s" if r.imported != 1 else "" }}.
+        {% if r.duplicates %}{{ r.duplicates|length }} row{{ "s" if r.duplicates|length != 1 else "" }} already existed and {{ "was" if r.duplicates|length == 1 else "were" }} skipped.{% endif %}
+        {% if r.skipped_status %}{{ r.skipped_status|length }} row{{ "s" if r.skipped_status|length != 1 else "" }} not posted/cleared, skipped.{% endif %}
+        {% if r.row_errors %}{{ r.row_errors|length }} row{{ "s" if r.row_errors|length != 1 else "" }} could not be imported &mdash; see below.{% endif %}
+    </p>
+    {% endif %}
+
+    {% if r.row_errors %}
+    <h4>Rows with problems</h4>
+    <ul>{% for e in r.row_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if r.duplicates %}
+    <h4>Duplicates skipped</h4>
+    <ul>{% for d in r.duplicates %}<li>{{ d }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if r.skipped_status %}
+    <h4>Skipped (not posted/cleared)</h4>
+    <ul>{% for s in r.skipped_status %}<li>{{ s }}</li>{% endfor %}</ul>
+    {% endif %}
+</div>
+{% endfor %}
+
+<p><a href="uploads{% if acting_qs %}?{{ acting_qs }}{% endif %}">&larr; Back to Upload &middot; Statements</a></p>
+{% endblock %}

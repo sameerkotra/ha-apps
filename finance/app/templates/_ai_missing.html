@@ -1,0 +1,9 @@
+{# Upload pages: say so when the AI address/model aren't set (SPEC.md section 21). #}
+{% if not ai_configured() %}
+<div class="warning-hint" role="alert">
+    <p>AI isn't set up yet, so PDFs can't be read.
+    {% if request.state.is_real_admin %}Choose the AI provider, address and model on <a href="settings">Admin &rarr; App settings</a>.
+    {% else %}Ask the admin to add it on Admin &rarr; App settings.{% endif %}</p>
+</div>
+{% endif %}
+{% include "_ai_privacy.html" %}

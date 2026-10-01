@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Review: {{ statement.original_filename }}{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+<p><a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Upload &middot; E-470 statement</a></p>
+<h1>Review: {{ statement.original_filename or "toll statement" }}</h1>
+<p class="hint">
+    This statement was held back because the checks below did not all pass. Compare it with the PDF, settle each difference,
+    and confirm &mdash; nothing is guessed for you.
+    {% if statement.pdf_path %}<button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=toll&amp;id={{ statement.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">Open PDF</button>{% endif %}
+</p>
+{% if error %}<p class="hint" style="color: var(--danger);">{{ error }}</p>{% endif %}
+
+<div class="card">
+    <h3>Grand Totals</h3>
+    <table class="detail-table">
+        <tr><th>Statement says</th><td>{% if printed is not none %}{{ "%.2f"|format(printed) }}{% else %}not printed / not found{% endif %}</td></tr>
+        <tr><th>Passes add up to</th><td>{{ "%.2f"|format(default_sum) }} <span class="hint">(with the choices pre-selected below)</span></td></tr>
+        {% if difference is not none and difference != 0 %}
+        <tr><th>Difference</th><td>{{ "%.2f"|format(difference|abs) }} {{ "not accounted for" if difference > 0 else "more than the statement says" }}</td></tr>
+        {% endif %}
+    </table>
+</div>
+
+<div class="card">
+    <h3>Checks</h3>
+    <table class="detail-table">
+        {% for c in checks %}
+        <tr><th>{{ c.name }}</th><td>{% if c.skipped %}<span class="hint">skipped</span>{% elif c.ok %}<span style="color: var(--ok);">passed</span>{% else %}<span style="color: var(--danger);">failed</span>{% endif %}
+            &mdash; {{ c.detail }}</td></tr>
+        {% endfor %}
+    </table>
+</div>
+
+<form method="post" action="toll-resolve{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+    <input type="hidden" name="id" value="{{ statement.id }}">
+
+    <h2>Passes that differ</h2>
+    {% if diff.differ %}
+    <p class="hint">Choose which reading to keep for each pass, edit it, or leave it out. Passes both readings agree on are kept.</p>
+    <div class="table-scroll">
+    <table class="statements-table" data-no-sort>
+        <thead><tr><th>Deterministic reading</th><th>AI reading</th><th>Keep</th></tr></thead>
+        <tbody>
+            {% for d in diff.differ %}
+            {% set base = d.det or d.ai %}
+            <tr>
+                <td data-label="Deterministic reading">{% if d.det %}{{ d.det.datetime }} &middot; {{ car_names[d.det.car] }}<br>{{ d.det.plaza }} {{ d.det.lane }} {{ d.det.direction }} &middot; <strong>{{ "%.2f"|format(d.det.amount) }}</strong>{% else %}<span class="hint">not found</span>{% if notes.get(d.idx) %}<div class="hint">{{ notes[d.idx] }}</div>{% endif %}{% endif %}</td>
+                <td data-label="AI reading">{% if d.ai %}{{ d.ai.datetime }} &middot; {{ car_names[d.ai.car] }}<br>{{ d.ai.plaza }} {{ d.ai.lane }} {{ d.ai.direction }} &middot; <strong>{{ "%.2f"|format(d.ai.amount) }}</strong>{% else %}<span class="hint">not found</span>{% if notes.get(d.idx) %}<div class="hint">{{ notes[d.idx] }}</div>{% endif %}{% endif %}</td>
+                <td data-label="Keep">
+                    {% if d.det %}<label class="radio-line"><input type="radio" name="choice_{{ d.idx }}" value="det" {{ "checked" if d.det else "" }}> Deterministic</label>{% endif %}
+                    {% if d.ai %}<label class="radio-line"><input type="radio" name="choice_{{ d.idx }}" value="ai" {{ "checked" if not d.det else "" }}> AI</label>{% endif %}
+                    <label class="radio-line"><input type="radio" name="choice_{{ d.idx }}" value="edit"> Edit</label>
+                    <label class="radio-line"><input type="radio" name="choice_{{ d.idx }}" value="skip"> Leave out</label>
+                    <details>
+                        <summary>Edit fields</summary>
+                        <div class="edit-grid">
+                            <label>Date and time <input type="datetime-local" step="1" name="edit_datetime_{{ d.idx }}" value="{{ base.datetime.replace(' ', 'T') }}"></label>
+                            <label>Plaza <input type="text" name="edit_plaza_{{ d.idx }}" value="{{ base.plaza }}"></label>
+                            <label>Lane <input type="text" name="edit_lane_{{ d.idx }}" value="{{ base.lane }}" size="4"></label>
+                            <label>Direction <input type="text" name="edit_direction_{{ d.idx }}" value="{{ base.direction }}" size="8"></label>
+                            <label>Amount <input type="number" step="0.01" min="0.01" name="edit_amount_{{ d.idx }}" value="{{ '%.2f'|format(base.amount) }}"></label>
+                        </div>
+                    </details>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="empty-state">Both readings found the same passes.</p>
+    {% endif %}
+
+    <details class="chart-table">
+        <summary>{{ diff.agree|length }} pass{{ "es" if diff.agree|length != 1 else "" }} both readings agree on</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>Date and time</th><th>Device</th><th>Plaza</th><th>Lane</th><th>Amount</th></tr>
+            {% for r in diff.agree %}
+            <tr><td>{{ r.datetime }}</td><td>{{ car_names[r.car] }}</td><td>{{ r.plaza }}</td><td>{{ r.lane }} {{ r.direction }}</td><td>{{ "%.2f"|format(r.amount) }}</td></tr>
+            {% endfor %}
+        </table>
+        </div>
+    </details>
+
+    <h2>Add a pass both readings missed</h2>
+    <p class="hint">If the totals above are short, find the missing passes in the PDF and type them in here.</p>
+    {% for j in range(3) %}
+    <div class="edit-grid add-pass">
+        <label>Device
+            <select name="add_car_{{ j }}"><option value="">—</option>{% for value, text in car_options %}<option value="{{ value }}">{{ text }}</option>{% endfor %}</select>
+        </label>
+        <label>Date and time <input type="datetime-local" step="1" name="add_datetime_{{ j }}"></label>
+        <label>Plaza <input type="text" name="add_plaza_{{ j }}"></label>
+        <label>Lane <input type="text" name="add_lane_{{ j }}" size="4"></label>
+        <label>Direction <input type="text" name="add_direction_{{ j }}" size="8"></label>
+        <label>Amount <input type="number" step="0.01" min="0.01" name="add_amount_{{ j }}"></label>
+    </div>
+    {% endfor %}
+
+    <h2>Confirm</h2>
+    <div class="add-account-form">
+        <label>Statement&rsquo;s Grand Totals (correct it if both readings got it wrong)
+            <input type="number" step="0.01" min="0" name="printed_total" value="{{ '%.2f'|format(printed) if printed is not none else '' }}">
+        </label>
+        <button type="submit">Confirm &amp; resolve</button>
+    </div>
+    <p class="hint">Confirming stores these passes, marks the statement complete and deletes the PDF. If the passes still don&rsquo;t add up to the Grand Totals, that difference is recorded as acknowledged.</p>
+</form>
+{% endblock %}

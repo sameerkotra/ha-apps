@@ -1,0 +1,44 @@
+name: "Family Tree"
+version: "2.0.0"
+slug: family_tree
+description: >-
+  A shared family tree for your household, with photos, stories, relationship
+  names, upcoming birthdays with phone reminders, and full change history.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8102
+panel_icon: mdi:family-tree
+panel_title: Family Tree
+# false = every Home Assistant user sees the panel; the whole household edits the tree.
+panel_admin: false
+# Ingress-only: no `ports:`. The Supervisor's authenticated ingress proxy is the
+# only way in, which is what makes trusting X-Remote-User-* safe (see main.py).
+# Photos and documents live on /share (the "Photo folder" App setting in the app),
+# outside /data, so the app's own backup holds only the database.
+map:
+  - type: share
+    read_only: false
+# Reads person.* states (the user list) and HA's time zone, lists notify services
+# and calls notify for reminders. Nothing else.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+environment:
+  DATA_DIR: /data
+  PORT: "8102"
+# Everything else (photo folder, days in trash, largest upload, feature switches)
+# is an App setting, changed by an admin in the app (Admin → App settings).
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

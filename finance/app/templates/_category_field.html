@@ -1,0 +1,13 @@
+<form class="category-form" method="post" action="transaction-category{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+    <input type="hidden" name="id" value="{{ t.id }}">
+    <input type="hidden" name="next" value="{{ next_page or 'transactions' }}">
+    <select name="category" class="category-select">
+        {% for c in categories %}
+        <option value="{{ c }}" {{ "selected" if t.category == c else "" }}>{{ c }}</option>
+        {% endfor %}
+        {% if t.category and t.category not in categories %}
+        <option value="{{ t.category }}" selected>{{ t.category }}</option>
+        {% endif %}
+    </select>
+    <button type="submit" class="btn-secondary category-save">Save</button>
+</form>

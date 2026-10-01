@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}{{ account.name }}{% endblock %}
+{% block content %}
+<p><a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">&larr; All accounts</a></p>
+
+{{ nav.setup_tabs("accounts", acting_qs, request.state.is_real_admin) }}
+<h1>{{ account.name }}</h1>
+<span class="type-badge type-{{ account.type }}">{{ account.type.replace('_', ' ') }}</span>
+{% if account.is_archived %}<span class="status-badge">archived</span>{% endif %}
+{% if account.website_url %}<a href="{{ account.website_url }}" target="_blank" rel="noopener noreferrer" class="btn-secondary acct-link">Open website &#8599;</a>{% endif %}
+
+<details class="inline-toggle" id="account-edit">
+    <summary>Edit details</summary>
+    <form method="post" action="account-update{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
+        <input type="hidden" name="id" value="{{ account.id }}">
+        <label>
+            Name
+            <input type="text" name="name" value="{{ account.name }}" required>
+        </label>
+        <label>
+            Bank
+            <input type="text" name="bank_name" value="{{ account.bank_name or '' }}" placeholder="e.g. Chase">
+        </label>
+        <label>
+            Last 4 digits
+            <input type="text" name="account_number_last4" value="{{ account.account_number_last4 or '' }}" maxlength="4" pattern="[0-9]{4}" placeholder="1234">
+        </label>
+        <label>
+            Preferred upload method
+            <select name="preferred_upload_method">
+                <option value="both" {% if account.preferred_upload_method == "both" %}selected{% endif %}>Either PDF or CSV</option>
+                <option value="pdf" {% if account.preferred_upload_method == "pdf" %}selected{% endif %}>PDF only</option>
+                <option value="csv" {% if account.preferred_upload_method == "csv" %}selected{% endif %}>CSV only</option>
+            </select>
+        </label>
+        <label>
+            Website
+            <input type="url" name="website_url" value="{{ account.website_url or '' }}" placeholder="e.g. https://www.chase.com" maxlength="500" inputmode="url">
+        </label>
+        <button type="submit">Save changes</button>
+    </form>
+    <p class="hint">The account type ({{ account.type.replace('_', ' ') }}) can't be changed here &mdash; delete and re-add the account for that. Everything else updates everywhere at once: past statements and transactions already imported show the new name, bank and number immediately, nothing needs re-importing. Preferred upload method updates the same way &mdash; it only changes what the Upload page warns about, it doesn't touch anything already imported.</p>
+</details>
+
+<form method="post" action="account-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}" style="display:inline-block; margin: 0.5rem 0;">
+    <input type="hidden" name="id" value="{{ account.id }}">
+    <input type="hidden" name="next" value="account">
+    {% if account.is_archived %}
+    <input type="hidden" name="archived" value="0">
+    <button type="submit" class="btn-secondary">Unarchive this account</button>
+    {% else %}
+    <input type="hidden" name="archived" value="1">
+    <button type="submit" class="btn-secondary">Archive this account</button>
+    {% endif %}
+</form>
+<p class="hint">
+    Archiving hides this account from the default accounts list and
+    current-period dashboard, but everything about it &mdash; statements,
+    transactions, this page &mdash; stays exactly as it is. Reversible
+    any time, no data is touched.
+</p>
+
+<p>
+    <a href="account-delete-confirm?id={{ account.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-danger">Delete this account&hellip;</a>
+</p>
+
+<table class="detail-table">
+    <tr><th>Bank</th><td>{{ account.bank_name or "—" }}</td></tr>
+    <tr><th>Account</th><td>{% if account.account_number_last4 %}····{{ account.account_number_last4 }}{% else %}—{% endif %}</td></tr>
+    <tr><th>Transactions</th><td>{{ txn_count }}</td></tr>
+    <tr><th>Added</th><td>{{ account.created_at }}</td></tr>
+</table>
+
+<h2>Statements</h2>
+{% if account.type == "credit_card" %}
+<p class="hint">For a credit card, &ldquo;Money in&rdquo; is the payments and credits on the statement and &ldquo;Money out&rdquo; is the purchases and charges &mdash; the same direction as checking/savings.</p>
+{% endif %}
+{% if statements %}
+<table class="statements-table">
+    <thead>
+        <tr><th>Period</th><th>Uploaded</th><th>Status</th><th>Money in</th><th>Money out</th></tr>
+    </thead>
+    <tbody>
+        {% for s in statements %}
+        {% set flow = flow_by_statement.get(s.id) %}
+        <tr>
+            <td data-label="Period">{{ s.statement_period or "—" }}</td>
+            <td data-label="Uploaded">{{ s.uploaded_at }}</td>
+            <td data-label="Status"><span class="status-badge status-{{ s.status }}">{{ s.status.replace('_', ' ') }}</span></td>
+            <td data-label="Money in">{{ "%.2f"|format(flow.money_in) if flow else "0.00" }}</td>
+            <td data-label="Money out">{{ "%.2f"|format(flow.money_out) if flow else "0.00" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No statements uploaded yet for this account.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_query_macros.html" import var_input %}
+{% block title %}{{ report.name }}{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+<p><a href="reports{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Reports</a></p>
+<h1>{{ report.name }}
+    {% if report.no_time_limit %}<span class="status-badge">Can take a while</span>{% endif %}</h1>
+{% if report.description %}<p class="hint">{{ report.description }}</p>{% endif %}
+{% if is_admin %}<p class="hint"><a href="admin-storage?tab=query&report={{ report.id }}{{ amp }}">Edit</a></p>{% endif %}
+
+<form method="get" action="report" class="q-run-form">
+    <input type="hidden" name="id" value="{{ report.id }}">
+    {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
+    <input type="hidden" name="run" value="1">
+    <input type="hidden" name="per_page" value="{{ view.per_page if view else 100 }}" class="q-per-page-field">
+    {% for v in report.variables %}{{ var_input(v, values[v.name], choices, presets) }}{% endfor %}
+    <div class="q-run-button"><button type="submit">Run</button>
+        <span class="hint">Data: <strong>{{ data_owner }}</strong></span></div>
+</form>
+
+<div id="query-results" class="q-results">
+{% if long_run %}
+{{ long_run | safe }}
+{% elif error or view %}
+{% include "_query_results.html" %}
+{% elif report.no_time_limit %}
+<p class="empty-state">This report can take a while, so it waits for you to press Run.</p>
+{% endif %}
+</div>
+<script src="static/query.js?v={{ app_version }}" defer></script>
+{% endblock %}

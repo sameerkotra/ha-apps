@@ -1,0 +1,13 @@
+# Not needed inside the app's image
+tests/
+.pytest_cache/
+**/__pycache__/
+*.md
+!README.md
+requirements-dev.txt
+pytest.ini
+# Read by Supervisor from the repository, not needed in the image
+icon.png
+logo.png
+translations/
+"data model/"

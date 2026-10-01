@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Transactions{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{{ nav.transactions_tabs("all", acting_qs) }}
+<h1>Transactions</h1>
+
+{% if filter_category or filter_txn_type or filter_flow %}
+<p class="hint">
+    Filtered
+    {% if filter_category %}by category &ldquo;{{ filter_category }}&rdquo;{% endif %}
+    {% if filter_flow == "income" %}(income){% elif filter_flow == "expense" %}(spending){% elif filter_txn_type %}({{ filter_txn_type }}){% endif %}
+    &mdash; <a href="transactions{% if acting_qs %}?{{ acting_qs }}{% endif %}">clear filter</a>
+</p>
+{% endif %}
+
+{# No type="submit" control on purpose: a form's only submit button is activated
+   by Enter in ANY field (it once silently triggered Export), and a click and an
+   Enter-activation can't be told apart. Nothing queries until Search is clicked
+   or Enter is pressed (the form's onkeydown clicks the button). #}
+<form id="txn-filters" class="add-account-form"
+      onkeydown="if (event.key === 'Enter') { event.preventDefault(); document.getElementById('txn-search-btn').click(); }">
+    <input type="hidden" name="txn_type" value="{{ filter_txn_type }}">
+    <label>
+        Search notes
+        <input type="text" name="q" value="{{ q }}" placeholder="Search notes&hellip;">
+    </label>
+    <label>
+        Description contains
+        <input type="text" name="desc" value="{{ filter_desc }}" placeholder="e.g. AMAZON&hellip;">
+    </label>
+    <label>
+        Account
+        <select name="account_id">
+            <option value="">All accounts</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}" {{ "selected" if selected_account_id == a.id else "" }}>{{ a.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Category
+        <select name="category">
+            <option value="">All categories</option>
+            {% for c in categories %}
+            <option value="{{ c }}" {{ "selected" if filter_category == c else "" }}>{{ c }}</option>
+            {% endfor %}
+            {% if filter_category and filter_category not in categories %}
+            <option value="{{ filter_category }}" selected>{{ filter_category }}</option>
+            {% endif %}
+        </select>
+    </label>
+    <label>
+        Type
+        <select name="flow">
+            <option value="">All</option>
+            <option value="income" {{ "selected" if filter_flow == "income" else "" }}>Money in</option>
+            <option value="expense" {{ "selected" if filter_flow == "expense" else "" }}>Money out</option>
+        </select>
+    </label>
+    <label>
+        Excluded
+        <select name="excluded">
+            <option value="">Show all</option>
+            <option value="only" {{ "selected" if filter_excluded == "only" else "" }}>Excluded only</option>
+            <option value="hide" {{ "selected" if filter_excluded == "hide" else "" }}>Hide excluded</option>
+        </select>
+    </label>
+    <label>
+        From date
+        <input type="date" name="start_date" value="{{ filter_start_date }}">
+    </label>
+    <label>
+        To date
+        <input type="date" name="end_date" value="{{ filter_end_date }}">
+    </label>
+    <label>
+        Min amount
+        <input type="number" step="0.01" min="0" name="min_amount" value="{{ filter_min_amount }}" placeholder="0.00">
+    </label>
+    <label>
+        Max amount
+        <input type="number" step="0.01" min="0" name="max_amount" value="{{ filter_max_amount }}" placeholder="9999.00">
+    </label>
+    <div class="txn-filter-actions">
+        {# searched=1 is always sent: every "All ..." option is blank, so a search with
+           nothing else set would otherwise look like a plain page load. #}
+        <button type="button" id="txn-search-btn" class="btn-primary"
+                hx-get="transactions?searched=1{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+                hx-target="#transactions-table-wrap" hx-swap="outerHTML"
+                hx-include="#txn-filters" hx-push-url="true">Search</button>
+        <a href="transactions{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">Clear all</a>
+        <button type="button" class="btn-secondary"
+                onclick="window.location.href = 'transactions-export?' + new URLSearchParams(new FormData(this.form)).toString();">Export to CSV</button>
+        {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=')[1] }}">{% endif %}
+    </div>
+</form>
+
+
+{% include "_transactions_table.html" %}
+{% endblock %}

@@ -1,0 +1,39 @@
+name: "Household Vault"
+version: "2.0.0"
+slug: household_vault
+description: >-
+  A household password manager inside Home Assistant: personal, household and
+  shared vaults, each an encrypted KeePass file. Experimental — keep your own
+  KeePass copy of your passwords.
+url: https://github.com/sameerkotra/ha-apps
+stage: experimental
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8101
+panel_icon: mdi:shield-key
+panel_title: Vault
+# Everyone sees the panel; nobody gets in until an admin enables and sets them up.
+panel_admin: false
+# Ingress-only: no `ports:`. The Supervisor's authenticated ingress proxy is the
+# only way in, which is what makes trusting X-Remote-User-* safe (see main.py).
+# Reads person.* states (the user list); calls notify for alerts and reminders;
+# keeps the optional guest Wi-Fi sensor. No vault contents are sent otherwise.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+environment:
+  DATA_DIR: /data
+  PORT: "8101"
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

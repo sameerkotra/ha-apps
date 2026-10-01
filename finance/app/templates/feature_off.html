@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Turned off{% endblock %}
+{% block content %}
+<h1>{{ feature_label }} is turned off</h1>
+<p>This part of the app is switched off{% if request.state.is_real_admin %}. Turn it on under Features on
+    <a href="settings">Admin &rarr; App settings</a>; nothing was deleted while it was off{% else %} by the admin{% endif %}.</p>
+<p><a href="dashboard">&larr; Home</a></p>
+{% endblock %}

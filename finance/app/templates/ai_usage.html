@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}AI usage{% endblock %}
+{% macro n(v) %}{{ "{:,}".format(v) }}{% endmacro %}
+{% macro money(v) %}{% if v is none %}—{% elif v < 1 %}{{ "$%.4f"|format(v) }}{% else %}{{ "${:,.2f}".format(v) }}{% endif %}{% endmacro %}
+{% macro duration(s) %}{% if s >= 3600 %}{{ (s // 3600)|int }} h {{ ((s % 3600) // 60)|int }} min{% elif s >= 60 %}{{ (s // 60)|int }} min {{ (s % 60)|int }} s{% else %}{{ "%.1f"|format(s) }} s{% endif %}{% endmacro %}
+{% macro usage_table(title, first_col, rows) %}
+<section class="card">
+    <h3>{{ title }}</h3>
+    <div class="table-scroll">
+    <table class="statements-table ai-usage-table ai-usage-totals">
+        <thead>
+            <tr><th>{{ first_col }}</th><th class="num">Requests</th><th class="num">Input tokens</th>
+                <th class="num">Output tokens</th><th class="num">Total tokens</th><th class="num">Time</th><th class="num">Cost</th></tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+            <tr>
+                <td data-label="{{ first_col }}">{{ r.name }}</td>
+                <td class="num" data-label="Requests">{{ n(r.requests) }}{% if r.failed %} <span class="hint">({{ n(r.failed) }} failed)</span>{% endif %}</td>
+                <td class="num" data-label="Input tokens">{{ n(r.input_tokens) }}</td>
+                <td class="num" data-label="Output tokens">{{ n(r.output_tokens) }}</td>
+                <td class="num" data-label="Total tokens">{{ n(r.total_tokens) }}</td>
+                <td class="num" data-label="Time">{{ duration(r.seconds) }}</td>
+                <td class="num" data-label="Cost">{{ money(r.cost) }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% endmacro %}
+{% block content %}
+{{ nav.admin_tabs("ai_usage", acting_qs) }}
+<h1>AI usage</h1>
+<p class="hint">Every request the app has made to the AI, added up for the whole household: reading PDFs, suggesting
+    categories, debug re-sends and Write SQL. Re-running or deleting a document doesn't lower the total. Admin only.</p>
+
+{% if totals is none %}
+<div class="warning-hint" role="alert"><p>The running total isn't available in this database yet. Restart the app to
+    finish bringing the imported database up to date.</p></div>
+{% elif not totals.overall.requests %}
+<p class="notice">No AI requests yet. The total starts with the first PDF the AI reads.</p>
+{% else %}
+{% set o = totals.overall %}
+<section class="card ai-usage-overall">
+    <h3>All time</h3>
+    <dl class="ai-usage-summary">
+        <dt>Requests</dt><dd>{{ n(o.requests) }}{% if o.failed %} <span class="hint">({{ n(o.failed) }} failed)</span>{% endif %}</dd>
+        <dt>Input tokens</dt><dd>{{ n(o.input_tokens) }}</dd>
+        <dt>Output tokens</dt><dd>{{ n(o.output_tokens) }}</dd>
+        <dt>Total tokens</dt><dd><strong>{{ n(o.total_tokens) }}</strong></dd>
+        <dt>Time the AI took</dt><dd>{{ duration(o.seconds) }}</dd>
+        <dt>Cost</dt><dd>{{ money(o.cost) }}</dd>
+    </dl>
+    <p class="hint">From {{ totals.first_at[:10] }} to {{ totals.last_at[:10] }}.
+        {% if totals.earlier %}{{ n(totals.earlier.requests) }} request{{ "s" if totals.earlier.requests != 1 }}
+        ({{ n(totals.earlier.total_tokens) }} tokens) came from the documents already in the app when the running total
+        started{% if totals.live_since %} on {{ totals.live_since[:10] }}{% endif %}: only each document's last processing run
+        was kept then, so earlier re-runs and anything already deleted aren't counted.{% endif %}</p>
+</section>
+
+{{ usage_table("By month", "Month", totals.months) }}
+{{ usage_table("By kind of request", "Request", totals.purposes) }}
+{{ usage_table("By model", "Model", totals.models) }}
+
+<p class="hint">Input tokens are what was sent (prompt and page images), output tokens what the model wrote, both as the
+    provider reports them; a failed request counts with no tokens. Months are in UTC.
+    {% if totals.priced %}Cost uses today's prices on <a href="settings{{ '?' + acting_qs if acting_qs }}">App settings</a>,
+    so it's an estimate if the prices have changed.{% else %}No cost shown: a local model costs nothing but time. For a paid
+    service, set its prices on <a href="settings{{ '?' + acting_qs if acting_qs }}">App settings</a>.{% endif %}</p>
+{% endif %}
+{% endblock %}

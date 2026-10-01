@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}App settings{% endblock %}
+{% block content %}
+{{ nav.admin_tabs("settings", acting_qs) }}
+<h1>App settings</h1>
+<p class="hint">App-wide settings, admin only. A change applies straight away &mdash; no need to restart the app.</p>
+
+{% if not ai_ready %}
+<div class="warning-hint" role="alert"><p>AI isn't set up: choose the provider and enter its address, model{% if values.ai_provider == "anthropic" %} and access key{% endif %} below.
+    Until then PDFs can't be read, categories aren't suggested and Write SQL is off.</p></div>
+{% endif %}
+{% include "_ai_privacy.html" %}
+{% if saved %}<p class="notice settings-saved">Saved. The next AI request uses the new settings.</p>{% endif %}
+{% if errors %}
+<div class="warning-hint" role="alert">
+    <p>Nothing was saved:</p>
+    <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form method="post" action="settings{{ '?' + acting_qs if acting_qs }}" class="settings-form" id="settings-form" autocomplete="off">
+    {% for title, hint, keys in groups %}
+    <section class="card settings-group">
+        <h2>{{ title }}</h2>
+        <p class="hint">{{ hint }}</p>
+        {% for key in keys %}
+        {% set s = defs[key] %}
+        {% set m = meta.get(key) %}
+        <div class="settings-field" data-key="{{ key }}">
+            {% if s.kind == "bool" %}
+            <label class="settings-check">
+                <input type="checkbox" name="{{ key }}" value="1" {{ "checked" if values[key] == "1" }}>
+                {{ s.label }}
+            </label>
+            {% else %}
+            <label for="set-{{ key }}">{{ s.label }}</label>
+            {% if s.kind == "price" %}
+            <div class="settings-price"><span>$</span>
+                <input id="set-{{ key }}" type="number" name="{{ key }}" min="0" step="any" inputmode="decimal" value="{{ values[key] }}">
+            </div>
+            {% elif s.kind == "int" %}
+            <input id="set-{{ key }}" type="number" name="{{ key }}" min="256" max="200000" step="1" inputmode="numeric" value="{{ values[key] }}">
+            {% elif s.kind == "choice" %}
+            <select id="set-{{ key }}" name="{{ key }}">
+                {% for v, label in s.choices %}<option value="{{ v }}" {{ "selected" if values[key] == v }}>{{ label }}</option>{% endfor %}
+            </select>
+            {% elif s.kind == "secret" %}
+            <input id="set-{{ key }}" type="password" name="{{ key }}" value="" autocomplete="new-password" spellcheck="false"
+                   maxlength="500" placeholder="{{ 'A key is saved (' ~ key_hint ~ ') — type a new one to replace it' if key_hint else 'Paste the key' }}">
+            {% if key_hint %}
+            <label class="settings-check settings-clear"><input type="checkbox" name="clear_{{ key }}" value="1"> Remove the saved key</label>
+            {% endif %}
+            {% else %}
+            <input id="set-{{ key }}" type="{{ 'url' if s.kind == 'url' else 'text' }}" name="{{ key }}" value="{{ values[key] }}"
+                   autocomplete="off" spellcheck="false" maxlength="{{ 300 if s.kind == 'url' else 200 }}"
+                   {% if key == "ai_url" %}data-defaults='{{ default_urls | tojson }}' placeholder="{{ default_urls[values.ai_provider] or 'http://192.168.1.10:11434' }}"{% endif %}>
+            {% endif %}
+            {% endif %}
+            {% if s.help %}<p class="hint">{{ s.help }}</p>{% endif %}
+            {% if m and s.kind != "secret" %}<p class="hint settings-meta">
+                {% if m.updated_by == "add-on options" %}Copied from the old app options ({{ m.updated_at }} UTC).
+                {% else %}Last changed {{ m.updated_at }} UTC{% if m.updated_by %} by {{ m.updated_by }}{% endif %}.{% endif %}
+            </p>{% elif m and key_hint %}<p class="hint settings-meta">Saved {{ m.updated_at }} UTC{% if m.updated_by %} by {{ m.updated_by }}{% endif %}.</p>{% endif %}
+        </div>
+        {% endfor %}
+        {% if "ai_url" in keys %}
+        <div class="settings-test-row">
+            <button type="button" class="btn-secondary" hx-post="settings-test" hx-include="#settings-form"
+                    hx-target="#settings-test-result" hx-swap="innerHTML" hx-indicator="#settings-test-result">Test connection</button>
+            <span class="hint">Uses what's typed above (before saving; a blank key field uses the saved key). Asks the provider which models it offers &mdash; nothing is generated, so it costs nothing and never disturbs a PDF being read.</span>
+            <div id="settings-test-result" aria-live="polite"></div>
+        </div>
+        {% endif %}
+    </section>
+    {% endfor %}
+    <p><button type="submit" class="btn-primary">Save settings</button></p>
+</form>
+<script>
+(function () {
+    // The address placeholder follows the provider (blank = that provider's standard address).
+    var provider = document.getElementById("set-ai_provider"), url = document.getElementById("set-ai_url");
+    if (!provider || !url) return;
+    var defaults = JSON.parse(url.dataset.defaults || "{}");
+    var saved = {provider: provider.value, url: url.value};
+    provider.addEventListener("change", function () {
+        // Another provider's address would be wrong for this one: start blank (= its standard
+        // address), and bring back the saved address when switching back.
+        url.value = provider.value === saved.provider ? saved.url : "";
+        url.placeholder = defaults[provider.value] || "http://192.168.1.10:11434";
+    });
+})();
+</script>
+{% endblock %}

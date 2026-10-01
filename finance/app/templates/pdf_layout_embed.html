@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+{# Bare layout for the PDF viewer shown inside the Uploads page's modal: no navigation, same theme. #}
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}PDF{% endblock %}</title>
+    <link rel="stylesheet" href="static/style.css?v={{ app_version }}">
+    <script>
+    (function () {
+        var THEMES = ["midnight", "slate", "daylight", "sandstone"];
+        try {
+            var theme = localStorage.getItem("theme");
+            if (theme && THEMES.indexOf(theme) !== -1) document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) { /* storage unavailable: default theme */ }
+    })();
+    </script>
+</head>
+<body class="embed-body">
+    <main class="embed-main">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

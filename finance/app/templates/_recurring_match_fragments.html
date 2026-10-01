@@ -1,0 +1,80 @@
+{% from "_recurring_macros.html" import override_form, amount_range with context %}
+<div class="recurring-match-results">
+{% if series is none %}
+    <h3>Not a recurring candidate</h3>
+    <p class="hint">
+        Only charges (money out) can be recurring &mdash; this transaction is income,
+        a transfer, or is excluded from reports.
+    </p>
+{% else %}
+    <h3>{{ series.sample_description }}</h3>
+    <p>
+        {% if series.status == "recurring" %}
+        <strong>Recurring &mdash; {{ series.frequency }}</strong>{% if series.manually_overridden %} <span class="hint">(marked by you)</span>{% endif %},
+        {{ series.occurrence_count }} charge{{ "s" if series.occurrence_count != 1 else "" }},
+        last {{ series.last_date }}{% if series.next_date %}, next around {{ series.next_date }}{% endif %}.
+        {% elif series.status == "suggested" %}
+        <strong>Possibly recurring ({{ series.frequency }})</strong> &mdash; only {{ series.occurrence_count }} charges so far, so it isn't listed automatically yet.
+        {% elif series.status == "dismissed" %}
+        <strong>Dismissed</strong> &mdash; you told the app this isn't recurring.
+        {% else %}
+        <strong>No recurring pattern found</strong> &mdash;
+        {{ series.occurrence_count }} similar charge{{ "s" if series.occurrence_count != 1 else "" }}, not on a regular schedule.
+        {% endif %}
+    </p>
+
+    <table class="statements-table">
+        <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
+        <tbody>
+            {% for t in series.txns %}
+            <tr>
+                <td data-label="Date">{{ t.date }}</td>
+                <td data-label="Description">{{ t.description }}</td>
+                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="modal-actions">
+        {% if series.status != "recurring" %}
+        {{ override_form(series.series_key, "1", "Mark as recurring", series.account_id, "btn-primary") }}
+        {% endif %}
+        {% if series.status != "dismissed" %}
+        {{ override_form(series.series_key, "0", "Not recurring", series.account_id) }}
+        {% endif %}
+        {% if series.manually_overridden %}
+        {{ override_form(series.series_key, "clear", "Back to automatic", series.account_id) }}
+        {% endif %}
+    </div>
+
+    {% if siblings %}
+    <h4>Other amounts from the same merchant</h4>
+    <table class="statements-table">
+        <thead><tr><th>Amount</th><th>Charges</th><th>Pattern</th><th></th></tr></thead>
+        <tbody>
+            {% for s in siblings %}
+            <tr>
+                <td data-label="Amount">{{ amount_range(s) }}</td>
+                <td data-label="Charges">{{ s.occurrence_count }} (last {{ s.last_date }})</td>
+                <td data-label="Pattern">{% if s.status == "recurring" %}{{ s.frequency }}{% elif s.status == "suggested" %}Possibly {{ s.frequency | lower }}{% elif s.status == "dismissed" %}Dismissed{% else %}&mdash;{% endif %}</td>
+                <td data-label="">
+                    {% if s.status != "recurring" %}
+                    {{ override_form(s.series_key, "1", "Mark as recurring", s.account_id) }}
+                    {% else %}
+                    {{ override_form(s.series_key, "0", "Not recurring", s.account_id) }}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div class="modal-actions">
+        {{ override_form(series.merchant_key, "1", "Mark every amount as recurring", series.account_id) }}
+    </div>
+    {% endif %}
+{% endif %}
+    <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-modal-close>Close</button>
+    </div>
+</div>

@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Transfers{% endblock %}
+{% block content %}
+{{ nav.transactions_tabs("transfers", acting_qs) }}
+<h1>Transfers</h1>
+<p class="hint">
+    Money moving between two of your own accounts &mdash; a payment to a
+    credit card, or a transfer between checking/savings accounts &mdash;
+    isn't real spending or income (SPEC.md section 8). Matches
+    are by amount and date proximity, not merchant text &mdash; the two
+    sides of a transfer almost never describe it the same way. An
+    unambiguous match links automatically on import; anything with more
+    than one possible match needs a human to pick below, and any single
+    transaction can be force-checked from its own "Find match" button on
+    the Transactions page.
+</p>
+
+{% set from_acc = (accounts | selectattr('id', 'equalto', filter_from_account) | first) if filter_from_account else None %}
+{% set to_acc = (accounts | selectattr('id', 'equalto', filter_to_account) | first) if filter_to_account else None %}
+{% set has_filter = filter_from_account or filter_to_account or filter_start_date or filter_end_date %}
+
+<form method="get" action="transfers" class="add-account-form">
+    {% if impersonation_qs_value %}<input type="hidden" name="as_user" value="{{ impersonation_qs_value }}">{% endif %}
+    <label>
+        From account
+        <select name="from_account">
+            <option value="">Any</option>
+            {% for a in accounts if a.type in ("checking", "savings") %}
+            <option value="{{ a.id }}" {{ "selected" if filter_from_account == a.id else "" }}>{{ a.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        To account
+        <select name="to_account">
+            <option value="">Any</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}" {{ "selected" if filter_to_account == a.id else "" }}>{{ a.name }}{% if a.type == "credit_card" %} (card){% endif %}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        From date
+        <input type="date" name="start_date" value="{{ filter_start_date }}">
+    </label>
+    <label>
+        To date
+        <input type="date" name="end_date" value="{{ filter_end_date }}">
+    </label>
+    <button type="submit" class="btn-secondary">Filter</button>
+</form>
+
+{% if has_filter %}
+<p class="hint">
+    {% if defaulted_to_this_month and not from_acc and not to_acc %}
+    Showing this month ({{ filter_start_date }} to {{ filter_end_date }}) by default
+    {% else %}
+    Filtered
+    {% if from_acc %}from {{ from_acc.name }}{% endif %}
+    {% if to_acc %}to {{ to_acc.name }}{% if to_acc.type == "credit_card" %} (card){% endif %}{% endif %}
+    {% if filter_start_date or filter_end_date %}
+    &mdash; between {{ filter_start_date or "the start" }} and {{ filter_end_date or "now" }}
+    {% endif %}
+    {% endif %}
+    &mdash; <a href="transfers?start_date=&end_date={% if acting_qs %}&{{ acting_qs }}{% endif %}">show all</a>
+</p>
+{% endif %}
+
+{% if highlight_txn_id %}
+<p class="hint">
+    Showing only the linked pair for that transaction &mdash;
+    <a href="transfers?start_date=&end_date={% if acting_qs %}&{{ acting_qs }}{% endif %}">show all linked pairs</a>
+</p>
+{% endif %}
+
+{% if just_linked %}
+<p class="notice transfer-notice" role="status">Linked: {{ just_linked.out_account_name }} {{ just_linked.out_date }}
+    ({{ "%.2f"|format(-just_linked.out_amount) }}) &rarr; {{ just_linked.in_account_name }} {{ just_linked.in_date }}.
+    It's now in Linked pairs below.</p>
+{% endif %}
+{% if link_error %}
+<div class="warning-hint" role="alert"><p>Couldn't link that pair: {{ link_error }}</p></div>
+{% endif %}
+
+<h2>Needs confirmation</h2>
+{% if ambiguous %}
+{% for group in ambiguous %}
+<div class="card">
+    <h3>{{ group.outflow.account_name }} &mdash; {{ "%.2f"|format(group.outflow.amount) }} on {{ group.outflow.date }}</h3>
+    <table class="statements-table">
+        <thead>
+            <tr><th>Date</th><th>Account</th><th>Amount</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for c in group.candidates %}
+            <tr>
+                <td data-label="Date">{{ c.date }}</td>
+                <td data-label="Account">{{ c.account_name }}</td>
+                <td data-label="Amount">{{ "%.2f"|format(c.amount) }}</td>
+                <td data-label="">
+                    <form method="post" action="transfer-link{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="outflow_id" value="{{ group.outflow.id }}">
+                        <input type="hidden" name="inflow_id" value="{{ c.id }}">
+                        <input type="hidden" name="from_account" value="{{ filter_from_account or '' }}">
+                        <input type="hidden" name="to_account" value="{{ filter_to_account or '' }}">
+                        <input type="hidden" name="start_date" value="{{ filter_start_date or '' }}">
+                        <input type="hidden" name="end_date" value="{{ filter_end_date or '' }}">
+                        <input type="hidden" name="dates_sent" value="{{ '1' if dates_sent else '' }}">
+                        <button type="submit" class="btn-secondary">Link this</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% else %}
+<p class="empty-state">
+    {% if has_filter %}No unresolved candidates match this filter.
+    {% else %}Nothing needs confirmation right now &mdash; every candidate pair either matched automatically or has no candidate yet.{% endif %}
+</p>
+{% endif %}
+
+<h2>Linked pairs</h2>
+{% if linked %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>From</th><th>Date</th><th>Amount</th><th>To</th><th>Date</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for l in linked %}
+            <tr>
+                <td data-label="From">{{ l.out_account_name }}</td>
+                <td data-label="Date">{{ l.out_date }}</td>
+                <td data-label="Amount">{{ "%.2f"|format(-l.out_amount) }}</td>
+                <td data-label="To">{{ l.in_account_name }}{% if l.in_account_type == "credit_card" %} (card){% endif %}</td>
+                <td data-label="Date">{{ l.in_date }}</td>
+                <td data-label="">
+                    <form method="post" action="transfer-unlink{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+                          onsubmit="return confirm(&quot;Undo this link? Both sides revert to plain transactions, and the receiving side also becomes excluded from dashboard totals so an undo cannot quietly inflate your income.&quot;);">
+                        <input type="hidden" name="id" value="{{ l.out_id }}">
+                        <button type="submit" class="restart-btn">Undo</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">
+    {% if highlight_txn_id %}That transaction isn&rsquo;t currently linked to anything &mdash; it may have just been unlinked.
+    {% elif has_filter %}No linked pairs match this filter.
+    {% else %}No linked transfer pairs yet.{% endif %}
+</p>
+{% endif %}
+{% endblock %}

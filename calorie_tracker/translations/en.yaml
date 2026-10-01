@@ -1,0 +1,13 @@
+configuration:
+  admin_users:
+    name: Admins
+    description: >-
+      Home Assistant user names (login names) or user ids of the app's admins
+      — display names are not accepted. Admins can open the Admin page (App
+      settings, including the AI setup; Users; Storage) and use the user
+      switcher to view or edit other household members' data. Everyone else
+      sees only their own data. Empty by default: until you add someone, every
+      page shows "No admin yet". Not sure what to enter? Open the app and click
+      your name (or the person icon on a phone): "How the app sees you" shows
+      the exact value. Restart the app (Information tab → Restart) after
+      changing this list.

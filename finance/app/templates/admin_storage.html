@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Storage (admin){% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% from "_query_macros.html" import storage_tabs %}
+{{ storage_tabs("storage", acting_qs) }}
+<h1>Storage</h1>
+<p class="hint">
+    Admin-only. Every file still sitting on disk across all users &mdash;
+    statement PDFs and utility bill PDFs not yet cleaned up, and any CSV import that outlived
+    its own request (normally empty; see the hint below that table).
+    Total: {{ "%.1f"|format(total_bytes / 1048576) }} MB.
+</p>
+
+{% if purged is defined and purged is not none %}
+<p class="hint">Deleted {{ purged }} PDF{{ "s" if purged != 1 else "" }} just now.</p>
+{% endif %}
+{% if imported %}
+<p class="hint" style="color: var(--accent);">Database imported successfully. Restart the app now so every
+    background worker picks up the imported data.</p>
+{% endif %}
+{% if import_error %}
+<p class="hint" style="color: var(--danger);">Import failed: {{ import_error }}</p>
+{% endif %}
+
+<h2>Database</h2>
+<p class="hint">
+    A full, consistent snapshot of the entire SQLite database &mdash;
+    every user's accounts, transactions, statements and rules &mdash;
+    for a manual backup or to open with an external SQLite tool.
+    Generated fresh on each click; nothing is kept on the server after
+    the download finishes.
+</p>
+<div class="card">
+    <a href="admin-storage-download-db" class="btn-secondary">Download database (.db)</a>
+</div>
+
+<h2>Import database</h2>
+<p class="hint">
+    Restores a previously-downloaded .db backup &mdash; mainly for
+    after reinstalling this app (a fresh install has no data of its
+    own until you import one). <strong>This replaces every user's
+    entire database at once and can't be undone</strong> &mdash; there
+    is no per-account or partial import, and whatever is currently
+    stored is gone the moment this finishes. Restart the app right
+    after importing so every background worker picks up the new data
+    instead of whatever it already had open.
+</p>
+<div class="card">
+    <form method="post" action="admin-storage-import-db" enctype="multipart/form-data"
+          onsubmit="return confirm('This replaces the ENTIRE database for every user and cannot be undone. Continue?');">
+        <input type="hidden" name="confirm" value="yes">
+        <div style="display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start;">
+            <input type="file" name="db_file" accept=".db" required>
+            <label style="font-size: 0.85rem; color: var(--text-dim); display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" required>
+                I understand this replaces all data for every user and can't be undone.
+            </label>
+            <button type="submit" class="btn-secondary">Import database (.db)</button>
+        </div>
+    </form>
+</div>
+
+<h2>Statement PDFs</h2>
+{% if pdf_rows %}
+<div class="card">
+    <form method="post" action="admin-storage-purge-pdfs" style="margin-bottom: 1rem;">
+        <button type="submit" class="btn-secondary">Delete all completed statements&rsquo; PDFs</button>
+    </form>
+    <table class="statements-table storage-table">
+        <thead>
+            <tr><th>File</th><th>User</th><th>Account</th><th>Status</th><th>Uploaded</th><th>Size</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in pdf_rows %}
+            <tr>
+                <td data-label="File">{{ r.original_filename or "—" }}</td>
+                <td data-label="User">{{ r.user_id }}</td>
+                <td data-label="Account">{{ r.account_name }}</td>
+                <td data-label="Status"><span class="status-badge status-{{ r.status }}">{{ r.status | replace("_", " ") }}</span></td>
+                <td data-label="Uploaded">{{ r.uploaded_at }}</td>
+                <td data-label="Size">{{ "%.2f"|format(r.size_bytes / 1048576) + " MB" if r.size_bytes else "—" }}</td>
+                <td data-label="">
+                    <form method="post" action="admin-storage-delete-pdf">
+                        <input type="hidden" name="id" value="{{ r.id }}">
+                        <button type="submit" class="restart-btn">Delete PDF</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No statement PDFs currently stored.</p>
+{% endif %}
+
+<h2>Utility bill PDFs</h2>
+{% if utility_rows %}
+<div class="card">
+    <form method="post" action="admin-storage-purge-utility-pdfs" style="margin-bottom: 1rem;">
+        <button type="submit" class="btn-secondary">Delete all completed bills&rsquo; PDFs</button>
+    </form>
+    <div class="table-scroll">
+    <table class="statements-table storage-table">
+        <thead>
+            <tr><th>File</th><th>User</th><th>Provider</th><th>Type</th><th>Status</th><th>Uploaded</th><th>Size</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in utility_rows %}
+            <tr>
+                <td data-label="File">{{ r.original_filename or "—" }}</td>
+                <td data-label="User">{{ r.user_id }}</td>
+                <td data-label="Provider">{{ r.provider }}</td>
+                <td data-label="Type">{{ r.types | join(" + ") or "—" }}</td>
+                <td data-label="Status">{% for st in r.statuses %}<span class="status-badge status-{{ st }}">{{ st | replace("_", " ") }}</span> {% endfor %}{% if r.deleted %}<span class="hint">(bill deleted)</span>{% endif %}</td>
+                <td data-label="Uploaded">{{ r.uploaded_at }}</td>
+                <td data-label="Size">{% if r.missing %}<span class="hint">file missing</span>{% elif r.size_bytes %}{{ "%.2f"|format(r.size_bytes / 1048576) }} MB{% else %}—{% endif %}</td>
+                <td data-label="">
+                    <form method="post" action="admin-storage-delete-utility-pdf">
+                        <input type="hidden" name="id" value="{{ r.id }}">
+                        <button type="submit" class="restart-btn">Delete PDF</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<p class="empty-state">No utility bill PDFs currently stored.</p>
+{% endif %}
+
+<h2>Toll statement PDFs</h2>
+{% if toll_rows %}
+<div class="card">
+    <form method="post" action="admin-storage-purge-toll-pdfs" style="margin-bottom: 1rem;">
+        <button type="submit" class="btn-secondary">Delete all completed statements&rsquo; PDFs</button>
+    </form>
+    <div class="table-scroll">
+    <table class="statements-table storage-table">
+        <thead>
+            <tr><th>File</th><th>User</th><th>Devices</th><th>Status</th><th>Uploaded</th><th>Size</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in toll_rows %}
+            <tr>
+                <td data-label="File">{{ r.original_filename or "—" }}</td>
+                <td data-label="User">{{ r.user_id }}</td>
+                <td data-label="Devices">{{ r.car_count or "—" }}</td>
+                <td data-label="Status"><span class="status-badge status-{{ r.status }}">{{ r.status | replace("_", " ") }}</span>{% if r.deleted %} <span class="hint">(statement deleted)</span>{% endif %}</td>
+                <td data-label="Uploaded">{{ r.uploaded_at }}</td>
+                <td data-label="Size">{% if r.missing %}<span class="hint">file missing</span>{% elif r.size_bytes %}{{ "%.2f"|format(r.size_bytes / 1048576) }} MB{% else %}—{% endif %}</td>
+                <td data-label="">
+                    <form method="post" action="admin-storage-delete-toll-pdf">
+                        <input type="hidden" name="id" value="{{ r.id }}">
+                        <button type="submit" class="restart-btn">Delete PDF</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<p class="empty-state">No toll statement PDFs currently stored.</p>
+{% endif %}
+
+<h2>Orphaned CSV imports</h2>
+<p class="hint">
+    A CSV import deletes its own file right after processing &mdash;
+    anything listed here means that delete itself failed (a permissions
+    or disk error), not that CSVs are meant to accumulate. This should
+    normally be empty.
+</p>
+{% if orphan_csvs %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>File</th><th>User</th><th>Size</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for c in orphan_csvs %}
+            <tr>
+                <td data-label="File">{{ c.filename }}</td>
+                <td data-label="User">{{ c.user_id }}</td>
+                <td data-label="Size">{{ "%.2f"|format(c.size_bytes / 1048576) + " MB" if c.size_bytes else "—" }}</td>
+                <td data-label="">
+                    <form method="post" action="admin-storage-delete-csv-orphan">
+                        <input type="hidden" name="path" value="{{ c.path }}">
+                        <button type="submit" class="restart-btn">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No orphaned CSV files.</p>
+{% endif %}
+{% endblock %}

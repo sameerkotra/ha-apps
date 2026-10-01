@@ -1,0 +1,11 @@
+configuration:
+  admin_users:
+    name: Admin users
+    description: >-
+      Home Assistant user names (or user ids) of the people who administer the app. Restart the
+      app after changing this. The app's "How the app sees you" page shows what to enter.
+  trusted_client_ips:
+    name: Extra trusted proxy addresses
+    description: >-
+      Leave empty. Only if the app answers 403 naming the address Home Assistant's proxy
+      connected from, add that address here.

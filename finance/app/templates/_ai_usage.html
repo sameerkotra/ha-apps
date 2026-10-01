@@ -1,0 +1,43 @@
+{# AI usage table for the debug pages (SPEC.md section 21). Expects `usage` = ai_usage.view(...)
+   (None when "Show AI token usage" is off on Admin → App settings, then nothing is shown) and optional
+   `usage_title`, `usage_card` (false: no card around it). #}
+{% if usage %}
+{% if usage_card is not defined or usage_card %}<div class="card ai-usage">{% else %}<div class="ai-usage">{% endif %}
+    <h3>{{ usage_title or "AI usage" }}</h3>
+    <div class="table-scroll">
+    <table class="statements-table ai-usage-table">
+        <thead>
+            <tr><th>Request</th><th>Model</th><th class="num">Input tokens</th><th class="num">Output tokens</th>
+                <th class="num">Time</th><th class="num">Cost</th></tr>
+        </thead>
+        <tbody>
+        {% for r in usage.rows %}
+            <tr>
+                <td>{{ r.purpose }}{% if r.error %}<div class="hint ai-usage-error">Failed: {{ r.error }}</div>{% endif %}</td>
+                <td>{{ r.model or "—" }}</td>
+                <td class="num">{{ "{:,}".format(r.input_tokens) if r.input_tokens is not none else "—" }}</td>
+                <td class="num">{{ "{:,}".format(r.output_tokens) if r.output_tokens is not none else "—" }}</td>
+                <td class="num">{{ "%.1f s"|format(r.seconds or 0) }}</td>
+                <td class="num">{{ "$%.4f"|format(r.cost) if r.cost is not none else "—" }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+        {% if usage.rows|length > 1 %}
+        <tfoot>
+            <tr><th>Total ({{ usage.rows|length }} requests)</th><th></th>
+                <th class="num">{{ "{:,}".format(usage.input_tokens) }}</th>
+                <th class="num">{{ "{:,}".format(usage.output_tokens) }}</th>
+                <th class="num">{{ "%.1f s"|format(usage.seconds) }}</th>
+                <th class="num">{{ "$%.4f"|format(usage.cost) if usage.cost is not none else "—" }}</th></tr>
+        </tfoot>
+        {% endif %}
+    </table>
+    </div>
+    <p class="hint">
+        Input tokens are what was sent (prompt and page images), output tokens what the model wrote; both as the provider
+        reports them (a prompt it already had cached can count as fewer).
+        {% if usage.priced %}Cost uses today's prices on Admin &rarr; App settings.{% else %}No cost shown: a local model costs
+        nothing but time. For a paid service, set its prices on Admin &rarr; App settings.{% endif %}
+    </p>
+</div>
+{% endif %}

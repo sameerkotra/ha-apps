@@ -1,0 +1,37 @@
+{# Section tab bars for the six-section layout (SPEC.md section 13). #}
+{% macro _tabs(items, active, acting_qs) -%}
+<nav class="subtabs section-tabs" aria-label="Section">
+    {% for key, label, url in items %}
+    <a href="{{ url }}{% if acting_qs %}{{ '&' if '?' in url else '?' }}{{ acting_qs }}{% endif %}"
+       class="subtab {{ 'active' if key == active else '' }}"{% if key == active %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>
+{%- endmacro %}
+
+{% macro transactions_tabs(active, acting_qs) -%}
+{{ _tabs([("all", "All", "transactions"), ("transfers", "Transfers", "transfers"),
+          ("recurring", "Recurring", "recurring"), ("accounts", "Accounts", "transactions-accounts")], active, acting_qs) }}
+{%- endmacro %}
+
+{# features: request.state.features (App settings → Features); a part that is off has no tab. #}
+{% macro upload_tabs(active, acting_qs, features=none) -%}
+{{ _tabs([("statements", "Statements", "uploads"), ("review", "Review", "review")]
+         + ([("utility", "Utility bill", "utilities?tab=upload")] if not features or features.utilities else [])
+         + ([("toll", "E-470 statement", "tolls?tab=upload")] if not features or features.tolls else []),
+         active, acting_qs) }}
+{%- endmacro %}
+
+{% macro bills_tabs(active, acting_qs, features=none) -%}
+{{ _tabs(([("utilities", "Utilities", "utilities?tab=dashboard")] if not features or features.utilities else [])
+         + ([("tolls", "E-470", "tolls?tab=dashboard")] if not features or features.tolls else []), active, acting_qs) }}
+{%- endmacro %}
+
+{% macro setup_tabs(active, acting_qs, admin=false) -%}
+{{ _tabs([("accounts", "Accounts", "accounts"), ("categories", "Categories", "categories")], active, acting_qs) }}
+{%- endmacro %}
+
+{% macro admin_tabs(active, acting_qs) -%}
+{{ _tabs([("storage", "Storage", "admin-storage"), ("query", "Query", "admin-storage?tab=query"),
+          ("users", "Users", "admin-storage?tab=users"), ("deleted", "Recently deleted", "recently-deleted"),
+          ("ai_usage", "AI usage", "ai-usage"), ("settings", "App settings", "settings")], active, acting_qs) }}
+{%- endmacro %}

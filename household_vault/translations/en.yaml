@@ -1,0 +1,8 @@
+configuration:
+  admin_users:
+    name: Admin users
+    description: >-
+      Home Assistant user names or user ids (not display names) of the people who
+      manage Household Vault: enable and set up people, turn access off, reset a
+      forgotten password, backups and App settings. Admins can't open anyone's vaults.
+      Restart the app after changing this.

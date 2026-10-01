@@ -1,0 +1,41 @@
+name: "Household Chat"
+version: "2.0.0"
+slug: household_chat
+description: >-
+  Private chat and file sharing for your household, inside Home Assistant.
+  Direct chats, groups and a personal room for each person, with files kept as ordinary files in /share.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8103
+panel_icon: mdi:chat-processing
+panel_title: Chat
+# Everyone sees the panel; nobody gets in until an admin enables them.
+panel_admin: false
+# Ingress-only: no `ports:`. The Supervisor's authenticated ingress proxy is the
+# only way in, which is what makes trusting X-Remote-User-* safe (see main.py).
+# Home Assistant API: persons (people list, home/away), notify, the time zone,
+# and the notification Reply buttons (mobile_app_notification_action events).
+homeassistant_api: true
+# /share/household_chat holds every shared file, one folder per chat.
+map:
+  - share:rw
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+environment:
+  DATA_DIR: /data
+  SHARE_DIR: /share/household_chat
+  PORT: "8103"
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

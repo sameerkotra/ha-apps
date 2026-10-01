@@ -1,0 +1,63 @@
+erDiagram
+    users ||--o{ group_members : "member of"
+    groups ||--o{ group_members : "has"
+    groups ||--o{ expenses : "contains (cascade)"
+    users ||--o{ expenses : "paid_by"
+    expenses ||--|{ expense_splits : "split into (cascade)"
+    users ||--o{ expense_splits : "owes share"
+    groups |o..o{ events : "group_id (soft, no FK)"
+
+    users {
+        TEXT id PK
+        TEXT name "HA friendly_name"
+        TEXT created_at
+        TEXT ha_entity_id UK "person.x, partial unique"
+        INTEGER disabled "0/1"
+        TEXT ha_user_id "HA user id of the Person"
+    }
+
+    groups {
+        TEXT id PK
+        TEXT name
+        TEXT created_at
+        INTEGER is_default "0/1, at most one = 1"
+    }
+
+    group_members {
+        TEXT group_id PK,FK
+        TEXT user_id PK,FK
+        INTEGER position "display order"
+    }
+
+    expenses {
+        TEXT id PK
+        TEXT group_id FK
+        TEXT description
+        REAL amount "total"
+        TEXT paid_by FK
+        TEXT split_type "equal | custom | percent | payment"
+        TEXT date "UTC timestamp or local YYYY-MM-DD"
+    }
+
+    expense_splits {
+        TEXT expense_id PK,FK
+        TEXT user_id PK,FK
+        REAL amount "share"
+        REAL percent "percent splits only, nullable"
+    }
+
+    events {
+        TEXT id PK
+        TEXT type
+        TEXT message
+        TEXT group_id "soft ref, nullable"
+        TEXT actor "HA display name"
+        TEXT created_at
+    }
+
+    app_settings {
+        TEXT key PK "ha_sync_enabled | sync_interval_minutes | currency"
+        TEXT value "JSON"
+        TEXT updated_at
+        TEXT updated_by "admin name"
+    }

@@ -1,0 +1,139 @@
+{% from "_paging_macros.html" import sort_th %}
+{# Shared utility-bill tables: the Upload tab's history (status, delete,
+   debug) and the Dashboard's per-type tables (show_actions=False; electric
+   shows every meter field, gas/water usage and cost). Tables sit in a
+   .table-scroll div so the wide electric table scrolls inside its card. #}
+
+{% macro status_cell(b, acting_qs) %}<td data-label="Status">{% with row=b, acting_qs=acting_qs %}{% include "_utility_status_fragment.html" %}{% endwith %}</td>{% endmacro %}
+
+{% macro actions_cells(b, acting_qs, is_admin) %}<td data-label="">
+    <form method="post" action="utility-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+          onsubmit="return confirm('Delete this bill? The admin can restore it from Recently deleted for 30 days.');">
+        <input type="hidden" name="id" value="{{ b.id }}">
+        <button type="submit" class="restart-btn">Delete</button>
+    </form>
+</td>{% if is_admin %}<td data-label=""><a href="utility-debug?id={{ b.id }}" class="debug-link">debug</a></td>{% endif %}{% endmacro %}
+
+{# Plain chronological table -- File/Provider/Type/Period/Usage/Cost/
+   Status/actions. Used by the Upload tab's history (every bill) and
+   the Dashboard's "processing / not yet typed" bucket (bills whose
+   utility_type is still NULL -- mid-processing, or errored before a
+   type was ever determined). #}
+{# `view` (a TableView, see app/paging.py) turns the headers into server-side sort links; `bills` is then view.rows. #}
+{% macro hd(view, key, label) %}{% if view %}{{ sort_th(view, key, label) }}{% else %}<th>{{ label }}</th>{% endif %}{% endmacro %}
+
+{% macro simple_bill_table(bills, acting_qs, is_admin, empty_message="No utility bills to show yet.", show_actions=True, show_file=True, view=None) %}
+{% if bills %}
+<div class="table-scroll">
+<table class="statements-table"{% if view %} data-no-sort{% endif %}>
+    <thead>
+        <tr>{% if show_file %}{{ hd(view, "file", "File") }}{% endif %}{% if view %}{{ hd(view, "uploaded", "Uploaded") }}{% endif %}{{ hd(view, "provider", "Provider") }}{{ hd(view, "type", "Type") }}{{ hd(view, "period", "Period") }}{{ hd(view, "usage", "Usage") }}{{ hd(view, "cost", "Cost") }}{% if show_actions %}{{ hd(view, "status", "Status") }}<th></th>{% if is_admin %}<th></th>{% endif %}{% endif %}</tr>
+    </thead>
+    <tbody>
+        {% for b in bills %}
+        <tr>
+            {% if show_file %}<td data-label="File">{{ b.original_filename or "—" }}</td>{% endif %}
+            {% if view %}<td data-label="Uploaded">{{ b.uploaded_at }}</td>{% endif %}
+            <td data-label="Provider">{{ b.provider }}</td>
+            <td data-label="Type">{{ b.utility_type or "—" }}</td>
+            <td data-label="Period">{% if b.period_start_date %}{{ b.period_start_date }} &ndash; {{ b.period_end_date }}{% else %}—{% endif %}</td>
+            <td data-label="Usage">{% if b.usage_amount is not none %}{{ fnum(b.usage_amount) }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
+            <td data-label="Cost">{% if b.cost is not none %}{{ "%.2f"|format(b.cost) }}{% else %}—{% endif %}</td>
+            {% if show_actions %}
+            {{ status_cell(b, acting_qs) }}
+            {{ actions_cells(b, acting_qs, is_admin) }}
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty-state">{{ empty_message }}</p>
+{% endif %}
+{% endmacro %}
+
+{# Gas/water -- "just usage/cost" per the user's own request, no
+   Provider/Type columns (both are implied by which section this table
+   is rendered under). #}
+{% macro simple_type_bill_table(bills, acting_qs, is_admin, empty_message, show_actions=True) %}
+{% if bills %}
+<div class="table-scroll">
+<table class="statements-table">
+    <thead>
+        <tr><th>Period</th><th>Usage</th><th>Cost</th>{% if show_actions %}<th>Status</th><th></th>{% if is_admin %}<th></th>{% endif %}{% endif %}</tr>
+    </thead>
+    <tbody>
+        {% for b in bills %}
+        <tr>
+            <td data-label="Period">{% if b.period_start_date %}{{ b.period_start_date }} &ndash; {{ b.period_end_date }}{% else %}—{% endif %}</td>
+            <td data-label="Usage">{% if b.usage_amount is not none %}{{ fnum(b.usage_amount) }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
+            <td data-label="Cost">{% if b.cost is not none %}{{ "%.2f"|format(b.cost) }}{% else %}—{% endif %}</td>
+            {% if show_actions %}
+            {{ status_cell(b, acting_qs) }}
+            {{ actions_cells(b, acting_qs, is_admin) }}
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty-state">{{ empty_message }}</p>
+{% endif %}
+{% endmacro %}
+
+{# One cell per meter concept: on-peak, off-peak and total stacked (.value-stack);
+   the column header names the order and the unit. #}
+{# Meter columns are REAL, so 219 arrives as 219.0: %g drops a trailing ".0". #}
+{% macro fnum(v) %}{{ "%g"|format(v) if v is not none else "—" }}{% endmacro %}
+{% macro triplet(on, off, total) %}{% if on is not none or off is not none or total is not none %}<div class="value-stack"><span>{{ fnum(on) }}</span><span>{{ fnum(off) }}</span><span>{{ fnum(total) }}</span></div>{% else %}—{% endif %}{% endmacro %}
+
+{# On-peak and off-peak "rate (charge)" stacked in one cell; the header names
+   the order and the unit. #}
+{% macro rate_pair(on_rate, on_charge, off_rate, off_charge) %}{% if on_rate is not none or on_charge is not none or off_rate is not none or off_charge is not none %}<div class="value-stack"><span>{{ "%.5f"|format(on_rate) if on_rate is not none else "—" }} ({{ "%.2f"|format(on_charge) if on_charge is not none else "—" }})</span><span>{{ "%.5f"|format(off_rate) if off_rate is not none else "—" }} ({{ "%.2f"|format(off_charge) if off_charge is not none else "—" }})</span></div>{% else %}—{% endif %}{% endmacro %}
+
+{# Electric -- every on/off-peak consumption (grid import) and
+   production (solar export) figure, plus net delivered, net
+   generated, and both peak tiers' rate/charge -- literally all 16
+   electric_meter_details columns, per the user's own request to
+   "expand all details on peak/off peak consumption/production". #}
+{% macro electric_bill_table(bills, acting_qs, is_admin, empty_message="No electric bills match the current filters.", show_actions=True) %}
+{% if bills %}
+<div class="table-scroll">
+<table class="statements-table electric-table">
+    <thead>
+        <tr>
+            <th>Period</th><th>Usage</th>
+            <th>Grid import<span class="th-sub">on / off / total<br>kWh</span></th>
+            <th>Solar export<span class="th-sub">on / off / total<br>kWh</span></th>
+            <th>Net delivered<span class="th-sub">on / off / total<br>kWh</span></th>
+            <th>Net generated<span class="th-sub">on / off / total<br>kWh</span></th>
+            <th>Rate (charge)<span class="th-sub">on-peak<br>off-peak<br>$/kWh</span></th>
+            <th>Cost</th>{% if show_actions %}<th>Status</th><th></th>{% if is_admin %}<th></th>{% endif %}{% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for b in bills %}
+        <tr>
+            <td data-label="Period">{% if b.period_start_date %}<div class="value-stack"><span>{{ b.period_start_date }}</span><span>&ndash; {{ b.period_end_date }}</span></div>{% else %}—{% endif %}</td>
+            <td data-label="Usage">{% if b.usage_amount is not none %}{{ fnum(b.usage_amount) }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
+            <td data-label="Grid import (on/off/total, kWh)">{{ triplet(b.grid_import_on_peak_kwh, b.grid_import_off_peak_kwh, b.grid_import_total_kwh) }}</td>
+            <td data-label="Solar export (on/off/total, kWh)">{{ triplet(b.solar_export_on_peak_kwh, b.solar_export_off_peak_kwh, b.solar_export_total_kwh) }}</td>
+            <td data-label="Net delivered (on/off/total, kWh)">{{ triplet(b.net_on_peak_kwh, b.net_off_peak_kwh, b.net_total_kwh) }}</td>
+            <td data-label="Net generated (on/off/total, kWh)">{{ triplet(b.net_generated_on_peak_kwh, b.net_generated_off_peak_kwh, b.net_generated_total_kwh) }}</td>
+            <td data-label="Rate (charge) — on-peak, off-peak ($/kWh)">{{ rate_pair(b.on_peak_rate, b.on_peak_charge, b.off_peak_rate, b.off_peak_charge) }}</td>
+            <td data-label="Cost">{% if b.cost is not none %}{{ "%.2f"|format(b.cost) }}{% else %}—{% endif %}</td>
+            {% if show_actions %}
+            {{ status_cell(b, acting_qs) }}
+            {{ actions_cells(b, acting_qs, is_admin) }}
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty-state">{{ empty_message }}</p>
+{% endif %}
+{% endmacro %}

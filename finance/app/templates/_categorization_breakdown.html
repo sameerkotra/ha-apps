@@ -1,0 +1,81 @@
+<!--
+    Shared categorization breakdown for statement_debug.html and
+    csv_import_debug.html (both imports use the same cascade): the batched
+    LLM call, if any, and which step decided each row's category.
+    Context: transactions (description, category, category_source,
+    category_matched_pattern), llm_prompt, llm_raw_response, llm_error.
+-->
+<div class="card">
+    <h3>Categorization</h3>
+    <p class="hint">
+        How each transaction below got its category — your own rule, a
+        built-in merchant rule, the AI fallback (one batched call for
+        everything neither rule set matched), or a value that never
+        went through the cascade at all (typed by hand, given
+        explicitly in a CSV, or set automatically for a credit-card
+        payment).
+    </p>
+
+    {% if llm_prompt %}
+    <p class="hint" style="margin-top: 1rem;"><strong>AI categorization call</strong></p>
+    {% if llm_error %}
+    <p class="hint" style="color: var(--danger);">Call failed: {{ llm_error }}</p>
+    {% endif %}
+    <p class="hint">Prompt sent:</p>
+    <pre class="debug-raw">{{ llm_prompt }}</pre>
+    <p class="hint">Raw response:</p>
+    {% if llm_raw_response is not none and llm_raw_response != "" %}
+    <pre class="debug-raw">{{ llm_raw_response }}</pre>
+    {% elif llm_raw_response == "" %}
+    <p class="hint" style="color: var(--warn);">
+        The call completed, but the AI's response came back as a
+        literal empty string.
+    </p>
+    {% else %}
+    <p class="hint">No response was captured — the call didn't complete (see the error above).</p>
+    {% endif %}
+    {% else %}
+    <p class="hint">
+        No AI categorization call was needed — every transaction below
+        either matched a rule, was given explicitly, or was set
+        automatically before the cascade ever ran.
+    </p>
+    {% endif %}
+
+    {% if transactions %}
+    <table class="statements-table">
+        <thead>
+            <tr><th>Description</th><th>Category</th><th>How</th></tr>
+        </thead>
+        <tbody>
+            {% for t in transactions %}
+            <tr>
+                <td data-label="Description">{{ t.description }}</td>
+                <td data-label="Category">{{ t.category or "—" }}</td>
+                <td data-label="How">
+                    {% if t.category_source == "user_rule" %}
+                        Your rule: <code>{{ t.category_matched_pattern }}</code>
+                    {% elif t.category_source == "builtin_rule" %}
+                        Built-in rule: <code>{{ t.category_matched_pattern }}</code>
+                    {% elif t.category_source == "llm" %}
+                        AI categorization
+                    {% elif t.category_source == "uncategorized_fallback" %}
+                        AI categorization — no answer for this description
+                    {% elif t.category_source == "manual" %}
+                        Set manually
+                    {% elif t.category_source == "csv_explicit" %}
+                        From the CSV file
+                    {% elif t.category_source == "card_payment" %}
+                        Automatic (credit-card payment)
+                    {% else %}
+                        Unknown (categorized before this debug view existed)
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="hint">No transactions to show.</p>
+    {% endif %}
+</div>

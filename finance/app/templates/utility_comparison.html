@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Utilities{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% import "_utility_table_macros.html" as m %}
+{{ nav.bills_tabs("utilities", acting_qs, request.state.features) }}
+<h1>Utilities</h1>
+<div class="subtabs">
+    <a href="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="subtab">Dashboard</a>
+    <a href="utility-comparison{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab active">Compare</a>
+</div>
+
+<h2>Cost trends &amp; compare months</h2>
+
+<div class="card">
+    <h3>Compare two months</h3>
+    <p class="hint">Pick any two billing months (e.g. Jan 2025 vs Jan 2026) to compare consumption, cost, and — for electric — on-peak vs off-peak charges side by side, for every utility type that has a bill in either month.</p>
+    <form method="get" action="utility-comparison" class="add-account-form">
+        {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=')[1] }}">{% endif %}
+        <label>
+            Month A
+            <input type="month" name="month_a" value="{{ month_a }}" required>
+        </label>
+        <label>
+            Month B
+            <input type="month" name="month_b" value="{{ month_b }}" required>
+        </label>
+        <button type="submit">Compare</button>
+    </form>
+</div>
+
+{% if compare is not none %}
+<h3>{{ month_a }} vs {{ month_b }}</h3>
+{% if compare %}
+{% for type_name, label in [("electric", "Electric"), ("gas", "Gas"), ("water", "Water")] %}
+{% if type_name in compare %}
+{% set pair = compare[type_name] %}
+{% set a = pair.a %}
+{% set b = pair.b %}
+<div class="card">
+    <h3>{{ label }}</h3>
+    <table class="detail-table">
+        <tr><th>Metric</th><th>{{ month_a }}</th><th>{{ month_b }}</th><th>Change</th></tr>
+        <tr>
+            <td>Period</td>
+            <td>{% if a %}{{ a.period_start_date }} &ndash; {{ a.period_end_date }}{% else %}No bill{% endif %}</td>
+            <td>{% if b %}{{ b.period_start_date }} &ndash; {{ b.period_end_date }}{% else %}No bill{% endif %}</td>
+            <td>—</td>
+        </tr>
+        <tr>
+            <td>Usage</td>
+            <td>{% if a and a.usage_amount is not none %}{{ a.usage_amount }} {{ a.usage_unit }}{% else %}—{% endif %}</td>
+            <td>{% if b and b.usage_amount is not none %}{{ b.usage_amount }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
+            <td>{% if a and b and a.usage_amount is not none and b.usage_amount is not none %}{{ "%+.1f"|format(b.usage_amount - a.usage_amount) }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Cost</td>
+            <td>{% if a and a.cost is not none %}${{ "%.2f"|format(a.cost) }}{% else %}—{% endif %}</td>
+            <td>{% if b and b.cost is not none %}${{ "%.2f"|format(b.cost) }}{% else %}—{% endif %}</td>
+            <td>
+                {% if a and b and a.cost is not none and b.cost is not none %}
+                {{ "%+.2f"|format(b.cost - a.cost) }}
+                {% if a.cost %} ({{ "%+.1f"|format((b.cost - a.cost) / a.cost * 100) }}%){% endif %}
+                {% else %}—{% endif %}
+            </td>
+        </tr>
+        {% if type_name == "electric" %}
+        <tr>
+            <td>Grid import (on/off/total, kWh)</td>
+            <td>{% if a %}{{ m.triplet(a.grid_import_on_peak_kwh, a.grid_import_off_peak_kwh, a.grid_import_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if b %}{{ m.triplet(b.grid_import_on_peak_kwh, b.grid_import_off_peak_kwh, b.grid_import_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if a and b and a.grid_import_total_kwh is not none and b.grid_import_total_kwh is not none %}{{ "%+.1f"|format(b.grid_import_total_kwh - a.grid_import_total_kwh) }} kWh{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Solar export (on/off/total, kWh)</td>
+            <td>{% if a %}{{ m.triplet(a.solar_export_on_peak_kwh, a.solar_export_off_peak_kwh, a.solar_export_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if b %}{{ m.triplet(b.solar_export_on_peak_kwh, b.solar_export_off_peak_kwh, b.solar_export_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if a and b and a.solar_export_total_kwh is not none and b.solar_export_total_kwh is not none %}{{ "%+.1f"|format(b.solar_export_total_kwh - a.solar_export_total_kwh) }} kWh{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Net delivered (on/off/total, kWh)</td>
+            <td>{% if a %}{{ m.triplet(a.net_on_peak_kwh, a.net_off_peak_kwh, a.net_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if b %}{{ m.triplet(b.net_on_peak_kwh, b.net_off_peak_kwh, b.net_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if a and b and a.net_total_kwh is not none and b.net_total_kwh is not none %}{{ "%+.1f"|format(b.net_total_kwh - a.net_total_kwh) }} kWh{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Net generated (on/off/total, kWh)</td>
+            <td>{% if a %}{{ m.triplet(a.net_generated_on_peak_kwh, a.net_generated_off_peak_kwh, a.net_generated_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if b %}{{ m.triplet(b.net_generated_on_peak_kwh, b.net_generated_off_peak_kwh, b.net_generated_total_kwh) }}{% else %}—{% endif %}</td>
+            <td>{% if a and b and a.net_generated_total_kwh is not none and b.net_generated_total_kwh is not none %}{{ "%+.1f"|format(b.net_generated_total_kwh - a.net_generated_total_kwh) }} kWh{% else %}—{% endif %}</td>
+        </tr>
+        <tr>
+            <td>Rate (charge) &mdash; on-peak, off-peak ($/kWh)</td>
+            <td>{% if a %}{{ m.rate_pair(a.on_peak_rate, a.on_peak_charge, a.off_peak_rate, a.off_peak_charge) }}{% else %}—{% endif %}</td>
+            <td>{% if b %}{{ m.rate_pair(b.on_peak_rate, b.on_peak_charge, b.off_peak_rate, b.off_peak_charge) }}{% else %}—{% endif %}</td>
+            <td>—</td>
+        </tr>
+        {% endif %}
+    </table>
+</div>
+{% endif %}
+{% endfor %}
+{% else %}
+<p class="hint">Neither month has a bill on file for any utility type yet.</p>
+{% endif %}
+{% endif %}
+
+{# Electric reuses the Dashboard's electric_bill_table() (show_actions=False);
+   gas and water keep the simple table. No status column on this page. #}
+{% for type_name, label in [("electric", "Electric"), ("gas", "Gas"), ("water", "Water")] %}
+{% set rows = by_type.get(type_name, []) %}
+<div class="card">
+    <h3>{{ label }}</h3>
+    {% if type_name == "electric" %}
+    {% if rows %}
+    <div>
+        {% for b in rows %}
+        <div class="trend-bar-row">
+            <span class="trend-bar-label">{{ b.period_start_date }}</span>
+            <span class="trend-bar-track">
+                <span class="trend-bar-fill" style="width: {{ ((b.cost / max_cost[type_name] * 100) if max_cost[type_name] else 0) | round(1) }}%;"></span>
+            </span>
+            <span class="trend-bar-value">{{ "%.2f"|format(b.cost) if b.cost is not none else "—" }}{% if b.status == "pending_review" %} &#9888;&#65039;{% endif %}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {{ m.electric_bill_table(rows, acting_qs, is_admin, "No electric bills yet.", show_actions=False) }}
+    {% elif rows %}
+    {% set c = charts[type_name] %}
+    <div class="chart-grid-2">
+        <figure class="chart-figure">
+            <figcaption>Cost per billing month</figcaption>
+            {{ c.cost }}
+        </figure>
+        {% if c.usage %}
+        <figure class="chart-figure">
+            <figcaption>Usage per billing month{% if c.unit %} ({{ c.unit }}){% endif %}</figcaption>
+            {{ c.usage }}
+        </figure>
+        {% endif %}
+    </div>
+    <p class="hint">Hover, tap or tab to a column for its exact figures. Bills not yet confirmed are marked in the tip.</p>
+    <details class="chart-table">
+        <summary>Show as a table</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>Period</th><th>Usage</th><th>Cost</th></tr>
+            {% for b in rows|reverse %}
+            <tr>
+                <td>{{ b.period_start_date }} &ndash; {{ b.period_end_date }}{% if b.status == "pending_review" %} &#9888;&#65039;{% endif %}</td>
+                <td>{% if b.usage_amount is not none %}{{ b.usage_amount }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
+                <td>{{ "%.2f"|format(b.cost) if b.cost is not none else "—" }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </details>
+    {% else %}
+    <p class="hint">No {{ label|lower }} bills yet.</p>
+    {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

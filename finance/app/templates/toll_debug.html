@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Debug: {{ statement.original_filename }}{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+<p><a href="tolls?tab=upload" class="btn-secondary">&larr; Upload &middot; E-470 statement</a></p>
+<h1>Debug: {{ statement.original_filename or "toll statement #" ~ statement.id }}</h1>
+<p class="hint">Admin-only troubleshooting view &mdash; not shown to regular users.</p>
+{% if statement.pdf_path %}<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=toll&amp;id={{ statement.id }}&amp;embed=1">View PDF</button></p>{% endif %}
+
+<div class="card">
+    <h3>Statement</h3>
+    <table class="detail-table">
+        <tr><th>User</th><td>{{ statement.user_id }}</td></tr>
+        <tr><th>Status</th><td>{{ statement.status }}{% if statement.deleted_at %} (deleted {{ statement.deleted_at }}){% endif %}</td></tr>
+        <tr><th>Current step</th><td>{{ statement.current_step or "—" }}</td></tr>
+        <tr><th>Error / flag</th><td>{{ statement.error_message or "—" }}</td></tr>
+        <tr><th>Period</th><td>{% if statement.period_start_date %}{{ statement.period_start_date }} &ndash; {{ statement.period_end_date }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Printed Grand Totals</th><td>{{ "%.2f"|format(statement.total_tolls_printed) if statement.total_tolls_printed is not none else "—" }}</td></tr>
+        <tr><th>Raw text length</th><td>{{ statement.raw_text_length or "—" }}</td></tr>
+        <tr><th>Duplicate passes skipped</th><td>{{ statement.skipped_duplicates }}</td></tr>
+        <tr><th>Notes</th><td>{{ statement.notes or "—" }}{% if statement.review_note %} &middot; {{ statement.review_note }}{% endif %}</td></tr>
+        <tr><th>Timings</th><td>{% if timings %}{% for k, v in timings.items() %}{{ k | replace("_", " ") }}: {{ v }}s{% if not loop.last %} &middot; {% endif %}{% endfor %}{% else %}—{% endif %}</td></tr>
+        <tr><th>File hash</th><td><code>{{ statement.file_hash or "—" }}</code></td></tr>
+    </table>
+</div>
+
+<div class="card">
+    <h3>Checks</h3>
+    {% if checks %}
+    <table class="detail-table">
+        {% for c in checks %}
+        <tr><th>{{ c.name }}</th><td>{% if c.skipped %}<span class="hint">skipped</span>{% elif c.ok %}<span style="color: var(--ok);">passed</span>{% else %}<span style="color: var(--danger);">failed</span>{% endif %} &mdash; {{ c.detail }}</td></tr>
+        {% endfor %}
+    </table>
+    {% else %}<p class="hint">No checks recorded yet &mdash; processing hasn't completed.</p>{% endif %}
+</div>
+
+<div class="card">
+    <h3>Unparsed lines</h3>
+    <p class="hint">Lines that started like a toll pass (a date and a time) but did not fit the row pattern. Any of these fails the &ldquo;no dropped lines&rdquo; check.</p>
+    {% if unparsed %}<pre class="debug-raw">{% for line in unparsed %}{{ line }}
+{% endfor %}</pre>{% else %}<p class="hint" style="color: var(--accent);">None.</p>{% endif %}
+    {% if ai_rejected %}
+    <p class="hint">AI rows that could not be read:</p>
+    <pre class="debug-raw">{% for line in ai_rejected %}{{ line }}
+{% endfor %}</pre>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>The two readings, row by row</h3>
+    {% if diff is none %}
+    <p class="hint">Both readings are needed for a comparison &mdash; one of them isn't stored yet.</p>
+    {% else %}
+    <p class="hint">Deterministic printed Grand Totals: {{ "%.2f"|format(det.grand_total) if det.grand_total is not none else "not found" }}
+        &middot; AI: {{ "%.2f"|format(ai.grand_total) if ai.grand_total is not none else "not found" }}
+        &middot; deterministic found {{ det.all_passes()|length }} passes ({{ "%.2f"|format(det.passes_total()) }}), AI found {{ ai.all_passes()|length }} ({{ "%.2f"|format(ai.passes_total()) }}).</p>
+    {% if diff.differ %}
+    <div class="table-scroll">
+    <table class="statements-table" data-no-sort>
+        <thead><tr><th>Deterministic</th><th>AI</th></tr></thead>
+        <tbody>
+            {% for d in diff.differ %}
+            <tr>
+                <td>{% if d.det %}{{ d.det.datetime }} &middot; {{ d.det.plaza }} {{ d.det.lane }} {{ d.det.direction }} &middot; {{ "%.2f"|format(d.det.amount) }}{% else %}<span class="hint">not found</span>{% endif %}</td>
+                <td>{% if d.ai %}{{ d.ai.datetime }} &middot; {{ d.ai.plaza }} {{ d.ai.lane }} {{ d.ai.direction }} &middot; {{ "%.2f"|format(d.ai.amount) }}{% else %}<span class="hint">not found</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}<p class="hint" style="color: var(--accent);">The readings agree on all {{ diff.agree|length }} passes.</p>{% endif %}
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Extracted text (pdftotext -layout)</h3>
+    {% if text_excerpt is not none %}<pre class="debug-raw">{{ text_excerpt }}</pre>
+    {% else %}<p class="hint">The PDF is no longer stored, so its text can't be re-extracted.</p>{% endif %}
+</div>
+
+{% with usage=ai_usage_view(statement.ai_usage), usage_title="AI usage — last processing run" %}{% include "_ai_usage.html" %}{% endwith %}
+
+<div class="card">
+    <h3>Resend to AI <span id="resendDot" class="status-dot"></span></h3>
+    <p class="hint" id="resendHint">
+        Re-sends the source PDF directly, bypassing the normal pipeline: no timeout, no retry loop, and the full raw response is shown.
+    </p>
+    <form id="resendForm" method="post" action="toll-debug-resend?id={{ statement.id }}">
+        <button type="submit" id="resendBtn" class="btn-primary">Resend to the AI (no timeout)</button>
+    </form>
+    <script>
+    document.getElementById("resendForm").addEventListener("submit", function () {
+        var btn = document.getElementById("resendBtn");
+        document.getElementById("resendDot").className = "status-dot pending";
+        btn.disabled = true;
+        btn.textContent = "Sending… waiting for the AI";
+        document.getElementById("resendHint").textContent = "Request sent — this has no timeout, so it may sit here for several minutes. The page reloads when a response comes back.";
+    });
+    </script>
+    {% if resend_error %}<p class="hint" style="color: var(--danger);">Resend failed: {{ resend_error }}</p>{% endif %}
+    {% if resend_elapsed is defined %}<p class="hint" style="color: var(--accent);">Completed in {{ "%.1f"|format(resend_elapsed) }}s &mdash; the response below has been updated.</p>{% endif %}
+    {% if resend_usage is defined %}{% with usage=ai_usage_view(resend_usage), usage_title="AI usage — this re-send", usage_card=false %}{% include "_ai_usage.html" %}{% endwith %}{% endif %}
+</div>
+
+<div class="card">
+    <h3>Raw AI response</h3>
+    {% if statement.llm_raw_response %}<pre class="debug-raw">{{ statement.llm_raw_response }}</pre>
+    {% elif statement.llm_raw_response == "" %}<p class="hint" style="color: var(--warn);">A call completed, but the AI's response was a literal empty string.</p>
+    {% else %}<p class="hint">No response captured yet &mdash; the AI call may not have run (or hasn't completed).</p>{% endif %}
+</div>
+{% endblock %}

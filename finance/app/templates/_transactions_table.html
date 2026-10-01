@@ -1,0 +1,73 @@
+<div id="transactions-table-wrap">
+{% if transactions %}
+{% set next_page = "transactions" %}
+{# data-next carries the current filters so a bulk action returns to this view. #}
+<div class="bulk-bar-wrap bulk-collapsed" data-action-url="transactions-bulk{% if acting_qs %}?{{ acting_qs }}{% endif %}" data-next="transactions{% if filter_qs %}?{{ filter_qs }}{% endif %}">
+    {# Collapsed by default: one small button. Opening it shows the checkboxes and the bulk actions (categorize / exclude / delete several rows at once). #}
+    <div class="bulk-toggle-row">
+        <button type="button" class="btn-secondary bulk-toggle" aria-expanded="false" aria-controls="bulk-bar">Select multiple&hellip;</button>
+    </div>
+    <div class="bulk-bar" id="bulk-bar" hidden>
+        <label class="bulk-select-all"><input type="checkbox" id="select-all"> Select all</label>
+        <span class="bulk-categorize">
+            <select class="bulk-category-select">
+                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+            <button type="button" class="btn-secondary bulk-action-btn" data-action="categorize">Categorize selected</button>
+        </span>
+        <button type="button" class="btn-secondary bulk-action-btn" data-action="exclude">Exclude selected</button>
+        <button type="button" class="btn-secondary bulk-action-btn" data-action="unexclude">Un-exclude selected</button>
+        <button type="button" class="btn-secondary bulk-action-btn bulk-delete" data-action="delete">Delete selected</button>
+    </div>
+    <div class="table-scroll">
+    <table class="statements-table txn-table">
+        <thead>
+            <tr><th class="bulk-col"></th><th>Date</th><th>Account</th><th>Description</th><th>Amount</th><th>Category</th><th>Note</th><th>Excluded</th><th>Transfer</th><th>Recurring</th></tr>
+        </thead>
+        <tbody>
+            {% for t in transactions %}
+            <tr>
+                <td data-label="" class="bulk-col"><input type="checkbox" class="bulk-select" data-id="{{ t.id }}"></td>
+                <td data-label="Date">{{ t.date }}</td>
+                <td data-label="Account">{{ t.account_name }}</td>
+                <td data-label="Description">{{ t.description }}</td>
+                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+                <td data-label="Category">{% include "_category_field.html" %}</td>
+                <td data-label="Note">
+                    {% include "_note_field.html" %}
+                </td>
+                <td data-label="Excluded">
+                    {% include "_exclude_field.html" %}
+                </td>
+                <td data-label="Transfer">
+                    {% if t.review_status == "clean" %}
+                    {% include "_match_action.html" %}
+                    {% else %}
+                    <span class="hint" title="Available once this transaction is fully imported.">not yet reviewed</span>
+                    {% endif %}
+                </td>
+                <td data-label="Recurring">
+                    {% if t.review_status == "clean" %}
+                    <button type="button" class="btn-secondary recurring-match-btn" data-url="recurring-find-match?id={{ t.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}" title="Is this recurring? Look for similar transactions">🔍</button>
+                    {% else %}
+                    <span class="hint" title="Available once this transaction is fully imported.">not yet reviewed</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <p class="list-total">
+        {{ transactions | length }} transaction{{ "s" if transactions | length != 1 else "" }},
+        total <span class="{{ 'negative' if total < 0 else '' }}">{{ "%.2f"|format(total) }}</span>
+    </p>
+</div>
+{% else %}
+<p class="empty-state">
+    {% if no_filter_yet %}Enter a search above and click Search to see transactions — nothing loads automatically here anymore, so large histories stay fast to open.
+    {% elif q %}No transactions with a note matching &ldquo;{{ q }}&rdquo;.
+    {% else %}No transactions match that search.{% endif %}
+</p>
+{% endif %}
+</div>

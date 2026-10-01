@@ -1,0 +1,7 @@
+# Test-only dependencies (not installed in the app's image)
+-r requirements.txt
+pytest
+httpx
+reportlab
+pyyaml
+pillow

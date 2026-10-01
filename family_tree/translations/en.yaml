@@ -1,0 +1,9 @@
+configuration:
+  admin_users:
+    name: Admins
+    description: >-
+      Home Assistant user ids or login names (not display names) of people who
+      can open Admin in the app: App settings (including the photo folder),
+      users, storage (backup and restore) and the trash. Open Family Tree →
+      your name in the sidebar to see exactly what to enter. Restart the
+      app after changing it.

@@ -1,0 +1,9 @@
+{% if t.transfer_pair_id %}
+<span class="hint"><a href="transfers?highlight={{ t.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">{{ match_message or "View linked transfer" }}</a></span>
+{% else %}
+<form class="match-form" hx-post="transfer-match-one{% if acting_qs %}?{{ acting_qs }}{% endif %}" hx-target="this" hx-swap="outerHTML">
+    <input type="hidden" name="id" value="{{ t.id }}">
+    <button type="submit" class="btn-secondary">Find match</button>
+</form>
+{% if match_message %}<div class="hint">{{ match_message }}</div>{% endif %}
+{% endif %}

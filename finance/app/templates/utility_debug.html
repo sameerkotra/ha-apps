@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Debug: {{ bill.original_filename }}{% endblock %}
+{% block content %}
+<p><a href="utilities?tab=upload" class="btn-secondary">&larr; Upload &middot; Utility bill</a></p>
+<h1>Debug: {{ bill.original_filename or "utility bill #" ~ bill.id }}</h1>
+<p class="hint">Admin-only troubleshooting view — not shown to regular users.</p>
+<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=utility&amp;id={{ bill.id }}&amp;embed=1">View PDF</button></p>
+
+<div class="card">
+    <h3>Bill details</h3>
+    <table class="detail-table">
+        <tr><th>Provider</th><td>{{ bill.provider }}</td></tr>
+        <tr><th>Type</th><td>{{ bill.utility_type or "—" }}</td></tr>
+        <tr><th>User</th><td>{{ bill.user_id }}</td></tr>
+        <tr><th>Period</th><td>{% if bill.period_start_date %}{{ bill.period_start_date }} &ndash; {{ bill.period_end_date }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Usage</th><td>{% if bill.usage_amount is not none %}{{ bill.usage_amount }} {{ bill.usage_unit }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Cost</th><td>{% if bill.cost is not none %}{{ "%.2f"|format(bill.cost) }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Due date</th><td>{{ bill.due_date or "—" }}</td></tr>
+        <tr><th>Account (last 4)</th><td>{{ bill.account_number_last4 or "—" }}</td></tr>
+        <tr><th>Status</th><td>{{ bill.status }}</td></tr>
+        <tr><th>Current step</th><td>{{ bill.current_step or "—" }}</td></tr>
+        <tr><th>Raw text length</th><td>{{ bill.raw_text_length or "—" }}</td></tr>
+        <tr><th>File hash</th><td><code>{{ bill.file_hash or "—" }}</code></td></tr>
+    </table>
+</div>
+
+<div class="card">
+    <h3>Amount check</h3>
+    <p class="hint">
+        This bill's own cost is checked against every money-shaped figure
+        actually printed in the PDF's extracted text (deterministic
+        path) — this doesn't re-derive the bill independently, it
+        confirms the AI's total wasn't misread. For a dual-fuel
+        statement (Xcel), the combined total of both fuels is also
+        checked against its own printed figure.
+    </p>
+    {% if bill.status == "error" %}
+    <p class="hint" style="color: var(--danger);">Error: {{ bill.error_message }}</p>
+    {% elif bill.review_status == "pending_review" %}
+    <p class="hint" style="color: var(--danger);">{{ bill.error_message or "Flagged for review." }}</p>
+    {% elif bill.status in ("complete", "pending_review") %}
+    <p class="hint" style="color: var(--accent);">Confirmed — this bill's total was found printed in the PDF's own extracted text.</p>
+    {% else %}
+    <p class="hint">Not checked yet — processing hasn't completed.</p>
+    {% endif %}
+</div>
+
+{% if meter %}
+<div class="card">
+    <h3>Electric meter details</h3>
+    <p class="hint">
+        SPEC.md section 15: grid import, solar export, and net
+        delivered are genuinely different numbers — the on/off-peak
+        dollar rate below is applied to the NET figures, not the gross
+        import ones.
+    </p>
+    <table class="detail-table">
+        <tr><th></th><th>On-peak</th><th>Off-peak</th><th>Total</th></tr>
+        <tr><th>Grid import (kWh)</th><td>{{ meter.grid_import_on_peak_kwh if meter.grid_import_on_peak_kwh is not none else "—" }}</td><td>{{ meter.grid_import_off_peak_kwh if meter.grid_import_off_peak_kwh is not none else "—" }}</td><td>{{ meter.grid_import_total_kwh if meter.grid_import_total_kwh is not none else "—" }}</td></tr>
+        <tr><th>Solar export (kWh)</th><td>{{ meter.solar_export_on_peak_kwh if meter.solar_export_on_peak_kwh is not none else "—" }}</td><td>{{ meter.solar_export_off_peak_kwh if meter.solar_export_off_peak_kwh is not none else "—" }}</td><td>{{ meter.solar_export_total_kwh if meter.solar_export_total_kwh is not none else "—" }}</td></tr>
+        <tr><th>Net delivered (kWh)</th><td>{{ meter.net_on_peak_kwh if meter.net_on_peak_kwh is not none else "—" }}</td><td>{{ meter.net_off_peak_kwh if meter.net_off_peak_kwh is not none else "—" }}</td><td>{{ meter.net_total_kwh if meter.net_total_kwh is not none else "—" }}</td></tr>
+        <tr><th>Net generated (kWh)</th><td>{{ meter.net_generated_on_peak_kwh if meter.net_generated_on_peak_kwh is not none else "—" }}</td><td>{{ meter.net_generated_off_peak_kwh if meter.net_generated_off_peak_kwh is not none else "—" }}</td><td>{{ meter.net_generated_total_kwh if meter.net_generated_total_kwh is not none else "—" }}</td></tr>
+        <tr><th>Rate ($/kWh)</th><td>{{ meter.on_peak_rate if meter.on_peak_rate is not none else "—" }}</td><td>{{ meter.off_peak_rate if meter.off_peak_rate is not none else "—" }}</td><td></td></tr>
+        <tr><th>Charge ($)</th><td>{{ "%.2f"|format(meter.on_peak_charge) if meter.on_peak_charge is not none else "—" }}</td><td>{{ "%.2f"|format(meter.off_peak_charge) if meter.off_peak_charge is not none else "—" }}</td><td></td></tr>
+    </table>
+</div>
+{% endif %}
+
+{% with usage=ai_usage_view(bill.ai_usage), usage_title="AI usage — last processing run" %}{% include "_ai_usage.html" %}{% endwith %}
+
+<div class="card">
+    <h3>Resend to AI <span id="resendDot" class="status-dot"></span></h3>
+    <p class="hint" id="resendHint">
+        Re-sends the source PDF directly, bypassing the normal pipeline entirely —
+        no timeout (waits as long as it genuinely takes), no retry loop, shows the
+        FULL raw response (not just one field — a reasoning model can put its real
+        output in a "thinking" field while leaving "response" empty, which would
+        otherwise look like nothing came back at all).
+    </p>
+    <form id="resendForm" method="post" action="utility-debug-resend?id={{ bill.id }}">
+        <button type="submit" id="resendBtn" class="btn-primary">Resend to the AI (no timeout)</button>
+    </form>
+    <script>
+    document.getElementById("resendForm").addEventListener("submit", function () {
+        var btn = document.getElementById("resendBtn");
+        var dot = document.getElementById("resendDot");
+        var hint = document.getElementById("resendHint");
+        btn.disabled = true;
+        btn.textContent = "Sending… waiting for the AI";
+        dot.className = "status-dot pending";
+        hint.textContent = "Request sent — this genuinely has no timeout, so it may sit here for several minutes on a large local model. The page will reload automatically once a response comes back.";
+    });
+    </script>
+
+    {% if resend_error %}
+    <p class="hint" style="color: var(--danger);">Resend failed: {{ resend_error }}</p>
+    {% endif %}
+    {% if resend_elapsed is defined %}
+    <p class="hint" style="color: var(--accent);">
+        Completed in {{ "%.1f"|format(resend_elapsed) }}s — response below has been updated.
+    </p>
+    {% endif %}
+    {% if resend_usage is defined %}{% with usage=ai_usage_view(resend_usage), usage_title="AI usage — this re-send", usage_card=false %}{% include "_ai_usage.html" %}{% endwith %}{% endif %}
+</div>
+
+<div class="card">
+    <h3>Raw AI response</h3>
+    {% if bill.llm_raw_response is not none and bill.llm_raw_response != "" %}
+    <pre class="debug-raw">{{ bill.llm_raw_response }}</pre>
+    {% elif bill.llm_raw_response == "" %}
+    <p class="hint" style="color: var(--warn);">
+        A call completed, but the AI's response came back as a literal empty string —
+        not "hasn't run yet." Worth checking whether the model is still loading, or
+        producing output somewhere the "Resend" action above can now actually show.
+    </p>
+    {% else %}
+    <p class="hint">No response captured yet — the AI call may not have run (or hasn't completed).</p>
+    {% endif %}
+</div>
+{% endblock %}

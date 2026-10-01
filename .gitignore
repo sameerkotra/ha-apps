@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Local databases / scratch data (never commit household data)
+*.db
+*.db-wal
+*.db-shm
+/data/
+
+# Not part of this repository
+Claude outputs/
+*.tar

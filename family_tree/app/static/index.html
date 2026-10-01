@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Family Tree</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8C%B3%3C/text%3E%3C/svg%3E">
+<!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
+<script src="theme-boot.js?v=2.0.0"></script>
+<link rel="stylesheet" href="style.css?v=2.0.0">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <button id="sidebarCollapseBtn" class="sidebar-collapse-btn" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+    <div class="brand"><span class="brand-icon">🌳</span><span class="brand-text">Family Tree</span></div>
+    <nav class="side-nav" id="sideNav">
+      <button class="tab-btn" type="button" data-route="tree" title="Tree"><span class="nav-icon">🌳</span><span class="nav-label">Tree</span></button>
+      <button class="tab-btn" type="button" data-route="people" title="People"><span class="nav-icon">👥</span><span class="nav-label">People</span></button>
+      <button class="tab-btn" type="button" data-route="upcoming" title="Upcoming"><span class="nav-icon">🎂</span><span class="nav-label">Upcoming</span></button>
+      <button class="tab-btn" type="button" data-route="photos" title="Photos"><span class="nav-icon">📷</span><span class="nav-label">Photos</span></button>
+      <button class="tab-btn" type="button" data-route="map" data-feature="map" title="Map of the family's places" hidden><span class="nav-icon">🗺️</span><span class="nav-label">Map</span></button>
+      <button class="tab-btn" type="button" data-route="export" data-feature="export" title="Export"><span class="nav-icon">📤</span><span class="nav-label">Export</span></button>
+      <button class="tab-btn" type="button" data-route="history" title="History"><span class="nav-icon">🕘</span><span class="nav-label">History</span></button>
+      <button class="tab-btn" type="button" data-route="more" title="More: relatives and the other tools"><span class="nav-icon">🧰</span><span class="nav-label">More</span></button>
+      <button class="tab-btn" type="button" data-route="settings" title="Settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+      <button class="tab-btn admin-only" type="button" data-route="admin/settings" title="Admin: app settings, users, storage and trash" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+      <button class="tab-btn mobile-only-flex" type="button" data-route="whoami" title="How the app sees you"><span class="nav-icon">👤</span><span class="nav-label">You</span></button>
+    </nav>
+    <button type="button" class="sidebar-user" id="sidebarUser" title="How the app sees you">—</button>
+    <div class="sidebar-footer">
+      <label class="sidebar-field">
+        <span class="field-label">Theme</span>
+        <select id="themeSelect" class="theme-select" aria-label="Theme">
+          <option value="heritage">📜 Heritage</option>
+          <option value="slate">🌆 Slate</option>
+          <option value="daylight">☀️ Daylight</option>
+          <option value="parchment">🕯️ Parchment</option>
+          <option value="auto">🌓 Auto</option>
+        </select>
+      </label>
+    </div>
+  </aside>
+  <div class="main-col">
+    <div id="noAdminBanner" class="setup-banner" role="status" hidden></div>
+    <div id="mediaBanner" class="media-banner" hidden></div>
+    <main id="main">
+      <div id="fatal" class="card fatal" hidden></div>
+      <div id="view"></div>
+    </main>
+  </div>
+</div>
+<div id="modalRoot"></div>
+<div id="toastRoot" class="toast-root" aria-live="polite"></div>
+<div id="printRoot"></div>
+<script src="backnav.js?v=2.0.0"></script>
+<script src="tree.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
+<script src="print.js?v=2.0.0"></script>
+</body>
+</html>

@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% import "_toll_macros.html" as m %}
+{% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
+{% block title %}E-470 analyze{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
+<h1>E-470</h1>
+{{ m.subtabs("analyze", acting_qs) }}
+
+<p class="hint">
+    A <strong>trip</strong> is one journey: the passes of one car, in order, each within 45 minutes of the previous one and
+    heading the same way. A <strong>regular trip</strong> is the same route, at about the same time, on several days of a week
+    (for example the morning drive to work); only routes with more than {{ min_suggest_trips - 1 }} trips are suggested. Tag it once and every current and future statement is matched automatically,
+    whichever car made the trip.
+</p>
+
+<form method="get" action="toll-analyze" class="add-account-form">
+    {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
+    <label>
+        Period
+        <select name="period" onchange="this.form.submit()">{{ m.period_options(period, months, years, month_labels) }}</select>
+    </label>
+</form>
+
+{% if error %}<p class="hint" style="color: var(--danger);">{{ error }}</p>{% endif %}
+
+{% macro hidden_common() %}<input type="hidden" name="period" value="{{ period }}">{% endmacro %}
+{% set post_qs = ("?" + acting_qs) if acting_qs else "" %}
+
+<h2>Groups</h2>
+<p class="hint">Put several tags in a group (for example &ldquo;Work&rdquo;, made of a morning and an evening tag) to see
+    them as one thing on the Dashboard and Compare, instead of listed one by one. A tag can be in at most one group; a
+    group can hold any number of tags.</p>
+<details class="new-car" id="toll-group-add">
+    <summary>+ New group</summary>
+    <form method="post" action="toll-group-add{{ post_qs }}" class="add-account-form">
+        {{ hidden_common() }}
+        <label>Group name<input type="text" name="name" maxlength="60" placeholder="e.g. Work" required></label>
+        <button type="submit">Add group</button>
+    </form>
+</details>
+{% if groups %}
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table" data-no-sort>
+        <thead><tr><th>Group</th><th>Tags</th><th></th></tr></thead>
+        <tbody>
+            {% for g in groups %}
+            <tr>
+                <td data-label="Group">
+                    <form method="post" action="toll-group-update{{ post_qs }}" class="inline-form">
+                        {{ hidden_common() }}
+                        <input type="hidden" name="id" value="{{ g.id }}">
+                        <input type="text" name="name" value="{{ g.name }}" maxlength="60" required aria-label="Name of {{ g.name }}">
+                        <button type="submit" class="btn-secondary">Rename</button>
+                    </form>
+                </td>
+                <td data-label="Tags">{{ g.tag_count }}</td>
+                <td data-label="">
+                    <form method="post" action="toll-group-delete{{ post_qs }}" class="inline-form"
+                          onsubmit="return confirm('Delete this group? Its tags are kept and become ungrouped.');">
+                        {{ hidden_common() }}
+                        <input type="hidden" name="id" value="{{ g.id }}">
+                        <button type="submit" class="restart-btn">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% else %}
+<p class="empty-state">No groups yet &mdash; open &ldquo;+ New group&rdquo; above.</p>
+{% endif %}
+
+<h2>Suggested regular trips</h2>
+{% if suggestions %}
+<p class="hint">Found in untagged trips only. Adjust the name and the start-time window if you like, then tag it &mdash; or ignore it.</p>
+{% for s in suggestions %}
+<div class="card suggestion">
+    <h3>{{ s.name }}</h3>
+    <p>{{ s.route }}</p>
+    <p class="hint">{{ s.trip_count }} trips, up to {{ s.days_per_week }} days in one week &middot; usual start {{ format_minutes(s.window_start_min) }} to {{ format_minutes(s.window_end_min) }}
+        &middot; average {{ "%.2f"|format(s.average) }}, total {{ "%.2f"|format(s.total) }}{% if s.cars %} &middot; seen on {{ s.cars }}{% endif %}</p>
+    <form method="post" action="toll-pattern-save{{ post_qs }}" class="add-account-form">
+        {{ hidden_common() }}
+        <input type="hidden" name="signature" value="{{ s.signature }}">
+        <label>Name<input type="text" name="name" value="{{ s.name }}" maxlength="60" required></label>
+        <label>Starts from<input type="time" name="start" value="{{ clock_value(s.window_start_min) }}" required></label>
+        <label>Starts until<input type="time" name="end" value="{{ clock_value(s.window_end_min) }}" required></label>
+        <button type="submit">Tag</button>
+    </form>
+    <form method="post" action="toll-pattern-ignore{{ post_qs }}" class="inline-form">
+        {{ hidden_common() }}
+        <input type="hidden" name="signature" value="{{ s.signature }}">
+        <input type="hidden" name="start" value="{{ clock_value(s.window_start_min) }}">
+        <input type="hidden" name="end" value="{{ clock_value(s.window_end_min) }}">
+        <button type="submit" class="restart-btn">Ignore this suggestion</button>
+    </form>
+</div>
+{% endfor %}
+{% else %}
+<p class="empty-state">No regular trips to suggest{% if trip_total %} (a suggestion needs more than {{ min_suggest_trips - 1 }} trips of the same route at about the same time, on 2 or more days in one week){% else %} yet &mdash; upload a statement first{% endif %}.</p>
+{% endif %}
+
+<h2>Your tags</h2>
+{% if patterns %}
+{% for p in patterns %}
+<div class="card">
+    <h3>{{ p.name }}</h3>
+    <p>{{ p.route }}</p>
+    <p class="hint">{{ p.trip_count }} matching trip{{ "s" if p.trip_count != 1 else "" }}, {{ "%.2f"|format(p.cost) }} in the period</p>
+    {% if groups %}
+    <form method="post" action="toll-pattern-group-assign{{ post_qs }}" class="inline-form">
+        {{ hidden_common() }}
+        <input type="hidden" name="id" value="{{ p.id }}">
+        <label>Group
+            <select name="group_id" onchange="this.form.submit()" aria-label="Group for {{ p.name }}">
+                <option value="">No group</option>
+                {% for g in groups %}<option value="{{ g.id }}" {{ "selected" if p.group_id == g.id else "" }}>{{ g.name }}</option>{% endfor %}
+            </select>
+        </label>
+        <noscript><button type="submit" class="btn-secondary">Save</button></noscript>
+    </form>
+    {% endif %}
+    <form method="post" action="toll-pattern-save{{ post_qs }}" class="add-account-form">
+        {{ hidden_common() }}
+        <input type="hidden" name="id" value="{{ p.id }}">
+        <label>Name<input type="text" name="name" value="{{ p.name }}" maxlength="60" required></label>
+        <label>Starts from<input type="time" name="start" value="{{ clock_value(p.window_start_min) }}" required></label>
+        <label>Starts until<input type="time" name="end" value="{{ clock_value(p.window_end_min) }}" required></label>
+        <button type="submit" class="btn-secondary">Save</button>
+    </form>
+    <form method="post" action="toll-pattern-delete{{ post_qs }}" class="inline-form"
+          onsubmit="return confirm('Delete this tag? Its trips become untagged.');">
+        {{ hidden_common() }}
+        <input type="hidden" name="id" value="{{ p.id }}">
+        <button type="submit" class="restart-btn">Delete tag</button>
+    </form>
+</div>
+{% endfor %}
+{% else %}
+<p class="empty-state">No tags yet.</p>
+{% endif %}
+
+<h2>Untagged trips</h2>
+<p class="hint">Trips that match no tag. Pick a tag to put one in it by hand, or mark it &ldquo;not regular&rdquo; so it is never matched automatically. A manual choice always wins over the automatic match.</p>
+{% if trip_view.total %}
+{{ mobile_sort(trip_view, trip_columns) }}
+<div class="table-scroll">
+<table class="statements-table" data-no-sort>
+    <thead>
+        <tr>
+            {{ sort_th(trip_view, "when", "Started") }}{{ sort_th(trip_view, "car", "Car") }}{{ sort_th(trip_view, "route", "Route") }}
+            {{ sort_th(trip_view, "passes", "Passes") }}{{ sort_th(trip_view, "cost", "Cost") }}<th>Tag it</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for t in trips_shown %}
+        <tr>
+            <td data-label="Started">{{ t.started_at }}</td>
+            <td data-label="Car">{{ t.car_name }}</td>
+            <td data-label="Route">{{ t.route }}{% if t.state %}<div class="hint">{{ t.state }}</div>{% endif %}</td>
+            <td data-label="Passes" class="num">{{ t.pass_count }}</td>
+            <td data-label="Cost" class="num">{{ "%.2f"|format(t.amount) }}</td>
+            <td data-label="Tag it">
+                <form method="post" action="toll-trip-tag{{ post_qs }}" class="inline-form">
+                    {{ hidden_common() }}
+                    <input type="hidden" name="trip_key" value="{{ t.trip_key }}">
+                    <select name="choice" aria-label="Tag this trip" onchange="this.form.submit()">
+                        {% if t.state %}<option value="none" selected>Not regular (your choice)</option><option value="auto">Automatic (remove my choice)</option>
+                        {% else %}<option value="">Choose…</option>{% endif %}
+                        {% for p in patterns %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}
+                        {% if not t.state %}<option value="none">Not regular</option>{% endif %}
+                    </select>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{{ pager(trip_view) }}
+{% else %}
+<p class="empty-state">No untagged trips{% if not trip_total %} &mdash; no trips in this period{% endif %}.</p>
+{% endif %}
+{% endblock %}

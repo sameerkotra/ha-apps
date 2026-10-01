@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Household Todo</title>
+<script>
+(function () {
+    var THEMES = ["ink", "slate", "daylight"];
+    try {
+        var theme = localStorage.getItem("theme");
+        if (theme && THEMES.indexOf(theme) !== -1) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+        if (localStorage.getItem("sidebarCollapsed") === "1") {
+            document.documentElement.setAttribute("data-sidebar", "collapsed");
+        }
+    } catch (e) { /* localStorage unavailable (private mode, etc.) */ }
+})();
+</script>
+<!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
+<link rel="stylesheet" href="style.css?v=2.0.0">
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar">
+    <button id="sidebarCollapseBtn" class="sidebar-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+    <div class="brand"><span class="brand-icon">🏠</span><span class="brand-text">Household Todo</span></div>
+    <nav class="side-nav" id="sideNav">
+      <button class="tab-btn active" data-tab="calendar" title="Calendar"><span class="nav-icon">📅</span><span class="nav-label">Calendar</span></button>
+      <button class="tab-btn" data-tab="dashboard" title="Dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></button>
+      <button class="tab-btn" data-tab="schedule" title="Schedule"><span class="nav-icon">🔁</span><span class="nav-label">Schedule</span></button>
+      <button class="tab-btn" data-tab="maintenance" title="Maintenance" hidden><span class="nav-icon">🔧</span><span class="nav-label">Maintenance</span></button>
+      <button class="tab-btn" data-tab="lists" title="Lists"><span class="nav-icon">✅</span><span class="nav-label">Lists</span></button>
+      <button class="tab-btn" data-tab="places" title="Places"><span class="nav-icon">📍</span><span class="nav-label">Places</span></button>
+      <button class="tab-btn" data-tab="settings" title="Settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+      <button class="tab-btn admin-only" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+    </nav>
+    <button type="button" class="sidebar-user" id="sidebarUser">—</button>
+    <div class="sidebar-footer">
+      <label class="sidebar-field">
+        <span class="field-label">Theme</span>
+        <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
+          <option value="ink">🌑 Ink</option>
+          <option value="slate">🌆 Slate</option>
+          <option value="daylight">☀️ Daylight</option>
+        </select>
+      </label>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <div class="top-stack">
+      <div class="topbar admin-only" id="actAsField" hidden>
+        <label class="topbar-field">
+          <span class="field-label">Acting as</span>
+          <select id="actAsSelect" title="Act as another household member" aria-label="Acting as"></select>
+        </label>
+      </div>
+      <div id="actingBanner" class="acting-banner" hidden></div>
+      <div id="noAdminBanner" class="no-admin-banner" role="status" hidden></div>
+    </div>
+    <main>
+      <div id="fatal" class="card fatal" hidden></div>
+      <section id="tab-dashboard" class="tab-panel"></section>
+      <section id="tab-calendar" class="tab-panel active"></section>
+      <section id="tab-schedule" class="tab-panel"></section>
+      <section id="tab-maintenance" class="tab-panel"></section>
+      <section id="tab-lists" class="tab-panel"></section>
+      <section id="tab-places" class="tab-panel"></section>
+      <section id="tab-settings" class="tab-panel"></section>
+      <section id="tab-admin" class="tab-panel"></section>
+    </main>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+<script src="backnav.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
+<script src="maintenance.js?v=2.0.0"></script>
+</body>
+</html>

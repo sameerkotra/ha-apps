@@ -1,0 +1,51 @@
+{# Shared pieces of the E-470 pages (SPEC.md section 18). #}
+
+{% macro subtabs(active, acting_qs) %}
+<div class="subtabs">
+    <a href="tolls?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="subtab {{ 'active' if active == 'dashboard' else '' }}">Dashboard</a>
+    <a href="toll-compare{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab {{ 'active' if active == 'compare' else '' }}">Compare</a>
+    <a href="toll-analyze{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab {{ 'active' if active == 'analyze' else '' }}">Analyze</a>
+</div>
+{% endmacro %}
+
+{# The Period choices, the same set the finance Dashboard offers (minus "this week"). #}
+{% macro period_options(period, months, years, month_labels) %}
+<option value="month" {{ "selected" if period == "month" else "" }}>This month</option>
+<option value="last_month" {{ "selected" if period == "last_month" else "" }}>Last month</option>
+<option value="year" {{ "selected" if period == "year" else "" }}>This year</option>
+<option value="last_year" {{ "selected" if period == "last_year" else "" }}>Last year</option>
+<option value="all" {{ "selected" if period == "all" else "" }}>All time</option>
+{% set picked_month = period[2:] if period.startswith("m:") else "" %}
+{% set picked_year = period[2:] if period.startswith("y:") else "" %}
+{% if months or picked_month %}
+<optgroup label="A specific month">
+    {% if picked_month and picked_month not in months %}<option value="m:{{ picked_month }}" selected>{{ picked_month }}</option>{% endif %}
+    {% for m in months %}<option value="m:{{ m }}" {{ "selected" if picked_month == m else "" }}>{{ month_labels[m] }}</option>{% endfor %}
+</optgroup>
+{% endif %}
+{% if years or picked_year %}
+<optgroup label="A specific year">
+    {% if picked_year and picked_year not in years %}<option value="y:{{ picked_year }}" selected>{{ picked_year }}</option>{% endif %}
+    {% for y in years %}<option value="y:{{ y }}" {{ "selected" if picked_year == y else "" }}>{{ y }}</option>{% endfor %}
+</optgroup>
+{% endif %}
+{% endmacro %}
+
+{# A toll is money out: an increase is bad. #}
+{% macro delta(change) -%}
+{%- if change == 0 -%}<span class="delta">0.00</span>
+{%- else -%}<span class="delta {{ 'delta-bad' if change > 0 else 'delta-good' }}">{{ "%+.2f"|format(change) }}</span>{%- endif -%}
+{%- endmacro %}
+{% macro pct(value) -%}{%- if value is none -%}&mdash;{%- else -%}{{ "%+.1f"|format(value) }}%{%- endif -%}{%- endmacro %}
+
+{# The car picker's options: All cars, tolls of devices not assigned to a car (only when there are some), active cars, archived ones (still part of the totals) under their own heading. #}
+{% macro car_options(cars, selected_id, has_unassigned=false) %}
+<option value="">All cars</option>
+{% if has_unassigned or selected_id == "none" %}<option value="none" {{ "selected" if selected_id == "none" else "" }}>Not assigned to a car</option>{% endif %}
+{% for c in cars if not c.archived_at %}<option value="{{ c.id }}" {{ "selected" if selected_id == c.id else "" }}>{{ c.label }}</option>{% endfor %}
+{% if cars|selectattr("archived_at")|list %}
+<optgroup label="Archived cars">
+    {% for c in cars if c.archived_at %}<option value="{{ c.id }}" {{ "selected" if selected_id == c.id else "" }}>{{ c.label }}</option>{% endfor %}
+</optgroup>
+{% endif %}
+{% endmacro %}

@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Utilities{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% if tab == "upload" %}
+{{ nav.upload_tabs("utility", acting_qs, request.state.features) }}
+{% include "_ai_missing.html" %}
+<h1>Upload</h1>
+{% else %}
+{{ nav.bills_tabs("utilities", acting_qs, request.state.features) }}
+<h1>Utilities</h1>
+<div class="subtabs">
+    <a href="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="subtab active">Dashboard</a>
+    <a href="utility-comparison{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab">Compare</a>
+</div>
+{% endif %}
+
+{% if tab == "upload" %}
+<h2>Upload utility bill(s)</h2>
+<form id="utility-upload-form" enctype="multipart/form-data" class="add-account-form">
+    <label>
+        Provider
+        <select name="provider" id="utility-provider-select" required>
+            {% for p in upload_providers %}
+            <option value="{{ p }}">{{ p }}</option>
+            {% endfor %}
+            <option value="Other">Other provider&hellip;</option>
+        </select>
+    </label>
+    <label id="utility-other-label" hidden>
+        Provider name
+        <input type="text" name="provider_other" id="utility-provider-other" maxlength="60" placeholder="e.g. Denver Water"
+               list="utility-known-providers">
+        <datalist id="utility-known-providers">{% for p in providers if p not in upload_providers %}<option value="{{ p }}">{% endfor %}</datalist>
+    </label>
+    <label>
+        PDF(s)
+        <input type="file" name="files" id="utility-file-input" accept="application/pdf" multiple required>
+    </label>
+    <button type="submit" id="utility-upload-btn">Upload</button>
+</form>
+<p class="hint">
+    Xcel Energy's monthly PDF commonly combines electric + gas on one
+    statement &mdash; that's expected, and becomes two separate bills
+    below once processed. Aurora Water's PDF is water-only. Pick the
+    provider that matches the PDF you're uploading &mdash; a mismatched
+    PDF (or one that isn't a bill at all) is rejected up front, before
+    it ever reaches the AI extraction step. <strong>Any other provider</strong>
+    (electric, gas or water): choose "Other provider" and type its name. The AI
+    reads it the same way, and every such bill waits for you to check it
+    against the PDF and Confirm (or Re-extract with notes).
+</p>
+<div id="utility-upload-result"></div>
+<script>
+(function () {
+    const form = document.getElementById("utility-upload-form");
+    const fileInput = document.getElementById("utility-file-input");
+    const btn = document.getElementById("utility-upload-btn");
+    const resultEl = document.getElementById("utility-upload-result");
+    const qs = "{{ acting_qs or '' }}";
+
+    form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        btn.disabled = true;
+        btn.textContent = "Uploading…";
+        resultEl.innerHTML = "<p>Uploading and starting AI extraction…</p>";
+        let failed = false;
+        try {
+            const body = new FormData(form);
+            const resp = await fetch("utility-upload" + (qs ? "?" + qs : ""), {
+                method: "POST", body: body,
+            });
+            let data = null;
+            try { data = await resp.json(); } catch (err) { /* not JSON: an expired session or server error page */ }
+            if (data === null) {
+                throw new Error("The server did not accept that (status " + resp.status + "). Reload the page and try again.");
+            }
+            const results = data.results || [];
+            if (data.error) {
+                resultEl.innerHTML = "<p>" + escapeHtml(data.error) + "</p>";
+            } else if (results.length === 0) {
+                resultEl.innerHTML = "<p>No files uploaded.</p>";
+            } else {
+                resultEl.innerHTML = results.map(function (r) {
+                    const name = escapeHtml(r.filename);
+                    if (r.duplicate_of) return "<p>" + name + ": " + escapeHtml(r.message) + "</p>";
+                    if (r.utility_bill_id) return "<p>" + name + ": uploaded, processing&hellip;</p>";
+                    return "<p>" + name + ": " + escapeHtml(r.error || "unknown error") + "</p>";
+                }).join("");
+            }
+        } catch (err) {
+            resultEl.textContent = "Upload failed: " + err.message;
+            failed = true;
+        } finally {
+            fileInput.value = "";
+            btn.disabled = false;
+            btn.textContent = "Upload";
+            // A failure keeps the page (and its message) so it can be read.
+            if (!failed) setTimeout(function () {
+                window.location.href = "utilities?tab=upload" + (qs ? "&" + qs : "");
+            }, 1200);
+        }
+    });
+    const providerSelect = document.getElementById("utility-provider-select");
+    const otherLabel = document.getElementById("utility-other-label");
+    const otherInput = document.getElementById("utility-provider-other");
+    function showOther() {
+        const other = providerSelect.value === "Other";
+        otherLabel.hidden = !other;
+        otherInput.required = other;
+    }
+    providerSelect.addEventListener("change", function () { showOther(); if (!otherLabel.hidden) otherInput.focus(); });
+    showOther();
+    // A back-navigation can restore the form with a stale file "selected".
+    window.addEventListener("pageshow", function () { fileInput.value = ""; });
+})();
+</script>
+
+<h2>Upload history</h2>
+<p class="hint">Every bill you've uploaded, newest first &mdash; delete one here, or (admins) open its debug view.</p>
+{% include "_utility_bills_table.html" %}
+
+{% else %}
+<h2>Bill history</h2>
+<form id="utility-filters" class="add-account-form">
+    <label>
+        Provider
+        <select name="provider"
+                hx-get="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+                hx-trigger="change"
+                hx-target="#utility-bills-table-wrap" hx-swap="outerHTML"
+                hx-include="#utility-filters" hx-push-url="true">
+            <option value="">All providers</option>
+            {% for p in providers %}
+            <option value="{{ p }}" {{ "selected" if filter_provider == p else "" }}>{{ p }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Type
+        <select name="utility_type"
+                hx-get="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+                hx-trigger="change"
+                hx-target="#utility-bills-table-wrap" hx-swap="outerHTML"
+                hx-include="#utility-filters" hx-push-url="true">
+            <option value="">All types</option>
+            <option value="electric" {{ "selected" if filter_utility_type == "electric" else "" }}>Electric</option>
+            <option value="gas" {{ "selected" if filter_utility_type == "gas" else "" }}>Gas</option>
+            <option value="water" {{ "selected" if filter_utility_type == "water" else "" }}>Water</option>
+        </select>
+    </label>
+    <label>
+        Period from
+        <input type="date" name="start_date" value="{{ filter_start_date }}"
+               hx-get="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+               hx-trigger="change"
+               hx-target="#utility-bills-table-wrap" hx-swap="outerHTML"
+               hx-include="#utility-filters" hx-push-url="true">
+    </label>
+    <label>
+        Period to
+        <input type="date" name="end_date" value="{{ filter_end_date }}"
+               hx-get="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+               hx-trigger="change"
+               hx-target="#utility-bills-table-wrap" hx-swap="outerHTML"
+               hx-include="#utility-filters" hx-push-url="true">
+    </label>
+</form>
+{% if filter_provider or filter_utility_type or filter_start_date or filter_end_date %}
+<p class="hint">
+    Filtered &mdash;
+    <a href="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}">clear all filters</a>
+</p>
+{% endif %}
+
+{% include "_utility_bills_by_type.html" %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,7 @@
+<form class="exclude-form" hx-post="transaction-exclude{% if acting_qs %}?{{ acting_qs }}{% endif %}" hx-target="this" hx-swap="outerHTML" hx-trigger="change">
+    <input type="hidden" name="id" value="{{ t.id }}">
+    <label class="exclude-label" title="Leaves the transaction visible everywhere; just leaves it out of dashboard totals.">
+        <input type="checkbox" name="is_excluded" value="1" {{ "checked" if t.is_excluded else "" }}>
+        Exclude
+    </label>
+</form>

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+{{ nav.setup_tabs("accounts", acting_qs, request.state.is_real_admin) }}
+<h1>Accounts</h1>
+
+{# "+ Add account" sits above the list, collapsed (same pattern as "+ New car"). #}
+<details class="new-car" id="account-add">
+    <summary>+ Add account</summary>
+    <form method="post" action="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
+        <label>
+            Name
+            <input type="text" name="name" placeholder="e.g. Chase Checking" required>
+        </label>
+        <label>
+            Type
+            <select name="type" required>
+                <option value="checking">Checking</option>
+                <option value="savings">Savings</option>
+                <option value="credit_card">Credit card</option>
+            </select>
+        </label>
+        <label>
+            Bank
+            <input type="text" name="bank_name" placeholder="e.g. Chase">
+        </label>
+        <label>
+            Last 4 digits
+            <input type="text" name="account_number_last4" maxlength="4" pattern="[0-9]{4}" placeholder="1234">
+        </label>
+        <label>
+            Preferred upload method
+            <select name="preferred_upload_method">
+                <option value="both" selected>Either PDF or CSV</option>
+                <option value="pdf">PDF only</option>
+                <option value="csv">CSV only</option>
+            </select>
+        </label>
+        <label>
+            Website
+            <input type="url" name="website_url" placeholder="e.g. https://www.chase.com" maxlength="500" inputmode="url">
+        </label>
+        <button type="submit">Add account</button>
+    </form>
+    <p class="hint">
+        Preferred upload method is just a reminder &mdash; picking it doesn't stop
+        you from uploading the other kind, it just warns you first (with the
+        option to proceed anyway) in case the wrong account got picked. Leave it
+        on &ldquo;Either&rdquo; for an account you import both ways.
+    </p>
+</details>
+
+<p class="hint">
+    {% if show_archived %}
+    Showing archived accounts too &mdash;
+    <a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">hide archived</a>
+    {% else %}
+    <a href="accounts?show_archived=1{% if acting_qs %}&{{ acting_qs }}{% endif %}">Show archived accounts</a>
+    {% endif %}
+</p>
+
+{% if accounts %}
+<table class="accounts-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Bank</th>
+            <th>Account</th>
+            <th>Preferred upload</th>
+            <th>Website</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for a in accounts %}
+        <tr>
+            <td data-label="Name">
+                <a href="account?id={{ a.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">{{ a.name }}</a>
+                {% if a.is_archived %}<span class="status-badge">archived</span>{% endif %}
+            </td>
+            <td data-label="Type"><span class="type-badge type-{{ a.type }}">{{ a.type.replace('_', ' ') }}</span></td>
+            <td data-label="Bank">{{ a.bank_name or "—" }}</td>
+            <td data-label="Account">{% if a.account_number_last4 %}····{{ a.account_number_last4 }}{% else %}—{% endif %}</td>
+            <td data-label="Preferred upload">
+                {% if a.preferred_upload_method == "pdf" %}PDF only
+                {% elif a.preferred_upload_method == "csv" %}CSV only
+                {% else %}Either{% endif %}
+            </td>
+            <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
+            <td data-label="">
+                <form method="post" action="account-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                    <input type="hidden" name="id" value="{{ a.id }}">
+                    <input type="hidden" name="next" value="accounts">
+                    {% if a.is_archived %}
+                    <input type="hidden" name="archived" value="0">
+                    <button type="submit" class="btn-secondary">Unarchive</button>
+                    {% else %}
+                    <input type="hidden" name="archived" value="1">
+                    <button type="submit" class="btn-secondary">Archive</button>
+                    {% endif %}
+                </form>
+                <a href="account-delete-confirm?id={{ a.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-danger">Delete</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No accounts yet — add one above.</p>
+{% endif %}
+{% endblock %}

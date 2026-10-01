@@ -1,0 +1,12 @@
+configuration:
+  admin_users:
+    name: Administrators
+    description: >-
+      Home Assistant login names or user ids (any case; display names are
+      not accepted)
+      allowed to open the Admin area (App settings, Users, Storage) and to
+      delete expenses/payments/groups.
+      Empty by default, so nobody is an administrator until you add one.
+      Not sure what to enter? Open Splitpot and click your name (or the
+      person icon on a phone): "How the app sees you" shows the exact values.
+      Restart the app after changing this list.

@@ -1,0 +1,52 @@
+name: "Household Todo"
+version: "2.0.0"
+slug: household_todo
+description: >-
+  Shared and personal household task lists with a calendar, a schedule of
+  recurring things like trash day, reminders through Home Assistant and house
+  maintenance. Everyone signs in with their Home Assistant account.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+  - i386
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8100
+panel_icon: mdi:format-list-checks
+panel_title: Household Todo
+# false = visible to every Home Assistant user, not just admins, since
+# this is meant to be used by the whole household.
+panel_admin: false
+# Ingress-only: no ports are published to the host or LAN. The only way
+# to reach this app is through the Supervisor's authenticated ingress
+# proxy, which is what makes trusting X-Remote-User-* actually safe.
+# homeassistant_api lets the app call the Supervisor's Core API proxy
+# (http://supervisor/core/api/, auto-injected SUPERVISOR_TOKEN) to send
+# notify.* reminders, publish one binary_sensor per schedule item, read the
+# time zone and the people, and list the notify services on Admin -> Users.
+# No other Supervisor/HA API access is requested.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+# The maintenance files folder is a folder inside /share an admin picks in
+# the app (Admin -> App settings); nothing is written there until then.
+map:
+  - share:rw
+environment:
+  DATA_DIR: /data
+  PORT: "8100"
+# admin_users is the only app option, on the app's Configuration tab (it's how
+# the first admin is known). Everything else is set in the app under
+# Admin -> App settings and Admin -> Users.
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

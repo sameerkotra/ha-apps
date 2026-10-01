@@ -1,0 +1,46 @@
+{# Query tab Variables panel: one row per variable found in the SQL, with its definition and a value for this run. #}
+{% from "_query_macros.html" import var_input %}
+<input type="hidden" name="var_names" value="{{ variables | map(attribute='name') | join(',') }}">
+{% if variables %}
+<div class="q-vars-panel">
+    <div class="panel-title">Variables</div>
+    <p class="hint">Found in the SQL. Set how a report asks for each one, and a value to test with now.
+        An empty value, or All, binds NULL &mdash; write <code>(:name IS NULL OR column = :name)</code>.</p>
+    {% for v in variables %}
+    <div class="q-var-row">
+        <div class="q-var-name"><code>{% for p in v.params %}:{{ p }}{% if not loop.last %}<br>{% endif %}{% endfor %}</code></div>
+        <label class="q-var">Type
+            <select name="d_{{ v.name }}_type" class="q-def-type">
+                {% for t in var_types %}
+                {% if t != "period" or v.type == "period" %}
+                <option value="{{ t }}" {{ "selected" if v.type == t else "" }}>{{ type_labels[t] }}</option>
+                {% endif %}
+                {% endfor %}
+            </select>
+        </label>
+        <label class="q-var">Label
+            <input type="text" name="d_{{ v.name }}_label" value="{{ v.label }}" placeholder="{{ v.display_label }}" maxlength="60">
+        </label>
+        <label class="q-var">Default
+            {% if v.type == "period" %}
+            <select name="d_{{ v.name }}_default">
+                {% for value, label in presets if value != "custom" %}
+                <option value="{{ value }}" {{ "selected" if (v.default or "month") == value else "" }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" name="d_{{ v.name }}_default" value="{{ v.default }}" placeholder="{{ 'all' if v.type in ('account', 'category') else 'none' }}" maxlength="200">
+            {% endif %}
+        </label>
+        <label class="q-check q-var-all"><input type="checkbox" name="d_{{ v.name }}_all" value="1" {{ "checked" if v.allow_all else "" }}> Allow All</label>
+        <div class="q-var-value">
+            {{ var_input(v, values.get(v.name) or {"value": v.default, "preset": v.default or "month", "from": "", "to": ""}, choices, presets) }}
+        </div>
+    </div>
+    {% endfor %}
+    <p class="hint">A period variable comes from a pair, <code>:name_start</code> and <code>:name_end</code>. After changing a type the value box follows.</p>
+</div>
+{% endif %}
+{% if unused %}
+<p class="hint q-warn">Defined but not used in the SQL any more: {{ unused | join(", ") }}. They'll be dropped when you save.</p>
+{% endif %}

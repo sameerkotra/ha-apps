@@ -1,0 +1,16 @@
+{# One Statement-history row. Also what /statement-status and /statement-restart
+   return: the status cell polls and swaps the WHOLE row, so the period /
+   money in-out / first-last date cells fill in the moment parsing finishes
+   instead of staying stale until a page refresh. #}
+<tr id="statement-row-{{ s.id }}">
+    <td data-label="File">{{ s.original_filename or "—" }}</td>
+    <td data-label="Account">{{ s.account_name }}</td>
+    <td data-label="Uploaded">{{ s.uploaded_at }}</td>
+    <td data-label="First transaction">{{ s.first_date or "—" }}</td>
+    <td data-label="Last transaction">{{ s.last_date or "—" }}</td>
+    <td data-label="Status">{% with row=s %}{% include "_status_fragment.html" %}{% endwith %}</td>
+    <td data-label="Money in">{{ "%.2f"|format(s.money_in) }}</td>
+    <td data-label="Money out">{{ "%.2f"|format(s.money_out) }}</td>
+    <td data-label=""><a href="statement-delete-confirm?id={{ s.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a></td>
+    {% if is_admin %}<td data-label=""><a href="statement-debug?id={{ s.id }}" class="debug-link">debug</a></td>{% endif %}
+</tr>

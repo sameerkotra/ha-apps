@@ -1,0 +1,17 @@
+{# Shared by recurring.html and the per-transaction modal. Import WITH context
+   so acting_qs is visible: {% from "_recurring_macros.html" import ... with context %} #}
+
+{# One POST form: value "1" = mark recurring, "0" = dismiss, "clear" = back to automatic. #}
+{% macro override_form(pattern, value, label, account_id="", css="btn-secondary") -%}
+<form method="post" action="recurring-override{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+    <input type="hidden" name="merchant_pattern" value="{{ pattern }}">
+    <input type="hidden" name="is_recurring" value="{{ value }}">
+    <input type="hidden" name="account_id" value="{{ account_id }}">
+    <button type="submit" class="{{ css }}">{{ label }}</button>
+</form>
+{%- endmacro %}
+
+{% macro amount_range(s) -%}
+{%- if s.amount_min == s.amount_max -%}{{ "%.2f"|format(s.amount_min) }}
+{%- else -%}{{ "%.2f"|format(s.amount_min) }} &ndash; {{ "%.2f"|format(s.amount_max) }}{%- endif -%}
+{%- endmacro %}

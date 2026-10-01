@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+{% set qs = "?" + acting_qs if acting_qs else "" %}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+<h1>Reports</h1>
+<p class="hint">Each report runs on {{ "your" if not acting_as_banner else user.name ~ "'s" }} own data.</p>
+{% if is_admin %}
+<div class="q-actions">
+    <a href="admin-storage?tab=query{{ amp }}" class="btn-secondary">New report</a>
+    <form method="post" action="reports-check{{ qs }}" class="inline-form"><button type="submit" class="btn-secondary">Check reports</button></form>
+</div>
+{% if request.query_params.get("deleted") %}<p class="hint">Report deleted.</p>{% endif %}
+{% endif %}
+{% if not reports %}
+<p class="empty-state">No reports yet.{% if is_admin %} Write a query on Storage &rarr; Query and save it as a report.{% endif %}</p>
+{% else %}
+<ul class="q-report-list">
+    {% for r in reports %}
+    <li class="q-report-card">
+        <div class="q-report-main">
+            <a href="report?id={{ r.id }}{{ amp }}" class="q-report-name">{{ r.name }}</a>
+            {% if r.no_time_limit %}<span class="status-badge">Can take a while</span>{% endif %}
+            {% if r.description %}<p class="hint">{{ r.description }}</p>{% endif %}
+            <p class="hint">{% if r.variables %}Asks for: {{ r.variables | map(attribute='display_label') | join(', ') }}{% else %}No options{% endif %}
+                {% if is_admin %} &middot; Last run: {{ r.last_run_at or "never" }}{% endif %}</p>
+        </div>
+        <div class="q-report-actions">
+            <a href="report?id={{ r.id }}{{ amp }}" class="btn-secondary">Run</a>
+            {% if is_admin %}
+            <a href="admin-storage?tab=query&report={{ r.id }}{{ amp }}" class="btn-secondary">Edit</a>
+            <form method="post" action="report-duplicate?id={{ r.id }}{{ amp }}" class="inline-form"><button type="submit" class="btn-secondary">Duplicate</button></form>
+            <form method="post" action="report-delete?id={{ r.id }}{{ amp }}" class="inline-form"
+                  onsubmit='return confirm({{ ("Delete the report “" ~ r.name ~ "”? This cannot be undone.") | tojson }});'><button type="submit" class="btn-secondary q-danger">Delete</button></form>
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% from "_query_macros.html" import storage_tabs %}
+{% block title %}Query (admin){% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% set qs = "?" + acting_qs if acting_qs else "" %}
+{{ storage_tabs("query", acting_qs) }}
+<h1>Query</h1>
+
+<div class="q-layout">
+<div class="q-main">
+    <p class="hint">Read-only SQL on <strong>{{ acting.name }}</strong>'s data only (switch user to query someone else's).
+        Deleted rows are already left out. Only SELECT runs; nothing here can change data.</p>
+    {% if report %}
+    <p class="q-editing">Editing report <strong>{{ report.name }}</strong>
+        &middot; <a href="report?id={{ report.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">Open report</a>
+        &middot; <a href="admin-storage?tab=query{% if acting_qs %}&{{ acting_qs }}{% endif %}">New query</a></p>
+    {% endif %}
+
+    <form id="query-form" class="q-form" hx-post="query-run{{ qs }}" hx-target="#query-results" hx-indicator="#q-running"
+          data-report-id="{{ report.id if report else '' }}">
+        {% if report %}<input type="hidden" name="report_id" value="{{ report.id }}">{% endif %}
+        <input type="hidden" name="per_page" value="100" class="q-per-page-field">
+        <details class="q-ai" open>
+            <summary>Write SQL from plain English</summary>
+            <textarea id="q-ai-question" name="ai_question" class="q-ai-question" rows="2" maxlength="2000"
+                      placeholder="e.g. How much did I spend on dining each month this year, by account?"></textarea>
+            <div class="q-actions">
+                <button type="button" hx-post="sql-assist-start{{ qs }}" hx-target="#q-ai-status">Write SQL</button>
+                <label class="q-check"><input type="checkbox" name="ai_vars" value="1" checked> Use report variables (account, period, category)</label>
+            </div>
+            <p class="hint">Uses the AI model (App settings) with a description of {{ acting.name }}'s tables (never their other data).
+                If a PDF is being read it won't interrupt it &mdash; it says so and you can try again. The SQL is only put in the editor; nothing runs until you press Run.</p>
+            <div id="q-ai-status" aria-live="polite"></div>
+        </details>
+        <label for="q-sql" class="panel-title">SQL</label>
+        <textarea id="q-sql" name="sql" class="q-sql" rows="12" spellcheck="false" autocapitalize="off" autocomplete="off"
+                  placeholder="SELECT category, ROUND(-SUM(amount), 2) AS spent&#10;FROM transactions&#10;WHERE amount < 0&#10;GROUP BY category&#10;ORDER BY spent DESC">{{ sql }}</textarea>
+
+        <div id="q-vars" hx-post="query-vars{{ qs }}" hx-target="this"
+             hx-trigger="load, keyup changed delay:700ms from:#q-sql, change[target.matches('.q-def-type')]">
+        </div>
+
+        <div class="q-actions">
+            <button type="submit">Run</button>
+            <span class="hint q-kbd">Ctrl/&#8984; + Enter</span>
+            <button type="button" class="btn-secondary q-clear">Clear</button>
+            <label class="q-check"><input type="checkbox" name="no_time_limit" value="1" class="q-no-limit"
+                {{ "checked" if report and report.no_time_limit else "" }}> No time limit</label>
+            <span id="q-running" class="htmx-indicator hint">Running&hellip;</span>
+        </div>
+
+        <details class="q-save" {% if report %}open{% endif %}>
+            <summary>{{ "Report settings" if report else "Save as report" }}</summary>
+            <div class="q-save-grid">
+                <label>Name <input type="text" name="name" value="{{ report.name if report else '' }}" maxlength="80"></label>
+                <label>Description <input type="text" name="description" value="{{ report.description if report else '' }}" maxlength="500"></label>
+                <label class="q-check"><input type="checkbox" name="totals_off" value="1"
+                    {{ "checked" if report and not report.totals.on else "" }}> No totals row</label>
+                <label>No total for columns <input type="text" name="no_total" value="{{ report.totals.skip | join(', ') if report else '' }}" placeholder="e.g. usage, times"></label>
+                <label>Chart
+                    <select name="chart_type">
+                        {% for t in chart_types %}
+                        <option value="{{ t }}" {{ "selected" if report and report.chart.type == t else "" }}>{{ {"none": "No chart", "bar": "Bar", "line": "Line"}[t] }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label>Chart X column <input type="text" name="chart_x" value="{{ report.chart.x if report else '' }}" placeholder="e.g. month"></label>
+                <label>Chart Y columns <input type="text" name="chart_y" value="{{ report.chart.y | join(', ') if report else '' }}" placeholder="e.g. money_in, money_out"></label>
+                <label class="q-check"><input type="checkbox" name="chart_keep_signs" value="1"
+                    {{ "checked" if report and report.chart.keep_signs else "" }}> Keep signs (negatives below zero)</label>
+            </div>
+            <p class="hint">"No time limit" above is saved with the report. Anyone can run saved reports on their own data from the Reports page; only you can edit them.</p>
+            <div class="q-actions">
+                <button type="button" hx-post="query-save{{ qs }}" hx-include="#query-form" hx-target="#q-save-result">{{ "Save changes" if report else "Save report" }}</button>
+                <span id="q-save-result"></span>
+            </div>
+        </details>
+    </form>
+
+    <div id="query-results" class="q-results" aria-live="polite"></div>
+</div>
+
+<aside class="q-ref" id="q-ref" data-open="0">
+    <button type="button" class="q-ref-toggle" aria-expanded="false" aria-controls="q-ref-body">&#128216; Reference</button>
+    <div class="q-ref-body" id="q-ref-body" hidden>
+        <div class="q-ref-tabs" role="tablist">
+            {% for key, label in [("tables", "Tables"), ("dates", "Dates"), ("vars", "Variables"), ("tips", "Tips")] %}
+            <button type="button" class="q-ref-tab" data-section="{{ key }}" role="tab">{{ label }}</button>
+            {% endfor %}
+        </div>
+
+        <section class="q-ref-section" data-section="tables" hidden>
+            <input type="search" class="q-ref-search" placeholder="Filter tables and columns" aria-label="Filter tables and columns">
+            <p class="hint">Only {{ acting.name }}'s rows; deleted rows are already left out, so no <code>deleted_at</code> filter is needed.</p>
+            {% for t in overview %}
+            {% if loop.first %}<div class="q-ref-group">Views</div>{% endif %}
+            {% if not t.is_view and (loop.first or overview[loop.index0 - 1].is_view) %}<div class="q-ref-group">Tables</div>{% endif %}
+            <details class="q-ref-table" data-search="{{ t.name }} {{ t.columns | map('first') | join(' ') }}">
+                <summary><code>{{ t.name }}</code> <span class="hint">{{ "{:,}".format(t.count) }} row{{ "" if t.count == 1 else "s" }}</span></summary>
+                <p class="q-ref-desc">{{ t.description }}</p>
+                <button type="button" class="btn-secondary q-preview" data-table="{{ t.name }}">Preview</button>
+                <button type="button" class="btn-secondary q-insert" data-insert="{{ t.name }}">Insert name</button>
+                <ul class="q-cols">
+                    {% for name, type in t.columns %}
+                    <li><button type="button" class="q-insert q-col" data-insert="{{ name }}">{{ name }}</button> <span class="hint">{{ type }}</span></li>
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endfor %}
+        </section>
+
+        <section class="q-ref-section" data-section="dates" hidden>
+            <ul class="q-date-formats">
+                <li><strong><code>YYYY-MM-DD</code></strong> <span class="hint">2026-09-24</span><br>
+                    <code>date</code>, <code>post_date</code> (transactions); utility <code>period_start_date</code>, <code>period_end_date</code>,
+                    <code>due_date</code>; toll statement periods; <code>toll_transactions.date</code></li>
+                <li><strong><code>YYYY-MM</code></strong> <span class="hint">2026-09</span><br><code>statements.statement_period</code></li>
+                <li><strong><code>YYYY-MM-DD HH:MM:SS</code></strong>, local time as printed<br>
+                    <code>toll_transactions.occurred_at</code>, <code>toll_trips.started_at</code> / <code>ended_at</code></li>
+                <li><strong><code>YYYY-MM-DD HH:MM:SS</code></strong> in <strong>UTC</strong> &mdash; near midnight this can be the next or previous local day<br>
+                    <code>created_at</code>, <code>uploaded_at</code>, <code>processed_at</code>, <code>imported_at</code>, <code>confirmed_at</code></li>
+            </ul>
+            {% set date_snippets = [
+                ("Month", "strftime('%Y-%m', date) AS month"),
+                ("Year", "strftime('%Y', date) AS year"),
+                ("US style", "strftime('%m/%d/%Y', date)"),
+                ("Weekday (0 = Sunday)", "strftime('%w', date)"),
+                ("Weekday name", "CASE strftime('%w', date) WHEN '0' THEN 'Sun' WHEN '1' THEN 'Mon' WHEN '2' THEN 'Tue' WHEN '3' THEN 'Wed' WHEN '4' THEN 'Thu' WHEN '5' THEN 'Fri' ELSE 'Sat' END AS weekday"),
+                ("Hour of a toll pass", "strftime('%H', occurred_at) AS hour"),
+                ("A period variable", "(:period_start IS NULL OR date >= :period_start) AND (:period_end IS NULL OR date <= :period_end)"),
+            ] %}
+            <ul class="q-snippets">
+                {% for label, code in date_snippets %}
+                <li><span>{{ label }}</span><code>{{ code }}</code><button type="button" class="btn-secondary q-insert" data-insert="{{ code }}">Insert</button></li>
+                {% endfor %}
+            </ul>
+            <p class="hint">Use a period variable rather than <code>date('now')</code>: SQLite's "now" is UTC, while period presets use the app time zone.</p>
+        </section>
+
+        <section class="q-ref-section" data-section="vars" hidden>
+            <p class="hint">Write <code>:name</code> in the SQL; the Variables panel under the editor then lets you set how a report asks for it.
+                NULL means All, so each filter is written to let NULL through.</p>
+            {% set var_snippets = [
+                ("Account", "Dropdown of the person's accounts (+ All)", ":account", "(:account IS NULL OR account_id = :account)"),
+                ("Period", "This month, Last month, This year, Last year, Last 12 months, All time, Custom", ":period_start, :period_end", "(:period_start IS NULL OR date >= :period_start) AND (:period_end IS NULL OR date <= :period_end)"),
+                ("Category", "Dropdown of categories (+ All)", ":category", "(:category IS NULL OR category = :category)"),
+                ("Text", "Text box", "e.g. :merchant", "(:merchant IS NULL OR description LIKE '%' || :merchant || '%')"),
+                ("Number", "Number box", "e.g. :min_amount", "(:min_amount IS NULL OR ABS(amount) >= :min_amount)"),
+                ("Date", "Date picker", "e.g. :since", "(:since IS NULL OR date >= :since)"),
+            ] %}
+            <ul class="q-snippets q-var-list">
+                {% for label, input, names, code in var_snippets %}
+                <li><span><strong>{{ label }}</strong> <span class="hint">{{ input }} &middot; <code>{{ names }}</code></span></span>
+                    <code>{{ code }}</code><button type="button" class="btn-secondary q-insert" data-insert="{{ code }}">Insert</button></li>
+                {% endfor %}
+            </ul>
+            <p class="hint">Names that suggest a type: <code>account</code> &rarr; Account; <code>period_start</code> + <code>period_end</code> &rarr; Period;
+                <code>category</code> &rarr; Category; <code>since</code>, <code>until</code>, <code>*_date</code> &rarr; Date; <code>min_*</code>, <code>max_*</code> &rarr; Number; anything else &rarr; Text.</p>
+        </section>
+
+        <section class="q-ref-section" data-section="tips" hidden>
+            {% set tips = [
+                ("Money out only", "amount < 0"),
+                ("Money in only", "amount > 0"),
+                ("Like the dashboard (no transfers or excluded rows)", "txn_type != 'transfer' AND is_excluded = 0"),
+                ("Spending as a positive number", "ROUND(-SUM(amount), 2) AS spent"),
+                ("Round to cents", "ROUND(SUM(amount), 2)"),
+                ("With account names", "SELECT * FROM transactions_with_account"),
+            ] %}
+            <ul class="q-snippets">
+                {% for label, code in tips %}
+                <li><span>{{ label }}</span><code>{{ code }}</code><button type="button" class="btn-secondary q-insert" data-insert="{{ code }}">Insert</button></li>
+                {% endfor %}
+            </ul>
+            <p class="hint">Results hold up to 100,000 rows; a run stops after 10 seconds unless "No time limit" is on.</p>
+        </section>
+    </div>
+</aside>
+</div>
+<script src="static/query.js?v={{ app_version }}" defer></script>
+{% endblock %}

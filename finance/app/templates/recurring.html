@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% from "_recurring_macros.html" import override_form, amount_range with context %}
+{% block title %}Recurring{% endblock %}
+
+{# One table shared by the recurring / suggested / dismissed sections. #}
+{% macro series_table(rows, actions) %}
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table recurring-table">
+        <thead>
+            <tr>
+                <th>Merchant</th><th>Amount</th><th>Frequency</th>
+                {% if not selected_account %}<th>Account</th>{% endif %}
+                <th>Last charge</th><th data-no-sort></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td data-label="Merchant"><div class="cell-stack">{{ r.sample_description }}<span class="hint">{{ r.category }}</span></div></td>
+                <td data-label="Amount" data-sort-value="{{ r.amount_min }}">{{ amount_range(r) }}</td>
+                <td data-label="Frequency"><div class="cell-stack">{{ r.frequency or "—" }}{% if r.manually_overridden and r.status == "recurring" %} (manual){% endif %}
+                    <span class="hint">{{ r.occurrence_count }} charge{{ "s" if r.occurrence_count != 1 else "" }}</span></div></td>
+                {% if not selected_account %}<td data-label="Account">{{ r.account_name }}</td>{% endif %}
+                <td data-label="Last charge" data-sort-value="{{ r.last_date }}"><div class="cell-stack">{{ r.last_date }}
+                    <span class="hint">next {{ r.next_date or "—" }}</span></div></td>
+                <td data-label="">
+                    {% for value, label in actions %}
+                    {{ override_form(r.series_key, value, label, selected_account.id if selected_account else "") }}
+                    {% endfor %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+{{ nav.transactions_tabs("recurring", acting_qs) }}
+<h1>Recurring &amp; Subscriptions</h1>
+<p class="hint">
+    Detected from your transaction history: three or more similarly-timed,
+    similarly-sized charges from the same merchant. A merchant that charges two
+    different amounts each month shows up as two lines. Anything you mark or
+    dismiss by hand always wins over the automatic result.
+</p>
+
+<div class="form-row recurring-controls">
+    <form id="recurring-filter" class="add-account-form">
+        <label>
+            Account
+            <select name="account_id"
+                    onchange="var p = []; if (this.value) p.push('account_id=' + this.value);{% if acting_qs %} p.push('{{ acting_qs }}');{% endif %} window.location.href = 'recurring' + (p.length ? '?' + p.join('&') : '');">
+                <option value="">All accounts</option>
+                {% for a in accounts %}
+                <option value="{{ a.id }}" {{ "selected" if selected_account and selected_account.id == a.id else "" }}>
+                    {{ a.name }}{{ " (card)" if a.type == "credit_card" else "" }}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+    </form>
+    <form method="post" action="recurring-scan-all{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+        <input type="hidden" name="account_id" value="{{ selected_account.id if selected_account else '' }}">
+        <button type="submit" class="btn-secondary">Find recurring in all {{ selected_account.name ~ " " if selected_account else "" }}transactions</button>
+    </form>
+</div>
+
+{% if scan_summary %}
+<p class="notice">
+    Scanned {{ scan_summary.scanned }} charge{{ "s" if scan_summary.scanned != 1 else "" }}:
+    {{ scan_summary.recurring | length }} recurring,
+    {{ scan_summary.suggested | length }} possible{% if scan_summary.suggested %} (listed below for you to confirm){% endif %}.
+</p>
+{% endif %}
+
+{% if selected_account and selected_account.type == "credit_card" %}
+<p class="hint">
+    Card-migration view: everything below with an active recurring charge
+    on <strong>{{ selected_account.name }}</strong> is what needs updating
+    if you get a new card number.
+</p>
+{% endif %}
+
+{% if recurring %}
+<h2>Weekly &amp; monthly totals</h2>
+<p class="hint">
+    What your recurring charges add up to, by how often they repeat. Every group is also scaled to a
+    per-month and a per-week figure (a weekly charge &times; 52 &divide; 12 per month, an annual one &divide; 12)
+    so the total row is comparable.
+    {% if totals.skipped %}{{ totals.skipped }} manually marked charge{{ "s" if totals.skipped != 1 else "" }} with no repeat
+    pattern {{ "are" if totals.skipped != 1 else "is" }} not counted.{% endif %}
+</p>
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table totals-table">
+        <thead>
+            <tr><th>Repeats</th><th class="num">Charges</th><th class="num">Each cycle</th><th class="num">Per month</th><th class="num">Per week</th></tr>
+        </thead>
+        <tbody>
+            {% for r in totals.rows %}
+            <tr>
+                <td data-label="Repeats">{{ {"Weekly": "Every week", "Monthly": "Every month", "Quarterly": "Every 3 months", "Annual": "Every year"}.get(r.frequency, "Other schedule") }}</td>
+                <td data-label="Charges" class="num">{{ r.count }}</td>
+                <td data-label="Each cycle" class="num">{{ "%.2f"|format(r.cycle) if r.cycle is not none else "—" }}</td>
+                <td data-label="Per month" class="num">{{ "%.2f"|format(r.monthly) }}</td>
+                <td data-label="Per week" class="num">{{ "%.2f"|format(r.weekly) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr class="totals-row">
+                <td data-label="Repeats">Total</td>
+                <td data-label="Charges" class="num">{{ totals.total.count }}</td>
+                <td data-label="Each cycle" class="num">—</td>
+                <td data-label="Per month" class="num">{{ "%.2f"|format(totals.total.monthly) }}</td>
+                <td data-label="Per week" class="num">{{ "%.2f"|format(totals.total.weekly) }}</td>
+            </tr>
+        </tfoot>
+    </table>
+    </div>
+</div>
+
+<h2>All recurring charges</h2>
+{{ series_table(recurring, [("0", "Dismiss")]) }}
+{% else %}
+<p class="empty-state">No recurring charges detected{{ " on " + selected_account.name if selected_account else "" }} yet.</p>
+{% endif %}
+
+{% if suggested %}
+<h2>Possibly recurring</h2>
+<p class="hint">
+    Only two charges so far, but they look like a schedule. Confirm the ones that are real.
+</p>
+{{ series_table(suggested, [("1", "Mark recurring"), ("0", "Not recurring")]) }}
+{% endif %}
+
+{% if dismissed %}
+<details>
+    <summary><h2 style="display:inline">Dismissed ({{ dismissed | length }})</h2></summary>
+    {{ series_table(dismissed, [("clear", "Restore")]) }}
+</details>
+{% endif %}
+
+{% if unique_merchants is not none %}
+<h2>Every merchant that's ever charged {{ selected_account.name }}</h2>
+<p class="hint">
+    Recurring or not &mdash; catches a saved card on file that hasn't shown
+    a clean recurring pattern yet (a hotel, a one-off retailer).
+</p>
+{% if unique_merchants %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>Merchant</th><th>Last amount</th><th>Last charge</th><th data-no-sort></th></tr>
+        </thead>
+        <tbody>
+            {% for m in unique_merchants %}
+            <tr>
+                <td data-label="Merchant">{{ m.sample_description }}</td>
+                <td data-label="Last amount">{{ "%.2f"|format(m.last_amount) }}</td>
+                <td data-label="Last charge">{{ m.last_date }}</td>
+                <td data-label="">{{ override_form(m.merchant_key, "1", "Mark as recurring", selected_account.id) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No charges on this card yet.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

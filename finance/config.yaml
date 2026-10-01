@@ -1,0 +1,61 @@
+name: "Finance Dashboard"
+version: "1.0.0"
+slug: "finance"
+description: >-
+  Household finances: bank and card statements (PDF/CSV) read by the AI you
+  choose (Ollama, OpenAI-compatible or Claude), categories, transfers,
+  recurring charges, dashboard and reports, per person with sharing.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+
+# Ingress ONLY — no `ports:` mapping, ever (SPEC.md section 1,
+# a hard requirement, not a preference: a host-mapped port would let
+# someone bypass HA auth entirely by hitting the container directly).
+# `panel_admin: false` is required: Home Assistant defaults it to true, which
+# shows the sidebar entry to admins only. Every HA user needs the panel;
+# access WITHIN the app is what's scoped per user (sections 3 and 20).
+ingress: true
+panel_admin: false
+ingress_port: 8321
+# Supervisor restarts the app if this port stops accepting connections.
+watchdog: tcp://[HOST]:[PORT:8321]
+panel_icon: mdi:bank-circle
+panel_title: Finance
+
+# Round 101: lets bootstrap.py read Home Assistant's own configured time
+# zone (Settings -> System -> General -> Time Zone) via Core's REST API
+# (GET http://supervisor/core/api/config), proxied through Supervisor using
+# the SUPERVISOR_TOKEN this flag causes Supervisor to inject as an env var.
+# HA shows a one-time prompt that the app now requests new permissions on
+# the next update because of this -- expected, not a bug. Read-only: this
+# app never writes anything back to Home Assistant's config.
+homeassistant_api: true
+
+# ADMIN_USERS (section 3) and the Ollama endpoint/model (section 4) are
+# app options for now — SPEC.md specs these as eventually
+# admin-editable in-app, but that settings UI doesn't exist yet (a later
+# phase), so they're configured here in the meantime. Moving them into
+# an in-app settings page later doesn't change the schema or auth model
+# at all, just where the value is read from.
+#
+# admin_users is a genuine HA list-type option (an "Add" button + one
+# input per entry in the UI), not a single text field — same pattern the
+# calorie-tracker app this HA integration is modeled on already uses.
+# A single comma-separated string field works but is a worse UI for
+# something that's inherently a list of names.
+# The AI address and model are not app options: they're set in the app on
+# Admin → App settings (admin), stored in its database and applied without a restart.
+options:
+  admin_users: []
+  trusted_client_ips: []
+schema:
+  admin_users:
+    - str
+  # Only needed if Home Assistant's ingress proxy ever connects from an address
+  # other than 172.30.32.2 (the app answers 403 and names the address it saw).
+  trusted_client_ips:
+    - str

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Compare{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div class="subtabs">
+    <a href="dashboard{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab">Overview</a>
+    <a href="dashboard-compare{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab active">Compare</a>
+</div>
+
+<form id="compare-filters" method="get" action="dashboard-compare" class="add-account-form">
+    {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
+    <label>
+        Compare
+        {# Switching between months and years drops the two choices (they are a different kind of value) so the server picks sensible defaults. #}
+        <select name="mode" onchange="this.form.a.disabled = true; this.form.b.disabled = true; this.form.submit();">
+            <option value="month" {{ "selected" if mode == "month" else "" }}>Months</option>
+            <option value="year" {{ "selected" if mode == "year" else "" }}>Years</option>
+        </select>
+    </label>
+    <label>
+        {{ "Year" if mode == "year" else "Month" }} A
+        <select name="a" onchange="this.form.submit()">
+            {% for value, text in options %}<option value="{{ value }}" {{ "selected" if value == a else "" }}>{{ text }}</option>{% endfor %}
+        </select>
+    </label>
+    <label>
+        {{ "Year" if mode == "year" else "Month" }} B
+        <select name="b" onchange="this.form.submit()">
+            {% for value, text in options %}<option value="{{ value }}" {{ "selected" if value == b else "" }}>{{ text }}</option>{% endfor %}
+        </select>
+    </label>
+    <label>
+        Account
+        <select name="account_id" onchange="this.form.submit()">
+            <option value="">All accounts</option>
+            {% for acct in accounts %}
+            <option value="{{ acct.id }}" {{ "selected" if selected_account_id == acct.id else "" }}>{{ acct.name }}{{ " (card)" if acct.type == "credit_card" else "" }}</option>
+            {% endfor %}
+        </select>
+    </label>
+</form>
+
+{# change: signed number; good_when_up says whether an increase is good (income) or bad (spend). #}
+{% macro delta(change, good_when_up) -%}
+{%- if change == 0 -%}<span class="delta">0.00</span>
+{%- else -%}<span class="delta {{ 'delta-good' if (change > 0) == good_when_up else 'delta-bad' }}">{{ "%+.2f"|format(change) }}</span>{%- endif -%}
+{%- endmacro %}
+{% macro pct(value) -%}{%- if value is none -%}&mdash;{%- else -%}{{ "%+.1f"|format(value) }}%{%- endif -%}{%- endmacro %}
+
+{% set account_qs = ("&account_id=" + (selected_account_id | string)) if selected_account_id else "" %}
+{% set acting_part = ("&" + acting_qs) if acting_qs else "" %}
+{% macro drill(value, category, flow, range) -%}
+<a href="transactions?{% if category %}category={{ category | urlencode }}&{% endif %}flow={{ flow }}&start_date={{ range[0] | urlencode }}&end_date={{ range[1] | urlencode }}{{ account_qs }}{{ acting_part }}">{{ "%.2f"|format(value) }}</a>
+{%- endmacro %}
+
+<h2>{{ label_a }} vs {{ label_b }}</h2>
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table compare-table" data-no-sort>
+        <thead>
+            <tr><th></th><th class="num">{{ label_a }}</th><th class="num">{{ label_b }}</th><th class="num">Change</th><th class="num">Change %</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td data-label="">Income</td>
+                <td data-label="{{ label_a }}" class="num">{{ drill(income.a, "", "income", range_a) }}</td>
+                <td data-label="{{ label_b }}" class="num">{{ drill(income.b, "", "income", range_b) }}</td>
+                <td data-label="Change" class="num">{{ delta(income.change, true) }}</td>
+                <td data-label="Change %" class="num">{{ pct(income.pct) }}</td>
+            </tr>
+            <tr>
+                <td data-label="">Spend</td>
+                <td data-label="{{ label_a }}" class="num">{{ drill(spend.a, "", "expense", range_a) }}</td>
+                <td data-label="{{ label_b }}" class="num">{{ drill(spend.b, "", "expense", range_b) }}</td>
+                <td data-label="Change" class="num">{{ delta(spend.change, false) }}</td>
+                <td data-label="Change %" class="num">{{ pct(spend.pct) }}</td>
+            </tr>
+            <tr class="totals-row">
+                <td data-label="">Left over (income &minus; spend)</td>
+                <td data-label="{{ label_a }}" class="num">{{ "%.2f"|format(net.a) }}</td>
+                <td data-label="{{ label_b }}" class="num">{{ "%.2f"|format(net.b) }}</td>
+                <td data-label="Change" class="num">{{ delta(net.change, true) }}</td>
+                <td data-label="Change %" class="num">&mdash;</td>
+            </tr>
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<p class="cmp-legend"><span class="cmp-swatch cmp-a"></span>{{ label_a }} <span class="cmp-swatch cmp-b"></span>{{ label_b }}</p>
+
+{% macro category_table(rows, max_value, flow, good_when_up) %}
+<div class="card">
+    <div class="table-scroll">
+    <table class="statements-table compare-table" data-no-sort>
+        <thead>
+            <tr><th>Category</th><th class="num">{{ label_a }}</th><th class="num">{{ label_b }}</th><th class="num">Change</th><th class="num">Change %</th><th class="cmp-bars-col">Compare</th></tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td data-label="Category">{{ r.category }}</td>
+                <td data-label="{{ label_a }}" class="num">{{ drill(r.a, r.category, flow, range_a) if r.a else "—" }}</td>
+                <td data-label="{{ label_b }}" class="num">{{ drill(r.b, r.category, flow, range_b) if r.b else "—" }}</td>
+                <td data-label="Change" class="num">{{ delta(r.change, good_when_up) }}</td>
+                <td data-label="Change %" class="num">{{ pct(r.pct) }}</td>
+                <td data-label="Compare" class="cmp-bars-col">
+                    <div class="cmp-bars" aria-hidden="true">
+                        <div class="cmp-bar cmp-a" style="width: {{ '%.1f'|format(r.a / max_value * 100 if max_value else 0) }}%"></div>
+                        <div class="cmp-bar cmp-b" style="width: {{ '%.1f'|format(r.b / max_value * 100 if max_value else 0) }}%"></div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endmacro %}
+
+<h2>Spend by category</h2>
+{% if spend_rows %}{{ category_table(spend_rows, spend_max, "expense", false) }}
+{% else %}<p class="empty-state">No spending in {{ label_a }} or {{ label_b }}{{ " on this account" if selected_account_id else "" }}.</p>{% endif %}
+
+<h2>Income by category</h2>
+{% if income_rows %}{{ category_table(income_rows, income_max, "income", true) }}
+{% else %}<p class="empty-state">No income in {{ label_a }} or {{ label_b }}{{ " on this account" if selected_account_id else "" }}.</p>{% endif %}
+
+<p class="hint">
+    Same rules as the Overview: reviewed transactions only, transfers and anything marked &ldquo;Exclude&rdquo; left out,
+    income counted on checking/savings accounts only, a credit-card purchase counted as spend. Click an amount to see its transactions.
+</p>
+{% endblock %}

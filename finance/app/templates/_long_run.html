@@ -1,0 +1,23 @@
+{# A no-time-limit run in progress, or the run in the way (SPEC.md section 19.11). #}
+{% if run %}
+<div class="q-long-run" {% if poll_form %}hx-post="{{ poll_url }}" hx-include="{{ poll_form }}"{% else %}hx-get="{{ poll_url }}"{% endif %} hx-trigger="every 3s" hx-target="this" hx-swap="outerHTML">
+    <span class="q-spinner" aria-hidden="true"></span>
+    Running&hellip; {{ elapsed_text }} <span class="hint">(no time limit; you can leave this page and come back)</span>
+    <button type="button" class="btn-secondary" hx-post="long-run-cancel?run={{ run.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+            hx-target="closest .q-long-run" hx-swap="outerHTML">Cancel</button>
+</div>
+{% elif busy %}
+<div class="q-long-run q-busy">
+    {% if busy_mine %}
+    You already have a long query running ({{ busy.label }}, {{ busy_elapsed }}). Cancel it first, then run this one.
+    {% else %}
+    Another long report is running &mdash; try again in a moment.
+    {% endif %}
+    {% if busy_mine or is_admin %}
+    <button type="button" class="btn-secondary" hx-post="long-run-cancel?run={{ busy.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+            hx-target="closest .q-long-run" hx-swap="outerHTML">Cancel {{ "it" if busy_mine else "that run" }}</button>
+    {% endif %}
+</div>
+{% elif cancelled %}
+<div class="q-long-run">{{ cancelled }}</div>
+{% endif %}

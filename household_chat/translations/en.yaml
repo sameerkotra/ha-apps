@@ -1,0 +1,8 @@
+configuration:
+  admin_users:
+    name: Admin users
+    description: >-
+      Home Assistant user names or user ids (not display names) of the people who
+      manage Household Chat: enable people, notification services, home/away,
+      App settings, storage and backups. Admins can't read chats they aren't in.
+      Restart the app after changing this (Information tab → Restart).

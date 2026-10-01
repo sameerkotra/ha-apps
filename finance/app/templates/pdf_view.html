@@ -1,0 +1,138 @@
+{% extends "pdf_layout_embed.html" if embed else "base.html" %}
+{% block title %}{{ doc.title }}{% endblock %}
+{% block content %}
+{# The statement's PDF as page images, with its own money in / money out (or a bill's total) highlighted. #}
+<div class="pdf-viewer">
+    {% if not embed %}
+    <p><a href="{{ doc.back }}{% if acting_qs %}{{ '&' if '?' in doc.back else '?' }}{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Back</a></p>
+    {% endif %}
+    <h2 class="pdf-title">{{ doc.title }}</h2>
+
+    {% if error %}
+    <p class="empty-state">{{ error }}</p>
+    {% else %}
+    <div class="pdf-toolbar">
+        {% if summary %}
+        <ul class="pdf-summary">
+            {% for s in summary %}
+            <li>
+                <span class="pdf-swatch pdf-hit-{{ s.kind }}"></span>
+                <strong>{{ s.label }}</strong> {{ s.amount }}
+                {% if s.pages %}&mdash; found on {{ "page" if s.pages|length == 1 else "pages" }}
+                    {% for n in s.pages %}<a href="#pdf-page-{{ n }}" class="pdf-jump">{{ n }}</a>{% endfor %}
+                {% elif s.searched %}&mdash; <span class="pdf-missing">not printed in this PDF as a figure</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+
+        <form method="get" action="pdf-view" class="pdf-search">
+            <input type="hidden" name="kind" value="{{ doc.kind }}">
+            <input type="hidden" name="id" value="{{ doc.id }}">
+            {% if embed %}<input type="hidden" name="embed" value="1">{% endif %}
+            {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
+            <input type="search" name="q" value="{{ q }}" placeholder="Search this PDF (e.g. total deposits)" aria-label="Search this PDF">
+            <button type="submit" class="btn-secondary">Search</button>
+        </form>
+        {% if q %}
+        <p class="hint">
+            {% if q_pages %}&ldquo;{{ q }}&rdquo; found on {{ "page" if q_pages|length == 1 else "pages" }}
+                {% for n in q_pages %}<a href="#pdf-page-{{ n }}" class="pdf-jump">{{ n }}</a>{% endfor %}.
+            {% else %}&ldquo;{{ q }}&rdquo; was not found in this PDF.{% endif %}
+        </p>
+        {% endif %}
+
+        {% if doc.can_confirm %}
+        {# Embedded, submit into the app page holding the modal; "_top" would be HA's own
+           window, which the companion app opens in the phone browser (no ingress there). #}
+        <form method="post" action="statement-confirm{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="pdf-confirm"
+              {% if embed %}target="_parent"{% endif %}>
+            <input type="hidden" name="id" value="{{ doc.id }}">
+            <button type="submit">Confirm &mdash; matches the PDF</button>
+        </form>
+        {% endif %}
+    </div>
+
+    <div class="pdf-pages">
+        {% for pg in pages %}
+        <div class="pdf-page" id="pdf-page-{{ pg.number }}" style="aspect-ratio: {{ pg.width }} / {{ pg.height }};">
+            <img src="pdf-page?kind={{ doc.kind }}&amp;id={{ doc.id }}&amp;page={{ pg.number }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}"
+                 alt="Page {{ pg.number }}" loading="{{ 'eager' if loop.first else 'lazy' }}">
+            {% for h in pg.hits %}
+            <span class="pdf-hit pdf-hit-{{ h.kind }}" title="{{ h.label }}"
+                  style="left: {{ '%.3f'|format(h.left) }}%; top: {{ '%.3f'|format(h.top) }}%; width: {{ '%.3f'|format(h.width) }}%; height: {{ '%.3f'|format(h.height) }}%;"></span>
+            {% endfor %}
+            <span class="pdf-page-number">Page {{ pg.number }} of {{ pages|length }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    <script>
+    (function () {
+        // The toolbar is sticky and its height varies, so publish it as a CSS
+        // var: .pdf-page's scroll-margin-top keeps page-jump links below it.
+        function syncToolbarHeight() {
+            var toolbar = document.querySelector(".pdf-toolbar");
+            if (toolbar) {
+                document.documentElement.style.setProperty("--pdf-toolbar-h", toolbar.offsetHeight + "px");
+            }
+        }
+        syncToolbarHeight();
+        window.addEventListener("resize", syncToolbarHeight);
+
+        // Start at the first highlighted figure (the containers reserve their height, so this is accurate).
+        var hit = document.querySelector(".pdf-hit");
+        if (hit) hit.scrollIntoView({ block: "center" });
+
+        // Pinch-to-zoom handled here (native pinch is unreliable several
+        // iframes deep; see style.css's .pdf-pages): two fingers scale
+        // --pdf-zoom by the change in their distance, clamped to 1x-4x.
+        // One finger is left alone, so native scrolling pans.
+        var pagesEl = document.querySelector(".pdf-pages");
+        if (pagesEl && "ontouchstart" in window) {
+            var pinch = null; // { startDist, startZoom }
+
+            function touchDist(touches) {
+                var dx = touches[0].clientX - touches[1].clientX;
+                var dy = touches[0].clientY - touches[1].clientY;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+            function currentZoom() {
+                var raw = getComputedStyle(pagesEl).getPropertyValue("--pdf-zoom").trim();
+                var n = parseFloat(raw);
+                return isNaN(n) ? 1 : n;
+            }
+            function setZoom(z) {
+                z = Math.max(1, Math.min(4, z));
+                pagesEl.style.setProperty("--pdf-zoom", z.toFixed(3));
+                pagesEl.classList.toggle("is-zoomed", z > 1.001);
+            }
+
+            pagesEl.addEventListener("touchstart", function (e) {
+                if (e.touches.length === 2) {
+                    pinch = { startDist: touchDist(e.touches), startZoom: currentZoom() };
+                } else {
+                    pinch = null;
+                }
+            }, { passive: true });
+
+            pagesEl.addEventListener("touchmove", function (e) {
+                if (e.touches.length === 2 && pinch) {
+                    e.preventDefault(); // don't also let the browser try its own page-level pinch-zoom
+                    var dist = touchDist(e.touches);
+                    if (pinch.startDist > 0) {
+                        setZoom(pinch.startZoom * (dist / pinch.startDist));
+                    }
+                }
+            }, { passive: false });
+
+            pagesEl.addEventListener("touchend", function (e) {
+                if (e.touches.length < 2) pinch = null;
+            }, { passive: true });
+            pagesEl.addEventListener("touchcancel", function () { pinch = null; }, { passive: true });
+        }
+    })();
+    </script>
+    {% endif %}
+</div>
+{% endblock %}

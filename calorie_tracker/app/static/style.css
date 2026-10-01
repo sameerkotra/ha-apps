@@ -1,0 +1,819 @@
+/* ---------- theming ----------
+   Every theme below defines the SAME set of custom properties; the rest of
+   this stylesheet only ever reads them via var(...), never a hardcoded
+   color. Adding a theme is a copy of one block below with new hex values —
+   nothing else in this file needs to change. See app.js for the bootstrap
+   script (applies the saved theme before first paint) and the #theme-select
+   change handler. Midnight is also the :root default (what renders before
+   the bootstrap script has run). */
+:root {
+  --radius: 12px;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root, [data-theme="midnight"] {
+  --bg: #10151c;
+  --panel: #1a2130;
+  --panel-alt: #202a3d;
+  --panel-hover: #24304a;
+  --border: #2b3549;
+  --text: #e7ecf5;
+  --text-dim: #93a0b8;
+  --accent: #5ee6a8;
+  --accent-dim: #3a9c72;
+  --accent-hover: #7bf0bc;
+  --accent-contrast: #0a1410;
+  --accent-soft: #1d2c26;
+  --protein: #5ee6a8;
+  --carbs: #f2c94c;
+  --fat: #ef7b7b;
+  --danger: #ef7b7b;
+  color-scheme: dark;
+}
+
+[data-theme="slate"] {
+  --bg: #0e1420;
+  --panel: #16202f;
+  --panel-alt: #1c2a3d;
+  --panel-hover: #223350;
+  --border: #283449;
+  --text: #e7ecf5;
+  --text-dim: #93a3ba;
+  --accent: #6aa6ff;
+  --accent-dim: #3f6fb0;
+  --accent-hover: #93c0ff;
+  --accent-contrast: #08111f;
+  --accent-soft: #1a2c47;
+  --protein: #6aa6ff;
+  --carbs: #f2c94c;
+  --fat: #ef7b7b;
+  --danger: #ef7b7b;
+  color-scheme: dark;
+}
+
+[data-theme="daylight"] {
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-alt: #eef1f7;
+  --panel-hover: #e3e9f4;
+  --border: #d8dfec;
+  --text: #1c2430;
+  --text-dim: #5b6577;
+  --accent: #2f6fed;
+  --accent-dim: #1d4fb0;
+  --accent-hover: #4d84ff;
+  --accent-contrast: #ffffff;
+  --accent-soft: #e4ecff;
+  --protein: #2f6fed;
+  --carbs: #b8860b;
+  --fat: #c94f4f;
+  --danger: #c94f4f;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+#app { display: flex; min-height: 100vh; }
+
+/* ---------- sidebar ---------- */
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  transition: width 0.15s ease;
+}
+
+/* Collapse toggle — a small round button pinned to the sidebar's own right
+   edge (sticking out over the boundary with the main column), so it reads
+   as "grab this to shrink the panel it's attached to" regardless of which
+   state the sidebar is currently in. */
+.sidebar-collapse-btn {
+  position: absolute;
+  top: 18px;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0;
+  z-index: 5;
+}
+.sidebar-collapse-btn:hover { background: var(--panel-hover); color: var(--text); }
+
+.sidebar .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  padding: 0 20px 18px;
+}
+.brand-icon { font-size: 1.3rem; }
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px;
+}
+
+.side-nav .tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 11px 12px;
+  cursor: pointer;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: left;
+  border-left: 3px solid transparent;
+}
+.side-nav .tab-btn:hover { background: var(--panel-alt); color: var(--text); }
+.side-nav .tab-btn.active {
+  background: var(--panel-alt);
+  color: var(--accent);
+  border-left: 3px solid var(--accent);
+}
+.nav-icon { font-size: 1.05rem; width: 20px; text-align: center; }
+
+.sidebar-user {
+  margin-top: auto;
+  padding: 12px 20px 8px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.sidebar-user:hover { color: var(--accent); }
+
+/* "How the app sees you" */
+.kv-row { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.kv-row:last-child { border-bottom: none; }
+.kv-label { color: var(--text-dim); font-size: 0.85rem; }
+.kv-value { font-weight: 600; word-break: break-all; text-align: right; display: flex; align-items: center; gap: 6px; }
+.kv-value code, #whoamiBody code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+.kv-copy { padding: 2px 7px; font-size: 0.8rem; }
+#whoamiBody .hint { margin-top: 10px; }
+
+.sidebar-theme {
+  padding: 0 20px 16px;
+}
+.sidebar-theme .theme-select {
+  width: 100%;
+}
+
+/* ---------- collapsed sidebar (icons only) ----------
+   Driven by [data-sidebar="collapsed"] on <html> (not a class on .sidebar
+   itself) so the same bootstrap-script trick used for the theme can apply
+   it before first paint, avoiding a flash of the expanded layout on
+   reload. See index.html's <head> script + app.js's sidebarCollapseBtn
+   handler. */
+[data-sidebar="collapsed"] .sidebar { width: 68px; }
+
+[data-sidebar="collapsed"] .brand-text,
+[data-sidebar="collapsed"] .nav-label,
+[data-sidebar="collapsed"] .sidebar-user,
+[data-sidebar="collapsed"] .sidebar-theme {
+  display: none;
+}
+
+[data-sidebar="collapsed"] .sidebar .brand {
+  justify-content: center;
+  padding: 0 0 18px;
+}
+
+[data-sidebar="collapsed"] .side-nav {
+  padding: 0 10px;
+}
+
+[data-sidebar="collapsed"] .side-nav .tab-btn {
+  justify-content: center;
+  gap: 0;
+  padding: 11px 0;
+}
+
+
+/* ---------- main column ---------- */
+.main-col { flex: 1; min-width: 0; }
+
+main { max-width: 900px; margin: 0 auto; padding: 0 16px 48px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 18px 4px 10px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.topbar-right { display: flex; gap: 8px; align-items: center; }
+
+/* Day selector: its own row, always visible above the tabs, since Food Log
+   and the Dashboard are both scoped to whichever date is selected here. */
+.date-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 4px 18px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.date-nav-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  line-height: 1;
+  border-radius: 999px;
+  flex: none;
+}
+.date-nav-btn:disabled { opacity: 0.35; cursor: default; }
+
+.date-picker-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 150px;
+  padding: 6px 34px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-family: inherit;
+}
+.date-picker-wrap:hover { background: var(--panel-hover); }
+
+.date-label-main { font-weight: 700; font-size: 1rem; color: var(--text); }
+.date-label-sub { font-size: 0.72rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+
+.date-calendar-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.95rem;
+  opacity: 0.65;
+}
+
+.date-today-btn { flex: none; white-space: nowrap; }
+.date-today-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* The real date input stays in the DOM (so #datePickerBtn's showPicker()
+   call and the change event both have something to act on) but is never
+   itself the visible control — .date-picker-wrap is. */
+.date-input-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: none;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+select, input, textarea, button {
+  font-family: inherit;
+  font-size: 0.9rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+textarea { resize: vertical; line-height: 1.4; }
+
+input::placeholder, textarea::placeholder { color: var(--text-dim); }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.card h3 { margin-top: 0; font-size: 1rem; color: var(--text); }
+
+/* A heading that introduces a group of cards without being a card itself
+   (e.g. "Day Summary" above the stat-card grid at the bottom of Food Log). */
+.section-heading {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 24px 0 10px;
+}
+
+/* Month picker for the Dashboard's Monthly Breakdown card — same building
+   blocks as the top-level day .date-bar, just without a "Today" button and
+   scoped smaller/left-aligned to sit inside a card instead of its own row. */
+.month-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.hint { color: var(--text-dim); font-size: 0.85rem; }
+
+/* Wraps the hand-drawn canvas charts (history + weight history) so the
+   hover tooltip can be positioned absolutely over the exact bar/point the
+   pointer (or, via arrow keys, the keyboard) is on. */
+.chart-wrap { position: relative; }
+
+.chart-wrap canvas {
+  display: block;
+  width: 100%;
+  cursor: crosshair;
+}
+
+.chart-wrap canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chart-tooltip {
+  /* left/top are computed and clamped in JS (attachChartHover) so the
+     tooltip stays centered over its bar/point but never runs off the
+     chart's own edges — no CSS transform here, since that math needs the
+     tooltip's real rendered width/height, not a fixed percentage. */
+  position: absolute;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 5;
+}
+
+.chart-tooltip-value { display: block; font-size: 0.85rem; font-weight: 700; color: var(--text); }
+.chart-tooltip-label { display: block; font-size: 0.75rem; color: var(--text-dim); margin-top: 1px; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-card .value { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+.stat-card .label { font-size: 0.78rem; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em;}
+.stat-card.over .value { color: var(--danger); }
+
+.form-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.form-row input, .form-row select, .form-row textarea { flex: 1; min-width: 90px; }
+
+.form-row label {
+  flex: 1;
+  min-width: 130px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.form-row label input { width: 100%; color: var(--text); font-size: 0.95rem; }
+
+.btn-primary, .btn-secondary, .btn-icon {
+  cursor: pointer;
+  font-weight: 600;
+  border: none;
+  /* so an <a> (e.g. the admin DB-download link) styled with these classes
+     renders button-shaped instead of picking up browser default link
+     styling (underline, inline layout). */
+  display: inline-block;
+  text-decoration: none;
+}
+
+.btn-primary { background: var(--accent); color: var(--accent-contrast); }
+.btn-primary:hover { background: var(--accent-hover); }
+
+.btn-secondary { background: var(--panel-alt); color: var(--accent); border: 1px solid var(--accent-dim); }
+.btn-secondary:hover { background: var(--panel-hover); }
+
+.btn-icon { background: var(--panel-alt); color: var(--text); border: 1px solid var(--border); }
+
+/* The `.btn-*` classes above set `display: inline-block` for link-as-button
+   styling, which (being an author rule) overrides the browser default
+   `[hidden] { display: none }` (a user-agent rule always loses to any
+   matching author rule). Restate it here so `hidden` still hides a button
+   — e.g. #sfCancelEditBtn — regardless of which `.btn-*` class it also has. */
+[hidden] { display: none !important; }
+
+/* An <a>, so it doesn't get the base `button` sizing — restate it. */
+.storage-download-btn { margin-top: 4px; font-size: 0.9rem; padding: 8px 10px; border-radius: 8px; }
+.weight-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+}
+.weight-item:last-child { border-bottom: none; }
+.log-item-main { display: flex; flex-direction: column; }
+.log-item-main .name { font-weight: 600; }
+.log-item-main .meta { font-size: 0.78rem; color: var(--text-dim); }
+
+.tag {
+  font-size: 0.7rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 20px;
+  padding: 2px 8px;
+  text-transform: capitalize;
+}
+
+.item-actions { display: flex; gap: 6px; }
+.item-actions button {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.item-actions button:hover { color: var(--danger); }
+.item-actions .use-btn:hover { color: var(--accent); }
+
+.macro-bar-row { margin-bottom: 14px; }
+.macro-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  margin-bottom: 5px;
+  color: var(--text-dim);
+}
+.macro-bar-track {
+  height: 10px;
+  background: var(--panel-alt);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.macro-bar-fill { height: 100%; border-radius: 6px; transition: width 0.3s; }
+
+.history-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.hist-btn {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 6px 14px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.hist-btn.active { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-soft); }
+.hist-btn:hover { color: var(--text); }
+
+#historyChart { width: 100%; display: block; }
+#weightChart { width: 100%; display: block; }
+
+.user-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+}
+.user-row:last-child { border-bottom: none; }
+.user-row .name { font-weight: 600; }
+.user-row .you-badge {
+  font-size: 0.7rem;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  border-radius: 20px;
+  padding: 1px 8px;
+  margin-left: 8px;
+  font-weight: 600;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.toggle-switch input { display: none; }
+.toggle-switch .track {
+  position: absolute;
+  inset: 0;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  transition: background 0.2s;
+}
+.toggle-switch .thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: var(--text-dim);
+  border-radius: 50%;
+  transition: left 0.2s, background 0.2s;
+}
+.toggle-switch input:checked + .track { background: var(--accent-soft); border-color: var(--accent-dim); }
+.toggle-switch input:checked + .track .thumb { left: 20px; background: var(--accent); }
+
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  margin-left: 6px;
+}
+.status-dot.ok { background: var(--accent); }
+.status-dot.err { background: var(--danger); }
+
+.chat-history {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.chat-msg { padding: 10px 12px; border-radius: 10px; max-width: 85%; font-size: 0.9rem; line-height: 1.4; }
+.chat-msg.user { align-self: flex-end; background: var(--accent-dim); color: var(--accent-contrast); }
+.chat-msg.ai { align-self: flex-start; background: var(--panel-alt); border: 1px solid var(--border); }
+.chat-msg.loading { color: var(--text-dim); font-style: italic; }
+
+/* ---------- data tables (saved foods / today's log) ---------- */
+.table-wrap { overflow-x: auto; }
+
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.data-table th, .data-table td {
+  padding: 9px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.data-table th {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.data-table td.col-name { font-weight: 600; white-space: normal; }
+.data-table td.col-details { white-space: normal; max-width: 260px; }
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:hover { background: var(--panel-alt); }
+.data-table td.col-actions { white-space: nowrap; text-align: right; }
+.data-table .item-actions { justify-content: flex-end; }
+
+.details-snippet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  max-width: 100%;
+}
+.details-snippet .snippet-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.enlarge-btn {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.enlarge-btn:hover { background: var(--panel-hover); }
+
+/* ---------- modal (enlarge details) ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+.modal-overlay[hidden] { display: none; }
+.modal-box {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-width: 480px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; font-size: 1rem; }
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+@media (max-width: 760px) {
+  #app { flex-direction: column; }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    flex-direction: row;
+    padding: 6px 4px;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    z-index: 50;
+  }
+  .sidebar .brand, .sidebar-theme, .sidebar-user, .sidebar-collapse-btn { display: none; }
+  /* Collapse is a desktop-only affordance — mobile already gets the
+     compact bottom-bar layout unconditionally, so ignore any saved
+     collapsed state here rather than shrinking the bottom bar too. */
+  [data-sidebar="collapsed"] .sidebar { width: 100%; }
+  .side-nav {
+    flex-direction: row;
+    justify-content: space-around;
+    width: 100%;
+    padding: 0;
+    overflow-x: auto;
+  }
+  .side-nav .tab-btn {
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    border-left: none;
+    border-radius: 10px;
+    font-size: 0.65rem;
+    white-space: nowrap;
+  }
+  .side-nav .tab-btn.active { border-left: none; background: var(--panel-alt); }
+  .nav-icon { font-size: 1.15rem; }
+
+  .main-col { padding-bottom: 78px; }
+
+  .topbar { flex-direction: column; align-items: stretch; padding-top: 14px; }
+  .topbar-right { justify-content: space-between; }
+
+  .date-bar { padding-bottom: 14px; gap: 6px; }
+  .date-picker-wrap { min-width: 120px; padding: 6px 30px; }
+  .date-today-btn { padding: 8px; }
+
+  .data-table { font-size: 0.8rem; }
+  .data-table th, .data-table td { padding: 8px 6px; }
+  .details-snippet .snippet-text { max-width: 120px; }
+  .modal-box { max-height: 88vh; }
+}
+
+/* ---------- Admin page (App settings | Users | Storage) ---------- */
+/* The tab row reuses the .hist-btn pill look; it wraps on narrow screens. */
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 14px;
+}
+.settings-help { margin: -4px 0 12px; }
+.settings-help code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; }
+.settings-status { overflow-wrap: anywhere; }
+.settings-status:empty { display: none; }
+.settings-status.ok { color: var(--accent); }
+.settings-status.err { color: var(--danger); }
+.settings-group { margin: 18px 0 10px; font-size: 0.9rem; color: var(--text); }
+.settings-group:first-of-type { margin-top: 6px; }
+.setting-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.setting-toggle-label { font-size: 0.9rem; }
+.settings-footnote { margin-top: 18px; }
+
+/* Phones: tighter bottom-bar buttons so all items (incl. Admin for admins)
+   fit at ~390 px; narrower screens still scroll the bar sideways. */
+@media (max-width: 420px) {
+  .side-nav .tab-btn { padding: 6px 3px; }
+}
+
+/* ---------- "No admin yet" banner, AI notices ---------- */
+.app-banner {
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.app-banner code, .ai-notice code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+button.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+.ai-notice { margin-top: 10px; font-size: 0.85rem; line-height: 1.5; overflow-wrap: anywhere; }
+.ai-notice p { margin: 6px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--panel-alt); border-left: 3px solid var(--carbs); }
+.ai-notice .notice-warn { border-left-color: var(--danger); }
+.settings-check { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; margin: -4px 0 8px; }
+.settings-check input { width: auto; }
+button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
+@media (max-width: 760px) { .app-banner { margin: 10px 12px 0; } }

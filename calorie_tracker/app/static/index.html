@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calorie Tracker</title>
+<script>
+(function () {
+    var THEMES = ["midnight", "slate", "daylight"];
+    try {
+        var theme = localStorage.getItem("theme");
+        if (theme && THEMES.indexOf(theme) !== -1) {
+            document.documentElement.setAttribute("data-theme", theme);
+        }
+        if (localStorage.getItem("sidebarCollapsed") === "1") {
+            document.documentElement.setAttribute("data-sidebar", "collapsed");
+        }
+    } catch (e) { /* localStorage unavailable (private mode, etc.) */ }
+})();
+</script>
+<link rel="stylesheet" href="style.css?v=2.0.0">
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar">
+    <button id="sidebarCollapseBtn" class="sidebar-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+    <div class="brand"><span class="brand-icon">🥗</span><span class="brand-text">Calorie Tracker</span></div>
+    <nav class="side-nav">
+      <button class="tab-btn" data-tab="dashboard" title="Dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></button>
+      <button class="tab-btn active" data-tab="foodlog" title="Food Log"><span class="nav-icon">🍽️</span><span class="nav-label">Food Log</span></button>
+      <button class="tab-btn" data-tab="savedfoods" title="Saved Foods"><span class="nav-icon">⭐</span><span class="nav-label">Saved Foods</span></button>
+      <button class="tab-btn" data-tab="weight" title="Weight"><span class="nav-icon">⚖️</span><span class="nav-label">Weight</span></button>
+      <button class="tab-btn" data-tab="goals" title="Goals"><span class="nav-icon">🎯</span><span class="nav-label">Goals</span></button>
+      <button class="tab-btn" data-tab="ai" title="AI Assistant"><span class="nav-icon">🤖</span><span class="nav-label">AI Assistant</span></button>
+      <button class="tab-btn" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+    </nav>
+    <button type="button" class="sidebar-user" id="sidebarUser" title="How the app sees you">—</button>
+    <div class="sidebar-theme">
+      <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
+        <option value="midnight">🌙 Midnight</option>
+        <option value="slate">🌆 Slate</option>
+        <option value="daylight">☀️ Daylight</option>
+      </select>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <header class="topbar">
+      <div class="topbar-right">
+        <button type="button" id="whoamiBtn" class="btn-secondary whoami-btn" title="How the app sees you" aria-label="How the app sees you">👤</button>
+        <select id="userSelect" title="Viewing data for"></select>
+      </div>
+    </header>
+
+    <!-- "No admin yet" (admin_users is empty): shown to everyone on every page. -->
+    <div id="noAdminBanner" class="app-banner" role="alert" hidden>
+      <strong>No admin yet</strong> — add your Home Assistant user name
+      (<strong><code id="noAdminName">—</code></strong>) to <code>admin_users</code> in the app's
+      Configuration tab, save, and restart the app.
+      <button type="button" id="noAdminWhoamiLink" class="link-btn">How the app sees you</button>
+    </div>
+
+    <div class="date-bar" id="dateBar">
+      <button type="button" id="datePrevBtn" class="btn-icon date-nav-btn" title="Previous day" aria-label="Previous day">‹</button>
+      <button type="button" id="datePickerBtn" class="date-picker-wrap" title="Pick a date" aria-label="Pick a date">
+        <span id="dateLabelMain" class="date-label-main">—</span>
+        <span id="dateLabelSub" class="date-label-sub"></span>
+        <span class="date-calendar-icon" aria-hidden="true">📅</span>
+      </button>
+      <button type="button" id="dateNextBtn" class="btn-icon date-nav-btn" title="Next day" aria-label="Next day">›</button>
+      <button type="button" id="dateTodayBtn" class="btn-secondary date-today-btn" title="Jump to today">Today</button>
+      <input id="dateInput" type="date" class="date-input-hidden" aria-label="Pick a date" tabindex="-1">
+    </div>
+
+    <main>
+    <!-- DASHBOARD -->
+    <section id="tab-dashboard" class="tab-panel">
+      <div class="card">
+        <h3>Summary</h3>
+        <div class="history-toggle">
+          <button class="hist-btn cal-hist-btn active" data-granularity="daily">Daily</button>
+          <button class="hist-btn cal-hist-btn" data-granularity="weekly">Weekly</button>
+          <button class="hist-btn cal-hist-btn" data-granularity="monthly">Monthly</button>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="historyChart" height="160" tabindex="0" aria-label="Calorie history chart. Use arrow keys to step through values."></canvas>
+          <div class="chart-tooltip" id="historyTooltip" role="status" hidden></div>
+        </div>
+        <div class="hint" id="historyHint"></div>
+      </div>
+      <div class="card">
+        <h3>Monthly Breakdown</h3>
+        <div class="month-bar" id="monthBar">
+          <button type="button" id="monthPrevBtn" class="btn-icon date-nav-btn" title="Previous month" aria-label="Previous month">‹</button>
+          <button type="button" id="monthPickerBtn" class="date-picker-wrap" title="Pick a month" aria-label="Pick a month">
+            <span id="monthLabelMain" class="date-label-main">—</span>
+            <span class="date-calendar-icon" aria-hidden="true">📅</span>
+          </button>
+          <button type="button" id="monthNextBtn" class="btn-icon date-nav-btn" title="Next month" aria-label="Next month">›</button>
+          <input id="monthInput" type="month" class="date-input-hidden" aria-label="Pick a month" tabindex="-1">
+        </div>
+        <div class="card-grid" id="monthSummaryGrid"></div>
+        <div class="hint" id="monthSummaryHint"></div>
+      </div>
+    </section>
+
+    <!-- FOOD LOG -->
+    <section id="tab-foodlog" class="tab-panel active">
+      <div class="card">
+        <h3>Add Food</h3>
+        <div class="form-row">
+          <select id="mealType">
+            <option value="breakfast">Breakfast</option>
+            <option value="lunch">Lunch</option>
+            <option value="dinner">Dinner</option>
+            <option value="snack" selected>Snack</option>
+          </select>
+          <select id="savedFoodPicker">
+            <option value="">— pick a saved food —</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <input id="foodName" placeholder="Food name" style="flex:2">
+          <input id="foodServings" type="number" step="0.1" value="1" placeholder="Servings" style="flex:1">
+        </div>
+        <div class="form-row">
+          <input id="foodCalories" type="number" step="1" placeholder="Calories">
+          <input id="foodProtein" type="number" step="0.1" placeholder="Protein (g)">
+          <input id="foodCarbs" type="number" step="0.1" placeholder="Carbs (g)">
+          <input id="foodFat" type="number" step="0.1" placeholder="Fat (g)">
+        </div>
+        <div class="form-row">
+          <button id="aiFillBtn" class="btn-secondary">✨ Estimate with AI</button>
+          <button id="addFoodBtn" class="btn-primary">Add Food</button>
+        </div>
+        <div id="aiFillStatus" class="hint"></div>
+        <div class="ai-notice" hidden></div>
+      </div>
+
+      <div class="card">
+        <h3>Log</h3>
+        <div id="foodLogList" class="table-wrap"></div>
+      </div>
+
+      <h3 class="section-heading">Day Summary</h3>
+      <div class="card-grid" id="summaryCards"></div>
+      <div class="card">
+        <h3>Macros</h3>
+        <div id="macroBars"></div>
+      </div>
+    </section>
+
+    <!-- SAVED FOODS -->
+    <section id="tab-savedfoods" class="tab-panel">
+      <div class="card">
+        <h3 id="sfFormTitle">Build a Repeated Food</h3>
+        <p class="hint">Save foods you eat often (e.g. "Protein Shake", "Chicken & Rice Bowl") so you can add them to your log in one click.</p>
+        <div class="form-row">
+          <input id="sfName" placeholder="Food name" style="flex:2">
+          <input id="sfServingSize" type="number" step="0.1" value="1" placeholder="Serving size">
+          <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" value="serving">
+        </div>
+        <div class="form-row">
+          <input id="sfCalories" type="number" step="1" placeholder="Calories">
+          <input id="sfProtein" type="number" step="0.1" placeholder="Protein (g)">
+          <input id="sfCarbs" type="number" step="0.1" placeholder="Carbs (g)">
+          <input id="sfFat" type="number" step="0.1" placeholder="Fat (g)">
+        </div>
+        <div class="form-row">
+          <textarea id="sfNotes" placeholder="Additional details (optional) — recipe, brand, prep notes..." rows="2" style="flex:1"></textarea>
+        </div>
+        <div class="form-row">
+          <button id="sfAiFillBtn" class="btn-secondary">✨ Estimate with AI</button>
+          <button id="sfCancelEditBtn" class="btn-secondary" hidden>Cancel</button>
+          <button id="sfSaveBtn" class="btn-primary">Save Food</button>
+        </div>
+        <div class="ai-notice" hidden></div>
+      </div>
+      <div class="card">
+        <h3>Your Saved Foods</h3>
+        <div id="savedFoodsList" class="table-wrap"></div>
+      </div>
+    </section>
+
+    <!-- Shared "enlarge details" popup -->
+    <div id="detailsModal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3 id="detailsModalTitle">Details</h3>
+          <button type="button" id="detailsModalClose" class="btn-icon" title="Close" aria-label="Close">✕</button>
+        </div>
+        <div id="detailsModalBody" class="modal-body"></div>
+      </div>
+    </div>
+
+    <!-- WEIGHT -->
+    <section id="tab-weight" class="tab-panel">
+      <div class="card">
+        <h3>Log Weight</h3>
+        <div class="form-row">
+          <input id="weightDate" type="date">
+          <input id="weightValue" type="number" step="0.1" placeholder="Weight (kg)">
+          <input id="weightNote" placeholder="Note (optional)" style="flex:2">
+          <button id="addWeightBtn" class="btn-primary">Log Weight</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Weight History</h3>
+        <div class="history-toggle">
+          <button class="hist-btn wt-hist-btn active" data-granularity="daily">Daily</button>
+          <button class="hist-btn wt-hist-btn" data-granularity="weekly">Weekly</button>
+          <button class="hist-btn wt-hist-btn" data-granularity="monthly">Monthly</button>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="weightChart" height="160" tabindex="0" aria-label="Weight history chart. Use arrow keys to step through values."></canvas>
+          <div class="chart-tooltip" id="weightTooltip" role="status" hidden></div>
+        </div>
+        <div class="hint" id="weightHistoryHint"></div>
+        <div id="weightList"></div>
+      </div>
+    </section>
+
+    <!-- GOALS -->
+    <section id="tab-goals" class="tab-panel">
+      <div class="card">
+        <h3>Daily Macro Goals</h3>
+        <div class="form-row">
+          <label>Calories<input id="goalCalories" type="number"></label>
+          <label>Protein (g)<input id="goalProtein" type="number"></label>
+          <label>Carbs (g)<input id="goalCarbs" type="number"></label>
+          <label>Fat (g)<input id="goalFat" type="number"></label>
+        </div>
+        <h3>Weight Goal</h3>
+        <div class="form-row">
+          <label>Starting Weight (kg)<input id="goalStartWeight" type="number" step="0.1"></label>
+          <label>Target Weight (kg)<input id="goalTargetWeight" type="number" step="0.1"></label>
+        </div>
+        <button id="saveGoalsBtn" class="btn-primary">Save Goals</button>
+      </div>
+    </section>
+
+    <!-- ADMIN (admins only; the server enforces it too). Tabs: App settings | Users | Storage.
+         Deep links: #/admin/settings, #/admin/users, #/admin/storage (#/storage and #/users open the matching tab). -->
+    <section id="tab-admin" class="tab-panel">
+      <div id="adminDenied" class="card" hidden>
+        <h3>🛡️ Admin</h3>
+        <p class="hint">Only admins can open this page.</p>
+      </div>
+      <div id="adminBody" hidden>
+        <div class="admin-tabs" role="tablist" aria-label="Admin sections">
+          <button type="button" class="hist-btn admin-tab-btn" role="tab" data-admin-tab="settings">App settings</button>
+          <button type="button" class="hist-btn admin-tab-btn" role="tab" data-admin-tab="users">Users</button>
+          <button type="button" class="hist-btn admin-tab-btn" role="tab" data-admin-tab="storage">Storage</button>
+        </div>
+
+        <!-- App settings -->
+        <div id="admin-settings" class="admin-panel" role="tabpanel" hidden>
+          <div class="card">
+            <h3>App settings</h3>
+            <div class="ai-notice" hidden></div>
+            <h4 class="settings-group">🤖 AI</h4>
+            <p class="hint settings-help">Used by "✨ Estimate with AI" and the AI Assistant. Leave the provider on "Not set up" to run without AI — everything else works.</p>
+            <div class="form-row">
+              <label>Provider
+                <select id="setAiProvider">
+                  <option value="">Not set up (no AI)</option>
+                  <option value="ollama">Ollama (your own computer or server)</option>
+                  <option value="openai">OpenAI-compatible (OpenAI, OpenRouter, Groq, LM Studio, …)</option>
+                  <option value="anthropic">Anthropic Claude</option>
+                </select>
+              </label>
+            </div>
+            <p class="hint settings-help">Ollama runs models on your own hardware, so nothing leaves your network. OpenAI-compatible covers OpenAI and any service or local server that speaks its API. Claude is Anthropic's API.</p>
+            <div class="form-row">
+              <label>Address
+                <input id="setAiUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="500" placeholder="http://192.168.1.10:11434">
+              </label>
+            </div>
+            <p class="hint settings-help">Ollama: its address, e.g. http://192.168.1.10:11434 (required). OpenAI-compatible: the API base — blank = https://api.openai.com/v1 (LM Studio: e.g. http://192.168.1.10:1234/v1). Claude: blank = https://api.anthropic.com.</p>
+            <div class="form-row">
+              <label>Model
+                <input id="setAiModel" type="text" autocomplete="off" spellcheck="false" maxlength="200" placeholder="e.g. llama3.1:8b, gpt-4o-mini, claude-sonnet-4-5">
+              </label>
+            </div>
+            <p class="hint settings-help">The model's exact name. <strong>Test connection</strong> lists the models the provider offers.</p>
+            <div class="form-row">
+              <label>Access key
+                <input id="setAiApiKey" type="password" autocomplete="new-password" spellcheck="false" maxlength="500" placeholder="Paste the key">
+              </label>
+            </div>
+            <label id="setAiClearKeyRow" class="settings-check" hidden><input id="setAiClearKey" type="checkbox"> Remove the saved key</label>
+            <p class="hint settings-help">Needed for Claude and for OpenAI and most cloud services; not for Ollama or LM Studio. Stored in the app's database, never shown again, never logged, and left out of database downloads. Leave the box empty to keep the saved key.</p>
+            <div class="form-row">
+              <label>Longest answer (tokens)
+                <input id="setAiMaxTokens" type="number" min="256" max="200000" step="1" inputmode="numeric">
+              </label>
+            </div>
+            <p class="hint settings-help">The most the model may write in one answer. Claude requires a limit; the other providers ignore it. <span id="setAiMaxTokensDefault"></span></p>
+            <div class="form-row">
+              <button type="button" id="settingsTestBtn" class="btn-secondary">🔌 Test connection</button>
+            </div>
+            <p class="hint settings-help">Uses what's typed above, before saving (an empty key box uses the saved key). Only asks the provider which models it offers — nothing is generated, so it costs nothing.</p>
+            <div id="settingsTestStatus" class="hint settings-status" role="status"></div>
+
+            <h4 class="settings-group">🏠 Home Assistant</h4>
+            <div class="setting-toggle-row">
+              <span id="setExposeSensorLabel" class="setting-toggle-label">Publish daily calories to Home Assistant</span>
+              <label class="toggle-switch" title="Publish daily calories to Home Assistant">
+                <input id="setExposeSensor" type="checkbox" aria-labelledby="setExposeSensorLabel">
+                <span class="track"><span class="thumb"></span></span>
+              </label>
+            </div>
+            <p class="hint settings-help">Publishes only each person's calories logged today, as <code>sensor.calorie_tracker_&lt;user&gt;_daily_calories</code> — never macros, weight or food names. Turning it on publishes everyone's sensor right away; turning it off removes those sensors from Home Assistant. <span id="setExposeSensorDefault"></span></p>
+
+            <p class="hint settings-help settings-footnote">Changes apply right away — no restart needed. Only who counts as an admin is set in the app's Configuration tab (<code>admin_users</code>).</p>
+            <div class="form-row">
+              <button type="button" id="settingsSaveBtn" class="btn-primary">Save settings</button>
+            </div>
+            <div id="settingsSaveStatus" class="hint settings-status" role="status"></div>
+          </div>
+        </div>
+
+        <!-- Users -->
+        <div id="admin-users" class="admin-panel" role="tabpanel" hidden>
+          <div class="card">
+            <h3>Household Users</h3>
+            <p class="hint">
+              Everyone listed here has opened this app through their own Home Assistant
+              login at least once — there's no way to add a user manually. Use the dropdown
+              at the top to switch which person's data you're viewing or editing. Disabling
+              a user just hides them from that dropdown for everyone else; it doesn't lock
+              them out of their own data or delete anything.
+            </p>
+            <div id="usersList"></div>
+          </div>
+        </div>
+
+        <!-- Storage -->
+        <div id="admin-storage" class="admin-panel" role="tabpanel" hidden>
+          <div class="card">
+            <h3>Database Backup</h3>
+            <p class="hint">
+              Download a full, consistent snapshot of the app's SQLite database —
+              every household member's data, not just yours — for a manual backup
+              or to inspect with an external SQLite tool.
+            </p>
+            <a href="api/admin-storage-download-db" class="btn-secondary storage-download-btn">⬇️ Download database (.db)</a>
+          </div>
+
+          <div class="card">
+            <h3>Restore from Backup</h3>
+            <p class="hint" style="color:var(--danger)">
+              ⚠️ Restoring replaces every household member's data with the contents
+              of the file you upload. There is no merge and no undo — use this
+              only to recover onto a fresh install (e.g. after a reinstall or a
+              lost /data volume), not as routine use.
+            </p>
+            <div class="form-row">
+              <input id="restoreDbFile" type="file" accept=".db">
+              <button id="restoreDbBtn" class="btn-secondary">⬆️ Import database (.db)</button>
+            </div>
+            <div id="restoreDbStatus" class="hint"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW THE APP SEES YOU (reached from the user chip; no nav tab) -->
+    <section id="tab-whoami" class="tab-panel">
+      <div class="card">
+        <h3>How the app sees you</h3>
+        <div id="whoamiBody"><p class="hint">Loading…</p></div>
+      </div>
+    </section>
+
+    <!-- AI -->
+    <section id="tab-ai" class="tab-panel">
+      <div class="card">
+        <h3>AI Assistant <span id="aiStatusDot" class="status-dot"></span></h3>
+        <p class="hint" id="aiStatusText">Checking the AI setup…</p>
+        <p class="hint" id="aiUsageText" hidden></p>
+        <button id="aiWarmupBtn" class="btn-secondary" hidden>Wake up model</button>
+        <div class="ai-notice" hidden></div>
+      </div>
+      <div class="card">
+        <h3>Ask a nutrition question</h3>
+        <div id="chatHistory" class="chat-history"></div>
+        <div class="form-row">
+          <input id="chatInput" placeholder="e.g. Is 150g protein a day too much?" style="flex:3">
+          <button id="chatSendBtn" class="btn-primary">Send</button>
+        </div>
+      </div>
+    </section>
+    </main>
+  </div>
+</div>
+
+<script src="backnav.js?v=2.0.0"></script>
+<script src="app.js?v=2.0.0"></script>
+</body>
+</html>

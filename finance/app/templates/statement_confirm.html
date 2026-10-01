@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Confirm statement{% endblock %}
+{% block content %}
+<h1>Confirm statement</h1>
+
+<div class="card">
+    <h3>{{ statement.account_name }} &mdash; {{ statement.original_filename or "statement" }}</h3>
+    <p class="hint">
+        Open the PDF (its money in and money out figures are highlighted) and check that they match what was
+        extracted below. Once you confirm, the statement is marked complete and
+        the PDF is deleted.
+    </p>
+
+    <p>
+        {% if pdf_available %}
+        <button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ statement.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">Open PDF</button>
+        {% else %}
+        <span class="hint">The PDF is no longer available, so it can&rsquo;t be checked here.</span>
+        {% endif %}
+    </p>
+
+    <table class="detail-table">
+        <tr><th>Period</th><td>{{ statement.statement_period or "&mdash;"|safe }}</td></tr>
+        <tr><th>Transactions</th><td>{{ txn_count }}</td></tr>
+        <tr><th>Money in</th><td>{{ "%.2f"|format(flow.money_in) }}</td></tr>
+        <tr><th>Money out</th><td>{{ "%.2f"|format(flow.money_out) }}</td></tr>
+        {% if statement.previous_balance is not none and statement.new_balance is not none %}
+        <tr><th>Printed balance</th><td>{{ "%.2f"|format(statement.previous_balance) }} &rarr; {{ "%.2f"|format(statement.new_balance) }}</td></tr>
+        {% endif %}
+    </table>
+    {% if statement.account_type == "credit_card" %}
+    <p class="hint">For a credit card, &ldquo;Money in&rdquo; is the payments and credits on the statement and &ldquo;Money out&rdquo; is the purchases and charges.</p>
+    {% endif %}
+
+    {% if statement.balance_mismatch %}
+    <p class="empty-state">Balance check: {{ statement.balance_mismatch }} Confirming also acknowledges this.</p>
+
+    <h3>Transactions in this statement</h3>
+    <p class="hint">
+        The balance check above means the extracted total doesn&rsquo;t match this statement&rsquo;s printed
+        balance movement &mdash; often because one real line was read twice (for example, a totals line
+        mistaken for its own transaction). Compare against the PDF; if one row here is an obvious duplicate
+        of another (same date, description and amount), use <strong>Remove</strong> to permanently delete just
+        that one row and re-check. This is a real, permanent delete &mdash; not the usual restorable Delete
+        &mdash; since a duplicated extraction was never a real transaction to begin with.
+    </p>
+    {% if transactions %}
+    <div class="table-scroll">
+    <table class="detail-table">
+        <thead>
+            <tr><th>Date</th><th>Description</th><th>Amount</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for t in transactions %}
+            <tr>
+                <td>{{ t.date }}</td>
+                <td>{{ t.description }}</td>
+                <td class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+                <td>
+                    <form method="post" action="statement-remove-transaction{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+                          onsubmit="return confirm('Permanently delete this one transaction? This cannot be undone.');">
+                        <input type="hidden" name="transaction_id" value="{{ t.id }}">
+                        <button type="submit" class="btn-danger">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% endif %}
+    {% endif %}
+    {% if flagged_count %}
+    <p class="empty-state">
+        {{ flagged_count }} transaction{{ "s" if flagged_count != 1 else "" }} still need{{ "" if flagged_count != 1 else "s" }} review.
+        Confirming records your check; the statement completes once those are resolved on the
+        <a href="review{% if acting_qs %}?{{ acting_qs }}{% endif %}">Review</a> page.
+    </p>
+    {% endif %}
+
+    <form method="post" action="statement-confirm{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+        <input type="hidden" name="id" value="{{ statement.id }}">
+        <div class="form-row">
+            <button type="submit">Confirm &mdash; matches the PDF</button>
+            <a href="uploads{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">Back</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

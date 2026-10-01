@@ -1,0 +1,16 @@
+# Keep the files exactly as Home Assistant's Linux build expects them, whatever the
+# operating system they are checked out or edited on: text with LF line endings,
+# images and other binaries untouched.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.ttf  binary
+*.db   binary
+*.pdf  binary

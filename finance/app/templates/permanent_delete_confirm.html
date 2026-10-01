@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Permanently delete {{ label }}{% endblock %}
+{% block content %}
+<h1>Permanently delete {{ label }}</h1>
+
+<div class="card">
+    <table class="statements-table">
+        <tbody>
+            {% for name, value in details %}
+            <tr><th scope="row">{{ name }}</th><td>{{ value }}</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="hint">
+        This cannot be undone.
+        {% if child_count %}
+        It also erases {{ child_count }} deleted row{{ "s" if child_count != 1 else "" }} that belong to it.
+        {% endif %}
+        Any PDF still stored for it is removed too.
+    </p>
+
+    {% if error %}
+    <p class="empty-state">{{ error }}</p>
+    {% endif %}
+
+    <form method="post" action="permanent-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        <input type="hidden" name="id" value="{{ item_id }}">
+        <label>
+            Type <strong>{{ confirm_label }}</strong> to confirm
+            <input type="text" name="confirm_text" id="confirm-text-input" autocomplete="off" required>
+        </label>
+        <div class="form-row" style="margin-top: 0.75rem;">
+            <button type="submit" class="restart-btn" id="confirm-delete-btn" disabled>Delete forever</button>
+            <a href="recently-deleted{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<script>
+(function () {
+    var expected = {{ confirm_label | tojson }};
+    var input = document.getElementById("confirm-text-input");
+    var btn = document.getElementById("confirm-delete-btn");
+    input.addEventListener("input", function () {
+        btn.disabled = input.value.trim() !== expected;
+    });
+})();
+</script>
+{% endblock %}

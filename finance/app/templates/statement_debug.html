@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Debug: {{ statement.original_filename }}{% endblock %}
+{% block content %}
+<p><a href="uploads" class="btn-secondary">&larr; Upload &middot; Statements</a>
+    <a href="review" class="btn-secondary">Review</a></p>
+<h1>Debug: {{ statement.original_filename or "statement #" ~ statement.id }}</h1>
+<p class="hint">Admin-only troubleshooting view — not shown to regular users.</p>
+<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ statement.id }}&amp;embed=1">View PDF</button></p>
+
+<div class="card">
+    <h3>Statement details</h3>
+    <table class="detail-table">
+        <tr><th>Account</th><td>{{ statement.account_name }}</td></tr>
+        <tr><th>User</th><td>{{ statement.user_id }}</td></tr>
+        <tr><th>Status</th><td>{{ statement.status }}</td></tr>
+        <tr><th>Current step</th><td>{{ statement.current_step or "—" }}</td></tr>
+        <tr><th>Error</th><td>{{ statement.error_message or "—" }}</td></tr>
+        <tr><th>Raw text length</th><td>{{ statement.raw_text_length or "—" }}</td></tr>
+        <tr><th>File hash</th><td><code>{{ statement.file_hash or "—" }}</code></td></tr>
+    </table>
+</div>
+
+{% with usage=ai_usage_view(statement.ai_usage), usage_title="AI usage — last processing run" %}{% include "_ai_usage.html" %}{% endwith %}
+
+<div class="card">
+    <h3>Resend to AI <span id="resendDot" class="status-dot"></span></h3>
+    <p class="hint" id="resendHint">
+        Re-sends the source PDF directly, bypassing the normal pipeline entirely —
+        no timeout (waits as long as it genuinely takes), no retry loop, shows the
+        FULL raw response (not just one field — a reasoning model can put its real
+        output in a "thinking" field while leaving "response" empty, which would
+        otherwise look like nothing came back at all).
+    </p>
+    <form id="resendForm" method="post" action="statement-debug-resend?id={{ statement.id }}">
+        <button type="submit" id="resendBtn" class="btn-primary">Resend to the AI (no timeout)</button>
+    </form>
+    <script>
+    document.getElementById("resendForm").addEventListener("submit", function () {
+        // Immediate feedback that the (potentially very long) request has
+        // actually started — a native form POST gives no in-page signal
+        // otherwise, and a multi-minute wait with zero feedback looks
+        // identical to a hung page.
+        var btn = document.getElementById("resendBtn");
+        var dot = document.getElementById("resendDot");
+        var hint = document.getElementById("resendHint");
+        btn.disabled = true;
+        btn.textContent = "Sending\u2026 waiting for the AI";
+        dot.className = "status-dot pending";
+        hint.textContent = "Request sent — this genuinely has no timeout, so it may sit here for several minutes on a large local model. The page will reload automatically once a response comes back.";
+        // Deliberately NOT preventDefault() — this lets the native form
+        // submission proceed normally; the feedback above just makes the
+        // long wait visible instead of looking stuck.
+    });
+    </script>
+
+    {% if resend_error %}
+    <p class="hint" style="color: var(--danger);">Resend failed: {{ resend_error }}</p>
+    {% endif %}
+    {% if resend_elapsed is defined %}
+    <p class="hint" style="color: var(--accent);">
+        Completed in {{ "%.1f"|format(resend_elapsed) }}s — response below has been updated.
+    </p>
+    {% endif %}
+    {% if resend_usage is defined %}{% with usage=ai_usage_view(resend_usage), usage_title="AI usage — this re-send", usage_card=false %}{% include "_ai_usage.html" %}{% endwith %}{% endif %}
+</div>
+
+<div class="card">
+    <h3>Transactions from this statement</h3>
+    <p class="hint">
+        Amount check: each transaction's amount is checked against every
+        money-shaped figure actually printed in the statement's extracted
+        text (deterministic path, below). This doesn't re-derive the
+        transaction independently — it confirms the LLM's amount wasn't
+        misread or fabricated (a real case this caught: $287.00 read back
+        as $2187).
+    </p>
+    {% if transactions %}
+    {% set confirmed_count = transactions | selectattr("review_status", "equalto", "clean") | list | length %}
+    {% set flagged_count = transactions | selectattr("review_status", "equalto", "pending_review") | list | length %}
+    <p class="hint">{{ confirmed_count }} confirmed, {{ flagged_count }} flagged — amount not found anywhere in the statement text.</p>
+    <table class="statements-table">
+        <thead>
+            <tr><th>Date</th><th>Amount</th><th>Description</th><th>Amount check</th></tr>
+        </thead>
+        <tbody>
+            {% for t in transactions %}
+            <tr>
+                <td data-label="Date">{{ t.date }}</td>
+                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+                <td data-label="Description">{{ t.description }}</td>
+                <td data-label="Amount check">
+                    {% if t.review_status == "clean" %}
+                    <span class="status-badge status-complete">confirmed in statement text</span>
+                    {% else %}
+                    <span class="status-badge status-pending_review">not found in statement text</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="hint">No transactions recorded for this statement yet.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    {% if statement.extraction_notes %}
+    <h3>Notes sent with the last re-extract</h3>
+    <p class="hint" style="white-space: pre-wrap;">{{ statement.extraction_notes }}</p>
+    {% endif %}
+    <h3>Balance reconciliation</h3>
+    <p class="hint">
+        Sum of extracted transactions checked against the statement's own
+        printed previous → new balance movement — catches a missing or
+        duplicated transaction that per-transaction amount checking can't
+        (every row can individually check out and the total still be
+        wrong).
+    </p>
+    {% if statement.previous_balance is none or statement.new_balance is none %}
+    <p class="hint">Not checked — couldn't find both a previous/beginning and a new/ending balance in the statement text.</p>
+    {% else %}
+    <table class="detail-table">
+        <tr><th>Previous balance</th><td>{{ "%.2f"|format(statement.previous_balance) }}</td></tr>
+        <tr><th>New balance</th><td>{{ "%.2f"|format(statement.new_balance) }}</td></tr>
+    </table>
+    {% if statement.balance_mismatch %}
+    <p class="hint" style="color: var(--danger);">{{ statement.balance_mismatch }}</p>
+    {% else %}
+    <p class="hint" style="color: var(--accent);">Reconciled — extracted transactions account for the statement's printed balance movement.</p>
+    {% endif %}
+    {% endif %}
+    {% if duplicate_transactions %}
+    <p class="hint" style="color: var(--danger);">
+        {{ duplicate_transactions|length }} line{{ "s" if duplicate_transactions|length != 1 else "" }}
+        from this extraction skipped during import (duplicate, or a $0.00 line that wasn't a real charge):
+    </p>
+    <ul class="hint">
+        {% for note in duplicate_transactions %}
+        <li>{{ note }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+
+{% with transactions=transactions, llm_prompt=statement.categorization_llm_prompt, llm_raw_response=statement.categorization_llm_raw_response, llm_error=statement.categorization_llm_error %}
+{% include "_categorization_breakdown.html" %}
+{% endwith %}
+
+<div class="card">
+    <h3>Extracted amounts (deterministic)</h3>
+    <p class="hint">
+        Every money-shaped figure <code>pdftotext</code> found anywhere in
+        this statement, with duplicates — what each transaction's amount
+        above was checked against. This is not a transaction list: page
+        totals, running balances, credit limits and the like are
+        candidates here too, same as real transaction amounts.
+    </p>
+    {% if statement.deterministic_amounts %}
+    <pre class="debug-raw">{{ statement.deterministic_amounts }}</pre>
+    {% else %}
+    <p class="hint">No amounts captured yet — extraction may not have run (or hasn't completed).</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>Raw AI response</h3>
+    {% if statement.llm_raw_response is not none and statement.llm_raw_response != "" %}
+    <pre class="debug-raw">{{ statement.llm_raw_response }}</pre>
+    {% elif statement.llm_raw_response == "" %}
+    <p class="hint" style="color: var(--warn);">
+        A call completed, but the AI's response came back as a literal empty string —
+        not "hasn't run yet." Worth checking whether the model is still loading, or
+        producing output somewhere the "Resend" action above can now actually show.
+    </p>
+    {% else %}
+    <p class="hint">No response captured yet — the AI call may not have run (or hasn't completed).</p>
+    {% endif %}
+</div>
+{% endblock %}

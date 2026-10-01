@@ -1,0 +1,30 @@
+{# Plain English → SQL status (SPEC.md section 19.7). #}
+{% set qs = "&" + acting_qs if acting_qs else "" %}
+{% macro again(label="Try again") %}
+<button type="button" class="btn-secondary" hx-post="sql-assist-start{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+        hx-target="#q-ai-status">{{ label }}</button>
+{% endmacro %}
+{% if job and job.running %}
+<div class="q-ai-box" hx-get="sql-assist-status?job={{ job.id }}{{ qs }}" hx-trigger="every 2s" hx-target="this" hx-swap="outerHTML">
+    <span class="q-spinner" aria-hidden="true"></span> {{ job.step }}&hellip; <span class="hint">{{ elapsed_text }}</span>
+</div>
+{% elif job and job.error %}
+<div class="q-ai-box q-ai-failed">
+    <span class="q-error-inline">{{ job.error }}</span> {{ again() }}
+    {% if job.usage %}{% set u = ai_usage_view(job.usage) %}{% if u %}<p class="hint q-ai-usage">AI: {{ u.rows|length }} request{{ "s" if u.rows|length != 1 }}, {{ "{:,}".format(u.input_tokens) }} tokens in, {{ "{:,}".format(u.output_tokens) }} out, {{ "%.1f"|format(u.seconds) }} s{% if u.cost is not none %}, ${{ "%.4f"|format(u.cost) }}{% endif %}</p>{% endif %}{% endif %}
+</div>
+{% elif job %}
+<div class="q-ai-box q-ai-result" data-sql="{{ job.sql }}" data-applied="0">
+    <div><strong>Put into the editor</strong> &mdash; review it, then Run. <span class="hint">({{ elapsed_text }})</span></div>
+    {% if job.explanation %}<p class="q-ai-explain">{{ job.explanation }}</p>{% endif %}
+    {% if job.warning %}<p class="q-warn">{{ job.warning }}</p>{% endif %}
+    {% if job.usage %}{% set u = ai_usage_view(job.usage) %}{% if u %}<p class="hint q-ai-usage">AI: {{ u.rows|length }} request{{ "s" if u.rows|length != 1 }}, {{ "{:,}".format(u.input_tokens) }} tokens in, {{ "{:,}".format(u.output_tokens) }} out, {{ "%.1f"|format(u.seconds) }} s{% if u.cost is not none %}, ${{ "%.4f"|format(u.cost) }}{% endif %}</p>{% endif %}{% endif %}
+    <div class="q-actions">
+        <button type="submit">Run it</button>
+        <button type="button" class="btn-secondary q-ai-undo">Undo (put my SQL back)</button>
+        {{ again("Ask again") }}
+    </div>
+</div>
+{% elif message %}
+<div class="q-ai-box q-ai-failed"><span class="q-error-inline">{{ message }}</span> {% if retry %}{{ again() }}{% endif %}</div>
+{% endif %}

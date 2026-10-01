@@ -1,0 +1,45 @@
+{# Shared by the Storage → Query tab and the Reports pages (SPEC.md section 19). #}
+
+{% from "_nav_macros.html" import admin_tabs %}
+{% macro storage_tabs(active, acting_qs) %}{{ admin_tabs(active, acting_qs) }}{% endmacro %}
+
+{# One input for one variable's value. `got` is report_vars.form_value(). #}
+{% macro var_input(v, got, choices, presets) %}
+{% set key = "v_" ~ v.name %}
+<label class="q-var">
+    <span>{{ v.display_label }}</span>
+    {% if v.type == "account" %}
+    <select name="{{ key }}">
+        {% if v.allow_all %}<option value="all" {{ "selected" if got.value in ("", "all") else "" }}>All accounts</option>{% endif %}
+        {% for a in choices.accounts %}
+        <option value="{{ a.id }}" {{ "selected" if got.value == a.id|string else "" }}>{{ a.name }}{% if a.account_number_last4 %} ··{{ a.account_number_last4 }}{% endif %}</option>
+        {% endfor %}
+    </select>
+    {% elif v.type == "category" %}
+    <select name="{{ key }}">
+        {% if v.allow_all %}<option value="all" {{ "selected" if got.value in ("", "all") else "" }}>All categories</option>{% endif %}
+        {% for c in choices.categories %}
+        <option value="{{ c }}" {{ "selected" if got.value == c else "" }}>{{ c }}</option>
+        {% endfor %}
+    </select>
+    {% elif v.type == "period" %}
+    <select name="{{ key }}" class="q-period-select">
+        {% for value, label in presets %}
+        {% if value != "all" or v.allow_all %}
+        <option value="{{ value }}" {{ "selected" if got.preset == value else "" }}>{{ label }}</option>
+        {% endif %}
+        {% endfor %}
+    </select>
+    <span class="q-period-custom" {% if got.preset != "custom" %}hidden{% endif %}>
+        <input type="date" name="{{ key }}_from" value="{{ got.from }}" aria-label="{{ v.display_label }} from">
+        <input type="date" name="{{ key }}_to" value="{{ got.to }}" aria-label="{{ v.display_label }} to">
+    </span>
+    {% elif v.type == "number" %}
+    <input type="number" step="any" name="{{ key }}" value="{{ got.value }}" {% if v.allow_all %}placeholder="All"{% endif %}>
+    {% elif v.type == "date" %}
+    <input type="date" name="{{ key }}" value="{{ got.value }}">
+    {% else %}
+    <input type="text" name="{{ key }}" value="{{ got.value }}" {% if v.allow_all %}placeholder="All"{% endif %} maxlength="500">
+    {% endif %}
+</label>
+{% endmacro %}

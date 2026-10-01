@@ -1,0 +1,31 @@
+{# Dashboard fragment: one table per utility type (see routes/utilities.py).
+   No status, actions or file names here — those are on the Upload tab. #}
+{% import "_utility_table_macros.html" as m %}
+{# While any bill is still processing, the wrapper re-fetches itself every 3s (carrying the current filters), so the
+   Dashboard fills in as bills finish instead of staying stale until a manual refresh. Once nothing is processing the
+   re-rendered wrapper has no trigger and polling stops by itself. #}
+<div id="utility-bills-table-wrap"{% if processing %}
+     hx-get="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+     hx-trigger="every 3s" hx-include="#utility-filters" hx-target="this" hx-swap="outerHTML"{% endif %}>
+{% if grouped.untyped %}
+<div class="card">
+    <h3>Processing / needs attention</h3>
+    {{ m.simple_bill_table(grouped.untyped, acting_qs, is_admin, show_actions=False, show_file=False) }}
+</div>
+{% endif %}
+
+<div class="card">
+    <h3>Electric</h3>
+    {{ m.electric_bill_table(grouped.electric, acting_qs, is_admin, show_actions=False) }}
+</div>
+
+<div class="card">
+    <h3>Gas</h3>
+    {{ m.simple_type_bill_table(grouped.gas, acting_qs, is_admin, "No gas bills match the current filters.", show_actions=False) }}
+</div>
+
+<div class="card">
+    <h3>Water</h3>
+    {{ m.simple_type_bill_table(grouped.water, acting_qs, is_admin, "No water bills match the current filters.", show_actions=False) }}
+</div>
+</div>

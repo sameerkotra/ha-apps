@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% macro purge_link(kind, id) -%}
+<a href="permanent-delete-confirm?kind={{ kind }}&id={{ id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-danger">Purge</a>
+{%- endmacro %}
+{% block title %}Recently deleted{% endblock %}
+{% block content %}
+{{ nav.admin_tabs("deleted", acting_qs) }}
+<h1>Recently deleted</h1>
+<p class="hint">
+    Anything deleted from this account stays here for 30 days before it's
+    permanently purged &mdash; restore it any time before then with one click.
+</p>
+
+<h2>Statements</h2>
+{% if statements %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>Account</th><th>Period</th><th>Transactions</th><th>Deleted</th><th>Restore</th><th>Purge</th></tr>
+        </thead>
+        <tbody>
+            {% for s in statements %}
+            <tr>
+                <td data-label="Account">{{ s.account_name }}</td>
+                <td data-label="Period">{{ s.statement_period or "—" }}</td>
+                <td data-label="Transactions">{{ s.txn_count }}</td>
+                <td data-label="Deleted">{{ s.deleted_at }}</td>
+                <td data-label="Restore">
+                    <form method="post" action="statement-restore{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="id" value="{{ s.id }}">
+                        <button type="submit" class="btn-secondary">Restore</button>
+                    </form>
+                </td>
+                <td data-label="Purge">
+                    {{ purge_link("statement", s.id) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No deleted statements.</p>
+{% endif %}
+
+<h2>CSV imports</h2>
+{% if csv_imports %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>File</th><th>Transactions</th><th>Deleted</th><th>Restore</th><th>Purge</th></tr>
+        </thead>
+        <tbody>
+            {% for c in csv_imports %}
+            <tr>
+                <td data-label="File">{{ c.original_filename or "—" }}</td>
+                <td data-label="Transactions">{{ c.txn_count }}</td>
+                <td data-label="Deleted">{{ c.deleted_at }}</td>
+                <td data-label="Restore">
+                    <form method="post" action="csv-import-restore{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="id" value="{{ c.id }}">
+                        <button type="submit" class="btn-secondary">Restore</button>
+                    </form>
+                </td>
+                <td data-label="Purge">
+                    {{ purge_link("csv_import", c.id) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No deleted CSV imports.</p>
+{% endif %}
+
+<h2>Standalone transactions</h2>
+{% if transactions %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>Date</th><th>Account</th><th>Description</th><th>Amount</th><th>Deleted</th><th>Restore</th><th>Purge</th></tr>
+        </thead>
+        <tbody>
+            {% for t in transactions %}
+            <tr>
+                <td data-label="Date">{{ t.date }}</td>
+                <td data-label="Account">{{ t.account_name }}</td>
+                <td data-label="Description">{{ t.description }}</td>
+                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+                <td data-label="Deleted">{{ t.deleted_at }}</td>
+                <td data-label="Restore">
+                    <form method="post" action="transaction-restore{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="id" value="{{ t.id }}">
+                        <button type="submit" class="btn-secondary">Restore</button>
+                    </form>
+                </td>
+                <td data-label="Purge">
+                    {{ purge_link("transaction", t.id) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No deleted standalone transactions.</p>
+{% endif %}
+
+<h2>Accounts</h2>
+{% if accounts %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>Name</th><th>Type</th><th>Deleted</th><th>Restore</th><th>Purge</th></tr>
+        </thead>
+        <tbody>
+            {% for a in accounts %}
+            <tr>
+                <td data-label="Name">{{ a.name }}</td>
+                <td data-label="Type">{{ a.type }}</td>
+                <td data-label="Deleted">{{ a.deleted_at }}</td>
+                <td data-label="Restore">
+                    <form method="post" action="account-restore{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="id" value="{{ a.id }}">
+                        <button type="submit" class="btn-secondary">Restore</button>
+                    </form>
+                </td>
+                <td data-label="Purge">
+                    {{ purge_link("account", a.id) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p class="hint">Restoring an account also restores whichever of its statements and transactions were removed in the same wipe.</p>
+</div>
+{% else %}
+<p class="empty-state">No deleted accounts.</p>
+{% endif %}
+
+<h2>Utility bills</h2>
+{% if utility_bills %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>File</th><th>Provider</th><th>Type</th><th>Period</th><th>Deleted</th><th>Restore</th><th>Purge</th></tr>
+        </thead>
+        <tbody>
+            {% for b in utility_bills %}
+            <tr>
+                <td data-label="File">{{ b.original_filename or "—" }}</td>
+                <td data-label="Provider">{{ b.provider }}</td>
+                <td data-label="Type">{{ b.utility_type or "—" }}</td>
+                <td data-label="Period">{% if b.period_start_date %}{{ b.period_start_date }} &ndash; {{ b.period_end_date }}{% else %}—{% endif %}</td>
+                <td data-label="Deleted">{{ b.deleted_at }}</td>
+                <td data-label="Restore">
+                    <form method="post" action="utility-restore{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="id" value="{{ b.id }}">
+                        <button type="submit" class="btn-secondary">Restore</button>
+                    </form>
+                </td>
+                <td data-label="Purge">
+                    {{ purge_link("utility_bill", b.id) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No deleted utility bills.</p>
+{% endif %}
+
+<h2>E-470 toll statements</h2>
+{% if toll_statements %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>File</th><th>Period</th><th>Passes</th><th>Deleted</th><th>Restore</th><th>Purge</th></tr>
+        </thead>
+        <tbody>
+            {% for s in toll_statements %}
+            <tr>
+                <td data-label="File">{{ s.original_filename or "—" }}</td>
+                <td data-label="Period">{% if s.period_start_date %}{{ s.period_start_date }} &ndash; {{ s.period_end_date }}{% else %}—{% endif %}</td>
+                <td data-label="Passes">{{ s.pass_count }}</td>
+                <td data-label="Deleted">{{ s.deleted_at }}</td>
+                <td data-label="Restore">
+                    <form method="post" action="toll-restore{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                        <input type="hidden" name="id" value="{{ s.id }}">
+                        <button type="submit" class="btn-secondary">Restore</button>
+                    </form>
+                </td>
+                <td data-label="Purge">
+                    {{ purge_link("toll_statement", s.id) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No deleted toll statements.</p>
+{% endif %}
+
+<h2>Start over</h2>
+<div class="card">
+    <p class="hint">
+        Permanently remove every account, statement and transaction you own.
+        This is the full wipe (SPEC.md section 11, Scope B) &mdash;
+        it lands here too, with the usual 30-day undo window, but it's
+        everything at once.
+    </p>
+    <a href="user-wipe{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="restart-btn">Wipe all my data&hellip;</a>
+</div>
+{% endblock %}

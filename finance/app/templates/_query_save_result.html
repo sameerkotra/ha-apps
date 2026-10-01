@@ -1,0 +1,4 @@
+{% if ok %}<span class="q-ok">{{ message }} <a href="{{ report_href }}">Open the report</a></span>
+<script>(function () { var f = document.getElementById("query-form"); if (f && !f.querySelector("[name=report_id]")) {
+    var i = document.createElement("input"); i.type = "hidden"; i.name = "report_id"; i.value = {{ report_id | tojson }}; f.appendChild(i); } })();</script>
+{% else %}<span class="q-error-inline">{{ message }}</span>{% endif %}

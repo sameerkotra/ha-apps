@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Debug: {{ csv_import.original_filename or "CSV import #" ~ csv_import.id }}{% endblock %}
+{% block content %}
+<p><a href="uploads" class="btn-secondary">&larr; Upload &middot; Statements</a></p>
+<h1>Debug: {{ csv_import.original_filename or "CSV import #" ~ csv_import.id }}</h1>
+<p class="hint">
+    Admin-only troubleshooting view — not shown to regular users.
+    Read-only: the CSV file itself was deleted right after this import
+    finished (same as always — see the Upload page), so there's no
+    file to resend or re-check against.
+</p>
+
+<div class="card">
+    <h3>Import details</h3>
+    <table class="detail-table">
+        <tr><th>User</th><td>{{ csv_import.user_id }}</td></tr>
+        <tr><th>Imported</th><td>{{ csv_import.imported_at }}</td></tr>
+        <tr><th>Rows imported</th><td>{{ csv_import.row_count }}</td></tr>
+        {% if csv_import.fatal_error %}
+        <tr><th>Result</th><td><span class="status-badge status-error">Failed</span> {{ csv_import.fatal_error }}</td></tr>
+        {% elif csv_import.error_count or csv_import.duplicate_count or csv_import.skipped_status_count %}
+        <tr><th>Result</th><td>
+            <span class="status-badge status-pending_review">
+                {{ csv_import.row_count }} imported{% if csv_import.duplicate_count %}, {{ csv_import.duplicate_count }} duplicate{{ "s" if csv_import.duplicate_count != 1 else "" }} skipped{% endif %}{% if csv_import.skipped_status_count %}, {{ csv_import.skipped_status_count }} not posted/cleared{% endif %}{% if csv_import.error_count %}, {{ csv_import.error_count }} row error{{ "s" if csv_import.error_count != 1 else "" }}{% endif %}
+            </span>
+        </td></tr>
+        {% else %}
+        <tr><th>Result</th><td><span class="status-badge status-complete">Complete, no issues</span></td></tr>
+        {% endif %}
+    </table>
+</div>
+
+{% with usage=ai_usage_view(csv_import.ai_usage), usage_title="AI usage — categorization" %}{% include "_ai_usage.html" %}{% endwith %}
+
+{% if row_errors %}
+<div class="card">
+    <h3>Rows with problems</h3>
+    <ul>
+        {% for e in row_errors %}
+        <li>{{ e }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if duplicates %}
+<div class="card">
+    <h3>Duplicates skipped</h3>
+    <ul>
+        {% for d in duplicates %}
+        <li>{{ d }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% if skipped_status %}
+<div class="card">
+    <h3>Skipped (not posted/cleared)</h3>
+    <ul>
+        {% for s in skipped_status %}
+        <li>{{ s }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+{% with transactions=transactions, llm_prompt=csv_import.categorization_llm_prompt, llm_raw_response=csv_import.categorization_llm_raw_response, llm_error=csv_import.categorization_llm_error %}
+{% include "_categorization_breakdown.html" %}
+{% endwith %}
+{% endblock %}

@@ -1,0 +1,45 @@
+{% if row.status == "processing" %}
+<span id="status-cell-{{ row.id }}" class="status-badge status-processing"
+      hx-get="statement-status?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+      hx-trigger="every 3s"
+      hx-target="closest tr" hx-swap="outerHTML">
+  {{ row.current_step or "Processing&hellip;" }}
+</span>
+{% elif row.status == "error" %}
+<span id="status-cell-{{ row.id }}" class="status-cell-stack">
+  <span class="status-badge status-error">Error: {{ row.error_message }}</span>
+  <button hx-post="statement-restart?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+          hx-target="closest tr" hx-swap="outerHTML"
+          class="restart-btn">Restart</button>
+</span>
+{% elif row.status == "pending_review" and row.needs_confirmation and not row.confirmed_at and not row.flagged_count %}
+<span id="status-cell-{{ row.id }}" class="status-cell-stack">
+  <span class="status-badge status-pending_review">Awaiting confirmation</span>
+  <span class="status-actions">
+    {% if row.has_pdf %}<button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ row.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">Open PDF</button>{% endif %}
+    <button type="button" class="confirm-btn"
+            hx-post="statement-confirm{% if acting_qs %}?{{ acting_qs }}{% endif %}" hx-vals='{"id": {{ row.id }}}'
+            hx-target="closest tr" hx-swap="outerHTML"
+            hx-confirm="Confirm that the PDF's money in and money out match? The PDF is deleted once the statement completes.">Confirm</button>
+    {% if row.has_pdf %}<button type="button" class="restart-btn reextract-open"
+            data-url="statement-reextract?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+            data-notes="{{ row.extraction_notes or '' }}" data-name="{{ row.original_filename or 'this statement' }}">Re-extract</button>{% endif %}
+  </span>
+</span>
+{% elif row.status == "pending_review" %}
+<span id="status-cell-{{ row.id }}" class="status-cell-stack">
+  <span class="status-badge status-pending_review">Needs review</span>
+  <span class="status-actions">
+    <a href="review?statement_id={{ row.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="debug-link">Review</a>
+    {% if row.has_pdf %}<button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ row.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">Open PDF</button>{% endif %}
+    {% if row.has_pdf %}<button type="button" class="restart-btn reextract-open"
+            data-url="statement-reextract?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+            data-notes="{{ row.extraction_notes or '' }}" data-name="{{ row.original_filename or 'this statement' }}">Re-extract</button>{% endif %}
+  </span>
+</span>
+{% else %}
+<span id="status-cell-{{ row.id }}" class="status-badge status-complete">Complete</span>
+{% endif %}
+{% if row.skipped_count and row.status != "processing" %}
+<a href="review?statement_id={{ row.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}#skipped" class="debug-link skipped-link">{{ row.skipped_count }} skipped as duplicate{{ "s" if row.skipped_count != 1 else "" }}</a>
+{% endif %}

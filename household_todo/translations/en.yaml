@@ -1,0 +1,12 @@
+configuration:
+  admin_users:
+    name: Admin users
+    description: >-
+      Home Assistant login names or user ids (not case-sensitive; display names
+      are not matched) who may open Admin in the app — App settings, Users
+      (enable or disable people, assign notify services), Maintenance and
+      Storage (database backup and restore) — and "act as" any household
+      member, which includes seeing and editing that person's private lists.
+      Empty by default: nobody is an admin until you list at least one name
+      here. Every other setting is in the app. Restart the app after
+      changing it.

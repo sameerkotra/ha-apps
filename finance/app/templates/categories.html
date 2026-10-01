@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Categories{% endblock %}
+{% block content %}
+{{ nav.setup_tabs("categories", acting_qs, request.state.is_real_admin) }}
+<h1>Categories &amp; rules</h1>
+<p class="hint">
+    A new transaction is categorized automatically on import: your rules
+    below are tried first (most specific match wins — exact beats a
+    prefix match beats a substring match; ties go to the longer pattern,
+    then whichever rule was saved most recently), then the built-in
+    rules further down, then a one-off AI guess if nothing matches, and
+    finally "Uncategorized" if nothing works at all (SPEC.md
+    section 9).
+</p>
+
+<h2>Your categories</h2>
+<p class="hint">
+    The built-in category list (Groceries, Dining, Shopping, etc.) plus
+    anything you add here &mdash; shown in every category picker in the
+    app (transaction editing, bulk actions, rules below).
+</p>
+<div class="card">
+    <h3>Add a category</h3>
+    <form method="post" action="custom-categories{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
+        <label>
+            Category name
+            <input type="text" name="name" placeholder="e.g. Pet Care" required maxlength="60">
+        </label>
+        <button type="submit">Add category</button>
+    </form>
+</div>
+
+{% if custom_categories %}
+<div class="card">
+    <h3>Your added categories</h3>
+    <table class="statements-table">
+        <thead>
+            <tr><th>Category</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for c in custom_categories %}
+            <tr>
+                <td data-label="Category">{{ c.name }}</td>
+                <td data-label="">
+                    <form method="post" action="custom-category-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+                          onsubmit="return confirm('Remove &quot;{{ c.name }}&quot; from the category list? Transactions and rules already using it keep it &mdash; it just won\'t be offered as a pick anymore.');">
+                        <input type="hidden" name="id" value="{{ c.id }}">
+                        <button type="submit" class="restart-btn">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">No categories added yet beyond the built-in list &mdash; add one above.</p>
+{% endif %}
+
+<div class="card">
+    <h3>Add a rule</h3>
+    <form method="post" action="category-rules{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
+        <label>
+            Match text
+            <input type="text" name="pattern" placeholder="e.g. NETFLIX" required maxlength="200">
+        </label>
+        <label>
+            Match type
+            <select name="match_type">
+                <option value="substring">contains</option>
+                <option value="prefix">starts with</option>
+                <option value="exact">exact match</option>
+            </select>
+        </label>
+        <label>
+            Category
+            <select name="category">
+                {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+            </select>
+        </label>
+        <label class="recategorize-label">
+            <input type="checkbox" name="recategorize" value="1">
+            Also apply to all existing transactions (overwrites their current category)
+        </label>
+        <button type="submit">Add rule</button>
+    </form>
+</div>
+
+{% if just_recategorized is not none %}
+<p class="hint">
+    {% if just_recategorized > 0 %}
+    Updated the category on {{ just_recategorized }} existing transaction{{ "s" if just_recategorized != 1 else "" }}.
+    {% else %}
+    No existing transactions matched this rule.
+    {% endif %}
+</p>
+{% endif %}
+
+<h2>Your rules</h2>
+{% if grouped_rules %}
+{% for category, rules in grouped_rules.items() %}
+<div class="card">
+    <h3>{{ category }}</h3>
+    <table class="statements-table">
+        <thead>
+            <tr><th>Match text</th><th>Match type</th><th></th></tr>
+        </thead>
+        <tbody>
+            {% for r in rules %}
+            <tr>
+                <td data-label="Match text">{{ r.pattern }}</td>
+                <td data-label="Match type">{{ r.match_type }}</td>
+                <td data-label="">
+                    <form method="post" action="category-rule-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
+                          onsubmit="return confirm('Delete this rule? Transactions already categorized by it keep their category — only future auto-categorization is affected.');">
+                        <input type="hidden" name="id" value="{{ r.id }}">
+                        <button type="submit" class="restart-btn">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% else %}
+<p class="empty-state">No rules saved yet &mdash; add one above, or check &ldquo;Save as rule&rdquo; when editing a transaction's category.</p>
+{% endif %}
+
+<h2>Built-in rules (reference only)</h2>
+<p class="hint">
+    Applied automatically for common merchants whenever none of your own
+    rules above match. Not editable here &mdash; save a rule above with
+    the same (or a more specific) match text to override one of these
+    for your own transactions.
+</p>
+{% for category, rules in builtin_grouped.items() %}
+<div class="card">
+    <h3>{{ category }}</h3>
+    <table class="statements-table">
+        <thead>
+            <tr><th>Match text</th><th>Match type</th></tr>
+        </thead>
+        <tbody>
+            {% for pattern, match_type in rules %}
+            <tr>
+                <td data-label="Match text">{{ pattern }}</td>
+                <td data-label="Match type">{{ match_type }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% endblock %}

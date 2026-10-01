@@ -1,0 +1,12 @@
+{# SPEC.md section 22.4: shown on Home, App settings and the upload pages while the AI is
+   outside the home network. Needs the ai_privacy() global (settings_privacy in each route module). #}
+{% set p = ai_privacy() %}
+{% if p %}
+<div class="privacy-warning" role="note">
+    <strong>Your documents go to {{ p.label }}.</strong>
+    PDFs you upload are sent as page images to <code>{{ p.host }}</code> to be read, and transaction
+    descriptions are sent there to suggest categories{% if p.sql %} (the admin's Write SQL sends table names and your accounts and categories too){% endif %}.
+    That service's own privacy and data-retention rules apply.
+    {% if request.state.is_real_admin %}<a href="settings">Change on App settings</a>.{% endif %}
+</div>
+{% endif %}

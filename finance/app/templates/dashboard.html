@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+{% include "_ai_privacy.html" %}
+
+<div class="subtabs">
+    <a href="dashboard{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab active">Overview</a>
+    <a href="dashboard-compare{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab">Compare</a>
+</div>
+
+<form id="dashboard-filters" class="add-account-form">
+    <label>
+        Period
+        <select name="period" id="dashboard-period-select" onchange="updateDashboardFilters()">
+            <option value="week" {{ "selected" if period == "week" else "" }}>This week</option>
+            <option value="month" {{ "selected" if period == "month" else "" }}>This month</option>
+            <option value="last_month" {{ "selected" if period == "last_month" else "" }}>Last month</option>
+            <option value="year" {{ "selected" if period == "year" else "" }}>This year</option>
+            <option value="last_year" {{ "selected" if period == "last_year" else "" }}>Last year</option>
+            <option value="all" {{ "selected" if period == "all" else "" }}>All time</option>
+            {% if months or period.startswith("m:") %}
+            <optgroup label="A specific month">
+                {% set picked_month = period[2:] if period.startswith("m:") else "" %}
+                {% if picked_month and picked_month not in months %}<option value="m:{{ picked_month }}" selected>{{ picked_month }}</option>{% endif %}
+                {% for m in months %}
+                <option value="m:{{ m }}" {{ "selected" if picked_month == m else "" }}>{{ month_labels[m] }}</option>
+                {% endfor %}
+            </optgroup>
+            {% endif %}
+            {% if years or period.startswith("y:") %}
+            <optgroup label="A specific year">
+                {% set picked_year = period[2:] if period.startswith("y:") else "" %}
+                {% if picked_year and picked_year not in years %}<option value="y:{{ picked_year }}" selected>{{ picked_year }}</option>{% endif %}
+                {% for y in years %}
+                <option value="y:{{ y }}" {{ "selected" if picked_year == y else "" }}>{{ y }}</option>
+                {% endfor %}
+            </optgroup>
+            {% endif %}
+        </select>
+    </label>
+    <label>
+        Account
+        <select name="account_id" id="dashboard-account-select" onchange="updateDashboardFilters()">
+            <option value="">All accounts</option>
+            {% for a in accounts %}
+            <option value="{{ a.id }}" {{ "selected" if selected_account_id == a.id else "" }}>
+                {{ a.name }}{{ " (card)" if a.type == "credit_card" else "" }}
+            </option>
+            {% endfor %}
+        </select>
+    </label>
+</form>
+<script>
+function updateDashboardFilters() {
+    var period = document.getElementById("dashboard-period-select").value;
+    var accountId = document.getElementById("dashboard-account-select").value;
+    var qs = "period=" + encodeURIComponent(period);
+    if (accountId) qs += "&account_id=" + encodeURIComponent(accountId);
+    qs += "{{ ('&' + acting_qs) if acting_qs else '' }}";
+    window.location.href = "dashboard?" + qs;
+}
+</script>
+
+<div class="card">
+    <form method="post" action="transfer-run-sweep{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+        <input type="hidden" name="next" value="dashboard">
+        <input type="hidden" name="period" value="{{ period }}">
+        <input type="hidden" name="account_id" value="{{ selected_account_id or '' }}">
+        <button type="submit" class="btn-secondary">Check for transfer matches</button>
+    </form>
+    {% if just_matched is not none %}
+    <p class="hint">
+        {% if just_matched > 0 %}
+        Linked {{ just_matched }} transfer{{ "s" if just_matched != 1 else "" }} just now &mdash; totals below are updated.
+        {% else %}
+        No new transfers matched &mdash; nothing unambiguous was waiting.
+        {% endif %}
+    </p>
+    {% endif %}
+    {% if unmatched_transfer_count %}
+    <p class="hint">
+        {{ unmatched_transfer_count }} transaction{{ "s" if unmatched_transfer_count != 1 else "" }}
+        still look{{ "s" if unmatched_transfer_count == 1 else "" }} like
+        {{ "a possible transfer" if unmatched_transfer_count == 1 else "possible transfers" }}
+        between your own accounts, but more than one candidate exists so it can't be linked
+        automatically &mdash; until resolved, that money may be counted as both spend and income
+        above. <a href="transfers{% if acting_qs %}?{{ acting_qs }}{% endif %}">Resolve on the Transfers page</a>.
+    </p>
+    {% else %}
+    <p class="hint">No unresolved possible transfers right now.</p>
+    {% endif %}
+</div>
+
+{% set account_qs = ("&account_id=" + (selected_account_id | string)) if selected_account_id else "" %}
+{% set income_qs = "flow=income&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
+<a class="card dashboard-card-link" href="transactions?{{ income_qs }}">
+    <h3>Income</h3>
+    <p class="dashboard-figure">{{ "%.2f"|format(total_income) }}</p>
+</a>
+{% set spend_qs = "flow=expense&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
+<a class="card dashboard-card-link" href="transactions?{{ spend_qs }}">
+    <h3>Spend</h3>
+    <p class="dashboard-figure">{{ "%.2f"|format(total_spend) }}</p>
+</a>
+
+<h2>By category</h2>
+{% if categories %}
+<div class="card">
+    <table class="statements-table">
+        <thead>
+            <tr><th>Category</th><th>Amount</th><th>% of spend</th></tr>
+        </thead>
+        <tbody>
+            {% for c in categories %}
+            {% set cat_qs = "category=" + (c.category | urlencode) + "&flow=expense&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
+            <tr>
+                <td data-label="Category"><a href="transactions?{{ cat_qs }}">{{ c.category }}</a></td>
+                <td data-label="Amount">{{ "%.2f"|format(c.total) }}</td>
+                <td data-label="% of spend">{{ "%.1f"|format(c.pct) }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p class="empty-state">
+    No spending {{ period_label }}{{ " on " + selected_account_name if selected_account_name else "" }}.
+</p>
+{% endif %}
+
+{% if excluded_count %}
+<p class="hint">
+    Excludes {{ "%.2f"|format(excluded_total) }} across {{ excluded_count }}
+    transaction{{ "s" if excluded_count != 1 else "" }} (transfer
+    payments and anything marked &ldquo;Exclude&rdquo;).
+</p>
+{% endif %}
+{% endblock %}

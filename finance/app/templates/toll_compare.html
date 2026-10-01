@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% import "_toll_macros.html" as m %}
+{% block title %}E-470 compare{% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
+<h1>E-470</h1>
+{{ m.subtabs("compare", acting_qs) }}
+
+<form id="toll-compare-filters" method="get" action="toll-compare" class="add-account-form">
+    {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
+    <label>
+        Compare
+        {# Switching months <-> years drops the two choices (a different kind of value) so the server picks defaults. #}
+        <select name="mode" onchange="this.form.a.disabled = true; this.form.b.disabled = true; this.form.submit();">
+            <option value="month" {{ "selected" if mode == "month" else "" }}>Months</option>
+            <option value="year" {{ "selected" if mode == "year" else "" }}>Years</option>
+        </select>
+    </label>
+    <label>
+        {{ "Year" if mode == "year" else "Month" }} A
+        <select name="a" onchange="this.form.submit()">
+            {% for value, text in options %}<option value="{{ value }}" {{ "selected" if value == a else "" }}>{{ text }}</option>{% endfor %}
+        </select>
+    </label>
+    <label>
+        {{ "Year" if mode == "year" else "Month" }} B
+        <select name="b" onchange="this.form.submit()">
+            {% for value, text in options %}<option value="{{ value }}" {{ "selected" if value == b else "" }}>{{ text }}</option>{% endfor %}
+        </select>
+    </label>
+    <label>
+        Car
+        <select name="car_id" onchange="this.form.submit()">
+            {{ m.car_options(all_cars, selected_car_id, has_unassigned) }}
+        </select>
+    </label>
+</form>
+
+{% if trend_chart %}
+<h2>By group over time</h2>
+<p class="hint">Every {{ "year" if mode == "year" else "month" }} from {{ label_a }} to {{ label_b }}, not just those two &mdash;
+    broken down by group (Analyze tab), not by each individual tag.</p>
+<div class="card">
+    {{ trend_chart }}
+    <ul class="chart-legend">
+        {% for s in trend_series %}<li><span class="chart-swatch {{ s.css_class }}"></span>{{ s.label }}</li>{% endfor %}
+    </ul>
+    <p class="hint">Hover, tap or tab to a column for its exact figures.</p>
+    <details class="chart-table">
+        <summary>Show as a table</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>{{ "Year" if mode == "year" else "Month" }}</th>{% for s in trend_series %}<th class="num">{{ s.label }}</th>{% endfor %}</tr>
+            {% for r in trend_rows %}
+            <tr>
+                <td>{{ r.tip_label }}</td>
+                {% for s in trend_series %}<td class="num">{{ "%.2f"|format(r['values'].get(s.key, 0.0)) }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </details>
+</div>
+{% endif %}
+
+{% if car_chart %}
+<h2>By car over time</h2>
+<p class="hint">Every {{ "year" if mode == "year" else "month" }} from {{ label_a }} to {{ label_b }}, broken down by car.</p>
+<div class="card">
+    {{ car_chart }}
+    <ul class="chart-legend">
+        {% for s in car_series %}<li><span class="chart-swatch {{ s.css_class }}"></span>{{ s.label }}</li>{% endfor %}
+    </ul>
+    <p class="hint">Hover, tap or tab to a column for its exact figures.</p>
+    <details class="chart-table">
+        <summary>Show as a table</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>{{ "Year" if mode == "year" else "Month" }}</th>{% for s in car_series %}<th class="num">{{ s.label }}</th>{% endfor %}</tr>
+            {% for r in car_rows %}
+            <tr>
+                <td>{{ r.tip_label }}</td>
+                {% for s in car_series %}<td class="num">{{ "%.2f"|format(r['values'].get(s.key, 0.0)) }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+    </details>
+</div>
+{% else %}
+<h2>By car over time</h2>
+<p class="empty-state">No tolls in either period.</p>
+{% endif %}
+{% endblock %}

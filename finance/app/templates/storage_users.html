@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_query_macros.html" import storage_tabs %}
+{% block title %}Users (admin){% endblock %}
+{% block main_class %}main-wide{% endblock %}
+{% block content %}
+{% set qs = "?" + acting_qs if acting_qs else "" %}
+{{ storage_tabs("users", acting_qs) }}
+<h1>Users</h1>
+<p class="hint">Everyone who has opened the app. Give a regular user shared access to someone else's data and they
+    open straight into it, with full rights (upload, edit, confirm, delete) &mdash; so a household doesn't upload the
+    same statements twice. They can still switch to their own data. Admins don't need this: they use the user switch.</p>
+{% if message %}<p class="q-ok">{{ message }}</p>{% endif %}
+{% if error %}<p class="q-error-inline">{{ error }}</p>{% endif %}
+
+{% if not users %}
+<p class="empty-state">Nobody has opened the app yet.</p>
+{% else %}
+<ul class="q-report-list u-list">
+    {% for u in users %}
+    <li class="q-report-card u-card">
+        <div class="q-report-main">
+            <div class="q-report-name">{{ u.name }}{% if u.is_admin %} <span class="status-badge">Admin</span>{% endif %}
+                {% if u.id == request.state.real_user_id %}<span class="hint">(you)</span>{% endif %}</div>
+            <p class="hint"><code>{{ u.id }}</code> &middot; last seen {{ u.last_seen_at or "—" }} UTC</p>
+            {% if u.is_admin %}
+            <p class="hint">Admins can already use anyone's data with the user switch.</p>
+            {% else %}
+            {% if u.owners %}
+            <p>Uses the data of:</p>
+            <ul class="u-owners">
+                {% for g in u.owners %}
+                <li><strong>{{ g.owner_name }}</strong>{% if loop.first %} <span class="hint">(opens into this)</span>{% endif %}
+                    <span class="hint">since {{ g.granted_at }} UTC</span>
+                    <form method="post" action="user-access-remove{{ qs }}" class="inline-form"
+                          onsubmit='return confirm({{ ("Stop " ~ u.name ~ " using " ~ g.owner_name ~ "’s data?") | tojson }});'>
+                        <input type="hidden" name="viewer" value="{{ u.id }}"><input type="hidden" name="owner" value="{{ g.owner_id }}">
+                        <button type="submit" class="btn-secondary q-danger">Remove</button>
+                    </form>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="hint">Uses only their own data.</p>
+            {% endif %}
+            {% if u.can_add %}
+            <form method="post" action="user-access-grant{{ qs }}" class="inline-form u-grant">
+                <input type="hidden" name="viewer" value="{{ u.id }}">
+                <label>Let {{ u.name }} use the data of
+                    <select name="owner">
+                        {% for o in u.can_add %}<option value="{{ o.id }}">{{ o.name }}</option>{% endfor %}
+                    </select>
+                </label>
+                <button type="submit" class="btn-secondary">Give access</button>
+            </form>
+            {% endif %}
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+{% if orphans %}
+<h2>Access for users no longer listed</h2>
+<ul>
+    {% for g in orphans %}
+    <li><code>{{ g.viewer_id }}</code> uses {{ g.owner_name }}'s data
+        <form method="post" action="user-access-remove{{ qs }}" class="inline-form">
+            <input type="hidden" name="viewer" value="{{ g.viewer_id }}"><input type="hidden" name="owner" value="{{ g.owner_id }}">
+            <button type="submit" class="btn-secondary q-danger">Remove</button>
+        </form></li>
+    {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

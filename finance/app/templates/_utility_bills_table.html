@@ -1,0 +1,7 @@
+{% import "_utility_table_macros.html" as m %}
+{% from "_paging_macros.html" import mobile_sort, pager %}
+<div id="utility-bills-table-wrap">
+{% if bill_view and bill_view.total %}{{ mobile_sort(bill_view, bill_sort_columns) }}{% endif %}
+{{ m.simple_bill_table(bills, acting_qs, is_admin, "No utility bills uploaded yet.", view=bill_view) }}
+{% if bill_view %}{{ pager(bill_view) }}{% endif %}
+</div>

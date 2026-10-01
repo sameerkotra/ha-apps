@@ -1,0 +1,84 @@
+{# One page of a query result (SPEC.md sections 19.4 and 19.8–19.10). view is report_core.ResultView. #}
+{% if error %}
+<div class="q-error" role="alert">{{ error }}</div>
+{% elif view %}
+{% set r = view.result %}
+<div class="q-status">
+    <strong>{{ "{:,}".format(view.total_rows) }}</strong> row{{ "" if view.total_rows == 1 else "s" }}
+    &middot; {{ "%.2f"|format(r.elapsed) }} s
+    {% if data_owner and not report %}&middot; Data: <strong>{{ data_owner }}</strong>{% endif %}
+    {% if r.truncated %}<span class="q-warn">&middot; Cut at {{ "{:,}".format(r.rows|length) }} rows (the most a result can hold); totals, chart and CSV cover those rows only.</span>{% endif %}
+    {% if csv_href and r.columns %}<a class="btn-secondary q-csv" href="{{ csv_href }}">Download CSV</a>{% endif %}
+</div>
+{% if chart_svg %}<div class="chart-wrap q-chart">{{ chart_svg }}</div>{% endif %}
+{% if chart_note %}<p class="hint">{{ chart_note }}</p>{% endif %}
+{% if not r.columns %}
+<p class="empty-state">The query ran but returned no columns.</p>
+{% elif not view.total_rows %}
+<p class="empty-state">No rows.</p>
+{% else %}
+{% macro pager() %}
+{% if view.show_pager %}
+<div class="pager q-pager">
+    <span class="pager-info">Page {{ view.page }} of {{ view.pages }} &middot; rows {{ "{:,}".format(view.first) }}&ndash;{{ "{:,}".format(view.last) }} of {{ "{:,}".format(view.total_rows) }}</span>
+    <label class="pager-size">Rows per page
+        <select class="q-per-page" onchange="this.nextElementSibling.querySelector('[data-size=' + JSON.stringify(this.value) + ']').click()">
+            {% for s in page_sizes %}
+            <option value="{{ s }}" {{ "selected" if s == view.per_page else "" }}>{{ "All" if s == "all" else s }}</option>
+            {% endfor %}
+        </select>
+        <span hidden>{% for s in page_sizes %}<a {{ view.link(per_page=s, page=1) }} data-size="{{ s }}"></a>{% endfor %}</span>
+    </label>
+    <span class="pager-nav">
+        {% if view.page > 1 %}
+        <a class="btn-secondary" {{ view.link(page=1) }}>First</a>
+        <a class="btn-secondary" {{ view.link(page=view.page - 1) }}>&larr; Prev</a>
+        {% endif %}
+        {% if view.page < view.pages %}
+        <a class="btn-secondary" {{ view.link(page=view.page + 1) }}>Next &rarr;</a>
+        <a class="btn-secondary" {{ view.link(page=view.pages) }}>Last</a>
+        {% endif %}
+    </span>
+</div>
+{% endif %}
+{% if view.all_warning %}<p class="hint q-warn">Showing all {{ "{:,}".format(view.total_rows) }} rows on one page &mdash; this may be slow on a phone.</p>{% endif %}
+{% endmacro %}
+{{ pager() }}
+<div class="q-mobile-sort">
+    <select aria-label="Sort by" onchange="this.nextElementSibling.querySelector('[data-sort=' + JSON.stringify(this.value) + ']').click()">
+        <option value="">Sort: as returned</option>
+        {% for c in view.columns %}
+        <option value="{{ loop.index0 }}:asc" {{ "selected" if view.sort == loop.index0 and not view.desc else "" }}>Sort: {{ c }} ▲</option>
+        <option value="{{ loop.index0 }}:desc" {{ "selected" if view.sort == loop.index0 and view.desc else "" }}>Sort: {{ c }} ▼</option>
+        {% endfor %}
+    </select>
+    <span hidden><a {{ view.link(sort="", dir="asc", page=1) }} data-sort=""></a>{% for c in view.columns %}<a {{ view.link(sort=loop.index0, dir="asc", page=1) }} data-sort="{{ loop.index0 }}:asc"></a><a {{ view.link(sort=loop.index0, dir="desc", page=1) }} data-sort="{{ loop.index0 }}:desc"></a>{% endfor %}</span>
+</div>
+<div class="table-scroll q-table-wrap">
+<table class="q-table" data-no-sort>
+    <thead>
+        <tr>
+        {% for c in view.columns %}
+            {% set i = loop.index0 %}
+            <th class="{{ 'num' if i in view.numeric else '' }}{% if view.sort == i %} sort-{{ 'desc' if view.desc else 'asc' }}{% endif %}"
+                {% if view.sort == i %}aria-sort="{{ 'descending' if view.desc else 'ascending' }}"{% endif %}>
+                <a {{ view.sort_link(i) }}>{{ c }}</a></th>
+        {% endfor %}
+        </tr>
+    </thead>
+    <tbody>
+    {% for row in view.rows %}
+        <tr>{% for v in row %}<td class="{{ 'num' if loop.index0 in view.numeric else '' }}" data-label="{{ view.columns[loop.index0] }}">{{ view.cell(loop.index0, v) }}</td>{% endfor %}</tr>
+    {% endfor %}
+    </tbody>
+    {% if view.totals %}
+    <tfoot>
+        <tr class="q-total-row">{% for c in view.columns %}{% if loop.index0 in view.totals or loop.index0 == view.label_column %}<td class="{{ 'num' if loop.index0 in view.numeric else '' }}" data-label="{{ 'Total' if loop.index0 == view.label_column else 'Total ' ~ c }}">{{ view.total_cell(loop.index0) if loop.index0 in view.totals else '' }}{% if loop.index0 == view.label_column %}<span class="q-total-label">Total</span>{% endif %}</td>{% else %}<td class="q-empty-total"></td>{% endif %}{% endfor %}</tr>
+    </tfoot>
+    {% endif %}
+</table>
+</div>
+{% if view.totals and view.pages > 1 %}<p class="hint">Totals cover all {{ "{:,}".format(view.total_rows) }} rows, not just this page.</p>{% endif %}
+{{ pager() }}
+{% endif %}
+{% endif %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Who am I{% endblock %}
+{% block content %}
+<h1>How the app sees you</h1>
+<div class="card">
+    <table class="statements-table" data-no-sort>
+        <tbody>
+            <tr><th>User name (sent by Home Assistant)</th><td>{{ user.name if name_sent else "not sent" }}</td></tr>
+            <tr><th>User id (sent by Home Assistant)</th><td>{{ user.id }}</td></tr>
+            <tr><th>Administrator in this app</th><td><strong>{{ "Yes" if is_admin else "No" }}</strong></td></tr>
+            <tr><th>Names in the app&rsquo;s admin_users list</th><td>{{ admin_entries }}</td></tr>
+        </tbody>
+    </table>
+</div>
+{% if is_admin %}
+<p class="hint">You are an administrator: the debug buttons, Storage and the user switch are available.</p>
+{% else %}
+<p class="hint">
+    {% if admin_entries == 0 %}
+    The admin_users list is <strong>empty</strong> in the running app. If you have filled it in, the app has not picked it up yet:
+    changes on the app&rsquo;s Configuration tab only take effect after it is <strong>restarted</strong> (Settings &rarr; Apps &rarr; Finance Dashboard &rarr; Information tab &rarr; Restart).
+    {% else %}
+    Neither your user name nor your user id above matches any of the {{ admin_entries }} name{{ "s" if admin_entries != 1 else "" }} in the admin_users list.
+    Add <strong>{{ user.name if name_sent else user.id }}</strong> (or <strong>{{ user.id }}</strong>) exactly as shown, save, and <strong>restart</strong> the app
+    &mdash; the list is only read when the app starts. Upper and lower case do not matter.
+    {% endif %}
+</p>
+{% endif %}
+{% endblock %}
