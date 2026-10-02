@@ -14,7 +14,7 @@ from . import db, features, geocode, ha_client, ha_people, housekeeping, inbox, 
 from .routers import (admin, events, export, families, history, kin as kin_router, me, media as media_router, people,
                       map as map_router, related as related_router, custom as custom_router,
                       sources as sources_router, contacts as contacts_router, duplicates as dup_router,
-                      reminders as reminders_router, stories, tree, tithi as tithi_router, quiz as quiz_router)
+                      reminders as reminders_router, stories, tree, tithi as tithi_router, quiz as quiz_router, tree_import)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Family Tree", lifespan=lifespan)
 for r in (me, related_router, people, families, events, stories, tree, history, media_router, export, reminders_router, kin_router,
-          map_router, custom_router, sources_router, contacts_router, dup_router, tithi_router, quiz_router, admin):
+          map_router, custom_router, sources_router, contacts_router, dup_router, tithi_router, quiz_router, admin, tree_import):
     app.include_router(r.router)
 
 

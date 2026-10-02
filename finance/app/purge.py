@@ -127,7 +127,7 @@ def purge_soft_deleted(conn) -> dict[str, int]:
     ).fetchone()["n"]
     conn.execute(f"DELETE FROM csv_imports WHERE {cutoff_sql}", (_CUTOFF_MODIFIER,))
 
-    # E-470 toll statements (their passes go with them).
+    # toll statements (their passes go with them).
     stale_tolls = conn.execute(
         f"SELECT id, pdf_path FROM toll_statements WHERE {cutoff_sql}", (_CUTOFF_MODIFIER,)
     ).fetchall()

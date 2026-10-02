@@ -164,6 +164,22 @@ class EditAndPayments(Base):
         self.assertEqual(self.c.delete(f"/api/expenses/{pay['id']}", headers=ADMIN).status_code, 204)
         self.assertEqual(self.net()["b"], -10.0)
 
+    def test_export_group_csv(self):
+        self.expense(amount=30, participants=["a", "b", "c"], description="=Groceries")
+        self.c.post(f"/api/groups/{self.gid}/payments", headers=ALICE, json={"fromUserId": "b", "toUserId": "a", "amount": 10})
+        r = self.c.get(f"/api/groups/{self.gid}/export.csv", headers=ALICE)    # anyone, not only admins
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.headers["content-type"].startswith("text/csv"))
+        self.assertIn('attachment; filename="House - ', r.headers["content-disposition"])
+        import csv as _csv
+        rows = list(_csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
+        self.assertEqual(rows[0], ["Date", "Type", "Description", "Amount", "Currency", "Paid by", "Split",
+                                   "Ann share", "Ben share", "Cat share"])
+        kinds = sorted((row[1], row[2], row[3], row[5], row[7:]) for row in rows[1:])
+        self.assertEqual(kinds, [("Expense", "'=Groceries", "30.00", "Ann", ["10.00", "10.00", "10.00"]),
+                                 ("Payment", "Ben paid Ann", "10.00", "Ben", ["10.00", "", ""])])
+        self.assertEqual(self.c.get("/api/groups/nope/export.csv", headers=ALICE).status_code, 404)
+
     def test_payment_validation(self):
         for body in ({"fromUserId": "a", "toUserId": "a", "amount": 5},
                      {"fromUserId": "a", "toUserId": "x", "amount": 5}):

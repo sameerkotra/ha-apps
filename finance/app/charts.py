@@ -50,7 +50,7 @@ _CAT_GAP = 2   # px, surface-coloured gap between stacked segments (dataviz: nev
 
 
 def stacked_column_chart(periods: list[dict], series: list[dict], *, prefix: str = "", label: str) -> Markup:
-    """A stacked column per period, one segment per series (E-470 Compare's "by group" trend).
+    """A stacked column per period, one segment per series (Tolls Compare's "by group" trend).
 
     periods: [{"label": "2026-03", "tip_label": "March 2026", "values": {"g1": 12.3, "g2": 0.0}}, ...] in time order.
     series:  [{"key": "g1", "label": "Work", "css_class": "chart-cat-1"}, ...] in the SAME fixed order every

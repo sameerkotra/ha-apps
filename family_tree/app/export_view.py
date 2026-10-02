@@ -104,6 +104,7 @@ class ExportOptions(_Strict):
     customFields: dict[str, bool] = Field(default_factory=dict)   # field id → on; missing = the field's own default (§13.8)
     contacts: bool = False          # phone numbers and addresses of the living (§13.11); off unless chosen
     sources: bool = False           # the sources behind the facts (§13.9)
+    importData: bool = True         # family-tree.json in the zip, so another Family Tree can import it (§13.6.3)
     site: SiteIn = Field(default_factory=SiteIn)
 
 

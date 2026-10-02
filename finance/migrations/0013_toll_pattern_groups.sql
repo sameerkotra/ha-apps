@@ -1,4 +1,4 @@
--- E-470, round 87: group tags together (e.g. "Work") so several regular trips can be tracked as one thing
+-- Tolls, round 87: group tags together (e.g. "Work") so several regular trips can be tracked as one thing
 -- on the Dashboard and Compare, instead of listed one by one. A group is just a name; tags are assigned to
 -- it the same way devices are assigned to a car (one group per tag, never required). Deleting a group keeps
 -- its tags — they just become ungrouped again, same as deleting a car keeps its devices.

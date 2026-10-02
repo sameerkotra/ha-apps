@@ -69,7 +69,7 @@ def _resolve(conn: sqlite3.Connection, kind: str, id_: int, current: User, actin
                               and not row["confirmed_at"] and row["user_id"] == acting.id)
         doc["back"] = "uploads"
     elif kind == "toll":
-        doc["title"] = f"E-470 — {row['original_filename'] or 'toll statement'}"
+        doc["title"] = f"Tolls — {row['original_filename'] or 'toll statement'}"
         # The printed Grand Totals is what the passes are checked against; it is highlighted so it
         # can be found (it prints negative; the viewer matches the absolute value).
         doc["targets"] = ([{"kind": "total", "label": "Grand Totals", "amount": row["total_tolls_printed"]}]

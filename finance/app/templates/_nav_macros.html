@@ -17,13 +17,13 @@
 {% macro upload_tabs(active, acting_qs, features=none) -%}
 {{ _tabs([("statements", "Statements", "uploads"), ("review", "Review", "review")]
          + ([("utility", "Utility bill", "utilities?tab=upload")] if not features or features.utilities else [])
-         + ([("toll", "E-470 statement", "tolls?tab=upload")] if not features or features.tolls else []),
+         + ([("toll", "Toll statement", "tolls?tab=upload")] if not features or features.tolls else []),
          active, acting_qs) }}
 {%- endmacro %}
 
 {% macro bills_tabs(active, acting_qs, features=none) -%}
 {{ _tabs(([("utilities", "Utilities", "utilities?tab=dashboard")] if not features or features.utilities else [])
-         + ([("tolls", "E-470", "tolls?tab=dashboard")] if not features or features.tolls else []), active, acting_qs) }}
+         + ([("tolls", "Tolls", "tolls?tab=dashboard")] if not features or features.tolls else []), active, acting_qs) }}
 {%- endmacro %}
 
 {% macro setup_tabs(active, acting_qs, admin=false) -%}

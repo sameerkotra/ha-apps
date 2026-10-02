@@ -1,4 +1,4 @@
-"""Deterministic extraction of an E-470 toll statement (SPEC.md section 18.1 and 18.4).
+"""Deterministic extraction of a toll road statement (SPEC.md section 18.1 and 18.4).
 
 Unlike the bank-statement and utility paths, which only sanity-check figures against the PDF
 text, a toll statement is regular enough to read completely from `pdftotext -layout`: a summary

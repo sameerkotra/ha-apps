@@ -1,5 +1,5 @@
 """Row helpers shared by the three document pipelines: bank statements
-(`statements`), utility bills (`utility_bills`) and E-470 toll statements
+(`statements`), utility bills (`utility_bills`) and toll statements
 (`toll_statements`). All three tables have the same status / current_step /
 error_message / file_hash columns."""
 import sqlite3

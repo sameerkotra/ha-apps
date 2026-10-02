@@ -1,4 +1,4 @@
-"""Small shared helpers for the E-470 toll feature (SPEC.md section 18): how a device and a car are
+"""Small shared helpers for the Tolls toll feature (SPEC.md section 18): how a device and a car are
 named, how a pass is identified for duplicate detection, and finding or adding a device.
 
 Two different things, on purpose ("tag" in the trips/Analyze sense means a named trip pattern, so the

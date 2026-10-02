@@ -1,4 +1,4 @@
--- E-470 toll statements (REQUIREMENTS.md section 18): a feature area separate from finance and utilities.
+-- Toll statements (REQUIREMENTS.md section 18): a feature area separate from finance and utilities.
 -- Nothing here references accounts, transactions or utility_bills.
 
 -- A car is a (device, plate, state) combination seen on a statement; created automatically.

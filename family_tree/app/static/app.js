@@ -2777,7 +2777,7 @@ async function copyText(t) {
 }
 
 // ---------- admin ----------
-const ADMIN_TABS = [["settings", "App settings"], ["users", "Users"], ["storage", "Storage"], ["trash", "Trash"]];
+const ADMIN_TABS = [["settings", "App settings"], ["users", "Users"], ["storage", "Storage"], ["import", "Import"], ["trash", "Trash"]];
 
 async function viewAdmin(tab) {
   if (!state.me.isAdmin) {
@@ -2794,6 +2794,7 @@ async function viewAdmin(tab) {
   if (tab === "users") body = await viewAdminUsers();
   else if (tab === "storage") body = await viewAdminStorage();
   else if (tab === "trash") body = await viewTrash();
+  else if (tab === "import") body = await viewAdminImport();
   else body = await viewAdminSettings();
   return h("div", null, h("h2", { class: "page-title" }, "Admin"), tabs, body);
 }
@@ -3114,6 +3115,142 @@ async function viewAdminStorage() {
       } catch (e) { result.textContent = ""; fail(e); }
     } }, "Restore")), result);
   return h("div", null, mediaCard, backup, restore);
+}
+
+// ---------- import part of another Family Tree (§13.6.3) ----------
+const IMPORT_KIND_LABEL = { person: "Person", family: "Family", child: "Child link", event: "Event", story: "Story", media: "Photo" };
+
+async function viewAdminImport() {
+  const box = h("div");
+  const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const result = h("div", { class: "hint", role: "status", "aria-live": "polite" });
+  const file = h("input", { type: "file", accept: ".zip,.json,application/zip,application/json" });
+  const readBtn = h("button", { type: "button", class: "btn-primary" }, "Read file");
+  const sourcesBox = h("div");
+  let current = null;            // the last preview (with its token)
+  const unmatch = new Set();
+  const remove = new Set();
+
+  const list = (items, render, more) => items.length
+    ? h("ul", { class: "import-list" }, items.map((x) => h("li", null, render(x))), more > items.length ? h("li", { class: "hint" }, `…and ${more - items.length} more`) : null)
+    : null;
+  const group = (title, count, body, open = false) => (count ? h("details", { class: "import-group", open },
+    h("summary", null, `${title} (${count})`), body) : null);
+
+  function draw(p) {
+    current = p;
+    const c = p.counts;
+    const when = (iso) => iso ? fmtWhen(iso) : "";
+    const matched = list(p.matched, (m) => {
+      const cb = h("input", { type: "checkbox", checked: !unmatch.has(m.remoteId) });
+      cb.addEventListener("change", async () => {
+        if (cb.checked) unmatch.delete(m.remoteId); else unmatch.add(m.remoteId);
+        try { draw(await api("api/admin/import/preview", { method: "POST", body: { token: p.token, unmatch: [...unmatch] } })); }
+        catch (e) { fail(e); }
+      });
+      return h("label", { class: "check-row" }, cb, h("span", null, h("strong", null, m.name), m.born ? ` (born ${m.born})` : "",
+        " is already here — the same person", m.adds.length ? h("span", { class: "hint" }, ` · adds ${m.adds.join(", ")}`) : null));
+    }, p.matched.length);
+    const dels = p.deletions.map((d) => {
+      const sel = h("select", { "aria-label": `What to do with ${d.label}` },
+        h("option", { value: "keep" }, "Keep here"), h("option", { value: "remove" }, "Remove here"));
+      sel.value = remove.has(d.key) ? "remove" : "keep";
+      sel.addEventListener("change", () => { if (sel.value === "remove") remove.add(d.key); else remove.delete(d.key); });
+      return h("li", { class: "import-del" }, h("span", { class: "chip" }, IMPORT_KIND_LABEL[d.kind] || d.kind), h("span", { class: "grow" }, d.label), sel);
+    });
+    const setAll = (rm) => { p.deletions.forEach((d) => { if (rm) remove.add(d.key); else remove.delete(d.key); }); draw(p); };
+    const go_ = h("button", { type: "button", class: "btn-primary" }, "Import");
+    const cancel = h("button", { type: "button", class: "btn-secondary" }, "Cancel");
+    cancel.addEventListener("click", async () => { try { await api(`api/admin/import/${p.token}`, { method: "DELETE" }); } catch (e) { /* expired */ } reset(); });
+    go_.addEventListener("click", async () => {
+      const n = [...remove].filter((k) => p.deletions.some((d) => d.key === k)).length;
+      const msg = `Import from “${p.source.title}”: ${plural(c.newPeople, "person")} added, ${plural(c.updated + c.matched, "person")} gaining details`
+        + (n ? `, and ${n} item${n === 1 ? "" : "s"} removed here (to the trash where possible)` : "") + ". You can undo it from History.";
+      if (!await confirmDialog("Import", msg, "Import", n > 0)) return;
+      go_.disabled = true;
+      result.textContent = "Importing…";
+      try {
+        const r = await api("api/admin/import/apply", { method: "POST", body: { token: p.token, unmatch: [...unmatch], remove: [...remove] } });
+        mount(box, h("div", { class: "card" }, h("h3", null, "Imported"),
+          h("p", null, `${plural(r.people, "person")} and ${pl(r.families, "family", "families")} added; ${plural(r.details, "person")} gained details; `
+            + `${pl(r.children, "child link", "child links")}, ${plural(r.events, "event")}, ${pl(r.stories, "story", "stories")} and ${plural(r.media, "photo")} added`
+            + (r.removed ? `; ${r.removed} removed` : "") + "."),
+          r.skipped.length ? h("ul", { class: "warnings" }, r.skipped.map((s) => h("li", null, "⚠ ", s))) : null,
+          h("p", { class: "hint" }, "Changed your mind? ", h("button", { type: "button", class: "link-btn", onclick: () => go("history") }, "Undo it from History"), "."),
+          h("div", { class: "actions" }, h("button", { type: "button", class: "btn-secondary", onclick: reset }, "Import another file"))));
+        result.textContent = "";
+        drawSources();
+      } catch (e) { result.textContent = ""; go_.disabled = false; fail(e); }
+    });
+    mount(box, h("div", { class: "card" },
+      h("h3", null, `From “${p.source.title}”`),
+      h("p", { class: "hint" }, p.source.exportedAt ? `Exported ${when(p.source.exportedAt)}. ` : "",
+        p.firstImport ? "Nothing has been imported from this tree before." : `Last imported ${when(p.lastImportAt)} — only what's new is added.`),
+      h("div", { class: "import-counts" },
+        h("div", null, h("strong", null, String(c.newPeople)), " new ", c.newPeople === 1 ? "person" : "people"),
+        h("div", null, h("strong", null, String(c.matched + c.updated)), " already here, gaining details"),
+        h("div", null, h("strong", null, String(c.newFamilies)), " new ", c.newFamilies === 1 ? "family" : "families"),
+        h("div", null, h("strong", null, String(c.newMedia)), " new ", c.newMedia === 1 ? "photo or document" : "photos and documents"),
+        c.deletions ? h("div", { class: "warn" }, h("strong", null, String(c.deletions)), " no longer in their tree") : null),
+      !c.newPeople && !c.matched && !c.updated && !c.newFamilies && !c.familiesGainingChildren && !c.newMedia && !c.deletions
+        ? h("p", null, "✅ Nothing new — everything in this file is already here.") : null,
+      p.newMedia && !p.mediaOnline ? h("p", { class: "warnings" }, "⚠ Photo storage isn't reachable: photos are skipped. Import the same file again later to add them.") : null,
+      h("p", { class: "hint" }, "Nothing that's already here is changed: empty details are filled in, and missing people, events, stories, photos and links are added."),
+      group("Matched to people already here", p.matched.length, h("div", null,
+        h("p", { class: "hint" }, "Same name and birth year as someone here. Untick anyone who isn't the same person — they're added as someone new."), matched), true),
+      group("Already imported, gaining details", p.updated.length, list(p.updated, (u) => h("span", null, h("strong", null, u.name), ` — ${u.adds.join(", ")}`), c.updated)),
+      group("New people", c.newPeople, list(p.newPeople, (x) => h("span", null, x.name, x.born ? ` (born ${x.born})` : "",
+        x.candidate ? h("span", { class: "hint" }, " — someone here has the same name; check for duplicates afterwards") : null), c.newPeople)),
+      group("New families", c.newFamilies, list(p.newFamilies, (f) => h("span", null, f.name, f.children ? ` · ${pl(f.children, "child", "children")}` : ""), c.newFamilies)),
+      group("Families gaining children", c.familiesGainingChildren, list(p.familiesGainingChildren, (f) => h("span", null, f.name, ` · ${pl(f.children, "child", "children")}`), c.familiesGainingChildren)),
+      p.deletions.length ? h("div", { class: "import-dels" },
+        h("h4", null, "No longer in their tree"),
+        h("p", { class: "hint" }, "These came from this tree before but aren't in this file — deleted there, or simply not part of this export. Keep them here, or remove them (people, families and photos go to the trash). Kept ones aren't asked about again unless they come back."),
+        h("div", { class: "toolbar" }, h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => setAll(false) }, "Keep all"),
+          h("button", { type: "button", class: "btn-secondary btn-small", onclick: () => setAll(true) }, "Remove all")),
+        h("ul", { class: "import-list" }, dels)) : null,
+      h("div", { class: "actions" }, cancel, go_), result));
+  }
+
+  function reset() {
+    unmatch.clear();
+    remove.clear();
+    current = null;
+    file.value = "";
+    mount(box, h("div", { class: "card" }, h("h3", null, "Import part of another family tree"),
+      h("p", { class: "hint" }, "Bring in people from another Family Tree — a relative's install, for example. They export the branch to share "
+        + "(Export → Website, with “Tree data for importing” ticked) and send you the zip. Importing only adds: nothing already here is changed. "
+        + "Import a newer zip from the same tree later and only what's new comes in; anything they removed is listed for you to remove or keep."),
+      field("Website export (.zip) or family-tree.json", file, "wide"),
+      h("div", { class: "actions" }, readBtn), result));
+  }
+  readBtn.addEventListener("click", async () => {
+    if (!file.files.length) { toast("Choose the file first.", { error: true }); return; }
+    const fd = new FormData();
+    fd.append("file", file.files[0]);
+    readBtn.disabled = true;
+    result.textContent = "Reading the file…";
+    try { draw(await api("api/admin/import", { method: "POST", formData: fd })); result.textContent = ""; }
+    catch (e) { result.textContent = ""; fail(e); }
+    readBtn.disabled = false;
+  });
+
+  async function drawSources() {
+    try {
+      const s = await api("api/admin/import/sources");
+      mount(sourcesBox, s.sources.length ? h("div", { class: "card" }, h("h3", null, "Imported from"),
+        ...s.sources.map((x) => h("div", { class: "form-row import-source" },
+          h("div", { class: "grow" }, h("strong", null, x.title || "A family tree"),
+            h("div", { class: "hint" }, `${plural(x.people, "person")} · imported ${plural(x.imports, "time")} · last ${fmtWhen(x.lastImportAt)}`)),
+          h("button", { type: "button", class: "btn-secondary btn-small", onclick: async () => {
+            if (!await confirmDialog("Forget this tree", `Forget what was imported from “${x.title}”? The people stay. Its next file is treated as a first import (people are matched by name and birth year again).`, "Forget")) return;
+            try { await api(`api/admin/import/sources/${encodeURIComponent(x.id)}`, { method: "DELETE" }); drawSources(); } catch (e) { fail(e); }
+          } }, "Forget")))) : null);
+    } catch (e) { mount(sourcesBox, null); }
+  }
+  reset();
+  drawSources();
+  return h("div", null, box, sourcesBox);
 }
 
 // ---------- photos & documents ----------
@@ -3668,7 +3805,7 @@ function exportDefaults() {
     living: "limited", maidenNames: true, otherNames: true, dates: "full", places: true,
     events: Object.fromEntries(EXPORT_EVENT_GROUPS.map(([k]) => [k, k !== "other"])),
     photos: "all", photoSize: "web", documents: false, stories: true, notes: false, relationships: true, relativeTo: null,
-    gender: true, deaths: true, familyDetails: true, customFields: {}, contacts: false, sources: false,
+    gender: true, deaths: true, familyDetails: true, customFields: {}, contacts: false, sources: false, importData: true,
     site: { title: "Our family", intro: "", homePersonId: null, coverMediaId: null, theme: "auto", pages: { tree: true, people: true, surnames: true, places: true } },
   };
 }
@@ -4121,7 +4258,9 @@ async function viewExport() {
             check("Tree", () => o.site.pages.tree, (v) => { o.site.pages.tree = v; }),
             check("Everyone (A–Z)", () => o.site.pages.people, (v) => { o.site.pages.people = v; }),
             check("Surnames", () => o.site.pages.surnames, (v) => { o.site.pages.surnames = v; }),
-            check("Places", () => o.site.pages.places, (v) => { o.site.pages.places = v; })))));
+            check("Places", () => o.site.pages.places, (v) => { o.site.pages.places = v; }))),
+        check("Tree data for importing", () => o.importData, (v) => { o.importData = v; },
+          "adds family-tree.json, so another Family Tree can import these same people (Admin → Import)")));
   }
 
   rebuild();

@@ -1,4 +1,4 @@
-"""Trips, regular-trip suggestions and tags for the E-470 feature (SPEC.md section 18.8).
+"""Trips, regular-trip suggestions and tags for the toll feature (SPEC.md section 18.8).
 
 A **trip** is what one journey costs: one vehicle's passes, in time order, where each pass is within
 TRIP_GAP_MIN minutes of the one before it and travels the same direction. Its **signature** is the

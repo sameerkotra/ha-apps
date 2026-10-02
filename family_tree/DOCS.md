@@ -250,6 +250,35 @@ for an hour, in the photo folder's `.exports`). Tick **Keep out of all
 exports** on a person (Edit → More details) to leave them out of every export.
 There is no password on a website: anyone with the zip can read it.
 
+### Import part of another family tree
+
+The website zip also holds `family-tree.json`: the same people, families,
+events, stories and photos as the pages, with the same choices applied (living
+people as names only, keep-out people left out, and so on). Untick **Tree data
+for importing** under Website to leave it out. "Private" link cards aren't in it.
+
+Another Family Tree imports it under **Admin → Import** (admins only):
+
+1. Choose the zip (or the `family-tree.json` on its own, without photos) and
+   press **Read file**. Nothing changes yet: you see who is new, who is already
+   here and what they gain, and new families and photos.
+2. First time from that tree: someone with the same name and birth year as
+   exactly one person here is **matched** to them. Untick a match that isn't the
+   same person and they're added as someone new.
+3. Importing **only adds**. Empty details are filled in; missing people, events,
+   stories, photos and parent/partner/child links are added. Nothing already
+   here is changed or overwritten, whatever the other tree says.
+4. Later zips from the same tree bring only what's new. Anything imported before
+   that isn't in the new zip — deleted there, or just not part of that export —
+   is listed under **No longer in their tree**: choose **Keep here** or **Remove
+   here** for each (people, families and photos go to the trash). Kept items
+   aren't asked about again unless they come back.
+5. **Import** does it as one History entry; **Undo** there takes it all back.
+
+**Imported from** lists each tree and lets you **Forget** it (the people stay;
+its next zip is treated as a first import). Custom fields, sources and contact
+details aren't imported.
+
 ## Wall chart and family book
 
 **More → Wall chart**: ancestors, descendants or an hourglass from anyone, 2–10

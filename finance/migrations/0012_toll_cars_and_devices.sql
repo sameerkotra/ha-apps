@@ -1,8 +1,8 @@
--- E-470, round 80: the person creates cars; the tags (Device #) found on statements are added as they appear
+-- Tolls, round 80: the person creates cars; the tags (Device #) found on statements are added as they appear
 -- and are assigned to a car afterwards. A tag can be moved to another car, and a car can have several tags over
 -- time (a replaced transponder). The plate is stored on the tag and follows the newest statement.
 --
--- There was no E-470 data when this was written, so the tables that held cars and passes are rebuilt empty and
+-- There was no toll data when this was written, so the tables that held cars and passes are rebuilt empty and
 -- any statement rows (never completed) are cleared rather than migrated.
 
 DELETE FROM toll_trip_overrides;

@@ -1,4 +1,4 @@
-"""Invented E-470 statement PDFs for tests (reportlab). The data is made up: the tag numbers, the plate
+"""Invented toll statement PDFs for tests (reportlab). The data is made up: the tag numbers, the plate
 placeholder and every time are fixtures, and the layout follows the two lines of the sample the feature
 was specified from (a summary block, a heading per car, one line per pass)."""
 from reportlab.lib.pagesizes import letter
@@ -32,7 +32,7 @@ def sample_cars():
     return [("1234567", "carplate-co", list(DEVICE_A)), ("5678945", "carplate-co", list(DEVICE_B))]
 
 
-def row_line(row, agency="CO", road="E470", status=STATUS):
+def row_line(row, agency="XX", road="TOLLWAY1", status=STATUS):
     date, time, plaza, lane, direction, amount = row
     return f"{date} {time} {agency} {road} {plaza} Lane {lane} {direction} {status} ${amount:.2f}"
 
@@ -44,7 +44,7 @@ def summary_lines(total):
             f"Grand Totals:  ${total:.2f}"]
 
 
-def make_pdf(path, cars=None, total="auto", summary=True, extra=(), lines_after_heading=None, footer="Thank you for using E-470"):
+def make_pdf(path, cars=None, total="auto", summary=True, extra=(), lines_after_heading=None, footer="Thank you for using the toll road"):
     """Write a statement PDF. cars: [(device, plate, rows)]; total: printed Grand Totals (positive), 'auto' for the
     passes' sum, or None for no Grand Totals line; extra: raw lines appended at the end of the last car;
     lines_after_heading: {car index: [raw lines]} inserted straight under that car's heading."""
@@ -52,7 +52,7 @@ def make_pdf(path, cars=None, total="auto", summary=True, extra=(), lines_after_
     passes_sum = round(sum(r[5] for _, _, rows in cars for r in rows if not isinstance(r, str)), 2)
     if total == "auto":
         total = passes_sum
-    lines = ["E-470 Public Highway Authority", "Toll Statement"]
+    lines = ["Example Toll Road Authority", "Toll Statement"]
     if summary:
         lines += ["Account Summary"]
         lines += summary_lines(total) if total is not None else ["Previous Balance : $35.00", "Payments : $166.60"]

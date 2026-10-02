@@ -1,4 +1,4 @@
-"""E-470 toll statement documents (SPEC.md section 18): upload, status polling, restart, delete/restore, review of passes the two readings disagree on, and the admin debug view. Dashboard/Compare/Analyze and cars/tags live in routes/tolls.py."""
+"""toll statement documents (SPEC.md section 18): upload, status polling, restart, delete/restore, review of passes the two readings disagree on, and the admin debug view. Dashboard/Compare/Analyze and cars/tags live in routes/tolls.py."""
 import asyncio
 import json
 from pathlib import Path
@@ -308,8 +308,8 @@ async def toll_resolve(
             if when is None or amount is None or amount <= 0 or not car_text:
                 errors.append(f"Added pass {j + 1}: choose a car and enter a valid date and time and a positive amount.")
                 continue
-            rows.append({"car": car, "mk": car[0] or car[1], "datetime": when, "agency": (form.get(f"add_agency_{j}") or "CO").strip().upper(),
-                         "road": (form.get(f"add_road_{j}") or "E470").strip().upper(), "plaza": (form.get(f"add_plaza_{j}") or "").strip(),
+            rows.append({"car": car, "mk": car[0] or car[1], "datetime": when, "agency": (form.get(f"add_agency_{j}") or "").strip().upper(),
+                         "road": (form.get(f"add_road_{j}") or "").strip().upper(), "plaza": (form.get(f"add_plaza_{j}") or "").strip(),
                          "lane": (form.get(f"add_lane_{j}") or "").strip(), "direction": normalize_direction(form.get(f"add_direction_{j}") or ""),
                          "amount": round(amount, 2), "raw_line": ""})
 

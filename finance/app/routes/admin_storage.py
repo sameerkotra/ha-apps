@@ -118,7 +118,7 @@ def admin_storage(
         utility_rows.append({**g, "size_bytes": size, "missing": not exists,
                              "all_complete": g["statuses"] == ["complete"]})
 
-    # E-470 toll statement PDFs: one file per statement row.
+    # toll statement PDFs: one file per statement row.
     toll_rows = []
     for r in stored_toll:
         size = None

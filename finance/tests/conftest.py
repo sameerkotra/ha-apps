@@ -109,7 +109,7 @@ def make_env(monkeypatch):
 
     def factory(client_host="testclient", tmp=None, features=True, **extra_env):
         """tmp: reuse an earlier env's directory (same database) — i.e. an app restart.
-        features: switch Utilities and E-470 on (a new install starts with them off)."""
+        features: switch Utilities and Tolls on (a new install starts with them off)."""
         reused = tmp is not None
         tmp = tmp or tempfile.mkdtemp()
         for k in list(extra_env):

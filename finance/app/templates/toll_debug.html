@@ -2,7 +2,7 @@
 {% block title %}Debug: {{ statement.original_filename }}{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
-<p><a href="tolls?tab=upload" class="btn-secondary">&larr; Upload &middot; E-470 statement</a></p>
+<p><a href="tolls?tab=upload" class="btn-secondary">&larr; Upload &middot; Toll statement</a></p>
 <h1>Debug: {{ statement.original_filename or "toll statement #" ~ statement.id }}</h1>
 <p class="hint">Admin-only troubleshooting view &mdash; not shown to regular users.</p>
 {% if statement.pdf_path %}<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=toll&amp;id={{ statement.id }}&amp;embed=1">View PDF</button></p>{% endif %}

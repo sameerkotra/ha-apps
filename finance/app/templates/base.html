@@ -145,7 +145,7 @@
         </a>
         {% if feat.utilities or feat.tolls %}
         <a href="{{ 'utilities' if feat.utilities else 'tolls' }}?tab=dashboard{{ '&' + acting_qs if acting_qs else '' }}" class="nav-item {{ 'active' if section == 'bills' }}"
-           title="Bills: {{ 'utilities and E-470' if feat.utilities and feat.tolls else ('utilities' if feat.utilities else 'E-470') }}">
+           title="Bills: {{ 'utilities and tolls' if feat.utilities and feat.tolls else ('utilities' if feat.utilities else 'tolls') }}">
             <span class="nav-icon" aria-hidden="true">&#129534;</span>
             <span class="nav-label">Bills</span>
         </a>
@@ -228,7 +228,7 @@
     </script>
     {% endif %}
     <script>
-    // The Upload nav item opens the upload page you used last (Statements, Utility bill or E-470 statement).
+    // The Upload nav item opens the upload page you used last (Statements, Utility bill or Toll statement).
     (function () {
         var here = {{ upload_page | tojson }}, last = null, qs = {{ acting_qs | default("") | tojson }};
         try {

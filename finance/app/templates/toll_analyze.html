@@ -2,11 +2,11 @@
 {% import "_nav_macros.html" as nav %}
 {% import "_toll_macros.html" as m %}
 {% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
-{% block title %}E-470 analyze{% endblock %}
+{% block title %}Tolls analyze{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
-<h1>E-470</h1>
+<h1>Tolls</h1>
 {{ m.subtabs("analyze", acting_qs) }}
 
 <p class="hint">

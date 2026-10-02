@@ -9,7 +9,7 @@ from fastapi import Depends
 from . import settings
 from .auth import User, get_current_user
 
-NAMES = {"utilities": "Utilities", "tolls": "E-470 tolls"}
+NAMES = {"utilities": "Utilities", "tolls": "Tolls"}
 
 
 class FeatureOff(Exception):

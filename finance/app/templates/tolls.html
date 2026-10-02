@@ -2,7 +2,7 @@
 {% import "_nav_macros.html" as nav %}
 {% import "_toll_macros.html" as m %}
 {% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
-{% block title %}E-470{% endblock %}
+{% block title %}Tolls{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {% if tab == "upload" %}
@@ -11,7 +11,7 @@
 <h1>Upload</h1>
 {% else %}
 {{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
-<h1>E-470</h1>
+<h1>Tolls</h1>
 {{ m.subtabs(tab, acting_qs) }}
 {% endif %}
 
@@ -147,7 +147,7 @@
 {% endif %}
 </details>
 
-<h2 id="toll-upload">Upload E-470 statement(s)</h2>
+<h2 id="toll-upload">Upload toll statement(s)</h2>
 <form id="toll-upload-form" enctype="multipart/form-data" class="add-account-form">
     <label>
         PDF(s)
@@ -254,7 +254,7 @@
 </div>
 {{ pager(history_view, always=true) }}
 {% else %}
-<p class="empty-state">No E-470 statements uploaded yet.</p>
+<p class="empty-state">No toll statements uploaded yet.</p>
 {% endif %}
 
 
@@ -277,12 +277,12 @@
 
 {% if pending_statements %}
 <p class="hint">{{ pending_statements }} statement{{ "s" if pending_statements != 1 else "" }} waiting for review &mdash; their passes are not counted until confirmed.
-    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}">Open Upload &rarr; E-470 statement</a>.</p>
+    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}">Open Upload &rarr; Toll statement</a>.</p>
 {% endif %}
 
 {% if unassigned_devices and selected_car_id != "none" %}
 <p class="hint">{{ unassigned_devices }} device{{ "s" if unassigned_devices != 1 else "" }} with tolls {{ "isn&rsquo;t" if unassigned_devices == 1 else "aren&rsquo;t" }} assigned to a car yet &mdash; their tolls show under the device.
-    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}&open=devices#toll-devices">Assign them on Upload &rarr; E-470 statement</a>.</p>
+    <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}&open=devices#toll-devices">Assign them on Upload &rarr; Toll statement</a>.</p>
 {% endif %}
 
 {% if figures.passes %}

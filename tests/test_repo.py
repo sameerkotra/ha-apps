@@ -10,10 +10,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
+# Apps released again since 2.0.0, at their own version.
+VERSIONS = {"family_tree": "2.1.0", "splitpot": "2.1.0"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.0.0"
+FINANCE_VERSION = "1.0.1"
+# Household Arcade: a newer app, built the same way as the six above, at its own version.
+ARCADE = "household_arcade"
+ARCADE_VERSION = "1.0.0"
+# Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
+RECEIPTS = "receipt_price_intelligence"
+RECEIPTS_VERSION = "1.0.0"
+NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",
@@ -22,6 +31,10 @@ TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".jso
 NEEDLES = re.compile(codecs.decode(
     r"fnzrre|xbgen|zvyirg|tznvy|192\.168\.1\.104|nzrevpn/qraire|\oqraire\o|pbybenqb|r-470|\okpry\o|cnexre|nheben",
     "rot13"), re.I)
+
+
+# A table of US state names and their codes (address reading) names every state, the needles' too.
+STATE_TABLE = re.compile(r'^\s*(?:"[a-z ]+": "[A-Z]{2}",\s*){4,}')
 
 
 def allow_repo_handle(line):
@@ -62,7 +75,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Unofficial apps", text[:600])
         self.assertIn("Claude", text[:600])
         self.assertIn(REPO_URL, text)
-        for slug in ADDONS + (FINANCE,):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS):
             self.assertIn(f"]({slug})", text, slug)
         self.assertIn("](LICENSE)", text)
         self.assertIn("](SECURITY.md)", text)
@@ -81,7 +94,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn(["*.png", "binary"], lines)
 
     def test_changelogs_start_at_the_release(self):
-        for slug, version in [(s, VERSION) for s in ADDONS] + [(FINANCE, FINANCE_VERSION)]:
+        for slug, version in [(s, VERSIONS.get(s, VERSION)) for s in ADDONS] + [(FINANCE, FINANCE_VERSION), *NEWER]:
             with self.subTest(slug):
                 log = read(slug, "CHANGELOG.md")
                 self.assertTrue(log.startswith("# Changelog\n"))
@@ -90,10 +103,13 @@ class RepositoryTests(unittest.TestCase):
     def test_shared_files_are_identical(self):
         """Files shared between apps are copied, not linked: every copy must be the same."""
         shared = {
-            "ha_notify.py": ["family_tree/app", "household_chat/app", "household_todo/app", "household_vault/app"],
-            "ha_people.py": ["family_tree/app", "household_chat/app", "household_todo/app", "household_vault/app"],
+            "ha_notify.py": ["family_tree/app", "household_chat/app", "household_todo/app", "household_vault/app",
+                             "household_arcade/app"],
+            "ha_people.py": ["family_tree/app", "household_chat/app", "household_todo/app", "household_vault/app",
+                             "household_arcade/app"],
             "backnav.js": ["calorie_tracker/app/static", "family_tree/app/static", "household_todo/app/static",
-                           "household_vault/app/static", "splitpot/public"],
+                           "household_vault/app/static", "splitpot/public", "household_arcade/app/static",
+                           "receipt_price_intelligence/frontend"],
         }
         for name, folders in shared.items():
             with self.subTest(name):
@@ -102,7 +118,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_user_facing_text_says_app_not_add_on(self):
         """Home Assistant 2026.2 renamed add-ons to apps; what people read says "app"."""
-        for slug in ADDONS + (FINANCE,):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS):
             for name in ("README.md", "DOCS.md", "CHANGELOG.md", os.path.join("translations", "en.yaml")):
                 with self.subTest(f"{slug}/{name}"):
                     text = read(slug, name).replace("ha-apps", "")
@@ -121,10 +137,10 @@ class RepositoryTests(unittest.TestCase):
         self.assertNotIn("data/", lines)    # would hide household_vault/app/data
 
     def test_each_addon(self):
-        for slug in ADDONS:
+        for slug, version in [(s, VERSIONS.get(s, VERSION)) for s in ADDONS] + list(NEWER):
             with self.subTest(slug):
                 config = read(slug, "config.yaml")
-                self.assertIn(f'version: "{VERSION}"', config)
+                self.assertIn(f'version: "{version}"', config)
                 self.assertIn(f"slug: {slug}", config)
                 self.assertIn(f"url: {REPO_URL}", config)
                 self.assertNotRegex(config, r"(?m)^ports:")
@@ -173,7 +189,7 @@ class RepositoryTests(unittest.TestCase):
                 continue
             with open(path, encoding="utf-8", errors="ignore") as f:
                 for n, line in enumerate(f, 1):
-                    if NEEDLES.search(allow_repo_handle(line)):
+                    if NEEDLES.search(allow_repo_handle(line)) and not STATE_TABLE.match(line):
                         hits.append(f"{os.path.relpath(path, ROOT)}:{n}")
         self.assertEqual(hits, [])
 

@@ -107,7 +107,7 @@ def test_wipe_all_data_includes_utility_bills_and_tolls(env):
     env.insert("utility_bills", user_id="tester", provider="Xcel Energy", status="complete")
     t = env.insert("toll_statements", user_id="tester", status="complete")
     r = env.get("user-wipe")
-    assert "1 utility bill" in r.text and "1 E-470 statement" in r.text
+    assert "1 utility bill" in r.text and "1 toll statement" in r.text
     assert env.post("user-wipe", data={"confirm_text": "Tester"}).status_code == 303
     with env.db() as c:
         for table in ("accounts", "transactions", "utility_bills", "toll_statements"):

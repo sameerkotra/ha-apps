@@ -1,4 +1,4 @@
-"""Vision reading of an E-470 toll statement (SPEC.md section 18.4): the
+"""Vision reading of a toll road statement (SPEC.md section 18.4): the
 prompt and the result shape; the request loop is parser/vision.ask_vision_json.
 toll_pipeline.py compares it with the deterministic reading. A row that can't be
 read (no valid date and time, or an amount that isn't positive) is reported in
@@ -22,13 +22,13 @@ class TollVisionResult:
     rejected: list[str] = field(default_factory=list)
 
 
-_TOLL_PROMPT = """You are extracting toll data from an E-470 toll statement. Respond with ONLY \
+_TOLL_PROMPT = """You are extracting toll data from a toll road statement. Respond with ONLY \
 a JSON object, no other text, in this exact shape:
 {"grand_total": 170.45, "period_start": "2026-08-01", "period_end": "2026-08-31", \
 "cars": [{"device_id": "1234567", "plate": "CARPLATE", "state": "CO", "transactions": [\
-{"date": "8/10/2026", "time": "6:30:53 AM", "agency": "CO", "road": "E470", "plaza": "SMOKY HILL RD", \
+{"date": "8/10/2026", "time": "6:30:53 AM", "agency": "XX", "road": "TOLLWAY 1", "plaza": "MAIN ST", \
 "lane": "1", "direction": "South", "amount": 1.25}, \
-{"date": "8/10/2026", "time": "4:17:25 PM", "agency": "CO", "road": "E470", "plaza": "PLAZA A", \
+{"date": "8/10/2026", "time": "4:17:25 PM", "agency": "XX", "road": "TOLLWAY 1", "plaza": "PLAZA A", \
 "lane": "3", "direction": "North", "amount": 2.60}]}]}
 
 Rules:
@@ -41,12 +41,12 @@ is the two letters after the LAST hyphen of the printed plate (for "carplate-co"
 ("Transaction Date/Time ... Amount") WITHOUT repeating the "Transactions For Device #" heading: those \
 lines still belong to the LAST heading above them. Put them in that same car's "transactions", never \
 in a new car with an empty device_id.
-- Each line reads: date, time (AM/PM), location (a two-letter agency such as CO, a road such as \
-E470, then the toll point's name), "Lane N" with a direction, a Toll Status column, and an amount.
+- Each line reads: date, time (AM/PM), location (a two-letter agency code, the road's name or number, \
+then the toll point's name), "Lane N" with a direction, a Toll Status column, and an amount.
   date = the date exactly as printed (month/day/year, e.g. "8/10/2026"); time = the time exactly as \
 printed INCLUDING its AM or PM (e.g. "6:30:53 AM", "4:17:25 PM"). Copy them; do NOT convert to 24-hour \
 time and do NOT drop the AM/PM.
-  agency = the two-letter code at the start of the location; road = the road (e.g. E470); \
+  agency = the two-letter code at the start of the location; road = the road's name or number as printed; \
 plaza = the toll point's name between the road and "Lane".
   lane = the lane NUMBER only; direction = North, South, East or West as printed after the lane.
   amount = the line's amount as a plain positive JSON number (no "$", no comma).

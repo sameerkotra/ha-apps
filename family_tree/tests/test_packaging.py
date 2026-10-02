@@ -10,7 +10,7 @@ import struct
 import unittest
 
 ROOT = _env.ROOT
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 REPO_URL = "https://github.com/sameerkotra/ha-apps"
 # Stored rot13-encoded so this file doesn't spell the words out itself.
 NEEDLES = re.compile(codecs.decode(r"fnzrre|xbgen|zvyirg|tznvy|192\.168\.1\.104|nzrevpn/qraire|qraire|pbybenqb|r-470|kpry|cnexre|nheben", "rot13"), re.I)

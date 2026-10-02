@@ -1,4 +1,4 @@
-"""Orchestrates one E-470 toll statement's processing end to end (SPEC.md section 18.4) —
+"""Orchestrates one toll statement's processing end to end (SPEC.md section 18.4) —
 sibling to utility_pipeline.process_utility_bill, queued on the same single FIFO worker.
 
 Two independent readings of the PDF are compared:
@@ -321,7 +321,7 @@ def process_toll_statement(statement_id: int, user_id: str, ollama_url: str, oll
         # Cheap format check ahead of the slow vision call.
         if not re.search(r"e-?470|toll", raw_text, re.IGNORECASE):
             _fail(conn, statement_id,
-                  "This PDF never mentions E-470 or tolls — it doesn't look like a toll statement. "
+                  "This PDF never mentions tolls — it doesn't look like a toll statement. "
                   "Check you uploaded the right file.")
             return
 

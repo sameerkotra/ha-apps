@@ -742,3 +742,18 @@ html.kids-locked .quiz-choices { grid-template-columns: repeat(auto-fit, minmax(
 .relate-pick { display: flex; flex-direction: column; gap: 6px; }
 .relate-swap { display: flex; justify-content: center; }
 .relate-line { margin: 0 0 6px; }
+
+/* ---------- Admin → Import (§13.6.3) ---------- */
+.import-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 10px 0; }
+.import-counts > div { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 0.88rem; }
+.import-counts strong { font-size: 1.15rem; margin-right: 2px; }
+.import-counts .warn { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.import-group { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.import-group summary { cursor: pointer; font-weight: 600; }
+.import-list { list-style: none; margin: 6px 0; padding: 0; max-height: 50vh; overflow-y: auto; }
+.import-list li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+.import-list li:last-child { border-bottom: none; }
+.import-del { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.import-del .grow, .import-source .grow { flex: 1; min-width: 0; }
+.import-dels { margin-top: 12px; }
+.import-source { align-items: center; }

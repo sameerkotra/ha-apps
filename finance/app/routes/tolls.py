@@ -1,4 +1,4 @@
-"""E-470 tolls (SPEC.md section 18): Dashboard, Compare, Analyze, and the
+"""tolls (SPEC.md section 18): Dashboard, Compare, Analyze, and the
 cars / devices / tags / groups behind them. Statement upload, status, restart,
 delete, review and debug are in routes/toll_statements.py; parsing runs on the
 shared job queue (app/jobs.py). Separate from finance and utilities: toll amounts
@@ -219,7 +219,7 @@ def _monthly_chart(months: dict):
     rows = [{"month": m, "cost": months.get(m, {}).get("cost", 0.0), "passes": months.get(m, {}).get("passes", 0)} for m in series]
     points = [{"label": r["month"], "value": r["cost"],
                "tip": f"{month_label(r['month'])}\nTolls ${r['cost']:,.2f}\n{r['passes']} pass{'es' if r['passes'] != 1 else ''}"} for r in rows]
-    return column_chart(points, prefix="$", css_class="chart-cost", label="E-470 tolls per month"), rows
+    return column_chart(points, prefix="$", css_class="chart-cost", label="Tolls per month"), rows
 
 
 _CLEAN_PASS = "x.deleted_at IS NULL AND x.review_status = 'clean' AND s.deleted_at IS NULL"
@@ -729,10 +729,10 @@ def toll_compare(
         car_series, car_periods = _car_series(conn, acting.id, mode, period_keys, safe_car)
 
     options = sorted(set(years if mode == "year" else months) | {a, b}, reverse=True)
-    trend_chart = (stacked_column_chart(trend_periods, trend_series, prefix="$", label="E-470 tolls by group")
+    trend_chart = (stacked_column_chart(trend_periods, trend_series, prefix="$", label="Tolls by group")
                    if len(trend_periods) >= 2 else None)
     trend_rows = [{"period": p["label"], "tip_label": p["tip_label"], "values": p["values"]} for p in trend_periods]
-    car_chart = (stacked_column_chart(car_periods, car_series, prefix="$", label="E-470 tolls by car")
+    car_chart = (stacked_column_chart(car_periods, car_series, prefix="$", label="Tolls by car")
                  if len(car_periods) >= 2 else None)
     car_rows = [{"period": p["label"], "tip_label": p["tip_label"], "values": p["values"]} for p in car_periods]
     return templates.TemplateResponse(request, "toll_compare.html", {

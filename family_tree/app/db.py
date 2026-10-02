@@ -189,6 +189,24 @@ CREATE INDEX IF NOT EXISTS idx_bp_person ON batch_people(person_id);
 
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
+-- Importing another Family Tree's export (§13.6.3, v2.1.0): which of their rows became which of ours, per
+-- source install, so a later export of the same tree only adds what's new. ignored_missing = the admin kept
+-- it when it was missing from a file; not asked again until it comes back.
+CREATE TABLE IF NOT EXISTS import_sources (
+  id TEXT PRIMARY KEY,
+  title TEXT,
+  last_import_at TEXT,
+  imports INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS import_links (
+  source_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('person','family','event','story','media','child')),
+  remote_id TEXT NOT NULL,
+  local_id TEXT NOT NULL,
+  ignored_missing INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (source_id, kind, remote_id)
+);
+
 -- App settings (Admin → App settings; settings.py, features.py). Values are JSON;
 -- updated_by is the admin's HA user id, NULL for the one-time import.
 CREATE TABLE IF NOT EXISTS app_settings (

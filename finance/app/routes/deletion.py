@@ -130,7 +130,7 @@ def recently_deleted(
             (acting.id,),
         ).fetchall()
 
-        # E-470 statements (restored with their passes by /toll-restore).
+        # toll statements (restored with their passes by /toll-restore).
         toll_statements = conn.execute(
             """
             SELECT id, original_filename, period_start_date, period_end_date, deleted_at,
@@ -597,7 +597,7 @@ _PURGEABLE = {
         hard_delete_utility_bill,
     ),
     "toll_statement": _purge_kind(
-        "E-470 toll statement",
+        "Toll statement",
         "SELECT * FROM toll_statements WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL",
         lambda r: [("File", r["original_filename"] or "\u2014"),
                    ("Period", f"{r['period_start_date']} \u2013 {r['period_end_date']}" if r["period_start_date"] else "\u2014")],
@@ -765,7 +765,7 @@ def user_wipe(
             "UPDATE accounts SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL",
             (stamp, acting.id),
         )
-        # Utility bills and E-470 statements (with their passes) go too; each
+        # Utility bills and toll statements (with their passes) go too; each
         # is restored from Recently deleted on its own, like any single delete.
         for table in ("utility_bills", "toll_transactions", "toll_statements"):
             conn.execute(

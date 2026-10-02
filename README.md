@@ -4,7 +4,7 @@
 > aren't affiliated with or endorsed by Home Assistant or Nabu Casa. They were built with Claude,
 > Anthropic's AI model, and are provided as-is: try them out first, and keep your own backups.
 
-Seven apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
+Eight apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
 sidebar, uses everyone's Home Assistant login (no extra accounts or passwords), and keeps its data on
 your own Home Assistant.
 
@@ -16,6 +16,8 @@ your own Home Assistant.
 | [Calorie Tracker](calorie_tracker) | Food, macros, weight and goals for each person, with optional AI estimates through your own Ollama, an OpenAI-compatible service or Anthropic Claude. |
 | [Finance Dashboard](finance) | **64-bit only.** Bank and credit-card statements (PDF or CSV) read by the AI you choose, with categories and rules, transfers, recurring charges, a dashboard, saved reports and per-person data with optional sharing. Utility bills and toll statements are optional extras. |
 | [Splitpot](splitpot) | Split shared expenses (equally, by amount or by percentage), see who owes whom and settle up; balances can show up as sensors. |
+| [Receipt Price Intelligence](receipt_price_intelligence) | Scan receipts with your own vision model, track prices and spending, and find where to shop for less: a shopping list that knows where each item is cheapest, a trip planner, price alerts and sensors. |
+| [Household Arcade](household_arcade) | Classic games for the whole household, played from the sidebar or the phone: Snake and Brick Breaker to start, with more to come. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
 | [Household Vault](household_vault) | **Experimental.** A password manager with personal, household and shared vaults, each a standard KeePass file. It hasn't had an independent security review — keep your own KeePass copy of your passwords. |
 
 ## Installing
@@ -57,7 +59,7 @@ Tree and Household Chat keep their files in the same `/share` folder either way.
   (for example an AI provider outside your network, drive times through OpenStreetMap, or the
   Family Tree map). Each app's Documentation tab says exactly what is sent and where.
 - **What's new:** each app's `CHANGELOG.md` (shown in Home Assistant's update dialog) starts at this
-  first public release: 2.0.0, and 1.0.0 for Finance Dashboard.
+  first public release: 2.0.0, and 1.0.0 for Finance Dashboard and Household Arcade.
 
 ## Reporting a problem
 

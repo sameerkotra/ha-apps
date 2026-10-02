@@ -9,7 +9,7 @@
 Your household's finances inside Home Assistant: bank and credit-card statements (PDF or CSV)
 read by an AI model you choose — your own Ollama, an OpenAI-compatible service or Anthropic
 Claude — with confirmation against the PDF, categories and rules, transfers, recurring charges,
-a dashboard, saved reports and per-person data with optional sharing. Utility bills and E-470
+a dashboard, saved reports and per-person data with optional sharing. Utility bills and Tolls
 toll statements are optional extras.
 
 See the **Documentation** tab for setup and everything the app does.

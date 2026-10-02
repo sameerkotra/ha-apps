@@ -57,7 +57,7 @@ REGISTRY: dict[str, TableSpec] = {
     "electric_meter_details": TableSpec(
         "Per electric bill: grid import, solar export and net kWh (on/off peak), rates and charges. Links by utility_bill_id.",
         "EXISTS (SELECT 1 FROM main.utility_bills b WHERE b.id = x.utility_bill_id AND b.user_id = {u} AND b.deleted_at IS NULL)"),
-    "toll_statements": TableSpec("Uploaded E-470 statements: period, totals, status.", _LIVE),
+    "toll_statements": TableSpec("Uploaded toll statements: period, totals, status.", _LIVE),
     "toll_transactions": TableSpec(
         "Each toll pass: date, occurred_at (local time), agency, road, plaza, lane, direction, amount (positive), device_ref, trip_id.",
         _LIVE + " AND EXISTS (SELECT 1 FROM main.toll_statements s WHERE s.id = x.statement_id AND s.deleted_at IS NULL)"),

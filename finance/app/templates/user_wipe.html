@@ -10,7 +10,7 @@
         {{ counts.transactions }} transaction{{ "s" if counts.transactions != 1 else "" }}
         {% if counts.transfers %}(including {{ counts.transfers }} reconciled transfer{{ "s" if counts.transfers != 1 else "" }}){% endif %},
         plus {{ counts.utility_bills }} utility bill{{ "s" if counts.utility_bills != 1 else "" }} and
-        {{ counts.toll_statements }} E-470 statement{{ "s" if counts.toll_statements != 1 else "" }}.
+        {{ counts.toll_statements }} toll statement{{ "s" if counts.toll_statements != 1 else "" }}.
         Everything moves to <a href="recently-deleted{% if acting_qs %}?{{ acting_qs }}{% endif %}">Recently deleted</a>
         for 30 days before it's permanently purged &mdash; restore it any time before then, or leave it and it's
         gone for good after the grace period.

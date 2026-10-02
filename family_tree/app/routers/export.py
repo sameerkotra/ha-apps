@@ -10,6 +10,7 @@ import os
 import tempfile
 import threading
 import time
+import zipfile
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -115,7 +116,14 @@ def _run(jid: str, user: dict, fmt: str, options: ExportOptions):
         stamp = datetime.now().strftime("%Y%m%d")
         path = os.path.join(exports_dir(), f"export-{jid}.zip")
         progress(5, "Writing pages")
-        Site(v, options, progress).write(path)
+        site = Site(v, options, progress)
+        site.write(path)
+        if options.importData:            # the same filtered data, for another Family Tree to import (§13.6.3)
+            from .. import tree_data
+            with db.get_conn() as conn:
+                data = tree_data.export_data(conn, v, options, site.files, site.title)
+            with zipfile.ZipFile(path, "a", zipfile.ZIP_DEFLATED) as z:
+                z.writestr(tree_data.DATA_NAME, json.dumps(data, ensure_ascii=False))
         with db.get_conn() as conn:
             Batch(conn, user["id"], summary_label(options, stats, fmt))
         with _lock:

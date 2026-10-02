@@ -1,4 +1,4 @@
-"""Utilities and E-470 are optional; other utility providers go through a confirm flow (SPEC.md section 23)."""
+"""Utilities and Tolls are optional; other utility providers go through a confirm flow (SPEC.md section 23)."""
 import json
 
 import pytest
@@ -11,7 +11,7 @@ def test_new_install_starts_with_them_off(make_env):
     home = env.get("dashboard").text
     assert "Bills</span>" not in home
     uploads = env.get("uploads").text
-    assert "Utility bill</a>" not in uploads and "E-470 statement</a>" not in uploads and "Review</a>" in uploads
+    assert "Utility bill</a>" not in uploads and "Toll statement</a>" not in uploads and "Review</a>" in uploads
     for url in ("utilities?tab=upload", "utilities?tab=dashboard", "utility-comparison", "tolls?tab=upload",
                 "tolls?tab=dashboard", "toll-compare"):
         r = env.get(url)
@@ -27,7 +27,7 @@ def test_new_install_starts_with_them_off(make_env):
     assert env.get("utilities?tab=upload").status_code == 200
     assert env.get("tolls?tab=upload").status_code == 404
     uploads = env.get("uploads").text
-    assert "Utility bill</a>" in uploads and "E-470 statement</a>" not in uploads
+    assert "Utility bill</a>" in uploads and "Toll statement</a>" not in uploads
     assert 'href="utilities?tab=dashboard' in env.get("dashboard").text      # Bills goes to Utilities
 
 

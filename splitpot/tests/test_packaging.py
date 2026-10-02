@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 ADDON_DIR = Path(__file__).resolve().parent.parent
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 REPO_URL = "https://github.com/sameerkotra/ha-apps"
 
 # Personal details that must never appear (the repository URL is the one

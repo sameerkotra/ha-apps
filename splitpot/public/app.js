@@ -578,6 +578,11 @@ function renderGroupDetail() {
   defaultBtn.title = g.isDefault ? 'Open the Dashboard when the app starts, instead of this group' : 'Open this group when the app starts, instead of the Dashboard';
   // Deleting a group is admin-only (enforced server-side too).
   $('#groupDeleteBtn').hidden = !state.isAdmin;
+  // Export is for everyone; it sits beside Delete (relative URL: ingress serves the app under a sub-path)
+  const exportBtn = $('#groupExportBtn');
+  exportBtn.href = `api/groups/${encodeURIComponent(g.id)}/export.csv`;
+  exportBtn.classList.toggle('disabled', !g.expenses.length);
+  exportBtn.title = g.expenses.length ? 'Download every expense and payment in this group as a CSV file for a spreadsheet' : 'Nothing to export yet';
 
   const paidBySel = $('#expPaidBy');
   paidBySel.innerHTML = selectableMembers.map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');

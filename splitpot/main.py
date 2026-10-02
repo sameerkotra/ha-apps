@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import json
 import logging
 import os
@@ -1330,6 +1332,46 @@ def add_member(group_id: str, payload: MemberAdd, request: Request):
             )
             conn.commit()
         return serialize_group(conn, group_id)
+
+
+_CSV_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_text(v) -> str:
+    """Text for a CSV cell. A leading = + - @ would make a spreadsheet run it as a formula, so it gets a '."""
+    s = "" if v is None else str(v)
+    return "'" + s if s.startswith(_CSV_FORMULA) else s
+
+
+@router.get("/groups/{group_id}/export.csv")
+def export_group_csv(group_id: str):
+    """Every expense and settle-up payment in one group, oldest first, with each member's share in its own
+    column — for a spreadsheet. Anyone who can open the group can export it."""
+    with get_conn() as conn:
+        g = serialize_group(conn, group_id)
+    currency = get_setting("currency")
+    members = list(g["members"])
+    known = {m["id"] for m in members}
+    for e in g["expenses"]:                      # people who left the group but still have shares
+        for s in e["splits"]:
+            if s["userId"] not in known:
+                known.add(s["userId"])
+                members.append({"id": s["userId"], "name": s["name"]})
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Type", "Description", "Amount", "Currency", "Paid by", "Split"]
+               + [f"{m['name']} share" for m in members])
+    split_label = {"equal": "Equally", "custom": "Exact amounts", "percent": "Percentages", "payment": "Payment"}
+    for e in sorted(g["expenses"], key=lambda x: (x["date"] or "", x["description"] or "")):
+        shares = {s["userId"]: s["amount"] for s in e["splits"]}
+        w.writerow([e["date"], "Payment" if e["splitType"] == "payment" else "Expense", _csv_text(e["description"]),
+                    f"{e['amount']:.2f}", currency, _csv_text(e["paidByName"]), split_label.get(e["splitType"], e["splitType"])]
+                   + [f"{shares[m['id']]:.2f}" if m["id"] in shares else "" for m in members])
+    safe = re.sub(r'[^A-Za-z0-9 ._-]+', "-", g["name"]).strip(" .-")[:60] or "group"
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{safe} - {stamp}.csv"',
+                             "Cache-Control": "no-store"})
 
 
 @router.delete("/groups/{group_id}", status_code=204)

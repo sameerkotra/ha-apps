@@ -2,7 +2,7 @@
 {% block title %}Review: {{ statement.original_filename }}{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
-<p><a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Upload &middot; E-470 statement</a></p>
+<p><a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Upload &middot; Toll statement</a></p>
 <h1>Review: {{ statement.original_filename or "toll statement" }}</h1>
 <p class="hint">
     This statement was held back because the checks below did not all pass. Compare it with the PDF, settle each difference,

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
 {% import "_toll_macros.html" as m %}
-{% block title %}E-470 compare{% endblock %}
+{% block title %}Tolls compare{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
-<h1>E-470</h1>
+<h1>Tolls</h1>
 {{ m.subtabs("compare", acting_qs) }}
 
 <form id="toll-compare-filters" method="get" action="toll-compare" class="add-account-form">

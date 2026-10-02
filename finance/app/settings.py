@@ -57,8 +57,8 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "The service's price per 1M output tokens."),
     Setting("feature_utilities", "Utilities", "bool", "0",
             "Utility bills: upload them under Upload, see them under Bills. Off hides them everywhere (nothing is deleted)."),
-    Setting("feature_tolls", "E-470 tolls", "bool", "0",
-            "E-470 toll statements (Colorado): upload and analyze trips. Off hides them everywhere (nothing is deleted)."),
+    Setting("feature_tolls", "Tolls", "bool", "0",
+            "Toll road statements (PDF): upload them and analyze cost by car, tag and trip. Off hides them everywhere (nothing is deleted)."),
 ]}
 
 _SEEDED_FROM_ENV = {"ai_url": "OLLAMA_URL", "ai_model": "OLLAMA_MODEL"}

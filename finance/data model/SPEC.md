@@ -9,7 +9,7 @@ so keep them stable. The database schema, as the migrations leave it, is in
 
 A self-hosted Home Assistant app for one household. It reads bank and
 credit-card statements (PDF or CSV) — PDFs with the AI model the admin chooses
-(section 22) — and, optionally, utility bills and E-470 toll statements (section
+(section 22) — and, optionally, utility bills and toll statements (section
 23), and turns them into searchable transactions, dashboards, reports and
 comparisons. Each Home Assistant user sees only their own data unless the admin
 shares it (section 20).
@@ -39,7 +39,7 @@ shares it (section 20).
   `accounts/5`) so relative links resolve the same from every page.
 - **Time zone.** `bootstrap.py` reads Home Assistant's configured zone through
   Supervisor's Core API (`homeassistant_api: true`) and sets `TZ` before
-  starting uvicorn; fallback `America/Denver` (Mountain Time with DST, not fixed
+  starting uvicorn; fallback `UTC` (was America/Denver before 1.0.1; not fixed
   MST). The image installs `tzdata`. SQLite `datetime('now')` audit timestamps
   stay UTC.
 - **App options** (the app's Configuration tab): `admin_users` (list) and `trusted_client_ips` (list) only.
@@ -346,8 +346,8 @@ Uncategorized — it never fails an import.
   |---|---|---|
   | Home | Overview · Compare | `dashboard`, `dashboard-compare` |
   | Transactions | All · Transfers · Recurring · Accounts | `transactions`, `transfers`, `recurring`, `transactions-accounts` |
-  | Upload | Statements · Review · Utility bill · E-470 statement | `uploads`, `review` (Back returns to Statements), `utilities?tab=upload`, `tolls?tab=upload` (each with its history) |
-  | Bills | Utilities (Dashboard · Compare) · E-470 (Dashboard · Compare · Analyze) | `utilities`, `utility-comparison`, `tolls`, `toll-compare`, `toll-analyze` |
+  | Upload | Statements · Review · Utility bill · toll statement | `uploads`, `review` (Back returns to Statements), `utilities?tab=upload`, `tolls?tab=upload` (each with its history) |
+  | Bills | Utilities (Dashboard · Compare) · Tolls (Dashboard · Compare · Analyze) | `utilities`, `utility-comparison`, `tolls`, `toll-compare`, `toll-analyze` |
   | Reports | — | `reports`, `report` |
   | Setup | Accounts · Categories | `accounts`, `account`, `categories` |
   | Admin | Storage · Query · Users · Recently deleted · AI usage · App settings | `admin-storage`, `recently-deleted`, `ai-usage`, `settings` |
@@ -356,7 +356,7 @@ Uncategorized — it never fails an import.
   Upload on their upload tab, Bills otherwise). URLs are unchanged.
 - **Staying in Upload.** Debug, review and PDF pages of an upload belong to the
   Upload section, and their Back link returns to that upload page (Statements,
-  Utility bill or E-470 statement). Actions on an upload — upload, delete,
+  Utility bill or toll statement). Actions on an upload — upload, delete,
   resolve, restart — come back to the same upload page, never another one. The
   Upload nav item reopens the upload page used last (remembered per browser).
 - **Upload → Statements:** statement upload, manual entry and
@@ -477,7 +477,7 @@ checking-account payment).
   Transactions or Review); recurring and toll-trip constants are tuned on limited
   real data.
 
-## 18. E-470 toll statements (separate from finance and utilities)
+## 18. toll statements (separate from finance and utilities)
 
 ### 18.1 The statement
 
@@ -491,7 +491,7 @@ $0.00 is an unparsed line.
 
 ### 18.2 Pages
 
-Nav item **E-470**: Dashboard, Upload, Compare and Analyze tabs; Review and admin
+Nav item **Tolls**: Dashboard, Upload, Compare and Analyze tabs; Review and admin
 Debug per statement; PDFs through the viewer (`kind=toll`).
 
 ### 18.3 Data
@@ -563,7 +563,7 @@ re-run of the AI.
 ### 19.1 Where and who
 
 - **Storage → Query tab** (`admin-storage?tab=query`): admin only. The admin writes read-only SQL over the data of the acting user (themselves, or the user picked in the switch), sees the results, and saves queries as reports. The Storage page has three tabs: Storage (the default), Query and Users (section 20).
-- **Reports page** (`reports`, `report?id=N`): in everyone's nav, after E-470. Anyone can run any saved report; each run uses the data of whoever runs it. For a regular user that is their own data, or the shared data they're using (section 20); for the admin it is the acting user. Only the admin creates, edits, duplicates or deletes reports, runs "Check reports", or sees a report's SQL. A report that fails shows other users a plain "ask the admin" message; input mistakes ("must be a number") are shown to everyone; SQLite's error text only to the admin.
+- **Reports page** (`reports`, `report?id=N`): in everyone's nav, after Tolls. Anyone can run any saved report; each run uses the data of whoever runs it. For a regular user that is their own data, or the shared data they're using (section 20); for the admin it is the acting user. Only the admin creates, edits, duplicates or deletes reports, runs "Check reports", or sees a report's SQL. A report that fails shows other users a plain "ask the admin" message; input mistakes ("must be a number") are shown to everyone; SQLite's error text only to the admin.
 - Writing SQL is desktop-first (wide editor, Reference box beside it); the Reports list and run pages are laid out for phones too (stacked form, results as labelled cards, a sort dropdown).
 
 ### 19.2 How a run is kept read-only and scoped (`app/query_engine.py`)
@@ -598,7 +598,7 @@ re-run of the AI.
 
 - Columns: name, description, sql, variables_json, totals_json, chart_json, no_time_limit, created_at, updated_at, last_run_at. App-wide, not per user: a user's "Wipe all data" leaves them; the admin DB download/import includes them.
 - Report page: the variable form, then results; a normal report runs as soon as it opens with its defaults. Links carry the values (`report?id=3&v_account=5&v_period=last_month`), so they can be bookmarked; the same link opened by another user shows their own data.
-- **Starter reports:** Spending by category (account, period), Money in / out by month (account, period), Top 20 merchants (account, period, category), Utility cost by month (period). No toll report: the E-470 tab covers that.
+- **Starter reports:** Spending by category (account, period), Money in / out by month (account, period), Top 20 merchants (account, period, category), Utility cost by month (period). No toll report: the Tolls tab covers that.
 - **Check reports** (admin) runs every report with its defaults on the acting user's data and lists any that fail.
 
 ### 19.6 Charts and No time limit
@@ -631,8 +631,8 @@ re-run of the AI.
 - Stored in `app_settings` (key, value, updated_at, updated_by; migration 0022) and read on every use, so **a change applies at once, without restarting the app**: the next PDF job, CSV categorization, debug re-send or Write SQL request uses it; nothing already running is interrupted.
 - **AI:** provider, address, model, access key, text model, longest answer (section 22).
 - **AI usage on debug pages:** Show AI token usage (on by default) and prices per million input and output tokens (default 0; a local model costs nothing but time). The prices are also used for the cost on Admin → AI usage (section 21.3).
-- **Features:** Utilities and E-470 tolls on or off (section 23).
-- **Not app options.** The AI settings are set only on this page (keys `ai_*`; migration 0023 renamed the earlier `ollama_url` / `ollama_model`). An older install's leftover `ollama_url` / `ollama_model` in `/data/options.json` (or `OLLAMA_URL` / `OLLAMA_MODEL` in the environment, for local development) fill in the address and model once if they're still empty ("Copied from the old app options"; the stored `updated_by` marker stays `add-on options`). While the AI isn't set up (no model; Ollama without an address; Claude without a key) App settings and the Statements, Utility bill and E-470 upload pages say so (the admin gets a link to App settings), and a PDF job fails with the same message.
+- **Features:** Utilities and tolls on or off (section 23).
+- **Not app options.** The AI settings are set only on this page (keys `ai_*`; migration 0023 renamed the earlier `ollama_url` / `ollama_model`). An older install's leftover `ollama_url` / `ollama_model` in `/data/options.json` (or `OLLAMA_URL` / `OLLAMA_MODEL` in the environment, for local development) fill in the address and model once if they're still empty ("Copied from the old app options"; the stored `updated_by` marker stays `add-on options`). While the AI isn't set up (no model; Ollama without an address; Claude without a key) App settings and the Statements, Utility bill and Tolls upload pages say so (the admin gets a link to App settings), and a PDF job fails with the same message.
 - Saving checks every value first; if one is wrong (bad address, unknown provider, Ollama without an address, a longest answer outside 256–200,000, negative or non-numeric price) nothing is saved and the form keeps what was typed, with the errors listed. Each field shows when it was last changed and by whom.
 - New settings are added to `app/settings.py` (`SETTINGS` and a `GROUPS` entry) and appear on the page automatically (kinds: url, text, bool, price, int, choice, secret).
 - `app_settings` and `ai_usage_log` are hidden from the Query tab.
@@ -676,12 +676,12 @@ re-run of the AI.
 
 ### 22.4 Privacy notice
 
-- While the AI is outside the home network, **Home**, **App settings** and the **Statements, Utility bill and E-470 upload pages** show, to everyone: "Your documents go to <provider>" — PDFs are sent as page images to <host>, transaction descriptions for categories (and the admin's Write SQL sends table names, accounts and categories), and that service's own privacy and retention rules apply. The admin gets a link to App settings.
+- While the AI is outside the home network, **Home**, **App settings** and the **Statements, Utility bill and Tolls upload pages** show, to everyone: "Your documents go to <provider>" — PDFs are sent as page images to <host>, transaction descriptions for categories (and the admin's Write SQL sends table names, accounts and categories), and that service's own privacy and retention rules apply. The admin gets a link to App settings.
 
-## 23. Optional parts: Utilities and E-470
+## 23. Optional parts: Utilities and Tolls
 
-- **App settings → Features:** Utilities and E-470 tolls, each on or off. A new install starts with both off; an upgrade that already has utility bills (or toll statements) keeps that part on (migration 0023).
-- **Off** hides it everywhere — the Bills nav item (when both are off), the Upload tabs Utility bill / E-470 statement, the Bills tabs — and every one of its pages and actions answers 404 "<part> is turned off" (the admin gets a link to App settings). Nothing is deleted; switching it back on shows everything again, without a restart. `request.state.features` carries the switches to every page (`app/features.py`).
+- **App settings → Features:** Utilities and tolls, each on or off. A new install starts with both off; an upgrade that already has utility bills (or toll statements) keeps that part on (migration 0023).
+- **Off** hides it everywhere — the Bills nav item (when both are off), the Upload tabs Utility bill / toll statement, the Bills tabs — and every one of its pages and actions answers 404 "<part> is turned off" (the admin gets a link to App settings). Nothing is deleted; switching it back on shows everything again, without a restart. `request.state.features` carries the switches to every page (`app/features.py`).
 - **Other utility providers.** Xcel Energy and Aurora Water keep their tuned prompt and the check that the PDF names the provider. **Other provider…** on the upload form takes a name (up to 60 characters; a typed known name maps to it): the bill is read with a general electric / gas / water prompt naming that provider and **always waits for review** ("isn't one of the providers the app reads by itself…"). The person checks the values against the PDF, corrects them and Confirms, or **Re-extracts** with notes.
 - **Re-extract a utility bill** (the review page, any provider, while the PDF is kept and the bill isn't confirmed): notes on what was wrong (up to 2,000 characters) are saved on the upload's first row (`utility_bills.extraction_notes`) and sent with the PDF; the whole upload is read again (Xcel's gas with its electric) and returns to Upload → Utility bill. The debug re-send uses the same prompt and notes.
 - Other providers appear in the Dashboard's provider filter once they have bills.
@@ -693,7 +693,7 @@ re-run of the AI.
 - **Store and Documentation tabs:** `finance/README.md` (short description) and `finance/DOCS.md` (setup and everything the app does, for users). `icon.png` (128×128) and `logo.png` (250×100) are the app's own artwork. `translations/en.yaml` names and explains the two options. `CHANGELOG.md` (shown in Home Assistant's update dialog) starts at the release version, newest first: its top `## <version>` section equals `config.yaml`'s version (a test checks); each later release adds its section above.
 - **Options:** only `admin_users` and `trusted_client_ips`, both empty by default; everything else is on Admin → App settings. Nothing in the shipped files names the author's network or accounts (a test checks the tracked files).
 - **First run:** while `admin_users` is empty, every page shows **No admin yet** with the viewer's Home Assistant user name, saying to add it to `admin_users` on the app's Configuration tab (Settings → Apps → Finance Dashboard → Configuration) and restart the app, then set up the AI on App settings. Nobody is admin until then.
-- New installs start with Utilities and E-470 off and no AI configured (section 23, 22).
+- New installs start with Utilities and Tolls off and no AI configured (section 23, 22).
 
 ## 25. Layout, status and limitations
 
@@ -728,7 +728,7 @@ ha addon/finance/           the app (folder name = where it lives; slug "finance
   and retries (faked); the privacy notice; Features on and off; the packaging
   files (changelog, 64-bit notice) and first-run notice.
 - Real-world with Ollama: statements from the household's banks and cards, Xcel
-  dual-fuel and Aurora Water bills, and real E-470 statements. The
+  dual-fuel and Aurora Water bills, and real toll statements. The
   OpenAI-compatible and Claude providers are tested against faked responses
   only so far: try one statement with each before relying on it.
 

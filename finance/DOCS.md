@@ -70,17 +70,18 @@ or two years side by side.
   amounts printed in it. Confirm it against the PDF, or **Re-extract** telling the AI what was
   wrong. Possible duplicates are skipped and can be inserted anyway.
 - **Review**: everything waiting for you.
-- **Utility bill** and **E-470 statement**: when those parts are switched on (below).
+- **Utility bill** and **Toll statement**: when those parts are switched on (below).
 
 ### Bills (optional)
 - **Utilities**: electric, gas and water bills with usage and cost per period, and Compare.
   Xcel Energy and Aurora Water are read with tuned rules; any other provider works too — its
   bills always wait for you to check and confirm.
-- **E-470** (Colorado toll road): statements by car and tag, trips and patterns.
+- **Tolls**: toll road statements by car and tag, trips and patterns.
 
 Both are off on a new install: switch them on under **Admin → App settings → Features**.
-Leave them off if you don't need them — the rest of the app works the same. E-470 only reads
-statements from that one Colorado toll road, so outside Colorado there's nothing to switch on.
+Leave them off if you don't need them — the rest of the app works the same. Tolls reads toll road
+statements that list each pass under a tag (device) and plate heading — date, time, location, lane and
+amount — with a grand total; a statement laid out differently may not be read.
 Turning a part off (untick it in the same place) hides it everywhere — its menu entries, upload page
 and Bills pages — but deletes nothing: switch it back on and everything is still there. An
 install that already had utility bills or toll statements before keeps those parts switched on.

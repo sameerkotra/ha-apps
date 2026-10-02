@@ -14,9 +14,8 @@ import urllib.request
 
 OPTIONS_PATH = "/data/options.json"
 
-# Only when Home Assistant's own zone can't be read. Mountain Time with
-# daylight saving (the install is in Colorado) — not fixed-offset "MST".
-FALLBACK_TZ = "America/Denver"
+# Only when Home Assistant's own zone can't be read.
+FALLBACK_TZ = "UTC"
 
 
 def _resolve_timezone() -> str:
