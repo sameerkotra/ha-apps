@@ -1,0 +1,9 @@
+# Pinned so an app rebuild can't silently pull a breaking release.
+# Upgrade deliberately: bump here, run `python3 -m pytest`, then rebuild.
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+pydantic==2.13.3
+httpx==0.28.1
+sqlalchemy==2.0.44
+pillow==12.3.0

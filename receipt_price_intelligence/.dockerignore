@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+.venv
+data
+*.db
+*.db-*
+*.log
+.git
+tests
+spec
+docs
+*.md
+!README.md
+icon.png
+logo.png
+translations
+requirements-dev.txt

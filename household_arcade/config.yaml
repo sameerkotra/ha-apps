@@ -1,0 +1,49 @@
+name: "Household Arcade"
+version: "1.4.1"
+slug: household_arcade
+description: >-
+  Classic arcade games for everyone in the home, played from the Home Assistant
+  sidebar or the Companion app: personal bests, a household leaderboard and
+  play-time limits for children. Everyone plays as their Home Assistant account.
+  Under development — games and features are still changing.
+url: https://github.com/sameerkotra/ha-apps
+stage: experimental
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - armhf
+  - i386
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8104
+panel_icon: mdi:gamepad-variant
+panel_title: Arcade
+# false = visible to every Home Assistant user, not just admins: the whole
+# household plays.
+panel_admin: false
+# Ingress-only: no ports are published to the host or LAN. The only way in is
+# the Supervisor's authenticated ingress proxy, which is what makes trusting
+# X-Remote-User-* safe.
+# homeassistant_api lets the app call the Supervisor's Core API proxy
+# (http://supervisor/core/api/, auto-injected SUPERVISOR_TOKEN) to read the
+# time zone and the people, publish the optional sensors and send the optional
+# notifications. No other Supervisor/HA API access is requested.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+environment:
+  DATA_DIR: /data
+  PORT: "8104"
+# admin_users is the only app option, on the app's Configuration tab (it's how
+# the first admin is known). Everything else is set in the app under
+# Admin -> App settings and Admin -> Users.
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

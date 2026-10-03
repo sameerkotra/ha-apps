@@ -1,0 +1,39 @@
+name: Receipt Price Intelligence
+version: "1.0.1"
+slug: receipt_price_intelligence
+description: >-
+  Scan receipts with your own AI model, track prices, and find where to shop
+  for less. Everyone signs in with their Home Assistant account.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:cart-outline
+panel_title: Shopping
+panel_admin: false
+# Sensors, events, notifications and the to-do list sync go through the
+# Supervisor's Core API proxy (SUPERVISOR_TOKEN). Nothing else is requested.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+# Receipt archive and import folders (set in Admin -> App settings) live
+# under /share or /media.
+map:
+  - share:rw
+  - media:rw
+watchdog: http://[HOST]:[PORT:8099]/health
+# admin_users is the only app option. Everything else (the model, imports,
+# maps, web search, notifications...) is in Admin -> App settings.
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

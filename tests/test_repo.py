@@ -18,10 +18,10 @@ FINANCE = "finance"
 FINANCE_VERSION = "1.0.1"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.0.0"
+ARCADE_VERSION = "1.4.1"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.0.0"
+RECEIPTS_VERSION = "1.0.1"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
@@ -175,6 +175,11 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("64-bit only", readme[:1200])
         self.assertEqual(re.findall(r"(?m)^  - (\w+)$", config.split("arch:", 1)[1].split("\n\n")[0])[:2],
                          ["amd64", "aarch64"])
+
+    def test_arcade_is_under_development(self):
+        self.assertRegex(read(ARCADE, "config.yaml"), r"(?m)^stage: experimental")
+        self.assertIn("Under development", read(ARCADE, "README.md"))
+        self.assertIn("[Household Arcade](household_arcade) | 🤖 Optional | **Under development.**", read("README.md"))
 
     def test_vault_is_experimental(self):
         self.assertRegex(read("household_vault", "config.yaml"), r"(?m)^stage: experimental")

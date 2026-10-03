@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Shopping list</title>
+  <script>
+  (function () {
+    var THEMES = ["midnight", "slate", "daylight"];
+    try {
+      var theme = localStorage.getItem("theme");
+      if (theme && THEMES.indexOf(theme) !== -1) document.documentElement.setAttribute("data-theme", theme);
+      if (localStorage.getItem("sidebarCollapsed") === "1") document.documentElement.setAttribute("data-sidebar", "collapsed");
+    } catch (e) { /* localStorage unavailable (private mode, some webviews) */ }
+  })();
+  </script>
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .addbar { display: grid; grid-template-columns: 1fr auto; gap: 8px; position: relative; }
+    .suggest { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 4px; background: var(--surface);
+               border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-height: 50vh; overflow: auto; }
+    .suggest button { display: flex; justify-content: space-between; width: 100%; text-align: left; padding: 10px 12px; border: 0;
+                      background: none; color: var(--text); font: inherit; cursor: pointer; }
+    .suggest button:hover, .suggest button.hl { background: var(--surface-2); }
+    .suggest .new { color: var(--muted); font-style: italic; }
+    .litem { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+    .litem:first-child { border-top: 0; }
+    .litem input[type=checkbox] { width: 22px; height: 22px; margin-top: 2px; flex: none; accent-color: var(--accent); }
+    .litem .body { flex: 1 1 auto; min-width: 0; }
+    .litem .nm { font-weight: 600; overflow-wrap: anywhere; }
+    .litem.done .nm { text-decoration: line-through; color: var(--muted); }
+    .litem .where { font-size: .82rem; margin-top: 2px; }
+    .litem .where b { color: var(--accent); }
+    .litem .also { font-size: .74rem; color: var(--muted); }
+    .litem .ctl { display: flex; gap: 6px; align-items: center; flex: none; }
+    .qty { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+    .qty button { width: 28px; height: 30px; border: 0; background: var(--surface-2); color: var(--text); font-size: 1rem; cursor: pointer; }
+    .qty span { min-width: 30px; text-align: center; line-height: 30px; font-variant-numeric: tabular-nums; font-size: .85rem; }
+    .rm { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); color: var(--danger); cursor: pointer; flex: none; }
+    .src { font-size: .66rem; font-weight: 700; padding: 1px 6px; border-radius: 8px; margin-left: 4px; vertical-align: middle; }
+    .src.online, .src.deal { background: var(--info-soft, rgba(52,120,246,.12)); color: var(--info, #3478f6); }
+    .src.receipt { background: var(--surface-3, rgba(127,127,127,.15)); color: var(--muted); }
+    .grp-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 4px 0; }
+    .grp-h h3 { margin: 0; font-size: 1rem; }
+    .pickrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+    .pickrow input { width: 20px; height: 20px; accent-color: var(--accent); }
+    .pickrow .on { font-size: .72rem; color: var(--muted); margin-left: auto; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tabs button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+    code { font-size: .8rem; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <div class="page mid">
+    <div class="topbar">
+      <div class="grow"><h1>Shopping list</h1><div class="sub">Where each item is cheapest now</div></div>
+      <span id="homeSwitch"></span>
+    </div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/backnav.js"></script>
+  <script src="static/app.js"></script>
+  <script>
+    const { h, icon, api, toast } = RPI;
+    const $ = (id) => document.getElementById(id);
+
+    let ctx = null, data = null, known = [], view = localStorage.getItem('list:view') || 'store', typed = '', hl = -1;
+    let pickOpen = false, pickQuery = '', picked = new Set(), busy = false;
+    let useOnline = localStorage.getItem('list:online') !== 'no';
+    let restock = [], drops = [];
+    const base = () => `api/v1/homes/${encodeURIComponent(ctx.homeId)}/list`;
+    // $3.29, or $3.199 for a price posted to a tenth of a cent (fuel)
+    const money = (n) => (n != null && Math.round(n * 100) !== Math.round(n * 1000) / 10
+      ? new Intl.NumberFormat(undefined, { style: 'currency', currency: (data && data.currency) || 'USD', minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(n)
+      : RPI.money(n, data && data.currency));
+    const unitOf = (u) => (u && u !== 'each' ? '/' + String(u).toLowerCase() : '');
+    const SRC = { online: 'online', deal: 'deal', receipt: 'receipt' };
+
+    async function load() {
+      try {
+        [data, known] = await Promise.all([api(base() + (useOnline ? '' : '?online=false')), api(base() + '/browse')]);
+        const home = `api/v1/homes/${encodeURIComponent(ctx.homeId)}`;
+        [restock, drops] = await Promise.all([api(home + '/restock').catch(() => []), api(home + '/price-drops').catch(() => [])]);
+        render();
+      } catch (e) {
+        $('content').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message)));
+      }
+    }
+    const act = async (fn, okText) => { try { await fn(); if (okText) toast(okText, 'success'); await load(); } catch (e) { toast(e.message, 'error'); } };
+
+    // ---------------------------------------------------------------- adding
+    // Your items whose name contains what is typed (any case), those starting with it first; then "add as a new item"
+    // unless an item has exactly that name.
+    function suggestions() {
+      const q = typed.trim().toLowerCase();
+      if (!q) return [];
+      const all = known.filter((k) => k.name.toLowerCase().includes(q));
+      all.sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || a.name.localeCompare(b.name));
+      const exact = all.find((k) => k.name.toLowerCase() === q);
+      const out = all.slice(0, 8).map((k) => ({ kind: 'item', item: k }));
+      if (all.length > 8) out.push({ kind: 'more', count: all.length - 8 });
+      if (!exact) out.push({ kind: 'text', text: typed.trim() });
+      return out;
+    }
+    async function addFrom(s) {
+      typed = ''; hl = -1;
+      if (s.kind === 'more') return;
+      if (s.kind === 'item') await act(() => api(base(), { method: 'POST', body: { item_id: s.item.id, qty: 1 } }), `${s.item.name} added`);
+      else await act(() => api(base(), { method: 'POST', body: { text: s.text, new: true } }), `${s.text} added as a new item`);
+      const input = document.querySelector('#addInput'); if (input) input.focus();
+    }
+    function addCard() {
+      const list = suggestions();
+      const input = h('input', { id: 'addInput', class: 'input', placeholder: 'Add an item (type, or pick below)', value: typed, autocomplete: 'off',
+        oninput: (e) => { typed = e.target.value; hl = -1; paintSuggest(); },
+        onkeydown: (e) => {
+          const s = suggestions();
+          if (e.key === 'ArrowDown') { hl = Math.min(hl + 1, s.length - 1); paintSuggest(); e.preventDefault(); }
+          else if (e.key === 'ArrowUp') { hl = Math.max(hl - 1, -1); paintSuggest(); e.preventDefault(); }
+          else if (e.key === 'Enter' && typed.trim()) {
+            // the highlighted suggestion; else the item with exactly this name; else a new item
+            e.preventDefault();
+            addFrom(hl >= 0 && s[hl].kind !== 'more' ? s[hl] : (s.find((x) => x.kind === 'item' && x.item.name.toLowerCase() === typed.trim().toLowerCase()) || { kind: 'text', text: typed.trim() }));
+          }
+          else if (e.key === 'Escape') { typed = ''; paintSuggest(); }
+        } });
+      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+        h('div', { class: 'addbar' }, input,
+          h('button', { class: 'btn btn-primary', type: 'button', disabled: !typed.trim(), id: 'addBtn', onclick: () => addFrom({ kind: 'text', text: typed.trim() }) }, icon('plus'), 'Add'),
+          h('div', { id: 'suggestBox' }, list.length ? suggestBox(list) : null)),
+        h('div', { class: 'note' }, 'Type anything: it becomes the item you already have when it clearly is one ("2 milk" adds two), or a new item. When you buy a new item, give its receipt line that name and the list shows where it is cheapest.'),
+        pickCard()));
+    }
+    function suggestBox(list) {
+      return h('div', { class: 'suggest', role: 'listbox' }, ...list.map((s, i) => h('button', { type: 'button', class: i === hl ? 'hl' : '', onmousedown: (e) => { e.preventDefault(); addFrom(s); } },
+        s.kind === 'more' ? [h('span', { class: 'note' }, `and ${s.count} more: keep typing to narrow it down`)] :
+        s.kind === 'item' ? [h('span', {}, s.item.name), s.item.on_list ? h('span', { class: 'note' }, 'on the list: adds one more') : null]
+          : [h('span', { class: 'new' }, `Add “${s.text}” as a new item`)])));
+    }
+    function paintSuggest() {
+      const box = $('suggestBox'); if (!box) return;
+      const list = suggestions();
+      box.replaceChildren(...(list.length ? [suggestBox(list)] : []));
+      const btn = $('addBtn'); if (btn) btn.disabled = !typed.trim();
+    }
+    function pickCard() {
+      const q = pickQuery.trim().toLowerCase();
+      const rows = known.filter((k) => !q || k.name.toLowerCase().includes(q)).slice(0, 80);
+      return h('details', { open: pickOpen ? true : null, ontoggle: (e) => { pickOpen = e.target.open; } },
+        h('summary', { style: 'cursor:pointer;font-weight:600' }, `Pick from items you buy (${known.length})`),
+        h('div', { class: 'stack', style: 'margin-top:8px' },
+          h('input', { class: 'input', placeholder: 'Filter', value: pickQuery, oninput: (e) => { pickQuery = e.target.value; paintPick(); } }),
+          h('div', { id: 'pickList' }, ...pickRows(rows)),
+          h('button', { class: 'btn btn-primary', type: 'button', id: 'pickAdd', disabled: !picked.size, onclick: addPicked }, icon('plus'), picked.size ? `Add selected (${picked.size})` : 'Add selected')));
+    }
+    function pickRows(rows) {
+      return rows.length ? rows.map((k) => h('label', { class: 'pickrow' },
+        h('input', { type: 'checkbox', checked: picked.has(k.id) ? true : null, onchange: (e) => { e.target.checked ? picked.add(k.id) : picked.delete(k.id); const b = $('pickAdd'); if (b) { b.disabled = !picked.size; b.lastChild.textContent = picked.size ? `Add selected (${picked.size})` : 'Add selected'; } } }),
+        h('span', {}, k.name), k.on_list ? h('span', { class: 'on' }, 'on the list') : (k.bought === false ? h('span', { class: 'on' }, 'not bought yet') : null))) : [h('p', { class: 'note' }, 'No items match.')];
+    }
+    function paintPick() {
+      const q = pickQuery.trim().toLowerCase();
+      $('pickList').replaceChildren(...pickRows(known.filter((k) => !q || k.name.toLowerCase().includes(q)).slice(0, 80)));
+    }
+    async function addPicked() {
+      const ids = [...picked]; picked = new Set();
+      await act(() => api(base() + '/many', { method: 'POST', body: { item_ids: ids } }), `${ids.length} item${ids.length === 1 ? '' : 's'} added`);
+    }
+
+    // ---------------------------------------------------------------- the list
+    function whereLine(it) {
+      const c = it.cheapest;
+      if (!c) return h('div', { class: 'also' }, `No price yet. When you buy it, choose “${it.text}” as the item's name on the receipt (Review page); from then on its prices show here.`);
+      return [
+        h('div', { class: 'where' }, 'Cheapest at ', h('b', {}, c.store), ` ${money(c.price)}${unitOf(c.unit)}`,
+          h('span', { class: 'src ' + c.price_source }, SRC[c.price_source]),
+          c.discount ? h('span', { class: 'also', style: 'margin-left:6px' }, `after ${c.discount.names.join(' + ')} (was ${money(c.before_discount)})`) : null,
+          c.source_url ? h('a', { href: c.source_url, target: '_blank', rel: 'noopener', class: 'note', style: 'margin-left:6px' }, 'page') : null),
+        it.also && it.also.length ? h('div', { class: 'also' }, 'Also: ' + it.also.map((a) => `${a.store} ${money(a.price)}${unitOf(a.unit)}`).join(' · ')) : null,
+      ];
+    }
+    function itemRow(it) {
+      const setQty = (q) => act(() => api(`${base()}/${it.id}`, { method: 'PATCH', body: { qty: Math.max(1, q) } }));
+      return h('div', { class: 'litem' + (it.checked ? ' done' : '') },
+        h('input', { type: 'checkbox', checked: it.checked ? true : null, 'aria-label': `Bought ${it.text}`,
+          onchange: (e) => act(() => api(`${base()}/${it.id}`, { method: 'PATCH', body: { checked: e.target.checked } })) }),
+        h('div', { class: 'body' }, h('div', { class: 'nm' }, it.text), ...(it.checked ? [] : [].concat(whereLine(it)))),
+        h('div', { class: 'ctl' },
+          it.checked ? null : h('div', { class: 'qty' },
+            h('button', { type: 'button', 'aria-label': 'One less', onclick: () => setQty((it.qty || 1) - 1) }, '−'),
+            h('span', {}, String(+(it.qty || 1).toFixed(2))),
+            h('button', { type: 'button', 'aria-label': 'One more', onclick: () => setQty((it.qty || 1) + 1) }, '+')),
+          h('button', { class: 'rm', type: 'button', title: 'Remove', 'aria-label': `Remove ${it.text}`,
+            onclick: () => act(() => api(`${base()}/${it.id}`, { method: 'DELETE' })) }, icon('x'))));
+    }
+    function listCard() {
+      const open = data.items.filter((i) => !i.checked), done = data.items.filter((i) => i.checked);
+      const byId = Object.fromEntries(data.items.map((i) => [i.id, i]));
+      const body = [];
+      if (!open.length) body.push(h('p', { class: 'note' }, done.length ? 'Everything is bought.' : 'The list is empty. Add items above.'));
+      else if (view === 'store') {
+        for (const g of data.by_store) {
+          body.push(h('div', { class: 'grp-h' }, h('h3', {}, g.store ? `Cheapest at ${g.store}` : 'No price yet'),
+            h('span', { class: 'note' }, `${g.items.length} item${g.items.length === 1 ? '' : 's'}${g.total ? ' · about ' + money(g.total) : ''}`)));
+          body.push(h('div', {}, ...g.items.map((id) => itemRow(byId[id]))));
+        }
+      } else body.push(h('div', {}, ...open.map(itemRow)));
+      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+        h('div', { class: 'row wrap', style: 'gap:8px;justify-content:space-between;align-items:center' },
+          h('strong', {}, `To buy (${open.length})`),
+          h('div', { class: 'tabs' }, ...[['store', 'By cheapest store'], ['all', 'All']].map(([k, l]) =>
+            h('button', { class: 'btn btn-sm', type: 'button', 'aria-pressed': String(view === k), onclick: () => { view = k; localStorage.setItem('list:view', k); render(); } }, l)))),
+        h('label', { class: 'small', style: 'display:flex;gap:6px;align-items:center' },
+          h('input', { type: 'checkbox', checked: useOnline ? true : null, onchange: (e) => { useOnline = e.target.checked; localStorage.setItem('list:online', useOnline ? 'yes' : 'no'); load(); } }),
+          'Use online prices (untick to compare your receipt prices only)'),
+        ...body,
+        open.some((i) => i.item_id) ? h('div', {}, h('button', { class: 'btn', type: 'button', onclick: planTrip }, icon('map'), 'Plan a trip with these')) : null,
+        done.length ? h('details', {}, h('summary', { style: 'cursor:pointer' }, `Bought (${done.length})`),
+          h('div', {}, ...done.map(itemRow)),
+          h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => act(() => api(base() + '/clear-checked', { method: 'POST' }), 'Bought items cleared') }, icon('trash'), 'Clear bought items')) : null));
+    }
+    function planTrip() {
+      // hand the list to the trip planner (it keeps its list per home for the session)
+      const items = data.items.filter((i) => !i.checked && i.item_id).map((i) => ({ id: i.item_id, qty: Math.max(1, Math.round(i.qty || 1)) }));
+      sessionStorage.setItem(`trip:items:${ctx.homeId}`, JSON.stringify(items));
+      RPI.go('trip.html');
+    }
+
+    // ---------------------------------------------------------------- Home Assistant
+    function haCard() {
+      const x = data.ha, n = x.nearby;
+      return h('details', { class: 'card' },
+        h('summary', { class: 'card-body', style: 'cursor:pointer;font-weight:650' }, 'Home Assistant',
+          h('span', { class: 'note', style: 'font-weight:400;margin-left:8px' }, x.available ? (x.todo_entity ? `synced with ${x.todo_entity}` : 'published as a sensor') : 'not available')),
+        h('div', { class: 'card-body stack', style: 'padding-top:0' },
+          !x.available ? h('p', { class: 'note' }, 'Home Assistant is not available to the app, so the list is only here.') : [
+            h('p', { class: 'note', style: 'margin:0' }, 'On your dashboard: ',
+              x.todo_entity ? ['add a ', h('b', {}, 'To-do list'), ' card for ', h('code', {}, x.todo_entity), '. Items added or ticked off there show here, and each item\'s description says where it is cheapest.']
+                : ['set ', h('b', {}, 'Shopping list to-do entity'), ' in Admin → App settings (for example ', h('code', {}, 'todo.shopping_list'), ') to keep a To-do list card in step with this list. '],
+              ' The list is also the sensor ', h('code', {}, x.sensor), ' (items left to buy; its attributes list each item with its cheapest store).'),
+            h('p', { class: 'note', style: 'margin:0' }, n.enabled
+              ? [`"Cheapest here" notifications: when `, h('code', {}, n.tracker), ` is within ${n.meters} m of a store where items on the list are cheapest, you get one notification through `, h('code', {}, n.notify_service || 'a persistent notification'), '.']
+              : ['"Cheapest here" notifications are off: turn them on, and choose your phone, on the ', h('a', { href: 'notifications.html' }, 'Notifications'), ' page.']),
+            h('div', { class: 'row wrap', style: 'gap:8px' },
+              h('button', { class: 'btn btn-sm', type: 'button', onclick: () => act(() => api(base() + '/sync', { method: 'POST' }), 'Synced with Home Assistant') }, icon('refresh'), 'Sync now'),
+              h('button', { class: 'btn btn-sm', type: 'button', onclick: testNotify }, 'Send a test notification')),
+          ]));
+    }
+    async function testNotify() {
+      try {
+        const r = await api(base() + '/test-nearby', { method: 'POST' });
+        toast(`Sent: "${r.title}"${r.distance_m != null ? ` (you are ${r.distance_m >= 1000 ? (r.distance_m / 1000).toFixed(1) + ' km' : r.distance_m + ' m'} from ${r.store})` : ''}`, 'success');
+      } catch (e) { toast(e.message, 'error'); }
+    }
+
+    // ---------------------------------------------------------------- due to restock, cheaper now
+    const dueText = (r) => r.days_left < 0 ? `${-r.days_left} day${r.days_left === -1 ? '' : 's'} overdue` : r.days_left === 0 ? 'due today'
+      : r.days_left === 1 ? 'due tomorrow' : `due in ${r.days_left} days`;
+    function restockCard() {
+      const soon = restock.filter((r) => r.status !== 'later');
+      if (!soon.length) return null;
+      const missing = soon.filter((r) => !r.on_list);
+      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+        h('div', { class: 'row wrap', style: 'gap:8px;justify-content:space-between;align-items:center' },
+          h('strong', {}, `Due to restock (${soon.length})`),
+          missing.length > 1 ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => act(() => api(base() + '/many', { method: 'POST', body: { item_ids: missing.map((r) => r.item_id) } }), `${missing.length} items added`) }, icon('plus'), `Add all ${missing.length}`) : null),
+        h('div', { class: 'note', style: 'margin:0' }, 'From how often you buy them.'),
+        ...soon.map((r) => h('div', { class: 'litem' },
+          h('div', { class: 'body' }, h('div', { class: 'nm' }, r.name),
+            h('div', { class: 'also' }, `${dueText(r)} · you buy it about every ${r.every_days} days${r.usual_store ? ', usually at ' + r.usual_store : ''} · last ${new Date(r.last_bought + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`)),
+          r.on_list ? h('span', { class: 'note' }, 'on the list')
+            : h('button', { class: 'btn btn-sm', type: 'button', onclick: () => act(() => api(base(), { method: 'POST', body: { item_id: r.item_id } }), `${r.name} added`) }, icon('plus'), 'Add')))));
+    }
+    function dropsCard() {
+      if (!drops.length) return null;
+      return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
+        h('strong', {}, `Cheaper than usual now (${drops.length})`),
+        ...drops.map((d) => h('div', { class: 'litem' }, h('div', { class: 'body' }, h('div', { class: 'nm' }, d.name),
+          h('div', { class: 'where' }, h('b', {}, `${money(d.price)}${unitOf(d.unit)}`), ` at ${d.store}`, h('span', { class: 'src ' + d.price_source }, SRC[d.price_source]),
+            ` · usually ${money(d.usual)} · `, h('b', {}, `${d.percent}% less`),
+            d.source_url ? h('a', { href: d.source_url, target: '_blank', rel: 'noopener', class: 'note', style: 'margin-left:6px' }, 'page') : null))))));
+    }
+
+    function render() {
+      $('content').replaceChildren(...[addCard(), dropsCard(), listCard(), restockCard(), haCard()].filter(Boolean));
+    }
+
+    (async () => {
+      try {
+        ctx = await RPI.homeContext();
+        const sw = RPI.homeSwitcher(ctx.homes, ctx.homeId, (id) => { ctx.homeId = id; load(); });
+        $('homeSwitch').replaceChildren(...(sw ? [sw] : []));
+        await load();
+      }
+      catch (e) { $('content').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message))); }
+    })();
+  </script>
+</body>
+</html>

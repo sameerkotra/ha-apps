@@ -4,21 +4,28 @@
 > aren't affiliated with or endorsed by Home Assistant or Nabu Casa. They were built with Claude,
 > Anthropic's AI model, and are provided as-is: try them out first, and keep your own backups.
 
-Eight apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
+Nine apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
 sidebar, uses everyone's Home Assistant login (no extra accounts or passwords), and keeps its data on
 your own Home Assistant.
 
-| App | What it does |
-|---|---|
-| [Family Tree](family_tree) | A shared family tree with photos, stories, relationship names, upcoming birthdays with phone reminders, exports and full change history. Optional parts (including Indian relationship names, Telugu/Hindi names and tithi dates) can be switched on or off. |
-| [Household Chat](household_chat) | Private chat and file sharing: direct chats, groups, a personal room for each person, voice messages, polls, notifications with Reply on the phone. |
-| [Household Todo](household_todo) | Shared and personal task lists, a calendar, a schedule of recurring things like trash day, house maintenance, and reminders through Home Assistant. |
-| [Calorie Tracker](calorie_tracker) | Food, macros, weight and goals for each person, with optional AI estimates through your own Ollama, an OpenAI-compatible service or Anthropic Claude. |
-| [Finance Dashboard](finance) | **64-bit only.** Bank and credit-card statements (PDF or CSV) read by the AI you choose, with categories and rules, transfers, recurring charges, a dashboard, saved reports and per-person data with optional sharing. Utility bills and toll statements are optional extras. |
-| [Splitpot](splitpot) | Split shared expenses (equally, by amount or by percentage), see who owes whom and settle up; balances can show up as sensors. |
-| [Receipt Price Intelligence](receipt_price_intelligence) | Scan receipts with your own vision model, track prices and spending, and find where to shop for less: a shopping list that knows where each item is cheapest, a trip planner, price alerts and sensors. |
-| [Household Arcade](household_arcade) | Classic games for the whole household, played from the sidebar or the phone: Snake and Brick Breaker to start, with more to come. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
-| [Household Vault](household_vault) | **Experimental.** A password manager with personal, household and shared vaults, each a standard KeePass file. It hasn't had an independent security review — keep your own KeePass copy of your passwords. |
+| App | AI | What it does |
+|---|---|---|
+| [Family Tree](family_tree) | — | A shared family tree with photos, stories, relationship names, upcoming birthdays with phone reminders, exports and full change history. Optional parts (including Indian relationship names, Telugu/Hindi names and tithi dates) can be switched on or off. |
+| [Household Chat](household_chat) | — | Private chat and file sharing: direct chats, groups, a personal room for each person, voice messages, polls, notifications with Reply on the phone. |
+| [Household Todo](household_todo) | — | Shared and personal task lists, a calendar, a schedule of recurring things like trash day, house maintenance, and reminders through Home Assistant. |
+| [Calorie Tracker](calorie_tracker) | 🤖 Optional | Food, macros, weight and goals for each person, with optional AI estimates through your own Ollama, an OpenAI-compatible service or Anthropic Claude. |
+| [Finance Dashboard](finance) | 🤖 **Needed** | **64-bit only.** Bank and credit-card statements (PDF or CSV) read by the AI you choose, with categories and rules, transfers, recurring charges, a dashboard, saved reports and per-person data with optional sharing. Utility bills and toll statements are optional extras. |
+| [Splitpot](splitpot) | — | Split shared expenses (equally, by amount or by percentage), see who owes whom and settle up; balances can show up as sensors. |
+| [Receipt Price Intelligence](receipt_price_intelligence) | 🤖 **Needed** | Scan receipts with your own vision model, track prices and spending, and find where to shop for less: a shopping list that knows where each item is cheapest, a trip planner, price alerts and sensors. |
+| [Household Vault](household_vault) | — | **Experimental.** A password manager with personal, household and shared vaults, each a standard KeePass file. It hasn't had an independent security review — keep your own KeePass copy of your passwords. |
+| [Household Arcade](household_arcade) | 🤖 Optional | **Under development.** Classic games for the whole household, played from the sidebar or the phone: 17 games from Snake and Falling Blocks to Tank Battle, Road Hop and two-player Snake Duel, with more to come. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
+
+**AI** — 🤖 **Needed**: the app's main job uses an AI model, so it needs one set up before it is useful (Finance
+Dashboard reads statements with it; Receipt Price Intelligence reads receipt photos with a vision model).
+🤖 Optional: the app works fully without one, and an AI model adds extras (Calorie Tracker's estimates, Household
+Arcade's extra levels). — : no AI. Every app that uses AI lets you choose the model: your own Ollama on your
+network, an OpenAI-compatible service, or Anthropic Claude (Receipt Price Intelligence: Ollama or an
+OpenAI-compatible server). Nothing is sent to an outside service unless you choose one.
 
 ## Installing
 

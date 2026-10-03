@@ -1,0 +1,8 @@
+configuration:
+  admin_users:
+    name: Administrators
+    description: >-
+      Home Assistant user names (login names) or user ids of the people who
+      can open Admin (App settings, homes, backups). One per line; upper and
+      lower case don't matter. Restart the app after changing it. Everything
+      else is set in the app under Admin → App settings.

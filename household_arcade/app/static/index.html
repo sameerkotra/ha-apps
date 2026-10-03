@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Household Arcade</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8E%AE%3C/text%3E%3C/svg%3E">
+<!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
+<script src="theme-boot.js?v=1.4.1"></script>
+<link rel="stylesheet" href="style.css?v=1.4.1">
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar">
+    <button id="sidebarCollapseBtn" class="sidebar-collapse-btn" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+    <div class="brand"><span class="brand-icon">🎮</span><span class="brand-text">Household Arcade</span></div>
+    <nav class="side-nav" id="sideNav" aria-label="Pages">
+      <button class="tab-btn active" type="button" data-tab="home" title="Games"><span class="nav-icon">🕹️</span><span class="nav-label">Games</span></button>
+      <button class="tab-btn" type="button" data-tab="scores" title="My scores"><span class="nav-icon">⭐</span><span class="nav-label">My scores</span></button>
+      <button class="tab-btn" type="button" data-tab="leaderboard" title="Leaderboard"><span class="nav-icon">🏆</span><span class="nav-label">Leaderboard</span></button>
+      <button class="tab-btn" type="button" data-tab="settings" title="Settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+      <button class="tab-btn admin-only" type="button" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+    </nav>
+    <button type="button" class="sidebar-user" id="sidebarUser">—</button>
+    <div class="sidebar-footer">
+      <label class="sidebar-field">
+        <span class="field-label">Theme</span>
+        <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
+          <option value="ink">🌑 Ink</option>
+          <option value="slate">🌆 Slate</option>
+          <option value="daylight">☀️ Daylight</option>
+        </select>
+      </label>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <div class="top-stack">
+      <div id="noAdminBanner" class="no-admin-banner" role="status" hidden></div>
+    </div>
+    <main>
+      <div id="fatal" class="card fatal" hidden></div>
+      <section id="tab-home" class="tab-panel active"></section>
+      <section id="tab-play" class="tab-panel"></section>
+      <section id="tab-scores" class="tab-panel"></section>
+      <section id="tab-leaderboard" class="tab-panel"></section>
+      <section id="tab-settings" class="tab-panel"></section>
+      <section id="tab-admin" class="tab-panel"></section>
+    </main>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+<script src="backnav.js?v=1.4.1"></script>
+<!-- The games (static/games/): looks kit, sound, registry, then each game's rules and drawing. -->
+<script src="games/kit.js?v=1.4.1"></script>
+<script src="games/sound.js?v=1.4.1"></script>
+<script src="games/registry.js?v=1.4.1"></script>
+<script src="games/snake-logic.js?v=1.4.1"></script>
+<script src="games/snake.js?v=1.4.1"></script>
+<script src="games/brick-logic.js?v=1.4.1"></script>
+<script src="games/brick.js?v=1.4.1"></script>
+<script src="games/blocks-logic.js?v=1.4.1"></script>
+<script src="games/blocks.js?v=1.4.1"></script>
+<script src="games/duel-logic.js?v=1.4.1"></script>
+<script src="games/duel.js?v=1.4.1"></script>
+<script src="games/racer-logic.js?v=1.4.1"></script>
+<script src="games/racer.js?v=1.4.1"></script>
+<script src="games/flap-logic.js?v=1.4.1"></script>
+<script src="games/flap.js?v=1.4.1"></script>
+<script src="games/mines-logic.js?v=1.4.1"></script>
+<script src="games/mines.js?v=1.4.1"></script>
+<script src="games/merge-logic.js?v=1.4.1"></script>
+<script src="games/merge.js?v=1.4.1"></script>
+<script src="games/colours-logic.js?v=1.4.1"></script>
+<script src="games/colours.js?v=1.4.1"></script>
+<script src="games/cards-logic.js?v=1.4.1"></script>
+<script src="games/cards.js?v=1.4.1"></script>
+<script src="games/mole-logic.js?v=1.4.1"></script>
+<script src="games/mole.js?v=1.4.1"></script>
+<script src="games/numbers-logic.js?v=1.4.1"></script>
+<script src="games/numbers.js?v=1.4.1"></script>
+<script src="games/tanks-logic.js?v=1.4.1"></script>
+<script src="games/tanks.js?v=1.4.1"></script>
+<script src="games/invaders-logic.js?v=1.4.1"></script>
+<script src="games/invaders.js?v=1.4.1"></script>
+<script src="games/rocks-logic.js?v=1.4.1"></script>
+<script src="games/rocks.js?v=1.4.1"></script>
+<script src="games/hop-logic.js?v=1.4.1"></script>
+<script src="games/hop.js?v=1.4.1"></script>
+<script src="games/snakeduel-logic.js?v=1.4.1"></script>
+<script src="games/snakeduel.js?v=1.4.1"></script>
+<script src="app.js?v=1.4.1"></script>
+<script src="play.js?v=1.4.1"></script>
+<script src="admin.js?v=1.4.1"></script>
+</body>
+</html>

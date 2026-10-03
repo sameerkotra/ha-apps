@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv/
+ENV/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Images
+data/receipts/
+*.jpg
+*.jpeg
+*.png
+# ...but the add-on's own icon and logo are part of it
+!/icon.png
+!/logo.png
+*.gif
+*.webp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+
+# Home Assistant addon data
+/data/
