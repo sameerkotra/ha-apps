@@ -98,7 +98,18 @@ async function settingsPage() {
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: s.hideOnline, onchange: (e) => save({ hideOnline: e.target.checked }) }),
         h("span", null, "Hide my online status and last seen"))),
     h("div", { class: "card" }, h("h3", null, "Look"), field("Theme", themeSel, "Shared with the other household apps.")),
-    h("p", { class: "hint" }, `Household Chat ${me.version}. Messages are stored readable on the Home Assistant machine — fine for household chat, not for passwords (use Household Vault).`));
+    privacyCard(),
+    h("p", { class: "hint" }, `Household Chat ${me.version}.`));
+}
+
+// Who can see your messages: shown to everyone in Settings (DOCS "Who can see what"; SPEC §4.1).
+function privacyCard() {
+  return h("div", { class: "card", id: "privacyCard" }, h("h3", null, "🔓 Who can see your messages"),
+    h("p", null, "In the app, only the members of a chat can read it. Admins can't read chats they aren't in, and nobody else can open your 📌 My room."),
+    h("div", { class: "notice", id: "privacyNotice" },
+      h("strong", null, "Messages aren't encrypted. "),
+      "They're stored readable on the Home Assistant machine, and files are ordinary files in its shared folder. Anyone who can get into that machine or its backups — including an admin who downloads the app's backup — can read every chat outside the app, My room included. Chat downloads can be read by anyone who has the file."),
+    h("p", { class: "hint" }, "Fine for household chat. Don't send passwords, bank details or other secrets here — use Household Vault."));
 }
 
 // ---------- admin ----------

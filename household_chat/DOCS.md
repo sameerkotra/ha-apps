@@ -23,7 +23,7 @@ Nobody is ever made an admin automatically, not even the first person to open th
 
 ## Chats
 
-- **📌 My room** is a chat with only yourself: notes, links, reminders and documents (a passport scan, a warranty). Nobody else can see it in the app, admins included. It's always first in the chat list and shows your own picture (📌 without one). It has files, pins, stars, reminders, search, voice memos, a description, disappearing notes and downloads, but no members, polls, announcements, reactions or send later, and it never notifies you.
+- **📌 My room** is a chat with only yourself: notes, links, reminders and documents (a passport scan, a warranty). Nobody else can see it in the app, admins included — but like every chat it isn't encrypted (see *Who can see what*). It's always first in the chat list and shows your own picture (📌 without one). It has files, pins, stars, reminders, search, voice memos, a description, disappearing notes and downloads, but no members, polls, announcements, reactions or send later, and it never notifies you.
 - **Direct messages** (＋ → 💬 Direct message): one chat per pair. The other person only sees it once it has a message.
 - **Groups** (＋ → 👥 New group): a name, an emoji and people.
   - The creator is the **owner**, who can make others **group admins** and hand over ownership (**Make owner**).
@@ -181,6 +181,8 @@ Changes apply straight away, without a restart.
 - **Automatic clean-up**: every night (03:30 Home Assistant time) old messages if an age limit is set, `_deleted` entries older than 30 days, missing files and old previews; every hour, files uploaded but never sent within a day.
 
 ## Who can see what, and where data goes
+
+Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your messages**. Each chat's info, My room and the start page say it in one line and link there.
 
 | Where | Who can read it |
 |---|---|

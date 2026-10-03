@@ -11,7 +11,7 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"family_tree": "2.1.0", "household_todo": "2.1.0", "splitpot": "2.1.0"}
+VERSIONS = {"family_tree": "2.1.0", "household_chat": "2.0.1", "household_todo": "2.1.0", "splitpot": "2.1.0"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"

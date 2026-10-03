@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1
+
+- Everyone can now see who can read their messages: a **Who can see your messages** card in Settings, and a line in each chat's info, in My room and on the start page. It says plainly that messages aren't encrypted, so anyone who can get into the Home Assistant machine or its backups — including an admin who downloads the app's backup — can read them outside the app.
+
 ## 2.0.0
 
 First public release, in the Household apps repository (https://github.com/sameerkotra/ha-apps).

@@ -60,6 +60,8 @@ async function chatInfoDialog() {
         convIcon(d, { big: true }),
         h("div", { class: "grow" }, h("div", { class: "info-name" }, d.name),
           h("div", { class: "hint" }, d.kind === "personal" ? "Only you can see this in the app." : d.kind === "direct" ? presenceLine(d.otherUserId) : `Group · created ${fmtFull(d.createdAt)}`))),
+      h("p", { class: "hint privacy-line" }, d.kind === "personal" ? "🔓 Not encrypted — whoever can get into the Home Assistant machine or its backups can read it. " : "🔓 Only its members can read it in the app, but it isn't encrypted — whoever can get into the Home Assistant machine or its backups can read it. ",
+        h("button", { class: "link-btn", type: "button", onclick: () => { if (m) m.close(); showPage("settings"); } }, "More")),
       h("div", { class: "section" }, h("div", { class: "row" }, h("span", { class: "lbl-sm grow" }, "Description"),
         canDesc ? h("button", { class: "btn small", type: "button", onclick: () => {
           const ta = h("textarea", { maxlength: "500", rows: "4", "aria-label": "Description" }); ta.value = d.description || "";

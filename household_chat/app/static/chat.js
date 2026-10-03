@@ -75,7 +75,7 @@ function renderConvList() {
     const last = c.lastMessage;
     const typing = typingText(c.id);
     const draft = !typing && c.draft && c.draft.body && c.id !== state.current ? c.draft.body : null;
-    let preview = typing || (last ? (last.by && last.by !== state.me.id && c.kind === "group" ? `${last.author}: ` : last.by === state.me.id && c.kind !== "personal" ? "You: " : "") + last.preview : (c.kind === "personal" ? "Only you can see this" : ""));
+    let preview = typing || (last ? (last.by && last.by !== state.me.id && c.kind === "group" ? `${last.author}: ` : last.by === state.me.id && c.kind !== "personal" ? "You: " : "") + last.preview : (c.kind === "personal" ? "Only you can see this in the app" : ""));
     const sub = c.kind === "direct" && c.otherUserId ? (state.homeAway[c.otherUserId] || {}).label : null;
     return h("button", {
       class: "conv" + (c.id === state.current && state.page === "chat" ? " active" : "") + (c.unread ? " unread" : ""), type: "button", role: "listitem",
@@ -123,7 +123,9 @@ function renderEmptyMain() {
   mount($("#main"), h("div", { class: "empty-main" },
     h("div", { class: "brand-big" }, "💬"),
     h("p", null, "Choose a chat, or start one with ＋."),
-    h("p", { class: "hint" }, "📌 My room is a space only you can see — for notes, links and documents.")));
+    h("p", { class: "hint" }, "📌 My room is a space only you can see in the app — for notes, links and documents."),
+    h("p", { class: "hint" }, "Messages aren't encrypted: whoever can get into the Home Assistant machine or its backups can read them. ",
+      h("button", { class: "link-btn", type: "button", onclick: () => showPage("settings") }, "Who can see your messages"))));
   setView("list");
 }
 async function openChat(cid, opts = {}) {
@@ -177,7 +179,7 @@ function renderChat() {
   const list = h("div", { class: "msg-list", id: "msgList", role: "log", "aria-live": "polite", "aria-relevant": "additions" });
   list.addEventListener("scroll", onListScroll, { passive: true });
   const downBtn = h("button", { class: "to-bottom", id: "toBottom", type: "button", hidden: true, "aria-label": "Newest messages", onclick: () => { state.newBelow = 0; if (state.moreAfter) openChat(state.current); else scrollBottom(true); } }, "↓", h("span", { class: "count", id: "toBottomCount" }));
-  const note = c.kind === "personal" ? h("div", { class: "room-note" }, "📌 Only you can see this in the app — notes, links and documents for yourself.") : null;
+  const note = c.kind === "personal" ? h("div", { class: "room-note" }, "📌 Only you can see this in the app — notes, links and documents for yourself. Like every chat, it isn't encrypted: whoever can get into the Home Assistant machine or its backups can read it.") : null;
   const readOnly = c.readOnly ? h("div", { class: "notice read-only" }, "They no longer have access to Household Chat, so this chat is read-only.") : null;
   mount($("#main"), h("section", { class: "chat" }, header, h("div", { id: "annBar" }), h("div", { id: "pinBar" }), h("div", { id: "schedBar" }), note,
     h("div", { class: "msg-wrap" }, list, downBtn),
@@ -192,7 +194,7 @@ function renderChat() {
 }
 function chatSubline(c, d) {
   const desc = plainText(c.description);
-  if (c.kind === "personal") return desc || "Only you can see this";
+  if (c.kind === "personal") return desc || "Only you can see this in the app";
   if (c.kind === "direct") return [presenceLine(c.otherUserId), desc].filter(Boolean).join(" · ");
   const online = d.members.filter((m) => m.id !== state.me.id && isOnline(m.id)).length;
   return [desc, `${d.members.length} members` + (online ? `, ${online} online` : "")].filter(Boolean).join(" · ");
