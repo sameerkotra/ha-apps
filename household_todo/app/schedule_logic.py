@@ -63,7 +63,7 @@ def lookups(conn) -> tuple[dict, dict]:
     """(user id -> display name, place id -> place row as dict) for the JSON
     and sensor attributes."""
     users = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
-    places = {r["id"]: dict(r) for r in conn.execute("SELECT id, name, address, drive_minutes FROM places")}
+    places = {r["id"]: dict(r) for r in conn.execute("SELECT id, name, address, phone, drive_minutes FROM places")}
     return users, places
 
 

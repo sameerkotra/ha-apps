@@ -55,7 +55,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.0.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.1.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -85,6 +85,7 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 | `home_address` | str ≤300, may be `""` | `""` | Where drive times are measured from (used only while `drive_times_enabled`). Blank leaves the feature unconfigured. A change resets the home location and every place's cached drive time and re-geocodes home (§7.3). |
 | `osrm_url` / `nominatim_url` | `""` or an `http(s)://host…` URL ≤500 | `https://router.project-osrm.org` / `https://nominatim.openstreetmap.org` | Blank uses the default; a trailing `/` is stripped. Used on the next request; a change re-queues places whose estimate failed and retries a failed home lookup. |
 | `avoid_tolls` | bool | `true` | Ask OSRM for `exclude=toll`, falling back to the fastest route. A change re-queues every place (via `drive_mode`). |
+| `notify_place_details` | bool | `true` | **Place details in reminders** (Admin → App settings → Reminders). On: notifications for a task/item with a place add its address and phone (§8.1). Off: only the place name is sent (the earlier behaviour). |
 
 - **Storage.** Table `app_settings(key PK, value JSON, updated_at, updated_by)` (§5). A key without a row uses `DEFAULTS`. `updated_by` is the admin's login name (or id).
 - **Validation.** Pydantic model, `extra="forbid"`, `strict=True` (no `"5"` → 5, no `1` → true, no floats/Infinity/NaN for the int), strings stripped. Unknown key or bad value → **422** with a readable message naming the setting; nothing is written.
@@ -469,6 +470,7 @@ The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in t
   - "N before" (own pass): the assignee's offsets against each occurrence's start (dates today…+8): `Yoga — starts in 1 hour (18:00–19:00) @ Studio[ drive note]`, same fire/skip rule as tasks, deduplicated in `schedule_reminder_log` on (item, user, offset, date, start_time).
 - **Assignment ping.** Queued as a background task when the assignee changed, is set, and isn't the acting user. The assignee needs notifications on, `notify_on_assign` on, and an assigned service. Message: `<acting name> assigned you: <title>[ (due YYYY-MM-DD)]`, or for a schedule item `… assigned you: Yoga (Every Tue, Thu & Fri, 18:00–19:00)`.
 - **Links.** A single-item notification — task "N before", schedule "N before", assignment ping — for a task/item with a `url` gets `\n<url>` appended and is sent with `data={"url": <url>, "clickAction": <url>}` (iOS Companion opens `url`, Android `clickAction`), which `send_notify` passes on the action path only. Without a URL the sender is called exactly as before (no `data`). Digest and weekly summary add `   🔗 <url>` after each *shown* line that has one; the `+K more` count is unchanged. The test notification never has a link.
+- **Place details** (`notify_place_details`, default on). `place_details(place)` returns `{address, phone}` when the setting is on and the place has either, else None. A single-item notification (task "N before", schedule "N before", assignment ping) appends `📍 <address>` and `📞 <phone>` lines after the message and before the link; `data["actions"]` gets `{"action":"URI","title":"Directions","uri":"https://www.google.com/maps/search/?api=1&query=<address, URL-encoded>"}` and/or `{"action":"URI","title":"Call","uri":"tel:<digits, leading +>"}` (a phone with fewer than 3 digits gets no Call button). Tapping still opens only the item's link (`url`/`clickAction`), so a place without a link sends `data` with `actions` only. The assignment ping takes the item's `place_id`, adds ` @ <Name>` and the details; an unknown id is ignored. Digest and weekly summary add `   📍 <address> · 📞 <phone>` under each shown line with details (before its 🔗 line). Off: none of this, and the sender is called exactly as before (no `data` without a link).
 
 ### 8.2 Housekeeping & drive-time warmer
 

@@ -16,12 +16,19 @@ The same reminders cover schedule items assigned to someone
 digest and weekly summary, timed ones get the person's "N before" offsets
 relative to the start time, and a new assignee gets a ping. Only the
 assignee is ever told about an item, and only its name, time range,
-place name and link are sent.
+place and link are sent (never notes).
 
 A task or item's optional link (URL) is included too: on its
 own last line of a single-item notification (which also carries it as
 notify `data`, so tapping the notification opens it), and on an indented
 "🔗" line under the item in the digest and weekly summary.
+
+Place details (the "Place details in reminders" App setting, on by default):
+a task or item with a place gets its address and phone — "📍 <address>" and
+"📞 <phone>" lines in a single-item notification, with **Directions** (a maps
+search for the address) and **Call** (tel:) buttons in the notify `data`,
+and an indented "📍 <address> · 📞 <phone>" line in the digest and weekly
+summary. With the setting off only the place's name is sent, as before.
 
 One asyncio loop ticks every 60 seconds and runs all four scheduled passes
 (digest, weekly summary, task reminders, schedule reminders) each tick:
@@ -38,6 +45,8 @@ One asyncio loop ticks every 60 seconds and runs all four scheduled passes
 """
 import asyncio
 import logging
+import re
+import urllib.parse
 from datetime import date, datetime, timedelta
 
 from starlette.concurrency import run_in_threadpool
@@ -53,20 +62,83 @@ MAX_WEEKLY_LINES = 10
 WEEKLY_LOOKAHEAD_DAYS = 7
 TITLE = "Household Todo"
 LINK_PREFIX = "   🔗 "
+PLACE_PREFIX = "   📍 "
+MAPS_SEARCH = "https://www.google.com/maps/search/?api=1&query="
 
 
-def _send_one(sender, services: list[str], message: str, url: str | None) -> bool:
+def maps_url(address: str) -> str:
+    """A maps search for the address — the same link the app's place chips open."""
+    return MAPS_SEARCH + urllib.parse.quote(address, safe="")
+
+
+def tel_url(phone: str) -> str | None:
+    """tel: link from a typed phone number (digits and a leading +), or None."""
+    digits = re.sub(r"[^\d+]", "", phone or "")
+    digits = digits[:1] + digits[1:].replace("+", "")
+    return f"tel:{digits}" if re.search(r"\d{3}", digits) else None
+
+
+def place_details(place: dict | None) -> dict | None:
+    """{address, phone} of a place when the App setting allows them and the
+    place has any; None otherwise. `place` is any dict with `address` and
+    optionally `phone`."""
+    if not place or not settings.notify_place_details():
+        return None
+    address = (place.get("address") or "").strip()
+    phone = (place.get("phone") or "").strip()
+    if not address and not phone:
+        return None
+    return {"address": address, "phone": phone}
+
+
+def _detail_lines(details: dict | None) -> list[str]:
+    """Single-item notification lines: "📍 <address>", "📞 <phone>"."""
+    if not details:
+        return []
+    out = []
+    if details["address"]:
+        out.append(f"📍 {details['address']}")
+    if details["phone"]:
+        out.append(f"📞 {details['phone']}")
+    return out
+
+
+def _actions(details: dict | None) -> list[dict]:
+    """Companion-app buttons: Directions (maps) and Call (tel:)."""
+    if not details:
+        return []
+    out = []
+    if details["address"]:
+        out.append({"action": "URI", "title": "Directions", "uri": maps_url(details["address"])})
+    tel = tel_url(details["phone"])
+    if tel:
+        out.append({"action": "URI", "title": "Call", "uri": tel})
+    return out
+
+
+def _send_one(sender, services: list[str], message: str, url: str | None, details: dict | None = None) -> bool:
     """Send a single-item notification to each of the person's services;
-    True if at least one accepted it. With a link, the URL goes on its own
-    last line and also as notify `data` (`url` for the iOS Companion app,
-    `clickAction` for Android), so tapping the notification opens it.
-    Without one, the sender is called exactly as before."""
+    True if at least one accepted it. Place details (address, phone) go on
+    their own lines, with Directions / Call buttons as notify `data`
+    `actions`. With a link, the URL goes on its own last line and also as
+    notify `data` (`url` for the iOS Companion app, `clickAction` for
+    Android), so tapping the notification opens it. With neither, the sender
+    is called exactly as before (no `data`)."""
+    lines = [message] + _detail_lines(details)
+    data = {}
+    if links.is_web_url(url):
+        lines.append(url)
+        data.update(url=url, clickAction=url)
+    actions = _actions(details)
+    if actions:
+        data["actions"] = actions
+    text = "\n".join(lines)
     ok = False
     for service in services:
-        if not links.is_web_url(url):
-            ok = bool(sender(service, TITLE, message)) or ok
+        if data:
+            ok = bool(sender(service, TITLE, text, data=data)) or ok
         else:
-            ok = bool(sender(service, TITLE, f"{message}\n{url}", data={"url": url, "clickAction": url})) or ok
+            ok = bool(sender(service, TITLE, text)) or ok
     return ok
 
 
@@ -84,6 +156,11 @@ def _with_links(entries: list[dict], today: date) -> list[str]:
     lines = []
     for t in entries:
         lines.append(_line(t, today))
+        details = place_details(t.get("place"))
+        if details:
+            parts = ([f"{details['address']}"] if details["address"] else []) + \
+                    ([f"📞 {details['phone']}"] if details["phone"] else [])
+            lines.append(PLACE_PREFIX + " · ".join(parts))
         if links.is_web_url(t.get("url")):
             lines.append(f"{LINK_PREFIX}{t['url']}")
     return lines
@@ -165,7 +242,10 @@ def collect_schedule_occurrences(conn, user_id: str, start: date, end: date) -> 
     _, places = schedule_logic.lookups(conn)
     out = []
     for item in items:
-        place = schedule_logic.place_json(places.get(item["place_id"]))
+        raw = places.get(item["place_id"])
+        place = schedule_logic.place_json(raw)
+        if place:
+            place = dict(place, phone=raw.get("phone"))
         timed = schedule_logic.is_timed(item)
         for d in schedule_logic.effective_dates_between(item, excs.get(item["id"], []), start, end):
             out.append({"schedule": True, "title": item["name"], "dueDate": d.isoformat(),
@@ -195,9 +275,10 @@ def _entry_key(t: dict, today: date):
 
 
 def format_digest(tasks: list[dict], today: date) -> str | None:
-    """Only titles (and schedule item names), times, place names and links
-    are ever sent — never notes or addresses. `tasks` may include schedule
-    occurrences from collect_schedule_occurrences."""
+    """Only titles (and schedule item names), times, places (name, and with
+    the place-details setting on, address and phone) and links are ever sent
+    — never notes. `tasks` may include schedule occurrences from
+    collect_schedule_occurrences."""
     if not tasks:
         return None
     lines = _with_links(tasks[:MAX_DIGEST_LINES], today)
@@ -457,7 +538,9 @@ def run_task_reminder_pass_blocking(now: datetime | None = None, sender=None) ->
                     if t["place_name"]:
                         message += f" @ {t['place_name']}"
                         message += _drive_note(t["due_date"], t["due_time"], t["place_drive_minutes"])
-                    if _send_one(sender, services, message, t["url"]):
+                    details = place_details({"address": t["place_address"], "phone": t["place_phone"]}) \
+                        if t["place_name"] else None
+                    if _send_one(sender, services, message, t["url"], details):
                         conn.execute(
                             "INSERT OR IGNORE INTO task_reminder_log "
                             "(id, task_id, user_id, minutes_before, due_date, due_time, created_at) "
@@ -523,7 +606,7 @@ def run_schedule_reminder_pass_blocking(now: datetime | None = None, sender=None
                         if place:
                             message += f" @ {place['name']}"
                             message += _drive_note(d.isoformat(), item["start_time"], place["drive_minutes"])
-                        if _send_one(sender, services, message, item["url"]):
+                        if _send_one(sender, services, message, item["url"], place_details(place)):
                             conn.execute(
                                 "INSERT OR IGNORE INTO schedule_reminder_log "
                                 "(id, item_id, user_id, minutes_before, date, start_time, created_at) "
@@ -541,12 +624,14 @@ def run_schedule_reminder_pass_blocking(now: datetime | None = None, sender=None
 # ---------------------------------------------------------------------------
 
 def send_assignment_ping_blocking(assignee_id: str, actor_name: str, title: str, due_date: str | None, sender=None,
-                                  detail: str | None = None, url: str | None = None) -> bool:
+                                  detail: str | None = None, url: str | None = None,
+                                  place_id: str | None = None) -> bool:
     """Best effort; the caller has already decided that a ping is warranted
     (assignee changed, and isn't the person who did it). Checks the
     assignee's own switches and mapping. Tasks pass `due_date`; schedule
     items pass `detail` ("Every Tue, Thu & Fri, 18:00–19:00"). Either may
-    pass its `url`."""
+    pass its `url` and `place_id` (the place's name, and its address and
+    phone when the place-details setting is on)."""
     if not ha_client.has_token():
         return False
     sender = sender or ha_notify.send_notify
@@ -558,6 +643,8 @@ def send_assignment_ping_blocking(assignee_id: str, actor_name: str, title: str,
             """,
             (assignee_id,),
         ).fetchone()
+        place = conn.execute("SELECT name, address, phone FROM places WHERE id = ?", (place_id,)).fetchone() \
+            if place_id else None
     # its own switch; someone who never saved their reminder settings (no prefs row) isn't pinged
     if not u or u["disabled"] or u["notify_on_assign"] is None or not u["notify_on_assign"]:
         return False
@@ -569,7 +656,9 @@ def send_assignment_ping_blocking(assignee_id: str, actor_name: str, title: str,
         message += f" (due {due_date})"
     elif detail:
         message += f" ({detail})"
-    return _send_one(sender, services, message, url)
+    if place:
+        message += f" @ {place['name']}"
+    return _send_one(sender, services, message, url, place_details(dict(place)) if place else None)
 
 
 # ---------------------------------------------------------------------------

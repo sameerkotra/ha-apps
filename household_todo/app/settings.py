@@ -40,6 +40,8 @@ DEFAULTS: dict = {
     "osrm_url": DEFAULT_OSRM_URL,
     "nominatim_url": DEFAULT_NOMINATIM_URL,
     "avoid_tolls": True,
+    # Reminders: a place's address and phone (with Directions / Call buttons) in notifications (§8.1)
+    "notify_place_details": True,
     # Maintenance (Admin → Maintenance; the files folder is in App settings)
     "maintenance_enabled": False,
     "maintenance_recipients": [],       # HA user ids: who gets maintenance notifications by default
@@ -71,6 +73,7 @@ class AppSettings(BaseModel):
     osrm_url: str = Field(max_length=500)
     nominatim_url: str = Field(max_length=500)
     avoid_tolls: bool
+    notify_place_details: bool
     maintenance_enabled: bool
     maintenance_recipients: list[str] = Field(max_length=100)
     maintenance_profile: list[str] = Field(max_length=60)
@@ -115,6 +118,7 @@ _LABELS = {
     "osrm_url": "Routing server (OSRM)",
     "nominatim_url": "Address lookup server (Nominatim)",
     "avoid_tolls": "Avoid toll roads",
+    "notify_place_details": "Place details in reminders",
     "maintenance_enabled": "Maintenance",
     "maintenance_recipients": "Who gets maintenance notifications",
     "maintenance_profile": "Home profile",
@@ -250,6 +254,11 @@ def osrm_url() -> str:
 
 def nominatim_url() -> str:
     return (get("nominatim_url") or "").rstrip("/") or DEFAULT_NOMINATIM_URL
+
+
+def notify_place_details() -> bool:
+    """Reminders carry a task's or item's place address and phone, with Directions / Call buttons (§8.1)."""
+    return bool(get("notify_place_details"))
 
 
 def drive_times_enabled() -> bool:

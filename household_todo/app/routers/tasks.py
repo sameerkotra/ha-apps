@@ -160,7 +160,7 @@ def _queue_ping(background: BackgroundTasks, acting: dict, old_assignee, cols_or
     if new and new != old_assignee and new != acting["id"]:
         background.add_task(
             reminders.send_assignment_ping_blocking, new, acting["name"], cols_or_row["title"], cols_or_row.get("due_date"),
-            url=cols_or_row.get("url"),
+            url=cols_or_row.get("url"), place_id=cols_or_row.get("place_id"),
         )
 
 

@@ -2197,6 +2197,7 @@ const SETTING_LABELS = {
   osrm_url: "Routing server (OSRM)",
   nominatim_url: "Address lookup server (Nominatim)",
   avoid_tolls: "Avoid toll roads",
+  notify_place_details: "Place details in reminders",
 };
 
 async function renderAppSettings(box) {
@@ -2280,6 +2281,9 @@ async function renderAppSettings(box) {
         h("code", null, hostOf(saved.nominatim_url || d.nominatim_url)), ") to find them on the map, and the resulting coordinates to the routing server (",
         h("code", null, hostOf(saved.osrm_url || d.osrm_url)), "). By default these are OpenStreetMap's public services, with their own usage policies. Nothing else is sent: no task titles, notes or names. To keep addresses at home, run your own servers and enter their addresses below. Off: nothing is sent and no drive times are shown."),
       driveFields),
+    h("div", { class: "card", id: "remindersCard" }, h("h3", null, "Reminders"),
+      fieldRow("notify_place_details", "Reminders and “assigned to you” notifications for a task or schedule item with a place show its address and phone, with Directions and Call buttons on the phone; the daily digest and weekly summary add the address under the item. Off: only the place's name is sent.",
+        toggle("notify_place_details"))),
     data.maintenanceFiles ? maintFolderCard(data.maintenanceFiles) : null,
     h("div", { class: "hint", style: "margin:0 2px 10px" }, "Who is an admin is set in the app's Configuration tab (",
       h("code", null, "admin_users"), ") — that's how the first admin is known."),

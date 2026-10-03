@@ -249,6 +249,14 @@ items that are for you (private ones included) are part of your reminders
 only. A task or item with a link has it on the last line, and tapping the
 notification opens it.
 
+**Place details.** When a task or schedule item has a place, its reminder and
+"assigned to you" notification show the place's address (📍) and phone (📞)
+under the message, and on a phone with the Companion app add **Directions**
+(opens the address in Google Maps) and **Call** buttons. The daily digest and
+weekly summary add the address and phone under the item. An admin can turn
+this off in **App settings → Reminders → Place details in reminders**; then
+only the place's name is sent.
+
 **Phones come from Home Assistant.** Set up a person's phone once in Home
 Assistant: **Settings → People → (the person)** — **Allow person to login**
 links the person to their user, and **Track device** picks their phone with
@@ -315,7 +323,8 @@ time isn't an App setting: each person picks their own.
   items are visible only to their owner (and to an admin while acting as
   them).
 - **Home Assistant** gets notifications (task titles, item names, times,
-  place names and links — never notes or addresses) and, if you publish them,
+  place names and links, and the place's address and phone unless **Place
+  details in reminders** is off — never notes) and, if you publish them,
   the schedule and maintenance sensors, which every Home Assistant user can
   read.
 - **Drive times (only when turned on).** Your home address and every saved

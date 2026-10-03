@@ -151,7 +151,7 @@ def _queue_ping(background: BackgroundTasks, acting: dict, old_assignee, item: d
         if schedule_logic.is_timed(item):
             detail += ", " + schedule_logic.time_range(item)
         background.add_task(reminders.send_assignment_ping_blocking, new, acting["name"], item["name"], None,
-                            detail=detail, url=item.get("url"))
+                            detail=detail, url=item.get("url"), place_id=item.get("place_id"))
 
 
 # ---------------------------------------------------------------------------

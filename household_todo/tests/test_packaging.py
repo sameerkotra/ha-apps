@@ -7,7 +7,7 @@ import struct
 import unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 REPO_URL = "https://github.com/sameerkotra/ha-apps"
 TEXT_EXT = (".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".cfg", ".toml", ".ini", ".sh")
 TEXT_NAMES = ("Dockerfile", ".dockerignore", ".gitignore")

@@ -215,6 +215,7 @@ class Housekeeping(Base):
 class Digest(Base):
     def setUp(self):
         super().setUp()
+        set_setting(notify_place_details=False)   # place names only (the place-details tests turn it on)
         config.utcnow = lambda: datetime(2026, 9, 21, 8, 5, tzinfo=UTC)   # 08:05, inside the 08:00 window
         link("ann", "mobile_app_ann")
         link("bob", "mobile_app_bob")
@@ -350,7 +351,7 @@ class Digest(Base):
         with db.get_conn() as c:
             times = {r["user_id"]: r["digest_time"] for r in c.execute("SELECT user_id, digest_time FROM user_prefs")}
             self.assertEqual(times, {"u1": "09:30", "u2": "20:00", "u3": "09:30"})
-            self.assertEqual(c.execute("SELECT COUNT(*) FROM app_settings WHERE key != 'drive_times_enabled'").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM app_settings WHERE key NOT IN ('drive_times_enabled', 'notify_place_details')").fetchone()[0], 0)
             self.assertIsNone(c.execute("SELECT 1 FROM sqlite_master WHERE name = 'user_notify_pending'").fetchone())
         out, fake = self.sent()
         config.utcnow = lambda: datetime(2026, 9, 21, 9, 35, tzinfo=UTC)
@@ -495,6 +496,7 @@ class WeeklySummary(Base):
 class TaskReminders(Base):
     def setUp(self):
         super().setUp()
+        set_setting(notify_place_details=False)   # place names only (the place-details tests turn it on)
         drive_on()
         config.utcnow = lambda: NOW  # Monday 21 Sep 2026, 12:00 UTC
         link("ann", "mobile_app_ann")
@@ -975,6 +977,7 @@ class ScheduleReminders(Base):
 
     def setUp(self):
         super().setUp()
+        set_setting(notify_place_details=False)   # place names only (the place-details tests turn it on)
         drive_on()
         link("ann", "mobile_app_ann")
         link("bob", "mobile_app_bob")
@@ -1911,6 +1914,7 @@ class LinkNotifications(Base):
 
     def setUp(self):
         super().setUp()
+        set_setting(notify_place_details=False)   # place names only (the place-details tests turn it on)
         drive_on()
         link("ann", "mobile_app_ann")
         link("bob", "mobile_app_bob")
@@ -2050,3 +2054,127 @@ class LinkNotifications(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaceDetails(Base):
+    """With "Place details in reminders" on (the default), a task or item with a place gets its address and
+    phone: lines plus Directions / Call buttons in single-item notifications, an indented 📍 line in the
+    digest and weekly summary (SPEC §8.1). Notes are still never sent."""
+
+    URL = "https://clinic.example/check-in?id=7"
+    MAPS = "https://www.google.com/maps/search/?api=1&query=1%20Main%20St%2C%20Springfield"
+
+    def setUp(self):
+        super().setUp()
+        link("ann", "mobile_app_ann")
+        link("bob", "mobile_app_bob")
+        with db.get_conn() as c:
+            add_user(c, "u1", "Ann", "ann")
+            add_user(c, "u2", "Bob", "bob")
+            add_list(c, "shared", "Household")
+            add_list(c, "ann_p", "My Tasks", "personal", "u1")
+            for u in ("u1", "u2"):
+                c.execute("INSERT INTO user_prefs (user_id, notifications_enabled, lead_days, notify_on_assign) VALUES (?,1,1,1)", (u,))
+                c.execute("INSERT INTO user_reminder_offsets (id, user_id, minutes_before, created_at) VALUES (?, ?, 60, ?)",
+                          (f"o_{u}", u, config.now_iso()))
+            c.execute("INSERT INTO places (id,name,address,phone,created_at) VALUES "
+                      "('pl1','Clinic','1 Main St, Springfield','+1 (555) 010-0100',?)", (config.now_iso(),))
+            c.execute("INSERT INTO places (id,name,address,created_at) VALUES ('pl2','Park','Elm Park',?)", (config.now_iso(),))
+
+    def sent(self):
+        out = []
+
+        def fake(service, title, message, data=None):
+            out.append((service, title, message, data))
+            return True
+        return out, fake
+
+    def test_default_is_on(self):
+        self.assertTrue(settings.notify_place_details())
+
+    def test_task_reminder_with_place_link_and_phone(self):
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Checkup", due_date="2026-09-21", due_time="18:00", place_id="pl1",
+                     notes="SECRET NOTE", url=self.URL)
+        out, fake = self.sent()
+        config.utcnow = at(2026, 9, 21, 17, 0)
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        service, title, message, data = out[-1]
+        self.assertEqual(message.split("\n"), ["Checkup — due in 1 hour (18:00) @ Clinic", "📍 1 Main St, Springfield",
+                                               "📞 +1 (555) 010-0100", self.URL])
+        self.assertEqual(data, {"url": self.URL, "clickAction": self.URL, "actions": [
+            {"action": "URI", "title": "Directions", "uri": self.MAPS},
+            {"action": "URI", "title": "Call", "uri": "tel:+15550100100"}]})
+        self.assertNotIn("SECRET", str(out))
+
+    def test_place_without_link_or_phone(self):
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Walk", due_date="2026-09-21", due_time="18:00", place_id="pl2")
+        out, fake = self.sent()
+        config.utcnow = at(2026, 9, 21, 17, 0)
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        self.assertEqual(out[-1][2:], ("Walk — due in 1 hour (18:00) @ Park\n📍 Elm Park", {"actions": [
+            {"action": "URI", "title": "Directions", "uri": "https://www.google.com/maps/search/?api=1&query=Elm%20Park"}]}))
+
+    def test_schedule_reminder_with_place(self):
+        with db.get_conn() as c:
+            add_item(c, "yoga", "Yoga", rule="weeks:1:1", anchor="2026-09-21", start="18:00", end="19:00", assigned="u1",
+                     place="pl1")
+        out, fake = self.sent()
+        config.utcnow = at(2026, 9, 21, 17, 0)
+        self.assertEqual(reminders.run_schedule_reminder_pass_blocking(sender=fake), 1)
+        message, data = out[-1][2:]
+        self.assertEqual(message.split("\n"), ["Yoga — starts in 1 hour (18:00–19:00) @ Clinic", "📍 1 Main St, Springfield",
+                                               "📞 +1 (555) 010-0100"])
+        self.assertEqual([a["title"] for a in data["actions"]], ["Directions", "Call"])
+        self.assertNotIn("url", data)
+
+    def test_assignment_ping_with_place(self):
+        out, fake = self.sent()
+        self.assertTrue(reminders.send_assignment_ping_blocking("u2", "Ann", "Book checkup", "2026-09-22", sender=fake,
+                                                                url=self.URL, place_id="pl1"))
+        self.assertEqual(out[-1][2].split("\n"), ["Ann assigned you: Book checkup (due 2026-09-22) @ Clinic",
+                                                  "📍 1 Main St, Springfield", "📞 +1 (555) 010-0100", self.URL])
+        self.assertEqual(len(out[-1][3]["actions"]), 2)
+        # an unknown place id is simply left out
+        self.assertTrue(reminders.send_assignment_ping_blocking("u2", "Ann", "Other", None, sender=fake, place_id="nope"))
+        self.assertEqual(out[-1][2:], ("Ann assigned you: Other", None))
+
+    def test_digest_and_weekly_place_lines(self):
+        config.utcnow = at(2026, 9, 21, 8, 5)
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Checkup", due_date="2026-09-21", place_id="pl1", url=self.URL, position=0)
+            add_task(c, "t2", "ann_p", "Walk", due_date="2026-09-21", place_id="pl2", position=1)
+            add_task(c, "t3", "ann_p", "Call mum", due_date="2026-09-21", position=2)
+        out, fake = self.sent()
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=fake), 1)
+        self.assertEqual(out[0][2].split("\n"), [
+            "• Checkup — today @ Clinic", "   📍 1 Main St, Springfield · 📞 +1 (555) 010-0100", f"   🔗 {self.URL}",
+            "• Walk — today @ Park", "   📍 Elm Park",
+            "• Call mum — today",
+        ])
+        self.assertIsNone(out[0][3])          # the digest is never tappable
+
+    def test_off_sends_place_names_only(self):
+        set_setting(notify_place_details=False)
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Checkup", due_date="2026-09-21", due_time="18:00", place_id="pl1")
+        out, fake = self.sent()
+        config.utcnow = at(2026, 9, 21, 17, 0)
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        self.assertEqual(out[-1][2:], ("Checkup — due in 1 hour (18:00) @ Clinic", None))
+        self.assertNotIn("Main St", str(out))
+
+    def test_action_path_carries_buttons(self):
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Checkup", due_date="2026-09-21", due_time="18:00", place_id="pl1")
+        config.utcnow = at(2026, 9, 21, 17, 0)
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(), 1)
+        svc, body = self.ha.notifications()[-1]
+        self.assertEqual(body["data"]["actions"][0], {"action": "URI", "title": "Directions", "uri": self.MAPS})
+
+    def test_tel_url(self):
+        self.assertEqual(reminders.tel_url("+44 20 7946 0000"), "tel:+442079460000")
+        self.assertEqual(reminders.tel_url("555-0100 ext"), "tel:5550100")
+        self.assertIsNone(reminders.tel_url("call us"))
+        self.assertIsNone(reminders.tel_url(""))

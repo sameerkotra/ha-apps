@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.0
+
+- Reminders and "assigned to you" notifications for a task or schedule item with a place now show the place's address and phone, with **Directions** and **Call** buttons on phones with the Home Assistant Companion app. The daily digest and weekly summary add the address and phone under the item.
+- "Assigned to you" notifications now include the place's name, and tapping them opens the item's link.
+- New App setting **Place details in reminders** (on by default) to send only the place's name instead.
+
 ## 2.0.0
 
 First public release, in the Household apps repository (https://github.com/sameerkotra/ha-apps).
