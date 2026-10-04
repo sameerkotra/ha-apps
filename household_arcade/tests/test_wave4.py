@@ -1,4 +1,4 @@
-"""Wave 4: the puzzle and word games' table entries (Sudoku, Solitaire, Word Guess, Word Search), the settings and
+"""Wave 4: the puzzle and word games' table entries (Sudoku, Word Guess, Word Search), the settings and
 per-game preferences they use, scores that keep nothing when a puzzle wasn't solved, and the daily challenge."""
 import _env  # noqa: F401  (must be first)
 
@@ -7,7 +7,7 @@ import unittest
 from app import daily, db, games, scores, settings
 from base import ASHA, DEV, KABIR, MEERA, ApiBase
 
-NEW = ("sudoku", "solitaire", "wordguess", "wordsearch")
+NEW = ("sudoku", "wordguess", "wordsearch")
 TODAY = "2026-09-21"
 
 
@@ -19,19 +19,15 @@ class TestGameTable(ApiBase):
             self.assertEqual(g[gid]["canSave"], True, gid)
             self.assertIsNone(g[gid]["daily"], gid)
         self.assertEqual([m["id"] for m in g["sudoku"]["modes"]], ["easy", "medium", "hard", "expert"])
-        self.assertEqual([m["id"] for m in g["solitaire"]["modes"]], ["draw1", "draw3"])
         self.assertEqual([m["id"] for m in g["wordguess"]["modes"]], ["classic", "easy", "strict"])
         self.assertEqual([m["id"] for m in g["wordsearch"]["modes"]], ["little", "kids", "family", "puzzler"])
         for gid in NEW:                              # no level lists: the puzzles are made from the seed
             self.assertEqual(games.GAMES[gid]["level_modes"], [])
             self.assertEqual(games.GAMES[gid]["race"]["rule"], "score")
-        self.assertEqual(games.GAMES["solitaire"]["race"]["tiebreak"], "faster")
 
     def test_honest_score_limits(self):
         self.assertIsNone(games.check_score("sudoku", "easy", 10_000, 1, 60, None))
         self.assertIsNotNone(games.check_score("sudoku", "easy", 10_001, 1, 600, None))
-        self.assertIsNone(games.check_score("solitaire", "draw1", 1_745, 1, 60, None))
-        self.assertIsNotNone(games.check_score("solitaire", "draw1", 2_001, 1, 6000, None))
         self.assertIsNone(games.check_score("wordguess", "easy", 8_999, 1, 30, None))
         self.assertIsNotNone(games.check_score("wordguess", "classic", 10_000, 1, 30, None))
         self.assertIsNone(games.check_score("wordsearch", "puzzler", 2_100, 1, 20, None))
@@ -69,14 +65,13 @@ class TestUnfinished(ApiBase):
 
     def test_other_games_still_keep_partial_scores_and_practice_says_so(self):
         self.assertEqual(self.play(300, seconds=60, game="wordsearch", mode="kids").json()["saved"], True)
-        self.assertEqual(self.play(500, seconds=60, game="solitaire", mode="draw1").json()["saved"], True)
         self.assertEqual(self.play(9_000, seconds=60, game="sudoku", mode="easy", practice=True).json()["reason"], "practice")
 
     def test_keeps_nothing_only_when_the_game_asks(self):
         self.assertTrue(games.keeps_nothing("sudoku", 0))
         self.assertFalse(games.keeps_nothing("sudoku", 5))
         self.assertFalse(games.keeps_nothing("snake", 0))
-        self.assertFalse(games.keeps_nothing("solitaire", 0))
+        self.assertFalse(games.keeps_nothing("wordsearch", 0))
 
 
 class TestSudokuHints(ApiBase):
@@ -147,16 +142,17 @@ class TestSavedPuzzles(ApiBase):
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM scores").fetchone()[0], 0)
 
-    def test_a_saved_solitaire_keeps_its_score_when_ended(self):
-        sid = self.start("solitaire", "draw3").json()["id"]
-        self.clock.advance(seconds=70)
-        self.assertEqual(self.save(sid, 250).status_code, 200)
-        sv = {g["id"]: g for g in self.get("/api/games").json()["games"]}["solitaire"]["saved"]
-        self.assertEqual((sv["mode"], sv["score"], sv["canResume"]), ("draw3", 250, True))
-        r = self.delete("/api/saved/solitaire?keepScore=true").json()
-        self.assertTrue(r["scoreSaved"])
-        r2 = self.start("solitaire", "draw1").json()
-        self.assertEqual(r2["mode"], "draw1")
+    def test_a_removed_game_leaves_old_rows_harmless(self):
+        """Solitaire was in 1.5.0 and is gone: its old scores, saved games and sessions mustn't break any page."""
+        self.play(300, seconds=60, game="wordsearch", mode="kids")
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO scores (user_id, game, mode, score, level, seconds, started_at, ended_at, app_version) "
+                         "SELECT user_id, 'solitaire', 'draw1', 500, 1, 60, started_at, ended_at, '1.5.0' FROM scores LIMIT 1")
+        for path in ("/api/games", "/api/scores/mine", "/api/leaderboard?game=wordsearch&mode=kids&period=all",
+                     "/api/me"):
+            self.assertEqual(self.get(path).status_code, 200, path)
+        self.assertNotIn("solitaire", [g["id"] for g in self.get("/api/games").json()["games"]])
+        self.assertIn(self.start("solitaire", "draw1").status_code, (400, 404, 422))
 
     def test_continuing_a_saved_word_search(self):
         sid = self.start("wordsearch", "family").json()["id"]

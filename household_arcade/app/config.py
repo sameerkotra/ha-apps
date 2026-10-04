@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 
 _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 

@@ -337,23 +337,6 @@ GAMES: dict[str, dict] = {
         "per_second": 10_000,
         "base": 10_000,
     },
-    "solitaire": {
-        "name": "Solitaire",
-        "icon": "♠️",
-        "modes": [
-            {"id": "draw1", "label": "Draw one"},
-            {"id": "draw3", "label": "Draw three"},
-        ],
-        "level_modes": [],
-        "default_mode": "draw1",
-        "state_version": 1,
-        "race": {"rule": "score", "tiebreak": "faster"},
-        # ≤ 52 × 10 to the foundations, 21 × 5 for turned cards, 24 × 5 from the waste, and a bonus for a quick win
-        # of at most 1,000: under 1,800 in all; a win takes well over 20 s
-        "max_score": 2_000,
-        "per_second": 100,
-        "base": 1_500,
-    },
     "wordguess": {
         "name": "Word Guess",
         "icon": "🔤",

@@ -34,7 +34,6 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | `hop-logic.js`, `hop.js` | Road Hop rules (`HopLogic`) and drawing; registers `hop` |
 | `snakeduel-logic.js`, `snakeduel.js` | Snake Duel rules (`SnakeDuelLogic`) and drawing; registers `snakeduel` |
 | `sudoku-logic.js`, `sudoku.js` | Sudoku rules (`SudokuLogic`; seeded puzzles with one solution, notes, hints) and drawing; registers `sudoku` |
-| `solitaire-logic.js`, `solitaire.js` | Klondike rules (`SolitaireLogic`; a solver makes every deal winnable) and drawing; registers `solitaire` |
 | `wordguess-words.js`, `wordguess-logic.js`, `wordguess.js` | Word Guess word lists, rules (`WordGuessLogic`) and drawing (a keyboard on the canvas); registers `wordguess` |
 | `wordsearch-words.js`, `wordsearch-logic.js`, `wordsearch.js` | Word Search word lists, grid maker (`WordSearchLogic`) and drawing; registers `wordsearch` |
 
@@ -74,7 +73,6 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | Rocks | `rocks` | `classic` Classic, `calm` Calm, `waves` Waves | `classic` | `buttons` ⟲ ⟳ ▲ Fire |
 | Road Hop | `hop` | `classic` Classic, `easy` Easy, `levels` Levels | `classic` | `dpad`, tap = `up` |
 | Sudoku | `sudoku` | `easy`, `medium`, `hard`, `expert` | `easy` | `buttons` number pad (5-column `place` grid), `typed` |
-| Solitaire | `solitaire` | `draw1` Draw one, `draw3` Draw three | `draw1` | `touch` Hint, Auto, Undo |
 | Word Guess | `wordguess` | `classic` Six tries, `easy` Eight tries, `strict` Strict | `classic` | `touch`, `typed` |
 | Word Search | `wordsearch` | `little`, `kids`, `family`, `puzzler` | `kids` | `touch` Hint |
 | Snake Duel | `snakeduel` | `cpu` Against the computer, `two` Two players | `cpu` | `touch`, two players |
@@ -356,8 +354,32 @@ state means is a new `STATE_VERSION` (and the same number in `games.py`), so old
 ## Wave 4 additions to the contract
 
 - Definition fields `options` (start-screen choices stored per person, passed as `opts.options`; Sudoku: Show mistakes, Number lines) and `typed: true` (the shell sends physical keys as `input("key:A" | "key:ENTER" | "key:BACKSPACE", true)`, and P no longer pauses). A `preview` opt makes the still picture behind the start card.
-- Daily play passes `opts.seed` and a mode from the day's challenge; none of the four have level lists, so no `level_kinds` entry (the puzzles are made from the seed).
+- Daily play passes `opts.seed` and a mode from the day's challenge; none of the three have level lists, so no `level_kinds` entry (the puzzles are made from the seed).
 - Results carry `stats.summary` and `stats.won`; scores are higher-is-better. `unfinished_zero` games score nothing until solved.
+
+## Sudoku: number lines (planned change — not built yet)
+
+Today (1.5.0) a selected number is shown by a thin line through the **middle** of every row and column that holds
+it, plus dots in some cells. It looks busy. The change:
+
+- **Whole rows and columns are shaded instead.** When a number is in focus (a filled cell is tapped, or a number
+  is picked on the pad), every cell in the **row**, the **column** and the **3 × 3 box** of each cell holding that
+  number gets one even, soft shade. **No line through the centre, no dots.**
+- **One shade per cell.** The covered cells are worked out first (`Logic.lines(s, focus).covered`), then each is
+  shaded once, so where a row and a column cross the colour doesn't get darker and the grid stays calm.
+- **What stands out:**
+  - the cells holding the focus number — the strong highlight they have today;
+  - **empty cells left unshaded** — the only places that number can still go;
+  - the selected cell keeps its own outline on top.
+- **Looks:** the shade uses each look's accent colour at low strength (about 0.18–0.22). Neon draws it as a dim fill
+  with no glow, so it doesn't bloom; Pixel and the low-resolution looks use the same per-cell fill. Checked by
+  screenshot in all six looks, on a phone and a computer, with notes in the cells still readable on top.
+- **Option:** the start-screen choice stays **Number lines: On / Off** (same id `lines`, so saved choices carry
+  over); the status line still says "Number lines: 5".
+- **Tests:** the `covered` set for a sample puzzle (rows, columns and boxes of every cell holding the number); no
+  centre lines drawn (the drawing test counts line calls inside the grid: grid lines only).
+- **Release:** a patch version (1.5.1), CHANGELOG "Sudoku: number lines now shade whole rows and columns instead of
+  drawing a line through the middle". DOCS.md already says "highlights the row and column".
 
 ## Adding a game later
 
@@ -378,7 +400,7 @@ entry. Nothing else in the kit or the shell changes.
   walls, brick toughness and points, lives and game over, level clear and the next layout, repeats
   getting faster, power-ups on/off and each power-up, extra balls, no tunnelling at top speed,
   determinism, honest-score limits.
-- `<game>-logic.test.js` for each of the other games (including the four wave 4 games): the rules (moves, scoring, levels, modes, the end),
+- `<game>-logic.test.js` for each of the other games (including the three wave 4 games): the rules (moves, scoring, levels, modes, the end),
   the level-list mode (built-in or the session's list, a bad list falls back, the next level, the last one
   wins), determinism, save and restore, a render in all six looks, and a quick bot playing within the
   honest-score limits, also on the hardest levels the list allows (Lane Racer: never forced to crash; Paddle

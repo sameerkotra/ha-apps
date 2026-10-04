@@ -15,7 +15,7 @@
   var defs = [];
   var CONTROLS = ["dpad", "paddle", "buttons", "touch"];
   var ACTIONS = ["up", "down", "left", "right", "fire", "alt", "up2", "down2", "left2", "right2", "fire2",
-    // puzzle games' buttons (Sudoku's number pad and tools, Solitaire's Undo / Hint / Auto)
+    // puzzle games' buttons (Sudoku's number pad and tools)
     "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "notes", "fill", "hint", "undo", "erase", "auto"];
 
   function fail(msg) { throw new Error("ArcadeGames.register: " + msg); }

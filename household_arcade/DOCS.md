@@ -257,17 +257,9 @@ adds 10 seconds to your time) and **Number lines** (highlights the row and colum
 10,000 minus your time in seconds, with 30 seconds added for each hint, so the fastest finish ranks first.
 A puzzle you didn't finish scores nothing and isn't kept. A game can be saved and carried on later.
 
-### Solitaire
-
-Classic Klondike: build the four suit piles from ace to king, and stack cards down in
-alternating colours in the seven columns. Tap a card to send it where it fits, or drag it. **Draw one** or
-**Draw three** from the stock. **Hint** points at a move, **Auto** sends every card that can go up to the
-piles, and **Undo** takes a move back. Every deal can be won, in Practice too. Points come from cards sent
-up, cards turned over, and a bonus for a quick win; **End game** keeps what you have so far.
-
 ### Word Guess
 
-Find the hidden word. Type a guess (or tap the on-screen keys) and press Enter: green is the right
+Find the hidden word. The first guess is any 5-letter word you like — that's where the clues come from. Type a guess (or tap the on-screen keys) and press Enter: green is the right
 letter in the right place, yellow is in the word but elsewhere, grey is not in the word. **Six tries**
 (5 letters), **Eight tries**, or **Strict**, where every clue you've been given must be used in the next guess.
 Only real words are accepted. Score: 1,000 for each try left (plus one) and up to 999 for speed,

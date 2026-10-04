@@ -7,13 +7,13 @@ phones, §13) and the games still to come are at the end.
 
 ## 1. Scope
 
-- Twenty-one games, written from scratch (no ROMs, no emulators, no commercial
+- Twenty games, written from scratch (no ROMs, no emulators, no commercial
   names, artwork, music or level layouts): **Snake**, **Brick Breaker**,
   **Falling Blocks**, **Paddle Duel**, **Lane Racer**, **Flap**, **Mines**,
   **Merge**, **Colour Memory**, **Memory Cards**, **Tap the Mole**, **Number
-  Dash**, **Tank Battle**, **Sky Defenders**, **Rocks**, **Road Hop**, **Sudoku**, **Solitaire**, **Word Guess**, **Word Search** and
+  Dash**, **Tank Battle**, **Sky Defenders**, **Rocks**, **Road Hop**, **Sudoku**, **Word Guess**, **Word Search** and
   **Snake Duel** (two players on one screen, or against the computer).
-- Every game except the four puzzle and word games (Sudoku, Solitaire, Word Guess, Word Search, made from the seed) has a level list that an AI model can add to (§11); the modes
+- Every game except the three puzzle and word games (Sudoku, Word Guess, Word Search, made from the seed) has a level list that an AI model can add to (§11); the modes
   that play it are listed in `games.py` (`level_modes`). Admin → AI usage shows
   every request made to the model (§11.10).
 - Everyone plays as their Home Assistant account; no extra accounts or PINs.
@@ -658,8 +658,6 @@ delay doesn't matter.
   - **Word Guess** — the same word; fewer guesses wins, then the faster time.
   - **Word Search** — the same grid; all words found first wins (or more words
     when one gives up).
-  - **Solitaire** — the same deal; the higher score wins, then the faster time.
-    Only deals that can be won are used for races.
   - **Slide Puzzle**, **Lights Out**, **Picture Logic**, **Tile Match** — the
     same board; solved first wins (Slide Puzzle and Lights Out: fewer moves
     breaks a tie).
@@ -845,7 +843,7 @@ requirements; no outside service is contacted.
 Every game is a module in `static/games/` behind the same start screen, pause,
 scores and limits; adding one means adding its files, one registry entry, one
 entry in `games.py`, its level list (`level_kinds/<game>.py`, §11.9) and a line
-in this file. Waves 1–4 are done (Sudoku, Solitaire, Word Guess, Word Search and the daily challenge; Falling Blocks, Paddle Duel, Lane Racer,
+in this file. Waves 1–4 are done (Sudoku, Word Guess, Word Search and the daily challenge — Solitaire was in wave 4 and has been removed; Falling Blocks, Paddle Duel, Lane Racer,
 Flap; Mines, Merge, Colour Memory, Memory Cards, Tap the Mole, Number Dash;
 Tank Battle, Sky Defenders, Rocks, Road Hop, Snake Duel); the rest will be
 added in this order, after playing together (§13). Every one of them can be
@@ -853,8 +851,8 @@ played together from two phones from the start: a race (§13.3) for waves 4–6,
 turn by turn (§13.5) for wave 7, Chess, Ludo and Snakes and Ladders, and a live
 match taking turns (§13.4) for Carrom:
 
-4. **Sudoku** (Easy to Expert, notes, number lines, hints), **Solitaire**,
-   **Word Guess**, **Word Search**, and the **daily challenge** (below).
+4. **Sudoku** (Easy to Expert, notes, number lines, hints), **Word Guess**,
+   **Word Search**, and the **daily challenge** (below).
 5. **Bubble Pop**, **Gem Swap**, **Tower Stack**, **Runner**, **Lander**,
    **City Defense**.
 6. **Slide Puzzle**, **Lights Out**, **Picture Logic**, **Tile Match**,

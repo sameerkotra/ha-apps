@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+- **Solitaire is removed.** Scores and saved games from it stay in the database but no longer show anywhere.
+- **Word Guess explains its clues**: before the first guess it says to type any 5-letter word, and after that a
+  key under the grid shows what the colours mean (right spot, in the word, not in it).
+
 ## 1.5.0
 
 - **Play together (a race)**: **Play with someone** on a game's start screen invites another person in the

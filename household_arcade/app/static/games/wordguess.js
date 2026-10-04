@@ -113,6 +113,17 @@
       }
     }
 
+    // What the colours mean, under the grid once there's a guess to read (the message line, when free).
+    function legend(g) {
+      var items = [[Logic.CORRECT, "right spot"], [Logic.ELSEWHERE, "in the word"], [Logic.ABSENT, "not in it"]];
+      var x = 14, y = MSG_Y + 1, sz = 12, i;
+      for (i = 0; i < items.length; i++) {
+        tile(g, x, y, sz, "A", items[i][0]);
+        g.text(items[i][1], x + sz + 4, y + sz / 2 + 1, { size: 8, base: "middle", a: 0.9 });
+        x += i === 0 ? 74 : 80;
+      }
+    }
+
     function draw(g, info) {
       var mode = Logic.MODES[s.mode], rows = s.tries, pitch = Math.min(28, Math.floor((GRID_BOTTOM - GRID_TOP) / rows)), size = pitch - 3;
       var gx = 120 - (5 * pitch - 3) / 2, r, c, i;
@@ -135,7 +146,9 @@
       var text = s.message;
       if (!text) text = s.strict ? "Strict: use every clue you have found." : "";
       if (s.won) text = "Found it in " + s.guesses.length + (s.guesses.length === 1 ? " try!" : " tries!");
+      if (!text && s.guesses.length === 0 && !s.over) text = "Type any 5-letter word to start: the colours give the clues.";
       if (text) g.text(text, 120, MSG_Y + 8, { size: 9, align: "center", a: 0.95 });
+      else legend(g);
 
       for (i = 0; i < KEYS.length; i++) {
         var k = KEYS[i], st = s.keys[k.label], special = k.label.length > 1;

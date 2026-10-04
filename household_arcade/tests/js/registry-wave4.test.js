@@ -56,11 +56,11 @@ test("the pad can carry number, notes, fill, hint, undo, erase and auto buttons"
 });
 
 test("the four wave 4 games register with the right shell settings", () => {
-  const { win } = makeSandbox({ extra: ["sudoku-logic.js", "sudoku.js", "solitaire-logic.js", "solitaire.js", "wordguess-words.js", "wordguess-logic.js", "wordguess.js",
+  const { win } = makeSandbox({ extra: ["sudoku-logic.js", "sudoku.js", "wordguess-words.js", "wordguess-logic.js", "wordguess.js",
     "wordsearch-words.js", "wordsearch-logic.js", "wordsearch.js"] });
   const G = win.ArcadeGames;
-  assert.deepEqual(plain(["sudoku", "solitaire", "wordguess", "wordsearch"].map((id) => [id, G.get(id).controls, G.get(id).typed, G.get(id).stateVersion])),
-    [["sudoku", "buttons", true, 1], ["solitaire", "touch", false, 1], ["wordguess", "touch", true, 1], ["wordsearch", "touch", false, 1]]);
+  assert.deepEqual(plain(["sudoku", "wordguess", "wordsearch"].map((id) => [id, G.get(id).controls, G.get(id).typed, G.get(id).stateVersion])),
+    [["sudoku", "buttons", true, 1], ["wordguess", "touch", true, 1], ["wordsearch", "touch", false, 1]]);
   assert.deepEqual(plain(G.get("sudoku").options.map((o) => o.id)), ["mistakes", "lines"]);
-  for (const id of ["sudoku", "solitaire", "wordguess", "wordsearch"]) assert.ok(G.get(id).help.length > 40, id);
+  for (const id of ["sudoku", "wordguess", "wordsearch"]) assert.ok(G.get(id).help.length > 40, id);
 });
