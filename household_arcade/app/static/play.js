@@ -52,7 +52,10 @@ const Play = (() => {
   function optionValues() {
     const saved = (state.me && state.me.prefs.gamePrefs && state.me.prefs.gamePrefs[S.gameId]) || {};
     const out = {};
-    for (const op of (S.def && S.def.options) || []) out[op.id] = op.choices.some((c) => c.id === saved[op.id]) ? saved[op.id] : op.default;
+    for (const op of (S.def && S.def.options) || []) {
+      out[op.id] = op.choices.some((c) => c.id === saved[op.id]) ? saved[op.id] : op.default;
+      if (op.offInRaces && (S.match || S.daily)) out[op.id] = op.default;     // a race or daily challenge: the same game for everyone
+    }
     return out;
   }
   function runLabel() { return S.daily ? "Today's challenge · " + modeLabel(S.daily.mode) : modeLabel(S.mode); }
@@ -568,12 +571,15 @@ const Play = (() => {
     else if (saved && saved.personalBest) badges.push(h("span", { class: "badge best" }, "⭐ New personal best!"));
     if (saved && saved.reason === "practice") badges.push(h("span", { class: "badge note" }, "Practice — not saved"));
     if (saved && saved.reason === "short") badges.push(h("span", { class: "badge note" }, "Under 3 seconds — not saved"));
+    if (saved && saved.reason === "unfinished") badges.push(h("span", { class: "badge note" }, "Not solved — scores 0"));
     if (error) badges.push(h("span", { class: "badge note" }, "Not saved: " + error));
     const blocked = blockReason();
     const rematch = S.rematchInvite;
+    const summary = result.stats && Array.isArray(result.stats.summary) && result.stats.summary.length ? result.stats.summary : null;
     setOverlay(h("h3", null, done ? (Together.headline(m) || "Race over") : "You finished"),
       h("div", { class: "big race-big", id: "finalScore" }, fmtNum(result.score)),
       h("div", { class: "hint race-hint" }, `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${modeLabel(S.mode)}`),
+      summary ? h("div", { class: "hint over-summary", id: "overSummary" }, summary.map((x) => h("div", null, x))) : null,     // a puzzle: how it went ("Found it in 3 tries")
       badges.length ? h("div", { class: "ov-row", id: "overBadges" }, badges) : null,
       done ? Together.resultTable(m)
         : h("div", { class: "hint", id: "waitingToFinish" }, o ? `Waiting for ${Together.first(o.name)} to finish… ${fmtNum(o.score)} · level ${o.level}` : "Waiting for the other player…"),

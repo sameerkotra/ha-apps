@@ -3,8 +3,9 @@
 
    The number pad and the tools (Notes, Fill notes, Hint, Undo, Erase) are the shell's buttons (big, always the
    same size); a tap on the grid selects a cell. Number lines are drawn here: the cells holding the focus number
-   are highlighted, a line runs through each of their rows and columns and their boxes are shaded; the cells
-   left clear are the only places that number can still go. */
+   are highlighted and every cell in their rows, columns and boxes gets one even, soft shade (worked out once
+   by Logic.lines, so crossings don't get darker); the empty cells left clear are the only places that number
+   can still go. */
 (function (root) {
   "use strict";
   var Kit = root.ArcadeKit, Logic = root.SudokuLogic;
@@ -24,7 +25,7 @@
   ];
 
   // the board on the 240 × 300 playfield
-  var CS = 23, GX = 16, GY = 38, GW = CS * 9, MSG_Y = 250;
+  var CS = 23, GX = 16, GY = 38, GW = CS * 9, MSG_Y = 250, SHADE_CI = 7;     // 7: the looks' accent (teal/cyan)
 
   function create(canvas, opts) {
     opts = opts || {};
@@ -78,13 +79,11 @@
       var hintCells = {};
       if (s.hint) (s.hint.cells || []).forEach(function (h) { hintCells[h] = true; });
 
-      // backgrounds
+      // backgrounds: the number lines' shade first (one even shade per covered cell), then the rest on top
+      if (ln) for (i = 0; i < 81; i++) if (ln.covered[i] && s.vals[i] !== focus && !(g.kind === "lcd" && s.vals[i])) shade(g, i);
       for (i = 0; i < 81; i++) {
         r = Math.floor(i / 9); c = i % 9; x = GX + c * CS; y = GY + r * CS;
-        if (ln && ln.boxes.indexOf(Logic.BOX[i]) >= 0 && s.vals[i] !== focus) {
-          if (neon) { /* the box is outlined below */ } else if (!lowres || g.kind === "pixel") g.rect(x, y, CS, CS, 7, { a: 0.18, r: 0, solid: true });
-        }
-        if (s.sel >= 0 && i !== s.sel && (Logic.ROW[i] === Logic.ROW[s.sel] || Logic.COL[i] === Logic.COL[s.sel] || Logic.BOX[i] === Logic.BOX[s.sel]) && !lowres)
+        if (s.sel >= 0 && i !== s.sel && !(ln && ln.covered[i]) && (Logic.ROW[i] === Logic.ROW[s.sel] || Logic.COL[i] === Logic.COL[s.sel] || Logic.BOX[i] === Logic.BOX[s.sel]) && !lowres)
           g.rect(x, y, CS, CS, 8, { a: 0.35, r: 0, solid: true });
         if (hintCells[i]) g.rect(x, y, CS, CS, 3, { a: 0.4, r: 0, solid: fillSolid });
         if (wrong[i] && !lowres) g.rect(x + 1, y + 1, CS - 2, CS - 2, 1, { a: 0.28, r: 2, solid: fillSolid });
@@ -93,19 +92,6 @@
       if (s.sel >= 0) {
         x = GX + (s.sel % 9) * CS; y = GY + Math.floor(s.sel / 9) * CS;
         g.rect(x + 1, y + 1, CS - 2, CS - 2, 5, { a: 0.32, r: 2, solid: fillSolid });
-      }
-      if (neon && ln) ln.boxes.forEach(function (bx) {      // the covered boxes, outlined
-        var bx0 = GX + (bx % 3) * CS * 3, by0 = GY + Math.floor(bx / 3) * CS * 3;
-        g.line(bx0 + 1, by0 + 1, bx0 + CS * 3 - 1, by0 + 1, 7, 1.4, { a: 0.8 }); g.line(bx0 + 1, by0 + CS * 3 - 1, bx0 + CS * 3 - 1, by0 + CS * 3 - 1, 7, 1.4, { a: 0.8 });
-        g.line(bx0 + 1, by0 + 1, bx0 + 1, by0 + CS * 3 - 1, 7, 1.4, { a: 0.8 }); g.line(bx0 + CS * 3 - 1, by0 + 1, bx0 + CS * 3 - 1, by0 + CS * 3 - 1, 7, 1.4, { a: 0.8 });
-      });
-      // number lines: through the middle of every row and column that holds the number
-      if (ln) {
-        ln.rows.forEach(function (rw) { g.line(GX + 2, GY + rw * CS + CS / 2, GX + GW - 2, GY + rw * CS + CS / 2, 5, 1.4, { a: 0.55 }); });
-        ln.cols.forEach(function (cl) { g.line(GX + cl * CS + CS / 2, GY + 2, GX + cl * CS + CS / 2, GY + GW - 2, 5, 1.4, { a: 0.55 }); });
-        if (g.kind === "lcd") {        // the coarse screen can't shade: mark the cells that are covered with a dot
-          for (i = 0; i < 81; i++) if (ln.covered[i] && !s.vals[i]) g.rect(GX + (i % 9) * CS + CS / 2 - 1, GY + Math.floor(i / 9) * CS + CS / 2 - 1, 2, 2, 0, { solid: true });
-        }
       }
       // grid lines
       for (i = 0; i <= 9; i++) {
@@ -118,7 +104,8 @@
         r = Math.floor(i / 9); c = i % 9; x = GX + c * CS; y = GY + r * CS;
         if (s.vals[i]) {
           var bad = wrong[i];
-          g.text(String(s.vals[i]), x + CS / 2, y + CS / 2 + 1, { size: 16, align: "center", base: "middle", ci: bad ? 1 : s.fixed[i] ? 0 : 5 });
+          var inkOnInk = g.kind === "lcd" && focus && s.vals[i] === focus;      // the LCD highlight is solid ink: the digit goes light
+          g.text(String(s.vals[i]), x + CS / 2, y + CS / 2 + 1, { size: 16, align: "center", base: "middle", ci: inkOnInk ? 9 : bad ? 1 : s.fixed[i] ? 0 : 5 });
           if (bad) g.poly([[x + CS - 8, y + 1], [x + CS - 1, y + 1], [x + CS - 1, y + 8]], 1, { solid: true });
         } else if (s.notes[i]) {
           for (var d = 1; d <= 9; d++) {
@@ -160,6 +147,21 @@
         g.text("SOLVED!", 120, 132, { size: 16, align: "center", ci: tc });
         g.text(Logic.clock(Logic.effective(s)), 120, 150, { size: 11, align: "center", ci: tc });
       }
+    }
+
+    /** One cell of the number lines' shade: the look's accent at low strength, filled once with no outline and
+        no glow. Retro LCD has only ink and no ink, so its empty covered cells get a sparse dither (one dot in
+        sixteen) instead, which keeps the digits clear. */
+    function shade(g, i) {
+      var x = GX + (i % 9) * CS, y = GY + Math.floor(i / 9) * CS;
+      if (g.kind === "lcd") {
+        var k = g.k, x0 = Math.ceil(x * k) + 1, y0 = Math.ceil(y * k) + 1, x1 = Math.floor((x + CS) * k) - 1, y1 = Math.floor((y + CS) * k) - 1, px, py;
+        for (py = y0; py < y1; py += 3) for (px = x0 + ((py - y0) / 3 % 2) * 2; px < x1; px += 4) g.rect(px / k, py / k, 1 / k, 1 / k, 0, { solid: true });
+        return;
+      }
+      if (g.lowres) { g.rect(x, y, CS, CS, SHADE_CI, { a: 0.24, solid: true }); return; }
+      g.ctx.fillStyle = g.col(SHADE_CI, g.kind === "neon" ? 0.08 : g.kind === "contrast" ? 0.3 : 0.2);
+      g.ctx.fillRect(x, y, CS, CS);
     }
 
     function wrap(text, width, maxLines) {

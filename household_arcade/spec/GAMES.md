@@ -357,29 +357,34 @@ state means is a new `STATE_VERSION` (and the same number in `games.py`), so old
 - Daily play passes `opts.seed` and a mode from the day's challenge; none of the three have level lists, so no `level_kinds` entry (the puzzles are made from the seed).
 - Results carry `stats.summary` and `stats.won`; scores are higher-is-better. `unfinished_zero` games score nothing until solved.
 
-## Sudoku: number lines (planned change — not built yet)
+## Sudoku: number lines
 
-Today (1.5.0) a selected number is shown by a thin line through the **middle** of every row and column that holds
-it, plus dots in some cells. It looks busy. The change:
+When a number is in focus (a filled cell is tapped, or a number is picked on the pad), every cell in the **row**,
+the **column** and the **3 × 3 box** of each cell holding that number gets one even, soft shade — no line through
+the middle, no dots.
 
-- **Whole rows and columns are shaded instead.** When a number is in focus (a filled cell is tapped, or a number
-  is picked on the pad), every cell in the **row**, the **column** and the **3 × 3 box** of each cell holding that
-  number gets one even, soft shade. **No line through the centre, no dots.**
-- **One shade per cell.** The covered cells are worked out first (`Logic.lines(s, focus).covered`), then each is
-  shaded once, so where a row and a column cross the colour doesn't get darker and the grid stays calm.
-- **What stands out:**
-  - the cells holding the focus number — the strong highlight they have today;
-  - **empty cells left unshaded** — the only places that number can still go;
-  - the selected cell keeps its own outline on top.
-- **Looks:** the shade uses each look's accent colour at low strength (about 0.18–0.22). Neon draws it as a dim fill
-  with no glow, so it doesn't bloom; Pixel and the low-resolution looks use the same per-cell fill. Checked by
-  screenshot in all six looks, on a phone and a computer, with notes in the cells still readable on top.
-- **Option:** the start-screen choice stays **Number lines: On / Off** (same id `lines`, so saved choices carry
-  over); the status line still says "Number lines: 5".
-- **Tests:** the `covered` set for a sample puzzle (rows, columns and boxes of every cell holding the number); no
-  centre lines drawn (the drawing test counts line calls inside the grid: grid lines only).
-- **Release:** a patch version (1.5.1), CHANGELOG "Sudoku: number lines now shade whole rows and columns instead of
-  drawing a line through the middle". DOCS.md already says "highlights the row and column".
+- **One shade per cell.** `Logic.lines(s, focus).covered` (81 booleans) is worked out first and each covered cell is
+  filled once, so crossings don't get darker. The selected cell's own row/column/box tint is skipped where the
+  number lines already shade.
+- **What stands out:** the cells holding the focus number (the strong highlight), the **empty cells left clear**
+  (the only places the number can still go), and the selected cell's outline on top.
+- **Looks:** the shade is palette colour 7 (each look's accent) at low strength, filled straight on the context
+  with no outline: 0.2 (Modern, Paper), 0.3 (High contrast), 0.08 on Neon so the glow doesn't bloom; Pixel uses
+  the same per-cell fill on its coarse grid (0.24). Retro LCD has only ink, so its empty covered cells get a
+  sparse dither (one dot in sixteen) and filled cells are left plain so the digits stay clear; the focus cells
+  are solid ink with a light digit.
+- **Option:** **Number lines: On / Off** (id `lines`); the line under the board says "Number lines: 5".
+- **Tests:** the covered set for a sample puzzle; the drawing test records every `line` call inside the grid and
+  checks it lies on a grid line, and counts one fill per covered cell in each look.
+
+## Start-screen options that stay off in races
+
+An option may set `offInRaces: true` (the registry keeps it). The shell (`optionValues()` in play.js) then uses
+the option's default in a race and in a daily challenge, so both players — or everyone on the day — play the
+same game. Word Guess's **Clue at the start** (`clue`: `none` / `letter`) is the first: one letter of the answer
+shown in its place before the first guess, its place drawn from the seed after the answer (so the same seed gives
+the same word with or without it), the key coloured as found, Strict mode keeping it in place, and
+`CLUE_COST` (500) taken off the score. A saved game keeps `clue`; older saves have none.
 
 ## Adding a game later
 

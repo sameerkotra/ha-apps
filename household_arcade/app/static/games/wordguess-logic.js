@@ -7,7 +7,8 @@
    Modes: classic (six tries), easy (eight tries), strict (six tries, and every clue found so far must be used
    in the next guess: correct letters stay in place, elsewhere letters must be included).
    Score = 1,000 × (tries left + 1) + (999 − seconds, at least 0) for a word found, otherwise 0, so fewer tries
-   rank first and then the faster time. The clock is the updates the game ran (60 a second).
+   rank first and then the faster time. The optional clue (one letter shown in its place before the first guess,
+   picked by the seed) costs CLUE_COST points; the shell turns it off in races and daily challenges. The clock is the updates the game ran (60 a second).
    One call to step() is one update. */
 (function () {
   "use strict";
@@ -20,6 +21,7 @@
   var MESSAGE_UPDATES = 150;
   var REVEAL_UPDATES = 8 * LEN;     // the marks of a new guess show one tile at a time (drawing only)
   var STATE_VERSION = 1;
+  var CLUE_COST = 500;
   var ABSENT = 0, ELSEWHERE = 1, CORRECT = 2;
   var ROWS = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
 
@@ -53,18 +55,24 @@
     var mode = MODES[o.mode] ? o.mode : "classic";
     var r = rand(o.seed == null ? 1 : o.seed);
     var answer = Words.ANSWERS[Math.floor(r() * Words.ANSWERS.length)];
-    return fresh(mode, answer);
+    var at = Math.floor(r() * LEN);       // drawn after the answer, so the same seed gives the same word either way
+    return fresh(mode, answer, o.clue === "letter" ? at : -1);
   }
-  function fresh(mode, answer) {
-    return {
+  /** clue: the place (0–4) of the letter shown at the start, or -1 for no clue. */
+  function fresh(mode, answer, clue) {
+    var s = {
       v: STATE_VERSION, mode: mode, answer: answer, tries: MODES[mode].tries, strict: MODES[mode].strict,
       guesses: [], marks: [], cur: "", message: "", messageT: 0, shake: 0, guessAt: -1000,
-      updates: 0, won: false, over: false, score: 0, level: 1, keys: {}, stats: { cause: "" },
+      updates: 0, won: false, over: false, score: 0, level: 1, keys: {}, stats: { cause: "" }, clue: -1,
     };
+    if (clue >= 0 && clue < LEN) { s.clue = clue; s.keys[answer[clue].toUpperCase()] = CORRECT; }
+    return s;
   }
+  /** The clue as a sentence ("The 3rd letter is R."), or "" without one. */
+  function clueText(s) { return s.clue >= 0 ? "Clue: the " + ordinal(s.clue + 1) + " letter is " + s.answer[s.clue].toUpperCase() + "." : ""; }
 
   function seconds(s) { return Math.floor(s.updates / UPS); }
-  function scoreOf(s) { return s.won ? 1000 * (s.tries - s.guesses.length + 1) + Math.max(0, 999 - seconds(s)) : 0; }
+  function scoreOf(s) { return s.won ? 1000 * (s.tries - s.guesses.length + 1) + Math.max(0, 999 - seconds(s)) - (s.clue >= 0 ? CLUE_COST : 0) : 0; }
   function ordinal(n) { return ["1st", "2nd", "3rd", "4th", "5th"][n - 1] || n + "th"; }
   function say(s, text) { s.message = text; s.messageT = MESSAGE_UPDATES; }
   function clock(sec) { return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2); }
@@ -94,6 +102,7 @@
   /** What a strict guess breaks, as a sentence, or "" when it uses every clue so far. */
   function strictProblem(s, guess) {
     var i, g, mk, c, need = {};
+    if (s.clue >= 0 && guess[s.clue] !== s.answer[s.clue]) return s.answer[s.clue].toUpperCase() + " must stay in the " + ordinal(s.clue + 1) + " place.";
     for (g = 0; g < s.guesses.length; g++) {
       mk = s.marks[g];
       var inGuess = {};
@@ -157,13 +166,14 @@
     var out = [];
     if (s.won) out.push("Found " + s.answer.toUpperCase() + " in " + s.guesses.length + (s.guesses.length === 1 ? " try" : " tries") + " of " + s.tries);
     else out.push("The word was " + s.answer.toUpperCase());
+    if (s.clue >= 0) out.push("With a clue (−" + CLUE_COST + ")");
     out.push("Time " + clock(seconds(s)));
     return out;
   }
   function result(s) {
     return {
       score: s.won ? s.score : 0, level: 1,
-      stats: { won: s.won, cause: s.stats.cause, mode: s.mode, tries: s.guesses.length, answer: s.over ? s.answer : undefined, seconds: seconds(s), summary: s.over ? summary(s) : undefined },
+      stats: { won: s.won, cause: s.stats.cause, mode: s.mode, tries: s.guesses.length, answer: s.over ? s.answer : undefined, seconds: seconds(s), clue: s.clue >= 0, summary: s.over ? summary(s) : undefined },
     };
   }
 
@@ -172,9 +182,10 @@
     var ok = data && typeof data === "object" && MODES[data.mode] && typeof data.answer === "string" && Words.ANSWERS.indexOf(data.answer) >= 0 &&
       Array.isArray(data.guesses) && data.guesses.length <= MODES[data.mode].tries && typeof data.cur === "string" && /^[a-z]{0,5}$/.test(data.cur) &&
       typeof data.updates === "number" && data.updates >= 0 && isFinite(data.updates) &&
-      data.guesses.every(function (w) { return typeof w === "string" && Words.isWord(w); });
+      data.guesses.every(function (w) { return typeof w === "string" && Words.isWord(w); }) &&
+      (data.clue == null || data.clue === -1 || (data.clue >= 0 && data.clue < LEN && data.clue === Math.floor(data.clue)));
     if (!ok) throw new Error("That saved game can't be continued.");
-    var s = fresh(data.mode, data.answer);
+    var s = fresh(data.mode, data.answer, data.clue == null ? -1 : data.clue);
     s.updates = Math.floor(data.updates);
     s.cur = data.cur;
     for (var g = 0; g < data.guesses.length; g++) {
@@ -191,7 +202,7 @@
 
   var WordGuessLogic = {
     UPS: UPS, LEN: LEN, MODES: MODES, MODE_IDS: MODE_IDS, STATE_VERSION: STATE_VERSION, ABSENT: ABSENT, ELSEWHERE: ELSEWHERE, CORRECT: CORRECT,
-    ROWS: ROWS, REVEAL_UPDATES: REVEAL_UPDATES, rand: rand, mark: mark, create: create, step: step, type: type, back: back, enter: enter,
+    ROWS: ROWS, REVEAL_UPDATES: REVEAL_UPDATES, CLUE_COST: CLUE_COST, clueText: clueText, rand: rand, mark: mark, create: create, step: step, type: type, back: back, enter: enter,
     press: press, seconds: seconds, scoreOf: scoreOf, status: status, result: result, save: save, restore: restore, clock: clock,
   };
   if (typeof module === "object" && module.exports) module.exports = WordGuessLogic; else self.WordGuessLogic = WordGuessLogic;

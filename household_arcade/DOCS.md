@@ -253,15 +253,20 @@ Fill the 9 × 9 grid so every row, column and 3 × 3 box holds 1 to 9 once. Tap 
 number (or type it). **✎ Notes** switches to pencil marks; **Erase** clears a square; **Undo** takes back a move; **Hint**
 fills one square (3 a puzzle, an admin can change that; unlimited in Practice). **Easy** to **Expert**
 get fewer clues. The start screen has **Show mistakes** (a wrong number turns red at once — it
-adds 10 seconds to your time) and **Number lines** (highlights the row and column). Your score is
+adds 10 seconds to your time) and **Number lines**: tap a number (on the pad or in the grid) and every
+square holding it is highlighted, and the rows, columns and boxes it covers get a soft shade; the empty
+squares left clear are the only places that number can still go. Your score is
 10,000 minus your time in seconds, with 30 seconds added for each hint, so the fastest finish ranks first.
 A puzzle you didn't finish scores nothing and isn't kept. A game can be saved and carried on later.
 
 ### Word Guess
 
-Find the hidden word. The first guess is any 5-letter word you like — that's where the clues come from. Type a guess (or tap the on-screen keys) and press Enter: green is the right
-letter in the right place, yellow is in the word but elsewhere, grey is not in the word. **Six tries**
+Find the hidden word. The first guess is any 5-letter word you like — that's where the clues come from. Type a guess (or tap the on-screen keys) and press Enter: blue with a dot is the right
+letter in the right place, orange with a diamond is in the word but elsewhere, dim is not in the word (a key
+under the grid repeats this). **Six tries**
 (5 letters), **Eight tries**, or **Strict**, where every clue you've been given must be used in the next guess.
+The start screen's **Clue at the start** can show one letter in its place before your first guess; it costs 500
+points, and races and daily challenges always start without it so everyone plays the same game.
 Only real words are accepted. Score: 1,000 for each try left (plus one) and up to 999 for speed,
 so fewer guesses rank first and then the faster time. A word you didn't find scores nothing.
 
@@ -444,7 +449,9 @@ same sums), at the same moment, each on their own phone or computer. The better 
 3. When they join, both phones count in 3, 2, 1 and play. A bar above the game shows the other player's score,
    level and whether they are still playing (a green dot: the phones are connected). When one of you is done
    first, you keep playing; the bar shows "finished in 6:12" and the result card waits for the other.
-4. When both have finished you see both results side by side and who won (or a draw). Each score is also saved
+4. When both have finished you see both results side by side and who won (or a draw). For Sudoku and Word Guess
+   the card also says how your game went ("Found SMALL in 3 tries of 6"), and a puzzle you didn't solve shows
+   **Not solved — scores 0**. Each score is also saved
    as a normal game for each of you (unless it was Practice). **Rematch** sends a new invite the other can accept
    with one tap.
 5. **My scores → Against others** lists each person you've raced with: games, won, lost and drawn, and the same

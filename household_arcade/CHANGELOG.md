@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.2
+
+- **Sudoku: number lines now shade whole rows, columns and boxes** instead of drawing a line through the middle:
+  every cell they cover gets one even, soft shade, so the empty cells left clear stand out as the only places the
+  number can go. On Retro LCD the focus cells' digits now show (light on the dark highlight).
+- **Word Guess: Clue at the start** (start screen): show one letter in its place before the first guess, for 500
+  points off. Races and daily challenges always start without it. The colours in the guide now match the game
+  (blue with a dot, orange with a diamond, dim), and the first message fits every look.
+- **Race result card** shows the puzzle summary for Sudoku and Word Guess ("Found SMALL in 3 tries of 6") and
+  **Not solved — scores 0** for a puzzle that wasn't solved.
+
 ## 1.5.1
 
 - **Solitaire is removed.** Scores and saved games from it stay in the database but no longer show anywhere.

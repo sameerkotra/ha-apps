@@ -793,7 +793,8 @@ a sheet with the people; then a waiting overlay (invite time left, Cancel), the
 two clocks needn't agree), the race bar (the other's first name, score, level,
 a connection dot and "playing / paused / finished in 6:12 / connection lost? /
 getting ready") above the game, and a result card inside the game's frame with both
-results, **Rematch** (the other's phone shows **Join <name>'s rematch**) and
+results (plus, for the puzzles, the game's own summary lines from `result.stats.summary` and a **Not solved —
+scores 0** badge when the server answers `reason: "unfinished"`), **Rematch** (the other's phone shows **Join <name>'s rematch**) and
 **Back**. An invite also pops up as a sheet wherever the app is open (not during
 a game), and shows on the Games page (**Waiting for you**, my own invite with
 Cancel, a race that is starting). The page re-fits with the bar (`fitStage`

@@ -65,7 +65,7 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed }); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, clue: (opts.options || {}).clue }); pending = []; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data); pending = []; },
       step: function () {
@@ -139,14 +139,18 @@
             state = s.marks[r][c];
             if (revealing && r === s.guesses.length - 1 && age < c * 8) state = -1;
           }
-          tile(g, gx + c * pitch + (r === s.guesses.length ? shakeX : 0), GRID_TOP + r * pitch, size, ch, state);
+          var tx = gx + c * pitch + (r === s.guesses.length ? shakeX : 0), ty = GRID_TOP + r * pitch;
+          tile(g, tx, ty, size, ch, state);
+          // the clue letter, faint, in its place on the row being typed until a letter covers it
+          if (s.clue === c && r === s.guesses.length && !s.over && !ch)
+            g.text(s.answer[c].toUpperCase(), tx + size / 2, ty + size / 2 + 1, { size: size * 0.62, align: "center", base: "middle", ci: 5, a: g.lowres ? 0.6 : 0.45 });
         }
       }
 
       var text = s.message;
       if (!text) text = s.strict ? "Strict: use every clue you have found." : "";
       if (s.won) text = "Found it in " + s.guesses.length + (s.guesses.length === 1 ? " try!" : " tries!");
-      if (!text && s.guesses.length === 0 && !s.over) text = "Type any 5-letter word to start: the colours give the clues.";
+      if (!text && s.guesses.length === 0 && !s.over) text = s.clue >= 0 ? Logic.clueText(s) : "Type any 5-letter word to start.";     // short enough for the coarse fonts; the colour key shows after it
       if (text) g.text(text, 120, MSG_Y + 8, { size: 9, align: "center", a: 0.95 });
       else legend(g);
 
@@ -181,8 +185,11 @@
     modes: MODES,
     defaultMode: "classic",
     controls: "touch",
+    // offInRaces: the shell uses the default in a race or a daily challenge, so everyone plays the same game
+    options: [{ id: "clue", label: "Clue at the start", default: "none", offInRaces: true,
+      choices: [{ id: "none", label: "None" }, { id: "letter", label: "Show one letter (−500 points)" }] }],
     typed: true,
-    help: "Find the secret five-letter word. Type a real word and press Enter. Blue with a dot: right letter, right place. Orange with a diamond: the letter is in the word, but somewhere else. Dim: not in the word. Strict mode makes you use every clue you've found. A faster win with fewer tries scores more. Esc pauses.",
+    help: "Find the secret five-letter word. Type a real word and press Enter. Blue with a dot: right letter, right place. Orange with a diamond: the letter is in the word, but somewhere else. Dim: not in the word. Strict mode makes you use every clue you've found. Clue at the start shows one letter in its place before your first guess (it costs 500 points, and is off in races and daily challenges). A faster win with fewer tries scores more. Esc pauses.",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

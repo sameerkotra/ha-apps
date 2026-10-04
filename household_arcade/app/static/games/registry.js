@@ -39,14 +39,16 @@
         buttons.push({ action: b.action, label: b.label, aria: typeof b.aria === "string" ? b.aria : b.label, wide: !!b.wide, place: place });
       });
     }
-    // Start-screen choices a game offers besides its modes (remembered per person): { id, label, default, choices: [{ id, label }] }
+    // Start-screen choices a game offers besides its modes (remembered per person): { id, label, default, choices: [{ id, label }], offInRaces? }
     var options = [];
     if (Array.isArray(def.options)) {
       def.options.forEach(function (op) {
         if (!op || typeof op.id !== "string" || !/^[a-z][a-z0-9_]{0,19}$/.test(op.id) || typeof op.label !== "string" || !Array.isArray(op.choices) || !op.choices.length) fail("each option needs an id, a label and choices (" + def.id + ")");
         var ids = op.choices.map(function (c) { return String(c.id); });
-        options.push({ id: op.id, label: op.label, choices: op.choices.map(function (c) { return { id: String(c.id), label: String(c.label) }; }),
-          default: ids.indexOf(String(op.default)) >= 0 ? String(op.default) : ids[0] });
+        var item = { id: op.id, label: op.label, choices: op.choices.map(function (c) { return { id: String(c.id), label: String(c.label) }; }),
+          default: ids.indexOf(String(op.default)) >= 0 ? String(op.default) : ids[0] };
+        if (op.offInRaces) item.offInRaces = true;      // the shell uses the default in races and daily challenges
+        options.push(item);
       });
     }
     var modeIds = def.modes.map(function (m) { return m.id; });

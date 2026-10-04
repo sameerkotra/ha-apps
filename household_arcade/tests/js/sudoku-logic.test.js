@@ -457,3 +457,56 @@ test("sudoku: the clock counts only the time the game ran; a pause stops it", ()
   assert.ok(S.seconds(inst.logic) >= secs);
   inst.destroy();
 });
+
+test("number lines cover the rows, columns and boxes of every cell holding the number, each cell once", () => {
+  const s = S.create({ mode: "medium", seed: 31, hints: null });
+  const d = 7, ln = S.lines(s, d);
+  const holders = s.vals.map((v, i) => (v === d ? i : -1)).filter((i) => i >= 0);
+  assert.ok(holders.length > 0);
+  for (let i = 0; i < 81; i++) {
+    const want = holders.some((h) => S.ROW[h] === S.ROW[i] || S.COL[h] === S.COL[i] || S.BOX[h] === S.BOX[i]);
+    assert.equal(ln.covered[i], want, `cell ${i}`);
+  }
+  assert.equal(ln.covered.length, 81);
+});
+
+// Draw one frame of Sudoku with a recording "g" (grabbing the game's draw from createSession).
+function recordDraw(look, setup) {
+  const sb = makeSandbox({ extra: ["sudoku-logic.js", "sudoku.js"] });
+  let impl = null;
+  const real = sb.win.ArcadeKit.createSession;
+  sb.win.ArcadeKit.createSession = (c, o, i) => { impl = i; return real(c, o, i); };
+  const inst = sb.win.ArcadeGames.get("sudoku").create(sb.canvas(), { mode: "easy", seed: 12, look, options: { lines: "on" } });
+  inst.start(); sb.frames(1);
+  const s = impl.logic();
+  setup(s);
+  const calls = { line: [], fill: [], rect: [] };
+  const ctx = { fillRect: (...a) => calls.fill.push(a), set fillStyle(v) {}, get fillStyle() { return ""; } };
+  const g = { kind: look, lowres: look === "lcd" || look === "pixel", k: look === "lcd" ? 2 / 3 : look === "pixel" ? 0.5 : 1, ctx,
+    col: () => "rgba(0,0,0,0.2)", hud() {}, text() {}, poly() {},
+    line: (...a) => calls.line.push(a), rect: (...a) => calls.rect.push(a) };
+  impl.draw(g, {});
+  inst.destroy();
+  return { s, calls };
+}
+
+test("number lines shade cells instead of drawing a line through the middle", () => {
+  const GX = 16, GY = 38, CS = 23, GW = CS * 9;
+  for (const look of LOOKS) {
+    const { s, calls } = recordDraw(look, (s) => { s.focus = 5; s.sel = -1; s.hint = null; });
+    const ln = S.lines(s, 5);
+    // every line inside the grid lies on a grid line: no line through a cell's middle
+    for (const [x1, y1, x2, y2] of calls.line) {
+      if (x1 < GX || x2 > GX + GW || y1 < GY || y2 > GY + GW) continue;
+      const onGrid = (v, o) => Math.abs(((v - o) / CS) - Math.round((v - o) / CS)) < 1e-6;
+      assert.ok((y1 === y2 && onGrid(y1, GY)) || (x1 === x2 && onGrid(x1, GX)), `${look}: line ${[x1, y1, x2, y2]} is a grid line`);
+    }
+    const shaded = ln.covered.filter((c, i) => c && s.vals[i] !== 5).length;
+    if (look === "lcd") assert.ok(calls.rect.length > shaded, "lcd dithers the covered cells");
+    else if (look === "pixel") assert.equal(calls.rect.filter((r) => r[4] === 7).length, shaded, "pixel: one fill per covered cell");
+    else assert.equal(calls.fill.length, shaded, `${look}: one fill per covered cell`);
+  }
+  // with nothing in focus nothing is shaded
+  const none = recordDraw("modern", (s) => { s.focus = 0; s.sel = -1; s.hint = null; });
+  assert.equal(none.calls.fill.length, 0);
+});

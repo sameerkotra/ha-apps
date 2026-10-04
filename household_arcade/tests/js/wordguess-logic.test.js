@@ -251,3 +251,53 @@ test("a lost game draws the answer and still ends cleanly", () => {
   assert.equal(ends.length, 1); assert.equal(ends[0].score, 0); assert.equal(ends[0].stats.cause, "lost");
   inst.destroy();
 });
+
+test("clue at the start: one letter in its place, the same word for the seed, 500 points off, kept in saves", () => {
+  const plain = G.create({ mode: "classic", seed: 21 });
+  const s = G.create({ mode: "classic", seed: 21, clue: "letter" });
+  assert.equal(plain.clue, -1); assert.equal(G.clueText(plain), "");
+  assert.equal(s.answer, plain.answer, "the clue doesn't change the word");
+  assert.ok(s.clue >= 0 && s.clue < 5);
+  assert.equal(G.create({ mode: "classic", seed: 21, clue: "letter" }).clue, s.clue, "the same place for the same seed");
+  const ch = s.answer[s.clue].toUpperCase();
+  assert.equal(s.keys[ch], G.CORRECT, "the keyboard shows the letter as found");
+  assert.match(G.clueText(s), new RegExp(`letter is ${ch}\\.$`));
+  // saved and continued with the clue
+  word(s)(other(s));
+  const back = G.restore(G.save(s));
+  assert.equal(back.clue, s.clue);
+  assert.throws(() => G.restore({ ...G.save(s), clue: 7 }));
+  assert.equal(G.restore({ ...G.save(plain), clue: undefined }).clue, -1, "older saves have no clue");
+  word(s)(s.answer);
+  word(plain)(other(plain)); word(plain)(plain.answer);
+  assert.equal(s.score, plain.score - G.CLUE_COST);
+  const r = G.result(s);
+  assert.equal(r.stats.clue, true); assert.ok(r.stats.summary.some((l) => /With a clue/.test(l)));
+  assert.equal(G.result(plain).stats.clue, false);
+});
+
+test("strict mode with a clue keeps the clue letter in its place", () => {
+  let s, seed = 1;
+  do { s = G.create({ mode: "strict", seed: seed++, clue: "letter" }); } while (!W.ANSWERS.some((w) => w[s.clue] !== s.answer[s.clue]));
+  const bad = W.ANSWERS.find((w) => w[s.clue] !== s.answer[s.clue]);
+  const evs = word(s)(bad);
+  assert.deepEqual(evs.map((e) => e.type), ["reject"]);
+  assert.match(s.message, /must stay in the/);
+});
+
+test("the clue option: offered on the start screen, off in races and daily challenges, drawn in every look", () => {
+  const sb = makeSandbox({ extra: ["wordguess-words.js", "wordguess-logic.js", "wordguess.js"] });
+  const def = sb.win.ArcadeGames.get("wordguess");
+  assert.deepEqual(JSON.parse(JSON.stringify(def.options)), [{ id: "clue", label: "Clue at the start", default: "none", offInRaces: true,
+    choices: [{ id: "none", label: "None" }, { id: "letter", label: "Show one letter (−500 points)" }] }]);
+  for (const look of LOOKS) {
+    const inst = def.create(sb.canvas(), { mode: "classic", look, seed: 4, options: { clue: "letter" } });
+    inst.start(); sb.frames(3);
+    assert.ok(inst.logic.clue >= 0);
+    inst.input("key:A", true); sb.frames(2);
+    inst.destroy();
+  }
+  const off = def.create(sb.canvas(), { mode: "classic", look: "modern", seed: 4, options: { clue: "none" } });
+  off.start(); assert.equal(off.logic.clue, -1); off.destroy();
+  assert.equal(sb.counts.nonFinite || 0, 0);
+});
