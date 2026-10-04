@@ -479,8 +479,9 @@ table.data tr.me td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .play-head h2 { margin: 0; font-size: 1.15rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .play-head .icon-btn { font-size: 1.25rem; min-width: 44px; min-height: 44px; border: 1px solid var(--border); background: var(--panel); }
 .play-area { display: flex; flex-direction: column; align-items: center; gap: 14px; }
-.stage { position: relative; aspect-ratio: 240 / 300; width: min(100%, 520px, calc((100dvh - 330px) * 0.8));
-  min-width: 200px; border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 0 0 1px var(--border);
+/* the stage's width is set by play.js (fitStage) to the biggest 4:5 box the window allows */
+.stage { position: relative; aspect-ratio: 240 / 300; container: stage / size; width: min(100%, 420px); max-width: 100%;
+  min-width: 200px; flex: none; border-radius: 10px; overflow: hidden; background: #000; box-shadow: 0 0 0 1px var(--border);
   touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 .overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -497,12 +498,23 @@ table.data tr.me td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .badge.note { background: var(--panel-alt); color: var(--text-dim); border: 1px solid var(--border); }
 /* the start screen: a card over the lower part of a still picture of the game, so the look shows */
 .overlay.start { background: linear-gradient(to bottom, transparent 35%, rgba(0, 0, 0, 0.35)); justify-content: flex-end; }
-.start-card { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(100%, 300px);
-  padding: 12px 14px; border-radius: 14px; background: var(--panel); border: 1px solid var(--border);
+/* compact, so it covers as little of the game as possible and fits a short game (a phone on its side) */
+.start-card { display: flex; flex-direction: column; align-items: center; gap: 5px; width: min(100%, 280px);
+  max-height: 100%; overflow-y: auto; font-size: 0.85rem;
+  padding: 8px 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
-.start-card h3 { font-size: 1.15rem; }
-.start-fields { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
-.start-fields .field { flex: 1 1 120px; width: auto; }
+.start-card h3 { font-size: 1rem; }
+.start-fields { display: flex; flex-wrap: nowrap; gap: 6px; justify-content: center; width: 100%; }
+.start-fields .field { flex: 1 1 0; width: auto; min-width: 0; gap: 2px; font-size: 0.72rem; }
+.start-card select { min-height: 34px; padding: 4px 6px; font-size: 0.85rem; }
+.start-card .btn-primary, .start-card .btn-secondary { min-height: 38px; min-width: 110px; font-size: 0.95rem; padding: 6px 14px; }
+.start-card .mini-toggle { font-size: 0.75rem; }
+.overlay.start { padding: 8px; }
+/* very short games (a phone on its side): drop the title, the game's name is in the header */
+@container stage (max-height: 360px) {
+  .start-card h3 { display: none; }
+  .start-card { gap: 4px; padding: 6px 8px; }
+}
 .mode-buttons { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; max-width: 320px; }
 .mode-buttons button { min-height: 40px; padding: 6px 10px; font-weight: 600; cursor: pointer; color: var(--text-dim); }
 .mode-buttons button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
@@ -531,21 +543,25 @@ table.data tr.me td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .btn-pad.grid { display: grid; grid-auto-columns: 60px; grid-auto-rows: 56px; gap: 8px; max-width: none; }
 .btn-pad.grid .pad-btn { min-width: 0; min-height: 0; width: 100%; height: 100%; }
 .pad.empty { display: none; }
-.play-help { color: var(--text-dim); font-size: 0.82rem; text-align: center; max-width: 520px; }
-@media (min-aspect-ratio: 5/4) {
-  .play-area { flex-direction: row; justify-content: center; align-items: center; }
-  .play-area[data-hand="left"] { flex-direction: row-reverse; }
-  .stage { width: min(520px, calc((100dvh - 150px) * 0.8)); }
-  .pad, .play-area[data-hand="left"] .pad { flex-direction: column; width: auto; justify-content: center; }
-  .drag-strip { min-height: 120px; min-width: 120px; }
-  .btn-pad { max-width: 132px; }
-}
+.play-help { color: var(--text-dim); font-size: 0.82rem; text-align: center; max-width: 640px; margin: -4px auto 8px;
+  padding: 6px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); }
+#helpBtn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+/* the controls keep their natural size; the game is sized around them (play.js) */
+.play-area .pad { flex: none; max-width: 100%; }
+.play-area { max-width: 100%; }
+/* controls beside the game when that leaves the game bigger (chosen by play.js) */
+.play-area[data-layout="side"] { flex-direction: row; justify-content: center; align-items: center; }
+.play-area[data-layout="side"][data-hand="left"] { flex-direction: row-reverse; }
+.play-area[data-layout="side"] .pad, .play-area[data-layout="side"][data-hand="left"] .pad { flex-direction: column; width: auto; justify-content: center; }
+.play-area[data-layout="side"] .drag-strip { min-height: 120px; min-width: 120px; }
+.play-area[data-layout="side"] .btn-pad { max-width: 132px; }
+/* the game page uses the whole width of the window, not the reading width of the other pages */
+body[data-route="play"] main { max-width: none; padding-bottom: 12px; }
 @media (max-width: 760px) {
   /* the game gets the whole screen on a phone: no bottom navigation while playing */
   body[data-route="play"] .sidebar { display: none; }
   body[data-route="play"] .main-col { padding-bottom: 0; }
   body[data-route="play"] main { padding: 8px 8px 12px; }
-  body[data-route="play"] .stage { width: min(100%, calc((100dvh - 260px) * 0.8)); }
 }
 @media (max-height: 500px) and (min-aspect-ratio: 5/4) {
   /* a phone on its side: the game and its controls get the whole screen */
@@ -554,7 +570,7 @@ table.data tr.me td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   body[data-route="play"] .play-help { display: none; }
 }
 @media (max-height: 500px) and (min-aspect-ratio: 5/4) {
-  body[data-route="play"] .stage { width: calc((100dvh - 76px) * 0.8); min-width: 0; }
+  body[data-route="play"] .stage { min-width: 0; }
   .play-head { margin-bottom: 4px; }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -413,6 +413,10 @@
       if (w > 0 && h > 0) { cssW = w; cssH = h; }
       // Neon is soft by nature: a slightly smaller backing store keeps its glow cheap.
       dpr = Math.min(kind === "neon" ? 1.5 : 2, Math.max(1, root.devicePixelRatio || 1));
+      // A game filling a big screen would otherwise draw millions of pixels every frame:
+      // keep the backing store under about 2.4 million pixels (still sharp at that size).
+      var MAX_PIXELS = 2400000, area = Math.max(1, cssW * cssH);
+      if (area * dpr * dpr > MAX_PIXELS) dpr = Math.max(1, Math.sqrt(MAX_PIXELS / area));
       if (kind === "lcd") {
         // Size the backing store so every LCD dot is exactly P × P device pixels;
         // the browser scales the canvas to its CSS size (free, on the compositor).

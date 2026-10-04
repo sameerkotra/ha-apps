@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.4
+
+- **No more cut-off buttons on an unfolded phone** in Tank Battle, Falling Blocks, Sky Defenders and Rocks: their
+  button grids are measured as drawn (they can be wider than their box), and after fitting, the app checks that
+  every button is fully on screen and shrinks the game a little if one isn't.
+
+## 1.4.3
+
+- **A smaller start card**: Mode and Look side by side, smaller buttons and text, so more of the game shows
+  behind it; on a short game (a phone on its side) it drops its title and still fits without scrolling.
+- **How to play is folded away**: the **?** button next to the sound button opens and closes it (remembered on
+  each device), and the game uses the room it frees.
+- **Nothing cut off on wide folding phones**: on an unfolded phone the controls beside the game keep their full
+  size and the game is sized around them, so no button sits past the right edge.
+
+## 1.4.2
+
+- **The game fills the screen it's on.** The game is now as big as the window allows, keeping its shape: a
+  folded or unfolded phone, a phone on its side, a tablet or a browser window of any size. The on-screen
+  controls go under the game or beside it, whichever leaves the game bigger, and everything resizes the moment
+  the screen changes (unfolding a phone, turning it, resizing the window).
+- Large screens stay smooth: the game draws at a sharp but limited resolution when it's very big.
+
 ## 1.4.1
 
 - **Tank Battle answers faster**: a quick tap on an arrow still turns and moves the tank; turning into a gap

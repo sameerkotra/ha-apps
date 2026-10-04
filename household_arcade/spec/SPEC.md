@@ -254,6 +254,25 @@ schema; it is validated, swapped in and migrated.
   Optional Gamepad API (d-pad / left stick, A B = fire, X Y = alt, Start =
   pause; in a two-player game the second controller is player 2; browsers
   offer it on https only).
+- **Fitting the screen** (`fitStage` in `play.js`): the stage keeps the game's
+  4:5 shape and is set to the biggest size the window allows — the play area's
+  width, and the visible viewport's height (`visualViewport`) below the page
+  header, less the help line and the page's bottom padding. The controls go
+  under the game or beside it (`data-layout="below" | "side"` on the play
+  area), whichever leaves the game bigger. It runs again on window and visual
+  viewport resizes, orientation changes and size changes of the play area, so
+  a folding phone opening or closing, a phone turning or a browser window being
+  resized re-fits at once. The game page drops the 1000 px reading width of the
+  other pages. The kit keeps a canvas's backing store under about 2.4 million
+  pixels (lowering the pixel ratio for very large games) so big screens stay
+  smooth. The controls never shrink (the game is sized around their natural
+  size, a few pixels short of the full width), so nothing is cut off on wide
+  folding phones.
+- **How to play** is folded away by default: the **?** button in the game's
+  header opens and closes it (remembered per device, `arcade.helpOpen`), and the
+  game re-fits to the room it frees. The start card is compact (Mode and Look
+  side by side, smaller controls) and drops its title on a short game
+  (container query on the stage), so it fits without scrolling.
 - The game pauses on `visibilitychange` (hidden), `pagehide`, the pause
   button/P/Esc and the back gesture: a running game is the top "layer" for
   `backnav.js`, so Back pauses it first, then leaves the game, then the app.
@@ -556,6 +575,29 @@ delay doesn't matter.
   Memory Cards, Tap the Mole, Mines, Rocks, Sky Defenders, Road Hop (every
   single-player game whose randomness comes from the seed; Brick Breaker and
   Snake too).
+- Later games get a race as they're built (each game's seed gives both players
+  the same start; the winner is decided as listed):
+  - **Sudoku** — the same puzzle; the faster finish wins, with the usual
+    penalties (30 s per hint, 10 s per shown mistake). Hints and notes are each
+    player's own.
+  - **Word Guess** — the same word; fewer guesses wins, then the faster time.
+  - **Word Search** — the same grid; all words found first wins (or more words
+    when one gives up).
+  - **Solitaire** — the same deal; the higher score wins, then the faster time.
+    Only deals that can be won are used for races.
+  - **Slide Puzzle**, **Lights Out**, **Picture Logic**, **Tile Match** — the
+    same board; solved first wins (Slide Puzzle and Lights Out: fewer moves
+    breaks a tie).
+  - **Code Breaker** — the same hidden colours; fewer rows wins, then the
+    faster time.
+  - **Bubble Pop**, **Gem Swap**, **Tower Stack**, **Runner**, **Lander**,
+    **City Defense** — the same level and the same sequence; the higher score
+    wins (Lander: landed with more fuel left).
+  - **Type Rain** — the same words in the same order; higher score wins, words
+    per minute breaks a tie.
+- A race where one player finishes a puzzle while the other is still playing
+  shows "Asha finished in 6:12" on the other phone; they can keep going to post
+  their own time or give up.
 - Modes: any mode both pick together (the inviter's choice), including the
   level-list modes; both get the same level list.
 - The winner: the higher score when both games have ended; a game that ends
@@ -572,6 +614,13 @@ delay doesn't matter.
   each player sees their own paddle at the bottom — the second phone draws the
   court upside down), then **Tank Battle** (two tanks: *together* — protect one
   flag — or *against each other* in an arena with a flag each).
+- **Carrom** (when it's built): two players, live, taking turns — each shot is
+  the striker's position, aim and power, sent to both phones, and both phones
+  play the same shot with the same physics. The physics use whole-number
+  (fixed-point) maths, not floating point, so every phone gets exactly the
+  same result; a checksum after each shot confirms it (out of step ends the
+  match with no result). A player has 30 s to take a shot (then a weak shot is
+  played for them). Doubles (four players, two teams) are possible later.
 - A duel game registers `players: 2` and `lockstep: true`; its rules take
   inputs per player (`press(s, action, down, player)`), are already
   deterministic, and gain `checksum(s)`.
@@ -583,7 +632,12 @@ delay doesn't matter.
 
 Wave 7's family games (Four in a Row, Tic-tac-toe, Checkers, Reversi, Dots and
 Boxes, Sea Battle) are played this way from the start, and Chess from wave 8:
-a move is sent to the server, **checked there** (each game has a small Python
+and so are **Ludo** and **Snakes and Ladders** from wave 8, for **2 to 4
+players** (the inviter picks up to three others; the match starts when all
+have joined or the inviter starts with those who have; anyone who leaves is
+played by the computer). In these two the **dice are rolled by the server**
+(the move request asks for a roll, the server answers with it and stores it),
+so nobody can choose their roll. Each move is sent to the server, **checked there** (each game has a small Python
 rules module that knows the legal moves — the only games whose rules run on the
 server), stored, and the other player gets a notification "Your move in Four in
 a Row against Asha" (at most one every 15 minutes per match, none in quiet
@@ -598,10 +652,13 @@ one who didn't move.
   | `done` | `declined` | `expired` | `cancelled`), created_by, created_at,
   started_at, ended_at, end reason (`finished`, `left`, `timeout`,
   `out_of_step`, `resigned`, `time_limit`), winner (user id, NULL for a draw).
-- `match_players`: match, user, seat (1, 2), invite status, session id (the
+- `match_players`: match, user, seat (1–2; 1–4 for Ludo and Snakes and
+  Ladders), invite status, played-by-computer flag, session id (the
   usual play session, so limits and play time work unchanged), score, level,
   seconds, result.
-- `match_moves` (turn-by-turn only): match, number, seat, move (JSON), at.
+- `match_moves` (turn-by-turn only): match, number, seat, move (JSON), dice roll
+  (Ludo, Snakes and Ladders), at. Carrom's shots are stored here too (a live
+  match taking turns), so a dropped connection can catch up.
 - Live inputs aren't stored (only kept in memory while the match runs).
 - Housekeeping: invites expire; live matches with nobody connected for 60 s end;
   finished matches are kept like scores (Keep scores for).
@@ -609,8 +666,9 @@ one who didn't move.
 ### 13.7 API
 
 - `GET /api/players?game=` — who can be invited now (with reasons for the rest).
-- `POST /api/matches {game, mode, kind, opponent, practice}` → 201 (invite
-  sent); `GET /api/matches` (mine: waiting for me, sent, playing, recent);
+- `POST /api/matches {game, mode, kind, opponents, practice}` → 201 (invites
+  sent; `opponents` is one person, or up to three for Ludo and Snakes and
+  Ladders); `GET /api/matches` (mine: waiting for me, sent, playing, recent);
   `POST /api/matches/{id}/accept | decline | cancel | resign`.
 - `GET /api/matches/{id}/live` (WebSocket) — messages: `hello` (seat, seed,
   mode, levels, delay), `ready`, `start`, `input` {update, actions}, `state`
@@ -620,7 +678,9 @@ one who didn't move.
   stored when both have reported (or the other has gone), checked against the
   honest limits; live duels' results must match each other.
 - `POST /api/matches/{id}/move {move}` (turn by turn) — 409 if it isn't your
-  turn, 422 if the move isn't legal.
+  turn, 422 if the move isn't legal. `POST /api/matches/{id}/roll` (Ludo,
+  Snakes and Ladders) — the server's dice roll for the player whose turn it
+  is.
 - Notifications use the existing notify settings (each person's linked phone,
   the "Receive notifications" preference); a new App setting **Invites by phone
   notification** (on) can turn them off household-wide.
@@ -648,6 +708,11 @@ one who didn't move.
   practice), head-to-head totals, turn-by-turn move checking and turn order,
   notifications (fake Home Assistant), the WebSocket relay with two test
   clients.
+- Later games, as each is built: its race winner rule (time, guesses, rows,
+  moves, score) with ties; Carrom's fixed-point physics gives identical results
+  for the same shot on two instances (checksums over many random shots); Ludo
+  and Snakes and Ladders with 2, 3 and 4 players, server dice that a player
+  can't choose or repeat, and a player who leaves taken over by the computer.
 - Packaging: `wsproto` in requirements; no outside service is contacted.
 
 ## Planned games
@@ -658,10 +723,13 @@ entry in `games.py`, its level list (`level_kinds/<game>.py`, §11.9) and a line
 in this file. Waves 1–3 are done (Falling Blocks, Paddle Duel, Lane Racer,
 Flap; Mines, Merge, Colour Memory, Memory Cards, Tap the Mole, Number Dash;
 Tank Battle, Sky Defenders, Rocks, Road Hop, Snake Duel); the rest will be
-added in this order, after playing together (§13):
+added in this order, after playing together (§13). Every one of them can be
+played together from two phones from the start: a race (§13.3) for waves 4–6,
+turn by turn (§13.5) for wave 7, Chess, Ludo and Snakes and Ladders, and a live
+match taking turns (§13.4) for Carrom:
 
 4. **Sudoku** (Easy to Expert, notes, number lines, hints), **Solitaire**,
-   **Word Guess**, **Word Search**.
+   **Word Guess**, **Word Search**, and the **daily challenge** (below).
 5. **Bubble Pop**, **Gem Swap**, **Tower Stack**, **Runner**, **Lander**,
    **City Defense**.
 6. **Slide Puzzle**, **Lights Out**, **Picture Logic**, **Tile Match**,
@@ -669,6 +737,30 @@ added in this order, after playing together (§13):
 7. Turn-by-turn family games: **Four in a Row**, **Tic-tac-toe**, **Checkers**,
    **Reversi**, **Dots and Boxes**, **Sea Battle** (same screen, or from two
    phones turn by turn as in §13.5).
-8. **Ludo**, **Snakes and Ladders**, **Carrom**, **Chess**.
+8. **Ludo** and **Snakes and Ladders** (2–4 players, on one phone or each on
+   their own), **Carrom** (on one phone, or live from two phones), **Chess**
+   (against the computer, or turn by turn).
 
-Not planned: a daily challenge, a full-screen TV leaderboard, a "game of the day".
+### Daily challenge (with wave 4)
+
+- **Off unless an admin turns it on**: App setting **Show daily challenges**
+  (group *Games*), off by default. While it is off nothing about daily
+  challenges appears anywhere — no Home card, no start-screen entry, no
+  leaderboard tab, no sensors or notifications — and the server refuses daily
+  scores (404 "Daily challenges are turned off"). Turning it off keeps the
+  scores already saved; turning it back on shows them again.
+- When on: each day (Home Assistant's time zone) the app picks the same seeded
+  game for everyone — one each of a few games that suit it (Snake, Falling
+  Blocks, Mines, Merge, Sudoku, Word Guess, as each one exists). A **Today's
+  challenges** card on Home shows them and whether you've played; each person
+  gets one ranked try per challenge (Practice replays aren't saved), and each
+  challenge has its own leaderboard for the day plus a monthly "days played"
+  count. Children's limits, quiet hours and allowed games apply as for any
+  game; a game an admin has switched off isn't picked.
+- Data: `daily_challenges` (date, game, mode, seed); daily scores are ordinary
+  `scores` rows with mode `daily-<date>`.
+- Tests: hidden and refused while the setting is off; the same seed for everyone
+  on a day; one ranked try; switched-off games never picked; keeping scores when
+  turned off and on again.
+
+Not planned: a full-screen TV leaderboard, a "game of the day".

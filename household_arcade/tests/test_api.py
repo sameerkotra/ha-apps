@@ -22,7 +22,7 @@ class TestAccess(ApiBase):
         self.assertEqual(r.status_code, 403)
 
     def test_health_needs_no_user(self):
-        self.assertEqual(self.c.get("/api/health").json(), {"status": "ok", "version": "1.4.1"})
+        self.assertEqual(self.c.get("/api/health").json(), {"status": "ok", "version": "1.4.4"})
 
     def test_admin_routes_refuse_non_admins(self):
         for method, path in (("get", "/api/admin/settings"), ("get", "/api/admin/users"),
@@ -73,7 +73,7 @@ class TestMe(ApiBase):
         self.assertTrue(me["leaderboard"])
         self.assertIsNone(me["playTime"]["leftSeconds"])
         self.assertEqual(me["today"], "2026-09-21")
-        self.assertEqual(me["version"], "1.4.1")
+        self.assertEqual(me["version"], "1.4.4")
 
     def test_whoami_echoes_identity_and_counts_only(self):
         w = self.get("/api/whoami", KABIR).json()
@@ -149,7 +149,7 @@ class TestStaticShell(ApiBase):
                  "games/snake.js", "games/brick-logic.js", "games/brick.js", "games/blocks-logic.js", "games/blocks.js",
                  "games/duel-logic.js", "games/duel.js", "games/racer-logic.js", "games/racer.js", "games/flap-logic.js",
                  "games/flap.js", "games/mines-logic.js", "games/mines.js", "games/merge-logic.js", "games/merge.js", "games/colours-logic.js", "games/colours.js", "games/cards-logic.js", "games/cards.js", "games/mole-logic.js", "games/mole.js", "games/numbers-logic.js", "games/numbers.js", "games/tanks-logic.js", "games/tanks.js", "games/invaders-logic.js", "games/invaders.js", "games/rocks-logic.js", "games/rocks.js", "games/hop-logic.js", "games/hop.js", "games/snakeduel-logic.js", "games/snakeduel.js", "app.js", "play.js", "admin.js"]
-        pos = [html.index(f'src="{name}?v=1.4.1"') for name in order]
+        pos = [html.index(f'src="{name}?v=1.4.4"') for name in order]
         self.assertEqual(pos, sorted(pos))
         self.assertNotIn("<script>", html)            # no inline script (CSP)
         self.assertNotIn("onclick=", html)

@@ -28,7 +28,7 @@ const Play = (() => {
     beatTimer: null, tickTimer: null,
     leftBase: null, activeAtBase: 0, warned: false, timeUpShown: false,
     held: new Set(), pads: {}, gpFrame: null,
-    el: {}, resizeObs: null,
+    el: {}, resizeObs: null, lastFit: "",
   };
 
   // ---------- helpers ----------
@@ -80,17 +80,26 @@ const Play = (() => {
     el.soundBtn = h("button", { class: "icon-btn", type: "button", id: "soundBtn", onclick: toggleSound });
     el.pauseBtn = h("button", { class: "icon-btn", type: "button", id: "pauseBtn", title: "Pause (P)", "aria-label": "Pause", onclick: () => (S.phase === "paused" ? resume() : pause()) }, "⏸");
     el.timeSlot = h("span", { id: "playTime" });
+    // How to play: folded away by default so the game gets the room; ? opens it (remembered per device).
+    const helpText = (S.def.help || "") + (/paus/i.test(S.def.help || "") ? "" : " P or Esc pauses.");
+    el.help = h("div", { class: "play-help", id: "playHelp", hidden: lsGet("arcade.helpOpen") !== "1" }, helpText.trim());
+    el.helpBtn = h("button", { class: "icon-btn", type: "button", id: "helpBtn", title: "How to play", "aria-label": "How to play",
+      "aria-controls": "playHelp", "aria-expanded": String(!el.help.hidden), onclick: toggleHelp }, "?");
     el.pad = buildPad();
     el.area = h("div", { class: "play-area", id: "playArea", dataset: { hand: hand(), controls: S.def.controls } }, el.stage, el.pad);
     mount(root,
       h("div", { class: "play-head" },
         h("button", { class: "icon-btn", type: "button", id: "backBtn", title: "Back to games", "aria-label": "Back to games", onclick: () => showTab("home") }, "‹"),
-        h("h2", null, `${S.server.icon} ${S.server.name}`), el.timeSlot, el.soundBtn, el.pauseBtn),
-      el.area,
-      h("div", { class: "play-help", id: "playHelp" }, S.def.help || "", /paus/i.test(S.def.help || "") ? "" : " P or Esc pauses."));
+        h("h2", null, `${S.server.icon} ${S.server.name}`), el.timeSlot, el.helpBtn, el.soundBtn, el.pauseBtn),
+      el.help,
+      el.area);
     syncSoundBtn();
     wireStage();
-    if (window.ResizeObserver) { S.resizeObs = new ResizeObserver(() => resize()); S.resizeObs.observe(el.stage); }
+    // Watch the page, not the stage: the stage's size is what fitStage() sets.
+    if (window.ResizeObserver) { S.resizeObs = new ResizeObserver(() => resize()); S.resizeObs.observe(el.area); }
+    S.lastFit = "";
+    fitStage(true);
+    requestAnimationFrame(() => fitStage(true));
     showStart();
   }
 
@@ -651,9 +660,83 @@ const Play = (() => {
     syncSoundBtn();
     try { await savePrefs({ sound: on }); } catch (e) { fail(e); }
   }
-  function resize() { if (S.inst) safe(() => S.inst.resize()); }
+  function toggleHelp() {
+    const el = S.el;
+    if (!el.help) return;
+    el.help.hidden = !el.help.hidden;
+    el.helpBtn.setAttribute("aria-expanded", String(!el.help.hidden));
+    lsSet("arcade.helpOpen", el.help.hidden ? "0" : "1");
+    fitStage(true);
+  }
+  // ---------- fitting the game to the screen ----------
+  // The game keeps its 4:5 shape and is made as big as the window allows: a folded phone, an
+  // unfolded one, a phone on its side, a tablet or a browser window of any size. The controls go
+  // under the game or beside it, whichever leaves the game bigger. Runs again whenever the window,
+  // the visible viewport (a folding phone opening or closing, the address bar) or the page changes.
+  const RATIO = 240 / 300;
+  function px(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function fitStage(force) {
+    const el = S.el;
+    if (!el.area || !el.stage || !el.area.isConnected) return;
+    const vv = window.visualViewport;
+    const vh = Math.floor(vv ? vv.height : window.innerHeight);
+    // a little short of the full width, so rounding or a scrollbar never pushes a button off the edge
+    const availW = Math.floor(Math.min(el.area.clientWidth, document.documentElement.clientWidth - el.area.getBoundingClientRect().left) - 6);
+    const key = `${vh}x${availW}x${window.innerWidth}`;
+    if (!force && key === S.lastFit) return;
+    S.lastFit = key;
+    // room under the play area: the page's own bottom padding (the help, when open, sits above it)
+    const main = el.area.closest("main"), col = el.area.closest(".main-col");
+    let below = 16;
+    if (main) below += px(getComputedStyle(main).paddingBottom);
+    if (col) below += px(getComputedStyle(col).paddingBottom);
+    const top = el.area.getBoundingClientRect().top + (window.scrollY || 0);
+    const availH = Math.max(160, vh - top - below);
+    const gap = px(getComputedStyle(el.area).columnGap) || 14;
+    const hasPad = !!(el.pad && !el.pad.classList.contains("empty"));
+    const tryLayout = (layout) => {
+      el.area.dataset.layout = layout;
+      // the controls' real size: the box around every button they draw (a button grid can be
+      // wider than the pad's own box), and never less than the pad itself
+      const [pw, ph] = hasPad ? padExtent() : [0, 0];
+      if (layout === "below") return Math.min(availW, (availH - (hasPad ? ph + gap : 0)) * RATIO);
+      return Math.min(availW - (hasPad ? pw + gap : 0), availH * RATIO);
+    };
+    const wBelow = tryLayout("below"), wSide = tryLayout("side");
+    const layout = wSide > wBelow + 8 ? "side" : "below";
+    el.area.dataset.layout = layout;
+    const w = Math.max(200, Math.floor(layout === "side" ? wSide : wBelow));
+    el.stage.style.width = `${w}px`;
+    // Last check against the real screen: if any control still ends past the right or bottom edge
+    // (a browser that sizes things its own way), shrink the game by that much and look again.
+    for (let i = 0; i < 3 && hasPad; i++) {
+      const vw = document.documentElement.clientWidth;
+      let over = 0;
+      for (const b of el.pad.querySelectorAll("button, .drag-strip")) {
+        const r = b.getBoundingClientRect();
+        if (r.width) over = Math.max(over, r.right - (vw - 4), layout === "below" ? r.bottom - (vh - 4) : 0);
+      }
+      const cur = parseFloat(el.stage.style.width);
+      if (over <= 0 || cur <= 200) break;
+      el.stage.style.width = `${Math.max(200, Math.floor(cur - over * (layout === "below" ? RATIO : 1) - 2))}px`;
+    }
+    if (S.inst) safe(() => S.inst.resize());
+  }
+  function padExtent() {
+    const el = S.el, box = el.pad.getBoundingClientRect();
+    let l = box.left, r = box.right, t = box.top, b = box.bottom;
+    for (const e of el.pad.querySelectorAll("button, .drag-strip, .dpad, .btn-pad")) {
+      const x = e.getBoundingClientRect();
+      if (!x.width) continue;
+      l = Math.min(l, x.left); r = Math.max(r, x.right); t = Math.min(t, x.top); b = Math.max(b, x.bottom);
+    }
+    return [Math.ceil(r - l), Math.ceil(b - t)];
+  }
+  function resize() { fitStage(false); if (S.inst) safe(() => S.inst.resize()); }
   function themeChanged() { if (S.inst) safe(() => S.inst.setLook(look())); }
   window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", () => setTimeout(() => fitStage(true), 150));
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
 
   return { render, leave, pause, resume, isRunning, resize, themeChanged, _state: S };
 })();
