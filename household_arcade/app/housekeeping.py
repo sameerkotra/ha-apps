@@ -12,7 +12,7 @@ from datetime import timedelta
 
 from starlette.concurrency import run_in_threadpool
 
-from . import ai_usage, config, db, ha_sensors, scores
+from . import ai_usage, config, db, ha_sensors, scores, settings, together
 
 logger = logging.getLogger("housekeeping")
 
@@ -30,6 +30,10 @@ def run_blocking() -> dict:
     with db.get_conn() as conn:
         closed = close_stale_sessions(conn)
         removed = scores.prune(conn)
+        together.housekeeping(conn)
+        years = settings.get("keep_scores_years")
+        if years:
+            together.prune(conn, (config.utcnow() - timedelta(days=365 * years)).isoformat(timespec="seconds"))
         ai_usage.prune(conn)
     if removed:
         logger.info("Keep scores for: removed %d old game(s)", removed)

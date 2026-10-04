@@ -260,6 +260,67 @@ CREATE TABLE IF NOT EXISTS ai_calls (
 CREATE INDEX IF NOT EXISTS idx_ai_calls_at ON ai_calls(at);
 """
 
+# Playing together (SPEC §13): a match between two people, their seats, and the play session each uses.
+_M6_TOGETHER = """
+CREATE TABLE IF NOT EXISTS matches (
+    id TEXT PRIMARY KEY,
+    game TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'race' CHECK (kind IN ('race', 'live', 'turns')),
+    seed INTEGER NOT NULL,               -- the same game on both phones
+    levels TEXT,                         -- JSON level list, fixed for the match (as for a session)
+    level_count INTEGER,
+    practice INTEGER NOT NULL DEFAULT 0, -- proposed by the one who invites; accepting agrees to it
+    status TEXT NOT NULL CHECK (status IN ('invited', 'playing', 'paused', 'done', 'declined', 'expired', 'cancelled')),
+    created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT,                     -- an invite lasts 5 minutes (live games)
+    started_at TEXT,                     -- when the count-in ends and both start
+    ended_at TEXT,
+    end_reason TEXT,                     -- finished, left, timeout, out_of_step, resigned, time_limit
+    winner TEXT,                         -- user id; NULL for a draw
+    rematch_of TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_matches_status ON matches(status, expires_at);
+
+CREATE TABLE IF NOT EXISTS match_players (
+    match_id TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    seat INTEGER NOT NULL,
+    invite_status TEXT NOT NULL DEFAULT 'invited' CHECK (invite_status IN ('invited', 'accepted', 'declined')),
+    computer INTEGER NOT NULL DEFAULT 0,
+    session_id TEXT,                     -- the usual play session, so limits and play time work unchanged
+    score INTEGER,
+    level INTEGER,
+    seconds INTEGER,
+    won INTEGER,                         -- the game was won / the puzzle solved (reported with the score)
+    result TEXT CHECK (result IN ('won', 'lost', 'draw')),
+    finished_at TEXT,
+    PRIMARY KEY (match_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_match_players_user ON match_players(user_id);
+
+ALTER TABLE play_sessions ADD COLUMN match_id TEXT
+"""
+
+# Wave 4: small per-person game choices (Sudoku's mistakes and number lines), the daily challenge (SPEC "Daily
+# challenge") and which play session was a daily one.
+_M7_DAILY = """
+ALTER TABLE users ADD COLUMN game_prefs TEXT;
+
+-- The day's challenges: the same seeded game for everyone. A row is made the first time anyone asks that day.
+CREATE TABLE IF NOT EXISTS daily_challenges (
+    date TEXT NOT NULL,                  -- the day in Home Assistant's time zone
+    game TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    PRIMARY KEY (date, game)
+);
+
+-- The date of the challenge a session plays (NULL for any other game); its score is stored with mode "daily-<date>".
+ALTER TABLE play_sessions ADD COLUMN daily TEXT
+"""
+
 # (number, description, SQL). Append only.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "people, play sessions, scores, app settings", _M1_CORE),
@@ -267,6 +328,8 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (3, "level lists and level builds", _M3_LEVELS),
     (4, "reorderable levels, saved games", _M4_SAVES),
     (5, "AI usage", _M5_AI_CALLS),
+    (6, "playing together: matches", _M6_TOGETHER),
+    (7, "daily challenge, per-person game choices", _M7_DAILY),
 ]
 LATEST = MIGRATIONS[-1][0]
 

@@ -71,6 +71,8 @@ const Admin = (() => {
     const keepSel = h("select", { id: "set-keep_scores_years", "aria-label": "Keep scores for", value: String(cur.keep_scores_years) },
       KEEP.map(([v, l]) => h("option", { value: String(v) }, l)));
     keepSel.addEventListener("change", () => set("keep_scores_years", Number(keepSel.value)));
+    const hintsIn = h("input", { type: "number", id: "set-sudoku_hints", min: "0", max: "20", step: "1", value: String(cur.sudoku_hints), "aria-label": "Sudoku hints per puzzle" });
+    hintsIn.addEventListener("input", () => { const n = Number(hintsIn.value); if (hintsIn.value !== "" && Number.isInteger(n) && n >= 0 && n <= 20) set("sudoku_hints", n); });
     const days = h("div", { class: "weekday-buttons", id: "schoolDays", role: "group", "aria-label": "School days" },
       DAYS.map(([n, letter, name]) => {
         const b = h("button", { type: "button", class: cur.school_days.includes(n) ? "on" : "", title: name, "aria-label": name,
@@ -102,7 +104,9 @@ const Admin = (() => {
 
     mount(box,
       h("div", { class: "card" }, h("h3", null, "Games"), h("div", { class: "hint" }, "A game that's off is hidden; its scores are kept."), gameRows,
-        row("Brick Breaker power-ups", "Off: only Classic play (no wider paddle, slower ball, extra ball or extra life).", sw("brick_powerups", "Brick Breaker power-ups"))),
+        row("Brick Breaker power-ups", "Off: only Classic play (no wider paddle, slower ball, extra ball or extra life).", sw("brick_powerups", "Brick Breaker power-ups")),
+        row("Sudoku hints per puzzle", "How many hints a ranked Sudoku allows (0 = none). Practice always has as many as you like. Each hint adds 30 seconds.", hintsIn),
+        row("Show daily challenges", "Off by default. On: Home shows three games with the same puzzle for everyone each day, one ranked try each. Turning it off hides them and keeps the scores.", sw("show_daily_challenges", "Show daily challenges"))),
       h("div", { class: "card" }, h("h3", null, "Looks and scores"),
         row("Default look", "For everyone who hasn't picked their own on Settings.", lookSel),
         row("Leaderboard", "Off: only personal bests are shown.", sw("leaderboard", "Leaderboard")),
@@ -115,6 +119,7 @@ const Admin = (() => {
         h("div", { class: "field wide" }, "Who gets limit warnings (none ticked = every admin)", adminChecks)),
       h("div", { class: "card" }, h("h3", null, "Home Assistant"),
         row("Notify new records", "A phone notification to the household when someone sets a new record. Each person can opt out on Settings.", sw("notify_records", "Notify new records")),
+        row("Invites by phone notification", "A phone notification when someone invites another person to play together (with Join and Not now). The invite also shows on the Games page. Each person can opt out on Settings.", sw("notify_invites", "Invites by phone notification")),
         row("Home Assistant sensors", h("span", null, "Publishes ", h("code", null, "sensor.household_arcade_<game>_record"), ", ",
           h("code", null, "sensor.household_arcade_<person>_played_today"), " and ", h("code", null, "binary_sensor.household_arcade_<person>_playing"), "."),
           sw("ha_sensors", "Home Assistant sensors")),

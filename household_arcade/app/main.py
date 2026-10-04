@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,8 +11,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, ha_client, ha_notify, ha_people, ha_sensors, housekeeping
-from .routers import admin, levels, me, play, prefs, users
+from . import auth, config, db, ha_client, ha_notify, ha_people, ha_sensors, housekeeping
+from .routers import admin, levels, me, play, prefs, together, users
+from .routers import daily as daily_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")
@@ -59,6 +61,8 @@ app.include_router(play.router)
 app.include_router(users.router)
 app.include_router(admin.router)
 app.include_router(levels.router)
+app.include_router(daily_router.router)
+app.include_router(together.router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -72,12 +76,24 @@ async def validation_error(request: Request, exc: RequestValidationError):
 
 # Only Home Assistant's Supervisor ingress proxy (or loopback) may reach the
 # app: that is what makes the X-Remote-User-* headers trustworthy (auth.py).
-_INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+_INGRESS_ALLOWED_HOSTS = auth.INGRESS_ALLOWED_HOSTS
 # Strict: scripts and styles only from the app itself (no inline scripts, no
 # eval), no outside hosts at all. Games are drawn on a canvas in code.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
        "connect-src 'self'; font-src 'self'; media-src 'self'; object-src 'none'; base-uri 'none'; "
        "form-action 'self'; frame-ancestors 'self'")
+_HOST_RE = re.compile(r"^[A-Za-z0-9.\-\[\]:]{1,255}$")
+
+
+def _csp_for(request: Request) -> str:
+    """The CSP, with this app's own host named for the live link's WebSocket: 'self' covers it in current
+    browsers, but some older ones only match http(s) for 'self'."""
+    host = request.headers.get("host", "")
+    if not _HOST_RE.match(host):
+        return CSP
+    return CSP.replace("connect-src 'self';", f"connect-src 'self' ws://{host} wss://{host};")
+
+
 MAX_BODY = 64 * 1024
 STREAMED = ("/api/admin-storage-import-db",)
 
@@ -96,7 +112,7 @@ async def guard(request: Request, call_next):
         if length > MAX_BODY:
             return JSONResponse(status_code=413, content={"detail": "That request is too big."})
     response = await call_next(request)
-    response.headers.setdefault("Content-Security-Policy", CSP)
+    response.headers.setdefault("Content-Security-Policy", _csp_for(request))
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     if path.startswith("/api/"):

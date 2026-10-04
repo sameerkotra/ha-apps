@@ -218,6 +218,10 @@ async function renderHome() {
     parts.push(h("div", { class: "card banner-card warn", id: "breakBanner" }, h("strong", null, me.playTime.reason)));
   }
   if (me.lowTimeChildren && me.lowTimeChildren.length) parts.push(lowTimeCard(me.lowTimeChildren));
+  if (window.Together && !me.disabled) parts.push(Together.homeCards());       // invites and "Waiting for you" (spec §13.1)
+  if (me.dailyChallenges && !me.disabled) {                                      // Today's challenges (only while an admin has them on)
+    try { parts.push(dailyCard(await api("api/daily"))); } catch (e) { /* off just now, or not reachable: the page is fine without it */ }
+  }
   if (!state.games.length) {
     parts.push(h("div", { class: "card empty" }, me.playTime.isChild ? "No games are switched on for you yet." : "Every game is switched off. An admin can turn them on under Admin → App settings."));
   } else {
@@ -225,6 +229,23 @@ async function renderHome() {
     parts.push(h("div", { class: "game-grid view-" + view, id: "gameGrid", dataset: { view } }, state.games.map((g) => gameTile(g, view))));
   }
   mount(root, parts);
+  if (window.Together && (state.arg === "join" || state.arg === "decline")) Together.afterHome(state.arg, state.arg2);   // a phone notification's button
+}
+
+// Today's challenges: three games with the same puzzle for everyone, one ranked try each (Practice any time).
+function dailyCard(d) {
+  if (!d.challenges.length) return null;
+  return h("div", { class: "card", id: "dailyCard" },
+    h("h3", null, "Today's challenges"),
+    h("div", { class: "hint" }, "The same puzzle for everyone today, with one ranked try each. ",
+      d.daysPlayed ? `You've played on ${d.daysPlayed} day${d.daysPlayed === 1 ? "" : "s"} this month.` : "Play any one to start your month."),
+    h("div", { class: "daily-list" }, d.challenges.map((c) => h("div", { class: "daily-row", dataset: { game: c.game } },
+      h("span", { class: "gc-icon", "aria-hidden": "true" }, c.icon),
+      h("span", { class: "daily-main" }, h("strong", null, c.name), h("span", { class: "hint" }, c.modeLabel,
+        c.played ? (c.score !== null && c.score !== undefined ? ` · your score ${fmtNum(c.score)}` : " · played") : " · one ranked try")),
+      h("button", { class: c.played ? "btn-secondary btn-small" : "btn-primary btn-small", type: "button",
+        "aria-label": `${c.played ? "Practice" : "Play"} today's ${c.name} challenge`,
+        onclick: () => showTab("play", { arg: c.game, arg2: "daily" }) }, c.played ? "Practice" : "Play")))));
 }
 
 // The Games page has three views, remembered on this device: a list, small squares (icon and name) and
@@ -310,7 +331,8 @@ async function renderScores() {
     : h("div", { class: "empty" }, "Your last 20 games show here.");
   mount(root, pageHead("My scores"), tiles,
     h("div", { class: "card" }, h("h3", null, "Personal bests"), bests),
-    h("div", { class: "card" }, h("h3", null, "Last 20 games"), recent));
+    h("div", { class: "card" }, h("h3", null, "Last 20 games"), recent),
+    window.Together ? Together.againstCard() : null);
 }
 
 // =====================================================================
@@ -330,13 +352,16 @@ async function renderLeaderboard() {
   if (!state.games.length) { mount(root, pageHead("Leaderboard"), h("div", { class: "card empty" }, "No games are switched on.")); return; }
   if (!state.games.some((g) => g.id === board.game)) board.game = state.games[0].id;
   const g = state.games.find((x) => x.id === board.game);
-  if (!g.modes.some((m) => m.id === board.mode)) {
+  if (board.mode !== "daily" && !g.modes.some((m) => m.id === board.mode)) {
     const last = lsGet("arcadeMode:" + g.id);           // the mode last played on this device
     board.mode = g.modes.some((m) => m.id === last) ? last : g.defaultMode;
   }
   const gameSel = h("select", { "aria-label": "Game", id: "boardGame", value: board.game }, state.games.map((x) => h("option", { value: x.id }, x.name)));
   gameSel.addEventListener("change", () => { board.game = gameSel.value; board.mode = null; renderLeaderboard(); });
-  const modeSel = h("select", { "aria-label": "Mode", id: "boardMode", value: board.mode }, g.modes.map((m) => h("option", { value: m.id }, m.label)));
+  if (board.mode === "daily" && !(state.me.dailyChallenges && g.daily)) board.mode = g.defaultMode;
+  const modeSel = h("select", { "aria-label": "Mode", id: "boardMode", value: board.mode },
+    g.modes.map((m) => h("option", { value: m.id }, m.label)),
+    state.me.dailyChallenges && g.daily ? h("option", { value: "daily" }, "Today's challenge") : null);
   modeSel.addEventListener("change", () => { board.mode = modeSel.value; loadBoard(box); });
   const period = segmented([["all", "All time"], ["month", "This month"]], board.period, (v) => { board.period = v; loadBoard(box); }, "Period");
   const box = h("div", { class: "card", id: "boardCard" }, spinner());
@@ -346,8 +371,10 @@ async function renderLeaderboard() {
 async function loadBoard(box) {
   mount(box, spinner());
   let data;
-  try { data = await api(`api/leaderboard?game=${encodeURIComponent(board.game)}&mode=${encodeURIComponent(board.mode)}&period=${board.period}`); }
+  const daily = board.mode === "daily";
+  try { data = await api(daily ? `api/daily/board?game=${encodeURIComponent(board.game)}` : `api/leaderboard?game=${encodeURIComponent(board.game)}&mode=${encodeURIComponent(board.mode)}&period=${board.period}`); }
   catch (e) { mount(box, errorCard(e, () => loadBoard(box))); return; }
+  if (daily && !data.rows.length) { mount(box, h("div", { class: "empty", id: "boardEmpty" }, "No one has played today's challenge yet — be the first!"), daysBoard(data.days)); return; }
   if (!data.rows.length) { mount(box, h("div", { class: "empty" }, board.period === "month" ? "No scores this month yet." : "No scores yet — be the first!")); return; }
   mount(box, h("div", { class: "table-wrap" }, h("table", { class: "data", id: "boardTable" },
     h("thead", null, h("tr", null, h("th", null, "#"), h("th", null, "Player"), h("th", { class: "num" }, "Score"), h("th", { class: "num" }, "Level"), h("th", null, "When"),
@@ -358,7 +385,15 @@ async function loadBoard(box) {
       data.canDelete ? h("td", null, h("button", { class: "icon-btn danger", type: "button", title: "Delete this score (admin)", "aria-label": `Delete ${r.name}'s score`, onclick: async () => {
         if (!(await confirmDialog("Delete score", `Delete ${r.name}'s score of ${fmtNum(r.score)}? The leaderboard updates at once.`))) return;
         try { await api(`api/scores/${r.scoreId}`, { method: "DELETE" }); toast("Score deleted"); loadBoard(box); } catch (e) { fail(e); }
-      } }, "🗑")) : null))))));
+      } }, "🗑")) : null))))), daily ? daysBoard(data.days) : null);
+}
+// Daily challenges: who has played on the most days this month
+function daysBoard(days) {
+  if (!days || !days.length) return null;
+  return h("div", { id: "daysBoard" }, h("h3", null, "Days played this month"),
+    h("div", { class: "table-wrap" }, h("table", { class: "data" },
+      h("thead", null, h("tr", null, h("th", null, "#"), h("th", null, "Player"), h("th", { class: "num" }, "Days"))),
+      h("tbody", null, days.map((r) => h("tr", { class: r.me ? "me" : "" }, h("td", null, r.rank), h("td", null, r.name, r.me ? h("span", { class: "badge-you" }, "you") : null), h("td", { class: "num" }, r.days)))))));
 }
 
 // =====================================================================
@@ -479,7 +514,7 @@ function whoamiCard(w) {
 // =====================================================================
 const RENDERERS = {
   home: renderHome, scores: renderScores, leaderboard: renderLeaderboard, settings: renderSettings,
-  play: () => Play.render(state.arg),
+  play: () => Play.render(state.arg, state.arg2),
   admin: () => Admin.render(state.arg, state.arg2),
 };
 
@@ -574,6 +609,7 @@ async function init() {
   document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = !state.me.isAdmin; });
   syncNoAdminBanner();
   try { await refreshGames(); } catch (e) { fail(e); }
+  if (window.Together && !state.me.disabled) Together.watch();         // an invite for me pops up wherever I am
   const start = parseHash(location.hash);
   showTab(start ? start.tab : "home", start || {});
   initBackNav();

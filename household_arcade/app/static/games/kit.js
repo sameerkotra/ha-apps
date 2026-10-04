@@ -825,6 +825,10 @@
         if (!impl.save || (state !== "running" && state !== "paused")) return null;
         return { state: impl.save(), score: impl.score(), level: impl.level(), seconds: Math.round(steps / 60) };
       },
+      /** For playing together (a race, SPEC §13.3): where this game stands, to show the other player. */
+      status: function () {
+        return { score: impl.score(), level: impl.level(), over: state === "over", paused: state === "paused" };
+      },
       get paused() { return state === "paused"; },
       get state() { return state; },
       get seconds() { return Math.round(steps / 60); },

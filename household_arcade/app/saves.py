@@ -50,6 +50,8 @@ def finalize(conn, user_id: str, row) -> dict:
         out["reason"] = "practice"
     elif row["seconds"] < scores.MIN_SECONDS:
         out["reason"] = "short"
+    elif games.keeps_nothing(row["game"], row["score"]):
+        out["reason"] = "unfinished"
     else:
         problem = games.check_score(row["game"], row["mode"], row["score"], row["level"], row["seconds"],
                                     row["level_count"])

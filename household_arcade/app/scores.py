@@ -97,7 +97,7 @@ def mine(conn, user_id: str) -> dict:
     bests = []
     for r in conn.execute(
             "SELECT game, mode, MAX(score) AS score, COUNT(*) AS games FROM scores WHERE user_id = ? "
-            "GROUP BY game, mode ORDER BY game, mode", (user_id,)):
+            "AND mode NOT LIKE 'daily-%' GROUP BY game, mode ORDER BY game, mode", (user_id,)):
         if not games.exists(r["game"]):
             continue
         bests.append({"game": r["game"], "mode": r["mode"], "modeLabel": games.mode_label(r["game"], r["mode"]),
@@ -113,7 +113,7 @@ def mine(conn, user_id: str) -> dict:
 def bests_for(conn, user_id: str) -> dict:
     """{game: best score in any mode} — for Home."""
     return {r["game"]: r["m"] for r in conn.execute(
-        "SELECT game, MAX(score) AS m FROM scores WHERE user_id = ? GROUP BY game", (user_id,))}
+        "SELECT game, MAX(score) AS m FROM scores WHERE user_id = ? AND mode NOT LIKE 'daily-%' GROUP BY game", (user_id,))}
 
 
 def records(conn) -> dict:
@@ -147,6 +147,6 @@ def prune(conn, now: datetime | None = None) -> int:
         "DELETE FROM scores WHERE ended_at < ? AND id NOT IN ("
         "  SELECT (SELECT s2.id FROM scores s2 WHERE s2.user_id = s1.user_id AND s2.game = s1.game "
         "          AND s2.mode = s1.mode ORDER BY s2.score DESC, s2.ended_at ASC, s2.id ASC LIMIT 1) "
-        "  FROM scores s1 GROUP BY s1.user_id, s1.game, s1.mode)", (cutoff,)).rowcount
+        "  FROM scores s1 WHERE s1.mode NOT LIKE 'daily-%' GROUP BY s1.user_id, s1.game, s1.mode)", (cutoff,)).rowcount
     conn.execute("DELETE FROM play_sessions WHERE ended_at IS NOT NULL AND started_at < ?", (cutoff,))
     return n

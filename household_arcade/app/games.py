@@ -314,6 +314,83 @@ GAMES: dict[str, dict] = {
         "per_second": 800,
         "base": 500,
     },
+    # Wave 4 (the puzzle and word games). Their puzzles are made from the seed, so there is no level list
+    # (`level_modes` empty); a score is a number that is higher the better the player did, so the leaderboard
+    # and a race need no special case. `unfinished_zero`: a game that wasn't solved scores 0, which isn't stored.
+    "sudoku": {
+        "name": "Sudoku",
+        "icon": "🧩",
+        "modes": [
+            {"id": "easy", "label": "Easy"},
+            {"id": "medium", "label": "Medium"},
+            {"id": "hard", "label": "Hard"},
+            {"id": "expert", "label": "Expert"},
+        ],
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "score"},
+        # score = 10,000 − the counted seconds (the time played + 30 s a hint + 10 s a mistake shown at once),
+        # so the fastest counted time ranks first; it is only ever given for a solved puzzle
+        "max_score": 10_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "solitaire": {
+        "name": "Solitaire",
+        "icon": "♠️",
+        "modes": [
+            {"id": "draw1", "label": "Draw one"},
+            {"id": "draw3", "label": "Draw three"},
+        ],
+        "level_modes": [],
+        "default_mode": "draw1",
+        "state_version": 1,
+        "race": {"rule": "score", "tiebreak": "faster"},
+        # ≤ 52 × 10 to the foundations, 21 × 5 for turned cards, 24 × 5 from the waste, and a bonus for a quick win
+        # of at most 1,000: under 1,800 in all; a win takes well over 20 s
+        "max_score": 2_000,
+        "per_second": 100,
+        "base": 1_500,
+    },
+    "wordguess": {
+        "name": "Word Guess",
+        "icon": "🔤",
+        "modes": [
+            {"id": "classic", "label": "Six tries"},
+            {"id": "easy", "label": "Eight tries"},
+            {"id": "strict", "label": "Strict (use every clue)"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "score"},
+        # score = 1,000 × (tries left + 1) + (999 − seconds, at least 0) for a word found, so fewer tries rank
+        # first and then the faster time
+        "max_score": 9_999,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "wordsearch": {
+        "name": "Word Search",
+        "icon": "🔎",
+        "modes": [
+            {"id": "little", "label": "Little ones (5–7)"},
+            {"id": "kids", "label": "Kids (8–11)"},
+            {"id": "family", "label": "Everyone (12 and up)"},
+            {"id": "puzzler", "label": "Puzzler (big grid)"},
+        ],
+        "level_modes": [],
+        "default_mode": "kids",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # 100 a word (at most 14) + up to 900 for finding them all quickly
+        "max_score": 2_500,
+        "per_second": 150,
+        "base": 1_500,
+    },
 }
 
 GAME_IDS = tuple(GAMES)
@@ -331,11 +408,18 @@ def mode_label(game: str, mode: str) -> str:
     for m in GAMES.get(game, {}).get("modes", []):
         if m["id"] == mode:
             return m["label"]
+    if isinstance(mode, str) and mode.startswith("daily-"):          # a daily challenge's scores (daily.py)
+        return "Daily challenge · " + mode[6:]
     return mode
 
 
 def name(game: str) -> str:
     return GAMES.get(game, {}).get("name", game)
+
+
+def keeps_nothing(game: str, score) -> bool:
+    """True for a game that scores 0 until it is won (Sudoku, Word Guess): a 0 isn't stored as a result."""
+    return bool(GAMES.get(game, {}).get("unfinished_zero")) and score == 0
 
 
 def uses_levels(game: str, mode: str) -> bool:

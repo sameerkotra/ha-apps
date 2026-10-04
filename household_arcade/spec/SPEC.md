@@ -7,13 +7,13 @@ phones, §13) and the games still to come are at the end.
 
 ## 1. Scope
 
-- Seventeen games, written from scratch (no ROMs, no emulators, no commercial
+- Twenty-one games, written from scratch (no ROMs, no emulators, no commercial
   names, artwork, music or level layouts): **Snake**, **Brick Breaker**,
   **Falling Blocks**, **Paddle Duel**, **Lane Racer**, **Flap**, **Mines**,
   **Merge**, **Colour Memory**, **Memory Cards**, **Tap the Mole**, **Number
-  Dash**, **Tank Battle**, **Sky Defenders**, **Rocks**, **Road Hop** and
+  Dash**, **Tank Battle**, **Sky Defenders**, **Rocks**, **Road Hop**, **Sudoku**, **Solitaire**, **Word Guess**, **Word Search** and
   **Snake Duel** (two players on one screen, or against the computer).
-- Every game has a level list that an AI model can add to (§11); the modes
+- Every game except the four puzzle and word games (Sudoku, Solitaire, Word Guess, Word Search, made from the seed) has a level list that an AI model can add to (§11); the modes
   that play it are listed in `games.py` (`level_modes`). Admin → AI usage shows
   every request made to the model (§11.10).
 - Everyone plays as their Home Assistant account; no extra accounts or PINs.
@@ -46,10 +46,11 @@ app/
   ha_sensors.py   the optional sensors
   housekeeping.py stale sessions, Keep scores for
   ha_client.py    Supervisor Core API (stdlib urllib)
+  together.py     playing together: invites, matches, the live numbers, winners, head to head (§13)
   ha_notify.py, ha_people.py   shared with the other household apps (identical copies)
-  routers/        me.py, prefs.py, play.py, users.py, admin.py, levels.py
+  routers/        me.py, prefs.py, play.py, users.py, admin.py, levels.py, together.py (+ the live WebSocket)
   static/
-    index.html theme-boot.js style.css backnav.js (shared) app.js play.js admin.js
+    index.html theme-boot.js style.css backnav.js (shared) app.js play.js admin.js together.js
     games/        the games (see spec/GAMES.md): kit.js sound.js registry.js, then <game>-logic.js
                   (rules) and <game>.js (drawing) for each of the 17 games
   level_kinds/    one file per game (but Brick Breaker and Snake · Maze): its level format and checks (§11.9)
@@ -82,6 +83,7 @@ at once.
 | `school_days` | `[1,2,3,4,5]` | ISO weekdays |
 | `limit_warnings`, `limit_warning_admins` | `false`, `[]` | empty list = every admin |
 | `notify_records` | `false` | |
+| `notify_invites` | `true` | a phone notification for a "Play with someone" invite (§13) |
 | `ha_sensors` | `false` | |
 | `keep_scores_years` | `0` | 0 = forever, or 1, 2, 5 |
 | `ai_…` | | AI levels, §11.3 |
@@ -123,6 +125,7 @@ Migrations are numbered, run once each, in order, and recorded in
 4. `levels.builtin_key`, `saved_games`, `play_sessions.base_seconds /
    resumed / first_started_at` (§12).
 5. `ai_calls` (§11.10).
+6. `matches`, `match_players`, `play_sessions.match_id` (§13.6).
 
 A backup must contain the migration-1 tables and must not come from a newer
 schema; it is validated, swapped in and migrated.
@@ -334,6 +337,8 @@ logic, run from `tests/test_games_js.py` when Node is installed.
 | `ai_levels_auto` | `true` | build ahead automatically |
 | `ai_levels_ahead` | `2` | 1–5 |
 | `ai_levels_batch` | `5` | 1–20 |
+| `show_daily_challenges` | `false` | the daily challenge (below); off = hidden everywhere and daily scores refused (404) |
+| `sudoku_hints` | `3` | hints per Sudoku puzzle, 0–20 (Practice: unlimited) |
 | `ai_levels_daily_limit` | `20` | levels made a day (Home Assistant's day, all lists); 0 = no limit |
 | `ai_levels_review` | `false` | new levels wait (`waiting`) for an admin's OK |
 | `ai_price_in` | `0` | price per million input tokens, only for the estimate on AI usage (0–1000) |
@@ -503,14 +508,21 @@ highest scores a 500-level list could reach are within each game's most.
   **Resume**, **Save for later** (asks first when it would replace a saved
   game), **End game**.
 
-## 13. Playing together from two phones (the next build — not built yet)
+## 13. Playing together from two phones (step 1, Race, is built; steps 2 and 3 are the plan)
 
 Two people in the household, each signed in to Home Assistant on their own
 phone (or computer), play one game together. It comes in three steps, each a
-release of its own; this section is the plan. The tables and routes named here
-don't exist yet.
+release of its own. **Step 1 (Race, §13.3) is built**: invites, the match tables
+(migration 6), the live link with its long-poll fallback, the race screen,
+Rematch, head to head and the App setting *Invites by phone notification*; the
+sections below say "Built" where they describe what exists and keep the plan
+for live duels (§13.4) and turn by turn (§13.5), which don't exist yet.
 
 ### 13.1 What it does
+
+*Built for races (§13.3); "a child out of time ends the game for both, as a draw"
+is for live duels: in a race a running game always finishes, as everywhere
+(§7), and each child's own limits decide whether they can start or join.*
 
 - **Invite.** On a game's start screen, **Play with someone** lists the people
   in the household who may play that game now (people switched off, children
@@ -535,6 +547,37 @@ don't exist yet.
   Home Assistant connection the app already uses (e.g. Home Assistant Cloud).
 
 ### 13.2 How the phones talk
+
+**Built (races).** `app/together.py` (the match logic), `app/routers/together.py`
+(routes and the socket), `static/together.js` (the browser side). One live
+link per player, chosen automatically in the browser:
+
+- **WebSocket** `GET /api/matches/{id}/live` through ingress (relative URL,
+  `ws`/`wss` to match the page). Uvicorn's WebSocket library is `wsproto`
+  (`requirements.txt`, pure Python). Starlette's HTTP middleware doesn't see
+  WebSockets, so the route itself refuses a source address that isn't
+  the ingress proxy or loopback (`auth.INGRESS_ALLOWED_HOSTS`), an `Origin`
+  whose host isn't the request's `Host`, no identity headers, and a person
+  who isn't in the match. The CSP names the app's own host for `ws:`/`wss:`
+  next to `'self'` (`main._csp_for`) for browsers that don't count `'self'`
+  as a WebSocket source. The phone sends `{"t":"state", score, level, over,
+  paused}` about every 0.3 s while it changed and at least every 2 s; the
+  server pushes `{"t":"match", ...}` whenever anything changes and at least
+  every 3 s; a phone silent for 30 s is dropped.
+- **Long poll** when the socket can't open (3 s), errors or drops:
+  `POST /api/matches/{id}/state` for the phone's numbers and
+  `GET /api/matches/{id}?since=<v>&wait=20` held open until the match's `v`
+  changes. Same picture, same messages' content.
+- The live numbers are display only: they live in memory (`together.LIVE`),
+  are clamped (score ≤ the game's most, level ≥ 1) and are never a score. A
+  phone is "connected" when it was heard from in the last 6 s.
+- Pause is local: either phone's pause shows "paused" to the other, nobody's
+  game waits (no lockstep is needed for a race).
+- Not measured yet: whether the WebSocket survives ingress on the companion
+  apps and Home Assistant Cloud; the fallback is what makes that safe to
+  ship. The test release the plan asks for before step 2 is still to do.
+
+*The rest of this section is the plan for live duels (step 2).*
 
 - One **WebSocket** per player to the app (`GET /api/match/{id}/live`, through
   Home Assistant's ingress like every other request; same identity headers,
@@ -563,7 +606,39 @@ don't exist yet.
 - **Pausing**: either player's pause (or their phone hiding the app) pauses
   both. Saving a live match for later is not offered.
 
-### 13.3 Step 1 — Race
+### 13.3 Step 1 — Race (built)
+
+**As built.** A race is a `matches` row (kind `race`) with two `match_players`.
+The inviter chooses mode and Practice on the start screen; the match fixes the
+seed and, for a level-list mode, the level list (both phones get them from
+`POST /api/sessions {game, matchId}`, which also takes the match's mode and
+Practice and refuses a second session for the same person). Each player's
+session is an ordinary play session (`play_sessions.match_id`), so limits,
+quiet hours, heartbeats and play time work unchanged; the player's final
+score is the one they send to `POST /api/scores` (so it is checked by the
+honest-score limits and saved as a normal game, except Practice), and the
+server copies it into `match_players` (an impossible score counts as 0 and
+loses). The shell adds `won` to that request in a race so puzzle rules
+can see who solved it. Winners (`together.decide`): by the game's race rule in
+`games.py` (`"race": {"rule": "score"}` default, higher score, tie a draw, or
+with `"tiebreak": "faster"` the shorter game; `{"rule": "fastest"}`: solved
+beats not solved, both solved the shorter game, neither the higher score;
+`False` = no race); with no `race` key a game is raced only if it is in
+`together.RACE_DEFAULT` (the list below, so new games opt in).
+A player who left (session ended or stale for 2 minutes, or never started in
+2 minutes) loses to the one who finished; both gone: no winner; 7 hours
+without a result ends it. Raced: Snake, Brick Breaker, Falling Blocks,
+Lane Racer, Flap, Mines, Merge, Colour Memory, Memory Cards, Tap the Mole,
+Number Dash, Sky Defenders, Rocks, Road Hop. Not raced: Paddle Duel and Tank
+Battle (left out of the plan's list), Snake Duel (two players on one screen).
+The shell's hooks: the game definition's `race` flag (default true unless
+`players: 2`), the kit session's `status()` (score, level, over, paused;
+nothing changes in any game file), the game page's race bar, count-in and
+result card (`play.js`), and a `GET /api/games` field `race` that is the
+server's decision. Every raced game is checked in Node: two phones with the
+same seed and the same inputs end in an identical state.
+
+The plan, as before:
 
 The same single-player game on both phones, with the same seed (the same
 traffic, the same pieces, the same sums), side by side: each plays their own
@@ -645,7 +720,17 @@ hours). A match can last days; both players see it in "Your games" on the
 Games page. Either can resign; 7 days without a move ends it as a loss for the
 one who didn't move.
 
-### 13.6 Data (a new migration)
+### 13.6 Data (migration 6; `match_moves` is for step 3)
+
+**Built (migration 6):** `matches` and `match_players` as below (the live
+picture's version number `v` is in memory, not in the table), plus
+`match_players.won` (the game was won, for the fastest rule), `matches.level_count`,
+`matches.expires_at`, `matches.rematch_of` and `play_sessions.match_id`.
+`matches.practice` is what the inviter proposed; accepting is agreeing, and the
+other person can't turn a ranked race into Practice. Housekeeping (every 10
+minutes and whenever a match is read) expires invites after 5 minutes, ends
+matches left behind, forgets live numbers 10 minutes after the end; Keep scores
+for removes finished matches older than the limit.
 
 - `matches`: id, game, mode, kind (`race` | `live` | `turns`), seed, level list
   (JSON, as for sessions), practice, status (`invited` | `playing` | `paused`
@@ -664,6 +749,23 @@ one who didn't move.
   finished matches are kept like scores (Keep scores for).
 
 ### 13.7 API
+
+**Built (races):** `GET /api/players?game=` → `{players: [{id, name, canPlay,
+reason, active}]}` (409 for a game that can't be raced); `POST /api/matches
+{game, mode, opponents: [id], practice?, kind: "race", rematchOf?}` → 201 (a
+person with an invite out, or in a match, gets 409; so does a person who can't
+play now, with the reason); `GET /api/matches` →
+`{waiting, sent, playing, recent}`; `GET /api/matches/{id}` (with `since`
+and `wait`, a long poll); `POST /api/matches/{id}/state | accept | decline |
+cancel`; `GET /api/matches/{id}/live` (WebSocket); `GET /api/against`; and
+the session/score routes above. There is no separate `result` route: a
+race's result is the player's own score. The notification
+(`together.invite_blocking`, a background task) is "Asha challenges you to
+Lane Racer" (or "wants a rematch in") with `actions` Join and Not now as URI
+actions to `#/home/join/<id>` and `#/home/decline/<id>` when the app knows its
+panel path; behind the App setting `notify_invites` (default on, label
+*Invites by phone notification*, group Home Assistant) and the person's
+*Receive notifications*.
 
 - `GET /api/players?game=` — who can be invited now (with reasons for the rest).
 - `POST /api/matches {game, mode, kind, opponents, practice}` → 201 (invites
@@ -687,6 +789,19 @@ one who didn't move.
 
 ### 13.8 Controls and screens
 
+**Built (races):** the start card's **Play with someone** (next to Play) opens
+a sheet with the people; then a waiting overlay (invite time left, Cancel), the
+3-2-1 count-in on both phones (from the server's relative `startsInMs`, so the
+two clocks needn't agree), the race bar (the other's first name, score, level,
+a connection dot and "playing / paused / finished in 6:12 / connection lost? /
+getting ready") above the game, and a result card inside the game's frame with both
+results, **Rematch** (the other's phone shows **Join <name>'s rematch**) and
+**Back**. An invite also pops up as a sheet wherever the app is open (not during
+a game), and shows on the Games page (**Waiting for you**, my own invite with
+Cancel, a race that is starting). The page re-fits with the bar (`fitStage`
+measures from the play area down). Pausing a race has no Save for later and
+the end button reads "Give up (score kept)".
+
 - Each player uses their own phone's usual controls (buttons, swipes, an Xbox
   or other controller). The two-on-one-screen layouts stay for playing on one
   phone.
@@ -699,6 +814,16 @@ one who didn't move.
   accept with one tap) and **Back**.
 
 ### 13.9 Tests
+
+**Built (races):** `tests/test_together.py` (players and reasons, invites, the
+one-at-a-time rule, expiry, accept/decline/cancel and who may, notifications
+with the fake Home Assistant, the match's sessions and results, winners and
+ties, left and stale players, long poll, WebSocket relay with two clients and
+the refusals, head to head, housekeeping, the migration) and
+`tests/js/race.test.js` (identical games from the same seed for every raced
+game, `status()`, the registry flag, the browser link's WebSocket / fallback /
+drop handling, the race bar and headline). Packaging: `wsproto` in
+requirements; no outside service is contacted.
 
 - Lockstep: two game instances fed the same inputs with random delays and
   reordering through a fake relay stay identical (checksums) for every duel
@@ -720,7 +845,7 @@ one who didn't move.
 Every game is a module in `static/games/` behind the same start screen, pause,
 scores and limits; adding one means adding its files, one registry entry, one
 entry in `games.py`, its level list (`level_kinds/<game>.py`, §11.9) and a line
-in this file. Waves 1–3 are done (Falling Blocks, Paddle Duel, Lane Racer,
+in this file. Waves 1–4 are done (Sudoku, Solitaire, Word Guess, Word Search and the daily challenge; Falling Blocks, Paddle Duel, Lane Racer,
 Flap; Mines, Merge, Colour Memory, Memory Cards, Tap the Mole, Number Dash;
 Tank Battle, Sky Defenders, Rocks, Road Hop, Snake Duel); the rest will be
 added in this order, after playing together (§13). Every one of them can be
@@ -741,7 +866,9 @@ match taking turns (§13.4) for Carrom:
    their own), **Carrom** (on one phone, or live from two phones), **Chess**
    (against the computer, or turn by turn).
 
-### Daily challenge (with wave 4)
+### Daily challenge (built with wave 4)
+
+Built: `app/daily.py`, `routers/daily.py`; the pool is Snake, Falling Blocks, Mines, Merge, Sudoku and Word Guess, three a day. Wave 4 games have no level lists (puzzles come from the seed), higher score is better for each, and Sudoku and Word Guess keep nothing at score 0.
 
 - **Off unless an admin turns it on**: App setting **Show daily challenges**
   (group *Games*), off by default. While it is off nothing about daily

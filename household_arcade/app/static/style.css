@@ -636,3 +636,77 @@ body[data-route="play"] main { max-width: none; padding-bottom: 12px; }
 .level-order .place-input { width: 56px; padding: 3px 6px; text-align: center; }
 .level-order .icon-btn:disabled { opacity: 0.35; cursor: default; }
 .btn-small.danger { color: var(--danger); }
+
+/* ---------- playing together (a race, SPEC §13.3) ---------- */
+/* in the game page's header: on its own row under the buttons, or (a phone on its side) between the title and the buttons */
+.race-bar { order: 10; flex: 1 0 100%; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-height: 34px; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel); font-size: 0.9rem; max-width: 420px;
+  margin: 0 auto; overflow: hidden; }
+.race-bar[hidden] { display: none; }
+.rb-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--text-dim); }
+.rb-dot.on { background: var(--accent); }
+.rb-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-score { font-weight: 800; font-variant-numeric: tabular-nums; margin-left: auto; }
+.rb-level { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.rb-state { flex: none; font-size: 0.78rem; color: var(--text-dim); border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; }
+.rb-state.live { color: var(--accent); border-color: var(--accent-dim); }
+.rb-state.done { color: var(--gold); border-color: var(--gold); }
+.rb-state.lost { color: var(--warn); border-color: var(--warn); }
+.overlay .countin { font-size: 3.4rem; line-height: 1; }
+.overlay .tg-result { width: 100%; font-size: 0.85rem; }
+.tg-people { display: flex; flex-direction: column; gap: 8px; }
+.tg-person, .tg-invite { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-alt); }
+.tg-person.off { opacity: 0.75; }
+.tg-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tg-text { min-width: 0; }
+.tg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.tg-cards { display: contents; }
+.tg-card { display: flex; flex-direction: column; gap: 8px; }
+.tg-card h3 { margin: 0; }
+.tg-vs { border-top: 1px solid var(--border); padding: 8px 0; }
+.tg-vs summary { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.tg-tally { color: var(--text-dim); font-size: 0.85rem; }
+@media (max-height: 500px) and (min-aspect-ratio: 5/4) {
+  .play-head .race-bar { order: 0; flex: 1 1 200px; max-width: 360px; min-height: 36px; margin: 0; }
+  .play-head h2 { flex: 0 1 auto; }
+}
+/* the result card of a race in a short game (a phone on its side): only what matters, tighter */
+@container stage (max-height: 360px) {
+  .overlay.race { gap: 6px; padding: 8px; }
+  .overlay.race h3 { font-size: 1.05rem; }
+  .overlay.race .race-big, .overlay.race .race-hint { display: none; }
+  .overlay.race .tg-result { font-size: 0.78rem; }
+  .overlay.race .tg-result th, .overlay.race .tg-result td { padding: 3px 6px; white-space: nowrap; }
+  .overlay.race .btn-primary, .overlay.race .btn-ghost, .overlay.race .btn-secondary { min-height: 40px; min-width: 96px; }
+}
+
+/* ---------- wave 4: Today's challenges, the over-screen summary, start-screen choices ---------- */
+.daily-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.daily-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+.daily-row:first-child { border-top: 0; }
+.daily-row .gc-icon { font-size: 1.6rem; flex: 0 0 auto; }
+.daily-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.daily-main .hint { overflow-wrap: anywhere; }
+.over-summary { display: flex; flex-direction: column; gap: 1px; align-items: center; }
+#startOptions .field { font-size: 0.7rem; }
+#dailyBlock { padding: 6px 8px; }
+@container stage (max-height: 360px) {
+  #dailyBlock, #startOptions { font-size: 0.72rem; }
+  #dailyBlock { flex-direction: row; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px; text-align: left; }
+  #dailyBlock .daily-text { flex: 1 1 auto; min-width: 0; }
+  #dailyBlock .daily-note { display: none; }
+  #dailyBlock .ov-row { flex: none; width: auto; }
+  #dailyBlock .btn-small, #dailyBlock .btn-primary { min-height: 30px; min-width: 0; padding: 3px 8px; font-size: 0.72rem; white-space: nowrap; }
+  .start-card .btn-primary, .start-card .btn-secondary { min-height: 30px; padding-top: 3px; padding-bottom: 3px; }
+  .start-card select { min-height: 28px; padding-top: 2px; padding-bottom: 2px; }
+  .start-card { gap: 3px; padding: 4px 8px; }
+  .start-card #startBest { font-size: 0.75rem; }
+  .start-card .start-fields .field { gap: 0; font-size: 0.66rem; }
+}
+
+/* a pad laid out on a grid (Sudoku's number pad) shrinks its columns on a narrow screen instead of spilling out of it,
+   and is not held to the width of a single column of buttons when it sits beside the game */
+.btn-pad.grid { grid-auto-columns: minmax(0, 60px); max-width: 100%; }
+.play-area[data-layout="side"] .btn-pad.grid { max-width: none; }
+.btn-pad.grid .pad-btn.pad-text { font-size: min(1rem, 4.4vw); line-height: 1.15; padding: 0 2px; overflow-wrap: anywhere; }

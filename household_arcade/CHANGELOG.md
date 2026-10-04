@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.0
+
+- **Play together (a race)**: **Play with someone** on a game's start screen invites another person in the
+  household to race the same game (same seed, mode and levels) on their own phone. A bar above the game shows
+  their score, level and whether they're still playing; the better score wins, each score is also saved as a
+  normal game, and Rematch is one tap. Works for Snake, Brick Breaker, Falling Blocks, Lane Racer, Flap, Mines,
+  Merge, Colour Memory, Memory Cards, Tap the Mole, Number Dash, Sky Defenders, Rocks, Road Hop and the four new
+  games.
+  - Invites arrive as a Home Assistant phone notification with **Join** / **Not now**, a pop-up in the app and a
+    **Waiting for you** card on Games; they last 5 minutes, can be cancelled, one out at a time.
+  - Children's limits, quiet hours and allowed games apply to each player; Practice needs both to agree.
+  - **My scores → Against others**: wins, losses and draws per person and game.
+  - New App setting **Invites by phone notification** (on).
+  - The live link uses a WebSocket, with an automatic slower fallback when a phone can't keep one open.
+- **New games**: **Sudoku** (Easy, Medium, Hard, Expert; notes with Fill notes; number lines through the rows,
+  columns and boxes of a number; hints that explain before filling in; mistakes shown at once or at the end;
+  undo), **Solitaire** (draw one or three, every deal winnable, hint, auto and undo), **Word Guess** (six or
+  eight tries, or Strict) and **Word Search** (four sizes, hints).
+- **Daily challenges**: off by default; the App setting **Show daily challenges** adds Today's challenges on
+  Home (the same three games for everyone each day), one ranked try a game, and a Daily leaderboard with a
+  monthly days-played ranking.
+- New App setting **Sudoku hints per puzzle** (3).
+- Games can have start-screen options remembered per person, and word games take the keyboard.
+
 ## 1.4.4
 
 - **No more cut-off buttons on an unfolded phone** in Tank Battle, Falling Blocks, Sky Defenders and Rocks: their

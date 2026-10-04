@@ -18,7 +18,11 @@ GAMES_DIR = os.path.join(HERE, "app", "static", "games")
 
 class TestLevelKinds(unittest.TestCase):
     def test_every_game_has_a_level_list(self):
-        self.assertEqual(set(levels.SETS), set(games.GAME_IDS))
+        # Sudoku, Solitaire, Word Guess and Word Search make their puzzles from the seed, so they have no level list
+        generated = {"sudoku", "solitaire", "wordguess", "wordsearch"}
+        self.assertEqual(set(levels.SETS), set(games.GAME_IDS) - generated)
+        for gid in generated:
+            self.assertEqual(games.GAMES[gid]["level_modes"], [])
 
     def test_kinds_are_complete(self):
         for gid, kind in level_kinds.KINDS.items():

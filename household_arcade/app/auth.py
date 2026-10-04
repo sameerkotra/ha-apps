@@ -38,11 +38,14 @@ def _warn_display_name_only(user_id: str, username: str | None, display_name: st
                        "Use the user id %s or the login name instead.", display_name, user_id)
 
 
-async def get_current_user(
-    x_remote_user_id: str | None = Header(default=None),
-    x_remote_user_name: str | None = Header(default=None),
-    x_remote_user_display_name: str | None = Header(default=None),
-) -> dict:
+# The only addresses a request may come from: the Supervisor's ingress proxy, or loopback (main.py).
+INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+
+
+def load_user(x_remote_user_id: str | None, x_remote_user_name: str | None,
+              x_remote_user_display_name: str | None) -> dict:
+    """The person behind the identity headers (created on first sight). Raises 401 without a user id.
+    Used by get_current_user for every request and by the live WebSocket, which has no Header() dependency."""
     user_id = (x_remote_user_id or "").strip()
     if not user_id:
         raise HTTPException(401, "No Home Assistant user identified. Open Household Arcade from its panel "
@@ -70,6 +73,14 @@ async def get_current_user(
         # limits never apply to an admin, even one marked as a child before being listed
         "is_child": bool(row["is_child"]) and not admin,
     }
+
+
+async def get_current_user(
+    x_remote_user_id: str | None = Header(default=None),
+    x_remote_user_name: str | None = Header(default=None),
+    x_remote_user_display_name: str | None = Header(default=None),
+) -> dict:
+    return load_user(x_remote_user_id, x_remote_user_name, x_remote_user_display_name)
 
 
 async def require_admin(current: dict = Depends(get_current_user)) -> dict:

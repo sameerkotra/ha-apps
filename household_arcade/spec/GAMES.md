@@ -33,6 +33,10 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | `rocks-logic.js`, `rocks.js` | Rocks rules (`RocksLogic`) and drawing; registers `rocks` |
 | `hop-logic.js`, `hop.js` | Road Hop rules (`HopLogic`) and drawing; registers `hop` |
 | `snakeduel-logic.js`, `snakeduel.js` | Snake Duel rules (`SnakeDuelLogic`) and drawing; registers `snakeduel` |
+| `sudoku-logic.js`, `sudoku.js` | Sudoku rules (`SudokuLogic`; seeded puzzles with one solution, notes, hints) and drawing; registers `sudoku` |
+| `solitaire-logic.js`, `solitaire.js` | Klondike rules (`SolitaireLogic`; a solver makes every deal winnable) and drawing; registers `solitaire` |
+| `wordguess-words.js`, `wordguess-logic.js`, `wordguess.js` | Word Guess word lists, rules (`WordGuessLogic`) and drawing (a keyboard on the canvas); registers `wordguess` |
+| `wordsearch-words.js`, `wordsearch-logic.js`, `wordsearch.js` | Word Search word lists, grid maker (`WordSearchLogic`) and drawing; registers `wordsearch` |
 
 ## The contract with the shell
 
@@ -69,9 +73,19 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | Sky Defenders | `invaders` | `classic` Classic, `easy` Easy, `waves` Waves | `classic` | `buttons` ◀ ▶ Fire |
 | Rocks | `rocks` | `classic` Classic, `calm` Calm, `waves` Waves | `classic` | `buttons` ⟲ ⟳ ▲ Fire |
 | Road Hop | `hop` | `classic` Classic, `easy` Easy, `levels` Levels | `classic` | `dpad`, tap = `up` |
+| Sudoku | `sudoku` | `easy`, `medium`, `hard`, `expert` | `easy` | `buttons` number pad (5-column `place` grid), `typed` |
+| Solitaire | `solitaire` | `draw1` Draw one, `draw3` Draw three | `draw1` | `touch` Hint, Auto, Undo |
+| Word Guess | `wordguess` | `classic` Six tries, `easy` Eight tries, `strict` Strict | `classic` | `touch`, `typed` |
+| Word Search | `wordsearch` | `little`, `kids`, `family`, `puzzler` | `kids` | `touch` Hint |
 | Snake Duel | `snakeduel` | `cpu` Against the computer, `two` Two players | `cpu` | `touch`, two players |
 
 The shell hides `powerups` when the App setting "Brick Breaker power-ups" is off.
+
+**Racing on two phones** (spec/SPEC.md §13.3): a definition's `race` field (default `true`, `false` for `players: 2` and
+for a game that opts out) says the game can be played in a race: both phones create the game with the same
+`opts.seed`, `opts.mode` and `opts.levels` (so a game's randomness must come only from the seed), each sends its
+`status()` a few times a second and its final result like any game. Which games the server offers a race for, and
+how the winner is decided, is the game's `race` entry in `app/games.py`.
 
 **`create(canvas, opts)`** — `opts = { mode, look, sound, reduceMotion, handedness, seed, onScore(score, level), onEnd(result), onEvent(type, data) }`.
 All are optional. `look` is a look id (unknown → `modern`); `seed` makes a game repeatable (default: random);
@@ -83,6 +97,7 @@ One optional extra: `best` (a number) shows "BEST n" in the Snake and Flap HUD i
 | Member | Does |
 |---|---|
 | `start()` | Starts the game (a first frame is already drawn by `create`). After the game is over, `start()` plays a new game. While paused it resumes. |
+| `status()` | `{ score, level, over, paused }` right now (for playing together: the race bar shows the other player's; any game built on `ArcadeKit.createSession` has it, nothing to add in the game) |
 | `pause()`, `resume()`, `paused` | Pause stops the animation loop; no game time passes. |
 | `setLook(id)`, `setSound(on)`, `setReduceMotion(on)` | Apply at once, also mid-game. `setSound` also calls `ArcadeSound.setEnabled`. |
 | `input(action, isDown)` | `up`, `down`, `left`, `right`, `fire`, `pause` (each game's use: the tables above and below). Snake turns on key-down. Brick Breaker: `left`/`right` held move the paddle, `fire` (or `up`) launches. `pause` toggles pause. Ignored unless the game is running. |
@@ -338,6 +353,12 @@ gets `canSave` and `save()` → `{ state, score, level, seconds }` (null unless 
 `opts.restore = { state, seconds }` it starts from there and its `seconds` continue. A change to what a game's
 state means is a new `STATE_VERSION` (and the same number in `games.py`), so older saves can only be ended.
 
+## Wave 4 additions to the contract
+
+- Definition fields `options` (start-screen choices stored per person, passed as `opts.options`; Sudoku: Show mistakes, Number lines) and `typed: true` (the shell sends physical keys as `input("key:A" | "key:ENTER" | "key:BACKSPACE", true)`, and P no longer pauses). A `preview` opt makes the still picture behind the start card.
+- Daily play passes `opts.seed` and a mode from the day's challenge; none of the four have level lists, so no `level_kinds` entry (the puzzles are made from the seed).
+- Results carry `stats.summary` and `stats.won`; scores are higher-is-better. `unfinished_zero` games score nothing until solved.
+
 ## Adding a game later
 
 Add `<game>-logic.js` (pure rules with `create`, `step`, `result`) and `<game>.js`, which builds an
@@ -357,7 +378,7 @@ entry. Nothing else in the kit or the shell changes.
   walls, brick toughness and points, lives and game over, level clear and the next layout, repeats
   getting faster, power-ups on/off and each power-up, extra balls, no tunnelling at top speed,
   determinism, honest-score limits.
-- `<game>-logic.test.js` for each of the other fifteen games: the rules (moves, scoring, levels, modes, the end),
+- `<game>-logic.test.js` for each of the other games (including the four wave 4 games): the rules (moves, scoring, levels, modes, the end),
   the level-list mode (built-in or the session's list, a bad list falls back, the next level, the last one
   wins), determinism, save and restore, a render in all six looks, and a quick bot playing within the
   honest-score limits, also on the hardest levels the list allows (Lane Racer: never forced to crash; Paddle

@@ -31,8 +31,11 @@ DEFAULTS: dict = {
     "limit_warnings": False,
     "limit_warning_admins": [],             # HA user ids of the admins to tell
     "notify_records": False,
+    "notify_invites": True,                 # a phone notification for a "play with someone" invite (SPEC §13)
     "ha_sensors": False,
     "keep_scores_years": 0,
+    "show_daily_challenges": False,         # the daily challenge (SPEC "Daily challenge"): off = hidden and refused
+    "sudoku_hints": 3,                      # hints per Sudoku puzzle (unlimited in Practice)
     # AI-made levels (SPEC §11): the same AI settings as Finance Dashboard's
     "ai_levels_enabled": False,
     "ai_provider": "ollama",
@@ -65,8 +68,11 @@ LABELS = {
     "limit_warnings": "Limit warnings to parents",
     "limit_warning_admins": "Who gets limit warnings",
     "notify_records": "Notify new records",
+    "notify_invites": "Invites by phone notification",
     "ha_sensors": "Home Assistant sensors",
     "keep_scores_years": "Keep scores for",
+    "show_daily_challenges": "Show daily challenges",
+    "sudoku_hints": "Sudoku hints per puzzle",
     "ai_levels_enabled": "AI levels",
     "ai_provider": "Provider",
     "ai_url": "Address",
@@ -98,8 +104,11 @@ class AppSettings(BaseModel):
     limit_warnings: bool
     limit_warning_admins: list[str] = Field(max_length=50)
     notify_records: bool
+    notify_invites: bool
     ha_sensors: bool
     keep_scores_years: int
+    show_daily_challenges: bool
+    sudoku_hints: int = Field(ge=0, le=20)
     ai_levels_enabled: bool
     ai_provider: str
     ai_url: str = Field(max_length=500)

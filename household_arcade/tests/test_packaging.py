@@ -7,7 +7,7 @@ import struct
 import unittest
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "1.4.4"
+VERSION = "1.5.0"
 REPO_URL = "https://github.com/sameerkotra/ha-apps"
 TEXT_EXT = (".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".cfg", ".toml", ".ini", ".sh")
 TEXT_NAMES = ("Dockerfile", ".dockerignore", ".gitignore")
@@ -104,8 +104,10 @@ class PackagingTests(unittest.TestCase):
     def test_versions_match(self):
         index = read("app", "static", "index.html")
         found = re.findall(r"\?v=([^\"'&>\s]+)", index)
-        # theme-boot.js, style.css, backnav.js, the 37 game files, app.js, play.js, admin.js
-        self.assertEqual(len(found), 43)
+        # every script and stylesheet of the page carries the version (theme-boot.js, style.css, backnav.js, the game
+        # files, app.js, play.js, admin.js, together.js ...): counted from the tags, not by hand
+        self.assertEqual(len(found), len(re.findall(r"<(?:script|link)\b[^>]*\b(?:src|href)=\"[^\"]+\.(?:js|css)", index)))
+        self.assertGreater(len(found), 40)
         self.assertEqual(set(found), {VERSION})
         for dirpath, _dirs, names in os.walk(os.path.join(HERE, "app", "static")):
             for name in names:
@@ -190,7 +192,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_requirements_pure_python_and_pinned(self):
         reqs = [l.strip() for l in read("requirements.txt").splitlines() if l.strip()]
-        self.assertEqual(reqs, ["fastapi==0.141.1", "uvicorn==0.53.0", "python-multipart==0.0.32"])
+        self.assertEqual(reqs, ["fastapi==0.141.1", "uvicorn==0.53.0", "python-multipart==0.0.32", "wsproto==1.3.2"])   # wsproto: the live link's WebSocket
         docker = read("Dockerfile")
         self.assertIn("python:3.12-alpine", docker)
         self.assertIn("tzdata", docker)

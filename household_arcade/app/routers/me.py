@@ -5,12 +5,23 @@ The whoami data echoes only the two identity headers' values and COUNTS
 (admin_users entries), never the lists themselves, so a non-admin can't learn
 who the admins are.
 """
+import json
+
 from fastapi import APIRouter, Depends, Request
 
 from .. import config, db, games, ha_notify, limits, settings
 from ..auth import get_current_user, is_admin_identity
 
 router = APIRouter(prefix="/api", tags=["me"])
+
+
+def game_prefs(row) -> dict:
+    """The person's start-screen choices for the games (Sudoku's mistakes, number lines): {game: {option: choice}}."""
+    try:
+        data = json.loads(row["game_prefs"]) if row["game_prefs"] else {}
+    except (ValueError, KeyError, IndexError, TypeError):
+        data = {}
+    return data if isinstance(data, dict) else {}
 
 
 def prefs_json(row, default_look: str) -> dict:
@@ -22,6 +33,7 @@ def prefs_json(row, default_look: str) -> dict:
         "handedness": row["handedness"],
         "reduceMotion": bool(row["reduce_motion"]),
         "receiveNotifications": bool(row["receive_notifications"]),
+        "gamePrefs": game_prefs(row),              # small per-person game choices: {game: {option: choice}}
     }
 
 
@@ -69,6 +81,7 @@ def me(current: dict = Depends(get_current_user)):
         "today": config.today().isoformat(),
         "timeZone": config.timezone_name(),
         "version": config.APP_VERSION,
+        "dailyChallenges": bool(s["show_daily_challenges"]),
         "lowTimeChildren": low,
     }
 

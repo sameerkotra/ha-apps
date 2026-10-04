@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 
 import json
 
-from .. import config, db, games, ha_sensors, level_builder, levels, limits, notify, saves, scores, settings
+from .. import config, daily, db, games, ha_sensors, level_builder, levels, limits, notify, saves, scores, settings, together
 from ..auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["play"])
@@ -42,6 +42,7 @@ def list_games(current: dict = Depends(get_current_user)):
         played = {r["game"]: (r["n"], r["last"]) for r in conn.execute(
             "SELECT game, COUNT(*) AS n, MAX(ended_at) AS last FROM scores WHERE user_id = ? GROUP BY game", (current["id"],))}
         level_counts = {s: levels.playable_count(conn, s) for s in levels.SETS}
+        todays = daily.for_games(conn, current)           # {} while daily challenges are off
     out = []
     for gid in settings.enabled_games():
         if child_limits and not limits.game_allowed(child_limits, gid):
@@ -52,7 +53,7 @@ def list_games(current: dict = Depends(get_current_user)):
         out.append({"id": gid, "name": g["name"], "icon": g["icon"], "modes": modes, "defaultMode": default,
                     "best": mine.get(gid),
                     "bestByMode": {m["id"]: bests_by_mode.get((gid, m["id"])) for m in modes},
-                    "canSave": bool(g.get("state_version")), "saved": saved.get(gid),
+                    "canSave": bool(g.get("state_version")), "saved": saved.get(gid), "race": together.race_ok(gid), "daily": todays.get(gid),
                     "plays": played.get(gid, (0, None))[0], "lastPlayed": played.get(gid, (0, None))[1],
                     "levels": level_counts.get(gid, 0),
                     "levelModes": [m["label"] for m in modes if m["id"] in g.get("level_modes", [])]})
@@ -96,6 +97,9 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         raise HTTPException(422, "Send {game, mode, practice}.")
     game, mode, practice = body.get("game"), body.get("mode"), body.get("practice", False)
     resume = body.get("resume", False)
+    match_id = body.get("matchId")        # a race (SPEC §13.3): the match decides mode, Practice, seed and levels
+    if match_id is not None and body.get("resume"):
+        raise HTTPException(422, "A match can't be continued from a saved game.")
     if not isinstance(game, str) or not games.exists(game):
         raise HTTPException(404, "Unknown game.")
     if not settings.game_enabled(game):
@@ -111,6 +115,26 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         if not saves.can_resume(saved):
             raise HTTPException(409, "That saved game was made by an older version and can't be continued. End it to keep its score.")
         mode, practice = saved["mode"], bool(saved["practice"])
+    match = None
+    if match_id is not None:
+        with db.get_conn() as conn:
+            try:
+                match = together.for_session(conn, current, match_id, game)
+            except together.TogetherError as e:
+                raise HTTPException(e.status, str(e))
+        mode, practice = match["match"]["mode"], bool(match["match"]["practice"])
+    daily_row = None
+    if body.get("daily", False) is not False:        # today's challenge: the day decides mode and seed
+        if body.get("daily") is not True or resume or match_id is not None:
+            raise HTTPException(422, "daily must be true, and can't be combined with a saved game or a race.")
+        if not isinstance(practice, bool):
+            raise HTTPException(422, "practice must be true or false.")
+        with db.get_conn() as conn:
+            try:
+                daily_row = daily.challenge_for(conn, game, current, practice)
+            except daily.DailyError as e:
+                raise HTTPException(e.status, str(e))
+        mode = daily_row["mode"]
     if not isinstance(mode, str) or not settings.mode_allowed(game, mode):
         raise HTTPException(422, "That mode isn't available.")
     if not isinstance(practice, bool):
@@ -130,19 +154,31 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         set_id = levels.mode_info(game, mode)["set"]
         if saved:
             level_list = json.loads(saved["levels"]) if saved["levels"] else None
+        elif match:
+            level_list = match["levels"]          # both phones play the same level list
         else:
             level_list = levels.playable(conn, set_id) if set_id else None
         conn.execute("INSERT INTO play_sessions (id, user_id, game, mode, practice, started_at, last_beat_at, "
-                     "level_count, base_seconds, resumed, first_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "level_count, base_seconds, resumed, first_started_at, match_id, daily) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (sid, current["id"], game, mode, 1 if practice else 0, now, now,
                       len(level_list) if level_list is not None else None,
-                      saved["seconds"] if saved else 0, 1 if saved else 0, saved["started_at"] if saved else now))
-        best = scores.best(conn, game, mode, current["id"])
-        record = scores.best(conn, game, mode)
+                      saved["seconds"] if saved else 0, 1 if saved else 0, saved["started_at"] if saved else now,
+                      match_id if match else None, daily_row["date"] if daily_row else None))
+        if match:
+            together.attach_session(conn, match_id, current["id"], sid)
+        best = None if daily_row else scores.best(conn, game, mode, current["id"])
+        record = None if daily_row else scores.best(conn, game, mode)
         status = _status_json(conn, current)
     background.add_task(ha_sensors.changed_blocking)
     return {"id": sid, "game": game, "mode": mode, "practice": practice, "best": best, "record": record,
-            "playTime": status, "seed": int(config.utcnow().timestamp() * 1000) % 2_147_483_647,
+            "playTime": status,
+            "seed": match["match"]["seed"] if match else daily_row["seed"] if daily_row
+            else int(config.utcnow().timestamp() * 1000) % 2_147_483_647,
+            "matchId": match_id if match else None,
+            "daily": daily_row["date"] if daily_row else None,
+            # the app's settings a game reads: Sudoku's hints per puzzle (none = unlimited, as in Practice)
+            "config": {"hints": None if practice else settings.get("sudoku_hints")},
             # the levels this game plays through (SPEC §11); fixed for the whole game
             "levels": level_list, "levelsBuilding": level_builder.building(set_id),
             "saved": {"state": json.loads(saved["state"]), "score": saved["score"], "level": saved["level"],
@@ -227,20 +263,29 @@ def post_score(background: BackgroundTasks, body: dict = Body(...), current: dic
                 end=True)
         conn.execute("UPDATE play_sessions SET scored = 1 WHERE id = ?", (sid,))
         if reason:
+            if row["match_id"]:         # an impossible score loses the race: it counts as nothing
+                together.record_result(conn, row, 0, 1, 0, False)
             conn.commit()
             raise HTTPException(422, reason)
         result = {"saved": False, "reason": None, "personalBest": False, "householdRecord": False, "scoreId": None,
-                  "best": scores.best(conn, row["game"], row["mode"], current["id"])}
+                  "best": None if row["daily"] else scores.best(conn, row["game"], row["mode"], current["id"])}
         if row["practice"]:
             result["reason"] = "practice"
         elif seconds < scores.MIN_SECONDS:
             result["reason"] = "short"
+        elif games.keeps_nothing(row["game"], score):
+            result["reason"] = "unfinished"
         else:
-            saved = scores.insert(conn, current["id"], dict(row, started_at=row["first_started_at"] or row["started_at"]),
+            daily_day = row["daily"]
+            saved = scores.insert(conn, current["id"], dict(row, started_at=row["first_started_at"] or row["started_at"],
+                                                           mode=daily.mode_key(daily_day) if daily_day else row["mode"]),
                                   int(score), int(level), int(round(seconds)))
-            result.update(saved=True, personalBest=saved["personalBest"], householdRecord=saved["householdRecord"],
-                          scoreId=saved["id"], best=max(int(score), result["best"] or 0))
+            result.update(saved=True, personalBest=saved["personalBest"] and not daily_day,
+                          householdRecord=saved["householdRecord"] and not daily_day,    # a daily isn't a record
+                          scoreId=saved["id"], best=None if daily_day else max(int(score), result["best"] or 0))
         saves.consumed_by(conn, current["id"], row)
+        if row["match_id"]:             # a race: the same score is the player's result in the match
+            together.record_result(conn, row, score, level, seconds, body.get("won"))
         status = _status_json(conn, current)
     result["playTime"] = status
     result["levelsComing"] = _auto_levels(row, int(level))
@@ -309,6 +354,8 @@ def save_game(session_id: str, background: BackgroundTasks, body: dict = Body(..
         row = _session(conn, session_id, current)
         if row["ended_at"] or row["scored"]:
             raise HTTPException(409, "That game has already ended.")
+        if row["daily"]:
+            raise HTTPException(409, "A daily challenge can't be put aside: finish it, or play it as Practice to take your time.")
         set_id = levels.mode_info(row["game"], row["mode"])["set"]
         levels_json = None
         if set_id and not row["resumed"]:

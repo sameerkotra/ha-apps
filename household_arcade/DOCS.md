@@ -247,6 +247,49 @@ faster, more walls, a smarter opponent; lose one and the game is over; win the
 last arena to win the game. *Two players*: two people share one screen or
 keyboard for one match. The score is player 1's (green, the person signed in).
 
+### Sudoku
+
+Fill the 9 × 9 grid so every row, column and 3 × 3 box holds 1 to 9 once. Tap a square, then a
+number (or type it). **✎ Notes** switches to pencil marks; **Erase** clears a square; **Undo** takes back a move; **Hint**
+fills one square (3 a puzzle, an admin can change that; unlimited in Practice). **Easy** to **Expert**
+get fewer clues. The start screen has **Show mistakes** (a wrong number turns red at once — it
+adds 10 seconds to your time) and **Number lines** (highlights the row and column). Your score is
+10,000 minus your time in seconds, with 30 seconds added for each hint, so the fastest finish ranks first.
+A puzzle you didn't finish scores nothing and isn't kept. A game can be saved and carried on later.
+
+### Solitaire
+
+Classic Klondike: build the four suit piles from ace to king, and stack cards down in
+alternating colours in the seven columns. Tap a card to send it where it fits, or drag it. **Draw one** or
+**Draw three** from the stock. **Hint** points at a move, **Auto** sends every card that can go up to the
+piles, and **Undo** takes a move back. Every deal can be won, in Practice too. Points come from cards sent
+up, cards turned over, and a bonus for a quick win; **End game** keeps what you have so far.
+
+### Word Guess
+
+Find the hidden word. Type a guess (or tap the on-screen keys) and press Enter: green is the right
+letter in the right place, yellow is in the word but elsewhere, grey is not in the word. **Six tries**
+(5 letters), **Eight tries**, or **Strict**, where every clue you've been given must be used in the next guess.
+Only real words are accepted. Score: 1,000 for each try left (plus one) and up to 999 for speed,
+so fewer guesses rank first and then the faster time. A word you didn't find scores nothing.
+
+### Word Search
+
+Find the hidden words in the grid by dragging across them (they run in straight lines, any
+direction except on **Little ones**, where they only run right and down). **Little ones**
+(7 × 7, 5 words), **Kids** (9 × 9), **Everyone** (11 × 11) and **Puzzler** (13 × 13, 12 words).
+**Hint** shows one word to look for and costs 25 points. Each word is worth 100, with a bonus for
+finishing quickly.
+
+### Daily challenges
+
+Off unless an admin turns on **Show daily challenges** in *Admin → App settings*. Then each day the
+app picks three games — the same seeded puzzle for everyone — and Home shows **Today's challenges**. You get one
+ranked try at each (starting it counts, finished or not); afterwards you can replay it as Practice, which isn't
+saved. Each challenge has its own leaderboard for the day (**Scores → Daily**) and there is a "days played this
+month" ranking. Children's limits and allowed games apply. Turning the setting off hides everything and keeps
+the scores.
+
 ### Controls
 
 | | Keyboard | Phone or tablet |
@@ -394,6 +437,43 @@ Leaving a game in the middle (Back, another page, closing the app) also ends
 it and keeps its score. Practice games are never saved to the scores either
 way. A child's limits apply to continuing a saved game too.
 
+### Playing together (a race)
+
+Two people in the household can race: the **same game, the same start** (the same traffic, the same pieces, the
+same sums), at the same moment, each on their own phone or computer. The better score wins.
+
+1. On a game's start screen choose the mode (and **Practice** if you both want nothing saved), then tap
+   **Play with someone**. The list shows everyone who has opened the app; people who can't play right now are
+   greyed out with the reason (switched off, a child's quiet hours or no play time left, a game that isn't one of
+   their games, or already in a match).
+2. Pick a person. They get a phone notification ("Asha challenges you to Lane Racer", with **Join** and
+   **Not now**), a pop-up if they have the app open, and a card on the **Games** page under **Waiting for you**.
+   An invite lasts 5 minutes; you can **Cancel** it, and you can have only one invite out at a time.
+3. When they join, both phones count in 3, 2, 1 and play. A bar above the game shows the other player's score,
+   level and whether they are still playing (a green dot: the phones are connected). When one of you is done
+   first, you keep playing; the bar shows "finished in 6:12" and the result card waits for the other.
+4. When both have finished you see both results side by side and who won (or a draw). Each score is also saved
+   as a normal game for each of you (unless it was Practice). **Rematch** sends a new invite the other can accept
+   with one tap.
+5. **My scores → Against others** lists each person you've raced with: games, won, lost and drawn, and the same
+   for each game (Practice races aren't counted).
+
+Good to know:
+
+- The phones talk through the app and Home Assistant only; nothing goes to any outside service. At home and
+  away (for example through Home Assistant Cloud) it works the same. The link uses a WebSocket and falls back
+  by itself to checking in every moment if the WebSocket can't open on your network. The bar's green dot has
+  the link's kind as its tooltip.
+- Each person's own limits apply: a child needs play time left and no quiet hours to start or join a race, and
+  their time counts as for any game. A race you leave counts as lost; if the other phone goes away for two
+  minutes while you finish, you win.
+- A race can't be saved for later. Pausing pauses only your own game (the other player sees "paused").
+- Racing is offered for Snake, Brick Breaker, Falling Blocks, Lane Racer, Flap, Mines, Merge, Colour Memory,
+  Memory Cards, Tap the Mole, Number Dash, Sky Defenders, Rocks and Road Hop. The two-player games are for one
+  screen (live play on two phones is planned).
+- An admin can turn the phone notification off with **Invites by phone notification** in **App settings**;
+  everyone can also turn off **Receive notifications** on Settings. The pop-up and the Games page card stay.
+
 ### Looks and sound
 
 Each person picks their own look on the start screen or on **Settings**; an
@@ -419,7 +499,8 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
 - Every finished game is saved with its mode, score, level and how long it
   lasted. **Practice** games and games shorter than 3 seconds aren't saved.
 - **My scores** shows your best per game and mode, your last 20 games and how
-  long you played this week. You can delete your own scores there.
+  long you played this week, and **Against others** (your wins, losses and
+  draws against each person you've raced). You can delete your own scores there.
 - **Leaderboard** shows the top 10 for each game and mode, of **All time** or
   **This month**; each person's best appears only once. Admins can delete any
   score from it (a misclick, or a suspiciously high one) and the leaderboard
@@ -498,6 +579,9 @@ notification when a child has 5 minutes left (once a day per child). Its
 | Holidays | none | Dates when children get weekend limits. |
 | Limit warnings to parents | off | Phone notice to the ticked admins (every admin if none is ticked). |
 | Notify new records | off | Tell the household when someone sets a new record. |
+| Invites by phone notification | on | A phone notification (with Join and Not now) when someone invites you to play together. The invite also shows in the app. |
+| Show daily challenges | off | Today's challenges on Home, a try on each game's start screen and a Daily tab on the leaderboard. |
+| Sudoku hints per puzzle | 3 | 0 to 20; Practice has no limit. |
 | Home Assistant sensors | off | See below. |
 | AI levels | off | More levels made by an AI model. See *AI levels* below. |
 
@@ -602,6 +686,10 @@ child's time is nearly up. Turning the switch off marks them unavailable.
 **Notify new records** sends "Asha set a new Snake record: 1,240" to everyone
 else who hasn't turned off **Receive notifications** on their Settings.
 
+**Invites by phone notification** (on by default) sends "Asha challenges you to Lane Racer" to the person
+invited to play together, with **Join** and **Not now** buttons that open the app (when the app knows its panel
+path in Home Assistant). It follows the person's **Receive notifications** choice too.
+
 Notifications go to each person's phone from Home Assistant's People page,
 plus any extra services an admin adds on **Admin → Users**.
 
@@ -627,6 +715,10 @@ plus any extra services an admin adds on **Admin → Users**.
   browser may be very old.
 - **The keys scroll the page instead of playing** — click or tap the game
   first; keys belong to the game only while it's on screen.
+- **"Play with someone" shows nobody** — a person appears after they have opened the app once; greyed names
+  say why they can't play now.
+- **The other phone's score doesn't move** — the bar's dot is grey when that phone has gone quiet. Races still
+  work when your network blocks WebSockets; they just check in more often.
 - **A child can't start a game** — the start screen says why: no time left
   today, or quiet hours. An admin can add extra time on **Admin → Users** or
   from **Games**.
