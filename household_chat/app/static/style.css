@@ -418,12 +418,21 @@ code.path { overflow-wrap: anywhere; word-break: break-all; }
 .call-box .avatar.big { width: 112px; height: 112px; font-size: 2.4rem; }
 .call-name { font-size: 1.5rem; font-weight: 600; overflow-wrap: anywhere; }
 .call-status { color: var(--text-dim); min-height: 1.4em; font-variant-numeric: tabular-nums; }
-.call-actions { display: flex; gap: 40px; margin-top: 36px; }
-.call-btn { width: 68px; height: 68px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text); font-size: 1.6rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.call-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px; margin-top: 28px; }
+.call-btn { width: 60px; height: 60px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text); font-size: 1.6rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .call-btn:hover { background: var(--panel-hover); }
 .call-btn.hangup, .call-btn.decline { background: var(--danger); border-color: var(--danger); color: #fff; }
 .call-btn.hangup { transform: rotate(135deg); }
 .call-btn.answer { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
 .call-btn.mute.on { background: var(--accent-soft); border-color: var(--accent); }
+.call-btn.speaker.on, .call-btn.hear { background: var(--accent-soft); border-color: var(--accent); }
+.call-meters { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 260px; margin-top: 8px; }
+.call-meter { display: grid; grid-template-columns: 5.5em 1fr; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-dim); }
+.call-meter b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.call-meter i { display: block; height: 6px; border-radius: 3px; background: var(--panel-alt); overflow: hidden; }
+.call-meter i span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
+.call-hint { min-height: 1.3em; font-size: 0.86rem; color: var(--danger); max-width: 320px; }
+.call-panel { width: 100%; max-width: 320px; text-align: left; margin-top: 18px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px 4px; }
+.call-audio { display: none; }
 .call-note.missed span { color: var(--danger); }
 .call-note .call-back { margin-left: 8px; font-size: inherit; }

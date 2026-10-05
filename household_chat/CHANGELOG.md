@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.1
+
+- **Calls: both people are heard.** On phones and in the Home Assistant app, the other person's sound could be held back on one side, so only one voice came through. The sound is now started by your tap on 📞 or Answer, and if a phone still holds it back, a 🔈 button appears to hear them.
+- **🔊 Speaker** during a call: switches to the loudspeaker where the browser lets a web page choose it (and back); where it can't, the call is made louder instead.
+- **⚙ Microphone and sound output** during a call: pick the microphone, and where the browser allows it the speaker or headset the call plays through. Your choice is remembered on that device.
+- **Is sound getting through?** Two small level bars show your microphone and the other person's sound, and a line says what's wrong: no sound arriving from them, their microphone seems silent, they've muted, or your own microphone seems silent.
+- Muting tells the other person ("Nisha has muted their microphone").
+
 ## 2.3.0
 
 - **Voice calls** (optional, off until an admin turns them on in **App settings → Voice calls**): 📞 at the top of a direct chat calls that person. Every open Household Chat page rings, and the phone gets "📞 Nisha is calling" with **Answer** (opens the app, which shows the ringing screen) and **Decline** (works without opening it). Mute and hang up during the call; the screen stays on.

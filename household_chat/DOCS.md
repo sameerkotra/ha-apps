@@ -71,7 +71,13 @@ An admin turns calls on in **App settings → Voice calls** (off until then).
 
 - **📞** at the top of a direct chat calls that person. Calls are one-to-one, in direct chats only: not in groups or My room, and not in a direct chat that's read-only. Children can call the people they can message.
 - **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
-- **During a call**: 🎤 mutes and unmutes you, the red button hangs up. The screen stays on while the call is on.
+- **During a call**:
+  - 🎤 mutes and unmutes you; the other person sees that you've muted.
+  - 🔊 **Speaker** switches to the loudspeaker where the browser lets a web page choose it. Where it can't (many phones), it makes the call louder instead; your phone's own sound or Bluetooth menu can switch the output too.
+  - ⚙ picks the **microphone**, and where the browser allows it the **speaker or headset** the call plays through (computers and some phones). The choice is remembered on that device.
+  - Two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
+  - 🔈 appears if your phone held back their sound: tap it to hear them.
+  - The red button hangs up. The screen stays on while the call is on.
 - **In the chat**, each call leaves a note: "📞 Outgoing call · 4 min", "📞 Missed call", "📞 No answer", "📞 Declined", with **Call back**. A missed call counts as unread and is notified like a message.
 - **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call.
 - **Quiet hours and muted chats**: your phone isn't rung, but open pages still ring. In quiet hours a missed call waits for the summary afterwards, like messages; in a muted chat it isn't notified.
@@ -259,6 +265,7 @@ recorder:
 - **A file shows "no longer available"**: it was renamed, moved or deleted outside the app (for example over Samba).
 - **Live updates stop**: the dot next to your name turns amber when the page falls back to checking every few seconds; it reconnects by itself.
 - **The microphone doesn't work**: it needs https and permission; in the Home Assistant phone app, try a browser instead.
+- **Only one person can be heard**: look at the bars and the line on the call screen. "No sound is arriving" means the connection lets sound through only one way (try again, both on the same Wi-Fi); "their microphone seems silent" means their phone isn't giving the call its microphone (muted, used by another app, or blocked — try a browser instead of the Home Assistant app, or pick another microphone in ⚙). If 🔈 shows, tap it.
 - **A call says "Couldn't connect"**: both sides must be on the home network for now, and the microphone must be allowed. A call also ends if one side loses its connection to Home Assistant for a minute.
 - **The back gesture**: on Android (Home Assistant app or browser), Back closes an open menu or dialog first, then goes from a chat or page back to the chat list; only Back from the list leaves the app.
 - **"Open in Docs" does nothing, or Docs isn't in Connected apps**: Household Docs and Chat find each other when they start and every few hours; restart Household Docs, then look at Admin → App settings → Connected apps. Both apps must run inside Home Assistant (messages between apps are off outside it).

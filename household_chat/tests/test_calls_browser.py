@@ -34,7 +34,8 @@ def headers(who):
 
 
 def chromium(pw):
-    args = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required"]
+    # sound may only start after a tap, as on phones and in the Home Assistant app
+    args = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=user-gesture-required"]
     try:
         return pw.chromium.launch(args=args)
     except Exception:
@@ -125,8 +126,31 @@ class CallsInBrowsers(unittest.TestCase):
             time.sleep(0.2)
         self.assertGreater(n.evaluate(INBOUND), 10)
         self.assertGreater(t.evaluate(INBOUND), 10)
+        # and each side actually plays it (desktop Chrome lets a page that uses the microphone play sound; phones are stricter)
+        for p in (n, t):
+            self.assertEqual(p.evaluate("[callAudio.paused, callAudio.muted, !!callAudio.srcObject.getAudioTracks().length]"),
+                             [False, False, True])
+            p.wait_for_selector("#meterThem:not([hidden])", timeout=5000)
+        # the other side is told about mute
         t.click("#callScreen button.mute")
         self.assertFalse(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
+        n.wait_for_function("(document.querySelector('#callHint') || {}).textContent === 'Tarun has muted their microphone.'", timeout=8000)
+        t.click("#callScreen button.mute")
+        self.assertTrue(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
+        # speaker: louder where the output can't be picked (or a speaker output where it can)
+        n.click("#callScreen button.speaker")
+        n.wait_for_selector("#callScreen button.speaker.on")
+        self.assertTrue(n.evaluate("call.loud ? !!call.boost && callAudio.muted : !!call.outputId"))
+        n.click("#callScreen button.speaker")
+        n.wait_for_selector("#callScreen button.speaker:not(.on)")
+        self.assertFalse(n.evaluate("!!call.boost || callAudio.muted"))
+        # ⚙: pick a microphone; the new one is sent in place of the old
+        t.click("#callScreen button.devices")
+        t.wait_for_selector("#callPanel:not([hidden]) select")
+        before = t.evaluate("call.stream.getAudioTracks()[0].id")
+        t.select_option("#callPanel select", index=t.evaluate("document.querySelector('#callPanel select').options.length") - 1)
+        t.wait_for_function(f"call.stream.getAudioTracks()[0].id !== {json.dumps(before)}", timeout=5000)
+        self.assertEqual(t.evaluate("call.pc.getSenders().find((x) => x.track).track.id"), t.evaluate("call.stream.getAudioTracks()[0].id"))
         n.click("#callScreen button.hangup")
         for p in (n, t):
             p.wait_for_selector("#callScreen", state="detached", timeout=10000)
