@@ -404,6 +404,7 @@ class AwayFromHomeTests(ApiTestCase):
         self.ok(self.put("/api/admin/settings", {"calls_cf_api_token": "bad"}))
         calls.reset()
         self.assertEqual(self.start()["iceServers"], [])
+        self.assertEqual(self.ok(self.get("/api/admin/calls/ice-servers"))["relayError"], "OSError")
         self.assertEqual(self.put("/api/admin/settings", {"clear_calls_cf_api_token": True}).status_code, 422)   # the relay still needs it
         self.ok(self.put("/api/admin/settings", {"clear_calls_cf_api_token": True, "calls_relay": "none"}))
         self.assertFalse(self.ok(self.get("/api/admin/settings"))["secretsSet"]["calls_cf_api_token"])

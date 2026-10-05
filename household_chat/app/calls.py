@@ -21,6 +21,7 @@ import json
 import logging
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -86,7 +87,7 @@ def enabled(conn=None) -> bool:
 CF_TTL = 4 * 3600                       # Cloudflare credentials last this long (longer than any call)
 CF_CACHE = 3600                         # and are fetched at most this often
 TURN_TTL = 4 * 3600
-_cf = {"servers": None, "until": 0.0, "key": None}
+_cf = {"servers": None, "until": 0.0, "key": None, "error": None}
 
 
 def cf_fetch(key_id: str, token: str, ttl: int = CF_TTL) -> list:
@@ -96,8 +97,13 @@ def cf_fetch(key_id: str, token: str, ttl: int = CF_TTL) -> list:
         f"https://rtc.live.cloudflare.com/v1/turn/keys/{urllib.parse.quote(key_id, safe='')}/credentials/generate-ice-servers",
         data=json.dumps({"ttl": ttl}).encode(), method="POST",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        body = json.loads(resp.read(64 * 1024).decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read(64 * 1024).decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # what Cloudflare said (its status and a line of its message: never the token, which isn't in an answer)
+        text = e.read(2000).decode("utf-8", "replace").replace("\n", " ").strip()[:200]
+        raise RuntimeError(f"HTTP {e.code} from Cloudflare: {text or e.reason}") from None
     servers = body.get("iceServers") if isinstance(body, dict) else None
     if isinstance(servers, dict):
         servers = [servers]
@@ -115,8 +121,13 @@ def cloudflare_servers(key_id: str, token: str) -> list:
     try:
         servers = cf_fetch(key_id, token)
     except Exception as e:                        # noqa: BLE001 — logged, the call goes on
-        logger.warning("Couldn't get call relay credentials from Cloudflare: %s", type(e).__name__)
+        why = str(e) if isinstance(e, RuntimeError) else type(e).__name__
+        logger.warning("Couldn't get call relay credentials from Cloudflare: %s", why)
+        with _lock:
+            _cf["error"] = why
         return []
+    with _lock:
+        _cf["error"] = None
     with _lock:
         _cf.update(servers=servers, until=now + CF_CACHE, key=(key_id, token))
     return list(servers)
@@ -146,7 +157,13 @@ def ice_servers(values: dict, call_id: str = "test") -> list:
 
 def reset_relay_cache() -> None:
     with _lock:
-        _cf.update(servers=None, until=0.0, key=None)
+        _cf.update(servers=None, until=0.0, key=None, error=None)
+
+
+def relay_error() -> str | None:
+    """Why the last Cloudflare request failed (for Test calling), or None."""
+    with _lock:
+        return _cf["error"]
 
 
 def busy(uid: str) -> bool:

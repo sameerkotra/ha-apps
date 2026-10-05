@@ -316,7 +316,7 @@ async function runCallTest(out, btn) {
     else { try { const s = await getMic(); s.getTracks().forEach((t) => t.stop()); say("✓ Microphone works."); } catch (e) { say("✗ Microphone permission was refused."); } }
     const t = await api("api/admin/calls/ice-servers");
     if (!t.stun && t.relay === "none") say("ℹ No address lookup or relay is set: calls work on the home network only.");
-    if (t.relay !== "none" && !t.relayOk) say("✗ Relay: no credentials — check the key id and token (Cloudflare) or the address and secret, and the app's Log tab.");
+    if (t.relay !== "none" && !t.relayOk) say("✗ Relay: no credentials — " + (t.relayError ? t.relayError + ". " : "") + (t.relay === "cloudflare" ? "The key id is the TURN key's Token ID from Realtime → TURN (not a Realtime app id), and the API token is the one shown when that TURN key was made." : "Check the address and secret, and the app's Log tab."));
     if (!window.RTCPeerConnection) { say("✗ This browser can't make calls."); return; }
     const found = { host: 0, srflx: 0, relay: 0 };
     const pc = new RTCPeerConnection({ iceServers: t.iceServers });

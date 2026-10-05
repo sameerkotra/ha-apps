@@ -64,7 +64,8 @@ def test_servers(admin: dict = Depends(require_admin)):
     values = settings.all_values()
     servers = calls.ice_servers(values, "test")
     return {"iceServers": servers, "stun": bool(values["calls_stun"]), "relay": values["calls_relay"],
-            "relayOk": values["calls_relay"] == "none" or any("username" in s for s in servers)}
+            "relayOk": values["calls_relay"] == "none" or any("username" in s for s in servers),
+            "relayError": calls.relay_error() if values["calls_relay"] == "cloudflare" else None}
 
 
 @router.post("/calls/{call_id}/end")
