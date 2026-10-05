@@ -1,11 +1,14 @@
 # Changelog
 
+## 2.4.1
+
+- **Calls**: ⚙ during a call shows the Microphone list (on a phone also where you switch to the speakerphone, earpiece or Bluetooth headset) and the output list where the browser has one.
+- **Test calling** says what Cloudflare answered when the relay credentials can't be fetched (its HTTP status and message), and the Log tab too.
+
 ## 2.4.0
 
 - **Calls away from home.** Admin → App settings → Voice calls gets an **address lookup (STUN) server** (Cloudflare's is free and needs no account) and a **call relay**: Cloudflare Realtime TURN (key id and API token) or your own TURN server (address and shared secret, with a short-lived password made for each call). **Test calling** checks the microphone, the lookup and the relay from your browser. The token and secret are write-only and never included in a backup; a restore keeps this install's.
 - **📞 Calls** (⋯ menu): your recent calls, missed ones on top, with **Call back** and a button to the chat.
-- **Calls**: ⚙ shows the **Microphone** list again — on a phone that list is also where you switch the call to the speakerphone, earpiece or Bluetooth headset — and the output list where the browser has one.
-- **Test calling** says what Cloudflare answered when the relay credentials can't be fetched (its HTTP status and message), and the Log tab too.
 - **Notifications open the exact chat**: tapping a message notification opens that chat, and a call's notification (or its **Answer** button) opens straight onto the ringing screen.
 
 ## 2.3.8
