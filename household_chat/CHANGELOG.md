@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.3
+
+- **Tapping a notification really opens Household Chat now.** 2.3.2 still sent phones to `/hassio/ingress/…`, an address current Home Assistant no longer has, so the tap still showed "404 not found". Notifications (and **Answer** on a call) now open the app's sidebar page, whose exact address the app asks Home Assistant for when it starts (for example `/a1b2c3d4_household_chat`). The app's **Log** tab shows it: "Notifications open … in Home Assistant".
+- Notifications sent before this update still carry the old address; new ones work.
+
 ## 2.3.2
 
 - **Tapping a notification opens Household Chat again** instead of "404 not found". Notifications pointed at the app's short name, but an app installed from a repository has the repository's id in its address in Home Assistant (for example `a1b2c3d4_household_chat`); they now use that full address. This also fixes **Answer** on a call notification.

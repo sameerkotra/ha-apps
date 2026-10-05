@@ -54,11 +54,23 @@ class NotifyTests(ApiTestCase):
         self.assertEqual(self.sent.items[-1]["message"], "Nisha: re")
 
     def test_notifications_open_the_apps_real_page(self):
-        # installed from a repository, the app's slug carries the repository's id: the container's host name says it
-        self.assertEqual(config.ingress_url("a1b2c3d4-household-chat"), "/hassio/ingress/a1b2c3d4_household_chat")
-        self.assertEqual(config.ingress_url("local-household-chat"), "/hassio/ingress/local_household_chat")
-        for other in ("", "my-laptop", "a1b2c3d4-household-docs", "x/../household-chat"):
-            self.assertEqual(config.ingress_url(other), "/hassio/ingress/household_chat")
+        from app import ha_client
+        orig = config.INGRESS_URL
+        try:
+            # from the Supervisor: the sidebar page /<full slug> (the old /hassio/ingress/… is a 404 now)
+            self.assertEqual(ha_client.learn_page_blocking({"slug": "a1b2c3d4_household_chat", "ingress_panel": True}),
+                             "/a1b2c3d4_household_chat")
+            self.assertEqual(config.INGRESS_URL, "/a1b2c3d4_household_chat")
+            self.send(self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"], "hi", NISHA)
+            self.assertEqual(self.sent.items[-1]["data"]["clickAction"], "/a1b2c3d4_household_chat")
+            self.assertEqual(ha_client.learn_page_blocking({"slug": "local_household_chat", "ingress_panel": False}),
+                             "/app/local_household_chat")
+            # without the Supervisor: the container's host name
+            self.assertEqual(ha_client.learn_page_blocking({}, host="a1b2c3d4-household-chat"), "/a1b2c3d4_household_chat")
+            for other in ("", "my-laptop", "a1b2c3d4-household-docs", "x/../household-chat"):
+                self.assertEqual(ha_client.learn_page_blocking({"slug": other.replace("-", "_")}, host=other), "/household_chat")
+        finally:
+            config.INGRESS_URL = orig
 
     def test_preview_levels_and_buttons(self):
         self.ok(self.put("/api/me/settings", {"notifyPreview": "sender"}, TARUN))

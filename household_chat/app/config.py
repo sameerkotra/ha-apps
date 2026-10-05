@@ -19,24 +19,39 @@ SHARE_DIR = os.environ.get("SHARE_DIR", "/share/household_chat")
 SHARE_ROOT = os.environ.get("SHARE_ROOT", os.path.dirname(SHARE_DIR.rstrip("/")) or "/share")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
 OPTIONS_PATH = os.environ.get("OPTIONS_PATH", os.path.join(DATA_DIR, "options.json"))
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.3.3"
 APP_TITLE = "Household Chat"
 
 
-def ingress_url(host: str | None = None) -> str:
-    """The app's page in Home Assistant, for phone notifications to open. An app installed from a repository has
-    the repository's id in its slug (a1b2c3d4_household_chat; local_household_chat for a local copy), and the
-    container's host name is that slug with - for _ (a1b2c3d4-household-chat). Outside Home Assistant (tests,
-    development) the bare slug is used."""
-    slug = (os.environ.get("HOSTNAME", "") if host is None else host).strip().lower().replace("-", "_")
-    return "/hassio/ingress/" + (slug if re.fullmatch(r"[a-z0-9]{1,40}_household_chat", slug) else "household_chat")
+# ---------- the app's page in Home Assistant (where phone notifications open) ----------
+# Home Assistant gives every app shown in the sidebar a page at /<full slug>. The full slug carries the repository's
+# id (a1b2c3d4_household_chat; local_household_chat for a local copy), so it depends on how the app was installed.
+# /hassio/ingress/<slug> is older Home Assistant's address and a 404 on current versions (APP_MESSAGES_SPEC §6.5).
+SLUG = "household_chat"
+_FULL_SLUG = re.compile(r"([0-9a-f]{8}|local)_household_chat")
 
 
-INGRESS_URL = ingress_url()
+def full_slug_from_host(host: str | None) -> str | None:
+    """The container's host name is the full slug with - for _ (a1b2c3d4-household-chat)."""
+    slug = (host or "").strip().lower().replace("-", "_")
+    return slug if _FULL_SLUG.fullmatch(slug) else None
+
+
+def page_url(slug: str | None, in_sidebar: bool = True) -> str:
+    """/<full slug> (the sidebar page, open to everyone); /app/<full slug> when the app isn't in the sidebar (its
+    Settings → Apps page); /household_chat outside Home Assistant (tests, development)."""
+    if not slug or not _FULL_SLUG.fullmatch(slug):
+        return "/" + SLUG
+    return "/" + slug if in_sidebar else "/app/" + slug
+
+
+# start-up refines this from the Supervisor (ha_client.learn_page_blocking)
+INGRESS_URL = page_url(full_slug_from_host(os.environ.get("HOSTNAME")))
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api")
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
+SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 
 
 def read_options(path: str | None = None) -> dict:

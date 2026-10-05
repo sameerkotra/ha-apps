@@ -401,7 +401,7 @@ No admin route returns message text, file names or file contents of chats the ad
     - `sender`: "New message from Nisha";
     - `none`: "New message in Household Chat".
   - Disappearing messages never show their text or file names (§15.8).
-- **Opening the app.** `data` includes `url` / `clickAction` = `/hassio/ingress/<full slug>` (`config.INGRESS_URL`), so tapping opens the chat panel (not the exact chat). The full slug carries the repository's id (`a1b2c3d4_household_chat`, or `local_household_chat`); it's the container's `HOSTNAME` with `-` for `_`, as in Household Todo and Arcade. A bare `/hassio/ingress/household_chat` is a 404 in Home Assistant, so it's used only outside it (tests, development).
+- **Opening the app.** `data` includes `url` / `clickAction` = the app's own page in Home Assistant (`config.INGRESS_URL`), so tapping opens Household Chat (not the exact chat). That page is the sidebar page **`/<full slug>`** — the full slug carries the repository's id (`/a1b2c3d4_household_chat`, `/local_household_chat`), and `/hassio/ingress/…` is older Home Assistant's address, a 404 now (APP_MESSAGES_SPEC §6.5). At start-up `ha_client.learn_page_blocking` asks the Supervisor (`GET /addons/self/info`: `slug`, `ingress_panel`, allowed without `hassio_api`); if that fails, the container's host name (the full slug with `-` for `_`). Not in the sidebar: `/app/<full slug>`. Outside Home Assistant: `/household_chat`. The log says which ("Notifications open … in Home Assistant").
 - **Never** sends to disabled people or to people who have left. Unknown services are logged at start-up with a hint.
 
 ### 7.1 Delivery
