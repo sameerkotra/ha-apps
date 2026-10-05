@@ -31,7 +31,7 @@ A private chat and file-sharing app for the household, inside Home Assistant. Ea
 - **Shared folders**: existing `/share` folders shared into chats (§12).
 - **Notifications** to phones through HA notify (§7).
 - **Out of scope.**
-  - Voice and video calls.
+  - Voice and video calls (planned as an optional feature, §18.1).
   - End-to-end encryption: messages are in the app's SQLite database and files are plain files in `/share` (§4.1 says who can read them).
   - Access from outside HA (no public link sharing), and chatting with people who aren't HA users.
   - Bots, link previews (they'd fetch every shared link), GIFs and stickers, and an unread badge on HA's sidebar (app panels can't show one).
@@ -765,98 +765,165 @@ A private space for each person: notes to self, links, reminders and documents (
 Ideas that are not built:
 
 - **PDF first-page thumbnails** in the Files view — waiting for a small, pure-Python dependency.
-- **Deep links** from a notification to the exact chat (the ingress URL would have to carry a route).
+- **Deep links** from a notification to the exact chat (the ingress URL would have to carry a route). Voice calls (§18.1) work around it by asking for a ringing call when the page opens.
 - **Link previews**, if they can be made without fetching every shared link from the server.
 - **Deleting files in shared folders** from the app.
 
 ### 18.1 Voice calls (optional — not built)
 
-An optional feature, **off** until an admin turns it on (App settings → Features → *Voice calls*). Nothing
-below exists yet; it is the plan if it is built.
+An optional feature, **off** until an admin turns it on (App settings → *Voice calls*). Nothing below exists
+yet; it is the plan if it is built. It replaces "Voice and video calls" in §1's *out of scope* list once built.
+
+**Releases**
+
+1. **Calls at home** (one medium release): one-to-one calls on the home network, the call screen, ringing,
+   call notes and history. Settings: the switch and *Ring for* only.
+2. **Calls away from home** (one small release): the STUN and relay settings, relay credentials, *Test calling*.
+3. **Later** (small to medium each): video (camera on/off, flip camera); group calls of up to 4 people (each
+   phone connects to each other; more would need a media server); a **Calls** list (recent, missed, call back).
 
 **What it does**
 
-- A **📞 Call** button in a one-to-one chat (and later in a group, §18.1 *Later*). The caller sees a call screen
-  (name, photo, "Ringing…", Mute, Speaker, Hang up); the other person gets a **ringing screen** if Chat is open
-  in any tab or the Companion app, and otherwise a **phone notification** — "📞 Asha is calling" with
-  **Answer** and **Decline** — that opens the call. Unanswered after 30 s: "Missed call".
-- A call note in the chat, like a system message: "📞 Call · 4 min", "📞 Missed call", "📞 Declined". Unread
-  missed calls count as unread messages and follow the usual notification rules (§7).
-- **Busy**: someone already in a call shows as busy and the caller hears a short busy tone. One call at a time
-  per person.
-- Children (§16.5) can call and be called by the people they share a chat with; a child's quiet hours stop calls
-  to and from them (the call button says why). People's own *Do not disturb* / quiet hours turn ringing
-  notifications into a missed-call note.
+- A **📞 Call** button in a **direct chat** the person may post in: not in groups (until *Later*), not in
+  "My room" (§17; the route answers 409 "Not possible in your personal room"), and not in a direct chat that is
+  read-only (§4: the other person has no access, or two children while `children_can_message_each_other` is off).
+  Children (§16.5) can call and be called wherever they can post in a direct chat.
+- **The caller** sees a call screen: name, photo, "Ringing…", Mute, Speaker and Hang up.
+- **The person called** gets a ringing screen in every open Chat tab, in a browser or the Companion app, and a phone
+  notification (§7 phones and extras) — "📞 Asha is calling" — with **Answer** and **Decline**:
+  - **Answer** opens Chat (`data.actions` entry with `action: "URI"` and `uri` = the ingress URL). Notifications
+    can't open a particular chat (§18, deep links), so the page asks `GET /api/calls/current` when it opens
+    (and on every live-update `hello`) and shows the ringing screen above whatever page it's on.
+  - **Decline** is handled without opening anything, like *Mark as read* (§15.1): an `HCHAT_DECLINE_<token>`
+    action through `ha_events.py`, the token stored like the reply tokens and valid until the call ends.
+  - Answering in one tab stops the ringing in the others and on the phone (`clear_notification` with the call's
+    tag `hchat_call_<id>`).
+- **Unanswered** after *Ring for* (default 30 s): the call ends as missed and the phone notification is replaced
+  (same tag) by "📞 Missed call from Asha".
+- **Busy**: one call at a time per person. Calling someone who is in a call or being rung ends at once with
+  "Asha is on another call" and a short busy tone; it's noted as a missed call for them.
+- **Quiet hours** (§7 rule 3): someone in their quiet hours isn't rung on their phone; open tabs still show the
+  ringing screen. When the quiet hours end, the missed call is in the usual summary. A muted chat (`off`, or
+  `muted_until` in the future) is treated the same way.
+- **A call note** in the chat, a system message like the cards of §15.11: "📞 Call · 4 min", "📞 Missed call",
+  "📞 Declined", "📞 Couldn't connect". Missed calls are unread messages for the person called and follow §7 like
+  messages. Notes follow retention and disappearing settings like other messages; they can't be edited or
+  forwarded.
+- While a call is on, the page holds a screen **wake lock** (where the browser has one) so the screen doesn't
+  turn off and end the call.
 
 **How it works**
 
-- **The audio goes phone to phone** with the browser's built-in WebRTC (Opus audio, always encrypted between
-  the two phones, DTLS-SRTP). The app never handles audio; it only introduces the two phones to each other.
-- **Signalling over what Chat already has**: the call offer, answer, network candidates, ringing, accept,
-  decline and hang-up go *down* as live-update events (§8: new `call` events, only to the two people) and *up* as
-  small POSTs (`POST /api/calls`, `POST /api/calls/{id}/answer|decline|end|candidate`). No new server
-  technology; it works through Home Assistant's ingress, Home Assistant Cloud and a Cloudflare Tunnel alike.
-- **https is required**: browsers only give a page the microphone on a secure address. On plain `http://` the
-  call button explains that and links to the docs.
-- **Microphone permission** is asked the first time, when the person presses Call or Answer.
-- Calls in progress live in memory only; a `calls` table keeps the history (who, when, how long, answered /
-  missed / declined) for the chat notes, kept like messages.
+- **The audio goes phone to phone** with the browser's built-in WebRTC (Opus audio, always encrypted between the
+  two phones, DTLS-SRTP). The app never handles audio; it only introduces the two phones to each other.
+- **Signalling over what Chat already has**: live-update `call` events (§8), sent only to the two people, carry
+  the offer, the answer, network candidates and the call's state; the browser sends its side as small POSTs:
+
+  | Route | |
+  |---|---|
+  | POST `/api/calls {conversationId}` | Start a call → 201 `{id, iceServers}`. 403 feature off; 409 busy, personal room, read-only chat or not a direct chat. |
+  | POST `/api/calls/{id}/offer {sdp}` | Caller's offer; starts the ringing. |
+  | GET `/api/calls/current` | My ringing or active call (with its offer and `iceServers`), or `null`. |
+  | POST `/api/calls/{id}/answer {sdp}` · `/decline` · `/end` | |
+  | POST `/api/calls/{id}/candidate {candidate}` | A late network candidate (up to 50 per side). |
+
+  A description (`sdp`) is at most 16 KB; only the two people in the call may use its routes (404 for anyone else,
+  as for chats). The page waits up to 3 s for its network candidates before sending the offer or answer, so most
+  calls connect with those two messages alone. That matters because Home Assistant Cloud and some proxies can
+  delay the event stream; while the page is on the polling fallback (§8), it polls `GET /api/calls/current`
+  every second during a call setup instead of every 5 s.
+- No new server technology: it works through Home Assistant's ingress, Home Assistant Cloud and a Cloudflare
+  Tunnel alike.
+- **Calls in progress live in memory**, in the same process as the live-update hub (§8 — this relies on uvicorn
+  running with **1 worker**, as the Dockerfile says; don't raise it). A restart ends them; their rows are closed
+  as "Couldn't connect" at start-up. A `calls` table keeps the history:
+  `calls(id, conversation_id, caller_id, callee_id, started_at, answered_at, ended_at, outcome, message_id)`, with
+  `outcome` one of `answered`, `missed`, `declined`, `busy`, `failed`, `cancelled`. Rows are deleted with their
+  note.
+- **https is required**: browsers only give a page the microphone on a secure address. The same check as voice
+  messages (§15.6): on plain `http://` (the shared `HttpWarning.isPlainHttp()`, `common/static/http-warning.js`)
+  the call button explains why and links to the docs.
+- **Microphone** permission is asked the first time, when the person presses Call or Answer. Ingress pages are
+  same-origin iframes, so the microphone works there as it does for voice messages. The Companion app's web view
+  may block it (§15.6); then *Answer* says so, offers the browser, and the caller sees "Asha couldn't answer here".
+- **No change to the CSP**: the page talks only to the app (`connect-src 'self'`); relay credentials are fetched
+  by the server, and the browser's WebRTC connections aren't covered by `connect-src`.
 
 **Connecting the two phones (the networking part)**
 
-1. **At home (same Wi-Fi)** — the phones connect directly. Nothing to set up.
-2. **Away from home, direct** — each phone asks a **STUN** server for its public address and the phones try to
-   connect directly. This works on many home and mobile networks. The STUN server is set in App settings (empty by
-   default: home only); a public one such as Cloudflare's (`stun.cloudflare.com`) can be entered. Only the
-   phones' network addresses go to it, never audio or names.
-3. **Away from home, relayed** — when the networks don't allow a direct link (common on mobile data and strict
-   Wi-Fi), the audio needs a **TURN relay**. A **Cloudflare Tunnel** carries the signalling but *not* the call
-   audio (tunnels don't pass UDP for public hostnames), so the relay is separate:
+1. **At home (same Wi-Fi)**: the phones connect directly. Nothing to set up.
+2. **Away from home, direct**: each phone asks a **STUN** server for its public address and the phones try to
+   connect directly. This works on many home and mobile networks. The STUN server is set in App settings (empty
+   by default, meaning home only). A public one such as Cloudflare's (`stun:stun.cloudflare.com:3478`, free, no
+   account) can be entered. Only the phones' network addresses go to it, never audio or names.
+3. **Away from home, relayed**: when the networks don't allow a direct link (common on mobile data and strict
+   Wi-Fi), the audio needs a **TURN relay**. A Cloudflare Tunnel carries the signalling but *not* the call audio
+   (tunnels don't pass UDP for public hostnames), so the relay is separate:
    - **Option A — Cloudflare Realtime TURN** (recommended with a Cloudflare setup): the admin creates a TURN key in
-     their Cloudflare account and enters its *key id* and *API token* in App settings (stored like other secrets,
-     write-only). For each call the app asks Cloudflare for short-lived credentials (valid for the call only) and
-     gives them to the two phones. The audio passes through Cloudflare still encrypted end to end — Cloudflare
-     can't listen. Cost: Cloudflare charges per GB relayed with a large free monthly allowance; a voice call is
-     about 30–60 MB an hour, so a household stays well inside it.
-   - **Option B — your own TURN server** (e.g. a coturn app on Home Assistant): the admin enters its address,
-     user name and password. Needs a router port forwarded to it.
+     their Cloudflare account and enters its *key id* and *API token*. For each call the server asks Cloudflare's
+     TURN credentials API for credentials valid 4 hours (longer than any call) and gives them to the two phones
+     in `iceServers`. The request goes straight from the app to Cloudflare (not through Home Assistant), with a
+     5 s time-out and no DB connection held; if it fails, the call goes ahead without a relay and the failure is
+     logged. Audio passes through Cloudflare still encrypted end to end. Cost: free up to a large monthly
+     allowance (1,000 GB when this was written; check Cloudflare's pricing), and a voice call is about 30–60 MB
+     an hour.
+   - **Option B — your own TURN server** (e.g. a coturn app on Home Assistant): the admin enters its address and
+     coturn's **shared secret** (`use-auth-secret` / `static-auth-secret`). The app makes short-lived
+     credentials per call (user name `<expiry>:<call id>`, password = base64 HMAC-SHA1 of it with the secret), so
+     no long-lived password is ever given to a phone. Needs a router port forwarded to it. Offer
+     `turns:` on port 443 where it's set up, for networks that allow only web traffic.
    - **No relay set**: calls that can't connect directly end with "Couldn't connect from here — an admin can add a
      call relay in App settings".
-- **Test calling** in App settings checks the microphone, STUN and the relay (does a short loop-back test).
+- **Test calling** in App settings checks the microphone, STUN and the relay with a short loop-back call in the
+  admin's own browser.
 
-**App settings (group *Voice calls*, shown while the feature is on)**
+**App settings (group `calls`, *Voice calls*)**
 
-| Setting | Default | |
+Declared in `settings.py` like every setting (§3.1), on the shared `settings_core.Registry`; everything but the
+switch has `show_if` the switch is on, and the relay fields `show_if` their relay choice.
+
+| Key | Default | |
 |---|---|---|
-| Voice calls | off | the feature switch |
-| Address lookup (STUN) | empty | e.g. `stun:stun.cloudflare.com:3478`; empty = home network only |
-| Call relay | none | none, Cloudflare (key id + API token), or own TURN (address, user, password) |
-| Ring for | 30 s | 15–60 s |
+| `calls_enabled` | false | The feature switch. Off: no call button, call routes answer 403. |
+| `calls_ring_seconds` | 30 | 15–60. |
+| `calls_stun` | empty | e.g. `stun:stun.cloudflare.com:3478`; empty = home network only. Must start `stun:` or `stuns:`. |
+| `calls_relay` | `none` | `none`, `cloudflare` or `turn`. |
+| `calls_cf_key_id` | empty | Cloudflare TURN key id. |
+| `calls_cf_api_token` | empty | **Secret** (write-only). |
+| `calls_turn_url` | empty | e.g. `turn:home.example.com:3478` (`turn:` / `turns:`). |
+| `calls_turn_secret` | empty | **Secret**: coturn's shared secret. |
 
-**Privacy (for DOCS)** — off by default; with only the home network nothing leaves the house; with a STUN server
-the phones' public network addresses go to it; with a relay the encrypted audio passes through it. Names,
-messages and recordings never do. Calls are never recorded.
+These are Chat's first secret settings, so the backup routes (Admin → Storage) must start using the
+shared `Registry.scrub_secrets` / `saved_secrets` / `keep_secrets` (`backup_core.blank_settings` /
+`saved_settings` / `keep_settings`): a downloaded backup never carries the token or the secret, and a restore
+keeps the ones this install has.
+
+**Shared code it uses** (nothing new in `common/` at first)
+
+`settings_core.py` and `settings.js` (the settings group, secrets, `show_if`), `backup_core.py` (secrets out of
+backups), `ha_notify.py` (the ringing and missed-call pushes, `clear_notification`), `ha_ws.py` through
+`ha_events.py` (the Decline button), `http-warning.js` (https check). If another household app ever wants calls,
+the browser side (call screen, WebRTC set-up) would move to `common/static/` then, not before.
+
+**Privacy (for DOCS)**: off by default. With only the home network nothing leaves the house. With a STUN server the
+phones' public network addresses go to it; with a relay the encrypted audio passes through it. Names, messages and
+recordings never do. Calls are never recorded. Call history (who called whom, when, how long) is in the database
+like messages (§4.1).
 
 **Limits to say plainly in the docs**
 
-- Ringing is a notification, not a real phone call: it can take a few seconds and is silenced by the phone's Do
-  Not Disturb. Ringing like a normal call would need a native app.
-- A call needs both people to keep Chat (or the Companion app) open on screen on some phones; locking the screen
-  may end it.
+- Ringing is a notification, not a real phone call. It can take a few seconds, and the phone's own Do Not Disturb
+  silences it. Ringing like a normal call would need a native app.
+- On some phones the call needs Chat (or the Companion app) to stay open on screen; locking the screen or
+  switching apps may end it.
+- The Companion app may not allow the microphone; the browser always works over https.
 
-**Later (each small once calls exist)**
-
-- **Video** (camera on/off, flip camera).
-- **Group calls** of up to 4 people (each phone connects to each other; beyond 4 would need a media server).
-- A **Calls** list (recent, missed, call back).
-
-**Rough size**: the home-network call (signalling, call screen, ringing notification, call notes, history) is one
-medium release; the STUN/relay settings and Cloudflare credentials are a small one on top; video and group calls
-are small to medium each.
-
-**Tests**: signalling and permissions (only the two people get the events, busy, timeout, decline, children's
-quiet hours), the call history and chat notes, Cloudflare credential requests with a fake server (never calling
-the real one in tests), the settings checks, and a browser test with two pages and a fake microphone.
+**Tests**: signalling and permissions (only the two people get the events and can use the routes; busy, ring
+time-out, decline, answered elsewhere, quiet hours and muted chats, children and read-only chats, personal room
+409, feature off 403), the Decline notification action, call history and chat notes, restart closing calls,
+Cloudflare credential requests against a fake server (never the real one in tests) and coturn credentials,
+secrets kept out of backups and kept over a restore, the settings checks, and a browser test with two pages and a
+fake microphone (Chromium's `--use-fake-device-for-media-stream`).
 
 ## Security notes (2026-10)
 
