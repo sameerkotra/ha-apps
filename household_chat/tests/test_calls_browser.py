@@ -141,14 +141,15 @@ class CallsInBrowsers(unittest.TestCase):
         n.wait_for_function("(document.querySelector('#callHint') || {}).textContent === 'Tarun has muted their microphone.'", timeout=8000)
         t.click("#callScreen button.mute")
         self.assertTrue(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
-        # ⚙: the sound output only (no microphone choice); picking one switches the call's sound
+        # ⚙: the microphone list (on Android the phone's sound routes) and, where labelled, the outputs
         t.click("#callScreen button.devices")
-        t.wait_for_selector("#callPanel:not([hidden])")
-        listed = t.evaluate("async () => (await navigator.mediaDevices.enumerateDevices()).some((d) => d.kind === 'audiooutput')")
-        self.assertEqual(t.evaluate("[...document.querySelectorAll('#callPanel select')].map((s) => s.getAttribute('aria-label'))"),
-                         ["Sound output"] if listed else [])
-        if listed and t.evaluate("CAN_PICK_OUTPUT"):
-            t.select_option("#callPanel select", index=0)
+        t.wait_for_selector("#callPanel:not([hidden]) select")
+        before = t.evaluate("call.stream.getAudioTracks()[0].id")
+        t.select_option("#callPanel select[aria-label='Microphone']", index=t.evaluate("document.querySelector('#callPanel select').options.length") - 1)
+        t.wait_for_function(f"call.stream.getAudioTracks()[0].id !== {json.dumps(before)}", timeout=5000)
+        self.assertEqual(t.evaluate("call.pc.getSenders().find((x) => x.track).track.id"), t.evaluate("call.stream.getAudioTracks()[0].id"))
+        if t.evaluate("CAN_PICK_OUTPUT") and t.evaluate("!!document.querySelector('#callPanel select[aria-label=\"Sound output\"]')"):
+            t.select_option("#callPanel select[aria-label='Sound output']", index=0)
             t.wait_for_function("callAudio.sinkId === call.outputId", timeout=5000)
         n.click("#callScreen button.hangup")
         for p in (n, t):

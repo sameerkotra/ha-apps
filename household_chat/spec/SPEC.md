@@ -718,11 +718,13 @@ the rest are planned in §18.1.
     Assistant app lists no outputs), and making the sound louder through Web Audio didn't help. The phone's own
     volume, sound or Bluetooth menu does it. The mute button is a drawn microphone (inline SVG) with a line across
     it when muted, since no emoji shows a muted microphone.
-  - **⚙ Sound output**: a panel listing the outputs (`enumerateDevices`) whenever the browser lists any — whether
-    or not it claims `setSinkId` (the Home Assistant app on Android says it can't and still switches); choosing
-    one tries it on the call's `<audio>` and says if it fails. The choice is
-    kept in the browser (`localStorage` `hchat.callOut`) for the next call. No microphone choice (it was tried and
-    taken out).
+  - **⚙ Sound and microphone**: a panel with the `audioinput` devices (`enumerateDevices`; switching gets the new
+    one and `replaceTrack`s it into the call) — **on Android these are the phone's sound routes, Speakerphone,
+    Earpiece, Bluetooth headset, and picking one switches the whole call there**, so the field is labelled
+    "Sound: speakerphone, earpiece, headset" on Android and "Microphone" elsewhere — and, when the browser lists
+    labelled `audiooutput` devices, those as "Sound comes out of" (`setSinkId`; Android lists one unnamed output,
+    which isn't shown). Both choices are kept in the browser (`localStorage` `hchat.callMic`, `hchat.callOut`) for
+    the next call.
   - **Is sound getting through?** Every second the page reads the connection's statistics: `inbound-rtp`
     packets and `audioLevel` (their sound) and `media-source` `audioLevel` (my microphone), drawn as two level
     bars. After 5 s a line says what's wrong: no packets arriving from them, their sound silent for 6 s, they've
