@@ -131,10 +131,9 @@ async function audioPanel() {
   const outNow = call.outputId || lsGet(OUT_KEY) || "default";
   const outSel = h("select", { "aria-label": "Sound output", onchange: (e) => setOutput(e.target.value) }, outs.map((d, i) => opt(d, i, "Output")));
   outSel.value = outs.some((d) => d.deviceId === outNow) ? outNow : (outs[0] || {}).deviceId || "";
-  const labelled = outs.filter((d) => d.label);
   mount(box,
-    field(/Android/.test(navigator.userAgent) ? "Sound: speakerphone, earpiece, headset" : "Microphone", micSel),
-    labelled.length ? field("Sound comes out of", outSel) : null);
+    field("Microphone", micSel, /Android/.test(navigator.userAgent) ? "On a phone this also switches the call to the speakerphone, earpiece or headset." : null),
+    outs.length ? field("Sound comes out of", outSel) : null);
   box.hidden = false;
 }
 

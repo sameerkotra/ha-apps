@@ -148,7 +148,7 @@ class CallsInBrowsers(unittest.TestCase):
         t.select_option("#callPanel select[aria-label='Microphone']", index=t.evaluate("document.querySelector('#callPanel select').options.length") - 1)
         t.wait_for_function(f"call.stream.getAudioTracks()[0].id !== {json.dumps(before)}", timeout=5000)
         self.assertEqual(t.evaluate("call.pc.getSenders().find((x) => x.track).track.id"), t.evaluate("call.stream.getAudioTracks()[0].id"))
-        if t.evaluate("CAN_PICK_OUTPUT") and t.evaluate("!!document.querySelector('#callPanel select[aria-label=\"Sound output\"]')"):
+        if t.evaluate("CAN_PICK_OUTPUT"):
             t.select_option("#callPanel select[aria-label='Sound output']", index=0)
             t.wait_for_function("callAudio.sinkId === call.outputId", timeout=5000)
         n.click("#callScreen button.hangup")

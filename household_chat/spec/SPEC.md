@@ -720,10 +720,9 @@ the rest are planned in §18.1.
     it when muted, since no emoji shows a muted microphone.
   - **⚙ Sound and microphone**: a panel with the `audioinput` devices (`enumerateDevices`; switching gets the new
     one and `replaceTrack`s it into the call) — **on Android these are the phone's sound routes, Speakerphone,
-    Earpiece, Bluetooth headset, and picking one switches the whole call there**, so the field is labelled
-    "Sound: speakerphone, earpiece, headset" on Android and "Microphone" elsewhere — and, when the browser lists
-    labelled `audiooutput` devices, those as "Sound comes out of" (`setSinkId`; Android lists one unnamed output,
-    which isn't shown). Both choices are kept in the browser (`localStorage` `hchat.callMic`, `hchat.callOut`) for
+    Earpiece, Bluetooth headset, and picking one switches the whole call there**, so on Android the field's help
+    says so — and, when the browser lists any `audiooutput` devices, those as "Sound comes out of" (`setSinkId`;
+    "Output n" for one without a name). Both choices are kept in the browser (`localStorage` `hchat.callMic`, `hchat.callOut`) for
     the next call.
   - **Is sound getting through?** Every second the page reads the connection's statistics: `inbound-rtp`
     packets and `audioLevel` (their sound) and `media-source` `audioLevel` (my microphone), drawn as two level
