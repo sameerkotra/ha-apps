@@ -96,7 +96,9 @@ def cf_fetch(key_id: str, token: str, ttl: int = CF_TTL) -> list:
     req = urllib.request.Request(
         f"https://rtc.live.cloudflare.com/v1/turn/keys/{urllib.parse.quote(key_id, safe='')}/credentials/generate-ice-servers",
         data=json.dumps({"ttl": ttl}).encode(), method="POST",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        # Cloudflare's bot filter bans Python's default user agent ("error code: 1010"): say who's asking
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json",
+                 "User-Agent": f"HouseholdChat/{config.APP_VERSION} (Home Assistant app; +https://github.com/sameerkotra/ha-apps)"})
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             body = json.loads(resp.read(64 * 1024).decode("utf-8"))

@@ -845,7 +845,8 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
 - **Cloudflare Realtime TURN** (`calls_relay = cloudflare`): the admin makes a TURN key in their Cloudflare
   account (Realtime → TURN) and enters its key id and API token. `calls.cf_fetch` POSTs
   `https://rtc.live.cloudflare.com/v1/turn/keys/<key id>/credentials/generate-ice-servers` `{"ttl": 14400}` with the
-  token (straight from the app to Cloudflare, 5 s time-out) and keeps the answer's `iceServers` (username,
+  token and a `User-Agent` naming the app (Cloudflare's bot filter answers 403 "error code: 1010" to Python's
+  default one; straight from the app to Cloudflare, 5 s time-out) and keeps the answer's `iceServers` (username,
   credential, urls) for an hour, so a household's calls make a few requests a day. A failure is logged
   ("Couldn't get call relay credentials from Cloudflare") and the call goes ahead without a relay. The sound through
   Cloudflare stays encrypted end to end. Cost: free up to a large monthly allowance (1,000 GB when this was

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.2
+
+- **Cloudflare relay**: fetching the credentials failed with "HTTP 403 … error code: 1010" — Cloudflare's bot filter refusing the app's default web client name. The app now identifies itself as Household Chat.
+
 ## 2.4.1
 
 - **Calls**: ⚙ during a call shows the Microphone list (on a phone also where you switch to the speakerphone, earpiece or Bluetooth headset) and the output list where the browser has one.
