@@ -359,6 +359,38 @@ def post_card(conn, out: Outbox, conv, user: dict, card: dict, bus_id: str | Non
     return mid
 
 
+# ---------- call notes (§15.12) ----------
+def call_row(conn, mid: int):
+    return conn.execute("SELECT * FROM calls WHERE message_id = ?", (mid,)).fetchone()
+
+
+def call_seconds(c) -> int | None:
+    a, e = config.parse_iso(c["answered_at"]), config.parse_iso(c["ended_at"])
+    return max(0, round((e - a).total_seconds())) if a and e else None
+
+
+def call_text(c) -> str:
+    """The note as anyone may see it (previews, exports); the page words it for the caller or the person called."""
+    return call_label(c["outcome"], call_seconds(c)) if c is not None else "📞 Call"
+
+
+def call_label(outcome: str | None, seconds: int | None) -> str:
+    if outcome == "answered":
+        secs = seconds or 0
+        return "📞 Call · " + (f"{secs // 60} min" if secs >= 60 else f"{secs} s")
+    return {"missed": "📞 Missed call", "busy": "📞 Missed call", "declined": "📞 Declined call",
+            "failed": "📞 Call couldn't connect"}.get(outcome, "📞 Call")
+
+
+def calls_out(conn, ids) -> dict:
+    if not ids:
+        return {}
+    q = ",".join("?" * len(ids))
+    return {c["message_id"]: {"id": c["id"], "outcome": c["outcome"], "callerId": c["caller_id"],
+                              "calleeId": c["callee_id"], "seconds": call_seconds(c), "startedAt": c["started_at"]}
+            for c in conn.execute(f"SELECT * FROM calls WHERE message_id IN ({q})", list(ids))}
+
+
 def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0) -> list:
     """Messages as the page shows them. `viewer_id` adds their own stars/reminders/heard marks;
     `visible_from` hides reply quotes of messages from before they joined."""
@@ -391,6 +423,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
                               f"FROM messages m WHERE m.id IN ({rq})", list(reply_ids)):
             replies[r["id"]] = r
     cards = cards_out(conn, [r["id"] for r in rows if r["kind"] == "card"])
+    calls = calls_out(conn, [r["id"] for r in rows if r["kind"] == "call"])
     acks: dict = {}
     if any(r["announcement"] for r in rows):
         for a in conn.execute(f"SELECT message_id, user_id FROM announcement_acks WHERE message_id IN ({qmarks}) ORDER BY at", ids):
@@ -415,6 +448,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
              "starred": r["id"] in stars, "reminder": reminders.get(r["id"]),
              "replyTo": None, "poll": poll_out(conn, r["id"]) if r["kind"] == "poll" else None,
              "card": cards.get(r["id"]) if r["kind"] == "card" and not r["deleted_at"] else None,
+             "call": calls.get(r["id"]) if r["kind"] == "call" and not r["deleted_at"] else None,
              "expiresAt": r["expires_at"],
              "announcement": announcement_out(conn, r, acks.get(r["id"], [])) if r["announcement"] else None}
         if r["reply_gone"] and not r["reply_to"]:
@@ -452,6 +486,8 @@ def preview_of(conn, msg) -> str:
         return "📊 " + short(msg["body"], 100)
     if msg["kind"] == "card":
         return card_icon(conn, msg) + " " + short(msg["body"], 100)
+    if msg["kind"] == "call":
+        return call_text(call_row(conn, msg["id"]))
     text = short(strip_marks(msg["body"]), 100)
     if text:
         return text
@@ -493,8 +529,10 @@ def members_out(conn, cid: str) -> list:
 
 
 def unread_counts(conn, cid: str, m, uid: str) -> tuple[int, int]:
+    # a call note is unread only when it's a call you missed (§15.12)
     base = ("FROM messages WHERE conversation_id = ? AND id > ? AND id > ? AND deleted_at IS NULL "
-            "AND kind != 'system' AND (user_id IS NULL OR user_id != ?)")
+            "AND kind != 'system' AND (user_id IS NULL OR user_id != ?) "
+            "AND (kind != 'call' OR id IN (SELECT message_id FROM calls WHERE outcome IN ('missed', 'busy')))")
     args = (cid, m["last_read_id"], m["joined_message_id"], uid)
     n = conn.execute("SELECT COUNT(*) " + base, args).fetchone()[0]
     if not n:
@@ -623,6 +661,8 @@ def disable_user(conn, out: Outbox, uid: str, actor: str) -> None:
         conversation_members_event(conn, out, r)
     db.audit(conn, "person_disabled", uid, None, actor)
     hub.close_user(uid)
+    from . import calls
+    out.job(calls.end_for_user, uid, "failed")
 
 
 def set_child(conn, out: Outbox, uid: str, child: bool, actor: str) -> None:
@@ -900,7 +940,7 @@ def delete_message(conn, out: Outbox, msg, conv, m, user: dict) -> None:
             files.move_to_deleted(a["rel_path"])
         files.remove_thumb(a["id"])
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (msg["id"],))
-    for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls", "app_cards"):
+    for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls", "app_cards", "calls"):
         conn.execute(f"DELETE FROM {t} WHERE message_id = ?", (msg["id"],))
     conn.execute("UPDATE messages SET body = '', mentions = NULL, mention_all = 0, deleted_at = ?, pinned_at = NULL, "
                  "pinned_by = NULL WHERE id = ?", (config.now_iso(), msg["id"]))

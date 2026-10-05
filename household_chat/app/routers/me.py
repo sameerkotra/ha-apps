@@ -24,7 +24,8 @@ def app_public(conn) -> dict:
             "showPresence": s["show_presence"], "notificationReply": s["notification_reply"],
             "whoCanCreateGroups": s["who_can_create_groups"], "blockedExtensions": s["blocked_extensions"],
             "whoCanAnnounce": s["who_can_announce"], "childrenCanMessageEachOther": s["children_can_message_each_other"],
-            "exportMaxMb": s["export_max_mb"]}
+            "exportMaxMb": s["export_max_mb"], "callsEnabled": s["calls_enabled"],
+            "callRingSeconds": s["calls_ring_seconds"]}
 
 
 @router.get("/me")

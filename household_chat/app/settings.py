@@ -24,6 +24,8 @@ GROUPS = [
     Group("messages", "Chats and messages"),
     Group("retention", "Old messages"),
     Group("notifications", "Notifications"),
+    Group("calls", "Voice calls", "One-to-one calls in direct chats. The sound goes straight between the two "
+          "phones; this release works on the home network only."),
 ]
 
 SETTINGS = [
@@ -58,6 +60,9 @@ SETTINGS = [
             choices=[("admins", "Admins"), ("admins_and_group_admins", "Admins, and group admins in their groups")]),
     Setting("children_can_message_each_other", False, "Children can start direct chats with each other",
             group="messages"),
+    Setting("calls_enabled", False, "Voice calls", group="calls",
+            help="Show a 📞 Call button in direct chats. Calls need the app opened over https (the microphone)."),
+    Setting("calls_ring_seconds", 30, "Ring for (seconds)", group="calls", min=15, max=60, show_if="calls_enabled"),
     Setting("export_max_mb", 500, "Largest chat download, files included (MB)", group="files", min=10, max=10000),
 ]
 

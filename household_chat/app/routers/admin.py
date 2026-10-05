@@ -18,7 +18,7 @@ import zipfile
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import app_messages, avatars, chats, config, db, disappearing, files, ha_client, presence, settings, shared_folders
+from .. import app_messages, avatars, calls, chats, config, db, disappearing, files, ha_client, presence, settings, shared_folders
 from ..common import backup_core, db_core, ha_notify, ha_people, people_admin
 from ..auth import require_admin
 from ..live import hub
@@ -743,6 +743,7 @@ def _restore_from(tmp: str, admin: dict) -> dict:
         db.RESTORING.set()
         try:
             hub.reset()
+            calls.reset()                    # calls that were on are dropped; the restored database's are closed below
             time.sleep(0.5)          # let requests already running finish
             for ext in ("-wal", "-shm"):
                 try:
@@ -757,6 +758,7 @@ def _restore_from(tmp: str, admin: dict) -> dict:
                     db.set_setting(conn, k, v)
             settings.invalidate()
             disappearing.run_expiry()        # before anything is served again
+            calls.close_unfinished()
         finally:
             db.RESTORING.clear()
         restored_files = 0
