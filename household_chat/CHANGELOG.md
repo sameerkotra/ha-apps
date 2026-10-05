@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.2
+
+- **Tapping a notification opens Household Chat again** instead of "404 not found". Notifications pointed at the app's short name, but an app installed from a repository has the repository's id in its address in Home Assistant (for example `a1b2c3d4_household_chat`); they now use that full address. This also fixes **Answer** on a call notification.
+
 ## 2.3.1
 
 - **Calls: both people are heard.** On phones and in the Home Assistant app, the other person's sound could be held back on one side, so only one voice came through. The sound is now started by your tap on 📞 or Answer, and if a phone still holds it back, a 🔈 button appears to hear them.

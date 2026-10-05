@@ -5,6 +5,7 @@ Options come from /data/options.json (written by the Supervisor). Only
 """
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 from .common import auth_core, ha_time
@@ -18,9 +19,20 @@ SHARE_DIR = os.environ.get("SHARE_DIR", "/share/household_chat")
 SHARE_ROOT = os.environ.get("SHARE_ROOT", os.path.dirname(SHARE_DIR.rstrip("/")) or "/share")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
 OPTIONS_PATH = os.environ.get("OPTIONS_PATH", os.path.join(DATA_DIR, "options.json"))
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 APP_TITLE = "Household Chat"
-INGRESS_URL = "/hassio/ingress/household_chat"
+
+
+def ingress_url(host: str | None = None) -> str:
+    """The app's page in Home Assistant, for phone notifications to open. An app installed from a repository has
+    the repository's id in its slug (a1b2c3d4_household_chat; local_household_chat for a local copy), and the
+    container's host name is that slug with - for _ (a1b2c3d4-household-chat). Outside Home Assistant (tests,
+    development) the bare slug is used."""
+    slug = (os.environ.get("HOSTNAME", "") if host is None else host).strip().lower().replace("-", "_")
+    return "/hassio/ingress/" + (slug if re.fullmatch(r"[a-z0-9]{1,40}_household_chat", slug) else "household_chat")
+
+
+INGRESS_URL = ingress_url()
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api")

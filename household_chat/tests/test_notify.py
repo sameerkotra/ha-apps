@@ -53,6 +53,13 @@ class NotifyTests(ApiTestCase):
         self.send(self.hh, "re", NISHA, replyTo=mine["id"])
         self.assertEqual(self.sent.items[-1]["message"], "Nisha: re")
 
+    def test_notifications_open_the_apps_real_page(self):
+        # installed from a repository, the app's slug carries the repository's id: the container's host name says it
+        self.assertEqual(config.ingress_url("a1b2c3d4-household-chat"), "/hassio/ingress/a1b2c3d4_household_chat")
+        self.assertEqual(config.ingress_url("local-household-chat"), "/hassio/ingress/local_household_chat")
+        for other in ("", "my-laptop", "a1b2c3d4-household-docs", "x/../household-chat"):
+            self.assertEqual(config.ingress_url(other), "/hassio/ingress/household_chat")
+
     def test_preview_levels_and_buttons(self):
         self.ok(self.put("/api/me/settings", {"notifyPreview": "sender"}, TARUN))
         self.send(self.hh, "secret", NISHA, mentions=[TARUN["id"]])
