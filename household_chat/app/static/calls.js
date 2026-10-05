@@ -73,7 +73,6 @@ function playRemote(stream) {
   if (!callAudio) unlockAudio();
   callAudio.srcObject = stream;
   applyOutput();
-  if (call.loud) startBoost();
   const p = callAudio.play();
   if (p && p.then) p.then(() => { if (call) { call.blocked = false; renderCallButtons(); } })
     .catch(() => { if (call) { call.blocked = true; renderCallButtons(); setCallHint("Your browser held back the sound — tap 🔈 to hear " + call.peerName + "."); } });
@@ -83,7 +82,7 @@ function tapToHear() {
   callAudio.play().then(() => { call.blocked = false; renderCallButtons(); setCallHint(""); }).catch(() => {});
 }
 
-// ---------- speaker, sound output and microphone ----------
+// ---------- sound output and microphone ----------
 const CAN_PICK_OUTPUT = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
 async function audioDevices(kind) {
   try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === kind); } catch (e) { return []; }
@@ -97,39 +96,6 @@ async function setOutput(id) {
   call.outputId = id;
   lsSet(OUT_KEY, id || "");
   if (CAN_PICK_OUTPUT && callAudio) { try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); } }
-}
-// Speaker: a phone's loudspeaker where the browser lets a page pick it; otherwise the sound is made louder.
-async function toggleSpeaker() {
-  if (!call) return;
-  call.speaker = !call.speaker;
-  const outs = CAN_PICK_OUTPUT ? await audioDevices("audiooutput") : [];
-  const loud = outs.find((d) => /speaker/i.test(d.label) && !/head|ear|blue/i.test(d.label));
-  const quiet = outs.find((d) => /earpiece|receiver|handset/i.test(d.label));
-  const pick = call.speaker ? loud : quiet;
-  if (pick) { await setOutput(pick.deviceId); call.loud = false; stopBoost(); }
-  else {
-    call.loud = call.speaker;
-    if (call.loud) startBoost(); else stopBoost();
-    if (call.loud && !call.toldLouder) { call.toldLouder = true; toast("This phone doesn't let a web page switch to the loudspeaker, so the call is made louder instead. Your phone's own sound menu can switch it too.", { ms: 7000 }); }
-  }
-  renderCallButtons();
-}
-// louder: the other person's sound through a gain of 3 (the <audio> stays attached but silent)
-function startBoost() {
-  if (!call || !call.remote || call.boost) return;
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = ctx.createMediaStreamSource(call.remote), gain = ctx.createGain();
-    gain.gain.value = 3;
-    src.connect(gain); gain.connect(ctx.destination);
-    ctx.resume().catch(() => {});
-    call.boost = ctx;
-    if (callAudio) callAudio.muted = true;
-  } catch (e) { call.loud = false; }
-}
-function stopBoost() {
-  if (call && call.boost) { call.boost.close().catch(() => {}); call.boost = null; }
-  if (callAudio) callAudio.muted = false;
 }
 async function switchMic(deviceId) {
   if (!call || !call.stream) return;
@@ -162,7 +128,7 @@ async function audioPanel() {
   mount(box,
     field("Microphone", micSel),
     outs.length ? field("Sound comes out of", outSel)
-      : h("p", { class: "hint" }, "This browser plays the call through the phone's current output. Use 🔊 Speaker, your phone's volume buttons, or its sound or Bluetooth menu to change it."));
+      : h("p", { class: "hint" }, "This browser plays the call through the phone's current output. Use your phone's volume buttons, or its sound or Bluetooth menu, to change it."));
   box.hidden = false;
 }
 
@@ -236,11 +202,22 @@ function callScreen(peerId, peerName, status, buttons) {
 }
 function setCallStatus(text) { const s = $("#callStatus"); if (s) s.textContent = text; }
 function closeCallScreen() { const el = $("#callScreen"); if (el) el.remove(); }
+// a microphone, with a line across it when muted (no emoji shows that)
+function micIcon(off) {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (name, attrs) => { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+  const svg = el("svg", { viewBox: "0 0 24 24", width: "26", height: "26", fill: "none", stroke: "currentColor",
+    "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true", class: "mic-icon" });
+  svg.appendChild(el("rect", { x: "9", y: "2", width: "6", height: "12", rx: "3" }));
+  svg.appendChild(el("path", { d: "M5 10v1a7 7 0 0 0 14 0v-1" }));
+  svg.appendChild(el("path", { d: "M12 18v4M8 22h8" }));
+  if (off) svg.appendChild(el("path", { d: "M3 3l18 18" }));
+  return svg;
+}
 function callBtn(label, cls, run, title) { return h("button", { class: "call-btn " + cls, type: "button", "aria-label": title || label, title: title || label, onclick: run }, label); }
 function inCallButtons() {
   return [
-    callBtn(call && call.muted ? "🔇" : "🎤", "mute" + (call && call.muted ? " on" : ""), toggleMute, call && call.muted ? "Unmute" : "Mute"),
-    callBtn("🔊", "speaker" + (call && call.speaker ? " on" : ""), toggleSpeaker, call && call.speaker ? "Speaker off" : "Speaker"),
+    callBtn(micIcon(!!(call && call.muted)), "mute" + (call && call.muted ? " on" : ""), toggleMute, call && call.muted ? "Unmute" : "Mute"),
     callBtn("⚙", "devices", audioPanel, "Microphone and sound output"),
     call && call.blocked ? callBtn("🔈", "hear on", tapToHear, "Tap to hear") : null,
     callBtn("📞", "hangup", () => hangUp(), "Hang up"),
@@ -418,7 +395,6 @@ function finish(text, tone) {
   clearInterval(c.clock); clearTimeout(c.connectTimer); clearInterval(c.poll);
   if (c.pc) { try { c.pc.close(); } catch (e) { /* closed */ } }
   if (c.stream) c.stream.getTracks().forEach((t) => t.stop());
-  if (c.boost) c.boost.close().catch(() => {});
   if (callAudio) { callAudio.srcObject = null; callAudio.muted = false; }
   if (c.wake) c.wake.release().catch(() => {});
   if (tone) startTone(tone);

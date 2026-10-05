@@ -72,12 +72,12 @@ An admin turns calls on in **App settings → Voice calls** (off until then).
 - **📞** at the top of a direct chat calls that person. Calls are one-to-one, in direct chats only: not in groups or My room, and not in a direct chat that's read-only. Children can call the people they can message.
 - **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
 - **During a call**:
-  - 🎤 mutes and unmutes you; the other person sees that you've muted.
-  - 🔊 **Speaker** switches to the loudspeaker where the browser lets a web page choose it. Where it can't (many phones), it makes the call louder instead; your phone's own sound or Bluetooth menu can switch the output too.
+  - The microphone button mutes and unmutes you (muted, it's red with a line across the microphone); the other person sees that you've muted.
   - ⚙ picks the **microphone**, and where the browser allows it the **speaker or headset** the call plays through (computers and some phones). The choice is remembered on that device.
   - Two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
   - 🔈 appears if your phone held back their sound: tap it to hear them.
   - The red button hangs up. The screen stays on while the call is on.
+  - There's no speaker button: a web page can't switch a phone to the loudspeaker. Use the phone's volume buttons, or its sound or Bluetooth menu.
 - **In the chat**, each call leaves a note: "📞 Outgoing call · 4 min", "📞 Missed call", "📞 No answer", "📞 Declined", with **Call back**. A missed call counts as unread and is notified like a message.
 - **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call.
 - **Quiet hours and muted chats**: your phone isn't rung, but open pages still ring. In quiet hours a missed call waits for the summary afterwards, like messages; in a muted chat it isn't notified.

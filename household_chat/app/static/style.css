@@ -425,7 +425,8 @@ code.path { overflow-wrap: anywhere; word-break: break-all; }
 .call-btn.hangup { transform: rotate(135deg); }
 .call-btn.answer { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
 .call-btn.mute.on { background: var(--accent-soft); border-color: var(--accent); }
-.call-btn.speaker.on, .call-btn.hear { background: var(--accent-soft); border-color: var(--accent); }
+.call-btn.hear { background: var(--accent-soft); border-color: var(--accent); }
+.call-btn.mute.on { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
 .call-meters { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 260px; margin-top: 8px; }
 .call-meter { display: grid; grid-template-columns: 5.5em 1fr; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-dim); }
 .call-meter b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }

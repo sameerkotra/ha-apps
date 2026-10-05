@@ -132,18 +132,15 @@ class CallsInBrowsers(unittest.TestCase):
                              [False, False, True])
             p.wait_for_selector("#meterThem:not([hidden])", timeout=5000)
         # the other side is told about mute
+        self.assertEqual(t.eval_on_selector_all("#callScreen button.speaker", "els => els.length"), 0)
+        self.assertEqual(t.evaluate("document.querySelectorAll('#callScreen button.mute svg path').length"), 2)
         t.click("#callScreen button.mute")
         self.assertFalse(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
+        # muted: the microphone is drawn with a line across it
+        self.assertEqual(t.evaluate("document.querySelectorAll('#callScreen button.mute.on svg path').length"), 3)
         n.wait_for_function("(document.querySelector('#callHint') || {}).textContent === 'Tarun has muted their microphone.'", timeout=8000)
         t.click("#callScreen button.mute")
         self.assertTrue(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
-        # speaker: louder where the output can't be picked (or a speaker output where it can)
-        n.click("#callScreen button.speaker")
-        n.wait_for_selector("#callScreen button.speaker.on")
-        self.assertTrue(n.evaluate("call.loud ? !!call.boost && callAudio.muted : !!call.outputId"))
-        n.click("#callScreen button.speaker")
-        n.wait_for_selector("#callScreen button.speaker:not(.on)")
-        self.assertFalse(n.evaluate("!!call.boost || callAudio.muted"))
         # ⚙: pick a microphone; the new one is sent in place of the old
         t.click("#callScreen button.devices")
         t.wait_for_selector("#callPanel:not([hidden]) select")

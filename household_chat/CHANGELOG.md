@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.4
+
+- **Calls**: the Speaker button is gone — on phones a web page can't switch to the loudspeaker, and making the call louder didn't help. Use the phone's volume buttons, or its sound or Bluetooth menu.
+- **Calls**: the mute button now shows a microphone, red with a line across it while you're muted (it used to show a speaker).
+
 ## 2.3.3
 
 - **Tapping a notification really opens Household Chat now.** 2.3.2 still sent phones to `/hassio/ingress/…`, an address current Home Assistant no longer has, so the tap still showed "404 not found". Notifications (and **Answer** on a call) now open the app's sidebar page, whose exact address the app asks Home Assistant for when it starts (for example `/a1b2c3d4_household_chat`). The app's **Log** tab shows it: "Notifications open … in Home Assistant".

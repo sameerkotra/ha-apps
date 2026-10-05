@@ -707,10 +707,10 @@ the rest are planned in §18.1.
   call's running time. A soft ringback tone plays while it rings. Once connected, both sides have:
   - **Mute** (the track is disabled; the other side is told over a small WebRTC data channel `hchat` that the
     caller opens, `{muted}`, and shows "Asha has muted their microphone").
-  - **Speaker**: where the browser can pick outputs (`setSinkId`) and lists one labelled as a speaker (and an
-    earpiece to go back to), it switches the `<audio>` to it. Otherwise (most phones: a page can't choose the
-    loudspeaker) the other person's sound is played through Web Audio with a gain of 3 and the `<audio>` muted,
-    with a one-time note saying so.
+  - **No Speaker button**: a page can't choose a phone's loudspeaker (the Android Home
+    Assistant app lists no outputs), and making the sound louder through Web Audio didn't help. The phone's own
+    volume, sound or Bluetooth menu does it. The mute button is a drawn microphone (inline SVG) with a line across
+    it when muted, since no emoji shows a muted microphone.
   - **⚙ Microphone and sound output**: a panel with the microphones (`enumerateDevices`; switching gets the new
     one and `replaceTrack`s it into the call) and, where `setSinkId` exists, the outputs. Both choices are kept in
     the browser (`localStorage` `hchat.callMic`, `hchat.callOut`) for the next call.
@@ -816,7 +816,7 @@ the rest are planned in §18.1.
 counts; missed calls and their pushes; the phone's Decline; busy; offers that never come; quiet hours and muted
 chats; failures, disabling, the gone-side check and restarts; sizes; disappearing chats; a 2.2 database
 upgraded) and `tests/test_calls_browser.py` (the app in uvicorn and two headless Chromium pages with fake
-microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute and the other side told, Speaker, switching microphones, hang up, decline, the notes; skipped without Playwright).
+microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, switching microphones, hang up, decline, the notes; skipped without Playwright).
 
 ## 16. More features
 
