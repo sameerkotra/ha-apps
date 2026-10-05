@@ -78,26 +78,30 @@ function tapToHear() {
 }
 
 // ---------- sound output and microphone ----------
+// whether a page may choose the output: the list is shown whatever the browser claims (some say no and still
+// switch), and choosing tries it on the call's <audio>
 const CAN_PICK_OUTPUT = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+function canSetSink() { return !!(callAudio && typeof callAudio.setSinkId === "function"); }
 async function audioDevices(kind) {
   try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === kind); } catch (e) { return []; }
 }
 function applyOutput() {
   const id = call && call.outputId ? call.outputId : lsGet(OUT_KEY);
-  if (CAN_PICK_OUTPUT && callAudio && id) callAudio.setSinkId(id).catch(() => {});
+  if (canSetSink() && id) callAudio.setSinkId(id).catch(() => {});
 }
 async function setOutput(id) {
   if (!call) return;
   call.outputId = id;
   lsSet(OUT_KEY, id || "");
-  if (CAN_PICK_OUTPUT && callAudio) { try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); } }
+  if (!canSetSink()) { toast("This browser doesn't let the app switch the output.", { error: true }); return; }
+  try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); }
 }
 async function audioPanel() {
   if (!call) return;
   const box = $("#callPanel");
   if (!box) return;
   if (!box.hidden) { box.hidden = true; return; }
-  const outs = CAN_PICK_OUTPUT ? await audioDevices("audiooutput") : [];
+  const outs = (await audioDevices("audiooutput")).filter((d) => d.deviceId !== "communications");   // always listed
   const opt = (d, i, word) => h("option", { value: d.deviceId }, d.label || `${word} ${i + 1}`);
   const outNow = call.outputId || lsGet(OUT_KEY) || "default";
   const outSel = h("select", { "aria-label": "Sound output", onchange: (e) => setOutput(e.target.value) }, outs.map((d, i) => opt(d, i, "Output")));
@@ -416,6 +420,44 @@ function watchWithoutLive() {
   if (!call || call.poll) return;
   const mine = call;
   call.poll = setInterval(() => { if (call !== mine) return; if (!state.sse) checkCurrentCall(); }, 1000);
+}
+
+// ---------- deep links (§15.14): "/<page>/chat/<id>" opens that chat, "/<page>/call/<id>" the ringing screen ----------
+// A notification opens the app's page with the route after it. Home Assistant hands the route to the page in a
+// "home-assistant/properties" message (current versions) and the top page's address says it too (same origin).
+const ROUTE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+function routeOf(path, page) {
+  if (typeof path !== "string") return null;
+  const p = page && path.startsWith(page + "/") ? path.slice(page.length) : path;
+  const parts = p.split("?")[0].split("#")[0].split("/").filter(Boolean);
+  if (parts.length === 2 && (parts[0] === "chat" || parts[0] === "call") && ROUTE_ID.test(parts[1])) return { kind: parts[0], id: parts[1] };
+  return null;
+}
+function parentPath() { try { return window.parent !== window ? window.parent.location.pathname : null; } catch (e) { return null; } }
+function followRoute(r) {
+  if (!r) return false;
+  if (r.kind === "chat") { if (convById(r.id)) openChat(r.id); else toast("That chat isn't here any more."); }
+  else checkCurrentCall();                  // a ringing call shows its screen; an ended one is gone
+  // the address goes back to the bare page, so a reload doesn't open it again
+  const page = state.me && state.me.page;
+  const pp = parentPath();
+  if (page && pp && pp.startsWith(page + "/")) { try { window.parent.history.replaceState(window.parent.history.state, "", page); } catch (e) { /* not reachable */ } }
+  return true;
+}
+function openFromRoute() {
+  const page = state.me && state.me.page;
+  let done = followRoute(routeOf(parentPath(), page)) || followRoute(routeOf(location.pathname, page));
+  if (window.parent === window) return done;
+  const until = Date.now() + 5000;
+  window.addEventListener("message", (e) => {
+    if (done || e.origin !== location.origin || e.source !== window.parent || Date.now() > until) return;
+    const d = e.data;
+    if (!d || d.type !== "home-assistant/properties" || !d.route || typeof d.route.path !== "string") return;
+    const r = routeOf(d.route.path, page);
+    if (r) done = followRoute(r);
+  });
+  try { window.parent.postMessage({ type: "home-assistant/subscribe-properties" }, location.origin); } catch (e) { /* older frames */ }
+  return done;
 }
 
 // ---------- call notes in the chat ----------

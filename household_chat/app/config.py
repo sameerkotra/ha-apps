@@ -19,7 +19,7 @@ SHARE_DIR = os.environ.get("SHARE_DIR", "/share/household_chat")
 SHARE_ROOT = os.environ.get("SHARE_ROOT", os.path.dirname(SHARE_DIR.rstrip("/")) or "/share")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
 OPTIONS_PATH = os.environ.get("OPTIONS_PATH", os.path.join(DATA_DIR, "options.json"))
-APP_VERSION = "2.3.8"
+APP_VERSION = "2.4.0"
 APP_TITLE = "Household Chat"
 
 
@@ -47,6 +47,16 @@ def page_url(slug: str | None, in_sidebar: bool = True) -> str:
 
 # start-up refines this from the Supervisor (ha_client.learn_page_blocking)
 INGRESS_URL = page_url(full_slug_from_host(os.environ.get("HOSTNAME")))
+
+
+def chat_link(cid: str) -> str:
+    """The app's page opened on one chat ("/<full slug>/chat/<id>", §15.14): what a notification opens."""
+    return f"{INGRESS_URL}/chat/{cid}"
+
+
+def call_link(call_id: str) -> str:
+    """The app's page opened on a ringing call ("/<full slug>/call/<id>")."""
+    return f"{INGRESS_URL}/call/{call_id}"
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api")

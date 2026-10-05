@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.0
+
+- **Calls away from home.** Admin → App settings → Voice calls gets an **address lookup (STUN) server** (Cloudflare's is free and needs no account) and a **call relay**: Cloudflare Realtime TURN (key id and API token) or your own TURN server (address and shared secret, with a short-lived password made for each call). **Test calling** checks the microphone, the lookup and the relay from your browser. The token and secret are write-only and never included in a backup; a restore keeps this install's.
+- **📞 Calls** (⋯ menu): your recent calls, missed ones on top, with **Call back** and a button to the chat.
+- **Calls**: ⚙ lists where the call plays whenever the phone lists any outputs, even when its browser claims an app can't choose (the Home Assistant app on Android says that and still switches).
+- **Notifications open the exact chat**: tapping a message notification opens that chat, and a call's notification (or its **Answer** button) opens straight onto the ringing screen.
+
 ## 2.3.8
 
 - **Calls**: ⚙ is back to the list from 2.3.4, which worked, with just the microphone choice taken out. (2.3.5–2.3.7 tried buttons for Speakerphone, Earpiece and headset; they didn't work on the phone.)

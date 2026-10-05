@@ -216,7 +216,7 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
     confirm = body.pop("confirm", False)
     if not isinstance(confirm, bool):
         raise HTTPException(422, "confirm must be true or false.")
-    unknown = set(body) - set(settings.DEFAULTS)
+    unknown = set(body) - set(settings.DEFAULTS) - set(settings.REGISTRY.flags)
     if unknown:
         raise HTTPException(422, settings.unknown_message(unknown))
     switching = False
@@ -655,7 +655,7 @@ def download_backup(includeFiles: bool = False, admin: dict = Depends(require_ad
     try:
         src = sqlite3.connect(config.DB_PATH)
         try:
-            db_core.snapshot(src, tmp_db)
+            db_core.snapshot(src, tmp_db, after=settings.REGISTRY.scrub_secrets)   # never the relay secrets
         finally:
             src.close()
         skip_files = disappearing.strip_from_copy(tmp_db)      # the app's backup never holds disappearing messages
@@ -740,6 +740,7 @@ def _restore_from(tmp: str, admin: dict) -> dict:
         with db.get_conn() as conn:
             keep = [(r["key"], r["value"]) for r in conn.execute(
                 "SELECT key, value FROM app_settings WHERE key IN ('files_path', ?)", (files.STORE_KEY,))]
+            saved_secrets = settings.REGISTRY.saved_secrets(conn)     # the relay secrets stay this install's
         db.RESTORING.set()
         try:
             hub.reset()
@@ -756,6 +757,7 @@ def _restore_from(tmp: str, admin: dict) -> dict:
                 conn.execute("DELETE FROM app_settings WHERE key IN ('files_path', ?)", (files.STORE_KEY,))
                 for k, v in keep:
                     db.set_setting(conn, k, v)
+                settings.REGISTRY.keep_secrets(saved_secrets, conn)
             settings.invalidate()
             disappearing.run_expiry()        # before anything is served again
             calls.close_unfinished()

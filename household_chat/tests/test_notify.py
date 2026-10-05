@@ -61,8 +61,9 @@ class NotifyTests(ApiTestCase):
             self.assertEqual(ha_client.learn_page_blocking({"slug": "a1b2c3d4_household_chat", "ingress_panel": True}),
                              "/a1b2c3d4_household_chat")
             self.assertEqual(config.INGRESS_URL, "/a1b2c3d4_household_chat")
-            self.send(self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"], "hi", NISHA)
-            self.assertEqual(self.sent.items[-1]["data"]["clickAction"], "/a1b2c3d4_household_chat")
+            d = self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"]
+            self.send(d, "hi", NISHA)
+            self.assertEqual(self.sent.items[-1]["data"]["clickAction"], "/a1b2c3d4_household_chat/chat/" + d)   # §15.14
             self.assertEqual(ha_client.learn_page_blocking({"slug": "local_household_chat", "ingress_panel": False}),
                              "/app/local_household_chat")
             # without the Supervisor: the container's host name
@@ -77,7 +78,7 @@ class NotifyTests(ApiTestCase):
         self.send(self.hh, "secret", NISHA, mentions=[TARUN["id"]])
         self.assertEqual(self.sent.items[-1]["message"], "New message from Nisha")
         data = self.sent.items[-1]["data"]
-        self.assertEqual(data["clickAction"], config.INGRESS_URL)
+        self.assertEqual(data["clickAction"], config.chat_link(self.hh))
         self.assertEqual([a["title"] for a in data["actions"]], ["Reply", "Mark as read"])
         notifier.reset()
         self.ok(self.put("/api/me/settings", {"notifyPreview": "full"}, TARUN))

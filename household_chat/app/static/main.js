@@ -9,7 +9,8 @@ async function boot() {
   await Promise.all([loadPeople(), loadConvs().catch(fail)]);
   renderShell();
   const last = lsGet("hchat.lastChat");
-  if (FINE_POINTER && last && convById(last)) openChat(last);
+  if (openFromRoute()) { /* a notification's link opened a chat or the ringing screen (§15.14) */ }
+  else if (FINE_POINTER && last && convById(last)) openChat(last);
   else renderEmptyMain();
   connectLive();
   checkCurrentCall();            // a call ringing for me when the page opens (e.g. Answer on the phone)
