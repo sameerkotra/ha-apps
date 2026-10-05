@@ -116,7 +116,8 @@ def new_token(conn, uid: str, cid: str) -> str:
 
 
 def push_data(conn, uid: str, cid: str) -> dict:
-    data = {"url": config.INGRESS_URL, "clickAction": config.INGRESS_URL, "tag": f"hchat_{cid}", "group": "household_chat"}
+    link = config.chat_link(cid)
+    data = {"url": link, "clickAction": link, "tag": f"hchat_{cid}", "group": "household_chat"}
     if settings.get("notification_reply", conn):
         t = new_token(conn, uid, cid)
         data["actions"] = [
@@ -239,7 +240,8 @@ def send_to_user(uid: str, title: str, text: str, cid: str | None = None) -> boo
         if user is None or user["disabled"]:
             return False
         services = ha_notify.services_for({"id": uid}, conn)
-        data = {"url": config.INGRESS_URL, "clickAction": config.INGRESS_URL}
+        link = config.chat_link(cid) if cid else config.INGRESS_URL
+        data = {"url": link, "clickAction": link}
         if cid:
             data["tag"] = f"hchat_r_{cid}"
     if not services:

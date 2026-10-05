@@ -13,10 +13,10 @@ async function showPage(page, arg) {
   const main = $("#main");
   mount(main, h("div", { class: "loading" }, "Loading…"));
   const back = h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back", onclick: backToList }, "←");
-  const titles = { starred: "☆ Starred", reminders: "⏰ Reminders", files: "📁 My files", search: "🔍 Search", settings: "⚙ Settings", admin: "🛡️ Admin", whoami: "👤 How the app sees you" };
+  const titles = { starred: "☆ Starred", reminders: "⏰ Reminders", calls: "📞 Calls", files: "📁 My files", search: "🔍 Search", settings: "⚙ Settings", admin: "🛡️ Admin", whoami: "👤 How the app sees you" };
   let content;
   try {
-    content = await ({ starred: starredPage, reminders: remindersPage, files: myFilesPage, search: searchPage, settings: settingsPage, admin: adminPage, whoami: whoamiPage }[page])(arg);
+    content = await ({ starred: starredPage, reminders: remindersPage, calls: callsPage, files: myFilesPage, search: searchPage, settings: settingsPage, admin: adminPage, whoami: whoamiPage }[page])(arg);
   } catch (e) { content = h("p", { class: "error" }, e.message); }
   if (state.page !== page) return;
   mount(main, h("section", { class: "page" }, h("div", { class: "page-head" }, back, h("h2", null, titles[page] + (page === "search" ? `: “${arg}”` : ""))), h("div", { class: "page-body" }, content)));
@@ -34,6 +34,22 @@ async function starredPage() {
     m.attachments.length ? attachmentsEl(m) : null)));
 }
 
+async function callsPage() {
+  const r = await api("api/me/calls");
+  if (!r.calls.length) return h("p", { class: "hint" }, "Your calls will be listed here. Call someone with 📞 at the top of a direct chat.");
+  const word = (x) => x.outcome === "answered" ? (x.outgoing ? "Outgoing" : "Incoming") + (x.seconds == null ? "" : " · " + fmtDuration(x.seconds))
+    : x.missed ? "Missed" : x.outcome === "busy" ? "Busy" : x.outcome === "declined" ? (x.outgoing ? "Declined" : "You declined") : x.outcome === "missed" ? "No answer" : "Couldn't connect";
+  const row = (x) => h("div", { class: "result card-ish call-row" + (x.missed ? " missed" : "") },
+    avatar(x.peerName, x.peerId, { small: true, noDot: true }),
+    h("div", { class: "grow" }, h("div", null, h("strong", null, x.peerName)),
+      h("div", { class: "hint" }, (x.outgoing ? "↗ " : "↙ ") + word(x) + " · " + fmtFull(x.startedAt))),
+    x.canCallBack ? h("button", { class: "btn small", type: "button", onclick: () => { const c = convById(x.conversationId); if (c) startCall(c); } }, "📞 Call back") : null,
+    h("button", { class: "icon-btn", type: "button", title: "Open the chat", "aria-label": "Open the chat", onclick: () => x.messageId ? openChatAt(x.conversationId, x.messageId) : openChat(x.conversationId) }, "💬"));
+  const missed = r.calls.filter((x) => x.missed);
+  return h("div", null,
+    missed.length ? h("div", { class: "lbl-sm" }, "Missed") : null, missed.length ? h("div", { class: "result-list" }, missed.map(row)) : null,
+    h("div", { class: "lbl-sm" }, "Recent"), h("div", { class: "result-list" }, r.calls.map(row)));
+}
 async function remindersPage() {
   const r = await api("api/me/reminders");
   if (!r.reminders.length) return h("p", { class: "hint" }, "Use ⋯ → ⏰ Remind me on any message. The reminder comes to you only.");
@@ -249,6 +265,7 @@ async function adminSettings() {
     save: (body) => api("api/admin/settings", { method: "PUT", body }),
     classes: { card: "card", primary: "btn primary", secondary: "btn", ghost: "btn" },
     fields: { files_path: { control: (page) => filesFolderControl(page, folder) } },
+    groups: { calls: { bottom: () => testCallingBlock() } },
     // changing the chat files folder: checked first, refused or confirmed as the check says; never moves files
     beforeSave: async (body, page) => {
       if ("files_path" in body) {
@@ -282,6 +299,37 @@ async function adminSettings() {
   const apps = h("div", { class: "connected-apps-wrap" });
   api("api/admin/connected-apps").then((d) => mount(apps, ConnectedApps.card(d, { h, when: fmtFull }))).catch(() => {});
   return h("div", null, box, apps);
+}
+// Test calling (§15.13): the browser checks the microphone and that it reaches the STUN server and the relay
+// as a call would — the addresses come from the saved settings, so Save first.
+function testCallingBlock() {
+  const out = h("div", { class: "hint test-call-out", "aria-live": "polite" });
+  const btn = h("button", { class: "btn", type: "button", onclick: () => runCallTest(out, btn) }, "Test calling");
+  return h("div", { class: "test-call" }, btn, h("span", { class: "hint" }, " Checks the microphone, the address lookup and the relay with the saved settings."), out);
+}
+async function runCallTest(out, btn) {
+  btn.disabled = true;
+  const lines = [];
+  const say = (t) => { lines.push(t); mount(out, lines.map((l) => h("div", null, l))); };
+  try {
+    if (!micPossible()) say("✗ Microphone: this browser can't use it here (https and permission are needed).");
+    else { try { const s = await getMic(); s.getTracks().forEach((t) => t.stop()); say("✓ Microphone works."); } catch (e) { say("✗ Microphone permission was refused."); } }
+    const t = await api("api/admin/calls/ice-servers");
+    if (!t.stun && t.relay === "none") say("ℹ No address lookup or relay is set: calls work on the home network only.");
+    if (t.relay !== "none" && !t.relayOk) say("✗ Relay: no credentials — " + (t.relayError ? t.relayError + ". " : "") + (t.relay === "cloudflare" ? "The key id is the TURN key's Token ID from Realtime → TURN (not a Realtime app id), and the API token is the one shown when that TURN key was made." : "Check the address and secret, and the app's Log tab."));
+    if (!window.RTCPeerConnection) { say("✗ This browser can't make calls."); return; }
+    const found = { host: 0, srflx: 0, relay: 0 };
+    const pc = new RTCPeerConnection({ iceServers: t.iceServers });
+    pc.createDataChannel("test");
+    pc.onicecandidate = (e) => { if (e.candidate && e.candidate.type in found) found[e.candidate.type] += 1; };
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise((r) => { pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === "complete") r(); }; setTimeout(r, 8000); });
+    pc.close();
+    say(found.host ? "✓ Home network: this device is reachable directly." : "✗ No local network address found.");
+    if (t.stun) say(found.srflx ? "✓ Address lookup (STUN): this device's public address was found." : "✗ Address lookup (STUN): no answer from the server — check the address and that this network allows it.");
+    if (t.relay !== "none" && t.relayOk) say(found.relay ? "✓ Relay: a relayed connection is possible from here." : "✗ Relay: couldn't get a relayed address — check the relay's address, port forwarding (own server) or the credentials.");
+    if (!lines.some((l) => l.startsWith("✗"))) say("All good.");
+  } catch (e) { say("✗ " + e.message); } finally { btn.disabled = false; }
 }
 async function adminStorage() {
   const s = await api("api/admin/storage");

@@ -132,6 +132,12 @@ household_chat/
 | `export_max_mb` | 500 | Largest chat download, files included (§15.9). |
 | `calls_enabled` | false | Voice calls (§15.12). Off: no 📞, and the call routes answer 403. |
 | `calls_ring_seconds` | 30 | How long a call rings before it's missed (15–60; shown while calls are on). |
+| `calls_stun` | empty | STUN server for calls away from home (§15.13), `stun:`/`stuns:`; empty = home network only. |
+| `calls_relay` | `none` | `none`, `cloudflare` or `turn` (§15.13). Needs the fields below for its choice. |
+| `calls_cf_key_id` · `calls_cf_api_token` | empty | Cloudflare TURN key id and API token (**secret**). |
+| `calls_turn_url` · `calls_turn_secret` | empty | Own TURN server address(es), `turn:`/`turns:`, comma-separated, and coturn's shared secret (**secret**). |
+
+The two secrets are write-only (the page is told only whether they're set; a blank box keeps the saved one, `clear_<key>: true` removes it) and never in a backup (§5.3 backups: `scrub_secrets` on the copy; a restore keeps this install's with `saved_secrets` / `keep_secrets`).
 
 The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, messages, retention, notifications, calls) on the shared `settings_core.Registry` (`app/common/settings_core.py`). `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups, storage}` (`meta[key]` = label, help, group, kind, `restartRequired`, range, choices, …; `storage` as in §5.3.1); unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1) is also kept in `app_settings` but isn't a setting.
 
@@ -366,7 +372,8 @@ CREATE TABLE calls (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCE
 | POST `/conversations/{id}/scheduled` · GET `/me/scheduled` · PATCH / DELETE `/scheduled/{id}` · POST `/scheduled/{id}/send-now` | Send later (§16.7) |
 | GET `/conversations/{id}/export?from=&to=` | Download a chat (§15.9) |
 | GET `/conversations/{id}/folders` · GET `/folders/{linkId}/list\|file\|search` · POST `/folders/{linkId}/upload\|mkdir` | Shared folders (§12) |
-| POST `/calls` · POST `/calls/{id}/offer\|answer\|candidate\|decline\|end` · GET `/calls/current` | Voice calls (§15.12) |
+| POST `/calls` · POST `/calls/{id}/offer\|answer\|candidate\|decline\|end` · GET `/calls/current` · GET `/me/calls` | Voice calls (§15.12), the Calls list |
+| Admin: GET `/admin/calls/ice-servers` | Test calling (§15.13): the STUN and relay addresses as a call would get them |
 | GET `/stream` | Server-Sent Events (§8) |
 | GET `/health` | `{status, version}` |
 | Admin: GET `/admin/people[?refresh=1]` · PATCH `/admin/people/{id}` `{disabled, isChild}` · POST / DELETE `/admin/people/{id}/notify[/{svc}]` · POST `/admin/people/{id}/notify/test` · GET `/admin/notify-services` · GET `/admin/person-entities` · PUT `/admin/people/{id}/presence` | People, notify extras, home/away (§7, §15.3) |
@@ -401,7 +408,7 @@ No admin route returns message text, file names or file contents of chats the ad
     - `sender`: "New message from Nisha";
     - `none`: "New message in Household Chat".
   - Disappearing messages never show their text or file names (§15.8).
-- **Opening the app.** `data` includes `url` / `clickAction` = `/hassio/ingress/household_chat`, so tapping opens the chat panel (not the exact chat).
+- **Opening the app.** `data` includes `url` / `clickAction` = the app's own page in Home Assistant (`config.INGRESS_URL`), plus the route of what it's about (§15.14: `/chat/<id>` for a message, `/call/<id>` for a ringing call), so tapping opens that chat or the ringing screen. That page is the sidebar page **`/<full slug>`** — the full slug carries the repository's id (`/a1b2c3d4_household_chat`, `/local_household_chat`), and `/hassio/ingress/…` is older Home Assistant's address, a 404 now (APP_MESSAGES_SPEC §6.5). At start-up `ha_client.learn_page_blocking` asks the Supervisor (`GET /addons/self/info`: `slug`, `ingress_panel`, allowed without `hassio_api`); if that fails, the container's host name (the full slug with `-` for `_`). Not in the sidebar: `/app/<full slug>`. Outside Home Assistant: `/household_chat`. The log says which ("Notifications open … in Home Assistant").
 - **Never** sends to disabled people or to people who have left. Unknown services are logged at start-up with a hint.
 
 ### 7.1 Delivery
@@ -704,8 +711,29 @@ the rest are planned in §18.1.
   or two children while `children_can_message_each_other` is off; 409). Children (§16.5) can call wherever they
   can post in a direct chat.
 - **The caller** sees a full-screen call screen: photo, name, "Calling…" → "Ringing…" → "Connecting…" → the
-  call's running time, with **Mute** and **Hang up**. A soft ringback tone plays while it rings. (A web page
-  can't switch between the earpiece and the loudspeaker, so there is no Speaker button.)
+  call's running time. A soft ringback tone plays while it rings. Once connected, both sides have:
+  - **Mute** (the track is disabled; the other side is told over a small WebRTC data channel `hchat` that the
+    caller opens, `{muted}`, and shows "Asha has muted their microphone").
+  - **No Speaker button**: a page can't choose a phone's loudspeaker (the Android Home
+    Assistant app lists no outputs), and making the sound louder through Web Audio didn't help. The phone's own
+    volume, sound or Bluetooth menu does it. The mute button is a drawn microphone (inline SVG) with a line across
+    it when muted, since no emoji shows a muted microphone.
+  - **⚙ Sound and microphone**: a panel with the `audioinput` devices (`enumerateDevices`; switching gets the new
+    one and `replaceTrack`s it into the call) — **on Android these are the phone's sound routes, Speakerphone,
+    Earpiece, Bluetooth headset, and picking one switches the whole call there**, so on Android the field's help
+    says so — and, when the browser lists any `audiooutput` devices, those as "Sound comes out of" (`setSinkId`;
+    "Output n" for one without a name). Both choices are kept in the browser (`localStorage` `hchat.callMic`, `hchat.callOut`) for
+    the next call.
+  - **Is sound getting through?** Every second the page reads the connection's statistics: `inbound-rtp`
+    packets and `audioLevel` (their sound) and `media-source` `audioLevel` (my microphone), drawn as two level
+    bars. After 5 s a line says what's wrong: no packets arriving from them, their sound silent for 6 s, they've
+    muted, or my microphone silent for 6 s.
+  - **Hang up**.
+- **Playing the other person's sound**: phones and the Home Assistant app's web view only let sound start from a
+  tap. The page keeps one `<audio>` element, started (with an empty stream) inside the tap on 📞 or Answer; the
+  other person's stream goes into that same element when it arrives. If playing is still refused, a 🔈 button and
+  a line ask for a tap. The ring tones' Web Audio context is closed once the call connects (some phones play
+  WebRTC sound badly while one is open).
 - **The person called** gets a ringing screen in every open Chat tab, in a browser or the Companion app (a ring
   tone made in the browser, and vibration where the phone allows it), and a phone notification (§7 phones and
   extras): title the caller's name, "📞 Asha is calling" (preview level *none*: title "Household Chat",
@@ -788,8 +816,11 @@ the rest are planned in §18.1.
   couldn't answer here (no microphone)"). The Companion app's web view may block it.
 - **No change to the CSP**: the page talks only to the app (`connect-src 'self'`), and WebRTC connections aren't
   covered by `connect-src`. The remote sound plays through an `<audio>` element's `srcObject` (not a URL).
-- **ICE servers**: none in this release (`calls.ice_servers()` returns `[]`), so the browsers find each other on
-  the home network only. §18.1 adds STUN and a relay.
+- **ICE servers**: from the App settings (§15.13); with none set the browsers find each other on the home network
+  only.
+- **The Calls list** (⋯ → 📞 Calls, `GET /me/calls`): my last 100 ended calls, newest first — who, incoming or
+  outgoing, how it ended, when, how long — with **Missed** on top, **Call back** (where I may post in that chat)
+  and a button to the note in the chat. Calls still on aren't listed; nobody sees anyone else's.
 - **Older databases**: `messages.kind`'s CHECK gains `'call'`. SQLite can't change a CHECK in place, so the
   messages table is rebuilt once at start-up exactly as for cards (§15.11; `db._allow_new_kinds`, which upgrades
   both 2.1 and 2.2 databases); the `calls` table is new.
@@ -798,7 +829,62 @@ the rest are planned in §18.1.
 counts; missed calls and their pushes; the phone's Decline; busy; offers that never come; quiet hours and muted
 chats; failures, disabling, the gone-side check and restarts; sizes; disappearing chats; a 2.2 database
 upgraded) and `tests/test_calls_browser.py` (the app in uvicorn and two headless Chromium pages with fake
-microphones: ring, answer, sound both ways, mute, hang up, decline, the notes; skipped without Playwright).
+microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, switching microphones, hang up, decline, the notes; skipped without Playwright).
+
+### 15.13 Calls away from home (STUN and a relay)
+
+At home the two browsers connect directly. Away from home each needs its public address (STUN), and on networks
+that block direct connections (common on mobile data) the sound needs a relay (TURN). A Cloudflare Tunnel carries
+the signalling but not the sound (tunnels don't pass UDP for public hostnames), so the relay is separate.
+
+- **What the browsers get**: `iceServers` in `POST /calls`'s answer and `GET /calls/current`, built by
+  `calls.ice_servers(values, call_id)` from the App settings — read first, the servers built **after** the DB
+  connection closes, since Cloudflare may be called. Empty settings: `[]`.
+- **STUN** (`calls_stun`): `{urls: "stun:…"}`. Cloudflare's `stun:stun.cloudflare.com:3478` is free and needs no
+  account. Only the phones' network addresses go to it.
+- **Cloudflare Realtime TURN** (`calls_relay = cloudflare`): the admin makes a TURN key in their Cloudflare
+  account (Realtime → TURN) and enters its key id and API token. `calls.cf_fetch` POSTs
+  `https://rtc.live.cloudflare.com/v1/turn/keys/<key id>/credentials/generate-ice-servers` `{"ttl": 14400}` with the
+  token and a `User-Agent` naming the app (Cloudflare's bot filter answers 403 "error code: 1010" to Python's
+  default one; straight from the app to Cloudflare, 5 s time-out) and keeps the answer's `iceServers` (username,
+  credential, urls) for an hour, so a household's calls make a few requests a day. A failure is logged
+  ("Couldn't get call relay credentials from Cloudflare") and the call goes ahead without a relay. The sound through
+  Cloudflare stays encrypted end to end. Cost: free up to a large monthly allowance (1,000 GB when this was
+  written; a voice call is about 30–60 MB an hour).
+- **Own TURN server** (`calls_relay = turn`, e.g. a coturn app with a router port forwarded): the admin enters
+  its address(es) (`turn:` / `turns:`; `turns:…:443` also works where only web traffic is allowed) and coturn's
+  **shared secret** (`use-auth-secret` / `static-auth-secret`). Per call the app makes user name
+  `<now + 4 h>:<call id>` and password `base64(HMAC-SHA1(secret, user name))`, so no long-lived password ever
+  reaches a phone.
+- **Test calling** (Admin → App settings, under Voice calls; the saved settings): the admin's browser checks the
+  microphone, fetches `GET /admin/calls/ice-servers` (`{iceServers, stun, relay, relayOk}`) and gathers ICE
+  candidates for up to 8 s with them, reporting a local address (host), a public one (srflx: STUN works) and a
+  relayed one (relay works), with a line for anything missing.
+- **Settings checks**: `calls_stun` must look like `stun(s):host[:port]`; each TURN address like
+  `turn(s):host[:port][?transport=udp|tcp]`; `cloudflare` needs its key id and token, `turn` its address and secret
+  (422 otherwise).
+- **Privacy (for DOCS)**: with only the home network nothing leaves the house; with STUN the phones' public
+  addresses go to that server; with a relay the encrypted sound passes through it. Names, messages and recordings
+  never do.
+- **Tests**: `test_calls.AwayFromHomeTests` — defaults, STUN, Cloudflare against a fake `cf_fetch` (never the
+  real API), the hour's cache, blank-keeps / clear, a failure meaning no relay, coturn credentials checked
+  against HMAC-SHA1, the test route, secrets out of backups and kept over a restore.
+
+### 15.14 Deep links (a notification opens the exact chat)
+
+- **The link**: a notification's `url` / `clickAction` is the app's page plus a route — `config.chat_link(cid)` =
+  `/<full slug>/chat/<conversation id>` for messages (also reminders), `config.call_link(id)` =
+  `/<full slug>/call/<call id>` for a ringing call (its Answer button too). Home Assistant opens the page and hands
+  it the rest of the path (APP_MESSAGES_SPEC §6.5): current versions in the `home-assistant/properties` message
+  (`route.path`, after the page posts `home-assistant/subscribe-properties`), and in any version the top page's
+  address (`window.parent.location.pathname`, same origin).
+- **The page** (`calls.js` `openFromRoute`, at start-up): `routeOf(path, page)` accepts only `chat/<id>` or
+  `call/<id>` after the page's own address (ids of `A–Z a–z 0–9 _ -`, ≤ 64) — never another page. A chat route
+  opens that chat (a chat you aren't in: "That chat isn't here any more"); a call route asks for the ringing call
+  (`GET /calls/current`) and shows its screen, or nothing if it has ended. Then the top page's address is put back
+  to the bare page (`history.replaceState`), so a reload doesn't open it again. A route found this way wins over
+  the remembered last chat.
+- Outside Home Assistant's frame the page's own path is read the same way.
 
 ## 16. More features
 
@@ -883,71 +969,15 @@ A private space for each person: notes to self, links, reminders and documents (
 Ideas that are not built:
 
 - **PDF first-page thumbnails** in the Files view — waiting for a small, pure-Python dependency.
-- **Deep links** from a notification to the exact chat (the ingress URL would have to carry a route). Voice calls (§15.12) work around it by asking for a ringing call when the page opens.
 - **Link previews**, if they can be made without fetching every shared link from the server.
 - **Deleting files in shared folders** from the app.
 
-### 18.1 Voice calls away from home, and later (not built)
+### 18.1 Voice calls — later (not built)
 
-Voice calls on the home network are built (§15.12). Nothing below exists yet; it is the plan.
-
-**Release 2 — calls away from home** (small)
-
-`calls.ice_servers()` starts returning STUN and relay addresses; the browsers already pass them to WebRTC.
-
-1. **Away from home, direct**: each phone asks a **STUN** server for its public address and the phones try to
-   connect directly. This works on many home and mobile networks. A public one such as Cloudflare's
-   (`stun:stun.cloudflare.com:3478`, free, no account) can be entered. Only the phones' network addresses go to
-   it, never audio or names.
-2. **Away from home, relayed**: when the networks don't allow a direct link (common on mobile data and strict
-   Wi-Fi), the audio needs a **TURN relay**. A Cloudflare Tunnel carries the signalling but *not* the call audio
-   (tunnels don't pass UDP for public hostnames), so the relay is separate:
-   - **Option A — Cloudflare Realtime TURN** (recommended with a Cloudflare setup): the admin creates a TURN key in
-     their Cloudflare account and enters its *key id* and *API token*. For each call the server asks Cloudflare's
-     TURN credentials API for credentials valid 4 hours (longer than any call) and gives them to the two phones
-     in `iceServers`. The request goes straight from the app to Cloudflare (not through Home Assistant), with a
-     5 s time-out and no DB connection held; if it fails, the call goes ahead without a relay and the failure is
-     logged. Audio passes through Cloudflare still encrypted end to end. Cost: free up to a large monthly
-     allowance (1,000 GB when this was written; check Cloudflare's pricing), and a voice call is about 30–60 MB
-     an hour.
-   - **Option B — your own TURN server** (e.g. a coturn app on Home Assistant): the admin enters its address and
-     coturn's **shared secret** (`use-auth-secret` / `static-auth-secret`). The app makes short-lived
-     credentials per call (user name `<expiry>:<call id>`, password = base64 HMAC-SHA1 of it with the secret), so
-     no long-lived password is ever given to a phone. Needs a router port forwarded to it. Offer `turns:` on
-     port 443 where it's set up, for networks that allow only web traffic.
-   - **No relay set**: calls that can't connect directly end with "Couldn't connect from here — an admin can add a
-     call relay in App settings".
-3. **Test calling** in App settings checks the microphone, STUN and the relay with a short loop-back call in the
-   admin's own browser.
-
-New settings in the `calls` group (each `show_if` calls are on; the relay fields `show_if` their relay choice):
-
-| Key | Default | |
-|---|---|---|
-| `calls_stun` | empty | e.g. `stun:stun.cloudflare.com:3478`; empty = home network only. Must start `stun:` or `stuns:`. |
-| `calls_relay` | `none` | `none`, `cloudflare` or `turn`. |
-| `calls_cf_key_id` | empty | Cloudflare TURN key id. |
-| `calls_cf_api_token` | empty | **Secret** (write-only). |
-| `calls_turn_url` | empty | e.g. `turn:home.example.com:3478` (`turn:` / `turns:`). |
-| `calls_turn_secret` | empty | **Secret**: coturn's shared secret. |
-
-These are Chat's first secret settings, so the backup routes (Admin → Storage) must start using the shared
-`Registry.scrub_secrets` / `saved_secrets` / `keep_secrets` (`backup_core.blank_settings` / `saved_settings` /
-`keep_settings`): a downloaded backup never carries the token or the secret, and a restore keeps the ones this
-install has.
-
-**Privacy (for DOCS)**: with a STUN server the phones' public network addresses go to it; with a relay the
-encrypted audio passes through it. Names, messages and recordings never do.
-
-**Tests**: Cloudflare credential requests against a fake server (never the real one in tests), coturn
-credentials, `iceServers` in the call routes, secrets kept out of backups and kept over a restore, the settings
-checks.
-
-**Later** (small to medium each)
+Calls at home (§15.12) and away from home (§15.13) are built. Still planned, each small to medium:
 
 - **Video** (camera on/off, flip camera).
 - **Group calls** of up to 4 people (each phone connects to each other; more would need a media server).
-- A **Calls** list (recent, missed, call back).
 - If another household app ever wants calls, the browser side (call screen, WebRTC set-up) would move to
   `common/static/` then, not before.
 

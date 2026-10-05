@@ -4,8 +4,8 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import Field
 
-from .. import calls
-from ..auth import require_user
+from .. import calls, settings
+from ..auth import require_admin, require_user
 from .common import Strict
 
 router = APIRouter(prefix="/api", tags=["calls"])
@@ -55,6 +55,17 @@ def candidate(call_id: str, body: CandidateIn, user: dict = Depends(require_user
 @router.post("/calls/{call_id}/decline")
 def decline(call_id: str, user: dict = Depends(require_user)):
     return calls.decline(user, call_id)
+
+
+@router.get("/admin/calls/ice-servers")
+def test_servers(admin: dict = Depends(require_admin)):
+    """Test calling (App settings): the STUN and relay addresses as a call would get them, so the admin's browser
+    can check it reaches them (§15.13)."""
+    values = settings.all_values()
+    servers = calls.ice_servers(values, "test")
+    return {"iceServers": servers, "stun": bool(values["calls_stun"]), "relay": values["calls_relay"],
+            "relayOk": values["calls_relay"] == "none" or any("username" in s for s in servers),
+            "relayError": calls.relay_error() if values["calls_relay"] == "cloudflare" else None}
 
 
 @router.post("/calls/{call_id}/end")

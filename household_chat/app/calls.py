@@ -14,9 +14,16 @@ A call: `new` (made by POST /calls, waiting for the caller's offer) → `ringing
 Live `call` events go only to the two people; each says which call it is about,
 and a page ignores calls it isn't handling.
 """
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 
 from fastapi import HTTPException
@@ -76,9 +83,89 @@ def enabled(conn=None) -> bool:
     return bool(settings.get("calls_enabled", conn))
 
 
-def ice_servers(conn=None) -> list:
-    """STUN / relay addresses for the browsers. None yet: calls work on the home network (§15.12)."""
-    return []
+# ---------- STUN and relay (§15.13): what the browsers get as iceServers ----------
+CF_TTL = 4 * 3600                       # Cloudflare credentials last this long (longer than any call)
+CF_CACHE = 3600                         # and are fetched at most this often
+TURN_TTL = 4 * 3600
+_cf = {"servers": None, "until": 0.0, "key": None, "error": None}
+
+
+def cf_fetch(key_id: str, token: str, ttl: int = CF_TTL) -> list:
+    """Short-lived TURN credentials from Cloudflare's API (tests replace this). Straight to Cloudflare, never
+    through Home Assistant. → the iceServers list."""
+    req = urllib.request.Request(
+        f"https://rtc.live.cloudflare.com/v1/turn/keys/{urllib.parse.quote(key_id, safe='')}/credentials/generate-ice-servers",
+        data=json.dumps({"ttl": ttl}).encode(), method="POST",
+        # Cloudflare's bot filter bans Python's default user agent ("error code: 1010"): say who's asking
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json",
+                 "User-Agent": f"HouseholdChat/{config.APP_VERSION} (Home Assistant app; +https://github.com/sameerkotra/ha-apps)"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = json.loads(resp.read(64 * 1024).decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # what Cloudflare said (its status and a line of its message: never the token, which isn't in an answer)
+        text = e.read(2000).decode("utf-8", "replace").replace("\n", " ").strip()[:200]
+        raise RuntimeError(f"HTTP {e.code} from Cloudflare: {text or e.reason}") from None
+    servers = body.get("iceServers") if isinstance(body, dict) else None
+    if isinstance(servers, dict):
+        servers = [servers]
+    if not isinstance(servers, list) or not all(isinstance(s, dict) and s.get("urls") for s in servers):
+        raise ValueError("unexpected answer")
+    return [{"urls": s["urls"], "username": s.get("username"), "credential": s.get("credential")} for s in servers]
+
+
+def cloudflare_servers(key_id: str, token: str) -> list:
+    """Cached for an hour; a failure is logged and the call goes ahead without a relay."""
+    now = time.monotonic()
+    with _lock:
+        if _cf["servers"] is not None and now < _cf["until"] and _cf["key"] == (key_id, token):
+            return list(_cf["servers"])
+    try:
+        servers = cf_fetch(key_id, token)
+    except Exception as e:                        # noqa: BLE001 — logged, the call goes on
+        why = str(e) if isinstance(e, RuntimeError) else type(e).__name__
+        logger.warning("Couldn't get call relay credentials from Cloudflare: %s", why)
+        with _lock:
+            _cf["error"] = why
+        return []
+    with _lock:
+        _cf["error"] = None
+    with _lock:
+        _cf.update(servers=servers, until=now + CF_CACHE, key=(key_id, token))
+    return list(servers)
+
+
+def turn_servers(urls: str, secret: str, call_id: str) -> list:
+    """coturn's shared-secret credentials (use-auth-secret): user "<expiry>:<call id>", password the base64
+    HMAC-SHA1 of it — made per call, so no long-lived password ever reaches a phone."""
+    user = f"{int(time.time()) + TURN_TTL}:{call_id}"
+    password = base64.b64encode(hmac.new(secret.encode(), user.encode(), hashlib.sha1).digest()).decode()
+    return [{"urls": [u.strip() for u in urls.split(",") if u.strip()], "username": user, "credential": password}]
+
+
+def ice_servers(values: dict, call_id: str = "test") -> list:
+    """STUN / relay addresses for the browsers, from the App settings (`settings.all_values()`, read before —
+    this may call Cloudflare, so never while a DB connection is held). Empty: the home network only."""
+    out = []
+    if values.get("calls_stun"):
+        out.append({"urls": values["calls_stun"]})
+    relay = values.get("calls_relay")
+    if relay == "cloudflare" and values.get("calls_cf_key_id") and values.get("calls_cf_api_token"):
+        out += cloudflare_servers(values["calls_cf_key_id"], values["calls_cf_api_token"])
+    elif relay == "turn" and values.get("calls_turn_url") and values.get("calls_turn_secret"):
+        out += turn_servers(values["calls_turn_url"], values["calls_turn_secret"], call_id)
+    return out
+
+
+def reset_relay_cache() -> None:
+    with _lock:
+        _cf.update(servers=None, until=0.0, key=None, error=None)
+
+
+def relay_error() -> str | None:
+    """Why the last Cloudflare request failed (for Test calling), or None."""
+    with _lock:
+        return _cf["error"]
 
 
 def busy(uid: str) -> bool:
@@ -118,10 +205,11 @@ def start(user: dict, conversation_id: str) -> dict:
         chats.require_post(conn, conv, user["id"])
         chats.message_limit.take(user["id"])        # a call can leave a note and a push: counted like a message
         other = chats.other_member(conn, conv, user["id"])
-        ring = settings.get("calls_ring_seconds", conn)
-        servers = ice_servers(conn)
+        values = settings.all_values(conn)
         other_name = chats.shown_name(other)
+    ring = values["calls_ring_seconds"]
     c = Call(id=db.new_id(), conversation_id=conv["id"], caller=user["id"], callee=other["id"])
+    servers = ice_servers(values, c.id)          # after the connection: may ask Cloudflare
     with _lock:
         if user["id"] in _by_user:
             raise HTTPException(409, "You're already in a call.")
@@ -215,7 +303,8 @@ def current(user: dict) -> dict | None:
             data["answer"] = c.answer           # for a page whose live updates are down (it polls this)
     with db.get_conn() as conn:
         data["peerName"] = chats.shown_name(chats.user_row(conn, data["peerId"]))
-        data["iceServers"] = ice_servers(conn)
+        values = settings.all_values(conn)
+    data["iceServers"] = ice_servers(values, c.id)
     return data
 
 
@@ -362,10 +451,11 @@ def _ring_push(call_id: str) -> None:
         token = notifier.new_token(conn, c.callee, c.conversation_id)
     title = config.APP_TITLE if level == "none" else caller_name
     text = "📞 Incoming call" if level == "none" else f"📞 {caller_name} is calling"
-    data = {"url": config.INGRESS_URL, "clickAction": config.INGRESS_URL, "tag": f"hchat_call_{c.id}",
+    link = config.call_link(c.id)
+    data = {"url": link, "clickAction": link, "tag": f"hchat_call_{c.id}",
             "group": "household_chat", "ttl": 0, "priority": "high",
             "push": {"interruption-level": "time-sensitive"},
-            "actions": [{"action": "URI", "title": "Answer", "uri": config.INGRESS_URL},
+            "actions": [{"action": "URI", "title": "Answer", "uri": link},
                         {"action": f"HCHAT_DECLINE_{token}", "title": "Decline"}]}
     with _lock:
         if c.id not in _calls or c.state != "ringing":

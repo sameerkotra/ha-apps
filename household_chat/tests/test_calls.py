@@ -94,7 +94,7 @@ class CallTests(ApiTestCase):
         self.assertEqual((push["title"], push["message"]), ("Nisha", "📞 Nisha is calling"))
         self.assertEqual(push["data"]["tag"], f"hchat_call_{c['id']}")
         self.assertEqual([a["title"] for a in push["data"]["actions"]], ["Answer", "Decline"])
-        self.assertEqual(push["data"]["actions"][0]["uri"], config.INGRESS_URL)
+        self.assertEqual(push["data"]["actions"][0]["uri"], config.INGRESS_URL + "/call/" + c["id"])
         # Tarun's page finds the call when it opens; Leela isn't told anything
         cur = self.ok(self.get("/api/calls/current", TARUN))["call"]
         self.assertEqual((cur["id"], cur["role"], cur["state"], cur["offer"]), (c["id"], "callee", "ringing", SDP))
@@ -286,3 +286,161 @@ class CallTests(ApiTestCase):
         self.assertEqual([(m["kind"], m["body"]) for m in sql("SELECT * FROM messages")], [("card", "Trip")])
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM calls")[0]["n"], 0)
         self.assertFalse(db._allow_new_kinds(db._connect()))
+
+
+class CallsListAndLinksTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        calls.reset()
+        self.enable(ADMIN, NISHA, TARUN, LEELA)
+        self.ok(self.put("/api/admin/settings", {"calls_enabled": True}))
+        self.notify_to(TARUN, "mobile_app_tarun")
+        self.direct = self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"]
+        self._orig_spawn = calls._spawn
+        calls._spawn = lambda fn, *args: fn(*args)
+
+    def tearDown(self):
+        calls._spawn = self._orig_spawn
+        calls.reset()
+        super().tearDown()
+
+    def ring(self):
+        c = self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
+        self.ok(self.post(f"/api/calls/{c['id']}/offer", {"sdp": SDP}, NISHA))
+        return c
+
+    def test_calls_list(self):
+        self.assertEqual(self.ok(self.get("/api/me/calls", NISHA))["calls"], [])
+        c = self.ring()
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP}, TARUN))
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=TARUN))
+        c2 = self.ring()
+        self.ok(self.post(f"/api/calls/{c2['id']}/decline", user=TARUN))
+        c3 = self.ring()
+        calls._calls[c3["id"]].ring_until = time.monotonic() - 1
+        calls.tick()
+        mine = self.ok(self.get("/api/me/calls", NISHA))["calls"]
+        self.assertEqual([x["outcome"] for x in mine], ["missed", "declined", "answered"])
+        self.assertEqual([x["missed"] for x in mine], [False, False, False])         # Nisha called: nothing missed for her
+        self.assertTrue(all(x["outgoing"] and x["peerName"] == "Tarun" and x["canCallBack"] for x in mine))
+        theirs = self.ok(self.get("/api/me/calls", TARUN))["calls"]
+        self.assertEqual([x["missed"] for x in theirs], [True, False, False])
+        self.assertEqual(theirs[-1]["seconds"], 0)
+        self.assertEqual(theirs[0]["peerName"], "Nisha")
+        self.assertFalse(theirs[0]["outgoing"])
+        # a call that's still on isn't listed; someone else never sees them
+        self.ring()
+        self.assertEqual(len(self.ok(self.get("/api/me/calls", NISHA))["calls"]), 3)
+        self.assertEqual(self.ok(self.get("/api/me/calls", LEELA))["calls"], [])
+        # no call back into a read-only chat
+        self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"disabled": True}))
+        self.assertFalse(self.ok(self.get("/api/me/calls", NISHA))["calls"][0]["canCallBack"])
+
+    def test_notifications_link_to_the_chat_and_the_call(self):
+        self.send(self.direct, "hello", NISHA)
+        self.assertEqual(self.sent.items[-1]["data"]["clickAction"], config.INGRESS_URL + "/chat/" + self.direct)
+        c = self.ring()
+        push = self.sent.items[-1]
+        self.assertEqual(push["data"]["clickAction"], config.INGRESS_URL + "/call/" + c["id"])
+        self.assertEqual(push["data"]["actions"][0]["uri"], config.INGRESS_URL + "/call/" + c["id"])
+
+
+class AwayFromHomeTests(ApiTestCase):
+    """Release 2 (§15.13): STUN and relay addresses for the browsers, Cloudflare and coturn credentials."""
+
+    def setUp(self):
+        super().setUp()
+        calls.reset()
+        calls.reset_relay_cache()
+        self.enable(ADMIN, NISHA, TARUN)
+        self.ok(self.put("/api/admin/settings", {"calls_enabled": True}))
+        self.direct = self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"]
+        self.cf_calls = []
+        self._orig_cf = calls.cf_fetch
+
+        def fake_cf(key_id, token, ttl=calls.CF_TTL):
+            self.cf_calls.append((key_id, token, ttl))
+            if token == "bad":
+                raise OSError("403")
+            return [{"urls": ["turn:turn.cloudflare.com:3478?transport=udp", "turns:turn.cloudflare.com:5349"],
+                     "username": "cfuser", "credential": "cfpass"}]
+        calls.cf_fetch = fake_cf
+
+    def tearDown(self):
+        calls.cf_fetch = self._orig_cf
+        calls.reset()
+        super().tearDown()
+
+    def start(self):
+        return self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
+
+    def test_home_only_by_default_then_stun(self):
+        self.assertEqual(self.start()["iceServers"], [])
+        calls.reset()
+        self.assertEqual(self.put("/api/admin/settings", {"calls_stun": "http://x"}).status_code, 422)
+        self.ok(self.put("/api/admin/settings", {"calls_stun": "stun:stun.cloudflare.com:3478"}))
+        self.assertEqual(self.start()["iceServers"], [{"urls": "stun:stun.cloudflare.com:3478"}])
+
+    def test_cloudflare_relay(self):
+        r = self.put("/api/admin/settings", {"calls_relay": "cloudflare"})
+        self.assertEqual(r.status_code, 422)                  # needs the key id and token
+        self.ok(self.put("/api/admin/settings", {"calls_relay": "cloudflare", "calls_cf_key_id": "k1", "calls_cf_api_token": "tok"}))
+        s = self.ok(self.get("/api/admin/settings"))
+        self.assertEqual(s["values"]["calls_cf_api_token"], "")            # never sent to the browser
+        self.assertTrue(s["secretsSet"]["calls_cf_api_token"])
+        servers = self.start()["iceServers"]
+        self.assertEqual(servers[0]["username"], "cfuser")
+        self.assertEqual(self.cf_calls, [("k1", "tok", calls.CF_TTL)])
+        # cached: a second call within the hour doesn't ask again
+        calls.reset()
+        self.start()
+        self.assertEqual(len(self.cf_calls), 1)
+        calls.reset()
+        self.start()
+        self.assertEqual(len(self.cf_calls), 1)
+        # a blank token keeps the saved one; the Remove flag clears it; a failure means no relay, the call goes on
+        self.ok(self.put("/api/admin/settings", {"calls_cf_api_token": ""}))
+        self.assertTrue(self.ok(self.get("/api/admin/settings"))["secretsSet"]["calls_cf_api_token"])
+        self.ok(self.put("/api/admin/settings", {"calls_cf_api_token": "bad"}))
+        calls.reset()
+        self.assertEqual(self.start()["iceServers"], [])
+        self.assertEqual(self.ok(self.get("/api/admin/calls/ice-servers"))["relayError"], "OSError")
+        self.assertEqual(self.put("/api/admin/settings", {"clear_calls_cf_api_token": True}).status_code, 422)   # the relay still needs it
+        self.ok(self.put("/api/admin/settings", {"clear_calls_cf_api_token": True, "calls_relay": "none"}))
+        self.assertFalse(self.ok(self.get("/api/admin/settings"))["secretsSet"]["calls_cf_api_token"])
+        # test calling (admins)
+        t = self.ok(self.get("/api/admin/calls/ice-servers"))
+        self.assertEqual((t["relay"], t["relayOk"], t["iceServers"]), ("none", True, []))
+        self.assertEqual(self.get("/api/admin/calls/ice-servers", NISHA).status_code, 403)
+
+    def test_own_turn_server(self):
+        self.assertEqual(self.put("/api/admin/settings", {"calls_turn_url": "turn:bad url"}).status_code, 422)
+        self.ok(self.put("/api/admin/settings", {"calls_relay": "turn", "calls_turn_url": "turn:home.example.com:3478, turns:home.example.com:443",
+                                                 "calls_turn_secret": "s3cret"}))
+        c = self.start()
+        [srv] = c["iceServers"]
+        self.assertEqual(srv["urls"], ["turn:home.example.com:3478", "turns:home.example.com:443"])
+        expiry, _, cid = srv["username"].partition(":")
+        self.assertEqual(cid, c["id"])
+        self.assertGreater(int(expiry), time.time() + 3600)
+        import base64, hashlib, hmac
+        want = base64.b64encode(hmac.new(b"s3cret", srv["username"].encode(), hashlib.sha1).digest()).decode()
+        self.assertEqual(srv["credential"], want)
+        self.assertNotIn("s3cret", str(srv))
+        t = self.ok(self.get("/api/admin/calls/ice-servers"))
+        self.assertTrue(t["relayOk"])
+        self.assertEqual(t["iceServers"][0]["username"].split(":")[1], "test")
+
+    def test_secrets_stay_out_of_backups_and_survive_a_restore(self):
+        import io, sqlite3, zipfile
+        self.ok(self.put("/api/admin/settings", {"calls_relay": "turn", "calls_turn_url": "turn:h.example.com:3478",
+                                                 "calls_turn_secret": "s3cret", "calls_stun": "stun:s.example.com"}))
+        backup = self.get("/api/admin-storage-download-db").content
+        with zipfile.ZipFile(io.BytesIO(backup)) as z:
+            raw = z.read("chat.db")
+        self.assertNotIn(b"s3cret", raw)
+        self.assertIn(b"s.example.com", raw)                     # not a secret: kept
+        # restoring that backup over this install keeps the secret it has
+        self.ok(self.req("POST", "/api/admin-storage-import-db", ADMIN, content=backup))
+        self.assertEqual(sql("SELECT value FROM app_settings WHERE key = 'calls_turn_secret'")[0]["value"], '"s3cret"')
+        self.assertEqual(self.start()["iceServers"][1]["urls"], ["turn:h.example.com:3478"])

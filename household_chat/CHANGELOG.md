@@ -1,5 +1,58 @@
 # Changelog
 
+## 2.4.2
+
+- **Cloudflare relay**: fetching the credentials failed with "HTTP 403 … error code: 1010" — Cloudflare's bot filter refusing the app's default web client name. The app now identifies itself as Household Chat.
+
+## 2.4.1
+
+- **Calls**: ⚙ during a call shows the Microphone list (on a phone also where you switch to the speakerphone, earpiece or Bluetooth headset) and the output list where the browser has one.
+- **Test calling** says what Cloudflare answered when the relay credentials can't be fetched (its HTTP status and message), and the Log tab too.
+
+## 2.4.0
+
+- **Calls away from home.** Admin → App settings → Voice calls gets an **address lookup (STUN) server** (Cloudflare's is free and needs no account) and a **call relay**: Cloudflare Realtime TURN (key id and API token) or your own TURN server (address and shared secret, with a short-lived password made for each call). **Test calling** checks the microphone, the lookup and the relay from your browser. The token and secret are write-only and never included in a backup; a restore keeps this install's.
+- **📞 Calls** (⋯ menu): your recent calls, missed ones on top, with **Call back** and a button to the chat.
+- **Notifications open the exact chat**: tapping a message notification opens that chat, and a call's notification (or its **Answer** button) opens straight onto the ringing screen.
+
+## 2.3.8
+
+- **Calls**: ⚙ is back to the list from 2.3.4, which worked, with just the microphone choice taken out. (2.3.5–2.3.7 tried buttons for Speakerphone, Earpiece and headset; they didn't work on the phone.)
+
+## 2.3.7
+
+- **Calls**: the ⚙ buttons (Speakerphone, Earpiece, headset) are shown whenever the phone lists any outputs, even when its browser claims an app can't choose — the Home Assistant app on Android says that and still switches. Tapping one tries it and says if it doesn't work.
+
+## 2.3.6
+
+- **Calls**: ⚙ is always shown. Where the phone lets the app choose where the call plays, the buttons are there; where it doesn't, ⚙ says so and shows what the browser reports (the outputs it lists and the browser), so the problem can be described.
+
+## 2.3.5
+
+- **Calls**: ⚙ now shows **where the call plays** as buttons — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth headset — instead of lists, and no longer offers a microphone choice. Shown where the browser lets the app choose.
+
+## 2.3.4
+
+- **Calls**: the Speaker button is gone — on phones a web page can't switch to the loudspeaker, and making the call louder didn't help. Use the phone's volume buttons, or its sound or Bluetooth menu.
+- **Calls**: the mute button now shows a microphone, red with a line across it while you're muted (it used to show a speaker).
+
+## 2.3.3
+
+- **Tapping a notification really opens Household Chat now.** 2.3.2 still sent phones to `/hassio/ingress/…`, an address current Home Assistant no longer has, so the tap still showed "404 not found". Notifications (and **Answer** on a call) now open the app's sidebar page, whose exact address the app asks Home Assistant for when it starts (for example `/a1b2c3d4_household_chat`). The app's **Log** tab shows it: "Notifications open … in Home Assistant".
+- Notifications sent before this update still carry the old address; new ones work.
+
+## 2.3.2
+
+- **Tapping a notification opens Household Chat again** instead of "404 not found". Notifications pointed at the app's short name, but an app installed from a repository has the repository's id in its address in Home Assistant (for example `a1b2c3d4_household_chat`); they now use that full address. This also fixes **Answer** on a call notification.
+
+## 2.3.1
+
+- **Calls: both people are heard.** On phones and in the Home Assistant app, the other person's sound could be held back on one side, so only one voice came through. The sound is now started by your tap on 📞 or Answer, and if a phone still holds it back, a 🔈 button appears to hear them.
+- **🔊 Speaker** during a call: switches to the loudspeaker where the browser lets a web page choose it (and back); where it can't, the call is made louder instead.
+- **⚙ Microphone and sound output** during a call: pick the microphone, and where the browser allows it the speaker or headset the call plays through. Your choice is remembered on that device.
+- **Is sound getting through?** Two small level bars show your microphone and the other person's sound, and a line says what's wrong: no sound arriving from them, their microphone seems silent, they've muted, or your own microphone seems silent.
+- Muting tells the other person ("Nisha has muted their microphone").
+
 ## 2.3.0
 
 - **Voice calls** (optional, off until an admin turns them on in **App settings → Voice calls**): 📞 at the top of a direct chat calls that person. Every open Household Chat page rings, and the phone gets "📞 Nisha is calling" with **Answer** (opens the app, which shows the ringing screen) and **Decline** (works without opening it). Mute and hang up during the call; the screen stays on.

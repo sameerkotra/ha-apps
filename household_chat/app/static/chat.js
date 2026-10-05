@@ -58,6 +58,7 @@ function mainMenu(anchor) {
     { label: "📌 My room", run: () => openChat(state.me.personalRoomId) },
     { label: "☆ Starred", run: () => showPage("starred") },
     { label: "⏰ Reminders", run: () => showPage("reminders") },
+    callsOn() ? { label: "📞 Calls", run: () => showPage("calls") } : null,
     { label: "🕓 Scheduled", run: () => scheduledDialog(null) },
     { label: "📁 My files", run: () => showPage("files") },
     "-",

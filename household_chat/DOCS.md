@@ -71,11 +71,18 @@ An admin turns calls on in **App settings → Voice calls** (off until then).
 
 - **📞** at the top of a direct chat calls that person. Calls are one-to-one, in direct chats only: not in groups or My room, and not in a direct chat that's read-only. Children can call the people they can message.
 - **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
-- **During a call**: 🎤 mutes and unmutes you, the red button hangs up. The screen stays on while the call is on.
+- **During a call**:
+  - The microphone button mutes and unmutes you (muted, it's red with a line across the microphone); the other person sees that you've muted.
+  - ⚙ picks the **microphone** — on a phone this list is also where you switch the call to the **speakerphone, earpiece or Bluetooth headset** — and, where the browser lists them, the **speaker or headset** the call plays through. The choices are remembered on that device.
+  - Two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
+  - 🔈 appears if your phone held back their sound: tap it to hear them.
+  - The red button hangs up. The screen stays on while the call is on.
+  - There's no speaker button: a web page can't switch a phone to the loudspeaker. Use the phone's volume buttons, or its sound or Bluetooth menu.
 - **In the chat**, each call leaves a note: "📞 Outgoing call · 4 min", "📞 Missed call", "📞 No answer", "📞 Declined", with **Call back**. A missed call counts as unread and is notified like a message.
 - **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call.
 - **Quiet hours and muted chats**: your phone isn't rung, but open pages still ring. In quiet hours a missed call waits for the summary afterwards, like messages; in a muted chat it isn't notified.
-- **This version works on the home network**: both phones (or computers) must be on the same network as each other. Calling from outside the home is planned.
+- **In the chat**, each call leaves a note. **⋯ → 📞 Calls** lists your recent calls, missed ones on top, with **Call back**.
+- **Away from home**: at home nothing needs setting up. For calls when someone's out, an admin adds an **address lookup (STUN) server** in App settings → Voice calls (Cloudflare's `stun:stun.cloudflare.com:3478` is free and needs no account), and for networks that block direct connections — common on mobile data — a **call relay**: either **Cloudflare Realtime TURN** (make a TURN key under Realtime → TURN in your Cloudflare account, free up to a large monthly allowance, and enter its key id and API token) or **your own TURN server** (for example a coturn app with a router port forwarded; enter its address and shared secret). A Cloudflare Tunnel doesn't carry call sound, so the relay is separate. **Test calling** under those settings checks the microphone, the lookup and the relay from your browser. The token and secret are never included in a backup.
 - **The microphone needs https** and permission, as for voice messages. The Home Assistant phone app may block it; then Answer says so, the call ends as "couldn't connect", and a browser works instead.
 - **Ringing is a notification, not a real phone call**: it can take a few seconds, and your phone's own Do Not Disturb silences it. On some phones the call needs Household Chat to stay open on screen; locking the phone or switching apps may end it.
 
@@ -147,7 +154,7 @@ If the household also uses the **Household Docs** app, its **⋯ → Send to cha
 - **Per chat** (chat ⋯ → 🔔 Notifications): all messages, mentions only or off, and mute for 1 hour, 8 hours, a week or until you turn it back on.
 - **Fewer pushes**: several messages from one chat within a minute arrive as one ("Nisha: 3 new messages"). Nothing is sent while you're looking at that chat, or for your own room. Reading the chat cancels anything still waiting.
 - **Reply and Mark as read** buttons appear on notifications sent to a phone with the Companion app. The reply is posted as you. Admins can turn the buttons off in App settings.
-- Tapping a notification opens Household Chat.
+- Tapping a notification opens the chat it's about (or the ringing screen for a call).
 - **Extra notify services**: an admin can add others for a person (a speaker, a second service) in Admin → People → 🔔 → **Also**, and **Send a test** to all of them.
 - People without access never get notifications.
 
@@ -186,6 +193,8 @@ The settings are in cards (Files, Chats and messages, Old messages, Notification
 | Largest chat download (MB) | 500 | Files beyond this are left out of a chat download. |
 | Voice calls | Off | Shows 📞 in direct chats (see *Voice calls*). |
 | Ring for (seconds) | 30 | 15–60; shown while Voice calls is on. |
+| Address lookup (STUN) server | empty | For calls away from home, e.g. `stun:stun.cloudflare.com:3478`. Empty = home network only. |
+| Call relay (TURN) | None | None, Cloudflare Realtime TURN (key id + API token) or your own TURN server (address + shared secret). |
 
 ## The chat files folder
 
@@ -217,7 +226,7 @@ Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your 
 | Phone notifications | What the preview setting allows shows on lock screens and in the Companion app's history. |
 | Notification replies | They pass through Home Assistant's event bus, where Home Assistant admins and automations can see them. |
 | Messages between the household apps | Household Docs and Chat talk over Home Assistant's event bus (`household_apps` events): ids, names, document titles and types, never document contents or chat messages. Your chat list goes without who is in each chat; the members of a chat are told only when you ask Docs to give that one chat's members access. Home Assistant admins, automations and every installed app with Home Assistant API access can see these events (and could send one), and Home Assistant's history keeps them unless you leave them out (below). Chat treats such a message only as a request the person could make themselves. |
-| Voice calls | The sound goes straight between the two phones or computers, encrypted; the app never handles it and calls are never recorded. The app keeps who called whom, when and for how long (the notes in the chat), like messages. |
+| Voice calls | The sound goes straight between the two phones or computers, encrypted; the app never handles it and calls are never recorded. With an address lookup (STUN) server set, the phones' public network addresses go to it; with a relay, the encrypted sound passes through it (Cloudflare or your own server) — names and messages never do. The app keeps who called whom, when and for how long (the notes in the chat and the Calls list), like messages. |
 | Home / away | Home Assistant already shows every user these states. |
 | Shared folders | Ordinary `/share` folders: anyone who can reach `/share` can read them. In the app, the members of each chat they're shared into. |
 | Chat downloads and backups | Anyone who has the file. |
@@ -240,8 +249,8 @@ recorder:
 - Built for a household: up to 20 people per group and 100 groups.
 - Messages up to 8000 characters, 10 files per message; 30 messages and 20 uploads a minute per person.
 - 10 pinned messages and 10 shared folders per chat; 50 open reminders and 20 scheduled messages per person; polls with 2–10 answers.
-- Voice calls are one-to-one, on the home network only; no video calls. No end-to-end encryption for messages, no link previews, and no access from outside Home Assistant or for people without a Home Assistant login.
-- Tapping a notification opens the app, not the exact chat. Home Assistant can't show an unread count on the sidebar.
+- Voice calls are one-to-one; no video calls. No end-to-end encryption for messages, no link previews, and no access from outside Home Assistant or for people without a Home Assistant login.
+- Home Assistant can't show an unread count on the sidebar.
 - PDFs have no preview picture in the Files view.
 - Notifications still waiting (batching, quiet hours) are dropped if the app restarts.
 
@@ -259,7 +268,8 @@ recorder:
 - **A file shows "no longer available"**: it was renamed, moved or deleted outside the app (for example over Samba).
 - **Live updates stop**: the dot next to your name turns amber when the page falls back to checking every few seconds; it reconnects by itself.
 - **The microphone doesn't work**: it needs https and permission; in the Home Assistant phone app, try a browser instead.
-- **A call says "Couldn't connect"**: both sides must be on the home network for now, and the microphone must be allowed. A call also ends if one side loses its connection to Home Assistant for a minute.
+- **Only one person can be heard**: look at the bars and the line on the call screen. "No sound is arriving" means the connection lets sound through only one way (try again, both on the same Wi-Fi); "their microphone seems silent" means their phone isn't giving the call its microphone (muted, used by another app, or blocked — try a browser instead of the Home Assistant app, or another choice in ⚙). If 🔈 shows, tap it.
+- **A call says "Couldn't connect"**: away from home it needs the address lookup and, on mobile data, a relay (App settings → Voice calls → Test calling says what's missing); and the microphone must be allowed. A call also ends if one side loses its connection to Home Assistant for a minute.
 - **The back gesture**: on Android (Home Assistant app or browser), Back closes an open menu or dialog first, then goes from a chat or page back to the chat list; only Back from the list leaves the app.
 - **"Open in Docs" does nothing, or Docs isn't in Connected apps**: Household Docs and Chat find each other when they start and every few hours; restart Household Docs, then look at Admin → App settings → Connected apps. Both apps must run inside Home Assistant (messages between apps are off outside it).
 - **Themes**: Settings → Look → Theme (Midnight, Slate, Daylight or Auto, which follows your device's light or dark setting). If you had picked Vault before, you now get Midnight.

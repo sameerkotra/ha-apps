@@ -19,13 +19,55 @@ def _exts(v: str) -> str:
     return ",".join(dict.fromkeys(parts))
 
 
+def _one_line(v: str) -> str:
+    v = (v or "").strip()
+    if any(c in v for c in "\r\n"):
+        raise ValueError("One line.")
+    return v
+
+
+def _stun(v: str) -> str:
+    v = (v or "").strip()
+    if v and not re.fullmatch(r"stuns?:[A-Za-z0-9.\-]+(:\d{1,5})?", v):
+        raise ValueError("A STUN address looks like stun:stun.cloudflare.com:3478")
+    return v
+
+
+def _turn(v: str) -> str:
+    parts = [p.strip() for p in (v or "").split(",") if p.strip()]
+    for p in parts:
+        if not re.fullmatch(r"turns?:[A-Za-z0-9.\-]+(:\d{1,5})?(\?transport=(udp|tcp))?", p):
+            raise ValueError("A TURN address looks like turn:home.example.com:3478 or turns:home.example.com:443")
+    return ",".join(parts)
+
+
+def _prepare(partial: dict, current: dict, flags: dict) -> dict:
+    """A blank secret keeps the saved one; clear_<key> removes it."""
+    for key in SECRETS:
+        if key in partial and not (partial[key] or "").strip():
+            partial.pop(key)
+        if flags.get(f"clear_{key}"):
+            partial[key] = ""
+    return partial
+
+
+def _check(merged: dict, partial: dict, current: dict) -> None:
+    if merged["calls_relay"] == "cloudflare" and not (merged["calls_cf_key_id"] and merged["calls_cf_api_token"]):
+        raise SettingsError("calls_relay: the Cloudflare relay needs its TURN key id and API token.")
+    if merged["calls_relay"] == "turn" and not (merged["calls_turn_url"] and merged["calls_turn_secret"]):
+        raise SettingsError("calls_relay: your own relay needs its address and shared secret.")
+
+
+SECRETS = ("calls_cf_api_token", "calls_turn_secret")
+
 GROUPS = [
     Group("files", "Files"),
     Group("messages", "Chats and messages"),
     Group("retention", "Old messages"),
     Group("notifications", "Notifications"),
     Group("calls", "Voice calls", "One-to-one calls in direct chats. The sound goes straight between the two "
-          "phones; this release works on the home network only."),
+          "phones. At home nothing needs setting up; for calls away from home add an address lookup (STUN) and, "
+          "for networks that block direct connections (common on mobile data), a call relay."),
 ]
 
 SETTINGS = [
@@ -63,6 +105,27 @@ SETTINGS = [
     Setting("calls_enabled", False, "Voice calls", group="calls",
             help="Show a 📞 Call button in direct chats. Calls need the app opened over https (the microphone)."),
     Setting("calls_ring_seconds", 30, "Ring for (seconds)", group="calls", min=15, max=60, show_if="calls_enabled"),
+    Setting("calls_stun", "", "Address lookup (STUN) server", group="calls", max_length=200, validators=[_stun],
+            show_if="calls_enabled", placeholder="Empty: home network only",
+            help="Lets phones away from home find each other. Cloudflare's is free and needs no account: "
+                 "stun:stun.cloudflare.com:3478. Only the phones' network addresses go to it, never sound."),
+    Setting("calls_relay", "none", "Call relay (TURN)", group="calls", show_if="calls_enabled",
+            choices=[("none", "None"), ("cloudflare", "Cloudflare Realtime TURN"), ("turn", "My own TURN server")],
+            help="Carries the sound when the phones can't connect directly. Cloudflare: make a TURN key under "
+                 "Realtime → TURN in your Cloudflare account (free up to a large monthly allowance) and enter its key "
+                 "id and API token. Own server: e.g. a coturn with a router port forwarded; enter its address and "
+                 "shared secret. A Cloudflare Tunnel doesn't carry call sound, so the relay is separate."),
+    Setting("calls_cf_key_id", "", "Cloudflare TURN key id", group="calls", max_length=100, validators=[_one_line],
+            show_if="calls_enabled"),
+    Setting("calls_cf_api_token", "", "Cloudflare TURN API token", group="calls", secret=True, max_length=200,
+            validators=[_one_line], show_if="calls_enabled", page={"clearFlag": "clear_calls_cf_api_token"}),
+    Setting("calls_turn_url", "", "TURN server address", group="calls", max_length=200, validators=[_turn],
+            show_if="calls_enabled", placeholder="turn:home.example.com:3478",
+            help="turn: or turns: (turns: on port 443 also works on networks that allow only web traffic). "
+                 "Several, separated by commas."),
+    Setting("calls_turn_secret", "", "TURN shared secret", group="calls", secret=True, max_length=200,
+            validators=[_one_line], show_if="calls_enabled", page={"clearFlag": "clear_calls_turn_secret"},
+            help="coturn's static-auth-secret: the app makes a short-lived password for each call from it."),
     Setting("export_max_mb", 500, "Largest chat download, files included (MB)", group="files", min=10, max=10000),
 ]
 
@@ -80,6 +143,7 @@ def unknown_message(keys) -> str:
 REGISTRY = settings_core.Registry(
     SETTINGS, groups=GROUPS, connect=db.get_conn, format_error=first_error, unknown_message=unknown_message,
     load_check="type", cache_ttl=5, write_all=True,
+    flags={f"clear_{k}": f"clear_{k}: must be true or false" for k in SECRETS}, prepare=_prepare, check=_check,
     write=lambda conn, key, value, who, now: db.set_setting(conn, key, value, who),
     log=lambda *a: None)
 

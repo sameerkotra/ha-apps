@@ -43,7 +43,8 @@ def me(user: dict = Depends(get_current_user)):
                 "notifyLinked": bool(ha_notify.services_for({"id": u["id"]}, conn)),    # phones + extras
                 "app": app_public(conn), "version": config.APP_VERSION, "files": files.public_status(),
                 "noAdmin": not config.ADMIN_NAMES,        # first run: nobody can open Admin yet (SPEC §4.2)
-                "timeZone": getattr(config.tz(), "key", "UTC")}
+                "timeZone": getattr(config.tz(), "key", "UTC"),
+                "page": config.INGRESS_URL}          # the app's page in Home Assistant (deep links, §15.14)
 
 
 @router.get("/whoami")
@@ -149,6 +150,27 @@ def starred(user: dict = Depends(require_user)):
         for mm in msgs:
             mm["conversationName"] = names[mm["conversationId"]]
     return {"messages": msgs}
+
+
+@router.get("/me/calls")
+def my_calls(user: dict = Depends(require_user)):
+    """My recent calls, newest first (up to 100), for the Calls list (§15.12): who, when, how it ended."""
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT c.*, m.deleted_at FROM calls c JOIN members mb ON mb.conversation_id = c.conversation_id AND mb.user_id = ? "
+            "LEFT JOIN messages m ON m.id = c.message_id WHERE (c.caller_id = ? OR c.callee_id = ?) AND c.ended_at IS NOT NULL "
+            "ORDER BY c.started_at DESC LIMIT 100", (user["id"], user["id"], user["id"])).fetchall()
+        out = []
+        for r in rows:
+            other = r["callee_id"] if r["caller_id"] == user["id"] else r["caller_id"]
+            conv = chats.conv_row(conn, r["conversation_id"])
+            out.append({"id": r["id"], "conversationId": r["conversation_id"], "messageId": r["message_id"],
+                        "peerId": other, "peerName": chats.shown_name(chats.user_row(conn, other)),
+                        "outgoing": r["caller_id"] == user["id"], "outcome": r["outcome"],
+                        "missed": r["callee_id"] == user["id"] and r["outcome"] in ("missed", "busy"),
+                        "startedAt": r["started_at"], "seconds": chats.call_seconds(r),
+                        "canCallBack": conv is not None and chats.can_post(conn, conv, user["id"])})
+    return {"calls": out}
 
 
 @router.get("/me/reminders")

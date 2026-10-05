@@ -34,7 +34,8 @@ def headers(who):
 
 
 def chromium(pw):
-    args = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=no-user-gesture-required"]
+    # sound may only start after a tap, as on phones and in the Home Assistant app
+    args = ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", "--autoplay-policy=user-gesture-required"]
     try:
         return pw.chromium.launch(args=args)
     except Exception:
@@ -125,8 +126,31 @@ class CallsInBrowsers(unittest.TestCase):
             time.sleep(0.2)
         self.assertGreater(n.evaluate(INBOUND), 10)
         self.assertGreater(t.evaluate(INBOUND), 10)
+        # and each side actually plays it (desktop Chrome lets a page that uses the microphone play sound; phones are stricter)
+        for p in (n, t):
+            self.assertEqual(p.evaluate("[callAudio.paused, callAudio.muted, !!callAudio.srcObject.getAudioTracks().length]"),
+                             [False, False, True])
+            p.wait_for_selector("#meterThem:not([hidden])", timeout=5000)
+        # the other side is told about mute
+        self.assertEqual(t.eval_on_selector_all("#callScreen button.speaker", "els => els.length"), 0)
+        self.assertEqual(t.evaluate("document.querySelectorAll('#callScreen button.mute svg path').length"), 2)
         t.click("#callScreen button.mute")
         self.assertFalse(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
+        # muted: the microphone is drawn with a line across it
+        self.assertEqual(t.evaluate("document.querySelectorAll('#callScreen button.mute.on svg path').length"), 3)
+        n.wait_for_function("(document.querySelector('#callHint') || {}).textContent === 'Tarun has muted their microphone.'", timeout=8000)
+        t.click("#callScreen button.mute")
+        self.assertTrue(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
+        # ⚙: the microphone list (on Android the phone's sound routes) and, where labelled, the outputs
+        t.click("#callScreen button.devices")
+        t.wait_for_selector("#callPanel:not([hidden]) select")
+        before = t.evaluate("call.stream.getAudioTracks()[0].id")
+        t.select_option("#callPanel select[aria-label='Microphone']", index=t.evaluate("document.querySelector('#callPanel select').options.length") - 1)
+        t.wait_for_function(f"call.stream.getAudioTracks()[0].id !== {json.dumps(before)}", timeout=5000)
+        self.assertEqual(t.evaluate("call.pc.getSenders().find((x) => x.track).track.id"), t.evaluate("call.stream.getAudioTracks()[0].id"))
+        if t.evaluate("CAN_PICK_OUTPUT"):
+            t.select_option("#callPanel select[aria-label='Sound output']", index=0)
+            t.wait_for_function("callAudio.sinkId === call.outputId", timeout=5000)
         n.click("#callScreen button.hangup")
         for p in (n, t):
             p.wait_for_selector("#callScreen", state="detached", timeout=10000)
@@ -138,5 +162,43 @@ class CallsInBrowsers(unittest.TestCase):
         t.wait_for_selector("#callScreen button.decline", timeout=15000)
         t.click("#callScreen button.decline")
         n.wait_for_function(f"{STATUS} === 'Declined'", timeout=10000)
+        time.sleep(2.5)
+        # the Calls list: both calls, Call back starts a call
+        n.click("#side button[title='More']")
+        n.click(".menu button:has-text('📞 Calls')")
+        n.wait_for_selector(".call-row")
+        self.assertEqual(n.evaluate("[...document.querySelectorAll('.call-row .hint')].map((e) => e.textContent.split(' · ')[0])"),
+                         ["↗ Declined", "↗ Outgoing"])
+        t.click("#side button[title='More']")
+        t.click(".menu button:has-text('📞 Calls')")
+        t.wait_for_selector(".call-row")
+        self.assertEqual(t.evaluate("document.querySelectorAll('.call-row.missed').length"), 0)   # declined, not missed
+        n.click(".call-row button:has-text('Call back')")
+        t.wait_for_selector("#callScreen button.answer", timeout=15000)
+        n.click("#callScreen button.hangup")
+        t.wait_for_selector("#callScreen", state="detached", timeout=10000)
+        t.click("#side button[title='More']")
+        t.click(".menu button:has-text('📞 Calls')")
+        t.wait_for_selector(".call-row.missed")
+        # deep links: the route after the page's address opens a chat or the ringing screen
+        self.assertEqual(n.evaluate(f"routeOf('/a1b2c3d4_household_chat/chat/{d}', '/a1b2c3d4_household_chat')"), {"kind": "chat", "id": d})
+        self.assertEqual(n.evaluate("routeOf('/a1b2c3d4_household_chat/call/abc', '/a1b2c3d4_household_chat')"), {"kind": "call", "id": "abc"})
+        self.assertIsNone(n.evaluate("routeOf('/a1b2c3d4_household_chat/config/x', '/a1b2c3d4_household_chat')"))
+        self.assertIsNone(n.evaluate("routeOf('/other/chat/abc', '/a1b2c3d4_household_chat')"))
+        t.click("#side button[title='More']")
+        t.click(".menu button:has-text('☆ Starred')")
+        t.wait_for_selector(".page")
+        self.assertTrue(t.evaluate(f"followRoute(routeOf('/x/chat/{d}', '/x'))"))
+        t.wait_for_selector(".chat-head")
+        self.assertEqual(t.evaluate("state.current"), d)
+        # Test calling (Admin → App settings): the microphone and a local address at least
+        a = self.page("admin")
+        a.click("#side button[title='More']")
+        a.click(".menu button:has-text('Admin')")
+        a.click(".tab:has-text('App settings')")
+        a.wait_for_selector("button:has-text('Test calling')")
+        a.click("button:has-text('Test calling')")
+        a.wait_for_function("document.querySelector('.test-call-out') && document.querySelector('.test-call-out').textContent.includes('All good')", timeout=20000)
+        self.assertIn("Microphone works", a.inner_text(".test-call-out"))
         msgs = self.api("GET", f"api/conversations/{d}/messages", "nisha")["messages"]
-        self.assertEqual([m["call"]["outcome"] for m in msgs if m["kind"] == "call"], ["answered", "declined"])
+        self.assertEqual([m["call"]["outcome"] for m in msgs if m["kind"] == "call"], ["answered", "declined", "missed"])
