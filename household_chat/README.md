@@ -8,6 +8,7 @@ A private chat and file-sharing app for a household, inside Home Assistant. Ever
 
 - Direct chats, groups, a Household group and a private **My room** for each person
 - Files, photos (made smaller, location removed) and voice messages
+- Optional **voice calls** in direct chats, phone to phone on the home network, with a ringing notification
 - Replies, reactions, edits, @mentions, formatting, pins, polls and forwarding
 - Search, starred messages and "remind me"
 - Disappearing messages, announcements, send later and drafts that follow you

@@ -12,6 +12,7 @@ async function boot() {
   if (FINE_POINTER && last && convById(last)) openChat(last);
   else renderEmptyMain();
   connectLive();
+  checkCurrentCall();            // a call ringing for me when the page opens (e.g. Answer on the phone)
   setInterval(() => { sendPresence(); }, 25000);
   setInterval(() => { renderTyping(); if (Object.keys(state.typing).length) renderConvList(); expireTyping(); }, 2000);
   setInterval(() => { refreshSubline(); if (state.page === "chat" && state.msgs.some((m) => m.expiresAt)) renderMessages(); }, 60000);
@@ -39,7 +40,8 @@ function connectLive() {
     if (state.sseSeen) catchUp();          // a new connection has no Last-Event-ID: fetch what was missed
     state.sseSeen = true; state.sseFails = 0; stopPolling(); dot();
   });
-  es.addEventListener("hello", () => { dot(); });
+  es.addEventListener("hello", () => { dot(); checkCurrentCall(); });
+  es.addEventListener("call", (e) => onCallEvent(JSON.parse(e.data)));
   es.addEventListener("error", () => {
     dot();
     if (es.readyState === 2) {
@@ -72,7 +74,7 @@ function connectLive() {
     if (d.conversationId === state.current) {
       const r = state.reads.find((x) => x.userId === d.userId);
       if (r) r.lastReadId = d.lastReadId; else state.reads.push({ userId: d.userId, lastReadId: d.lastReadId });
-      const mine = [...state.msgs].reverse().find((m) => m.userId === state.me.id && !m.deleted && m.kind !== "system");
+      const mine = [...state.msgs].reverse().find((m) => m.userId === state.me.id && !m.deleted && !isNote(m));
       if (mine) { const el = document.getElementById("m" + mine.id); if (el) { const s = el.querySelector(".seen"); const txt = seenBy(mine); if (s) s.textContent = txt || ""; else if (txt) el.querySelector(".msg-col").appendChild(h("div", { class: "seen" }, txt)); } }
     }
     if (d.userId === state.me.id) refreshConvsSoon();
@@ -131,7 +133,7 @@ function onMessageEvent(m, fromPoll) {
   c.lastActivityAt = m.createdAt;
   const looking = m.conversationId === state.current && state.page === "chat" && document.visibilityState === "visible" && atBottom();
   if (m.userId === state.me.id) { c.unread = 0; c.mentionUnread = 0; c.lastReadId = m.id; }
-  else if (m.userId && !looking && c.kind !== "personal" && !fromPoll) {
+  else if (m.userId && !looking && c.kind !== "personal" && !fromPoll && (m.kind !== "call" || callMissedByMe(m))) {
     c.unread = (c.unread || 0) + 1;
     if (m.mentionAll || m.mentions.includes(state.me.id)) c.mentionUnread = (c.mentionUnread || 0) + 1;
   }
@@ -151,6 +153,7 @@ function onMessageUpdated(m) {
 function previewOf(m) {
   if (m.kind === "system") return m.body;
   if (m.deleted) return "Message deleted";
+  if (m.kind === "call") return callNoteText(m);
   if (m.kind === "poll") return "📊 " + m.poll.question;
   if (m.body) return plainText(m.body).slice(0, 100);
   const a = m.attachments[0];
@@ -162,6 +165,7 @@ function startPolling() {
   if (state.polling) return;
   const tick = async () => {
     await catchUp();
+    if (!call) checkCurrentCall();          // during a call, calls.js asks every second
     state.polling = setTimeout(tick, document.visibilityState === "visible" ? 5000 : 60000);
   };
   state.polling = setTimeout(tick, 1000);

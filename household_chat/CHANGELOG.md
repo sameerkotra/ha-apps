@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.0
+
+- **Voice calls** (optional, off until an admin turns them on in **App settings → Voice calls**): 📞 at the top of a direct chat calls that person. Every open Household Chat page rings, and the phone gets "📞 Nisha is calling" with **Answer** (opens the app, which shows the ringing screen) and **Decline** (works without opening it). Mute and hang up during the call; the screen stays on.
+- The sound goes straight between the two phones or computers (WebRTC, encrypted); the app only introduces them and never handles or records it. This version works when both are on the home network; calling from outside the home is planned.
+- Each call leaves a note in the chat (Outgoing call · 4 min, Missed call, No answer, Declined) with **Call back**. Missed calls count as unread and are notified like messages; quiet hours and muted chats stop the phone ringing.
+- One call at a time: calling someone already on a call says so, and they see a missed call. Children can call the people they can message.
+- At the first start, a one-time database update adds call notes and the call history; every message, file and setting is kept as it is.
+
 ## 2.2.1
 
 - **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.

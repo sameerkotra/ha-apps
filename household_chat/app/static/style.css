@@ -411,3 +411,19 @@ code.path { overflow-wrap: anywhere; word-break: break-all; }
 .upload-queue[hidden] { display: none; }
 .upload-bar { display: block; height: 6px; border-radius: 3px; background: var(--panel-alt); overflow: hidden; }
 .upload-bar-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+/* ---------- voice calls (§15.12) ---------- */
+.call-screen { position: fixed; inset: 0; z-index: 65; background: var(--bg); display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.call-box { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 360px; width: 100%; }
+.call-box .avatar.big { width: 112px; height: 112px; font-size: 2.4rem; }
+.call-name { font-size: 1.5rem; font-weight: 600; overflow-wrap: anywhere; }
+.call-status { color: var(--text-dim); min-height: 1.4em; font-variant-numeric: tabular-nums; }
+.call-actions { display: flex; gap: 40px; margin-top: 36px; }
+.call-btn { width: 68px; height: 68px; border-radius: 50%; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text); font-size: 1.6rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.call-btn:hover { background: var(--panel-hover); }
+.call-btn.hangup, .call-btn.decline { background: var(--danger); border-color: var(--danger); color: #fff; }
+.call-btn.hangup { transform: rotate(135deg); }
+.call-btn.answer { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+.call-btn.mute.on { background: var(--accent-soft); border-color: var(--accent); }
+.call-note.missed span { color: var(--danger); }
+.call-note .call-back { margin-left: 8px; font-size: inherit; }

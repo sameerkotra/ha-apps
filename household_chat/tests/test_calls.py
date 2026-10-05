@@ -194,6 +194,9 @@ class CallTests(ApiTestCase):
         self.assertIn("Tarun is on another call", r.json()["detail"])
         notes = [m for m in self.ok(self.get(f"/api/conversations/{d2}/messages", LEELA))["messages"] if m["kind"] == "call"]
         self.assertEqual(notes[0]["call"]["outcome"], "busy")
+        # calling again and again counts like messages
+        codes = [self.post("/api/calls", {"conversationId": d2}, LEELA).status_code for _ in range(30)]
+        self.assertEqual(codes[-1], 429)
         # an offer that never comes: dropped without a note
         calls.reset()
         c = self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)

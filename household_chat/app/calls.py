@@ -116,6 +116,7 @@ def start(user: dict, conversation_id: str) -> dict:
         if conv["kind"] != "direct":
             raise HTTPException(409, "Calls are only possible in a direct chat.")
         chats.require_post(conn, conv, user["id"])
+        chats.message_limit.take(user["id"])        # a call can leave a note and a push: counted like a message
         other = chats.other_member(conn, conv, user["id"])
         ring = settings.get("calls_ring_seconds", conn)
         servers = ice_servers(conn)
@@ -210,6 +211,8 @@ def current(user: dict) -> dict | None:
         if not mine and c.state == "ringing":
             data["offer"] = c.offer
             data["candidates"] = list(c.candidates.get(c.caller, []))
+        if mine and c.state == "active":
+            data["answer"] = c.answer           # for a page whose live updates are down (it polls this)
     with db.get_conn() as conn:
         data["peerName"] = chats.shown_name(chats.user_row(conn, data["peerId"]))
         data["iceServers"] = ice_servers(conn)
@@ -256,14 +259,13 @@ def _end(call_id: str, outcome: str | None, by: str | None = None, reason: str |
     c = _take(call_id)
     if c is None:
         return
-    data = {"state": "ended", "outcome": outcome, "by": by}
+    if outcome is not None and c.started_at is not None:
+        _clear_push(c)          # a missed call's notification follows as a message (§7)
+        _finish_note(c, outcome)
+    data = {"state": "ended", "outcome": outcome, "by": by}      # after the note: pages see both
     if reason:
         data["reason"] = reason
     _event(c, [c.caller, c.callee], data)
-    if outcome is None or c.started_at is None:
-        return
-    _clear_push(c)              # a missed call's notification follows as a message (§7)
-    _finish_note(c, outcome)
 
 
 def _finish_note(c: Call, outcome: str) -> None:

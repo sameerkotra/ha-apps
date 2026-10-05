@@ -172,6 +172,7 @@ function renderChat() {
       h("span", { class: "chat-sub ellipsis", id: "chatSub" }, chatSubline(c, d))),
     c.disappearSeconds ? h("button", { class: "chip dis-chip", type: "button", title: "Disappearing messages", onclick: () => canSetDisappearing(c) ? disappearDialog() : null }, "⏱ " + durationLabel(c.disappearSeconds)) : null,
     h("span", { class: "spacer" }),
+    canCallIn(c) ? h("button", { class: "icon-btn", type: "button", title: "Call", "aria-label": "Call " + c.name, onclick: () => startCall(c) }, "📞") : null,
     d.folders && d.folders.length ? h("button", { class: "icon-btn", type: "button", title: "Shared folders", "aria-label": "Shared folders", onclick: (e) => foldersMenu(e.currentTarget) }, "📂") : null,
     h("button", { class: "icon-btn", type: "button", title: "Search in chat", "aria-label": "Search in chat", onclick: () => searchInChatDialog() }, "🔍"),
     h("button", { class: "icon-btn", type: "button", title: "Files", "aria-label": "Files", onclick: () => filesDialog(d.id, c.name) }, "📁"),
@@ -289,12 +290,12 @@ function renderMessages() {
     els.push(h("div", { class: "chat-start" }, h("button", { class: "btn small", type: "button", onclick: () => onListScroll() }, "Load earlier messages")));
   }
   let prev = null;
-  const lastMine = [...state.msgs].reverse().find((m) => m.userId === state.me.id && !m.deleted && m.kind !== "system");
+  const lastMine = [...state.msgs].reverse().find((m) => m.userId === state.me.id && !m.deleted && !isNote(m));
   for (const m of state.msgs) {
     const d = toDate(m.createdAt);
     if (!prev || !sameDay(toDate(prev.createdAt), d)) els.push(h("div", { class: "day-sep" }, h("span", null, fmtDay(m.createdAt))));
     if (state.unreadMarker && m.id === state.unreadMarker) els.push(h("div", { class: "unread-sep" }, h("span", null, "Unread")));
-    const grouped = prev && prev.userId === m.userId && prev.kind !== "system" && m.kind !== "system" && (d - toDate(prev.createdAt)) < 5 * 60000 && sameDay(toDate(prev.createdAt), d) && !(state.unreadMarker === m.id);
+    const grouped = prev && prev.userId === m.userId && !isNote(prev) && !isNote(m) && (d - toDate(prev.createdAt)) < 5 * 60000 && sameDay(toDate(prev.createdAt), d) && !(state.unreadMarker === m.id);
     els.push(messageEl(m, grouped, ctx, lastMine && lastMine.id === m.id));
     prev = m;
   }
@@ -310,8 +311,11 @@ function seenBy(m) {
   if (c.kind === "direct") return "Seen";
   return "Seen by " + (readers.length > 4 ? readers.slice(0, 4).join(", ") + ` +${readers.length - 4}` : readers.join(", "));
 }
+// system lines and call notes sit in the middle of the chat, without a bubble
+function isNote(m) { return m.kind === "system" || m.kind === "call"; }
 function messageEl(m, grouped, ctx, isLastMine) {
   if (m.kind === "system") return h("div", { class: "sys", id: "m" + m.id }, h("span", null, m.body, " · ", fmtTime(m.createdAt)));
+  if (m.kind === "call") return callNoteEl(m);
   const mine = m.userId === state.me.id;
   const c = convById(state.current) || state.detail;
   const bubble = h("div", { class: "bubble" + (m.deleted ? " deleted" : "") + (m.announcement ? " announcement" : "") });
@@ -365,7 +369,7 @@ function messageEl(m, grouped, ctx, isLastMine) {
 function replyQuote(r) {
   if (r.gone) return h("div", { class: "quote" }, h("span", { class: "hint" }, "Original message no longer available"));
   if (r.hidden) return h("div", { class: "quote" }, h("span", { class: "hint" }, "Replying to an earlier message"));
-  const text = r.deleted ? "Message deleted" : r.kind === "card" ? "📄 " + r.text : (r.text || (r.kind === "poll" ? "📊 Poll" : r.files ? "📎 File" : ""));
+  const text = r.deleted ? "Message deleted" : r.kind === "card" ? "📄 " + r.text : r.kind === "call" ? "📞 Call" : (r.text || (r.kind === "poll" ? "📊 Poll" : r.files ? "📎 File" : ""));
   return h("button", { class: "quote", type: "button", onclick: () => jumpTo(r.id) },
     h("span", { class: "quote-author" }, r.userId === state.me.id ? "You" : (r.author || "")), h("span", { class: "quote-text" }, text));
 }
