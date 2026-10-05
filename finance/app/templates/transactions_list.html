@@ -20,7 +20,7 @@
    Enter-activation can't be told apart. Nothing queries until Search is clicked
    or Enter is pressed (the form's onkeydown clicks the button). #}
 <form id="txn-filters" class="add-account-form"
-      onkeydown="if (event.key === 'Enter') { event.preventDefault(); document.getElementById('txn-search-btn').click(); }">
+      data-enter-clicks="txn-search-btn">
     <input type="hidden" name="txn_type" value="{{ filter_txn_type }}">
     <label>
         Search notes
@@ -92,7 +92,7 @@
                 hx-include="#txn-filters" hx-push-url="true">Search</button>
         <a href="transactions{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">Clear all</a>
         <button type="button" class="btn-secondary"
-                onclick="window.location.href = 'transactions-export?' + new URLSearchParams(new FormData(this.form)).toString();">Export to CSV</button>
+                data-export="transactions-export">Export to CSV</button>
         {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=')[1] }}">{% endif %}
     </div>
 </form>

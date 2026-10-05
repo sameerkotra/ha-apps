@@ -26,4 +26,6 @@ LABEL \
 EXPOSE 8103
 
 # One worker on purpose: live updates (Server-Sent Events) are held in this process's memory.
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8103", "--workers", "1"]
+# --no-proxy-headers: the ingress check needs the real TCP peer (Supervisor's proxy), never an address
+# taken from X-Forwarded-For (tools/check_build.py checks it).
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8103", "--workers", "1", "--no-proxy-headers"]

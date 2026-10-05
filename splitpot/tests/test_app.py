@@ -16,17 +16,16 @@ from datetime import timedelta
 
 from starlette.testclient import TestClient
 
-import main
+from app import main
+from common_tests.ingress import identity_headers, ingress_client
 
 for _name in ("httpx", "httpx2"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 
 def hdr(uid, name, username=None):
-    h = {"X-Remote-User-Id": uid, "X-Remote-User-Display-Name": name}
-    if username:
-        h["X-Remote-User-Name"] = username
-    return h
+    """The login name is sent only when given."""
+    return identity_headers(uid, username, name)
 
 
 ADMIN = hdr("u_admin", "Adminy", "adminy")
@@ -38,7 +37,7 @@ class Base(unittest.TestCase):
     def setUpClass(cls):
         main.ADMIN_NAMES.clear()
         main.ADMIN_NAMES.add("adminy")
-        cls._ctx = TestClient(main.app, client=("127.0.0.1", 12345))   # stands in for HA's ingress proxy
+        cls._ctx = ingress_client(main.app)   # stands in for HA's ingress proxy
         cls.c = cls._ctx.__enter__()
 
     @classmethod
@@ -129,7 +128,7 @@ class DateOnlyValues(unittest.TestCase):
     def test_bare_date_is_local_midnight(self):
         dt = main.parse_date("2026-09-20")
         self.assertEqual((dt.year, dt.month, dt.day, dt.hour), (2026, 9, 20, 0))
-        self.assertEqual(dt.tzinfo, main._tz)
+        self.assertEqual(dt.tzinfo, main.tz())
 
 
 class EditAndPayments(Base):

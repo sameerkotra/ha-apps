@@ -321,8 +321,9 @@ function messageEl(m, grouped, ctx, isLastMine) {
   if (m.deleted) bubble.appendChild(h("div", { class: "fmt" }, h("em", null, "Message deleted")));
   else {
     if (m.kind === "poll" && m.poll) bubble.appendChild(pollEl(m));
+    if (m.kind === "card" && m.card) bubble.appendChild(cardEl(m));
     if (m.attachments.length) bubble.appendChild(attachmentsEl(m));
-    if (m.body && m.kind !== "poll") bubble.appendChild(renderText(m.body, ctx));
+    if (m.body && m.kind !== "poll" && m.kind !== "card") bubble.appendChild(renderText(m.body, ctx));
     if (m.announcement) bubble.appendChild(announcementBlock(m));
   }
   const meta = h("div", { class: "meta" },
@@ -364,7 +365,7 @@ function messageEl(m, grouped, ctx, isLastMine) {
 function replyQuote(r) {
   if (r.gone) return h("div", { class: "quote" }, h("span", { class: "hint" }, "Original message no longer available"));
   if (r.hidden) return h("div", { class: "quote" }, h("span", { class: "hint" }, "Replying to an earlier message"));
-  const text = r.deleted ? "Message deleted" : (r.text || (r.kind === "poll" ? "📊 Poll" : r.files ? "📎 File" : ""));
+  const text = r.deleted ? "Message deleted" : r.kind === "card" ? "📄 " + r.text : (r.text || (r.kind === "poll" ? "📊 Poll" : r.files ? "📎 File" : ""));
   return h("button", { class: "quote", type: "button", onclick: () => jumpTo(r.id) },
     h("span", { class: "quote-author" }, r.userId === state.me.id ? "You" : (r.author || "")), h("span", { class: "quote-text" }, text));
 }
@@ -387,12 +388,12 @@ function messageMenu(m, anchor, at) {
   menu(anchor, [
     quick,
     !c.readOnly ? { label: "↩ Reply", run: () => startReply(m) } : null,
-    m.body && m.kind !== "poll" ? { label: "📋 Copy text", run: () => copyText(m.body) } : null,
+    m.body && m.kind !== "poll" && m.kind !== "card" ? { label: "📋 Copy text", run: () => copyText(m.body) } : null,
     canEdit(m) ? { label: "✏ Edit", run: () => startEdit(m) } : null,
     !c.readOnly && !isChild() ? { label: m.pinned ? "📌 Unpin" : "📌 Pin", run: () => togglePin(m) } : null,
     { label: m.starred ? "★ Unstar" : "☆ Star", run: () => toggleStar(m) },
     { label: m.reminder ? "⏰ Cancel reminder" : "⏰ Remind me…", run: () => m.reminder ? cancelReminder(m) : remindDialog(m) },
-    m.kind !== "system" && !m.expiresAt ? { label: "↪ Forward…", run: () => forwardDialog([m.id]) } : null,
+    m.kind !== "system" && m.kind !== "card" && !m.expiresAt ? { label: "↪ Forward…", run: () => forwardDialog([m.id]) } : null,
     m.kind !== "system" && !m.expiresAt ? { label: "☑ Select messages…", run: () => startSelecting(m) } : null,
     (m.userId === state.me.id || manager) ? "-" : null,
     (m.userId === state.me.id || manager) ? { label: "🗑 Delete", danger: true, run: () => deleteMessage(m) } : null,
@@ -462,7 +463,7 @@ async function renderPinBar() {
   if (!pins.length) { clear(bar); bar.className = ""; return; }
   let i = 0;
   const text = h("span", { class: "pin-text ellipsis" });
-  const paint = () => { const p = pins[i]; text.textContent = (p.kind === "poll" ? "📊 " + p.poll.question : plainText(p.body) || (p.attachments[0] ? "📎 " + p.attachments[0].name : "")) || "…"; };
+  const paint = () => { const p = pins[i]; text.textContent = (p.kind === "poll" ? "📊 " + p.poll.question : p.kind === "card" ? (p.card ? (CARD_ICONS[p.card.type] || "📄") + " " + p.card.title : p.body) : plainText(p.body) || (p.attachments[0] ? "📎 " + p.attachments[0].name : "")) || "…"; };
   paint();
   bar.className = "pin-bar";
   mount(bar,
@@ -539,6 +540,29 @@ function voicePlayer(a) {
   const wrap = h("div", { class: "voice" + (a.voice && heard === false && a.uploadedBy !== state.me.id ? " unheard" : "") }, btn, bar, time, speed, audio,
     a.voice ? null : h("span", { class: "hint ellipsis" }, a.name));
   return wrap;
+}
+
+// ---------- cards shared from other household apps (SPEC §15.11) ----------
+// Only a title, type, owner and a link: never the document itself. Whether someone may open it is the other
+// app's business (Docs shows its own "No access" page).
+const CARD_ICONS = { note: "📝", checklist: "✅", sheet: "🧮", folder: "📁", file: "📄" };
+const CARD_TYPES = { note: "Note", checklist: "Checklist", sheet: "Sheet", folder: "Folder", file: "File" };
+function cardEl(m) {
+  const c = m.card;
+  const who = m.userId === state.me.id ? "You" : (m.author || "Someone");
+  const app = c.badge || "the other app";
+  const href = typeof c.href === "string" && /^\/[a-z0-9]{1,16}_[a-z0-9_]{1,40}(\/(doc|folder|file)\/[A-Za-z0-9_-]{1,64})?$/.test(c.href) ? c.href : null;
+  const open = href
+    ? h("a", { class: "btn small app-card-open", href, target: "_top", rel: "noopener",
+      onclick: (e) => { if (e.ctrlKey || e.metaKey || e.shiftKey || e.button) return; e.preventDefault(); ConnectedApps.openAppPage(href); } }, "Open in " + app)
+    : h("div", { class: "hint app-card-open" }, `Open the ${app} app from the sidebar to see it.`);
+  return h("div", { class: "app-card" },
+    h("div", { class: "app-card-icon", "aria-hidden": "true" }, CARD_ICONS[c.type] || "📄"),
+    h("div", { class: "app-card-body" },
+      h("div", { class: "app-card-title" }, who + " shared ", h("strong", null, c.title)),
+      h("div", { class: "hint" }, [CARD_TYPES[c.type] || "Document", c.owner ? c.owner + "'s" : null, "from " + app].filter(Boolean).join(" · ")),
+      c.sharedWithMembers ? h("div", { class: "hint" }, "Shared with this chat's members") : null,
+      open));
 }
 
 // ---------- polls ----------

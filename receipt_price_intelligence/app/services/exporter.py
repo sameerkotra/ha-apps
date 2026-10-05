@@ -1,13 +1,12 @@
 """CSV export of receipts and their lines, for spreadsheets, taxes or expense claims."""
 
-import csv
-import io
 import json
 from datetime import date
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.common import csv_export
 from app.db.models import Address, CommonItem, Receipt, ReceiptItem, StoreChain, StoreLocation
 
 RECEIPT_COLUMNS = [
@@ -51,22 +50,13 @@ def _wanted(receipt: Receipt, tag: str | None) -> bool:
     return not tag or tag.strip().lower() in {t.lower() for t in _tags(receipt)}
 
 
-def _safe(value: Any) -> Any:
-    """Stop spreadsheets treating text as a formula (a leading = + - @ or control character)."""
-    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
-        return "'" + value
-    return value
+# Stop spreadsheets treating text as a formula (a leading = + - @ or control character).
+_safe = csv_export.guard
 
 
 def to_csv(rows: list[dict[str, Any]], columns: list[str]) -> str:
     """UTF-8 CSV with a byte-order mark so Excel opens accents correctly."""
-    out = io.StringIO()
-    out.write("\ufeff")
-    writer = csv.writer(out)
-    writer.writerow(columns)
-    for row in rows:
-        writer.writerow([_safe(row.get(c)) for c in columns])
-    return out.getvalue()
+    return csv_export.to_text(columns, ([_safe(row.get(c)) for c in columns] for row in rows), bom=True)
 
 
 def _base_query(db: Session, home_id: str, start: str | None, end: str | None):

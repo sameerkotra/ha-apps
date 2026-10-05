@@ -4,22 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Todo</title>
-<script>
-(function () {
-    var THEMES = ["ink", "slate", "daylight"];
-    try {
-        var theme = localStorage.getItem("theme");
-        if (theme && THEMES.indexOf(theme) !== -1) {
-            document.documentElement.setAttribute("data-theme", theme);
-        }
-        if (localStorage.getItem("sidebarCollapsed") === "1") {
-            document.documentElement.setAttribute("data-sidebar", "collapsed");
-        }
-    } catch (e) { /* localStorage unavailable (private mode, etc.) */ }
-})();
-</script>
+<script src="common/theme-boot.js?v=2.3.1"></script>
 <!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
-<link rel="stylesheet" href="style.css?v=2.1.0">
+<link rel="stylesheet" href="common/themes.css?v=2.3.1">
+<link rel="stylesheet" href="common/settings.css?v=2.3.1">
+<link rel="stylesheet" href="style.css?v=2.3.1">
 </head>
 <body>
 <div id="app">
@@ -41,11 +30,7 @@
     <div class="sidebar-footer">
       <label class="sidebar-field">
         <span class="field-label">Theme</span>
-        <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
-          <option value="ink">🌑 Ink</option>
-          <option value="slate">🌆 Slate</option>
-          <option value="daylight">☀️ Daylight</option>
-        </select>
+        <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
       </label>
     </div>
   </aside>
@@ -78,8 +63,13 @@
 <div id="modalRoot"></div>
 <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-<script src="backnav.js?v=2.1.0"></script>
-<script src="app.js?v=2.1.0"></script>
-<script src="maintenance.js?v=2.1.0"></script>
+<script src="common/ui.js?v=2.3.1"></script>
+<script src="common/settings.js?v=2.3.1"></script>
+<script src="common/people.js?v=2.3.1"></script>
+<script src="common/backnav.js?v=2.3.1"></script>
+<script src="common/whoami.js?v=2.3.1"></script>
+<script src="common/connected-apps.js?v=2.3.1"></script>
+<script src="app.js?v=2.3.1"></script>
+<script src="maintenance.js?v=2.3.1"></script>
 </body>
 </html>

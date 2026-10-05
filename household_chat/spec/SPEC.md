@@ -44,7 +44,7 @@ A private chat and file-sharing app for the household, inside Home Assistant. Ea
 - **Its own panel and permissions.** It needs `share:rw` and its own sidebar entry ("Chat").
 - **Independent updates and backups.** The chat database grows fast; keeping it separate keeps the other apps' backups small, and a chat bug can't take them down.
 
-It still fits the family: the same look and themes, the same shared `ha_notify.py` and `ha_people.py` (byte-identical copies), the same admin pattern.
+It still fits the family: the same look and themes, the same shared code from the repository's `common/` folder (`ha_notify.py`, `ha_people.py`, the admin pages, …), the same admin pattern.
 
 ## 2. Stack & file layout
 
@@ -58,16 +58,16 @@ household_chat/
 ├── config.yaml  Dockerfile  requirements.txt  requirements-dev.txt  .dockerignore
 ├── README.md  DOCS.md  icon.png  logo.png  translations/en.yaml  spec/SPEC.md
 ├── app/
-│   ├── main.py            # lifespan (folder check, expiry pass, HA time zone, person sync, photos, loops),
-│   │                      # routers, ingress-IP guard, CSP, static files
-│   ├── config.py          # options.json → ADMIN_NAMES; paths (DATA_DIR, SHARE_DIR); time helpers in HA's zone
-│   ├── settings.py        # App settings (§3.1)
-│   ├── auth.py            # get_current_user, require_user, require_admin
-│   ├── db.py              # schema, migrations of older databases, helpers
-│   ├── ha_client.py       # Core API: persons, states, time zone
-│   ├── ha_people.py       # shared: persons with their logins and Companion-app phones
-│   ├── ha_notify.py       # shared: notify targets (phones + extras) and delivery
-│   ├── ha_events.py       # a small stdlib WebSocket client for the notification buttons (§15.1)
+│   ├── main.py            # lifespan (folder check, expiry pass, HA time zone, person sync, photos, jobs),
+│   │                      # routers, ingress-IP guard, security headers (CSP), static files
+│   ├── config.py          # options.json → ADMIN_NAMES; paths (DATA_DIR, SHARE_DIR); time helpers in HA's zone (config.ZONE)
+│   ├── settings.py        # App settings (§3.1), declared on common settings_core
+│   ├── auth.py            # get_current_user, require_user, require_admin (on common auth_core)
+│   ├── db.py              # schema, MIGRATIONS of older databases, helpers (on common db_core)
+│   ├── ha_client.py       # thin: re-exports the shared Core API client + person_entities, user sync, load_time_zone_blocking
+│   ├── ha_events.py       # the notification buttons (§15.1), on the shared WebSocket client common/ha_ws.py;
+│   │                      # the same one connection carries the app messages (app_messages.py)
+│   ├── app_messages.py    # messages from the other household apps: chat.chats.list, chat.card (§15.11)
 │   ├── notifier.py        # who gets told what, batching, quiet hours, "already looking" (§7)
 │   ├── live.py            # SSE hub: per-user queues, events, presence/typing (§8)
 │   ├── chats.py           # rules and serialisation of chats and messages
@@ -80,10 +80,18 @@ household_chat/
 │   ├── shared_folders.py  # shared folders (§12)
 │   ├── housekeeping.py    # background jobs (§10)
 │   ├── routers/           # me, conversations, messages, files, search, stream, extras, admin
-│   └── static/            # index.html, theme-boot.js, core.js, format.js, chat.js, compose.js,
-│                          # dialogs.js, extras.js, pages.js, main.js, style.css
-└── tests/
+│   ├── common/            # shared Python (copies): ha_notify, ha_people, whoami, ha_client, ha_time, housekeeping,
+│   │                      # ha_ws, app_bus, auth_core, db_core, settings_core, people_admin, web_security, backup_core
+│   └── static/            # index.html, core.js, format.js, chat.js, compose.js,
+│       │                  # dialogs.js, extras.js, pages.js, main.js, style.css
+│       └── common/        # shared browser files (copies): theme-boot.js, themes.css, ui.js, settings.js,
+│                          # settings.css, people.js, whoami.js, connected-apps.js (no backnav.js: Chat has its
+│                          # own layers, §9)
+└── tests/                 # _env.py, base.py, test_*.py; common_tests/ (shared helpers and shared-module tests, copies:
+                           # also fake_ha.py, fake_ha_bus.py and test_app_bus.py)
 ```
+
+`app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync (`tests/common_tests/test_shared_copies.py` fails if a copy was changed).
 
 ## 3. Manifest & options
 
@@ -122,11 +130,11 @@ household_chat/
 | `children_can_message_each_other` | false | §16.5. |
 | `export_max_mb` | 500 | Largest chat download, files included (§15.9). |
 
-`GET/PUT /api/admin/settings` → `{values, defaults, meta}`; unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1) is also kept in `app_settings` but isn't a setting.
+The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, messages, retention, notifications) on the shared `settings_core.Registry` (`app/common/settings_core.py`). `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups, storage}` (`meta[key]` = label, help, group, kind, `restartRequired`, range, choices, …; `storage` as in §5.3.1); unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1) is also kept in `app_settings` but isn't a setting.
 
 ## 4. Security & identity
 
-- **Ingress only.** A middleware answers 403 to any request whose TCP source isn't Supervisor's ingress proxy (`172.30.32.2`) or loopback, before any route runs. After that, the caller is identified by `X-Remote-User-Id` (401 without it), with `X-Remote-User-Name` (login) and `X-Remote-User-Display-Name`.
+- **Ingress only.** A middleware answers 403 to any request whose TCP source isn't Supervisor's ingress proxy (`172.30.32.2`) or loopback (`auth_core.INGRESS_HOSTS`, shared `app/common/auth_core.py`), before any route runs. The security headers (CSP, `nosniff`, Cache-Control) are added at the end of that guard by `web_security.SecurityHeaders.apply` (shared `app/common/web_security.py`), the same headers as before. After that, the caller is identified by `X-Remote-User-Id` (401 without it), with `X-Remote-User-Name` (login) and `X-Remote-User-Display-Name`.
 - **Admins** are the people whose user id or login name (case-insensitive) is in `admin_users`. Display names are never matched; when an entry matches someone only by display name, `/api/me` and `/api/whoami` say so (`displayNameOnly`) and "How the app sees you" tells them what to add instead.
 - **Users.**
   - The user list mirrors HA persons: synced at start-up, every 5 minutes and on *Check Home Assistant again*. Someone who opens the app without a Person is added on first visit.
@@ -169,7 +177,7 @@ household_chat/
 
 - With `admin_users` empty, nobody is an admin, so nobody can enable people or open App settings. Nobody is ever promoted automatically — not the first visitor, not anyone.
 - `GET /api/me` and `GET /api/whoami` carry `noAdmin: true` (`whoami` also `adminEntries: 0`).
-- The page then shows a banner to everyone, on every page (it sits above the app, so it's there on the chat list, on "Ask an admin to give you access" and in the admin view): "**No admin yet** — add your Home Assistant user name (**<their login name>**) to `admin_users` in the app's Configuration tab, save, and restart the app." with a link to "How the app sees you" (a page for enabled people, a dialog for everyone else). "How the app sees you" repeats the hint.
+- The page then shows a banner to everyone, on every page (it sits above the app, so it's there on the chat list, on "Ask an admin to give you access" and in the admin view; drawn by `HouseholdWhoami.noAdminBanner` from `common/whoami.js`): "**No admin yet** — add your Home Assistant user name (**<their login name>**) to `admin_users` on the app's Configuration tab, save, and restart the app." with a link to "How the app sees you" (a page for enabled people, a dialog for everyone else). "How the app sees you" repeats the hint.
 
 ## 5. Data model
 
@@ -217,8 +225,8 @@ CREATE TABLE members (conversation_id TEXT NOT NULL REFERENCES conversations(id)
 CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT,   -- global order; paging by id
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id),                   -- NULL for system messages
-  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll')),
-  body TEXT NOT NULL DEFAULT '',                       -- ≤ 8000 chars; system: JSON {event, …}
+  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll','card')),   -- card: §15.11
+  body TEXT NOT NULL DEFAULT '',                       -- ≤ 8000 chars; system: JSON {event, …}; card: its title
   reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL, reply_gone INTEGER NOT NULL DEFAULT 0,
   mentions TEXT, mention_all INTEGER NOT NULL DEFAULT 0,   -- server-resolved user ids; @everyone
   forwarded INTEGER NOT NULL DEFAULT 0, via TEXT,      -- via = 'notification' for replies from the phone
@@ -241,10 +249,18 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(body, content='messages', content_r
 CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT, updated_by TEXT);
 CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, actor_id TEXT, conversation_id TEXT,
   action TEXT NOT NULL, created_at TEXT NOT NULL);     -- admin and membership actions, never content
+CREATE TABLE app_cards (message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,   -- §15.11
+  app TEXT NOT NULL, badge TEXT NOT NULL,
+  item_type TEXT NOT NULL CHECK (item_type IN ('note','checklist','sheet','folder','file')),
+  item_id TEXT NOT NULL, title TEXT NOT NULL, owner_name TEXT,
+  panel TEXT, target TEXT,                             -- the other app's page and the item's route in it
+  shared_with_members INTEGER NOT NULL DEFAULT 0, bus_id TEXT, created_at TEXT NOT NULL);
+-- bus_outbox, bus_seen, bus_apps: the app messages (APP_MESSAGES_SPEC.md §4, created by app_bus.migrate)
 ```
 
-- Connections use `foreign_keys = ON` and `secure_delete = ON` (§15.8).
-- **Older databases** are brought up to date at start-up: missing columns are added (`db.MIGRATIONS`), the old one-row-per-group shared folder table becomes `folders` + `folder_links` (§12), photos people once uploaded themselves and chat photos are removed (§15.3.1), and a 🏠 choice equal to the person's own `ha_person` becomes automatic. After an admin restore the same runs again.
+- Connections (`db_core.connect` / `db_core.transaction`, shared `app/common/db_core.py`: timeout 30, `check_same_thread=False`) use `foreign_keys = ON`, `busy_timeout = 30000` and `secure_delete = ON` (§15.8).
+- **Older databases** are brought up to date at start-up: missing columns are added (`db.MIGRATIONS`, applied by `db_core.add_missing_columns`), the old one-row-per-group shared folder table becomes `folders` + `folder_links` (§12), photos people once uploaded themselves and chat photos are removed (§15.3.1), and a 🏠 choice equal to the person's own `ha_person` becomes automatic. After an admin restore the same runs again.
+- **`messages.kind` gains `'card'`** (cards, §15.11) (`db._allow_card_messages`). SQLite can't change a CHECK in place, so the table is rebuilt the way SQLite documents it: foreign keys off; in one transaction a copy made from the stored `CREATE TABLE` text with only the CHECK changed (so every column, including those added later by `ALTER`, keeps its place), every row copied with its id, the old table dropped, the copy renamed, its indexes and triggers re-created from their stored SQL, the AUTOINCREMENT counter kept (ids of deleted messages are never reused), the row count compared and `PRAGMA foreign_key_check` required to find nothing new — otherwise everything is rolled back and the old table stays; foreign keys back on. Nothing that points at messages changes (same ids); the search index keeps its rowids. Chosen over "store cards as an existing kind plus a JSON column" because every rule that looks at `kind` (edit, forward, copy text, previews, notifications) would otherwise treat a card as a text message. Runs once (it does nothing when `'card'` is there), also after a restore of an older backup.
 
 ### 5.2 Rules
 
@@ -286,8 +302,8 @@ CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, actor_id TEXT, conver
 - **Changed outside the app.** If a file is renamed or deleted over Samba, the attachment shows as "File no longer available" (`missing = 1`, found on access and by the nightly check). Files dropped into these folders by hand are ignored (shared folders, §12, are the way to bring `/share` files into chats).
 - **Backups.**
   - HA's own backups include `/share` when "Share" is ticked.
-  - The app's admin backup (`GET /api/admin-storage-download-db`) is a copy of the database (`Connection.backup`), with an *Include files* option that builds a zip including the chat files folder. It leaves out disappearing messages and their files (§15.8) and scheduled messages that will disappear.
-  - Restore (`POST /api/admin-storage-import-db`, up to 20 GB) validates the zip, answers 503 to other requests and pauses background jobs while the database file is swapped, runs the migrations and the expiry pass, puts files back if the zip has them, re-checks `missing`, and tells open pages to reload. It keeps this install's `files_path` and `files_store_id`.
+  - The app's admin backup (`GET /api/admin-storage-download-db`) is a copy of the database (`Connection.backup`, `db_core.snapshot`), with an *Include files* option that builds a zip including the chat files folder (`backup_core.write_zip` / `walk`, sent by `backup_core.send_file`). It leaves out disappearing messages and their files (§15.8) and scheduled messages that will disappear.
+  - Restore (`POST /api/admin-storage-import-db`, up to 20 GB; received by `backup_core.receive`) validates the zip (member names and the app's own checks: `backup_core.check_members`; files put back with `backup_core.copy_out`; its own swap with `RESTORING` is unchanged), answers 503 to other requests and pauses background jobs while the database file is swapped, runs the migrations and the expiry pass, puts files back if the zip has them, re-checks `missing`, and tells open pages to reload. It keeps this install's `files_path` and `files_store_id`.
 
 ### 5.3.1 Choosing the folder, and "connected"
 
@@ -309,14 +325,14 @@ CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, actor_id TEXT, conver
   - `PUT /api/admin/settings` enforces the same (409 for refused, and for *no_marker* without `"confirm": true`), then runs the check with set-up allowed: the folder is created, the marker written and the layout made, and it's connected at once.
 - **Use this folder** (Admin → Storage, only while not connected; `POST /api/admin/files-storage/check {useThisFolder: true}`, confirmed): sets up the folder in use now for this install when its marker was lost or came from another install. *Check again* is the same call without it. Nothing is moved or deleted.
 - **Status.** `GET /api/admin/settings` and `GET /api/admin/storage` carry `storage {path, online, reason, checkedAt, networkMount, freeBytes, default}`; `/api/me` carries `files {online, reason}` without the path.
-- **Admin UI.** A *Chat files folder* card at the top of App settings (in use now, ● Connected / Not connected, path box, *Check folder*, *Change folder*; on a phone the path box has its own line and long paths wrap) and a *File storage* card at the top of Storage (folder, status, last check, free space, waiting deletes, *Check again*, *Use this folder*, *Change folder…*).
+- **Admin UI.** The chat files folder is a field of App settings' **Files** group (in use now, ● Connected / Not connected, path box, *Check folder*; on a phone the path box has its own line and long paths wrap), saved with the other settings by **Save** — the separate *Change folder* button is gone; a change is checked first and refused or confirmed as above — and a *File storage* card at the top of Storage (folder, status, last check, free space, waiting deletes, *Check again*, *Use this folder*, *Change folder…*).
 
 ## 6. API (all `/api`, ingress; 403 when disabled; 404 for chats you aren't in)
 
 | Method & path | Purpose |
 |---|---|
 | GET `/me` · PUT `/me/settings` | Me (`isAdmin`, `disabled`, `isChild`, `personalRoomId`, `avatar`, `notifyLinked`, `files`, `noAdmin`, `timeZone`, public App settings, `version`) + my notification choices, quiet hours, hide online |
-| GET `/whoami` | User name, id, display name, admin or not, `adminEntries`, `noAdmin`, `displayNameOnly`, access, chats, phone linked (works when disabled) |
+| GET `/whoami` | The shared contract (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`): `haUserId`, `haUsername`, `haDisplayName`, `nameSent`, `isAdmin`, `displayNameOnly`, `adminEntries`, `noAdmin`, `viaIngress`, `notifyLinked`, `extras` (Access, Chats you're in, Phone linked for notifications), plus the app's `disabled` (works when disabled) |
 | GET `/people` · GET `/avatars/{id}` · POST `/presence` | Enabled people `{id, name, avatar, lastSeen, …}`; a person's photo (§15.3.1); my visible chat and heartbeat (§8) |
 | GET `/conversations` | Mine: my personal room first, then pinned, then newest activity: `{id, kind, name, icon, members, lastMessage{preview, at, by}, unread, mentionUnread, muted, pinned, draft, …}` |
 | GET `/conversations/{id}` | Details: members and roles, description, pins, announcements, folders, what I may do |
@@ -347,6 +363,7 @@ CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, actor_id TEXT, conver
 | GET `/health` | `{status, version}` |
 | Admin: GET `/admin/people[?refresh=1]` · PATCH `/admin/people/{id}` `{disabled, isChild}` · POST / DELETE `/admin/people/{id}/notify[/{svc}]` · POST `/admin/people/{id}/notify/test` · GET `/admin/notify-services` · GET `/admin/person-entities` · PUT `/admin/people/{id}/presence` | People, notify extras, home/away (§7, §15.3) |
 | Admin: GET / PUT `/admin/settings` · POST `/admin/settings/check-files-path` · POST `/admin/files-storage/check` | App settings, the chat files folder (§5.3.1) |
+| Admin: GET `/admin/connected-apps` | `{on, connected, apps: [{slug, name, version, can, last_seen, active}]}` — Connected apps (§15.11), read only |
 | Admin: GET `/admin/conversations` · DELETE `/admin/conversations/{id}` | Chat overview, metadata only; delete only a group with no enabled members; logged |
 | Admin: GET `/admin/storage` · POST `/admin/storage/check` · GET `/admin/storage/usage\|files` · POST `/admin/storage/delete\|empty-deleted\|thumbs-delete` · GET `/admin-storage-download-db` · POST `/admin-storage-import-db` | Storage, clean-up, backup and restore (§5.3, §15.10) |
 | Admin: GET `/admin/share-dirs` · GET / POST `/admin/folders` · PATCH / DELETE `/admin/folders/{id}` | Shared folders (§12) |
@@ -357,7 +374,7 @@ No admin route returns message text, file names or file contents of chats the ad
 
 - **Phones.** From Home Assistant: the person linked to the login (Settings → People → *Allow person to login*) and the Companion-app phones picked under *Track device*, read by `ha_people.py`. One `POST /api/template` renders every `person.*` with its linked `user_id`, state and picture, and each tracked device that belongs to the `mobile_app` integration. A device's notify action is `mobile_app_<slugified device name>` (or HA's numbered `_2…` one), checked against `GET /api/services`; a device with none is shown (⚠ "Companion app action not found") but not used. Refreshed at start-up, every 5 minutes and on *Check Home Assistant again* (`GET /api/admin/people?refresh=1`, which also re-runs the person sync). If HA can't be read, the last answer is kept; everything else only reads the cache, so nothing calls HA while holding a DB connection.
 - **Extras.** Admin → People → 🔔 → *Also*: extra notify services for this app only (a picker of HA's `notify` services, or typed), up to 5 per person, stored in `user_notify`. `ha_notify.services_for(user)` = phones + extras, without duplicates; *Send a test* goes to both. Everything that decides who is notified or whether someone "can be notified" goes through it (`notifier.py`, `/me` and `/whoami` `notifyLinked`, the admin test).
-- **Admin → People** shows the phones as read-only chips (a warning chip when a phone has no notify action) or a hint ("No person linked", "No phone"), then 🔔 with the number of extras. `GET /api/admin/people` carries `ha {known, person, personName, phones: [{label, service, tracker}]}`, `presenceEntity` (effective) and `presenceChosen` (an admin's override).
+- **Admin → People** is the shared people list (`common/people.js`; the routes use `app/common/people_admin.py`): one card per person with the Enabled / No access badge, the **Child** switch, **Enable** / **Disable** (with its confirmation), the phones as read-only chips (a warning chip when a phone has no notify action) or a hint ("No person linked", "No phone"), 🏠 home/away, and 🔔 opening the Notifications dialog (Phones, Also, Add, *Send a test*). `GET /api/admin/people` carries `ha {known, person, personName, phones: [{label, service, tracker}]}`, `presenceEntity` (effective) and `presenceChosen` (an admin's override).
 - **Who gets a push for a new message.** Each member other than the sender, if all of these hold:
   1. They have access (not disabled) and a phone or an extra notify service.
   2. Their level allows it:
@@ -403,7 +420,8 @@ No admin route returns message text, file names or file contents of chats the ad
   - The page is a column: the first-run banner (§4.2, when shown) above the app, which fills the rest.
   - Desktop: a chat list on the left (search box, **＋** → *Direct message* / *New group*, ⋯ menu; **📌 My room** always at the top, then pinned chats, then newest activity; unread and @ badges; the "File storage isn't connected" banner; your name with the live dot and ⚙) and the open chat or page on the right.
   - Phone: one pane at a time, with a back arrow.
-  - Themes Vault / Slate / Daylight / Auto, shared with the sibling apps, with a pre-paint theme boot script.
+  - Themes Midnight (default, green accent) / Slate / Daylight / Auto, shared with the sibling apps (`common/themes.css`), applied before first paint by `common/theme-boot.js`; a saved **Vault** becomes Midnight.
+  - Shared browser helpers: `common/ui.js` (`h()`, `api` via `UI.makeApi` with the app's `ApiError` and the 403 reload / 401 lock, `toast()`, `openModal()`, `confirmDialog()`), used by `core.js`.
 - **Chat view.**
   - Header: name, members / online / home-away line, ⋯ with *Group info / Info*, *Files*, *Search in chat*, *Pinned messages*, shared folders (📂), *Notifications*, *Disappearing messages*, *Pin chat to the top*, *Download chat*, *Leave* and *Delete* (owner).
   - A pin bar with the newest pin, an announcements bar, a 🕓 bar for my scheduled messages.
@@ -420,13 +438,15 @@ No admin route returns message text, file names or file contents of chats the ad
 - **Admin** (⋯ → 🛡️ Admin, admins only): tabs People, Chats, Shared folders, App settings, Storage.
   - **Chats**: every chat's name, kind, members, last activity, message count and storage used (personal rooms appear as "Nisha's room", with size only). It doesn't open them; a note says "Admins can't read chats they aren't in". *Delete* appears only for a group with no enabled members.
   - An admin who hasn't enabled themselves gets *Enable me* and *Open Admin* on the "no access" page.
-- **"How the app sees you"** (⋯ menu, and a button on the "no access" page): user name and id with copy buttons, display name "(not used for matching)", administrator or not, the number of names in `admin_users`, access, chats, phone linked; notices for "No admin yet" and display-name-only matches.
+- **"How the app sees you"** (⋯ menu, and a button on the "no access" page; drawn by `HouseholdWhoami.panel()` from `common/whoami.js`): user name and id with copy buttons, display name "(not used for matching)", administrator or not, the number of names in `admin_users`, access, chats, phone linked; notices for "No admin yet" and display-name-only matches.
 - **Accessibility.** The message list is a live region for new messages in the open chat; everything works by keyboard.
 - **Layout** is checked at 360, 390, 768 and 1280 px.
 
 ## 10. Background jobs (`housekeeping.py`)
 
-- **Every tick (20 s).** The disappearing-message expiry pass (§15.8), held and quiet-hour pushes, due reminders, due scheduled messages, poll closing.
+The 20-second loop is a `Jobs.every()` job of the shared runner (`app/common/housekeeping.py`) started in `main.py`'s lifespan and cancelled on shutdown; logging is set up by `housekeeping.setup_logging()`.
+
+- **Every tick (20 s).** The disappearing-message expiry pass (§15.8), held and quiet-hour pushes, due reminders, due scheduled messages, poll closing, the app-messages outbox (`app_bus.run_outbox_once`: re-sends, expiry, pruning, the six-hourly `hello`; §15.11).
 - **Every minute.** Home/away from `GET /api/states` while someone has the app open (§15.3); typing states older than 6 s and expired presence are dropped.
 - **Every 5 minutes.** Check the chat files folder (§5.3.1); refresh people and phones from HA (§7); scan shared folders (§12).
 - **Every 10 minutes.** People's photos (§15.3.1).
@@ -471,7 +491,7 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
 
 ## 13. Tests (Python unittest)
 
-`python3 -m unittest discover -s tests` with `requirements-dev.txt`. `tests/base.py` runs every request through `TestClient(app, client=("127.0.0.1", 12345))`, captures notifications, runs background work inline, and replaces `ha_client.request` with a small `FakeHA` (`POST /template`, `GET /services`, `GET /states`, notify calls). The people in the fixtures are invented.
+`python3 -m unittest discover -s tests` with `requirements-dev.txt`. `tests/_env.py` is built on `common_tests/env.py`. `tests/base.py` runs every request through `TestClient(app, client=("127.0.0.1", 12345))`, captures notifications, runs background work inline, and replaces `ha_client.request` with a small `FakeHA` (`POST /template`, `GET /services`, `GET /states`, notify calls). The people in the fixtures are invented.
 
 - **Access** (`test_access.py`): disabled by default; enable/disable; a disabled person's calls are 403 and their SSE is closed; membership 404 for others, removal hides at once; personal rooms (made on enable, one per person, visible only to the owner on every route, admins included, no members/leave/rename/delete, never notifies, own folder, kept over disable and re-enable); admins get 404 for chats they aren't in on every route; the admin overview has no content; admin delete only for a group with no enabled members; the ingress source check.
 - **Messages** (`test_messages.py`): direct uniqueness, group roles, owner hand-over, system messages, paging, edit window, delete, FTS (only my chats), pins, polls, reminders, stars, forward, formatting limits, descriptions.
@@ -480,7 +500,8 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
 - **Chat files folder** (`test_storage.py`): connected / not connected, adopting an existing folder, changing folders (new, confirm, refused), waiting deletes, restore keeps this install's folder.
 - **Admin** (`test_admin.py`): settings validation, storage, backup and restore with and without files, retention, whoami; first run with no admins (the `noAdmin` flag, nobody promoted, the banner in the page).
 - **Features** (`test_features.py`): child accounts, announcements, disappearing messages (per chat and per message, complete deletion, `secure_delete` and WAL checkpoint, backup leaves them out, restores expire before serving, `_disappearing/` files deleted without rows), send later, drafts, chat downloads, storage clean-up, photos from HA, shared folders (rules, browse/serve/upload/announce, search and several uploads, any chats with access per chat, 10 per chat, older databases migrated), and review regressions.
-- **Packaging** (`test_packaging.py`): `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options == schema == translations, empty defaults), every `?v=` equals the version, README/DOCS present, CHANGELOG.md whose newest (top) version heading equals the version, `spec/` present, icon and logo sizes, and no personal details in any text file of the app.
+- **Shared** (`tests/common_tests/`, copies): `test_shared_copies.py` and the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin, web_security, backup_core).
+- **Packaging** (`test_packaging.py`, the shared checks from `common_tests/packaging_core.py`): `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options == schema == translations, empty defaults), every `?v=` equals the version, README/DOCS present, CHANGELOG.md whose newest (top) version heading equals the version, `spec/` present, icon and logo sizes, and no personal details in any text file of the app.
 
 ## 14. Defaults chosen
 
@@ -504,7 +525,7 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
 - **How.**
   - Each notification carries `data.actions`: `[{action: "HCHAT_REPLY_<token>", title: "Reply", behavior: "textInput", textInputButtonTitle: "Send", textInputPlaceholder: "Message"}, {action: "HCHAT_READ_<token>", title: "Mark as read"}]`, and `data.tag = "hchat_<conversation id>"`, so a newer notification replaces the older one for that chat.
   - `<token>` is 128 random bits, stored in `notify_tokens(token, user_id, conversation_id, created_at)`, valid 24 hours, and usable any number of times within that.
-  - The app keeps one WebSocket open to Home Assistant (`ws://supervisor/core/websocket` with `SUPERVISOR_TOKEN`; covered by `homeassistant_api`) in `ha_events.py`. It subscribes to `mobile_app_notification_action`, reconnects with back-off, and ignores actions without its `HCHAT_` prefix.
+  - The app keeps one WebSocket open to Home Assistant (`ws://supervisor/core/websocket` with `SUPERVISOR_TOKEN`; covered by `homeassistant_api`) in `ha_events.py`, built on the shared client `app/common/ha_ws.py`: one daemon thread "ha-events", reconnect after 5 s doubling to 5 min, a ping every 50 s, and a dropped connection is also noticed when pings go unanswered for about 190 s; `stop()` closes the socket and joins the thread. Connection messages are logged by the `ha_ws` logger. It subscribes to `mobile_app_notification_action` and ignores actions without its `HCHAT_` prefix.
   - On an action it looks the token up, checks that the person is still enabled and a member and that the reply isn't empty (≤ 2000 characters), then posts the message (`via = 'notification'`) or moves the read marker.
 - **Limits.**
   - Only for notify **actions**: notify **entities** can't carry buttons, so those get plain notifications.
@@ -614,6 +635,52 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
 - Tick files and **Delete**: the file and thumbnail go to `_deleted` (purged after 30 days, or at once with *Empty now*); the attachment keeps its row with `admin_deleted_at`, and the message shows "File deleted by admin"; each deletion is in `audit_log`.
 - Also *Delete thumbnails* (rebuilt on demand) and *Check files*.
 - API: `GET /admin/storage/usage`, `GET /admin/storage/files?type=&olderThanDays=&limit=`, `POST /admin/storage/delete {attachmentIds}`, `POST /admin/storage/empty-deleted`, `POST /admin/storage/thumbs-delete`, `POST /admin/storage/check`.
+
+### 15.11 Cards shared from other household apps (app messages)
+Household Docs' *Send to chat* (Docs spec §17.15) reaches Chat as app messages over Home Assistant's event bus
+(`APP_MESSAGES_SPEC.md`; kinds and checks in §6.3 there, link addressing in §6.5). `app_messages.py`:
+
+- **One connection.** `ha_events.connection()` builds Chat's single WebSocket (notification buttons); the lifespan
+  starts the bus on it (`app_bus.start(..., ws=…)`, `outbox_thread=False`) before starting it, and stops the bus
+  before closing it. The outbox (re-sends, expiry, six-hourly `hello`) runs in the 20-second housekeeping tick.
+  Without a Supervisor token (development, tests) the bus is off. `hello` says `can: ["chat.card",
+  "chat.chats.list"]`.
+- **`chat.chats.list`** answers the chats `requested_by` may post in — exactly `list_conversations()` (Chat's own
+  order and visibility) without read-only ones — with names as that person sees them and member counts, trimmed to
+  fit the 8 KB event (§6.3). *(security review 2026-10)* The list names no members (answers go into Home
+  Assistant's event history); with `chat_id` it answers only that chat (one the person may post in, else `nack
+  not_found chat`) with its enabled members' ids except theirs — Docs asks so only for the chat a person picked to
+  give its members access.
+- **`chat.card`** checks like a typed message (enabled user → current member → may post → fields — *(security review
+  2026-10)* `panel` only the sending app's own page `/<1–16 of a–z 0–9>_<sender's slug>`, `target` only
+  `/doc|folder|file/<id>` → the 30-a-minute
+  limit) and posts **as `requested_by`**: a `messages` row of kind `card` (body = the title, so search and
+  previews work) and an `app_cards` row (app, badge, type, item id, title, owner name, panel, target,
+  shared-with-members). It follows the chat's disappearing setting; live events and notifications go out after
+  the bus commits (`msg.after_commit(outbox.flush)`). During a restore every message is `nack busy`.
+- **In the page** (`chat.js cardEl`): icon by type (📝 ✅ 🧮 📁 📄), "<person> shared **<title>**", "<Type> ·
+  <owner>'s · from Docs", "Shared with this chat's members" when asked, and **Open in Docs** — a link to
+  `panel + target` — *(security review 2026-10)* each card's **own** `panel`, checked again when shown
+  (`chats.card_link(panel, target, app)`; before, the newest `panel` of any card was used for every card of that
+  app, so one forged card could redirect them all) — opened by
+  `common/connected-apps.js openAppPage()` (Home Assistant's `home-assistant/navigate` message, then its
+  `location-changed` history navigation, then a plain top-level load). Without a known page: "Open the Docs app
+  from the sidebar to see it."
+- **Like messages:** unread, notifications ("Nisha shared a checklist “Trip 2026”" at the full preview level),
+  search by title, reply quotes ("📄 <title>"), pins ("✅ <title>"), stars, reminders, reactions, delete (the
+  sharer or a group owner/admin; removes the `app_cards` row), retention, chat downloads ("✅ <title> — shared
+  from Docs (<owner>'s)", no link). **Not** editable, forwardable or copyable as text. A card never holds
+  document content; whether a member may open the item is Household Docs' decision (its own "No access" page).
+- **Admin → App settings → Connected apps:** a read-only card under the settings (`GET /api/admin/connected-apps`
+  → `{on, connected, apps}`, drawn by `common/connected-apps.js`): name, version, last seen, what each app can do.
+- **Privacy:** envelopes carry ids, names, titles and types only; DOCS.md shows the `recorder: exclude:
+  event_types: [household_apps]` snippet (APP_MESSAGES_SPEC §8).
+- **Tests:** `tests/test_app_messages.py` — every handler check (allowed and refused, nothing written on a nack,
+  answer size), cards in search/notifications/exports/replies/delete/forward/edit, the migration of a database from before cards
+  (data, column order, counter, indexes, triggers, FTS, cascades, a failure rolls back, an old backup restored,
+  existing foreign-key problems don't block it) and end to end: the real lifespan on the fake event bus
+  (`common_tests/fake_ha_bus.py`) with a fake Household Docs, one shared socket, duplicates acted on once; plus
+  `common_tests/test_app_bus.py` on the app's own copies.
 
 ## 16. More features
 
@@ -790,3 +857,10 @@ are small to medium each.
 **Tests**: signalling and permissions (only the two people get the events, busy, timeout, decline, children's
 quiet hours), the call history and chat notes, Cloudflare credential requests with a fake server (never calling
 the real one in tests), the settings checks, and a browser test with two pages and a fake microphone.
+
+## Security notes (2026-10)
+
+From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
+
+- **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
+- **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass. (Live updates are a GET event stream; the app-bus messages don't use HTTP.)

@@ -1,7 +1,9 @@
 """PDF receipts: each page is rendered to a JPEG so the model reads it like a photo.
 
 Rendering uses poppler's ``pdftoppm`` and ``pdfinfo`` (installed in the app image) in a
-subprocess with a time limit, so a bad PDF can never hang or crash the app. The PDF itself
+subprocess with a time limit, so a bad PDF can never hang or crash the app. The tools run as the
+unprivileged ``pdfworker`` user with resource limits, on a copy of the file in a scratch folder of their
+own (``app/common/sandbox_run.py``), so they can't reach the app's database or photos. The PDF itself
 is never kept; only the rendered page images are stored on the draft.
 """
 
@@ -9,8 +11,8 @@ import glob
 import os
 import re
 import subprocess
-import tempfile
 
+from app.common import sandbox_run
 from app.logging_config import get_logger
 
 logger = get_logger("pdf")
@@ -33,9 +35,9 @@ def looks_like_pdf(content_type: str | None, head: bytes) -> bool:
     return (content_type or "").lower() in ("application/pdf", "application/x-pdf")
 
 
-def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+def _run(box: sandbox_run.Scratch, cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return box.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
     except FileNotFoundError:
         raise PdfError("PDF support is not installed in this version of the app")
     except subprocess.TimeoutExpired:
@@ -54,12 +56,11 @@ def render_pdf(data: bytes, max_pages: int = MAX_PDF_PAGES) -> tuple[list[bytes]
     if max_pages < 1:
         raise PdfError("There is no room for more pages on this receipt")
 
-    with tempfile.TemporaryDirectory(prefix="receipt-pdf-") as tmp:
-        source = os.path.join(tmp, "in.pdf")
-        with open(source, "wb") as f:
-            f.write(data)
+    with sandbox_run.Scratch(prefix="receipt-pdf-") as box:
+        tmp = box.path
+        source = box.add_bytes(data, "in.pdf")
 
-        info = _run(["pdfinfo", source], INFO_TIMEOUT)
+        info = _run(box, ["pdfinfo", source], INFO_TIMEOUT)
         if info.returncode != 0:
             raise PdfError(_explain(info.stderr))
         match = re.search(r"^Pages:\s+(\d+)", info.stdout, re.M)
@@ -70,6 +71,7 @@ def render_pdf(data: bytes, max_pages: int = MAX_PDF_PAGES) -> tuple[list[bytes]
         last = min(total, max_pages)
         prefix = os.path.join(tmp, "page")
         result = _run(
+            box,
             ["pdftoppm", "-jpeg", "-jpegopt", "quality=90", "-scale-to", str(RENDER_LONG_SIDE),
              "-f", "1", "-l", str(last), source, prefix],
             RENDER_TIMEOUT,

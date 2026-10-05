@@ -1,0 +1,24 @@
+# The shared pins (tools/check_build.py, run by the repository tests): an app's requirements.txt or
+# requirements-dev.txt that lists one of these packages pins exactly this version. Every app needs the
+# first three. Not copied anywhere: each app keeps its own requirements.txt (Home Assistant builds an
+# app from its own folder) and adds its own lines. Change a version here and in every app together,
+# deliberately (run each app's tests), never as a side effect.
+
+# Every app
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+
+# Apps that use them
+pillow==12.3.0
+starlette==1.7.0
+jinja2==3.1.6
+pydantic==2.13.3
+httpx==0.28.1
+sqlalchemy==2.0.44
+cryptography==46.0.7
+argon2-cffi==25.1.0
+wsproto==1.3.2
+
+# Tests only (requirements-dev.txt)
+httpx2==2.13.1

@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.api import admin, alerts, analysis, backup, budgets, deals, drafts, export, extraction, homes, images, imports, items, lookout, nearby, notifications, planner, shoplist, stores, webdebug, webinfo
 from app import app_settings
+from app.common import sandbox_run, web_security
 from app.auth import ingress_gate, sync_roles
 from app.config import APP_VERSION, get_settings
 from app.db import get_db_session, init_models
@@ -55,6 +56,10 @@ async def lifespan(app: FastAPI):
     os.makedirs(os.path.join(settings.image_path, "receipts"), exist_ok=True)
     logger.info("Image storage directories created")
 
+    # The database and photos closed to every user but root: the PDF tools run as pdfworker (sandbox_run)
+    for folder in {os.path.dirname(os.path.abspath(settings.database_path)), os.path.abspath(settings.image_path)}:
+        sandbox_run.lock_down(folder)
+
     # A changed log level applies straight away (the other App settings are read when used)
     app_settings.on_change(_apply_log_level)
 
@@ -82,7 +87,7 @@ logger = get_logger("main")
 
 
 # Mount static files for frontend
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
+frontend_path = os.path.join(os.path.dirname(__file__), "static")
 frontend_path = os.path.abspath(frontend_path)
 if os.path.exists(frontend_path):
     try:
@@ -92,19 +97,20 @@ if os.path.exists(frontend_path):
         logger.warning("Failed to mount static files: %s", e)
 
 
-@app.middleware("http")
-async def revalidate_static(request, call_next):
-    """Pages and static files are never cached.
+# Pages: no inline scripts (the page scripts are static/pages/*.js); inline styles are still used (the
+# pages' <style> blocks and style attributes). PDFs (receipt photos can be PDFs) get no CSP: Chrome's
+# viewer refuses a PDF whose own policy has object-src 'none'.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+       "media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; "
+       "form-action 'self'; frame-ancestors 'self'")
 
-    "no-cache" (the previous setting) only requires a cache to check back with the server before
-    reusing a copy; some webviews, including the Home Assistant companion app's on some platforms,
-    have been seen to skip that check and just reuse whatever they already have. "no-store" is a
-    stronger instruction that a compliant cache cannot reuse at all, only serve fresh each time.
-    """
-    response = await call_next(request)
-    if not request.url.path.startswith("/api/") and "cache-control" not in response.headers:
-        response.headers["Cache-Control"] = "no-store"
-    return response
+# Pages and static files are never cached: "no-cache" (the previous setting) only requires a cache to
+# check back with the server before reusing a copy; some webviews, including the Home Assistant
+# companion app's on some platforms, have been seen to skip that check and just reuse whatever they
+# already have. "no-store" is a stronger instruction that a compliant cache cannot reuse at all, only
+# serve fresh each time. (A route's own Cache-Control is kept; the API's answers are left alone.)
+HEADERS = web_security.SecurityHeaders(CSP, csp_skip=web_security.is_pdf, pages_no_cache=False, other_no_store=True)
+HEADERS.install(app)
 
 
 app.include_router(admin.router)
@@ -156,29 +162,27 @@ def _page(name: str) -> HTMLResponse:
     Phones (the Home Assistant app in particular) keep old copies of scripts and styles for a long
     time; without this an update can leave a page with the old navigation bar. The version in the
     URL forces a fresh copy after every update, and the page itself is never cached. The version is
-    also baked into the page as ``window.__APP_VERSION__`` so app.js can notice, on its own, if it
+    also baked into the page (``data-app-version`` on app.js's script tag: no inline script, see the
+    Content-Security-Policy) so app.js can notice, on its own, if it
     is somehow still running against a stale copy (see ``checkVersion`` in app.js) and recover
     without the person needing to know to clear a cache by hand.
     """
     with open(_frontend_file(name), encoding="utf-8") as f:
         html = f.read()
-    for asset in ("app.css", "app.js", "backnav.js"):
+    for asset in ("app.css", "app.js", "common/backnav.js", "common/whoami.js", "common/theme-boot.js", "common/themes.css",
+                  "common/ui.js", "common/settings.js", "common/settings.css", f"pages/{name[:-5]}.js"):
         html = html.replace(f'static/{asset}"', f'static/{asset}?v={APP_VERSION}"')
-    html = html.replace(
-        '<script src="static/app.js',
-        f'<script>window.__APP_VERSION__="{APP_VERSION}";</script>\n  <script src="static/app.js',
-        1,
-    )
+    html = html.replace('<script src="static/app.js', f'<script data-app-version="{APP_VERSION}" src="static/app.js', 1)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 def _frontend_file(name: str) -> str:
     """Absolute path of a frontend page, or a 404 if it is missing."""
-    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", name))
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), "static", name))
     if not os.path.exists(path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Frontend not found. Make sure the frontend directory contains {name}",
+            detail=f"Frontend not found. Make sure app/static contains {name}",
         )
     return path
 
@@ -224,21 +228,22 @@ async def health():
 
 @app.get("/health/model")
 async def model_health():
-    """Whether a model is set up (Admin → App settings)."""
+    """Whether a model is set up (Admin → App settings). Answered without a user, so it never names the model."""
     settings = get_settings()
-    return {"configured": settings.model_ready, "model_name": settings.model_name}
+    return {"configured": settings.model_ready}
 
 
 @app.get("/health/database")
 async def database_health():
-    """Database health check."""
+    """Database health check. Answered without a user: the error itself goes to the log, not the answer."""
     try:
         db_session = get_db_session()
         with db_session() as db:
             db.execute(text("SELECT 1"))
         return {"status": "ok", "connected": True}
-    except Exception as e:
-        return {"status": "error", "connected": False, "error": str(e)}
+    except Exception:
+        get_logger("main").exception("Database health check failed")
+        return {"status": "error", "connected": False}
 
 
 # Frontend pages, served as they are (with the app version, see _page)
@@ -280,4 +285,7 @@ if __name__ == "__main__":
         host=settings.host,
         port=settings.port,
         reload=os.environ.get("RECEIPT_DEV_RELOAD") == "1",
+        # The ingress check needs the real TCP peer (Supervisor's proxy), never an address taken from
+        # X-Forwarded-For (tools/check_build.py checks this).
+        proxy_headers=False,
     )

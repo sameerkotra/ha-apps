@@ -14,14 +14,16 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from .. import config, db, ha_notify, ha_people
+from .. import config, db
+from ..common import ha_notify, ha_people, people_admin
 from ..auth import get_acting_user, require_admin
 
 router = APIRouter(prefix="/api", tags=["users"])
 
 MAX_SERVICES_PER_USER = 10
 TEST_INTERVAL_SECONDS = 10
-_last_test: dict[str, float] = {}
+_LIMITER = people_admin.TestLimiter(TEST_INTERVAL_SECONDS)
+_last_test: dict[str, float] = _LIMITER.last
 
 
 @router.get("/users")
@@ -33,12 +35,7 @@ def list_users(acting: dict = Depends(get_acting_user)):
     return [{"id": r["id"], "name": r["name"], "disabled": bool(r["disabled"])} for r in rows]
 
 
-def ha_person_json(user_id: str) -> dict:
-    """What Home Assistant says about the person (Settings → People): their person and phones."""
-    p = ha_people.person_for(user_id)
-    return {"known": ha_people.known(), "person": p["entityId"] if p else None, "personName": p["name"] if p else None,
-            "phones": [{"label": ph["label"], "service": f"notify.{ph['service']}" if ph["service"] else None,
-                        "tracker": ph["tracker"]} for ph in (p or {}).get("phones", [])]}
+ha_person_json = people_admin.ha_person_json          # their person and phones (common/people_admin.py)
 
 
 def _admin_user_json(conn, row) -> dict:
@@ -66,8 +63,7 @@ def admin_list_users(refresh: bool = Query(default=False), admin: dict = Depends
     """Admin → Users: everyone who has ever opened the app, with their phones from Home Assistant and
     any extra notify services. `refresh=1` reads Home Assistant's people again first (no DB connection
     is open meanwhile)."""
-    if refresh:
-        ha_people.refresh_blocking(True)
+    people_admin.refresh_people(refresh)
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT id, name, username, disabled, created_at FROM users ORDER BY name COLLATE NOCASE").fetchall()
@@ -103,18 +99,10 @@ def admin_notify_services(refresh: bool = Query(default=False), admin: dict = De
     error here would only be noise in the browser console on every visit).
     A sync route (runs in the threadpool); no DB connection is open while
     Home Assistant is asked."""
-    try:
-        return {"available": True, "error": None, **ha_notify.list_notify_services_blocking(force=refresh)}
-    except ha_notify.NotifyListError as e:
-        return {"available": False, "error": f"Couldn't read the notify services from Home Assistant: {e}",
-                "services": [], "entities": []}
+    return people_admin.notify_services(refresh)
 
 
-def _service(value) -> str:
-    try:
-        return ha_notify.normalize_service(value)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+_service = people_admin.clean_service
 
 
 def _who(admin: dict) -> str:
@@ -146,11 +134,7 @@ def admin_add_notify(user_id: str, body: dict = Body(...), admin: dict = Depends
     service = _service(body.get("service"))
     with db.get_conn() as conn:
         row = _load_user(conn, user_id)
-        current = ha_notify.assigned_services(conn, {"id": row["id"]})
-        if service not in current and len(current) >= MAX_SERVICES_PER_USER:
-            raise HTTPException(422, f"At most {MAX_SERVICES_PER_USER} notify services per person.")
-        conn.execute("INSERT OR IGNORE INTO user_notify (user_id, service, created_at, created_by) VALUES (?, ?, ?, ?)",
-                     (user_id, service, config.now_iso(), _who(admin)))
+        people_admin.add_service(conn, user_id, service, _who(admin), config.now_iso(), limit=MAX_SERVICES_PER_USER)
         return _admin_user_json(conn, row)
 
 
@@ -160,9 +144,7 @@ def admin_remove_notify(user_id: str, service: str, admin: dict = Depends(requir
     service = _service(service)
     with db.get_conn() as conn:
         row = _load_user(conn, user_id)
-        n = conn.execute("DELETE FROM user_notify WHERE user_id = ? AND service = ?", (user_id, service)).rowcount
-        if not n:
-            raise HTTPException(404, f"{service} isn't assigned to {row['name']}.")
+        people_admin.remove_service(conn, user_id, service, f"{service} isn't assigned to {row['name']}.")
         return _admin_user_json(conn, row)
 
 
@@ -186,19 +168,10 @@ def admin_test_notify(user_id: str, body: dict | None = Body(default=None), admi
     if not services:
         raise HTTPException(400, f"{row['name']} has no phone linked in Home Assistant (Settings → People) "
                                  "and no extra notify service here.")
-    now = time.monotonic()
-    last = _last_test.get(user_id)
-    if last is not None and now - last < TEST_INTERVAL_SECONDS:
-        raise HTTPException(429, "Please wait a few seconds before sending another test.")
-    _last_test[user_id] = now
+    _LIMITER.check(user_id)
     sent = ha_notify.send_to_services(
         [ha_notify.bare(s) for s in services], "Household Todo",
         f"Test notification from Household Todo for {row['name']}, sent by an admin.")
-    results = {f"notify.{k}": v for k, v in sent.items()}
-    if not any(results.values()):
-        if not ha_notify.ha_client.has_token():
-            raise HTTPException(502, "This app can't reach Home Assistant (no Supervisor token).")
-        hint = ha_notify.explain_failure(ha_notify.bare(services[0]))
-        raise HTTPException(502, "Home Assistant didn't accept the test notification"
-                                 + (f" — {hint}" if hint else " — check the service name."))
+    results = people_admin.test_results(sent)
+    people_admin.require_one_sent(results, ha_notify.bare(services[0]), ha_notify.ha_client.has_token)
     return {"results": results}

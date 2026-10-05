@@ -22,18 +22,19 @@ except ImportError:
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "shim"))
     USING_SHIM = True
 
-from starlette.testclient import TestClient  # noqa: E402
 
-from app import config, db, ha_notify, ha_people, settings  # noqa: E402
+from app import config, db, settings
+from app.common import ha_notify, ha_people  # noqa: E402
 from app.main import app  # noqa: E402
-from fake_ha import FakeHA  # noqa: E402
+from common_tests.fake_ha import FakeHA  # noqa: E402
+from common_tests.ingress import identity_headers, ingress_client  # noqa: E402
 
 NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)   # Monday 21 Sep 2026
 
 
 def hdr(uid, name=None, username=None):
-    return {"X-Remote-User-Id": uid, "X-Remote-User-Name": username or name or uid,
-            "X-Remote-User-Display-Name": name or uid}
+    """Login name defaults to the display name, display name to the id."""
+    return identity_headers(uid, username or name or uid, name or uid)
 
 
 def link(key, service):
@@ -58,7 +59,7 @@ class ApiBase(unittest.TestCase):
         cls.ha = FakeHA()
         config.SUPERVISOR_CORE_API = cls.ha.start()
         config.SUPERVISOR_TOKEN = "test-token"
-        cls._ctx = TestClient(app, client=("127.0.0.1", 12345))  # simulate a request from
+        cls._ctx = ingress_client(app)  # simulate a request from
         # Home Assistant's ingress proxy, which require_ha_ingress_auth now requires
         cls.c = cls._ctx.__enter__()
 

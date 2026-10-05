@@ -6,13 +6,11 @@
 - Keep scores for (App settings): remove older games, keeping each person's
   best per game and mode (scores.prune).
 """
-import asyncio
 import logging
 from datetime import timedelta
 
-from starlette.concurrency import run_in_threadpool
-
 from . import ai_usage, config, db, ha_sensors, scores, settings, together
+from .common import housekeeping as jobs_core
 
 logger = logging.getLogger("housekeeping")
 
@@ -42,12 +40,5 @@ def run_blocking() -> dict:
     return {"closed": closed, "removed": removed}
 
 
-async def loop() -> None:
-    while True:
-        try:
-            await run_in_threadpool(run_blocking)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Housekeeping failed")
-        await asyncio.sleep(TICK_SECONDS)
+# Every TICK_SECONDS from main.py's lifespan, once straight away (tests may replace `loop`).
+loop = jobs_core.periodic(TICK_SECONDS, run_blocking, log=logger, error="Housekeeping failed")

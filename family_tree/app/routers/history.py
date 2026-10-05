@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import names as names_mod, db, graph as graph_mod, housekeeping
 from ..auth import require_admin, require_user
-from ..common import people_in_loops, reject_new_loops
+from ..models import people_in_loops, reject_new_loops
 from ..history import Batch, Conflict, NotFound, undo
 from .families import family_people
 

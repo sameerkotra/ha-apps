@@ -16,7 +16,6 @@ backups and the web debug page.
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from contextvars import ContextVar
@@ -27,32 +26,26 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import JSONResponse
 
+from app.common import auth_core, web_security
 from app.db import get_db_session
 from app.db.models import User
 from app.logging_config import get_logger
 
 logger = get_logger("auth")
 
-INGRESS_HOSTS = frozenset({"172.30.32.2", "127.0.0.1", "::1"})
+INGRESS_HOSTS = auth_core.INGRESS_HOSTS          # the ingress proxy and loopback (app/common/auth_core.py)
 OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 _CACHE_SECONDS = 60
 
 
-def _clean(name: str) -> str:
-    return str(name).strip().strip("\"'").strip()
-
-
 def load_admin_users() -> list[str]:
-    """``admin_users`` from the app's options (a list; a comma-separated string is accepted too)."""
+    """``admin_users`` from the app's options (a list; a comma-separated string is accepted too).
+    The ADMIN_USERS environment variable, when set, is used instead (tests and local development)."""
     raw: object = os.environ.get("ADMIN_USERS")
     if raw is None:
-        try:
-            with open(OPTIONS_PATH, encoding="utf-8") as f:
-                raw = json.load(f).get("admin_users") or []
-        except (OSError, ValueError, AttributeError):
-            raw = []
+        raw = auth_core.read_options(OPTIONS_PATH, errors=(OSError, ValueError)).get("admin_users") or []
     items = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else []
-    return [n for n in (_clean(x) for x in items if isinstance(x, (str, int))) if n]
+    return auth_core.admin_entries([x for x in items if isinstance(x, (str, int))], strip_quotes=True)
 
 
 ADMIN_USERS: list[str] = load_admin_users()
@@ -60,13 +53,12 @@ _ADMIN_FOLDED = {n.casefold() for n in ADMIN_USERS}
 
 
 def is_admin_identity(user_id: str | None, username: str | None) -> bool:
-    return bool((user_id and user_id.strip().casefold() in _ADMIN_FOLDED)
-                or (username and username.strip().casefold() in _ADMIN_FOLDED))
+    return auth_core.is_admin(user_id, username, _ADMIN_FOLDED, fold=str.casefold)
 
 
 def no_admin_yet() -> bool:
     """First run: admin_users is empty, so nobody can open the Admin pages."""
-    return not _ADMIN_FOLDED
+    return auth_core.no_admin(_ADMIN_FOLDED)
 
 
 @dataclass(frozen=True)
@@ -101,18 +93,17 @@ def get_current_user_id() -> str:
 def require_admin() -> CurrentUser:
     """FastAPI dependency: only administrators may continue."""
     user = get_current_user()
-    if not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Only an administrator can do this (the app's admin_users option)")
+    auth_core.require_admin_flag(user.is_admin, "Only an administrator can do this (the app's admin_users option)")
     return user
 
 
 def identify(request: Request) -> tuple[str, str | None, str | None] | None:
     """(user id, login name, display name) from the ingress headers, else None."""
-    user_id = (request.headers.get("x-remote-user-id") or "").strip()
+    ident = auth_core.identity(request)
+    user_id = (ident.user_id or "").strip()
     if not user_id:
         return None
-    return user_id, request.headers.get("x-remote-user-name"), request.headers.get("x-remote-user-display-name")
+    return user_id, ident.username, ident.display_name
 
 
 def _sync_user(user_id: str, username: str | None, display_name: str | None) -> CurrentUser:
@@ -152,9 +143,10 @@ def _sync_user(user_id: str, username: str | None, display_name: str | None) -> 
 
 async def ingress_gate(request: Request, call_next):
     """Every request must come through Home Assistant's ingress; API requests need its user."""
-    host = request.client.host if request.client else ""
-    if host not in INGRESS_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden: open this app from Home Assistant"})
+    blocked = (auth_core.refuse_outsiders(request, INGRESS_HOSTS, "Forbidden: open this app from Home Assistant")
+               or web_security.refuse_cross_site(request))
+    if blocked is not None:
+        return blocked
     if not request.url.path.startswith("/api/"):
         return await call_next(request)
 

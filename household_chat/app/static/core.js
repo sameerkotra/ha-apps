@@ -2,33 +2,9 @@
    and styles, and every piece of user text goes in through textContent (never innerHTML). */
 "use strict";
 
-// ---------- DOM ----------
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "class") el.className = v;
-      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
-      else if (k === "value") el.value = v;
-      else if (k === "checked") el.checked = !!v;
-      else if (k === "disabled") el.disabled = !!v;
-      else if (k === "hidden") el.hidden = !!v;
-      else el.setAttribute(k, v === true ? "" : String(v));
-    }
-  }
-  for (const kid of kids.flat(Infinity)) {
-    if (kid === null || kid === undefined || kid === false) continue;
-    el.appendChild(kid instanceof Node ? kid : document.createTextNode(String(kid)));
-  }
-  return el;
-}
-function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
-function mount(el, ...kids) { clear(el); for (const k of kids.flat(Infinity)) if (k) el.appendChild(k); return el; }
-const $ = (s, root) => (root || document).querySelector(s);
-function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+// ---------- DOM (common/ui.js) ----------
+const { clear, mount, $, debounce, lsGet, lsSet } = UI;
+const h = UI.makeH({ booleanProps: ["checked", "disabled", "hidden"] });   // as properties: 0 / "" mean off
 function initials(t) { const w = String(t || "?").replace(/\(.*\)/, "").trim().split(/\s+/); return ((w[0] || "?")[0] + ((w[1] || "")[0] || "")).toUpperCase(); }
 function colorOf(t) { let n = 0; for (const c of String(t || "")) n = (n * 31 + c.charCodeAt(0)) >>> 0; return "av" + (n % 8); }
 function fmtSize(n) {
@@ -73,25 +49,17 @@ function ago(iso) {
 
 // ---------- API ----------
 class ApiError extends Error { constructor(msg, status) { super(msg); this.status = status; } }
-async function api(path, opts = {}) {
-  const { method = "GET", body, raw, rawBody, headers } = opts;
-  const init = { method, headers: Object.assign({}, headers || {}) };
-  if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
-  else if (rawBody !== undefined) init.body = rawBody;
-  let res;
-  try { res = await fetch(path.replace(/^\//, ""), init); }
-  catch (e) { throw new ApiError("Can't reach Household Chat. Check your connection and try again.", 0); }
-  if (!res.ok) {
-    let detail = null;
-    try { detail = (await res.json()).detail; } catch (e) { /* not JSON */ }
-    const msg = typeof detail === "string" ? detail : `Something went wrong (HTTP ${res.status}).`;
-    if (res.status === 403 && state.me && !state.me.disabled && /hasn't given you access/.test(msg)) { location.reload(); }
-    throw new ApiError(msg, res.status);
-  }
-  if (raw) return res;
-  if (res.status === 204) return null;
-  return res.json();
-}
+const api = UI.makeApi({
+  networkError: "Can't reach Household Chat. Check your connection and try again.",
+  message: (body, res) => {
+    const detail = body ? body.detail : null;
+    return typeof detail === "string" ? detail : `Something went wrong (HTTP ${res.status}).`;
+  },
+  makeError: (msg, status) => new ApiError(msg, status),
+  onError: (err, res) => {
+    if (res.status === 403 && state.me && !state.me.disabled && /hasn't given you access/.test(err.message)) { location.reload(); }
+  },
+});
 function uploadXhr(url, file, onProgress) {
   const xhr = new XMLHttpRequest();
   const promise = new Promise((resolve, reject) => {
@@ -111,10 +79,7 @@ function uploadXhr(url, file, onProgress) {
 
 // ---------- toasts, modals, menus ----------
 function toast(msg, opts = {}) {
-  const t = h("div", { class: "toast" + (opts.error ? " error" : ""), role: "status" }, msg);
-  if (opts.onclick) { t.classList.add("clickable"); t.addEventListener("click", () => { opts.onclick(); t.remove(); }); }
-  $("#toastRoot").appendChild(t);
-  setTimeout(() => t.remove(), opts.ms || (opts.error ? 5000 : 2600));
+  UI.toast(msg, { error: opts.error, role: "status", onclick: opts.onclick, ms: opts.ms || (opts.error ? 5000 : 2600) });
 }
 function fail(e) { if (e && e.status === -1) return; toast(e && e.message ? e.message : String(e), { error: true }); }
 // ---------- the back button / back gesture ----------
@@ -147,34 +112,16 @@ window.addEventListener("popstate", () => {
   if (layers.length) addLayer(layers.pop());     // re-arm the guard for what's still open
 });
 
-function openModal(title, content, opts = {}) {
-  const closeBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Close" }, "✕");
-  const modal = h("div", { class: "modal" + (opts.wide ? " wide" : "") + (opts.full ? " full" : ""), role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("h3", null, h("span", null, title), closeBtn), content);
-  const back = h("div", { class: "modal-backdrop" + (opts.dark ? " dark" : "") }, modal);
-  let downOnBack = false;
-  back.addEventListener("mousedown", (e) => { downOnBack = e.target === back; });
-  back.addEventListener("click", (e) => { if (e.target === back && downOnBack) close(); });
-  const onKey = (e) => { if (e.key === "Escape" && back === lastBackdrop()) { e.stopPropagation(); close(); } };
-  document.addEventListener("keydown", onKey);
-  let closed = false;
-  function close() { if (closed) return; closed = true; removeLayer(close); back.remove(); document.removeEventListener("keydown", onKey); if (opts.onClose) opts.onClose(); }
-  addLayer(close);
-  closeBtn.addEventListener("click", close);
-  $("#modalRoot").appendChild(back);
-  const first = modal.querySelector("input:not([type=hidden]):not([disabled]):not([type=checkbox]):not([type=radio]), select, textarea");
-  if (first && !opts.noFocus && FINE_POINTER) setTimeout(() => first.focus(), 30);
-  return { close, el: modal };
+// Dialogs (common/ui.js): Escape closes only the top one, and each is a back-button layer.
+function modalOptions(opts) {
+  return { modalClass: [opts.wide ? "wide" : "", opts.full ? "full" : ""].filter(Boolean).join(" "), backdropClass: opts.dark ? "dark" : "",
+    escape: "top", onOpen: addLayer, onClosed: removeLayer, onClose: opts.onClose,
+    focus: opts.noFocus ? false : "first", focusIf: FINE_POINTER,
+    focusSelector: "input:not([type=hidden]):not([disabled]):not([type=checkbox]):not([type=radio]), select, textarea" };
 }
-function lastBackdrop() { const b = document.querySelectorAll("#modalRoot .modal-backdrop"); return b[b.length - 1]; }
+function openModal(title, content, opts = {}) { return UI.openModal(title, content, modalOptions(opts)); }
 function confirmDialog(title, message, okLabel = "OK", danger = false) {
-  return new Promise((resolve) => {
-    let done = false;
-    const m = openModal(title, h("div", null, h("p", null, message), h("div", { class: "actions" },
-      h("button", { class: "btn", type: "button", onclick: () => { done = true; m.close(); resolve(false); } }, "Cancel"),
-      h("button", { class: "btn " + (danger ? "danger" : "primary"), type: "button", onclick: () => { done = true; m.close(); resolve(true); } }, okLabel))),
-      { onClose: () => { if (!done) resolve(false); } });
-  });
+  return UI.confirmDialog(title, message, { okLabel, okClass: "btn " + (danger ? "danger" : "primary"), cancelClass: "btn", modal: modalOptions({}) });
 }
 function dropMenu(m) { m.remove(); if (m._layer) removeLayer(m._layer); }
 function closeMenus() { document.querySelectorAll(".menu").forEach(dropMenu); }

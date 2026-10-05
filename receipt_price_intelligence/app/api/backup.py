@@ -2,20 +2,17 @@
 
 import asyncio
 import os
-import tempfile
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 
 from app.auth import CurrentUser, require_admin
+from app.common import backup_core
 from app.services import backup as backup_service
 from app.services import deals
 
 router = APIRouter(prefix="/api/v1/admin/backup", tags=["backup"])
 
-CHUNK = 1024 * 1024
 DB_MEDIA_TYPE = "application/vnd.sqlite3"
 
 
@@ -41,16 +38,18 @@ async def export_database(_: CurrentUser = Depends(require_admin)):
         path, filename = await asyncio.to_thread(backup_service.new_export)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Could not create the export: {e}")
-    return FileResponse(path, media_type=DB_MEDIA_TYPE, filename=filename, background=BackgroundTask(os.remove, path))
+    return backup_core.send_file(path, filename, DB_MEDIA_TYPE)
 
 
 @router.get("/safety-copies/{name}")
 async def download_safety_copy(name: str, _: CurrentUser = Depends(require_admin)):
-    """Download a copy of the database as it was just before an import."""
+    """Download a copy of the database as it was just before an import (without the access keys and
+    passwords, like an export)."""
     path = backup_service.safety_copy_path(name)
     if path is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Copy not found")
-    return FileResponse(path, media_type=DB_MEDIA_TYPE, filename=name)
+    copy = await asyncio.to_thread(backup_service.safety_copy_download, path)
+    return backup_core.send_file(copy, name, DB_MEDIA_TYPE)
 
 
 @router.post("/import")
@@ -65,16 +64,14 @@ async def import_database(
     upgraded automatically. App settings come from the file when it has them; otherwise the current ones are kept.
     """
     folder = os.path.dirname(backup_service.db_path()) or "."
-    os.makedirs(folder, exist_ok=True)
-    fd, temp_path = tempfile.mkstemp(prefix="import-", suffix=".db", dir=folder)
+    limit = backup_service.MAX_IMPORT_BYTES
     try:
-        size = 0
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(CHUNK):
-                size += len(chunk)
-                if size > backup_service.MAX_IMPORT_BYTES:
-                    raise backup_service.BackupError(f"The file is larger than {backup_service.MAX_IMPORT_BYTES // (1024 * 1024)} MB")
-                out.write(chunk)
+        temp_path = await backup_core.receive(
+            file, folder, prefix="import-", suffix=".db", max_bytes=limit,
+            too_big=lambda: backup_service.BackupError(f"The file is larger than {limit // (1024 * 1024)} MB"))
+    except backup_service.BackupError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    try:
         result = await asyncio.to_thread(backup_service.import_backup, temp_path, admin.id, admin.display_name or admin.id)
     except backup_service.BackupError as e:
         if os.path.exists(temp_path):

@@ -839,7 +839,7 @@ const Play = (() => {
     return t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable);
   }
   document.addEventListener("keydown", (e) => {
-    if (state.tab !== "play" || !S.server || modalStack.length || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (state.tab !== "play" || !S.server || UI.dialogs().length || e.ctrlKey || e.metaKey || e.altKey) return;
     const pauseKey = (e.code === "KeyP" && !(S.def && S.def.typed)) || e.key === "Escape";
     if (S.phase === "running") {
       if (pauseKey) { e.preventDefault(); pause(); return; }

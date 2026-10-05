@@ -5,16 +5,18 @@ provides the token in ``SUPERVISOR_TOKEN``. Used to publish sensors and events, 
 notifications, and read shopping / to-do lists. Everything here is best effort: when Home
 Assistant is not reachable the app carries on without it.
 
-``HA_API_URL`` and ``HA_API_TOKEN`` override the defaults (used to point at another instance).
+``HA_API_URL`` and ``HA_API_TOKEN`` override the defaults (used to point at another instance). The
+HTTP call itself is the shared client (app/common/ha_client.py); this module turns its answers into
+results or ``HAError``.
 """
 
 import json
 import os
 import re
 import urllib.error
-import urllib.request
 from typing import Any
 
+from app.common import ha_client
 from app.logging_config import get_logger
 
 logger = get_logger("ha")
@@ -44,19 +46,19 @@ def slug(text: str) -> str:
 def _request(method: str, path: str, body: Any = None) -> Any:
     if not available():
         raise HAError("Home Assistant is not available to this app")
-    url = (os.environ.get("HA_API_URL") or DEFAULT_URL).rstrip("/") + path
-    data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, method=method, headers={
-        "Authorization": f"Bearer {_token()}", "Content-Type": "application/json",
-    })
+
+    def unreachable(e: Exception) -> None:   # no answer at all: say so; anything unexpected goes up as it is
+        if isinstance(e, (urllib.error.URLError, TimeoutError, OSError)):
+            raise HAError("Home Assistant could not be reached") from e
+        raise e
+
+    status, raw = ha_client.request(method, path, body, timeout=TIMEOUT, on_error=unreachable,
+                                    base_url=(os.environ.get("HA_API_URL") or DEFAULT_URL).rstrip("/"), token=_token())
+    if status is None or not 200 <= status < 300:
+        raise HAError(f"Home Assistant answered with an error ({status})")
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            raw = response.read().decode("utf-8")
-            return json.loads(raw) if raw else None
-    except urllib.error.HTTPError as e:
-        raise HAError(f"Home Assistant answered with an error ({e.code})") from e
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        raise HAError("Home Assistant could not be reached") from e
+        text = raw.decode("utf-8")
+        return json.loads(text) if text else None
     except json.JSONDecodeError as e:
         raise HAError("Home Assistant sent an unreadable answer") from e
 
@@ -64,6 +66,12 @@ def _request(method: str, path: str, body: Any = None) -> Any:
 def set_state(entity_id: str, state: Any, attributes: dict[str, Any] | None = None) -> None:
     """Create or update an entity's state (it lasts until Home Assistant restarts, so it is republished)."""
     _request("POST", f"/states/{entity_id}", {"state": str(state), "attributes": attributes or {}})
+
+
+def post_sensor(entity_id: str, state: Any, attributes: dict[str, Any] | None = None) -> bool:
+    """set_state() for app/common/sensor_publisher.py: True once posted; raises HAError like set_state."""
+    set_state(entity_id, state, attributes)
+    return True
 
 
 def call_service(domain: str, service: str, data: dict[str, Any] | None = None, response: bool = False) -> Any:

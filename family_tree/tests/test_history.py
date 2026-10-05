@@ -209,9 +209,9 @@ class UndoAgainstLaterChanges(ApiTestCase):
 
     def setUp(self):
         super().setUp()
-        from fastapi.testclient import TestClient
+        from common_tests.ingress import ingress_client
         from app.main import app
-        self.client = TestClient(app, client=("127.0.0.1", 12345), raise_server_exceptions=False)
+        self.client = ingress_client(app, raise_server_exceptions=False)
 
     def assert_conflict(self, bid):
         r = self.post(f"/api/history/{bid}/undo")

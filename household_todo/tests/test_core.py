@@ -14,10 +14,12 @@ from unittest import mock
 
 from starlette.exceptions import HTTPException
 
-from app import config, db, drive_time, geocode, ha_client, ha_notify, ha_sensors, housekeeping, links, reminders, schedule_logic, settings, taskview
+from app import config, db, drive_time, geocode, ha_client, ha_sensors, housekeeping, links, reminders, schedule_logic, settings, taskview
+from app.common import ha_notify
+from app.common import ha_client as shared_ha_client
 from app.routers import places as places_router
 from app.routers import prefs as prefs_router
-from fake_ha import FakeHA
+from common_tests.fake_ha import FakeHA
 
 UTC = timezone.utc
 NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=UTC)   # Monday 21 Sep 2026, noon UTC
@@ -100,7 +102,7 @@ class Base(unittest.TestCase):
         self.ha.requests.clear()
         self.ha.states.clear()
         self.ha.fail = False
-        ha_client._warned_no_token = False
+        shared_ha_client._warned_no_token = False
         ha_notify._targets_cache = None
         ha_notify._entity_mode.clear()
         _deferred_links.clear()
@@ -1887,13 +1889,14 @@ class LinkSchema(Base):
         with db.get_conn() as c:
             fresh = {t: [(r["name"], r["type"], r["notnull"], r["dflt_value"]) for r in c.execute(f"PRAGMA table_info({t})")]
                      for t in ("tasks", "schedule_items")}
-            self.assertEqual(fresh["tasks"][-1], ("url", "TEXT", 0, None))
+            self.assertEqual(fresh["tasks"][-2:], [("url", "TEXT", 0, None), ("source", "TEXT", 0, None)])
             self.assertEqual(fresh["schedule_items"][-1], ("url", "TEXT", 0, None))
             # make it an older database: no url columns, one row in each table
             add_user(c, "u1", "Ann")
             add_list(c, "l1", "Household")
             add_task(c, "t1", "l1", "Old task")
             add_item(c, "s1", "Old item")
+            c.execute("ALTER TABLE tasks DROP COLUMN source")         # 2.2.0 had neither (source: 2.3.0)
             c.execute("ALTER TABLE tasks DROP COLUMN url")
             c.execute("ALTER TABLE schedule_items DROP COLUMN url")
         db.init_db()

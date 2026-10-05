@@ -10,7 +10,7 @@ Everything stays on your network.
 - Everyone signs in with their Home Assistant account; administrators come from the app's `admin_users` option.
 - Every other setting (the model, imports, maps, web search, notifications) is in **Admin → App settings** and applies
   without a restart.
-- Sidebar menu on a computer, bottom bar on a phone, three themes (Midnight, Slate, Daylight).
+- Sidebar menu on a computer, bottom bar on a phone, four themes (Midnight, Slate, Daylight, Auto).
 
 You need a vision-capable model on your own network (Ollama, or an OpenAI-compatible server such as vLLM or LM
 Studio). The app doesn't include one.

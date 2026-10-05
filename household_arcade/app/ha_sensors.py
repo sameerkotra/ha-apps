@@ -18,14 +18,14 @@ shows them as unavailable, and nothing is posted after that.
 Best effort: nothing here ever fails an API request. Blocking functions run in
 a thread, never while holding a DB connection across a network call.
 """
-import asyncio
 import logging
 import time
 from datetime import timedelta
 
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, games, ha_client, ha_people, limits, scores, settings
+from . import auth, config, db, games, ha_client, limits, scores, settings
+from .common import ha_people, sensor_publisher
 
 logger = logging.getLogger("ha_sensors")
 
@@ -34,7 +34,9 @@ FULL_EVERY_SECONDS = 300
 PLAYING_WINDOW_SECONDS = 90
 PREFIX = "household_arcade_"
 
-_last: dict[str, tuple] = {}            # entity_id -> (state, attributes) last posted
+# What was last posted (entity_id -> (state, attributes)): only changes are posted between full re-posts.
+SENSORS = sensor_publisher.Publisher(post=lambda eid, state, attrs: ha_client.post_state(eid, state, attrs))
+_last = SENSORS.memory
 
 
 def enabled() -> bool:
@@ -85,23 +87,13 @@ def entities(conn) -> list[tuple[str, str, dict]]:
 
 
 def push_blocking(force: bool = False) -> dict:
-    """Post every entity whose state changed (all of them with `force`)."""
-    result = {"pushed": 0, "failed": 0}
+    """Post every entity whose state changed (all of them with `force`). Stops at the first failure
+    (Home Assistant is probably unreachable; the next tick tries again)."""
     if not enabled():
-        return result
+        return {"pushed": 0, "failed": 0}
     with db.get_conn() as conn:
         items = entities(conn)
-    for eid, state, attrs in items:
-        key = (state, repr(sorted(attrs.items())))
-        if not force and _last.get(eid) == key:
-            continue
-        if ha_client.post_state(eid, state, attrs):
-            _last[eid] = key
-            result["pushed"] += 1
-        else:
-            result["failed"] += 1
-            break               # Home Assistant is probably unreachable; the next tick tries again
-    return result
+    return SENSORS.publish(items, force=force, stop_after=1)
 
 
 def mark_unavailable_blocking() -> int:
@@ -114,7 +106,7 @@ def mark_unavailable_blocking() -> int:
     for eid, _state, attrs in items:
         if ha_client.post_state(eid, "unavailable", {"friendly_name": attrs.get("friendly_name")}):
             n += 1
-    _last.clear()
+    SENSORS.forget()
     return n
 
 
@@ -133,20 +125,15 @@ def changed_blocking() -> None:
 
 
 async def loop() -> None:
-    last_full = None
-    last_date = None
-    while True:
-        try:
-            if enabled():
-                full = last_full is None or time.monotonic() - last_full >= FULL_EVERY_SECONDS \
-                    or last_date != config.today()
-                await run_in_threadpool(push_blocking, full)
-                if full:
-                    last_full, last_date = time.monotonic(), config.today()
-            else:
-                last_full = None
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Sensor sync tick failed")
-        await asyncio.sleep(TICK_SECONDS)
+    full_sync = sensor_publisher.Refresh(FULL_EVERY_SECONDS, clock=lambda: time.monotonic())
+
+    async def tick():
+        if enabled():
+            full = full_sync.due(config.today())
+            await run_in_threadpool(push_blocking, full)
+            if full:
+                full_sync.done(config.today())
+        else:
+            full_sync.reset()
+
+    await sensor_publisher.run(TICK_SECONDS, tick, log=logger)

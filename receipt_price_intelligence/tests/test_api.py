@@ -66,9 +66,10 @@ class ApiTests(unittest.TestCase):
     def test_me_and_whoami(self):
         me = self.client().get("/api/v1/me", headers=PAT).json()
         self.assertTrue(me["is_admin"])
-        self.assertFalse(me["no_admin_yet"])
+        self.assertFalse(me["noAdmin"])
         w = self.client().get("/api/v1/whoami", headers=SAM).json()
-        self.assertEqual((w["userId"], w["username"], w["isAdmin"], w["adminEntries"]), ("def456", "sam", False, 2))
+        self.assertEqual((w["haUserId"], w["haUsername"], w["isAdmin"], w["adminEntries"]), ("def456", "sam", False, 2))
+        self.assertFalse(w["noAdmin"])
         self.assertNotIn("pat", str(w).lower())
 
     def test_settings_are_admin_only(self):
@@ -87,12 +88,41 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 422)
         self.assertIn("Model timeout", r.json()["detail"])
 
+    def test_security_headers(self):
+        from app import main
+        c = self.client()
+        for path in ("/admin.html", "/static/app.js", "/api/info"):
+            r = c.get(path, headers=PAT)
+            self.assertEqual(r.headers["content-security-policy"], main.CSP, path)
+            self.assertEqual(r.headers["x-content-type-options"], "nosniff", path)
+        self.assertEqual(c.get("/admin.html", headers=PAT).headers["cache-control"], "no-store")
+        self.assertEqual(c.get("/static/app.js", headers=PAT).headers["cache-control"], "no-store")
+        self.assertNotIn("cache-control", c.get("/api/info", headers=PAT).headers)
+        self.assertIn("script-src 'self';", main.CSP)
+
+    def test_health_answers_tell_nothing_more(self):
+        """/health/* answer without a user: no model name, no error text (it goes to the log)."""
+        from app import app_settings
+        app_settings.update({"model_url": "http://192.0.2.1:11434/", "model_name": "secret-model-name"}, "Pat")
+        c = self.client()
+        model = c.get("/health/model")
+        self.assertEqual(model.status_code, 200)
+        self.assertEqual(set(model.json()), {"configured"})
+        self.assertNotIn("secret-model-name", model.text)
+        self.assertEqual(c.get("/health/database").json(), {"status": "ok", "connected": True})
+        with mock.patch("app.main.get_db_session", side_effect=RuntimeError("/data/secret/path.db is locked")), \
+                self.assertLogs("app.main", "ERROR"):
+            r = c.get("/health/database")
+        self.assertEqual(r.json(), {"status": "error", "connected": False})
+        self.assertNotIn("secret", r.text)
+
     def test_pages_carry_the_version(self):
         html = self.client().get("/admin.html").text
         from app.config import APP_VERSION
         self.assertIn(f"static/app.js?v={APP_VERSION}", html)
-        self.assertIn(f"static/backnav.js?v={APP_VERSION}", html)
-        self.assertIn(f'window.__APP_VERSION__="{APP_VERSION}"', html)
+        self.assertIn(f"static/common/backnav.js?v={APP_VERSION}", html)
+        self.assertIn(f'data-app-version="{APP_VERSION}" src="static/app.js?v={APP_VERSION}"', html)
+        self.assertNotIn("<script>", html)          # no inline script (Content-Security-Policy)
 
 
 if __name__ == "__main__":

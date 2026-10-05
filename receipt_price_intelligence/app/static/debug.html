@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Web debug</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tabs button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: .88rem; margin: 0; }
+    .kv dt { color: var(--muted); }
+    .kv dd { margin: 0; overflow-wrap: anywhere; }
+    .req { border: 1px solid var(--line); border-radius: 10px; margin-top: 8px; overflow: hidden; }
+    .req > summary { list-style: none; cursor: pointer; padding: 8px 10px; display: grid; gap: 2px; }
+    .req > summary::-webkit-details-marker { display: none; }
+    .req .line1 { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .85rem; }
+    .req .url { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; color: var(--muted); overflow-wrap: anywhere; }
+    .req .body { padding: 0 10px 10px; display: grid; gap: 8px; }
+    .blk { display: grid; gap: 4px; }
+    .blk .hd { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .8rem; font-weight: 650; color: var(--muted); }
+    .blk pre { margin: 0; max-height: 360px; overflow: auto; background: var(--surface-2); border-radius: 8px; padding: 8px;
+               font-size: .75rem; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .svc { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 7px; border-radius: 9px;
+           background: var(--surface-3); }
+    .svc.model { background: var(--info-soft); color: var(--info); }
+    .svc.page { background: var(--warn-soft); color: var(--warn); }
+    .svc.tavily, .svc.parallel, .svc.searxng, .svc.custom { background: var(--accent-soft); color: var(--accent); }
+    .svc.cache { background: var(--surface-3); color: var(--muted); }
+    .st-ok { color: var(--accent); font-weight: 700; }
+    .st-bad { color: var(--danger); font-weight: 700; }
+    .form-grid { display: grid; gap: 10px; }
+    @media (min-width: 640px) { .form-grid.two { grid-template-columns: 1fr 1fr; } }
+    .step { border-left: 3px solid var(--line); padding-left: 10px; }
+    .step.good { border-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar">
+      <div class="grow"><h1>Admin</h1><div class="sub">Web debug</div></div>
+    </div>
+    <div id="adminTabs"></div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/debug.js"></script>
+</body>
+</html>

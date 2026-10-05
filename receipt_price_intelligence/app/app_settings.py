@@ -17,14 +17,15 @@ set up (the database layer itself reads ``log_level``).
 
 from __future__ import annotations
 
-import json
+import contextlib
+import logging
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from .common import settings_core
+from .common.settings_core import Group, Setting, SettingsError  # noqa: F401  (SettingsError: the routes' name)
 
 _URL = re.compile(r"^https?://[^\s/]+\S*$", re.I)
 _NOTIFY = re.compile(r"^notify\.[a-z0-9_]+$")
@@ -48,161 +49,138 @@ def _pattern(v: str, rx: re.Pattern, example: str) -> str:
     return v
 
 
-class AppSettings(BaseModel):
-    """Validation for every App setting (unknown keys are rejected)."""
+def _urls(v: str) -> str:
+    return _url(v)
 
-    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
+def _trimmed(v: str) -> str:
+    v = (v or "").strip()
+    if any(c in v for c in "\r\n\x00"):
+        raise ValueError("must be on one line")
+    return v
+
+
+def _model_name(v: str) -> str:
+    if len(v) > 255:
+        raise ValueError("is too long")
+    return v
+
+
+def _currency(v: str) -> str:
+    v = (v or "").strip().upper()
+    if not re.fullmatch(r"[A-Z]{3}", v):
+        raise ValueError("must be a 3-letter currency code such as USD, EUR or GBP")
+    return v
+
+
+def _folder(v: str) -> str:
+    v = (v or "").strip().rstrip("/")
+    if v and (not _FOLDER.match(v) or "/../" in v + "/" or "/./" in v + "/"):
+        raise ValueError("must be a folder under /share or /media, for example /share/receipts")
+    return v
+
+
+def _email(v: str) -> str:
+    v = (v or "").strip()
+    if v and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
+        raise ValueError("must be an email address")
+    return v
+
+
+def _field_name(v: str) -> str:
+    v = (v or "").strip()
+    if not _FIELD_NAME.match(v):
+        raise ValueError("must be a field name such as query, q or url")
+    return v
+
+
+def _notify(v: str) -> str:
+    return _pattern(v, _NOTIFY, "notify.mobile_app_your_phone")
+
+
+def _todo(v: str) -> str:
+    return _pattern(v, _TODO, "todo.shopping_list")
+
+
+def _tracker(v: str) -> str:
+    return _pattern(v, _TRACKER, "person.someone or device_tracker.a_phone")
+
+
+def _home(v: str) -> str:
+    return (v or "").strip()
+
+
+# key: (default, {Setting keywords}) — in the order the page shows them, grouped as in GROUPS below.
+_SPEC: dict[str, tuple[Any, dict]] = {
     # Model (reading receipts)
-    model_url: str = ""
-    model_name: str = ""
-    model_api_format: Literal["ollama", "openai_compatible"] = "ollama"
-    model_api_key: str = ""
-    model_timeout_seconds: int = Field(300, ge=10, le=3600)
-    model_temperature: float = Field(0.0, ge=0, le=2)
-    model_num_ctx: int = Field(16384, ge=0, le=262144)
-    model_max_output_tokens: int = Field(8192, ge=256, le=65536)
-    model_think: bool = False
-    extraction_concurrency: int = Field(1, ge=1, le=8)
-
+    "model_url": ("", {"kind": "text", "validators": [_urls]}),
+    "model_name": ("", {"validators": [_trimmed, _model_name]}),
+    "model_api_format": ("ollama", {}),
+    "model_api_key": ("", {"validators": [_trimmed]}),
+    "model_timeout_seconds": (300, {"min": 10, "max": 3600}),
+    "model_temperature": (0.0, {"min": 0, "max": 2}),
+    "model_num_ctx": (16384, {"min": 0, "max": 262144}),
+    "model_max_output_tokens": (8192, {"min": 256, "max": 65536}),
+    "model_think": (False, {}),
+    "extraction_concurrency": (1, {"min": 1, "max": 8}),
     # Receipts
-    default_currency: str = "USD"
-    receipt_date_order: Literal["auto", "MDY", "DMY"] = "auto"
-    receipt_archive_path: str = ""
-    draft_retention_hours: int = Field(72, ge=1, le=8760)
-
+    "default_currency": ("USD", {"validators": [_currency]}),
+    "receipt_date_order": ("auto", {}),
+    "receipt_archive_path": ("", {"validators": [_folder]}),
+    "draft_retention_hours": (72, {"min": 1, "max": 8760}),
     # Importing receipts
-    import_folder: str = ""
-    import_home: str = Field("", max_length=255)
-    imap_host: str = Field("", max_length=255)
-    imap_port: int = Field(993, ge=1, le=65535)
-    imap_user: str = Field("", max_length=255)
-    imap_password: str = Field("", max_length=1024)
-    imap_folder: str = Field("INBOX", max_length=255)
-    imap_ssl: bool = True
-
+    "import_folder": ("", {"validators": [_folder]}),
+    "import_home": ("", {"max_length": 255, "validators": [_home]}),
+    "imap_host": ("", {"max_length": 255, "validators": [_trimmed]}),
+    "imap_port": (993, {"min": 1, "max": 65535}),
+    "imap_user": ("", {"max_length": 255, "validators": [_trimmed]}),
+    "imap_password": ("", {"max_length": 1024}),
+    "imap_folder": ("INBOX", {"max_length": 255, "validators": [_trimmed]}),
+    "imap_ssl": (True, {}),
     # Maps and trips
-    unit_system: Literal["imperial", "metric"] = "imperial"
-    geocoder_url: str = "https://nominatim.openstreetmap.org"
-    routing_url: str = "https://router.project-osrm.org"
-    overpass_url: str = "https://overpass-api.de/api/interpreter"
-    map_contact_email: str = Field("", max_length=255)
-    trip_plan_keep_hours: int = Field(12, ge=0, le=72)
-
+    "unit_system": ("imperial", {}),
+    "geocoder_url": ("https://nominatim.openstreetmap.org", {"kind": "text", "validators": [_urls]}),
+    "routing_url": ("https://router.project-osrm.org", {"kind": "text", "validators": [_urls]}),
+    "overpass_url": ("https://overpass-api.de/api/interpreter", {"kind": "text", "validators": [_urls]}),
+    "map_contact_email": ("", {"max_length": 255, "validators": [_email]}),
+    "trip_plan_keep_hours": (12, {"min": 0, "max": 72}),
     # Web search
-    web_search_provider: Literal["custom", "tavily", "parallel", "searxng"] = "custom"
-    web_search_url: str = ""
-    web_search_api_key: str = Field("", max_length=1024)
-    web_search_token: str = Field("", max_length=1024)
-    web_search_timeout_seconds: int = Field(120, ge=5, le=600)
-    web_search_concurrency: int = Field(3, ge=1, le=5)
-    web_search_cache_days: int = Field(3, ge=0, le=30)
-    web_search_min_interval_seconds: int = Field(4, ge=0, le=60)
-    web_query_field: str = "query"
-    web_url_field: str = "url"
-    web_auto_hours: bool = False
-    web_deals_days: int = Field(3, ge=0, le=60)
-    web_price_freshness_hours: int = Field(6, ge=1, le=72)
-    web_prices_days: int = Field(0, ge=0, le=60)
-
+    "web_search_provider": ("custom", {}),
+    "web_search_url": ("", {"kind": "text", "validators": [_urls]}),
+    "web_search_api_key": ("", {"max_length": 1024, "validators": [_trimmed]}),
+    "web_search_token": ("", {"max_length": 1024, "validators": [_trimmed]}),
+    "web_search_timeout_seconds": (120, {"min": 5, "max": 600}),
+    "web_search_concurrency": (3, {"min": 1, "max": 5}),
+    "web_search_cache_days": (3, {"min": 0, "max": 30}),
+    "web_search_min_interval_seconds": (4, {"min": 0, "max": 60}),
+    "web_query_field": ("query", {"validators": [_field_name]}),
+    "web_url_field": ("url", {"validators": [_field_name]}),
+    "web_auto_hours": (False, {}),
+    "web_deals_days": (3, {"min": 0, "max": 60}),
+    "web_price_freshness_hours": (6, {"min": 1, "max": 72}),
+    "web_prices_days": (0, {"min": 0, "max": 60}),
     # Best prices
-    recommendation_window_days: int = Field(90, ge=7, le=365)
-    minimum_savings_percent: float = Field(5.0, ge=0, le=100)
-    alert_min_saving_percent: float = Field(15.0, ge=0, le=100)
-    recommendation_run_hour: int = Field(3, ge=0, le=23)
-
+    "recommendation_window_days": (90, {"min": 7, "max": 365}),
+    "minimum_savings_percent": (5.0, {"min": 0, "max": 100}),
+    "alert_min_saving_percent": (15.0, {"min": 0, "max": 100}),
+    "recommendation_run_hour": (3, {"min": 0, "max": 23}),
     # Home Assistant and notifications
-    ha_sensors: bool = True
-    alerts_enabled: bool = True
-    alert_notify_service: str = ""
-    restock_notify: bool = True
-    restock_auto_add: bool = False
-    price_drop_percent: int = Field(10, ge=0, le=90)
-    overcharge_notify: bool = True
-    shopping_list_todo_entity: str = ""
-    shopping_tracker_entity: str = ""
-    shopping_notify_service: str = ""
-    shopping_nearby_meters: int = Field(250, ge=0, le=3000)
-
+    "ha_sensors": (True, {}),
+    "alerts_enabled": (True, {}),
+    "alert_notify_service": ("", {"validators": [_notify]}),
+    "restock_notify": (True, {}),
+    "restock_auto_add": (False, {}),
+    "price_drop_percent": (10, {"min": 0, "max": 90}),
+    "overcharge_notify": (True, {}),
+    "shopping_list_todo_entity": ("", {"validators": [_todo]}),
+    "shopping_tracker_entity": ("", {"validators": [_tracker]}),
+    "shopping_notify_service": ("", {"validators": [_notify]}),
+    "shopping_nearby_meters": (250, {"min": 0, "max": 3000}),
     # Advanced
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    "log_level": ("INFO", {}),
+}
 
-    @field_validator("model_url", "web_search_url", "geocoder_url", "routing_url", "overpass_url")
-    @classmethod
-    def _urls(cls, v: str) -> str:
-        return _url(v)
-
-    @field_validator("model_name", "imap_host", "imap_user", "imap_folder", "model_api_key", "web_search_api_key",
-                     "web_search_token")
-    @classmethod
-    def _trimmed(cls, v: str) -> str:
-        v = (v or "").strip()
-        if any(c in v for c in "\r\n\x00"):
-            raise ValueError("must be on one line")
-        return v
-
-    @field_validator("model_name")
-    @classmethod
-    def _model_name(cls, v: str) -> str:
-        if len(v) > 255:
-            raise ValueError("is too long")
-        return v
-
-    @field_validator("default_currency")
-    @classmethod
-    def _currency(cls, v: str) -> str:
-        v = (v or "").strip().upper()
-        if not re.fullmatch(r"[A-Z]{3}", v):
-            raise ValueError("must be a 3-letter currency code such as USD, EUR or GBP")
-        return v
-
-    @field_validator("receipt_archive_path", "import_folder")
-    @classmethod
-    def _folder(cls, v: str) -> str:
-        v = (v or "").strip().rstrip("/")
-        if v and (not _FOLDER.match(v) or "/../" in v + "/" or "/./" in v + "/"):
-            raise ValueError("must be a folder under /share or /media, for example /share/receipts")
-        return v
-
-    @field_validator("map_contact_email")
-    @classmethod
-    def _email(cls, v: str) -> str:
-        v = (v or "").strip()
-        if v and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v):
-            raise ValueError("must be an email address")
-        return v
-
-    @field_validator("web_query_field", "web_url_field")
-    @classmethod
-    def _field_name(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not _FIELD_NAME.match(v):
-            raise ValueError("must be a field name such as query, q or url")
-        return v
-
-    @field_validator("alert_notify_service", "shopping_notify_service")
-    @classmethod
-    def _notify(cls, v: str) -> str:
-        return _pattern(v, _NOTIFY, "notify.mobile_app_your_phone")
-
-    @field_validator("shopping_list_todo_entity")
-    @classmethod
-    def _todo(cls, v: str) -> str:
-        return _pattern(v, _TODO, "todo.shopping_list")
-
-    @field_validator("shopping_tracker_entity")
-    @classmethod
-    def _tracker(cls, v: str) -> str:
-        return _pattern(v, _TRACKER, "person.someone or device_tracker.a_phone")
-
-    @field_validator("import_home")
-    @classmethod
-    def _home(cls, v: str) -> str:
-        return (v or "").strip()
-
-
-DEFAULTS: dict[str, Any] = AppSettings().model_dump()
-SECRETS = frozenset({"model_api_key", "imap_password", "web_search_api_key", "web_search_token"})
+_SECRET_KEYS = frozenset({"model_api_key", "imap_password", "web_search_api_key", "web_search_token"})
 
 # The page is drawn from this: groups in order, each field's label, help and kind. "choices" fields are
 # a drop-down, "secret" fields are write-only. Every setting applies straight away (no restart).
@@ -346,54 +324,18 @@ FIELDS: dict[str, tuple[str, str, str]] = {
     "log_level": ("advanced", "Log level", "Use Debug only while troubleshooting."),
 }
 
-assert set(FIELDS) == set(DEFAULTS), set(FIELDS) ^ set(DEFAULTS)
+assert set(FIELDS) == set(_SPEC), set(FIELDS) ^ set(_SPEC)
 
-_RANGES = {}
-for _key, _info in AppSettings.model_fields.items():
-    for _m in _info.metadata:
-        for _attr, _name in (("ge", "min"), ("le", "max")):
-            if getattr(_m, _attr, None) is not None:
-                _RANGES.setdefault(_key, {})[_name] = getattr(_m, _attr)
-
-
-def _kind(key: str) -> str:
-    if key in SECRETS:
-        return "secret"
-    if key in _CHOICES:
-        return "choice"
-    value = DEFAULTS[key]
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
-    return "text"
-
-
-def meta() -> dict[str, dict[str, Any]]:
-    out = {}
-    for key, (group, label, help_text) in FIELDS.items():
-        m: dict[str, Any] = {"group": group, "label": label, "help": help_text, "kind": _kind(key), "restartRequired": False}
-        if key in _CHOICES:
-            m["choices"] = [{"value": v, "label": lbl} for v, lbl in _CHOICES[key]]
-        m.update(_RANGES.get(key, {}))
-        out[key] = m
-    return out
+SETTINGS = [Setting(key, default, FIELDS[key][1], help=FIELDS[key][2], group=FIELDS[key][0], secret=key in _SECRET_KEYS,
+                    choices=_CHOICES.get(key), **kw)
+            for key, (default, kw) in _SPEC.items()]
 
 
 # --------------------------------------------------------------------------- #
 # Storage
 # --------------------------------------------------------------------------- #
 
-class SettingsError(ValueError):
-    """A bad settings update; the message is shown to the admin as it is (422)."""
-
-
 _db_path: str | None = None
-_cache: dict[str, Any] | None = None
-_generation = 0
-_lock = threading.Lock()
 _write_lock = threading.Lock()
 
 
@@ -421,6 +363,15 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+@contextlib.contextmanager
+def _connection():
+    conn = _connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 def ensure_table(conn: sqlite3.Connection) -> None:
     """The table is shared with settings the app saves itself (the Notifications page's ``notifications`` row), which
     is why only the keys in DEFAULTS are read or written here."""
@@ -436,66 +387,36 @@ def _ours(rows: list[tuple]) -> list[tuple]:
     return [r for r in rows if r[0] in DEFAULTS]
 
 
-def _validate_one(key: str, value: Any) -> Any:
-    return getattr(AppSettings.model_validate({**DEFAULTS, key: value}), key)
+def _log(user, changed, before, after) -> None:
+    logging.getLogger("app_settings").info(
+        "%s changed the app settings: %s", user or "Someone",
+        ", ".join(k if k in SECRETS else f"{k}={after[k]!r}" for k in changed))
 
 
-def _stored(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Defaults overlaid with the valid stored rows (a bad row is ignored, with a warning)."""
-    values = dict(DEFAULTS)
-    for key, raw in conn.execute("SELECT key, value FROM app_settings").fetchall():
-        if key not in DEFAULTS:
-            continue
-        try:
-            values[key] = _validate_one(key, json.loads(raw))
-        except (json.JSONDecodeError, ValidationError):
-            import logging
-            logging.getLogger("app_settings").warning("Ignoring an invalid stored %s setting; using %r",
-                                                      key, "(secret)" if key in SECRETS else values[key])
-    return values
+REGISTRY = settings_core.Registry(
+    SETTINGS, groups=[Group(g, label, help_text) for g, label, help_text in GROUPS], connect=_connection,
+    model_config={"strict": True, "allow_inf_nan": False}, format_error=settings_core.by_label(
+        {k: v[1] for k, v in FIELDS.items()}, empty="Invalid settings"),
+    not_object_message="Send the settings as a JSON object", write_lock=_write_lock, log=_log,
+    fallback_on_error=True, logger=logging.getLogger("app_settings"))
+
+AppSettings = REGISTRY.model
+DEFAULTS: dict[str, Any] = REGISTRY.defaults
+SECRETS = REGISTRY.secrets
+_hooks = REGISTRY.on_change
+
+
+def meta() -> dict[str, dict[str, Any]]:
+    return REGISTRY.meta()
 
 
 def invalidate() -> None:
-    global _cache, _generation
-    with _lock:
-        _cache = None
-        _generation += 1
+    REGISTRY.invalidate()
 
 
 def values() -> dict[str, Any]:
     """The effective settings (a copy)."""
-    global _cache
-    with _lock:
-        if _cache is not None:
-            return dict(_cache)
-        generation = _generation
-    try:
-        conn = _connect()
-    except (RuntimeError, sqlite3.Error, OSError):
-        return dict(DEFAULTS)
-    try:
-        current = _stored(conn)
-    except sqlite3.Error:
-        return dict(DEFAULTS)
-    finally:
-        conn.close()
-    with _lock:
-        if generation == _generation:
-            _cache = current
-    return dict(current)
-
-
-def _error_text(exc: ValidationError) -> str:
-    parts = []
-    for err in exc.errors():
-        key = str(err["loc"][0]) if err.get("loc") else ""
-        msg = str(err.get("msg", "invalid value")).removeprefix("Value error, ")
-        label = FIELDS.get(key, ("", key, ""))[1]
-        parts.append(f"{label}: {msg}" if label else msg)
-    return "; ".join(parts) or "Invalid settings"
-
-
-_hooks: list = []
+    return REGISTRY.all()
 
 
 def on_change(fn) -> None:
@@ -507,52 +428,16 @@ def update(partial: dict, user: str | None) -> dict[str, Any]:
     """Validate the merged result, write only what changed, and return the new values.
 
     Raises SettingsError on unknown keys or bad values; nothing is written then."""
-    if not isinstance(partial, dict):
-        raise SettingsError("Send the settings as a JSON object")
-    unknown = sorted(k for k in partial if k not in DEFAULTS)
-    if unknown:
-        raise SettingsError(f"Unknown setting{'s' if len(unknown) > 1 else ''}: {', '.join(unknown)}")
-    with _write_lock:
-        conn = _connect()
-        try:
-            current = _stored(conn)
-            try:
-                merged = AppSettings.model_validate({**current, **partial}).model_dump()
-            except ValidationError as e:
-                raise SettingsError(_error_text(e)) from None
-            changed = [k for k in DEFAULTS if merged[k] != current[k]]
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            for key in changed:
-                conn.execute("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) "
-                             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, "
-                             "updated_by = excluded.updated_by", (key, json.dumps(merged[key]), now, user))
-            conn.commit()
-        finally:
-            conn.close()
-        invalidate()
-    if changed:
-        import logging
-        logging.getLogger("app_settings").info(
-            "%s changed the app settings: %s", user or "Someone",
-            ", ".join(k if k in SECRETS else f"{k}={merged[k]!r}" for k in changed))
-        for fn in list(_hooks):
-            try:
-                fn(changed, merged)
-            except Exception:  # noqa: BLE001 - a hook must not undo a saved change
-                logging.getLogger("app_settings").exception("Settings hook failed")
-    return merged
+    return REGISTRY.update(partial, user)[0]
 
 
 def public(vals: dict[str, Any]) -> dict[str, Any]:
     """``vals`` with secrets blanked (whether each is set is in ``secrets_set``)."""
-    return {k: ("" if k in SECRETS else v) for k, v in vals.items()}
+    return REGISTRY.public(vals)
 
 
 def payload() -> dict[str, Any]:
-    vals = values()
-    return {"values": public(vals), "defaults": public(DEFAULTS), "meta": meta(),
-            "groups": [{"id": g, "label": label, "help": help_text} for g, label, help_text in GROUPS],
-            "secretsSet": {k: bool(vals[k]) for k in sorted(SECRETS)}}
+    return REGISTRY.payload()
 
 
 # --------------------------------------------------------------------------- #

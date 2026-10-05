@@ -1,8 +1,9 @@
 """Notifications: notify services per person, security alerts, preferences."""
 from base import ADMIN, NEHA, VIKRAM, ApiTestCase, sql
-from fake_ha import FakeHA
+from common_tests.fake_ha import FakeHA
 
-from app import alerts, config, db, ha_people
+from app import alerts, config, db
+from app.common import ha_people
 
 
 class AlertCase(ApiTestCase):

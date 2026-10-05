@@ -1,0 +1,88 @@
+/* themes.css — the page themes every household app shares (shared: common/static/themes.css).
+ *
+ * Midnight (the default), Slate and Daylight; "Auto" is resolved by theme-boot.js to Midnight or
+ * Daylight, so <html data-theme> only ever holds these three. Load it before the app's own style.css.
+ * Each app's style.css then adds, in the same three blocks (":root, [data-theme="midnight"]",
+ * "[data-theme="slate"]", "[data-theme="daylight"]"), its own accent colour (--accent, --accent-dim,
+ * --accent-hover, --accent-contrast, --accent-soft) and any colours of its own. An app block must
+ * set the same variables in all three blocks: its ":root" block also applies under the other themes.
+ *
+ *   surfaces  --bg  --panel  --panel-alt  --panel-hover  --card  --border
+ *   text      --text  --text-dim
+ *   states    --danger --danger-soft  --warn --warn-soft  --ok --ok-soft  --info --info-soft
+ *   accent    --accent --accent-dim --accent-hover --accent-contrast --accent-soft (a neutral default)
+ */
+:root, [data-theme="midnight"] {
+  --bg: #10151c;
+  --panel: #1a2130;
+  --panel-alt: #202a3d;
+  --panel-hover: #24304a;
+  --card: #1d2536;
+  --border: #2b3549;
+  --text: #e7ecf5;
+  --text-dim: #93a0b8;
+  --danger: #ef7b7b;
+  --danger-soft: #3a2229;
+  --warn: #f2c94c;
+  --warn-soft: #332c1a;
+  --ok: #5ee6a8;
+  --ok-soft: #1a2e26;
+  --info: #6aa6ff;
+  --info-soft: #1a2540;
+  --accent: #6aa6ff;
+  --accent-dim: #3f6fb0;
+  --accent-hover: #93c0ff;
+  --accent-contrast: #08111f;
+  --accent-soft: #1a2c47;
+  color-scheme: dark;
+}
+
+[data-theme="slate"] {
+  --bg: #0e1420;
+  --panel: #16202f;
+  --panel-alt: #1c2a3d;
+  --panel-hover: #223350;
+  --card: #18253a;
+  --border: #283449;
+  --text: #e7ecf5;
+  --text-dim: #93a3ba;
+  --danger: #ef7b7b;
+  --danger-soft: #35212b;
+  --warn: #f2c94c;
+  --warn-soft: #33301a;
+  --ok: #6ee7b7;
+  --ok-soft: #163328;
+  --info: #6aa6ff;
+  --info-soft: #17233d;
+  --accent: #6aa6ff;
+  --accent-dim: #3f6fb0;
+  --accent-hover: #93c0ff;
+  --accent-contrast: #08111f;
+  --accent-soft: #1a2c47;
+  color-scheme: dark;
+}
+
+[data-theme="daylight"] {
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-alt: #eef1f7;
+  --panel-hover: #e3e9f4;
+  --card: #ffffff;
+  --border: #d8dfec;
+  --text: #1c2430;
+  --text-dim: #5b6577;
+  --danger: #c94f4f;
+  --danger-soft: #fbe6e6;
+  --warn: #a86a00;
+  --warn-soft: #fff1d6;
+  --ok: #1f9d63;
+  --ok-soft: #e0f5e9;
+  --info: #2f6fed;
+  --info-soft: #e5edfd;
+  --accent: #2f6fed;
+  --accent-dim: #1d4fb0;
+  --accent-hover: #4d84ff;
+  --accent-contrast: #ffffff;
+  --accent-soft: #e4ecff;
+  color-scheme: light;
+}

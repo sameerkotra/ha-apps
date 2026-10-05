@@ -9,7 +9,8 @@ import json
 
 from fastapi import APIRouter, Depends, Request
 
-from .. import config, db, games, ha_notify, limits, settings
+from .. import config, db, games, limits, settings
+from ..common import ha_notify, whoami as whoami_core
 from ..auth import get_current_user, is_admin_identity
 
 router = APIRouter(prefix="/api", tags=["me"])
@@ -69,7 +70,7 @@ def me(current: dict = Depends(get_current_user)):
         "isAdmin": current["is_admin"],
         "isChild": current["is_child"],
         "disabled": current["disabled"],
-        "noAdmins": len(config.ADMIN_NAMES) == 0,
+        "noAdmin": len(config.ADMIN_NAMES) == 0,        # nobody can open Admin yet: every page says how to fix it
         "nameSent": bool(current["username"]),
         "prefs": prefs_json(row, s["default_look"]),
         "looks": [{"id": k, "label": v} for k, v in games.LOOKS.items()],
@@ -88,14 +89,8 @@ def me(current: dict = Depends(get_current_user)):
 
 @router.get("/whoami")
 def whoami(request: Request, current: dict = Depends(get_current_user)):
-    return {
-        "haUserId": current["id"],
-        "haUsername": current["username"],
-        "haDisplayName": current["name"],
-        "isAdmin": current["is_admin"],
-        "nameSent": bool(current["username"]),
-        "viaIngress": "x-ingress-path" in request.headers,
-        "adminEntries": len(config.ADMIN_NAMES),
-        "notifyLinked": bool(ha_notify.services_for(current)),
-        "noAdmins": len(config.ADMIN_NAMES) == 0,
-    }
+    linked = bool(ha_notify.services_for(current))
+    return whoami_core.build(
+        request, user_id=current["id"], username=current["username"], display_name=current["name"],
+        is_admin=current["is_admin"], admin_entries=len(config.ADMIN_NAMES), notify_linked=linked,
+        extras=[whoami_core.notify_row(linked)])

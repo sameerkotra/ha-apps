@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 
-from . import ha_notify
+from .common import ha_notify
 
 logger = logging.getLogger("alerts")
 KINDS = ("security", "emergency", "expiry", "admin")

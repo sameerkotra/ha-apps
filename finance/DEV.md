@@ -1,7 +1,7 @@
 # Developing the app
 
 The full spec (what the app does, the rules it follows, layout and release steps) is
-[`data model/SPEC.md`](data%20model/SPEC.md); the schema is `data model/finance_schema.sql`.
+[`spec/SPEC.md`](spec/SPEC.md); the schema is `spec/finance_schema.sql`.
 
 ## Tests
 

@@ -64,7 +64,7 @@
                         <button type="submit" class="btn-secondary">{{ "Restore" if archived else "Archive" }}</button>
                     </form>
                     <form method="post" action="toll-car-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form"
-                          onsubmit="return confirm('Delete this car? Its devices and tolls are kept and become not assigned.');">
+                          data-confirm="Delete this car? Its devices and tolls are kept and become not assigned.">
                         <input type="hidden" name="id" value="{{ c.id }}">
                         <button type="submit" class="restart-btn">Delete</button>
                     </form>
@@ -113,7 +113,7 @@
                 <td data-label="Car">
                     <form method="post" action="toll-device-assign{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
                         <input type="hidden" name="id" value="{{ d.id }}">
-                        <select name="car_id" onchange="this.form.submit()" aria-label="Car for {{ d.label }}">
+                        <select name="car_id" data-autosubmit aria-label="Car for {{ d.label }}">
                             <option value="">Not assigned</option>
                             {% for c in active_cars %}<option value="{{ c.id }}" {{ "selected" if d.car_id == c.id else "" }}>{{ c.name }}</option>{% endfor %}
                             {% if archived_cars %}<optgroup label="Archived cars">
@@ -130,7 +130,7 @@
                 <td data-label="">
                     {% if not d.any_rows %}
                     <form method="post" action="toll-device-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form"
-                          onsubmit="return confirm('Remove this device? It has no toll passes.');">
+                          data-confirm="Remove this device? It has no toll passes.">
                         <input type="hidden" name="id" value="{{ d.id }}">
                         <button type="submit" class="restart-btn">Remove</button>
                     </form>
@@ -161,58 +161,7 @@
     <strong>Grand Totals</strong>; anything that doesn&rsquo;t agree is held for review.
 </p>
 <div id="toll-upload-result"></div>
-<script>
-(function () {
-    const form = document.getElementById("toll-upload-form");
-    const fileInput = document.getElementById("toll-file-input");
-    const btn = document.getElementById("toll-upload-btn");
-    const resultEl = document.getElementById("toll-upload-result");
-    const qs = "{{ acting_qs or '' }}";
-
-    form.addEventListener("submit", async function (e) {
-        e.preventDefault();
-        btn.disabled = true;
-        btn.textContent = "Uploading…";
-        resultEl.textContent = "Uploading and starting extraction…";
-        let failed = false;
-        try {
-            const resp = await fetch("toll-upload" + (qs ? "?" + qs : ""), { method: "POST", body: new FormData(form) });
-            let data = null;
-            try { data = await resp.json(); } catch (err) { /* not JSON: an expired session or a server error page */ }
-            if (data === null) {
-                throw new Error("The server did not accept that (status " + resp.status + "). Reload the page and try again.");
-            }
-            const results = data.results || [];
-            resultEl.textContent = "";
-            if (data.error) {
-                resultEl.textContent = data.error;
-            } else if (results.length === 0) {
-                resultEl.textContent = "No files uploaded.";
-            } else {
-                results.forEach(function (r) {
-                    const p = document.createElement("p");
-                    if (r.duplicate_of) p.textContent = r.filename + ": " + r.message;
-                    else if (r.toll_statement_id) p.textContent = r.filename + ": uploaded, processing…";
-                    else p.textContent = r.filename + ": " + (r.error || "unknown error");
-                    resultEl.appendChild(p);
-                });
-            }
-        } catch (err) {
-            resultEl.textContent = "Upload failed: " + err.message;
-            failed = true;
-        } finally {
-            fileInput.value = "";
-            btn.disabled = false;
-            btn.textContent = "Upload";
-            // A failure keeps the page (and its message) so it can be read; success stays on this tab.
-            if (!failed) setTimeout(function () {
-                window.location.href = "tolls?tab=upload" + (qs ? "&" + qs : "");
-            }, 1200);
-        }
-    });
-    window.addEventListener("pageshow", function () { fileInput.value = ""; });
-})();
-</script>
+<script src="static/pages/toll-upload.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>
 
 <h2>Upload history</h2>
 <p class="hint">Every statement you&rsquo;ve uploaded, newest first.</p>
@@ -265,13 +214,13 @@
     {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
     <label>
         Car
-        <select name="car_id" onchange="this.form.submit()">
+        <select name="car_id" data-autosubmit>
             {{ m.car_options(all_cars, selected_car_id, unassigned_devices) }}
         </select>
     </label>
     <label>
         Period
-        <select name="period" onchange="this.form.submit()">{{ m.period_options(period, months, years, month_labels) }}</select>
+        <select name="period" data-autosubmit>{{ m.period_options(period, months, years, month_labels) }}</select>
     </label>
 </form>
 

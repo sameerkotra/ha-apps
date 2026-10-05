@@ -1,5 +1,5 @@
 """A fresh install: with admin_users empty nobody is an admin, the API says so
-(`noAdmins`) and every page shows the "No admin yet" banner. Nobody is ever
+(`noAdmin`) and every page shows the "No admin yet" banner. Nobody is ever
 auto-promoted. Invented people only."""
 import _env  # noqa: F401  (must be first)
 
@@ -31,7 +31,7 @@ class TestNoAdminYet(ApiBase):
         config.ADMIN_NAMES.clear()
         first = hdr("u_first", "Nisha Rao", "nisha")
         me = self.get("/api/me", first).json()
-        self.assertTrue(me["noAdmins"])
+        self.assertTrue(me["noAdmin"])
         self.assertFalse(me["isAdmin"])                                  # the first visitor isn't promoted
         self.assertEqual(me["username"], "nisha")                        # the name the banner shows
         w = self.get("/api/whoami", first).json()
@@ -42,17 +42,20 @@ class TestNoAdminYet(ApiBase):
 
     def test_flag_clear_once_someone_is_listed(self):
         self.assertTrue(config.ADMIN_NAMES)
-        self.assertFalse(self.get("/api/me").json()["noAdmins"])
+        self.assertFalse(self.get("/api/me").json()["noAdmin"])
 
     def test_banner_is_on_every_page(self):
         index = read_static("index.html")
         self.assertIn('id="noAdminBanner"', index)
         self.assertLess(index.index('id="noAdminBanner"'), index.index("<main>"))   # outside the pages
+        self.assertIn('src="common/whoami.js', index)
         js = read_static("app.js")
-        self.assertIn("state.me.noAdmins", js)
-        self.assertIn("No admin yet — add your Home Assistant user name (", js)
-        self.assertIn("admin_users", js)
-        self.assertIn("How the app sees you", js)
+        self.assertIn("state.me.noAdmin", js)
+        self.assertIn('HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner")', js)
+        shared = read_static(os.path.join("common", "whoami.js"))          # the banner's text, the same in every app
+        self.assertIn('"No admin yet"), " — add your Home Assistant user name (', shared)
+        self.assertIn("admin_users", shared)
+        self.assertIn("How the app sees you", shared)
         self.assertIn("syncNoAdminBanner();", js)
 
 

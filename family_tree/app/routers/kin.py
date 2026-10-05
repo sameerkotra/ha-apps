@@ -6,7 +6,7 @@ from pydantic import Field
 
 from .. import config, db, features, kin
 from ..auth import require_user
-from ..common import Strict
+from ..models import Strict
 from ..history import Batch
 
 router = APIRouter(prefix="/api", tags=["kin"])

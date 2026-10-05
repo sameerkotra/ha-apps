@@ -3,15 +3,12 @@
         reverse (dates, amounts and text each sort by their own type).
      2. The "is this recurring?" modal opened from the transactions table.
      3. Server-sorted headers, the bfcache reload and the request-failure banner.
-     Also defines window.escapeHtml.
+     Also defines window.escapeHtml (from static/common/ui.js).
    Loaded from base.html; htmx-swapped fragments are picked up via htmx:load. */
-// Escape text for building HTML strings (upload result messages, etc.).
-// Global so every page's inline scripts share one copy.
-window.escapeHtml = function (text) {
-    var el = document.createElement("div");
-    el.textContent = text == null ? "" : String(text);
-    return el.innerHTML;
-};
+// Escape text for building HTML strings (upload result messages, etc.): static/common/ui.js's
+// escaper (quotes too, so it is safe inside attribute values as well). Global so every page's
+// inline scripts share one copy.
+window.escapeHtml = UI.escapeHtml;
 
 (function () {
     "use strict";

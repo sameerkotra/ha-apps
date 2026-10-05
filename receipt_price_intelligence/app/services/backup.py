@@ -2,7 +2,8 @@
 
 Everything the app keeps lives in one SQLite file (receipt photos are deleted once a receipt is
 saved, so they are not part of it). *Export* writes a consistent snapshot using SQLite's online
-backup, which is safe while the app is running. *Import* replaces the database with an
+backup, which is safe while the app is running, with the access keys and passwords in App settings
+left out (an import keeps the ones this install has). *Import* replaces the database with an
 uploaded file after checking it, keeping a safety copy of the current one first, and puts
 the old one back if anything goes wrong.
 """
@@ -16,6 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from app import app_settings
+from app.common import backup_core
 from app.config import get_settings
 from app.db import dispose_engine, get_db_session, init_models
 from app.db.models import ReceiptImage, User
@@ -73,12 +75,16 @@ def summarize(path: str, live: bool = False) -> dict[str, int]:
     return counts
 
 
-def make_snapshot(dest: str) -> None:
-    """Write a consistent copy of the live database to ``dest`` (safe while the app is running)."""
+def make_snapshot(dest: str, without_secrets: bool = False) -> None:
+    """Write a consistent copy of the live database to ``dest`` (safe while the app is running).
+    ``without_secrets``: the access keys and passwords in App settings are blanked in the copy (an
+    export; the safety copies kept on this install keep them)."""
     src = _connect(db_path())
     dst = _connect(dest)
     try:
         src.backup(dst)
+        if without_secrets:
+            app_settings.REGISTRY.scrub_secrets(dst)
         dst.execute("PRAGMA journal_mode=DELETE")  # a single self-contained file
     finally:
         dst.close()
@@ -92,13 +98,34 @@ def new_export() -> tuple[str, str]:
     fd, path = tempfile.mkstemp(prefix="export-", suffix=".db", dir=folder)
     os.close(fd)
     try:
-        make_snapshot(path)
+        make_snapshot(path, without_secrets=True)
     except Exception:
         os.remove(path)
         raise
-    name = f"receipt-price-intelligence-{datetime.now().strftime('%Y%m%d-%H%M')}.db"
+    name = backup_core.file_name("receipt-price-intelligence", ".db", fmt="%Y%m%d-%H%M")
     logger.info("Exported the database (%d bytes)", os.path.getsize(path))
     return path, name
+
+
+def safety_copy_download(path: str) -> str:
+    """A temporary copy of a safety copy for download, with the access keys and passwords blanked (the safety
+    copy itself keeps them: it is what a failed import puts back). The caller deletes the file."""
+    fd, dest = tempfile.mkstemp(prefix="export-", suffix=".db", dir=os.path.dirname(path) or ".")
+    os.close(fd)
+    try:
+        src = _connect(path, read_only=True)
+        dst = _connect(dest)
+        try:
+            src.backup(dst)
+            app_settings.REGISTRY.scrub_secrets(dst)
+            dst.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            dst.close()
+            src.close()
+    except Exception:
+        os.remove(dest)
+        raise
+    return dest
 
 
 def list_safety_copies() -> list[dict[str, Any]]:
@@ -204,11 +231,14 @@ def import_backup(upload_path: str, admin_id: str, admin_name: str) -> dict[str,
         make_snapshot(safety)
 
         current_settings = app_settings.export_rows(db_path())
+        current_secrets = app_settings.REGISTRY.saved_secrets()
         dispose_engine()
         try:
             _swap_in(upload_path, keep_source=False)
             # App settings come from the backup if it has them, else the current ones are kept.
             settings_kept = app_settings.adopt_rows(db_path(), current_settings)
+            # An export has no access keys or passwords: this install keeps its own.
+            app_settings.REGISTRY.keep_secrets(current_secrets)
             extra = _prepare_imported_database(admin_id, admin_name)
             extra["settings_from_backup"] = not settings_kept and bool(app_settings.export_rows(db_path()))
         except Exception as e:  # put the previous database back

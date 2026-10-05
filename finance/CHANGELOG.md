@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.1
+
+- **Security**: PDFs are now read by the PDF tools (poppler) as a separate user without any rights, with memory, time and file-size limits, on a copy of the file — they can't reach the app's database or other files.
+- Cross-site form posts are still refused, now by the check every household app shares. No visible change.
+- Backups still leave out the AI access key; restoring keeps the key this install has (now the same shared code in every app that has access keys).
+- `config.yaml` now spells out the security settings like the other apps (AppArmor on; no Supervisor, sign-in or Docker API access). These were already the defaults, so nothing changes.
+
+## 1.1.0
+
+- **Themes**: Midnight, Slate, Daylight and **Auto** (follows your device), as in the other household apps; Sandstone is now Daylight and your saved choice carries over.
+- **How the app sees you** shows your display name too, and the **No admin yet** banner uses the same wording as the other household apps.
+- **Security**: pages now send a Content-Security-Policy and `nosniff` header; scripts moved out of the pages into files. No visible change.
+- Under the hood: this app now shares its code for Home Assistant sign-in, people and notifications, settings, backups and the page helpers with the other household apps (one copy, kept in step), so fixes reach every app at once. Nothing was removed.
+
 ## 1.0.1
 
 - **Tolls are no longer tied to one road.** The optional toll feature is now called **Tolls** everywhere (menu, pages, App settings → Features, uploads, recently deleted), and statements are read as general toll road statements that list passes under a tag and plate. Nothing about your data changes.

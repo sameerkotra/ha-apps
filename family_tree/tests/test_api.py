@@ -3,10 +3,10 @@ from base import ALICE, ApiTestCase, headers, sql
 
 import unittest
 
-from fastapi.testclient import TestClient
 
 from app import config
 from app.main import app
+from common_tests.ingress import ingress_client
 
 
 class People(ApiTestCase):
@@ -376,7 +376,7 @@ class PeopleList(ApiTestCase):
 class Validation(ApiTestCase):
     def setUp(self):
         super().setUp()
-        self.raw = TestClient(app, client=("127.0.0.1", 12345), raise_server_exceptions=False)
+        self.raw = ingress_client(app, raise_server_exceptions=False)
         self.pid = self.person("Ann")
         self.fid = self.family(self.pid, None)
 

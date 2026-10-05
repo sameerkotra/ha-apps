@@ -349,8 +349,10 @@ expiry reminders); **Search** (also search notes); **Breach check**; **Master
 password** (change it — you need the current one; your other devices are
 locked, and you're reminded to print a new Emergency Kit and download a new
 copy); **Emergency access**; **Download all my passwords**; **Import
-passwords**; **Import 2FA codes**; **Emergency Kit**. The theme (**Vault**,
-**Slate**, **Daylight** or **Auto**) is picked at the bottom of the sidebar.
+passwords**; **Import 2FA codes**; **Emergency Kit**. The theme (**Midnight**,
+**Slate**, **Daylight** or **Auto**, which follows your device's light or dark
+setting) is picked at the bottom of the sidebar; if you had picked Vault before,
+you now get Midnight.
 
 ## Admin
 
@@ -364,7 +366,8 @@ without unlocking).
   Household and shared vaults, which get new passwords; their Personal vault is
   kept; turning it back on returns them to Household), **Reset…** (only for a
   forgotten master password; type their name to confirm), **Unblock** after too
-  many wrong passwords, and **🔔** for their phones and extra notify services.
+  many wrong passwords, and **🔔** for their phones and extra notify services
+  (with **Send a test**).
 - **App settings** (below).
 - **Personal copies**: who has a file and when it was last written.
 - **Backup and restore**: **Download backup** is one zip with the database, every
@@ -379,7 +382,12 @@ Admins can never open anyone's vaults through the app.
 
 ## App settings
 
-**Admin → App settings**. Changes apply at once, without a restart.
+**Admin → App settings**. The settings are in cards (Security, Reminders and
+copies), with a line under each setting saying what it does, its range and its
+default. Changes are kept until you select **Save** at the bottom (it shows how
+many unsaved changes there are); **Discard changes** puts everything back. A
+number out of range is flagged at the field before anything is saved. Saved
+changes apply at once, without a restart.
 
 | Setting | Default | What it does |
 |---|---|---|

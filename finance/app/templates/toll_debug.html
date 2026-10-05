@@ -89,15 +89,7 @@
     <form id="resendForm" method="post" action="toll-debug-resend?id={{ statement.id }}">
         <button type="submit" id="resendBtn" class="btn-primary">Resend to the AI (no timeout)</button>
     </form>
-    <script>
-    document.getElementById("resendForm").addEventListener("submit", function () {
-        var btn = document.getElementById("resendBtn");
-        document.getElementById("resendDot").className = "status-dot pending";
-        btn.disabled = true;
-        btn.textContent = "Sending… waiting for the AI";
-        document.getElementById("resendHint").textContent = "Request sent — this has no timeout, so it may sit here for several minutes. The page reloads when a response comes back.";
-    });
-    </script>
+    <script src="static/pages/resend.js?v={{ app_version }}" data-hint="Request sent — this has no timeout, so it may sit here for several minutes. The page reloads when a response comes back."></script>
     {% if resend_error %}<p class="hint" style="color: var(--danger);">Resend failed: {{ resend_error }}</p>{% endif %}
     {% if resend_elapsed is defined %}<p class="hint" style="color: var(--accent);">Completed in {{ "%.1f"|format(resend_elapsed) }}s &mdash; the response below has been updated.</p>{% endif %}
     {% if resend_usage is defined %}{% with usage=ai_usage_view(resend_usage), usage_title="AI usage — this re-send", usage_card=false %}{% include "_ai_usage.html" %}{% endwith %}{% endif %}

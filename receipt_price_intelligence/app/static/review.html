@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Review receipt</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .layout { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+    @media (min-width: 960px) {
+      .layout { grid-template-columns: 360px minmax(0, 1fr); align-items: start; }
+      .viewer { position: sticky; top: 16px; }
+      .viewer-img { max-height: calc(100vh - 210px) !important; }
+    }
+    .viewer-img { width: 100%; max-height: 240px; object-fit: contain; background: #000; cursor: zoom-in; }
+    .thumbs { display: flex; gap: 8px; padding: 10px; overflow-x: auto; border-top: 1px solid var(--line); }
+    .thumbs button { flex: none; width: 52px; height: 68px; padding: 0; border: 2px solid transparent; border-radius: 8px; overflow: hidden; background: #000; }
+    .thumbs button[aria-current="true"] { border-color: var(--accent); }
+    .thumbs img { width: 100%; height: 100%; object-fit: cover; }
+    .viewer-cap { display: flex; justify-content: space-between; padding: 10px 14px; font-size: .8rem; color: var(--muted); border-top: 1px solid var(--line); }
+
+    /* lightbox */
+    dialog.lightbox { max-width: 100vw; width: 100vw; height: 100vh; height: 100dvh; max-height: 100dvh; border-radius: 0; border: 0; background: #000; }
+    .lb-bar { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 10px; color: #fff; }
+    .lb-bar .icon-btn { color: #fff; }
+    .lb-bar .icon-btn:hover { background: rgba(255,255,255,.14); }
+    .lb-scroll { height: calc(100vh - 56px); height: calc(100dvh - 56px); overflow: auto; display: grid; }
+    .lb-img { margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; }
+    .lb-scroll.zoomed .lb-img { max-width: none; max-height: none; width: 220%; cursor: zoom-out; }
+
+    /* progress */
+    .steps-list { display: grid; gap: 12px; margin: 18px 0 6px; }
+    .step { display: flex; align-items: center; gap: 12px; color: var(--faint); font-weight: 600; }
+    .step .mark { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-3); flex: none; }
+    .step .mark svg { width: 14px; height: 14px; }
+    .step.done { color: var(--muted); } .step.done .mark { background: var(--accent); color: var(--accent-ink); }
+    .step.now { color: var(--text); }
+
+    /* recon */
+    .recon { display: grid; gap: 6px; }
+    .recon .line { display: flex; gap: 8px; align-items: flex-start; }
+    .recon .line svg { width: 18px; height: 18px; flex: none; margin-top: 2px; }
+
+    /* items */
+    .items-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .chip { border: 0; border-radius: 999px; padding: 4px 12px; font-size: .78rem; font-weight: 650; background: var(--warn-soft); color: var(--warn); }
+    .chip[aria-pressed="true"] { background: var(--warn); color: #1a1200; }
+    .item { display: grid; grid-template-columns: minmax(0, 1fr) 96px 34px; column-gap: 8px; align-items: center; padding: 8px 10px 8px 12px; border-top: 1px solid var(--line); border-left: 3px solid transparent; }
+    .item.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+    .item.bad { border-left-color: var(--danger); background: var(--danger-soft); }
+    .ghost { width: 100%; min-height: 38px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; outline: none; }
+    .ghost:hover { border-color: var(--line); }
+    .ghost:focus { border-color: var(--accent); background: var(--bg); }
+    .ghost:disabled { opacity: 1; }
+    .item .desc { font-weight: 600; }
+    .item .total { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .item .was { grid-column: 1; font-size: .74rem; color: var(--faint); padding: 0 8px; }
+    .item .common { grid-column: 1; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--faint); }
+    .item .common svg { width: 14px; height: 14px; flex: none; }
+    .item .common input { flex: 1; min-width: 0; width: 100%; min-height: 28px; border: 1px solid transparent; border-radius: 6px; background: transparent; outline: none; font-size: .82rem; color: var(--muted); padding: 0 6px; }
+    .item .common input:hover { border-color: var(--line); }
+    .item .common input:focus { border-color: var(--accent); background: var(--bg); color: var(--text); }
+    .item .common input.named { color: var(--accent); font-weight: 600; }
+    .item .common input::placeholder { color: var(--faint); }
+    .item .meta { grid-column: 1; padding: 0 8px; font-size: .8rem; color: var(--muted); min-height: 0; }
+    .item .meta:empty { display: none; }
+    .item .expand { grid-column: 3; grid-row: 1; }
+    .item .expand svg { transition: transform .15s; }
+    .item .expand[aria-expanded="true"] svg { transform: rotate(180deg); }
+    .item .flag { grid-column: 1 / -1; padding: 4px 8px 2px; font-size: .82rem; }
+    .item.warn .flag { color: var(--warn); } .item.bad .flag { color: var(--danger); }
+    .item .details { grid-column: 1 / -1; padding: 10px 4px 6px; display: grid; gap: 12px; }
+    .item-add { padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+
+    .totals { display: grid; gap: 8px; }
+    .totals .trow { display: grid; grid-template-columns: 1fr 140px; align-items: center; gap: 10px; }
+    .totals .trow.grand > span { font-weight: 700; font-size: 1.02rem; }
+    .totals .trow.grand .input { font-weight: 700; font-size: 1.05rem; }
+    .linkbtn { border: 0; background: none; color: var(--accent); font-weight: 600; font-size: .82rem; padding: 2px 0; text-align: left; }
+    .linkbtn:hover { text-decoration: underline; }
+
+    details.more > summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: .88rem; padding: 4px 0; }
+    .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: .88rem; }
+    .kv dt { color: var(--muted); } .kv dd { text-align: right; word-break: break-word; }
+    .center { text-align: center; padding: 40px 20px; }
+    .center h2 { margin: 12px 0 6px; }
+    .center .big { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto; background: var(--accent-soft); color: var(--accent); }
+    .center .big svg { width: 32px; height: 32px; }
+  </style>
+</head>
+<body>
+  <div class="page" id="page">
+    <div class="topbar stacked" id="topbar"></div>
+    <div id="fatal" hidden></div>
+    <div class="layout" id="layout" hidden>
+      <aside class="viewer" id="viewer"></aside>
+      <main class="stack" id="editor"></main>
+    </div>
+    <div class="stack" id="skeleton">
+      <div class="skeleton" style="height:56px"></div><div class="skeleton" style="height:180px"></div><div class="skeleton" style="height:260px"></div>
+    </div>
+  </div>
+
+  <div class="actionbar" id="actionbar" hidden>
+    <div class="actionbar-inner">
+      <div class="summary"><div class="total" id="sumTotal"></div><div class="meta" id="sumMeta"></div></div>
+      <button class="btn" id="saveBtn" hidden>Save</button>
+      <button class="btn btn-primary" id="approveBtn">Approve &amp; save</button>
+    </div>
+  </div>
+
+  <datalist id="chains"></datalist>
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/review.js"></script>
+</body>
+</html>

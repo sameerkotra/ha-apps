@@ -26,8 +26,9 @@ Assistant sent and what to add. Changes to admin_users need a restart.
 ## Menu, themes and the back gesture
 
 The menu is a sidebar on a computer (it can be collapsed to icons) and a bar along the bottom on a phone: List,
-Receipts, Insights, Best prices, Trip, Stores, Notify and, for administrators, Admin. The theme (Midnight, Slate or
-Daylight) is chosen at the bottom of the sidebar and remembered on each device. In the Home Assistant app, the back
+Receipts, Insights, Best prices, Trip, Stores, Notify and, for administrators, Admin. The theme (Midnight, Slate,
+Daylight, or Auto, which follows the device's light or dark setting) is chosen at the bottom of the sidebar and
+remembered on each device. In the Home Assistant app, the back
 gesture closes an open dialog first, then returns to the List, and only then leaves the app.
 
 ## Using it
@@ -60,8 +61,11 @@ kept in the app's database (so they are part of its backups), apply as soon as t
 | Home Assistant and notifications | Sensors, alerts, notification services, restock and price-drop notifications, overcharge notices, the to-do list to sync, the person or phone for "cheapest here" and its distance |
 | Advanced | Log level |
 
-API keys and the mail password are write-only: the page shows whether one is set, never what it is. Each value is
-checked before anything is saved, and a bad one is named in the message.
+Each group is a card, with a line under each setting saying what it does, its range and its default. Changes are
+kept until you select **Save** at the bottom (it shows how many unsaved changes there are); **Discard changes** puts
+everything back. API keys and the mail password are write-only: the page shows whether one is set, never what it
+is, and **Remove** clears one. Each value is checked before anything is saved (a number out of range is flagged at
+the field), and a bad one is named in the message.
 
 The Notify page lets each person choose their own notifications; App settings are the defaults until they save
 there.
@@ -421,13 +425,14 @@ It considers the stores you have bought from, using the price you last paid ther
 
 Administrators open **Admin → Backup**.
 
-- **Export** downloads everything (all homes' receipts, prices, items, stores, people and the App settings, secrets
-  included) as one file. Receipt photos are not included because they are deleted once a receipt is saved. The file is
-  personal financial data, so keep it private.
+- **Export** downloads everything (all homes' receipts, prices, items, stores, people and the App settings) as one
+  file. Backups leave out access keys and passwords; after restoring on a new install, enter them again. (Restoring
+  keeps the ones this install already has.) Receipt photos are not included because they are deleted once a receipt is
+  saved. The file is personal financial data, so keep it private.
 - **Restore** replaces everything in the app with a chosen export. The file is checked first; a copy of the current
-  data is kept (the newest three are listed on the page and can be downloaded) and put back automatically if the
-  restore fails. Exports from older versions are upgraded. App settings come from the file when it has them;
-  otherwise the current ones are kept. Administrators always come from admin_users.
+  data is kept (the newest three are listed on the page and can be downloaded, also without access keys and passwords)
+  and put back automatically if the restore fails. Exports from older versions are upgraded. App settings come from
+  the file when it has them; otherwise the current ones are kept. Administrators always come from admin_users.
 
 Home Assistant's own backups of the app also include this data. Use export/restore to move data between installs or
 to keep a copy outside Home Assistant.

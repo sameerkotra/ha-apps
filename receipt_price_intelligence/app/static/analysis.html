@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Insights</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .controls .seg { max-width: 100%; overflow-x: auto; }
+    #tabs button { padding-inline: 10px; }
+    .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    @media (min-width: 640px) { .kpis { grid-template-columns: repeat(4, 1fr); } }
+    .kpi { padding: 14px; }
+    .kpi .label { font-size: .75rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+    .kpi .value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .kpi .sub { font-size: .8rem; color: var(--muted); margin-top: 2px; }
+
+    .bars { display: flex; align-items: flex-end; gap: 6px; height: 170px; overflow-x: auto; padding-top: 6px; }
+    .bar-col { flex: 1 0 34px; max-width: 80px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+    .bar-stick { width: 100%; background: var(--accent); border-radius: 6px 6px 2px 2px; min-height: 0; opacity: .85; }
+    .bar-col:last-child .bar-stick { opacity: 1; }
+    .bar-val { font-size: .7rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .bar-lab { font-size: .72rem; color: var(--faint); }
+
+    .rowline { display: grid; gap: 6px; padding: 11px 16px; border-top: 1px solid var(--line); }
+    .rowline:first-child { border-top: 0; }
+    .rowline .top { display: flex; align-items: center; gap: 10px; }
+    .rowline .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rowline .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .rowline .meta { font-size: .82rem; color: var(--muted); }
+    button.rowline { width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: inherit; cursor: pointer; }
+    button.rowline:hover { background: var(--surface-2); }
+
+    .price-card .head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 6px; }
+    .price-card .head .grow { flex: 1; min-width: 0; }
+    .price-card .head button { background: none; border: 0; text-align: left; font-weight: 700; font-size: 1rem; padding: 0; color: inherit; cursor: pointer; }
+    .price-card .head button:hover { text-decoration: underline; }
+    .srow { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-top: 1px solid var(--line); }
+    .srow .grow { flex: 1; min-width: 0; }
+    .srow .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+    .rec { padding: 14px 16px; display: grid; gap: 8px; }
+    .rec .headline { font-weight: 700; }
+    .rec .money { color: var(--accent); font-weight: 700; }
+    .conf { display: inline-flex; gap: 3px; vertical-align: middle; }
+    .conf i { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
+    .conf i.on { background: var(--accent); }
+    .sect { font-size: .78rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 8px 2px 0; }
+    .tbl { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    .tbl th { text-align: left; font-weight: 600; color: var(--muted); font-size: .78rem; padding: 6px 16px; }
+    .tbl td { padding: 9px 16px; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    .tbl .r { text-align: right; }
+
+    dialog.wide { max-width: min(680px, calc(100vw - 20px)); }
+    dialog.wide .dialog-body { max-height: 74vh; overflow: auto; }
+    .kv4 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
+    @media (min-width: 560px) { .kv4 { grid-template-columns: repeat(4, 1fr); } }
+    .kv4 div { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; }
+    .kv4 b { display: block; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+    .kv4 span { font-size: .75rem; color: var(--muted); }
+    .search { position: relative; flex: 1; min-width: 160px; }
+    .search svg { position: absolute; left: 12px; top: 11px; width: 20px; height: 20px; color: var(--faint); }
+    .search .input { padding-left: 40px; }
+    mark { background: var(--accent-soft, rgba(15,157,107,.18)); color: inherit; border-radius: 3px; padding: 0 1px; }
+    .renamerow { display: flex; gap: 8px; margin: 10px 0 4px; }
+  </style>
+</head>
+<body>
+  <div class="page mid">
+    <div class="topbar">
+      <div class="grow">
+        <h1>Insights</h1>
+        <div class="sub" id="homeLine">Spending, prices and savings</div>
+      </div>
+      <span id="homeSwitch"></span>
+    </div>
+
+    <div class="controls">
+      <div class="seg" id="tabs" role="tablist" aria-label="Analysis sections"></div>
+      <div class="seg" id="ranges" role="group" aria-label="Period"></div>
+      <button class="btn btn-sm" id="exportBtn" type="button"></button>
+    </div>
+
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/analysis.js"></script>
+</body>
+</html>

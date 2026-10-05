@@ -15,40 +15,8 @@ const state = {
 
 const TABS = ["home", "play", "scores", "leaderboard", "settings", "admin"];
 
-// ---------- tiny DOM helper ----------
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  let value;
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "class") el.className = v;
-      else if (k === "dataset") Object.assign(el.dataset, v);
-      else if (k === "style") el.style.cssText = v;
-      else if (k === "value") value = v;
-      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (v === true) el.setAttribute(k, "");
-      else el.setAttribute(k, v);
-    }
-  }
-  const add = (kid) => {
-    if (kid === null || kid === undefined || kid === false) return;
-    if (Array.isArray(kid)) kid.forEach(add);
-    else if (kid instanceof Node) el.appendChild(kid);
-    else el.appendChild(document.createTextNode(String(kid)));
-  };
-  kids.forEach(add);
-  if (value !== undefined) el.value = value;
-  return el;
-}
-const $ = (sel, root = document) => root.querySelector(sel);
-function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
-function mount(el, ...kids) {
-  clear(el);
-  const add = (k) => { if (!k) return; if (Array.isArray(k)) k.forEach(add); else el.appendChild(k); };
-  kids.forEach(add);
-  return el;
-}
+// ---------- tiny DOM helpers (common/ui.js) ----------
+const { h, $, clear, mount, lsGet, lsSet } = UI;
 function spinner() { return h("div", { class: "spinner" }, "Loading…"); }
 function toggleSwitch(checked, onChange, opts = {}) {
   const input = h("input", { type: "checkbox", checked: !!checked, disabled: !!opts.disabled, "aria-label": opts.label || "toggle" });
@@ -65,80 +33,21 @@ function segmented(options, current, onChange, label) {
   return wrap;
 }
 
-// ---------- safe storage ----------
-function lsGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
-function lsSet(key, val) { try { localStorage.setItem(key, val); } catch (e) { /* ignore */ } }
+// ---------- API (common/ui.js) ----------
+const errorMessage = UI.errorMessage;
+const api = UI.makeApi();
 
-// ---------- API ----------
-function errorMessage(detail, status) {
-  if (typeof detail === "string" && detail) return detail;
-  if (Array.isArray(detail) && detail.length) return detail.map((d) => (d && d.msg) || String(d)).join("; ");
-  return `Something went wrong (HTTP ${status}).`;
-}
-async function api(path, opts = {}) {
-  const { method = "GET", body, formData, keepalive = false } = opts;
-  const url = path.replace(/^\//, "");
-  const init = { method, headers: {}, keepalive };
-  if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
-  else if (formData) init.body = formData;
-  let res;
-  try { res = await fetch(url, init); }
-  catch (e) { throw new Error("Can't reach the app. Check your connection and try again."); }
-  if (!res.ok) {
-    let detail = null;
-    try { detail = (await res.json()).detail; } catch (e) { /* not JSON */ }
-    const err = new Error(errorMessage(detail, res.status));
-    err.status = res.status;
-    throw err;
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
-
-// ---------- toasts & modals ----------
-function toast(msg, isError = false) {
-  const el = h("div", { class: "toast" + (isError ? " error" : "") }, msg);
-  $("#toastRoot").appendChild(el);
-  setTimeout(() => el.remove(), isError ? 6000 : 3500);
-}
+// ---------- toasts & modals (common/ui.js) ----------
+function toast(msg, isError = false) { UI.toast(msg, { error: isError, ms: isError ? 6000 : 3500 }); }
 function fail(e) { toast(e && e.message ? e.message : String(e), true); }
 
-let modalStack = [];
 function openModal(title, content, opts = {}) {
-  const closeBtn = h("button", { class: "icon-btn", "aria-label": "Close", type: "button" }, "✕");
-  const modal = h("div", { class: "modal" + (opts.sheet ? " sheet" : ""), role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("h3", null, h("span", null, title), closeBtn), content);
-  const backdrop = h("div", { class: "modal-backdrop" }, modal);
-  let downOnBackdrop = false;
-  backdrop.addEventListener("mousedown", (e) => { downOnBackdrop = e.target === backdrop; });
-  backdrop.addEventListener("click", (e) => { if (e.target === backdrop && downOnBackdrop) close(); });
-  const handle = { close, el: modal };
-  function close() {
-    backdrop.remove();
-    modalStack = modalStack.filter((m) => m !== handle);
-    if (opts.onClose) opts.onClose();
-  }
-  closeBtn.addEventListener("click", close);
-  modalStack.push(handle);
-  $("#modalRoot").appendChild(backdrop);
-  closeBtn.focus();
-  return handle;
+  return UI.openModal(title, content, { modalClass: opts.sheet ? "sheet" : "", onClose: opts.onClose, escape: "stack", focus: "close" });
 }
 function confirmDialog(title, text, okLabel = "Delete") {
-  return new Promise((resolve) => {
-    let answered = false;
-    const ok = h("button", { class: "btn-danger", type: "button" }, okLabel);
-    const cancel = h("button", { class: "btn-ghost", type: "button" }, "Cancel");
-    const m = openModal(title, h("div", null, h("p", null, text), h("div", { class: "actions" }, cancel, ok)),
-      { sheet: true, onClose: () => { if (!answered) resolve(false); } });
-    ok.addEventListener("click", () => { answered = true; m.close(); resolve(true); });
-    cancel.addEventListener("click", () => { answered = true; m.close(); resolve(false); });
-    ok.focus();
-  });
+  return UI.confirmDialog(title, text, { okLabel, okClass: "btn-danger", cancelClass: "btn-ghost", focusOk: true,
+    modal: { modalClass: "sheet", escape: "stack", focus: "close" } });
 }
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && modalStack.length) modalStack[modalStack.length - 1].close();
-});
 
 // ---------- formatting ----------
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -399,19 +308,10 @@ function daysBoard(days) {
 // =====================================================================
 // Settings (everyone)
 // =====================================================================
-const THEME_OPTIONS = [["ink", "🌑 Ink"], ["slate", "🌆 Slate"], ["daylight", "☀️ Daylight"]];
-function currentTheme() { return document.documentElement.getAttribute("data-theme") || "ink"; }
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  lsSet("theme", theme);
-  document.querySelectorAll("select[data-theme-select]").forEach((s) => { s.value = theme; });
-  if (window.Play && Play.themeChanged) Play.themeChanged();
-}
+// The page theme (common/theme-boot.js): every Theme menu shows and changes the same choice.
+HouseholdTheme.onChange(() => { if (window.Play && Play.themeChanged) Play.themeChanged(); });
 function themeSelect(extra = {}) {
-  const sel = h("select", { ...extra, "data-theme-select": "1", value: currentTheme(), "aria-label": "Theme" },
-    THEME_OPTIONS.map(([v, l]) => h("option", { value: v }, l)));
-  sel.addEventListener("change", () => applyTheme(sel.value));
-  return sel;
+  return HouseholdTheme.bindSelect(h("select", { ...extra, "aria-label": "Theme" }));
 }
 function lookOptions(withDefault) {
   const me = state.me;
@@ -478,35 +378,14 @@ function limitsCard(me) {
 }
 
 // "How the app sees you": exactly what Home Assistant sent and whether it matched admin_users.
-// Read-only; shows counts, never the list.
+// Read-only; shows counts, never the list. Drawn by common/whoami.js (the same in every app).
 function whoamiCard(w) {
-  const name = w.nameSent ? w.haUsername : null;
-  const row = (label, value, copy) => h("div", { class: "kv-row" },
-    h("div", { class: "kv-label" }, label),
-    h("div", { class: "kv-value" }, value,
-      copy ? h("button", { class: "icon-btn", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: () => copyText(copy) }, "⧉") : null));
-  const yesNo = (v) => h("strong", null, v ? "Yes" : "No");
-  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  let advice;
-  if (w.isAdmin) advice = "You are an administrator.";
-  else if (w.adminEntries === 0) {
-    advice = h("span", null, "The ", h("code", null, "admin_users"), " list is ", h("strong", null, "empty"),
-      " in the running app. If you have filled it in, the app hasn't picked it up yet: changes on the app's Configuration tab only take effect after it is ",
-      h("strong", null, "restarted"), " (Settings → Apps → Household Arcade → Information → Restart).");
-  } else {
-    advice = h("span", null, `Neither your user name nor your user id above matches any of the ${plural(w.adminEntries, "name")} in the `,
-      h("code", null, "admin_users"), " list. Add ", h("strong", null, name || w.haUserId), " (or ", h("strong", null, w.haUserId),
-      ") exactly as shown, save, and ", h("strong", null, "restart"), " the app — the list is only read when the app starts. Upper and lower case don't matter.");
-  }
   return h("div", { class: "card", id: "whoamiCard" }, h("h3", null, "How the app sees you"),
-    h("div", { class: "kv" },
-      row("User name (sent by Home Assistant)", name || "not sent", name),
-      row("User id (sent by Home Assistant)", h("code", null, w.haUserId), w.haUserId),
-      row("Display name (not used for matching)", w.haDisplayName),
-      row("Administrator in this app", yesNo(w.isAdmin)),
-      row("Names in the app's admin_users", String(w.adminEntries)),
-      row("Phone linked for notifications", yesNo(w.notifyLinked))),
-    h("div", { class: "hint", style: "margin-top:8px" }, advice));
+    HouseholdWhoami.panel(w, {
+      appName: "Household Arcade",
+      adviceTag: "div", adviceStyle: "margin-top:8px",
+      onCopy: (text) => copyText(text),
+    }));
 }
 
 // =====================================================================
@@ -559,17 +438,12 @@ function wireChrome() {
     collapse.setAttribute("aria-label", collapse.title);
   };
   collapse.addEventListener("click", () => {
-    const collapsed = document.documentElement.getAttribute("data-sidebar") === "collapsed";
-    if (collapsed) document.documentElement.removeAttribute("data-sidebar"); else document.documentElement.setAttribute("data-sidebar", "collapsed");
-    lsSet("sidebarCollapsed", collapsed ? "0" : "1");
+    HouseholdTheme.setSidebarCollapsed(!HouseholdTheme.sidebarCollapsed());
     syncCollapse();
     if (window.Play && Play.resize) Play.resize();
   });
   syncCollapse();
-  const themeSel = $("#theme-select");
-  themeSel.dataset.themeSelect = "1";
-  themeSel.value = currentTheme();
-  themeSel.addEventListener("change", () => applyTheme(themeSel.value));
+  HouseholdTheme.bindSelect($("#theme-select"));
 }
 
 // A fresh install has nobody in admin_users, so nobody can open Admin. Every page says how to fix
@@ -584,13 +458,8 @@ function openWhoamiCard() {
   })();
 }
 function syncNoAdminBanner() {
-  const banner = $("#noAdminBanner");
-  if (!state.me || !state.me.noAdmins) { banner.hidden = true; clear(banner); return; }
-  const who = state.me.nameSent ? state.me.username : state.me.id;
-  banner.hidden = false;
-  mount(banner, h("span", null, "No admin yet — add your Home Assistant user name (", h("strong", null, who),
-    ") to ", h("code", null, "admin_users"), " in the app's Configuration tab, save, and restart the app. "),
-    h("button", { class: "link-btn", type: "button", id: "noAdminWhoami", onclick: openWhoamiCard }, "How the app sees you"));
+  HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), state.me && state.me.noAdmin,
+    state.me && (state.me.nameSent ? state.me.username : state.me.id), { onOpen: openWhoamiCard, linkId: "noAdminWhoami" });
 }
 
 async function init() {
@@ -622,7 +491,7 @@ function initBackNav() {
   BackNav.init({
     atHome: () => state.tab === "home",
     goHome: () => showTab("home"),
-    openLayers: () => modalStack.slice().concat(window.Play && Play.isRunning() ? ["game"] : []),
+    openLayers: () => UI.dialogs().concat(window.Play && Play.isRunning() ? ["game"] : []),
     closeLayer: (layer) => { if (layer === "game") Play.pause(); else layer.close(); },
   });
 }

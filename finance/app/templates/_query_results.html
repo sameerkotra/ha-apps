@@ -22,7 +22,7 @@
 <div class="pager q-pager">
     <span class="pager-info">Page {{ view.page }} of {{ view.pages }} &middot; rows {{ "{:,}".format(view.first) }}&ndash;{{ "{:,}".format(view.last) }} of {{ "{:,}".format(view.total_rows) }}</span>
     <label class="pager-size">Rows per page
-        <select class="q-per-page" onchange="this.nextElementSibling.querySelector('[data-size=' + JSON.stringify(this.value) + ']').click()">
+        <select class="q-per-page" data-click-sibling="size">
             {% for s in page_sizes %}
             <option value="{{ s }}" {{ "selected" if s == view.per_page else "" }}>{{ "All" if s == "all" else s }}</option>
             {% endfor %}
@@ -45,7 +45,7 @@
 {% endmacro %}
 {{ pager() }}
 <div class="q-mobile-sort">
-    <select aria-label="Sort by" onchange="this.nextElementSibling.querySelector('[data-sort=' + JSON.stringify(this.value) + ']').click()">
+    <select aria-label="Sort by" data-click-sibling="sort">
         <option value="">Sort: as returned</option>
         {% for c in view.columns %}
         <option value="{{ loop.index0 }}:asc" {{ "selected" if view.sort == loop.index0 and not view.desc else "" }}>Sort: {{ c }} ▲</option>

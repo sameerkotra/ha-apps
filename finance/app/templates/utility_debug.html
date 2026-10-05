@@ -80,17 +80,7 @@
     <form id="resendForm" method="post" action="utility-debug-resend?id={{ bill.id }}">
         <button type="submit" id="resendBtn" class="btn-primary">Resend to the AI (no timeout)</button>
     </form>
-    <script>
-    document.getElementById("resendForm").addEventListener("submit", function () {
-        var btn = document.getElementById("resendBtn");
-        var dot = document.getElementById("resendDot");
-        var hint = document.getElementById("resendHint");
-        btn.disabled = true;
-        btn.textContent = "Sending… waiting for the AI";
-        dot.className = "status-dot pending";
-        hint.textContent = "Request sent — this genuinely has no timeout, so it may sit here for several minutes on a large local model. The page will reload automatically once a response comes back.";
-    });
-    </script>
+    <script src="static/pages/resend.js?v={{ app_version }}" data-hint="Request sent — this genuinely has no timeout, so it may sit here for several minutes on a large local model. The page will reload automatically once a response comes back."></script>
 
     {% if resend_error %}
     <p class="hint" style="color: var(--danger);">Resend failed: {{ resend_error }}</p>

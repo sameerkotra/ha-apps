@@ -5,7 +5,8 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from .. import config, db, ha_client, ha_notify
+from .. import config, db, ha_client
+from ..common import ha_notify
 from ..auth import get_real_user_for_prefs
 
 router = APIRouter(prefix="/api", tags=["prefs"])

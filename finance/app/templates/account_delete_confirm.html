@@ -32,14 +32,5 @@
     </form>
 </div>
 
-<script>
-(function () {
-    var expected = {{ confirm_label | tojson }};
-    var input = document.getElementById("confirm-text-input");
-    var btn = document.getElementById("confirm-delete-btn");
-    input.addEventListener("input", function () {
-        btn.disabled = input.value.trim() !== expected;
-    });
-})();
-</script>
+<script src="static/pages/confirm-text.js?v={{ app_version }}" data-expected='{{ confirm_label | tojson }}' data-button="confirm-delete-btn" data-trim></script>
 {% endblock %}

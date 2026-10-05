@@ -3,13 +3,13 @@
 Message text is stored readable, not encrypted at rest (SPEC §4.1).
 Files live in /share (files.py); the database only records where.
 """
-import contextlib
 import os
 import sqlite3
 import threading
 import uuid
 
 from . import config
+from .common import app_bus, db_core
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id),
-  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll')),
+  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll','card')),   -- 'card': shared from another app (§15.11)
   body TEXT NOT NULL DEFAULT '',
   reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
   mentions TEXT,                             -- JSON list of user ids (server-checked)
@@ -126,6 +126,22 @@ CREATE TABLE IF NOT EXISTS poll_votes (
   user_id TEXT NOT NULL, created_at TEXT NOT NULL,
   PRIMARY KEY (option_id, user_id)
 );
+-- a card another household app posted for a person (§15.11, APP_MESSAGES_SPEC §6.3): never any document content
+CREATE TABLE IF NOT EXISTS app_cards (
+  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  app TEXT NOT NULL,                         -- the sending app's slug (household_docs)
+  badge TEXT NOT NULL,                       -- "Docs": shown as "from Docs"
+  item_type TEXT NOT NULL CHECK (item_type IN ('note','checklist','sheet','folder','file')),
+  item_id TEXT NOT NULL,                     -- the other app's id for it
+  title TEXT NOT NULL,
+  owner_name TEXT,
+  panel TEXT,                                -- the other app's page in Home Assistant ("/<full slug>"), if it said
+  target TEXT,                               -- the item's route inside that page ("/doc/<id>")
+  shared_with_members INTEGER NOT NULL DEFAULT 0,
+  bus_id TEXT,                               -- the app message it came in
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_cards_app ON app_cards(app, message_id);
 CREATE TABLE IF NOT EXISTS stars (
   user_id TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL, PRIMARY KEY (user_id, message_id)
@@ -206,31 +222,14 @@ def new_id() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DB_PATH, timeout=30, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
-    # deleted rows are overwritten, not just marked free (disappearing messages, SPEC §15.8)
-    conn.execute("PRAGMA secure_delete = ON")
-    return conn
+    # secure_delete: deleted rows are overwritten, not just marked free (disappearing messages, SPEC §15.8)
+    return db_core.connect(config.DB_PATH, timeout=30, check_same_thread=False,
+                           pragmas=("foreign_keys = ON", "busy_timeout = 30000", "secure_delete = ON"))
 
 
-@contextlib.contextmanager
 def get_conn():
-    """A connection that commits when the block ends (and rolls back on an error)."""
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def _columns(conn, table: str) -> set:
-    return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    """A connection that commits when the block ends (and rolls back on an error) — app/common/db_core.py."""
+    return db_core.transaction(_connect)
 
 
 MIGRATIONS = {
@@ -247,11 +246,7 @@ MIGRATIONS = {
 
 def _migrate(conn) -> None:
     """Columns that older databases lack (CREATE TABLE IF NOT EXISTS never adds them)."""
-    for table, cols in MIGRATIONS.items():
-        have = _columns(conn, table)
-        for name, decl in cols:
-            if name not in have:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    db_core.add_missing_columns(conn, MIGRATIONS)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_expires ON messages(expires_at) WHERE expires_at IS NOT NULL")
     _migrate_shared_folders(conn)
 
@@ -280,6 +275,64 @@ def _migrate_shared_folders(conn) -> None:
     conn.execute("DROP TABLE shared_folders")
 
 
+OLD_KINDS = "CHECK (kind IN ('text','file','system','poll'))"
+NEW_KINDS = "CHECK (kind IN ('text','file','system','poll','card'))"
+
+
+def _allow_card_messages(conn) -> bool:
+    """Databases from before 2.2.0 have messages.kind CHECK (… 'poll') without 'card'. SQLite can't change a
+    CHECK in place, so the table is rebuilt as SQLite documents it (https://sqlite.org/lang_altertable.html,
+    "other kinds of table schema changes"): foreign keys off; in ONE transaction a copy of the table with the
+    new CHECK (the stored CREATE statement itself, so every column — also those added later by ALTER — keeps
+    its place and definition), every row copied with its id, the old table dropped, the copy renamed, its
+    indexes and triggers made again exactly as they were, the AUTOINCREMENT counter kept (ids of deleted
+    messages are never reused), and `PRAGMA foreign_key_check` must find no problem that wasn't there before,
+    else everything is rolled back; foreign keys back on. The rows that point at messages (attachments, reactions, polls, …) keep
+    their ids, so nothing else changes; the search index (messages_fts) keeps its rowids. → True if rebuilt."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'").fetchone()
+    sql = row[0]
+    if NEW_KINDS in sql:
+        return False
+    if OLD_KINDS not in sql:
+        raise RuntimeError("The messages table isn't the expected one; not changing it.")
+    create = sql.replace(OLD_KINDS, NEW_KINDS, 1)
+    head = create[:create.index("(")]
+    create = head.replace("messages", "messages_new", 1) + create[len(head):]
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            extras = [r[0] for r in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE tbl_name = 'messages' AND type IN ('index', 'trigger') "
+                "AND sql IS NOT NULL ORDER BY type, name")]
+            seq = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'messages'").fetchone()
+            before = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            problems = {tuple(r) for r in conn.execute("PRAGMA foreign_key_check")}   # already there: not ours
+            conn.execute(create)
+            conn.execute("INSERT INTO messages_new SELECT * FROM messages")
+            conn.execute("DROP TABLE messages")
+            conn.execute("ALTER TABLE messages_new RENAME TO messages")
+            for stmt in extras:
+                conn.execute(stmt)
+            if seq is not None:
+                if not conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'messages'",
+                                    (seq[0],)).rowcount:
+                    conn.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('messages', ?)", (seq[0],))
+            if conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] != before:
+                raise RuntimeError("Copying the messages lost rows.")
+            if {tuple(r) for r in conn.execute("PRAGMA foreign_key_check")} - problems:
+                raise RuntimeError("The rebuilt messages table breaks a foreign key.")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+    return True
+
+
 def init_db() -> None:
     os.makedirs(os.path.dirname(config.DB_PATH) or ".", exist_ok=True)
     conn = _connect()
@@ -287,6 +340,9 @@ def init_db() -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
         _migrate(conn)
+        conn.commit()
+        _allow_card_messages(conn)
+        app_bus.migrate(conn)          # messages between the household apps (bus_outbox, bus_seen, bus_apps)
         conn.commit()
     finally:
         conn.close()

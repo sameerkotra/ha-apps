@@ -1,5 +1,3 @@
-import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -10,11 +8,13 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import avatars, chats, config, db, disappearing, files, ha_client, ha_events, ha_notify, ha_people, housekeeping
+from . import app_messages, avatars, chats, config, db, disappearing, files, ha_client, ha_events, housekeeping
+from .common import auth_core, ha_notify, ha_people, web_security
+from .common import housekeeping as jobs_core
 from .live import hub
 from .routers import admin, conversations, extras, files as files_router, me, messages, search, stream
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+jobs_core.setup_logging()
 logger = logging.getLogger("main")
 
 
@@ -77,16 +77,9 @@ def startup_blocking() -> None:
         logger.exception("Checking notify services failed")
 
 
-async def housekeeping_loop():
-    n = 0
-    while True:
-        try:
-            if not db.RESTORING.is_set():
-                await run_in_threadpool(housekeeping.tick, n)
-        except Exception:
-            logger.exception("Housekeeping failed")
-        n += 1
-        await asyncio.sleep(20)
+async def housekeeping_step(n: int) -> None:
+    if not db.RESTORING.is_set():
+        await run_in_threadpool(housekeeping.tick, n)
 
 
 @asynccontextmanager
@@ -97,17 +90,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Reading the people from Home Assistant failed")
     await run_in_threadpool(startup_blocking)
+    # one WebSocket to Home Assistant for the phone's notification buttons and the other apps' messages
+    await run_in_threadpool(app_messages.start, ha_events.connection())
     ha_events.start()
-    tasks = [asyncio.create_task(housekeeping_loop(), name="housekeeping"),
-             asyncio.create_task(ha_people.loop(), name="ha_people")]
+    jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
+    jobs.every("housekeeping", 20, housekeeping_step, thread=False, tick=True, log=logger, error="Housekeeping failed")
+    jobs.add("ha_people", ha_people.loop)
+    jobs.start()
     try:
         yield
     finally:
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+        await jobs.stop()
+        app_messages.stop()
         ha_events.stop()
         hub.reset()
 
@@ -127,18 +121,28 @@ async def validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": "; ".join(msgs) or "Invalid request."})
 
 
-_INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+# Only Supervisor's ingress proxy and loopback get in: app/common/auth_core.INGRESS_HOSTS.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
        "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'")
 MAX_BODY = 1024 * 1024
 STREAMED = ("/uploads", "/upload", "/admin-storage-import-db")     # these enforce their own limits while reading
 
 
+def _is_file(path: str) -> bool:
+    """A chat file or shared-folder file: its route sets its own CSP (sandbox) and caching."""
+    return path.startswith("/api/files/") or path.startswith("/api/folders/")
+
+
+HEADERS = web_security.SecurityHeaders(
+    CSP, csp_skip=lambda request, _response: _is_file(request.url.path), referrer="no-referrer",
+    api_no_store="set", api_skip=lambda path: _is_file(path) or path.startswith("/api/avatars/"))
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    client_host = request.client.host if request.client else None
-    if client_host not in _INGRESS_ALLOWED_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden — access only via Home Assistant"})
+    blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
+    if blocked is not None:
+        return blocked
     path = request.url.path
     if db.RESTORING.is_set() and path.startswith("/api/"):
         return JSONResponse(status_code=503, content={"detail": "A backup is being restored — try again in a moment."})
@@ -149,17 +153,7 @@ async def guard(request: Request, call_next):
             length = 0
         if length > MAX_BODY:
             return JSONResponse(status_code=413, content={"detail": "That request is too big."})
-    response = await call_next(request)
-    is_file = path.startswith("/api/files/") or path.startswith("/api/folders/")
-    if not is_file and "content-security-policy" not in response.headers:
-        response.headers["Content-Security-Policy"] = CSP
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    if path.startswith("/api/") and not is_file and not path.startswith("/api/avatars/"):
-        response.headers["Cache-Control"] = "no-store"
-    elif path == "/" or path.endswith(".html"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return response
+    return HEADERS.apply(request, await call_next(request))
 
 
 @app.get("/api/health")

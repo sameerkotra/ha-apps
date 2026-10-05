@@ -4,7 +4,7 @@
 > aren't affiliated with or endorsed by Home Assistant or Nabu Casa. They were built with Claude,
 > Anthropic's AI model, and are provided as-is: try them out first, and keep your own backups.
 
-Nine apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
+Ten apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
 sidebar, uses everyone's Home Assistant login (no extra accounts or passwords), and keeps its data on
 your own Home Assistant.
 
@@ -17,13 +17,14 @@ your own Home Assistant.
 | [Finance Dashboard](finance) | 🤖 **Needed** | **64-bit only.** Bank and credit-card statements (PDF or CSV) read by the AI you choose, with categories and rules, transfers, recurring charges, a dashboard, saved reports and per-person data with optional sharing. Utility bills and toll statements are optional extras. |
 | [Splitpot](splitpot) | — | Split shared expenses (equally, by amount or by percentage), see who owes whom and settle up; balances can show up as sensors. |
 | [Receipt Price Intelligence](receipt_price_intelligence) | 🤖 **Needed** | Scan receipts with your own vision model, track prices and spending, and find where to shop for less: a shopping list that knows where each item is cheapest, a trip planner, price alerts and sensors. |
+| [Household Docs](household_docs) | 🤖 Optional | Notes (plain or Markdown), checklists and sheets in folders, shared with chosen people or everyone, with tags, links between documents, pins, quick notes, PDF, strong search, history and trash; templates, filing and clean-up rules, a Kids' space, and cards in Household Chat and checklists to Household Todo. Documents are plain files in Home Assistant's `/share` folder, readable and changeable by anyone with access to `/share` (Samba, the File editor, other apps, backups that include Share) — keep passwords in Household Vault. |
 | [Household Vault](household_vault) | — | **Experimental.** A password manager with personal, household and shared vaults, each a standard KeePass file. It hasn't had an independent security review — keep your own KeePass copy of your passwords. |
 | [Household Arcade](household_arcade) | 🤖 Optional | **Under development.** Classic games for the whole household, played from the sidebar or the phone: 17 games from Snake and Falling Blocks to Tank Battle, Road Hop and two-player Snake Duel, with more to come. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
 
 **AI** — 🤖 **Needed**: the app's main job uses an AI model, so it needs one set up before it is useful (Finance
 Dashboard reads statements with it; Receipt Price Intelligence reads receipt photos with a vision model).
 🤖 Optional: the app works fully without one, and an AI model adds extras (Calorie Tracker's estimates, Household
-Arcade's extra levels). — : no AI. Every app that uses AI lets you choose the model: your own Ollama on your
+Arcade's extra levels, Household Docs' text read from scans, summaries and checklists made from text). — : no AI. Every app that uses AI lets you choose the model: your own Ollama on your
 network, an OpenAI-compatible service, or Anthropic Claude (Receipt Price Intelligence: Ollama or an
 OpenAI-compatible server). Nothing is sent to an outside service unless you choose one.
 
@@ -59,14 +60,16 @@ Tree and Household Chat keep their files in the same `/share` folder either way.
   sidebar (ingress); no network port is opened. The admin list is the only option you set on the
   Configuration tab.
 - **Settings live in the app** (Admin → App settings) and apply without a restart.
-- **Backups:** each app's data is in Home Assistant's backups, and Admin → Storage can download
-  and restore a copy. Files that live in `/share` (Family Tree photos, Household Chat files) need
-  their own backup if they are outside Home Assistant's backups.
+- **Backups:** each app's data is in Home Assistant's backups, and Admin → Storage (Household Docs and
+  Receipt Price Intelligence: Admin → Backup) can download and restore a copy. Downloaded backups leave out
+  access keys and passwords (enter them again after restoring on a new install). Files that live in `/share`
+  (Family Tree photos, Household Chat files, Household Docs documents — the apps that map `/share`) need their
+  own backup if they are outside Home Assistant's backups.
 - **Where data goes:** nothing leaves your home network unless you turn on a feature that needs it
   (for example an AI provider outside your network, drive times through OpenStreetMap, or the
   Family Tree map). Each app's Documentation tab says exactly what is sent and where.
 - **What's new:** each app's `CHANGELOG.md` (shown in Home Assistant's update dialog) starts at this
-  first public release: 2.0.0, and 1.0.0 for Finance Dashboard and Household Arcade.
+  first public release: 2.0.0, and 1.0.0 for Finance Dashboard, Household Arcade and Household Docs.
 
 ## Reporting a problem
 
@@ -75,12 +78,22 @@ report them privately — see [SECURITY.md](SECURITY.md). Support is best effort
 
 ## For developers
 
-Each app folder has `spec/SPEC.md` (how it works; `data model/SPEC.md` in Finance Dashboard), its own tests
+Each app folder has `spec/SPEC.md` (how it works), its own tests
 (`python3 -m unittest discover -s tests` inside the folder, or `pytest` for Finance Dashboard, with its
 `requirements-dev.txt`), and
 `DOCS.md` (the user guide). `HA_ADDON_PATTERNS.md` and `WHOAMI_PAGE_SPEC.md` describe the
 conventions they share. The tests in `tests/` check the repository as a whole:
 `python3 -m unittest discover -s tests` from the repository root.
+
+**Shared code.** Code the apps have in common (the ingress and admin checks, "How the app sees you",
+database and backup helpers, App settings and People pages, themes, security headers, Home Assistant
+client, sensors, AI client, maps, CSV export, test helpers) lives once in `common/`. Home Assistant builds
+each app from its own folder, so `python tools/sync_common.py` copies these files into every app that uses
+them (`app/common/`, `app/static/common/`, `tests/common_tests/`, as listed in `common/manifest.json`);
+the copies are committed with the apps. Edit `common/`, never a copy, then run the script
+(`--check` only reports differences; the repository tests run it). `python tools/check_build.py` checks
+every app's Dockerfile and pinned requirements against `common/build/`. See `common/README.md` and
+`SHARED_CODE_PLAN.md`.
 
 ## License
 

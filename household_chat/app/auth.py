@@ -7,18 +7,18 @@ Everyone is **disabled** until an admin enables them.
 """
 from datetime import timedelta
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Request
 
 from . import config, db
+from .common import auth_core
 
 
 def is_admin(user_id: str, username: str | None) -> bool:
-    return bool({str(n).strip().lower() for n in (user_id, username) if n} & config.ADMIN_NAMES)
+    return auth_core.is_admin(user_id, username, config.ADMIN_NAMES)
 
 
 def display_name_only(user_id, username, display_name) -> bool:
-    return (not is_admin(user_id, username) and bool(display_name)
-            and display_name.strip().lower() in config.ADMIN_NAMES)
+    return auth_core.display_name_only(user_id, username, display_name, config.ADMIN_NAMES)
 
 
 def _stale(ts: str | None) -> bool:
@@ -34,9 +34,7 @@ def user_dict(row, admin=False, display_only=False) -> dict:
 
 def identify(uid: str | None, username: str | None, display_name: str | None) -> dict:
     """The real caller, created (disabled) on first sight; name kept current."""
-    if not uid:
-        raise HTTPException(401, "No Home Assistant user identified. Open Household Chat from its panel "
-                                 "in the Home Assistant sidebar.")
+    auth_core.require_user_id(uid, "Household Chat")
     display = (display_name or username or "Home Assistant user").strip()[:100] or "Home Assistant user"
     now = config.now_iso()
     renamed = False
@@ -57,12 +55,9 @@ def identify(uid: str | None, username: str | None, display_name: str | None) ->
     return user_dict(row, is_admin(uid, username), display_name_only(uid, username, display_name))
 
 
-async def get_current_user(
-    x_remote_user_id: str | None = Header(default=None),
-    x_remote_user_name: str | None = Header(default=None),
-    x_remote_user_display_name: str | None = Header(default=None),
-) -> dict:
-    return identify(x_remote_user_id, x_remote_user_name, x_remote_user_display_name)
+async def get_current_user(request: Request) -> dict:
+    ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
+    return identify(ident.user_id, ident.username, ident.display_name)
 
 
 async def require_user(current: dict = Depends(get_current_user)) -> dict:
@@ -75,6 +70,6 @@ async def require_user(current: dict = Depends(get_current_user)) -> dict:
 async def require_admin(current: dict = Depends(get_current_user)) -> dict:
     """Admins manage people and settings even if their own chat access is off. Being an
     admin never opens a chat they aren't in (SPEC §4)."""
-    if not current["is_admin"]:
-        raise HTTPException(403, "Only admins can do this. See admin_users in the app's Configuration tab.")
+    auth_core.require_admin_flag(current["is_admin"],
+                                 "Only admins can do this. See admin_users in the app's Configuration tab.")
     return current

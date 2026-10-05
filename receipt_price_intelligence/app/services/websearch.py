@@ -24,7 +24,9 @@ import json
 import re
 import threading
 import time
+import functools
 import gzip
+import http.client
 import ipaddress
 import socket
 import ssl
@@ -524,48 +526,103 @@ _AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko
           "ReceiptPriceIntelligence")
 
 
-def _public_host(host: str) -> bool:
-    """Whether every address ``host`` resolves to is on the public internet.
+def _public_address(host: str) -> str | None:
+    """The address to connect to for ``host`` — resolved once — or None unless every address it resolves to
+    is on the public internet.
 
     Page addresses come from search results, which anyone can influence, and the app runs inside
     your home network: a result pointing at your router or Home Assistant itself must never be fetched.
+    The connection then goes to exactly this address (see ``_PinnedHTTPConnection``), so a name that
+    answers differently the second time it is looked up (DNS rebinding) can't lead it anywhere else.
     """
     try:
         infos = socket.getaddrinfo(host, None)
     except (socket.gaierror, UnicodeError, OSError):
-        return False
+        return None
     if not infos:
-        return False
+        return None
     for info in infos:
         address = ipaddress.ip_address(info[4][0].split("%")[0])
         if getattr(address, "ipv4_mapped", None):
             address = address.ipv4_mapped
         if not address.is_global or address.is_multicast:
-            return False
-    return True
+            return None
+    return infos[0][4][0].split("%")[0]
 
 
-def _check_url(url: str) -> None:
+def _public_host(host: str) -> bool:
+    """Whether every address ``host`` resolves to is on the public internet."""
+    return _public_address(host) is not None
+
+
+def _check_url(url: str) -> tuple[str, str]:
+    """Refuse anything but a web address on a usual port of a public host. Returns (host name, the checked
+    address) for the connection to be pinned to."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise WebSearchError("Only web addresses can be fetched")
     if parsed.port not in (None, 80, 443, 8080, 8443):
         raise WebSearchError("it is on an unusual port, so it was not opened")
-    if not _public_host(parsed.hostname):
+    address = _public_address(parsed.hostname)
+    if address is None:
         raise WebSearchError("it is not on the public internet, so it was not opened")
+    return parsed.hostname, address
+
+
+def _pinned_create_connection(pin):
+    """socket.create_connection that connects to the checked address when asked for the checked host name
+    (anything else — a proxy from the environment — is connected to as asked)."""
+    def create(address, *args, **kwargs):
+        host, port = address[0], address[1]
+        if pin is not None and host.strip("[]").lower() == pin[0].strip("[]").lower():
+            return socket.create_connection((pin[1], port), *args, **kwargs)
+        return socket.create_connection(address, *args, **kwargs)
+    return create
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """Connects to the address ``_check_url`` checked (``pin`` = (host name, address)); the Host header
+    keeps the name."""
+
+    def __init__(self, *args, pin=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _pinned_create_connection(pin)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """As _PinnedHTTPConnection; TLS still sends the host name (SNI) and checks the certificate against it."""
+
+    def __init__(self, *args, pin=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._create_connection = _pinned_create_connection(pin)
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(functools.partial(_PinnedHTTPConnection, pin=getattr(req, "pin", None)), req)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(functools.partial(_PinnedHTTPSConnection, pin=getattr(req, "pin", None)), req,
+                            context=self._context)
 
 
 class _CheckedRedirects(urllib.request.HTTPRedirectHandler):
-    """Follow redirects only to public addresses (a redirect must not lead into the home network)."""
+    """Follow redirects only to public addresses (a redirect must not lead into the home network); each one
+    is checked again and its connection pinned to the address checked."""
 
     max_redirections = 5
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001 - urllib's signature
-        _check_url(newurl)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        pin = _check_url(newurl)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.pin = pin
+        return new
 
 
-_opener = urllib.request.build_opener(_CheckedRedirects())
+_opener = urllib.request.build_opener(_PinnedHTTPHandler(), _PinnedHTTPSHandler(), _CheckedRedirects())
 
 
 def _fetch_reason(error: Exception) -> str:
@@ -604,8 +661,9 @@ def fetch_direct(url: str) -> str:
 
 
 def _fetch_direct(url: str, headers: dict[str, str]) -> tuple[str, int, str, str]:
-    _check_url(url)
+    pin = _check_url(url)
     request = urllib.request.Request(url, headers=headers)
+    request.pin = pin
     slot = _slot()
     slot.acquire()
     try:

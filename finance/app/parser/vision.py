@@ -11,13 +11,13 @@ import glob
 import json
 import os
 import shutil
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from typing import Callable
 
 from .. import ai_client
+from ..common import sandbox_run
 
 MAX_JSON_RETRIES = 2  # section 5: retry limit on JSON parse failures
 
@@ -84,13 +84,26 @@ def rasterize_pdf(pdf_path: str) -> tuple[str, list[str]]:
     """pdftoppm -png, one file per page, in a fresh temp dir the caller
     is responsible for cleaning up — returns (dir, image_paths); the dir
     itself, not just the files in it, since the caller needs it to
-    actually remove the directory afterward."""
+    actually remove the directory afterward. pdftoppm runs on a copy of the
+    file as the unprivileged pdfworker user, with resource limits, in a
+    scratch folder of its own (common/python/sandbox_run.py); the pages are
+    moved from there into out_dir."""
     out_dir = tempfile.mkdtemp(prefix="pages-")
     prefix = os.path.join(out_dir, "page")
-    result = subprocess.run(
-        ["pdftoppm", "-png", "-r", "150", pdf_path, prefix],
-        capture_output=True, text=True, timeout=60,
-    )
+    try:
+        with sandbox_run.Scratch(prefix="pdftoppm-") as box:
+            src = box.add_file(pdf_path, "in.pdf")
+            result = box.run(
+                ["pdftoppm", "-png", "-r", "150", src, os.path.join(box.path, "page")],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                for name in os.listdir(box.path):
+                    if name.startswith("page-") and name.endswith(".png"):
+                        shutil.move(os.path.join(box.path, name), os.path.join(out_dir, name))
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
     if result.returncode != 0:
         # mkdtemp already created out_dir by this point, and we're about
         # to raise without ever returning it to the caller — clean it up

@@ -236,11 +236,11 @@ const Together = (() => {
     if (watchTimer) return;
     const tick = async () => {
       if (document.hidden || (window.Play && Play.isRunning && Play.isRunning())) return;
-      if (modalStack.length || (state.tab === "play" && Play._state && Play._state.phase !== "idle")) return;
+      if (UI.dialogs().length || (state.tab === "play" && Play._state && Play._state.phase !== "idle")) return;
       let data;
       try { data = await api("api/matches"); } catch (e) { return; }
       const m = data.waiting.map(stamp).find((x) => !shown.has(x.id));
-      if (!m || modalStack.length) return;
+      if (!m || UI.dialogs().length) return;
       shown.add(m.id);
       let handle;
       const body = h("div", null, h("p", null, h("strong", null, `${who(m)}`), m.rematchOf ? " wants a rematch in " : " challenges you to ", h("strong", null, m.gameName), m.practice ? " (Practice)." : "."),

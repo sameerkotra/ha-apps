@@ -30,16 +30,23 @@ A shared family tree for the household, as a Home Assistant app. This document d
 ```
 family_tree/
 ├── config.yaml  Dockerfile  requirements.txt  requirements-dev.txt  .dockerignore  README.md  DOCS.md  CHANGELOG.md
-├── icon.png  logo.png  translations/en.yaml   spec/SPEC.md   tests/
+├── icon.png  logo.png  translations/en.yaml   spec/SPEC.md
+├── tests/   _env.py base.py test_*.py; common_tests/ (shared helpers and shared-module tests, copies)
 └── app/  main.py config.py auth.py db.py settings.py features.py dates.py names.py graph.py relations.py
           kin.py sides.py related.py history.py media.py photoedit.py inbox.py geocode.py duplicates.py
           upcoming.py reminders.py milestones.py panchang.py tithi.py ceremonies.py kidmode.py
-          export_view.py site_export.py housekeeping.py common.py ha_client.py ha_notify.py ha_people.py
+          export_view.py site_export.py tree_data.py housekeeping.py models.py ha_client.py
+          common/  shared Python (copies): ha_notify ha_people whoami ha_client ha_time housekeeping auth_core
+                   db_core settings_core people_admin web_security backup_core geo
           routers/ me people families events stories tree history media export reminders kin map related
-                   custom sources contacts duplicates tithi quiz admin
-          static/ index.html app.js tree.js print.js backnav.js theme-boot.js style.css vendor/{leaflet,sanscript}
-          site_assets/ site.css site.js
+                   custom sources contacts duplicates tithi quiz admin tree_import
+          static/ index.html app.js tree.js print.js style.css vendor/{leaflet,sanscript}
+                  common/ (shared browser files, copies): theme-boot.js themes.css ui.js settings.js settings.css
+                          people.js backnav.js whoami.js
+          site_assets/ site.css site.js site_themes.css
 ```
+- `app/models.py` (was `app/common.py`, renamed because `app/common/` is now the shared folder) holds the request models, validation and read helpers for the routers.
+- `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy (`tests/common_tests/test_shared_copies.py` fails if one was changed). `app/ha_client.py` is a thin module re-exporting the shared Core API client (`app/common/ha_client.py`) plus the user sync; `auth.py` is a thin layer over `auth_core` with the same names, messages and rules.
 
 ## 3. Manifest, options & App settings
 - **Manifest:** `slug: family_tree`, `url: https://github.com/sameerkotra/ha-apps`, `ingress: true`, `ingress_port: 8102`, **no `ports:`**, `panel_icon: mdi:family-tree`, `panel_admin: false`, arch amd64/aarch64/armv7.
@@ -51,9 +58,9 @@ family_tree/
 | `admin_users` | `[]` | HA user ids or login names (never display names). Admins open **Admin** (App settings, Users, Storage, Trash): they disable users, link/unlink anyone's "This is me", restore from and empty the trash, change App settings and feature switches, and run backup and restore. Stays an app option (the app's Configuration tab): it's how the first admin is known. |
 
 - **Every other setting is an App setting**, never an option in the app's Configuration tab. `config.yaml` keeps only `admin_users` (the bootstrap: someone must be an admin before App settings can be opened). Per-person choices go in that user's own Settings. Values other than `admin_users` in `/data/options.json` are never read.
-- **First run — "No admin yet".** While `admin_users` is empty nobody is admin. Every page shows a banner to everyone: "No admin yet — add your Home Assistant user name (**<their user name>**) to `admin_users` in the app's Configuration tab, save, and restart the app", linking to the "How the app sees you" page. `/me` and `/whoami` report `noAdmin` (and `/whoami` `adminOption: "admin_users"`). Nobody is ever promoted automatically.
+- **First run — "No admin yet".** While `admin_users` is empty nobody is admin. Every page shows a banner to everyone: "No admin yet — add your Home Assistant user name (**<their user name>**) to `admin_users` on the app's Configuration tab, save, and restart the app", linking to the "How the app sees you" page (the banner is drawn by `common/whoami.js`). `/me` and `/whoami` report `noAdmin`. Nobody is ever promoted automatically.
 - **Reminders need no app options:** phones come from Home Assistant (Settings → People → Track device) plus any extra notify services an admin assigns in Admin → Users (§9), and each user picks their own digest time (default 08:00).
-- **App settings** (Admin → App settings, admins only). Stored in the `app_settings` table (§5) as JSON, validated (Pydantic, strict types, unknown keys → 422), read through a small cache at the moment they're used, so a change applies **without a restart**.
+- **App settings** (Admin → App settings, admins only). Declared once in `settings.py` on the shared `settings_core.Registry` (`app/common/settings_core.py`), which provides validation, storage, the cache and the GET/PUT payload. Stored in the `app_settings` table (§5) as JSON, validated (Pydantic, strict types, unknown keys → 422), read through a small cache at the moment they're used, so a change applies **without a restart**.
 
   | Setting | Default | Meaning |
   |---|---|---|
@@ -105,7 +112,7 @@ Every optional module has a switch, the App setting `feature_<name>` (bool), sho
 
 ## 4. Users, security & privacy
 - **Users.** Every `person.*` linked to an HA user is synced, like Household Vault. Users are **enabled by default**; an admin disables anyone. A disabled user gets 403 everywhere and no reminders. Someone first seen through ingress is added automatically.
-- **Identity** follows the siblings: only requests from the ingress proxy are accepted, the user is identified by `X-Remote-User-Id`, and admins are matched by id or login name. There's no "acting as": edits are always recorded as the real person.
+- **Identity** follows the siblings: only requests from the ingress proxy are accepted (`auth_core.INGRESS_HOSTS`, the shared `app/common/auth_core.py`), the user is identified by `X-Remote-User-Id`, and admins are matched by id or login name. The security headers (the CSP below, `nosniff`, `Referrer-Policy: same-origin`, the caching rules) are added at the end of the guard middleware by `web_security.SecurityHeaders.apply` (shared `app/common/web_security.py`), the same headers as before. There's no "acting as": edits are always recorded as the real person.
 - **Who can do what.**
   - Every enabled user: view everything; add, edit and delete people, families, events and media (deletes go to the trash); undo changes, including deletes; claim "This is me" for one unclaimed person; set up their own reminders.
   - Admins additionally (the **Admin** area): change App settings and feature switches, disable users, change anyone's "This is me", see the trash, restore from it and empty it, and back up or restore.
@@ -210,6 +217,7 @@ CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL,  -- App se
   - **Accepted combinations:** year only; month + year; day + month + year; **day + month**. A day without a month is rejected (422), and so is a month alone. 29 Feb without a year is allowed.
 - **Consistency warnings** are shown in the UI but never block a save: a child born before a parent, a parent younger than 12 at the birth, death before birth, age over 110 while "living", or a person in a loop (their own ancestor). **An edit that would create a loop is rejected (422).**
 - **Limits:** 20 000 people, and 50 events and 200 media links per person.
+- **Connections and migrations** (`db.py` on the shared `app/common/db_core.py`): `db_core.connect` (timeout 15, `foreign_keys`) and `db_core.transaction`; the columns added since the first release are the `db.MIGRATIONS` list (in the old order), applied by `db_core.add_missing_columns`, then the `idx_media_orig` index and `features.migrate` follow. `validate_db_file`, `replace_db` and `backup_to_file` are built on `db_core` / `backup_core`.
 
 ### 5.1 Media storage on `/share`
 - **Why.** Photos and documents are almost all of the data. Keeping them out of `/data` means the app's own backup holds only the database (a few MB), however many photos you add.
@@ -258,7 +266,7 @@ CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL,  -- App se
 - **Enforced on the server, in one place:** `export_view.build(options)` applies scope, the keep-out flag (§13.20), the living rule, the detail choices and the feature switches (§3.1), so a switched-off detail can't leak through any format.
 - Relationship labels in exports are in English.
 
-## 9. Reminders (`reminders.py`, `ha_notify.py`, `ha_people.py`)
+## 9. Reminders (`reminders.py`, the shared `app/common/ha_notify.py` and `ha_people.py`)
 A reminder about someone goes out only when **two switches are on**: the person's own **🔔 Reminders** switch in the tree, and the user's own reminders in Settings. Both are **off by default**, so nobody gets anything, and nobody is reminded about, until someone chooses to.
 
 **Per-person switch (`people.remind`)**
@@ -278,9 +286,9 @@ A reminder about someone goes out only when **two switches are on**: the person'
 - **Time** (default 08:00, the user's own; there is no household default), **birthdays** (on), **anniversaries** (on), **remembrance** (off), **days ahead** 0–14 (0 = only today), and **scope**: `all` (the default: everyone whose 🔔 switch is on) or `close` (only those within 3 steps of "This is me", which needs "This is me" set).
 - **Send me a test** sends one short notification to your phones and all your extra notify services.
 
-**Notify services** (admins, Admin → Users)
-- Each user row first shows their **Phones** from Home Assistant (read-only, `ha_people.py`, see "Phones from Home Assistant" below); the assigned services below are *extras* ("Also").
-- Each user row shows their extra notify services as removable chips, a list of the services Home Assistant offers (`GET /api/services`, domain `notify`, plus notify entities; cached 60 s; if HA can't be reached the admin can type a name), **Add** and **Send test**. Several services per user; names are validated as `notify.` + `[a-z0-9_]+`. Stored in `user_notify`.
+**Notify services** (admins, Admin → Users; the shared notify editor of `common/people.js`, routes on `app/common/people_admin.py`)
+- Each user card first shows their **Phones** from Home Assistant (read-only, `ha_people.py`, see "Phones from Home Assistant" below); the assigned services below are *extras* ("Also").
+- Each user card shows their extra notify services as removable chips, a list of the services Home Assistant offers (`GET /api/services`, domain `notify`, plus notify entities; cached 60 s; if HA can't be reached the admin can type a name), **Add** and **Send a test**. Several services per user; names are validated as `notify.` + `[a-z0-9_]+`. Stored in `user_notify`.
 
 **The daily digest**
 - Sent once a day in the hour after the user's time, in HA's time zone (`reminder_log`, survives restarts), and **only when there's something to say**. It covers today and the next *days ahead*:
@@ -294,7 +302,7 @@ A reminder about someone goes out only when **two switches are on**: the person'
 
 **Details:** - The digest reuses `upcoming.entries()` (each entry carries `remind`: the person's switch, or either partner's for an anniversary) and filters it by 🔔, the user's kinds and scope. `scope: close` without a live "This is me" sends nothing (never silently everyone); Settings shows a warning.
 - Lines: "🎂 Lakshmi Sharma (your mother) turns 60 today" · "🎂 It's Bob Jones's birthday tomorrow" · "🎂 Cat Jones turns 26 on Thu 1 Oct" · "💍 Ravi & Priya — 25th anniversary today" · "🕯 Remembering Venkat, born 100 years ago today" · "🕯 Remembering Venkat, who died 25 years ago tomorrow" (no years: "— their birthday, today" / "— the day they died, today"). At most 8 lines, then "…and N more". Title "Family Tree".
-- A separate asyncio loop ticks every 60 s (`reminders.loop()`, started in `main.py` next to housekeeping): it reads due users, prefs, services and the graph in one short connection, closes it, sends to **every** service of the user, then logs `(user, day)` if at least one accepted. A failed send isn't logged, so it's retried each minute while the hour lasts. `reminder_log` rows older than 60 days are pruned daily. At start-up, assigned services Home Assistant can't reach are logged once (`check_targets_blocking`).
+- A separate asyncio loop ticks every 60 s (`reminders.loop()`, started in `main.py` next to housekeeping; every loop — housekeeping, reminders, geocode, inbox, ha_people — is started through the shared Jobs runner, `app/common/housekeeping.py`, in the same order and at the same intervals, and `housekeeping.loop` is built with `housekeeping.periodic()`): it reads due users, prefs, services and the graph in one short connection, closes it, sends to **every** service of the user, then logs `(user, day)` if at least one accepted. A failed send isn't logged, so it's retried each minute while the hour lasts. `reminder_log` rows older than 60 days are pruned daily. At start-up, assigned services Home Assistant can't reach are logged once (`check_targets_blocking`).
 - "Close family" (the shortcut and `scope: close`) is `upcoming.close_family(g, me, 3)` and includes the user's own person.
 - The per-person switch is `remind` in `PersonIn`, **ignored on create** (every new person starts off). A PATCH that changes only `remind` is labelled "Turned reminders on/off for <name>"; several people change in one batch through PUT `/reminders/people` (the Upcoming bell for a couple) and POST `/reminders/close-family` ("Turned reminders on for close family (N people)").
 - Undo compares only the columns an old snapshot knew about, so a batch recorded before `people.remind` existed stays undoable.
@@ -316,8 +324,8 @@ A reminder about someone goes out only when **two switches are on**: the person'
 | Modules (§13.7–13.20) | CRUD `/custom-fields`, `/sources`, `/citations`, `/people/{id}/contacts` · GET `/contacts?scope=` + `/contacts.vcf?ids=` · GET `/media?unsorted=1` + POST `/inbox/scan` · PUT `/events/{id}/tithi` + GET `/tithi/dates?year=` + PUT `/tithi/{eventId}/{year}` (override) · GET `/quiz/next?mode=&player=` + POST `/quiz/answer` · POST `/kidmode/start` · GET `/kidmode` · GET `/kidmode/challenge` · POST `/kidmode/unlock` · admin: DELETE `/kidmode/{deviceId}` · PUT `/me/kid-pin` · GET `/people/related?anchor=&rel=&side=&living=` · POST `/families/quick` · PUT `/media/{id}/edit` · CRUD `/milestones` (admin) |
 | Relationship names | PUT `/me/kin-lang` `{kinLang: en\|te\|hi\|null}` (null = App setting; `/me` returns `kinLang`, `kinLangEffective`, `kinLangApp`) · GET `/kin-terms?lang=te\|hi` → `{items: [{key, meaning, term, note, source, seedTerm}]}` · PUT `/kin-terms/{lang}/{key}` `{term, note}` · DELETE `/kin-terms/{lang}/{key}` (reset) — each a history batch. `relationshipToMe` and GET `/relationship` add `{english, term, termKey, kinKey, meaning, ageUnknown, note}`; `label` is the term when there is one |
 | Sides & search | `sides=true` on GET `/tree` (relative to "me", else the focus; `sideAnchor`) and GET `/tree/all` (relative to "me") adds `side` to cards · GET `/people?side=paternal\|maternal` (needs "me"; `both` counts for either) · GET `/people/related?anchor=&rel=&term=&side=&living=&generation=&gender=` → `{anchor, items: [summary + relationship, english, generation, side]}` · GET `/people/related/parse?q=` → `{anchor, anchorName, rel, gender, side, term, understood}` (422 with a hint) |
-| Whoami | GET `/whoami` → `{haUserId, haUsername, haDisplayName, nameSent, isAdmin, displayNameOnly, adminEntries, mePersonName, notifyLinked, remindersOn, remindPeople, disabled, noAdmin, adminOption}` (counts only; also works for disabled users) |
-| Admin | GET/PUT `/admin/settings` → `{values, defaults, meta: {key: {restartRequired}}, features: [{key, name, label, default, kind, help}], media: {path, online, reason}}` (PUT takes any subset plus `confirm`; 422 for out-of-range, wrong type or unknown keys; 409 for a photo folder that is refused or needs `confirm`, §5.1) · POST `/admin/settings/check-media-path` `{path}` · GET `/admin/users` · GET `/admin/storage` · GET `/admin-storage-download-db` (a zip of `family.db` + media) · POST `/admin-storage-import-db` (validated, re-runs `init_db()`) — §11.1 |
+| Whoami | GET `/whoami` → the shared contract (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`) `{haUserId, haUsername, haDisplayName, nameSent, isAdmin, displayNameOnly, adminEntries, noAdmin, viaIngress, notifyLinked (a bool), extras}` plus the app's `disabled`. Extras: **This is me** (the tree person, or "not set — set it", an action that opens Settings), **Reminders** (shown while Reminders is on, and always to someone turned off), **Account status**. `mePersonName`, `remindersOn`, `remindPeople` and `adminOption` are no longer top-level fields (counts only; also works for disabled users) |
+| Admin | GET/PUT `/admin/settings` → `{values, defaults, meta: {key: {label, help, group, kind, restartRequired, min?, max?, unit?, choices?, showIf?, …}}, groups: [{id, label, help}] (general, map, features, features_regional, features_internet), features: [{key, name, label, default, kind, help}] (kept), media: {path, online, reason}}` (PUT takes any subset plus `confirm`; 422 for out-of-range, wrong type or unknown keys; 409 for a photo folder that is refused or needs `confirm`, §5.1) · POST `/admin/settings/check-media-path` `{path}` · GET `/admin/users` · GET `/admin/storage` · GET `/admin-storage-download-db` (a zip of `family.db` + media) · POST `/admin-storage-import-db` (validated, re-runs `init_db()`) — §11.1 |
 
 ## 11. Frontend
 - **Tree** (the start view). An **hourglass chart**: the focus person in the middle, ancestors above (default 4 generations), and descendants below (3). Partners sit beside each person and siblings can be toggled on.
@@ -339,31 +347,32 @@ A reminder about someone goes out only when **two switches are on**: the person'
 - **Upcoming:** this month and next — birthdays, anniversaries and remembrance, with relationship labels.
 - **Media:** a gallery with a filter by person, upload (drag-and-drop, several files at once), tagging people, and choosing the profile photo.
 - **History** (see §7). **Export** (§13.6.1). **Settings:** "This is me", names and relationships, reminders, milestones, custom fields (admins), the kids-mode PIN, display (theme, typed date order) and the whoami card — each card only while its module is on.
-- **🛡️ Admin**: one sidebar item, shown to admins only, opening `#/admin/settings`. Tabs **App settings** (§3: number fields with range and default; the photo folder with **Check folder**, the result box, the folder in use now with its online state, and a confirm dialog before saving a folder that isn't this tree's; Save), **Users** (enable/disable, set/unset "me"), **Storage** (backup/restore) and **Trash** (§7), deep-linkable as `#/admin/settings|users|storage|trash`; the tab row wraps on phones. The old `#/trash` link redirects to `#/admin/trash`. A non-admin opening any of these sees "Only admins can open this page" (the server answers 403 anyway). Delete confirmations tell non-admins to use Undo/History, since they can't see the trash.
+- **🛡️ Admin**: one sidebar item, shown to admins only, opening `#/admin/settings`. Tabs **App settings** (§3; drawn by `common/settings.js` from `meta` and `groups`: one card per group, a help line with the range and default under each setting, Save / Discard changes with the count of unsaved changes, wrong numbers flagged at the field; module settings show while their feature switch is on, live; the photo folder keeps **Check folder**, the result box, the folder in use now ("In use now") with its online state, and a confirm dialog before saving a folder that isn't this tree's; the map's look-up status under Places map; a confirmation before turning on the places map), **Users** (the shared people list, `common/people.js`: per person the access switch, **This is me**, and the notify editor — Phones, Also, Add, **Send a test**), **Storage** (backup/restore) and **Trash** (§7), deep-linkable as `#/admin/settings|users|storage|trash`; the tab row wraps on phones. The old `#/trash` link redirects to `#/admin/trash`. A non-admin opening any of these sees "Only admins can open this page" (the server answers 403 anyway). Delete confirmations tell non-admins to use Undo/History, since they can't see the trash.
 - **Phone layout:** the sibling apps' bottom icon bar. On phones the tree gets a simplified vertical "family card" mode: parents, then the person, then partners and children, with swipe navigation.
 
 ### 11.1 Features shared with the other apps
-- **Themes.** Four themes defined with CSS variables on `[data-theme]`: **Heritage** (warm sepia on dark, the default), **Slate**, **Daylight** and **Parchment** (light and warm), plus **Auto**, which follows the device's light/dark setting.
-  - Picked in the sidebar footer (and in Settings on phones), and remembered per browser in `localStorage.theme`.
-  - Applied **before first paint** by an external `static/theme-boot.js` (the CSP forbids inline scripts).
+- **Themes.** The household apps' shared themes (`common/themes.css`, CSS variables on `[data-theme]`): **Midnight** (dark, the default; Family Tree keeps its amber accent and own colours in `style.css`), **Slate**, **Daylight**, plus **Auto** (Daylight when the device is light, else Midnight). A saved **Heritage** becomes Midnight and **Parchment** becomes Daylight.
+  - Picked in the sidebar footer (and in Settings on phones) through `HouseholdTheme.bindSelect`, and remembered per browser in `localStorage.theme`.
+  - Applied **before first paint** by the external `static/common/theme-boot.js` (the CSP forbids inline scripts). There is no `static/theme-boot.js` any more.
   - The tree chart reads the same CSS variables, so cards and lines follow the theme. Printing always uses Daylight.
   - The collapsible sidebar is remembered in `localStorage.sidebarCollapsed`.
-- **"How the app sees you" page** (`WHOAMI_PAGE_SPEC.md`), opened from the name chip at the bottom of the sidebar (👤 on phones), for the real signed-in person. It shows:
+- **Shared helpers:** `common/ui.js` (`h()`, `$`, `toast()`, `openModal()` / `confirmDialog()`, `escapeHtml` in `print.js`; `api` via `UI.makeApi` with the `X-Device-Id` header and the reload on 423).
+- **"How the app sees you" page** (`WHOAMI_PAGE_SPEC.md`, drawn by `HouseholdWhoami.panel()` from `common/whoami.js`), opened from the name chip at the bottom of the sidebar (👤 on phones), for the real signed-in person. It shows:
   - user name, user id (with copy buttons) and display name ("not used for matching");
   - **Administrator in this app**, and **Names in `admin_users`** (a count only);
   - family-tree rows: **This is me** (the linked person's name, or "not set" with a link to set it), **Reminders** (how many phones from Home Assistant and extra notify services reach you, whether your reminders are on, and how many people have 🔔 on; how to link your phone in Home Assistant when there are none), and **Account status**.
 
   Advice text explains any mismatch.
 - **Admin export / import** (Storage tab, admins only; routes `admin-storage-download-db` / `admin-storage-import-db`, as in the siblings):
-  - **Export:** `family-tree-backup-YYYYmmdd-HHMMSS.zip` holding a consistent `family.db` snapshot (`sqlite3` backup API), including history and trash. Two choices:
+  - **Export:** `family-tree-backup-YYYYmmdd-HHMMSS.zip` holding a consistent `family.db` snapshot (`sqlite3` backup API, `db.backup_to_file` on `db_core.snapshot`), including history and trash; the zip is built with `backup_core.write_zip` / `walk` and sent by `backup_core.send_file`. Two choices:
     - **Database only** (the default, small): every record, but no photo files. The photos stay safe on the share.
     - **Database + media** (large, streamed): also every file from `media_path`, for a complete copy or a move to another HA.
-  - **Import:** upload a zip. It is validated before anything is touched: the zip layout, no path traversal, `PRAGMA integrity_check`, the required tables, and any included media files of allowed types. Then it replaces the database, writes any included media to `media_path`, re-runs `init_db()`, and logs a history entry "Restored from backup".
+  - **Import:** upload a zip. It is validated before anything is touched: the zip layout, no path traversal (`backup_core.check_members`), `PRAGMA integrity_check` and the required tables (`db.validate_db_file` on `db_core.validate_file`), and any included media files of allowed types. Then it replaces the database (`db.replace_db` = `backup_core.restore_file`, which swaps it in and re-runs `init_db()`), writes any included media to `media_path` (`backup_core.copy_out`), and logs a history entry "Restored from backup".
   - A database-only restore is fine when the photos are still on the share. Media the database references but can't find is reported ("37 photos missing") and shown as placeholders, but doesn't block the restore.
   - The Storage tab notes that a website export is **not** a backup (no history, only the details you chose).
 
 ## 12. Tests
-`tests/` (unittest, `TestClient(app, client=("127.0.0.1", 12345))`; `python -m unittest discover -p "test_*.py"` from `tests/`). The test base switches every feature on unless a class sets `ALL_FEATURES = False`. Fixtures are invented data.
+`tests/` (unittest, `TestClient(app, client=("127.0.0.1", 12345))`; `python -m unittest discover -p "test_*.py"` from `tests/`). `_env.py` is built on `common_tests/env.py`; the fake Home Assistant is `common_tests/fake_ha.py`; `tests/common_tests/` (copies) also runs `test_shared_copies.py` and the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin, web_security, backup_core, geo). The test base switches every feature on unless a class sets `ALL_FEATURES = False`. Fixtures are invented data.
 - Dates: parsing, formatting and sort keys for every qualifier, plus 29 February; year-less dates (accepted and rejected combinations, sorting, "age unknown", the living rule); time of birth and death.
 - Relationships: a table of known kinships up to third cousins twice removed, half-relatives and in-laws; kin keys and terms (§13.1); sides (§13.16); relationship search (§13.17).
 - Loop rejection, and undo/redo including conflicts (409); trash and purge.
@@ -374,7 +383,7 @@ A reminder about someone goes out only when **two switches are on**: the person'
 - Tithi and milestones against published panchangam dates; the quiz and kids mode; duplicates and merge; custom fields, sources and contacts/vCard; the places map against a fake Nominatim.
 - App settings: admin-only, validation, applied at once, restore behaviour.
 - Feature switches (`test_features.py`): new-install defaults, the existing-data rule (migration and restored backup), a stored value wins, the old map/inbox settings carry over, each module's UI data and API hidden while off (404 with `featureOff`), background jobs skip, exports leave switched-off data out, switching back on restores everything; the "No admin yet" flag and banner.
-- Packaging (`test_packaging.py`): `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options = schema = translations, empty defaults), every `?v=` equals the version, README/DOCS present and free of release notes, a CHANGELOG.md with `# Changelog` and its newest (top) version heading equal to the config.yaml version, `spec/` present, icon 128×128 and logo 250×100, and a scan of every text file for personal details.
+- Packaging (`test_packaging.py`, the shared checks from `common_tests/packaging_core.py`): `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options = schema = translations, empty defaults), every `?v=` equals the version, README/DOCS present and free of release notes, a CHANGELOG.md with `# Changelog` and its newest (top) version heading equal to the config.yaml version, `spec/` present, icon 128×128 and logo 250×100, and a scan of every text file for personal details.
 - Tree payload limits, and API permissions (disabled users 403, admin-only routes).
 
 ## 13. Modules
@@ -434,7 +443,7 @@ ALTER TABLE people ADD COLUMN photo_region_id TEXT REFERENCES media_regions(id) 
   - `map_tiles_url` defaults to `https://tile.openstreetmap.org/{z}/{x}/{y}.png`; the attribution is shown.
   - `nominatim_url` defaults to `https://nominatim.openstreetmap.org`.
   - The CSP is widened only for those two hosts when the map is on.
-- **Geocoding.** Unique place strings from events are geocoded in the background with the **same approach as Household Todo's drive-time geocoder**: throttled to 1 request per second, one place per tick, retried with the unit stripped, and cached.
+- **Geocoding.** Unique place strings from events are geocoded in the background with the **same approach as Household Todo's drive-time geocoder**: throttled to 1 request per second, one place per tick, retried with the unit stripped, and cached. The throttle (`geo.Throttle`), the Nominatim search URL / first hit and the HTTP fetch are the shared `app/common/geo.py`; `geocode.py` keeps its User-Agent, queries, retries, cache table, timeouts and errors.
   - Anyone can correct a pin by dragging it, which pins it for that place string.
   - Only the place text is sent; no names or dates.
 ```sql
@@ -541,7 +550,7 @@ ALTER TABLE users ADD COLUMN export_last TEXT;  -- JSON {format: options}
   - **`people/<name>-<shortid>.html`:** one page per person with the photo, names, dates, relationship label, parents, partners and children (all linked), a timeline, stories and a gallery, in each case only what the options allow.
   - **`people.html`** (A–Z with search), **`surnames.html`**, and optionally **`places.html`** (a list of places with who was born, married, lived or died there; no online map, so it stays offline).
 - **Assets:** `assets/site.css`, `assets/site.js`, `assets/tree.js`, and `assets/data.js`, which holds the tree as `window.TREE = {…}`. It is a script rather than JSON because browsers block `fetch()` from `file://`. Media go in `media/` at the size chosen.
-- **Website extras in the dialog:** title, intro text, home person (defaults to "me"), cover photo, theme (Heritage, Slate, Daylight, Parchment or Auto; visitors can switch too), and which pages to include.
+- **Website extras in the dialog:** title, intro text, home person (defaults to "me"), cover photo, theme (Heritage, Slate, Daylight, Parchment or Auto; visitors can switch too), and which pages to include. The website keeps these themes (unlike the app, §11.1); their colours live in `app/site_assets/site_themes.css` instead of being cut from `static/style.css`.
 - **Safety:**
   - No external requests: no fonts, CDNs, analytics or map tiles. Every page carries a strict CSP `<meta>` tag, and all text is HTML-escaped.
   - There's **no password protection**, since a static site can't enforce one. Anyone with the files can read everything in them. The dialog says so, and makes you confirm again when *Living people: full* is combined with the website format.
@@ -783,3 +792,10 @@ ALTER TABLE people ADD COLUMN never_export INTEGER NOT NULL DEFAULT 0;
 ## 14. Possible future work
 - **GEDCOM import and export** (5.5.1 `.ged` in UTF-8/UTF-16/ANSEL, 7.0 `.ged`/`.gdz` with media) through the same Export options, with a preview step, *empty* / *append* / *merge* (matched with the duplicate scorer, §13.4) import modes as one undoable batch, and mappings for the modules: photo regions as `OBJE`/`CROP`, script names as `NAME`/`TRAN` (7.0) or an extra `NAME` with `_LANG` (5.5.1), custom fields as `FACT`/`TYPE`, sources as `SOUR`/`PAGE`/`QUAY`, tithis as a `_TITHI` extension tag, ceremonies as `EVEN`/`TYPE`, and year-less dates as date phrases. The `gedcom_id` / `gedcom_extra` columns are reserved for it.
 - **HEIC uploads** converted to JPEG on the server.
+
+## Security notes (2026-10)
+
+From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
+
+- **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
+- **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass.

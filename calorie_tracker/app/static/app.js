@@ -29,36 +29,25 @@ function withUser(path) {
 // own frontend at the domain root instead of this app — which returns
 // its own unrelated 404. Stripping the leading slash makes every request
 // relative to the current page, which keeps it under the ingress prefix.
-async function api(path, opts = {}) {
-  const relPath = path.replace(/^\//, "");
-  const res = await fetch(relPath, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
-  if (!res.ok) {
-    let msg = res.statusText;
-    try { const j = await res.json(); msg = j.detail || msg; } catch (e) {}
-    throw new Error(msg);
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
+// api(path, fetchOptions): the options go to fetch() as they are (callers JSON.stringify their own bodies).
+const api = UI.makeApi({
+  init: (opts) => ({ headers: { "Content-Type": "application/json" }, ...opts }),
+  networkError: null,
+  message: (body, res) => (body && body.detail) || res.statusText,
+  makeError: (msg) => new Error(msg),
+});
 
 function fmt(n) {
   if (n === null || n === undefined || isNaN(n)) return "0";
   return Math.round(n * 10) / 10;
 }
 
-function $(sel) { return document.querySelector(sel); }
+const $ = (sel) => UI.$(sel);
 function $all(sel) { return document.querySelectorAll(sel); }
 
-// Escapes all five HTML-significant characters, quotes included: several
-// templates put user text inside attribute values (title="…", data-copy="…"),
-// and the textContent → innerHTML trick leaves " and ' unescaped, which would
-// let a saved-food note break out of its title attribute and run script.
-function escapeHtml(str) {
-  return String(str ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
+// Escapes all five HTML-significant characters, quotes included (common/ui.js): several
+// templates put user text inside attribute values (title="…", data-copy="…").
+const escapeHtml = UI.escapeHtml;
 
 // ---------- "enlarge" popup for long details/notes text ----------
 function openDetailsModal(title, text) {
@@ -103,50 +92,23 @@ function bindEnlargeButtons(root) {
   });
 }
 
-// ---------- theme switcher ----------
-// The bootstrap <script> in <head> already applied any saved theme before
-// this file even loaded (beating first paint); this just wires the
-// <select> to reflect + change it.
-(function () {
-  const select = document.getElementById("theme-select");
-  if (!select) return;
-  const current = document.documentElement.getAttribute("data-theme") || "midnight";
-  select.value = current;
-  select.addEventListener("change", () => {
-    const theme = select.value;
-    document.documentElement.setAttribute("data-theme", theme);
-    try { localStorage.setItem("theme", theme); } catch (e) { /* ignore */ }
-  });
-})();
-
-// ---------- sidebar collapse ----------
-// Same before-first-paint trick as the theme: the bootstrap <script> in
-// <head> already applied any saved collapsed state via
-// [data-sidebar="collapsed"] on <html>; this just wires the toggle button
-// and keeps its arrow direction/label in sync.
+// ---------- theme switcher and sidebar collapse ----------
+// common/theme-boot.js (in <head>) already applied the saved theme and the
+// collapsed state before first paint; this wires the <select> and the toggle.
+HouseholdTheme.bindSelect(document.getElementById("theme-select"));
 (function () {
   const btn = document.getElementById("sidebarCollapseBtn");
   if (!btn) return;
 
-  function isCollapsed() {
-    return document.documentElement.getAttribute("data-sidebar") === "collapsed";
-  }
-
   function syncButton() {
-    const collapsed = isCollapsed();
+    const collapsed = HouseholdTheme.sidebarCollapsed();
     btn.textContent = collapsed ? "›" : "‹";
     btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
     btn.setAttribute("aria-label", btn.title);
   }
 
   btn.addEventListener("click", () => {
-    const collapsed = !isCollapsed();
-    if (collapsed) {
-      document.documentElement.setAttribute("data-sidebar", "collapsed");
-    } else {
-      document.documentElement.removeAttribute("data-sidebar");
-    }
-    try { localStorage.setItem("sidebarCollapsed", collapsed ? "1" : "0"); } catch (e) { /* ignore */ }
+    HouseholdTheme.setSidebarCollapsed(!HouseholdTheme.sidebarCollapsed());
     syncButton();
   });
 
@@ -276,45 +238,15 @@ async function loadWhoami() {
   const body = $("#whoamiBody");
   let w;
   try { w = await api("/api/whoami"); }
-  catch (e) { body.innerHTML = `<p class="hint">${escapeHtml(e.message)}</p>`; return; }
-
-  const name = w.nameSent ? w.haUsername : null;
-  const yn = v => `<strong>${v ? "Yes" : "No"}</strong>`;
-  const copyBtn = text => text
-    ? `<button type="button" class="btn-secondary kv-copy" data-copy="${escapeHtml(text)}" title="Copy" aria-label="Copy">⧉</button>` : "";
-  const row = (label, value, copy) =>
-    `<div class="kv-row"><div class="kv-label">${label}</div><div class="kv-value">${value}${copyBtn(copy)}</div></div>`;
-
-  let advice;
-  if (w.isAdmin) {
-    advice = "You are an administrator.";
-  } else if (w.displayNameOnly) {
-    advice = `Your <strong>display name</strong> is in the <code>admin_users</code> list, but display names aren't accepted there (anyone could share or take a name). Replace it with <strong>${escapeHtml(name || w.haUserId)}</strong> (or <strong>${escapeHtml(w.haUserId)}</strong>), save, and <strong>restart</strong> the app.`;
-  } else if (w.adminEntries === 0) {
-    advice = `The <code>admin_users</code> list is <strong>empty</strong> in the running app. If you have filled it in, the app hasn't picked it up yet: changes on the app's Configuration tab only take effect after it is <strong>restarted</strong> (Settings → Apps → Calorie Tracker → Information tab → Restart).`;
-  } else {
-    const n = w.adminEntries;
-    advice = `Neither your user name nor user id above matches any of the ${n} name${n === 1 ? "" : "s"} in the <code>admin_users</code> list. Add <strong>${escapeHtml(name || w.haUserId)}</strong> (or <strong>${escapeHtml(w.haUserId)}</strong>) exactly as shown, save, and <strong>restart</strong> the app — the list is only read when the app starts. Upper and lower case don't matter.`;
-  }
-
-  body.innerHTML =
-    `<div class="kv">` +
-      row("User name (sent by Home Assistant)", escapeHtml(name || "not sent"), name) +
-      row("User id (sent by Home Assistant)", `<code>${escapeHtml(w.haUserId)}</code>`, w.haUserId) +
-      row("Display name (not used for matching)", escapeHtml(w.haDisplayName)) +
-      row("Administrator in this app", yn(w.isAdmin)) +
-      row("Names in the app's admin_users", String(w.adminEntries)) +
-    `</div>` +
-    `<p class="hint">${advice}</p>`;
-
-  body.querySelectorAll("[data-copy]").forEach(btn => btn.addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "✓"; setTimeout(() => { btn.textContent = "⧉"; }, 1200); }
-    catch (e) { /* clipboard unavailable (insecure context) — the value is on screen to copy by hand */ }
+  catch (e) { body.replaceChildren(Object.assign(document.createElement("p"), { className: "hint", textContent: e.message })); return; }
+  // common/whoami.js: the same rows and wording as every other app
+  body.replaceChildren(HouseholdWhoami.panel(w, {
+    appName: "Calorie Tracker",
+    classes: { copy: "btn-secondary kv-copy" },
   }));
 }
 
 $("#sidebarUser").addEventListener("click", openWhoami);
-$("#noAdminWhoamiLink").addEventListener("click", openWhoami);
 $("#whoamiBtn").addEventListener("click", openWhoami);
 
 // ---------- current user (from Home Assistant, read-only) ----------
@@ -333,8 +265,8 @@ async function loadMe() {
     $('.tab-btn[data-tab="admin"]').hidden = !state.isAdmin;
     // First run: nobody is an admin yet, so nobody could open App settings.
     // Everyone sees how to fix it (never auto-promoted).
-    $("#noAdminName").textContent = me.username || me.id;
-    $("#noAdminBanner").hidden = !me.no_admins;
+    HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), me.noAdmin, me.username || me.id,
+      { onOpen: openWhoami, linkId: "noAdminWhoamiLink" });
   } catch (e) {
     $("#sidebarUser").textContent = "Not signed in";
     document.body.innerHTML = `<div style="padding:40px;font-family:sans-serif;color:#e7ecf5;background:#10151c;min-height:100vh;">
@@ -372,37 +304,26 @@ $("#userSelect").addEventListener("change", async (e) => {
   await refreshAll();
 });
 
+// The shared people list (common/people.js): each person with their switcher on/off switch.
 function renderUsersTab() {
-  const list = $("#usersList");
-  if (allUsers.length === 0) {
-    list.innerHTML = `<p class="hint">No one else has opened this app yet.</p>`;
-    return;
-  }
-  list.innerHTML = allUsers.map(u => `
-    <div class="user-row">
-      <span class="name">${escapeHtml(u.name)}${u.id === state.selfId ? '<span class="you-badge">YOU</span>' : ""}</span>
-      <label class="toggle-switch" title="${u.enabled ? "Enabled — visible in switcher" : "Disabled — hidden from switcher"}">
-        <input type="checkbox" data-id="${u.id}" ${u.enabled ? "checked" : ""}>
-        <span class="track"><span class="thumb"></span></span>
-      </label>
-    </div>
-  `).join("");
-
-  $all('.user-row input[type=checkbox]').forEach(input => {
-    input.addEventListener("change", async (e) => {
-      const id = e.target.dataset.id;
-      const enabled = e.target.checked;
-      try {
-        await api(`/api/users/${encodeURIComponent(id)}`, {
-          method: "PUT",
-          body: JSON.stringify({ enabled }),
-        });
-        await loadUsers();
-      } catch (err) {
-        alert("Could not update user: " + err.message);
-        e.target.checked = !enabled;
-      }
-    });
+  PeoplePage.render($("#usersList"), {
+    people: allUsers,
+    cardClass: "",
+    empty: "No one else has opened this app yet.",
+    person: (u) => ({
+      badges: [u.id === state.selfId ? ["you"] : null],
+      controls: h("label", { class: "pp-toggle", title: u.enabled ? "Enabled — visible in switcher" : "Disabled — hidden from switcher" },
+        u.enabled ? "Enabled" : "Disabled",
+        PeoplePage.accessSwitch(u.enabled, async (enabled, input) => {
+          try {
+            await api(`/api/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ enabled }) });
+            await loadUsers();
+          } catch (err) {
+            alert("Could not update user: " + err.message);
+            input.checked = !enabled;
+          }
+        }, { label: `${u.name} in the switcher` })),
+    }),
   });
 }
 
@@ -1524,7 +1445,9 @@ async function refreshAll() {
 }
 
 // ---------- admin: App settings ----------
-let savedSettings = null;
+// Drawn by common/settings.js from GET /api/admin/settings (labels, help, limits and defaults come from
+// the server). This app adds the AI notice, "Test connection", and the provider/address behaviour.
+const h = UI.h;
 
 function setStatus(el, text, kind) {
   el.textContent = text;
@@ -1532,112 +1455,89 @@ function setStatus(el, text, kind) {
   el.classList.toggle("err", kind === "err");
 }
 
-let providerInfo = {};
-
-function urlPlaceholder(provider) {
-  return (providerInfo[provider] && providerInfo[provider].defaultUrl) || "http://192.168.1.10:11434";
+function urlPlaceholder(page, provider) {
+  const info = (page.data.providers || {})[provider];
+  return (info && info.defaultUrl) || "http://192.168.1.10:11434";
 }
 
-function renderAppSettings(s) {
-  savedSettings = s.values;
-  providerInfo = s.providers || {};
-  $("#setAiProvider").value = s.values.ai_provider;
-  $("#setAiUrl").value = s.values.ai_url;
-  $("#setAiUrl").placeholder = urlPlaceholder(s.values.ai_provider);
-  $("#setAiModel").value = s.values.ai_model;
-  $("#setAiMaxTokens").value = s.values.ai_max_tokens;
-  $("#setExposeSensor").checked = !!s.values.expose_daily_calories_sensor;
-  // The key itself never comes back from the server — only whether one is saved.
-  const key = (s.secrets && s.secrets.ai_api_key) || {};
-  $("#setAiApiKey").value = "";
-  $("#setAiApiKey").placeholder = key.saved ? `A key is saved (${key.hint}) — type a new one to replace it` : "Paste the key";
-  $("#setAiClearKey").checked = false;
-  $("#setAiClearKeyRow").hidden = !key.saved;
-  $("#setAiMaxTokensDefault").textContent = `Default: ${s.defaults.ai_max_tokens}.`;
-  $("#setExposeSensorDefault").textContent = `Default: ${s.defaults.expose_daily_calories_sensor ? "on" : "off"}.`;
-}
-
-async function loadAppSettings() {
-  setStatus($("#settingsSaveStatus"), "", null);
-  setStatus($("#settingsTestStatus"), "", null);
-  try {
-    renderAppSettings(await api("/api/admin/settings"));
-  } catch (e) {
-    setStatus($("#settingsSaveStatus"), "Could not load settings: " + e.message, "err");
-  }
-  refreshAiStatus();
-}
-
-function settingsFormValues() {
-  const maxTokens = parseInt($("#setAiMaxTokens").value, 10);
+// What "Test connection" sends: what's typed on the page, saved or not (an empty key box = the saved key).
+function settingsFormValues(page) {
+  const maxTokens = page.value("ai_max_tokens");
   const body = {
-    ai_provider: $("#setAiProvider").value,
-    ai_url: $("#setAiUrl").value.trim(),
-    ai_model: $("#setAiModel").value.trim(),
-    ai_max_tokens: Number.isFinite(maxTokens) ? maxTokens : (savedSettings ? savedSettings.ai_max_tokens : 4096),
-    expose_daily_calories_sensor: $("#setExposeSensor").checked,
+    ai_provider: page.value("ai_provider"),
+    ai_url: page.value("ai_url"),
+    ai_model: page.value("ai_model"),
+    ai_max_tokens: Number.isInteger(maxTokens) ? maxTokens : page.values.ai_max_tokens,
+    expose_daily_calories_sensor: page.value("expose_daily_calories_sensor"),
   };
-  const key = $("#setAiApiKey").value.trim();
-  if (key) body.ai_api_key = key;                    // empty box = keep the saved key
-  if ($("#setAiClearKey").checked) body.clear_ai_api_key = true;
+  if (page.edits.ai_api_key) body.ai_api_key = page.edits.ai_api_key;   // empty box = keep the saved key
+  if (page.extra.clear_ai_api_key) body.clear_ai_api_key = true;
   return body;
 }
 
-// Another provider's address would be wrong for this one: start blank (= its
-// standard address), and bring back the saved address when switching back.
-$("#setAiProvider").addEventListener("change", () => {
-  const p = $("#setAiProvider").value;
-  $("#setAiUrl").value = savedSettings && p === savedSettings.ai_provider ? savedSettings.ai_url : "";
-  $("#setAiUrl").placeholder = urlPlaceholder(p);
-});
-
-// A result shown for the old values would be misleading once the form changes.
-["#setAiProvider", "#setAiUrl", "#setAiModel", "#setAiApiKey", "#setAiClearKey", "#setAiMaxTokens", "#setExposeSensor"]
-  .forEach(sel => $(sel).addEventListener("input", () => {
-    setStatus($("#settingsSaveStatus"), "", null);
-    setStatus($("#settingsTestStatus"), "", null);
-  }));
-
-$("#settingsSaveBtn").addEventListener("click", async () => {
-  const btn = $("#settingsSaveBtn");
-  const status = $("#settingsSaveStatus");
-  btn.disabled = true;
-  setStatus(status, "Saving…", null);
-  try {
-    const before = savedSettings;
-    const s = await api("/api/admin/settings", { method: "PUT", body: JSON.stringify(settingsFormValues()) });
-    renderAppSettings(s);
-    let msg = "✓ Saved. Changes apply right away.";
-    const expose = s.values.expose_daily_calories_sensor;
-    if (before && before.expose_daily_calories_sensor !== expose) {
-      msg += expose
-        ? " Publishing everyone's daily-calories sensor to Home Assistant now."
-        : " Removing the daily-calories sensors from Home Assistant now.";
+function aiTestBlock(page) {
+  const status = h("div", { id: "settingsTestStatus", class: "hint settings-status", role: "status" });
+  const btn = h("button", { type: "button", id: "settingsTestBtn", class: "btn-secondary" }, "🔌 Test connection");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    setStatus(status, "Asking the provider which models it offers…", null);
+    try {
+      // Tests what's in the form, even if it isn't saved yet.
+      const r = await api("/api/admin/settings/test-ai", { method: "POST", body: JSON.stringify(settingsFormValues(page)) });
+      setStatus(status, (r.ok ? "✓ " : "✗ ") + r.message, r.ok ? "ok" : "err");
+    } catch (e) {
+      setStatus(status, "✗ " + e.message, "err");
+    } finally {
+      btn.disabled = false;
     }
-    setStatus(status, msg, "ok");
-    refreshAiStatus();
-  } catch (e) {
-    setStatus(status, "Not saved: " + e.message, "err");
-  } finally {
-    btn.disabled = false;
-  }
-});
+  });
+  return [btn,
+    h("p", { class: "hint", style: "margin:6px 0 0" }, "Uses what's typed above, before saving (an empty key box uses the saved key). Only asks the provider which models it offers — nothing is generated, so it costs nothing."),
+    status];
+}
 
-$("#settingsTestBtn").addEventListener("click", async () => {
-  const btn = $("#settingsTestBtn");
-  const status = $("#settingsTestStatus");
-  btn.disabled = true;
-  setStatus(status, "Asking the provider which models it offers…", null);
+async function loadAppSettings() {
+  const box = $("#appSettingsBox");
   try {
-    // Tests what's in the form, even if it isn't saved yet.
-    const r = await api("/api/admin/settings/test-ai", { method: "POST", body: JSON.stringify(settingsFormValues()) });
-    setStatus(status, (r.ok ? "✓ " : "✗ ") + r.message, r.ok ? "ok" : "err");
+    await SettingsPage.render(box, {
+      load: () => api("/api/admin/settings"),
+      save: (body) => api("/api/admin/settings", { method: "PUT", body: JSON.stringify(body) }),
+      groups: { ai: { top: () => h("div", { class: "ai-notice", hidden: true }), bottom: aiTestBlock } },
+      footer: () => h("p", null, "Changes apply right away — no restart needed. Only who counts as an admin is set in the app's Configuration tab (",
+        h("code", null, "admin_users"), ")."),
+      saveLabel: "Save settings",
+      onChange: (key, value, page) => {
+        // A result shown for the old values would be misleading once the form changes.
+        const test = $("#settingsTestStatus");
+        if (test) setStatus(test, "", null);
+        // Another provider's address would be wrong for this one: start blank (= its
+        // standard address), and bring back the saved address when switching back.
+        if (key === "ai_provider") {
+          const input = page.row("ai_url").querySelector("input");
+          input.value = value === page.values.ai_provider ? page.values.ai_url : "";
+          input.placeholder = urlPlaceholder(page, value);
+          page.set("ai_url", input.value);
+        }
+      },
+      afterSave: (data, body, page) => {
+        let msg = "✓ Saved. Changes apply right away.";
+        if ("expose_daily_calories_sensor" in body) {
+          msg += data.values.expose_daily_calories_sensor
+            ? " Publishing everyone's daily-calories sensor to Home Assistant now."
+            : " Removing the daily-calories sensors from Home Assistant now.";
+        }
+        refreshAiStatus();
+        return msg;
+      },
+      afterDraw: (page) => {
+        page.row("ai_url").querySelector("input").placeholder = urlPlaceholder(page, page.values.ai_provider);
+      },
+    });
   } catch (e) {
-    setStatus(status, "✗ " + e.message, "err");
-  } finally {
-    btn.disabled = false;
+    UI.mount(box, h("p", { class: "hint settings-status err" }, "Could not load settings: " + e.message));
   }
-});
+  refreshAiStatus();
+}
 
 // ---------- admin: restore database from backup ----------
 (function () {

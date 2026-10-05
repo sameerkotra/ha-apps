@@ -33,141 +33,100 @@ const Admin = (() => {
   // =====================================================================
   // App settings
   // =====================================================================
+  // Drawn by common/settings.js from the server's description of each setting; this app adds the game
+  // switches, school days, holidays, who gets limit warnings and the AI "Test connection".
+  function spSwitch(checked, onChange, label, id) {
+    const input = h("input", { type: "checkbox", role: "switch", id, checked: !!checked, "aria-label": label });
+    input.addEventListener("change", () => onChange(input.checked));
+    return h("label", { class: "sp-switch", title: label }, input, h("span", { class: "sp-track" }, h("span", { class: "sp-thumb" })));
+  }
+
   async function renderSettings(box) {
     mount(box, spinner());
     let data, hol;
     try { [data, hol] = await Promise.all([api("api/admin/settings"), api("api/admin/holidays")]); }
     catch (e) { mount(box, errorCard(e, () => renderSettings(box))); return; }
-    const saved = JSON.parse(JSON.stringify(data.values));
-    const cur = JSON.parse(JSON.stringify(data.values));
-    const err = h("div", { class: "error-text", id: "settingsError", role: "alert" });
-    const saveBtn = h("button", { class: "btn-primary", type: "button", id: "saveSettings", disabled: true }, "Save");
-    const revertBtn = h("button", { class: "btn-ghost", type: "button", disabled: true, onclick: () => renderSettings(box) }, "Discard changes");
-    const extra = {};          // secrets to clear (an empty value is otherwise "unchanged")
-    const changes = () => {
-      const out = {};
-      for (const k of Object.keys(cur)) if (JSON.stringify(cur[k]) !== JSON.stringify(saved[k])) out[k] = cur[k];
-      return Object.assign(out, extra);
-    };
-    const dirty = () => { const n = Object.keys(changes()).length > 0; saveBtn.disabled = !n; revertBtn.disabled = !n; };
-    const set = (k, v) => { cur[k] = v; dirty(); };
-    const row = (label, sub, control, id) => h("div", { class: "setting-row", id: id || null },
-      h("div", null, h("div", null, label), sub ? h("div", { class: "sub" }, sub) : null), control);
-    const sw = (k, label) => { const w = toggleSwitch(cur[k], (v) => set(k, v), { label }); w.querySelector("input").id = "set-" + k; return w; };
-
-    // games
-    const gameRows = data.games.map((g) => {
-      const w = toggleSwitch(!cur.disabled_games.includes(g.id), (on) => {
-        const off = new Set(cur.disabled_games);
-        if (on) off.delete(g.id); else off.add(g.id);
-        set("disabled_games", data.games.map((x) => x.id).filter((id) => off.has(id)));
-      }, { label: g.name });
-      w.querySelector("input").id = "set-game-" + g.id;
-      return row(g.name, null, w);
+    const gameIds = data.games.map((x) => x.id);
+    await SettingsPage.render(box, {
+      data,
+      load: () => api("api/admin/settings"),
+      save: (body) => api("api/admin/settings", { method: "PUT", body }),
+      fields: {
+        disabled_games: { render: (page) => h("div", { class: "sp-games" }, data.games.map((g) => h("div", { class: "sp-field sp-bool" },
+          h("div", { class: "sp-text" }, h("label", { for: "set-game-" + g.id }, g.name)),
+          spSwitch(!page.value("disabled_games").includes(g.id), (on) => {
+            const off = new Set(page.value("disabled_games"));
+            if (on) off.delete(g.id); else off.add(g.id);
+            page.set("disabled_games", gameIds.filter((id) => off.has(id)));
+          }, g.name, "set-game-" + g.id)))) },
+        school_days: {
+          control: (page) => h("div", { class: "weekday-buttons", id: "schoolDays", role: "group", "aria-label": "School days" },
+            DAYS.map(([n, letter, name]) => {
+              const on = page.value("school_days").includes(n);
+              const b = h("button", { type: "button", class: on ? "on" : "", title: name, "aria-label": name, "aria-pressed": on ? "true" : "false", dataset: { day: String(n) } }, letter);
+              b.addEventListener("click", () => {
+                const set = new Set(page.value("school_days"));
+                if (set.has(n)) set.delete(n); else set.add(n);
+                b.classList.toggle("on", set.has(n)); b.setAttribute("aria-pressed", set.has(n) ? "true" : "false");
+                page.set("school_days", [...set].sort((x, y) => x - y));
+              });
+              return b;
+            })),
+          after: () => holidaysBlock(hol.holidays),
+        },
+        limit_warning_admins: {
+          control: (page) => h("div", { class: "check-list", id: "warnAdmins" }, data.admins.length ? data.admins.map((a) => {
+            const box_ = h("input", { type: "checkbox", checked: page.value("limit_warning_admins").includes(a.id), dataset: { id: a.id } });
+            box_.addEventListener("change", () => {
+              const set = new Set(page.value("limit_warning_admins"));
+              if (box_.checked) set.add(a.id); else set.delete(a.id);
+              page.set("limit_warning_admins", data.admins.map((x) => x.id).filter((id) => set.has(id)));
+            });
+            return h("label", null, box_, a.name);
+          }) : h("span", { class: "hint" }, "Admins appear here after they have opened the app once.")),
+        },
+        ai_model: {
+          control: (page) => {
+            const input = h("input", { type: "text", id: "set-ai_model", value: page.value("ai_model"), list: "aiModels", spellcheck: "false",
+              maxlength: "200", placeholder: "e.g. a model you have pulled" });
+            input.addEventListener("input", () => page.set("ai_model", input.value.trim()));
+            return h("span", { class: "sp-inline" }, input, h("datalist", { id: "aiModels" }));
+          },
+        },
+        ai_max_output_tokens: { after: (page) => aiTestBlock(page) },
+      },
+      groups: {
+        children: { top: () => h("div", { class: "hint" }, "Mark a person as a child and set their limits on ",
+          h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "users" }) }, "Users"), ".") },
+        ha: { bottom: () => [data.hasToken ? null : h("div", { class: "hint warn" }, "This app can't reach Home Assistant right now (no Supervisor token), so sensors and notifications can't be sent."),
+          h("div", { class: "hint" }, `Days and times use Home Assistant's time zone (${data.timeZone}).`)] },
+        ai: { top: () => h("div", { class: "hint" }, h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "levels" }) }, "See the levels"),
+          " · ", h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "ai" }) }, "AI usage")) },
+      },
+      onChange: (key, value, page) => { if (key === "ai_provider") urlPlaceholder(page); },
+      afterDraw: (page) => urlPlaceholder(page),
+      afterSave: async () => { await refreshMe(); await refreshGames(); return "Settings saved"; },
+      toast: (msg) => toast(msg),
     });
-    const lookSel = h("select", { id: "set-default_look", "aria-label": "Default look", value: cur.default_look },
-      data.looks.map((l) => h("option", { value: l.id }, l.label)));
-    lookSel.addEventListener("change", () => set("default_look", lookSel.value));
-    const keepSel = h("select", { id: "set-keep_scores_years", "aria-label": "Keep scores for", value: String(cur.keep_scores_years) },
-      KEEP.map(([v, l]) => h("option", { value: String(v) }, l)));
-    keepSel.addEventListener("change", () => set("keep_scores_years", Number(keepSel.value)));
-    const hintsIn = h("input", { type: "number", id: "set-sudoku_hints", min: "0", max: "20", step: "1", value: String(cur.sudoku_hints), "aria-label": "Sudoku hints per puzzle" });
-    hintsIn.addEventListener("input", () => { const n = Number(hintsIn.value); if (hintsIn.value !== "" && Number.isInteger(n) && n >= 0 && n <= 20) set("sudoku_hints", n); });
-    const days = h("div", { class: "weekday-buttons", id: "schoolDays", role: "group", "aria-label": "School days" },
-      DAYS.map(([n, letter, name]) => {
-        const b = h("button", { type: "button", class: cur.school_days.includes(n) ? "on" : "", title: name, "aria-label": name,
-          "aria-pressed": cur.school_days.includes(n) ? "true" : "false", dataset: { day: String(n) } }, letter);
-        b.addEventListener("click", () => {
-          const s = new Set(cur.school_days);
-          if (s.has(n)) s.delete(n); else s.add(n);
-          b.classList.toggle("on", s.has(n)); b.setAttribute("aria-pressed", s.has(n) ? "true" : "false");
-          set("school_days", [...s].sort((a, b2) => a - b2));
-        });
-        return b;
-      }));
-    const adminChecks = h("div", { class: "check-list", id: "warnAdmins" }, data.admins.length ? data.admins.map((a) => {
-      const box_ = h("input", { type: "checkbox", checked: cur.limit_warning_admins.includes(a.id), dataset: { id: a.id } });
-      box_.addEventListener("change", () => {
-        const s = new Set(cur.limit_warning_admins);
-        if (box_.checked) s.add(a.id); else s.delete(a.id);
-        set("limit_warning_admins", data.admins.map((x) => x.id).filter((id) => s.has(id)));
-      });
-      return h("label", null, box_, a.name);
-    }) : h("span", { class: "hint" }, "Admins appear here after they have opened the app once."));
-
-    saveBtn.addEventListener("click", async () => {
-      err.textContent = "";
-      saveBtn.disabled = true;
-      try { await api("api/admin/settings", { method: "PUT", body: changes() }); toast("Settings saved"); await refreshMe(); await refreshGames(); renderSettings(box); }
-      catch (e) { err.textContent = e.message; saveBtn.disabled = false; }
-    });
-
-    mount(box,
-      h("div", { class: "card" }, h("h3", null, "Games"), h("div", { class: "hint" }, "A game that's off is hidden; its scores are kept."), gameRows,
-        row("Brick Breaker power-ups", "Off: only Classic play (no wider paddle, slower ball, extra ball or extra life).", sw("brick_powerups", "Brick Breaker power-ups")),
-        row("Sudoku hints per puzzle", "How many hints a ranked Sudoku allows (0 = none). Practice always has as many as you like. Each hint adds 30 seconds.", hintsIn),
-        row("Show daily challenges", "Off by default. On: Home shows three games with the same puzzle for everyone each day, one ranked try each. Turning it off hides them and keeps the scores.", sw("show_daily_challenges", "Show daily challenges"))),
-      h("div", { class: "card" }, h("h3", null, "Looks and scores"),
-        row("Default look", "For everyone who hasn't picked their own on Settings.", lookSel),
-        row("Leaderboard", "Off: only personal bests are shown.", sw("leaderboard", "Leaderboard")),
-        row("Keep scores for", "Older games are removed; each person's best per game and mode is always kept.", keepSel)),
-      h("div", { class: "card" }, h("h3", null, "Children"),
-        h("div", { class: "hint" }, "Mark a person as a child and set their limits on ", h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "users" }) }, "Users"), "."),
-        row("School days", "Days that use school-day limits. Every other day, and every holiday below, uses weekend limits.", days),
-        holidaysBlock(hol.holidays),
-        row("Limit warnings to parents", "A phone notice when a child has 5 minutes left today, with “Add 15 minutes”.", sw("limit_warnings", "Limit warnings to parents")),
-        h("div", { class: "field wide" }, "Who gets limit warnings (none ticked = every admin)", adminChecks)),
-      h("div", { class: "card" }, h("h3", null, "Home Assistant"),
-        row("Notify new records", "A phone notification to the household when someone sets a new record. Each person can opt out on Settings.", sw("notify_records", "Notify new records")),
-        row("Invites by phone notification", "A phone notification when someone invites another person to play together (with Join and Not now). The invite also shows on the Games page. Each person can opt out on Settings.", sw("notify_invites", "Invites by phone notification")),
-        row("Home Assistant sensors", h("span", null, "Publishes ", h("code", null, "sensor.household_arcade_<game>_record"), ", ",
-          h("code", null, "sensor.household_arcade_<person>_played_today"), " and ", h("code", null, "binary_sensor.household_arcade_<person>_playing"), "."),
-          sw("ha_sensors", "Home Assistant sensors")),
-        data.hasToken ? null : h("div", { class: "hint warn" }, "This app can't reach Home Assistant right now (no Supervisor token), so sensors and notifications can't be sent."),
-        h("div", { class: "hint" }, `Days and times use Home Assistant's time zone (${data.timeZone}).`)),
-      aiCard(data, cur, set, sw, row, extra, dirty),
-      err, h("div", { class: "actions" }, revertBtn, saveBtn));
   }
 
-  // ---------- App settings → AI levels ----------
-  function aiCard(data, cur, set, sw, row, extra, dirty) {
-    const provSel = h("select", { id: "set-ai_provider", "aria-label": "Provider", value: cur.ai_provider },
-      data.providers.map((p) => h("option", { value: p.id }, p.label)));
-    const urlIn = h("input", { type: "url", id: "set-ai_url", value: cur.ai_url, "aria-label": "Address", spellcheck: "false" });
-    const placeholder = () => {
-      const p = data.providers.find((x) => x.id === provSel.value);
-      urlIn.placeholder = p && p.defaultUrl ? `${p.defaultUrl} (leave empty for this)` : "http://<ollama host>:11434";
-    };
-    placeholder();
-    provSel.addEventListener("change", () => { set("ai_provider", provSel.value); placeholder(); });
-    urlIn.addEventListener("input", () => set("ai_url", urlIn.value.trim()));
-    const models = h("datalist", { id: "aiModels" });
-    const modelIn = h("input", { type: "text", id: "set-ai_model", value: cur.ai_model, list: "aiModels", "aria-label": "Model", spellcheck: "false", placeholder: "e.g. a model you have pulled" });
-    modelIn.addEventListener("input", () => set("ai_model", modelIn.value.trim()));
-    const keySet = data.secretsSet.ai_api_key;
-    const keyIn = h("input", { type: "password", id: "set-ai_api_key", autocomplete: "new-password", "aria-label": "Access key",
-      placeholder: keySet ? "Saved — type to replace" : "Not set (only Anthropic Claude and some services need one)" });
-    keyIn.addEventListener("input", () => { delete extra.ai_api_key; set("ai_api_key", keyIn.value); });
-    const clearKey = keySet ? h("button", { class: "btn-ghost btn-small", type: "button", id: "clearAiKey", onclick: () => {
-      keyIn.value = ""; set("ai_api_key", ""); extra.ai_api_key = ""; dirty(); keyIn.placeholder = "Will be removed when you save";
-    } }, "Remove key") : null;
-    const num = (k, min, max, label) => {
-      const el = h("input", { type: "number", id: "set-" + k, min: String(min), max: String(max), step: "1", value: String(cur[k]), "aria-label": label, class: "num-input" });
-      el.addEventListener("input", () => { const n = Number(el.value); set(k, Number.isInteger(n) ? n : el.value); });
-      return el;
-    };
-    const price = (k, label) => {
-      const el = h("input", { type: "number", id: "set-" + k, min: "0", max: "1000", step: "0.01", value: String(cur[k]), "aria-label": label, class: "num-input" });
-      el.addEventListener("input", () => { const n = Number(el.value); set(k, el.value !== "" && Number.isFinite(n) ? n : el.value); });
-      return el;
-    };
+  function urlPlaceholder(page) {
+    const p = page.data.providers.find((x) => x.id === page.value("ai_provider"));
+    const input = page.row("ai_url") && page.row("ai_url").querySelector("input");
+    if (input) input.placeholder = p && p.defaultUrl ? `${p.defaultUrl} (leave empty for this)` : "http://<ollama host>:11434";
+  }
+
+  // ---------- App settings → AI levels: Test connection (what's typed, before saving) ----------
+  function aiTestBlock(page) {
     const result = h("div", { class: "hint", id: "aiTestResult", role: "status" });
     const test = h("button", { class: "btn-secondary", type: "button", id: "aiTest" }, "Test connection");
     test.addEventListener("click", async () => {
       test.disabled = true; result.textContent = "Testing…"; result.className = "hint";
       try {
-        const r = await api("api/admin/ai/test", { method: "POST", body: { provider: provSel.value, url: urlIn.value.trim(), model: modelIn.value.trim(), apiKey: keyIn.value } });
-        if (r.models) mount(models, r.models.map((m) => h("option", { value: m })));
+        const r = await api("api/admin/ai/test", { method: "POST", body: { provider: page.value("ai_provider"), url: page.value("ai_url"),
+          model: page.value("ai_model"), apiKey: page.edits.ai_api_key || "" } });
+        const models = document.getElementById("aiModels");
+        if (r.models && models) mount(models, r.models.map((m) => h("option", { value: m })));
         if (r.ok) {
           result.className = "hint ok";
           result.textContent = `Connected. ${r.models.length} model(s) offered.` + (r.answer !== null ? ` The model answered: ${r.answer}` : " Pick a model to test it too.");
@@ -175,30 +134,7 @@ const Admin = (() => {
       } catch (e) { result.className = "hint warn"; result.textContent = e.message; }
       test.disabled = false;
     });
-    return h("div", { class: "card", id: "aiCard" }, h("h3", null, "AI levels"),
-      h("div", { class: "hint" }, "More levels for every game, made by an AI model: your own (Ollama) or a service. ",
-        "Only the game's rules and recent levels are sent, never anything about the people here. Every level is checked before anyone plays it. ",
-        h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "levels" }) }, "See the levels"), "."),
-      row("AI levels", "Off: games play their built-in levels only.", sw("ai_levels_enabled", "AI levels")),
-      h("div", { class: "limits-grid" },
-        h("label", { class: "field" }, "Provider", provSel),
-        h("label", { class: "field" }, "Address", urlIn),
-        h("label", { class: "field" }, "Model", modelIn, models),
-        h("div", { class: "field" }, "Access key", h("div", { class: "inline-times" }, keyIn, clearKey)),
-        h("label", { class: "field" }, "Most the model may write (tokens)", num("ai_max_output_tokens", 256, 64000, "Most the model may write"))),
-      h("div", { class: "form-row" }, test), result,
-      row("Build ahead automatically", "When someone nears the last level, the next ones are built in the background.", sw("ai_levels_auto", "Build ahead automatically")),
-      h("div", { class: "limits-grid" },
-        h("label", { class: "field" }, "Start building this many levels before the end (1–5)", num("ai_levels_ahead", 1, 5, "Levels before the end")),
-        h("label", { class: "field" }, "Levels per build (1–20)", num("ai_levels_batch", 1, 20, "Levels per build")),
-        h("label", { class: "field" }, "Most levels built a day (0 = no limit)", num("ai_levels_daily_limit", 0, 500, "Most levels built a day"))),
-      row("Check new levels before they're played", "New levels wait on Admin → Levels until an admin approves them.", sw("ai_levels_review", "Check new levels first")),
-      h("div", { class: "hint" }, "Prices are only for the cost estimate on ",
-        h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { arg: "ai" }) }, "AI usage"),
-        " — copy them from your provider's price list. Leave 0 for your own model."),
-      h("div", { class: "limits-grid" },
-        h("label", { class: "field" }, "Price per million input tokens", price("ai_price_in", "Price per million input tokens")),
-        h("label", { class: "field" }, "Price per million output tokens", price("ai_price_out", "Price per million output tokens"))));
+    return h("div", { class: "sp-extra" }, h("div", { class: "form-row" }, test), result);
   }
 
   // =====================================================================
@@ -460,54 +396,57 @@ const Admin = (() => {
   // =====================================================================
   // Users
   // =====================================================================
+  // The shared people page (common/people.js) with this app's switches (can play, child), children's limits,
+  // extra time and play history.
   async function renderUsers(box, focusId) {
     mount(box, spinner());
-    let data;
-    try { data = await api("api/admin/users"); }
+    let data, avail;
+    try { [data, avail] = await Promise.all([api("api/admin/users"), api("api/admin/notify-services").catch(() => null)]); }
     catch (e) { mount(box, errorCard(e, () => renderUsers(box, focusId))); return; }
-    const list = h("div", { id: "userList" });
     const again = () => renderUsers(box, focusId);
-    data.users.forEach((u) => list.appendChild(userCard(u, data.games, again, u.id === focusId)));
-    mount(box, h("div", { class: "hint", style: "margin-bottom:10px" },
-      "Everyone who has opened the app is here. People switched off can't play and don't appear on the leaderboard."),
-      data.users.length ? list : h("div", { class: "card empty" }, "Nobody has opened the app yet."));
+    const patch = async (u, body) => {
+      try { await api(`api/admin/users/${encodeURIComponent(u.id)}`, { method: "PATCH", body }); }
+      catch (e) { fail(e); }
+      again();
+    };
+    PeoplePage.render(box, {
+      people: data.users,
+      intro: "Everyone who has opened the app is here. People switched off can't play and don't appear on the leaderboard.",
+      checkAgain: async () => {
+        try { await api("api/admin/users?refresh=1"); toast("Read from Home Assistant"); again(); } catch (e) { fail(e); }
+      },
+      person: (u) => {
+        const self = state.me && u.id === state.me.id;
+        return {
+          badges: [self ? ["you"] : null, u.isAdmin ? ["admin", "accent"] : null, u.isChild ? ["child", "accent"] : null,
+            u.disabled ? ["switched off", "warn"] : null],
+          sub: (u.username ? `login ${u.username} · ` : "") + `last seen ${fmtStamp(u.lastSeen)}`,
+          controls: [
+            h("label", { class: "pp-toggle" }, "Can play", PeoplePage.accessSwitch(!u.disabled, (on) => patch(u, { disabled: !on }), { label: `${u.name} can play`, disabled: self })),
+            h("label", { class: "pp-toggle", title: u.isAdmin ? "Admins can't be marked as children" : "" }, "Child",
+              PeoplePage.accessSwitch(u.isChild, (on) => patch(u, { isChild: on }), { label: `${u.name} is a child`, disabled: u.isAdmin })),
+          ],
+          blocks: [u.isAdmin ? h("div", { class: "hint" }, "Admins can't be marked as children; limits never apply to them.") : null,
+            u.isChild ? childBlock(u, data.games, again) : null],
+        };
+      },
+      notify: {
+        api, services: avail || { available: false, services: [], entities: [], error: null },
+        toast: (m, err) => toast(m, !!err), fail,
+        path: (u) => `api/admin/users/${encodeURIComponent(u.id)}/notify`,
+        testPath: (u) => `api/admin/users/${encodeURIComponent(u.id)}/notify/test`,
+        texts: { none: () => "none" },
+      },
+      empty: "Nobody has opened the app yet.",
+    });
     if (focusId) {
-      const card = document.getElementById("user-" + focusId);
-      if (card) setTimeout(() => card.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+      const card = document.getElementById("person-" + focusId);
+      if (card) { card.classList.add("highlight"); setTimeout(() => card.scrollIntoView({ behavior: "smooth", block: "start" }), 50); }
       else toast("That person isn't known to this app.", true);
     }
   }
 
-  function userCard(u, games, again, highlight) {
-    const self = state.me && u.id === state.me.id;
-    const card = h("div", { class: "user-card" + (highlight ? " highlight" : ""), id: "user-" + u.id, dataset: { userId: u.id } });
-    const patch = async (body) => {
-      try { const r = await api(`api/admin/users/${encodeURIComponent(u.id)}`, { method: "PATCH", body }); card.replaceWith(userCard(r, games, again, highlight)); }
-      catch (e) { fail(e); again(); }
-    };
-    const badges = h("span", { class: "user-badges" },
-      self ? h("span", { class: "badge-you" }, "you") : null,
-      u.isAdmin ? h("span", { class: "chip on" }, "admin") : null,
-      u.isChild ? h("span", { class: "chip on" }, "child") : null,
-      u.disabled ? h("span", { class: "chip" }, "switched off") : null);
-    const enabled = toggleSwitch(!u.disabled, (on) => patch({ disabled: !on }), { label: `${u.name} can play`, disabled: self });
-    const child = toggleSwitch(u.isChild, (on) => patch({ isChild: on }), { label: `${u.name} is a child`, disabled: u.isAdmin });
-    const parts = [
-      h("div", { class: "user-head" },
-        h("span", null, h("span", { class: "name" }, u.name), badges,
-          h("div", { class: "hint" }, u.username ? `login ${u.username} · ` : "", `last seen ${fmtStamp(u.lastSeen)}`)),
-        h("div", { class: "list-actions" },
-          h("label", { class: "mini-toggle" }, "Can play", enabled),
-          h("label", { class: "mini-toggle", title: u.isAdmin ? "Admins can't be marked as children" : "" }, "Child", child))),
-    ];
-    if (u.isAdmin) parts.push(h("div", { class: "hint" }, "Admins can't be marked as children; limits never apply to them."));
-    if (u.isChild) parts.push(childBlock(u, games, card, again, highlight));
-    parts.push(notifyBlock(u, card, games, again, highlight));
-    mount(card, parts);
-    return card;
-  }
-
-  function childBlock(u, games, card, again, highlight) {
+  function childBlock(u, games, again) {
     const l = u.limits;
     const pt = u.playTime;
     const num = (v, label, id) => h("input", { type: "number", min: "0", max: "1440", step: "5", id, value: v === null ? "" : String(v), placeholder: "No limit", "aria-label": label });
@@ -535,12 +474,12 @@ const Admin = (() => {
       };
       for (const k of ["minutesSchool", "minutesWeekend"]) if (body[k] !== null && !Number.isInteger(body[k])) { err.textContent = "Minutes must be whole numbers."; return; }
       save.disabled = true;
-      try { const r = await api(`api/admin/users/${encodeURIComponent(u.id)}/limits`, { method: "PUT", body }); toast(`${u.name}'s limits saved`); card.replaceWith(userCard(r, games, again, highlight)); }
+      try { await api(`api/admin/users/${encodeURIComponent(u.id)}/limits`, { method: "PUT", body }); toast(`${u.name}'s limits saved`); again(); }
       catch (e) { err.textContent = e.message; save.disabled = false; }
     });
     const extra = [15, 30, 60].map((m) => h("button", { class: "btn-secondary btn-small", type: "button", dataset: { extra: String(m) }, onclick: async (ev) => {
       ev.target.disabled = true;
-      try { const r = await api(`api/admin/users/${encodeURIComponent(u.id)}/extra-time`, { method: "POST", body: { minutes: m } }); toast(`${u.name}: ${m} minutes added for today`); card.replaceWith(userCard(r, games, again, highlight)); }
+      try { await api(`api/admin/users/${encodeURIComponent(u.id)}/extra-time`, { method: "POST", body: { minutes: m } }); toast(`${u.name}: ${m} minutes added for today`); again(); }
       catch (e) { fail(e); ev.target.disabled = false; }
     } }, `Add ${m} minutes`));
     const played = pt.usedSeconds ? `Played ${fmtDuration(pt.usedSeconds)} today` : "Nothing played today yet";
@@ -578,30 +517,6 @@ const Admin = (() => {
           h("td", { class: "num" }, fmtDuration(s.seconds)), h("td", { class: "num" }, s.score === null ? "—" : fmtNum(s.score))))))) :
         h("div", { class: "empty" }, "Nothing played in the last 14 days."),
       d.extraTime.length ? h("div", { class: "hint" }, "Extra time given: ", d.extraTime.map((e) => `${e.date} +${e.minutes} min`).join(", ")) : null);
-  }
-
-  function notifyBlock(u, card, games, again, highlight) {
-    const phones = u.ha.phones.length
-      ? u.ha.phones.map((p) => h("span", { class: "chip notify-chip", title: p.service || "" }, "📱 ", p.label))
-      : [h("span", { class: "hint" }, u.ha.known ? "No phone linked in Home Assistant (Settings → People → Track device)." : "Home Assistant's people couldn't be read.")];
-    const chips = u.notify.length ? u.notify.map((s) => h("span", { class: "chip notify-chip" }, s,
-      h("button", { class: "icon-btn", type: "button", "aria-label": `Remove ${s}`, onclick: async () => {
-        try { const r = await api(`api/admin/users/${encodeURIComponent(u.id)}/notify/${encodeURIComponent(s)}`, { method: "DELETE" }); card.replaceWith(userCard(r, games, again, highlight)); }
-        catch (e) { fail(e); }
-      } }, "✕"))) : [h("span", { class: "hint" }, "none")];
-    const input = h("input", { type: "text", placeholder: "notify.mobile_app_…", "aria-label": `Add a notify service for ${u.name}` });
-    const add = h("button", { class: "btn-secondary btn-small", type: "button", onclick: async () => {
-      if (!input.value.trim()) return;
-      try { const r = await api(`api/admin/users/${encodeURIComponent(u.id)}/notify`, { method: "POST", body: { service: input.value.trim() } }); card.replaceWith(userCard(r, games, again, highlight)); }
-      catch (e) { fail(e); }
-    } }, "Add");
-    const test = h("button", { class: "btn-ghost btn-small", type: "button", onclick: async () => {
-      try { await api(`api/admin/users/${encodeURIComponent(u.id)}/notify/test`, { method: "POST", body: {} }); toast("Test sent"); } catch (e) { fail(e); }
-    } }, "Send test");
-    return h("div", { class: "sub-block" },
-      h("div", { class: "notify-line" }, h("span", { class: "notify-label" }, "Phones"), h("div", { class: "chip-row" }, phones)),
-      h("div", { class: "notify-line", style: "margin-top:6px" }, h("span", { class: "notify-label" }, "Also"), h("div", { class: "chip-row" }, chips)),
-      h("div", { class: "notify-add", style: "margin-top:6px" }, input, add, test));
   }
 
   // =====================================================================

@@ -142,6 +142,7 @@ def serialize_tasks(conn, rows, today: date) -> list[dict]:
             "title": r["title"],
             "notes": r["notes"],
             "url": r["url"],
+            "source": r.get("source"),
             "dueDate": r["due_date"],
             "dueTime": r["due_time"],
             "priority": r["priority"],

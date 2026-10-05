@@ -10,7 +10,7 @@
 {# Phones hide <thead>, so the same choice is offered as a select + direction link. #}
 {% macro mobile_sort(tv, columns) -%}
 <div class="sort-bar">
-    <select aria-label="Sort by" onchange="window.location.href = this.value">
+    <select aria-label="Sort by" data-go>
         {% for key, label in columns %}
         <option value="{{ tv.sort_url(key) }}" {{ "selected" if key == tv.sort else "" }}>Sort: {{ label }}</option>
         {% endfor %}
@@ -24,7 +24,7 @@
 <div class="pager">
     <span class="pager-info">Showing {{ tv.first }}&ndash;{{ tv.last }} of {{ tv.total }}</span>
     <label class="pager-size">Rows per page
-        <select onchange="window.location.href = this.value">
+        <select data-go>
             {% for s in tv.sizes %}
             <option value="{{ tv.size_url(s) }}" {{ "selected" if s == tv.size else "" }}>{{ "All" if s == "all" else s }}</option>
             {% endfor %}

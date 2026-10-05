@@ -3,9 +3,9 @@ from base import BOB, ApiTestCase, reset_state
 
 import unittest
 
-from fastapi.testclient import TestClient
 
 from app.main import app
+from common_tests.ingress import ingress_client
 
 
 class SharedTree(ApiTestCase):
@@ -16,7 +16,7 @@ class SharedTree(ApiTestCase):
         cls._built = False
 
     def setUp(self):
-        self.client = TestClient(app, client=("127.0.0.1", 12345))
+        self.client = ingress_client(app)
         cls = type(self)
         if not cls._built:
             reset_state(all_features=cls.ALL_FEATURES)

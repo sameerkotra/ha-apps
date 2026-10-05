@@ -58,7 +58,7 @@
                 <td class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
                 <td>
                     <form method="post" action="statement-remove-transaction{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-                          onsubmit="return confirm('Permanently delete this one transaction? This cannot be undone.');">
+                          data-confirm="Permanently delete this one transaction? This cannot be undone.">
                         <input type="hidden" name="transaction_id" value="{{ t.id }}">
                         <button type="submit" class="btn-danger">Remove</button>
                     </form>

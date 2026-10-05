@@ -4,15 +4,15 @@ dates have all passed are pruned (§8k).
 
 The loop ticks every 60 seconds and runs a full pass on its first tick after
 startup and again whenever the local date has changed. Each pass is one
-transaction.
+transaction. Every tick also runs the app-messages outbox (app_messages.py).
 """
-import asyncio
 import logging
 from datetime import date, timedelta
 
 from starlette.concurrency import run_in_threadpool
 
 from . import config, db
+from .common import housekeeping as jobs_core
 
 logger = logging.getLogger("housekeeping")
 
@@ -87,16 +87,19 @@ def run_pass_blocking(today: date | None = None) -> dict:
 
 
 async def loop() -> None:
-    """Started from main.py's lifespan; cancelled on shutdown."""
-    last_date = None
-    while True:
-        try:
-            today = config.today()
-            if last_date != today:
-                await run_in_threadpool(run_pass_blocking, today)
-                last_date = today
-        except asyncio.CancelledError:
-            raise
+    """Started from main.py's lifespan; cancelled on shutdown. A pass on the
+    first tick and whenever the local date has changed."""
+    last = {"date": None}
+
+    async def step() -> None:
+        today = config.today()
+        if last["date"] != today:
+            await run_in_threadpool(run_pass_blocking, today)
+            last["date"] = today
+        try:     # the app-messages outbox (APP_MESSAGES_SPEC §4): re-sends, expiry, the six-hourly hello
+            from . import app_messages
+            await run_in_threadpool(app_messages.run_outbox)
         except Exception:
-            logger.exception("Housekeeping pass failed")
-        await asyncio.sleep(TICK_SECONDS)
+            logger.exception("App messages outbox run failed")
+
+    await jobs_core.periodic(TICK_SECONDS, step, thread=False, log=logger, error="Housekeeping pass failed")()

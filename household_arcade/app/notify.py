@@ -16,7 +16,8 @@ never while holding a DB connection.
 """
 import logging
 
-from . import auth, config, db, games, ha_notify, settings
+from . import auth, config, db, games, settings
+from .common import ha_notify
 
 logger = logging.getLogger("notify")
 

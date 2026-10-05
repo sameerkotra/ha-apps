@@ -26,5 +26,7 @@ Documentation tab (DOCS.md) for the full guide.
   (off by default; uses OpenStreetMap services when turned on).
 - **Maintenance** — house upkeep with suggestions, Mark done, history, costs,
   files and reminders.
+- **Checklists from Household Docs** — *Make a Todo list* in Household Docs
+  turns a checklist into tasks here (Admin → App settings → Connected apps).
 - **Admin** — in-app settings, users and notify services, "act as" another
   person, and database backup and restore.

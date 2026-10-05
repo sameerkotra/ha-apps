@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="referrer" content="no-referrer">
+<title>Household Docs</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%93%84%3C/text%3E%3C/svg%3E">
+<!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
+<script src="common/theme-boot.js?v=1.0.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.0.1">
+<link rel="stylesheet" href="common/settings.css?v=1.0.1">
+<link rel="stylesheet" href="style.css?v=1.0.1">
+</head>
+<body>
+<div id="app">
+
+  <aside class="sidebar" aria-label="Spaces">
+    <button id="sidebarCollapseBtn" class="sidebar-collapse-btn" type="button" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
+    <div class="brand"><span class="brand-icon">📄</span><span class="brand-text">Household Docs</span></div>
+    <div class="new-wrap"><button id="newBtn" class="btn-primary new-btn" type="button" aria-haspopup="menu"><span class="nav-icon">➕</span><span class="nav-label">New</span></button></div>
+    <nav class="side-nav" id="sideNav" aria-label="Pages"></nav>
+    <button type="button" class="sidebar-user" id="sidebarUser">—</button>
+    <div class="sidebar-footer">
+      <label class="sidebar-field">
+        <span class="field-label">Theme</span>
+        <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
+      </label>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <div class="top-stack">
+      <header class="topbar">
+        <form id="searchForm" class="search-form" role="search">
+          <input id="searchInput" type="search" placeholder="Search names and text" aria-label="Search" autocomplete="off" maxlength="200">
+        </form>
+        <button id="quickNoteBtn" class="btn-secondary quick-note-btn" type="button" title="Quick note (N)" aria-label="Quick note"><span aria-hidden="true">⚡</span><span class="qn-label"> Quick note</span></button>
+      </header>
+      <div id="noAdminBanner" class="no-admin-banner" role="status" hidden></div>
+      <div id="folderBanner" class="folder-banner" role="alert" hidden></div>
+      <div id="moveBanner" class="move-banner" role="status" hidden></div>
+      <div id="httpBanner" hidden></div>
+    </div>
+    <main id="page">
+      <div id="fatal" class="card fatal" hidden></div>
+    </main>
+  </div>
+
+  <nav class="bottombar" id="bottomBar" aria-label="Pages"></nav>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+<script src="common/ui.js?v=1.0.1"></script>
+<script src="common/settings.js?v=1.0.1"></script>
+<script src="common/people.js?v=1.0.1"></script>
+<script src="common/backnav.js?v=1.0.1"></script>
+<script src="common/whoami.js?v=1.0.1"></script>
+<script src="common/http-warning.js?v=1.0.1"></script>
+<script src="common/connected-apps.js?v=1.0.1"></script>
+<script src="textutil.js?v=1.0.1"></script>
+<script src="md.js?v=1.0.1"></script>
+<script src="app.js?v=1.0.1"></script>
+<script src="docs.js?v=1.0.1"></script>
+<script src="sheetcalc.js?v=1.0.1"></script>
+<script src="sheet.js?v=1.0.1"></script>
+<script src="files.js?v=1.0.1"></script>
+<script src="search.js?v=1.0.1"></script>
+<script src="organise.js?v=1.0.1"></script>
+<script src="admin.js?v=1.0.1"></script>
+<script src="scanpdf.js?v=1.0.1"></script>
+<script src="activity.js?v=1.0.1"></script>
+<script src="bring.js?v=1.0.1"></script>
+<script src="ai.js?v=1.0.1"></script>
+<script src="connect.js?v=1.0.1"></script>
+<script src="tidy.js?v=1.0.1"></script>
+<script src="start.js?v=1.0.1"></script>
+</body>
+</html>

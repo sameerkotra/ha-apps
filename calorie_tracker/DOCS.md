@@ -75,8 +75,8 @@ An empty key box means "use the saved key". Click **Save settings** when it look
 AI request uses the new settings — no restart.
 
 **The access key** is stored only in the app's database. The page never shows it again (only
-"A key is saved (…last 4 characters)"); leave the box empty to keep it, type a new one to replace
-it, or tick **Remove the saved key**. It is sent only to the provider, in a request header — never
+"Saved (…last 4 characters)"); leave the box empty to keep it, type a new one to replace it, or
+select **Remove** next to the box and save. It is sent only to the provider, in a request header — never
 in an address, a log line, an error message or a page — and it is left out of database downloads.
 
 **Privacy.** What the AI receives is only what you type for it: the food description you estimate
@@ -148,7 +148,8 @@ Click your name at the bottom of the menu (👤 on a phone) to see the user name
 Assistant sends, whether you are an admin, and what to change if you expected to be one.
 
 ### Look and feel
-Three themes (Midnight, Slate, Daylight) at the bottom of the menu; the menu collapses to icons.
+Four themes at the bottom of the menu: Midnight (the default), Slate, Daylight and Auto (Daylight
+when your device is set to light, Midnight when it is dark); the menu collapses to icons.
 On a phone the menu becomes a bar at the bottom. In the Home Assistant app, the Back gesture
 closes a popup first, then returns to the Food Log.
 
@@ -164,7 +165,11 @@ Home Assistant; turning it on publishes everyone's again at once.
 
 ## App settings
 
-All in **🛡️ Admin → App settings**; changes apply immediately, no restart.
+All in **🛡️ Admin → App settings**; changes apply immediately, no restart. Each group of settings
+is a card, with a line under each setting saying what it does, its range and its default. Your
+changes are kept until you select **Save settings** at the bottom (it shows how many unsaved changes
+there are); **Discard changes** puts everything back. A number out of range is flagged at the field
+before anything is saved.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -209,6 +214,7 @@ Everything else is set inside the app.
   and no undo, so use it only to recover (e.g. after reinstalling). The file is checked before
   anything is replaced, older backups are brought up to date automatically, and the App settings
   in the file take effect at once — except the AI access key: the install keeps its own.
+- Backups leave out access keys and passwords; after restoring on a new install, enter them again.
 
 ## Limits
 

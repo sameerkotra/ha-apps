@@ -12,22 +12,17 @@ import sqlite3
 import os
 from pathlib import Path
 
+from .common import db_core
 from .datenorm import normalize_date
 
 DB_PATH = os.environ.get("DB_PATH", "/data/finance.db")
 MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
 
 
-class _Connection(sqlite3.Connection):
-    """`with get_db() as conn:` commits (or rolls back on an exception) AND
-    closes the connection at the end of the block. Plain sqlite3 only does the
-    commit/rollback and leaves the connection open until garbage collection."""
-
-    def __exit__(self, exc_type, exc, tb):
-        try:
-            return super().__exit__(exc_type, exc, tb)
-        finally:
-            self.close()
+# `with get_db() as conn:` commits (or rolls back on an exception) AND
+# closes the connection at the end of the block. Plain sqlite3 only does the
+# commit/rollback and leaves the connection open until garbage collection.
+_Connection = db_core.ClosingConnection
 
 
 def get_db() -> sqlite3.Connection:
@@ -35,13 +30,9 @@ def get_db() -> sqlite3.Connection:
     in templates (row["name"] and row.name both work). Use it as a context
     manager, or call close() yourself."""
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10.0, factory=_Connection)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA synchronous = NORMAL")
-    return conn
+    return db_core.connect(DB_PATH, timeout=10.0, factory=_Connection,
+                           pragmas=("journal_mode = WAL", "busy_timeout = 5000", "foreign_keys = ON",
+                                    "synchronous = NORMAL"))
 
 
 def run_migrations() -> None:

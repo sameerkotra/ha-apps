@@ -12,9 +12,10 @@ import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
-from app import config, db, drive_time, geocode, ha_notify, ha_sensors, housekeeping, reminders, settings
+from app import config, db, drive_time, geocode, ha_sensors, housekeeping, reminders, settings
+from app.common import ha_notify
 from app.routers import users as users_router
-from starlette.testclient import TestClient
+from common_tests.ingress import ingress_client
 
 from app.main import app
 from test_api import ADMIN, ALICE, BOB, ApiBase
@@ -57,8 +58,10 @@ class TestSettingsApi(SettingsBase):
         self.assertEqual(body["values"], settings.DEFAULTS)
         self.assertEqual(body["defaults"], settings.DEFAULTS)
         self.assertEqual(set(body["meta"]), set(settings.KEYS))
-        self.assertTrue(all(m == {"restartRequired": False} for m in body["meta"].values()))
-        self.assertEqual(set(body), {"values", "defaults", "meta", "maintenanceFiles"})
+        # meta describes each field for the shared page (common/static/settings.js); none needs a restart
+        self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
+        self.assertTrue(body["meta"]["maintenance_profile"]["hidden"])     # edited on Admin → Maintenance
+        self.assertEqual(set(body), {"values", "defaults", "meta", "groups", "maintenanceFiles"})
         self.assertNotIn("reminder_time", body["values"])   # each person has their own digest time
         self.assertNotIn("admin_users", body["values"])   # stays on the app's Configuration tab
         self.assertNotIn("notify_targets", body["values"])  # became per-user assignments
@@ -126,15 +129,16 @@ class TestSettingsApi(SettingsBase):
         # A background reader loads the rows, an admin saves before it stores
         # them: its (old) result must not be cached over the new value.
         settings.invalidate()
-        real_load, fired = settings._load, []
+        # (the loader is the shared registry's, common/python/settings_core.py)
+        real_load, fired = settings.REGISTRY.load, []
 
-        def load_then_someone_saves():
-            values = real_load()
+        def load_then_someone_saves(conn):
+            values = real_load(conn)
             if not fired:
                 fired.append(1)
                 settings.update({"sensor_refresh_minutes": 60}, None)
             return values
-        with mock.patch.object(settings, "_load", load_then_someone_saves):
+        with mock.patch.object(settings.REGISTRY, "load", load_then_someone_saves):
             self.assertEqual(settings.all()["sensor_refresh_minutes"], 5)   # that reader's own snapshot
         self.assertEqual(settings.get("sensor_refresh_minutes"), 60)         # but nothing stale was cached
 
@@ -385,7 +389,7 @@ class TestConfiguration(SettingsBase):
             json.dump(old, f)
         try:
             self.assertEqual(config.read_options_file(), old)       # still readable…
-            with TestClient(app, client=("127.0.0.1", 12345)):      # …but a start-up uses none of it
+            with ingress_client(app):      # …but a start-up uses none of it
                 pass
         finally:
             os.remove(path)
@@ -426,7 +430,7 @@ class TestBackgroundWork(SettingsBase):
         for p in patches:
             p.start()
         try:
-            with TestClient(app, client=("127.0.0.1", 12345)):
+            with ingress_client(app):
                 pass
         finally:
             for p in patches:
@@ -439,7 +443,7 @@ class TestBackgroundWork(SettingsBase):
             p.start()
         try:
             with mock.patch.object(config, "BACKGROUND_LOOPS", True):
-                with TestClient(app, client=("127.0.0.1", 12345)) as c:
+                with ingress_client(app) as c:
                     self.assertEqual(c.get("/api/health").status_code, 200)
         finally:
             for p in patches:

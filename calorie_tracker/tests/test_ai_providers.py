@@ -15,10 +15,10 @@ import unittest
 import urllib.error
 from unittest import mock
 
-from starlette.testclient import TestClient
 
 from app import ai_client, config, db, settings
 from app.main import app
+from common_tests.ingress import ingress_client
 
 logging.getLogger("ai").setLevel(logging.ERROR)
 logging.getLogger("settings").setLevel(logging.ERROR)
@@ -62,7 +62,7 @@ class FakeAI:
 class ProviderBase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._ctx = TestClient(app, client=("127.0.0.1", 12345))
+        cls._ctx = ingress_client(app)
         cls.c = cls._ctx.__enter__()
 
     @classmethod

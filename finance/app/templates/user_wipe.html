@@ -32,14 +32,5 @@
     </form>
 </div>
 
-<script>
-(function () {
-    var expected = {{ user.name | tojson }};
-    var input = document.getElementById("confirm-text-input");
-    var btn = document.getElementById("confirm-wipe-btn");
-    input.addEventListener("input", function () {
-        btn.disabled = input.value !== expected;
-    });
-})();
-</script>
+<script src="static/pages/confirm-text.js?v={{ app_version }}" data-expected='{{ user.name | tojson }}' data-button="confirm-wipe-btn"></script>
 {% endblock %}

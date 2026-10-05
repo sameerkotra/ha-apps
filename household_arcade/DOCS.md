@@ -522,8 +522,10 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
   and games, read-only.
 - **How the app sees you** — the user name and id Home Assistant sent, and
   whether you are an admin in this app.
-- **Theme** (Ink, Slate, Daylight) — in the sidebar on a computer, on Settings
-  on a phone.
+- **Theme** (Midnight, Slate, Daylight, or Auto, which follows your device's
+  light or dark setting) — in the sidebar on a computer, on Settings on a phone.
+  If you had picked Ink before, you now get Midnight. The game looks below are
+  separate and unchanged.
 
 ## Children and limits
 
@@ -566,6 +568,12 @@ notification when a child has 5 minutes left (once a day per child). Its
 ## Admin (admins only)
 
 ### App settings
+
+The settings are in cards (Games, Looks and scores, Children, Home Assistant,
+AI levels), with a line under each setting saying what it does, its range and
+its default. Changes are kept until you select **Save** at the bottom (it shows
+how many unsaved changes there are); **Discard changes** puts everything back.
+A number out of range is flagged at the field before anything is saved.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -648,14 +656,15 @@ Everyone who has opened the app at least once, with their phones from Home
 Assistant. Per person: **Can play** (switch someone off), **Child** and their
 limits, extra notify services (a phone is picked up automatically from
 **Settings → People → (person) → Track device** in Home Assistant; add a
-`notify.…` service here for anything else) and **Send test**.
+`notify.…` service here for anything else) and **Send a test**.
 
 ### Storage
 
 **Download database** saves a complete backup (a `.db` file). **Import
 database** replaces everything in the app with a backup; a backup from an
 older version is brought up to date automatically. Home Assistant's own
-backups include the app's data too.
+backups include the app's data too. Backups leave out access keys and passwords; after restoring on a new install, enter them again. (Importing keeps the AI
+access key this install already has.)
 
 ### The app option (Configuration tab)
 
@@ -722,4 +731,4 @@ plus any extra services an admin adds on **Admin → Users**.
   today, or quiet hours. An admin can add extra time on **Admin → Users** or
   from **Games**.
 - **No notifications arrive** — check the person's phone under **Admin →
-  Users** and use **Send test**.
+  Users** and use **Send a test**.

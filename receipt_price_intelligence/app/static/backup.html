@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Backup and restore</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .counts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 16px; margin: 0; }
+    @media (min-width: 560px) { .counts { grid-template-columns: repeat(4, 1fr); } }
+    .counts div { display: grid; }
+    .counts dt { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .counts dd { margin: 0; font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .filebox { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .filename { flex: 1; min-width: 160px; font-size: .9rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .copies a { text-decoration: underline; }
+    .copies li { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: .88rem; }
+    .copies { list-style: none; padding: 0; margin: 0; }
+    .copies li:first-child { border-top: 0; }
+  </style>
+</head>
+<body>
+  <div class="page narrow">
+    <div class="topbar">
+      <div class="grow"><h1>Admin</h1><div class="sub">Backup and restore</div></div>
+    </div>
+    <div id="adminTabs"></div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/backup.js"></script>
+</body>
+</html>

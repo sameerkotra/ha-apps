@@ -17,22 +17,28 @@ calorie_tracker/
 ├── config.yaml  Dockerfile  requirements.txt  requirements-dev.txt  .dockerignore
 ├── README.md (store page)  DOCS.md (user guide)  CHANGELOG.md  translations/en.yaml  icon.png  logo.png
 ├── spec/                  SPEC.md, calorie_tracker_schema.sql
-├── tests/                 _env.py, test_app.py, test_ai_providers.py, test_packaging.py
+├── tests/                 _env.py, test_app.py, test_ai_providers.py, test_security_headers.py, test_packaging.py
+│   └── common_tests/      shared test helpers and shared-module tests (copies, see below)
 └── app/
-    ├── main.py            lifespan, middlewares, router registration, static mount, periodic sync
-    ├── config.py          /data/options.json → admin_users; HA time zone (now/today)
-    ├── settings.py        App settings (app_settings table): DEFAULTS, validation, cache, secret key, "outside the home network"
-    ├── db.py              SCHEMA, init_db/_migrate, get_conn, backup/validate/import
-    ├── auth.py            get_current_user / get_acting_user / require_admin
-    ├── ha_sync.py         daily-calories sensor push/remove (live App setting); HA time zone fetch
-    ├── ai_client.py       the one AI client: Ollama / OpenAI-compatible / Anthropic; generate, list_models, warm-up, estimate, chat, status, privacy
+    ├── main.py            lifespan (jobs), ingress gate, security headers (CSP), router registration, static mount
+    ├── config.py          /data/options.json → admin_users; HA time zone (config.ZONE: now/today)
+    ├── settings.py        App settings declared on common settings_core: SETTINGS, GROUPS, secret key, "outside the home network"
+    ├── db.py              SCHEMA, init_db/MIGRATIONS, get_conn, backup/validate/import (on common db_core)
+    ├── auth.py            get_current_user / get_acting_user / require_admin (on common auth_core)
+    ├── ha_sync.py         daily-calories sensor push/remove (live App setting, common sensor_publisher); HA time zone fetch
+    ├── ai_client.py       the app's AI layer on common ai_client: Config, current(), generate, warm-up, estimate, chat, status, privacy, WORDING
     ├── schemas.py         Pydantic request bodies
     ├── routers/           me, users, goals, weight, saved_foods, logs, ai, admin
-    └── static/            index.html, app.js, backnav.js, style.css
+    ├── common/            shared Python (copies): whoami, ha_client, ha_time, housekeeping, auth_core, db_core,
+    │                      settings_core, web_security, backup_core, sensor_publisher, ai_client
+    └── static/            index.html, app.js, style.css
+        └── common/        shared browser files (copies): theme-boot.js, themes.css, ui.js, settings.js, settings.css,
+                           people.js, backnav.js, whoami.js
 ```
+- `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync; `tests/common_tests/test_shared_copies.py` fails if a copy was changed.
 
 ## 3. Manifest & options
-`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.0.0"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
+`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.1.1"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
 
 | Option | Schema | Default | Effect |
 |---|---|---|---|
@@ -52,14 +58,16 @@ calorie_tracker/
 | `ai_max_tokens` | `4096` | strict int 256–200000 | Anthropic `max_tokens` (others ignore it) |
 | `expose_daily_calories_sensor` | `true` | strict bool (`"yes"`, `1`, `null` → 422) | every sensor push (`ha_sync.exposed()`); a change triggers publish-all / remove-all (§7) |
 
-- Stored in the `app_settings` table (JSON `value`, `updated_at`, `updated_by` = admin's HA user id). A key without a row (or with a value of the wrong JSON type) uses `DEFAULTS`. Pydantic model `AppSettings` (`extra="forbid"`, `str_strip_whitespace`, strict types) plus one cross-field rule (Ollama needs an address).
+- `settings.py` declares the list once — `SETTINGS` (`Setting(key, default, label, help=, group=, min=, max=, choices=, secret=, …)`) and `GROUPS` ("🤖 AI", "🏠 Home Assistant") — and builds `REGISTRY = settings_core.Registry(...)` (`app/common/settings_core.py`) with its own hooks: `prepare` (the secret rules below), `check` (Ollama needs an address), the readable error format. The registry provides validation, storage, the cache and the GET/PUT payload; labels and help text come from the server.
+- Stored in the `app_settings` table (JSON `value`, `updated_at`, `updated_by` = admin's HA user id). A key without a row (or with a value of the wrong JSON type — the `isinstance` check of stored rows) uses `DEFAULTS`. Pydantic model `AppSettings` (`REGISTRY.model`: `extra="forbid"`, `str_strip_whitespace`, strict types) plus one cross-field rule (Ollama needs an address).
 - `settings.get(key)` / `all()` read through an in-memory cache, dropped on every write and whenever `db.init_db()` bumps `db.generation` (startup, restore) — so a restore's settings apply immediately. Every key is `restartRequired: false`.
 - `settings.update(partial, user)`: unknown keys → error; validates `{current values + partial}`; writes only the keys whose value changed; logs the changed key **names** only. **Secret rules:** a blank (or whitespace/`null`) `ai_api_key` keeps the saved key; `clear_ai_api_key: true` removes it. The key is never returned by the API (`payload()` has `secrets.ai_api_key = {saved, hint}`, hint = `…` + last 4 characters when the key is ≥12 long, else `saved`), never logged, and blanked in database downloads (§10). When any `ai_*` key changes, `ai_client.forget_state()` clears the warm timestamp, last error and last request.
 - `ai_configured()`: provider set, resolved address non-empty, model non-empty, and (anthropic only) a key. `ai_is_external()`: the resolved address's host is outside the home network — an IP that isn't private/loopback/link-local, or a name that isn't `localhost`, single-label, or ending in `.local .lan .home .internal .localdomain .home.arpa .localhost .test .invalid`.
 - `Dockerfile`: `ARG BUILD_ARCH`/`BUILD_VERSION` → `FROM python:3.12-alpine` → `apk add --no-cache tzdata` → `pip install -r requirements.txt` → `COPY app` → `io.hass.version/type="app"/arch` labels → `EXPOSE 8099` → `CMD python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8099`.
 
 ## 4. Security, identity & admin
-- **Ingress-origin gate** (`require_ha_ingress_auth` middleware): if `request.client.host` is not in `{172.30.32.2, 127.0.0.1, ::1}`, the request gets 403 `{"detail":"Forbidden — access only via Home Assistant"}`. The gate covers every path, including static files and `/api/health`. It checks the network origin only, and each route's dependency still returns its own 401. Why: another app on the internal Docker network could otherwise forge the headers.
+- **Ingress-origin gate** (`require_ha_ingress_auth` middleware, `auth_core.refuse_outsiders`): if `request.client.host` is not in `auth_core.INGRESS_HOSTS` (`{172.30.32.2, 127.0.0.1, ::1}`), the request gets 403 `{"detail":"Forbidden — access only via Home Assistant"}`. The gate covers every path, including static files and `/api/health`. It checks the network origin only, and each route's dependency still returns its own 401. Why: another app on the internal Docker network could otherwise forge the headers.
+- **Security headers** (`web_security.SecurityHeaders(CSP, pragma=True).install(app)`, policy `CSP` in `main.py`): every response gets `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` and `X-Content-Type-Options: nosniff`. No inline scripts or `on…=` handlers in the page.
 - **Headers** (trusted only because of the gate above):
 
 | Header | Use |
@@ -76,13 +84,13 @@ calorie_tracker/
   - Caller is an admin but the id is unknown: acts as the caller.
   - Otherwise: acts as that user, `{id, name, slug, is_admin: <caller's>}`. The `enabled` flag is not checked.
 - **`require_admin`**: 403 "Only admins can do this. See admin_users on the app's Configuration tab."
-- **No admin yet**: `auth.no_admins()` is true while `admin_users` is empty. `/api/me` returns `no_admins` and `username` (login name, else the user id); the frontend then shows the banner (§9) to everyone. Nobody is ever promoted automatically.
+- **No admin yet**: `auth.no_admins()` is true while `admin_users` is empty. `/api/me` returns `noAdmin` and `username` (login name, else the user id); the frontend then shows the banner (§9) to everyone. Nobody is ever promoted automatically.
 - Enforcement is server-side. The UI hiding admin controls is only a convenience. The AI routes and `/api/me`/`/api/whoami` always use the real caller.
 
 ## 5. Data model
 Six tables (full DDL with comments in the `.sql` file): `users` (HA id, display name, `enabled`), `goals` (1:1; defaults 2000 kcal / 150 P / 200 C / 65 F; optional starting and target kg), `weight_logs`, `saved_foods` (per-user templates plus `notes`), `food_logs` (optional `saved_food_id`, `ON DELETE SET NULL`), and `app_settings` (key → JSON value, §3a). Indexes are on `(user_id, date)` for both log tables.
-- `init_db()` runs `executescript(SCHEMA)` followed by `_migrate()`, then increments `db.generation`. It runs at startup and again after every restore (so an older backup gains `app_settings` via `CREATE TABLE IF NOT EXISTS`). `validate_backup_file` still requires only the original five tables. `_migrate()` adds `users.enabled` and `saved_foods.notes` through guarded `ALTER TABLE`, and turns the older `ollama_url` / `ollama_model` rows into `ai_provider = "ollama"`, `ai_url`, `ai_model` (`INSERT OR IGNORE`, keeping their `updated_at`/`updated_by`, so an existing `ai_*` value wins), then deletes the old rows — for an install's own database and for a restored older backup alike. An older database that never stored those rows starts with AI not set up. **To add a new column, update both the CREATE statement and `_migrate`.**
-- `get_conn()` opens a short-lived connection for each use: `timeout=10`, `sqlite3.Row` rows, `PRAGMA foreign_keys = ON` on every connection, commit on success, rollback on exception. WAL journal mode.
+- `init_db()` runs `executescript(SCHEMA)` followed by `_migrate()`, then increments `db.generation`. It runs at startup and again after every restore (so an older backup gains `app_settings` via `CREATE TABLE IF NOT EXISTS`). `validate_backup_file` still requires only the original five tables. `_migrate()` adds the columns in `db.MIGRATIONS` (`users.enabled`, `saved_foods.notes`) through `db_core.add_missing_columns`, and turns the older `ollama_url` / `ollama_model` rows into `ai_provider = "ollama"`, `ai_url`, `ai_model` (`INSERT OR IGNORE`, keeping their `updated_at`/`updated_by`, so an existing `ai_*` value wins), then deletes the old rows — for an install's own database and for a restored older backup alike. An older database that never stored those rows starts with AI not set up. **To add a new column, update both the CREATE statement and `db.MIGRATIONS`.**
+- `get_conn()` opens a short-lived connection for each use (`db_core.connect` + `db_core.transaction`, `app/common/db_core.py`): `timeout=10`, `sqlite3.Row` rows, `PRAGMA foreign_keys = ON` on every connection, commit on success, rollback on exception, always closed. WAL journal mode.
 - Dates are ISO `YYYY-MM-DD` strings in HA's time zone, compared as strings.
 - A `food_logs` row is a standalone copy of the numbers. `calories`/macros are the entry's totals, and `servings` is display-only (nothing multiplies by it).
 - Every query is scoped to the acting user's id. Update and delete use `WHERE id=? AND user_id=?` and return 404 when no row matches, so ids from other users are rejected.
@@ -95,8 +103,8 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 |---|---|---|
 | `GET /api/health` | none | `{"status":"ok"}` |
 | `GET /api/today` | none | `{today: "YYYY-MM-DD", timezone: "<IANA>"}` from `config.today()` |
-| `GET /api/me` | cur | `{id, name, is_admin, username, no_admins}` |
-| `GET /api/whoami` | cur | `{haUserId, haUsername, haDisplayName, nameSent, viaIngress (X-Ingress-Path present), isAdmin, displayNameOnly, adminEntries (count only), noAdmins}`. Never returns the list itself or raw headers |
+| `GET /api/me` | cur | `{id, name, is_admin, username, noAdmin}` |
+| `GET /api/whoami` | cur | The shared contract (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`): `{haUserId, haUsername, haDisplayName, nameSent, isAdmin, displayNameOnly, adminEntries (count only), noAdmin, viaIngress (X-Ingress-Path present), extras: []}`. Never returns the list itself or raw headers |
 | `GET /api/users` | adm | `[{id, name, enabled, is_you}]`, sorted by name case-insensitively |
 | `PUT /api/users/{id}` | adm | Body `{enabled: bool}`. Returns the updated row; 404 if the id is unknown. Only affects visibility in the switcher |
 | `GET /api/goals` | act | The goals row |
@@ -119,7 +127,7 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `POST /api/ai/warmup` | cur | Not set up → 503 with the message. Non-Ollama → `{ok:true, model, skipped:true}` and nothing is sent. Ollama → sends "hi"; `{ok:true, model}` or 502 with the error |
 | `POST /api/ai/estimate` | cur | Body `{description}`, 1–2000 characters. Returns the parsed model JSON. Not set up → 503; provider errors and an answer without a JSON object → 502 with a readable message |
 | `POST /api/ai/chat` | cur | Body `{message}`, 1–4000 characters. Returns `{reply}`. Not set up → 503; provider errors → 502 |
-| `GET /api/admin/settings` | adm | `{values:{ai_provider, ai_url, ai_model, ai_max_tokens, expose_daily_calories_sensor}, defaults:{…same keys}, meta:{key:{restartRequired:false}}, secrets:{ai_api_key:{saved, hint}}, providers:{ollama|openai|anthropic:{label, defaultUrl}}}` — no key |
+| `GET /api/admin/settings` | adm | The shared payload (`settings_core`): `{values:{ai_provider, ai_url, ai_model, ai_max_tokens, expose_daily_calories_sensor}, defaults:{…same keys}, meta:{key:{label, help, group, kind, restartRequired:false, min?, max?, choices?:[{value, label}], placeholder?, maxLength?, …}}, groups:[{id, label, help}] (ai, ha), secretsSet:{ai_api_key: bool}}` plus the app's `secrets:{ai_api_key:{saved, hint}}` and `providers:{ollama|openai|anthropic:{label, defaultUrl}}` — no key |
 | `PUT /api/admin/settings` | adm | Body: any subset of the keys, `ai_api_key` (blank = keep) and `clear_ai_api_key` (bool). Returns the same shape as GET. 422 with a readable string `detail` (e.g. `"ai_url: must be an http:// or https:// URL…"`, `"Unknown setting(s): x"`, `"ai_url: Ollama needs its address…"`); nothing is stored then |
 | `POST /api/admin/settings/test-ai` | adm | Optional body `{ai_provider?, ai_url?, ai_model?, ai_api_key?, clear_ai_api_key?}` — the form's unsaved values; a missing one = the saved value; a blank key = the saved key unless `clear_ai_api_key`; invalid → 422. Lists the provider's models (`GET /api/tags`, `/models` or `/v1/models?limit=100`, 10 s timeout, in a worker thread, no DB connection held). Returns `{ok, message, provider, label, url, model, models[≤100], modelCount, modelFound}` (`model` or `model:latest` listed). Generates and saves nothing |
 | `GET /api/admin-storage-download-db` | adm | Download named `calorie-tracker-backup-YYYYmmdd-HHMMSS.db` (HA time), type `application/vnd.sqlite3`. The `ai_api_key` row is blanked (`""`) in the copy |
@@ -127,25 +135,27 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `GET /…` | none | `StaticFiles(html=True)` mounted at `/`, registered last |
 
 - Router order: `me.router, me.whoami_router, users, goals, weight, saved_foods, logs, ai, admin`, then the static mount.
-- `no_cache_html_shell` middleware: responses for `/` and `*.html` get `Cache-Control: no-cache, no-store, must-revalidate` and `Pragma: no-cache`.
+- Security headers (`web_security`, §4): responses for `/` and `*.html` also get `Cache-Control: no-cache, no-store, must-revalidate` and `Pragma: no-cache`.
+- Storage routes: the download is `db.backup_to_tempfile` sent by `backup_core.send_file` (deleted after the response) under `backup_core.file_name(...)`; the upload is received by `backup_core.receive` into a temp file in `DATA_DIR`, then validated and swapped in (§10).
 
 ## 7. Home Assistant & external integrations
 **Daily-calories sensor** (`ha_sync.py`)
 - Controlled by the App setting `expose_daily_calories_sensor` (§3a), read live by every push (`ha_sync.exposed()`).
 - Pushes `POST http://supervisor/core/api/states/sensor.calorie_tracker_<slug>_daily_calories` with a Bearer `SUPERVISOR_TOKEN`. Body: `{state: round(today's total, 1), attributes: {unit_of_measurement: "kcal", friendly_name: "<name> Daily Calories", icon: "mdi:food-apple"}}`.
-- Runs with `urllib` in the threadpool, 10 s timeout. A failure logs a WARNING and never fails the request. With no token, it logs one warning and skips.
+- Posts and removes go through `ha_sync.SENSORS`, a `sensor_publisher.Publisher` (`app/common/sensor_publisher.py`) whose post/delete hooks are the app's own `_post`/`_delete` (its HTTP calls through `app/common/ha_client.py` and its own log lines). Runs in the threadpool, 10 s timeout. A failure logs a WARNING and never fails the request. With no token, it logs one warning and skips.
 - Triggered by food-log create or delete dated today (for the acting user's sensor) and by the periodic job (§8). Nothing is pushed while the setting is off.
 - **Setting turned on** (`PUT /api/admin/settings` changed it; runs as a `BackgroundTask` right after the response): `push_all()` — one query for every user's total today (LEFT JOIN, so users with nothing logged get 0), the connection closed, then one POST per user.
-- **Setting turned off**: `remove_all()` — `DELETE /api/states/<entity_id>` for every current user's slug plus every entity this process pushed successfully (`_published`, which covers a user renamed since). 2xx or 404 counts as removed. If any DELETE fails, `_removal_pending` is set and the periodic job retries until all succeed. Entities published under an old name before the last restart can't be known and are left to HA (REST-created states don't survive an HA restart anyway).
+- **Setting turned off**: `remove_all()` — `DELETE /api/states/<entity_id>` for every current user's slug plus every entity this process pushed successfully (`_published` = the publisher's memory, which covers a user renamed since). 2xx or 404 counts as removed. If any DELETE fails, `_removal_pending` is set and the periodic job retries until all succeed. Entities published under an old name before the last restart can't be known and are left to HA (REST-created states don't survive an HA restart anyway).
 - No DB connection is ever held during an HA call.
 - The slug comes from the display name: renaming a user creates a new entity, and two users with the same display name share one sensor.
 
 **Time zone**
-- At startup, `load_timezone()` calls `GET http://supervisor/core/api/config`, reads `time_zone`, and passes it to `config.set_timezone()`.
+- At startup, `load_timezone()` (`ha_time.load(config.ZONE)`, `app/common/ha_time.py`) calls `GET http://supervisor/core/api/config` through the shared `ha_client`, reads `time_zone`, and sets `config.ZONE` (an `ha_time.Zone`; `config.set_timezone()` / `timezone_name()` / `now()` / `today()` are backed by it).
 - If the call fails, the app stays on UTC. The zone is read once, so a change in HA needs an app restart.
 - `config.now()`/`config.today()` are the only way to get the current time or date. They feed `/api/today`, the sensor total, the history, weight-history and month windows, and the backup filename. Never use `date.today()` or `datetime.now()`.
 
 **AI** (`ai_client.py`) — the only code that talks to a model
+- The requests, retries (429/500/502/503/504/529, Retry-After or 5/15/45 s), the 400 fall-backs, error mapping and model listing are the shared `app/common/ai_client.py` (`Client`, `Wording`); the app's `ai_client.py` keeps `Config`, `current()`, `generate()`, the warm-up, estimate/chat, its usage notes and its wording (`WORDING`, with the longer messages, and the key scrubbing).
 - `current()` reads provider, resolved address, model, key and `ai_max_tokens` from App settings at each request. `generate(prompt, system=, want_json=, temperature=, timeout=, purpose=)` raises `AIError(kind)` with a readable message and records `last_request` (+ an INFO log line with tokens and seconds; never the key). Not set up → `AIError("not_configured")` before anything is sent.
 
 | | Ollama | OpenAI-compatible | Anthropic Claude |
@@ -165,17 +175,18 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 - **Privacy**: `privacy()` = `{label, host}` while `ai_is_external()`, else null; the frontend shows it to everyone (§9).
 
 ## 8. Background jobs
-- `lifespan` runs `db.init_db()`, then `await ha_sync.load_timezone()`, then starts the `_periodic_ha_sync` task. On shutdown it cancels the task and awaits it.
-- `_periodic_ha_sync` sleeps 900 s, then calls `ha_sync.periodic_sync()`: while the setting is on, it pushes the sensor for **every** `users` row, disabled users included, using the slug of each name; while it's off, it only retries a pending removal. It repeats forever. Exceptions log a WARNING and the loop continues. The first push comes 15 minutes after start. Purpose: the sensor rolls over to 0 after midnight even if nobody opens the app.
-- `main.py` calls `logging.basicConfig(level=INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")`. Use no `print()`.
+- `lifespan` runs `db.init_db()`, then `await ha_sync.load_timezone()`, then registers the `"ha_sync"` job with the shared runner (`app/common/housekeeping.py`, `Jobs().every("ha_sync", 900, ha_sync.periodic_sync, at_start=False)`) and starts it. On shutdown `jobs.stop()` cancels the task and awaits it.
+- The `"ha_sync"` job runs every 900 s, first after 900 s, and calls `ha_sync.periodic_sync()`: while the setting is on, it pushes the sensor for **every** `users` row, disabled users included, using the slug of each name; while it's off, it only retries a pending removal. It repeats forever. Exceptions log a WARNING "Periodic HA sync failed: <error>" and the job continues. The first push comes 15 minutes after start. Purpose: the sensor rolls over to 0 after midnight even if nobody opens the app.
+- Logging is set up by `housekeeping.setup_logging()` at the top of `main.py` (level INFO, format `"%(asctime)s %(levelname)s %(name)s: %(message)s"`). Use no `print()`.
 
 ## 9. Frontend
 **Core rules**
-- Every request uses a relative URL: `api()` strips a leading `/` because ingress serves the app under `/api/hassio_ingress/<token>/`. `api()` sends JSON by default and throws `Error(detail)` on any non-2xx response.
+- Shared browser helpers: `common/ui.js` (`window.UI`) loads before `app.js`; the app binds `api = UI.makeApi({…})`, `$`, `h = UI.h`, `escapeHtml = UI.escapeHtml`. Script order at the end of `index.html`: `common/ui.js`, `common/settings.js`, `common/people.js`, `common/backnav.js`, `common/whoami.js`, `app.js`.
+- Every request uses a relative URL: `api()` strips a leading `/` because ingress serves the app under `/api/hassio_ingress/<token>/`. `api()` sends JSON by default (the fetch options are passed through as they are) and throws `Error(detail)` on any non-2xx response.
 - `withUser(path)` appends `as_user=<actingUserId>` to every data call (goals, weight, saved foods, logs, summary, history). It is not added to `me`, `today`, `whoami`, `users`, `ai` or `admin` calls.
-- Routing: the app is tab-based without URLs, except the Admin page, which uses the hash: `#/admin/settings`, `#/admin/users`, `#/admin/storage` (`#/admin` → settings); `#/users` and `#/storage` redirect (`history.replaceState`) to the matching Admin tab. Opening any other tab or the whoami page clears the hash. Admin navigation uses `BackNav.go()` (no history entries); Back (HA app gesture or browser) is handled by `backnav.js` (byte-identical across the household apps, loaded before `app.js`): closes the details popup, else returns to Food Log, else leaves the app.
-- `escapeHtml()` escapes `&<>"'` and must wrap every piece of server or user text put into `innerHTML` or an attribute. Chat messages, the details modal, the "No admin yet" name and the AI notices use `textContent` / DOM nodes.
-- **"No admin yet" banner** (`#noAdminBanner`, above the date bar, every page, everyone): "No admin yet — add your Home Assistant user name (**<username>**) to `admin_users` in the app's Configuration tab, save, and restart the app." plus a "How the app sees you" link button. Shown when `/api/me` says `no_admins`.
+- Routing: the app is tab-based without URLs, except the Admin page, which uses the hash: `#/admin/settings`, `#/admin/users`, `#/admin/storage` (`#/admin` → settings); `#/users` and `#/storage` redirect (`history.replaceState`) to the matching Admin tab. Opening any other tab or the whoami page clears the hash. Admin navigation uses `BackNav.go()` (no history entries); Back (HA app gesture or browser) is handled by `common/backnav.js` (shared, loaded before `app.js`): closes the details popup, else returns to Food Log, else leaves the app.
+- `escapeHtml()` (common/ui.js's `UI.escapeHtml`) escapes `&<>"'` and must wrap every piece of server or user text put into `innerHTML` or an attribute. Chat messages, the details modal, the "No admin yet" name and the AI notices use `textContent` / DOM nodes.
+- **"No admin yet" banner** (`#noAdminBanner`, an empty container above the date bar, every page, everyone, filled by `HouseholdWhoami.fillNoAdminBanner` from `common/whoami.js`): "No admin yet — add your Home Assistant user name (**<username>**) to `admin_users` on the app's Configuration tab, save, and restart the app." plus a "How the app sees you" link button. Shown when `/api/me` says `noAdmin`.
 - **AI notices** (`.ai-notice`, four places: Food Log Add Food card, Saved Foods form, AI Assistant card, App settings): from `/api/ai/status` — "AI isn't set up — an admin can set it up in Admin → App settings." while not configured (the ✨ buttons, chat input and Send are then disabled), and while `privacy` is set: "AI requests go to <label>. The food descriptions you send with ✨ Estimate with AI and the messages you type on AI Assistant are sent to <host> — outside your home network. That service's own privacy and data-retention rules apply. Nothing else from the app … is sent." (admins also get a "Change in Admin → App settings" button). Status is loaded at startup and refreshed when the AI tab or App settings opens and after each AI request or save.
 
 **Startup**
@@ -184,7 +195,7 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 
 **Layout**
 - Sidebar (220 px): 🥗 brand, nav, user chip "Logged in as <name>" (a button that opens the whoami page), and the theme `<select>`.
-- The sidebar collapses to a 68 px icon rail with the ‹/› button. The state is saved in localStorage `sidebarCollapsed`.
+- The sidebar collapses to a 68 px icon rail with the ‹/› button. The state is saved in localStorage `sidebarCollapsed` (through `HouseholdTheme.sidebarCollapsed()` / `setSidebarCollapsed()`).
 - At ≤760 px the sidebar becomes a fixed bottom icon bar, and the brand, chip, theme select and collapse button are hidden.
 - Top bar: a 👤 button (opens the whoami page) and `#userSelect`. The select is hidden for non-admins. It lists enabled users plus yourself, marked "(you)".
 - **Date bar is shown on Food Log only** (`DATE_BAR_TABS = {"foodlog"}`; the whoami page hides it too). Controls: ‹ previous day; a pill showing e.g. "Sep 22" (", 2025" added when not the current year), a sub-label (Today / Yesterday / Tomorrow / weekday) and 📅; › next day; and Today.
@@ -192,9 +203,9 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
   - › is disabled once the date reaches today, and Today is disabled on today.
   - `shiftDate` does its date arithmetic in UTC so DST changes never skip or repeat a day.
   - Changing the date reloads the summary, the food log, the saved-food picker and the history.
-- Themes `midnight` (default), `slate` and `daylight` are set with `data-theme` on `<html>`.
-  - An inline script in `<head>`, placed before the stylesheet, applies the saved theme and sidebar state before first paint (localStorage `theme`, `sidebarCollapsed`).
-  - The `:root` block must stay identical to the `midnight` block.
+- Themes `midnight` (default), `slate`, `daylight` and `auto` (Daylight when the device is light, else Midnight); `data-theme` on `<html>` always holds the resolved theme (never `auto`). The theme `<select>` is filled by `HouseholdTheme.bindSelect()`.
+  - The shared surfaces, text and state colours come from `common/themes.css`; `style.css` adds the app's green accent and its own colours in the `:root, [data-theme="midnight"]`, `[data-theme="slate"]` and `[data-theme="daylight"]` blocks.
+  - `common/theme-boot.js`, an external script in `<head>` placed before the stylesheets (`common/themes.css`, `common/settings.css`, `style.css`), applies the saved theme and sidebar state before first paint (localStorage `theme`, `sidebarCollapsed`). There is no inline script.
   - Charts read colors with `cssVar()`.
 
 | Tab | Who | Contents / behavior |
@@ -206,19 +217,19 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | Goals | all | 4 macro inputs plus starting and target weight (kg). Save sends all six fields: an empty macro is sent as 0, an empty weight as null |
 | AI Assistant | all | Status dot (grey, `ok` or `err`), status text (not set up message / "Connected to <provider> · <model> at <url>." / "Set up for …" / last error), the last request's tokens and seconds, a "Wake up model" button (Ollama only), and the AI notice; the status refreshes when the tab opens. Chat log plus an input with Send or Enter. The "Estimate with AI" buttons use the name field, or `prompt()` if it is empty. The Saved Foods estimate also fills serving size and unit, and the status line shows the AI's note |
 | 🛡️ Admin | admin | Last nav item, `hidden` in the HTML and un-hidden by `loadMe()` for admins only. `#tab-admin` holds a pill tab row (`.admin-tabs`, reusing `.hist-btn`, wraps on phones): **App settings \| Users \| Storage**. A non-admin who opens an Admin link sees only the card "Only admins can open this page." (`#adminDenied`). Sub-tabs below |
-| ↳ App settings | admin | One card: the AI notice, then **🤖 AI**: Provider `<select>` (Not set up / Ollama / OpenAI-compatible / Anthropic Claude; changing it blanks the address, or brings back the saved one, and sets the placeholder to that provider's standard address), Address, Model, Access key (`type=password`, always empty; placeholder "A key is saved (…1234) — type a new one to replace it" or "Paste the key"; a "Remove the saved key" checkbox only when one is saved), Longest answer (tokens), each with help text; **🔌 Test connection** posts the form (a blank key = saved key) to `test-ai` and shows ✓/✗ + the message inline. **🏠 Home Assistant**: "Publish daily calories to Home Assistant" toggle with help text. Footnote: changes apply right away; only `admin_users` is on the app's Configuration tab. **Save settings** PUTs all fields (the key only when typed, `clear_ai_api_key` when ticked); shows "✓ Saved. Changes apply right away." (plus "Publishing…"/"Removing…" when the toggle changed) or "Not saved: <detail>" inline, and refreshes the AI status. Editing any field clears the old messages |
-| ↳ Users | admin | Explanatory hint, then one row per user with a YOU badge and an enabled toggle that saves immediately; on failure the toggle reverts and an alert appears |
+| ↳ App settings | admin | Drawn by `common/settings.js` (`SettingsPage.render`) from the payload's `meta` and `groups`: one card per group, a help line with the range and default under each setting, Save / Discard changes at the bottom ("N unsaved changes"), wrong numbers flagged at the field before saving. The app adds the AI notice at the top of the AI group, the Test connection block at its bottom, the footnote and its own messages. **🤖 AI**: Provider `<select>` (Not set up / Ollama / OpenAI-compatible / Anthropic Claude; changing it blanks the address, or brings back the saved one, and sets the placeholder to that provider's standard address), Address, Model, Access key (`type=password`, always empty; placeholder "Saved (…1234) — type a new one to replace it" or "Paste the key"; a **Remove** button only when one is saved, which sends `clear_ai_api_key: true` with the next save), Longest answer (tokens), each with its help text; **🔌 Test connection** posts the form (a blank key = saved key) to `test-ai` and shows ✓/✗ + the message inline. **🏠 Home Assistant**: "Publish daily calories to Home Assistant" switch with its help text. Footnote: changes apply right away; only `admin_users` is on the app's Configuration tab. **Save settings** PUTs the changed settings (the key only when typed, `clear_ai_api_key` after Remove); shows "✓ Saved. Changes apply right away." (plus the publishing/removing sentence when the switch changed) or the server's message, and refreshes the AI status. Editing any field clears the old Test connection result |
+| ↳ Users | admin | Explanatory hint, then the shared people list (`common/people.js`, `PeoplePage.render`): one card per user with a "you" badge and an Enabled/Disabled switch (`PeoplePage.accessSwitch`) that saves immediately; on failure the switch reverts and an alert appears |
 | ↳ Storage | admin | Download link `api/admin-storage-download-db`. Restore card: red warning, `.db` file input, `confirm()`, then a POST of `FormData` with `headers:{}` so the browser sets the multipart boundary. On success: "Import complete. Reloading…", then a reload after 1.2 s |
 | How the app sees you | all | `#tab-whoami`, which has no nav button; opened from the user chip or 👤. See below |
 
 **How the app sees you**
-- Rows: User name (sent by Home Assistant) with a copy button (shows "not sent" if absent), User id with a copy button, Display name (not used for matching), Administrator in this app (Yes/No), and Names in the app's admin_users (the count).
+- Drawn by the shared `HouseholdWhoami.panel()` (`common/whoami.js`) from `/api/whoami`, inside the app's own card; rows and advice as in `WHOAMI_PAGE_SPEC.md` §3: User name (sent by Home Assistant) with a copy button (shows "not sent" if absent), User id with a copy button, Display name (not used for matching), Administrator in this app (Yes/No), and Names in the app's admin_users (the count). No extra rows.
 - Advice, checked in this order:
   1. The user is an admin: "You are an administrator."
   2. `displayNameOnly`: replace the display name with the login name or id, then restart.
   3. `adminEntries == 0`: the list is empty in the running app, so restart.
   4. Otherwise: add the login name or id exactly as shown, then restart; case doesn't matter.
-- There is no "Opened through Home Assistant" row: `viaIngress` is returned by the API but not shown. Copying uses `navigator.clipboard` and shows ✓ for 1.2 s.
+- There is no "Opened through Home Assistant" row: `viaIngress` is returned by the API but not shown. Copying uses `navigator.clipboard` and shows ✓ for a moment.
 
 **Charts** (hand-rolled `<canvas>`, no library)
 - Y-axis gridlines and labels come from `niceTicks` (steps of 1, 2 or 5 × 10ⁿ). When there are more than 10 points, every other x label is shown.
@@ -233,12 +244,12 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 - Keep frontend URLs relative. Get the date from `/api/today` and never from the browser clock. On the server, use `config.today()`/`now()` only.
 - The Alpine image needs `tzdata`. Without it every `ZoneInfo()` call fails and the day rolls over at UTC midnight.
 - Admins are matched by user id or login name only. Acting-as is enforced in `get_acting_user`, not in the UI. Disabling a user only hides them from the switcher: an admin can still act as them, and their sensor still syncs.
-- **Backup** uses `Connection.backup()` into a temp file, which a `BackgroundTask` deletes after the response. Never serve the WAL-mode file directly.
+- **Backup** uses `Connection.backup()` into a temp file (`db_core.snapshot_to_tempfile`), which `backup_core.send_file` deletes after the response. Never serve the WAL-mode file directly.
 - **Backup never carries the AI access key**: `backup_to_tempfile(blank_settings=("ai_api_key",))` sets that row's value to `""` in the copy.
 - **Restore**, in order:
-  1. Stream the upload to `mkstemp(dir=DATA_DIR)`. A temp file in `/tmp` makes `os.replace` fail with EXDEV.
-  2. `validate_backup_file`: the file must open as SQLite, `PRAGMA integrity_check` must return `ok`, and all 5 tables must be present; otherwise return 400.
-  3. Under `_import_lock`: `wal_checkpoint(TRUNCATE)`, `os.replace` over the DB, delete `-wal`/`-shm`, then run `init_db()` so older backups get migrated.
+  1. Stream the upload to a temp file in `DATA_DIR` (`backup_core.receive`). A temp file in `/tmp` makes `os.replace` fail with EXDEV.
+  2. `validate_backup_file` (`db_core.validate_file`): the file must open as SQLite, `PRAGMA integrity_check` must return `ok`, and all 5 tables must be present; otherwise return 400.
+  3. `db.import_from_tempfile` = `backup_core.restore_file` under `_import_lock`: `wal_checkpoint(TRUNCATE)`, `os.replace` over the DB, delete `-wal`/`-shm` (`db_core.swap_in`), then run `init_db()` so older backups get migrated.
   4. Remove the temp file in `finally`.
   5. Put this install's access key back if the restored file has none (`settings.restore_secrets`), then `ai_client.forget_state()`.
   Restore replaces everything else, with no merge and no undo.
@@ -250,11 +261,21 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 ## 11. Build, test & release
 - `requirements.txt`: `fastapi==0.141.1`, `uvicorn==0.53.0`, `python-multipart==0.0.32`. `requirements-dev.txt`: `-r requirements.txt` plus `httpx2==2.13.1` (needed by Starlette's TestClient). All household apps use the same pins; bump them together.
 - Tests: run `python3 -m unittest discover -s tests` from the app folder with the dev requirements installed.
-  - `tests/_env.py` must be imported first. It sets a temp `DATA_DIR`, removes `SUPERVISOR_TOKEN`, and sets `DEV_ADMIN_USERS=adminy`.
-  - The client is `TestClient(app, client=("127.0.0.1", 12345))` so requests pass the origin gate.
+  - `tests/_env.py` must be imported first. Built on `common_tests/env.py`, it sets a temp `DATA_DIR`, removes `SUPERVISOR_TOKEN`, and sets `DEV_ADMIN_USERS=adminy`.
+  - The client is `TestClient(app, client=("127.0.0.1", 12345))` so requests pass the origin gate (`common_tests/ingress.py` has `ingress_client`, `identity_headers`, `user_headers` for the same).
+  - `tests/common_tests/` (copies from the repository's `common/tests/`): the shared helpers above and `packaging_core.py`, `test_shared_copies.py` (no copy was edited), and the shared modules' own tests (`test_whoami_shared`, `test_auth_core`, `test_db_core`, `test_settings_core`, `test_web_security`, `test_backup_core`, `test_sensor_publisher`, `test_ai_client`).
+  - `test_security_headers.py`: the CSP and `nosniff` on pages and API answers, and no inline scripts or `on…` handler attributes in the page.
   - `test_app.py`: ingress gate and 401; admin matching by id/login, not display name; `as_user` for non-admins ignored; cross-user edits 404; backup/restore round trip, junk files, older backups migrated; Ollama warm-up only when stale and never for cloud providers; AI input caps; time zone (UTC fallback); `escapeHtml` (under node, skipped without it); App settings shape/defaults (no personal defaults), admin-only, validation (422, nothing stored), partial updates, restore of the backup's settings; migration of `ollama_url`/`ollama_model` rows (on startup and on restore); "AI isn't set up" (503s, nothing sent, the app still works, the four notice places); "No admin yet" (API flag and banner); only `admin_users` read from options.json; the daily-calories sensor (on/off, publish-all, remove-all incl. renamed users, retries, no DB connection during HA calls); Admin APIs admin-only; sidebar layout.
   - `test_ai_providers.py` (the network replaced by a fake `ai_client._post`): request shape per provider, auth headers only when a key is set, JSON mode and its fallback, system prompts, Claude's `max_tokens` lowering, Claude needing a key, warm-up only for Ollama, settings applying to the next request; 401/404/unreachable/timeout messages (with the provider's message, never the key), retries with Retry-After and the cap; the key as a secret (never returned, blank keeps, replace, remove, never logged, blanked in the download, kept on restore); Test connection per provider (GET only, typed values, blank key = saved key, errors, 422 on a bad address); what counts as outside the home network and the privacy flag for everyone.
-  - `test_packaging.py`: `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options == schema == translations == `admin_users`, empty default), every `?v=` equals the version, README/DOCS/Dockerfile present, CHANGELOG.md starts with `# Changelog` and its newest (top) version heading equals the `config.yaml` version, `spec/` present and no `data model/`, `.dockerignore` entries, icon 128×128 and logo 250×100 (PNG header), no earlier release numbers in the docs, and a scan of every text file for personal details (only the repository URL allowed; only obvious example addresses).
+  - `test_packaging.py` (the checks come from `common_tests/packaging_core.py`, with the app's own values): `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options == schema == translations == `admin_users`, empty default), every `?v=` equals the version, README/DOCS/Dockerfile present, CHANGELOG.md starts with `# Changelog` and its newest (top) version heading equals the `config.yaml` version, `spec/` present and no `data model/`, `.dockerignore` entries, icon 128×128 and logo 250×100 (PNG header), no earlier release numbers in the docs, and a scan of every text file for personal details (only the repository URL allowed; only obvious example addresses).
 - `.dockerignore`: `__pycache__ *.pyc .venv tests spec *.md !README.md icon.png logo.png translations requirements-dev.txt data *.db *.db-wal *.db-shm *.log .git`.
 - **Every release**: bump `config.yaml` `version` (the Supervisor compares this string to offer an update), set every `?v=` in `index.html` to the same version, and add a `## <version>` section to `CHANGELOG.md` (Home Assistant shows it in the update dialog; it is read from the repository, so `.dockerignore` keeps it out of the image).
 - Install: add the repository `https://github.com/sameerkotra/ha-apps` in **Settings → Apps → Install app → ⋮ (top right) → Repositories**, **Add**; then in **Settings → Apps → Install app** find the app, **Install**, set `admin_users` on the **Configuration** tab, **Start** (Information tab) (see `DOCS.md`).
+
+## Security notes (2026-10)
+
+From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
+
+- **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
+- **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass.
+- **Backups without secrets**: the download blanks the secret App settings (`ai_api_key`) in the copy (`settings.REGISTRY.scrub_secrets`); a restore keeps this install's value for each one the file leaves blank (`saved_secrets` before, `keep_secrets` after the migrations; a value the file carries is used).

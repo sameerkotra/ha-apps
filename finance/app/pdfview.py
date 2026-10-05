@@ -12,9 +12,9 @@ WebView, which an embedded PDF frame does not.
 import html
 import os
 import re
-import subprocess
-import tempfile
 from collections import OrderedDict
+
+from .common import sandbox_run
 
 # ~2x a phone screen's CSS pixels, so text stays sharp when pinch-zoomed.
 RENDER_DPI = 200
@@ -48,9 +48,9 @@ def load_pages(path: str) -> list[dict]:
     key = _stamp(path)
     if key in _words_cache:
         return _words_cache[key]
-    result = subprocess.run(
-        ["pdftotext", "-bbox", path, "-"], capture_output=True, text=True, timeout=_TIMEOUT,
-    )
+    with sandbox_run.Scratch(prefix="pdftotext-") as box:          # a copy, as pdfworker, with limits
+        src = box.add_file(path, "in.pdf")
+        result = box.run(["pdftotext", "-bbox", src, "-"], capture_output=True, text=True, timeout=_TIMEOUT)
     if result.returncode != 0:
         raise RuntimeError(f"pdftotext failed: {result.stderr.strip()}")
     pages = []
@@ -68,10 +68,11 @@ def render_page(path: str, page: int) -> bytes:
     key = _stamp(path) + (page,)
     if key in _image_cache:
         return _image_cache[key]
-    with tempfile.TemporaryDirectory() as tmp:
-        root = os.path.join(tmp, "page")
-        result = subprocess.run(
-            ["pdftoppm", "-png", "-r", str(RENDER_DPI), "-f", str(page), "-l", str(page), "-singlefile", path, root],
+    with sandbox_run.Scratch(prefix="pdftoppm-") as box:           # a copy, as pdfworker, with limits
+        src = box.add_file(path, "in.pdf")
+        root = os.path.join(box.path, "page")
+        result = box.run(
+            ["pdftoppm", "-png", "-r", str(RENDER_DPI), "-f", str(page), "-l", str(page), "-singlefile", src, root],
             capture_output=True, timeout=_TIMEOUT,
         )
         out = root + ".png"

@@ -5,6 +5,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
+from ..common import whoami as whoami_core
 from ..db import get_db
 from ..version import APP_VERSION
 
@@ -80,11 +81,14 @@ def htmx_fragment_requested(request: Request) -> bool:
 def whoami(request: Request, current: User = Depends(get_current_user)):
     """How this app sees the signed-in person: the exact id and name Home Assistant sent, and whether either
     is on the app's admin_users list. Meant for "I added my name but there is no debug button": it shows
-    what to type. Only the person's own identity and a count are shown, never the admin list itself."""
+    what to type. Only the person's own identity and a count are shown, never the admin list itself.
+    The data is the shared whoami contract (common/whoami.py); whoami.html draws it."""
+    w = whoami_core.build(
+        request, user_id=current.id, username=request.headers.get("x-remote-user-name"),
+        display_name=request.headers.get("x-remote-user-display-name"), is_admin=current.is_admin,
+        admin_entries=len(ADMIN_USERS))
     return templates.TemplateResponse(request, "whoami.html", {
-        "user": current, "acting_qs": "", "acting_as_banner": None, "is_admin": current.is_admin,
-        "active_page": "whoami", "admin_entries": len(ADMIN_USERS),
-        "name_sent": "x-remote-user-name" in request.headers,
+        "user": current, "acting_qs": "", "acting_as_banner": None, "active_page": "whoami", "w": w,
     })
 
 

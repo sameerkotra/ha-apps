@@ -1,12 +1,12 @@
 """Background upkeep: the daily trash purge, the media online check every
 5 minutes, and the hourly sync of Home Assistant persons into users."""
-import asyncio
 import logging
 from datetime import timedelta
 
 from starlette.concurrency import run_in_threadpool
 
 from . import config, db, ha_client, media, settings
+from .common import housekeeping as jobs_core
 
 logger = logging.getLogger("housekeeping")
 
@@ -73,19 +73,17 @@ def purge(older_than_days: int | None) -> dict:
     return counts
 
 
-async def loop():
-    """Media check every 5 minutes; person sync hourly; purge daily."""
-    tick = 0
-    while True:
-        try:
-            await run_in_threadpool(media.check)
-            from .routers import export as export_router
-            await run_in_threadpool(export_router.cleanup)
-            if tick % 12 == 0:
-                await run_in_threadpool(ha_client.sync_users_blocking)
-            if tick % 288 == 0:
-                await run_in_threadpool(purge_expired)
-        except Exception:
-            logger.exception("Housekeeping step failed")
-        tick += 1
-        await asyncio.sleep(300)
+async def step(tick: int) -> None:
+    """One run of `loop` (every 5 minutes): the media check every time; person
+    sync hourly (every 12th run); purge daily (every 288th)."""
+    await run_in_threadpool(media.check)
+    from .routers import export as export_router
+    await run_in_threadpool(export_router.cleanup)
+    if tick % 12 == 0:
+        await run_in_threadpool(ha_client.sync_users_blocking)
+    if tick % 288 == 0:
+        await run_in_threadpool(purge_expired)
+
+
+# Every 5 minutes, from main.py's lifespan (tests may replace `loop`).
+loop = jobs_core.periodic(300, step, thread=False, tick=True, log=logger, error="Housekeeping step failed")

@@ -1,50 +1,53 @@
 # HA app patterns: multi-theme CSS + admin determination + SQLite export
 
-Three self-contained patterns pulled out of the Finance Dashboard app
-so they're easy to drop into another Home Assistant
-app — ingress-only, ships its own login-free auth via HA's forwarded
-headers, one SQLite file under `/data`.
+Three patterns pulled out of the Finance Dashboard app — page themes, admin determination from HA's
+ingress headers, and the admin-only SQLite export — plus the maintenance checklist every household app
+follows (section 4). Ingress-only apps, login-free auth via HA's forwarded headers, one SQLite file under
+`/data`.
 
-**Status: implemented in all three apps in this folder** (calorie_tracker,
-household_todo, splitpot). Section 4 at the end is the shared maintenance
-checklist all three were brought in line with in September 2026 — read it
-before starting a new app or changing one of these.
+**Status (October 2026): the patterns are now implemented once, in the repository's `common/` folder,**
+and copied into every app that uses them by `python tools/sync_common.py` (see `common/README.md` and
+`SHARED_CODE_PLAN.md`). An app no longer writes its own version: it uses the shared file and keeps only
+what is its own (its accent colours, its routes, its file names and messages). Sections 1–3 below still
+explain *why* each piece works the way it does — read them before changing the shared file — and each
+starts with where the shared version lives.
 
-- **calorie_tracker** — already had admin determination (the `switch_admins`
-  option / `get_current_user` / `require_admin` / `get_acting_user` chain in
-  `app/auth.py` is this pattern, just named differently). Added: the
-  multi-theme CSS (`midnight` / `slate` / `daylight`, `app/static/style.css`
-  + `index.html` + `app.js`) and the admin-only SQLite backup route
-  (`db.backup_to_tempfile()` + `app/routers/admin.py`, gated behind the
-  existing `require_admin`). Route name and its own dedicated **Storage**
-  sidebar tab (separate from Users) both match the Finance Dashboard
-  app's naming: `GET /api/admin-storage-download-db`.
-- **splitpot** — had none of the three going in (ingress auth was a
-  same-shape but different mechanism: a host-allowlist + header-presence
-  `@app.middleware("http")`, not a per-route dependency, and no admin
-  concept at all — every request could disable/enable anyone). Added: the
-  same multi-theme CSS (`paper` / `slate` / `daylight`, reusing splitpot's
-  own `--paper`/`--ink`/`--moss`/... variable names rather than the
-  `--bg`/`--panel`/`--accent` names below), a new `admin_users` config
-  option + `is_admin()`/`require_admin()` in `main.py` (now also gating the
-  People enable/disable toggle, which was previously ungated), and the same
-  backup route at `/api/admin/backup-db`.
+| Pattern | Shared files (in `common/`) | Copied to |
+|---|---|---|
+| 1. Themes (Midnight, Slate, Daylight, Auto; old names mapped) | `static/theme-boot.js`, `static/themes.css` | `app/static/common/` — all 9 apps |
+| 2. Ingress source check, identity headers, admin list | `python/auth_core.py` (`refuse_outsiders`, `identity`, `admin_names` / `admin_entries`, `is_admin`, `no_admin`, `require_admin_flag`) | `app/common/` — all 9 |
+| 2. "How the app sees you" + "No admin yet" | `python/whoami.py`, `static/whoami.js` (`WHOAMI_PAGE_SPEC.md`) | all 9 (`whoami.js`: all but Finance) |
+| 3. Database export / import | `python/db_core.py` (`connect`, `transaction`, `add_missing_columns`, `snapshot_to_tempfile`, `validate_file`, `swap_in`), `python/backup_core.py` (`file_name`, `send_file`, `write_zip`, `receive`, `check_members`, `restore_file`, …) | `db_core`: all but Receipt (SQLAlchemy); `backup_core`: all 9 |
+| 4. App settings page | `python/settings_core.py`, `static/settings.js`, `static/settings.css` | all but Finance |
+| 4. Admin → People / Users (phones from HA, extra notify services, Send a test) | `python/people_admin.py`, `static/people.js` | Family Tree, Arcade, Chat, Todo, Vault (`people.js` also Calorie Tracker, Splitpot) |
+| 4. Logging, lifespan jobs | `python/housekeeping.py` (`setup_logging`, `Jobs`, `periodic`) | all but Finance and Receipt |
+| 4. Security headers (CSP, `nosniff`, Cache-Control) | `python/web_security.py` | all 9 |
+| 4. Escaping and DOM building | `static/ui.js` (`UI.h`, `UI.escapeHtml`, `UI.makeApi`, `UI.toast`, …) | all 9 |
+| 4. Build files | `build/Dockerfile.template`, `build/requirements-base.txt`, checked by `python tools/check_build.py` | not copied (patterns) |
+| 4. Test helpers and packaging checks | `tests/env.py`, `tests/ingress.py`, `tests/packaging_core.py`, `tests/fake_ha.py` | `tests/common_tests/` |
 
-Below is the original how-to (still accurate as the underlying mechanism —
-just read `calorie_tracker`/`splitpot`'s actual files for the two apps'
-concrete, slightly-differently-named implementations of it). It applies to
-any FastAPI + Jinja2/vanilla-JS + raw-`sqlite3` HA app built the same way.
+`common/manifest.json` says exactly which app gets which file. Never edit a copy in an app (its first line
+says "Shared file: edit common/…"): edit `common/`, run `python tools/sync_common.py`, then the tests.
 
-All three patterns assume the same baseline that Finance Dashboard already has:
-a single `style.css` served at `static/style.css`, a `base.html` that every
-page `{% extends %}`, and a `db.py` with one `DB_PATH` constant and one
-`get_db()` that opens `sqlite3` connections in WAL mode. If your app's
-shape differs, adjust file names accordingly — the mechanisms below don't
-depend on anything Finance-Dashboard-specific.
+The original how-to follows. It applies to any FastAPI + Jinja2/vanilla-JS + raw-`sqlite3` HA app built
+the same way; the code samples show the mechanism, the shared files are the version to use.
 
 ---
 
 ## 1. Multi-theme CSS (light/dark, user-selectable, no flash)
+
+**Shared now:** `common/static/themes.css` (the surfaces, text and state colours of Midnight — the default
+— Slate and Daylight: `--bg --panel --panel-alt --panel-hover --card --border --text --text-dim`,
+`--danger(-soft) --warn(-soft) --ok(-soft) --info(-soft)` and a neutral accent) and
+`common/static/theme-boot.js` (`window.HouseholdTheme`: applies the saved `theme` and the collapsed
+sidebar before first paint; `bindSelect`, `set`, `choice`, `onChange`, `sidebarCollapsed`,
+`setSidebarCollapsed`). **Auto** follows the device (Daylight when it is light, else Midnight); old saved
+names keep working (heritage, ink, vault, paper → Midnight; parchment, sandstone → Daylight). Each app's
+`style.css` sets only its accent and its own colours, in the three blocks `:root, [data-theme="midnight"]`,
+`[data-theme="slate"]`, `[data-theme="daylight"]`. In `<head>`, before the app's stylesheet:
+`<script src="common/theme-boot.js?v=…"></script>` then `<link rel="stylesheet" href="common/themes.css?v=…">`
+(Finance and Receipt: `static/common/…`). It is an **external** script, not an inline one: every app's
+Content-Security-Policy forbids inline scripts (section 4).
 
 ### What this gets you
 - Several complete color palettes (dark and light), switchable instantly
@@ -60,8 +63,8 @@ depend on anything Finance-Dashboard-specific.
 
 ### The mechanism, in one sentence
 Every theme is a same-shaped set of CSS custom properties under a
-`[data-theme="..."]` attribute selector on `<html>`; a small inline
-script in `<head>` reads the saved choice from `localStorage` and sets
+`[data-theme="..."]` attribute selector on `<html>`; a small script
+in `<head>` (now the external `common/theme-boot.js`) reads the saved choice from `localStorage` and sets
 that attribute *before* anything below it paints; a `<select>` later in
 the page lets the user change it instantly (pure CSS variable swap, no
 JS re-render needed) and writes the new choice back to `localStorage`.
@@ -202,9 +205,11 @@ that's the point, and it's cheap enough that it doesn't matter.
   around in returning users' browsers; an unvalidated stale name sets a
   `[data-theme]` attribute nothing matches, which renders completely
   unstyled (worse than just falling back to default).
-- **This has to be a plain inline `<script>` in `<head>`, not a bundled/
-  deferred script.** The entire point is beating first paint; anything
-  that loads after `<body>` starts rendering defeats it.
+- **This has to be a synchronous `<script>` in `<head>`, not a bundled/
+  deferred one.** The entire point is beating first paint; anything
+  that loads after `<body>` starts rendering defeats it. An external file
+  (`common/theme-boot.js`, no `defer`/`async`) works just as well as an
+  inline block and keeps the CSP strict (`script-src 'self'`).
 - **Wrap every `localStorage` call in try/catch.** Private browsing
   modes and some embedded WebViews (HA's own companion apps, for
   instance) can throw on access rather than just returning `null`.
@@ -216,6 +221,17 @@ that's the point, and it's cheap enough that it doesn't matter.
 ---
 
 ## 2. Admin determination (HA ingress headers + a static allowlist)
+
+**Shared now:** `common/python/auth_core.py` — the ingress source check (`INGRESS_PROXY` 172.30.32.2,
+`INGRESS_HOSTS` with loopback, `client_host`, `from_ingress`, `refuse_outsiders`), the identity headers
+(`identity()` → `Identity(user_id, username, display_name, ingress_path)`), the 401 text
+(`no_user_message`, `require_user_id`), loading `admin_users` (`read_options`, `admin_entries`,
+`admin_names`, with `strip_quotes` and `fold`; `env_admins` for `DEV_ADMINS` / `DEV_ADMIN_USERS`) and
+matching (`is_admin` by id or login name, `display_name_listed`, `display_name_only`, `no_admin`,
+`require_admin_flag`). Each app's `auth.py` (Splitpot: `main.py`; Finance: `auth.py` + `security.py`)
+is a thin layer over it with its own names, messages and extra rules (Vault sessions, Todo "acting as",
+Finance "view as"). "How the app sees you" and the "No admin yet" banner are `common/python/whoami.py`
+and `common/static/whoami.js` (`WHOAMI_PAGE_SPEC.md`).
 
 ### What this gets you
 - No app-local login/password system at all — identity comes
@@ -294,7 +310,8 @@ else:
     # options.json to layer on top of them.
     pass
 
-os.execvp("uvicorn", ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8321"])
+# --no-proxy-headers: the source-address check needs the real TCP peer, never X-Forwarded-For.
+os.execvp("uvicorn", ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8321", "--no-proxy-headers"])
 ```
 
 ### 2c. auth.py: the actual identity + admin-check dependency chain
@@ -317,7 +334,7 @@ class User:
     is_admin: bool
 
 
-INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}   # shared: auth_core.INGRESS_HOSTS
 
 
 @app.middleware("http")
@@ -396,6 +413,16 @@ request" (audit trails, "acting as" banners, etc).
   `127.0.0.1` or `::1`. Without it, another app on the same Docker
   network could send `X-Remote-User-Id: <an admin's id>` straight to the
   container. Then fail closed on a missing `X-Remote-User-Id` (401).
+- **Start uvicorn with proxy headers off** (`--no-proxy-headers`, or
+  `proxy_headers=False` from Python): otherwise `request.client.host` can
+  come from `X-Forwarded-For` (uvicorn trusts it from `--forwarded-allow-ips`,
+  default 127.0.0.1), which a setting or a changed default would open up.
+  `tools/check_build.py` checks every app's start command.
+- **Refuse cross-site writes**: right after the source check, the shared
+  `web_security.refuse_cross_site` 403s any request but GET/HEAD/OPTIONS that
+  the browser labels `Sec-Fetch-Site: cross-site` or `same-site` (no header,
+  `same-origin` and `none` pass). A WebSocket route checks `Origin` itself
+  (`web_security.cross_origin_websocket`).
 - **Match `id` and login name only — never the display name.** Display
   names aren't unique and aren't an identity: two people can share one,
   and matching them lets someone become an admin just by having (or
@@ -420,6 +447,15 @@ request" (audit trails, "acting as" banners, etc).
 ---
 
 ## 3. Admin-only SQLite database export
+
+**Shared now:** `common/python/db_core.py` (`connect` with the app's pragmas, `transaction`, `closing`,
+`columns`, `add_missing_columns`, `snapshot` / `snapshot_to_tempfile`, `validate_file`, `swap_in`) and
+`common/python/backup_core.py` (`file_name` — the stamped name, `send_file` — a temp file sent then
+deleted, `walk` + `write_zip` — a zip from the snapshot and the app's extra files, `receive` /
+`receive_sync` — an upload streamed into a temp file next to the database with a size limit, `open_zip`,
+`check_members` — safe member names plus the app's own check, `copy_out`, `restore_file` — `swap_in` and
+the app's migrations under its lock). Each app keeps its routes, file names, zip layout, messages, status
+codes and post-restore steps. The sample below is what `snapshot_to_tempfile` + `send_file` do.
 
 ### What this gets you
 - A one-click "download the whole database" button, gated to admin
@@ -564,13 +600,16 @@ underline and inline (not button-shaped) layout.
 
 Things each app got wrong at least once — check them in any new one.
 
-- **Shared code is copied, not imported — keep copies identical.** Home
+- **Shared code is copied, not imported — never edit a copy.** Home
   Assistant builds each app from its own folder, so apps can't import
-  from each other or from a common folder. Where two apps need the same
-  module, the copies must be byte-for-byte identical so a fix is a straight
-  copy: today that's `app/ha_notify.py` in Household Todo, Family Tree and
-  Household Vault and Household Chat (its docstring says so). Everything else that looks alike (auth,
-  settings, admin backup) differs on purpose per app.
+  from each other or from a common folder at run time. Shared code lives
+  once in `common/` and `python tools/sync_common.py` copies it into each
+  app listed in `common/manifest.json` (Python → `app/common/`, browser
+  files → `app/static/common/`, test helpers → `tests/common_tests/`), each
+  copy with a "Shared file: edit common/…" header and its hash.
+  `sync_common.py --check` (run by the repository tests) and each app's
+  `tests/common_tests/test_shared_copies.py` fail when a copy drifts. What
+  differs per app stays in the app's own thin module built on the shared one.
 
 - **Time zone data.** `python:3.12-alpine` ships without a zoneinfo
   database, so `ZoneInfo("Europe/Berlin")` raises and the app silently
@@ -581,29 +620,48 @@ Things each app got wrong at least once — check them in any new one.
   helper everywhere.
 - **Pinned dependencies, the same set in every app.** Unpinned
   requirements make every rebuild a different app; old pins collect CVEs.
-  Current set: `fastapi==0.141.1`, `uvicorn==0.53.0`
-  (`uvicorn[standard]` in splitpot), `python-multipart==0.0.32`, plus
-  `requirements-dev.txt` adding `httpx2` for Starlette's `TestClient`.
-  Bump them together.
+  The shared pins are `common/build/requirements-base.txt` (fastapi,
+  uvicorn — `uvicorn[standard]` in splitpot —, python-multipart in every
+  app, the others where used, `httpx2` for Starlette's `TestClient` in
+  `requirements-dev.txt`); each app keeps its own `requirements.txt` with
+  exactly those versions. The Dockerfile follows
+  `common/build/Dockerfile.template` (pinned Python base, `tzdata`,
+  requirements first, `COPY app ./app` so the shared copies reach the image).
+  `python tools/check_build.py` (also run by the repository tests) checks
+  every app's requirements, Dockerfile and `.dockerignore`. Bump them together.
 - **`lifespan`, not `@app.on_event("startup")`** (deprecated, and gone in
   Starlette 1.x). Start background loops in the lifespan and cancel them
-  in its `finally`.
-- **`logging.basicConfig(level=logging.INFO, …)` in `main.py`** — without
-  it, INFO logs are dropped and only WARNING+ reach the app log. No
+  in its `finally` — with the shared runner, `common/python/housekeeping.py`
+  (`Jobs().every()` / `add()`, `start()`, `await stop()`; `periodic()` for a
+  loop function).
+- **Set up logging at INFO in `main.py`** — `housekeeping.setup_logging()`
+  (a `logging.basicConfig(level=logging.INFO, …)` with the shared format);
+  without it, INFO logs are dropped and only WARNING+ reach the app log. No
   `print()`.
 - **Restore = validate, swap, then migrate.** After `os.replace()` of an
   uploaded backup, call `init_db()` again. A backup from an older version
-  may predate a column, and `CREATE TABLE IF NOT EXISTS` + `_migrate()`
+  may predate a column, and `CREATE TABLE IF NOT EXISTS` + the migrations
   only run at startup otherwise, which means errors until the next restart.
   Create the upload's scratch file in `DATA_DIR` (same filesystem as the
-  live DB, or `os.replace` fails with EXDEV).
+  live DB, or `os.replace` fails with EXDEV). The shared pieces do exactly
+  this: `backup_core.receive` (scratch file next to the database),
+  `db_core.validate_file`, `backup_core.restore_file` (`db_core.swap_in`,
+  then the app's migrations under its lock); new columns go in the app's
+  `MIGRATIONS` list (`db_core.add_missing_columns`).
 - **Escape for attributes, not just text.** Frontend `escapeHtml()` must
   escape `&<>"'`. The `div.textContent = s; return div.innerHTML` trick
   does **not** escape quotes, so `title="${escapeHtml(note)}"` is an XSS
   hole. It matters more than usual here: ingress pages are served from
   Home Assistant's own origin, so injected script runs with the viewer's HA
-  session. Better still, build DOM nodes with `textContent`
-  (household_todo's `h()` helper) and skip HTML strings entirely.
+  session. `common/static/ui.js`'s `UI.escapeHtml` escapes all five.
+  Better still, build DOM nodes with `textContent` (`UI.h()`) and skip
+  HTML strings entirely.
+- **A Content-Security-Policy everywhere.** Every app sends one through
+  `common/python/web_security.py` (`SecurityHeaders(CSP, …)`, its `CSP`
+  string in `main.py`, plus `X-Content-Type-Options: nosniff` and its
+  Cache-Control rules): `script-src 'self'`, so no inline `<script>`
+  blocks, no `on…=` attributes, no `javascript:` URLs; values a page script
+  needs from the server go in `data-*` attributes.
 - **Validate numbers as finite and in range.** JSON allows `Infinity` and
   `NaN`, and Pydantic accepts them by default. Use
   `Field(gt=0, le=…, allow_inf_nan=False)` on money and quantities, and
@@ -614,24 +672,34 @@ Things each app got wrong at least once — check them in any new one.
   connection.** Fetch first (with a cache if it's heavy, like
   `GET /api/states`), then take the lock and write.
 - **Tests exist and run with the pinned deps.** Each app has a
-  `tests/` folder (`python3 -m unittest discover -s tests`). Use
-  `TestClient(app, client=("127.0.0.1", 12345))` so requests pass the
-  ingress source check.
+  `tests/` folder (`python3 -m unittest discover -s tests`; Finance:
+  `pytest`). Use `TestClient(app, client=("127.0.0.1", 12345))` so requests
+  pass the ingress source check (`common_tests/ingress.py`:
+  `ingress_client`, `identity_headers`, `user_headers`). The shared
+  packaging checks are `common_tests/packaging_core.py`; each app's
+  `test_packaging.py` runs them with its own values.
 - **Settings go in the app, not the app configuration.** `config.yaml`
-  holds only the admin list (`admin_users`, or `switch_admins` in
-  calorie_tracker) — the bootstrap, since you must be an admin to open App
+  holds only the admin list (`admin_users`; Finance also `trusted_client_ips`)
+  — the bootstrap, since you must be an admin to open App
   settings. Every other setting, including new ones, is an **App setting**:
   an admin-only **🛡️ Admin → App settings** page backed by an
   `app_settings` table (`key`, JSON `value`, `updated_at`, `updated_by`),
   validated with Pydantic (`allow_inf_nan=False`, unknown keys → 422), read
   through a small cache at the moment it's used so changes apply without a
   restart (mark a key `restartRequired` only if that's truly impossible),
-  exposed as `GET/PUT /api/admin/settings` → `{values, defaults, meta}`.
-  Per-person choices go in that user's own Settings instead. Notify
-  targets are assigned per user by admins in Admin → Users (a list of HA's
-  `notify` services + manual entry + Send test), never a config option.
-  Admin pages (App settings, Users, Storage, …) live under one admin-only
-  sidebar item. All four apps follow this since September 2026.
+  exposed as `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups}`.
+  Shared now: the app lists its settings once (`Setting(...)`, `Group(...)`)
+  on `common/python/settings_core.py`'s `Registry` (validation, storage,
+  cache, the payload), and `common/static/settings.js` draws the page from
+  `meta` (one card per group, help, range and default, Save / Discard
+  changes), so a new setting needs no page code. Per-person choices go in
+  that user's own Settings instead. Notify targets are assigned per user by
+  admins in Admin → Users (phones from Home Assistant, a list of HA's
+  `notify` services + manual entry + **Send a test**:
+  `common/python/people_admin.py` + `common/static/people.js`), never a
+  config option. Admin pages (App settings, Users, Storage, …) live under
+  one admin-only sidebar item. Every app follows this (Finance keeps its
+  own settings page).
 - **Housekeeping:** a `.dockerignore` (`__pycache__`, `*.pyc`, `tests`,
   `*.db*`), a `CHANGELOG.md` per app (HA shows it on update), no
   placeholder `url:` in `config.yaml`, and a version bump plus the
@@ -641,22 +709,25 @@ Things each app got wrong at least once — check them in any new one.
 
 ## Minimal checklist to add all three to a new app
 
-1. Copy the `:root` + `[data-theme="..."]` blocks (1a) into the new
-   app's stylesheet, using its own existing color values as the
-   default/first named theme.
-2. Add the theme `<select>` (1b) to its shared nav/header template.
-3. Add the bootstrap script (1c) to `<head>`, before the stylesheet's
-   effects would otherwise be visible — and the change handler (1d)
-   anywhere after the `<select>` renders.
-4. Add the `admin_users` list-type option to `config.yaml` (2a), the
-   entrypoint script that turns it into an `ADMIN_USERS` env var (2b),
-   and `auth.py`'s `get_current_user`/`require_admin` (2c) — plus
-   `get_acting_user` if the app scopes data per-user and admins need
-   to inspect another user's view.
-5. Confirm the app's `db.py` actually opens connections with
-   `PRAGMA journal_mode = WAL` — if it doesn't, the plain-file-copy
-   caveat in section 3 doesn't apply, but `Connection.backup()` is
-   still the safer/simpler choice either way (also correct, and free
-   of any need to reason about it).
-6. Add the download route (3a) and button (3b) to the app's admin
-   page, gated behind `require_admin` (2c).
+1. Add the app to `common/manifest.json` with the shared files it uses
+   (at least `__init__.py`, `auth_core.py`, `whoami.py`, `db_core.py`,
+   `backup_core.py`, `web_security.py`; `theme-boot.js`, `themes.css`,
+   `ui.js`, `whoami.js`, `backnav.js`; the test helpers), then run
+   `python tools/sync_common.py`.
+2. Themes (section 1): load `common/theme-boot.js` and `common/themes.css`
+   in `<head>` before the app's stylesheet, set the app's accent in the
+   three theme blocks of its `style.css`, and fill the theme `<select>`
+   with `HouseholdTheme.bindSelect(select)`.
+3. Admins (section 2): the `admin_users` list-type option in `config.yaml`
+   (2a), a guard middleware calling `auth_core.refuse_outsiders`, and an
+   `auth.py` with `get_current_user` / `require_admin` built on `auth_core`
+   — plus `get_acting_user` if the app scopes data per-user and admins need
+   to inspect another user's view. Add the `/api/whoami` route with
+   `whoami.build()` and the "No admin yet" banner with `whoami.js`.
+4. Database (section 3): `db.py` on `db_core.connect` (WAL) and
+   `db_core.transaction`, a `MIGRATIONS` list, and the download / import
+   routes on `backup_core`, gated behind `require_admin`.
+5. Security headers: a `CSP` string in `main.py` passed to
+   `web_security.SecurityHeaders`, no inline scripts.
+6. Build files: follow `common/build/Dockerfile.template`, pin as in
+   `common/build/requirements-base.txt`, and run `python tools/check_build.py`.

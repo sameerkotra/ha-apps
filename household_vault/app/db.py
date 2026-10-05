@@ -1,11 +1,11 @@
 """SQLite metadata (SPEC §6). Vault contents are never stored here — only
 names, members, versions and sealed (encrypted) keys."""
-import contextlib
 import os
 import sqlite3
 import uuid
 
 from . import config
+from .common import db_core
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -165,23 +165,12 @@ def new_id() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return db_core.connect(config.DB_PATH, timeout=30, pragmas=("foreign_keys = ON",))
 
 
-@contextlib.contextmanager
 def get_conn():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+    return db_core.transaction(_connect)
 
 
 def init_db() -> None:
@@ -211,10 +200,7 @@ MIGRATIONS = [
 
 
 def _migrate(conn) -> None:
-    for table, col, definition in MIGRATIONS:
-        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        if col not in have:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+    db_core.add_missing_columns(conn, MIGRATIONS)
 
 
 def get_setting(conn, key: str, default=None):

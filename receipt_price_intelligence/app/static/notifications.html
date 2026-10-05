@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Notifications</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .opt { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-top: 1px solid var(--line); }
+    .opt:first-of-type { border-top: 0; }
+    .opt input[type=checkbox] { width: 22px; height: 22px; margin-top: 1px; flex: none; accent-color: var(--accent); }
+    .opt .body { flex: 1; min-width: 0; display: grid; gap: 4px; }
+    .opt .title { font-weight: 650; }
+    .opt .sub { font-size: .82rem; color: var(--muted); }
+    .opt .more { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; font-size: .88rem; }
+    .opt .more input.input, .opt .more select { width: auto; min-width: 5rem; }
+    .opt .test { flex: none; }
+    .kind-off .more { opacity: .45; pointer-events: none; }
+    .savebar { position: sticky; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); display: flex; gap: 8px; align-items: center;
+               justify-content: flex-end; padding: 10px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line);
+               box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+    .savebar .note { margin-right: auto; }
+  </style>
+</head>
+<body>
+  <div class="page mid">
+    <div class="topbar"><div class="grow"><h1>Notifications</h1><div class="sub">Where they go, and which you get</div></div></div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/notifications.js"></script>
+</body>
+</html>

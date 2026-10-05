@@ -11,22 +11,28 @@
 2. Cross-site form posts. Browsers label every request with Sec-Fetch-Site.
    A state-changing request that a browser marks as coming from another site
    is refused. Requests without the header (older WebViews, curl) are allowed:
-   the random per-session ingress URL is still a second barrier there.
+   the random per-session ingress URL is still a second barrier there. The
+   check is the shared one every app runs (common/python/web_security.py).
 """
 import logging
 import os
 
 from starlette.responses import PlainTextResponse
 
+from .common import auth_core, web_security
+
 logger = logging.getLogger(__name__)
 
-SUPERVISOR_INGRESS_IP = "172.30.32.2"
-_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+SUPERVISOR_INGRESS_IP = auth_core.INGRESS_PROXY          # 172.30.32.2 (no loopback here)
 
 
 def trusted_client_ips() -> set[str]:
     extra = {ip.strip() for ip in os.environ.get("TRUSTED_CLIENT_IPS", "").split(",") if ip.strip()}
     return {SUPERVISOR_INGRESS_IP} | extra
+
+
+def _cross_site_response():
+    return PlainTextResponse("Forbidden: cross-site request", status_code=403)
 
 
 def install(app) -> None:
@@ -35,8 +41,8 @@ def install(app) -> None:
 
     @app.middleware("http")
     async def _guard(request, call_next):
-        host = request.client.host if request.client else ""
-        if not allow_any and host not in trusted:
+        host = auth_core.client_host(request, "")
+        if not allow_any and not auth_core.from_ingress(request, trusted):
             logger.warning("Refused request from %s (not Home Assistant ingress)", host)
             return PlainTextResponse(
                 f"Forbidden: this app only accepts requests through Home Assistant ingress "
@@ -44,7 +50,7 @@ def install(app) -> None:
                 f"add it to trusted_client_ips on the app's Configuration tab.",
                 status_code=403,
             )
-        if request.method not in _SAFE_METHODS and request.headers.get("sec-fetch-site") in ("cross-site", "same-site"):
-            logger.warning("Refused cross-site %s %s", request.method, request.url.path)
-            return PlainTextResponse("Forbidden: cross-site request", status_code=403)
+        cross = web_security.refuse_cross_site(request, log=logger, response=_cross_site_response)
+        if cross is not None:
+            return cross
         return await call_next(request)

@@ -35,21 +35,19 @@ import logging
 import re
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
+import urllib.request  # noqa: F401 - tests replace urllib.request.urlopen through this module
 
 from starlette.concurrency import run_in_threadpool
 
 from . import settings
+from .common import geo
 
 logger = logging.getLogger("geocode")
 
 NOMINATIM_USER_AGENT = "HouseholdTodo-HomeAssistantAddon/1.0 (self-hosted Home Assistant add-on)"
 _MIN_INTERVAL_SECONDS = 1.05  # Nominatim's usage policy: at most 1 request/second
 
-_throttle_lock = threading.Lock()
-_last_call_at = 0.0
+_THROTTLE = geo.Throttle(_MIN_INTERVAL_SECONDS)
 
 # Set by ensure_home_blocking(); None means "not configured", "not geocoded
 # yet" or "the last attempt failed" — either way, the feature is off.
@@ -66,12 +64,7 @@ def _throttle() -> None:
     """Blocks the calling thread just long enough to keep Nominatim calls at
     most 1/second process-wide, however many threads call geocode_blocking
     concurrently."""
-    global _last_call_at
-    with _throttle_lock:
-        wait = _MIN_INTERVAL_SECONDS - (time.monotonic() - _last_call_at)
-        if wait > 0:
-            time.sleep(wait)
-        _last_call_at = time.monotonic()
+    _THROTTLE.wait()
 
 
 # Matches a trailing (or comma-separated) suite/unit/apartment designator —
@@ -103,17 +96,14 @@ def _strip_unit(address: str) -> str | None:
 def _geocode_once(address: str) -> tuple[float, float] | None:
     """One throttled Nominatim lookup, no retry. Blocking."""
     _throttle()
-    url = settings.nominatim_url() + "/search?" + urllib.parse.urlencode({"q": address, "format": "json", "limit": 1})
-    req = urllib.request.Request(url, headers={"User-Agent": NOMINATIM_USER_AGENT})
+    url = geo.search_url(settings.nominatim_url(), address)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read()
+        body = geo.fetch(url, headers={"User-Agent": NOMINATIM_USER_AGENT}, timeout=10)
     except Exception as e:  # URLError, timeout, connection reset, ...
         logger.debug("Geocoding %r failed: %s", address, e)
         return None
     try:
-        results = json.loads(body)
-        return float(results[0]["lat"]), float(results[0]["lon"])
+        return geo.first_result(body)
     except (ValueError, KeyError, IndexError, TypeError):
         logger.debug("Geocoding %r returned no usable result", address)
         return None
@@ -145,8 +135,7 @@ def _route_minutes(url: str) -> int | None:
     route needs a toll road, or "InvalidValue" from a server whose profile
     can't exclude tolls (both arrive as HTTP 400, raised by urlopen)."""
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            body = resp.read()
+        body = geo.fetch(url, timeout=10)
     except Exception as e:
         logger.debug("Routing request %s failed: %s", url, e)
         return None
@@ -175,8 +164,7 @@ def route_blocking(
     so a place still gets an estimate rather than none at all."""
     if not osrm_url:
         return None
-    (o_lat, o_lon), (d_lat, d_lon) = origin, dest
-    url = f"{osrm_url}/route/v1/driving/{o_lon},{o_lat};{d_lon},{d_lat}?overview=false"
+    url = f"{osrm_url}/route/v1/driving/{geo.lonlat([origin, dest])}?overview=false"
     if avoid_tolls:
         minutes = _route_minutes(url + "&exclude=toll")
         if minutes is not None:

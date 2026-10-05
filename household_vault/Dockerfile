@@ -23,4 +23,6 @@ LABEL \
 # /data (database and encrypted vault files) is always mapped by the Supervisor.
 EXPOSE 8101
 
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101"]
+# --no-proxy-headers: the ingress check needs the real TCP peer (Supervisor's proxy), never an address
+# taken from X-Forwarded-For (tools/check_build.py checks it).
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101", "--no-proxy-headers"]

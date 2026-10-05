@@ -6,11 +6,13 @@ import os
 import shutil
 import unittest
 
-from fastapi.testclient import TestClient
 
-from app import chats, config, db, files, ha_client, ha_notify, ha_people, notifier, presence, settings
+from app import chats, config, db, files, ha_client, notifier, presence, settings
+from app.common import ha_client as shared_ha_client
+from app.common import ha_notify, ha_people
 from app.live import hub
 from app.main import app
+from common_tests.ingress import ingress_client, user_headers
 
 for _n in ("httpx", "httpx2", "files"):
     logging.getLogger(_n).setLevel(logging.WARNING)
@@ -22,12 +24,7 @@ LEELA = {"id": "u-leela", "name": "leela", "display": "Leela"}
 
 
 def headers(user):
-    h = {"X-Remote-User-Id": user["id"]}
-    if user.get("name"):
-        h["X-Remote-User-Name"] = user["name"]
-    if user.get("display"):
-        h["X-Remote-User-Display-Name"] = user["display"]
-    return h
+    return user_headers(user)
 
 
 class FakeHA:
@@ -63,7 +60,7 @@ def reset_state():
     notifier.reset()
     presence.reset()
     ha_people.reset()
-    ha_client._states_cache = None
+    shared_ha_client._states_cache = None
     ha_notify._targets_cache = None
     chats.message_limit.reset()
     chats.upload_limit.reset()
@@ -100,7 +97,7 @@ class Sent:
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
         reset_state()
-        self.client = TestClient(app, client=("127.0.0.1", 12345))
+        self.client = ingress_client(app)
         self.sent = Sent()
         self._orig_deliver = notifier.deliver
         notifier.deliver = self.sent
@@ -115,14 +112,17 @@ class ApiTestCase(unittest.TestCase):
                 fn(*args)
         chats.Outbox.flush = flush_sync
         self.ha = FakeHA()
-        self._orig_ha = (ha_client.request, ha_client.has_token)
-        ha_client.request = self.ha.request
-        ha_client.has_token = lambda: self.ha.token
+        # the app's own ha_client re-exports the shared client's functions: replace them in both
+        self._orig_ha = [(m, m.request, m.has_token) for m in (ha_client, shared_ha_client)]
+        for m in (ha_client, shared_ha_client):
+            m.request = self.ha.request
+            m.has_token = lambda: self.ha.token
 
     def tearDown(self):
         notifier.deliver = self._orig_deliver
         chats.Outbox.flush = self._orig_thread
-        ha_client.request, ha_client.has_token = self._orig_ha
+        for m, request, has_token in self._orig_ha:
+            m.request, m.has_token = request, has_token
 
     def req(self, method, path, user=ADMIN, **kw):
         h = dict(headers(user))

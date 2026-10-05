@@ -12,6 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import ADMIN_USERS, CurrentUser, get_current_user, no_admin_yet, require_admin
+from app.common import whoami as whoami_core
 from app.db import get_db
 from app.db.models import (
     Address,
@@ -37,7 +38,7 @@ class MeResponse(BaseModel):
     username: str | None = None
     is_admin: bool
     anonymous: bool = False
-    no_admin_yet: bool = False
+    noAdmin: bool = False          # admin_users is empty: every page shows "No admin yet"
 
 
 class HomeResponse(BaseModel):
@@ -102,7 +103,7 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         display_name=user.display_name,
         username=user.username,
         is_admin=user.is_admin,
-        no_admin_yet=no_admin_yet(),
+        noAdmin=no_admin_yet(),
     )
 
 
@@ -111,15 +112,10 @@ async def whoami(request: Request, user: CurrentUser = Depends(get_current_user)
     """"How the app sees you": exactly what Home Assistant sent and whether it matched admin_users.
 
     Only the person's own identity and a COUNT of admin_users entries are returned, never the list."""
-    return {
-        "userId": user.id,
-        "username": request.headers.get("x-remote-user-name"),
-        "displayName": request.headers.get("x-remote-user-display-name"),
-        "nameSent": bool(request.headers.get("x-remote-user-name")),
-        "isAdmin": user.is_admin,
-        "adminEntries": len(ADMIN_USERS),
-        "noAdminYet": no_admin_yet(),
-    }
+    return whoami_core.build(
+        request, user_id=user.id, username=request.headers.get("x-remote-user-name"),
+        display_name=request.headers.get("x-remote-user-display-name"), is_admin=user.is_admin,
+        admin_entries=len(ADMIN_USERS))
 
 
 @router.get("/users", response_model=list[UserResponse])

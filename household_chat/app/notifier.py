@@ -13,7 +13,8 @@ import threading
 import time
 from datetime import timedelta
 
-from . import chats, config, db, ha_notify, settings
+from . import chats, config, db, settings
+from .common import ha_notify
 from .live import hub
 
 logger = logging.getLogger("notifier")
@@ -94,6 +95,10 @@ def text_for(conn, msg, level: str, sender_name: str, group: bool) -> str:
     if msg["kind"] == "poll":
         body = f"started a poll: {chats.short(msg['body'], 150)}"
         return f"{sender_name} {body}"
+    if msg["kind"] == "card":           # shared from another app (§15.11): the title only, never content
+        c = chats.card_row(conn, msg["id"])
+        what = chats.CARD_WORDS.get(c["item_type"], "a document") if c else "a document"
+        return f"{sender_name} shared {what} “{chats.short(msg['body'], 150)}”"
     body = chats.short(chats.strip_marks(msg["body"]), 200)
     if not body:
         a = conn.execute("SELECT original_name, voice FROM attachments WHERE message_id = ? LIMIT 1", (msg["id"],)).fetchone()

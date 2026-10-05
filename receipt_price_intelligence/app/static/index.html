@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Receipts</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .chip-btn { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 4px 12px; font-size: .82rem; cursor: pointer; }
+    .chip-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .list { display: grid; gap: 10px; }
+    .receipt {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px; border-radius: var(--radius);
+      background: var(--surface); border: 1px solid var(--line);
+      transition: border-color .15s, background .15s;
+    }
+    .receipt:hover { border-color: var(--faint); background: var(--surface-2); }
+    .receipt .main { flex: 1; min-width: 0; }
+    .receipt .name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .receipt .meta { color: var(--muted); font-size: .85rem; margin-top: 2px; }
+    .receipt .end { text-align: right; display: grid; gap: 6px; justify-items: end; }
+    .receipt .amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+    .stat { color: var(--muted); font-size: .88rem; }
+    .fab { position: fixed; right: 20px; bottom: calc(16px + max(var(--bottomnav-h), env(safe-area-inset-bottom))); z-index: 10; box-shadow: var(--shadow); min-height: 54px; border-radius: 27px; padding: 0 22px; }
+    .fab svg { width: 22px; height: 22px; }
+    .hero-btn { display: none; }
+    @media (min-width: 700px) { .fab { display: none; } .hero-btn { display: inline-flex; } }
+    .home-select { width: auto; min-height: 36px; font-weight: 600; }
+
+  </style>
+</head>
+<body>
+  <div class="page narrow" id="app">
+    <div class="topbar">
+      <div class="grow">
+        <h1>Receipts</h1>
+        <div class="sub" id="homeLine">Price history from your shopping trips</div>
+      </div>
+      <a class="icon-btn" href="import.html" id="bulkBtn" aria-label="Upload several receipts" title="Upload several receipts"></a>
+      <a class="btn btn-primary hero-btn" href="capture.html" id="scanTop"></a>
+    </div>
+
+
+    <div id="importBox"></div>
+    <div id="tagFilters" class="row wrap" style="gap:6px;margin-bottom:10px"></div>
+
+    <div class="toolbar" id="toolbar" hidden>
+      <div class="seg" role="group" aria-label="View" id="filters"></div>
+      <span id="homeSwitch"></span>
+      <span class="stat" id="stat"></span>
+    </div>
+
+    <div id="content" class="list" aria-live="polite"></div>
+  </div>
+
+  <a class="btn btn-primary fab" href="capture.html" id="scanFab" hidden></a>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/index.js"></script>
+</body>
+</html>

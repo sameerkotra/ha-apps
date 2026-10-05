@@ -31,7 +31,7 @@
             <a href="admin-storage?tab=query&report={{ r.id }}{{ amp }}" class="btn-secondary">Edit</a>
             <form method="post" action="report-duplicate?id={{ r.id }}{{ amp }}" class="inline-form"><button type="submit" class="btn-secondary">Duplicate</button></form>
             <form method="post" action="report-delete?id={{ r.id }}{{ amp }}" class="inline-form"
-                  onsubmit='return confirm({{ ("Delete the report “" ~ r.name ~ "”? This cannot be undone.") | tojson }});'><button type="submit" class="btn-secondary q-danger">Delete</button></form>
+                  data-confirm="{{ ("Delete the report “" ~ r.name ~ "”? This cannot be undone.") }}"><button type="submit" class="btn-secondary q-danger">Delete</button></form>
             {% endif %}
         </div>
     </li>

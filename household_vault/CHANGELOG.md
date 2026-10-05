@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.1
+
+- **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.
+- **Security**: cross-site form posts are refused — a change sent to the app from a page on another website is turned away. The app's own pages and the Home Assistant app work as before.
+
+## 2.1.0
+
+- **Themes**: Midnight, Slate, Daylight and **Auto** (follows your device) — the same four in every household app. The Vault theme is now Midnight; your saved choice carries over.
+- **App settings page redrawn**: one card per group, each setting with its range and default under it, problems shown at the field before saving, and Save / Discard with a count of unsaved changes. Every setting, default and limit is unchanged.
+- **Admin → People**: one card per person instead of a table; the notify editor says **Send a test** and shows a result for each service.
+- **How the app sees you** and the **No admin yet** banner use the same wording in every household app; the banner names the user name to add to `admin_users`.
+- Under the hood: this app now shares its code for Home Assistant sign-in, people and notifications, settings, backups and the page helpers with the other household apps (one copy, kept in step), so fixes reach every app at once. Nothing was removed.
+
 ## 2.0.0
 
 First public release, in the Household apps repository (https://github.com/sameerkotra/ha-apps).

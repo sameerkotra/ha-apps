@@ -15,9 +15,10 @@ for the full threat-model discussion.
 import logging
 import re
 
-from fastapi import Depends, Header, HTTPException, Query
+from fastapi import Depends, Query, Request
 
 from . import config, db
+from .common import auth_core
 
 logger = logging.getLogger("auth")
 _warned_display_name_only: set[str] = set()
@@ -29,14 +30,14 @@ def _slugify(text: str) -> str:
 
 
 def display_name_listed(display_name: str | None) -> bool:
-    return bool(display_name) and display_name.strip().lower() in config.ADMIN_USERS
+    return auth_core.display_name_listed(display_name, config.ADMIN_USERS)
 
 
 def no_admins() -> bool:
     """True while the admin_users option is empty: nobody can open App
     settings yet, so every page shows the "No admin yet" banner. Nobody is
     ever promoted automatically."""
-    return not config.ADMIN_USERS
+    return auth_core.no_admin(config.ADMIN_USERS)
 
 
 def _is_admin(user_id: str, display_name: str, username: str | None) -> bool:
@@ -48,8 +49,7 @@ def _is_admin(user_id: str, display_name: str, username: str | None) -> bool:
     Household Todo and Splitpot. Someone listed only by display name gets a
     one-time log warning (and a hint on "How the app sees you") telling the
     HA admin which id to list instead."""
-    candidates = {n.strip().lower() for n in (user_id, username) if n}
-    if candidates & config.ADMIN_USERS:
+    if auth_core.is_admin(user_id, username, config.ADMIN_USERS):
         return True
     if display_name_listed(display_name) and user_id not in _warned_display_name_only:
         _warned_display_name_only.add(user_id)
@@ -61,21 +61,13 @@ def _is_admin(user_id: str, display_name: str, username: str | None) -> bool:
     return False
 
 
-async def get_current_user(
-    x_remote_user_id: str | None = Header(default=None),
-    x_remote_user_name: str | None = Header(default=None),
-    x_remote_user_display_name: str | None = Header(default=None),
-) -> dict:
-    user_id = x_remote_user_id
-    username = x_remote_user_name
-    display_name = x_remote_user_display_name or x_remote_user_name
+async def get_current_user(request: Request) -> dict:
+    ident = auth_core.identity(request)            # the X-Remote-User-* headers (app/common/auth_core.py)
+    user_id = ident.user_id
+    username = ident.username
+    display_name = ident.display_name or ident.username
 
-    if not user_id:
-        raise HTTPException(
-            401,
-            "No Home Assistant user identified. Open Calorie Tracker from its panel "
-            "in the Home Assistant sidebar.",
-        )
+    auth_core.require_user_id(user_id, "Calorie Tracker")
 
     display_name = display_name or "Home Assistant User"
     is_admin = _is_admin(user_id, display_name, username)
@@ -134,6 +126,6 @@ async def get_acting_user(
 
 
 async def require_admin(current: dict = Depends(get_current_user)) -> dict:
-    if not current["is_admin"]:
-        raise HTTPException(403, "Only admins can do this. See admin_users on the app's Configuration tab.")
+    auth_core.require_admin_flag(current["is_admin"],
+                                 "Only admins can do this. See admin_users on the app's Configuration tab.")
     return current

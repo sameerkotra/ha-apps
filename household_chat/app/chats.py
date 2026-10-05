@@ -284,6 +284,81 @@ def poll_expired(p) -> bool:
     return t is not None and t <= config.utcnow()
 
 
+# ---------- cards from other apps (§15.11, APP_MESSAGES_SPEC §6.3) ----------
+CARD_TYPES = ("note", "checklist", "sheet", "folder", "file")
+CARD_ICONS = {"note": "📝", "checklist": "✅", "sheet": "🧮", "folder": "📁", "file": "📄"}
+CARD_WORDS = {"note": "a note", "checklist": "a checklist", "sheet": "a sheet", "folder": "a folder", "file": "a file"}
+_APP_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+_TARGET_RE = re.compile(r"^/(doc|folder|file)/[A-Za-z0-9_-]{1,64}$")
+
+
+def panel_ok(panel, app) -> bool:
+    """Is `panel` the sending app's own sidebar page, "/<repository hash or local>_<its slug>" (APP_MESSAGES_SPEC
+    §6.5)? Nothing else — not /config, not another app's page, no scheme, no "//"."""
+    if not isinstance(panel, str) or not isinstance(app, str) or not _APP_RE.match(app):
+        return False
+    return re.fullmatch(r"/[a-z0-9]{1,16}_" + re.escape(app), panel) is not None
+
+
+def target_ok(target) -> bool:
+    """A Docs route: "/doc/<id>", "/folder/<id>" or "/file/<id>" (ids of A–Z a–z 0–9 _ -)."""
+    return isinstance(target, str) and _TARGET_RE.match(target) is not None
+
+
+def card_link(panel, target, app) -> str | None:
+    """The sending app's page path for a card ("/<full slug>/doc/<id>"), or None when it isn't well formed — the
+    card then says to open the app from the sidebar."""
+    if not panel_ok(panel, app):
+        return None
+    if not target:
+        return panel
+    if not target_ok(target):
+        return None
+    return panel + target
+
+
+def cards_out(conn, ids) -> dict:
+    """{message id: card} for card messages; each card links with its own page path, checked again here (§15.11)."""
+    if not ids:
+        return {}
+    q = ",".join("?" * len(ids))
+    rows = conn.execute(f"SELECT * FROM app_cards WHERE message_id IN ({q})", list(ids)).fetchall()
+    out = {}
+    for r in rows:
+        out[r["message_id"]] = {"app": r["app"], "badge": r["badge"], "type": r["item_type"], "itemId": r["item_id"],
+                                "title": r["title"], "owner": r["owner_name"],
+                                "href": card_link(r["panel"], r["target"], r["app"]),
+                                "sharedWithMembers": bool(r["shared_with_members"])}
+    return out
+
+
+def card_row(conn, mid: int):
+    return conn.execute("SELECT * FROM app_cards WHERE message_id = ?", (mid,)).fetchone()
+
+
+def card_icon(conn, msg) -> str:
+    c = card_row(conn, msg["id"])
+    return CARD_ICONS.get(c["item_type"], "📄") if c else "📄"
+
+
+def post_card(conn, out: Outbox, conv, user: dict, card: dict, bus_id: str | None = None) -> int:
+    """A card another household app asked to post for `user` (checked by app_messages.py like a message
+    they type): as their message, in the chat's disappearing setting, live and with notifications."""
+    require_post(conn, conv, user["id"])
+    mid = insert_message(conn, conv, user["id"], kind="card", body=card["title"],
+                         expires_in=resolve_expiry(conv, user, None))
+    conn.execute("INSERT INTO app_cards (message_id, app, badge, item_type, item_id, title, owner_name, panel, target, "
+                 "shared_with_members, bus_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (mid, card["app"], card["badge"], card["type"], card["item_id"], card["title"], card.get("owner_name"),
+                  card.get("panel"), card.get("target"), 1 if card.get("share_with_members") else 0, bus_id,
+                  config.now_iso()))
+    publish_message(conn, out, conv, message_row(conn, mid))
+    if conv["kind"] != "personal":
+        from . import notifier
+        out.job(notifier.new_message, mid)
+    return mid
+
+
 def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0) -> list:
     """Messages as the page shows them. `viewer_id` adds their own stars/reminders/heard marks;
     `visible_from` hides reply quotes of messages from before they joined."""
@@ -315,6 +390,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
         for r in conn.execute(f"SELECT m.*, (SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id) AS n "
                               f"FROM messages m WHERE m.id IN ({rq})", list(reply_ids)):
             replies[r["id"]] = r
+    cards = cards_out(conn, [r["id"] for r in rows if r["kind"] == "card"])
     acks: dict = {}
     if any(r["announcement"] for r in rows):
         for a in conn.execute(f"SELECT message_id, user_id FROM announcement_acks WHERE message_id IN ({qmarks}) ORDER BY at", ids):
@@ -338,6 +414,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
              "reactions": [{"emoji": e, "userIds": u} for e, u in reacts.get(r["id"], {}).items()],
              "starred": r["id"] in stars, "reminder": reminders.get(r["id"]),
              "replyTo": None, "poll": poll_out(conn, r["id"]) if r["kind"] == "poll" else None,
+             "card": cards.get(r["id"]) if r["kind"] == "card" and not r["deleted_at"] else None,
              "expiresAt": r["expires_at"],
              "announcement": announcement_out(conn, r, acks.get(r["id"], [])) if r["announcement"] else None}
         if r["reply_gone"] and not r["reply_to"]:
@@ -348,7 +425,7 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
                 d["replyTo"] = {"id": r["reply_to"], "hidden": True}
             else:
                 d["replyTo"] = {"id": q["id"], "userId": q["user_id"], "author": uname(q["user_id"]) if q["user_id"] else None,
-                                "text": "" if q["deleted_at"] else short(strip_marks(q["body"]), 140),
+                                "text": "" if q["deleted_at"] else short(q["body"] if q["kind"] == "card" else strip_marks(q["body"]), 140),
                                 "deleted": q["deleted_at"] is not None, "files": q["n"], "kind": q["kind"]}
         out.append(d)
     return out
@@ -373,6 +450,8 @@ def preview_of(conn, msg) -> str:
         return "Message deleted"
     if msg["kind"] == "poll":
         return "📊 " + short(msg["body"], 100)
+    if msg["kind"] == "card":
+        return card_icon(conn, msg) + " " + short(msg["body"], 100)
     text = short(strip_marks(msg["body"]), 100)
     if text:
         return text
@@ -821,7 +900,7 @@ def delete_message(conn, out: Outbox, msg, conv, m, user: dict) -> None:
             files.move_to_deleted(a["rel_path"])
         files.remove_thumb(a["id"])
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (msg["id"],))
-    for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls"):
+    for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls", "app_cards"):
         conn.execute(f"DELETE FROM {t} WHERE message_id = ?", (msg["id"],))
     conn.execute("UPDATE messages SET body = '', mentions = NULL, mention_all = 0, deleted_at = ?, pinned_at = NULL, "
                  "pinned_by = NULL WHERE id = ?", (config.now_iso(), msg["id"]))

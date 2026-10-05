@@ -19,6 +19,7 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.common import sensor_publisher
 from app.config import get_settings
 from app.db.models import Alert, CommonItem, Home, PriceTarget, Receipt, StoreChain, StoreLocation
 from app.logging_config import get_logger
@@ -337,6 +338,10 @@ def _month_start(d: date) -> date:
     return d.replace(day=1)
 
 
+# Posts the home's sensors through ha.set_state (an HAError stops the run).
+_SENSORS = sensor_publisher.Publisher(post=lambda entity_id, state, attrs: ha.post_sensor(entity_id, state, attrs))
+
+
 def publish_sensors(db: Session, home_id: str, payload: dict[str, Any], today: date | None = None) -> bool:
     """Create or update the Home Assistant sensors for a home. Returns False if they were skipped."""
     settings = get_settings()
@@ -396,9 +401,9 @@ def publish_sensors(db: Session, home_id: str, payload: dict[str, Any], today: d
             "friendly_name": f"{home.name} price change (12 months)", "unit_of_measurement": "%", "icon": "mdi:trending-up",
             "items_in_basket": index["items_used"], "biggest_rises": [f"{m['name']} {m['change_pct']:+.0f}%" for m in index["risers"][:3]]})
 
-    try:
-        for entity_id, (state, attributes) in sensors.items():
-            ha.set_state(entity_id, state, attributes)
+    try:   # stops at the first one Home Assistant refuses
+        _SENSORS.publish([(entity_id, state, attributes) for entity_id, (state, attributes) in sensors.items()],
+                         force=True)
     except ha.HAError as e:
         logger.warning("Could not publish sensors: %s", e)
         return False

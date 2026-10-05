@@ -3,32 +3,9 @@
    page's memory: a reload locks. */
 "use strict";
 
-// ---------- DOM helpers ----------
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "class") el.className = v;
-      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
-      else if (k === "value") el.value = v;
-      else if (k === "checked") el.checked = !!v;
-      else if (k === "disabled") el.disabled = !!v;
-      else if (k === "hidden") el.hidden = !!v;
-      else el.setAttribute(k, v === true ? "" : String(v));
-    }
-  }
-  for (const kid of kids.flat(Infinity)) {
-    if (kid === null || kid === undefined || kid === false) continue;
-    el.appendChild(kid instanceof Node ? kid : document.createTextNode(String(kid)));
-  }
-  return el;
-}
-function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
-function mount(el, ...kids) { clear(el); for (const k of kids.flat(Infinity)) if (k) el.appendChild(k); return el; }
-const $ = (s) => document.querySelector(s);
-function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
-function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
+// ---------- DOM helpers (common/ui.js) ----------
+const { clear, mount, $, debounce, lsSet } = UI;
+const h = UI.makeH({ booleanProps: ["checked", "disabled", "hidden"] });   // as properties: 0 / "" mean off
 function initials(t) { const w = String(t || "?").trim().split(/\s+/); return ((w[0] || "?")[0] + ((w[1] || "")[0] || "")).toUpperCase(); }
 function colorOf(t) { let n = 0; for (const c of String(t || "")) n = (n * 31 + c.charCodeAt(0)) >>> 0; return "av" + (n % 8); }
 function avatar(title) { return h("span", { class: "avatar " + colorOf(title), "aria-hidden": "true" }, initials(title)); }
@@ -86,63 +63,30 @@ const FINE_POINTER = window.matchMedia && window.matchMedia("(pointer: fine)").m
 
 // ---------- API ----------
 class ApiError extends Error { constructor(msg, status, detail) { super(msg); this.status = status; this.detail = detail; } }
-async function api(path, opts = {}) {
-  const { method = "GET", body, form, raw } = opts;
-  const init = { method, headers: {} };
-  if (state.token) init.headers["X-Vault-Session"] = state.token;
-  if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
-  else if (form) init.body = form;
-  let res;
-  try { res = await fetch(path.replace(/^\//, ""), init); }
-  catch (e) { throw new ApiError("Can't reach the app. Check your connection and try again.", 0); }
-  if (res.ok) state.lastActivity = Date.now();
-  if (!res.ok) {
-    let detail = null;
-    try { detail = (await res.json()).detail; } catch (e) { /* not JSON */ }
-    const msg = typeof detail === "string" ? detail : (detail && detail.message) || `Something went wrong (HTTP ${res.status}).`;
-    if (res.status === 401 && state.token && !opts.noLock) { lockLocal("Locked."); }
-    throw new ApiError(msg, res.status, detail);
-  }
-  if (raw) return res;
-  if (res.status === 204) return null;
-  return res.json();
-}
+const api = UI.makeApi({
+  headers: () => (state.token ? { "X-Vault-Session": state.token } : {}),
+  message: (body, res) => {
+    const detail = body ? body.detail : null;
+    return typeof detail === "string" ? detail : (detail && detail.message) || `Something went wrong (HTTP ${res.status}).`;
+  },
+  makeError: (msg, status, body, res) => new ApiError(msg, status, res ? (body ? body.detail : null) : undefined),
+  onResponse: (res) => { if (res.ok) state.lastActivity = Date.now(); },
+  onError: (err, res, opts) => { if (res.status === 401 && state.token && !opts.noLock) { lockLocal("Locked."); } },
+});
 
 // ---------- toasts, modals, menus ----------
 function toast(msg, opts = {}) {
-  const t = h("div", { class: "toast" + (opts.error ? " error" : ""), role: "status" }, msg);
-  $("#toastRoot").appendChild(t);
-  setTimeout(() => t.remove(), opts.ms || (opts.error ? 5000 : 2600));
+  UI.toast(msg, { error: opts.error, role: "status", ms: opts.ms || (opts.error ? 5000 : 2600) });
 }
 function fail(e) { toast(e && e.message ? e.message : String(e), { error: true }); }
-function openModal(title, content, opts = {}) {
-  const closeBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Close" }, "✕");
-  const modal = h("div", { class: "modal" + (opts.wide ? " wide" : ""), role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("h3", null, h("span", null, title), closeBtn), content);
-  const back = h("div", { class: "modal-backdrop" }, modal);
-  let downOnBack = false;
-  back.addEventListener("mousedown", (e) => { downOnBack = e.target === back; });
-  back.addEventListener("click", (e) => { if (e.target === back && downOnBack && !opts.sticky) close(); });
-  const onKey = (e) => { if (e.key === "Escape" && !opts.sticky) close(); };
-  document.addEventListener("keydown", onKey);
-  function close() { back.remove(); document.removeEventListener("keydown", onKey); if (opts.onClose) opts.onClose(); }
-  closeBtn.addEventListener("click", close);
-  if (opts.sticky) closeBtn.hidden = true;
-  $("#modalRoot").appendChild(back);
-  closeNav();
-  const first = modal.querySelector("input:not([type=hidden]):not([disabled]):not([type=checkbox]), select, textarea");
-  if (first && !opts.noFocus) setTimeout(() => first.focus(), 30);
-  return { close, el: modal };
+function modalOptions(opts) {
+  return { modalClass: opts.wide ? "wide" : "", sticky: !!opts.sticky, onClose: opts.onClose, afterOpen: closeNav,
+    focus: opts.noFocus ? false : "first", focusSelector: "input:not([type=hidden]):not([disabled]):not([type=checkbox]), select, textarea" };
 }
+function openModal(title, content, opts = {}) { return UI.openModal(title, content, modalOptions(opts)); }
 function closeTopModal() { const b = document.querySelectorAll("#modalRoot .modal-backdrop"); if (b.length) b[b.length - 1].querySelector(".modal h3 .icon-btn").click(); }
 function confirmDialog(title, message, okLabel = "OK", danger = false) {
-  return new Promise((resolve) => {
-    let done = false;
-    const m = openModal(title, h("div", null, h("p", null, message), h("div", { class: "actions" },
-      h("button", { class: "btn", type: "button", onclick: () => { done = true; m.close(); resolve(false); } }, "Cancel"),
-      h("button", { class: "btn " + (danger ? "danger" : "primary"), type: "button", onclick: () => { done = true; m.close(); resolve(true); } }, okLabel))),
-      { onClose: () => { if (!done) resolve(false); } });
-  });
+  return UI.confirmDialog(title, message, { okLabel, okClass: "btn " + (danger ? "danger" : "primary"), cancelClass: "btn", modal: modalOptions({}) });
 }
 function closeMenus() { document.querySelectorAll(".menu").forEach((m) => m.remove()); }
 function menu(anchor, entries) {
@@ -258,19 +202,15 @@ async function boot() {
   if (state.me.status === "none") return showNotSetUp();
   showUnlock();
 }
+// common/http-warning.js: the banner on plain http:// (not localhost), with this app's wording.
 function httpBanner() {
-  if (location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname))
-    return h("div", { class: "banner" }, "⚠ You're using Home Assistant over plain HTTP: your master password crosses your network unencrypted. Use HTTPS (e.g. Nabu Casa or a certificate) if you can.");
-  return null;
+  return HttpWarning.banner("⚠ You're using Home Assistant over plain HTTP: your master password crosses your network unencrypted. Use HTTPS (e.g. Nabu Casa or a certificate) if you can.");
 }
 // First run: with admin_users empty nobody can open Admin, so every page says how to fix it (never auto-promote).
 function noAdminBanner() {
   if (!state.me || !state.me.noAdmin) return null;
   const whoami = () => (state.token && $("#shell") ? showPage("whoami") : showStandalone("whoami"));
-  return h("div", { class: "banner no-admin", role: "status" },
-    "No admin yet — add your Home Assistant user name (", h("strong", null, state.me.username || "see “How the app sees you”"),
-    ") to ", h("code", null, "admin_users"), " on the app's Configuration tab, save, and restart the app. ",
-    h("button", { class: "link-btn", type: "button", onclick: whoami }, "How the app sees you"));
+  return h("div", { class: "banner no-admin", role: "status" }, HouseholdWhoami.noAdminBanner(state.me.username, { onOpen: whoami }));
 }
 function topBanners() { return [noAdminBanner(), httpBanner()]; }
 // A password manager without an independent security review: said calmly, where people unlock and in Admin.
@@ -609,9 +549,7 @@ function isView(kind, vaultId, folderId, type) {
 function renderSidebar() {
   const sb = $("#sidebar");
   if (!sb) return;
-  const theme = h("select", { "aria-label": "Theme" }, ...[["vault", "🔐 Vault"], ["slate", "🌆 Slate"], ["daylight", "☀️ Daylight"], ["auto", "🌓 Auto"]].map(([k, l]) => h("option", { value: k }, l)));
-  theme.value = window.__themeChoice || "vault";
-  theme.addEventListener("change", () => { window.__themeChoice = theme.value; lsSet("theme", theme.value); document.documentElement.setAttribute("data-theme", window.__resolveTheme(theme.value)); });
+  const theme = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
   const vaultBlocks = state.vaults.map((v) => {
     const f = state.folders[v.id];
     const expanded = state.expanded[v.id] !== false;
@@ -2086,44 +2024,55 @@ const phonesCount = (x) => (!x.disabled && x.status === "active" ? haPhones(x).l
 async function adminPage() {
   const [u, s] = await Promise.all([api("api/admin/users"), api("api/admin/settings")]);
   const statusText = { none: "Not set up", temporary: "Waiting for first unlock", active: "Active" };
-  const rows = u.users.map((x) => [
-    h("div", { class: "person" }, h("strong", null, x.name), x.you ? " (you)" : "", h("div", { class: "hint" }, [x.username, x.person].filter(Boolean).join(" · "))),
-    h("span", null, x.disabled && x.status !== "active" ? "No access" : statusText[x.status], x.blockedUntil ? h("div", { class: "hint" }, "Too many wrong passwords") : null),
-    h("span", null, x.status === "none" ? h("button", { class: "btn small primary", type: "button", onclick: () => setupDialog(x) }, "Enable and set up")
-      : (() => {
-        const t = h("input", { type: "checkbox", checked: !x.disabled, "aria-label": `Access for ${x.name}` });
-        t.addEventListener("change", async () => {
-          if (!t.checked && !await confirmDialog("Turn off access", `Turn off Household Vault for ${x.name}? They're signed out, removed from Household and shared vaults (which get new passwords). Their Personal vault is kept.`, "Turn off", true)) { t.checked = true; return; }
-          try { await api(`api/users/${x.id}`, { method: "PATCH", body: { disabled: !t.checked } }); toast("Saved"); } catch (e) { fail(e); t.checked = !t.checked; }
-        });
-        return h("label", { class: "check" }, t, "Access");
-      })()),
-    h("span", { class: "row wrap" },
-      h("button", { class: "btn small", type: "button", title: "Notifications", onclick: () => notifyDialog(x) }, "🔔 ", phonesCount(x) + x.notify.length ? String(phonesCount(x) + x.notify.length) : "–"),
-      x.status !== "none" ? h("button", { class: "btn small danger", type: "button", onclick: () => resetDialog(x) }, "Reset…") : null,
-      x.blockedUntil ? h("button", { class: "btn small", type: "button", onclick: async () => { await api(`api/users/${x.id}/unblock`, { method: "POST" }); toast("Unblocked"); } }, "Unblock") : null)]);
-  const inputs = {};
-  const settingsForm = h("form", { onsubmit: async (e) => {
-    e.preventDefault();
-    const body = {};
-    for (const [k, el] of Object.entries(inputs)) body[k] = el.type === "checkbox" ? el.checked : +el.value;
-    try { await api("api/admin/settings", { method: "PUT", body }); toast("Saved"); } catch (x) { fail(x); }
-  } }, Object.entries(s.values).map(([k, v]) => {
-    const el = typeof v === "boolean" ? h("input", { type: "checkbox", checked: v }) : h("input", { type: "number", value: v });
-    inputs[k] = el;
-    return typeof v === "boolean" ? h("label", { class: "check" }, el, s.labels[k]) : field(s.labels[k], el);
-  }), h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Save")));
+  // People: the shared people page (common/people.js) with this app's set-up, access, reset and unblock
+  const peopleBox = h("div", { id: "people" });
+  PeoplePage.render(peopleBox, {
+    people: u.users,
+    intro: ["Everyone with a Home Assistant login is listed, with no access until you enable and set them up. Setting up gives a one-time password; they choose their own on first unlock.",
+      "📱 Alerts go to each person's phone from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. Set it up there once and every household app uses it. 🔔 shows their phones and lets you add an extra notify service (a speaker, a second service)."],
+    checkAgain: async () => { try { await api("api/admin/users?refresh=1"); showPage("admin"); toast("Read from Home Assistant"); } catch (e) { fail(e); } },
+    person: (x) => ({
+      badges: [x.you ? ["you"] : null, [x.disabled && x.status !== "active" ? "No access" : statusText[x.status], x.status === "active" && !x.disabled ? "accent" : null],
+        x.blockedUntil ? ["Too many wrong passwords", "warn"] : null],
+      sub: [x.username, x.person].filter(Boolean).join(" · "),
+      controls: x.status === "none" ? h("button", { class: "btn small primary", type: "button", onclick: () => setupDialog(x) }, "Enable and set up")
+        : h("label", { class: "pp-toggle" }, "Access", PeoplePage.accessSwitch(!x.disabled, async (on, t) => {
+          if (!on && !await confirmDialog("Turn off access", `Turn off Household Vault for ${x.name}? They're signed out, removed from Household and shared vaults (which get new passwords). Their Personal vault is kept.`, "Turn off", true)) { t.checked = true; return; }
+          try { await api(`api/users/${x.id}`, { method: "PATCH", body: { disabled: !on } }); toast("Saved"); } catch (e) { fail(e); t.checked = !on; }
+        }, { label: `Access for ${x.name}` })),
+      actions: [x.status !== "none" ? h("button", { class: "btn small danger", type: "button", onclick: () => resetDialog(x) }, "Reset…") : null,
+        x.blockedUntil ? h("button", { class: "btn small", type: "button", onclick: async () => { await api(`api/users/${x.id}/unblock`, { method: "POST" }); toast("Unblocked"); } }, "Unblock") : null],
+    }),
+    notify: {
+      mode: "dialog", buttonClass: "btn small", ghostClass: "btn small", openModal, api, fail,
+      loadServices: () => api("api/admin/notify-services"), toast: (m, err) => toast(m, err ? { error: true } : undefined),
+      path: (x) => `api/admin/users/${x.id}/notify`, testPath: (x) => `api/admin/users/${x.id}/notify/test`,
+      usable: (x) => phonesCount(x),
+      texts: {
+        intro: (x) => `Alerts for ${x.name}: security alerts, emergency access and expiry reminders. They never contain a password.`,
+        phonesHelp: (x) => (haPhones(x).length && !(!x.disabled && x.status === "active") ? `Used once ${x.name} is enabled and set up here. ` : "") +
+          "Set in Home Assistant: Settings → People → (the person) → Track device, with the Home Assistant Companion app on the phone.",
+        none: (x, phones) => (phones || haPhones(x).length ? "None." : "None — nothing is sent to them until a phone is linked in Home Assistant or a service is added here."),
+      },
+      onClose: () => { if (state.page === "admin") showPage("admin"); },
+    },
+  });
+  // App settings: drawn by common/settings.js from the server's description of each setting
+  const settingsBox = h("div", { id: "appSettings" });
+  SettingsPage.render(settingsBox, {
+    data: s,
+    load: () => api("api/admin/settings"),
+    save: (body) => api("api/admin/settings", { method: "PUT", body }),
+    classes: { card: "card", primary: "btn primary", secondary: "btn", ghost: "btn" },
+    footer: (page) => `Key derivation: Argon2id ${page.data.kdf.memoryMiB} MiB × ${page.data.kdf.iterations || "?"} iterations (tuned for this machine). ${page.data.sessions} unlocked session(s), ${page.data.openVaults} open vault(s). Version ${page.data.version}.`,
+    afterSave: () => { toast("Saved"); return "Saved"; },
+  }).catch(fail);
   const restoreFile = h("input", { type: "file", accept: ".zip", "aria-label": "Backup file" });
   return h("div", null, h("h2", null, "Admin"),
     h("p", { class: "hint" }, "Admins manage who can use Household Vault. They can never open anyone's vaults."),
     h("div", { class: "notice" }, h("strong", null, "Experimental. "), "Household Vault hasn't had an independent security review yet. Ask everyone to keep their own KeePass copy (Settings → Download all my passwords), and keep Home Assistant backups of this app."),
-    h("div", { class: "card" }, h("h3", null, "People"),
-      h("p", { class: "hint" }, "Everyone with a Home Assistant login is listed, with no access until you enable and set them up. Setting up gives a one-time password; they choose their own on first unlock."),
-      h("p", { class: "hint" }, "📱 Alerts go to each person's phone from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. Set it up there once and every household app uses it. 🔔 shows their phones and lets you add an extra notify service (a speaker, a second service). ",
-        h("button", { class: "link-btn", type: "button", onclick: async () => { try { await api("api/admin/users?refresh=1"); showPage("admin"); toast("Read from Home Assistant"); } catch (e) { fail(e); } } }, "Check Home Assistant again")),
-      dataTable(["Person", "Status", "Access", ""], rows, "people")),
-    h("div", { class: "card" }, h("h3", null, "App settings"), settingsForm,
-      h("p", { class: "hint" }, `Key derivation: Argon2id ${s.kdf.memoryMiB} MiB × ${s.kdf.iterations || "?"} iterations (tuned for this machine). ${s.sessions} unlocked session(s), ${s.openVaults} open vault(s). Version ${s.version}.`)),
+    h("h3", { style: "margin:18px 0 8px" }, "People"), peopleBox,
+    h("h3", { style: "margin:18px 0 8px" }, "App settings"), settingsBox,
     personalCopiesCard(s.personalCopies),
     h("div", { class: "card" }, h("h3", null, "Backup and restore"),
       h("p", { class: "hint" }, "The backup holds only encrypted vault files and settings — nobody can read passwords from it without the vaults' passwords."),
@@ -2139,66 +2088,6 @@ async function adminPage() {
       } }, "Restore…"))));
 }
 const NOTIFY_RE = /^notify\.[a-z0-9_]+$/;
-async function notifyDialog(x) {
-  let avail = { available: false, services: [], entities: [], error: null };
-  try { avail = await api("api/admin/notify-services"); } catch (e) { /* manual entry still works */ }
-  const body = h("div");
-  const draw = () => {
-    const have = new Set(x.notify);
-    const opts = [...avail.services, ...avail.entities].filter((n) => !have.has(n) && n !== "notify.persistent_notification");
-    const sel = opts.length ? h("select", { "aria-label": "Notify service" }, h("option", { value: "" }, "Choose…"), opts.map((n) => h("option", { value: n }, n))) : null;
-    const manual = h("input", { type: "text", placeholder: "notify.mobile_app_phone", "aria-label": "Notify service", autocomplete: "off", spellcheck: "false", maxlength: 120 });
-    const result = h("div", { class: "hint" });
-    const add = h("button", { class: "btn small primary", type: "button", onclick: async () => {
-      let v = (manual.value.trim() || (sel && sel.value) || "");
-      if (!v) { toast("Choose or type a notify service first.", { error: true }); return; }
-      if (!v.includes(".")) v = "notify." + v;
-      if (!NOTIFY_RE.test(v)) { toast("A notify service looks like notify.mobile_app_phone (lower-case letters, digits and _).", { error: true }); return; }
-      try { x.notify = (await api(`api/admin/users/${x.id}/notify`, { method: "POST", body: { service: v } })).notify; draw(); } catch (e) { fail(e); }
-    } }, "Add");
-    // phones from Home Assistant (Settings → People) — read-only here
-    const ha = x.ha || { known: false, phones: [] };
-    const active = !x.disabled && x.status === "active";
-    const phoneChips = !ha.known
-      ? h("p", { class: "hint" }, "Home Assistant's people couldn't be read yet.")
-      : !ha.person
-        ? h("p", { class: "hint" }, "No Home Assistant person is linked to this login — in Home Assistant: Settings → People → (the person) → Allow person to login.")
-        : ha.phones.length
-          ? h("div", { class: "row wrap" }, ha.phones.map((p) => h("span", { class: p.service ? "chip on" : "chip warn", title: p.service ? `${p.tracker} → ${p.service}` : `${p.tracker}: Home Assistant has no notify action for this phone` },
-              "📱 " + p.label, h("span", { class: "hint" }, p.service ? " " + p.service : " — Companion app action not found"))))
-          : h("p", { class: "hint" }, `${ha.personName} has no phone in Home Assistant — Settings → People → ${ha.personName} → Track device.`);
-    const reachable = (active ? haPhones(x).length : 0) + x.notify.length;
-    const again = h("button", { class: "link-btn", type: "button", onclick: async () => {
-      try {
-        const r = await api("api/admin/users?refresh=1");
-        const me2 = r.users.find((y) => y.id === x.id);
-        if (me2) { x.ha = me2.ha; x.notify = me2.notify; }
-        draw(); toast("Read from Home Assistant");
-      } catch (e) { fail(e); }
-    } }, "Check Home Assistant again");
-    const test = h("button", { class: "btn small", type: "button", disabled: !reachable,
-      title: reachable ? "Send a short test notification to their phones and every service listed" : "Link a phone in Home Assistant or add a notify service first", onclick: async () => {
-      try {
-        const r = await api(`api/admin/users/${x.id}/notify/test`, { method: "POST" });
-        result.textContent = r.results.map((y) => `${y.service}: ${y.ok ? "sent ✓" : "failed" + (y.hint ? " — " + y.hint : "")}`).join(" · ");
-      } catch (e) { fail(e); }
-    } }, "Send a test");
-    mount(body,
-      h("p", { class: "hint" }, `Alerts for ${x.name}: security alerts, emergency access and expiry reminders. They never contain a password.`),
-      h("div", { class: "nav-sec" }, "Phones — from Home Assistant"), phoneChips,
-      haPhones(x).length && !active ? h("p", { class: "hint" }, `Used once ${x.name} is enabled and set up here.`) : null,
-      h("p", { class: "hint" }, "Set in Home Assistant: Settings → People → (the person) → Track device, with the Home Assistant Companion app on the phone. ", again),
-      h("div", { class: "nav-sec" }, "Also — extra notify services"),
-      avail.available ? null : h("div", { class: "notice" }, (avail.error || "Home Assistant's notify services couldn't be listed.") + " You can still type one."),
-      x.notify.length ? h("div", { class: "row wrap" }, x.notify.map((n) => h("span", { class: "chip on" }, n, " ",
-        h("button", { class: "icon-btn", type: "button", "aria-label": `Remove ${n}`, onclick: async () => {
-          try { x.notify = (await api(`api/admin/users/${x.id}/notify/${encodeURIComponent(n)}`, { method: "DELETE" })).notify; draw(); } catch (e) { fail(e); }
-        } }, "✕")))) : h("p", { class: "hint" }, reachable || haPhones(x).length ? "None." : "None — nothing is sent to them until a phone is linked in Home Assistant or a service is added here."),
-      h("div", { class: "row wrap" }, sel, manual, add, test), result);
-  };
-  draw();
-  openModal(`Notifications — ${x.name}`, body, { onClose: () => { if (state.page === "admin") showPage("admin"); } });
-}
 function setupDialog(x) {
   const go = h("button", { class: "btn primary", type: "button" }, "Enable and set up");
   const box = h("div", null, h("p", null, `This gives ${x.name} access and makes their Personal vault with a one-time password. You'll see it once — hand it over in person. They choose their own master password the first time they unlock, and you won't know it.`),
@@ -2227,24 +2116,15 @@ function resetDialog(x) {
     h("div", { class: "notice danger" }, `Only for a forgotten master password. ${x.name}'s Personal vault is wiped — every password in it is gone for good. They're removed from shared vaults (which get new passwords). Make sure they agree.`),
     field(`Type “${x.name}” to confirm`, name), err, h("div", { class: "actions" }, h("button", { class: "btn danger", type: "submit" }, "Reset"))));
 }
+// Drawn by common/whoami.js: the same rows and wording as every other app. Needs no unlocked session.
 async function whoamiPage() {
   const w = await api("api/whoami");
-  const status = { none: "Not set up", temporary: "Waiting for first unlock", active: "Active" }[w.status];
-  const copyBtn = (t) => h("button", { class: "icon-btn", type: "button", "aria-label": "Copy", onclick: () => copyText(t || "", "plain") }, "📋");
-  let advice = null;
-  if (w.noAdmin) advice = h("div", { class: "notice" }, "No admin yet: add your user name above (", h("strong", null, w.haUsername || w.haUserId), ") to admin_users on the app's Configuration tab, save, and restart the app.");
-  if (w.displayNameOnly) advice = h("div", { class: "notice" }, "Your display name is in admin_users, but display names don't count — add your user name or user id instead, then restart the app.");
-  return h("div", null, h("h2", null, "How the app sees you"), h("div", { class: "card" }, h("div", { class: "kv" },
-    h("span", { class: "k" }, "User name"), h("span", null, w.haUsername || "—", " ", copyBtn(w.haUsername)),
-    h("span", { class: "k" }, "User id"), h("span", { class: "mono" }, w.haUserId, " ", copyBtn(w.haUserId)),
-    h("span", { class: "k" }, "Display name"), h("span", null, w.haDisplayName, h("span", { class: "hint" }, " (not used for matching)")),
-    h("span", { class: "k" }, "Administrator in this app"), h("span", null, w.isAdmin ? "Yes" : "No"),
-    h("span", { class: "k" }, "Names in admin_users"), h("span", null, String(w.adminEntries)),
-    h("span", { class: "k" }, "Set up"), h("span", null, status),
-    h("span", { class: "k" }, "Vaults you can open"), h("span", null, String(w.vaultCount)),
-    h("span", { class: "k" }, "Account status"), h("span", null, w.disabled ? "No access (ask an admin)" : "Enabled"),
-    h("span", { class: "k" }, "Phone linked for alerts"), h("span", null, w.notifyLinked ? "Yes" : w.disabled || w.status !== "active" ? "No — only once you're enabled and set up here" : "No — in Home Assistant: Settings → People → you → Track device (your phone with the Companion app)")), advice,
-    h("p", { class: "hint" }, "Admins are listed in the admin_users option on the app's Configuration tab, by user name or user id. After editing it, restart the app.")));
+  return h("div", null, h("h2", null, "How the app sees you"), h("div", { class: "card" }, HouseholdWhoami.panel(w, {
+    appName: "Household Vault",
+    classes: { row: null, label: "k", value: null },
+    copyGlyph: "📋",
+    onCopy: (text) => copyText(text, "plain"),
+  })));
 }
 
 // ---------- Back gesture in the Home Assistant app (backnav.js) ----------

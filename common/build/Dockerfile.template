@@ -1,0 +1,48 @@
+# The Dockerfile pattern of the household apps (tools/check_build.py checks the parts marked "checked").
+# Home Assistant builds each app from its own folder, so this file is a pattern, not something that is
+# copied: each app keeps its own Dockerfile. Fill in the <…> parts; keep the order.
+
+# (Alpine apps) Home Assistant's builder passes these; they only feed the labels below.
+ARG BUILD_ARCH
+ARG BUILD_VERSION
+# checked: pinned Python minor version. Alpine by default; Debian slim (trixie, pinned) only when the
+# app needs Debian packages (poppler-utils for PDFs: Finance, Receipt Price Intelligence).
+FROM python:3.12-alpine
+
+# tzdata: python:alpine and the slim images ship without a zoneinfo database; the apps read Home
+# Assistant's time zone, and without it they silently run on UTC. Plus the app's runtime libraries.
+RUN apk add --no-cache tzdata <runtime libraries>
+# Debian slim: RUN apt-get update && apt-get install -y --no-install-recommends tzdata <…> && rm -rf /var/lib/apt/lists/*
+# checked: an app with the shared sandbox_run.py (PDF tools on uploads) makes the unprivileged user they run as:
+# RUN useradd --system --no-create-home --shell /usr/sbin/nologin pdfworker   (Alpine: adduser -D -H -s /sbin/nologin pdfworker)
+
+WORKDIR /app
+
+# checked: requirements first (a cached layer while only the code changes). Build tools, when a wheel
+# has to be compiled on some architecture (armv7), only for the pip install and removed in the same layer:
+COPY requirements.txt .
+RUN apk add --no-cache --virtual .build-deps <build packages> \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apk del .build-deps
+# (no build packages needed: RUN pip install --no-cache-dir -r requirements.txt)
+
+# checked: the app, with its shared copies (app/common/, app/static/common/). `COPY . .` (Finance) works
+# too when .dockerignore keeps the rest out; .dockerignore never excludes app/, app/common or
+# app/static/common (checked).
+COPY app ./app
+
+LABEL \
+  io.hass.version="${BUILD_VERSION}" \
+  io.hass.type="app" \
+  io.hass.arch="${BUILD_ARCH}"
+
+# /data is mapped by the Supervisor (the database); ingress port only, nothing published to the LAN.
+EXPOSE <ingress_port>
+
+# checked: proxy headers off — the ingress check (auth_core.from_ingress) needs the real TCP peer
+# (Supervisor's proxy), never an address taken from X-Forwarded-For. An app that starts uvicorn from Python
+# passes proxy_headers=False (Receipt Price Intelligence) or --no-proxy-headers (Finance's bootstrap.py).
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "<ingress_port>", "--no-proxy-headers"]
+
+# .dockerignore (one per app): tests, spec, *.md but !README.md, icon.png, logo.png, translations,
+# requirements-dev.txt, __pycache__ / **/__pycache__, *.pyc, *.db, *.db-wal, *.db-shm.

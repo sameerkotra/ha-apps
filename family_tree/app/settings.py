@@ -14,69 +14,87 @@ The feature switches (`feature_<name>`, features.py) are App settings too.
 import json
 import logging
 import os
-import threading
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, create_model, field_validator
+from pydantic import ValidationError, ValidationInfo
 
 from . import config, db, features
+from .common import settings_core
+from .common.settings_core import Group, Setting, SettingsError  # noqa: F401  (SettingsError: the routes' name)
 
 logger = logging.getLogger("settings")
 
 # The same defaults and ranges the app options used to have.
 TILES_DEFAULT = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 NOMINATIM_DEFAULT = "https://nominatim.openstreetmap.org"
-DEFAULTS = {"trash_days": 90, "max_upload_mb": 20, "media_path": config.MEDIA_PATH_DEFAULT,
-            "relationship_language": "en", "name_order": "given_first",
-            "default_phone_code": "+1", "tithi_rule": "aparahna",
-            "map_tiles_url": TILES_DEFAULT, "nominatim_url": NOMINATIM_DEFAULT,
-            **{f.key: f.default for f in features.FEATURES}}
-LABELS = {"trash_days": "Days in trash", "max_upload_mb": "Largest upload (MB)", "media_path": "Photo folder",
-          "relationship_language": "Relationship names", "name_order": "Name order",
-          "default_phone_code": "Default phone code", "tithi_rule": "Tithi day",
-          "map_tiles_url": "Map tiles address", "nominatim_url": "Place search address",
-          **{f.key: f.label for f in features.FEATURES}}
-RANGES = {"trash_days": (7, 3650), "max_upload_mb": (1, 100)}
-META = {k: {"restartRequired": False} for k in DEFAULTS}
 
 
-class _BaseSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+def _tiles(v: str) -> str:
+    v = clean_url(v)
+    if any(k not in v for k in ("{z}", "{x}", "{y}")):
+        raise ValueError("The map tiles address needs {z}, {x} and {y}, like "
+                         "https://tile.openstreetmap.org/{z}/{x}/{y}.png.")
+    return v
+
+
+def _nominatim(v: str) -> str:
+    return clean_url(v).rstrip("/")
+
+
+def _media_path(v: str, info: ValidationInfo) -> str:
+    return clean_media_path(v, stored=bool(info.context and info.context.get("stored")))
+
+
+_FEATURE_GROUPS = {"general": "features", "regional": "features_regional", "internet": "features_internet"}
+
+GROUPS = [
+    Group("general", "App settings"),
+    Group("map", "Places map", "Defaults: OpenStreetMap's tile server and Nominatim. Point them at your own servers "
+                               "if you have them."),
+    Group("features", "Features", "Turn parts of the app on or off for everyone. Turning something off only hides it "
+                                  "— nothing is deleted, and turning it back on shows everything again. Background "
+                                  "work for a module that's off (reminders, map look-ups, the inbox) stops."),
+    Group("features_regional", "Region- and culture-specific features (off for a new install)"),
+    Group("features_internet", "Features that use the internet (off for a new install)"),
+]
+
+SETTINGS = [
     # strict: no "90", 90.0, true or NaN — whole numbers only
-    trash_days: int = Field(ge=7, le=3650, strict=True)
-    max_upload_mb: int = Field(ge=1, le=100, strict=True)
-    media_path: str = Field(min_length=1, max_length=400, strict=True)
-    relationship_language: Literal["en", "te", "hi"]            # §13.1
-    name_order: Literal["given_first", "surname_first"]         # §13.7
-    default_phone_code: str = Field(pattern=r"^\+[1-9][0-9]{0,3}$", strict=True)     # §13.11
-    tithi_rule: Literal["aparahna", "sunrise"]                                      # §13.12
-    map_tiles_url: str = Field(min_length=10, max_length=300, strict=True)
-    nominatim_url: str = Field(min_length=10, max_length=300, strict=True)
-
-    @field_validator("map_tiles_url")
-    @classmethod
-    def _tiles(cls, v: str) -> str:
-        v = clean_url(v)
-        if any(k not in v for k in ("{z}", "{x}", "{y}")):       # (all() is this module's own function)
-            raise ValueError("The map tiles address needs {z}, {x} and {y}, like "
-                             "https://tile.openstreetmap.org/{z}/{x}/{y}.png.")
-        return v
-
-    @field_validator("nominatim_url")
-    @classmethod
-    def _nominatim(cls, v: str) -> str:
-        return clean_url(v).rstrip("/")
-
-    @field_validator("media_path")
-    @classmethod
-    def _media_path(cls, v: str, info: ValidationInfo) -> str:
-        return clean_media_path(v, stored=bool(info.context and info.context.get("stored")))
-
-
-# one strict true/false per feature switch (features.py)
-AppSettings = create_model("AppSettings", __base__=_BaseSettings,
-                           **{f.key: (bool, Field(strict=True)) for f in features.FEATURES})
+    Setting("trash_days", 90, "Days in trash", group="general", min=7, max=3650, strict=True, unit="days",
+            help="How long deleted people, families and photos can be restored before they're removed for good."),
+    Setting("max_upload_mb", 20, "Largest upload (MB)", group="general", min=1, max=100, strict=True, unit="MB",
+            help="The biggest photo or document anyone can upload."),
+    Setting("media_path", config.MEDIA_PATH_DEFAULT, "Photo folder", group="general", kind="text", strict=True,
+            min_length=1, max_length=400, validators=[_media_path],
+            help="Where photos and documents are kept, inside /share — for example /share/nas/family_tree on network "
+                 "storage. Changing it doesn't move any files: copy the whole old folder, including "
+                 ".family_tree_store, to the new place first."),
+    Setting("relationship_language", "en", "Relationship names", group="general",                          # §13.1
+            choices=[("en", "English"), ("te", "Telugu (తెలుగు)"), ("hi", "Hindi (हिन्दी)")],
+            show_if="feature_kin_names",
+            help="The household's language for relationship names: “uncle”, or “Babai — your father's younger "
+                 "brother”. Each person can choose their own in Settings."),
+    Setting("name_order", "given_first", "Name order", group="general",                                    # §13.7
+            choices=[("given_first", "First name first (Asha Sharma)"), ("surname_first", "Surname first (Sharma Asha)")],
+            help="How full names are written for everyone. Any person can have their own order (Edit → More details)."),
+    Setting("default_phone_code", "+1", "Default phone code", group="general", strict=True,               # §13.11
+            pattern=r"^\+[1-9][0-9]{0,3}$", show_if="feature_contacts", page={"maxLength": 5},
+            help="Contact details: used when a phone number is typed without a country code, like +1 or +44."),
+    Setting("tithi_rule", "aparahna", "Tithi day", group="general",                                      # §13.12
+            choices=[("aparahna", "Aparahna — the tithi covers the afternoon (usual for shraddha)"),
+                     ("sunrise", "Sunrise — the tithi at sunrise")],
+            show_if="feature_tithi",
+            help="Tithi: which day a death-anniversary tithi is kept on, when a tithi spans two days."),
+    Setting("map_tiles_url", TILES_DEFAULT, "Map tiles address", group="map", kind="url", strict=True,
+            min_length=10, max_length=300, validators=[_tiles], show_if="feature_map"),
+    Setting("nominatim_url", NOMINATIM_DEFAULT, "Place search address", group="map", kind="url", strict=True,
+            min_length=10, max_length=300, validators=[_nominatim], show_if="feature_map"),
+    # one strict true/false per feature switch (features.py)
+    *[Setting(f.key, f.default, f.label, group=_FEATURE_GROUPS[f.kind], strict=True, help=f.help)
+      for f in features.FEATURES],
+]
+RANGES = {s.key: (s.min, s.max) for s in SETTINGS if s.min is not None}
 
 
 def clean_media_path(v: str, stored: bool = False) -> str:
@@ -121,20 +139,6 @@ def origin(url: str) -> str:
     return f"{p.scheme}://{host}"
 
 
-class SettingsError(ValueError):
-    """A readable message for a 422."""
-
-
-_lock = threading.Lock()
-_cache: dict | None = None
-
-
-def invalidate() -> None:
-    global _cache
-    with _lock:
-        _cache = None
-
-
 def _message(e: ValidationError) -> str:
     msgs = []
     for err in e.errors():
@@ -166,90 +170,58 @@ def _message(e: ValidationError) -> str:
     return " ".join(msgs) or "Invalid settings."
 
 
+def _prepare(partial: dict, current: dict, flags: dict) -> dict:
+    """Only the keys being changed are held to today's rules (a stored photo folder outside /share stays)."""
+    return {k: REGISTRY.validate_one(k, v) for k, v in partial.items()}
+
+
+def _check(merged: dict, partial: dict, current: dict) -> None:
+    if merged["relationship_language"] != "en" and not merged["feature_kin_names"] and "relationship_language" in partial:
+        # the household language is part of that module (and would switch it back on in a restored copy)
+        raise SettingsError("Turn on Indian relationship names (Features) to choose Telugu or Hindi.")
+
+
+REGISTRY = settings_core.Registry(
+    SETTINGS, groups=GROUPS, connect=db.get_conn, format_error=lambda e: _message(e),
+    unknown_message=lambda keys: f"Unknown setting: {', '.join(sorted(map(str, keys)))}.",
+    not_object_message="Send the settings as a JSON object.", prepare=_prepare, check=_check,
+    context={"stored": True}, load_context={"stored": True}, now=config.now_iso,
+    log=lambda *a: None, logger=logger)
+
+AppSettings = REGISTRY.model
+DEFAULTS = REGISTRY.defaults
+LABELS = REGISTRY.labels
+META = REGISTRY.meta()
+
+
 def validate_one(key: str, value, stored: bool = False):
     """The validated value for one key, or SettingsError."""
-    if key not in DEFAULTS:
-        raise SettingsError(f"Unknown setting: {key}.")
-    try:
-        # the defaults are fine as they are (MEDIA_PATH may point outside /share in development)
-        base = dict(DEFAULTS, media_path="/share/family_tree") if key != "media_path" else dict(DEFAULTS)
-        return AppSettings.model_validate(dict(base, **{key: value}),
-                                          context={"stored": stored}).model_dump()[key]
-    except ValidationError as e:
-        raise SettingsError(_message(e))
+    return REGISTRY.validate_one(key, value, context={"stored": stored})
 
 
-def _load(conn) -> dict:
-    values = dict(DEFAULTS)
-    for r in conn.execute("SELECT key, value FROM app_settings"):
-        try:
-            v = json.loads(r["value"])
-        except (TypeError, ValueError):
-            logger.warning("Ignoring an unreadable app setting %s", r["key"])
-            continue
-        if r["key"] in DEFAULTS:                  # anything else (e.g. an old "_imported" row) is ignored
-            try:
-                values[r["key"]] = validate_one(r["key"], v, stored=True)
-            except SettingsError:
-                logger.warning("Ignoring an invalid stored value for %s; using the default", r["key"])
-    return {"values": values}
-
-
-def _snapshot() -> dict:
-    global _cache
-    with _lock:
-        if _cache is None:
-            with db.get_conn() as conn:
-                _cache = _load(conn)
-        return _cache
+def invalidate() -> None:
+    REGISTRY.invalidate()
 
 
 def get(key: str):
-    return _snapshot()["values"][key]
+    return REGISTRY.get(key)
 
 
 def all() -> dict:      # noqa: A001  (the design's name)
-    return dict(_snapshot()["values"])
+    return REGISTRY.all()
 
 
 def public() -> dict:
     """The GET/PUT /api/admin/settings payload."""
-    snap = _snapshot()
-    return {"values": dict(snap["values"]), "defaults": dict(DEFAULTS),
-            "meta": {k: dict(v) for k, v in META.items()}, "features": features.public()}
-
-
-def _write(conn, key: str, value, user_id: str | None) -> None:
-    conn.execute("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?) "
-                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, "
-                 "updated_by = excluded.updated_by", (key, json.dumps(value), config.now_iso(), user_id))
+    return REGISTRY.payload(features=features.public())
 
 
 def update(partial: dict, user: dict | None) -> dict:
     """Validate the merged result, write only the changed keys, return all values."""
-    if not isinstance(partial, dict):
-        raise SettingsError("Send the settings as a JSON object.")
-    unknown = [k for k in partial if k not in DEFAULTS]
-    if unknown:
-        raise SettingsError(f"Unknown setting: {', '.join(sorted(map(str, unknown)))}.")
-    current = all()
-    try:
-        # only the keys being changed are held to today's rules
-        checked = {k: validate_one(k, v) for k, v in partial.items()}
-        merged = AppSettings.model_validate(dict(current, **checked), context={"stored": True}).model_dump()
-    except ValidationError as e:
-        raise SettingsError(_message(e))
-    if merged["relationship_language"] != "en" and not merged["feature_kin_names"] and "relationship_language" in partial:
-        # the household language is part of that module (and would switch it back on in a restored copy)
-        raise SettingsError("Turn on Indian relationship names (Features) to choose Telugu or Hindi.")
-    changed = {k: v for k, v in merged.items() if k in partial and v != current[k]}
+    values, changed = REGISTRY.update(partial, user["id"] if user else None)
     if changed:
-        with db.get_conn() as conn:
-            for k, v in changed.items():
-                _write(conn, k, v, user["id"] if user else None)
-        invalidate()
-        logger.info("App settings changed by %s: %s", (user or {}).get("name") or "?", changed)
-    return all()
+        logger.info("App settings changed by %s: %s", (user or {}).get("name") or "?", {k: values[k] for k in changed})
+    return REGISTRY.all()
 
 
 def rows(conn) -> list:

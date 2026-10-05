@@ -8,7 +8,7 @@ from pydantic import Field
 
 from .. import features, dates, db
 from ..auth import require_admin, require_user
-from ..common import Strict, clean, require_family, require_person
+from ..models import Strict, clean, require_family, require_person
 from ..history import Batch
 from .people import _nm
 

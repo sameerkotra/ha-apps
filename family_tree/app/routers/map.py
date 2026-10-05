@@ -6,7 +6,7 @@ from pydantic import Field
 
 from .. import features, config, dates, db, geocode, graph as graph_mod, settings
 from ..auth import require_admin, require_user
-from ..common import Strict
+from ..models import Strict
 
 router = APIRouter(prefix="/api", tags=["map"], dependencies=[Depends(features.required("map"))])
 

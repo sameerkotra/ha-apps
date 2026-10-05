@@ -140,7 +140,7 @@
                 <td data-label="Date">{{ l.in_date }}</td>
                 <td data-label="">
                     <form method="post" action="transfer-unlink{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-                          onsubmit="return confirm(&quot;Undo this link? Both sides revert to plain transactions, and the receiving side also becomes excluded from dashboard totals so an undo cannot quietly inflate your income.&quot;);">
+                          data-confirm="Undo this link? Both sides revert to plain transactions, and the receiving side also becomes excluded from dashboard totals so an undo cannot quietly inflate your income.">
                         <input type="hidden" name="id" value="{{ l.out_id }}">
                         <button type="submit" class="restart-btn">Undo</button>
                     </form>

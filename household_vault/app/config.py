@@ -3,10 +3,11 @@
 Options come from /data/options.json (written by the Supervisor). Only
 `admin_users` lives there; everything else is an App setting (settings.py).
 """
-import json
 import logging
 import os
 from datetime import datetime, timezone
+
+from .common import auth_core
 
 logger = logging.getLogger("config")
 
@@ -25,23 +26,12 @@ KDF_TARGET_SECONDS = float(os.environ.get("VAULT_KDF_TARGET_SECONDS", "0.7"))
 
 
 def read_options(path: str | None = None) -> dict:
-    path = path or OPTIONS_PATH
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        logger.warning("Could not read %s; using defaults", path)
-        return {}
-    return data if isinstance(data, dict) else {}
+    return auth_core.read_options(path or OPTIONS_PATH, log=logger)
 
 
 _options = read_options()
-ADMIN_NAMES = {str(n).strip().lower() for n in (_options.get("admin_users") or []) if str(n).strip()}
-_dev_admins = os.environ.get("DEV_ADMINS")
-if _dev_admins:
-    ADMIN_NAMES |= {n.strip().lower() for n in _dev_admins.split(",") if n.strip()}
+# DEV_ADMINS (comma-separated) adds more for tests and local development (app/common/auth_core.py).
+ADMIN_NAMES = auth_core.admin_names(_options.get("admin_users") or []) | auth_core.env_admins("DEV_ADMINS")
 
 
 def utcnow() -> datetime:

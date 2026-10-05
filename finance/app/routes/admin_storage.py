@@ -1,22 +1,21 @@
 """Admin Storage page: every stored PDF / leftover CSV across all users, per-file and bulk delete, and full-database backup download / restore. Admin only."""
 import logging
 import os
-import shutil
 import sqlite3
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, UploadFile, File, Form
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from starlette.background import BackgroundTask
 
 from ..auth import User, get_acting_user, require_admin
 from ..db import get_db, DB_PATH, run_migrations
 from ..version import APP_VERSION
-from .. import storage
+from .. import settings as app_settings, storage
+from ..common import backup_core, db_core
 from ..parser.pipeline import delete_pdf
 from .accounts import _acting_banner, _acting_qs
 from ..parser.utility_pipeline import delete_pdf_utility
@@ -169,45 +168,41 @@ def admin_storage(
     )
 
 
-SECRET_SETTINGS = ("ai_api_key",)
+# The secret settings (the AI access key) and the stored text of "not set": a downloaded backup never
+# carries them, and importing one keeps the ones this install has (SPEC.md section 22).
+SECRET_SETTINGS = {key: "" for key, s in app_settings.SETTINGS.items() if s.kind == "secret"}
 
 
 def _blank_secrets(conn: sqlite3.Connection) -> None:
     """A downloaded backup never carries the AI access key (SPEC.md section 22)."""
-    try:
-        conn.execute(f"UPDATE app_settings SET value = '' WHERE key IN ({','.join('?' * len(SECRET_SETTINGS))})",
-                     SECRET_SETTINGS)
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass   # an old database without app_settings
+    backup_core.blank_settings(conn, SECRET_SETTINGS)
 
 
-def _keep_secrets(new_db: str) -> None:
-    """Importing a backup (which has no access key) keeps the key this install already has."""
+def _saved_secrets() -> dict:
+    """This install's secrets that are set, read before an import replaces the database."""
     try:
         cur = sqlite3.connect(DB_PATH, timeout=10.0)
         try:
-            saved = dict(cur.execute(
-                f"SELECT key, value FROM app_settings WHERE key IN ({','.join('?' * len(SECRET_SETTINGS))})",
-                SECRET_SETTINGS).fetchall())
+            return backup_core.saved_settings(cur, SECRET_SETTINGS)
         finally:
             cur.close()
     except sqlite3.DatabaseError:
-        return
-    saved = {k: v for k, v in saved.items() if v}
+        return {}
+
+
+def _keep_secrets(saved: dict) -> None:
+    """Importing a backup (which has no access key) keeps the key this install already has."""
     if not saved:
         return
-    new = sqlite3.connect(new_db)
     try:
-        for key, value in saved.items():
-            new.execute("UPDATE app_settings SET value = ? WHERE key = ? AND (value IS NULL OR value = '')", (value, key))
-            new.execute("INSERT OR IGNORE INTO app_settings (key, value, updated_by) VALUES (?, ?, 'kept on import')",
-                        (key, value))
-        new.commit()
-    except sqlite3.OperationalError:
-        pass   # the backup predates app_settings; migrations create it and the key is re-entered
-    finally:
-        new.close()
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
+        try:
+            backup_core.keep_settings(conn, saved, SECRET_SETTINGS, by="kept on import",
+                                      now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        logger.exception("Could not keep the access key over the imported database; enter it again")
 
 
 @router.get("/admin-storage-download-db")
@@ -222,22 +217,11 @@ def admin_storage_download_db(
     os.close(fd)
     src = sqlite3.connect(DB_PATH)
     try:
-        dst = sqlite3.connect(tmp_path)
-        try:
-            src.backup(dst)
-            _blank_secrets(dst)
-        finally:
-            dst.close()
+        db_core.snapshot(src, tmp_path, after=_blank_secrets)
     finally:
         src.close()
 
-    filename = f"finance-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-    return FileResponse(
-        tmp_path,
-        media_type="application/vnd.sqlite3",
-        filename=filename,
-        background=BackgroundTask(os.remove, tmp_path),
-    )
+    return backup_core.send_file(tmp_path, backup_core.file_name("finance-backup", ".db"))
 
 
 @router.post("/admin-storage-import-db")
@@ -263,44 +247,18 @@ def admin_storage_import_db(
         )
 
     db_dir = os.path.dirname(DB_PATH) or "."
-    os.makedirs(db_dir, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(suffix=".db", dir=db_dir)
+    tmp_path = backup_core.receive_sync(db_file.file, db_dir)  # streamed, never fully in memory
     try:
-        with os.fdopen(fd, "wb") as f:
-            shutil.copyfileobj(db_file.file, f, 1024 * 1024)  # streamed, never fully in memory
-
         try:
-            check_conn = sqlite3.connect(tmp_path)
-            integrity = check_conn.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                check_conn.close()
-                return RedirectResponse(
-                    url="admin-storage?import_error=" + quote(f"Failed integrity check: {integrity}"),
-                    status_code=303,
-                )
-            tables = {
-                row[0] for row in
-                check_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            }
-            check_conn.close()
-        except sqlite3.DatabaseError:
-            return RedirectResponse(
-                url="admin-storage?import_error=" + quote("That file isn't a valid SQLite database."),
-                status_code=303,
-            )
+            db_core.validate_file(
+                tmp_path, {"schema_version", "accounts", "transactions", "statements"},
+                integrity_msg="Failed integrity check: {integrity}",
+                missing_msg="Doesn't look like a Finance Dashboard database (missing tables: {missing}).",
+                invalid_msg="That file isn't a valid SQLite database.")
+        except ValueError as e:
+            return RedirectResponse(url="admin-storage?import_error=" + quote(str(e)), status_code=303)
 
-        required_tables = {"schema_version", "accounts", "transactions", "statements"}
-        missing = required_tables - tables
-        if missing:
-            return RedirectResponse(
-                url="admin-storage?import_error=" + quote(
-                    "Doesn't look like a Finance Dashboard database (missing tables: "
-                    + ", ".join(sorted(missing)) + ")."
-                ),
-                status_code=303,
-            )
-
-        _keep_secrets(tmp_path)
+        saved_secrets = _saved_secrets()
 
         # Flush and empty the CURRENT db's WAL before swapping the file
         # out from under it — see docstring.
@@ -330,6 +288,7 @@ def admin_storage_import_db(
         run_migrations()
     except Exception:
         logger.exception("Migrations after the database import failed; they run again on restart")
+    _keep_secrets(saved_secrets)
 
     return RedirectResponse(url="admin-storage?imported=1", status_code=303)
 

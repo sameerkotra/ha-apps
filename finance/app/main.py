@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,14 +9,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import features, jobs, purge, security, settings
+from .common import sandbox_run, web_security
 from .version import APP_VERSION
-from .db import normalize_legacy_transaction_dates, run_migrations
+from .db import DB_PATH, normalize_legacy_transaction_dates, run_migrations
 from .routes import (accounts, admin_storage, ai_usage_page, categories, csv_import, dashboard, deletion, pdf_view, query, recurring,
                      reports, settings_page, review, toll_statements, tolls, transactions, transfers, upload, users, utilities)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # /data closed to every user but root: the PDF tools run as pdfworker (common/python/sandbox_run.py)
+    sandbox_run.lock_down(os.path.dirname(os.path.abspath(DB_PATH)))
     run_migrations()
     settings.seed_from_addon_options()  # first start: AI address/model from the old app options
     normalize_legacy_transaction_dates()  # cheap no-op once every stored date is ISO
@@ -44,15 +48,20 @@ async def _features(request, call_next):
     return await call_next(request)
 
 
-@app.middleware("http")
-async def _no_cache(request, call_next):
-    """Every response, static files included, is `no-store`. The Home Assistant
-    companion app's WebView was seen serving stale pages and even a mix of two
-    versions of style.css despite versioned URLs; for a small single-household
-    app, never caching costs nothing that matters."""
-    response = await call_next(request)
-    response.headers["Cache-Control"] = "no-store"
-    return response
+# Scripts only from the app itself: the page scripts are static/*.js and static/pages/*.js, the templates
+# carry no inline scripts or on* handlers, and no htmx attribute needs eval (no hx-on, no js: values, no
+# trigger filters). Styles: htmx adds its indicator <style> and the templates use style attributes, so
+# inline styles stay allowed. PDFs are shown as rendered page images, so nothing needs a plugin.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+       "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+       "frame-ancestors 'self'")
+
+# Every response, static files included, is `no-store`. The Home Assistant
+# companion app's WebView was seen serving stale pages and even a mix of two
+# versions of style.css despite versioned URLs; for a small single-household
+# app, never caching costs nothing that matters.
+HEADERS = web_security.SecurityHeaders(CSP, all_no_store=True)
+HEADERS.install(app)
 
 
 security.install(app)  # added last, so it runs first: ingress-only + cross-site POST refusal

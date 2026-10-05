@@ -2,7 +2,7 @@
    every 3 seconds; anything else is static. Needs: row, acting_qs (the admin debug link is its own column in tolls.html). #}
 {% macro delete_form(row, acting_qs) %}
 <form method="post" action="toll-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-      onsubmit="return confirm('Delete this statement and its toll passes? The admin can restore it from Recently deleted for 30 days.');">
+      data-confirm="Delete this statement and its toll passes? The admin can restore it from Recently deleted for 30 days.">
     <input type="hidden" name="id" value="{{ row.id }}">
     <button type="submit" class="restart-btn">Delete</button>
 </form>

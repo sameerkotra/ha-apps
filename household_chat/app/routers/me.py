@@ -3,11 +3,12 @@ reminders and my files."""
 import os
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import Field
 
-from .. import chats, config, db, files, ha_notify, presence, settings
+from .. import chats, config, db, files, presence, settings
+from ..common import ha_notify, whoami as whoami_core
 from ..auth import get_current_user, require_user
 from ..live import hub
 from .common import Strict
@@ -45,15 +46,19 @@ def me(user: dict = Depends(get_current_user)):
 
 
 @router.get("/whoami")
-def whoami(user: dict = Depends(get_current_user)):
-    """Works for disabled people too, so they can see why."""
+def whoami(request: Request, user: dict = Depends(get_current_user)):
+    """Works for disabled people too, so they can see why (common/whoami.py)."""
     with db.get_conn() as conn:
         linked = bool(ha_notify.services_for({"id": user["id"]}, conn))    # phones from HA + extras
         chats_n = conn.execute("SELECT COUNT(*) FROM members WHERE user_id = ?", (user["id"],)).fetchone()[0]
-    return {"haUserId": user["id"], "haUsername": user["username"], "haDisplayName": user["name"],
-            "isAdmin": user["is_admin"], "displayNameOnly": user["display_name_only"],
-            "adminEntries": len(config.ADMIN_NAMES), "noAdmin": not config.ADMIN_NAMES, "disabled": user["disabled"], "notifyLinked": linked,
-            "chatCount": chats_n}
+    return whoami_core.build(
+        request, user_id=user["id"], username=user["username"], display_name=user["name"],
+        is_admin=user["is_admin"], admin_entries=len(config.ADMIN_NAMES),
+        display_name_only=user["display_name_only"], notify_linked=linked,
+        extras=[whoami_core.row("Access", "Not yet — ask an admin" if user["disabled"] else "Enabled"),
+                whoami_core.row("Chats you're in", chats_n),
+                whoami_core.notify_row(linked)],
+        disabled=user["disabled"])
 
 
 class SettingsIn(Strict):

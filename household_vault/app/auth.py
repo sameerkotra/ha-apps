@@ -7,18 +7,18 @@ New people are **disabled** until an admin enables and sets them up.
 """
 from datetime import timedelta
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Request
 
 from . import config, db
+from .common import auth_core
 
 
 def is_admin(user_id: str, username: str | None) -> bool:
-    return bool({str(n).strip().lower() for n in (user_id, username) if n} & config.ADMIN_NAMES)
+    return auth_core.is_admin(user_id, username, config.ADMIN_NAMES)
 
 
 def display_name_only(user_id, username, display_name) -> bool:
-    return (not is_admin(user_id, username) and bool(display_name)
-            and display_name.strip().lower() in config.ADMIN_NAMES)
+    return auth_core.display_name_only(user_id, username, display_name, config.ADMIN_NAMES)
 
 
 def _stale(ts: str | None) -> bool:
@@ -33,17 +33,12 @@ def user_dict(row, display_only=False, admin=False) -> dict:
             "public_key": row["public_key"]}
 
 
-async def get_current_user(
-    x_remote_user_id: str | None = Header(default=None),
-    x_remote_user_name: str | None = Header(default=None),
-    x_remote_user_display_name: str | None = Header(default=None),
-) -> dict:
+async def get_current_user(request: Request) -> dict:
     """The real caller, created (disabled) on first sight."""
-    if not x_remote_user_id:
-        raise HTTPException(401, "No Home Assistant user identified. Open Household Vault from its panel "
-                                 "in the Home Assistant sidebar.")
-    uid, username = x_remote_user_id, x_remote_user_name
-    display = (x_remote_user_display_name or username or "Home Assistant user").strip()[:100]
+    ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
+    auth_core.require_user_id(ident.user_id, "Household Vault")
+    uid, username = ident.user_id, ident.username
+    display = (ident.display_name or username or "Home Assistant user").strip()[:100]
     now = config.now_iso()
     with db.get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
@@ -55,7 +50,7 @@ async def get_current_user(
             conn.execute("UPDATE users SET name = ?, username = ?, last_seen = ? WHERE id = ?",
                          (display, username, now, uid))
             row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
-    return user_dict(row, display_name_only(uid, username, x_remote_user_display_name), is_admin(uid, username))
+    return user_dict(row, display_name_only(uid, username, ident.display_name), is_admin(uid, username))
 
 
 async def require_user(current: dict = Depends(get_current_user)) -> dict:
@@ -67,6 +62,6 @@ async def require_user(current: dict = Depends(get_current_user)) -> dict:
 
 async def require_admin(current: dict = Depends(get_current_user)) -> dict:
     """Admins manage users even if their own vault access is off."""
-    if not current["is_admin"]:
-        raise HTTPException(403, "Only admins can do this. See the admin_users option on the app's Configuration tab.")
+    auth_core.require_admin_flag(current["is_admin"], "Only admins can do this. See the admin_users option on "
+                                                       "the app's Configuration tab.")
     return current

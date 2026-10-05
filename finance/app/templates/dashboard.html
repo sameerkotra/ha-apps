@@ -12,7 +12,7 @@
 <form id="dashboard-filters" class="add-account-form">
     <label>
         Period
-        <select name="period" id="dashboard-period-select" onchange="updateDashboardFilters()">
+        <select name="period" id="dashboard-period-select">
             <option value="week" {{ "selected" if period == "week" else "" }}>This week</option>
             <option value="month" {{ "selected" if period == "month" else "" }}>This month</option>
             <option value="last_month" {{ "selected" if period == "last_month" else "" }}>Last month</option>
@@ -41,7 +41,7 @@
     </label>
     <label>
         Account
-        <select name="account_id" id="dashboard-account-select" onchange="updateDashboardFilters()">
+        <select name="account_id" id="dashboard-account-select">
             <option value="">All accounts</option>
             {% for a in accounts %}
             <option value="{{ a.id }}" {{ "selected" if selected_account_id == a.id else "" }}>
@@ -51,16 +51,7 @@
         </select>
     </label>
 </form>
-<script>
-function updateDashboardFilters() {
-    var period = document.getElementById("dashboard-period-select").value;
-    var accountId = document.getElementById("dashboard-account-select").value;
-    var qs = "period=" + encodeURIComponent(period);
-    if (accountId) qs += "&account_id=" + encodeURIComponent(accountId);
-    qs += "{{ ('&' + acting_qs) if acting_qs else '' }}";
-    window.location.href = "dashboard?" + qs;
-}
-</script>
+<script src="static/pages/dashboard.js?v={{ app_version }}" data-suffix='{{ (("&" + acting_qs) if acting_qs else "") | e | tojson }}'></script>
 
 <div class="card">
     <form method="post" action="transfer-run-sweep{% if acting_qs %}?{{ acting_qs }}{% endif %}">

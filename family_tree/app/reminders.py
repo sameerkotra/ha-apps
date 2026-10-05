@@ -23,7 +23,8 @@ from datetime import date, datetime, timedelta
 
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, graph as graph_mod, ha_client, ha_notify, kin, milestones as milestones_mod, upcoming
+from . import config, db, graph as graph_mod, ha_client, kin, milestones as milestones_mod, upcoming
+from .common import ha_notify
 
 logger = logging.getLogger("reminders")
 

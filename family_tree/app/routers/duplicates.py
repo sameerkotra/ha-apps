@@ -7,7 +7,7 @@ from pydantic import Field
 
 from .. import features, config, db, duplicates, graph as graph_mod
 from ..auth import require_user
-from ..common import Strict, reject_new_loops, require_person
+from ..models import Strict, reject_new_loops, require_person
 from ..history import Batch
 from .people import _nm, person_detail
 

@@ -17,8 +17,9 @@ import re
 import threading
 import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Any
+
+from app.common import geo
 
 TIMEOUT = 40
 MAX_RESULTS = 300
@@ -213,15 +214,14 @@ def parse_opening_hours(value: str | None) -> dict[str, Any] | None:
 
 def fetch_stores(url: str, home: tuple[float, float], radius_km: float, contact_email: str = "") -> list[dict[str, Any]]:
     """Grocery stores within ``radius_km`` of ``home``, nearest first. Raises OsmError if the server fails."""
-    from app.config import APP_VERSION as version
-    agent = f"ReceiptPriceIntelligence/{version} (Home Assistant app{'; ' + contact_email if contact_email else ''})"
+    from app.services.geo import user_agent
     body = urllib.parse.urlencode({"data": build_query(home[0], home[1], radius_km)}).encode("utf-8")
-    request = urllib.request.Request(url, data=body, method="POST", headers={
-        "User-Agent": agent, "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded"})
+    headers = {"User-Agent": user_agent(contact_email), "Accept": "application/json",
+               "Content-Type": "application/x-www-form-urlencoded"}
     with _lock:  # one query at a time
         try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                data = json.loads(response.read().decode("utf-8", errors="replace"))
+            data = json.loads(geo.fetch(url, data=body, method="POST", headers=headers,
+                                        timeout=TIMEOUT).decode("utf-8", errors="replace"))
         except urllib.error.HTTPError as e:
             if e.code in (429, 504):
                 raise OsmError("The OpenStreetMap store search is busy right now. Try again in a few minutes.") from e

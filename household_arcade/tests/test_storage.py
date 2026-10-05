@@ -34,6 +34,25 @@ class TestStorage(ApiBase):
         rows = self.get("/api/leaderboard?game=snake&mode=walls-normal").json()["rows"]
         self.assertEqual([x["score"] for x in rows], [321])
 
+    def test_backup_leaves_out_the_access_key_and_restore_keeps_ours(self):
+        key = "sk-test-not-a-real-key-4321"
+        settings.REGISTRY.update({"ai_api_key": key, "default_look": "lcd"}, "test")
+        backup = self.download()
+        self.assertNotIn(key.encode(), backup)
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        with open(path, "wb") as f:
+            f.write(backup)
+        conn = sqlite3.connect(path)
+        self.assertEqual(conn.execute("SELECT value FROM app_settings WHERE key='ai_api_key'").fetchone()[0], '""')
+        conn.close()
+        os.remove(path)
+        self.assertEqual(settings.get("ai_api_key"), key)                # the live database keeps it
+        self.settings({"default_look": "neon"})
+        self.assertEqual(self.upload(backup).status_code, 200)
+        self.assertEqual(settings.get("default_look"), "lcd")            # the backup's settings…
+        self.assertEqual(settings.get("ai_api_key"), key)                # …but this install's key
+
     def test_admin_only(self):
         self.assertEqual(self.get("/api/admin-storage-download-db", KABIR).status_code, 403)
         self.assertEqual(self.upload(b"x", KABIR).status_code, 403)

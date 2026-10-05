@@ -129,9 +129,13 @@ class FirstRunTests(ApiTestCase):
         self.assertLess(index.index('id="setupBanner"'), index.index('id="app"'))
         pages = read("pages.js")
         self.assertIn("function renderSetupBanner()", pages)
+        self.assertIn("state.me.noAdmin", pages)
+        self.assertIn("HouseholdWhoami.noAdminBanner(", pages)
+        self.assertIn('src="common/whoami.js', index)
+        shared = read(os.path.join("common", "whoami.js"))          # the banner's text, the same in every app
         for text in ("No admin yet", "add your Home Assistant user name", "admin_users",
-                     "Configuration tab, save, and restart the app", "How the app sees you", "state.me.noAdmin"):
-            self.assertIn(text, pages)
+                     "Configuration tab, save, and restart the app", "How the app sees you"):
+            self.assertIn(text, shared)
         boot = read("main.js")
         self.assertLess(boot.index("renderSetupBanner();"), boot.index("renderDisabled();"))
         self.assertIn(".setup-banner", read("style.css"))

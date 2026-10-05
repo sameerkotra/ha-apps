@@ -41,8 +41,8 @@ See `spec/SPEC.md` §3 for the fields of `meta`.
 
 | Endpoint | Who | Purpose |
 | --- | --- | --- |
-| `GET /api/v1/me` | any | `{id, display_name, username, is_admin, no_admin_yet}` |
-| `GET /api/v1/whoami` | any | What Home Assistant sent (`userId`, `username`, `displayName`, `nameSent`), `isAdmin`, `adminEntries` (a count), `noAdminYet` |
+| `GET /api/v1/me` | any | `{id, display_name, username, is_admin, anonymous, noAdmin}` |
+| `GET /api/v1/whoami` | any | The shared "How the app sees you" contract (`WHOAMI_PAGE_SPEC.md`): what Home Assistant sent (`haUserId`, `haUsername`, `haDisplayName`, `nameSent`), `isAdmin`, `displayNameOnly`, `adminEntries` (a count), `noAdmin`, `viaIngress`, `extras` |
 | `GET /api/v1/homes` | any | Homes with `receipt_count` and `pending_count` |
 | `POST /api/v1/homes` `{name}` | admin | Create a home (`409` if the name exists) |
 | `PATCH /api/v1/homes/{id}` `{name}` | admin | Rename |

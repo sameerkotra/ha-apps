@@ -1,9 +1,10 @@
 """Me, unlocking, locking, settings, the whoami page, the generator."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field
 
 from .. import alerts, config, copies, db, passwords, service, sessions, settings
 from ..auth import get_current_user, require_user
+from ..common import whoami as whoami_core
 from .common import Ctx, Strict, unlocked, unlocked_any
 
 router = APIRouter(prefix="/api", tags=["me"])
@@ -121,17 +122,29 @@ def put_settings(body: SettingsIn, user: dict = Depends(require_user)):
         return me_out(conn, user)
 
 
+SETUP_STATUS = {"none": "Not set up", "temporary": "Waiting for first unlock", "active": "Active"}
+
+
 @router.get("/whoami")
-def whoami(user: dict = Depends(get_current_user)):
-    """Works for disabled people too, so they can see why."""
+def whoami(request: Request, user: dict = Depends(get_current_user)):
+    """Works for disabled people too, so they can see why, and while locked: no session needed, and it
+    holds nothing from any vault (common/whoami.py)."""
     with db.get_conn() as conn:
         u = service.user_row(conn, user["id"])
         count = conn.execute("SELECT COUNT(*) FROM vault_members WHERE user_id = ?", (user["id"],)).fetchone()[0]
         linked = bool(alerts.services_for(conn, u))
-    return {"haUserId": user["id"], "haUsername": user["username"], "haDisplayName": user["name"],
-            "isAdmin": user["is_admin"], "displayNameOnly": user["display_name_only"],
-            "adminEntries": len(config.ADMIN_NAMES), "noAdmin": not config.ADMIN_NAMES, "status": u["status"], "vaultCount": count,
-            "disabled": user["disabled"], "notifyLinked": linked}
+    ready = not user["disabled"] and u["status"] == "active"
+    return whoami_core.build(
+        request, user_id=user["id"], username=user["username"], display_name=user["name"],
+        is_admin=user["is_admin"], admin_entries=len(config.ADMIN_NAMES),
+        display_name_only=user["display_name_only"], notify_linked=linked,
+        extras=[whoami_core.row("Set up", SETUP_STATUS.get(u["status"], u["status"])),
+                whoami_core.row("Vaults you can open", count),
+                whoami_core.row("Account status", "No access (ask an admin)" if user["disabled"] else "Enabled"),
+                whoami_core.notify_row(linked, label="Phone linked for alerts",
+                                       hint=whoami_core.NOTIFY_HINT if ready
+                                       else "A phone is linked for alerts only once you're enabled and set up here.")],
+        status=u["status"], disabled=user["disabled"])
 
 
 class UnlockIn(Strict):

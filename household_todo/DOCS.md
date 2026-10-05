@@ -73,6 +73,16 @@ app and changes apply straight away, without a restart.
   (Alt + ↑/↓ from the keyboard).
 - **Completed tasks** are deleted automatically 60 days after they were
   completed; anyone can delete one sooner.
+- **From Household Docs.** If the household also uses the **Household Docs**
+  app, a checklist there can become tasks here: **⋯ → Make a Todo list** (or
+  select items → **Send to Todo**) puts them in a new list — private to you or
+  shared — or in a list you pick. Each item becomes a task at the end of the
+  list, an indented item goes into the task's checklist, ticked items arrive
+  completed, and every such task shows **from Docs**. Todo checks that you may
+  add to that list, as if you did it here: shared lists and your own personal
+  lists only. Due dates, assignees and reminders are then set here as usual;
+  nobody is notified when the tasks arrive. You must have opened Household
+  Todo at least once (and not be turned off in Admin → Users).
 
 ## Calendar
 
@@ -214,7 +224,10 @@ list and makes every admin a recipient).
 - **All upkeep** — every item by category, with details, files, history,
   **Pause**, **Edit** and **Delete**.
 - **History** — every Mark done, kept for good, with a yearly cost total and
-  **Export CSV**. **Undo** takes back an item's latest Mark done.
+  **Export CSV**. In the CSV, an item name, category, name, note or file name
+  that starts with `=`, `+`, `-` or `@` gets a `'` in front, so a spreadsheet
+  shows it as text instead of running it as a formula. **Undo** takes back an
+  item's latest Mark done.
 - An item repeats either **after it's done** (e.g. 3 months after the filter
   was changed) or **on set dates** (e.g. every 1 April and 1 October).
 - **Notifications:** one message at each person's daily time listing what's
@@ -263,7 +276,7 @@ links the person to their user, and **Track device** picks their phone with
 the Companion app. The app picks it up within 5 minutes (**Check Home
 Assistant again** on Admin → Users does it now). Admins can add extra notify
 services per person under **Admin → Users → Also** (a speaker, a second
-phone), chosen from Home Assistant's list or typed, and press **Send test**.
+phone), chosen from Home Assistant's list or typed, and press **Send a test**.
 People can't choose their own service, so nobody can send to someone else's
 device. If a send fails, the log shows Home Assistant's reason and the
 closest real service name.
@@ -275,7 +288,9 @@ closest real service name.
   (copyable), whether you're an admin, how many names are in `admin_users`,
   whether a reminder service is linked, and what to do if something's wrong.
 - **Task types** — add, rename, recolour or delete types, each with an emoji.
-- **Theme** (Ink, Slate, Daylight) in the sidebar, or in Settings on a phone.
+- **Theme** (Midnight, Slate, Daylight, or Auto, which follows your device's
+  light or dark setting) in the sidebar, or in Settings on a phone. If you had
+  picked Ink before, you now get Midnight.
 
 ## Admin (admins only)
 
@@ -293,8 +308,18 @@ this page", and the server refuses them either way.
 - **Maintenance.** Turn maintenance on, who is told, the home profile, the
   overdue sensor and your own suggestions.
 - **Storage.** Download a backup and restore one (see *Backups*).
+- **Connected apps** (under App settings, read only): the other household
+  apps this one exchanges messages with (for example Household Docs), their
+  version, when they were last heard from and what they can do. An app not
+  heard from for a day shows as *not seen lately*.
 
 ### App settings
+
+Each group of settings is a card, with a line under each setting saying what
+it does, its range and its default. Changes are kept until you select
+**Save** at the bottom (it shows how many unsaved changes there are);
+**Discard changes** puts everything back. A number out of range is flagged at
+the field before anything is saved.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -338,6 +363,20 @@ time isn't an App setting: each person picks their own.
   server has no uptime guarantee. Nothing else — no task titles, notes or
   names — is sent. To keep addresses on your own network, run your own
   Nominatim and/or OSRM server and enter its address in App settings.
+- **Messages between the household apps.** Household Docs and Todo talk
+  over Home Assistant's event bus (`household_apps` events): ids, names,
+  list names and checklist item texts, never anything else from Docs. Home
+  Assistant admins and automations can see them, and Home Assistant's
+  history keeps them unless you leave them out with this in Home Assistant's
+  `configuration.yaml` (then restart Home Assistant):
+
+  ```yaml
+  recorder:
+    exclude:
+      event_types:
+        - household_apps
+  ```
+
 - Nothing else leaves your Home Assistant. The app has no port on your
   network: it is reachable only through Home Assistant's sidebar (ingress),
   and it refuses requests that don't come through it.
@@ -360,6 +399,8 @@ time isn't an App setting: each person picks their own.
 - 100 schedule items, 50 date changes per item, 200 maintenance items.
 - Titles up to 200 characters, notes up to 5,000, checklists up to 100 items,
   links up to 2,000 characters (`http://` or `https://` only).
+- From Household Docs: list names up to 60 characters, items up to 200
+  characters; a long checklist arrives in several parts.
 - Up to 5 "N before" reminders per person, 10 extra notify services per
   person, files up to 25 MB.
 - Completed tasks are removed after 60 days.

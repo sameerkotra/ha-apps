@@ -16,7 +16,7 @@ import unittest
 import urllib.error
 from pathlib import Path
 
-import main
+from app import main
 from test_app import ADMIN, ALICE, Base, hdr
 
 IMPOSTOR = hdr("u_eve", "adminy", "eve")   # admin's display name, but not listed
@@ -98,8 +98,11 @@ class SettingsApi(Base):
         body = settings(self.c).json()
         self.assertEqual(body["values"], DEFAULTS)
         self.assertEqual(body["defaults"], DEFAULTS)
-        self.assertEqual(body["meta"], {k: {"restartRequired": False} for k in DEFAULTS})
-        self.assertEqual(set(body), {"values", "defaults", "meta"})
+        # meta describes each field for the shared page (common/static/settings.js); none needs a restart
+        self.assertEqual(set(body["meta"]), set(DEFAULTS))
+        self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
+        self.assertEqual((body["meta"]["sync_interval_minutes"]["min"], body["meta"]["sync_interval_minutes"]["max"]), (1, 60))
+        self.assertEqual(set(body), {"values", "defaults", "meta", "groups"})
 
     def test_partial_update_keeps_other_keys_and_normalises_currency(self):
         r = self.c.put("/api/admin/settings", headers=ADMIN, json={"sync_interval_minutes": 15})
@@ -421,7 +424,7 @@ class NoAdminYet(Base):
     def test_flag_set_for_everyone_and_nobody_promoted(self):
         for who in (ADMIN, ALICE, ADMIN):   # the first visitor, then others, then again
             w = self.c.get("/api/whoami", headers=who).json()
-            self.assertTrue(w["noAdminYet"])
+            self.assertTrue(w["noAdmin"])
             self.assertFalse(w["isAdmin"])
             self.assertEqual(w["adminEntries"], 0)
             self.assertEqual(settings(self.c, who).status_code, 403)
@@ -430,21 +433,24 @@ class NoAdminYet(Base):
     def test_flag_clears_once_an_admin_is_listed(self):
         main.ADMIN_NAMES.add("adminy")
         for who in (ADMIN, ALICE):
-            self.assertFalse(self.c.get("/api/whoami", headers=who).json()["noAdminYet"])
+            self.assertFalse(self.c.get("/api/whoami", headers=who).json()["noAdmin"])
 
     def test_banner_is_on_the_page_shell_and_filled_from_whoami(self):
         page = self.c.get("/", headers=ALICE).text
-        banner = page[page.index('id="noAdminBanner"'):]
-        banner = banner[:banner.index("</div>")]
-        for text in ("No admin yet", 'id="noAdminName"', "<code>admin_users</code>",
-                     "Configuration tab", "restart the app", 'id="noAdminWhoami"', "How the app sees you"):
-            self.assertIn(text, banner)
+        self.assertIn('id="noAdminBanner"', page)
+        self.assertIn('src="common/whoami.js', page)
         # outside every .view, so it shows on every page
         self.assertLess(page.index('id="noAdminBanner"'), page.index('id="view-dashboard"'))
-        js = (ADDON_DIR / "public" / "app.js").read_text()
-        self.assertIn("who.noAdminYet", js)
-        self.assertIn("$('#noAdminWhoami').addEventListener('click', openWhoami)", js)
+        js = (ADDON_DIR / "app" / "static" / "app.js").read_text()
+        self.assertIn("who.noAdmin", js)
+        self.assertIn("HouseholdWhoami.fillNoAdminBanner($('#noAdminBanner')", js)
+        self.assertIn("onOpen: openWhoami, linkId: 'noAdminWhoami'", js)
         self.assertIn("renderNoAdminBanner(who);", js)
+        banner = (ADDON_DIR / "app" / "static" / "common" / "whoami.js").read_text()     # the same text in every app
+        banner = banner[banner.index("function noAdminBanner"):banner.index("function fillNoAdminBanner")]
+        for text in ("No admin yet", 'el("code", null, "admin_users")', "Configuration tab", "restart the app",
+                     "How the app sees you"):
+            self.assertIn(text, banner)
 
 
 class AdminOnlyUsersAndStorage(Base):

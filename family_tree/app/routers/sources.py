@@ -6,7 +6,7 @@ from pydantic import Field
 
 from .. import features, db, graph as graph_mod, names
 from ..auth import require_user
-from ..common import Strict, clean, require_person
+from ..models import Strict, clean, require_person
 from ..history import Batch
 
 router = APIRouter(prefix="/api", tags=["sources"], dependencies=[Depends(features.required("sources"))])

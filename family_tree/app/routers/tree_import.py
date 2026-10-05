@@ -17,7 +17,7 @@ from pydantic import Field
 
 from .. import config, db, tree_data
 from ..auth import require_admin
-from ..common import Strict
+from ..models import Strict
 
 router = APIRouter(prefix="/api", tags=["import"])
 TTL = 3600

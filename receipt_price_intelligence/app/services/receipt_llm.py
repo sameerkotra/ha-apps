@@ -712,7 +712,7 @@ def _differs(a: float, b: float, tolerance: float = MONEY_TOLERANCE) -> bool:
 def item_math_issue(item: dict[str, Any]) -> str | None:
     """Return a human-readable problem with one item's arithmetic, or None if it checks out.
 
-    Mirrors ``itemMathIssue`` in frontend/review.html so the server and the review
+    Mirrors ``itemMathIssue`` in app/static/review.html so the server and the review
     screen flag the same lines.
     """
     unit_price = item.get("unit_price")

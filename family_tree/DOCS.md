@@ -428,7 +428,13 @@ disappears; after that, the switch is yours.
 
 ## App settings
 
-**Admin → App settings** (admins only). Changes apply straight away.
+**Admin → App settings** (admins only). The settings are in cards (App
+settings, Places map, Features and the two groups of optional features), with
+a line under each setting saying what it does, its range and its default; a
+module's own settings show while its switch is on. Changes are kept until you
+select **Save** at the bottom (it shows how many unsaved changes there are);
+**Discard changes** puts everything back. A number out of range is flagged at
+the field before anything is saved. Saved changes apply straight away.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -458,7 +464,7 @@ pages say "Only admins can open this page" to others. Tabs:
 - **Users** — everyone who has opened Family Tree or has a Home Assistant
   person: turn someone's access off (they then see nothing and get no
   reminders), set their "This is me", see their phones from Home Assistant
-  and add extra notify services (**Send test** checks them), and end kids mode
+  and add extra notify services (**Send a test** checks them), and end kids mode
   on a device.
 - **Storage** — photo storage status, backup and restore (see *Backups*).
 - **Trash** — deleted people, families and photos, with **Restore** and
@@ -552,9 +558,11 @@ only), for *Days in trash* days.
 
 ## Themes and settings
 
-Pick a theme in the sidebar (or Settings on a phone): **Heritage**, **Slate**,
-**Daylight**, **Parchment** or **Auto** (follows your device); it's remembered
-in each browser. **Settings** also has This is me, names and relationships,
+Pick a theme in the sidebar (or Settings on a phone): **Midnight** (the
+default), **Slate**, **Daylight** or **Auto** (follows your device); it's
+remembered in each browser. If you had picked Heritage before, you now get
+Midnight; Parchment becomes Daylight. An exported website still offers its own
+themes (Heritage, Slate, Daylight, Parchment, Auto). **Settings** also has This is me, names and relationships,
 reminders, milestones, the kids-mode PIN and how typed dates are read.
 
 ## Limits

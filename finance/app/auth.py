@@ -20,11 +20,11 @@ import time
 from dataclasses import dataclass
 from fastapi import Request, HTTPException, Depends
 
+from .common import auth_core
 from .db import get_db
 
-ADMIN_USERS = {
-    u.strip().strip("\"'").strip() for u in os.environ.get("ADMIN_USERS", "").split(",") if u.strip().strip("\"'").strip()
-}
+# Entries lose surrounding spaces and quotes (app/common/auth_core.py).
+ADMIN_USERS = set(auth_core.admin_entries(os.environ.get("ADMIN_USERS", "").split(","), strip_quotes=True))
 # Compared without regard to case: HA user names are case-insensitive, and a person typing "Jane.Doe"
 # into the app's admin_users list should not silently end up with no admin rights.
 _ADMIN_FOLDED = {u.casefold() for u in ADMIN_USERS}
@@ -32,7 +32,7 @@ _ADMIN_FOLDED = {u.casefold() for u in ADMIN_USERS}
 
 def is_admin_identity(user_id: str, name: str) -> bool:
     """Whether a request's X-Remote-User-Id or X-Remote-User-Name is on the app's admin_users list."""
-    return user_id.strip().casefold() in _ADMIN_FOLDED or name.strip().casefold() in _ADMIN_FOLDED
+    return auth_core.is_admin(user_id, name, _ADMIN_FOLDED, fold=str.casefold)
 
 
 @dataclass
@@ -71,8 +71,9 @@ def _remember_known_user(user_id: str, name: str) -> None:
 
 
 def get_current_user(request: Request) -> User:
-    ingress_path = request.headers.get("x-ingress-path")
-    user_id = request.headers.get("x-remote-user-id")
+    ident = auth_core.identity(request)            # the X-Remote-User-* / X-Ingress-Path headers
+    ingress_path = ident.ingress_path
+    user_id = ident.user_id
 
     if not ingress_path or not user_id:
         # No genuine ingress context, or Supervisor didn't identify anyone
@@ -80,7 +81,7 @@ def get_current_user(request: Request) -> User:
         # docs). Fail closed: no identity, no access. Never guess.
         raise HTTPException(status_code=401, detail="Not authenticated via Home Assistant ingress")
 
-    name = request.headers.get("x-remote-user-name", user_id)
+    name = ident.username if ident.username is not None else user_id
     is_admin = is_admin_identity(user_id, name)
     user = User(id=user_id, name=name, is_admin=is_admin)
 
@@ -91,7 +92,7 @@ def get_current_user(request: Request) -> User:
     # while they act as someone else (whose User has is_admin=False).
     request.state.real_user_id = user.id
     # A fresh install has nobody on admin_users, so nobody could open App settings: every page says how to fix it.
-    request.state.no_admin_configured = not ADMIN_USERS
+    request.state.no_admin = auth_core.no_admin(ADMIN_USERS)
     request.state.is_real_admin = is_admin
     request.state.known_users = []
     request.state.shared_owners = []
@@ -168,6 +169,5 @@ def get_acting_user(
 
 
 def require_admin(current: User = Depends(get_current_user)) -> User:
-    if not current.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
+    auth_core.require_admin_flag(current.is_admin, "Admin only")
     return current

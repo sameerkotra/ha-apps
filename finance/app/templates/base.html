@@ -15,35 +15,14 @@
         correctly from anywhere, with no server-side prefix parsing.
     -->
     <!-- ?v=<version> makes every rebuild fetch a fresh stylesheet (app/version.py). -->
+    <!-- The theme (shared with the other household apps) and the collapsed sidenav are applied in
+         <head>, before any content below paints, so there's no flash of the wrong theme or the
+         full-width sidebar re-collapsing a moment later on every page load (this is a multi-page
+         app, so this re-runs on every navigation). -->
+    <script src="static/common/theme-boot.js?v={{ app_version }}"></script>
+    <link rel="stylesheet" href="static/common/themes.css?v={{ app_version }}">
     <link rel="stylesheet" href="static/style.css?v={{ app_version }}">
-    <script>
-    // Applied in <head>, before any content below paints, so there's
-    // no flash of the wrong theme or the full-width sidebar re-
-    // collapsing a moment later on every page load — this is a real
-    // multi-page HA app, not a single-page app, so this has to
-    // re-run on every navigation. localStorage is the right tool here:
-    // a real browser serving a real deployed page, not a Claude-
-    // artifact preview.
-    (function () {
-        var THEMES = ["midnight", "slate", "daylight", "sandstone"];
-        try {
-            if (localStorage.getItem("navCollapsed") === "1") {
-                document.documentElement.classList.add("nav-collapsed");
-            }
-        } catch (e) { /* localStorage unavailable (private mode, etc.) — just stay expanded */ }
-        try {
-            var theme = localStorage.getItem("theme");
-            // Validated against the known theme list rather than trusted
-            // blindly — a stale/invalid stored value (an old theme name
-            // that no longer exists) falls back to the default instead
-            // of setting a [data-theme] attribute nothing in style.css
-            // matches, which would silently render totally unstyled.
-            if (theme && THEMES.indexOf(theme) !== -1) {
-                document.documentElement.setAttribute("data-theme", theme);
-            }
-        } catch (e) { /* localStorage unavailable — stays on the default (midnight) palette */ }
-    })();
-    </script>
+    <script src="static/nav-boot.js?v={{ app_version }}"></script>
     {# historyCacheSize 0: Back/Forward re-fetches the page from the server instead of restoring an htmx
        snapshot (a snapshot can hold half-swapped or stale pollers - one cause of "stuck until I refresh").
        timeout: a request that never answers is aborted after 30s (htmx:timeout -> ui.js shows the banner). #}
@@ -58,7 +37,7 @@
        acting as someone else. #}
     {% set known_ids = request.state.known_users | map(attribute="id") | list %}
     <div class="admin-user-switch">
-        <select id="admin-user-switch-select" aria-label="Switch user (admin)">
+        <select id="admin-user-switch-select" aria-label="Switch user (admin)" data-real-user-id='{{ request.state.real_user_id | tojson }}'>
             {% if user.id not in known_ids %}
             <option value="{{ user.id }}" selected>{{ user.name }}</option>
             {% endif %}
@@ -67,28 +46,6 @@
             {% endfor %}
         </select>
     </div>
-    <script>
-    (function () {
-        var select = document.getElementById("admin-user-switch-select");
-        if (!select) return;
-        var REAL_USER_ID = {{ request.state.real_user_id | tojson }};
-        select.addEventListener("change", function () {
-            // Only ever touches the `as_user` param -- any other query
-            // string on the current page (a transactions-page filter,
-            // say) survives the switch untouched. Picking your own name
-            // clears `as_user` entirely rather than setting it to your
-            // own id -- functionally identical either way (get_acting_user
-            // short-circuits when as_user == current.id) but a cleaner URL.
-            var params = new URLSearchParams(window.location.search);
-            if (select.value === REAL_USER_ID) {
-                params.delete("as_user");
-            } else {
-                params.set("as_user", select.value);
-            }
-            window.location.search = params.toString();
-        });
-    })();
-    </script>
     {% endif %}
     {% if not request.state.is_real_admin and request.state.shared_owners %}
     {# Shared access (SPEC.md section 20): only the people the admin shared with this user, plus themselves. #}
@@ -100,24 +57,13 @@
             <option value="{{ request.state.real_user_id }}" {{ "selected" if user.id == request.state.real_user_id else "" }}>My own data</option>
         </select>
     </div>
-    <script>
-    (function () {
-        var select = document.getElementById("shared-user-switch-select");
-        if (!select) return;
-        select.addEventListener("change", function () {
-            var params = new URLSearchParams(window.location.search);
-            if (select.options[select.selectedIndex].dataset.home) params.delete("as_user");
-            else params.set("as_user", select.value);
-            window.location.search = params.toString();
-        });
-    })();
-    </script>
     {% endif %}
     {% set feat = request.state.features if request.state.features is defined else {"utilities": true, "tolls": true} %}
     {% set upload_page = "uploads" if active_page == "uploads" and request.url.path.endswith("/uploads")
         else ("utilities?tab=upload" if active_page == "utilities" and tab == "upload" and request.url.path.endswith("/utilities")
         else ("tolls?tab=upload" if active_page == "tolls" and tab == "upload" and request.url.path.endswith("/tolls") else "")) %}
-    <nav class="sidenav">
+    <nav class="sidenav" data-upload-here='{{ upload_page | tojson }}' data-acting-qs='{{ acting_qs | default("") | tojson }}'
+         data-upload-pages='{{ (["uploads"] + (["utilities?tab=upload"] if feat.utilities else []) + (["tolls?tab=upload"] if feat.tolls else [])) | tojson }}'>
         <div class="brand"><span class="brand-text">Finance</span></div>
         <button type="button" id="nav-collapse-toggle" class="nav-collapse-toggle" title="Collapse navigation" aria-label="Collapse navigation">
             <span aria-hidden="true">&#171;</span>
@@ -173,12 +119,7 @@
         {% if user %}
         <div class="nav-user">
             <a href="whoami{{ qs }}" class="user-chip" title="How the app sees you">{{ user.name }}{% if user.is_admin %} (admin){% endif %}</a>
-            <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
-                <option value="midnight">&#127769; Midnight</option>
-                <option value="slate">&#127774; Slate</option>
-                <option value="daylight">&#9728;&#65039; Daylight</option>
-                <option value="sandstone">&#127964;&#65039; Sandstone</option>
-            </select>
+            <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
             <!-- Version marker: tells "not redeployed" (behind config.yaml)
                  apart from "stale cache" at a glance. -->
             <span class="nav-version">v{{ app_version }}</span>
@@ -207,74 +148,19 @@
         <div class="nav-more-group">
             <div class="panel-title">You</div>
             <a href="whoami{{ qs }}">{{ user.name }}{% if user.is_admin %} (admin){% endif %} &middot; how the app sees you</a>
-            <select class="theme-select" title="Theme" aria-label="Theme">
-                <option value="midnight">&#127769; Midnight</option>
-                <option value="slate">&#127774; Slate</option>
-                <option value="daylight">&#9728;&#65039; Daylight</option>
-                <option value="sandstone">&#127964;&#65039; Sandstone</option>
-            </select>
+            <select class="theme-select" title="Theme" aria-label="Theme"></select>
             <span class="nav-version">v{{ app_version }}</span>
         </div>
     </div>
-    <script>
-    (function () {
-        var btn = document.querySelector(".nav-more-btn"), panel = document.getElementById("nav-more");
-        if (!btn || !panel) return;
-        function setOpen(open) { panel.hidden = !open; btn.setAttribute("aria-expanded", open ? "true" : "false"); }
-        btn.addEventListener("click", function (e) { e.stopPropagation(); setOpen(panel.hidden); });
-        document.addEventListener("click", function (e) { if (!panel.hidden && !panel.contains(e.target)) setOpen(false); });
-        document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
-    })();
-    </script>
     {% endif %}
-    <script>
-    // The Upload nav item opens the upload page you used last (Statements, Utility bill or Toll statement).
-    (function () {
-        var here = {{ upload_page | tojson }}, last = null, qs = {{ acting_qs | default("") | tojson }};
-        try {
-            if (here) localStorage.setItem("lastUploadPage", here);
-            last = localStorage.getItem("lastUploadPage");
-        } catch (e) { /* storage unavailable: always Statements */ }
-        if ({{ (["uploads"] + (["utilities?tab=upload"] if feat.utilities else []) + (["tolls?tab=upload"] if feat.tolls else [])) | tojson }}.indexOf(last) === -1) return;
-        document.querySelectorAll("a[data-upload-nav]").forEach(function (a) {
-            a.href = last + (qs ? (last.indexOf("?") === -1 ? "?" : "&") + qs : "");
-        });
-    })();
-    </script>
-    <script>
-    (function () {
-        var toggle = document.getElementById("nav-collapse-toggle");
-        if (!toggle) return;
-        toggle.addEventListener("click", function () {
-            var collapsed = document.documentElement.classList.toggle("nav-collapsed");
-            try { localStorage.setItem("navCollapsed", collapsed ? "1" : "0"); } catch (e) { /* ignore */ }
-        });
-    })();
-    </script>
-    <script>
-    (function () {
-        // Two theme pickers (desktop nav, phone "More" panel), kept in step. Each reflects whatever the
-        // <head> bootstrap script already applied (the choice lives in localStorage, not in Jinja).
-        var selects = document.querySelectorAll(".theme-select");
-        var current = document.documentElement.getAttribute("data-theme") || "midnight";
-        selects.forEach(function (select) {
-            select.value = current;
-            select.addEventListener("change", function () {
-                var theme = select.value;
-                document.documentElement.setAttribute("data-theme", theme);
-                selects.forEach(function (other) { other.value = theme; });
-                try { localStorage.setItem("theme", theme); } catch (e) { /* ignore */ }
-            });
-        });
-    })();
-    </script>
     <div class="page">
-        {% if request.state.no_admin_configured %}
+        {% if request.state.no_admin %}
+            {# The same "No admin yet" text as every other app (common/static/whoami.js), plus the AI step. #}
             <div class="setup-banner" role="alert">
-                <strong>No admin yet.</strong> To finish setting up, add your Home Assistant user name
-                {% if user %}(<code>{{ user.name }}</code>){% endif %} to <strong>admin_users</strong> on the app's
-                Configuration tab (Settings &rarr; Apps &rarr; Finance Dashboard &rarr; Configuration), save, and restart the app.
-                The admin then sets up the AI on Admin &rarr; App settings. <a href="whoami">How the app sees you</a>
+                <strong>No admin yet</strong> &mdash; add your Home Assistant user name{% if user %}
+                (<strong>{{ user.name }}</strong>){% endif %} to <code>admin_users</code> on the app's Configuration tab,
+                save, and restart the app. The admin then sets up the AI on Admin &rarr; App settings.
+                <a href="whoami">How the app sees you</a>
             </div>
         {% endif %}
         {% if acting_as_banner %}
@@ -314,115 +200,15 @@
             </div>
         </div>
     </div>
-    <script>
-    (function () {
-        var modal = document.getElementById("reextract-modal");
-        if (!modal) return;
-        var notes = document.getElementById("reextract-notes"), current = null;
-        function close() { modal.hidden = true; current = null; }
-        document.addEventListener("click", function (e) {
-            var open = e.target.closest(".reextract-open");
-            if (open) {
-                current = open;
-                document.getElementById("reextract-name").textContent = open.dataset.name || "";
-                notes.value = open.dataset.notes || "";
-                modal.hidden = false;
-                notes.focus();
-                return;
-            }
-            if (e.target.closest("[data-reextract-close]") || e.target === modal) close();
-        });
-        document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
-        document.getElementById("reextract-go").addEventListener("click", function () {
-            if (!current) return;
-            var row = current.closest("tr");
-            htmx.ajax("POST", current.dataset.url, {target: row, swap: "outerHTML", values: {notes: notes.value}});
-            close();
-        });
-    })();
-    </script>
     <div id="recurring-modal" class="modal" hidden>
         <div class="modal-content">
             <button type="button" class="modal-close" data-modal-close aria-label="Close">&times;</button>
             <div id="recurring-modal-body"></div>
         </div>
     </div>
-    <script>
-    // Phase 3 bulk-action / save-as-rule behavior, shared by every page
-    // that includes _category_field.html and/or a .bulk-bar-wrap
-    // (transactions_list.html, review_queue.html). Delegated on
-    // `document` rather than bound per-element, since these fragments
-    // can be re-rendered (htmx swaps on the note field, full page loads
-    // elsewhere) without this script re-running.
-    //
-    // Deliberately plain fetch() + full-page navigation, not htmx, for
-    // the bulk actions themselves — see routes/transactions.py's module
-    // docstring and this app's existing POST-redirect-GET pattern for
-    // page-level state transitions (accounts.py). The checkboxes can't
-    // be a native <form> (each row's cell also contains its own
-    // independent _category_field.html/_note_field.html <form>, and
-    // nesting forms is invalid HTML), so this reads checked boxes by
-    // class/data-id instead of form-encoding them natively.
-
-    document.addEventListener("change", function (e) {
-        if (e.target.id === "select-all") {
-            var wrap = e.target.closest(".bulk-bar-wrap") || document;
-            wrap.querySelectorAll(".bulk-select").forEach(function (cb) {
-                cb.checked = e.target.checked;
-            });
-        }
-    });
-
-    function submitBulkAction(wrap, action) {
-        var ids = Array.prototype.slice.call(wrap.querySelectorAll(".bulk-select:checked"))
-            .map(function (cb) { return cb.dataset.id; });
-        if (ids.length === 0) {
-            alert("Select at least one transaction first.");
-            return;
-        }
-        if (action === "delete" && !confirm("Delete " + ids.length + " transaction(s)? This can't be undone from here.")) {
-            return;
-        }
-
-        var body = new URLSearchParams();
-        body.set("ids", ids.join(","));
-        body.set("action", action);
-        body.set("next", wrap.dataset.next || "transactions");
-        if (action === "categorize") {
-            var select = wrap.querySelector(".bulk-category-select");
-            body.set("category", select ? select.value : "");
-        }
-
-        fetch(wrap.dataset.actionUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: body.toString(),
-        }).then(function (resp) {
-            if (resp.status === 400) {
-                return resp.json().then(function (data) {
-                    alert(data.error || "Bulk action failed.");
-                });
-            }
-            // Anything else that is not a success (an expired session, a
-            // 405/500 error page) must not be navigated to as if the
-            // action had worked - that left the page looking stuck.
-            if (!resp.ok) {
-                alert("The bulk action did not go through (status " + resp.status + "). Reload the page and try again.");
-                return;
-            }
-            window.location.href = resp.url;
-        }).catch(function () {
-            alert("Something went wrong submitting that bulk action.");
-        });
-    }
-
-    document.addEventListener("click", function (e) {
-        var btn = e.target.closest(".bulk-action-btn");
-        if (!btn) return;
-        var wrap = btn.closest(".bulk-bar-wrap");
-        if (wrap) submitBulkAction(wrap, btn.dataset.action);
-    });
-    </script>
+    {# The page's behaviour (no inline scripts: see the Content-Security-Policy in main.py). #}
+    <script src="static/base.js?v={{ app_version }}"></script>
+    <script src="static/common/ui.js?v={{ app_version }}" defer></script>
     <script src="static/ui.js?v={{ app_version }}" defer></script>
 </body>
 </html>

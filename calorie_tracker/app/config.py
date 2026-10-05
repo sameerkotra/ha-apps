@@ -19,7 +19,8 @@ import logging
 import os
 from calendar import monthrange
 from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+
+from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
@@ -61,10 +62,8 @@ _options = _load()
 _raw_admins = _options.get("admin_users") or []
 if not isinstance(_raw_admins, list):
     _raw_admins = []
-ADMIN_USERS = {str(n).strip().lower() for n in _raw_admins if str(n).strip()}
-_dev_admins = os.environ.get("DEV_ADMIN_USERS")
-if _dev_admins:
-    ADMIN_USERS |= {n.strip().lower() for n in _dev_admins.split(",") if n.strip()}
+# (app/common/auth_core.py; DEV_ADMIN_USERS adds more, comma-separated, for tests and local development)
+ADMIN_USERS = auth_core.admin_names(_raw_admins) | auth_core.env_admins("DEV_ADMIN_USERS")
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = "http://supervisor/core/api"
@@ -82,30 +81,18 @@ SUPERVISOR_CORE_API = "http://supervisor/core/api"
 # same source of truth Household Todo uses. If that fetch fails (no token,
 # HA unreachable), the app stays on UTC.
 # ---------------------------------------------------------------------------
-_DEFAULT_TZ_NAME = "UTC"
-try:
-    _tz: ZoneInfo | timezone = ZoneInfo(_DEFAULT_TZ_NAME)
-except Exception:  # ZoneInfoNotFoundError if the tz database is somehow missing
-    _tz = timezone.utc
-_tz_name = _DEFAULT_TZ_NAME
+ZONE = ha_time.Zone(logger)       # app/common/ha_time.py
 
 
 def set_timezone(name: str) -> bool:
     """Switch `now()`/`today()` to `name` (an IANA zone like
     'Europe/Berlin'). Returns False (and keeps the current zone) if `name`
     isn't a recognized zone."""
-    global _tz, _tz_name
-    try:
-        _tz = ZoneInfo(name)
-        _tz_name = name
-        return True
-    except Exception as e:  # ZoneInfoNotFoundError, ValueError, ...
-        logger.warning("Unknown timezone %r (%s); staying on %s", name, e, _tz_name)
-        return False
+    return ZONE.set(name)
 
 
 def timezone_name() -> str:
-    return _tz_name
+    return ZONE.name
 
 
 def utcnow() -> datetime:
@@ -114,7 +101,7 @@ def utcnow() -> datetime:
 
 def now() -> datetime:
     """Current time as an aware datetime in Home Assistant's time zone."""
-    return utcnow().astimezone(_tz)
+    return ZONE.now(utcnow())
 
 
 def today() -> date:

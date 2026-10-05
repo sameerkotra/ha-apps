@@ -20,7 +20,7 @@
     {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
     <label>
         Period
-        <select name="period" onchange="this.form.submit()">{{ m.period_options(period, months, years, month_labels) }}</select>
+        <select name="period" data-autosubmit>{{ m.period_options(period, months, years, month_labels) }}</select>
     </label>
 </form>
 
@@ -60,7 +60,7 @@
                 <td data-label="Tags">{{ g.tag_count }}</td>
                 <td data-label="">
                     <form method="post" action="toll-group-delete{{ post_qs }}" class="inline-form"
-                          onsubmit="return confirm('Delete this group? Its tags are kept and become ungrouped.');">
+                          data-confirm="Delete this group? Its tags are kept and become ungrouped.">
                         {{ hidden_common() }}
                         <input type="hidden" name="id" value="{{ g.id }}">
                         <button type="submit" class="restart-btn">Delete</button>
@@ -118,7 +118,7 @@
         {{ hidden_common() }}
         <input type="hidden" name="id" value="{{ p.id }}">
         <label>Group
-            <select name="group_id" onchange="this.form.submit()" aria-label="Group for {{ p.name }}">
+            <select name="group_id" data-autosubmit aria-label="Group for {{ p.name }}">
                 <option value="">No group</option>
                 {% for g in groups %}<option value="{{ g.id }}" {{ "selected" if p.group_id == g.id else "" }}>{{ g.name }}</option>{% endfor %}
             </select>
@@ -135,7 +135,7 @@
         <button type="submit" class="btn-secondary">Save</button>
     </form>
     <form method="post" action="toll-pattern-delete{{ post_qs }}" class="inline-form"
-          onsubmit="return confirm('Delete this tag? Its trips become untagged.');">
+          data-confirm="Delete this tag? Its trips become untagged.">
         {{ hidden_common() }}
         <input type="hidden" name="id" value="{{ p.id }}">
         <button type="submit" class="restart-btn">Delete tag</button>
@@ -170,7 +170,7 @@
                 <form method="post" action="toll-trip-tag{{ post_qs }}" class="inline-form">
                     {{ hidden_common() }}
                     <input type="hidden" name="trip_key" value="{{ t.trip_key }}">
-                    <select name="choice" aria-label="Tag this trip" onchange="this.form.submit()">
+                    <select name="choice" aria-label="Tag this trip" data-autosubmit>
                         {% if t.state %}<option value="none" selected>Not regular (your choice)</option><option value="auto">Automatic (remove my choice)</option>
                         {% else %}<option value="">Choose…</option>{% endif %}
                         {% for p in patterns %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}

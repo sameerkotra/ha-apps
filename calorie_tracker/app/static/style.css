@@ -1,24 +1,16 @@
 /* ---------- theming ----------
-   Every theme below defines the SAME set of custom properties; the rest of
-   this stylesheet only ever reads them via var(...), never a hardcoded
-   color. Adding a theme is a copy of one block below with new hex values —
-   nothing else in this file needs to change. See app.js for the bootstrap
-   script (applies the saved theme before first paint) and the #theme-select
-   change handler. Midnight is also the :root default (what renders before
-   the bootstrap script has run). */
+   The colours of Midnight, Slate and Daylight are shared by every household
+   app (common/themes.css, loaded first; common/theme-boot.js applies the saved
+   choice before first paint, and app.js wires the #theme-select). This app
+   adds its accent and the macro colours in the same three blocks (each block
+   sets the same variables); the rest of this stylesheet only ever reads
+   colours via var(...). */
 :root {
   --radius: 12px;
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 :root, [data-theme="midnight"] {
-  --bg: #10151c;
-  --panel: #1a2130;
-  --panel-alt: #202a3d;
-  --panel-hover: #24304a;
-  --border: #2b3549;
-  --text: #e7ecf5;
-  --text-dim: #93a0b8;
   --accent: #5ee6a8;
   --accent-dim: #3a9c72;
   --accent-hover: #7bf0bc;
@@ -27,18 +19,9 @@
   --protein: #5ee6a8;
   --carbs: #f2c94c;
   --fat: #ef7b7b;
-  --danger: #ef7b7b;
-  color-scheme: dark;
 }
 
 [data-theme="slate"] {
-  --bg: #0e1420;
-  --panel: #16202f;
-  --panel-alt: #1c2a3d;
-  --panel-hover: #223350;
-  --border: #283449;
-  --text: #e7ecf5;
-  --text-dim: #93a3ba;
   --accent: #6aa6ff;
   --accent-dim: #3f6fb0;
   --accent-hover: #93c0ff;
@@ -47,18 +30,9 @@
   --protein: #6aa6ff;
   --carbs: #f2c94c;
   --fat: #ef7b7b;
-  --danger: #ef7b7b;
-  color-scheme: dark;
 }
 
 [data-theme="daylight"] {
-  --bg: #f4f6fa;
-  --panel: #ffffff;
-  --panel-alt: #eef1f7;
-  --panel-hover: #e3e9f4;
-  --border: #d8dfec;
-  --text: #1c2430;
-  --text-dim: #5b6577;
   --accent: #2f6fed;
   --accent-dim: #1d4fb0;
   --accent-hover: #4d84ff;
@@ -67,8 +41,6 @@
   --protein: #2f6fed;
   --carbs: #b8860b;
   --fat: #c94f4f;
-  --danger: #c94f4f;
-  color-scheme: light;
 }
 
 * { box-sizing: border-box; }

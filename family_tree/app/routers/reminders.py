@@ -7,16 +7,18 @@ import time
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import Field
 
-from .. import features, config, db, graph as graph_mod, ha_client, ha_notify, reminders
+from .. import features, config, db, graph as graph_mod, ha_client, reminders
+from ..common import ha_notify, people_admin
 from ..auth import require_admin, require_user
-from ..common import Strict
+from ..models import Strict
 from ..history import Batch
 
 router = APIRouter(prefix="/api", tags=["reminders"], dependencies=[Depends(features.required("reminders"))])
 
 MAX_SERVICES_PER_USER = 5
 TEST_INTERVAL_SECONDS = 10
-_last_test: dict[str, float] = {}
+_LIMITER = people_admin.TestLimiter(TEST_INTERVAL_SECONDS)
+_last_test: dict[str, float] = _LIMITER.last
 
 
 # ---------- your own settings ----------
@@ -90,23 +92,14 @@ def put_prefs(body: PrefsIn, user: dict = Depends(require_user)):
 
 
 def _rate_limit(key: str) -> None:
-    now = time.monotonic()
-    last = _last_test.get(key)
-    if last is not None and now - last < TEST_INTERVAL_SECONDS:
-        raise HTTPException(429, "Please wait a few seconds before sending another test.")
-    _last_test[key] = now
+    _LIMITER.check(key)
 
 
 def _send_test(services: list[str], message: str) -> dict:
     """Blocking; no DB connection may be open. 502 if nothing was accepted."""
     sent = ha_notify.send_to_services([ha_notify.bare(s) for s in services], reminders.TITLE, message)
-    results = {f"notify.{k}": v for k, v in sent.items()}
-    if not any(results.values()):
-        if not ha_client.has_token():
-            raise HTTPException(502, "This app can't reach Home Assistant (no Supervisor token).")
-        hint = ha_notify.explain_failure(ha_notify.bare(services[0]))
-        raise HTTPException(502, "Home Assistant didn't accept the test notification"
-                                 + (f" — {hint}" if hint else " — check the service name."))
+    results = people_admin.test_results(sent)
+    people_admin.require_one_sent(results, ha_notify.bare(services[0]), ha_client.has_token)
     return {"results": results}
 
 
@@ -182,11 +175,7 @@ def _load_user(conn, user_id: str):
     return row
 
 
-def _service(value) -> str:
-    try:
-        return ha_notify.normalize_service(value)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+_service = people_admin.clean_service
 
 
 def _user_notify_out(conn, row) -> dict:
@@ -197,11 +186,7 @@ def _user_notify_out(conn, row) -> dict:
 def admin_notify_services(refresh: bool = Query(default=False), admin: dict = Depends(require_admin)):
     """What Home Assistant can notify (actions and entities), cached 60 s. If HA
     can't be asked: 200 with available=false, and the page lets you type a name."""
-    try:
-        return {"available": True, "error": None, **ha_notify.list_notify_services_blocking(force=refresh)}
-    except ha_notify.NotifyListError as e:
-        return {"available": False, "error": f"Couldn't read the notify services from Home Assistant: {e}",
-                "services": [], "entities": []}
+    return people_admin.notify_services(refresh)
 
 
 @router.post("/admin/users/{user_id}/notify", status_code=201)
@@ -209,11 +194,8 @@ def admin_add_notify(user_id: str, body: dict = Body(...), admin: dict = Depends
     service = _service(body.get("service"))
     with db.get_conn() as conn:
         row = _load_user(conn, user_id)
-        current = ha_notify.assigned_services(conn, {"id": user_id})
-        if service not in current and len(current) >= MAX_SERVICES_PER_USER:
-            raise HTTPException(422, f"At most {MAX_SERVICES_PER_USER} notify services per person.")
-        conn.execute("INSERT OR IGNORE INTO user_notify (user_id, service, added_by, added_at) VALUES (?, ?, ?, ?)",
-                     (user_id, service, admin["id"], config.now_iso()))
+        people_admin.add_service(conn, user_id, service, admin["id"], config.now_iso(), limit=MAX_SERVICES_PER_USER,
+                                 columns=("added_at", "added_by"))
         return _user_notify_out(conn, row)
 
 
@@ -222,8 +204,7 @@ def admin_remove_notify(user_id: str, service: str, admin: dict = Depends(requir
     service = _service(service)
     with db.get_conn() as conn:
         row = _load_user(conn, user_id)
-        if not conn.execute("DELETE FROM user_notify WHERE user_id = ? AND service = ?", (user_id, service)).rowcount:
-            raise HTTPException(404, f"{service} isn't assigned to {row['name']}.")
+        people_admin.remove_service(conn, user_id, service, f"{service} isn't assigned to {row['name']}.")
         return _user_notify_out(conn, row)
 
 

@@ -25,29 +25,37 @@ household_todo/
 ├── translations/en.yaml   README.md  DOCS.md  CHANGELOG.md  icon.png  logo.png
 ├── spec/SPEC.md          # this file
 ├── app/
-│   ├── main.py           # lifespan (init_db, HA tz, geocode home, notify check, 4 loops), routers, ingress-IP middleware, no-cache shell, static mount
-│   ├── config.py         # options.json → ADMIN_NAMES (other keys ignored); today()/now() in HA tz
-│   ├── settings.py       # App settings: DEFAULTS, pydantic validation, cached get()/all(), update(), drive_mode()
-│   ├── auth.py           # get_current_user, get_acting_user, get_real_user_for_prefs, require_admin
-│   ├── db.py             # SCHEMA, _migrate, first-run seed, backup/validate/import
+│   ├── main.py           # lifespan (init_db, HA tz, geocode home, notify check, the background jobs), routers, ingress-IP middleware, security headers (CSP), static mount
+│   ├── config.py         # options.json → ADMIN_NAMES (other keys ignored); today()/now() in HA tz (config.ZONE)
+│   ├── settings.py       # App settings declared on common settings_core: SETTINGS, GROUPS, hooks, drive_mode()
+│   ├── auth.py           # get_current_user, get_acting_user, get_real_user_for_prefs, require_admin (on common auth_core)
+│   ├── db.py             # SCHEMA, MIGRATIONS + _migrate, first-run seed, backup/validate/import (on common db_core)
 │   ├── links.py          # clean_url (the http/https link rule), is_web_url
 │   ├── recurrence.py     # pure rule maths
 │   ├── schedule_logic.py # visibility, exceptions → effective dates, sensor state/payload (incl. timed windows), upcoming, calendar entries, exception validation
 │   ├── taskview.py       # visibility SQL, TASK_SELECT, task JSON, sorts, default list
 │   ├── reminders.py      # digest / weekly / task-reminder / schedule-reminder passes, assignment ping, loop
-│   ├── ha_client.py      # Core API request(), post_state/delete_state, time zone
-│   ├── ha_notify.py      # send_notify (action → entity fallback), target discovery (60 s cache), hints, startup check, per-user assignments
-│   ├── ha_sensors.py     # push/delete one, full sync, timed-window pushes, loop
-│   ├── housekeeping.py   # purge completed tasks, prune exceptions, loop
-│   ├── geocode.py        # Nominatim (throttled, unit-strip retry), OSRM route, live home geocode (ensure_home_blocking); all behind the Drive times switch
+│   ├── ha_client.py      # thin: re-exports the shared client (app/common/ha_client.py: request(), post_state/delete_state) + load_timezone
+│   ├── ha_sensors.py     # push/delete one, full sync, timed-window pushes, loop (on common sensor_publisher)
+│   ├── housekeeping.py   # purge completed tasks, prune exceptions, the app-messages outbox, loop (common housekeeping.periodic)
+│   ├── app_messages.py   # messages from the other household apps: todo.lists.list, todo.items.add (§15)
+│   ├── geocode.py        # Nominatim (throttled, unit-strip retry), OSRM route, live home geocode (ensure_home_blocking); all behind the Drive times switch (on common geo)
 │   ├── drive_time.py     # background cache warmer + compute_for_address()
-│   ├── ha_people.py      # people and their phones from HA (shared, identical copies across the household apps)
 │   ├── maint_catalog.py maintenance.py maint_files.py maint_notify.py   # Maintenance (§14)
-│   ├── routers/          # me users (members + Admin → Users) lists tasks task_types places schedule calendar dashboard prefs admin (settings + storage)
-│   └── static/           # index.html app.js maintenance.js backnav.js style.css
-└── tests/                # _env.py fake_ha.py test_api.py test_core.py test_recurrence.py test_admin_settings.py
-                          # test_maintenance.py test_drive_times.py test_first_run.py test_packaging.py
+│   ├── routers/          # me users (members + Admin → Users) lists tasks task_types places schedule calendar dashboard prefs admin (settings + storage) maintenance
+│   ├── common/           # shared Python (copies): ha_notify, ha_people, whoami, ha_client, ha_time, housekeeping, auth_core,
+│   │                     #   db_core, settings_core, people_admin, web_security, backup_core, sensor_publisher, geo, csv_export,
+│   │                     #   app_bus, ha_ws
+│   └── static/           # index.html app.js maintenance.js style.css
+│       └── common/       # shared browser files (copies): theme-boot.js themes.css ui.js settings.js settings.css people.js backnav.js whoami.js
+│                         #   connected-apps.js
+└── tests/                # _env.py test_api.py test_core.py test_recurrence.py test_admin_settings.py test_maintenance.py
+    │                     # test_drive_times.py test_first_run.py test_security_headers.py test_packaging.py test_app_messages.py
+    └── common_tests/     # shared helpers (fake_ha.py, fake_ha_bus.py, env.py, ingress.py, packaging_core.py) and shared-module
+                          # tests incl. test_app_bus.py (copies)
 ```
+
+`app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync (`tests/common_tests/test_shared_copies.py` fails if a copy was changed). `ha_notify.py` and `ha_people.py` live there now (identical in Family Tree, Arcade, Chat, Todo and Vault).
 
 ## 3. Manifest & options
 
@@ -55,7 +63,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.1.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.3.1"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -70,9 +78,9 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 | `admin_users` | `[str]` | `[]` | HA login names or user ids, case-insensitive. The display name is never matched. Stays an option because it's how the first admin is known (you must be an admin to open App settings). |
 
 - **Only `admin_users`.** `config.yaml` `options:` and `schema:` contain only `admin_users` (so does `translations/en.yaml`). Every other setting is an App setting (§3.1); any other key found in options.json is ignored (nothing is imported from it).
-- **First run.** With `ADMIN_NAMES` empty nobody is an admin; `whoami.noAdmins` is true and every page shows the "No admin yet" banner (§9). Nobody is ever auto-promoted.
+- **First run.** With `ADMIN_NAMES` empty nobody is an admin; `whoami.noAdmin` is true and every page shows the "No admin yet" banner (§9). Nobody is ever auto-promoted.
 - **Loading options.** `config.py` reads `/data/options.json` (or `OPTIONS_PATH`) once, at import, for `admin_users` → `ADMIN_NAMES`. **Restart after changing it.**
-- **Environment.** `SUPERVISOR_TOKEN` is injected by the Supervisor. `SUPERVISOR_CORE_API` defaults to `http://supervisor/core/api`. `DEV_ADMINS` (comma-separated extra admins) is used by the tests. `BACKGROUND_LOOPS=0` (set by the tests) stops the lifespan from starting the four loops.
+- **Environment.** `SUPERVISOR_TOKEN` is injected by the Supervisor. `SUPERVISOR_CORE_API` defaults to `http://supervisor/core/api`. `DEV_ADMINS` (comma-separated extra admins) is used by the tests. `BACKGROUND_LOOPS=0` (set by the tests) stops the lifespan from starting the background loops (§8).
 - **Constants.** `COMPLETED_RETENTION_DAYS = 60`. The time zone falls back to **UTC** when HA's `GET /config` → `time_zone` can't be read or applied.
 
 ### 3.1 App settings (`settings.py`, Admin → App settings)
@@ -87,6 +95,7 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 | `avoid_tolls` | bool | `true` | Ask OSRM for `exclude=toll`, falling back to the fastest route. A change re-queues every place (via `drive_mode`). |
 | `notify_place_details` | bool | `true` | **Place details in reminders** (Admin → App settings → Reminders). On: notifications for a task/item with a place add its address and phone (§8.1). Off: only the place name is sent (the earlier behaviour). |
 
+- **Declared once.** `settings.py` lists every setting (`SETTINGS`: `Setting(key, default, label, help=, group=, min=, max=, show_if=, hidden=, …)`) and its `GROUPS` (Home Assistant sensors, Drive time, Reminders, Maintenance) on the shared `settings_core.Registry` (`app/common/settings_core.py`), which does validation, storage, the cache and the GET/PUT payload; the app keeps its hooks. `meta` describes each key (label, help, group, kind, range, `showIf`, …). The `maintenance_*` keys are `hidden` (edited on Admin → Maintenance) except `maintenance_files_path`, which is a field of App settings' **Maintenance** group with its status, **Check** / **Use this folder** and the confirmation.
 - **Storage.** Table `app_settings(key PK, value JSON, updated_at, updated_by)` (§5). A key without a row uses `DEFAULTS`. `updated_by` is the admin's login name (or id).
 - **Validation.** Pydantic model, `extra="forbid"`, `strict=True` (no `"5"` → 5, no `1` → true, no floats/Infinity/NaN for the int), strings stripped. Unknown key or bad value → **422** with a readable message naming the setting; nothing is written.
 - **Reads.** `settings.get(key)` / `all()` go through an in-memory cache dropped on every write and whenever `db.generation()` changes (every `init_db()`, so a restore reloads). A load that overlapped a write (version counter) or a DB swap is returned but not cached. A stored value that no longer validates falls back to the default with a warning. Helpers: `drive_times_enabled()`, `osrm_url()`, `nominatim_url()`, `home_address()`, `drive_mode()`, `sensor_refresh_seconds()`.
@@ -95,12 +104,13 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 
 ## 4. Security, identity & admin
 
-- **Ingress-only, enforced.** The `require_ha_ingress_auth` middleware returns 403 unless `request.client.host` is in `{172.30.32.2, 127.0.0.1, ::1}`. That check is what makes the headers trustworthy, since sibling apps share the Docker network. `X-Ingress-Path` is not required. `/api/health` needs no user but is still IP-gated.
+- **Ingress-only, enforced.** The `require_ha_ingress_auth` middleware (`auth_core.refuse_outsiders`) returns 403 unless `request.client.host` is in `auth_core.INGRESS_HOSTS` (`{172.30.32.2, 127.0.0.1, ::1}`, shared `app/common/auth_core.py`). That check is what makes the headers trustworthy, since sibling apps share the Docker network. `X-Ingress-Path` is not required. `/api/health` needs no user but is still IP-gated.
+- **Security headers** (`web_security.SecurityHeaders(CSP, pragma=True).install(app)`, policy `CSP` in `main.py`): every response gets `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` (no inline scripts, handlers or style attributes) and `X-Content-Type-Options: nosniff`. A maintenance file sets its own policy (`sandbox`), which is kept.
 - **Identity** (`get_current_user`).
   - `X-Remote-User-Id` is required; without it the request gets a 401 ("Open Household Todo from its panel…"). There is **no** dev-user fallback.
   - `username` comes from `X-Remote-User-Name`; the display name from `X-Remote-User-Display-Name`, else the login, else "Home Assistant User". Both are upserted on every request.
   - A user seen for the first time gets a row and a personal list called **"My Tasks"**.
-- **Admin** means the lower-cased id or username is in `ADMIN_NAMES`. The display name is never matched.
+- **Admin** means the lower-cased id or username is in `ADMIN_NAMES` (`auth_core.is_admin`; `auth.py` is a thin layer over `app/common/auth_core.py` with the same names and messages). The display name is never matched.
 - **Admin area.** App settings, Users, Maintenance and Storage live behind one admin-only sidebar item. Every API behind them is `require_admin`: `/api/admin/settings`, `/api/admin/users…`, `/api/admin/notify-services`, `PATCH /api/users/{id}` and both storage routes. `GET /api/users` stays open to everyone (acting) because pickers need it, but returns only `{id, name, disabled}`.
 - **Acting as** (`get_acting_user`, used by every data route).
   - Only an admin's `?as_user=<id>` counts; a non-admin's is ignored. An unknown id is a **404**, never a silent fallback.
@@ -116,12 +126,13 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 
 ## 5. Data model
 
-- **Connections.** Each operation opens a short-lived connection that sets `PRAGMA foreign_keys=ON` and registers `normalize_addr` (deterministic: collapses whitespace and lower-cases).
+- **Connections.** Each operation opens a short-lived connection (`db_core.connect` / `db_core.transaction`, `app/common/db_core.py`) that sets `PRAGMA foreign_keys=ON` and registers `normalize_addr` (deterministic: collapses whitespace and lower-cases).
 - **Formats.** IDs are `uuid4().hex`. Timestamps are UTC ISO to the second. Dates are `YYYY-MM-DD`; times are `HH:MM`.
 - **`init_db()`** runs three steps in order:
   1. `SCHEMA` creates any missing tables and indexes.
-  2. `_migrate()` `ALTER`s in missing columns and creates the address index. If existing rows are already duplicates, it only logs a warning.
+  2. `_migrate()` first adds every missing column in `db.MIGRATIONS` (`db_core.add_missing_columns`), then fills `digest_time`, the drive-times rows and creates the address index. If existing rows are already duplicates, it only logs a warning.
   3. `_seed_first_run()`, only while `user_version < 1`: creates a shared **"Household"** list and the types Appointment, Doctor appointment, Errand, Chore and Bill (each only if none exist), then sets `user_version=1` so nothing is ever re-seeded.
+  4. `app_bus.migrate()`: the app-messages tables `bus_outbox`, `bus_seen`, `bus_apps` (APP_MESSAGES_SPEC.md §4).
 
 A fresh database and a migrated one end up identical:
 
@@ -151,7 +162,8 @@ CREATE TABLE tasks (
   completed INTEGER NOT NULL DEFAULT 0, completed_at TEXT, completed_by TEXT REFERENCES users(id),
   created_by TEXT NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
   position INTEGER NOT NULL DEFAULT 0,         -- manual order within the list
-  url TEXT);                                   -- migrated; http(s) link, NULL = none
+  url TEXT,                                    -- migrated; http(s) link, NULL = none
+  source TEXT);                                -- migrated; "Docs" when another app added it (§15)
 CREATE INDEX idx_tasks_list ON tasks(list_id);          CREATE INDEX idx_tasks_due ON tasks(due_date);
 CREATE INDEX idx_tasks_assigned ON tasks(assigned_to);  CREATE INDEX idx_tasks_completed ON tasks(completed, completed_at);
 CREATE INDEX idx_tasks_list_pos ON tasks(list_id, position);
@@ -254,7 +266,7 @@ CREATE TABLE user_notify (                            -- extra notify services p
 - **Position.** New tasks, lists and items get `MAX+1`. Reorder sets `position=index` only for the ids sent; other rows keep their position.
 - **Sorts** (ties → position, then `created_at`): `manual` = position; `due` = undated last, all-day before timed; `priority` = high → low, none last; `assignee` = A → Z, unassigned last; `created` / `completed` = newest first.
 - **Fixed orders.** A calendar day: all-day, then time, priority, position. The dashboard: date, all-day, time, priority, position.
-- **Task JSON:** `id, listId, listName, listKind, title, notes, url, dueDate, dueTime, priority, typeId, type{id,name,icon,color}|null, placeId, place{id,name,address,phone,driveMinutes,driveTollsAvoided}|null, assignedTo, assigneeName, completionRequired, completed, completedAt, completedBy, completedByName, createdBy, createdByName, createdAt, position, items[{id,text,done}], itemsDone, itemsTotal, overdue, past`.
+- **Task JSON:** `id, listId, listName, listKind, title, notes, url, dueDate, dueTime, priority, typeId, type{id,name,icon,color}|null, placeId, place{id,name,address,phone,driveMinutes,driveTollsAvoided}|null, assignedTo, assigneeName, completionRequired, completed, completedAt, completedBy, completedByName, createdBy, createdByName, createdAt, position, items[{id,text,done}], itemsDone, itemsTotal, overdue, past, source` (`source`: e.g. "Docs" — shown as a "from Docs" chip — or null).
 
 ### 5.2 Places, types, lists
 
@@ -333,16 +345,17 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | GET | `/api/health` | IP only | `{"status":"ok"}` |
-| GET | `/api/whoami` | acting (reports real) | `{haUserId, haUsername, haDisplayName, isAdmin, actingAs:{id,name}\|null, nameSent, viaIngress, adminEntries, notifyEntries, notifyLinked, noAdmins, maintenance:{enabled}, driveTimes:{enabled}}` — `noAdmins` is true while `admin_users` is empty |
+| GET | `/api/whoami` | acting (reports real) | The shared contract (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`) `{haUserId, haUsername, haDisplayName, nameSent, isAdmin, displayNameOnly, adminEntries, noAdmin, viaIngress, notifyLinked, extras:[Reminder service linked]}` plus the app's own `actingAs:{id,name}\|null`, `notifyEntries`, `maintenance:{enabled}`, `driveTimes:{enabled}` — `noAdmin` is true while `admin_users` is empty |
 | GET | `/api/users` | acting | Household members for pickers — everyone, including disabled users, sorted by name: `{id,name,disabled}` (no `createdAt`; that's in the admin list) |
 | PATCH | `/api/users/{id}` | admin | `{disabled: bool}`. 404 if the user is unknown. Only the UI stops you disabling yourself. |
-| GET | `/api/admin/users` | admin | `{users:[{id,name,username,disabled,createdAt,notify:["notify.x",…]}]}` |
+| GET | `/api/admin/users` | admin | `{users:[{id,name,username,disabled,createdAt,notify:["notify.x",…],ha}]}` (`ha` from `people_admin.ha_person_json`, §7.4) |
 | GET | `/api/admin/notify-services` | admin | `refresh=1` skips the cache. `{available:true, error:null, services:["notify.…"], entities:["notify.…"]}`, sorted; if HA can't be asked: **200** `{available:false, error:"Couldn't read the notify services from Home Assistant: …", services:[], entities:[]}` (keeps the page usable and the console clean). |
 | PUT | `/api/admin/users/{id}/notify` | admin | `{services:[…]}` replaces the set (deduplicated, ≤10). Each is `notify.` + `[a-z0-9_]+` (a bare name gets the prefix); else 422. Returns the admin user JSON. 404 unknown user. |
 | POST | `/api/admin/users/{id}/notify` | admin | `{service}` adds one (201; already there = unchanged). 422 invalid or over 10. |
 | DELETE | `/api/admin/users/{id}/notify/{service}` | admin | Removes one; 404 if they don't have it. Returns the admin user JSON. |
 | POST | `/api/admin/users/{id}/notify/test` | admin | Optional `{service}` (must be theirs, else 422). Sends "Test notification from Household Todo for <name>, sent by an admin." to every (or that) service via `send_notify`, ignoring the person's own switches. 400 if they have none; 429 within 10 s per person; **502** with HA's hint if none was accepted; else `{results:{"notify.x":bool}}`. DB connection closed before HA is called. |
-| GET / PUT | `/api/admin/settings` | admin | §3.1. GET → `{values, defaults, meta:{key:{restartRequired:false}}}`. PUT takes any subset; 422 on an unknown key or bad value; returns the same shape. Side effects in §3.1 (sensor add/remove and home re-geocode run as background tasks). |
+| GET | `/api/admin/connected-apps` | admin | `{on, connected, apps: [{slug, name, version, can, last_seen, active}]}` — the read-only Connected apps card under App settings (§15). |
+| GET / PUT | `/api/admin/settings` | admin | §3.1. GET → `{values, defaults, meta:{key:{label, help, group, kind, restartRequired:false, min?, max?, showIf?, hidden?, maxLength?, …}}, groups:[{id, label, help}], maintenanceFiles}`. PUT takes any subset; 422 on an unknown key or bad value; returns the same shape. Side effects in §3.1 (sensor add/remove and home re-geocode run as background tasks). |
 | GET / POST | `/api/lists` | acting | POST takes `{name, kind}`. A personal list is owned by the acting user. |
 | POST | `/api/lists/reorder` | acting | `{kind, ordered_ids}`. Declared before `/lists/{id}`. 400 on a duplicate id, the wrong kind, or someone else's list. |
 | PATCH / DELETE | `/api/lists/{id}` | acting (403 on someone else's personal list) | PATCH takes `{name}` only. DELETE cascades. |
@@ -384,10 +397,10 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 
 ## 7. Home Assistant & external integrations
 
-- **Calling HA.** Every call goes to `SUPERVISOR_CORE_API` with `Bearer SUPERVISOR_TOKEN`. `ha_client.request()` never raises. A missing token logs one warning per process.
-- **Time zone.** Read once at startup from `GET /config`, falling back to UTC. The same call reads `latitude` (maintenance seasons) and `currency`.
+- **Calling HA.** Every call goes to `SUPERVISOR_CORE_API` with `Bearer SUPERVISOR_TOKEN`. `ha_client.request()`, `post_state` and `delete_state` come from the shared `app/common/ha_client.py`; the app's `ha_client.py` re-exports them and adds `load_timezone`. `ha_client.request()` never raises. A missing token logs one warning per process.
+- **Time zone.** Read once at startup from `GET /config` (`app/common/ha_time.py`; `config.today()` / `now()` are backed by `config.ZONE`), falling back to UTC. The same call reads `latitude` (maintenance seasons) and `currency`.
 
-### 7.1 Notifications (`ha_notify.py`)
+### 7.1 Notifications (`app/common/ha_notify.py`)
 
 **`send_notify(service, title, message, data=None) -> bool`** never raises. It proceeds as follows:
 1. Refuse any name that doesn't match `^[a-z0-9_]+$`.
@@ -398,7 +411,7 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 - **Target discovery** (`fetch_notify_targets_blocking`, cached **60 s**, successes only). Actions come from `GET /services` (`domain == "notify"`, names matching `^[a-z0-9_]+$`, minus `send_message`). Entities are the `notify.*` entries in `GET /states` (best effort). Raises `NotifyListError` with a readable reason (no token / no answer / HTTP status / unreadable). `available_notify_targets()` returns None instead; `list_notify_services_blocking()` formats it for Admin → Users. Never called while a DB connection is open. `persistent_notification` is a valid target but is never suggested in hints.
 - **Failure hints.** `explain_failure` suggests close names ("did you mean notify.…?") or lists the phone targets. It also says where to look and to fix it under Admin → Users.
 - **Startup check** (`check_targets_blocking`, best effort). Reads every assigned service from the DB, closes it, then asks HA. Logs INFO for each that is an entity, and marks it. Logs WARNING with a hint for each that matches nothing.
-- **Assignments.** `user_notify` is keyed by the HA **user id** (stable, not user-editable). `assigned_services(conn, user)` = the user's `user_notify` rows, by id only — never a login or display name. `services_for(user, conn=None)` returns bare names for `send_notify` (an empty list when nobody's assigned). The module is shared, identical, with Family Tree, Household Vault and Household Chat. `services_for` = the person's HA phones (§7.4) + their `user_notify` extras, without duplicates; `ha_notify.ha_phones` imports `ha_people` only if it exists. `normalize_service` accepts `notify.x` or `x`, requires `^notify\.[a-z0-9_]+$`.
+- **Assignments.** `user_notify` is keyed by the HA **user id** (stable, not user-editable). `assigned_services(conn, user)` = the user's `user_notify` rows, by id only — never a login or display name. `services_for(user, conn=None)` returns bare names for `send_notify` (an empty list when nobody's assigned). The module is shared (`common/python/ha_notify.py`) with Family Tree, Household Arcade, Household Vault and Household Chat. `services_for` = the person's HA phones (§7.4) + their `user_notify` extras, without duplicates; `ha_notify.ha_phones` imports `ha_people` only if it exists. `normalize_service` accepts `notify.x` or `x`, requires `^notify\.[a-z0-9_]+$`.
 - **Content.** Only titles (or item names), times, place names and links are sent; notes and addresses never are. A schedule item is only ever named to its assignee. The notification title is always "Household Todo".
 
 ### 7.2 Schedule sensors (`ha_sensors.py`)
@@ -409,6 +422,7 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 - **Deleting.** `DELETE /states/<id>`; a 404 counts as success. Full syncs also DELETE each unpublished item's entity once per process (`_cleared_unpublished`), so a failed delete after turning "Publish" off doesn't leave a stale sensor.
 - **Re-pushing.** HA doesn't persist these entities, so the loop keeps re-pushing them (§8).
 - **Immediate pushes.** Creating, editing, and adding or undoing an exception push immediately as a background task. Deleting an item, or turning its `expose_sensor` off, deletes its entity; full syncs skip it. A restore triggers a full sync.
+- **Shared publisher.** The "last pushed state" memory is `ha_sensors.SENSORS`, a `sensor_publisher.Publisher` (`app/common/sensor_publisher.py`, state-only key); the loop's full-sync and maintenance timings are two `sensor_publisher.Refresh` (every `sensor_refresh_minutes`, and on a date change), and the loop itself is `sensor_publisher.run`.
 - **Timed windows.** The module keeps the last state pushed per entity in memory. On loop ticks between full syncs it recomputes every published timed item and pushes those whose state changed, so a window opens and closes within ~60 s. A failed push isn't recorded and is retried next tick; a restart simply re-pushes everything.
 - **Failures.** A full sync aborts after 3 consecutive failures, logging one warning per streak. A push never fails a request.
 - **`expose_schedule_sensors` off** (App setting, live). Pushes and deletes become no-ops and `published` is false. The loop checks it every tick: on the first tick with it off (startup, or just switched off) it deletes every known entity and clears its memory of pushed states; when it comes back on, the next tick does a full sync. The settings route also calls `apply_exposure_change_blocking()` straight away (remove all / full sync). A restore does the same.
@@ -417,7 +431,7 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 
 - **Enabling.** The feature needs the `drive_times_enabled` switch on (§3.1) and a geocoded home (`HOME_LATLON`); with the switch off `ensure_home_blocking()` treats the address as blank (no lookup), `compute_for_address()` returns all None without calling anything, and `feature_enabled()` is false. `osrm_url` always resolves (blank = default). `ensure_home_blocking()` geocodes the current `home_address` at startup, at the start of every drive-time tick if it isn't done, and in the background after the setting changes; a failure logs one warning per address and is retried at most hourly (sooner after a server-URL change via `retry_home_soon()`). `reset_home()` (settings route, restore) drops it at once and bumps `home_generation()`. The lock is never held during the lookup. While it's off, nothing is shown, sent or raised.
 - **Geocoding (Nominatim).** `GET {nominatim_url}/search?q=…&format=json&limit=1`.
-  - UA `HouseholdTodo-HomeAssistantAddon/1.0 (…)`; throttled process-wide to one call per 1.05 s; 10 s timeout.
+  - UA `HouseholdTodo-HomeAssistantAddon/1.0 (…)`; throttled process-wide to one call per 1.05 s (`geo.Throttle`); 10 s timeout. The throttle, the Nominatim search URL / first hit, the OSRM coordinates and the HTTP fetch are the shared `app/common/geo.py`; the app keeps its User-Agent, queries, retries, cache and errors.
   - **If there are no results**, it strips one suite/unit designator (`#150`, Suite, Ste., Unit, Apt, Apartment, Bldg, Building, Fl, Floor, Rm, Room, plus the token after it), tidies spaces and commas, and retries once. If there's nothing to strip, it doesn't retry.
 - **Routing (OSRM).** `GET {osrm_url}/route/v1/driving/{lon},{lat};{lon},{lat}?overview=false`. Coordinates are **lon,lat**.
   - The response must have `code=="Ok"`. Minutes = `max(1, round(duration/60))`.
@@ -435,17 +449,17 @@ Every route except health needs the user headers. Errors come back as `{"detail"
   - In the UI it appears only when there's both a place with an estimate and a due time. It wraps past midnight.
   - Notifications append ` · ~N min drive, leave by HH:MM`.
 
-### 7.4 People and phones (`ha_people.py`)
+### 7.4 People and phones (`app/common/ha_people.py`)
 
-Shared, identical copy across the household apps.
+Shared (`common/python/ha_people.py`) with Family Tree, Arcade, Chat and Vault; the Admin → Users routes use `app/common/people_admin.py` (`ha_person_json`, `refresh_people`, `notify_services`, `clean_service`, `add_service`, `remove_service`, `TestLimiter`, `test_results`, `require_one_sent`).
 
 - **Reading the people:** one `POST /api/template` renders every `person.*` with its linked `user_id`, state and picture, and each tracked device that belongs to the `mobile_app` integration (`device_id` / `device_attr`; the device registry isn't on REST). A device's notify action is `mobile_app_<slugify(device name)>`, or HA's `_2…` numbered one, checked against `GET /api/services`; a device with none is shown but not used.
 - **Refreshing:** at start-up, every 5 minutes (a background loop) and on *Check Home Assistant again* (`GET /api/admin/users?refresh=1`). If HA can't be read, the last answer is kept; everything else only reads the cache, so it never calls HA while holding a DB connection.
-- **Admin → Users:** *Phones* (from HA, read-only; `ha {known, person, personName, phones[{label, service, tracker}]}` in the admin user JSON), *Also* (the `user_notify` extras), and *Send test* to both. People still appear on first open and can be disabled here.
+- **Admin → Users:** *Phones* (from HA, read-only; `ha {known, person, personName, phones[{label, service, tracker}]}` in the admin user JSON), *Also* (the `user_notify` extras), and *Send a test* to both. People still appear on first open and can be disabled here.
 
 ## 8. Background jobs
 
-The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in the threadpool, catches and logs its own errors every tick, and is cancelled on shutdown; shutdown waits for a pass already running in a worker thread.
+The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through the shared Jobs runner (`app/common/housekeeping.py`), in this order: `reminders`, `ha_sensors`, `housekeeping`, `drive_time`, `ha_people` (§7.4), `maint_files` (§14.5). Each one runs in the threadpool, catches and logs its own errors every tick, and is cancelled on shutdown; shutdown waits for a pass already running in a worker thread. `housekeeping.loop` is built with `housekeeping.periodic()`. Logging is set up by `housekeeping.setup_logging()`.
 
 | Loop | Tick | Work |
 |---|---|---|
@@ -477,6 +491,7 @@ The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in t
 - **Housekeeping** runs in a single transaction.
   - It deletes tasks where `completed=1` and the **local** date of `completed_at` is more than 60 days ago. A SQL pre-filter narrows the rows, then an exact check runs in Python. Checklist items cascade; open tasks are never touched.
   - It prunes skips and adds dated before today, moves whose `date` and `to_date` are both before today, and `schedule_reminder_log` rows dated before today. It logs INFO if any tasks were removed.
+  - Every 60-second tick also runs the app-messages outbox (`app_messages.run_outbox` → `app_bus.run_outbox_once`: re-sends, expiry, pruning, the six-hourly `hello`; §15).
 - **Drive-time warmer** picks places that match any of these:
   - `drive_checked_at IS NULL`;
   - failed (`drive_minutes IS NULL`) and last checked **more than 1 h** ago;
@@ -488,15 +503,16 @@ The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in t
 
 ## 9. Frontend
 
-- **Shell.** `index.html` loads `style.css`, `backnav.js`, `app.js` and `maintenance.js`, each with `?v=<config.yaml version>`. An inline `<head>` script applies the saved `theme` and `sidebarCollapsed` before first paint. URLs are relative only. User text is added only via `h()` / `textContent`, never `innerHTML`. Every storage access is wrapped in try/catch.
-- **API helper.** `api()` appends `as_user` while acting, unless `asSelf` is set, and throws the server's `detail` message.
+- **Shell.** `index.html` loads `common/theme-boot.js`, `common/themes.css`, `common/settings.css` and `style.css` in `<head>`, then `common/ui.js`, `common/settings.js`, `common/people.js`, `common/backnav.js`, `common/whoami.js`, `app.js` and `maintenance.js`, each with `?v=<config.yaml version>`. There is no inline script: `common/theme-boot.js` applies the saved `theme` and `sidebarCollapsed` before first paint. URLs are relative only. User text is added only via `h()` / `textContent`, never `innerHTML`. Every storage access is wrapped in try/catch.
+- **Shared helpers.** `common/ui.js` (`window.UI`) gives the DOM helper `h()`, `$`, `clear`/`mount`, `lsGet`/`lsSet`, `debounce`, `toast()`, `openModal()`/`confirmDialog()`; the list of open dialogs is `UI.dialogs()` (was the global `modalStack`).
+- **API helper.** `api()` (`UI.makeApi` with the `as_user` option) appends `as_user` while acting, unless `asSelf` is set, and throws the server's `detail` message.
 - **Chrome.**
   - The sidebar holds the brand, nav, a user chip (`<display> · admin`, opening Settings → "How the app sees you") and a Theme select.
-  - Themes are **Ink** (default, dark; `:root` equals Ink), **Slate** and **Daylight**.
+  - Themes are **Midnight** (default, dark, teal accent), **Slate**, **Daylight** and **Auto** (Daylight on a light device, else Midnight), from `common/themes.css`; `style.css` sets the teal accent and the app's own colours per theme. A saved **Ink** becomes Midnight. The select is filled by `HouseholdTheme.bindSelect()`.
   - `‹` / `›` collapse the sidebar to an icon rail.
   - At ≤760 px the sidebar becomes a scrolling bottom icon bar, and Settings gains a mobile-only Appearance card.
-- **"No admin yet" banner.** While `whoami.noAdmins` is true, `#noAdminBanner` (under the top bar, on every tab, for everyone) reads "No admin yet — add your Home Assistant user name (**<their user name, or id if no name was sent>**) to `admin_users` in the app's Configuration tab, save, and restart the app." with a **How the app sees you** button that opens Settings and scrolls to that card.
-- **Back gesture** (`backnav.js`, byte-identical across the household apps). Back closes the top modal (via its own close, so `onClose` runs); otherwise, away from the Calendar, it returns to the Calendar; only Back on the Calendar with nothing open leaves the app. Tabs and deep links add no history entries.
+- **"No admin yet" banner.** While `whoami.noAdmin` is true, `#noAdminBanner` (under the top bar, on every tab, for everyone; filled by `HouseholdWhoami.fillNoAdminBanner` from `common/whoami.js`) reads "No admin yet — add your Home Assistant user name (**<their user name, or id if no name was sent>**) to `admin_users` on the app's Configuration tab, save, and restart the app." with a **How the app sees you** button that opens Settings and scrolls to that card.
+- **Back gesture** (`common/backnav.js`, shared). Back closes the top modal (via its own close, so `onClose` runs); otherwise, away from the Calendar, it returns to the Calendar; only Back on the Calendar with nothing open leaves the app. Tabs and deep links add no history entries.
 - **Acting as (admins only).**
   - A top-bar select offers "Myself (name)" plus everyone else; disabled users are marked.
   - While acting, a banner reads "Acting as X — everything you add or change is recorded as them." with a **Switch back to me** button.
@@ -552,11 +568,11 @@ The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in t
     - the Weekly summary toggle, with day and time;
     - Send test notification.
     - A hint at the top says the digest, weekly summary and per-task reminders also cover schedule items that are for you, private ones included.
-  - **How the app sees you** (`WHOAMI_PAGE_SPEC.md`) shows the user name (or "not sent") and user id, each copyable; the display name, marked "not used for matching"; Administrator yes/no; the `admin_users` count; and Reminder service linked yes/no. It gives three-case advice for `admin_users`; when no service is linked it says to ask an admin (Admin → Users), or for an admin links there.
+  - **How the app sees you** (`WHOAMI_PAGE_SPEC.md`, drawn by `HouseholdWhoami.panel()` from `common/whoami.js`) shows the user name (or "not sent") and user id, each copyable; the display name, marked "not used for matching"; Administrator yes/no; the `admin_users` count; and Reminder service linked yes/no. It gives the shared advice for `admin_users`; when no service is linked it says to ask an admin (Admin → Users), or for an admin links there.
   - **Task types** can be edited and deleted, each with an emoji (up to 8 chars) and an optional colour.
 - **Admin.** Page head "Admin", then a tab row **App settings | Users | Maintenance | Storage** (`.admin-tabs`, scrolls horizontally on narrow screens). All calls use `asSelf`.
-  - **App settings.** A hint that each person sets their own daily reminder time (Settings → Reminders → Send at, 08:00 by default), then cards Home Assistant sensors (toggle, number 1–1440) and Drive time: the **Drive times (uses OpenStreetMap services)** switch with a privacy note (what is sent, to which hosts — the configured ones, OpenStreetMap's public services by default — and that self-hosted servers can be entered), then, only while the switch is ticked, the home address, two URL inputs with the defaults as placeholders and the avoid-tolls toggle; then the Maintenance files folder card. A note that `admin_users` stays in the Configuration tab. **Save** (PUT of changed keys only; disabled until something changed) and **Discard changes**; a 422 shows its message above the buttons. A "restart needed" chip would show for any `restartRequired` key (none today).
-  - **Users.** Per person: name, "you", login name and first seen; the Active/Disabled toggle (disabled on your own row); **Notify** chips (✕ removes); a select of HA's services (optgroups "Notify actions"/"Notify entities", minus ones they have, plus "Type a name…" revealing a text box) — or only the text box when `available` is false, with a warning box showing the error and "Try again" (`refresh=1`); **Add** (client check `^notify\.[a-z0-9_]+$`, bare names get `notify.`) and **Send test**.
+  - **App settings.** Drawn by `common/settings.js` (`SettingsPage.render`) from the payload's `meta` and `groups`: one card per group, a help line with the range and default under each setting, wrong numbers flagged at the field before saving. A hint that each person sets their own daily reminder time (Settings → Reminders → Send at, 08:00 by default), then the groups Home Assistant sensors (switch, number 1–1440), Drive time (the **Drive times (uses OpenStreetMap services)** switch with a privacy note — what is sent, to which hosts, the configured ones, OpenStreetMap's public services by default, and that self-hosted servers can be entered — then, only while the switch is on (`showIf`, live), the home address, two URL inputs with the defaults as placeholders and the avoid-tolls switch), Reminders (place details) and Maintenance (the files folder with its status, **Check** / **Use this folder** and the confirm before switching). A note that `admin_users` stays in the Configuration tab. **Save** (PUT of changed keys only; disabled until something changed, "N unsaved changes") and **Discard changes**; a 422 shows its message. A "restart needed" chip would show for any `restartRequired` key (none today).
+  - **Users.** The shared people list (`common/people.js`, `PeoplePage.render`): an intro, *Check Home Assistant again*, then one card per person: name, "you", login name and first seen; the Active/Disabled switch (disabled on your own row); the notify editor — *Phones* (from Home Assistant, read-only), *Also* (the extra notify services, ✕ removes), *Add* (a select of HA's services minus ones they have, plus a typed name; or only the text box when `available` is false, with a warning showing the error and "Try again" (`refresh=1`); client check `^notify\.[a-z0-9_]+$`, bare names get `notify.`) and **Send a test**.
   - **Storage.** A "Download backup (.db)" button. Restore has a file input, a red warning and a `confirm()`; afterwards the page reloads its lookups.
 
 ## 10. Invariants & pitfalls
@@ -564,19 +580,19 @@ The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in t
 - **Access.** Never add `ports:`, and keep the ingress IP allowlist: the headers are trustworthy only because of it. Admin authority never passes to the acting user, and prefs never follow `as_user`. The server enforces all of this; the UI only hides things.
 - **Time.** Use `config.today()` / `now()` everywhere, never `date.today()`. Alpine needs `tzdata`, or the zone silently stays on the fallback.
 - **SQLite.** Every connection needs `foreign_keys=ON`, or cascades and SET NULL silently don't run. It also needs `normalize_addr` registered — including in `validate_backup_file` before `integrity_check` — or the expression index makes every backup look "not a valid SQLite database".
-- **Migrations.** Schema changes are additive: add each column to `SCHEMA` **and** `_migrate()`. `digest_time` is filled by `_migrate()` (old household `reminder_time` if one was stored, else 08:00), so nobody's time jumps.
+- **Migrations.** Schema changes are additive: add each column to `SCHEMA` **and** `db.MIGRATIONS` (applied first in `_migrate()` by `db_core.add_missing_columns`). `digest_time` is filled by `_migrate()` (old household `reminder_time` if one was stored, else 08:00), so nobody's time jumps.
 - **Restore**, in order:
-  1. Write the upload to a scratch file **in `DATA_DIR`** (`os.replace` fails with EXDEV across filesystems).
-  2. Validate with `integrity_check`, and require all 14 tables; otherwise return 400.
+  1. Write the upload to a scratch file **in `DATA_DIR`** (`backup_core.receive`; `os.replace` fails with EXDEV across filesystems).
+  2. Validate with `integrity_check`, and require all 14 tables (`db_core.validate_file`); otherwise return 400.
   3. Take `_import_lock` and checkpoint the WAL with `wal_checkpoint(TRUNCATE)`.
   4. `os.replace` the scratch file over the database.
-  5. Delete the `-wal` and `-shm` files.
+  5. Delete the `-wal` and `-shm` files (3–5: `db_core.swap_in`, run by `backup_core.restore_file`).
   6. Run **`init_db()`** again, so an older backup is migrated immediately.
   7. `init_db()` bumps `db.generation()`, so App settings reload from the restored file; `geocode.reset_home()`; then as request **BackgroundTasks** (tied to the request, never untracked executor jobs) `apply_exposure_change_blocking()` (full sync, or remove all if the backup had exposure off) and a home re-geocode.
-- **Backup** always uses `Connection.backup()`, never the raw file (the database is in WAL mode).
+- **Backup** always uses `Connection.backup()` (`db_core.snapshot_to_tempfile`, sent by `backup_core.send_file`), never the raw file (the database is in WAL mode).
 - **Network I/O.** No request path or background lookup does network I/O while holding a DB connection: Recalculate, the drive-time warmer, the notify-services list, the admin test send and the startup notify check all close theirs first. Requests only ever read the cached `drive_minutes`. (The reminder passes still send while their read connection is open — unchanged, harmless under WAL.)
 - **Settings are read live.** Never copy an App setting into a module constant; call `settings.get()` (cached) where it's used.
-- **Routes and caching.** `/lists/reorder` must be declared before `/lists/{id}`, and the static mount goes **last**. `/` and `*.html` are served with `no-cache, no-store, must-revalidate` plus `Pragma: no-cache`; assets are versioned with `?v=`.
+- **Routes and caching.** `/lists/reorder` must be declared before `/lists/{id}`, and the static mount goes **last**. `/` and `*.html` are served with `no-cache, no-store, must-revalidate` plus `Pragma: no-cache` (`web_security`); assets are versioned with `?v=`.
 - **Client limits mirror server limits** (e.g. the exception reason input is `maxlength=60`, matching the server's 60-char check; link inputs are `maxlength=2000`); keep them in step.
 - **Links.** The server's link rule is the enforcement; the UI still renders an `<a>` only for `http(s)://` values, always with `target="_blank" rel="noopener noreferrer"`, and never via `innerHTML`. Links are not sensor attributes.
 - **Private schedule items.** Every query of `schedule_items` on a request path must filter with `VISIBLE_SQL` (or `_load_item`); reminders select by `assigned_to` only. Anything new that reads items must do the same.
@@ -588,11 +604,11 @@ The lifespan starts four loops (unless `BACKGROUND_LOOPS=0`). Each one runs in t
   - Runtime: `fastapi==0.141.1`, `uvicorn==0.53.0`, `python-multipart==0.0.32`.
   - Dev: adds `httpx2==2.13.1`.
   - Bump them together with the sibling apps.
-- **Running tests.** `pip install -r requirements-dev.txt`, then `python3 -m unittest discover -s tests`. Every module runs with the pinned dependencies; `tests/test_packaging.py` also checks `config.yaml`, the `?v=` strings, the docs, the icons and that no personal details are in any text file.
+- **Running tests.** `pip install -r requirements-dev.txt`, then `python3 -m unittest discover -s tests`. Every module runs with the pinned dependencies; `tests/test_packaging.py` also checks `config.yaml`, the `?v=` strings, the docs, the icons and that no personal details are in any text file (the shared checks come from `common_tests/packaging_core.py`, run with the app's own values). `tests/test_security_headers.py` checks the CSP and `nosniff` and that the page has no inline scripts, handlers or style attributes.
 - **Test harness.**
-  - `_env.py` must be imported first. It sets a temp `DATA_DIR`, `OPTIONS_PATH`, `SUPERVISOR_TOKEN`, `DEV_ADMINS=adminy` and `BACKGROUND_LOOPS=0`. Every test deletes and recreates the database, so no loop may run behind the tests' backs (a loop's first tick in a worker thread would race the reset: random `disk I/O error` / `no such table`); tests call the passes and `ha_sensors.loop()` directly.
-  - `fake_ha.py` is an in-process server for `/config`, `/states`, `/services` and notify. It records requests, and its `notify_services` / `notify_entities` settings control which targets exist.
-  - Tests patch `config.utcnow` and `SUPERVISOR_CORE_API`. HTTP tests use `TestClient(app, client=("127.0.0.1", 12345))`. Settings are changed with `settings.update(...)` (each test starts from a fresh DB, so defaults — Drive times off; tests that use drive time turn it on); notify links with a `link()` helper that inserts into `user_notify` (in `test_core` it waits for `add_user` if the person doesn't exist yet).
+  - `_env.py` must be imported first (built on `common_tests/env.py`). It sets a temp `DATA_DIR`, `OPTIONS_PATH`, `SUPERVISOR_TOKEN`, `DEV_ADMINS=adminy` and `BACKGROUND_LOOPS=0`. Every test deletes and recreates the database, so no loop may run behind the tests' backs (a loop's first tick in a worker thread would race the reset: random `disk I/O error` / `no such table`); tests call the passes and `ha_sensors.loop()` directly.
+  - `common_tests/fake_ha.py` (shared) is an in-process server for `/config`, `/states`, `/services` and notify. It records requests, and its `notify_services` / `notify_entities` settings control which targets exist.
+  - Tests patch `config.utcnow` and `SUPERVISOR_CORE_API`. HTTP tests use `TestClient(app, client=("127.0.0.1", 12345))` (`common_tests/ingress.py` has the same as `ingress_client` and the header helpers). `tests/common_tests/` also runs the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin, web_security, backup_core, sensor_publisher, geo, csv_export) and `test_shared_copies.py`. Settings are changed with `settings.update(...)` (each test starts from a fresh DB, so defaults — Drive times off; tests that use drive time turn it on); notify links with a `link()` helper that inserts into `user_notify` (in `test_core` it waits for `add_user` if the person doesn't exist yet).
 - **Coverage:** every route and access rule (including private schedule items); the link rule, links in every notification kind and the action-vs-entity `data` split; recurrence and exceptions; timed sensor windows and the per-item switch; all reminder kinds, for tasks and schedule items; housekeeping in non-UTC zones; drive time (unit stripping, tolls, Recalculate, the Drive times switch: defaults, the existing-data rule, nothing sent while off); the "No admin yet" flag and banner; packaging and the personal-details scan; notify fallback and hints; backup/restore including migration of an older backup; App settings (admin-only, 422 cases, partial updates, each setting taking effect live incl. the sensor loop), `config.yaml`/translations holding only `admin_users` and old options.json keys being ignored, the `digest_time` migration, admin-only guards, the notify-services list (cache, errors), assignment CRUD, reminders to every service, and the admin test send.
 - **Release.**
   1. Bump `version` in `config.yaml` **and** every `?v=` string in `index.html` (`test_packaging` checks they match).
@@ -644,7 +660,47 @@ Recipients per item = custom list or `maintenance_recipients` (+ assignee), filt
 `maintenance_files_path` ("" = off) must be inside `SHARE_ROOT` (/share), no `.`/`..`. `.household_todo_store` marker = `maint_files_store_id` (app_settings, not an App setting). Saving a new path runs `inspect` (refused: other install / missing parent / read-only → 409; files already attached or a non-empty folder → 409 unless `confirm`) then `check(allow_setup=True)`. `check()` at start-up and every 5 minutes; requests re-check an offline folder at most every 30 s; 503 with the reason while offline. Owners: item, done record or job (task in the list). Names cleaned for Samba, duplicates get " (2)"; ≤25 MB (413), empty → 422; JPEG/PNG/WebP/GIF get a 320 px `_thumbs` preview. Downloads: images/PDF/text inline, others attachment, `CSP: sandbox`, `nosniff`. Deletes move to `_deleted/<date>/…` (housekeeping empties dated folders older than 30 days); purged jobs' file rows are dropped, their files stay. Renames reconcile item folders when online. A DB restore keeps the current path and store id.
 
 ### 14.6 API
-`GET /api/maintenance` (items, jobs, files status, overdueCount, currency); `POST/PATCH/DELETE /api/maintenance/items[/{id}]`; `POST …/{id}/done|undo|snooze`; `GET /api/maintenance/history[.csv]?year&category&item`; `GET /api/maintenance/suggestions`; `PUT/DELETE /api/maintenance/suggestions/{key}/hidden`; `POST /api/maintenance/files?item_id|done_id|task_id`, `GET /api/maintenance/files?task_id`, `GET|DELETE /api/maintenance/files/{id}[?thumb=1]`. Admin: `GET/PUT /api/admin/maintenance` ({enabled, recipients, profile, sensor}), `POST/PATCH/DELETE /api/admin/maintenance/suggestions[/{id}]`, `POST /api/admin/settings/check-maintenance-folder`, `POST /api/admin/maintenance/files/check` ({useThisFolder, confirm}). `/api/prefs` gains `maintenanceNotify` and `maintenanceRecipient`.
+`GET /api/maintenance` (items, jobs, files status, overdueCount, currency); `POST/PATCH/DELETE /api/maintenance/items[/{id}]`; `POST …/{id}/done|undo|snooze`; `GET /api/maintenance/history[.csv]?year&category&item` (the CSV, written by `app/common/csv_export.py` with a UTF-8 BOM: Date, Item, Category, Done by, Note, Cost, Was due, Files; **formula guard**: the Item, Category, Done by, Note and Files cells starting with `=` `+` `-` `@` (or tab/CR) get a leading `'` — new; Date, Cost and Was due unchanged); `GET /api/maintenance/suggestions`; `PUT/DELETE /api/maintenance/suggestions/{key}/hidden`; `POST /api/maintenance/files?item_id|done_id|task_id`, `GET /api/maintenance/files?task_id`, `GET|DELETE /api/maintenance/files/{id}[?thumb=1]`. Admin: `GET/PUT /api/admin/maintenance` ({enabled, recipients, profile, sensor}), `POST/PATCH/DELETE /api/admin/maintenance/suggestions[/{id}]`, `POST /api/admin/settings/check-maintenance-folder`, `POST /api/admin/maintenance/files/check` ({useThisFolder, confirm}). `/api/prefs` gains `maintenanceNotify` and `maintenanceRecipient`.
 
 ### 14.7 Sensors
 `push_maintenance_blocking` (after changes, and every `sensor_refresh_minutes`): the overdue count sensor while `maintenance_sensor` (deleted once when off), and per item with `expose_sensor` a binary_sensor on while due/overdue — only while `expose_schedule_sensors` is on too.
+
+## 15. Checklists from Household Docs (app messages)
+
+Household Docs' *Make a Todo list* / *Send to Todo* (Docs spec §17.16) reaches Todo as app messages over Home
+Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §6.4 there). `app_messages.py`:
+
+- **Connection.** The lifespan starts the bus (`app_bus.start`, its own WebSocket — Todo has no other —
+  `outbox_thread=False`) together with the background loops (so not under `BACKGROUND_LOOPS=0`, the tests) and
+  stops it on shutdown; without a Supervisor token it stays off. The outbox runs in the housekeeping loop.
+  `hello` says `can: ["todo.items.add", "todo.lists.list"]`, version `config.APP_VERSION` (= config.yaml's).
+- **`requested_by` is the actor.** A known Todo user (opened the app at least once) who isn't disabled in Admin →
+  Users, else `nack not_allowed no_access`. "Acting as" never applies. Lists as in `GET /api/lists`: every
+  shared list (the Maintenance list flagged) and their own personal lists; anyone else's private list is
+  `nack not_found list`, like a missing one.
+- **`todo.lists.list`** → `{lists: [{id, name, kind, open, maintenance?}], more}` (trimmed to fit 8 KB).
+- **`todo.items.add`** — `list_id` or `new: {name 1–60, shared?}` (a new personal list of `requested_by`, or a
+  shared one, placed last). Items 1–200, text 1–200 after trimming (the task-title and checklist-item limits),
+  `done` bool, `level` 0/1: level 0 → a task at the end of the list (`created_by` = requested_by, `source` =
+  the message's `source` or the sender's name without "Household "), `done` → completed now by requested_by;
+  level 1 → a checklist item of the task before it (≤ 100 per task, else `nack invalid too_many_subitems`); a
+  level 1 item with no task before it is a task. All in the transaction that records the answer: any refusal
+  writes nothing (a list made by `new` included). Answer `{list_id, list_name, created, tasks, subitems, ids?}`
+  (`ids` dropped if the answer wouldn't fit). No notifications (nothing is assigned; the only "new task" push is
+  the assignment ping). During a restore (`db._import_lock` held) every message is `nack busy`.
+- **Frontend.** A task with `source` shows a "from <source>" chip. Admin → App settings ends with the read-only
+  **Connected apps** card (`common/connected-apps.js`).
+- **Privacy.** Item texts the person chose to send travel in the event, so DOCS.md shows the recorder exclusion
+  (APP_MESSAGES_SPEC §8).
+- **Tests.** `tests/test_app_messages.py`: every check of both handlers (allowed and refused, nothing written on
+  a nack, answer size, the restore lock), the resulting tasks in the API, no notifications, Connected apps, and
+  end to end on the fake event bus (`common_tests/fake_ha_bus.py`) with a fake Household Docs: lists, a new list
+  and a second batch, a duplicate acted on once, a refusal, the lifespan starting and stopping the bus; plus
+  `common_tests/test_app_bus.py` on the app's own copies.
+
+## Security notes (2026-10)
+
+From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
+
+- **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
+- **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass.

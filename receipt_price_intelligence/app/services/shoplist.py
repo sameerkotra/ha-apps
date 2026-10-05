@@ -16,11 +16,13 @@ on your list are cheapest.
 from __future__ import annotations
 
 import threading
+import time
 from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.common import sensor_publisher
 from app.config import get_settings
 from app.db import get_db_session
 from app.db.models import CommonItem, Home, ShoppingListItem
@@ -350,7 +352,8 @@ def _describe(place: dict[str, Any] | None) -> str:
     return f"Cheapest at {place['store']}: {price_text(place['price'])}{unit} ({source})"
 
 
-_published: dict[str, tuple[str, float]] = {}
+# home id -> (fingerprint of the sensor last published, time.time() then)
+_published = sensor_publisher.Publisher(clock=lambda: time.time())
 
 
 def publish(db: Session, home_id: str) -> None:
@@ -368,15 +371,13 @@ def publish(db: Session, home_id: str) -> None:
     attributes = {"friendly_name": "Shopping list", "icon": "mdi:cart", "unit_of_measurement": "items", "home": home.name if home else None,
                   "items": items, "by_store": by_store}
     import json
-    import time
     fingerprint = json.dumps([data["left"], attributes], sort_keys=True, default=str)
-    last = _published.get(home_id)
     # only when it changed, and at least every 15 minutes (Home Assistant forgets a state set this way when it restarts)
-    if last and last[0] == fingerprint and time.time() - last[1] < 900:
+    if _published.unchanged(home_id, fingerprint, max_age=900):
         return
     try:
         ha.set_state(SENSOR, data["left"], {**attributes, "updated": datetime.now().isoformat(timespec="seconds")})
-        _published[home_id] = (fingerprint, time.time())
+        _published.remember(home_id, fingerprint)
     except ha.HAError as e:
         logger.debug("Could not publish the shopping list sensor: %s", e)
 

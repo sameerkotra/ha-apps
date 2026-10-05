@@ -32,32 +32,41 @@ libraries. Ingress only.
 ```
 config.yaml  Dockerfile  requirements.txt  requirements-dev.txt  translations/en.yaml
 app/
-  main.py         lifespan (migrate, time zone, people, loops), ingress source check, CSP, routers
-  config.py       admin_users, DATA_DIR, version, Home Assistant time zone (UTC fallback), now()/today()
-  db.py           schema as numbered migrations, schema_version, backup/import
-  auth.py         identity from X-Remote-User-*, require_admin
-  settings.py     App settings (app_settings table, cached, applied without restart)
+  main.py         lifespan (migrate, time zone, people, jobs), ingress source check, security headers (CSP), routers
+  config.py       admin_users, DATA_DIR, version, Home Assistant time zone (config.ZONE, UTC fallback), now()/today()
+  db.py           schema as numbered migrations, schema_version, backup/import (on common db_core / backup_core)
+  auth.py         identity from X-Remote-User-*, require_admin (on common auth_core)
+  settings.py     App settings declared on common settings_core (SETTINGS, GROUPS; cached, applied without restart)
   levels.py       level lists: built-in levels (level_data.py), checks, the levels table
   level_builder.py  building more levels with the AI model (ai_client.py)
   games.py        the server's game table: ids, names, modes, score limits; the looks
   limits.py       children: day type, quiet hours, time used/left, limits validation
   scores.py       saving, personal bests, records, leaderboard, retention
   notify.py       record notifications, limit warnings to parents
-  ha_sensors.py   the optional sensors
-  housekeeping.py stale sessions, Keep scores for
-  ha_client.py    Supervisor Core API (stdlib urllib)
+  ha_sensors.py   the optional sensors (on common sensor_publisher)
+  housekeeping.py stale sessions, Keep scores for (loop = common housekeeping.periodic)
+  ha_client.py    thin: re-exports the shared Core API client (app/common/ha_client.py) + load_timezone
   together.py     playing together: invites, matches, the live numbers, winners, head to head (§13)
-  ha_notify.py, ha_people.py   shared with the other household apps (identical copies)
+  common/         shared Python (copies of the repository's common/): ha_notify, ha_people, whoami, ha_client,
+                  ha_time, housekeeping, auth_core, db_core, settings_core, people_admin, web_security,
+                  backup_core, sensor_publisher, ai_client
   routers/        me.py, prefs.py, play.py, users.py, admin.py, levels.py, together.py (+ the live WebSocket)
   static/
-    index.html theme-boot.js style.css backnav.js (shared) app.js play.js admin.js together.js
+    index.html style.css app.js play.js admin.js together.js
+    common/       shared browser files (copies): theme-boot.js themes.css ui.js settings.js settings.css
+                  people.js backnav.js whoami.js
     games/        the games (see spec/GAMES.md): kit.js sound.js registry.js, then <game>-logic.js
                   (rules) and <game>.js (drawing) for each of the 17 games
   level_kinds/    one file per game (but Brick Breaker and Snake · Maze): its level format and checks (§11.9)
   level_common.py the level name check and LevelError, shared by levels.py and level_kinds
   ai_usage.py     every request to the AI model, and the AI usage report (§11.10)
 tests/            unittest suite (python -m unittest discover -s tests); tests/js for the games (node --test)
+  common_tests/   shared helpers (fake_ha, env, ingress, packaging_core) and the shared modules' tests (copies)
 ```
+
+`app/common/`, `app/static/common/` and `tests/common_tests/` are written by `tools/sync_common.py` from
+`common/manifest.json` (see `common/README.md`); never edit a copy (`tests/common_tests/test_shared_copies.py`
+fails if one was changed).
 
 ## 3. Manifest and options
 
@@ -70,9 +79,13 @@ Database `/data/arcade.db`.
 
 ### 3.1 App settings (`settings.py`, Admin → App settings)
 
-`GET/PUT /api/admin/settings` → `{values, defaults, meta, games, looks, admins}`.
-Unknown keys or bad values are a 422 and nothing is saved. Every key applies
-at once.
+`GET/PUT /api/admin/settings` → the shared payload (`settings_core`)
+`{values, defaults, meta, groups, secretsSet}` (`meta[key]` = label, help,
+group, kind, range, choices, … — the page is drawn from it by
+`common/settings.js`) plus `providers`, `games`, `looks`, `admins`, `hasToken`
+and `timeZone`. Unknown keys or bad values are a 422 and nothing is saved.
+Every key applies at once. The page's groups: Games, Looks and scores,
+Children (school days, holidays, who gets warnings), Home Assistant, AI levels.
 
 | Key | Default | |
 |---|---|---|
@@ -94,16 +107,23 @@ Holidays are their own table: `GET/POST /api/admin/holidays`
 ## 4. Security and identity
 
 - A middleware refuses every request whose source address isn't the
-  Supervisor's ingress proxy (`172.30.32.2`) or loopback; that is what makes
-  the `X-Remote-User-*` headers trustworthy. No user id → 401.
+  Supervisor's ingress proxy (`172.30.32.2`) or loopback
+  (`auth.INGRESS_ALLOWED_HOSTS` = `auth_core.INGRESS_HOSTS`, through
+  `auth_core.refuse_outsiders`; shared `app/common/auth_core.py`); that is what
+  makes the `X-Remote-User-*` headers trustworthy. No user id → 401.
 - Admin = the user id or the login name is in `admin_users` (case-insensitive).
   Display names are never matched. Nobody is auto-promoted; while the list is
   empty every page shows the "No admin yet" banner.
-- "How the app sees you" (`GET /api/whoami`) echoes only the identity headers
-  and a count of admin entries.
+- `/api/me` and `/api/whoami` carry the flag `noAdmin` (was `noAdmins`).
+  "How the app sees you" (`GET /api/whoami`) is the shared contract
+  (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`): only the identity headers, a
+  count of admin entries, `noAdmin`, `notifyLinked` and one extra row, Phone
+  linked for notifications. The page and the banner are drawn by
+  `common/whoami.js`.
 - CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'
   data: blob:; connect-src 'self'; …` — no inline scripts, no eval, no outside
-  hosts. Request bodies over 64 KB are refused (except the import).
+  hosts. The headers are added by `web_security.SecurityHeaders.apply` at the end
+  of the ingress guard (shared `app/common/web_security.py`). Request bodies over 64 KB are refused (except the import).
 - The frontend builds DOM with `textContent` only; all URLs are relative.
 
 ## 5. Data (`db.py`)
@@ -127,8 +147,13 @@ Migrations are numbered, run once each, in order, and recorded in
 5. `ai_calls` (§11.10).
 6. `matches`, `match_players`, `play_sessions.match_id` (§13.6).
 
+The numbered migrations runner stays in `db.py` (its column check uses
+`db_core.columns`). Connections come from `db_core.connect` / `db_core.transaction`.
 A backup must contain the migration-1 tables and must not come from a newer
-schema; it is validated, swapped in and migrated.
+schema (`db_core.validate_file` with the "newer version" check as its extra
+hook); it is received (`backup_core.receive`), swapped in and migrated
+(`backup_core.restore_file`). The download is `db_core.snapshot_to_tempfile`,
+sent by `backup_core.send_file`.
 
 ## 6. Play sessions and scores (`routers/play.py`)
 
@@ -205,13 +230,22 @@ schema; it is validated, swapped in and migrated.
 - Admin routes: `PATCH /api/admin/users/{id} {disabled?, isChild?}`,
   `GET/PUT /api/admin/users/{id}/limits`, `POST /api/admin/users/{id}/extra-time
   {minutes: 15|30|60}`, `GET /api/admin/users/{id}/history` (14 days).
+- **Admin → Users** is the shared people list (`common/people.js`): one card per
+  person with the **Can play** and **Child** switches, a child's limits, extra
+  time and play history, and the notify editor (Phones from Home Assistant,
+  Also, Add, **Send a test**). `GET /api/admin/users` gives each person's `ha`
+  (now also `personName` and `tracker` per phone, from
+  `app/common/people_admin.py`); the page also loads
+  `GET /api/admin/notify-services` for the Add list.
 - `GET /api/me` gives the child's play time and limits; for admins it lists
   children with 5 minutes or less left (`lowTimeChildren`).
 
 ## 8. Home Assistant
 
-- Time zone from `GET /api/config` at startup; UTC if it can't be read.
-- People and phones: the shared `ha_people.py`, refreshed every 5 minutes.
+- Core API calls through the shared `app/common/ha_client.py` (the app's
+  `ha_client.py` re-exports it and adds `load_timezone`).
+- Time zone from `GET /api/config` at startup (`app/common/ha_time.py`); UTC if it can't be read.
+- People and phones: the shared `ha_people.py` (`app/common/`), refreshed every 5 minutes.
 - Notifications (`notify.py`, shared `ha_notify.py`): new household records to
   everyone else switched on with `receive_notifications` (not a child whose
   leaderboard is hidden); "5 minutes left" to the chosen admins once per child
@@ -223,13 +257,27 @@ schema; it is validated, swapped in and migrated.
   `sensor.household_arcade_<person>_played_today` (minutes; child attributes),
   `binary_sensor.household_arcade_<person>_playing` (a session with a
   heartbeat in the last 90 s). Posted on every change and every 5 minutes;
-  turning the switch off posts `unavailable` once.
+  turning the switch off posts `unavailable` once. Posting goes through
+  `ha_sensors.SENSORS`, a `sensor_publisher.Publisher` (shared
+  `app/common/sensor_publisher.py`: change detection on state + attributes, stops
+  at the first failure); the 30 s loop is `sensor_publisher.run`, with a
+  `Refresh` (300 s, or a date change) for the full re-post.
 
 ## 9. Frontend
 
-- `index.html` loads `theme-boot.js`, `style.css`, `backnav.js`, the game
-  files in the order of spec/GAMES.md, then `app.js`, `play.js`, `admin.js`,
-  all with `?v=<version>`.
+- `index.html` loads `common/theme-boot.js`, `common/themes.css`,
+  `common/settings.css` and `style.css` in `<head>`, then `common/ui.js`,
+  `common/settings.js`, `common/people.js`, `common/backnav.js`,
+  `common/whoami.js`, the game files in the order of spec/GAMES.md, then
+  `app.js`, `play.js`, `admin.js`, `together.js`, all with `?v=<version>`.
+- Page themes: Midnight (default, teal accent), Slate, Daylight and Auto
+  (Daylight on a light device, else Midnight), from `common/themes.css` and
+  applied before first paint by `common/theme-boot.js`; a saved **Ink** becomes
+  Midnight. The game looks (Modern, Retro LCD, Neon, Pixel, Paper, High
+  contrast) are unchanged and separate.
+- Shared helpers come from `common/ui.js` (`h()`, `api` via `UI.makeApi`,
+  `toast()`, `openModal()` / `confirmDialog()`; the open-dialog list is
+  `UI.dialogs()`, was the global `modalStack`).
 - Pages (hash routes, no history entries of their own): `#/home`,
   `#/play/<game>`, `#/scores`, `#/leaderboard`, `#/settings`,
   `#/admin/settings|levels|ai|users|storage`, `#/admin/users/<id>`.
@@ -278,7 +326,7 @@ schema; it is validated, swapped in and migrated.
   (container query on the stage), so it fits without scrolling.
 - The game pauses on `visibilitychange` (hidden), `pagehide`, the pause
   button/P/Esc and the back gesture: a running game is the top "layer" for
-  `backnav.js`, so Back pauses it first, then leaves the game, then the app.
+  `common/backnav.js`, so Back pauses it first, then leaves the game, then the app.
 - The page measures active (unpaused) time itself for the heartbeats and uses
   the game's `result.seconds` for the score.
 
@@ -286,8 +334,11 @@ schema; it is validated, swapped in and migrated.
 
 `python -m unittest discover -s tests` (API, auth, first run, admin, children
 and limits, scores and leaderboard, sensors with a fake Home Assistant,
-storage and migrations, levels and the builder with a fake model, packaging) and `node --test tests/js` for the game
-logic, run from `tests/test_games_js.py` when Node is installed.
+storage and migrations, levels and the builder with a fake model, packaging — the shared checks from
+`common_tests/packaging_core.py`) and `node --test tests/js` for the game
+logic, run from `tests/test_games_js.py` when Node is installed. `tests/common_tests/` (copies) holds the shared
+helpers and runs the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin,
+web_security, backup_core, sensor_publisher, ai_client) and `test_shared_copies.py`.
 
 ## 11. Levels and AI-made levels
 
@@ -298,7 +349,10 @@ logic, run from `tests/test_games_js.py` when Node is installed.
   same as `LAYOUTS` / `MAZES` in the game files), then any made by an AI model.
 - The model is the household's own (Ollama on the network) or a remote one (an
   OpenAI-compatible service or Anthropic Claude), set up as in Finance
-  Dashboard (`ai_client.py` is the same client, without images).
+  Dashboard: the requests, retries (429/500/502/503/504/529, Retry-After or
+  5/15/45 s), the 400 fall-backs, error mapping and model listing are the
+  shared `app/common/ai_client.py`; the app's `ai_client.py` keeps `Config`,
+  `current()`, `generate()` and its usage notes (no images).
 - **Automatically**: when a game reaches a level within `ai_levels_ahead` of
   the end of the list (reported by `POST /api/scores` and by heartbeats), the
   next `ai_levels_batch` levels are built in the background. Nothing is built
@@ -890,3 +944,11 @@ Built: `app/daily.py`, `routers/daily.py`; the pool is Snake, Falling Blocks, Mi
   turned off and on again.
 
 Not planned: a full-screen TV leaderboard, a "game of the day".
+
+## Security notes (2026-10)
+
+From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
+
+- **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
+- **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass. The live WebSocket's origin check is `web_security.cross_origin_websocket`.
+- **Backups without secrets**: the download blanks the secret App settings (`ai_api_key`) in the copy (`settings.REGISTRY.scrub_secrets`); a restore keeps this install's value for each one the file leaves blank (`saved_secrets` before, `keep_secrets` after the migrations; a value the file carries is used).

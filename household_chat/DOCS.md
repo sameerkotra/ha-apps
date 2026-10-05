@@ -114,6 +114,15 @@ Chat ⋯ → ⬇ Download chat gives a zip with one readable page of the message
 - **Edit…** changes the name, the announcements and the chats. **Stop sharing** removes it from every chat and leaves the folder untouched.
 - You don't need shared folders to send files: 📎 works in every chat.
 
+### Shared from Household Docs
+
+If the household also uses the **Household Docs** app, its **⋯ → Send to chat** puts a card in a chat you pick: "**Nisha shared Trip 2026**", with an icon for the kind of document (📝 note, ✅ checklist, 🧮 sheet, 📁 folder, 📄 file), whose it is, and **Open in Docs**.
+
+- **Open in Docs** opens the document in Household Docs' page in Home Assistant, without leaving Home Assistant. Each card opens only the page it was sent with — only Docs' own page and one of its items are accepted. If Docs doesn't say where its page is (for example it isn't shown in the sidebar), the card says to open Household Docs from the sidebar instead.
+- The card holds only the **title, type and owner** — never what's in the document. Whether you can open it is up to Household Docs: if it wasn't shared with you, Docs says so and who to ask. Docs can share it with the chat's members at the same time (the card then says *Shared with this chat's members*).
+- It's posted **as the person who sent it**, only where they could post themselves (they must be in the chat; a direct chat with someone who no longer has access is read-only), and it counts toward their 30 messages a minute.
+- Cards notify like messages ("Nisha shared a checklist “Trip 2026”"), show in search by title, and can be replied to, reacted to, pinned, starred, reminded and deleted. They can't be edited or forwarded — send it again from Docs instead. A chat download lists them by title, without a link.
+
 ## Notifications
 
 - **Settings → Notifications**:
@@ -135,12 +144,12 @@ Only people listed under **Admin users** in the app's **Configuration** tab are 
 - **People**: enable or disable people, tick Child, see each person's phones from Home Assistant (⚠ means Home Assistant has no notify action for that phone yet — open the Companion app on it once), 🔔 extras and test, 🏠 home/away and photo, and **Check Home Assistant again**.
 - **Chats**: every chat's name, kind, members, last activity, message count and storage used — never messages or file names of chats you aren't in. A group with no enabled members left can be deleted here (by typing its name).
 - **Shared folders**: see above.
-- **App settings**: see below.
+- **App settings**: see below. Under the settings, a read-only **Connected apps** card lists the other household apps this one exchanges messages with (for example Household Docs): name, version, when it was last heard from and what it can do. An app not heard from for a day shows as *not seen lately*.
 - **Storage**: see *Storage and backups*.
 
 ## App settings (Admin → App settings)
 
-Changes apply straight away, without a restart.
+The settings are in cards (Files, Chats and messages, Old messages, Notifications), with a line under each setting saying what it does, its range and its default. Changes are kept until you select **Save** at the bottom (it shows how many unsaved changes there are); **Discard changes** puts everything back. A number out of range is flagged at the field before anything is saved. Saved changes apply straight away, without a restart.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -164,7 +173,7 @@ Changes apply straight away, without a restart.
 
 ## The chat files folder
 
-- **Choosing it** (Admin → App settings → Chat files folder): type a folder inside `/share` and press **Check folder**; it tells you what's there. **Change folder** creates the folder and what the app needs inside it (`_thumbs`, `_deleted`, `README.txt` and a small `.household_chat_store` file that marks it as this install's). Folders that belong to another install, are a shared folder, are read-only, or whose parent doesn't exist are refused.
+- **Choosing it** (Admin → App settings → Files → Chat files folder): type a folder inside `/share` and press **Check folder**; it tells you what's there. Then **Save** at the bottom of the page (with any other changes): saving checks the folder again, asks first if needed, and creates the folder and what the app needs inside it (`_thumbs`, `_deleted`, `README.txt` and a small `.household_chat_store` file that marks it as this install's). Folders that belong to another install, are a shared folder, are read-only, or whose parent doesn't exist are refused.
 - **Network storage**: in Home Assistant, add it under Settings → System → Storage → *Add network storage* with usage *Share*. It appears as `/share/<name>`, so use `/share/<name>/household_chat`. Home Assistant's backups don't copy network storage, so give it its own backup.
 - **Changing it never moves files.** Copy the whole old folder, **including `.household_chat_store`**, to the new place first, then change the setting. Otherwise the files already shared show as "no longer available" until you do (you're asked first).
 - **Connected?** Admin → Storage → *File storage* shows **● Connected** or **● Not connected** and why, with the free space. It's checked at start-up, every 5 minutes and after a change; **Check again** checks now.
@@ -191,6 +200,7 @@ Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your 
 | Files in the chat files folder | Anyone who can reach `/share` (and the NAS, if it's there): Samba, the File editor, other apps with `share` access, and Home Assistant backups that include Share. Folder names show chat names. |
 | Phone notifications | What the preview setting allows shows on lock screens and in the Companion app's history. |
 | Notification replies | They pass through Home Assistant's event bus, where Home Assistant admins and automations can see them. |
+| Messages between the household apps | Household Docs and Chat talk over Home Assistant's event bus (`household_apps` events): ids, names, document titles and types, never document contents or chat messages. Your chat list goes without who is in each chat; the members of a chat are told only when you ask Docs to give that one chat's members access. Home Assistant admins, automations and every installed app with Home Assistant API access can see these events (and could send one), and Home Assistant's history keeps them unless you leave them out (below). Chat treats such a message only as a request the person could make themselves. |
 | Home / away | Home Assistant already shows every user these states. |
 | Shared folders | Ordinary `/share` folders: anyone who can reach `/share` can read them. In the app, the members of each chat they're shared into. |
 | Chat downloads and backups | Anyone who has the file. |
@@ -198,6 +208,15 @@ Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your 
 **What leaves your home network:** the app itself only talks to Home Assistant. Phone notifications are delivered by Home Assistant's Companion app push service (through Google's or Apple's push systems), so their title and preview text travel over the internet like any Home Assistant notification — choose "Sender only" or "Nothing" in Settings or App settings if you'd rather they didn't. People's pictures are copied only from Home Assistant itself, never from other sites.
 
 So it's fine for household chat and documents, but not for secrets such as passwords or card numbers.
+
+**Keeping app messages out of Home Assistant's history.** Home Assistant's recorder stores events, including the household apps' messages to each other. They hold no message text or document contents, but if you'd rather not keep them, add this to Home Assistant's `configuration.yaml` and restart Home Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
+```
 
 ## Limits
 
@@ -224,4 +243,5 @@ So it's fine for household chat and documents, but not for secrets such as passw
 - **Live updates stop**: the dot next to your name turns amber when the page falls back to checking every few seconds; it reconnects by itself.
 - **The microphone doesn't work**: it needs https and permission; in the Home Assistant phone app, try a browser instead.
 - **The back gesture**: on Android (Home Assistant app or browser), Back closes an open menu or dialog first, then goes from a chat or page back to the chat list; only Back from the list leaves the app.
-- **Themes**: Settings → Look → Theme (Vault, Slate, Daylight or Auto).
+- **"Open in Docs" does nothing, or Docs isn't in Connected apps**: Household Docs and Chat find each other when they start and every few hours; restart Household Docs, then look at Admin → App settings → Connected apps. Both apps must run inside Home Assistant (messages between apps are off outside it).
+- **Themes**: Settings → Look → Theme (Midnight, Slate, Daylight or Auto, which follows your device's light or dark setting). If you had picked Vault before, you now get Midnight.

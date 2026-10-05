@@ -30,7 +30,7 @@ async function starredPage() {
     h("div", { class: "row" }, h("span", { class: "hint grow" }, `${m.conversationName} · ${m.userId === state.me.id ? "You" : m.author} · ${fmtFull(m.createdAt)}`),
       h("button", { class: "btn small", type: "button", onclick: () => openChatAt(m.conversationId, m.id) }, "Show in chat"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "Unstar", title: "Unstar", onclick: async () => { try { await api(`api/messages/${m.id}/star`, { method: "DELETE" }); showPage("starred"); } catch (e) { fail(e); } } }, "★")),
-    m.kind === "poll" ? h("div", null, "📊 " + m.poll.question) : m.body ? renderText(m.body, ctx) : null,
+    m.kind === "poll" ? h("div", null, "📊 " + m.poll.question) : m.kind === "card" && m.card ? cardEl(m) : m.body ? renderText(m.body, ctx) : null,
     m.attachments.length ? attachmentsEl(m) : null)));
 }
 
@@ -72,8 +72,7 @@ async function settingsPage() {
   const levels = [["all", "Every message"], ["direct_mentions", "Direct messages, mentions and replies to me"], ["off", "Nothing"]];
   const qs = h("input", { type: "time", value: s.quietStart || "", "aria-label": "Quiet from" });
   const qe = h("input", { type: "time", value: s.quietEnd || "", "aria-label": "Quiet until" });
-  const themeSel = h("select", { "aria-label": "Theme", onchange: (e) => { const v = e.target.value; lsSet("theme", v); window.__themeChoice = v; document.documentElement.setAttribute("data-theme", window.__resolveTheme(v)); } },
-    [["vault", "Vault (dark)"], ["slate", "Slate (dark blue)"], ["daylight", "Daylight (light)"], ["auto", "Auto (follow the device)"]].map(([v, l]) => h("option", { value: v, selected: (window.__themeChoice || "vault") === v }, l)));
+  const themeSel = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
   const overrides = state.convs.filter((c) => c.kind !== "personal" && (c.notify !== "default" || c.muted));
   return h("div", { class: "cards" },
     h("div", { class: "card" }, h("h3", null, "Notifications"),
@@ -121,80 +120,50 @@ async function adminPage() {
   mount(body, await fn());
   return h("div", null, tabBar, body);
 }
+// The shared people page (common/people.js) with this app's access (enable / disable), child accounts,
+// home/away and, in a dialog, phones and extra notify services.
 async function adminPeople() {
   const r = await api("api/admin/people");
-  const rows = r.people.map((x) => h("tr", null,
-    h("td", { "data-label": "Person" }, h("div", { class: "row" }, avatar(x.name, x.id, { small: true, noDot: true }),
-      h("div", null, h("div", null, x.name + (x.you ? " (you)" : "")), h("div", { class: "hint" }, x.username || x.id)))),
-    h("td", { "data-label": "Access" }, x.disabled ? h("span", { class: "chip" }, "No access") : h("span", { class: "chip on" }, "Enabled"),
-      " ", h("label", { class: "check inline", title: "Child account: can't create groups, add people, rename, pin, announce or send disappearing messages" },
-        h("input", { type: "checkbox", checked: x.isChild, onchange: async (e) => {
-          try { await api(`api/admin/people/${encodeURIComponent(x.id)}`, { method: "PATCH", body: { isChild: e.target.checked } }); toast(e.target.checked ? `${x.name} is a child account` : `${x.name} is an adult account`); }
-          catch (er) { fail(er); e.target.checked = !e.target.checked; }
-        } }), h("span", { class: "hint" }, "Child"))),
-    h("td", { "data-label": "Seen" }, x.online ? "online" : x.lastSeen ? ago(x.lastSeen) : "never"),
-    h("td", { "data-label": "Phone" }, h("div", { class: "row wrap phone-cell" }, phoneChips(x, true),
-      h("button", { class: "btn small", type: "button", title: "Phones, extra notify services and a test", onclick: () => notifyDialog(x) }, "🔔", x.notify.length ? ` +${x.notify.length}` : null))),
-    h("td", { "data-label": "Home/away" }, h("div", null, h("button", { class: "btn small" + (x.presenceMissing ? " warn" : ""), type: "button", title: x.presenceMissing ? `${x.presenceEntity} no longer exists` : "Home / away and photo", onclick: () => presenceDialog(x) },
-      "🏠 ", x.presenceEntity ? x.presenceEntity.replace("person.", "") + (x.presenceMissing ? " ⚠" : "") : "–"),
-      x.presenceEntity ? h("div", { class: "hint" }, x.presenceChosen ? "chosen here" : "from Home Assistant login") : null)),
-    h("td", { class: "cell-actions" }, h("button", { class: "btn small " + (x.disabled ? "primary" : "danger"), type: "button", onclick: async () => {
-      if (!x.disabled && !await confirmDialog("Turn off access", `${x.name} loses access at once and leaves every group. Their messages, direct chats and personal room are kept.`, "Turn off", true)) return;
-      try { await api(`api/admin/people/${encodeURIComponent(x.id)}`, { method: "PATCH", body: { disabled: !x.disabled } }); showPage("admin"); } catch (e) { fail(e); }
-    } }, x.disabled ? "Enable" : "Disable"))));
-  return h("div", null,
-    h("p", { class: "hint" }, "Everyone with a Home Assistant login is listed, and nobody can chat until you enable them. Enabling gives them their personal room and adds them to the Household group."),
-    h("p", { class: "hint" }, "📱 Phones, home/away and photos come from Home Assistant: Settings → People → (the person) — Allow person to login links them to their login, Track device picks their phone with the Companion app. Set a phone up there once and every household app uses it. People without access get no notifications. ",
-      h("button", { class: "link-btn", type: "button", onclick: async () => { try { await api("api/admin/people?refresh=1"); showPage("admin"); toast("Read from Home Assistant"); } catch (e) { fail(e); } } }, "Check Home Assistant again")),
-    h("table", { class: "table stack people" }, h("thead", null, h("tr", null, ["Person", "Access", "Seen", "Phone", "Home/away", ""].map((t) => h("th", null, t)))), h("tbody", null, rows)));
-}
-const NOTIFY_RE = /^notify\.[a-z0-9_]+$/;
-// The person's phones from Home Assistant (Settings → People → Track device) — read-only here.
-function phoneChips(x, short) {
-  const ha = x.ha || { known: false, phones: [] };
-  if (!ha.known) return [h("span", { class: "hint" }, short ? "Not read yet" : "Home Assistant's people couldn't be read yet.")];
-  if (!ha.person) return [h("span", { class: "hint", title: "Settings → People → Allow person to login" }, short ? "No person linked" : "No Home Assistant person is linked to this login (Settings → People → Allow person to login).")];
-  if (!ha.phones.length) return [h("span", { class: "hint", title: `Settings → People → ${ha.personName} → Track device` }, short ? "No phone" : `${ha.personName} has no phone in Home Assistant — Settings → People → ${ha.personName} → Track device.`)];
-  return ha.phones.map((p) => h("span", { class: "chip " + (p.service ? "on" : "warn"), title: p.service ? `${p.tracker} → ${p.service}` : `${p.tracker}: Companion app action not found` },
-    "📱 " + p.label, p.service ? null : " ⚠"));
-}
-async function notifyDialog(x) {
-  let avail = { available: false, services: [], entities: [], error: null };
-  try { avail = await api("api/admin/notify-services"); } catch (e) { /* manual entry still works */ }
-  const body = h("div");
-  const draw = () => {
-    const have = new Set(x.notify);
-    const opts = [...avail.services, ...avail.entities].filter((n) => !have.has(n) && n !== "notify.persistent_notification");
-    const sel = opts.length ? h("select", { "aria-label": "Notify service" }, h("option", { value: "" }, "Choose…"), opts.map((n) => h("option", { value: n }, n))) : null;
-    const manual = h("input", { type: "text", placeholder: "notify.mobile_app_phone", "aria-label": "Notify service", autocomplete: "off", spellcheck: "false", maxlength: "120" });
-    const result = h("div", { class: "hint" });
-    const add = h("button", { class: "btn small primary", type: "button", onclick: async () => {
-      let v = manual.value.trim() || (sel && sel.value) || "";
-      if (!v) { toast("Choose or type a notify service first.", { error: true }); return; }
-      if (!v.includes(".")) v = "notify." + v;
-      if (!NOTIFY_RE.test(v)) { toast("A notify service looks like notify.mobile_app_phone.", { error: true }); return; }
-      try { x.notify = (await api(`api/admin/people/${encodeURIComponent(x.id)}/notify`, { method: "POST", body: { service: v } })).notify; draw(); } catch (e) { fail(e); }
-    } }, "Add");
-    const reachable = x.notify.length + ((x.ha && x.ha.phones) || []).filter((p) => p.service).length;
-    const test = h("button", { class: "btn small", type: "button", disabled: !reachable, title: reachable ? "Send a short test to their phones and every extra service" : "Link a phone in Home Assistant or add a service first", onclick: async () => {
-      try { const r = await api(`api/admin/people/${encodeURIComponent(x.id)}/notify/test`, { method: "POST" }); result.textContent = r.results.map((y) => `${y.service}: ${y.ok ? "sent ✓" : "failed" + (y.hint ? " — " + y.hint : "")}`).join(" · "); } catch (e) { fail(e); }
-    } }, "Send a test");
-    const phones = ((x.ha && x.ha.phones) || []);
-    mount(body,
-      h("p", { class: "hint" }, `New messages, mentions and reminders for ${x.name}${x.disabled ? " (nothing is sent while they have no access)" : ""}.`),
-      h("div", { class: "lbl-sm" }, "Phones — from Home Assistant"),
-      h("div", { class: "row wrap" }, phoneChips(x, false)),
-      phones.some((p) => !p.service) ? h("p", { class: "hint" }, "⚠ Companion app action not found: Home Assistant has no notify.mobile_app_… action for that phone yet — open the Companion app on it once.") : null,
-      h("p", { class: "hint" }, "Set up in Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Companion app."),
-      h("div", { class: "lbl-sm" }, "Also — extra notify services, this app only"),
-      avail.available ? null : h("div", { class: "notice" }, (avail.error || "Home Assistant's notify services couldn't be listed.") + " You can still type one."),
-      x.notify.length ? h("div", { class: "row wrap" }, x.notify.map((n) => h("span", { class: "chip on" }, n, " ",
-        h("button", { class: "icon-btn", type: "button", "aria-label": `Remove ${n}`, onclick: async () => { try { x.notify = (await api(`api/admin/people/${encodeURIComponent(x.id)}/notify/${encodeURIComponent(n)}`, { method: "DELETE" })).notify; draw(); } catch (e) { fail(e); } } }, "✕"))))
-        : h("p", { class: "hint" }, "None — only for something else, like a speaker or a second service."),
-      h("div", { class: "row wrap" }, sel, manual, add, test), result);
-  };
-  draw();
-  openModal(`Notifications — ${x.name}`, body, { onClose: () => { if (state.page === "admin") showPage("admin"); } });
+  const box = h("div");
+  PeoplePage.render(box, {
+    people: r.people,
+    intro: ["Everyone with a Home Assistant login is listed, and nobody can chat until you enable them. Enabling gives them their personal room and adds them to the Household group.",
+      "📱 Phones, home/away and photos come from Home Assistant: Settings → People → (the person) — Allow person to login links them to their login, Track device picks their phone with the Companion app. Set a phone up there once and every household app uses it. People without access get no notifications."],
+    checkAgain: async () => { try { await api("api/admin/people?refresh=1"); showPage("admin"); toast("Read from Home Assistant"); } catch (e) { fail(e); } },
+    cardClass: "card",
+    person: (x) => ({
+      avatar: avatar(x.name, x.id, { small: true, noDot: true }),
+      badges: [x.you ? ["you"] : null, x.disabled ? ["No access", "warn"] : ["Enabled", "accent"]],
+      sub: [x.username || x.id, x.online ? "online" : x.lastSeen ? "seen " + ago(x.lastSeen) : "never seen"].join(" · "),
+      controls: [
+        h("label", { class: "pp-toggle", title: "Child account: can't create groups, add people, rename, pin, announce or send disappearing messages" }, "Child",
+          PeoplePage.accessSwitch(x.isChild, async (on, input) => {
+            try { await api(`api/admin/people/${encodeURIComponent(x.id)}`, { method: "PATCH", body: { isChild: on } }); toast(on ? `${x.name} is a child account` : `${x.name} is an adult account`); }
+            catch (er) { fail(er); input.checked = !on; }
+          }, { label: `${x.name} is a child account` })),
+        h("button", { class: "btn small " + (x.disabled ? "primary" : "danger"), type: "button", onclick: async () => {
+          if (!x.disabled && !await confirmDialog("Turn off access", `${x.name} loses access at once and leaves every group. Their messages, direct chats and personal room are kept.`, "Turn off", true)) return;
+          try { await api(`api/admin/people/${encodeURIComponent(x.id)}`, { method: "PATCH", body: { disabled: !x.disabled } }); showPage("admin"); } catch (e) { fail(e); }
+        } }, x.disabled ? "Enable" : "Disable"),
+      ],
+      blocks: h("div", { class: "pp-line" }, h("span", { class: "pp-label" }, "Phone"), h("div", { class: "pp-chips" }, PeoplePage.phoneChips(x, true))),
+      actions: h("div", null, h("button", { class: "btn small" + (x.presenceMissing ? " warn" : ""), type: "button", title: x.presenceMissing ? `${x.presenceEntity} no longer exists` : "Home / away and photo", onclick: () => presenceDialog(x) },
+        "🏠 ", x.presenceEntity ? x.presenceEntity.replace("person.", "") + (x.presenceMissing ? " ⚠" : "") : "–"),
+        x.presenceEntity ? h("span", { class: "hint" }, x.presenceChosen ? " chosen here" : " from Home Assistant login") : null),
+    }),
+    notify: {
+      mode: "dialog", buttonClass: "btn small", ghostClass: "btn small", openModal, api, fail,
+      loadServices: () => api("api/admin/notify-services"), toast: (m, err) => toast(m, err ? { error: true } : undefined),
+      path: (x) => `api/admin/people/${encodeURIComponent(x.id)}/notify`,
+      testPath: (x) => `api/admin/people/${encodeURIComponent(x.id)}/notify/test`,
+      texts: {
+        intro: (x) => `New messages, mentions and reminders for ${x.name}${x.disabled ? " (nothing is sent while they have no access)" : ""}.`,
+        phonesHelp: "Set up in Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Companion app.",
+      },
+      onClose: () => { if (state.page === "admin") showPage("admin"); },
+    },
+  });
+  return box;
 }
 async function presenceDialog(x) {
   let r = { available: false, entities: [] };
@@ -240,85 +209,79 @@ function storageStatus(st) {
     ? h("span", { class: "store-status ok" }, h("span", { class: "store-dot" }), "Connected")
     : h("span", { class: "store-status bad" }, h("span", { class: "store-dot" }), "Not connected");
 }
-function filesFolderCard(r, rerender) {
-  const st = r.storage;
-  const input = h("input", { type: "text", value: r.values.files_path, spellcheck: "false", autocomplete: "off", autocapitalize: "off", "aria-label": "Chat files folder" });
+// The folder field on App settings: what's in use now, the box, Check folder, and the check's result.
+function filesFolderControl(page, folder) {
+  const st = page.data.storage;
+  const input = h("input", { type: "text", id: "set-files_path", value: page.value("files_path"), spellcheck: "false", autocomplete: "off",
+    autocapitalize: "off", "aria-describedby": "set-files_path-help" });
   const result = h("div", { role: "status", "aria-live": "polite" });
-  const err = h("div", { class: "error" });
-  let last = null;
   const draw = (c) => {
-    const kind = c.refused ? "danger" : c.ok ? "info" : "";
+    const kind = c.refused ? "bad" : c.ok ? "good" : "warn";
     const facts = [c.exists ? (c.writable ? "exists, writable" : "exists, read-only") : "doesn't exist yet",
       c.marker === "this" ? "this install's folder" : c.marker === "other" ? "another install's folder" : null,
       c.exists ? `${c.files} file${c.files === 1 ? "" : "s"} found` : null, c.networkMount ? "network storage" : null].filter(Boolean).join(" · ");
-    mount(result, h("div", { class: "notice " + kind }, h("div", null, { danger: "⛔ ", info: "✅ ", "": "⚠️ " }[kind], c.message), h("div", { class: "hint" }, facts)));
+    mount(result, h("div", { class: `sp-check ${kind}` }, h("div", null, { bad: "⛔ ", good: "✅ ", warn: "⚠️ " }[kind], c.message), h("div", { class: "sp-help" }, facts)));
   };
-  const check = async () => {
+  folder.check = async () => {
     const p = input.value.trim();
     mount(result, h("div", { class: "hint" }, "Checking the folder…"));
     try {
       const c = await api("api/admin/settings/check-files-path", { method: "POST", body: { path: p } });
       if (input.value.trim() !== p) return null;
-      last = { path: p, c }; draw(c); return c;
-    } catch (e) { last = null; mount(result, h("div", { class: "error" }, e.message)); return null; }
+      folder.last = { path: p, c }; draw(c); return c;
+    } catch (e) { folder.last = null; mount(result, h("div", { class: "error" }, e.message)); return null; }
   };
-  input.addEventListener("input", () => { last = null; clear(result); err.textContent = ""; });
-  const save = h("button", { class: "btn primary", type: "button", onclick: async () => {
-    err.textContent = "";
-    const p = input.value.trim();
-    if (p === r.values.files_path) { toast("That's the folder in use now."); return; }
-    const c = last && last.path === p ? last.c : await check();
-    if (!c) return;
-    if (c.verdict === "current") { toast("That's the folder in use now."); return; }
-    if (c.refused) { err.textContent = c.message; return; }
-    const body = { files_path: p };
-    if (c.needsConfirm) {
-      if (!await confirmDialog("Change the chat files folder", c.message + " Change the folder anyway?", "Change folder", true)) return;
-      body.confirm = true;
-    }
-    save.disabled = true;
-    try {
-      const out = await api("api/admin/settings", { method: "PUT", body });
-      state.me = await api("api/me").catch(() => state.me); renderFilesBanner();
-      if (out.storage.online) toast("Saved — the chat's files now go to " + out.storage.path);
-      else toast("Saved, but the folder isn't connected: " + out.storage.reason, { error: true });
-      rerender();
-    } catch (x) { err.textContent = x.message; save.disabled = false; }
-  } }, "Change folder");
-  return h("div", { class: "card" }, h("h3", null, "Chat files folder"),
+  input.addEventListener("input", () => { folder.last = null; clear(result); page.set("files_path", input.value.trim()); });
+  return h("div", { class: "sp-folder" },
     h("div", { class: "kv" },
       h("span", { class: "k" }, "In use now"), h("span", null, h("code", { class: "path" }, st.path)),
       h("span", { class: "k" }, "Status"), h("span", null, storageStatus(st), st.networkMount ? h("span", { class: "hint" }, " · network storage") : null)),
     !st.online ? h("div", { class: "notice danger" }, st.reason) : null,
-    h("div", { class: "folder-path" }, input,
-      h("div", { class: "folder-btns" }, h("button", { class: "btn", type: "button", onclick: check }, "Check folder"), save)),
-    h("p", { class: "hint" }, "Where the files, photos and voice messages shared in chats are kept, inside /share — for example ",
-      h("code", null, "/share/nas/household_chat"), " on network storage. The app creates the folder and what it needs inside it. ",
-      "Changing it doesn't move any files: copy the whole old folder, including ", h("code", null, ".household_chat_store"),
-      ", to the new place first. Default ", h("code", null, r.defaults.files_path), "."),
-    result, err);
+    h("div", { class: "sp-folder-row" }, input, h("button", { class: "btn", type: "button", onclick: () => folder.check() }, "Check folder")),
+    result);
 }
+// Admin → App settings: drawn by common/settings.js from the server's description of each setting.
 async function adminSettings() {
-  const r = await api("api/admin/settings");
-  const inputs = {};
-  const rows = Object.keys(r.defaults).filter((k) => k !== "files_path").map((k) => {
-    const meta = r.meta[k] || { label: k };
-    const v = r.values[k];
-    let el;
-    if (typeof r.defaults[k] === "boolean") { el = h("input", { type: "checkbox", checked: v }); inputs[k] = () => el.checked; return h("label", { class: "check" }, el, h("span", null, meta.label)); }
-    if (meta.choices) { el = h("select", null, Object.entries(meta.choices).map(([cv, cl]) => h("option", { value: cv, selected: v === cv }, cl))); inputs[k] = () => el.value; }
-    else if (typeof r.defaults[k] === "number") { el = h("input", { type: "number", value: String(v), min: meta.min, max: meta.max, step: "1" }); inputs[k] = () => Number(el.value); }
-    else { el = h("input", { type: "text", value: v }); inputs[k] = () => el.value; }
-    return field(meta.label, el, v !== r.defaults[k] ? `Default: ${typeof r.defaults[k] === "boolean" ? (r.defaults[k] ? "on" : "off") : r.defaults[k]}` : null);
+  const box = h("div");
+  const folder = { last: null, check: null };
+  await SettingsPage.render(box, {
+    load: () => api("api/admin/settings"),
+    save: (body) => api("api/admin/settings", { method: "PUT", body }),
+    classes: { card: "card", primary: "btn primary", secondary: "btn", ghost: "btn" },
+    fields: { files_path: { control: (page) => filesFolderControl(page, folder) } },
+    // changing the chat files folder: checked first, refused or confirmed as the check says; never moves files
+    beforeSave: async (body, page) => {
+      if ("files_path" in body) {
+        const p = body.files_path;
+        const c = folder.last && folder.last.path === p ? folder.last.c : await folder.check();
+        if (!c) return null;
+        if (c.verdict === "current") delete body.files_path;
+        else {
+          if (c.refused) { page.setError("files_path", c.message); return null; }
+          if (c.needsConfirm) {
+            if (!await confirmDialog("Change the chat files folder", c.message + " Change the folder anyway?", "Change folder", true)) return null;
+            body.confirm = true;
+          }
+        }
+      }
+      return body;
+    },
+    afterSave: async (out, body) => {
+      state.me = await api("api/me").catch(() => state.me);
+      if ("files_path" in body) {
+        renderFilesBanner();
+        if (out.storage.online) { toast("Saved — the chat's files now go to " + out.storage.path); return "Saved — the chat's files now go to " + out.storage.path; }
+        toast("Saved, but the folder isn't connected: " + out.storage.reason, { error: true });
+        return "Saved, but the folder isn't connected: " + out.storage.reason;
+      }
+      toast("Saved — applies straight away");
+      return "Saved — applies straight away";
+    },
   });
-  const err = h("div", { class: "error" });
-  const wrap = h("div", { class: "cards" });
-  const rerender = async () => { try { const fresh = await adminSettings(); wrap.replaceWith(fresh); } catch (e) { fail(e); } };
-  return mount(wrap, filesFolderCard(r, rerender), h("form", { class: "card", onsubmit: async (e) => {
-    e.preventDefault();
-    const body = {}; for (const [k, f] of Object.entries(inputs)) body[k] = f();
-    try { await api("api/admin/settings", { method: "PUT", body }); state.me = await api("api/me"); toast("Saved — applies straight away"); err.textContent = ""; } catch (x) { err.textContent = x.message; }
-  } }, h("h3", null, "App settings"), rows, err, h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Save"))));
+  // Connected apps (APP_MESSAGES_SPEC §5): read only, drawn by common/connected-apps.js
+  const apps = h("div", { class: "connected-apps-wrap" });
+  api("api/admin/connected-apps").then((d) => mount(apps, ConnectedApps.card(d, { h, when: fmtFull }))).catch(() => {});
+  return h("div", null, box, apps);
 }
 async function adminStorage() {
   const s = await api("api/admin/storage");
@@ -506,21 +469,15 @@ function folderDialog(chatsList, existing) {
 }
 
 // ---------- whoami ----------
+// Drawn by common/whoami.js: the same rows and wording as every other app.
 async function whoamiPage() {
   const w = await api("api/whoami");
-  const copyBtn = (t) => h("button", { class: "icon-btn", type: "button", "aria-label": "Copy", onclick: () => copyText(t || "") }, "📋");
-  return h("div", { class: "card" }, h("div", { class: "kv" },
-    h("span", { class: "k" }, "User name"), h("span", null, w.haUsername || "—", " ", copyBtn(w.haUsername)),
-    h("span", { class: "k" }, "User id"), h("span", { class: "mono" }, w.haUserId, " ", copyBtn(w.haUserId)),
-    h("span", { class: "k" }, "Display name"), h("span", null, w.haDisplayName, h("span", { class: "hint" }, " (not used for matching)")),
-    h("span", { class: "k" }, "Administrator in this app"), h("span", null, w.isAdmin ? "Yes" : "No"),
-    h("span", { class: "k" }, "Names in admin_users"), h("span", null, String(w.adminEntries)),
-    h("span", { class: "k" }, "Access"), h("span", null, w.disabled ? "Not yet — ask an admin" : "Enabled"),
-    h("span", { class: "k" }, "Chats you're in"), h("span", null, String(w.chatCount)),
-    h("span", { class: "k" }, "Phone linked for notifications"), h("span", null, w.notifyLinked ? "Yes" : "No — in Home Assistant: Settings → People → you → Track device")),
-  w.noAdmin ? h("div", { class: "notice" }, "No admin yet: admin_users is empty, so nobody can open Admin. Add your user name above to admin_users in the app's Configuration tab, save, and restart the app.") : null,
-  w.displayNameOnly ? h("div", { class: "notice" }, "Your display name is in admin_users, but display names don't count — add your user name or user id instead, then restart the app.") : null,
-  h("p", { class: "hint" }, "Admins are listed in admin_users in the app's Configuration tab, by user name or user id. After editing it, restart the app."));
+  return h("div", { class: "card" }, HouseholdWhoami.panel(w, {
+    appName: "Household Chat",
+    classes: { row: null, label: "k", value: null },
+    copyGlyph: "📋",
+    onCopy: (text) => copyText(text),
+  }));
 }
 
 // ---------- first run: nobody is an admin yet (SPEC §4.2) ----------
@@ -529,16 +486,13 @@ function renderSetupBanner() {
   const el = $("#setupBanner");
   if (!el) return;
   if (!state.me || !state.me.noAdmin) { clear(el); el.hidden = true; return; }
-  const who = state.me.username || state.me.id;
   const openWhoami = async () => {
     if (state.me.disabled) { try { openModal("How the app sees you", await whoamiPage()); } catch (e) { fail(e); } }
     else showPage("whoami");
   };
   el.hidden = false;
   mount(el, h("div", { class: "setup-banner", role: "alert" },
-    h("strong", null, "No admin yet"), " — add your Home Assistant user name (", h("strong", null, who), ") to ",
-    h("code", null, "admin_users"), " in the app's Configuration tab, save, and restart the app. ",
-    h("button", { class: "link-btn", type: "button", onclick: openWhoami }, "How the app sees you")));
+    HouseholdWhoami.noAdminBanner(state.me.username || state.me.id, { onOpen: openWhoami })));
 }
 
 // ---------- no access yet ----------

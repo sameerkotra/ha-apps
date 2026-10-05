@@ -75,6 +75,26 @@
         }
     });
 
+    // ---- a report was saved (_query_save_result.html): its id joins the form, so Save updates it next time ----
+    document.body.addEventListener("htmx:afterSwap", function () {
+        document.querySelectorAll("[data-saved-report-id]").forEach(function (el) {
+            var id = JSON.parse(el.getAttribute("data-saved-report-id"));
+            el.removeAttribute("data-saved-report-id");
+            var f = document.getElementById("query-form");
+            if (f && !f.querySelector("[name=report_id]")) {
+                var i = document.createElement("input"); i.type = "hidden"; i.name = "report_id"; i.value = id; f.appendChild(i);
+            }
+        });
+    });
+
+    // ---- the variables box re-reads the SQL when a variable's type changes (storage_query.html) ----
+    document.addEventListener("change", function (e) {
+        if (e.target.matches && e.target.matches(".q-def-type")) {
+            var box = e.target.closest("#q-vars");
+            if (box) htmx.trigger(box, "q-def-type-change");
+        }
+    });
+
     // ---- plain English → SQL: put the answer in the editor, keep the old SQL for Undo ----------
     var undoSql = null;
     document.body.addEventListener("htmx:afterSettle", function () {

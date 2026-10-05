@@ -13,5 +13,6 @@ A private chat and file-sharing app for a household, inside Home Assistant. Ever
 - Disappearing messages, announcements, send later and drafts that follow you
 - Child accounts, home/away and photos from Home Assistant's People
 - `/share` folders shared into chats, chat downloads, backups and storage clean-up
+- Cards from **Household Docs**: a document sent to a chat shows up as a card with **Open in Docs** (Admin → App settings → Connected apps)
 
 See the **Documentation** tab (DOCS.md) for setup and the full user guide.

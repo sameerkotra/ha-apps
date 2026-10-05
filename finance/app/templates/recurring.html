@@ -53,7 +53,7 @@
         <label>
             Account
             <select name="account_id"
-                    onchange="var p = []; if (this.value) p.push('account_id=' + this.value);{% if acting_qs %} p.push('{{ acting_qs }}');{% endif %} window.location.href = 'recurring' + (p.length ? '?' + p.join('&') : '');">
+                    data-go-param="account_id" data-go-base="recurring" data-go-qs='{{ (acting_qs or "") | tojson }}'>
                 <option value="">All accounts</option>
                 {% for a in accounts %}
                 <option value="{{ a.id }}" {{ "selected" if selected_account and selected_account.id == a.id else "" }}>

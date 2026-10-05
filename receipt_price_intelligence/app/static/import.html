@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Upload several receipts</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 26px 16px; text-align: center; color: var(--muted); cursor: pointer; background: var(--surface); }
+    .drop.over { border-color: var(--accent); background: var(--accent-soft, rgba(15,157,107,.08)); }
+    .drop svg { width: 30px; height: 30px; color: var(--faint); }
+    .files { display: grid; gap: 6px; }
+    .file { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    .file .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: .92rem; }
+    .file .meta { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+    .file a { text-decoration: underline; }
+    .err { color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div class="page narrow">
+    <div class="topbar">
+      <a class="back" href="index.html" id="backLink"></a>
+      <div class="grow"><h1>Upload several receipts</h1><div class="sub" id="homeLine"></div></div>
+      <span id="homeSwitch"></span>
+    </div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/import.js"></script>
+</body>
+</html>

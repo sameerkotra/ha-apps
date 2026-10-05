@@ -1,10 +1,11 @@
-"""Background jobs (SPEC §10): every tick (20 s) held pushes, due reminders and
-poll closing; every minute home/away; every 5 minutes the chat files folder; hourly unsent uploads; nightly retention,
+"""Background jobs (SPEC §10): every tick (20 s) held pushes, due reminders,
+poll closing and the app-messages outbox (APP_MESSAGES_SPEC §4); every minute home/away; every 5 minutes the chat files folder; hourly unsent uploads; nightly retention,
 _deleted purge, missing files, orphan thumbnails."""
 import logging
 from datetime import timedelta
 
-from . import avatars, chats, config, db, disappearing, files, notifier, presence, scheduled, settings, shared_folders
+from . import (app_messages, avatars, chats, config, db, disappearing, files, notifier, presence, scheduled, settings,
+               shared_folders)
 from .live import hub
 
 logger = logging.getLogger("housekeeping")
@@ -127,7 +128,8 @@ def _safe(fn, *args):
 
 
 def tick(n: int) -> None:
-    for job in (disappearing.run_expiry, scheduled.run_due, notifier.flush, due_reminders, close_due_polls, hub.expire):
+    for job in (disappearing.run_expiry, scheduled.run_due, notifier.flush, due_reminders, close_due_polls, hub.expire,
+                app_messages.run_outbox):
         _safe(job)
     if n % 3 == 0:
         try:

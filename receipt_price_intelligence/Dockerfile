@@ -9,12 +9,15 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends poppler-utils fontconfig fonts-dejavu-core tzdata && \
     rm -rf /var/lib/apt/lists/*
 
+# pdfworker: the PDF tools run as this user (no home, no login), never as root, with resource limits
+# (app/common/sandbox_run.py; tools/check_build.py checks the user is made).
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin pdfworker
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY frontend ./frontend
 
 # Everything the app keeps is in /data (the Supervisor provides it and backs it up).
 ENV DATABASE_PATH=/data/receipt_price_intelligence.db \

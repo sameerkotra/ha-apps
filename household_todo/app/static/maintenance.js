@@ -853,12 +853,14 @@ function customSuggestionForm(s, a, again) {
 // ---------------------------------------------------------------------------------------------------
 // App settings: the maintenance files folder (checked before saving; never moves files)
 // ---------------------------------------------------------------------------------------------------
-function maintFolderCard(status) {
-  const input = h("input", { type: "text", value: status.path || "", placeholder: "/share/household/maintenance", "aria-label": "Maintenance files folder", spellcheck: "false" });
+// The maintenance files folder on Admin → App settings (common/settings.js draws the label and help):
+// whether it's connected, Check, and the check's verdict. folder.check() is used again before saving.
+function maintFolderControl(page, folder) {
+  const input = h("input", { type: "text", id: "set-maintenance_files_path", value: page.value("maintenance_files_path") || "",
+    placeholder: "/share/household/maintenance", "aria-label": "Maintenance files folder", spellcheck: "false" });
   const verdict = h("div", { class: "hint" });
   const err = h("div", { class: "error-text" });
   const checkBtn = h("button", { class: "btn-ghost", type: "button" }, "Check");
-  const saveBtn = h("button", { class: "btn-primary", type: "button" }, "Save folder");
   const statusLine = h("div", { class: "hint", style: "margin:6px 0" });
   const paintStatus = (s) => mount(statusLine, h("span", null, !s.configured ? "Not set — attaching files is off."
     : [h("strong", { style: s.online ? "color:var(--accent)" : "color:var(--danger)" }, s.online ? "● Connected" : "● Not connected"),
@@ -870,29 +872,17 @@ function maintFolderCard(status) {
         if (!confirm("Set this folder up for maintenance files (creating what the app needs)?")) return;
         try { paintStatus(await adminApi("/api/admin/maintenance/files/check", { method: "POST", body: { useThisFolder: true, confirm: true } })); } catch (e) { fail(e); }
       } }, "Use this folder")] : null]));
-  paintStatus(status);
-  let last = null;
-  checkBtn.addEventListener("click", async () => {
+  if (page.data.maintenanceFiles) paintStatus(page.data.maintenanceFiles);
+  folder.check = async () => {
     err.textContent = "";
-    try { last = await adminApi("/api/admin/settings/check-maintenance-folder", { method: "POST", body: { path: input.value.trim() } }); verdict.textContent = last.message; }
-    catch (e) { err.textContent = e.message; }
-  });
-  saveBtn.addEventListener("click", async () => {
-    err.textContent = "";
-    const path = input.value.trim();
     try {
-      const info = await adminApi("/api/admin/settings/check-maintenance-folder", { method: "POST", body: { path } });
+      const info = await adminApi("/api/admin/settings/check-maintenance-folder", { method: "POST", body: { path: input.value.trim() } });
       verdict.textContent = info.message;
-      if (info.refused) return;
-      if (info.needsConfirm && !confirm(info.message + "\n\nUse this folder anyway?")) return;
-      const res = await adminApi("/api/admin/settings", { method: "PUT", body: { maintenance_files_path: path, confirm: !!info.needsConfirm } });
-      paintStatus(res.maintenanceFiles);
-      toast(path ? "Files folder saved" : "Attaching files is off");
-    } catch (e) { err.textContent = e.message; }
-  });
-  return h("div", { class: "card", id: "maintFolderCard" }, h("h3", null, "Maintenance files folder"),
-    h("div", { class: "hint", style: "margin-bottom:8px" }, "Manuals, receipts and photos for Maintenance are kept in a folder inside /share (a network share mounted in Home Assistant works too). Saving creates the folder and what the app needs. Changing it later never moves files. Blank turns attaching files off."),
-    statusLine,
-    h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Folder", input), checkBtn, saveBtn),
-    verdict, err);
+      return info;
+    } catch (e) { err.textContent = e.message; return null; }
+  };
+  checkBtn.addEventListener("click", () => folder.check());
+  input.addEventListener("input", () => { verdict.textContent = ""; err.textContent = ""; page.set("maintenance_files_path", input.value.trim()); });
+  return h("div", { class: "sp-folder", id: "maintFolderCard" }, statusLine,
+    h("div", { class: "sp-folder-row" }, input, checkBtn), verdict, err);
 }

@@ -14,13 +14,13 @@ The match's results come from each person's own score (POST /api/scores on a ses
 import asyncio
 import json
 import logging
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, WebSocket
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 
 from .. import auth, db, games, settings, together
+from ..common import auth_core, web_security
 from ..auth import get_current_user
 
 logger = logging.getLogger("together")
@@ -155,18 +155,15 @@ async def live(ws: WebSocket, match_id: str):
     """Messages from the phone: {"t": "state", score, level, over, paused} (and {"t": "ping"}); to the phone:
     {"t": "match", ...the match as it sees it}. The middleware that keeps outsiders away doesn't see WebSockets,
     so the source address and the origin are checked here."""
-    host = ws.client.host if ws.client else None
-    if host not in auth.INGRESS_ALLOWED_HOSTS:
+    if not auth_core.from_ingress(ws, auth.INGRESS_ALLOWED_HOSTS):
         await _close(ws)
         return
-    origin = ws.headers.get("origin")
-    if origin and urlparse(origin).netloc != ws.headers.get("host"):
+    if web_security.cross_origin_websocket(ws):
         await _close(ws)
         return
     try:
-        user = await run_in_threadpool(auth.load_user, ws.headers.get("x-remote-user-id"),
-                                       ws.headers.get("x-remote-user-name"),
-                                       ws.headers.get("x-remote-user-display-name"))
+        ident = auth_core.identity(ws)
+        user = await run_in_threadpool(auth.load_user, ident.user_id, ident.username, ident.display_name)
     except HTTPException:
         await _close(ws)
         return

@@ -9,7 +9,8 @@ headers' values (never the request's headers wholesale).
 """
 from fastapi import APIRouter, Depends, Request
 
-from .. import config, db, ha_notify, settings
+from .. import config, db, settings
+from ..common import ha_notify, whoami as whoami_core
 from ..auth import get_acting_user
 
 router = APIRouter(prefix="/api", tags=["me"])
@@ -18,23 +19,21 @@ router = APIRouter(prefix="/api", tags=["me"])
 @router.get("/whoami")
 def whoami(request: Request, acting: dict = Depends(get_acting_user)):
     real = acting["real"]
-    return {
-        "haUserId": real["id"],
-        "haUsername": real["username"],
-        "haDisplayName": real["name"],
-        "isAdmin": real["is_admin"],
-        "actingAs": {"id": acting["id"], "name": acting["name"]} if acting["acting"] else None,
-        # diagnostics
-        "nameSent": bool(real["username"]),
-        "viaIngress": "x-ingress-path" in request.headers,
-        "adminEntries": len(config.ADMIN_NAMES),
-        "notifyEntries": _notify_people(),
-        "notifyLinked": bool(ha_notify.services_for(real)),
-        # nobody is listed in admin_users yet: every page shows "No admin yet" (nobody is auto-promoted)
-        "noAdmins": len(config.ADMIN_NAMES) == 0,
-        "maintenance": {"enabled": bool(settings.get("maintenance_enabled"))},
-        "driveTimes": {"enabled": settings.drive_times_enabled()},
-    }
+    linked = bool(ha_notify.services_for(real))
+    hint = ("No phone is linked to you yet. In Home Assistant: Settings → People → you → Track device (your phone with "
+            "the Companion app). Or add a service under Admin → Users." if real["is_admin"] else
+            "No phone is linked to you yet. In Home Assistant: Settings → People → you → Track device (your phone with "
+            "the Companion app) — or ask an admin. It's picked up within 5 minutes.")
+    return whoami_core.build(
+        request, user_id=real["id"], username=real["username"], display_name=real["name"],
+        is_admin=real["is_admin"], admin_entries=len(config.ADMIN_NAMES), notify_linked=linked,
+        extras=[whoami_core.notify_row(linked, label="Reminder service linked", hint=hint)],
+        # the rest is for the app's own code (state.me): who an admin is acting as, and what's switched on
+        actingAs={"id": acting["id"], "name": acting["name"]} if acting["acting"] else None,
+        notifyEntries=_notify_people(),
+        maintenance={"enabled": bool(settings.get("maintenance_enabled"))},
+        driveTimes={"enabled": settings.drive_times_enabled()},
+    )
 
 
 def _notify_people() -> int:

@@ -9,9 +9,9 @@ import sqlite3
 import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
 
 from . import config
+from .common import backup_core, db_core
 
 logger = logging.getLogger("db")
 
@@ -416,23 +416,12 @@ def new_id() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DB_PATH, timeout=15)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return db_core.connect(config.DB_PATH, timeout=15, pragmas=("foreign_keys = ON",))
 
 
-@contextmanager
 def get_conn():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+    return db_core.transaction(_connect)
 
 
 def init_db() -> None:
@@ -447,50 +436,36 @@ def init_db() -> None:
         conn.close()
 
 
-def _columns(conn, table: str) -> set:
-    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+# Columns databases made by older versions lack: (table, column, definition), added in this order.
+MIGRATIONS = [
+    ("users", "last_seen", "TEXT"),
+    ("users", "export_last", "TEXT"),
+    ("people", "never_export", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "kin_lang", "TEXT CHECK (kin_lang IN ('en','te','hi'))"),              # NULL = App setting
+    ("people", "given_local", "TEXT"),
+    ("people", "surname_local", "TEXT"),
+    ("people", "name_order", "TEXT CHECK (name_order IN ('given_first','surname_first'))"),
+    ("users", "name_display", "TEXT CHECK (name_display IN ('en','script','both'))"),
+    ("people", "merged_into", "TEXT REFERENCES people(id)"),                          # (§13.4)
+    ("events", "time", "TEXT"),                                                       # birth / death time "HH:MM"
+    ("users", "kid_pin_hash", "TEXT"),                                                # (§13.13)
+    ("media", "edit", "TEXT"),                                                        # (§13.19, §13.10)
+    ("media", "unsorted", "INTEGER NOT NULL DEFAULT 0"),
+    ("media", "orig_name", "TEXT"),
+    ("media", "orig_sha256", "TEXT"),
+    ("media", "edit_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("reminder_prefs", "tithi", "INTEGER NOT NULL DEFAULT 1"),                        # (§13.12, §13.15)
+    ("reminder_prefs", "tithi_lead_days", "INTEGER NOT NULL DEFAULT 7 CHECK (tithi_lead_days BETWEEN 0 AND 30)"),
+    ("reminder_prefs", "milestones", "INTEGER NOT NULL DEFAULT 1"),
+    ("people", "photo_region_id", "TEXT REFERENCES media_regions(id) ON DELETE SET NULL"),
+    ("people", "remind", "INTEGER NOT NULL DEFAULT 0"),                               # off for everyone
+]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Additive migrations for databases made by older versions."""
-    users = _columns(conn, "users")
-    if "last_seen" not in users:
-        conn.execute("ALTER TABLE users ADD COLUMN last_seen TEXT")
-    if "export_last" not in users:
-        conn.execute("ALTER TABLE users ADD COLUMN export_last TEXT")
-    if "never_export" not in _columns(conn, "people"):
-        conn.execute("ALTER TABLE people ADD COLUMN never_export INTEGER NOT NULL DEFAULT 0")
-    if "kin_lang" not in users:                                        # NULL = App setting
-        conn.execute("ALTER TABLE users ADD COLUMN kin_lang TEXT CHECK (kin_lang IN ('en','te','hi'))")
-    people = _columns(conn, "people")
-    for col, ddl in (("given_local", "TEXT"), ("surname_local", "TEXT"),
-                     ("name_order", "TEXT CHECK (name_order IN ('given_first','surname_first'))")):
-        if col not in people:
-            conn.execute(f"ALTER TABLE people ADD COLUMN {col} {ddl}")
-    if "name_display" not in users:
-        conn.execute("ALTER TABLE users ADD COLUMN name_display TEXT CHECK (name_display IN ('en','script','both'))")
-    if "merged_into" not in _columns(conn, "people"):                  # (§13.4)
-        conn.execute("ALTER TABLE people ADD COLUMN merged_into TEXT REFERENCES people(id)")
-    if "time" not in _columns(conn, "events"):                          # birth / death time "HH:MM"
-        conn.execute("ALTER TABLE events ADD COLUMN time TEXT")
-    if "kid_pin_hash" not in _columns(conn, "users"):                  # (§13.13)
-        conn.execute("ALTER TABLE users ADD COLUMN kid_pin_hash TEXT")
-    media_cols = _columns(conn, "media")
-    for col, ddl in (("edit", "TEXT"), ("unsorted", "INTEGER NOT NULL DEFAULT 0"),      # (§13.19, §13.10)
-                     ("orig_name", "TEXT"), ("orig_sha256", "TEXT"), ("edit_version", "INTEGER NOT NULL DEFAULT 0")):
-        if col not in media_cols:
-            conn.execute(f"ALTER TABLE media ADD COLUMN {col} {ddl}")
+    db_core.add_missing_columns(conn, MIGRATIONS)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_media_orig ON media(orig_sha256)")
-    prefs = _columns(conn, "reminder_prefs")
-    for col, ddl in (("tithi", "INTEGER NOT NULL DEFAULT 1"),                             # (§13.12, §13.15)
-                     ("tithi_lead_days", "INTEGER NOT NULL DEFAULT 7 CHECK (tithi_lead_days BETWEEN 0 AND 30)"),
-                     ("milestones", "INTEGER NOT NULL DEFAULT 1")):
-        if col not in prefs:
-            conn.execute(f"ALTER TABLE reminder_prefs ADD COLUMN {col} {ddl}")
-    if "photo_region_id" not in _columns(conn, "people"):
-        conn.execute("ALTER TABLE people ADD COLUMN photo_region_id TEXT REFERENCES media_regions(id) ON DELETE SET NULL")
-    if "remind" not in _columns(conn, "people"):                       # off for everyone
-        conn.execute("ALTER TABLE people ADD COLUMN remind INTEGER NOT NULL DEFAULT 0")
     # feature switches: on where the module already has data (features.py)
     from . import features
     features.migrate(conn, config.now_iso())
@@ -511,47 +486,23 @@ def backup_to_file(path: str) -> None:
     """Consistent snapshot through sqlite3's backup API (never a file copy: WAL)."""
     src = _connect()
     try:
-        dst = sqlite3.connect(path)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
+        db_core.snapshot(src, path)
     finally:
         src.close()
 
 
 def validate_db_file(path: str) -> None:
     """ValueError with a user-facing message if `path` isn't a Family Tree DB."""
-    try:
-        conn = sqlite3.connect(path)
-        try:
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                raise ValueError(f"The database in that backup failed an integrity check ({integrity}).")
-            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            missing = REQUIRED_TABLES - tables
-            if missing:
-                raise ValueError("That doesn't look like a Family Tree backup "
-                                 f"(missing tables: {', '.join(sorted(missing))}).")
-        finally:
-            conn.close()
-    except sqlite3.DatabaseError:
-        raise ValueError("The database in that backup isn't a valid SQLite file.")
+    db_core.validate_file(
+        path, REQUIRED_TABLES,
+        integrity_msg="The database in that backup failed an integrity check ({integrity}).",
+        missing_msg="That doesn't look like a Family Tree backup (missing tables: {missing}).",
+        invalid_msg="The database in that backup isn't a valid SQLite file.")
 
 
 def replace_db(tmp_path: str) -> None:
     """Swap the live DB for an already-validated file, then migrate it."""
-    with _import_lock:
-        try:
-            with get_conn() as c:
-                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except sqlite3.Error:
-            pass
-        os.replace(tmp_path, config.DB_PATH)
-        for ext in ("-wal", "-shm"):
-            if os.path.exists(config.DB_PATH + ext):
-                os.remove(config.DB_PATH + ext)
-        init_db()
+    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
 
 
 def temp_path_in_data(suffix: str) -> str:

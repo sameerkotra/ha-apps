@@ -1,0 +1,46 @@
+name: "Household Docs"
+version: "1.0.1"
+slug: household_docs
+description: >-
+  Notes and checklists for your household, kept as plain files in Home
+  Assistant's /share folder, shared with chosen people or everyone. Everyone
+  signs in with their Home Assistant account.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+  - armv7
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8105
+panel_icon: mdi:file-document-multiple
+panel_title: Docs
+# false = every Home Assistant user sees the panel (the whole household uses it).
+panel_admin: false
+# Ingress-only: no `ports:`. The Supervisor's authenticated ingress proxy is the
+# only way in, which is what makes trusting X-Remote-User-* safe (see main.py).
+# Home Assistant API: the people (person.*) and their phones, notifications,
+# and Home Assistant's time zone. No other Supervisor or Home Assistant access.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+# Every document is a plain file in a folder inside /share (default
+# /share/household_docs, chosen in the app under Admin -> Documents folder).
+map:
+  - type: share
+    read_only: false
+environment:
+  DATA_DIR: /data
+  SHARE_DIR: /share
+  PORT: "8105"
+# admin_users is the only app option (the Configuration tab): it's how the first
+# admin is known. Everything else is set in the app under Admin -> App settings.
+options:
+  admin_users: []
+schema:
+  admin_users:
+    - "str"

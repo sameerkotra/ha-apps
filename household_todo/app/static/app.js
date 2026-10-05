@@ -26,40 +26,8 @@ const ICON_PRESETS = [
   ["mdi:bell-outline", "🔔", "Bell"],
 ];
 
-// ---------- tiny DOM helper ----------
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  let value;
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "class") el.className = v;
-      else if (k === "dataset") Object.assign(el.dataset, v);
-      else if (k === "style") el.style.cssText = v;
-      else if (k === "value") value = v;              // applied after the children (<select> options)
-      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (v === true) el.setAttribute(k, "");
-      else el.setAttribute(k, v);
-    }
-  }
-  const add = (kid) => {
-    if (kid === null || kid === undefined || kid === false) return;
-    if (Array.isArray(kid)) kid.forEach(add);
-    else if (kid instanceof Node) el.appendChild(kid);
-    else el.appendChild(document.createTextNode(String(kid)));
-  };
-  kids.forEach(add);
-  if (value !== undefined) el.value = value;
-  return el;
-}
-const $ = (sel, root = document) => root.querySelector(sel);
-function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
-function mount(el, ...kids) {
-  clear(el);
-  const add = (k) => { if (!k) return; if (Array.isArray(k)) k.forEach(add); else el.appendChild(k); };
-  kids.forEach(add);
-  return el;
-}
+// ---------- tiny DOM helpers (common/ui.js) ----------
+const { h, $, clear, mount, lsGet, lsSet } = UI;
 function spinner() { return h("div", { class: "spinner" }, "Loading…"); }
 
 function toggleSwitch(checked, onChange, opts = {}) {
@@ -69,8 +37,6 @@ function toggleSwitch(checked, onChange, opts = {}) {
 }
 
 // ---------- safe storage (localStorage can throw or be empty) ----------
-function lsGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
-function lsSet(key, val) { try { localStorage.setItem(key, val); } catch (e) { /* ignore */ } }
 function ssGet(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
 function ssSet(key, val) {
   try { if (val === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, val); } catch (e) { /* ignore */ }
@@ -82,75 +48,18 @@ function withUser(path) {
   return path + (path.includes("?") ? "&" : "?") + "as_user=" + encodeURIComponent(state.actAs);
 }
 
-function errorMessage(detail, status) {
-  if (typeof detail === "string" && detail) return detail;
-  if (Array.isArray(detail) && detail.length) {
-    // FastAPI's own validation errors: [{loc, msg, type}, ...]
-    return detail.map((d) => (d && d.msg) || String(d)).join("; ");
-  }
-  return `Something went wrong (HTTP ${status}).`;
-}
+const errorMessage = UI.errorMessage;
+// asSelf: true sends the request as the real caller even while an admin is acting as someone else.
+const api = UI.makeApi({ url: (path, opts) => (opts.asSelf ? path : withUser(path)).replace(/^\//, "") });
 
-async function api(path, opts = {}) {
-  const { method = "GET", body, formData, asSelf = false } = opts;
-  const url = (asSelf ? path : withUser(path)).replace(/^\//, "");
-  const init = { method, headers: {} };
-  if (body !== undefined) {
-    init.headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(body);
-  } else if (formData) {
-    init.body = formData;
-  }
-  let res;
-  try {
-    res = await fetch(url, init);
-  } catch (e) {
-    throw new Error("Can't reach the app. Check your connection and try again.");
-  }
-  if (!res.ok) {
-    let detail = null;
-    try { detail = (await res.json()).detail; } catch (e) { /* not JSON */ }
-    const err = new Error(errorMessage(detail, res.status));
-    err.status = res.status;
-    throw err;
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
-
-// ---------- toasts & modals ----------
-function toast(msg, isError = false) {
-  const el = h("div", { class: "toast" + (isError ? " error" : "") }, msg);
-  $("#toastRoot").appendChild(el);
-  setTimeout(() => el.remove(), isError ? 6000 : 3000);
-}
+// ---------- toasts & modals (common/ui.js) ----------
+function toast(msg, isError = false) { UI.toast(msg, { error: isError, ms: isError ? 6000 : 3000 }); }
 function fail(e) { toast(e && e.message ? e.message : String(e), true); }
 
-let modalStack = [];
 function openModal(title, content, opts = {}) {
-  const closeBtn = h("button", { class: "icon-btn", "aria-label": "Close", type: "button" }, "✕");
-  const modal = h("div", { class: "modal" + (opts.sheet ? " sheet" : ""), role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("h3", null, h("span", null, title), closeBtn), content);
-  const backdrop = h("div", { class: "modal-backdrop" }, modal);
-  let downOnBackdrop = false;
-  backdrop.addEventListener("mousedown", (e) => { downOnBackdrop = e.target === backdrop; });
-  backdrop.addEventListener("click", (e) => { if (e.target === backdrop && downOnBackdrop) close(); });
-  const api_ = { close, el: modal };
-  function close() {
-    backdrop.remove();
-    modalStack = modalStack.filter((m) => m !== api_);
-    if (opts.onClose) opts.onClose();
-  }
-  closeBtn.addEventListener("click", close);
-  modalStack.push(api_);
-  $("#modalRoot").appendChild(backdrop);
-  const first = modal.querySelector("input:not([type=hidden]), textarea, select");
-  if (first && opts.focus !== false) first.focus();
-  return api_;
+  return UI.openModal(title, content, { modalClass: opts.sheet ? "sheet" : "", onClose: opts.onClose, escape: "stack",
+    focus: opts.focus === false ? false : "first", focusSelector: "input:not([type=hidden]), textarea, select", focusDelay: 0 });
 }
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && modalStack.length) modalStack[modalStack.length - 1].close();
-});
 
 // ---------- dates (all display formatting; the server owns the maths) ----------
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -366,6 +275,7 @@ function taskRow(t, opts = {}) {
     driveChip(t),
     t.assigneeName ? h("span", { class: "chip" }, "👤 ", t.assigneeName) : null,
     linkChip(t.url),
+    t.source ? h("span", { class: "chip source", title: `Added from Household ${t.source}` }, "from " + t.source) : null,
     t.fileCount ? h("span", { class: "chip", title: "Files" }, "📎 ", String(t.fileCount)) : null,
     showList ? h("span", { class: "plain" }, t.listKind === "personal" ? "in My lists · " : "in ", t.listName) : null,
   ].filter(Boolean));
@@ -1934,8 +1844,6 @@ function editPlace(p, again) {
 // Settings: reminders (per user), task types, appearance
 // =====================================================================
 
-const THEME_OPTIONS = [["ink", "🌑 Ink"], ["slate", "🌆 Slate"], ["daylight", "☀️ Daylight"]];
-
 const DOW_OPTIONS = [[1, "Monday"], [2, "Tuesday"], [3, "Wednesday"], [4, "Thursday"], [5, "Friday"], [6, "Saturday"], [7, "Sunday"]];
 const OFFSET_UNITS = [["hours", 60], ["minutes", 1], ["days", 1440]];
 const MAX_REMINDER_OFFSETS = 5;
@@ -1946,17 +1854,9 @@ function formatOffset(minutes) {
   return `${minutes} minute${minutes === 1 ? "" : "s"} before`;
 }
 
-function currentTheme() { return document.documentElement.getAttribute("data-theme") || "ink"; }
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  lsSet("theme", theme);
-  document.querySelectorAll("select[data-theme-select]").forEach((s) => { s.value = theme; });
-}
+// The page theme (common/theme-boot.js): every Theme menu shows and changes the same choice.
 function themeSelect(extra = {}) {
-  const sel = h("select", { ...extra, "data-theme-select": "1", value: currentTheme(), "aria-label": "Theme" },
-    THEME_OPTIONS.map(([v, l]) => h("option", { value: v }, l)));
-  sel.addEventListener("change", () => applyTheme(sel.value));
-  return sel;
+  return HouseholdTheme.bindSelect(h("select", { ...extra, "aria-label": "Theme" }));
 }
 
 async function renderSettings() {
@@ -1974,46 +1874,15 @@ async function renderSettings() {
 
 // "How the app sees you": exactly what Home Assistant sent, whether it matched
 // admin_users, and whether an admin linked a notify service (Admin → Users). Always the real signed-in person, even while an
-// admin is acting as someone else. Read-only; shows counts, never the lists.
+// admin is acting as someone else. Read-only; shows counts, never the lists. Drawn by common/whoami.js.
 async function whoamiCard() {
   const w = await api("/api/whoami", { asSelf: true });
-  const name = w.nameSent ? w.haUsername : null;
-  const row = (label, value, copy) => h("div", { class: "kv-row" },
-    h("div", { class: "kv-label" }, label),
-    h("div", { class: "kv-value" }, value,
-      copy ? h("button", { class: "icon-btn", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: () => copyText(copy) }, "⧉") : null));
-  const yesNo = (v) => h("strong", null, v ? "Yes" : "No");
-
-  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-  let adminAdvice;
-  if (w.isAdmin) adminAdvice = "You are an administrator.";
-  else if (w.adminEntries === 0) {
-    adminAdvice = h("span", null, "The ", h("code", null, "admin_users"), " list is ", h("strong", null, "empty"),
-      " in the running app. If you have filled it in, the app hasn't picked it up yet: changes on the app's Configuration tab only take effect after it is ",
-      h("strong", null, "restarted"), " (Settings → Apps → Household Todo → Information → Restart).");
-  } else {
-    adminAdvice = h("span", null, `Neither your user name nor your user id above matches any of the ${plural(w.adminEntries, "name")} in the `,
-      h("code", null, "admin_users"), " list. Add ", h("strong", null, name || w.haUserId), " (or ", h("strong", null, w.haUserId),
-      ") exactly as shown, save, and ", h("strong", null, "restart"), " the app — the list is only read when the app starts. Upper and lower case don't matter.");
-  }
-  let notifyAdvice = null;
-  if (!w.notifyLinked) {
-    notifyAdvice = w.isAdmin
-      ? h("span", null, "No phone is linked to you yet. In Home Assistant: Settings → People → you → Track device (your phone with the Companion app). Or add a service under ",
-          h("button", { class: "link-btn", type: "button", onclick: () => showTab("admin", { sub: "users" }) }, "Admin → Users"), ".")
-      : h("span", null, "No phone is linked to you yet. In Home Assistant: Settings → People → you → Track device (your phone with the Companion app) — or ask an admin. It's picked up within 5 minutes.");
-  }
-
   return h("div", { class: "card", id: "whoamiCard" }, h("h3", null, "How the app sees you"),
-    h("div", { class: "kv" },
-      row("User name (sent by Home Assistant)", name || "not sent", name),
-      row("User id (sent by Home Assistant)", h("code", null, w.haUserId), w.haUserId),
-      row("Display name (not used for matching)", w.haDisplayName),
-      row("Administrator in this app", yesNo(w.isAdmin)),
-      row("Names in the app's admin_users", String(w.adminEntries)),
-      row("Reminder service linked", yesNo(w.notifyLinked))),
-    h("div", { class: "hint", style: "margin-top:8px" }, adminAdvice),
-    notifyAdvice ? h("div", { class: "hint", style: "margin-top:6px" }, notifyAdvice) : null);
+    HouseholdWhoami.panel(w, {
+      appName: "Household Todo",
+      adviceTag: "div", adviceStyle: "margin-top:8px",
+      onCopy: (text) => copyText(text),
+    }));
 }
 
 async function remindersCard() {
@@ -2189,249 +2058,100 @@ function hostOf(url) {
   try { return new URL(url).host; } catch (e) { return url; }
 }
 
-const SETTING_LABELS = {
-  expose_schedule_sensors: "Expose schedule items to Home Assistant",
-  sensor_refresh_minutes: "Sensor refresh (minutes)",
-  drive_times_enabled: "Drive times (uses OpenStreetMap services)",
-  home_address: "Home address",
-  osrm_url: "Routing server (OSRM)",
-  nominatim_url: "Address lookup server (Nominatim)",
-  avoid_tolls: "Avoid toll roads",
-  notify_place_details: "Place details in reminders",
-};
-
+// Drawn by common/settings.js from the server's description of each setting; this app adds the drive-time
+// privacy note and the maintenance files folder (checked before it is saved).
 async function renderAppSettings(box) {
   mount(box, spinner());
   let data;
   try { data = await adminApi("/api/admin/settings"); }
   catch (e) { mount(box, errorCard(e, () => renderAppSettings(box))); return; }
-
-  const saved = { ...data.values };
-  const inputs = {};
-  const err = h("div", { class: "error-text", id: "settingsError", role: "alert" });
-  const saveBtn = h("button", { class: "btn-primary", type: "button", id: "saveSettings", disabled: true }, "Save");
-  const revertBtn = h("button", { class: "btn-ghost", type: "button", disabled: true }, "Discard changes");
-
-  const current = () => {
-    const v = {};
-    for (const [k, el] of Object.entries(inputs)) {
-      if (el.type === "checkbox") v[k] = el.checked;
-      else if (el.type === "number") v[k] = el.value.trim() === "" ? NaN : Number(el.value);
-      else v[k] = el.value.trim();
-    }
-    return v;
-  };
-  const changes = () => {
-    const now = current();
-    const out = {};
-    for (const k of Object.keys(now)) {
-      const a = now[k], b = saved[k];
-      if (typeof b === "string" ? a !== b.trim() : a !== b) out[k] = a;
-    }
-    return out;
-  };
-  const refreshButtons = () => {
-    const dirty = Object.keys(changes()).length > 0;
-    saveBtn.disabled = !dirty;
-    revertBtn.disabled = !dirty;
-  };
-  const restartBadge = (k) => (data.meta[k] && data.meta[k].restartRequired)
-    ? h("span", { class: "chip warn-chip", title: "Takes effect after the app restarts" }, "restart needed") : null;
-  const label = (k, sub) => h("div", null, h("div", null, SETTING_LABELS[k], restartBadge(k)), sub ? h("div", { class: "sub" }, sub) : null);
-
-  const text = (k, attrs = {}) => {
-    const el = h("input", { type: "text", value: saved[k], id: "set-" + k, "aria-label": SETTING_LABELS[k], ...attrs });
-    el.addEventListener("input", refreshButtons);
-    inputs[k] = el;
-    return el;
-  };
-  const toggle = (k) => {
-    const wrap = toggleSwitch(saved[k], refreshButtons, { label: SETTING_LABELS[k] });
-    const el = wrap.querySelector("input");
-    el.id = "set-" + k;
-    inputs[k] = el;
-    return wrap;
-  };
-  const fieldRow = (k, sub, control) => h("div", { class: "setting-row" }, label(k, sub), control);
-
-  const d = data.defaults;
-  // the rest of the drive-time settings only matter (and only show) while the switch is on
-  const driveFields = h("div", { id: "driveFields" },
-    h("label", { class: "field wide" }, "Home address", text("home_address", { maxlength: "300", placeholder: "e.g. 12 Example Street, Springfield" }),
-      h("span", { class: "hint" }, "Drive times are estimated from here to every saved place. Leave blank and nothing is looked up.")),
-    h("label", { class: "field wide" }, SETTING_LABELS.osrm_url, text("osrm_url", { type: "url", maxlength: "500", placeholder: d.osrm_url }),
-      h("span", { class: "hint" }, "Blank uses the public OSRM demo server. Change it if you run your own.")),
-    h("label", { class: "field wide" }, SETTING_LABELS.nominatim_url, text("nominatim_url", { type: "url", maxlength: "500", placeholder: d.nominatim_url }),
-      h("span", { class: "hint" }, "Blank uses OpenStreetMap's public Nominatim service. Change it if you run your own.")),
-    fieldRow("avoid_tolls", "Estimate on routes without toll roads, falling back to the fastest route when there isn't one. Changing it re-calculates every place.",
-      toggle("avoid_tolls")));
-  const syncDriveFields = () => { driveFields.hidden = !inputs.drive_times_enabled.checked; };
-  mount(box,
-    h("div", { class: "hint", style: "margin:0 2px 12px" }, "Each person picks their own daily reminder time under Settings → Reminders → Send at (08:00 until they change it)."),
-    h("div", { class: "card" }, h("h3", null, "Home Assistant sensors"),
-      fieldRow("expose_schedule_sensors", "Publish each schedule item as binary_sensor.household_todo_<name>. Turning this off removes them from Home Assistant.",
-        toggle("expose_schedule_sensors")),
-      fieldRow("sensor_refresh_minutes", `How often every sensor is re-published (1–1440). Changes you make are pushed immediately; this is the safety net after a Home Assistant restart. Default ${d.sensor_refresh_minutes}.`,
-        text("sensor_refresh_minutes", { type: "number", min: "1", max: "1440", step: "1", style: "width:90px" }))),
-    h("div", { class: "card", id: "driveTimesCard" }, h("h3", null, "Drive time"),
-      fieldRow("drive_times_enabled", "Estimated drive time from home to each saved place, and a “leave by” time on tasks and reminders that have a place and a time.",
-        toggle("drive_times_enabled")),
-      h("div", { class: "hint", id: "drivePrivacyNote", style: "margin:4px 0 10px" },
-        "Privacy: with this on, your home address and every saved place's address are sent to the address lookup server (",
-        h("code", null, hostOf(saved.nominatim_url || d.nominatim_url)), ") to find them on the map, and the resulting coordinates to the routing server (",
-        h("code", null, hostOf(saved.osrm_url || d.osrm_url)), "). By default these are OpenStreetMap's public services, with their own usage policies. Nothing else is sent: no task titles, notes or names. To keep addresses at home, run your own servers and enter their addresses below. Off: nothing is sent and no drive times are shown."),
-      driveFields),
-    h("div", { class: "card", id: "remindersCard" }, h("h3", null, "Reminders"),
-      fieldRow("notify_place_details", "Reminders and “assigned to you” notifications for a task or schedule item with a place show its address and phone, with Directions and Call buttons on the phone; the daily digest and weekly summary add the address under the item. Off: only the place's name is sent.",
-        toggle("notify_place_details"))),
-    data.maintenanceFiles ? maintFolderCard(data.maintenanceFiles) : null,
-    h("div", { class: "hint", style: "margin:0 2px 10px" }, "Who is an admin is set in the app's Configuration tab (",
-      h("code", null, "admin_users"), ") — that's how the first admin is known."),
-    err,
-    h("div", { class: "actions sticky-actions" }, revertBtn, saveBtn));
-  inputs.drive_times_enabled.addEventListener("change", syncDriveFields);
-  syncDriveFields();
-
-  revertBtn.addEventListener("click", () => renderAppSettings(box));
-  saveBtn.addEventListener("click", async () => {
-    err.textContent = "";
-    const body = changes();
-    if (!Object.keys(body).length) return;
-    if ("sensor_refresh_minutes" in body && !Number.isInteger(body.sensor_refresh_minutes)) {
-      err.textContent = "Sensor refresh must be a whole number of minutes from 1 to 1440."; return;
-    }
-    saveBtn.disabled = true;
-    try {
-      const res = await adminApi("/api/admin/settings", { method: "PUT", body });
-      Object.assign(saved, res.values);
-      for (const [k, el] of Object.entries(inputs)) {
-        if (el.type === "checkbox") el.checked = !!saved[k]; else el.value = saved[k];
+  const folder = { check: null };
+  // Connected apps (APP_MESSAGES_SPEC §5): a read-only card under the settings, drawn by common/connected-apps.js
+  const settingsBox = h("div"), appsBox = h("div", { class: "connected-apps-wrap" });
+  mount(box, settingsBox, appsBox);
+  adminApi("/api/admin/connected-apps").then((d) => mount(appsBox, ConnectedApps.card(d, { h }))).catch(() => {});
+  await SettingsPage.render(settingsBox, {
+    data,
+    load: () => adminApi("/api/admin/settings"),
+    save: (body) => adminApi("/api/admin/settings", { method: "PUT", body }),
+    intro: "Each person picks their own daily reminder time under Settings → Reminders → Send at (08:00 until they change it).",
+    footer: () => h("span", null, "Who is an admin is set in the app's Configuration tab (", h("code", null, "admin_users"), ") — that's how the first admin is known."),
+    fields: {
+      drive_times_enabled: {
+        after: (page) => {
+          const d = page.data.defaults;
+          return h("div", { class: "hint", id: "drivePrivacyNote", style: "margin:4px 0 0" },
+            "Privacy: with this on, your home address and every saved place's address are sent to the address lookup server (",
+            h("code", null, hostOf(page.values.nominatim_url || d.nominatim_url)), ") to find them on the map, and the resulting coordinates to the routing server (",
+            h("code", null, hostOf(page.values.osrm_url || d.osrm_url)), "). By default these are OpenStreetMap's public services, with their own usage policies. Nothing else is sent: no task titles, notes or names. To keep addresses at home, run your own servers and enter their addresses below. Off: nothing is sent and no drive times are shown.");
+        },
+      },
+      maintenance_files_path: {
+        hidden: (page) => !page.data.maintenanceFiles,
+        control: (page) => maintFolderControl(page, folder),
+      },
+    },
+    beforeSave: async (body) => {
+      if ("maintenance_files_path" in body) {
+        // like Household Chat's files folder — refused / confirmed as Check says; never moves files
+        const info = await folder.check();
+        if (!info || info.refused) return null;
+        if (info.needsConfirm && !confirm(info.message + "\n\nUse this folder anyway?")) return null;
+        body.confirm = !!info.needsConfirm;
       }
-      syncDriveFields();
-      if (state.me) state.me.driveTimes = { enabled: !!saved.drive_times_enabled };
-      toast("Settings saved");
-    } catch (e) { err.textContent = e.message; }
-    refreshButtons();
+      return body;
+    },
+    afterSave: (res, body) => {
+      if (state.me) state.me.driveTimes = { enabled: !!res.values.drive_times_enabled };
+      const msg = "maintenance_files_path" in body ? (res.values.maintenance_files_path ? "Files folder saved" : "Attaching files is off") : "Settings saved";
+      toast(msg);
+      return msg;
+    },
   });
 }
 
 // ---------- Users ----------
+// The shared people page (common/people.js) with this app's enable switch.
 async function renderUsers(box) {
   mount(box, spinner());
   let data;
   try { data = await adminApi("/api/admin/users"); }
   catch (e) { mount(box, errorCard(e, () => renderUsers(box))); return; }
   // The notify list comes from Home Assistant; the page still works without it.
-  let avail = null, availError = null;
-  try {
-    const r = await adminApi("/api/admin/notify-services");
-    if (r.available) avail = r; else availError = r.error;
-  } catch (e) { availError = e.message; }
-
+  let avail;
+  try { avail = await adminApi("/api/admin/notify-services"); }
+  catch (e) { avail = { available: false, services: [], entities: [], error: e.message }; }
   const again = () => renderUsers(box);
-  const availNote = availError
-    ? h("div", { class: "warn-box soft", id: "notifyUnavailable" }, availError, " You can still type a service name, e.g. ",
-        h("code", null, "notify.mobile_app_phone"), ". ",
-        h("button", { class: "link-btn", type: "button", onclick: async () => {
-          try { await adminApi("/api/admin/notify-services?refresh=1"); } catch (e) { /* shown again below */ }
-          again();
-        } }, "Try again"))
-    : null;
-
-  const rows = data.users.map((u) => userRow(u, avail, again));
-  mount(box,
-    h("div", { class: "card" },
-      h("div", { class: "hint", style: "margin-bottom:8px" }, "Everyone who has ever opened Household Todo. A disabled person can't be assigned new tasks; their existing tasks stay where they are."),
-      h("div", { class: "hint", style: "margin-bottom:8px" }, "📱 Phones come from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. Set a phone up there once and every household app uses it. Add an extra notify service below only for something else (a speaker, a second service). People still switch their own reminders on under Settings.",
-        " ", h("button", { class: "link-btn", type: "button", onclick: async () => { try { await adminApi("/api/admin/users?refresh=1"); again(); toast("Read from Home Assistant"); } catch (e) { fail(e); } } }, "Check Home Assistant again")),
-      availNote,
-      h("div", { class: "user-list" }, rows)));
-}
-
-function userRow(u, avail, again) {
-  const self = u.id === state.me.haUserId;
-  const status = h("span", { class: "hint", style: "display:flex;gap:8px;align-items:center" }, u.disabled ? "Disabled" : "Active",
-    toggleSwitch(!u.disabled, async (on, input) => {
-      try {
-        await adminApi(`/api/users/${encodeURIComponent(u.id)}`, { method: "PATCH", body: { disabled: !on } });
-        toast(on ? "Enabled" : "Disabled");
-        state.users = await api("/api/users");
-        again();
-      } catch (e) { input.checked = !on; fail(e); }
-    }, { disabled: self, label: `Enable ${u.name}` }));
-
-  // phones from Home Assistant (Settings → People) — read-only here
-  const ha = u.ha || { known: false, phones: [] };
-  const phoneChips = !ha.known
-    ? [h("span", { class: "hint" }, "Home Assistant's people couldn't be read yet.")]
-    : !ha.person
-      ? [h("span", { class: "hint" }, "No Home Assistant person is linked to this login (Settings → People → Allow person to login).")]
-      : ha.phones.length
-        ? ha.phones.map((p) => h("span", { class: "chip on notify-chip", title: p.service ? `${p.tracker} → ${p.service}` : `${p.tracker}: Home Assistant has no notify action for this phone` },
-            "📱 " + p.label, p.service ? null : h("span", { class: "hint" }, " (no notify action)")))
-        : [h("span", { class: "hint" }, `${ha.personName} has no phone in Home Assistant — Settings → People → ${ha.personName} → Track device.`)];
-  const haPhones = ha.phones.filter((p) => p.service);
-
-  const chips = u.notify.length
-    ? u.notify.map((s) => h("span", { class: "chip on notify-chip" }, s,
-        h("button", { class: "icon-btn", type: "button", title: "Remove", "aria-label": `Remove ${s} from ${u.name}`, onclick: async () => {
-          try { await adminApi(`/api/admin/users/${encodeURIComponent(u.id)}/notify/${encodeURIComponent(s)}`, { method: "DELETE" }); toast("Removed"); again(); }
-          catch (e) { fail(e); }
-        } }, "✕")))
-    : [h("span", { class: "hint" }, haPhones.length ? "None" : "None — no reminders until a phone is linked in Home Assistant or a service is added here.")];
-
-  // A select of what Home Assistant offers (minus what they already have),
-  // with "Type a name…" for anything else; just a text box if the list is unavailable.
-  const manual = h("input", { type: "text", placeholder: "notify.mobile_app_phone", "aria-label": `Notify service for ${u.name}`,
-    class: "notify-manual", autocomplete: "off", spellcheck: "false", maxlength: "120" });
-  let select = null;
-  if (avail) {
-    const have = new Set(u.notify);
-    const opt = (s) => h("option", { value: s }, s);
-    const services = avail.services.filter((s) => !have.has(s));
-    const entities = avail.entities.filter((s) => !have.has(s));
-    select = h("select", { "aria-label": `Choose a notify service for ${u.name}`, class: "notify-select" },
-      h("option", { value: "" }, services.length || entities.length ? "Choose a service…" : "No other services in Home Assistant"),
-      services.length ? h("optgroup", { label: "Notify actions" }, services.map(opt)) : null,
-      entities.length ? h("optgroup", { label: "Notify entities" }, entities.map(opt)) : null,
-      h("option", { value: "__manual" }, "Type a name…"));
-    manual.hidden = true;
-    select.addEventListener("change", () => { manual.hidden = select.value !== "__manual"; if (!manual.hidden) manual.focus(); });
-  }
-  const addBtn = h("button", { class: "btn-secondary btn-small", type: "button" }, "Add");
-  const add = async () => {
-    let s = (select && select.value !== "__manual" ? select.value : manual.value).trim();
-    if (!s) { toast("Choose or type a notify service first", true); return; }
-    if (!s.includes(".")) s = "notify." + s;
-    if (!NOTIFY_RE.test(s)) { toast("A notify service looks like notify.mobile_app_phone (lower-case letters, digits and _).", true); return; }
-    addBtn.disabled = true;
-    try { await adminApi(`/api/admin/users/${encodeURIComponent(u.id)}/notify`, { method: "POST", body: { service: s } }); toast(`Added ${s}`); again(); }
-    catch (e) { fail(e); addBtn.disabled = false; }
-  };
-  addBtn.addEventListener("click", add);
-  manual.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
-
-  const reachable = u.notify.length + haPhones.length;
-  const testBtn = h("button", { class: "btn-ghost btn-small", type: "button", disabled: !reachable,
-    title: reachable ? "Send a short test notification to their phones and every service listed" : "Link a phone in Home Assistant or add a notify service first" }, "Send test");
-  testBtn.addEventListener("click", async () => {
-    testBtn.disabled = true;
-    try {
-      const r = await adminApi(`/api/admin/users/${encodeURIComponent(u.id)}/notify/test`, { method: "POST", body: {} });
-      const bad = Object.entries(r.results).filter(([, ok]) => !ok).map(([s]) => s);
-      if (bad.length) toast(`Sent, but Home Assistant refused ${bad.join(", ")}`, true); else toast(`Test sent to ${u.name}`);
-    } catch (e) { fail(e); }
-    setTimeout(() => { testBtn.disabled = false; }, 1500);
+  PeoplePage.render(box, {
+    people: data.users,
+    intro: ["Everyone who has ever opened Household Todo. A disabled person can't be assigned new tasks; their existing tasks stay where they are.",
+      "📱 Phones come from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. Set a phone up there once and every household app uses it. Add an extra notify service below only for something else (a speaker, a second service). People still switch their own reminders on under Settings."],
+    checkAgain: async () => { try { await adminApi("/api/admin/users?refresh=1"); again(); toast("Read from Home Assistant"); } catch (e) { fail(e); } },
+    person: (u) => {
+      const self = u.id === state.me.haUserId;
+      return {
+        badges: [self ? ["you"] : null],
+        sub: (u.username ? `login ${u.username} · ` : "") + `first seen ${fmtStamp(u.createdAt)}`,
+        controls: h("label", { class: "pp-toggle" }, u.disabled ? "Disabled" : "Active",
+          PeoplePage.accessSwitch(!u.disabled, async (on, input) => {
+            try {
+              await adminApi(`/api/users/${encodeURIComponent(u.id)}`, { method: "PATCH", body: { disabled: !on } });
+              toast(on ? "Enabled" : "Disabled");
+              state.users = await api("/api/users");
+              again();
+            } catch (e) { input.checked = !on; fail(e); }
+          }, { disabled: self, label: `Enable ${u.name}` })),
+      };
+    },
+    notify: {
+      api: adminApi, services: avail, toast: (m, err) => toast(m, !!err), fail,
+      path: (u) => `/api/admin/users/${encodeURIComponent(u.id)}/notify`,
+      testPath: (u) => `/api/admin/users/${encodeURIComponent(u.id)}/notify/test`,
+      retry: async () => { try { await adminApi("/api/admin/notify-services?refresh=1"); } catch (e) { /* shown again */ } again(); },
+      texts: { none: (u, phones) => (phones ? "None" : "None — no reminders until a phone is linked in Home Assistant or a service is added here.") },
+    },
+    empty: "Nobody has opened Household Todo yet.",
   });
-
-  return h("div", { class: "user-row", dataset: { userId: u.id } },
-    h("div", { class: "user-head" },
-      h("span", null, h("span", { class: "name" }, u.name), self ? h("span", { class: "badge-you" }, "you") : null,
-        h("div", { class: "hint" }, u.username ? `login ${u.username} · ` : "", `first seen ${fmtStamp(u.createdAt)}`)),
-      status),
-    h("div", { class: "notify-line" }, h("span", { class: "notify-label" }, "Phones"), h("div", { class: "chip-row" }, phoneChips)),
-    h("div", { class: "notify-line" }, h("span", { class: "notify-label" }, "Also"), h("div", { class: "chip-row" }, chips)),
-    h("div", { class: "notify-add" }, select, manual, addBtn, testBtn));
 }
 
 // ---------- Storage ----------
@@ -2569,16 +2289,11 @@ function wireChrome() {
     collapse.title = collapse.ariaLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
   };
   collapse.addEventListener("click", () => {
-    const collapsed = document.documentElement.getAttribute("data-sidebar") === "collapsed";
-    if (collapsed) document.documentElement.removeAttribute("data-sidebar"); else document.documentElement.setAttribute("data-sidebar", "collapsed");
-    lsSet("sidebarCollapsed", collapsed ? "0" : "1");
+    HouseholdTheme.setSidebarCollapsed(!HouseholdTheme.sidebarCollapsed());
     syncCollapse();
   });
   syncCollapse();
-  const themeSel = $("#theme-select");
-  themeSel.dataset.themeSelect = "1";
-  themeSel.value = currentTheme();
-  themeSel.addEventListener("change", () => applyTheme(themeSel.value));
+  HouseholdTheme.bindSelect($("#theme-select"));
 }
 
 // A fresh install has nobody in admin_users, so nobody can open App settings.
@@ -2595,13 +2310,8 @@ function openWhoamiCard() {
 }
 
 function syncNoAdminBanner() {
-  const banner = $("#noAdminBanner");
-  if (!state.me || !state.me.noAdmins) { banner.hidden = true; clear(banner); return; }
-  const who = state.me.nameSent ? state.me.haUsername : state.me.haUserId;
-  banner.hidden = false;
-  mount(banner, h("span", null, "No admin yet — add your Home Assistant user name (", h("strong", null, who),
-    ") to ", h("code", null, "admin_users"), " in the app's Configuration tab, save, and restart the app. "),
-    h("button", { class: "link-btn", type: "button", id: "noAdminWhoami", onclick: openWhoamiCard }, "How the app sees you"));
+  HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), state.me && state.me.noAdmin,
+    state.me && (state.me.nameSent ? state.me.haUsername : state.me.haUserId), { onOpen: openWhoamiCard, linkId: "noAdminWhoami" });
 }
 
 async function init() {
@@ -2644,7 +2354,7 @@ function initBackNav() {
   BackNav.init({
     atHome: () => state.tab === "calendar",
     goHome: () => showTab("calendar"),   // showTab keeps the hash in sync with replaceState
-    openLayers: () => modalStack.slice(),
+    openLayers: () => UI.dialogs(),
     closeLayer: (m) => m.close(),         // the modal's own close, so onClose runs
   });
 }

@@ -49,15 +49,20 @@ Every vault is a real **KeePass KDBX 4 file**, **encrypted at rest** with its ow
 ```
 household_vault/
 ├── config.yaml  Dockerfile  requirements.txt  requirements-dev.txt  .dockerignore  README.md  DOCS.md  icon.png  logo.png
-├── translations/en.yaml   spec/SPEC.md   tests/
+├── translations/en.yaml   spec/SPEC.md   tests/ (tests/common_tests/: shared helpers and shared-module tests, copies)
 └── app/  main.py config.py auth.py db.py storage.py sessions.py keyring.py kdbx.py argon2py.py items.py search.py
           totp.py passwords.py service.py health.py importers.py emergency.py alerts.py reminders.py guest_wifi.py
-          qrcode.py copies.py settings.py ha_client.py ha_notify.py ha_people.py
+          qrcode.py copies.py settings.py ha_client.py
+          common/ (shared Python, copies): ha_notify.py ha_people.py whoami.py ha_client.py housekeeping.py auth_core.py
+                  db_core.py settings_core.py people_admin.py web_security.py backup_core.py
           routers/ me.py vaults.py items.py admin.py health.py sheet.py emergency.py guest.py quick.py common.py
-          static/ index.html theme-boot.js app.js backnav.js qr.js style.css
+          static/ index.html app.js qr.js style.css
+                  common/ (shared browser files, copies): theme-boot.js themes.css ui.js settings.js settings.css
+                          people.js backnav.js whoami.js http-warning.js
           data/ words.txt twofa_domains.txt
 ```
-- **Development:** `pip install -r requirements-dev.txt`, then `python -m unittest discover -s tests` from the app folder (the QR tests also need Node.js). `tests/test_packaging.py` checks the published package: `config.yaml` (version, url, `stage: experimental`, ingress only, no `map`), cache-busting versions, docs (including `CHANGELOG.md`, whose newest (top) version heading must match `config.yaml`), icons, and that nothing personal is in any text file.
+- **Shared code:** `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy (`tests/common_tests/test_shared_copies.py` fails if one was changed). `app/ha_client.py` is a thin module re-exporting the shared client plus the user sync; `auth.py` keeps Vault's sessions on top of the shared `auth_core`; `db.py` keeps its schema and `MIGRATIONS` on `db_core`. Vault's sessions, crypto and CSP stay its own (stricter on purpose).
+- **Development:** `pip install -r requirements-dev.txt`, then `python -m unittest discover -s tests` from the app folder (the QR tests also need Node.js). `tests/test_packaging.py` checks the published package (the shared checks from `common_tests/packaging_core.py`): `config.yaml` (version, url, `stage: experimental`, ingress only, no `map`), cache-busting versions, docs (including `CHANGELOG.md`, whose newest (top) version heading must match `config.yaml`), icons, and that nothing personal is in any text file.
 
 ## 3. Manifest & options
 - **Manifest:** `slug: household_vault`, `stage: experimental`, `url: https://github.com/sameerkotra/ha-apps`, `ingress: true`, `ingress_port: 8101`, **no `ports:`**, `panel_icon: mdi:shield-key`, `panel_admin: false`.
@@ -72,7 +77,7 @@ household_vault/
 
 **First run.** With `admin_users` empty nobody is an admin, so nobody can open Admin. `/api/me` and `/api/whoami` return `noAdmin: true` (and `/api/me` the caller's HA `username`), and every screen — lock screen, no-access, standalone pages, the unlocked shell — shows a banner: "No admin yet — add your Home Assistant user name (**<user name>**) to `admin_users` on the app's Configuration tab, save, and restart the app." with a link to *How the app sees you*. The first visitor is never promoted.
 
-App settings (Admin → App settings, admins only; `app_settings` table; validated; apply without a restart):
+App settings (Admin → App settings, admins only; `app_settings` table; validated; apply without a restart). They're declared once in `settings.py` (`SETTINGS`, `GROUPS`: Security, Reminders and copies) on the shared `settings_core.Registry`:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -85,7 +90,7 @@ App settings (Admin → App settings, admins only; `app_settings` table; validat
 
 **Each person's own settings** (Settings): **Lock after** 1–60 minutes (default 5), stored in `users.auto_lock_minutes` and used on all their devices; lock when hidden (§12.13); search in notes (on/off); breach check (if allowed); download reminder (§12.6); security alerts and expiry reminders (§12.7).
 
-**Notifications** (§12.7): each person's phones come from Home Assistant (Settings → People → Track device, `ha_people.py`, the same file as in Household Todo) while they're enabled and set up here; admins can add extra notify services in Admin → People → 🔔 (`ha_notify.py`, shared with the sibling apps).
+**Notifications** (§12.7): each person's phones come from Home Assistant (Settings → People → Track device, the shared `app/common/ha_people.py`) while they're enabled and set up here; admins can add extra notify services in Admin → People → 🔔 (the shared `app/common/ha_notify.py` and `people_admin.py`).
 
 ## 4. Security model
 - **Encrypted at rest, decrypted on the server while unlocked.**
@@ -102,13 +107,13 @@ App settings (Admin → App settings, admins only; `app_settings` table; validat
   - **Disabled people** get a 403 page ("An admin has turned off Household Vault for you"); their sessions end at once; they're removed from every shared vault and Household, and their remembered passwords are deleted. Random-password vaults they were in are re-keyed (§5.4); owners of same-password vaults are asked to change the password.
   - **Re-enabling** an active person restores access to their Personal vault and puts them back in Household; not in other shared vaults.
   - Someone who opens the app without a matching Person is added (disabled) on first visit.
-- **Identity.** Same as the siblings: requests are accepted only from the ingress proxy (`172.30.32.2`/loopback) and identified by `X-Remote-User-Id`. Admins are matched by id or login name.
+- **Identity.** Same as the siblings: requests are accepted only from the ingress proxy (`172.30.32.2`/loopback, `auth_core.INGRESS_HOSTS` in the shared `app/common/auth_core.py`) and identified by `X-Remote-User-Id`. Admins are matched by id or login name (`auth_core.is_admin`). The security headers (CSP, `nosniff`, `Referrer-Policy: no-referrer`, `no-store` on `/api`) are added at the end of the ingress guard by `web_security.SecurityHeaders.apply` (shared `app/common/web_security.py`), the same as before.
 - **Sessions** (`sessions.py`).
   - Unlocking returns a random 256-bit **session token**, kept only in the page's memory (never in `localStorage`, cookies or `sessionStorage` — the origin is shared with HA and every other app) and sent as `X-Vault-Session`. It's bound to the HA user id: a token from someone else's request is refused.
   - A **page reload locks** (the token is gone). Idle timeout = the person's *Lock after*; hard limit `session_max_hours`; the browser also calls `POST /api/lock` when the tab has been hidden longer than *Lock after*, and on the 🔒 button.
   - A person can be unlocked on several devices at once; each has its own session. *Lock everywhere* in Settings ends them all.
 - **Who can reach a vault.** A vault can be opened only by its members (Personal: the owner, plus anyone it's shared with). Everyone else gets 404, so existence isn't leaked. Being a member isn't enough on its own: you also need the vault's password — typed, or remembered in your key ring.
-- **Network.** On plain `http://` (LAN without TLS) master passwords cross the network unencrypted. The app shows a warning banner on `http://` unless the host is `localhost`, and DOCS.md recommends HTTPS (Nabu Casa, or a certificate).
+- **Network.** On plain `http://` (LAN without TLS) master passwords cross the network unencrypted. The app shows a warning banner on `http://` unless the host is `localhost` (drawn by the shared `common/http-warning.js` with Vault's wording), and DOCS.md recommends HTTPS (Nabu Casa, or a certificate).
 - **Browser hardening** (still matters: ingress pages share HA's origin).
   - CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'`.
   - No inline scripts, no `innerHTML`/`insertAdjacentHTML` (DOM building only, `textContent` for user text), no third-party requests; site icons are initials, never fetched.
@@ -144,7 +149,7 @@ HA backups made *before* a change still contain the old files, locked with the o
 | 11 | **Restoring an old backup** brings back removed members and old passwords. | After an import every user sees "A backup from <date> was restored" and the list of removals and password changes made after that date (kept in `restore_notes.json` outside the replaced DB), so they can be redone. |
 | 12 | **Old copies after a password change** (HA backups). | Server copies are purged on change. **Residual:** earlier HA backups keep them until they rotate out. |
 | 13 | **Sharing your Personal vault with the same password** means the other person knows your master password. | They still can't open your other vaults: they'd have to be signed in to HA as you. But anyone with your master password *and* a backup could open your key ring offline. The Share dialog says so and suggests a separate shared vault instead. |
-| 14 | **Master password over plain HTTP.** | Warning banner on `http://`; use HTTPS. |
+| 14 | **Master password over plain HTTP.** | Warning banner on `http://` (`common/http-warning.js`); use HTTPS. |
 | 15 | **Bugs in crypto handling.** | Well-known primitives only (`cryptography`, `argon2-cffi`); the KDBX format code is in-house and covered by round-trip tests; no new cryptography is invented. **An independent security review is pending** — hence `stage: experimental` and the advice to keep an own KeePass copy. |
 | 16 | **Emergency access abused** — a contact asks while you're away. | You're told at once (banner + notify) and can deny during the waiting period; nothing is released while an admin has you disabled (you couldn't deny); the Emergency vault can't be shared or edited by hand; only marked items are in it. **Residual:** if you never look during the wait, they get the marked items — choose contacts and the wait accordingly. |
 | 17 | **Quick unlock** turns "can unlock this phone" into "can unlock your vault on this phone". A script on HA's origin (#1) could also prompt for the passkey and recover the master password. | Needs the device's fingerprint/face/PIN (user verification); master password again every 14 days (a rule the page honours — the server can't tell a passkey unlock from a typed one if a script leaves out `quickUnlockId`); 5 failures remove the device; removed on every master-password change; an alert when a device is added. Remove devices you don't use. |
@@ -253,7 +258,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 |---|---|---|
 | GET `/api/me` | anyone | `{id, name, username, isAdmin, noAdmin, disabled, status, autoLockMinutes, searchNotes, …}` plus the person's settings, `lastDownloadAll`, `lastMasterChange`, `notifyLinked`, `personalCopy`, `guestWifi` |
 | PUT `/api/me/settings` | enabled | `{autoLockMinutes, searchNotes, breachCheck, downloadReminderDays, securityAlerts, expiryAlerts, hideLockSeconds}` (any subset) |
-| GET `/api/whoami` | anyone, including disabled | As in the siblings (§9.1); counts only; `noAdmin` |
+| GET `/api/whoami` | anyone, including disabled | The shared contract (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`) with extras Set up, Vaults you can open, Account status, Phone linked for alerts, plus the app's `status` and `disabled` (`vaultCount` is no longer a top-level field); counts only; `noAdmin` |
 | POST `/api/unlock` | enabled | `{password, quickUnlockId?}` → opens Personal and every remembered vault; `{session, vaults:[…], mustChangePassword, notices, couldNotOpen, …}`. 403 wrong password (counts towards the per-user wait, §4.2 #5). |
 | GET `/api/session` | 🔑 | Is this session still unlocked |
 | POST `/api/lock` · `/api/lock-everywhere` | 🔑 | End this session · all of mine |
@@ -290,15 +295,15 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 | PUT / DELETE `/api/vaults/{id}/items/{xid}/guest-wifi` · GET / DELETE `/api/guest-wifi` | 🔑 Household editor · active (GET works without unlocking) | Guest Wi-Fi (§12.9) |
 | GET `/api/admin/users[?refresh=1]` · POST `/api/users/{id}/setup` · PATCH `/api/users/{id}` · POST `/api/users/{id}/reset` · `…/unblock` | admin | List (with `status` and phones from HA) · enable and set up (returns the one-time password **once**) · `{disabled}` · reset · clear the wrong-password wait |
 | GET `/api/admin/notify-services` · POST / DELETE `/api/admin/users/{id}/notify[/{service}]` · POST `…/notify/test` | admin | Extra notify services (§12.7) |
-| GET / PUT `/api/admin/settings` | admin | App settings `{values, defaults, labels, kdf, version, personalCopies, …}` |
+| GET / PUT `/api/admin/settings` | admin | App settings: the shared payload `{values, defaults, meta, groups, …}` (`meta` replaces the old `labels`: label, help, group, kind, range, …) plus `kdf, version, personalCopies` and the session counts; PUT now answers the same as GET |
 | GET `/api/admin-storage-download-db` · POST `/api/admin-storage-import-db` | admin | Encrypted-only backup and restore (§9.1) |
 | GET `/api/restore-notes` | enabled | What the last restore undid (§4.2 #11) |
 
 ## 9. Frontend
 ### 9.1 Features shared with the other apps
-- **Themes.** **Vault** (dark, the default), **Slate**, **Daylight**, and **Auto**, as CSS variables on `[data-theme]`, applied before first paint by the external `static/theme-boot.js` (this app's CSP forbids inline scripts). The `theme` and `sidebarCollapsed` keys in `localStorage` are shared with HA and the sibling apps (one origin); an unknown theme name falls back to the default. Nothing else is stored in `localStorage`.
-- **"How the app sees you" page** (`WHOAMI_PAGE_SPEC.md`), from the name chip (👤 on phones): user name and id (copy buttons), display name ("not used for matching"), Administrator (Yes/No), Names in `admin_users` (a count), **Set up** (not set up / waiting for first unlock / active), **Vaults you can open** (a count), **Account status**. Works while locked and for disabled users. Never shows secrets, vault names or other users.
-- **Admin export / import** (Admin → Backup and restore): a `household-vault-backup-YYYYmmdd-HHMMSS.zip` with a consistent `vault.db` snapshot, every vault file and kept version, and the personal copies — **all encrypted**; import validates the zip layout, `PRAGMA integrity_check`, the tables, every file's KDBX signature and paths, then replaces everything, runs the start-up migrations again, locks everyone, and shows the restore notes (§4.2 #11).
+- **Themes.** **Midnight** (dark, the default; green accent), **Slate**, **Daylight**, and **Auto**, shared with the sibling apps (`common/themes.css`, with Vault's accent and own colours in `style.css`), as CSS variables on `[data-theme]`, applied before first paint by the external `static/common/theme-boot.js` (this app's CSP forbids inline scripts). A saved **Vault** theme becomes Midnight. The `theme` and `sidebarCollapsed` keys in `localStorage` are shared with HA and the sibling apps (one origin); an unknown theme name falls back to the default. Nothing else is stored in `localStorage`.
+- **"How the app sees you" page** (`WHOAMI_PAGE_SPEC.md`, drawn by `HouseholdWhoami.panel()` from `common/whoami.js`), from the name chip (👤 on phones): user name and id (copy buttons), display name ("not used for matching"), Administrator (Yes/No), Names in `admin_users` (a count), **Set up** (not set up / waiting for first unlock / active), **Vaults you can open** (a count), **Account status**. Works while locked and for disabled users. Never shows secrets, vault names or other users.
+- **Admin export / import** (Admin → Backup and restore): a `household-vault-backup-YYYYmmdd-HHMMSS.zip` with a consistent `vault.db` snapshot (`db_core.snapshot`), every vault file and kept version, and the personal copies — **all encrypted**; the zip is still built in memory, now with `backup_core.write_zip` / `walk`. Import (member names and the app's own checks with `backup_core.check_members`, files put back with `backup_core.copy_out`; its own swap and restore notes are unchanged) validates the zip layout, `PRAGMA integrity_check`, the tables, every file's KDBX signature and paths, then replaces everything, runs the start-up migrations again, locks everyone, and shows the restore notes (§4.2 #11).
 
 ### 9.2 Getting in
 - **Before access.** A disabled person sees "Ask an admin to give you access to Household Vault".
@@ -323,7 +328,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 - **Sharing:** vault ⋯ → **Share…**: pick people and roles; for same-password vaults a note "Tell them the vault's password; they'll enter it once" (and for Personal the §4.2 #13 warning with *Create a shared vault instead*). **People with access** list, remove, transfer ownership, *Change vault password* / *Re-key*, *Show vault password* (random vaults), version history and restore, delete, **Leave** (for members).
 - **Import & export:** import `.kdbx` as a new shared vault or merged into one you can edit; *Download .kdbx* of any vault you can open (encrypted); **Download all my passwords** (§12.6). No unencrypted export.
 - **Settings:** quick unlock devices, **Lock after** (1–60 min) and lock when hidden, *Lock everywhere*, notifications, search in notes, breach check, *Change master password*, emergency access, *Download all my passwords* and its reminder, *Import passwords*, *Import 2FA codes*, *Emergency Kit*. What others did that affects you is listed after unlocking ("Since you last unlocked").
-- **Admin page** (one page, admins only; also reachable from the lock screen as *Manage people*): an "Experimental" notice · **People** (every HA person, **disabled until an admin acts**; status "Not set up" / "Waiting for first unlock" / "Active"; *Enable and set up*; the Access switch; reset with a big warning; unblock; 🔔 phones and extra notify services) · **App settings** (with the tuned Argon2 parameters, open sessions and the version) · **Personal copies** · **Backup and restore**.
+- **Admin page** (one page, admins only; also reachable from the lock screen as *Manage people*): an "Experimental" notice · **People** (the shared people list, `common/people.js`: every HA person, **disabled until an admin acts**; status "Not set up" / "Waiting for first unlock" / "Active"; *Enable and set up*; the Access switch, with a confirmation before turning it off; *Reset…* with a big warning; *Unblock*; 🔔 opens the Notifications dialog: phones and extra notify services, *Send a test*) · **App settings** (drawn by `common/settings.js`: one card per group, help, range and default under each setting, Save / Discard changes; with the tuned Argon2 parameters, open sessions and the version) · **Personal copies** · **Backup and restore**.
 
 ### 9.4 Search
 - **Where:** the search box in the header (**/** or **Ctrl+K** focuses it), across **every open vault** by default; chips narrow it to **this vault**, **this folder (and subfolders)**, a **type**, or **favourites**. 🔒 vaults aren't searched until opened (the results say "2 vaults are locked — open them to search there").
@@ -356,7 +361,8 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
   - TOTP against RFC 6238 vectors, both TOTP field conventions; KDBX round trips (unknown fields, attachments, history kept), KDBX 3.1 import, key files; Argon2 against RFC 9106 vectors;
   - QR: `qr.js` round trips at every version and level, and `qrcode.py` module-for-module against `qr.js`;
   - password health, breach check (faked responses), household sheet, Google Authenticator export, CSV imports and duplicates, expiry reminders, notifications and phones from HA (a fake HA), guest Wi-Fi, emergency access, quick unlock (server side), personal copies, backup/restore with restore notes, older databases gaining their missing columns;
-  - packaging (`test_packaging.py`): `config.yaml`, versions, docs, icons, the "No admin yet" flag and banner, nothing personal in any text file.
+  - packaging (`test_packaging.py`): `config.yaml`, versions, docs, icons, the "No admin yet" flag and banner, nothing personal in any text file;
+  - shared (`tests/common_tests/`, copies): `test_shared_copies.py` and the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin, web_security, backup_core); `tests/_env.py` is built on `common_tests/env.py` and the fake HA is `common_tests/fake_ha.py`.
 - **Checked by hand:** the UI in Chromium (Playwright), including quick unlock with a virtual authenticator.
 - **Still to check by hand:** downloads opened in KeePassXC/KeePassDX and a real KeePassXC file imported; the camera and passkeys inside the HA phone app; the breach check, notify and the guest Wi-Fi sensor on a real HA box.
 
@@ -411,7 +417,7 @@ CREATE TABLE emergency_contacts (owner_id TEXT NOT NULL REFERENCES users(id), co
 - **Filename:** `household-vault-<first name>-YYYY-MM-DD.kdbx`.
 
 ### 12.7 Notifications
-- **Who gets what:** `alerts.services_for(conn, row)` — the person's phones from Home Assistant (`ha_people.py`: one `POST /api/template` renders every `person.*` with its `user_id` and each tracked `mobile_app` device; a device's notify action is `mobile_app_<slugify(name)>` or HA's numbered `_2…`, checked against `GET /api/services`; none → shown, not used) **only while `disabled = 0` and `status = 'active'`**, plus admin-assigned extras in `user_notify(user_id, service)` (at most 5; an extra still gets the *admin* messages). HA's people are read at start-up, every 5 minutes (a background task next to housekeeping, cancelled on shutdown) and on *Check Home Assistant again* (`GET /api/admin/users?refresh=1`, called before any DB connection is opened); if HA can't be read the last answer is kept.
+- **Who gets what:** `alerts.services_for(conn, row)` — the person's phones from Home Assistant (`ha_people.py`: one `POST /api/template` renders every `person.*` with its `user_id` and each tracked `mobile_app` device; a device's notify action is `mobile_app_<slugify(name)>` or HA's numbered `_2…`, checked against `GET /api/services`; none → shown, not used) **only while `disabled = 0` and `status = 'active'`**, plus admin-assigned extras in `user_notify(user_id, service)` (at most 5; an extra still gets the *admin* messages). HA's people are read at start-up, every 5 minutes (a background task next to housekeeping — the 20 s housekeeping loop is a `Jobs.every()` job of the shared runner, `app/common/housekeeping.py` — cancelled on shutdown) and on *Check Home Assistant again* (`GET /api/admin/users?refresh=1`, called before any DB connection is opened); if HA can't be read the last answer is kept.
 - **Sending:** `alerts.send(conn, user_ids, message, kind)` looks services up with the caller's connection and delivers from a thread. Kinds `security` and `expiry` respect `users.security_alerts` / `users.expiry_alerts` (default on); `emergency` and `admin` always go.
 - **Security alerts:** 3+ wrong passwords in a row (throttled to one per 15 min), master password changed, download-all, quick unlock added (to you); a shared vault downloaded, its password shown, the household sheet printed, a guest Wi-Fi published (to the vault's other members). **Admin:** disabled, reset, backup restored. Messages hold names, vault names and network names, never secrets.
 - **Admin → People → 🔔:** *Phones — from Home Assistant* (read-only, `ha {known, person, personName, phones[{label, service, tracker}]}` in `GET /api/admin/users`; a phone with `service: null` is flagged "Companion app action not found"), hints when no person or phone is linked, *Also* (the extras), *Send a test* to both (409 explains a missing phone or that the person isn't set up yet). Routes: `GET /api/admin/notify-services`, `POST/DELETE /api/admin/users/{id}/notify[/{service}]`, `POST …/notify/test`.
@@ -450,3 +456,10 @@ CREATE TABLE emergency_contacts (owner_id TEXT NOT NULL REFERENCES users(id), co
 ## 13. Review status
 - An independent security review is pending. The app is published with `stage: experimental` until then.
 - Accepted and documented residual risks: the quick-unlock 14-day rule is enforced by the page (§4.2 #17), same-origin scripts (#1), reminder titles (#19), personal-copy file names (#20).
+
+## Security notes (2026-10)
+
+From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
+
+- **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
+- **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass.

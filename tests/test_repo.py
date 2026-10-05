@@ -11,18 +11,22 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"family_tree": "2.1.0", "household_chat": "2.0.1", "household_todo": "2.1.0", "splitpot": "2.1.0"}
+VERSIONS = {"calorie_tracker": "2.1.1", "family_tree": "2.2.1", "household_chat": "2.2.1", "household_todo": "2.3.1",
+            "household_vault": "2.1.1", "splitpot": "2.2.1"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.0.1"
+FINANCE_VERSION = "1.1.1"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.4.1"
+ARCADE_VERSION = "1.6.1"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.0.1"
-NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION))
+RECEIPTS_VERSION = "1.1.1"
+# Household Docs: the tenth app, built the same way, at its own version.
+DOCS = "household_docs"
+DOCS_VERSION = "1.0.1"
+NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",
@@ -75,7 +79,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Unofficial apps", text[:600])
         self.assertIn("Claude", text[:600])
         self.assertIn(REPO_URL, text)
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS):
             self.assertIn(f"]({slug})", text, slug)
         self.assertIn("](LICENSE)", text)
         self.assertIn("](SECURITY.md)", text)
@@ -101,24 +105,16 @@ class RepositoryTests(unittest.TestCase):
                 self.assertEqual(re.findall(r"(?m)^## (\S+)", log)[0], version)   # newest first
 
     def test_shared_files_are_identical(self):
-        """Files shared between apps are copied, not linked: every copy must be the same."""
-        shared = {
-            "ha_notify.py": ["family_tree/app", "household_chat/app", "household_todo/app", "household_vault/app",
-                             "household_arcade/app"],
-            "ha_people.py": ["family_tree/app", "household_chat/app", "household_todo/app", "household_vault/app",
-                             "household_arcade/app"],
-            "backnav.js": ["calorie_tracker/app/static", "family_tree/app/static", "household_todo/app/static",
-                           "household_vault/app/static", "splitpot/public", "household_arcade/app/static",
-                           "receipt_price_intelligence/frontend"],
-        }
-        for name, folders in shared.items():
-            with self.subTest(name):
-                copies = {read(*f.split("/"), name) for f in folders}
-                self.assertEqual(len(copies), 1, f"{name} differs between {folders}")
+        """Files shared between apps live in common/ and are copied into each app by
+        tools/sync_common.py: every copy must match its source (and the manifest)."""
+        import subprocess, sys
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "sync_common.py"), "--check"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_user_facing_text_says_app_not_add_on(self):
         """Home Assistant 2026.2 renamed add-ons to apps; what people read says "app"."""
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS):
             for name in ("README.md", "DOCS.md", "CHANGELOG.md", os.path.join("translations", "en.yaml")):
                 with self.subTest(f"{slug}/{name}"):
                     text = read(slug, name).replace("ha-apps", "")
@@ -180,6 +176,14 @@ class RepositoryTests(unittest.TestCase):
         self.assertRegex(read(ARCADE, "config.yaml"), r"(?m)^stage: experimental")
         self.assertIn("Under development", read(ARCADE, "README.md"))
         self.assertIn("[Household Arcade](household_arcade) | 🤖 Optional | **Under development.**", read("README.md"))
+
+    def test_docs_is_a_normal_release_and_says_files_are_plain(self):
+        self.assertNotRegex(read(DOCS, "config.yaml"), r"(?m)^stage:")
+        row = [l for l in read("README.md").splitlines() if l.startswith("| [Household Docs](household_docs)")]
+        self.assertEqual(len(row), 1)
+        self.assertNotIn("Under development", row[0])
+        self.assertIn("plain files", row[0])
+        self.assertIn("/share", row[0])
 
     def test_vault_is_experimental(self):
         self.assertRegex(read("household_vault", "config.yaml"), r"(?m)^stage: experimental")

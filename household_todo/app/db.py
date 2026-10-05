@@ -11,12 +11,11 @@ import logging
 import os
 import re
 import sqlite3
-import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
 
 from . import config
+from .common import app_bus, backup_core, db_core
 
 logger = logging.getLogger("db")
 
@@ -43,28 +42,19 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+# deterministic=True is required for use inside an index (idx_places_
+# address_norm below); it's true in the ordinary sense too (same input,
+# same output, no I/O).
+_FUNCTIONS = (("normalize_addr", 1, normalize_address, True),)
+
+
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    # deterministic=True is required for use inside an index (idx_places_
-    # address_norm below); it's true in the ordinary sense too (same input,
-    # same output, no I/O).
-    conn.create_function("normalize_addr", 1, normalize_address, deterministic=True)
-    return conn
+    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",), functions=_FUNCTIONS)
 
 
-@contextmanager
 def get_conn():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+    return db_core.transaction(_connect)
 
 
 SCHEMA = """
@@ -105,7 +95,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_by TEXT NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL,
     position INTEGER NOT NULL DEFAULT 0,
-    url TEXT                                -- optional http(s) link; also ALTERed in by _migrate()
+    url TEXT,                               -- optional http(s) link; also ALTERed in by _migrate()
+    source TEXT                             -- set when another household app added it ("Docs": shown as
+                                            -- "from Docs", app_messages.py); also ALTERed in by _migrate()
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_list ON tasks(list_id);
@@ -440,7 +432,34 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         _migrate(conn)
         _seed_first_run(conn)
+        app_bus.migrate(conn)          # messages between the household apps (bus_outbox, bus_seen, bus_apps)
     _generation += 1
+
+
+# Columns older databases lack: (table, column, definition), added in this order.
+MIGRATIONS = [
+    ("places", "phone", "TEXT"),
+    ("places", "lat", "REAL"),
+    ("places", "lon", "REAL"),
+    ("places", "drive_minutes", "INTEGER"),
+    ("places", "drive_checked_at", "TEXT"),
+    ("places", "drive_mode", "TEXT"),
+    ("places", "drive_tolls_avoided", "INTEGER"),
+    ("user_prefs", "digest_time", "TEXT"),
+    ("user_prefs", "maintenance_notify", "INTEGER NOT NULL DEFAULT 1"),   # a recipient can mute maintenance
+    ("lists", "role", "TEXT"),                                           # 'maintenance' marks the Maintenance list
+    ("tasks", "url", "TEXT"),                                            # optional link
+    ("tasks", "source", "TEXT"),                                         # "Docs": added by another app
+    # personal schedule items. The defaults keep every existing item
+    # exactly as it was: household, all-day, no place, published.
+    ("schedule_items", "assigned_to", "TEXT REFERENCES users(id)"),
+    ("schedule_items", "start_time", "TEXT"),
+    ("schedule_items", "end_time", "TEXT"),
+    ("schedule_items", "place_id", "TEXT REFERENCES places(id) ON DELETE SET NULL"),
+    ("schedule_items", "visibility", "TEXT NOT NULL DEFAULT 'household' CHECK (visibility IN ('household', 'private'))"),
+    ("schedule_items", "expose_sensor", "INTEGER NOT NULL DEFAULT 1"),
+    ("schedule_items", "url", "TEXT"),                                   # optional link
+]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -448,28 +467,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     index — this schema otherwise only ever uses CREATE TABLE/INDEX IF NOT
     EXISTS, which can't add a column to an already-existing table. No
     migration framework dependency; mirrors Calorie Tracker's db._migrate."""
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(places)")}
-    for col, ddl in (
-        ("phone", "TEXT"),
-        ("lat", "REAL"),
-        ("lon", "REAL"),
-        ("drive_minutes", "INTEGER"),
-        ("drive_checked_at", "TEXT"),
-        ("drive_mode", "TEXT"),
-        ("drive_tolls_avoided", "INTEGER"),
-    ):
-        if col not in cols:
-            conn.execute(f"ALTER TABLE places ADD COLUMN {col} {ddl}")
-
-    pcols = {row["name"] for row in conn.execute("PRAGMA table_info(user_prefs)")}
-    if "digest_time" not in pcols:
-        conn.execute("ALTER TABLE user_prefs ADD COLUMN digest_time TEXT")
-    if "maintenance_notify" not in pcols:        # a recipient can mute maintenance for themselves
-        conn.execute("ALTER TABLE user_prefs ADD COLUMN maintenance_notify INTEGER NOT NULL DEFAULT 1")
-
-    lcols = {row["name"] for row in conn.execute("PRAGMA table_info(lists)")}
-    if "role" not in lcols:                      # 'maintenance' marks the Maintenance list
-        conn.execute("ALTER TABLE lists ADD COLUMN role TEXT")
+    db_core.add_missing_columns(conn, MIGRATIONS)
 
     # Each person has their own digest time. In older databases a NULL
     # digest_time meant "the household's reminder_time"; fill it with that
@@ -508,25 +506,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "VALUES ('drive_times_enabled', 'false', ?, NULL)",
         (now,),
     )
-
-    tcols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
-    if "url" not in tcols:
-        conn.execute("ALTER TABLE tasks ADD COLUMN url TEXT")   # optional link
-
-    scols = {row["name"] for row in conn.execute("PRAGMA table_info(schedule_items)")}
-    # personal schedule items. The defaults keep every existing item
-    # exactly as it was: household, all-day, no place, published.
-    for col, ddl in (
-        ("assigned_to", "TEXT REFERENCES users(id)"),
-        ("start_time", "TEXT"),
-        ("end_time", "TEXT"),
-        ("place_id", "TEXT REFERENCES places(id) ON DELETE SET NULL"),
-        ("visibility", "TEXT NOT NULL DEFAULT 'household' CHECK (visibility IN ('household', 'private'))"),
-        ("expose_sensor", "INTEGER NOT NULL DEFAULT 1"),
-        ("url", "TEXT"),                                 # optional link
-    ):
-        if col not in scols:
-            conn.execute(f"ALTER TABLE schedule_items ADD COLUMN {col} {ddl}")
 
     try:
         conn.execute(
@@ -570,46 +549,21 @@ def backup_to_tempfile() -> str:
     its path. Deliberately not a plain file copy: the DB runs in WAL mode, so
     recent commits may still be in the -wal file. sqlite3's backup API yields
     one complete, consistent file. The caller deletes the temp file."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    src = _connect()
-    try:
-        dst = sqlite3.connect(tmp_path)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
-    return tmp_path
+    return db_core.snapshot_to_tempfile(_connect)
 
 
 def validate_backup_file(path: str) -> None:
     """Raises ValueError with a user-facing message if `path` isn't safe to
     import: not SQLite, fails an integrity check, or lacks a table this app
     needs (e.g. some other app's database)."""
-    try:
-        conn = sqlite3.connect(path)
-        try:
-            # PRAGMA integrity_check evaluates every index, including the
-            # expression index on normalize_addr(address) — without this
-            # registered, SQLite raises "unknown function" and every backup
-            # gets misreported as "not a valid SQLite database".
-            conn.create_function("normalize_addr", 1, normalize_address, deterministic=True)
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                raise ValueError(f"That file failed a database integrity check ({integrity}) — refusing to import it.")
-            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            missing = REQUIRED_TABLES - tables
-            if missing:
-                raise ValueError(
-                    "That doesn't look like a Household Todo database "
-                    f"(missing tables: {', '.join(sorted(missing))})."
-                )
-        finally:
-            conn.close()
-    except sqlite3.DatabaseError:
-        raise ValueError("That file isn't a valid SQLite database.")
+    # PRAGMA integrity_check evaluates every index, including the
+    # expression index on normalize_addr(address) — without this
+    # registered, SQLite raises "unknown function" and every backup
+    # gets misreported as "not a valid SQLite database".
+    def setup(conn):
+        conn.create_function("normalize_addr", 1, normalize_address, deterministic=True)
+
+    db_core.validate_file(path, REQUIRED_TABLES, app_name="Household Todo", setup=setup)
 
 
 def import_from_tempfile(tmp_path: str) -> None:
@@ -617,19 +571,8 @@ def import_from_tempfile(tmp_path: str) -> None:
     validate_backup_file first). Serialised by _import_lock; checkpoints and
     drops the current -wal/-shm sidecars so nothing replays stale WAL frames
     against the new file."""
-    with _import_lock:
-        try:
-            with get_conn() as c:
-                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except sqlite3.Error:
-            pass
-        os.replace(tmp_path, config.DB_PATH)
-        for ext in ("-wal", "-shm"):
-            sidecar = config.DB_PATH + ext
-            if os.path.exists(sidecar):
-                os.remove(sidecar)
-        # A backup made by an older version may predate columns/tables added
-        # since (db._migrate) — bring it up to the current schema right away
-        # instead of serving errors until the next restart.
-        init_db()
+    # A backup made by an older version may predate columns/tables added
+    # since (db._migrate) — init_db brings it up to the current schema right
+    # away instead of serving errors until the next restart.
+    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
 

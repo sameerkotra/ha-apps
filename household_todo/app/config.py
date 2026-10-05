@@ -15,7 +15,8 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+
+from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
@@ -25,14 +26,7 @@ _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 def read_options_file() -> dict:
     """The raw contents of options.json ({} if missing or unreadable). Only
     `admin_users` is used."""
-    if os.path.isfile(_OPTIONS_PATH):
-        try:
-            with open(_OPTIONS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError):
-            logger.warning("Could not read %s; using defaults", _OPTIONS_PATH)
-    return {}
+    return auth_core.read_options(_OPTIONS_PATH, log=logger, errors=(json.JSONDecodeError, OSError))
 
 
 _options = read_options_file()
@@ -40,10 +34,8 @@ _options = read_options_file()
 # Home Assistant login names / user ids allowed to open the Admin area
 # (App settings, Users, Storage) and to act as another user (§4, §7, §8e).
 # Deny by default. Stays an app option (Configuration tab): it's how the first admin is known.
-ADMIN_NAMES = {str(n).strip().lower() for n in (_options.get("admin_users") or []) if str(n).strip()}
-_dev_admins = os.environ.get("DEV_ADMINS")
-if _dev_admins:
-    ADMIN_NAMES |= {n.strip().lower() for n in _dev_admins.split(",") if n.strip()}
+# DEV_ADMINS (comma-separated) adds more for tests and local development (app/common/auth_core.py).
+ADMIN_NAMES = auth_core.admin_names(_options.get("admin_users") or []) | auth_core.env_admins("DEV_ADMINS")
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 
@@ -58,6 +50,11 @@ DB_PATH = os.path.join(DATA_DIR, "household.db")
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
+SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
+
+# Said to the other household apps in `hello` (app_messages.py); equals config.yaml's version.
+APP_VERSION = "2.3.1"
+APP_TITLE = "Household Todo"
 
 # Maintenance: read from Home Assistant's GET /config at start-up (ha_client). A negative latitude
 # means the southern hemisphere's seasons; the currency labels costs. /share is where the files folder may be.
@@ -76,12 +73,8 @@ COMPLETED_RETENTION_DAYS = 60
 # ---------------------------------------------------------------------------
 # Time. `utcnow` is a module-level function so tests can replace it.
 # ---------------------------------------------------------------------------
-_DEFAULT_TZ_NAME = "UTC"
-try:
-    _tz: ZoneInfo | timezone = ZoneInfo(_DEFAULT_TZ_NAME)
-except Exception:  # ZoneInfoNotFoundError if the tz database is somehow missing
-    _tz = timezone.utc
-_tz_name = _DEFAULT_TZ_NAME
+# Home Assistant's zone (app/common/ha_time.py), read at startup by ha_client.load_timezone().
+ZONE = ha_time.Zone(logger)
 
 
 def utcnow() -> datetime:
@@ -92,23 +85,16 @@ def set_timezone(name: str) -> bool:
     """Set the zone `today()` / `now()` use. Returns False (and keeps the
     current zone) if `name` is not a known zone — e.g. the container has no
     tz database (python:3.12-alpine needs `apk add tzdata`)."""
-    global _tz, _tz_name
-    try:
-        _tz = ZoneInfo(name)
-        _tz_name = name
-        return True
-    except Exception as e:  # ZoneInfoNotFoundError, ValueError, ...
-        logger.warning("Unknown timezone %r (%s); staying on %s", name, e, _tz_name)
-        return False
+    return ZONE.set(name)
 
 
 def timezone_name() -> str:
-    return _tz_name
+    return ZONE.name
 
 
 def now() -> datetime:
     """Current time as an aware datetime in Home Assistant's timezone."""
-    return utcnow().astimezone(_tz)
+    return ZONE.now(utcnow())
 
 
 def today() -> date:
@@ -123,7 +109,7 @@ def to_local_date(iso_timestamp: str) -> date | None:
         return None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(_tz).date()
+    return dt.astimezone(ZONE.tz).date()
 
 
 def now_iso() -> str:

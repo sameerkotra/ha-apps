@@ -19,7 +19,7 @@ from pydantic import Field
 
 from .. import config, db, features, media
 from ..auth import require_user
-from ..common import Strict
+from ..models import Strict
 from ..export_view import ExportOptions, build, included_ids, summary_label
 from ..history import Batch
 from ..site_export import Site

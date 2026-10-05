@@ -23,6 +23,7 @@ from starlette.testclient import TestClient
 
 from app import ai_client, config, db, ha_sync, settings
 from app.main import app
+from common_tests.ingress import identity_headers, ingress_client
 
 import logging
 for _name in ("httpx", "httpx2"):
@@ -30,10 +31,8 @@ for _name in ("httpx", "httpx2"):
 
 
 def hdr(uid, name=None, username=None):
-    h = {"X-Remote-User-Id": uid, "X-Remote-User-Display-Name": name or uid}
-    if username:
-        h["X-Remote-User-Name"] = username
-    return h
+    """Display name defaults to the id; the login name is sent only when given."""
+    return identity_headers(uid, username, name or uid)
 
 
 ADMIN = hdr("u_admin", "Adminy Admin", "adminy")
@@ -46,7 +45,7 @@ class ApiBase(unittest.TestCase):
     def setUpClass(cls):
         # 127.0.0.1 stands in for Home Assistant's ingress proxy, which the
         # require_ha_ingress_auth middleware requires.
-        cls._ctx = TestClient(app, client=("127.0.0.1", 12345))
+        cls._ctx = ingress_client(app)
         cls.c = cls._ctx.__enter__()
 
     @classmethod
@@ -210,7 +209,8 @@ class TimeZone(unittest.TestCase):
 
     def test_fallback_is_utc(self):
         # Home Assistant's own zone is read at startup; without it the app runs on UTC.
-        self.assertEqual(config._DEFAULT_TZ_NAME, "UTC")
+        from app.common import ha_time      # config.ZONE starts as ha_time.Zone()'s default
+        self.assertEqual((ha_time.DEFAULT_ZONE, ha_time.Zone().name), ("UTC", "UTC"))
 
 
 class FrontendEscaping(unittest.TestCase):
@@ -221,10 +221,13 @@ class FrontendEscaping(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             self.skipTest("node not installed")
-        with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "app.js"), encoding="utf-8") as f:
-            src = f.read()
-        fn = re.search(r"function escapeHtml\(str\) \{.*?\n\}", src, re.S).group(0)
-        script = fn + '\nprocess.stdout.write(escapeHtml(`" onmouseover="alert(1)\' <b>&`));'
+        static = os.path.join(os.path.dirname(__file__), "..", "app", "static")
+        with open(os.path.join(static, "app.js"), encoding="utf-8") as f:
+            self.assertIn("const escapeHtml = UI.escapeHtml;", f.read())     # the shared escaper (common/ui.js)
+        with open(os.path.join(static, "common", "ui.js"), encoding="utf-8") as f:
+            ui = f.read()
+        script = ("globalThis.window = globalThis; globalThis.document = { addEventListener() {} };\n" + ui +
+                  '\nconst escapeHtml = UI.escapeHtml;\nprocess.stdout.write(escapeHtml(`" onmouseover="alert(1)\' <b>&`));')
         out = subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout
         self.assertEqual(out, "&quot; onmouseover=&quot;alert(1)&#39; &lt;b&gt;&amp;")
 
@@ -250,7 +253,13 @@ class AppSettingsApi(ApiBase):
         self.assertEqual(j["values"], DEFAULT_VALUES)
         self.assertEqual(j["defaults"], j["values"])
         self.assertEqual(set(j["meta"]), set(settings.DEFAULTS))
-        self.assertTrue(all(m == {"restartRequired": False} for m in j["meta"].values()))
+        # meta describes each field for the shared page (common/static/settings.js); none needs a restart
+        self.assertTrue(all(m["restartRequired"] is False for m in j["meta"].values()))
+        self.assertTrue(all(m["label"] and m["group"] in {"ai", "ha"} for m in j["meta"].values()))
+        self.assertEqual([g["id"] for g in j["groups"]], ["ai", "ha"])
+        self.assertEqual(j["meta"]["ai_api_key"]["kind"], "secret")
+        self.assertEqual((j["meta"]["ai_max_tokens"]["min"], j["meta"]["ai_max_tokens"]["max"]), (256, 200000))
+        self.assertEqual(j["secretsSet"], {"ai_api_key": False})
         self.assertEqual(j["secrets"], {"ai_api_key": {"saved": False, "hint": ""}})
         self.assertEqual(j["providers"]["openai"]["defaultUrl"], "https://api.openai.com/v1")
         self.assertEqual(j["providers"]["anthropic"]["defaultUrl"], "https://api.anthropic.com")
@@ -430,9 +439,10 @@ class AiNotSetUp(ApiBase):
     def test_ui_has_the_notice_places(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "index.html"), encoding="utf-8") as f:
             html = f.read()
-        self.assertEqual(html.count('class="ai-notice"'), 4)    # Food Log, Saved Foods, AI Assistant, App settings
+        self.assertEqual(html.count('class="ai-notice"'), 3)    # Food Log, Saved Foods, AI Assistant
         with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "app.js"), encoding="utf-8") as f:
             js = f.read()
+        self.assertIn('h("div", { class: "ai-notice", hidden: true })', js)   # App settings (drawn by common/settings.js)
         self.assertIn("AI isn't set up — an admin can set it up in Admin → App settings.", js)
 
 
@@ -445,21 +455,28 @@ class NoAdminYet(ApiBase):
         config.ADMIN_USERS.clear()
         try:
             j = self.c.get("/api/me", headers=ALICE).json()
-            self.assertTrue(j["no_admins"])
+            self.assertTrue(j["noAdmin"])
             self.assertFalse(j["is_admin"])
             self.assertEqual(j["username"], "alice")
             j = self.c.get("/api/me", headers=hdr("u_x", "X")).json()   # no login name sent: the id
             self.assertEqual(j["username"], "u_x")
-            self.assertTrue(self.c.get("/api/whoami", headers=ALICE).json()["noAdmins"])
+            self.assertTrue(self.c.get("/api/whoami", headers=ALICE).json()["noAdmin"])
             self.assertEqual(self.c.get("/api/admin/settings", headers=ADMIN).status_code, 403)
         finally:
             config.ADMIN_USERS.update(saved)
-        self.assertFalse(self.c.get("/api/me", headers=ALICE).json()["no_admins"])
-        with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "index.html"), encoding="utf-8") as f:
+        self.assertFalse(self.c.get("/api/me", headers=ALICE).json()["noAdmin"])
+        static = os.path.join(os.path.dirname(__file__), "..", "app", "static")
+        with open(os.path.join(static, "index.html"), encoding="utf-8") as f:
             html = f.read()
-        banner = html.split('id="noAdminBanner"', 1)[1].split("</div>", 1)[0]
+        self.assertIn('id="noAdminBanner"', html)                       # on every page (above the tabs)
+        self.assertIn('src="common/whoami.js', html)
+        with open(os.path.join(static, "app.js"), encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn('HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), me.noAdmin', js)
+        with open(os.path.join(static, "common", "whoami.js"), encoding="utf-8") as f:   # the banner's text
+            banner = f.read().split("function noAdminBanner", 1)[1].split("function fillNoAdminBanner", 1)[0]
         self.assertIn("No admin yet", banner)
-        self.assertIn("<code>admin_users</code>", banner)
+        self.assertIn('el("code", null, "admin_users")', banner)
         self.assertIn("restart the app", banner)
         self.assertNotIn("add-on", banner)
         self.assertIn("How the app sees you", banner)
@@ -477,7 +494,7 @@ class AddonOptions(ApiBase):
                        "admin_users": ["jane.doe"]}, f)
         try:
             self.assertEqual(config._load(), {"admin_users": ["jane.doe"]})
-            with TestClient(app, client=("127.0.0.1", 12345)) as c:      # runs the startup (lifespan)
+            with ingress_client(app) as c:      # runs the startup (lifespan)
                 j = c.get("/api/admin/settings", headers=ADMIN).json()
             self.assertEqual(j["values"], DEFAULT_VALUES)
             self.assertTrue(ha_sync.exposed())
@@ -502,7 +519,7 @@ class _HAResponse:
 
 
 class FakeHA:
-    """Stands in for urllib.request.urlopen inside app.ha_sync: records
+    """Stands in for urllib.request.urlopen inside the shared ha_client: records
     (method, entity_id, state) for every Core API /states call."""
 
     def __init__(self, fail=False, delete_status=200):
@@ -534,7 +551,7 @@ class DailyCaloriesSensor(ApiBase):
     def setUp(self):
         super().setUp()
         self.ha = FakeHA()
-        patches = [mock.patch("app.ha_sync.urllib.request.urlopen", self.ha),
+        patches = [mock.patch("app.common.ha_client.urllib.request.urlopen", self.ha),
                    mock.patch.object(config, "SUPERVISOR_TOKEN", "test-token")]
         for p in patches:
             p.start()
@@ -637,7 +654,7 @@ class DailyCaloriesSensor(ApiBase):
             return self.ha(req, timeout)
 
         with mock.patch.object(db, "_connect", tracking_connect), \
-                mock.patch("app.ha_sync.urllib.request.urlopen", urlopen):
+                mock.patch("app.common.ha_client.urllib.request.urlopen", urlopen):
             import asyncio
             asyncio.run(ha_sync.push_all())
             asyncio.run(ha_sync.push_for_user("u_alice", "alice", "Alice"))

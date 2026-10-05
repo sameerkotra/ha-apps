@@ -9,11 +9,11 @@ which applies without a restart.
 "Today" is Home Assistant's time zone, never the container's: use `today()` /
 `now()` from here. If HA's zone can't be read the fallback is UTC.
 """
-import json
 import logging
 import os
 from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+
+from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
@@ -32,25 +32,15 @@ _DEFAULTS = {
 def read_options(path: str | None = None) -> dict:
     """The raw options.json (without defaults); {} if missing or unreadable.
     Only `admin_users` is read from it; anything else in it is ignored."""
-    path = path or OPTIONS_PATH
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        logger.warning("Could not read %s; using defaults", path)
-        return {}
-    return {k: v for k, v in data.items() if v is not None} if isinstance(data, dict) else {}
+    data = auth_core.read_options(path or OPTIONS_PATH, log=logger)
+    return {k: v for k, v in data.items() if v is not None}
 
 
 _options = dict(_DEFAULTS, **read_options())
 
 # admin_users: HA user ids or login names (never display names), lower-cased.
-ADMIN_NAMES = {str(n).strip().lower() for n in (_options.get("admin_users") or []) if str(n).strip()}
-_dev_admins = os.environ.get("DEV_ADMINS")
-if _dev_admins:
-    ADMIN_NAMES |= {n.strip().lower() for n in _dev_admins.split(",") if n.strip()}
+# DEV_ADMINS (comma-separated) adds more for tests and local development (app/common/auth_core.py).
+ADMIN_NAMES = auth_core.admin_names(_options.get("admin_users") or []) | auth_core.env_admins("DEV_ADMINS")
 
 # trash_days, max_upload_mb and media_path are App settings: read settings.get().
 # The photo folder is the `media_path` App setting. This is only its
@@ -61,20 +51,12 @@ MEDIA_PATH_DEFAULT = os.path.normpath(os.environ.get("MEDIA_PATH") or "/share/fa
 ALLOW_ANY_MEDIA_PATH = os.environ.get("ALLOW_ANY_MEDIA_PATH") == "1"
 
 # ---------- time ----------
-_DEFAULT_TZ = "UTC"
-_tz_name = _DEFAULT_TZ
-_tz = ZoneInfo(_DEFAULT_TZ)
+# Home Assistant's zone (app/common/ha_time.py), read at startup by ha_client.load_timezone().
+ZONE = ha_time.Zone(logger)
 
 
 def set_timezone(name: str) -> bool:
-    global _tz, _tz_name
-    try:
-        _tz = ZoneInfo(name)
-        _tz_name = name
-        return True
-    except Exception:
-        logger.warning("Unknown time zone %r", name)
-        return False
+    return ZONE.set(name)
 
 
 # Home Assistant's home location (for sunrise and tithi days, §13.12). Until it's
@@ -98,11 +80,11 @@ def location_known() -> bool:
 
 
 def tz():
-    return _tz
+    return ZONE.tz
 
 
 def timezone_name() -> str:
-    return _tz_name
+    return ZONE.name
 
 
 def utcnow() -> datetime:
@@ -110,7 +92,7 @@ def utcnow() -> datetime:
 
 
 def now() -> datetime:
-    return utcnow().astimezone(_tz)
+    return ZONE.now(utcnow())
 
 
 def today() -> date:

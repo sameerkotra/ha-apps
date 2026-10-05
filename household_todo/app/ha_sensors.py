@@ -18,13 +18,14 @@ re-pushes everything on the first tick).
 
 Every push is best effort. Nothing here ever fails an API request.
 """
-import asyncio
+import asyncio  # noqa: F401 - tests replace asyncio.sleep through this module
 import logging
 import time
 
 from starlette.concurrency import run_in_threadpool
 
 from . import config, db, ha_client, schedule_logic, settings
+from .common import sensor_publisher
 
 logger = logging.getLogger("ha_sensors")
 
@@ -35,7 +36,9 @@ _streak_warned = False
 
 # entity_id -> "on"/"off" last pushed successfully. Only used to notice a
 # timed item's window opening or closing between full syncs.
-_last_state: dict[str, str] = {}
+SENSORS = sensor_publisher.Publisher(post=lambda eid, state, attrs: ha_client.post_state(eid, state, attrs),
+                                     key=sensor_publisher.state_only)
+_last_state = SENSORS.memory
 # Entities of unpublished items (expose_sensor off) already confirmed gone in
 # HA this run. A full sync deletes any others once, so a failed delete right
 # after "Publish" was switched off doesn't leave a stale sensor behind.
@@ -56,10 +59,10 @@ def _enabled() -> bool:
     return True
 
 
-def _post(entity: str, state: str, attrs: dict) -> bool:
-    ok = ha_client.post_state(entity, state, attrs)
+def _post(entity: str, state: str, attrs: dict, force: bool = True):
+    """Post one entity (only if its state changed, without `force`: None then)."""
+    ok = SENSORS.post(entity, state, attrs, force=force)
     if ok:
-        _last_state[entity] = state
         _cleared_unpublished.discard(entity)
     return ok
 
@@ -96,7 +99,7 @@ def delete_entity_blocking(slug: str) -> bool:
     if not _enabled():
         return False
     eid = schedule_logic.entity_id(slug)
-    _last_state.pop(eid, None)
+    SENSORS.forget(eid)
     ok = ha_client.delete_state(eid)
     if ok:
         _cleared_unpublished.add(eid)
@@ -156,9 +159,10 @@ def push_timed_changes_blocking() -> int:
     pushed = 0
     for item in items:
         entity, state, attrs = schedule_logic.sensor_payload(item, excs.get(item["id"], []), now.date(), now, users)
-        if _last_state.get(entity) == state:
+        ok = _post(entity, state, attrs, force=False)
+        if ok is None:
             continue
-        if _post(entity, state, attrs):
+        if ok:
             pushed += 1
         else:
             logger.warning("Could not push %s to Home Assistant", entity)
@@ -180,8 +184,8 @@ def remove_all_entities_blocking() -> int:
     for eid in [schedule_logic.entity_id(s) for s in slugs] + [MAINT_PREFIX + s for s in maint]:
         if ha_client.delete_state(eid):
             removed += 1
-            _last_state.pop(eid, None)
-    _last_state.clear()
+            SENSORS.forget(eid)
+    SENSORS.forget()
     _cleared_unpublished.clear()
     return removed
 
@@ -239,9 +243,9 @@ def push_maintenance_blocking() -> dict:
                          "days_until": (d - today).days if d else None, "repeat": mt.repeat_label(it)}
                 if _post(eid, state, attrs):
                     out["pushed"] += 1
-            elif it["expose_sensor"] and eid in _last_state:
+            elif it["expose_sensor"] and eid in SENSORS.memory:
                 if ha_client.delete_state(eid):
-                    _last_state.pop(eid, None)
+                    SENSORS.forget(eid)
                     out["removed"] += 1
     except Exception:
         logger.exception("Maintenance sensor sync failed")
@@ -253,7 +257,7 @@ def delete_maintenance_entity_blocking(slug: str) -> bool:
     if not ha_client.has_token():
         return False
     eid = mt.ENTITY_PREFIX + slug
-    _last_state.pop(eid, None)
+    SENSORS.forget(eid)
     return ha_client.delete_state(eid)
 
 
@@ -261,40 +265,33 @@ async def loop() -> None:
     """Started from main.py's lifespan; cancelled on shutdown. Re-reads both
     App settings (expose_schedule_sensors, sensor_refresh_minutes) every
     tick."""
-    last_date = None
-    last_sync = None
+    clock = lambda: time.monotonic()   # noqa: E731 - read through this module's `time` (tests replace it)
+    full_sync = sensor_publisher.Refresh(settings.sensor_refresh_seconds, clock=clock)
+    maint_sync = sensor_publisher.Refresh(settings.sensor_refresh_seconds, clock=clock)
     was_exposed = None        # None = first tick
-    maint_date, maint_sync = None, None
-    while True:
-        try:
+
+    async def tick():
+        nonlocal was_exposed
+        today = config.today()
+        if maint_sync.due(today):
+            await run_in_threadpool(push_maintenance_blocking)
+            maint_sync.done(today)
+        if not exposed():
+            if was_exposed is not False:   # startup with it off, or just switched off
+                n = await run_in_threadpool(remove_all_entities_blocking)
+                if n:
+                    logger.info("expose_schedule_sensors is off: removed %d sensor(s)", n)
+            was_exposed = False
+            full_sync.reset()               # re-publish everything once it's back on
+        else:
+            was_exposed = True
             today = config.today()
-            if maint_sync is None or maint_date != today or time.monotonic() - maint_sync >= settings.sensor_refresh_seconds():
-                await run_in_threadpool(push_maintenance_blocking)
-                maint_date, maint_sync = today, time.monotonic()
-            if not exposed():
-                if was_exposed is not False:   # startup with it off, or just switched off
-                    n = await run_in_threadpool(remove_all_entities_blocking)
-                    if n:
-                        logger.info("expose_schedule_sensors is off: removed %d sensor(s)", n)
-                was_exposed = False
-                last_sync = None                # re-publish everything once it's back on
+            if full_sync.due(today):
+                res = await run_in_threadpool(full_sync_blocking)
+                full_sync.done(today)
+                if res["pushed"] or res["failed"]:
+                    logger.debug("sensor sync: %s", res)
             else:
-                was_exposed = True
-                today = config.today()
-                due = (
-                    last_sync is None
-                    or last_date != today
-                    or time.monotonic() - last_sync >= settings.sensor_refresh_seconds()
-                )
-                if due:
-                    res = await run_in_threadpool(full_sync_blocking)
-                    last_date, last_sync = today, time.monotonic()
-                    if res["pushed"] or res["failed"]:
-                        logger.debug("sensor sync: %s", res)
-                else:
-                    await run_in_threadpool(push_timed_changes_blocking)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Sensor sync tick failed")
-        await asyncio.sleep(TICK_SECONDS)
+                await run_in_threadpool(push_timed_changes_blocking)
+
+    await sensor_publisher.run(TICK_SECONDS, tick, log=logger)

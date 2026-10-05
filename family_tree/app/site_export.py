@@ -37,11 +37,12 @@ def slugify(name: str) -> str:
 
 
 def _theme_css() -> str:
-    """Theme variables and the chart rules, copied from the app's stylesheet."""
+    """The website's theme variables (site_assets/site_themes.css) and the chart rules from the app's stylesheet."""
+    with open(os.path.join(HERE, "site_assets", "site_themes.css"), encoding="utf-8") as f:
+        themes = f.read()
     with open(os.path.join(HERE, "static", "style.css"), encoding="utf-8") as f:
         css = f.read()
-    themes = css[: css.index(":root { --radius")]
-    parchment = re.search(r'\[data-theme="parchment"\] \{(.*?)\n\}', css, re.S).group(1)
+    parchment = re.search(r'\[data-theme="parchment"\] \{(.*?)\n\}', themes, re.S).group(1)
     auto = ('html[data-theme="auto"] {}\n@media (prefers-color-scheme: light) {\n  html[data-theme="auto"] {'
             + parchment + "\n  }\n}\n")
     tree_rules = "\n".join(line for line in css.splitlines() if line.startswith(".tree-svg"))

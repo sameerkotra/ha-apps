@@ -4,7 +4,7 @@ from pydantic import Field
 
 from .. import db
 from ..auth import require_user
-from ..common import Strict, clean, require_person
+from ..models import Strict, clean, require_person
 from ..history import Batch
 from .people import _nm
 

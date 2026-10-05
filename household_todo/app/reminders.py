@@ -51,7 +51,8 @@ from datetime import date, datetime, timedelta
 
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, ha_client, ha_notify, links, schedule_logic, settings, taskview
+from . import config, db, ha_client, links, schedule_logic, settings, taskview
+from .common import ha_notify
 
 logger = logging.getLogger("reminders")
 

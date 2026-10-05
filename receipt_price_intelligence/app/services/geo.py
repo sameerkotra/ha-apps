@@ -16,13 +16,10 @@ shop at), never your receipts or prices.
 """
 
 import json
-import threading
-import time
 import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any
 
+from app.common import geo as geo_core
 from app.config import get_settings
 from app.logging_config import get_logger
 
@@ -32,25 +29,27 @@ TIMEOUT = 20
 MIN_SEARCH_INTERVAL = 1.1  # seconds between address searches (Nominatim usage policy)
 MAX_ROUTE_POINTS = 60
 
-_search_lock = threading.Lock()
-_last_search = 0.0
+_SEARCHES = geo_core.Throttle(MIN_SEARCH_INTERVAL)   # one address search at a time, spaced out
 
 
 class GeoError(RuntimeError):
     """A map service could not be reached or gave no usable answer."""
 
 
-def _user_agent() -> str:
+def user_agent(email: str) -> str:
+    """The identifying User-Agent for the map services (with the contact email, if one is set)."""
     from app.config import APP_VERSION as version
-    email = get_settings().map_contact_email.strip()
     return f"ReceiptPriceIntelligence/{version} (Home Assistant app{'; ' + email if email else ''})"
 
 
+def _user_agent() -> str:
+    return user_agent(get_settings().map_contact_email.strip())
+
+
 def _get_json(url: str) -> Any:
-    request = urllib.request.Request(url, headers={"User-Agent": _user_agent(), "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-            return json.loads(response.read().decode("utf-8"))
+        return json.loads(geo_core.fetch(url, headers={"User-Agent": _user_agent(), "Accept": "application/json"},
+                                         timeout=TIMEOUT).decode("utf-8"))
     except urllib.error.HTTPError as e:
         raise GeoError(f"The map service answered with an error ({e.code})") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -61,25 +60,18 @@ def _get_json(url: str) -> Any:
 
 def geocode(address: str) -> dict[str, Any] | None:
     """Coordinates of an address, or None if it cannot be found. Raises GeoError if unreachable."""
-    global _last_search
     query = " ".join((address or "").split())
     if not query:
         return None
 
-    params = {"q": query, "format": "jsonv2", "limit": "1", "addressdetails": "0"}
+    extra = {"addressdetails": "0"}
     email = get_settings().map_contact_email.strip()
     if email:
-        params["email"] = email
-    url = get_settings().geocoder_url.rstrip("/") + "/search?" + urllib.parse.urlencode(params)
+        extra["email"] = email
+    url = geo_core.search_url(get_settings().geocoder_url.rstrip("/"), query, format="jsonv2", limit="1", extra=extra)
 
-    with _search_lock:  # one search at a time, spaced out
-        wait = MIN_SEARCH_INTERVAL - (time.monotonic() - _last_search)
-        if wait > 0:
-            time.sleep(wait)
-        try:
-            results = _get_json(url)
-        finally:
-            _last_search = time.monotonic()
+    with _SEARCHES.spaced():  # one search at a time, spaced out
+        results = _get_json(url)
 
     if not results:
         return None
@@ -95,7 +87,7 @@ def geocode(address: str) -> dict[str, Any] | None:
 
 
 def _coords(points: list[tuple[float, float]]) -> str:
-    return ";".join(f"{lng:.6f},{lat:.6f}" for lat, lng in points)
+    return geo_core.lonlat(points, precision=6)
 
 
 def route_matrix(points: list[tuple[float, float]]) -> tuple[list[list[float]], list[list[float]]]:

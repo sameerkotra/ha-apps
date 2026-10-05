@@ -2,8 +2,6 @@
 (SPEC.md sections 8, 9, 10, 13). The Review queue lives in
 routes/review.py and CSV import in routes/csv_import.py.
 """
-import csv
-import io
 from pathlib import Path
 from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
@@ -12,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
 from ..categorize import UNCATEGORIZED, list_all_categories
+from ..common import csv_export
 from ..db import get_db
 from ..version import APP_VERSION
 from ..matching import cascade_unlink_on_delete
@@ -398,14 +397,9 @@ def list_transactions(
     return templates.TemplateResponse(request, "transactions_list.html", context)
 
 
-_CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _csv_safe(value: str) -> str:
-    """CSV/formula injection guard: spreadsheets run a cell starting with
-    = + - @ (or tab/CR) as a formula, so such a cell gets a leading quote
-    (the OWASP mitigation). Only the exported bytes change."""
-    return "'" + value if value.startswith(_CSV_FORMULA_TRIGGERS) else value
+# CSV/formula injection guard (app/common/csv_export.py): spreadsheets run a cell starting with
+# = + - @ (or tab/CR) as a formula, so such a text cell gets a leading quote (the OWASP mitigation).
+_csv_safe = csv_export.guard
 
 
 @router.get("/transactions-export")
@@ -429,7 +423,7 @@ def export_transactions_csv(
     filtered set list_transactions would show — same
     _parsed_transaction_filters/_build_transaction_conditions helpers,
     same query, so "export" can never silently disagree with what's on
-    screen. stdlib csv, zero new dependencies, per section 10 and
+    screen. stdlib csv (app/common/csv_export.py), zero new dependencies, per section 10 and
     section 12's tech-stack constraint."""
     f = _parsed_transaction_filters(q, account_id, category, txn_type, flow, start_date, end_date, min_amount, max_amount, desc,
                                     excluded)
@@ -448,19 +442,15 @@ def export_transactions_csv(
             params,
         ).fetchall()
 
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(["Date", "Account", "Account Type", "Description", "Amount", "Category", "Type", "Excluded", "Note"])
-    for t in transactions:
-        writer.writerow([
-            t["date"], _csv_safe(t["account_name"]), t["account_type"], _csv_safe(t["description"]),
-            f"{t['amount']:.2f}", _csv_safe(t["category"] or ""), t["txn_type"],
-            "yes" if t["is_excluded"] else "no", _csv_safe(t["note"] or ""),
-        ])
-    buffer.seek(0)
+    rows = ([
+        t["date"], _csv_safe(t["account_name"]), t["account_type"], _csv_safe(t["description"]),
+        f"{t['amount']:.2f}", _csv_safe(t["category"] or ""), t["txn_type"],
+        "yes" if t["is_excluded"] else "no", _csv_safe(t["note"] or ""),
+    ] for t in transactions)
 
     return StreamingResponse(
-        iter([buffer.getvalue()]),
+        csv_export.stream(["Date", "Account", "Account Type", "Description", "Amount", "Category", "Type",
+                           "Excluded", "Note"], rows),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=transactions.csv"},
     )

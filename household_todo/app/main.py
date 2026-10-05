@@ -1,19 +1,18 @@
-import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import (config, db, drive_time, geocode, ha_client, ha_notify, ha_people, ha_sensors, housekeeping, maint_files,
+from . import (app_messages, config, db, drive_time, geocode, ha_client, ha_sensors, housekeeping, maint_files,
                maint_notify, reminders)
+from .common import auth_core, ha_notify, ha_people, web_security
+from .common import housekeeping as jobs_core
 from .routers import admin, calendar, dashboard, lists, maintenance, me, places, prefs, schedule, task_types, tasks, users
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+jobs_core.setup_logging()
 logger = logging.getLogger("main")
 
 
@@ -40,26 +39,24 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(ha_notify.check_targets_blocking)
     except Exception:
         logger.exception("notify service check failed")
-    loops = []
+    jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
     if config.BACKGROUND_LOOPS:
-        loops = [
-            asyncio.create_task(reminders.loop(), name="reminders"),
-            asyncio.create_task(ha_sensors.loop(), name="ha_sensors"),
-            asyncio.create_task(housekeeping.loop(), name="housekeeping"),
-            asyncio.create_task(drive_time.loop(), name="drive_time"),
-            asyncio.create_task(ha_people.loop(), name="ha_people"),
-            asyncio.create_task(maint_files.loop(), name="maint_files"),
-        ]
+        # messages from the other household apps (Docs → "Make a Todo list"); off without Home Assistant
+        await run_in_threadpool(app_messages.start)
+        jobs.add("reminders", reminders.loop)
+        jobs.add("ha_sensors", ha_sensors.loop)
+        jobs.add("housekeeping", housekeeping.loop)
+        jobs.add("drive_time", drive_time.loop)
+        jobs.add("ha_people", ha_people.loop)
+        jobs.add("maint_files", maint_files.loop)
     else:
         logger.info("Background loops are off (BACKGROUND_LOOPS=0)")
+    jobs.start()
     try:
         yield
     finally:
-        for t in loops:
-            t.cancel()
-        for t in loops:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await t
+        await jobs.stop()
+        await run_in_threadpool(app_messages.stop)
 
 
 app = FastAPI(title="Household Todo", lifespan=lifespan)
@@ -84,7 +81,7 @@ app.include_router(admin.router)
 # completely (see auth.py) precisely because Ingress is assumed to be the
 # only path in — so this check is what actually makes that assumption true,
 # rather than just a comment. Matches the same allowlist Splitpot uses.
-_INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+# The allowlist (Supervisor's ingress proxy and loopback) is app/common/auth_core.INGRESS_HOSTS.
 
 
 @app.middleware("http")
@@ -97,9 +94,9 @@ async def require_ha_ingress_auth(request: Request, call_next):
     /api/health stays reachable with no user context (SPEC §2) and every
     route's existing get_current_user/get_acting_user dependency keeps
     producing its own (more specific) 401 for a missing/unrecognized user."""
-    client_host = request.client.host if request.client else None
-    if client_host not in _INGRESS_ALLOWED_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden — access only via Home Assistant"})
+    blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
+    if blocked is not None:
+        return blocked
     return await call_next(request)
 
 
@@ -108,18 +105,19 @@ def health():
     return {"status": "ok"}
 
 
-@app.middleware("http")
-async def no_cache_html_shell(request: Request, call_next):
-    """The HTML shell must never be browser-cached: it points at the
-    versioned style.css?v=... / app.js?v=..., so a stale cached copy of just
-    this one file can make a rebuilt app look like the update never took
-    effect. The assets themselves keep normal caching — their ?v= query
-    string (bumped with config.yaml's version) invalidates them."""
-    response = await call_next(request)
-    if request.url.path == "/" or request.url.path.endswith(".html"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-    return response
+# Scripts and styles only from the app itself (no inline scripts, handlers or style attributes).
+# A maintenance file sets its own policy (sandbox).
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
+       "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+       "frame-ancestors 'self'")
+
+# The HTML shell must never be browser-cached: it points at the
+# versioned style.css?v=... / app.js?v=..., so a stale cached copy of just
+# this one file can make a rebuilt app look like the update never took
+# effect. The assets themselves keep normal caching — their ?v= query
+# string (bumped with config.yaml's version) invalidates them.
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True)
+HEADERS.install(app)
 
 
 # Static frontend, mounted LAST so /api/* always wins on route-match order.

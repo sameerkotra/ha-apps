@@ -1,3 +1,4 @@
+import os
 """Regression tests for user-facing behavior added in recent rounds (99-108)."""
 import json
 
@@ -156,7 +157,9 @@ def test_pdf_viewer_has_sticky_toolbar_and_pinch_zoom(env):
                      pdf_path=path, file_hash="h", status="complete")
     for url in (f"pdf-view?kind=statement&id={sid}", f"pdf-view?kind=statement&id={sid}&embed=1"):
         r = env.get(url)
-        assert r.status_code == 200 and 'class="pdf-toolbar"' in r.text and "setZoom" in r.text
+        assert r.status_code == 200 and 'class="pdf-toolbar"' in r.text and "static/pages/pdf-view.js" in r.text
+    with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "pages", "pdf-view.js")) as f:
+        assert "setZoom" in f.read()          # the page's script (an external file: CSP)
     r = env.get(f"pdf-page?kind=statement&id={sid}&page=1")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
 

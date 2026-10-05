@@ -3,25 +3,25 @@ import json
 import logging
 import os
 import re
+import itertools
+import shutil
 import tempfile
 import zipfile
-from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import Field
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from .. import config, db, kin, media, settings
 from ..auth import require_admin
-from ..common import Strict
+from ..common import backup_core
+from ..models import Strict
 from ..history import Batch
 
 router = APIRouter(prefix="/api", tags=["admin"])
 logger = logging.getLogger("admin")
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.1"
 _MEDIA_NAME = re.compile(r"^media/([0-9a-f]{2})/([0-9a-f]{32})/(original|thumb1024\.jpg|thumb256\.jpg)$")
 MAX_DB_BYTES = 2 * 1024 ** 3
 MAX_MEDIA_FILE_BYTES = 200 * 1024 ** 2
@@ -106,57 +106,47 @@ def download_backup(media_files: bool = Query(False, alias="media"), admin: dict
     dbtmp = db.temp_path_in_data(".db")
     try:
         db.backup_to_file(dbtmp)
-        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
-            z.write(dbtmp, "family.db")
-            z.writestr("backup.json", json.dumps({"app": "family_tree", "version": APP_VERSION,
-                                                  "created": config.now_iso(), "withMedia": media_files}))
-            if media_files:
-                base = os.path.join(media.root(), "media")
-                for dirpath, _dirs, files in os.walk(base):
-                    for fn in files:
-                        full = os.path.join(dirpath, fn)
-                        rel = os.path.relpath(full, media.root()).replace(os.sep, "/")
-                        if _MEDIA_NAME.match(rel):
-                            z.write(full, rel, compress_type=zipfile.ZIP_STORED)
+        members = [(dbtmp, "family.db"),
+                   backup_core.Text("backup.json", json.dumps({"app": "family_tree", "version": APP_VERSION,
+                                                               "created": config.now_iso(), "withMedia": media_files}))]
+        if media_files:          # the photos, stored as they are (already compressed)
+            members = itertools.chain(members, (
+                (full, name, zipfile.ZIP_STORED) for full, name in backup_core.walk(
+                    os.path.join(media.root(), "media"), prefix="media/",
+                    keep=lambda _full, rel: _MEDIA_NAME.match("media/" + rel))))
+        backup_core.write_zip(zpath, members)
     except Exception:
         os.remove(zpath)
         raise
     finally:
         if os.path.exists(dbtmp):
             os.remove(dbtmp)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    name = f"family-tree-backup-{stamp}{'-with-photos' if media_files else ''}.zip"
-    return FileResponse(zpath, media_type="application/zip", filename=name,
-                        background=BackgroundTask(os.remove, zpath))
+    name = backup_core.file_name("family-tree-backup", ".zip", suffix="-with-photos" if media_files else "")
+    return backup_core.send_file(zpath, name, backup_core.ZIP_MEDIA_TYPE)
 
 
 def _validate_zip(zpath: str) -> dict:
     """Check everything before touching anything. Returns {db_member, media_members}."""
-    try:
-        z = zipfile.ZipFile(zpath)
-    except zipfile.BadZipFile:
-        raise ValueError("That file isn't a Family Tree backup (.zip).")
-    with z:
-        names = z.namelist()
-        if "family.db" not in names:
+    media_members = []
+
+    def check(info):
+        n = info.filename
+        if n in ("family.db", "backup.json"):
+            if n == "family.db" and info.file_size > MAX_DB_BYTES:
+                raise ValueError("The database in that backup is unreasonably large.")
+            return
+        m = _MEDIA_NAME.match(n)
+        if not m or m.group(1) != m.group(2)[:2]:
+            raise ValueError(f"Unexpected file in the backup: {n}")
+        if info.file_size > MAX_MEDIA_FILE_BYTES:
+            raise ValueError(f"A media file in the backup is too large: {n}")
+        media_members.append((n, m.group(2), m.group(3)))
+
+    with backup_core.open_zip(zpath, lambda: ValueError("That file isn't a Family Tree backup (.zip).")) as z:
+        if "family.db" not in z.namelist():
             raise ValueError("That zip has no family.db — it isn't a Family Tree backup.")
-        media_members = []
-        for info in z.infolist():
-            n = info.filename
-            if n.endswith("/"):
-                continue
-            if n.startswith("/") or ".." in n.split("/") or "\\" in n:
-                raise ValueError(f"Refusing a backup with an unsafe path: {n}")
-            if n in ("family.db", "backup.json"):
-                if n == "family.db" and info.file_size > MAX_DB_BYTES:
-                    raise ValueError("The database in that backup is unreasonably large.")
-                continue
-            m = _MEDIA_NAME.match(n)
-            if not m or m.group(1) != m.group(2)[:2]:
-                raise ValueError(f"Unexpected file in the backup: {n}")
-            if info.file_size > MAX_MEDIA_FILE_BYTES:
-                raise ValueError(f"A media file in the backup is too large: {n}")
-            media_members.append((n, m.group(2), m.group(3)))
+        backup_core.check_members(z, skip_dirs=True, check=check,
+                                  unsafe=lambda n: ValueError(f"Refusing a backup with an unsafe path: {n}"))
     return {"media": media_members}
 
 
@@ -166,8 +156,7 @@ def _restore(zpath: str, admin: dict) -> dict:
     try:
         with zipfile.ZipFile(zpath) as z:
             with z.open("family.db") as src, open(dbtmp, "wb") as dst:
-                while chunk := src.read(1024 * 1024):
-                    dst.write(chunk)
+                shutil.copyfileobj(src, dst, backup_core.CHUNK)
             db.validate_db_file(dbtmp)
             import sqlite3
             c = sqlite3.connect(dbtmp)
@@ -191,12 +180,7 @@ def _restore(zpath: str, admin: dict) -> dict:
                     if sniffed != expected:
                         raise ValueError(f"A media file in the backup isn't the type its database says ({name}).")
                 for name, _mid, _kind in members:
-                    dest = os.path.join(media.root(), name)
-                    os.makedirs(os.path.dirname(dest), exist_ok=True)
-                    with z.open(name) as src, open(dest + ".tmp", "wb") as dst:
-                        while chunk := src.read(1024 * 1024):
-                            dst.write(chunk)
-                    os.replace(dest + ".tmp", dest)
+                    backup_core.copy_out(z, name, os.path.join(media.root(), name), part=".tmp")
         current_store = media.status().get("store_id")
         with db.get_conn() as conn:
             current_settings = settings.rows(conn)

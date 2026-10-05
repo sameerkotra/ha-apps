@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Admin</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/common/settings.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .group { scroll-margin-top: 12px; }
+    .group h2 { font-size: 1.02rem; margin-bottom: 2px; }
+    .group > .card-body > .muted { font-size: .85rem; margin-bottom: 12px; }
+    .setting { display: grid; gap: 4px; padding: 12px 0; border-top: 1px solid var(--line); }
+    .setting:first-of-type { border-top: 0; }
+    .setting .label { font-weight: 600; }
+    .setting .help { font-size: .8rem; color: var(--muted); line-height: 1.45; max-width: 70ch; overflow-wrap: anywhere; }
+    .setting .input, .setting .select { max-width: 460px; }
+    .setting.num .input { max-width: 160px; }
+    .setting .check { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+    .setting .check input { width: 20px; height: 20px; margin-top: 1px; accent-color: var(--accent); flex: none; }
+    .setting .secret-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .setting .changed { color: var(--warn); font-size: .75rem; font-weight: 700; margin-left: 6px; }
+    .jump { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+    .jump a { font-size: .8rem; padding: 4px 10px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+    .jump a:hover { color: var(--text); }
+    .savebar { position: sticky; bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); z-index: 5;
+               display: flex; gap: 10px; align-items: center; justify-content: flex-end; padding: 10px 14px; margin-top: 14px;
+               background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); border-radius: 12px;
+               -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+    .savebar .note { flex: 1; font-size: .85rem; color: var(--muted); }
+    .mrow { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .mrow .input { min-height: 38px; }
+    .mrow .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="page mid">
+    <div class="topbar">
+      <div class="grow"><h1>Admin</h1><div class="sub" id="sub">App settings</div></div>
+    </div>
+    <div id="adminTabs"></div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/common/settings.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/admin.js"></script>
+</body>
+</html>

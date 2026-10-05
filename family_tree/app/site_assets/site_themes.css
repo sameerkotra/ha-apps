@@ -1,0 +1,115 @@
+/* Family Tree — exported website: the theme colours (Heritage, Slate, Daylight, Parchment) the exported
+   pages use. These are the website's own themes (the reader picks one on the site; "auto" is added by
+   site_export.py); the app itself uses the household themes in static/common/themes.css. */
+:root, [data-theme="heritage"] {
+  --bg: #17120e;
+  --panel: #211a14;
+  --panel-alt: #2b221a;
+  --panel-hover: #352a20;
+  --border: #463829;
+  --text: #f2e7d6;
+  --text-dim: #b4a38b;
+  --accent: #d9a55b;
+  --accent-dim: #9c7439;
+  --accent-hover: #ebc07f;
+  --accent-contrast: #231605;
+  --accent-soft: #3a2b18;
+  --danger: #e57b6b;
+  --danger-soft: #3a211b;
+  --warn: #e9b949;
+  --warn-soft: #362a14;
+  --male: #7ea6d8;
+  --female: #d98fa8;
+  --other: #b59be0;
+  --unknown: #8d8676;
+  --line: #7a6650;
+  --side-paternal: #5aa0e0;
+  --side-maternal: #e5963c;
+  --card: #261e17;
+  --card-focus: #3b2c1b;
+  color-scheme: dark;
+}
+[data-theme="slate"] {
+  --bg: #0e1420;
+  --panel: #16202f;
+  --panel-alt: #1c2a3d;
+  --panel-hover: #223350;
+  --border: #283449;
+  --text: #e7ecf5;
+  --text-dim: #93a3ba;
+  --accent: #6aa6ff;
+  --accent-dim: #3f6fb0;
+  --accent-hover: #93c0ff;
+  --accent-contrast: #08111f;
+  --accent-soft: #1a2c47;
+  --danger: #ef7b7b;
+  --danger-soft: #35212b;
+  --warn: #f2c94c;
+  --warn-soft: #33301a;
+  --male: #6aa6ff;
+  --female: #f08cb4;
+  --other: #b39dfa;
+  --unknown: #7f8ba0;
+  --line: #4f6280;
+  --side-paternal: #5aa0e0;
+  --side-maternal: #e5963c;
+  --card: #18253a;
+  --card-focus: #1f3558;
+  color-scheme: dark;
+}
+[data-theme="daylight"] {
+  --bg: #f4f6fa;
+  --panel: #ffffff;
+  --panel-alt: #eef1f7;
+  --panel-hover: #e3e9f4;
+  --border: #d8dfec;
+  --text: #1c2433;
+  --text-dim: #5e6b80;
+  --accent: #2f6fd6;
+  --accent-dim: #8fb0e8;
+  --accent-hover: #245bb3;
+  --accent-contrast: #ffffff;
+  --accent-soft: #e4edfc;
+  --danger: #c93c3c;
+  --danger-soft: #fbe7e7;
+  --warn: #a86b00;
+  --warn-soft: #fdf1d8;
+  --male: #3f7fd6;
+  --female: #d0558a;
+  --other: #7d5cc8;
+  --unknown: #8a93a3;
+  --line: #9aa6b8;
+  --side-paternal: #1f6fc0;
+  --side-maternal: #c66a10;
+  --card: #ffffff;
+  --card-focus: #e4edfc;
+  color-scheme: light;
+}
+[data-theme="parchment"] {
+  --bg: #f3ead8;
+  --panel: #fbf5e8;
+  --panel-alt: #efe3c9;
+  --panel-hover: #e8d9b8;
+  --border: #d8c6a0;
+  --text: #3a2c1c;
+  --text-dim: #7a6649;
+  --accent: #9a5b24;
+  --accent-dim: #c79a6a;
+  --accent-hover: #7d4617;
+  --accent-contrast: #fffaf0;
+  --accent-soft: #f1dfc2;
+  --danger: #b0402e;
+  --danger-soft: #f6dcd3;
+  --warn: #8f6200;
+  --warn-soft: #f6e6bd;
+  --male: #3c6e9e;
+  --female: #a8456f;
+  --other: #74559e;
+  --unknown: #8c7c61;
+  --line: #a88e66;
+  --side-paternal: #2b6cb0;
+  --side-maternal: #b85f0f;
+  --card: #fffaf0;
+  --card-focus: #f1dfc2;
+  color-scheme: light;
+}

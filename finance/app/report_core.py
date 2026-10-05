@@ -4,8 +4,6 @@ Shared by the Query tab (routes/query.py) and the Reports page (routes/reports.p
 """
 from __future__ import annotations
 
-import csv
-import io
 import json
 import math
 import re
@@ -13,6 +11,7 @@ from urllib.parse import urlencode
 
 from markupsafe import Markup, escape
 
+from .common import csv_export
 from .query_engine import Result
 
 PAGE_SIZES = (100, 250, 500, "all")
@@ -20,7 +19,6 @@ DEFAULT_PAGE_SIZE = 100
 ALL_WARNING_ROWS = 5000
 CELL_PREVIEW_CHARS = 200
 _MONEY_NAME = re.compile(r"amount|total|cost|balance|charge|spen[dt]|income|paid|price|money|\bnet\b", re.I)
-_CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
 
 
 def is_number(v) -> bool:
@@ -200,19 +198,11 @@ def get_link(path: str, base: dict):
     return link
 
 
-def _csv_safe(value):
-    if isinstance(value, str) and value.startswith(_CSV_FORMULA_TRIGGERS):
-        return "'" + value
-    return value
-
-
 def csv_bytes(result: Result, sort=None, desc=False) -> bytes:
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow([_csv_safe(c) for c in result.columns])
-    for row in sorted_rows(result, _int(sort), bool(desc)):
-        w.writerow(["" if v is None else _csv_safe(v) for v in row])
-    return buf.getvalue().encode("utf-8")
+    """UTF-8, no BOM; text cells (headers included) through the formula guard, numbers as they are."""
+    return csv_export.to_bytes([csv_export.guard(c) for c in result.columns],
+                               (["" if v is None else csv_export.guard(v) for v in row]
+                                for row in sorted_rows(result, _int(sort), bool(desc))))
 
 
 def csv_filename(name: str, today: str) -> str:

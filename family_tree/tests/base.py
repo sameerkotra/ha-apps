@@ -9,10 +9,11 @@ import shutil
 import sqlite3
 import unittest
 
-from fastapi.testclient import TestClient
 
-from app import config, db, features, graph, ha_people, media, settings
+from app import config, db, features, graph, media, settings
+from app.common import ha_people
 from app.main import app
+from common_tests.ingress import ingress_client, user_headers
 
 import logging
 logging.disable(logging.WARNING)      # keep test output readable (main.py sets INFO)
@@ -77,13 +78,7 @@ def reset_state(setup_media: bool = True, all_features: bool = False):
 
 
 def headers(user=None):
-    user = user or ALICE
-    h = {"X-Remote-User-Id": user["id"]}
-    if user.get("name") is not None:
-        h["X-Remote-User-Name"] = user["name"]
-    if user.get("display") is not None:
-        h["X-Remote-User-Display-Name"] = user["display"]
-    return h
+    return user_headers(user or ALICE)
 
 
 def sql(query, args=()):
@@ -119,7 +114,7 @@ class ApiTestCase(unittest.TestCase):
 
     def setUp(self):
         reset_state(all_features=self.ALL_FEATURES)
-        self.client = TestClient(app, client=("127.0.0.1", 12345))
+        self.client = ingress_client(app)
         self.addCleanup(restore_config)
 
     # ---- raw requests ----

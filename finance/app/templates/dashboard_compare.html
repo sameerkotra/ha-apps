@@ -13,26 +13,26 @@
     <label>
         Compare
         {# Switching between months and years drops the two choices (they are a different kind of value) so the server picks sensible defaults. #}
-        <select name="mode" onchange="this.form.a.disabled = true; this.form.b.disabled = true; this.form.submit();">
+        <select name="mode" data-autosubmit="a b">
             <option value="month" {{ "selected" if mode == "month" else "" }}>Months</option>
             <option value="year" {{ "selected" if mode == "year" else "" }}>Years</option>
         </select>
     </label>
     <label>
         {{ "Year" if mode == "year" else "Month" }} A
-        <select name="a" onchange="this.form.submit()">
+        <select name="a" data-autosubmit>
             {% for value, text in options %}<option value="{{ value }}" {{ "selected" if value == a else "" }}>{{ text }}</option>{% endfor %}
         </select>
     </label>
     <label>
         {{ "Year" if mode == "year" else "Month" }} B
-        <select name="b" onchange="this.form.submit()">
+        <select name="b" data-autosubmit>
             {% for value, text in options %}<option value="{{ value }}" {{ "selected" if value == b else "" }}>{{ text }}</option>{% endfor %}
         </select>
     </label>
     <label>
         Account
-        <select name="account_id" onchange="this.form.submit()">
+        <select name="account_id" data-autosubmit>
             <option value="">All accounts</option>
             {% for acct in accounts %}
             <option value="{{ acct.id }}" {{ "selected" if selected_account_id == acct.id else "" }}>{{ acct.name }}{{ " (card)" if acct.type == "credit_card" else "" }}</option>

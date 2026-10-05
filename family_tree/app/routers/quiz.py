@@ -19,7 +19,7 @@ from pydantic import Field
 
 from .. import features, config, db, graph as graph_mod, kidmode, kin, relations, upcoming
 from ..auth import require_admin, require_user
-from ..common import Strict
+from ..models import Strict
 
 router = APIRouter(prefix="/api", tags=["quiz"], dependencies=[Depends(features.required("quiz"))])
 

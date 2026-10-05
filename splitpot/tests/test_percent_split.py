@@ -8,7 +8,7 @@ import unittest
 
 from fastapi import HTTPException
 
-import main
+from app import main
 from test_app import ALICE, Base
 
 

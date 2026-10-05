@@ -4,21 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script>
-(function () {
-    var THEMES = ["midnight", "slate", "daylight"];
-    try {
-        var theme = localStorage.getItem("theme");
-        if (theme && THEMES.indexOf(theme) !== -1) {
-            document.documentElement.setAttribute("data-theme", theme);
-        }
-        if (localStorage.getItem("sidebarCollapsed") === "1") {
-            document.documentElement.setAttribute("data-sidebar", "collapsed");
-        }
-    } catch (e) { /* localStorage unavailable (private mode, etc.) */ }
-})();
-</script>
-<link rel="stylesheet" href="style.css?v=2.0.0">
+<script src="common/theme-boot.js?v=2.1.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.1.1">
+<link rel="stylesheet" href="common/settings.css?v=2.1.1">
+<link rel="stylesheet" href="style.css?v=2.1.1">
 </head>
 <body>
 <div id="app">
@@ -37,11 +26,7 @@
     </nav>
     <button type="button" class="sidebar-user" id="sidebarUser" title="How the app sees you">—</button>
     <div class="sidebar-theme">
-      <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
-        <option value="midnight">🌙 Midnight</option>
-        <option value="slate">🌆 Slate</option>
-        <option value="daylight">☀️ Daylight</option>
-      </select>
+      <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
     </div>
   </aside>
 
@@ -53,13 +38,8 @@
       </div>
     </header>
 
-    <!-- "No admin yet" (admin_users is empty): shown to everyone on every page. -->
-    <div id="noAdminBanner" class="app-banner" role="alert" hidden>
-      <strong>No admin yet</strong> — add your Home Assistant user name
-      (<strong><code id="noAdminName">—</code></strong>) to <code>admin_users</code> in the app's
-      Configuration tab, save, and restart the app.
-      <button type="button" id="noAdminWhoamiLink" class="link-btn">How the app sees you</button>
-    </div>
+    <!-- "No admin yet" (admin_users is empty): shown to everyone on every page (filled by common/whoami.js). -->
+    <div id="noAdminBanner" class="app-banner" role="alert" hidden></div>
 
     <div class="date-bar" id="dateBar">
       <button type="button" id="datePrevBtn" class="btn-icon date-nav-btn" title="Previous day" aria-label="Previous day">‹</button>
@@ -254,71 +234,9 @@
           <button type="button" class="hist-btn admin-tab-btn" role="tab" data-admin-tab="storage">Storage</button>
         </div>
 
-        <!-- App settings -->
+        <!-- App settings: drawn by common/settings.js from GET /api/admin/settings -->
         <div id="admin-settings" class="admin-panel" role="tabpanel" hidden>
-          <div class="card">
-            <h3>App settings</h3>
-            <div class="ai-notice" hidden></div>
-            <h4 class="settings-group">🤖 AI</h4>
-            <p class="hint settings-help">Used by "✨ Estimate with AI" and the AI Assistant. Leave the provider on "Not set up" to run without AI — everything else works.</p>
-            <div class="form-row">
-              <label>Provider
-                <select id="setAiProvider">
-                  <option value="">Not set up (no AI)</option>
-                  <option value="ollama">Ollama (your own computer or server)</option>
-                  <option value="openai">OpenAI-compatible (OpenAI, OpenRouter, Groq, LM Studio, …)</option>
-                  <option value="anthropic">Anthropic Claude</option>
-                </select>
-              </label>
-            </div>
-            <p class="hint settings-help">Ollama runs models on your own hardware, so nothing leaves your network. OpenAI-compatible covers OpenAI and any service or local server that speaks its API. Claude is Anthropic's API.</p>
-            <div class="form-row">
-              <label>Address
-                <input id="setAiUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" maxlength="500" placeholder="http://192.168.1.10:11434">
-              </label>
-            </div>
-            <p class="hint settings-help">Ollama: its address, e.g. http://192.168.1.10:11434 (required). OpenAI-compatible: the API base — blank = https://api.openai.com/v1 (LM Studio: e.g. http://192.168.1.10:1234/v1). Claude: blank = https://api.anthropic.com.</p>
-            <div class="form-row">
-              <label>Model
-                <input id="setAiModel" type="text" autocomplete="off" spellcheck="false" maxlength="200" placeholder="e.g. llama3.1:8b, gpt-4o-mini, claude-sonnet-4-5">
-              </label>
-            </div>
-            <p class="hint settings-help">The model's exact name. <strong>Test connection</strong> lists the models the provider offers.</p>
-            <div class="form-row">
-              <label>Access key
-                <input id="setAiApiKey" type="password" autocomplete="new-password" spellcheck="false" maxlength="500" placeholder="Paste the key">
-              </label>
-            </div>
-            <label id="setAiClearKeyRow" class="settings-check" hidden><input id="setAiClearKey" type="checkbox"> Remove the saved key</label>
-            <p class="hint settings-help">Needed for Claude and for OpenAI and most cloud services; not for Ollama or LM Studio. Stored in the app's database, never shown again, never logged, and left out of database downloads. Leave the box empty to keep the saved key.</p>
-            <div class="form-row">
-              <label>Longest answer (tokens)
-                <input id="setAiMaxTokens" type="number" min="256" max="200000" step="1" inputmode="numeric">
-              </label>
-            </div>
-            <p class="hint settings-help">The most the model may write in one answer. Claude requires a limit; the other providers ignore it. <span id="setAiMaxTokensDefault"></span></p>
-            <div class="form-row">
-              <button type="button" id="settingsTestBtn" class="btn-secondary">🔌 Test connection</button>
-            </div>
-            <p class="hint settings-help">Uses what's typed above, before saving (an empty key box uses the saved key). Only asks the provider which models it offers — nothing is generated, so it costs nothing.</p>
-            <div id="settingsTestStatus" class="hint settings-status" role="status"></div>
-
-            <h4 class="settings-group">🏠 Home Assistant</h4>
-            <div class="setting-toggle-row">
-              <span id="setExposeSensorLabel" class="setting-toggle-label">Publish daily calories to Home Assistant</span>
-              <label class="toggle-switch" title="Publish daily calories to Home Assistant">
-                <input id="setExposeSensor" type="checkbox" aria-labelledby="setExposeSensorLabel">
-                <span class="track"><span class="thumb"></span></span>
-              </label>
-            </div>
-            <p class="hint settings-help">Publishes only each person's calories logged today, as <code>sensor.calorie_tracker_&lt;user&gt;_daily_calories</code> — never macros, weight or food names. Turning it on publishes everyone's sensor right away; turning it off removes those sensors from Home Assistant. <span id="setExposeSensorDefault"></span></p>
-
-            <p class="hint settings-help settings-footnote">Changes apply right away — no restart needed. Only who counts as an admin is set in the app's Configuration tab (<code>admin_users</code>).</p>
-            <div class="form-row">
-              <button type="button" id="settingsSaveBtn" class="btn-primary">Save settings</button>
-            </div>
-            <div id="settingsSaveStatus" class="hint settings-status" role="status"></div>
-          </div>
+          <div id="appSettingsBox"></div>
         </div>
 
         <!-- Users -->
@@ -396,7 +314,11 @@
   </div>
 </div>
 
-<script src="backnav.js?v=2.0.0"></script>
-<script src="app.js?v=2.0.0"></script>
+<script src="common/ui.js?v=2.1.1"></script>
+<script src="common/settings.js?v=2.1.1"></script>
+<script src="common/people.js?v=2.1.1"></script>
+<script src="common/backnav.js?v=2.1.1"></script>
+<script src="common/whoami.js?v=2.1.1"></script>
+<script src="app.js?v=2.1.1"></script>
 </body>
 </html>

@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import names as names_mod, dates, db, features, media, photoedit, settings
 from ..auth import require_user
-from ..common import DateIn, Strict, clean, date_cols, require_person
+from ..models import DateIn, Strict, clean, date_cols, require_person
 from ..history import Batch
 from .people import _nm, person_detail
 
@@ -61,7 +61,7 @@ def _check_link_target(conn, person_id=None, family_id=None, event_id=None) -> N
         if n >= MAX_LINKS_PER_PERSON:
             raise HTTPException(422, f"A person can have at most {MAX_LINKS_PER_PERSON} photos and documents.")
     elif family_id:
-        from ..common import require_family
+        from ..models import require_family
         require_family(conn, family_id)
     else:
         if not conn.execute("SELECT 1 FROM events WHERE id = ?", (event_id,)).fetchone():

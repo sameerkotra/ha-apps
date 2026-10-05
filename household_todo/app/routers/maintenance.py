@@ -5,8 +5,6 @@ Everyone who uses the app can see the tab, add and edit items and jobs, mark don
 Turning the feature on or off, the household recipients, the home profile, the overdue sensor, custom
 suggestions and the files folder are admin-only. While the feature is off, everything but the admin routes
 answers 409."""
-import csv
-import io
 import json
 import os
 from datetime import date, timedelta
@@ -16,6 +14,7 @@ from fastapi.responses import FileResponse
 
 from .. import config, db, ha_sensors, maint_catalog as cat, maint_files, maintenance as mt, recurrence, settings, taskview
 from ..auth import get_acting_user, require_admin
+from ..common import csv_export
 
 router = APIRouter(prefix="/api", tags=["maintenance"])
 
@@ -325,16 +324,16 @@ def history_csv(year: str | None = Query(default=None), acting: dict = Depends(g
     y = _year(year)
     with db.get_conn() as conn:
         rows = _history_rows(conn, year=y, limit=100_000)
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["Date", "Item", "Category", "Done by", "Note", f"Cost{' (' + config.CURRENCY + ')' if config.CURRENCY else ''}",
-                "Was due", "Files"])
-    for r in rows:
-        w.writerow([r["date"], r["itemName"], r["categoryLabel"], r["by"] or "", r["note"] or "",
-                    "" if r["cost"] is None else f"{r['cost']:.2f}", r["dueWas"] or "",
-                    "; ".join(f["name"] for f in r["files"])])
+    # Text that people typed goes through the formula guard (app/common/csv_export.py); dates and costs don't.
+    t = csv_export.text
+    text = csv_export.to_text(
+        ["Date", "Item", "Category", "Done by", "Note", f"Cost{' (' + config.CURRENCY + ')' if config.CURRENCY else ''}",
+         "Was due", "Files"],
+        ([r["date"], t(r["itemName"]), t(r["categoryLabel"]), t(r["by"] or ""), t(r["note"] or ""),
+          "" if r["cost"] is None else f"{r['cost']:.2f}", r["dueWas"] or "",
+          t("; ".join(f["name"] for f in r["files"]))] for r in rows), bom=True)
     name = f"maintenance-history{'-' + str(y) if y else ''}.csv"
-    return Response(buf.getvalue().encode("utf-8-sig"), media_type="text/csv",
+    return Response(text.encode("utf-8"), media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 

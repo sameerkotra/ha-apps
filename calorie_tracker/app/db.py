@@ -5,11 +5,10 @@ overlap without a global lock.
 """
 import os
 import sqlite3
-import tempfile
 import threading
-from contextlib import contextmanager
 
 from . import config
+from .common import backup_core, db_core
 
 os.makedirs(config.DATA_DIR, exist_ok=True)
 
@@ -17,23 +16,12 @@ _import_lock = threading.Lock()  # serializes a DB-file swap against concurrent 
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",))
 
 
-@contextmanager
 def get_conn():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+    return db_core.transaction(_connect)
 
 
 SCHEMA = """
@@ -120,17 +108,18 @@ def init_db():
     generation += 1
 
 
+# Columns older databases lack: (table, column, definition), added in this order.
+MIGRATIONS = [
+    ("users", "enabled", "INTEGER NOT NULL DEFAULT 1"),
+    ("saved_foods", "notes", "TEXT"),
+]
+
+
 def _migrate(conn: sqlite3.Connection):
     """Additive, idempotent migrations for installs that predate a column.
     No migration framework dependency — this app's schema is small enough
     that a couple of guarded ALTER TABLEs are simpler and clearer."""
-    cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
-    if "enabled" not in cols:
-        conn.execute("ALTER TABLE users ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
-
-    sf_cols = {row["name"] for row in conn.execute("PRAGMA table_info(saved_foods)")}
-    if "notes" not in sf_cols:
-        conn.execute("ALTER TABLE saved_foods ADD COLUMN notes TEXT")
+    db_core.add_missing_columns(conn, MIGRATIONS)
 
     # Older databases stored the AI server as ollama_url / ollama_model. They
     # become ai_provider = "ollama", ai_url and ai_model (an ai_* value that
@@ -150,7 +139,7 @@ def _migrate(conn: sqlite3.Connection):
         conn.execute("DELETE FROM app_settings WHERE key IN ('ollama_url', 'ollama_model')")
 
 
-def backup_to_tempfile(blank_settings: tuple = ()) -> str:
+def backup_to_tempfile(after=None) -> str:
     """Online-backup the live database into a fresh temp .db file and return
     its path. Deliberately not a plain file copy of config.DB_PATH: this DB
     runs in WAL mode (see the schema's `PRAGMA journal_mode = WAL`), so
@@ -160,28 +149,14 @@ def backup_to_tempfile(blank_settings: tuple = ()) -> str:
     (Connection.backup()) produces one complete, consistent file regardless
     of WAL state, safely even against a database still taking writes.
 
-    `blank_settings`: app_settings keys whose value is blanked in the copy
-    (the AI access key — a backup file never carries it).
+    `after(conn)`: changes the copy before it's closed — the download passes
+    settings.REGISTRY.scrub_secrets, so a backup file never carries the AI
+    access key.
 
     Caller owns the returned temp file and is responsible for deleting it
     once it's done (e.g. via a FastAPI BackgroundTask after streaming it).
     """
-    fd, tmp_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    src = _connect()
-    try:
-        dst = sqlite3.connect(tmp_path)
-        try:
-            src.backup(dst)
-            if blank_settings:
-                dst.execute(f"UPDATE app_settings SET value = '\"\"' WHERE key IN ({','.join('?' * len(blank_settings))})",
-                            tuple(blank_settings))
-                dst.commit()
-        finally:
-            dst.close()
-    finally:
-        src.close()
-    return tmp_path
+    return db_core.snapshot_to_tempfile(_connect, after=after)
 
 
 REQUIRED_TABLES = {"users", "goals", "weight_logs", "saved_foods", "food_logs"}
@@ -192,20 +167,7 @@ def validate_backup_file(path: str) -> None:
     import as a replacement database: not valid SQLite, fails an integrity
     check, or is missing a table this app relies on (e.g. someone uploaded
     an unrelated .db file, or Splitpot's backup by mistake)."""
-    try:
-        conn = sqlite3.connect(path)
-        try:
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                raise ValueError(f"That file failed a database integrity check ({integrity}) — refusing to import it.")
-            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            missing = REQUIRED_TABLES - tables
-            if missing:
-                raise ValueError(f"That doesn't look like a Calorie Tracker database (missing tables: {', '.join(sorted(missing))}).")
-        finally:
-            conn.close()
-    except sqlite3.DatabaseError:
-        raise ValueError("That file isn't a valid SQLite database.")
+    db_core.validate_file(path, REQUIRED_TABLES, app_name="Calorie Tracker")
 
 
 def import_from_tempfile(tmp_path: str) -> None:
@@ -214,21 +176,10 @@ def import_from_tempfile(tmp_path: str) -> None:
     caller). Serialized against concurrent writers via _import_lock, and
     checkpoints + drops the current -wal/-shm sidecars first so nothing
     tries to replay stale WAL frames against the freshly-swapped-in file."""
-    with _import_lock:
-        try:
-            with get_conn() as c:
-                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except sqlite3.Error:
-            pass
-        os.replace(tmp_path, config.DB_PATH)
-        for ext in ("-wal", "-shm"):
-            sidecar = config.DB_PATH + ext
-            if os.path.exists(sidecar):
-                os.remove(sidecar)
-        # An older backup may lack columns or settings rows the app now
-        # expects (_migrate) — bring it up to date now rather than serving
-        # errors until the next restart.
-        init_db()
+    # An older backup may lack columns or settings rows the app now
+    # expects (_migrate) — init_db brings it up to date now rather than
+    # serving errors until the next restart.
+    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:

@@ -20,7 +20,7 @@ class TestGamesJs(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
 
     def test_shell_scripts_parse(self):
-        for name in ("app.js", "play.js", "admin.js", "theme-boot.js", "backnav.js"):
+        for name in ("app.js", "play.js", "admin.js", "common/theme-boot.js", "common/ui.js", "common/backnav.js"):
             r = subprocess.run(["node", "--check", os.path.join(HERE, "app", "static", name)],
                                capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 0, name + ": " + r.stderr)

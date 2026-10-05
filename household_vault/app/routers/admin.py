@@ -1,23 +1,24 @@
 """Admin: users (enable and set up, disable, reset), App settings, backup and restore (SPEC §4, §9.1).
 Admins can never open anyone's vault through these routes."""
 import io
+import itertools
 import json
 import os
 import shutil
 import sqlite3
 import tempfile
 import time
-import zipfile
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from .. import alerts, config, copies, db, ha_client, ha_notify, ha_people, kdbx, service, sessions, settings
+from .. import alerts, config, copies, db, ha_client, kdbx, service, sessions, settings
+from ..common import backup_core, db_core, ha_notify, ha_people, people_admin
 from ..auth import require_admin, require_user
 from .common import Strict
 
 router = APIRouter(prefix="/api", tags=["admin"])
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.1"
 _last_sync = {"t": 0.0}
 
 
@@ -30,12 +31,7 @@ def _maybe_sync():
             pass
 
 
-def ha_person_json(user_id: str) -> dict:
-    """What Home Assistant says about the person (Settings → People): their person and phones."""
-    p = ha_people.person_for(user_id)
-    return {"known": ha_people.known(), "person": p["entityId"] if p else None, "personName": p["name"] if p else None,
-            "phones": [{"label": ph["label"], "service": f"notify.{ph['service']}" if ph["service"] else None,
-                        "tracker": ph["tracker"]} for ph in (p or {}).get("phones", [])]}
+ha_person_json = people_admin.ha_person_json          # their person and phones (common/people_admin.py)
 
 
 @router.get("/admin/users")
@@ -43,8 +39,7 @@ def admin_users(refresh: bool = False, admin: dict = Depends(require_admin)):
     """Everyone known, with their phones from Home Assistant and any extra notify services. `refresh=1` reads
     Home Assistant's people again first (no DB connection or vault lock is held meanwhile)."""
     _maybe_sync()
-    if refresh:
-        ha_people.refresh_blocking(True)
+    people_admin.refresh_people(refresh)
     with db.get_conn() as conn:
         rows = conn.execute("SELECT u.*, (SELECT COUNT(*) FROM vault_members m WHERE m.user_id = u.id) AS vaults "
                             "FROM users u ORDER BY u.name COLLATE NOCASE").fetchall()
@@ -65,18 +60,10 @@ MAX_SERVICES_PER_USER = 5
 @router.get("/admin/notify-services")
 def notify_services(refresh: bool = False, admin: dict = Depends(require_admin)):
     """Notify actions and entities Home Assistant has, for the picker."""
-    try:
-        return {"available": True, "error": None, **ha_notify.list_notify_services_blocking(force=refresh)}
-    except ha_notify.NotifyListError as e:
-        return {"available": False, "error": f"Couldn't read the notify services from Home Assistant: {e}",
-                "services": [], "entities": []}
+    return people_admin.notify_services(refresh)
 
 
-def _service(value) -> str:
-    try:
-        return ha_notify.normalize_service(value)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+_service = people_admin.clean_service
 
 
 def _known_user(conn, uid: str):
@@ -91,12 +78,8 @@ def add_notify(uid: str, body: dict = Body(...), admin: dict = Depends(require_a
     svc = _service(body.get("service"))
     with db.get_conn() as conn:
         _known_user(conn, uid)
-        current = ha_notify.assigned_services(conn, {"id": uid})
-        if svc not in current and len(current) >= MAX_SERVICES_PER_USER:
-            raise HTTPException(422, f"At most {MAX_SERVICES_PER_USER} notify services per person.")
-        conn.execute("INSERT OR IGNORE INTO user_notify (user_id, service, created_at, created_by) VALUES (?, ?, ?, ?)",
-                     (uid, svc, config.now_iso(), admin.get("username") or admin["id"]))
-        return {"notify": ha_notify.assigned_services(conn, {"id": uid})}
+        return {"notify": people_admin.add_service(conn, uid, svc, admin.get("username") or admin["id"], config.now_iso(),
+                                                   limit=MAX_SERVICES_PER_USER)}
 
 
 @router.delete("/admin/users/{uid}/notify/{svc}")
@@ -104,9 +87,7 @@ def remove_notify(uid: str, svc: str, admin: dict = Depends(require_admin)):
     svc = _service(svc)
     with db.get_conn() as conn:
         _known_user(conn, uid)
-        if not conn.execute("DELETE FROM user_notify WHERE user_id = ? AND service = ?", (uid, svc)).rowcount:
-            raise HTTPException(404, "That service isn't assigned to them.")
-        return {"notify": ha_notify.assigned_services(conn, {"id": uid})}
+        return {"notify": people_admin.remove_service(conn, uid, svc, "That service isn't assigned to them.")}
 
 
 @router.post("/admin/users/{uid}/notify/test")
@@ -125,8 +106,7 @@ def test_notify(uid: str, admin: dict = Depends(require_admin)):
                                  f"{row['name']} → Track device) and no extra notify service here.")
     results = ha_notify.send_to_services(services, alerts.TITLE, f"Test from Household Vault for {row['name']} — "
                                          "alerts will arrive like this.")
-    return {"results": [{"service": f"notify.{k}", "ok": v, "hint": "" if v else ha_notify.explain_failure(k)}
-                        for k, v in results.items()]}
+    return {"results": people_admin.test_results(results, as_list=True)}
 
 
 @router.post("/users/{uid}/setup")
@@ -163,16 +143,19 @@ def unblock(uid: str, admin: dict = Depends(require_admin)):
     return {"ok": True}
 
 
-@router.get("/admin/settings")
-def get_settings(admin: dict = Depends(require_admin)):
+def _settings_out() -> dict:
     with db.get_conn() as conn:
         values = settings.all_values(conn)
         tuned = {"iterations": db.get_setting(conn, "argon2_iterations"),
                  "memoryMiB": config.KDF_MEMORY_KIB // 1024,
                  "secondsPerIteration": db.get_setting(conn, "argon2_seconds_per_iteration")}
         pc = copies.admin_status(conn)
-    return {"values": values, "defaults": settings.DEFAULTS, "labels": settings.LABELS, "kdf": tuned,
-            "version": APP_VERSION, "personalCopies": pc, **sessions.stats()}
+    return settings.payload(values, kdf=tuned, version=APP_VERSION, personalCopies=pc, **sessions.stats())
+
+
+@router.get("/admin/settings")
+def get_settings(admin: dict = Depends(require_admin)):
+    return _settings_out()
 
 
 @router.put("/admin/settings")
@@ -188,7 +171,7 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
     if values["personal_copies"] != before["personal_copies"]:
         with db.get_conn() as conn:
             copies.setting_changed(conn, values["personal_copies"])      # off: the files are deleted
-    return {"values": values}
+    return _settings_out()
 
 
 # ---------- backup and restore ----------
@@ -202,45 +185,43 @@ def download_backup(admin: dict = Depends(require_admin)):
     with tempfile.TemporaryDirectory() as tmp:
         snap = os.path.join(tmp, "vault.db")
         src = sqlite3.connect(config.DB_PATH)
-        dst = sqlite3.connect(snap)
-        with dst:
-            src.backup(dst)
-        src.close()
-        dst.close()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            z.write(snap, "vault.db")
-            for root, _dirs, files in os.walk(config.VAULT_DIR):
-                for f in files:
-                    if f.endswith(".kdbx"):
-                        full = os.path.join(root, f)
-                        z.write(full, os.path.join("vaults", os.path.relpath(full, config.VAULT_DIR)))
-            cdir = copies.copy_dir()                    # each person's one-file copy (their master password)
-            if os.path.isdir(cdir):
-                for f in sorted(os.listdir(cdir)):
-                    if f.endswith(".kdbx"):
-                        z.write(os.path.join(cdir, f), "copies/" + f)
+        try:
+            db_core.snapshot(src, snap)
+        finally:
+            src.close()
+        cdir = copies.copy_dir()                        # each person's one-file copy (their master password)
+        backup_core.write_zip(buf, itertools.chain(
+            [(snap, "vault.db")],
+            backup_core.walk(config.VAULT_DIR, prefix="vaults/", keep=lambda full, _rel: full.endswith(".kdbx")),
+            ((os.path.join(cdir, f), "copies/" + f) for f in (sorted(os.listdir(cdir)) if os.path.isdir(cdir) else [])
+             if f.endswith(".kdbx"))))
     with db.get_conn() as conn:
         db.audit(conn, "backup_downloaded", None, None, admin["id"])
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    return Response(buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="household-vault-backup-{stamp}.zip"'})
+    name = backup_core.file_name("household-vault-backup", ".zip")
+    # the zip is built in memory (no copy of the vault files is left in a temp folder)
+    return Response(buf.getvalue(), media_type=backup_core.ZIP_MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/admin-storage-import-db")
 async def import_backup(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
     raw = await file.read()
-    try:
-        z = zipfile.ZipFile(io.BytesIO(raw))
-    except zipfile.BadZipFile:
-        raise HTTPException(422, "That isn't a Household Vault backup (.zip).")
+    z = backup_core.open_zip(raw, lambda: HTTPException(422, "That isn't a Household Vault backup (.zip)."))
     names = z.namelist()
     if "vault.db" not in names:
         raise HTTPException(422, "The backup has no vault.db.")
-    for n in names:
-        if n.startswith("/") or ".." in n.split("/") or not (n == "vault.db" or
-                                                           (n.startswith("vaults/") and n.endswith(".kdbx")) or
-                                                           (n.startswith("copies/") and n.count("/") == 1 and n.endswith(".kdbx"))):
-            raise HTTPException(422, f"Unexpected file in the backup: {n}")
+
+    def unexpected(n):
+        return HTTPException(422, f"Unexpected file in the backup: {n}")
+
+    def expected(info):
+        n = info.filename
+        if not (n == "vault.db" or (n.startswith("vaults/") and n.endswith(".kdbx")) or
+                (n.startswith("copies/") and n.count("/") == 1 and n.endswith(".kdbx"))):
+            raise unexpected(n)
+
+    backup_core.check_members(z, check=expected, unsafe=unexpected,
+                              is_unsafe=lambda n: n.startswith("/") or ".." in n.split("/"))
     with tempfile.TemporaryDirectory() as tmp:
         dbfile = os.path.join(tmp, "vault.db")
         with open(dbfile, "wb") as f:
@@ -274,14 +255,9 @@ async def import_backup(file: UploadFile = File(...), admin: dict = Depends(requ
         shutil.rmtree(copies.copy_dir(), ignore_errors=True)
         for n in names:
             if n.startswith("copies/"):
-                os.makedirs(copies.copy_dir(), exist_ok=True)
-                with open(os.path.join(copies.copy_dir(), n.split("/", 1)[1]), "wb") as f:
-                    f.write(z.read(n))
+                backup_core.copy_out(z, n, os.path.join(copies.copy_dir(), n.split("/", 1)[1]))
             elif n.endswith(".kdbx"):
-                dest = os.path.join(config.VAULT_DIR, os.path.relpath(n, "vaults"))
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                with open(dest, "wb") as f:
-                    f.write(z.read(n))
+                backup_core.copy_out(z, n, os.path.join(config.VAULT_DIR, os.path.relpath(n, "vaults")))
         for ext in ("", "-wal", "-shm"):
             try:
                 os.remove(config.DB_PATH + ext)

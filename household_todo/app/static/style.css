@@ -1,76 +1,41 @@
 /* ---------- theming ----------
-   Every theme defines the SAME set of custom properties; the rest of this
-   file only ever reads them through var(...). Ink is also the :root default
-   (it is what renders before the bootstrap script in index.html has run). */
+   The theme colours (Midnight, Slate, Daylight) are shared by every household app:
+   common/themes.css, loaded first, applied by common/theme-boot.js. This app adds its
+   own accent (teal) and the schedule colour in the same three blocks; the rest of this
+   file only ever reads colours through var(...). */
 :root {
   --radius: 12px;
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-:root, [data-theme="ink"] {
-  --bg: #13161b;
-  --panel: #1b1f27;
-  --panel-alt: #232834;
-  --panel-hover: #2b3140;
-  --border: #303748;
-  --text: #e9edf4;
-  --text-dim: #9099ad;
+:root, [data-theme="midnight"] {
   --accent: #5ec8b6;
   --accent-dim: #3d8f81;
   --accent-hover: #7fdccb;
   --accent-contrast: #08201c;
   --accent-soft: #1b2d2c;
-  --danger: #ef6b6b;
-  --danger-soft: #35202a;
-  --warn: #f0b34a;
-  --warn-soft: #33291a;
   --sched: #a78bfa;
   --sched-soft: #262238;
-  color-scheme: dark;
 }
 
 [data-theme="slate"] {
-  --bg: #0e1420;
-  --panel: #16202f;
-  --panel-alt: #1c2a3d;
-  --panel-hover: #223350;
-  --border: #283449;
-  --text: #e7ecf5;
-  --text-dim: #93a3ba;
   --accent: #6aa6ff;
   --accent-dim: #3f6fb0;
   --accent-hover: #93c0ff;
   --accent-contrast: #08111f;
   --accent-soft: #1a2c47;
-  --danger: #ef7b7b;
-  --danger-soft: #35212b;
-  --warn: #f2c94c;
-  --warn-soft: #33301a;
   --sched: #b39dfa;
   --sched-soft: #262541;
-  color-scheme: dark;
 }
 
 [data-theme="daylight"] {
-  --bg: #f4f6fa;
-  --panel: #ffffff;
-  --panel-alt: #eef1f7;
-  --panel-hover: #e3e9f4;
-  --border: #d8dfec;
-  --text: #1c2430;
-  --text-dim: #5b6577;
   --accent: #1f8a78;
   --accent-dim: #17695c;
   --accent-hover: #26a18c;
   --accent-contrast: #ffffff;
   --accent-soft: #dff3ef;
-  --danger: #c94f4f;
-  --danger-soft: #fbe6e6;
-  --warn: #a86a00;
-  --warn-soft: #fff1d6;
   --sched: #6d4bd6;
   --sched-soft: #ece7fb;
-  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -340,6 +305,14 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .chip.type { border-left-width: 3px; }
 .chip.required { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-soft); }
+.chip.source { font-style: italic; }
+/* Admin → App settings: Connected apps (common/connected-apps.js) */
+.connected-apps-wrap { margin-top: 16px; }
+.connected-apps-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.connected-app { border-top: 1px solid var(--border); padding-top: 8px; }
+.connected-app.stale { opacity: 0.6; }
+.connected-app-name { font-weight: 700; }
+.connected-app-does { font-size: 0.9rem; }
 .chip.overdue { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); font-weight: 600; }
 .chip.past { color: var(--text-dim); font-style: italic; }
 .chip.today { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }

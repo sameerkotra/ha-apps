@@ -8,7 +8,7 @@ const PAPER = { A4: [210, 297], A3: [297, 420], A2: [420, 594], A1: [594, 841], 
 const BOX_W = 170, BOX_H = 64, GAP_X = 18, ROW_H = 120;
 const SEX_COLOR = { male: "#3f7fd6", female: "#d0558a", other: "#7d5cc8", unknown: "#8a93a3" };
 
-function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
+const esc = UI.escapeHtml;   // common/ui.js
 
 /* The privacy/detail part of the export options, seeded from the last website export. */
 async function printOptions() {

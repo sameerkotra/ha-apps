@@ -8,15 +8,13 @@ section 3.
 """
 import asyncio
 import os
-import tempfile
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
-from starlette.background import BackgroundTask
 
 from .. import ai_client, config, db, ha_sync, settings
 from ..auth import require_admin
+from ..common import backup_core
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
@@ -97,14 +95,8 @@ def admin_storage_download_db(admin: dict = Depends(require_admin)):
     SQLite tool. See db.backup_to_tempfile for why this isn't a plain
     file copy. The AI access key is blanked in the copy: a backup file
     never carries it."""
-    tmp_path = db.backup_to_tempfile(blank_settings=settings.SECRET_KEYS)
-    filename = f"calorie-tracker-backup-{config.now().strftime('%Y%m%d-%H%M%S')}.db"
-    return FileResponse(
-        tmp_path,
-        media_type="application/vnd.sqlite3",
-        filename=filename,
-        background=BackgroundTask(os.remove, tmp_path),
-    )
+    tmp_path = db.backup_to_tempfile(after=settings.REGISTRY.scrub_secrets)
+    return backup_core.send_file(tmp_path, backup_core.file_name("calorie-tracker-backup", ".db", now=config.now()))
 
 
 @router.post("/admin-storage-import-db")
@@ -127,18 +119,15 @@ async def admin_storage_import_db(file: UploadFile = File(...), admin: dict = De
 
     The restored file's App settings apply at once — except the AI access
     key: a downloaded backup has none, so this install keeps its own."""
-    saved_secrets = {k: settings.get(k) for k in settings.SECRET_KEYS}
-    fd, tmp_path = tempfile.mkstemp(suffix=".db", dir=config.DATA_DIR)
+    saved_secrets = settings.REGISTRY.saved_secrets()
+    tmp_path = await backup_core.receive(file, config.DATA_DIR)
     try:
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                out.write(chunk)
         try:
             db.validate_backup_file(tmp_path)
         except ValueError as e:
             raise HTTPException(400, str(e))
         db.import_from_tempfile(tmp_path)
-        settings.restore_secrets(saved_secrets)
+        settings.REGISTRY.keep_secrets(saved_secrets)
         # The restored file may carry different App settings (init_db bumps
         # db.generation, which drops settings' cache); a warm-up recorded
         # against the old values no longer means anything.

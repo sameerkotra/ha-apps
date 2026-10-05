@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Best prices</title>
+  <script src="static/common/theme-boot.js"></script>
+  <link rel="stylesheet" href="static/common/themes.css">
+  <link rel="stylesheet" href="static/app.css">
+  <style>
+    .statusline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: .85rem; }
+    .statusline .btn { margin-left: auto; }
+    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .kpis .kpi { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line);
+                 background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+    .kpis .kpi .value { font-size: 1.2rem; font-weight: 750; font-variant-numeric: tabular-nums; margin: 0; }
+    .kpis .kpi .label { font-size: .72rem; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; }
+    .kpis .kpi.warnk .value { color: var(--warn, #b7791f); }
+    .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+    .tabs .tab { flex: none; border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600; padding: 10px 12px;
+                 border-bottom: 2px solid transparent; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+    .tabs .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+    .tabs .count { font-size: .7rem; background: var(--surface-3, rgba(127,127,127,.18)); border-radius: 9px; padding: 1px 7px; }
+    .frow { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
+    .frow:first-child { border-top: 0; }
+    .frow .grow { flex: 1; min-width: 0; display: grid; gap: 3px; }
+    .frow .ftop { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .frow .fname { font-weight: 650; }
+    .frow .fval { font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); }
+    .frow .meta a { color: inherit; text-decoration: underline; }
+    @media (max-width: 420px) { .kpis .kpi .value { font-size: 1.05rem; } .kpis .kpi { padding: 8px 10px; } }
+    .status { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+    .status .grow { flex: 1; min-width: 0; }
+    .status .when { font-weight: 650; }
+    .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .kpi { padding: 12px 14px; }
+    .kpi .label { font-size: .72rem; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+    .kpi .value { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .sect { font-size: .78rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 10px 2px 0; }
+    .rec { padding: 14px 16px; display: grid; gap: 6px; }
+    .rec .headline { font-weight: 700; }
+    .money { color: var(--accent); font-weight: 700; }
+    .conf { display: inline-flex; gap: 3px; vertical-align: middle; }
+    .conf i { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
+    .conf i.on { background: var(--accent); }
+    .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+    .search { position: relative; flex: 1; min-width: 180px; }
+    .search svg { position: absolute; left: 12px; top: 11px; width: 20px; height: 20px; color: var(--faint); }
+    .search .input { padding-left: 40px; }
+    .check { display: inline-flex; align-items: center; gap: 8px; font-size: .9rem; color: var(--muted); cursor: pointer; }
+    details.item > summary { list-style: none; cursor: pointer; padding: 12px 16px; display: grid; gap: 4px; }
+    details.item > summary::-webkit-details-marker { display: none; }
+    details.item + details.item { margin-top: 0; }
+    .top { display: flex; align-items: center; gap: 10px; }
+    .top .name { flex: 1; min-width: 0; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .top .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .meta { font-size: .84rem; color: var(--muted); }
+    .srow { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-top: 1px solid var(--line); }
+    .srow .grow { flex: 1; min-width: 0; }
+    .srow .amt { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .list { display: grid; gap: 8px; }
+    .note { font-size: .82rem; color: var(--muted); }
+    .row-between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  </style>
+</head>
+<body>
+  <div class="page mid">
+    <div class="topbar">
+      <div class="grow">
+        <h1>Best prices</h1>
+        <div class="sub" id="homeLine">Where each item is cheapest</div>
+      </div>
+      <span id="homeSwitch"></span>
+    </div>
+    <div id="content" class="stack" aria-live="polite"></div>
+  </div>
+
+  <script src="static/common/backnav.js"></script>
+  <script src="static/common/ui.js"></script>
+  <script src="static/app.js"></script>
+  <script src="static/pages/deals.js"></script>
+</body>
+</html>

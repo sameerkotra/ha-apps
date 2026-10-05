@@ -12,18 +12,14 @@ Anyone can drag a pin to fix it: that's a `manual` row, never overwritten.
 Only the place text is sent — no names, no dates.
 """
 import asyncio
-import json
 import logging
 import re
-import threading
-import time
-import urllib.parse
-import urllib.request
 from datetime import timedelta
 
 from starlette.concurrency import run_in_threadpool
 
 from . import config, db, features, settings
+from .common import geo
 
 logger = logging.getLogger("geocode")
 
@@ -33,8 +29,7 @@ RETRY_DAYS = 7
 MAX_TRIES = 3
 IDLE_SECONDS = 60
 
-_throttle_lock = threading.Lock()
-_last_call = 0.0
+_THROTTLE = geo.Throttle(lambda: MIN_INTERVAL)     # read each time (tests set MIN_INTERVAL to 0)
 
 
 def key(place: str) -> str:
@@ -44,12 +39,7 @@ def key(place: str) -> str:
 
 
 def _throttle() -> None:
-    global _last_call
-    with _throttle_lock:
-        wait = MIN_INTERVAL - (time.monotonic() - _last_call)
-        if wait > 0:
-            time.sleep(wait)
-        _last_call = time.monotonic()
+    _THROTTLE.wait()
 
 
 _UNIT_RE = re.compile(r"(?:^|[,\s])(?:#\s*[\w-]+|(?:suite|ste|unit|apt|apartment|flat|door no|d\.? ?no|h\.? ?no|"
@@ -74,12 +64,10 @@ def variants(place: str) -> list:
 
 def _lookup(q: str):
     _throttle()
-    url = settings.get("nominatim_url") + "/search?" + urllib.parse.urlencode({"q": q, "format": "json", "limit": 1})
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    url = geo.search_url(settings.get("nominatim_url"), q)
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            results = json.loads(resp.read())
-        return float(results[0]["lat"]), float(results[0]["lon"])
+        return geo.first_result(geo.fetch(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+                                          timeout=10))
     except Exception as e:                                   # network, no result, odd answer
         logger.debug("Geocoding %r: %s", q, e)
         return None

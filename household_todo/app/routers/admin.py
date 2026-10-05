@@ -3,15 +3,12 @@ database backup and restore. The Users tab's routes are in
 users.py."""
 import json
 import os
-import tempfile
-from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 
-from .. import config, db, geocode, ha_sensors, maint_files, settings
+from .. import app_messages, config, db, geocode, ha_sensors, maint_files, settings
 from ..auth import require_admin
+from ..common import backup_core
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
@@ -23,6 +20,12 @@ router = APIRouter(prefix="/api", tags=["admin"])
 @router.get("/admin/settings")
 def get_settings(admin: dict = Depends(require_admin)):
     return dict(settings.payload(), maintenanceFiles=maint_files.admin_status())
+
+
+@router.get("/admin/connected-apps")
+def connected_apps(admin: dict = Depends(require_admin)):
+    """The other household apps this one exchanges messages with (APP_MESSAGES_SPEC §5): read only."""
+    return app_messages.connected_apps()
 
 
 def _refresh_home_blocking() -> None:
@@ -102,14 +105,7 @@ def admin_storage_download_db(admin: dict = Depends(require_admin)):
     """A full, consistent snapshot of the whole database — every household
     member's data. Never a plain file copy: the DB is in WAL mode, so see
     db.backup_to_tempfile."""
-    tmp_path = db.backup_to_tempfile()
-    filename = f"household-todo-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-    return FileResponse(
-        tmp_path,
-        media_type="application/vnd.sqlite3",
-        filename=filename,
-        background=BackgroundTask(os.remove, tmp_path),
-    )
+    return backup_core.send_file(db.backup_to_tempfile(), backup_core.file_name("household-todo-backup", ".db"))
 
 
 @router.post("/admin-storage-import-db")
@@ -122,11 +118,8 @@ async def admin_storage_import_db(background: BackgroundTasks, file: UploadFile 
     final os.replace() is a same-filesystem rename: /tmp and /data are
     separate mounts in the app's container, and os.replace() can't cross
     devices (OSError 18)."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".db", dir=config.DATA_DIR)
+    tmp_path = await backup_core.receive(file, config.DATA_DIR)
     try:
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                out.write(chunk)
         try:
             db.validate_backup_file(tmp_path)
         except ValueError as e:

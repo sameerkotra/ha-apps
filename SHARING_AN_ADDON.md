@@ -150,6 +150,10 @@ README.md                    for people browsing GitHub
 
 - `url` in `repository.yaml` and `config.yaml` is the **https** GitHub address (people add
   that in HA). Your own SSH remote is separate and never appears in these files.
+- In this repository the Dockerfile follows `common/build/Dockerfile.template`, the pins are
+  `common/build/requirements-base.txt`, and `python tools/check_build.py` checks every app's
+  Dockerfile, requirements and `.dockerignore` (the shared copies under `app/common/` and
+  `app/static/common/` must reach the image).
 - Bump `version` every release or Supervisor won't offer the update.
 - "Build on install" (no prebuilt images) is the simplest: nothing to maintain; first install
   takes a few minutes. Prebuilt images need a GitHub Actions builder and `image:` in config.

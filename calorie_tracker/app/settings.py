@@ -23,80 +23,86 @@ Keys (DEFAULTS below):
   `ai_api_key` keeps the saved key; `clear_ai_api_key: true` removes it.
 """
 import ipaddress
-import json
 import logging
 import re
-import threading
 from urllib.parse import urlsplit
 
-from pydantic import (BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError,
-                      field_validator)
+from pydantic import StrictStr
 
 from . import config, db
+from .common import settings_core
+from .common.settings_core import Group, Setting, SettingsError  # noqa: F401  (SettingsError: the routes' name)
 
 logger = logging.getLogger("settings")
 
 PROVIDERS = {"ollama": "Ollama", "openai": "OpenAI-compatible", "anthropic": "Anthropic Claude"}
 DEFAULT_URLS = {"ollama": "", "openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com"}
 
-DEFAULTS = {
-    "ai_provider": "",
-    "ai_url": "",
-    "ai_model": "",
-    "ai_api_key": "",
-    "ai_max_tokens": 4096,
-    "expose_daily_calories_sensor": True,
-}
-SECRET_KEYS = ("ai_api_key",)
-# Every key applies live (read at the moment it's used).
-META = {key: {"restartRequired": False} for key in DEFAULTS}
-
 NOT_SET_UP = "AI isn't set up — an admin can set it up in Admin → App settings."
 
 _KEY_CHARS = re.compile(r"^[\x21-\x7e]+$")     # printable ASCII, no spaces: safe in a header
 
 
-class SettingsError(ValueError):
-    """Bad or unknown setting — the API turns it into a 422."""
+def _check_provider(v: str) -> str:
+    if v and v not in PROVIDERS:
+        raise ValueError("must be one of: " + ", ".join(PROVIDERS) + " (or empty for no AI)")
+    return v
 
 
-class AppSettings(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+def _check_url(v: str) -> str:
+    return normalize_url(v) if v else ""
 
-    ai_provider: StrictStr
-    ai_url: StrictStr = Field(max_length=500)
-    ai_model: StrictStr = Field(max_length=200)
-    ai_api_key: StrictStr = Field(max_length=500)
-    ai_max_tokens: StrictInt = Field(ge=256, le=200000)
+
+def _check_model(v: str) -> str:
+    if any(c.isspace() for c in v):
+        raise ValueError("must be a model name without spaces, e.g. llama3.1:8b")
+    return v
+
+
+def _check_key(v: str) -> str:
+    if v and not _KEY_CHARS.match(v):
+        # Never echo the value: it is (probably) a key.
+        raise ValueError("must be the access key exactly as the provider shows it (no spaces or line breaks)")
+    return v
+
+
+GROUPS = [
+    Group("ai", "🤖 AI", "Used by \"✨ Estimate with AI\" and the AI Assistant. Leave the provider on \"Not set up\" to "
+          "run without AI — everything else works."),
+    Group("ha", "🏠 Home Assistant"),
+]
+
+# Every key applies live (read at the moment it's used); none needs a restart.
+SETTINGS = [
+    Setting("ai_provider", "", "Provider", group="ai", type=StrictStr, validators=[_check_provider],
+            choices=[("", "Not set up (no AI)"), ("ollama", "Ollama (your own computer or server)"),
+                     ("openai", "OpenAI-compatible (OpenAI, OpenRouter, Groq, LM Studio, …)"),
+                     ("anthropic", "Anthropic Claude")],
+            help="Ollama runs models on your own hardware, so nothing leaves your network. OpenAI-compatible covers "
+                 "OpenAI and any service or local server that speaks its API. Claude is Anthropic's API."),
+    Setting("ai_url", "", "Address", group="ai", kind="url", strict=True, max_length=500, validators=[_check_url],
+            placeholder="http://192.168.1.10:11434",
+            help="Ollama: its address, e.g. http://192.168.1.10:11434 (required). OpenAI-compatible: the API base — "
+                 "blank = https://api.openai.com/v1 (LM Studio: e.g. http://192.168.1.10:1234/v1). Claude: blank = "
+                 "https://api.anthropic.com."),
+    Setting("ai_model", "", "Model", group="ai", strict=True, max_length=200, validators=[_check_model],
+            placeholder="e.g. llama3.1:8b, gpt-4o-mini, claude-sonnet-4-5",
+            help="The model's exact name. Test connection lists the models the provider offers."),
+    # SECRET: never returned by the API or shown on a page; only ever sent to the provider in a request
+    # header. Blanked in the database download; a restore keeps this install's key.
+    Setting("ai_api_key", "", "Access key", group="ai", secret=True, strict=True, max_length=500,
+            validators=[_check_key], placeholder="Paste the key", page={"clearFlag": "clear_ai_api_key"},
+            help="Needed for Claude and for OpenAI and most cloud services; not for Ollama or LM Studio. Stored in "
+                 "the app's database, never shown again, never logged, and left out of database downloads. Leave the "
+                 "box empty to keep the saved key."),
+    Setting("ai_max_tokens", 4096, "Longest answer (tokens)", group="ai", min=256, max=200000, strict=True,
+            help="The most the model may write in one answer. Claude requires a limit; the other providers ignore it."),
     # Strict: true/false only (no "yes", 1, …).
-    expose_daily_calories_sensor: StrictBool
-
-    @field_validator("ai_provider")
-    @classmethod
-    def _check_provider(cls, v: str) -> str:
-        if v and v not in PROVIDERS:
-            raise ValueError("must be one of: " + ", ".join(PROVIDERS) + " (or empty for no AI)")
-        return v
-
-    @field_validator("ai_url")
-    @classmethod
-    def _check_url(cls, v: str) -> str:
-        return normalize_url(v) if v else ""
-
-    @field_validator("ai_model")
-    @classmethod
-    def _check_model(cls, v: str) -> str:
-        if any(c.isspace() for c in v):
-            raise ValueError("must be a model name without spaces, e.g. llama3.1:8b")
-        return v
-
-    @field_validator("ai_api_key")
-    @classmethod
-    def _check_key(cls, v: str) -> str:
-        if v and not _KEY_CHARS.match(v):
-            # Never echo the value: it is (probably) a key.
-            raise ValueError("must be the access key exactly as the provider shows it (no spaces or line breaks)")
-        return v
+    Setting("expose_daily_calories_sensor", True, "Publish daily calories to Home Assistant", group="ha", strict=True,
+            help="Publishes only each person's calories logged today, as sensor.calorie_tracker_<user>_daily_calories "
+                 "— never macros, weight or food names. Turning it on publishes everyone's sensor right away; turning "
+                 "it off removes those sensors from Home Assistant."),
+]
 
 
 def normalize_url(v: str) -> str:
@@ -119,79 +125,54 @@ def normalize_url(v: str) -> str:
     return v.rstrip("/")
 
 
-def readable(e: ValidationError) -> str:
-    msgs = []
-    for err in e.errors():
-        loc = ".".join(str(p) for p in err.get("loc", ())) or "settings"
-        msg = err.get("msg", "invalid value")
-        if msg.startswith("Value error, "):
-            msg = msg[len("Value error, "):]
-        msgs.append(f"{loc}: {msg}")
-    return "; ".join(msgs)
+readable = settings_core.by_key           # "<key>: <message>; …" (also the test-connection route's 422)
 
 
-def _validate(values: dict) -> dict:
-    try:
-        validated = AppSettings(**values).model_dump()
-    except ValidationError as e:
-        raise SettingsError(readable(e))
-    if validated["ai_provider"] == "ollama" and not validated["ai_url"]:
+def _prepare(partial: dict, current: dict, flags: dict) -> dict:
+    """A blank ai_api_key keeps the saved key; clear_ai_api_key=true removes it."""
+    if "ai_api_key" in partial:
+        new_key = partial["ai_api_key"]
+        if new_key is None or (isinstance(new_key, str) and not new_key.strip()):
+            partial.pop("ai_api_key")             # blank box = keep the saved key
+    if flags.get("clear_ai_api_key"):
+        partial["ai_api_key"] = ""
+    return partial
+
+
+def _check(merged: dict, partial: dict, current: dict) -> None:
+    if merged["ai_provider"] == "ollama" and not merged["ai_url"]:
         raise SettingsError("ai_url: Ollama needs its address, e.g. http://192.168.1.10:11434")
-    return validated
 
 
-# ---------- cache ----------
-_lock = threading.Lock()
-_cache: dict | None = None
-_cache_generation = -1
-_writes = 0   # bumped by invalidate(), so a read that raced a write isn't cached
+def _now_iso() -> str:
+    return config.utcnow().isoformat(timespec="seconds")
+
+
+REGISTRY = settings_core.Registry(
+    SETTINGS, groups=GROUPS, connect=db.get_conn, model_config={"str_strip_whitespace": True},
+    format_error=readable, unknown_message=lambda keys: f"Unknown setting(s): {', '.join(sorted(keys))}",
+    not_object_message="Expected a JSON object of settings.",
+    flags={"clear_ai_api_key": "clear_ai_api_key: must be true or false"},
+    prepare=_prepare, check=_check, load_check="isinstance", now=_now_iso,
+    generation=lambda: db.generation, secret_values="omit", logger=logger)
+
+AppSettings = REGISTRY.model
+DEFAULTS = REGISTRY.defaults
+SECRET_KEYS = tuple(REGISTRY.secrets)
+META = REGISTRY.meta()
 
 
 def invalidate() -> None:
-    global _cache, _writes
-    with _lock:
-        _cache = None
-        _writes += 1
-
-
-def _load_rows() -> dict:
-    with db.get_conn() as conn:
-        rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
-    stored = {}
-    for r in rows:
-        try:
-            stored[r["key"]] = json.loads(r["value"])
-        except (TypeError, ValueError):
-            logger.warning("Ignoring unreadable app setting %r", r["key"])
-    return stored
-
-
-def _snapshot() -> dict:
-    """{"values": {...}} — cached until a write/init_db."""
-    global _cache, _cache_generation
-    with _lock:
-        if _cache is not None and _cache_generation == db.generation:
-            return _cache
-        gen, writes = db.generation, _writes
-    stored = _load_rows()
-    values = dict(DEFAULTS)
-    for key in DEFAULTS:
-        if key in stored and isinstance(stored[key], type(DEFAULTS[key])):
-            values[key] = stored[key]
-    snap = {"values": values}
-    with _lock:
-        if writes == _writes:
-            _cache, _cache_generation = snap, gen
-    return snap
+    REGISTRY.invalidate()
 
 
 def all() -> dict:  # noqa: A001 — the design's name for it
     """Every value, the access key included — for server-side use only."""
-    return dict(_snapshot()["values"])
+    return REGISTRY.all()
 
 
 def get(key: str):
-    return _snapshot()["values"][key]
+    return REGISTRY.get(key)
 
 
 # ---------- AI helpers ----------
@@ -251,83 +232,17 @@ def ai_is_external() -> bool:
 def payload() -> dict:
     """The GET/PUT /api/admin/settings response shape. The access key itself
     is never included — only whether one is saved and its last 4 characters."""
-    snap = _snapshot()
-    values = {k: v for k, v in snap["values"].items() if k not in SECRET_KEYS}
-    key = snap["values"]["ai_api_key"]
-    return {
-        "values": values,
-        "defaults": {k: v for k, v in DEFAULTS.items() if k not in SECRET_KEYS},
-        "meta": {k: dict(v) for k, v in META.items()},
-        "secrets": {"ai_api_key": {"saved": bool(key), "hint": api_key_hint(key)}},
-        "providers": {k: {"label": PROVIDERS[k], "defaultUrl": DEFAULT_URLS[k]} for k in PROVIDERS},
-    }
-
-
-def _now_iso() -> str:
-    return config.utcnow().isoformat(timespec="seconds")
-
-
-def merged_with(partial: dict) -> dict:
-    """{current values + partial}, validated, applying the secret rules: a
-    blank ai_api_key keeps the saved key, clear_ai_api_key=true removes it.
-    Raises SettingsError. Stores nothing."""
-    if not isinstance(partial, dict):
-        raise SettingsError("Expected a JSON object of settings.")
-    partial = dict(partial)
-    clear = partial.pop("clear_ai_api_key", False)
-    if not isinstance(clear, bool):
-        raise SettingsError("clear_ai_api_key: must be true or false")
-    unknown = sorted(k for k in partial if k not in DEFAULTS)
-    if unknown:
-        raise SettingsError(f"Unknown setting(s): {', '.join(unknown)}")
-    current = all()
-    if "ai_api_key" in partial:
-        new_key = partial["ai_api_key"]
-        if new_key is None or (isinstance(new_key, str) and not new_key.strip()):
-            partial.pop("ai_api_key")             # blank box = keep the saved key
-    if clear:
-        partial["ai_api_key"] = ""
-    return _validate({**current, **partial})
+    values = REGISTRY.all()
+    key = values["ai_api_key"]
+    return REGISTRY.payload(
+        values,
+        secrets={"ai_api_key": {"saved": bool(key), "hint": api_key_hint(key)}},
+        providers={k: {"label": PROVIDERS[k], "defaultUrl": DEFAULT_URLS[k]} for k in PROVIDERS})
 
 
 def update(partial: dict, user: dict | None) -> list[str]:
     """Validate {current values + partial} and store the keys that changed.
-    Returns the list of changed keys."""
-    current = all()
-    validated = merged_with(partial)
-    changed = [k for k in DEFAULTS if validated[k] != current[k]]
-    if changed:
-        who = None
-        if user:
-            who = user.get("id") or user.get("name")
-        now = _now_iso()
-        with db.get_conn() as conn:
-            for k in changed:
-                conn.execute(
-                    """INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)
-                       ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                           updated_at = excluded.updated_at, updated_by = excluded.updated_by""",
-                    (k, json.dumps(validated[k]), now, who),
-                )
-        invalidate()
-        # Key names only — never a value (one of them may be the access key).
-        logger.info("App settings changed by %s: %s", who, ", ".join(changed))
-    return changed
-
-
-def restore_secrets(saved: dict) -> None:
-    """After a database restore: put back this install's access key when the
-    restored file has none (a downloaded backup never carries it)."""
-    fill = {k: v for k, v in saved.items() if k in SECRET_KEYS and v and not get(k)}
-    if not fill:
-        return
-    now = _now_iso()
-    with db.get_conn() as conn:
-        for k, v in fill.items():
-            conn.execute(
-                """INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, 'kept on restore')
-                   ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                       updated_at = excluded.updated_at, updated_by = excluded.updated_by""",
-                (k, json.dumps(v), now),
-            )
-    invalidate()
+    Returns the list of changed keys. A blank `ai_api_key` keeps the saved
+    key; `clear_ai_api_key: true` removes it. Raises SettingsError."""
+    who = (user.get("id") or user.get("name")) if user else None
+    return REGISTRY.update(partial, who)[1]

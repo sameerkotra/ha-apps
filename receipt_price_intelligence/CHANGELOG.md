@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.1.1
+
+- **Security**: backups (Backup → Export) no longer include the access keys and passwords from App settings (the model's access key, the mailbox password, the web search key and token), and importing a backup keeps the ones this install already has. After restoring on a new install, enter them again in Admin → App settings.
+- **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.
+- **Security**: cross-site form posts are refused — a change sent to the app from a page on another website is turned away. The app's own pages and the Home Assistant app work as before.
+- **Security**: PDFs are now read by the PDF tools (poppler) as a separate user without any rights, with memory, time and file-size limits, on a copy of the file — they can't reach the app's database or other files.
+- **Security**: pages fetched for store hours and prices go to exactly the address that was checked as being on the public internet (a site can no longer answer the check with one address and the connection with another); redirects are checked the same way.
+- The `/health/model` and `/health/database` checks no longer show the model's name or error details (the details go to the log).
+
+## 1.1.0
+
+- **Themes**: Midnight, Slate, Daylight and a new **Auto** (follows your device), as in the other household apps.
+- **App settings page redrawn**: one card per group, each setting with its range and default under it, problems shown at the field before saving, and Save / Discard with a count of unsaved changes. Every setting, default and limit is unchanged.
+- **How the app sees you** has copy buttons and the same wording as the other household apps; the **No admin yet** banner names the user name to add.
+- **Security**: pages now send a Content-Security-Policy and `nosniff` header; scripts moved out of the pages into files. No visible change.
+- Under the hood: this app now shares its code for Home Assistant sign-in, people and notifications, settings, backups and the page helpers with the other household apps (one copy, kept in step), so fixes reach every app at once. Nothing was removed.
+
 ## 1.0.1
 
 - **The menu shows on phones in the Home Assistant app.** On a phone the page is now a column the height of the

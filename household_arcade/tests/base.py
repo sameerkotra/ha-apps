@@ -7,19 +7,19 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from starlette.testclient import TestClient
-
-from app import config, db, ha_notify, ha_people, ha_sensors, settings
+from app import config, db, ha_sensors, settings
+from app.common import ha_notify, ha_people
 from app.main import app
-from fake_ha import FakeHA
+from common_tests.fake_ha import FakeHA
+from common_tests.ingress import INGRESS_PATH, identity_headers, ingress_client
 
 # Monday 21 September 2026, noon UTC
 NOW = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def hdr(uid, name=None, username=None):
-    return {"X-Remote-User-Id": uid, "X-Remote-User-Name": username or uid,
-            "X-Remote-User-Display-Name": name or uid, "X-Ingress-Path": "/api/hassio_ingress/x"}
+    """Login name and display name default to the id; always through ingress."""
+    return identity_headers(uid, username or uid, name or uid, ingress_path=INGRESS_PATH)
 
 
 ASHA = hdr("u_asha", "Asha Rao", "asha")          # admin (DEV_ADMINS in _env)
@@ -45,7 +45,7 @@ class ApiBase(unittest.TestCase):
         cls.ha = FakeHA()
         config.SUPERVISOR_CORE_API = cls.ha.start()
         config.SUPERVISOR_TOKEN = "test-token"
-        cls._ctx = TestClient(app, client=("127.0.0.1", 12345))
+        cls._ctx = ingress_client(app)
         cls.c = cls._ctx.__enter__()
 
     @classmethod

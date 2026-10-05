@@ -24,7 +24,7 @@ import re
 import zipfile
 
 from . import config, db, dates, media, names
-from .common import FAMILY_EVENT_TYPES, FAMILY_KINDS, GENDERS, OTHER_NAME_TYPES, PERSON_EVENT_TYPES, RELATIONS
+from .models import FAMILY_EVENT_TYPES, FAMILY_KINDS, GENDERS, OTHER_NAME_TYPES, PERSON_EVENT_TYPES, RELATIONS
 
 FORMAT = "family-tree-export"
 VERSION = 1

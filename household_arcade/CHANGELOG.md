@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1
+
+- **Security**: backups no longer include the AI access key, and restoring a backup keeps the key this install already has. After restoring on a new install, enter the key again in Admin → App settings.
+- **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.
+- **Security**: cross-site form posts are refused — a change sent to the app from a page on another website is turned away. The app's own pages and the Home Assistant app work as before.
+
+## 1.6.0
+
+- **Themes**: Midnight, Slate, Daylight and **Auto** (follows your device) — the same four in every household app. Ink is now Midnight; your saved choice carries over. Game looks (Retro LCD, Neon, Pixel…) are unchanged.
+- **App settings page redrawn**: one card per group, each setting with its range and default under it, problems shown at the field before saving, and Save / Discard with a count of unsaved changes. Every setting, default and limit is unchanged.
+- **Admin → People**: one card per person; the notify editor says **Send a test** and shows a result for each service.
+- **How the app sees you** and the **No admin yet** banner use the same wording in every household app; the banner names the user name to add to `admin_users`.
+- Under the hood: this app now shares its code for Home Assistant sign-in, people and notifications, settings, backups and the page helpers with the other household apps (one copy, kept in step), so fixes reach every app at once. Nothing was removed.
+
 ## 1.5.2
 
 - **Sudoku: number lines now shade whole rows, columns and boxes** instead of drawing a line through the middle:

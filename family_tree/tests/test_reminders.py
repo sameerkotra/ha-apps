@@ -12,9 +12,10 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-from app import config, db, ha_notify, ha_people, reminders
+from app import config, db, reminders
+from app.common import ha_notify, ha_people
 from app.routers import reminders as reminders_router
-from fake_ha import FakeHA
+from common_tests.fake_ha import FakeHA
 
 TZ = ZoneInfo("America/Chicago")
 
@@ -231,7 +232,9 @@ class Prefs(ReminderCase):
         a = self.person("Ann")
         self.remind(a)
         w = self.ok(self.get("/api/whoami"))
-        self.assertEqual((w["notifyLinked"], w["remindersOn"], w["remindPeople"]), (1, True, 1))
+        self.assertTrue(w["notifyLinked"])
+        rows = {r["label"]: r["value"] for r in w["extras"]}
+        self.assertEqual(rows["Reminders"], "on · 1 phone or service · 1 person with 🔔 on")     # counts, no names
         users = {u["id"]: u for u in self.ok(self.get("/api/admin/users", user=ADMIN))}
         self.assertEqual(users[ALICE["id"]]["notify"], ["notify.mobile_app_alice"])
         self.assertTrue(users[ALICE["id"]]["remindersOn"])

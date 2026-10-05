@@ -32,7 +32,7 @@
                 <li><strong>{{ g.owner_name }}</strong>{% if loop.first %} <span class="hint">(opens into this)</span>{% endif %}
                     <span class="hint">since {{ g.granted_at }} UTC</span>
                     <form method="post" action="user-access-remove{{ qs }}" class="inline-form"
-                          onsubmit='return confirm({{ ("Stop " ~ u.name ~ " using " ~ g.owner_name ~ "’s data?") | tojson }});'>
+                          data-confirm="{{ ("Stop " ~ u.name ~ " using " ~ g.owner_name ~ "’s data?") }}">
                         <input type="hidden" name="viewer" value="{{ u.id }}"><input type="hidden" name="owner" value="{{ g.owner_id }}">
                         <button type="submit" class="btn-secondary q-danger">Remove</button>
                     </form>

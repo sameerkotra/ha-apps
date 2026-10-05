@@ -10,4 +10,4 @@ pytest.ini
 icon.png
 logo.png
 translations/
-"data model/"
+spec/

@@ -3,10 +3,11 @@
 Options come from /data/options.json (written by the Supervisor). Only
 `admin_users` lives there; everything else is an App setting (settings.py).
 """
-import json
 import logging
 import os
 from datetime import datetime, timezone
+
+from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
@@ -17,7 +18,7 @@ SHARE_DIR = os.environ.get("SHARE_DIR", "/share/household_chat")
 SHARE_ROOT = os.environ.get("SHARE_ROOT", os.path.dirname(SHARE_DIR.rstrip("/")) or "/share")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
 OPTIONS_PATH = os.environ.get("OPTIONS_PATH", os.path.join(DATA_DIR, "options.json"))
-APP_VERSION = "2.0.1"
+APP_VERSION = "2.2.1"
 APP_TITLE = "Household Chat"
 INGRESS_URL = "/hassio/ingress/household_chat"
 
@@ -27,47 +28,27 @@ SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/
 
 
 def read_options(path: str | None = None) -> dict:
-    path = path or OPTIONS_PATH
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        logger.warning("Could not read %s; using defaults", path)
-        return {}
-    return data if isinstance(data, dict) else {}
+    return auth_core.read_options(path or OPTIONS_PATH, log=logger)
 
 
 _options = read_options()
-ADMIN_NAMES = {str(n).strip().lower() for n in (_options.get("admin_users") or []) if str(n).strip()}
-_dev_admins = os.environ.get("DEV_ADMINS")
-if _dev_admins:
-    ADMIN_NAMES |= {n.strip().lower() for n in _dev_admins.split(",") if n.strip()}
+# DEV_ADMINS (comma-separated) adds more for tests and local development (app/common/auth_core.py).
+ADMIN_NAMES = auth_core.admin_names(_options.get("admin_users") or []) | auth_core.env_admins("DEV_ADMINS")
 
 
 # ---------- time ----------
 # Stored times are UTC ISO strings with milliseconds. Home Assistant's time zone
-# (read at startup, ha_client.load_time_zone) is used for quiet hours, reminder
+# (read at startup, ha_client.load_time_zone_blocking) is used for quiet hours, reminder
 # shortcuts ("this evening") and the nightly job.
-_tz = None
+ZONE = ha_time.Zone(logger, tz=timezone.utc)      # app/common/ha_time.py
 
 
 def set_time_zone(name: str | None) -> bool:
-    global _tz
-    if not name:
-        return False
-    try:
-        from zoneinfo import ZoneInfo
-        _tz = ZoneInfo(name)
-        return True
-    except Exception:
-        logger.warning("Unknown time zone %r (is tzdata installed?) — using UTC.", name)
-        return False
+    return ZONE.set(name)
 
 
 def tz():
-    return _tz or timezone.utc
+    return ZONE.tz
 
 
 def utcnow() -> datetime:
@@ -75,7 +56,7 @@ def utcnow() -> datetime:
 
 
 def local_now() -> datetime:
-    return datetime.now(tz())
+    return ZONE.now()
 
 
 def iso(t: datetime) -> str:

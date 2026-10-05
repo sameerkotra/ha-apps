@@ -13,12 +13,11 @@ import logging
 import os
 import re
 import sqlite3
-import tempfile
 import threading
 import uuid
-from contextlib import contextmanager
 
 from . import config
+from .common import backup_core, db_core
 
 logger = logging.getLogger("db")
 
@@ -32,23 +31,12 @@ def new_id() -> str:
 
 
 def _connect(path: str | None = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(path or config.DB_PATH, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return db_core.connect(path or config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",))
 
 
-@contextmanager
 def get_conn():
-    conn = _connect()
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+    return db_core.transaction(_connect)
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +343,7 @@ def _column_exists_already(conn, stmt: str) -> bool:
     words = stmt.split()
     if len(words) >= 6 and [w.upper() for w in words[:2]] == ["ALTER", "TABLE"] \
             and [w.upper() for w in words[3:5]] == ["ADD", "COLUMN"]:
-        cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({words[2]})")}
-        return words[5] in cols
+        return words[5] in db_core.columns(conn, words[2])
     return False
 
 
@@ -395,61 +382,28 @@ def init_db() -> None:
 # Backup / import (Admin → Storage)
 # ---------------------------------------------------------------------------
 
-def backup_to_tempfile() -> str:
+def backup_to_tempfile(after=None) -> str:
     """Online-backup the live database into a fresh temp .db file and return
     its path (never a plain copy: recent commits may still be in the -wal
-    file). The caller deletes it."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    src = _connect()
-    try:
-        dst = sqlite3.connect(tmp_path)
-        try:
-            src.backup(dst)
-        finally:
-            dst.close()
-    finally:
-        src.close()
-    return tmp_path
+    file). `after(conn)` changes the copy first (the download blanks the
+    secret settings). The caller deletes it."""
+    return db_core.snapshot_to_tempfile(_connect, after=after)
 
 
 def validate_backup_file(path: str) -> None:
     """Raises ValueError with a readable message if `path` isn't safe to
     import: not SQLite, damaged, another app's database, or from a newer
     version of this app."""
-    try:
-        conn = sqlite3.connect(path)
-        try:
-            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                raise ValueError(f"That file failed a database integrity check ({integrity}) — refusing to import it.")
-            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            missing = REQUIRED_TABLES - tables
-            if missing:
-                raise ValueError("That doesn't look like a Household Arcade database "
-                                 f"(missing tables: {', '.join(sorted(missing))}).")
-            version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] or 0
-            if version > LATEST:
-                raise ValueError("That backup was made by a newer version of Household Arcade. "
-                                 "Update the app first, then import it.")
-        finally:
-            conn.close()
-    except sqlite3.DatabaseError:
-        raise ValueError("That file isn't a valid SQLite database.")
+    def not_newer(conn, tables):
+        version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] or 0
+        if version > LATEST:
+            raise ValueError("That backup was made by a newer version of Household Arcade. "
+                             "Update the app first, then import it.")
+
+    db_core.validate_file(path, REQUIRED_TABLES, app_name="Household Arcade", extra=not_newer)
 
 
 def import_from_tempfile(tmp_path: str) -> None:
     """Swap the live database for an already-validated file, then migrate it
     to the current schema straight away."""
-    with _import_lock:
-        try:
-            with get_conn() as c:
-                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        except sqlite3.Error:
-            pass
-        os.replace(tmp_path, config.DB_PATH)
-        for ext in ("-wal", "-shm"):
-            sidecar = config.DB_PATH + ext
-            if os.path.exists(sidecar):
-                os.remove(sidecar)
-        init_db()
+    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)

@@ -22,7 +22,7 @@ from typing import Any
 from app import app_settings
 
 # Set from config.yaml's version by the release; the tests check the two match.
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.1"
 
 
 def _infra() -> dict[str, Any]:

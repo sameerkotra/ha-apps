@@ -406,7 +406,7 @@ class FirstRun(ApiTestCase):
         config.ADMIN_NAMES = set()                       # restored by the base class
         w = self.ok(self.get("/api/whoami"))
         self.assertTrue(w["noAdmin"])
-        self.assertEqual((w["adminOption"], w["haUsername"], w["isAdmin"]), ("admin_users", "alice", False))
+        self.assertEqual((w["adminEntries"], w["haUsername"], w["isAdmin"]), (0, "alice", False))
         self.assertTrue(self.ok(self.get("/api/me"))["noAdmin"])
         self.assertEqual(self.get("/api/admin/settings").status_code, 403)          # the first visitor isn't promoted
         config.ADMIN_NAMES = {"admin"}
@@ -418,8 +418,11 @@ class FirstRun(ApiTestCase):
         with open(os.path.join(_env.ROOT, "app", "static", "app.js"), encoding="utf-8") as f:
             js = f.read()
         self.assertIn('id="noAdminBanner"', html)
-        self.assertIn("No admin yet — add your Home Assistant user name (", js)
+        self.assertIn('src="common/whoami.js', html)
+        with open(os.path.join(_env.ROOT, "app", "static", "common", "whoami.js"), encoding="utf-8") as f:
+            self.assertIn('"No admin yet"), " — add your Home Assistant user name (', f.read())    # the shared banner
         self.assertIn('go("whoami")', js[js.index("function showNoAdminBanner"):js.index("async function init()")])
+        self.assertIn("HouseholdWhoami.fillNoAdminBanner", js[js.index("function showNoAdminBanner"):js.index("async function init()")])
         self.assertIn("showNoAdminBanner(state.me)", js)
 
 
@@ -433,7 +436,7 @@ class FrontEnd(ApiTestCase):
             html = f.read()
         self.assertIn('data-feature="map"', html)
         self.assertIn('data-feature="export"', html)
-        self.assertIn('id: "featuresCard"', js)
+        self.assertIn("SettingsPage.render(", js)          # the Features cards: common/settings.js, from the meta
         for name in GENERAL + OFF_FOR_NEW:
             self.assertIn(f'feat("{name}")', js, name)
 

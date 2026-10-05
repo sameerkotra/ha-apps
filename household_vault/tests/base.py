@@ -5,10 +5,11 @@ import os
 import shutil
 import unittest
 
-from fastapi.testclient import TestClient
 
-from app import config, db, ha_notify, ha_people, sessions
+from app import config, db, sessions
+from app.common import ha_notify, ha_people
 from app.main import app
+from common_tests.ingress import ingress_client, user_headers
 
 ADMIN = {"id": "u-admin", "name": "admin", "display": "Kiran"}
 NEHA = {"id": "u-neha", "name": "neha", "display": "Neha"}
@@ -19,12 +20,7 @@ PW = {"u-admin": "maple-river-candle-orbit-zebra", "u-neha": "harbor-violet-pepp
 
 
 def headers(user):
-    h = {"X-Remote-User-Id": user["id"]}
-    if user.get("name"):
-        h["X-Remote-User-Name"] = user["name"]
-    if user.get("display"):
-        h["X-Remote-User-Display-Name"] = user["display"]
-    return h
+    return user_headers(user)
 
 
 def reset_state():
@@ -51,7 +47,7 @@ class ApiTestCase(unittest.TestCase):
         reset_state()
         ha_people.reset()                      # no Home Assistant people (phones) unless a test sets them
         ha_notify._targets_cache = None
-        self.client = TestClient(app, client=("127.0.0.1", 12345))
+        self.client = ingress_client(app)
         self.tokens = {}
 
     def req(self, method, path, user=ADMIN, token=True, **kw):

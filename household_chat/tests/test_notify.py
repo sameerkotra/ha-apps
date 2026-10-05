@@ -210,7 +210,7 @@ class PhonesFromHomeAssistantTests(ApiTestCase):
              "phones": [{"name": "Leela Phone", "label": "Leela Phone", "tracker": "device_tracker.leela_phone"}]},
         ]
         self.ha.notify_services.append("mobile_app_leela_phone")
-        from app import ha_people
+        from app.common import ha_people
         self.ha_people = ha_people
         ha_people.refresh_blocking(True)
 

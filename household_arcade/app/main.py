@@ -1,5 +1,3 @@
-import asyncio
-import contextlib
 import logging
 import os
 import re
@@ -11,11 +9,13 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, ha_client, ha_notify, ha_people, ha_sensors, housekeeping
+from . import auth, config, db, ha_client, ha_sensors, housekeeping
+from .common import auth_core, ha_notify, ha_people, web_security
+from .common import housekeeping as jobs_core
 from .routers import admin, levels, me, play, prefs, together, users
 from .routers import daily as daily_router
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+jobs_core.setup_logging()
 logger = logging.getLogger("main")
 
 
@@ -34,23 +34,18 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(ha_notify.check_targets_blocking)
     except Exception:
         logger.exception("notify service check failed")
-    loops = []
+    jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
     if config.BACKGROUND_LOOPS:
-        loops = [
-            asyncio.create_task(ha_sensors.loop(), name="ha_sensors"),
-            asyncio.create_task(housekeeping.loop(), name="housekeeping"),
-            asyncio.create_task(ha_people.loop(), name="ha_people"),
-        ]
+        jobs.add("ha_sensors", ha_sensors.loop)
+        jobs.add("housekeeping", housekeeping.loop)
+        jobs.add("ha_people", ha_people.loop)
     else:
         logger.info("Background loops are off (BACKGROUND_LOOPS=0)")
+    jobs.start()
     try:
         yield
     finally:
-        for t in loops:
-            t.cancel()
-        for t in loops:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await t
+        await jobs.stop()
 
 
 app = FastAPI(title="Household Arcade", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -94,15 +89,20 @@ def _csp_for(request: Request) -> str:
     return CSP.replace("connect-src 'self';", f"connect-src 'self' ws://{host} wss://{host};")
 
 
+# The HTML shell points at versioned ?v= assets: never cache the shell itself. API answers: no-store
+# unless the route says otherwise.
+HEADERS = web_security.SecurityHeaders(_csp_for, referrer="no-referrer", api_no_store="default", pragma=True)
+
+
 MAX_BODY = 64 * 1024
 STREAMED = ("/api/admin-storage-import-db",)
 
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    client_host = request.client.host if request.client else None
-    if client_host not in _INGRESS_ALLOWED_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden — access only via Home Assistant"})
+    blocked = auth_core.refuse_outsiders(request, _INGRESS_ALLOWED_HOSTS) or web_security.refuse_cross_site(request)
+    if blocked is not None:
+        return blocked
     path = request.url.path
     if request.method in ("POST", "PUT", "PATCH", "DELETE") and path not in STREAMED:
         try:
@@ -111,17 +111,7 @@ async def guard(request: Request, call_next):
             length = 0
         if length > MAX_BODY:
             return JSONResponse(status_code=413, content={"detail": "That request is too big."})
-    response = await call_next(request)
-    response.headers.setdefault("Content-Security-Policy", _csp_for(request))
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    if path.startswith("/api/"):
-        response.headers.setdefault("Cache-Control", "no-store")
-    elif path == "/" or path.endswith(".html"):
-        # the HTML shell points at versioned ?v= assets; never cache the shell itself
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-    return response
+    return HEADERS.apply(request, await call_next(request))
 
 
 @app.get("/api/health")

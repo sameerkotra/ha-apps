@@ -85,6 +85,12 @@ open the app.
   group with all its expenses and payments, after a confirmation that says
   how many go with it. This can't be undone; the activity log keeps a record
   of it.
+- **⬇ Export CSV** (everyone, top of the group's page) downloads every
+  expense and settle-up payment in the group, oldest first, as a CSV file for
+  a spreadsheet: date, type, description, amount, currency, who paid, how it
+  was split, and one "<name> share" column per person. A description, name or
+  column heading that starts with `=`, `+`, `-` or `@` gets a `'` in front, so
+  a spreadsheet shows it as text instead of running it as a formula.
 
 ## Expenses
 
@@ -159,9 +165,10 @@ The first item in the sidebar:
 
 ## Look and navigation
 
-- **Theme**: Paper (dark, the default), Slate (dark blue-grey) or Daylight
-  (light), at the bottom of the sidebar. The choice is remembered by your
-  browser.
+- **Theme**: Midnight (dark, the default), Slate (dark blue-grey), Daylight
+  (light) or Auto (Daylight when your device is set to light, Midnight when
+  it is dark), at the bottom of the sidebar. The choice is remembered by your
+  browser; if you had picked Paper before, you now get Midnight.
 - **Collapse the sidebar** to an icon rail with the ‹ button (desktop). On a
   phone the sidebar becomes a tab bar at the bottom.
 - **Back in the Home Assistant app**: the back gesture first cancels an
@@ -198,8 +205,13 @@ page", and the server refuses its functions. It has three tabs.
 
 ### App settings
 
-Household-wide settings. Saving applies them straight away, no restart.
-Changes are written to the activity log.
+Household-wide settings, in two cards (Money and Home Assistant), with a
+line under each setting saying what it does, its range and its default. Your
+changes are kept until you select **Save settings** at the bottom (it shows
+how many unsaved changes there are); **Discard changes** puts everything back.
+A number out of range is flagged at the field before anything is saved.
+Saving applies them straight away, no restart. Changes are written to the
+activity log.
 
 | Setting | Default | What it does |
 | --- | --- | --- |

@@ -1,305 +1,220 @@
-# "How the app sees you" page: build spec for a Home Assistant ingress app
+# "How the app sees you" and "No admin yet": the shared spec
 
-A small read-only page (`/whoami`) that tells the person looking at it exactly which
-**user name** and **user id** Home Assistant sent to the app, whether the app treats them
-as an **administrator**, and, if not, exactly what to type into the app's Configuration tab.
+Every household app decides who is an administrator from its own `admin_users` option, and every app
+has the same small read-only page, **How the app sees you**, that shows exactly which user name and
+user id Home Assistant sent, whether the app treats the person as an administrator and, if not, exactly
+what to type into the app's Configuration tab. While `admin_users` is empty every page also shows the
+**No admin yet** banner.
 
-Reference implementation: Finance Dashboard app, version 0.4.63 (`app/auth.py`,
-`app/routes/accounts.py`, `app/templates/whoami.html`, the user chip in `app/templates/base.html`,
-`tests/test_whoami.py`). This document is self-contained: everything needed to build it in another
-FastAPI + Jinja2 app is below.
+Both are built from shared code:
+
+| Piece | File (in `common/`) | Copied to | Used by |
+|---|---|---|---|
+| The data | `python/whoami.py` | `app/common/whoami.py` | all 9 apps |
+| The page and the banner (plain-JS apps) | `static/whoami.js` | `app/static/common/whoami.js` | all but Finance |
+| Contract tests | `tests/test_whoami_shared.py` | `tests/common_tests/` | all 9 apps |
+
+Finance Dashboard draws the page on the server (Jinja): it uses `whoami.py` for the data and its own
+template, with the same rows and wording.
 
 ---
 
-## 1. Why every app with an admin allowlist wants this
+## 1. Why every app with an admin list wants this
 
-An app that decides who is an administrator from a list in its own configuration (the
-`admin_users` option) produces one support request over and over: **"I added my name in the
-configuration but I don't see the admin buttons."** The cause is almost always one of three things,
-and none of them can be seen from inside the app without a page like this:
+An app that reads its administrators from its options produces one support request over and over:
+**"I added my name in the configuration but I don't see the admin buttons."** The cause is almost
+always one of three things, and none of them can be seen from inside the app without this page:
 
 1. the app was **not restarted** after the list changed (options are read when the process starts);
-2. the string in the list is **not the string Home Assistant sends** (a friendly name instead of the
-   login name, a typo, a different capital letter);
-3. the person is not actually signed in as who they think (another HA user, a shared tablet).
-
-The page turns a guessing game into one screen: here is exactly what arrived, here is whether it
-matched, here is what to add.
-
-What the person sees:
-
-```
-How the app sees you
-+----------------------------------------------------------+
-| User name (sent by Home Assistant)   jane.doe        |
-| User id (sent by Home Assistant)     9f3c...e81a          |
-| Administrator in this app            No                   |
-| Names in the app's admin_users    1                    |
-+----------------------------------------------------------+
-Neither your user name nor your user id above matches any of the 1 name in the admin_users list.
-Add jane.doe (or 9f3c...e81a) exactly as shown, save, and restart the app -- the list is only
-read when the app starts. Upper and lower case do not matter.
-```
+2. the string in the list is **not the string Home Assistant sends** (a display name instead of the
+   login name, a typo);
+3. the person is not signed in as who they think (another HA user, a shared tablet).
 
 ---
 
-## 2. What you must already have (prerequisites)
+## 2. The contract (`whoami.build`)
 
-The page is a thin layer on top of the usual "identity from ingress headers + static admin
-allowlist" setup. If the app already has that, skip to section 3. If not, this is the minimum.
-
-### 2a. `config.yaml`: a real list-type option
-```yaml
-options:
-  admin_users: []
-schema:
-  admin_users:
-    - str
-```
-
-### 2b. Entrypoint (`bootstrap.py`): option -> environment variable, then start the server
-Home Assistant writes the options to `/data/options.json` when the container starts. The app reads
-`ADMIN_USERS` at import time, so it must be in the environment **before** the server process starts:
+Each app keeps its own route — `GET /api/whoami` (Receipt Price Intelligence: `GET /api/v1/whoami`;
+Finance: the server-rendered `GET /whoami` page) — and its own idea of who the caller is. The route
+calls `whoami.build()` with what it already knows:
 
 ```python
-import json, os
-if os.path.exists("/data/options.json"):
-    with open("/data/options.json") as f:
-        options = json.load(f)
-    os.environ["ADMIN_USERS"] = ",".join(options.get("admin_users", []))
-os.execvp("uvicorn", ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8321"])
-```
-and the `Dockerfile` ends with `CMD ["python3", "bootstrap.py"]`.
-
-### 2c. The headers Home Assistant's ingress proxy sends
-| Header | Meaning |
-|---|---|
-| `X-Ingress-Path` | Set only by Supervisor's own ingress proxy. Its presence is what makes the other two headers trustworthy. |
-| `X-Remote-User-Id` | The person's Home Assistant user id (a long hex string). |
-| `X-Remote-User-Name` | The person's Home Assistant **login name**, for example `jane.doe`. Not necessarily the friendly name on their profile page. |
-
-A request without `X-Ingress-Path` (or without a user id) must be refused (401): it did not come
-through Home Assistant.
-
----
-
-## 3. `auth.py`: match without regard to case, and expose one match function
-
-```python
-import os
-from dataclasses import dataclass
-from fastapi import Depends, HTTPException, Request
-
-ADMIN_USERS = {
-    u.strip().strip("\"'").strip()
-    for u in os.environ.get("ADMIN_USERS", "").split(",")
-    if u.strip().strip("\"'").strip()
-}
-# Home Assistant user names are case-insensitive, and someone typing "Jane.Doe" into the
-# configuration screen should not silently end up with no admin rights.
-_ADMIN_FOLDED = {u.casefold() for u in ADMIN_USERS}
-
-
-def is_admin_identity(user_id: str, name: str) -> bool:
-    """True if the X-Remote-User-Id or X-Remote-User-Name is on the admin_users list."""
-    return user_id.strip().casefold() in _ADMIN_FOLDED or name.strip().casefold() in _ADMIN_FOLDED
-
-
-@dataclass
-class User:
-    id: str
-    name: str
-    is_admin: bool
-
-
-def get_current_user(request: Request) -> User:
-    ingress_path = request.headers.get("x-ingress-path")
-    user_id = request.headers.get("x-remote-user-id")
-    if not ingress_path or not user_id:
-        raise HTTPException(status_code=401, detail="Not authenticated via Home Assistant ingress")
-    name = request.headers.get("x-remote-user-name", user_id)   # falls back to the id if the header is absent
-    return User(id=user_id, name=name, is_admin=is_admin_identity(user_id, name))
-```
-
-Notes:
-- Both the id and the name are compared, so whichever the person finds easier to copy works.
-- `strip("\"'")` forgives quotes pasted into the list; `casefold()` forgives capitals.
-- This must be the **real** identity. If the app has an "admin views as another user" feature, the
-  whoami page must still use `get_current_user`, not the "acting user" dependency.
-
----
-
-## 4. The route
-
-```python
-from fastapi import APIRouter, Depends, Request
-from fastapi.templating import Jinja2Templates
-from .auth import ADMIN_USERS, User, get_current_user
-
-router = APIRouter()
-templates = Jinja2Templates(directory="templates")
-
+from .common import whoami as whoami_core          # ..common in app/routers/
 
 @router.get("/whoami")
-def whoami(request: Request, current: User = Depends(get_current_user)):
-    """The exact id and name Home Assistant sent, and whether either is on the admin_users list.
-    Only the person's OWN identity and a COUNT are shown, never the list itself."""
-    return templates.TemplateResponse(request, "whoami.html", {
-        "user": current,                       # whatever base.html needs to draw the sidebar
-        "is_admin": current.is_admin,
-        "admin_entries": len(ADMIN_USERS),
-        "name_sent": "x-remote-user-name" in request.headers,
-    })
+def whoami(request: Request, user: dict = Depends(get_current_user)):
+    linked = bool(ha_notify.services_for(user))
+    return whoami_core.build(
+        request, user_id=user["id"], username=user["username"], display_name=user["name"],
+        is_admin=user["is_admin"], admin_entries=len(config.ADMIN_NAMES),
+        display_name_only=user["display_name_only"],        # optional, default False
+        notify_linked=linked,                               # optional; leave out when the app has no notifications
+        extras=[whoami_core.row("Chats you're in", n), whoami_core.notify_row(linked)],
+        disabled=user["disabled"])                          # the app's own fields, for its own code
 ```
 
-Register it with `app.include_router(router)`. Every link to it is **relative** (`href="whoami"`,
-never `/whoami`), like every other link in an ingress app; a leading slash resolves against the
-Home Assistant host instead of the app's ingress prefix and lands on Home Assistant's own frontend.
+The JSON:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `haUserId` | string | `X-Remote-User-Id` as sent |
+| `haUsername` | string or null | `X-Remote-User-Name` (the **login name**); null when Home Assistant didn't send it |
+| `haDisplayName` | string or null | the display name (never used for matching) |
+| `nameSent` | bool | the login-name header was there |
+| `isAdmin` | bool | the id or the login name is on `admin_users` (any case) |
+| `displayNameOnly` | bool | not an admin, but the **display name** is on the list (which never counts) |
+| `adminEntries` | int | how many names `admin_users` has — the count, never the names |
+| `noAdmin` | bool | `adminEntries == 0`: nobody can be an administrator yet (the banner) |
+| `viaIngress` | bool | the request carried `X-Ingress-Path` (diagnostic; not drawn) |
+| `notifyLinked` | bool | a phone or notify service reaches the person — **only in apps with notifications** |
+| `extras` | list | the app's own rows (below) |
+
+Apps may add **their own top-level fields** for their own code (Household Todo: `actingAs`,
+`notifyEntries`, `maintenance`, `driveTimes`; Splitpot: `userId` — the Splitpot person —,
+`sensorSyncEnabled`, `haConnected`; Family Tree, Chat, Vault: `disabled`; Vault: `status`).
+`build()` refuses a field that reuses a shared name.
+
+The same flag drives the banner from the app's start-up call, so it is called **`noAdmin`
+everywhere**: in `/api/whoami` and in each app's `/api/me` (Receipt: `/api/v1/me`).
+
+### Extras: the app's own rows
+
+`whoami.row(label, value, hint=None, tone=None, action=None)` makes one row:
+
+- `value`: text or a number (shown as is), a bool (**Yes** / **No**) or None ("—"). Anything else
+  (a list, a dict) is refused.
+- `hint`: one sentence shown under the table — how to change this row's answer.
+- `tone="danger"`: the value is drawn in the danger colour.
+- `action={"label", "target"}`: a link button in the value cell; the page passes `target` to the app's
+  `onAction` hook (Family Tree: "This is me — not set — set it" opens Settings).
+
+`whoami.notify_row(linked, label=..., hint=...)` is the usual "is a phone linked" row (Yes / No, with a
+how-to-link hint only when it isn't).
+
+**Rules for extras: counts and statuses only.** Never another person's name, never the admin list,
+never a secret (a password, a token, a vault's contents), never the request's headers. The person's
+own things are fine (Family Tree shows the tree person they said is them).
+
+### Rules for every whoami route
+
+1. It reports the **real** signed-in person, even while an admin is "acting as" someone else.
+2. It works for people an admin has turned off (Family Tree, Chat, Vault) and, in Vault, while the vault
+   is locked: it needs no session and holds nothing from any vault.
+3. No `X-Ingress-Path` / no user means 401 (or 403 from an app's ingress check), like every other route.
+4. Read-only: no writes, no side effects.
 
 ---
 
-## 5. The template `whoami.html`
+## 3. The page (`whoami.js`)
 
-Adapt the wrapper (`extends`, blocks, card and table classes) to the app's own `base.html`; the
-content is what matters:
+Loaded with the app's other scripts (`<script src="common/whoami.js?v=X.Y.Z">`, before the app's own
+scripts). It draws the page from the JSON with DOM nodes and `textContent` only — the names come from
+request headers and are never parsed as HTML — and uses the app's own CSS classes:
 
-```html
-{% extends "base.html" %}
-{% block title %}Who am I{% endblock %}
-{% block content %}
-<h1>How the app sees you</h1>
-<div class="card">
-  <table>
-    <tr><th>User name (sent by Home Assistant)</th><td>{{ user.name if name_sent else "not sent" }}</td></tr>
-    <tr><th>User id (sent by Home Assistant)</th><td>{{ user.id }}</td></tr>
-    <tr><th>Administrator in this app</th><td><strong>{{ "Yes" if is_admin else "No" }}</strong></td></tr>
-    <tr><th>Names in the app's admin_users list</th><td>{{ admin_entries }}</td></tr>
-  </table>
-</div>
-{% if is_admin %}
-<p class="hint">You are an administrator.</p>
-{% else %}
-<p class="hint">
-  {% if admin_entries == 0 %}
-  The admin_users list is <strong>empty</strong> in the running app. If you have filled it in, the app has not
-  picked it up yet: changes to the app's options only take effect after it is <strong>restarted</strong>
-  (Settings &rarr; Apps &rarr; this app &rarr; Restart).
-  {% else %}
-  Neither your user name nor your user id above matches any of the {{ admin_entries }}
-  name{{ "s" if admin_entries != 1 else "" }} in the admin_users list. Add
-  <strong>{{ user.name if name_sent else user.id }}</strong> (or <strong>{{ user.id }}</strong>) exactly as shown, save,
-  and <strong>restart</strong> the app -- the list is only read when the app starts. Upper and lower case do not matter.
-  {% endif %}
-</p>
-{% endif %}
-{% endblock %}
+```js
+const body = HouseholdWhoami.panel(w, {
+  appName: "Household Todo",            // for "(Settings → Apps → Household Todo → Information → Restart)"
+  classes: { kv: "kv", row: "kv-row", label: "kv-label", value: "kv-value", copy: "icon-btn",
+             advice: "hint", hint: "hint" },   // the defaults; row: null = label and value straight in .kv (a grid)
+  adviceTag: "div", adviceStyle: "margin-top:8px",
+  copyGlyph: "⧉",
+  onCopy: (text, button) => copyText(text),   // default: clipboard, then ✓ on the button for a moment
+  onAction: (target) => go(target),           // an extras row's action button
+});
 ```
 
-Three cases, three messages: **admin** (Yes, nothing to do), **not admin and the list is empty**
-(the running app has no entries: restart it), **not admin and the list has entries** (none match:
-here is what to add).
+The app wraps it in its own card and heading ("How the app sees you"). What it shows:
+
+| Row | Value |
+|---|---|
+| User name (sent by Home Assistant) | the login name, or "not sent"; a copy button |
+| User id (sent by Home Assistant) | the id (monospace); a copy button |
+| Display name (not used for matching) | the display name, or "not sent" |
+| Administrator in this app | **Yes** / **No** |
+| Names in the app's admin_users | the count |
+| *the app's extras* | … |
+
+Then one sentence of advice — four cases — and each extras row's hint:
+
+1. **Admin:** "You are an administrator."
+2. **Display name only:** "Your **display name** is in the `admin_users` list, but display names aren't
+   accepted there (anyone could share or take a name). Replace it with **jane.doe** (or **9f3c…**),
+   save, and **restart** the app."
+3. **Empty list:** "The `admin_users` list is **empty** in the running app, so nobody is an
+   administrator yet. Add **jane.doe** to `admin_users` on the app's Configuration tab, save, and
+   **restart** the app (Settings → Apps → *App* → Information → Restart) — the list is only read when the
+   app starts, so if you have already filled it in, a restart is all it needs."
+4. **No match:** "Neither your user name nor your user id above matches any of the *N* names in the
+   `admin_users` list. Add **jane.doe** (or **9f3c…**) exactly as shown, save, and **restart** the app —
+   the list is only read when the app starts. Upper and lower case don't matter."
+
+The name to add is the login name when Home Assistant sent one, else the user id ("(or …)" is left out
+then).
+
+**Reachable from everywhere:** the signed-in name in the sidebar is a link or button to the page, and
+on phones (no sidebar) a 👤 button or the Settings page leads there. Links are relative (`whoami`,
+`whoami.html`, `#/whoami`), never `/whoami`.
 
 ---
 
-## 6. Make it reachable: the user chip links to it
+## 4. The "No admin yet" banner
 
-Wherever the sidebar or header shows the signed-in name, make it a link. Keep the "(admin)" marker,
-which is itself a quick tell:
+While `noAdmin` is true, every page shows, to everyone, at the top of the content (each app's existing
+banner place, above the pages):
 
-```html
-<a href="whoami{{ qs }}" class="user-chip" title="How the app sees you">{{ user.name }}{% if user.is_admin %} (admin){% endif %}</a>
+> **No admin yet** — add your Home Assistant user name (**jane.doe**) to `admin_users` on the app's
+> Configuration tab, save, and restart the app. [How the app sees you]
+
+```js
+HouseholdWhoami.fillNoAdminBanner(container, me.noAdmin, me.username || me.id,
+                                  { onOpen: openWhoami });      // or { href: "whoami.html" }
+// or, to place it yourself:
+container.append(HouseholdWhoami.noAdminBanner(name, { onOpen }));
 ```
 
-`qs` is whatever query-string carry-over the app already appends to internal links (for example
-`?as_user=...`); drop it if there is none. A phone user in the Home Assistant companion app has no
-address bar, so an in-page link is the only way they can reach the page at all.
+Nobody is ever made an administrator automatically, not even the first visitor. Finance draws the same
+text in `base.html` and adds one sentence of its own (the AI set-up step).
 
 ---
 
-## 7. Behaviours to match (acceptance list)
+## 5. Tests
 
-1. Signed in and on the list (by id **or** by name, any case): "Administrator: **Yes**", no advice.
-2. Signed in and not on the list: "**No**", the exact name and id received, the entry count, and the
-   "add ... and restart" advice. With an empty list the advice is about the restart instead.
-3. The page never prints the admin list's contents, only the count.
-4. It always reports the **real** signed-in person, even while an admin is viewing the app "as"
-   someone else.
-5. No `X-Ingress-Path` header means 401, like every other page.
-6. Read-only: no forms, no writes, no side effects.
-7. It echoes only the two identity headers (plus whether the name header was present). Do not dump the
-   request's headers wholesale: proxies can add cookies or tokens that should never be on a screen.
-8. The name in the sidebar links to it, and shows "(admin)" for administrators.
+- **Shared** (`common/tests/test_whoami_shared.py`, run in every app): the fields, `noAdmin` follows the
+  count, name not sent, `viaIngress`, `displayNameOnly` never for admins, `notifyLinked` only when given,
+  extras rows (values, hints, tone, actions), rows refuse lists and bad shapes, app fields can't shadow
+  shared ones, and the page script's wording and DOM-only rendering.
+- **Each app** keeps its own: admin by id or login name in any case, display names never match,
+  the count and never the list, the real caller while acting as someone else, disabled people still get
+  the page, the `noAdmin` flag in `/api/me` and `/api/whoami`, the banner container and script on the
+  page, and the app's extras.
+- **Finance**: `tests/test_whoami.py` (the server-rendered page).
 
 ---
 
-## 8. Tests worth copying
+## 6. Each app's extra rows
 
-FastAPI `TestClient`, with `ADMIN_USERS=admin` set in the environment **before** the app is imported:
-
-```python
-from fastapi.testclient import TestClient
-
-H = lambda uid, name: {"X-Remote-User-Id": uid, "X-Remote-User-Name": name, "X-Ingress-Path": "/x"}
-
-r = client.get("whoami", headers=H("abc123", "jane.doe"))
-assert "<strong>No</strong>" in r.text and "jane.doe" in r.text and "abc123" in r.text
-assert "restart" in r.text.lower()
-assert 'href="whoami' in r.text                                                     # the sidebar link
-
-assert "<strong>Yes</strong>" in client.get("whoami", headers=H("admin", "Admin")).text    # exact
-assert "<strong>Yes</strong>" in client.get("whoami", headers=H("ADMIN", "x")).text        # id, upper case
-assert "<strong>Yes</strong>" in client.get("whoami", headers=H("zzz", "Admin")).text      # name, mixed case
-assert "<strong>No</strong>"  in client.get("whoami", headers=H("zzz", "administrator")).text
-
-# the list itself is never shown: add a second entry, load the page as a non-admin
-import app.auth as auth
-auth.ADMIN_USERS.add("hidden.person"); auth._ADMIN_FOLDED.add("hidden.person")
-r = client.get("whoami", headers=H("abc123", "jane.doe"))
-assert "hidden.person" not in r.text and "<td>2</td>" in r.text                     # count only
-
-# fails closed without the ingress header
-assert TestClient(app).get("whoami", headers={"X-Remote-User-Id": "admin"}).status_code == 401
-```
-
-Also check by hand once in the real app: open the page as an administrator and as a person not on
-the list, and on a phone (no horizontal scrolling, the link in the sidebar is reachable).
+| App | Route | Extra rows | Own top-level fields |
+|---|---|---|---|
+| Calorie Tracker | `/api/whoami` | — | — |
+| Family Tree | `/api/whoami` | This is me (your tree person, or a "set it" button) · Reminders (on/off · phones · people with 🔔; shown while Reminders is on, and always to someone turned off) · Account status | `disabled` |
+| Finance Dashboard | `/whoami` (page) | — | — |
+| Household Arcade | `/api/whoami` | Phone linked for notifications | — |
+| Household Chat | `/api/whoami` | Access · Chats you're in · Phone linked for notifications | `disabled` |
+| Household Docs | `/api/whoami` | Access · Your folder · Files in your folder · Phone linked for notifications | `disabled` |
+| Household Todo | `/api/whoami` | Reminder service linked | `actingAs`, `notifyEntries`, `maintenance`, `driveTimes` |
+| Household Vault | `/api/whoami` | Set up · Vaults you can open · Account status · Phone linked for alerts | `status`, `disabled` |
+| Receipt Price Intelligence | `/api/v1/whoami` (page `whoami.html`) | — | — |
+| Splitpot | `/api/whoami` | — | `userId`, `sensorSyncEnabled`, `haConnected` |
 
 ---
 
-## 9. Gotchas
+## 7. Gotchas
 
-- **The app must be restarted after `admin_users` changes.** Options reach the app as an environment
-  variable read when the process starts (2b). Saving the Configuration tab does not restart the app.
-  This is the number-one reason for "I added my name and nothing happened", and the reason the page says so.
-- **`X-Remote-User-Name` is the Home Assistant login name** (like `jane.doe`), not necessarily the
-  friendly name on the profile page. Do not guess: the page shows exactly what arrived, and that is the
-  string to put in the list. The user id (long hex) works too.
-- **Do not match on anything a person can edit themselves.** The list is compared only to the two
-  identity headers Supervisor sets. If you ever add a "display name" to the match, first check the
-  person cannot change it; otherwise a person could rename themselves into admin.
-- **Keep the count, drop the list.** Showing the names would tell every user who the administrators
-  are; the count is enough to tell "list is empty" from "list does not match".
-- **Relative links only** (`whoami`, not `/whoami`).
-- **This page is a diagnostic, not a security boundary.** Anything actually admin-only still needs
-  its own `require_admin` dependency on the route behind it; hiding a link is not access control.
-
----
-
-## 10. Optional extras (not built in Finance Dashboard)
-
-- Show `X-Remote-User-Display-Name` if Supervisor sends it, labelled "display name (not used for admin)".
-- Show "opened through Home Assistant ingress: yes" (the `X-Ingress-Path` header was present) as reassurance.
-- A "copy" button next to the name for people on a desktop.
-
----
-
-## 11. Build checklist
-
-1. `config.yaml` has the `admin_users` list option (2a); the entrypoint turns it into `ADMIN_USERS` (2b).
-2. `auth.py` has `is_admin_identity` and the fail-closed `get_current_user` (3).
-3. Add the `/whoami` route (4) and register the router.
-4. Add `whoami.html` (5), adapted to the app's own base template.
-5. Make the sidebar name a relative link to it (6).
-6. Copy the tests (8) and make them pass.
-7. Bump the app's version in `config.yaml` so Supervisor offers the update, rebuild, then **restart**
-   after any change to `admin_users`, and open the page once as an admin and once as a non-admin.
+- **The app must be restarted after `admin_users` changes** — options are read when it starts. The page
+  says so in every non-admin case.
+- **`X-Remote-User-Name` is the login name**, not necessarily the display name on the profile page. The
+  page shows exactly what arrived.
+- **Never match on anything a person can edit themselves.** Display names are never matched; the page
+  explains that when only a display name is listed.
+- **Keep the count, drop the list.** Showing the names would tell everyone who the administrators are.
+- **This page is a diagnostic, not a security boundary.** Admin-only routes keep their own checks.

@@ -40,39 +40,9 @@ const KIND_LABELS = { married: "Married", partners: "Partners", unknown: "Unknow
 const ENDED_LABELS = { "": "Still together / n.a.", divorced: "Divorced", separated: "Separated", widowed: "Widowed" };
 const NAME_TYPES = { aka: "Also known as", married: "Married name", birth: "Birth name", religious: "Religious name", nickname: "Nickname", other: "Other" };
 
-// ---------- DOM helpers ----------
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  let value;
-  if (attrs) {
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === null || v === undefined || v === false) continue;
-      if (k === "class") el.className = v;
-      else if (k === "dataset") Object.assign(el.dataset, v);
-      else if (k === "style") el.style.cssText = v;
-      else if (k === "value") value = v;
-      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
-      else if (v === true) el.setAttribute(k, "");
-      else el.setAttribute(k, v);
-    }
-  }
-  const add = (kid) => {
-    if (kid === null || kid === undefined || kid === false) return;
-    if (Array.isArray(kid)) kid.forEach(add);
-    else if (kid instanceof Node) el.appendChild(kid);
-    else el.appendChild(document.createTextNode(String(kid)));
-  };
-  kids.forEach(add);
-  if (value !== undefined) el.value = value;
-  return el;
-}
-const $ = (sel, root = document) => root.querySelector(sel);
-function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
-function mount(el, ...kids) { clear(el); kids.flat().forEach((k) => k && el.appendChild(k)); return el; }
+// ---------- DOM helpers (common/ui.js) ----------
+const { h, $, clear, mount, lsGet, lsSet, debounce } = UI;
 function spinner() { return h("div", { class: "spinner" }, "Loading…"); }
-function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } }
-function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 function plural(n, w) { return w === "person" ? `${n} ${n === 1 ? "person" : "people"}` : `${n} ${w}${n === 1 ? "" : "s"}`; }
 function fmtWhen(iso) {
   if (!iso) return "";
@@ -94,12 +64,8 @@ function fmtBytes(n) {
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
 }
 
-// ---------- API ----------
-function errorMessage(detail, status) {
-  if (typeof detail === "string" && detail) return detail;
-  if (Array.isArray(detail) && detail.length) return detail.map((d) => (d && d.msg) || String(d)).join("; ");
-  return `Something went wrong (HTTP ${status}).`;
-}
+// ---------- API (common/ui.js) ----------
+const errorMessage = UI.errorMessage;
 function deviceId() {
   let d = lsGet("deviceId");
   if (!d || !/^[A-Za-z0-9_-]{16,64}$/.test(d)) {
@@ -110,38 +76,22 @@ function deviceId() {
   }
   return d;
 }
-async function api(path, opts = {}) {
-  const { method = "GET", body, formData } = opts;
-  const init = { method, headers: { "X-Device-Id": deviceId() } };
-  if (body !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
-  else if (formData) init.body = formData;
-  let res;
-  try { res = await fetch(path.replace(/^\//, ""), init); }
-  catch (e) { throw new Error("Can't reach the app. Check your connection and try again."); }
-  if (!res.ok) {
-    let detail = null;
-    try { detail = (await res.json()).detail; } catch (e) { /* not JSON */ }
-    const err = new Error(errorMessage(detail, res.status));
-    err.status = res.status;
+const api = UI.makeApi({
+  headers: () => ({ "X-Device-Id": deviceId() }),
+  onError: (err, res) => {
     if (res.status === 423 && !state.kids) setTimeout(() => location.reload(), 50);   // kids mode started elsewhere in this browser
-    throw err;
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
+  },
+});
 
-// ---------- toasts & modals ----------
+// ---------- toasts & modals (common/ui.js) ----------
 function toast(msg, opts = {}) {
-  const el = h("div", { class: "toast" + (opts.error ? " error" : "") }, h("span", null, msg));
-  if (opts.undo) {
-    el.appendChild(h("button", { class: "btn-secondary btn-small", type: "button", onclick: async () => {
-      el.remove();
-      try { await api(`api/history/${opts.undo}/undo`, { method: "POST" }); toast("Undone"); if (opts.onUndone) opts.onUndone(); rerender(); }
-      catch (e) { fail(e); }
-    } }, "Undo"));
-  }
-  $("#toastRoot").appendChild(el);
-  setTimeout(() => el.remove(), opts.error ? 7000 : opts.undo ? 7000 : 3000);
+  let el = null;
+  const undo = opts.undo ? h("button", { class: "btn-secondary btn-small", type: "button", onclick: async () => {
+    el.remove();
+    try { await api(`api/history/${opts.undo}/undo`, { method: "POST" }); toast("Undone"); if (opts.onUndone) opts.onUndone(); rerender(); }
+    catch (e) { fail(e); }
+  } }, "Undo") : null;
+  el = UI.toast(msg, { error: opts.error, wrap: true, extra: undo, ms: opts.error ? 7000 : opts.undo ? 7000 : 3000 });
 }
 function fail(e) { toast(e && e.message ? e.message : String(e), { error: true }); }
 function saved(res, msg = "Saved") { toast(msg, { undo: res && res.batchId }); }
@@ -153,33 +103,11 @@ function restoreHint(pronoun) {
 }
 
 function openModal(title, content, opts = {}) {
-  const closeBtn = h("button", { class: "icon-btn", "aria-label": "Close", type: "button" }, "✕");
-  const modal = h("div", { class: "modal" + (opts.wide ? " wide" : ""), role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("h3", null, h("span", null, title), closeBtn), content);
-  const backdrop = h("div", { class: "modal-backdrop" }, modal);
-  let downOnBackdrop = false;
-  backdrop.addEventListener("mousedown", (e) => { downOnBackdrop = e.target === backdrop; });
-  backdrop.addEventListener("click", (e) => { if (e.target === backdrop && downOnBackdrop) close(); });
-  const onKey = (e) => { if (e.key === "Escape") close(); };
-  document.addEventListener("keydown", onKey);
-  function close() { backdrop.remove(); document.removeEventListener("keydown", onKey); if (opts.onClose) opts.onClose(); }
-  closeBtn.addEventListener("click", close);
-  $("#modalRoot").appendChild(backdrop);
-  const first = modal.querySelector("input:not([type=hidden]):not([disabled]), select, textarea");
-  if (first && !opts.noFocus) setTimeout(() => first.focus(), 30);
-  return { close, el: modal };
+  return UI.openModal(title, content, { modalClass: opts.wide ? "wide" : "", onClose: opts.onClose, focus: opts.noFocus ? false : "first" });
 }
 
 function confirmDialog(title, message, okLabel = "OK", danger = false) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (v) => { if (!done) { done = true; m.close(); resolve(v); } };
-    const body = h("div", null, h("p", null, message),
-      h("div", { class: "actions" },
-        h("button", { class: "btn-ghost", type: "button", onclick: () => finish(false) }, "Cancel"),
-        h("button", { class: danger ? "btn-danger" : "btn-primary", type: "button", onclick: () => finish(true) }, okLabel)));
-    const m = openModal(title, body, { onClose: () => { if (!done) { done = true; resolve(false); } } });
-  });
+  return UI.confirmDialog(title, message, { okLabel, okClass: danger ? "btn-danger" : "btn-primary", cancelClass: "btn-ghost" });
 }
 
 // ---------- people bits ----------
@@ -2455,9 +2383,7 @@ async function viewSettings() {
         } }, "Save"))));
   };
   drawMe();
-  const theme = h("select", { "aria-label": "Theme" }, ...[["heritage", "📜 Heritage"], ["slate", "🌆 Slate"], ["daylight", "☀️ Daylight"], ["parchment", "🕯️ Parchment"], ["auto", "🌓 Auto (follows your device)"]].map(([k, l]) => h("option", { value: k }, l)));
-  theme.value = window.__themeChoice || "heritage";
-  theme.addEventListener("change", () => applyTheme(theme.value));
+  const theme = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
   const order = h("select", { "aria-label": "Typed date order" }, h("option", { value: "dmy" }, "Day / Month / Year (12/03/1950 = 12 March)"), h("option", { value: "mdy" }, "Month / Day / Year (03/12/1950 = 12 March)"));
   order.value = dateOrder();
   order.addEventListener("change", () => { lsSet("dateOrder", order.value); toast("Saved"); });
@@ -2737,40 +2663,16 @@ async function remindersCard() {
   return card;
 }
 
-function applyTheme(choice) {
-  window.__themeChoice = choice;
-  lsSet("theme", choice);
-  document.documentElement.setAttribute("data-theme", window.__resolveTheme ? window.__resolveTheme(choice) : choice);
-  const sel = $("#themeSelect");
-  if (sel) sel.value = choice;
-}
-
 async function whoamiCard() {
   const w = await api("api/whoami");
-  const name = w.nameSent ? w.haUsername : null;
-  const row = (label, value, copy) => h("div", { class: "kv-row" }, h("div", { class: "kv-label" }, label),
-    h("div", { class: "kv-value" }, value, copy ? h("button", { class: "icon-btn", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: () => copyText(copy) }, "⧉") : null));
-  const yesNo = (v) => h("strong", null, v ? "Yes" : "No");
-  let advice;
-  if (w.isAdmin) advice = "You are an administrator.";
-  else if (w.displayNameOnly) advice = h("span", null, "Your ", h("strong", null, "display name"), " is in ", h("code", null, "admin_users"),
-    ", but display names are never used for matching. Replace it with ", h("strong", null, name || w.haUserId), " and restart the app.");
-  else if (w.adminEntries === 0) advice = h("span", null, "The ", h("code", null, "admin_users"), " list is empty in the running app. If you've filled it in, restart the app — options are only read when it starts.");
-  else advice = h("span", null, `Neither your user name nor your user id matches any of the ${plural(w.adminEntries, "entry")} in `, h("code", null, "admin_users"),
-    ". Add ", h("strong", null, name || w.haUserId), " exactly as shown, save, and restart the app. Upper and lower case don't matter.");
+  // common/whoami.js: the same rows and wording as every other app; this app adds This is me, Reminders, Account status
   return h("div", { class: "card", id: "whoamiCard" }, h("h3", null, "How the app sees you"),
-    h("div", { class: "kv" },
-      row("User name (sent by Home Assistant)", name || "not sent", name),
-      row("User id (sent by Home Assistant)", h("code", null, w.haUserId), w.haUserId),
-      row("Display name (not used for matching)", w.haDisplayName),
-      row("Administrator in this app", yesNo(w.isAdmin)),
-      row("Names in admin_users", String(w.adminEntries)),
-      row("This is me", w.mePersonName ? w.mePersonName : h("button", { type: "button", class: "link-btn", onclick: () => go("settings") }, "not set — set it")),
-      state.user && !feat("reminders") ? null : row("Reminders", w.notifyLinked
-        ? `${w.remindersOn ? "on" : "off"} · ${w.notifyLinked === 1 ? "1 phone or service" : `${w.notifyLinked} phones or services`} · ${plural(w.remindPeople, "person")} with 🔔 on`
-        : "No phone linked yet — in Home Assistant: Settings → People → you → Track device (your phone with the Companion app). It's picked up within 5 minutes; or ask an admin."),
-      row("Account status", w.disabled ? h("strong", { style: "color:var(--danger)" }, "Turned off by an admin") : "Enabled")),
-    h("div", { class: "hint", style: "margin-top:8px" }, advice));
+    HouseholdWhoami.panel(w, {
+      appName: "Family Tree",
+      adviceTag: "div", adviceStyle: "margin-top:8px",
+      onCopy: (text) => copyText(text),
+      onAction: (target) => go(target),
+    }));
 }
 async function copyText(t) {
   try { await navigator.clipboard.writeText(t); toast("Copied"); } catch (e) { toast("Couldn't copy — select and copy it by hand.", { error: true }); }
@@ -2799,252 +2701,133 @@ async function viewAdmin(tab) {
   return h("div", null, h("h2", { class: "page-title" }, "Admin"), tabs, body);
 }
 
-const APP_SETTING_FIELDS = [
-  { key: "trash_days", label: "Days in trash", min: 7, max: 3650, unit: "days",
-    help: "How long deleted people, families and photos can be restored before they're removed for good." },
-  { key: "max_upload_mb", label: "Largest upload (MB)", min: 1, max: 100, unit: "MB",
-    help: "The biggest photo or document anyone can upload." },
-];
-
+/* Admin → App settings: drawn by common/settings.js from the server's description of each setting (labels, help,
+   limits, defaults, which module a setting belongs to). This app adds the photo folder check, the map's look-up
+   status and the "Turn on the places map" confirmation. */
 async function viewAdminSettings() {
-  const s = await api("api/admin/settings");
-  const err = h("div", { class: "error-text", role: "alert" });
-  const inputs = {};
-  const rows = APP_SETTING_FIELDS.map((f) => {
-    const input = h("input", { type: "number", min: f.min, max: f.max, step: 1, inputmode: "numeric", value: String(s.values[f.key]), "aria-describedby": `help-${f.key}` });
-    inputs[f.key] = input;
-    return h("div", { class: "form-row" }, field(f.label, input, "narrow setting-field"),
-      h("div", { class: "hint setting-help", id: `help-${f.key}` }, f.help, h("br"), `${f.min}–${f.max} ${f.unit}. Default ${s.defaults[f.key]}.`));
-  });
-
-  // ---- photo folder: checked before saving; changing it never moves files ----
-  const pathInput = h("input", { type: "text", value: s.values.media_path, spellcheck: "false", autocomplete: "off", autocapitalize: "off", "aria-describedby": "help-media_path" });
-  const pathResult = h("div", { class: "folder-check", role: "status", "aria-live": "polite" });
-  let lastCheck = null;          // { path, result } for the value in the box
+  const box = h("div");
+  let lastCheck = null;          // { path, result } for the value in the photo folder box
   const markerWords = { this: "this tree's marker", other: "another tree's marker", none: "no .family_tree_store marker" };
-  const drawCheck = (r) => {
-    const kind = r.refused ? "bad" : r.ok ? "good" : "warn";
-    const facts = [r.exists ? (r.writable ? "folder exists, writable" : "folder exists, read-only") : "folder doesn't exist yet",
-      markerWords[r.marker], plural(r.files, "photo file"), r.networkMount ? "network storage" : null].filter(Boolean).join(" · ");
-    mount(pathResult, h("div", { class: `folder-check-box ${kind}` },
-      h("div", null, { good: "✅ ", warn: "⚠️ ", bad: "⛔ " }[kind], r.message), h("div", { class: "hint" }, facts)));
-  };
-  const checkFolder = async () => {
-    const p = pathInput.value.trim();
-    mount(pathResult, h("div", { class: "hint" }, "Checking the folder…"));
-    try {
-      const r = await api("api/admin/settings/check-media-path", { method: "POST", body: { path: p } });
-      if (pathInput.value.trim() !== p) return null;           // typed on meanwhile
-      lastCheck = { path: p, result: r };
-      drawCheck(r);
-      return r;
-    } catch (e) { lastCheck = null; mount(pathResult, h("div", { class: "error-text" }, e.message)); return null; }
-  };
-  pathInput.addEventListener("input", () => { lastCheck = null; clear(pathResult); err.textContent = ""; });
-  pathInput.addEventListener("change", () => { if (pathInput.value.trim() !== s.values.media_path) checkFolder(); });
-  const nowLine = h("div", { class: "hint", id: "help-media_path" }, "In use now: ", h("code", null, s.media.path), " — ",
-    s.media.online ? h("span", null, h("span", { class: "status-dot ok" }), "reachable") : h("span", { style: "color:var(--warn)" }, `offline: ${s.media.reason || "not reachable"}`));
-  const folderRow = h("div", null,
-    h("div", { class: "form-row folder-row" }, field("Photo folder", pathInput, "wide-ish"),
-      h("button", { type: "button", class: "btn-secondary", onclick: checkFolder }, "Check folder")),
-    nowLine,
-    h("p", { class: "hint" }, "Where photos and documents are kept, inside /share — for example ", h("code", null, "/share/nas/family_tree"),
-      " on network storage. Changing it doesn't move any files: copy the whole old folder, including ", h("code", null, ".family_tree_store"),
-      ", to the new place first. Default ", h("code", null, s.defaults.media_path), "."),
-    pathResult);
 
-  // ---- module settings, shown while their module is switched on ----
-  const on = (k) => !!s.values["feature_" + k];
-  const kinSel = h("select", { "aria-label": "Relationship names", "aria-describedby": "help-relationship_language" },
-    ...Object.entries(KIN_LANGS).map(([k, l]) => h("option", { value: k }, l)));
-  kinSel.value = s.values.relationship_language || "en";
-  const orderSel = h("select", { "aria-label": "Name order" }, h("option", { value: "given_first" }, "First name first (Asha Sharma)"),
-    h("option", { value: "surname_first" }, "Surname first (Sharma Asha)"));
-  orderSel.value = s.values.name_order || "given_first";
-  const phoneIn = h("input", { value: s.values.default_phone_code, maxlength: 5, "aria-label": "Default phone code", style: "max-width:90px" });
-  const tithiSel = h("select", { "aria-label": "Tithi day" }, h("option", { value: "aparahna" }, "Aparahna — the tithi covers the afternoon (usual for shraddha)"),
-    h("option", { value: "sunrise" }, "Sunrise — the tithi at sunrise"));
-  tithiSel.value = s.values.tithi_rule;
-  const orderRow = h("div", { class: "form-row" }, field("Name order", orderSel, "narrow setting-field"),
-    h("div", { class: "hint setting-help" }, "How full names are written for everyone. Any person can have their own order (Edit → More details). Default: first name first."));
-  const moreRows = h("div", null,
-    on("contacts") ? h("div", { class: "form-row" }, field("Default phone code", phoneIn, "narrow setting-field"),
-      h("div", { class: "hint setting-help" }, "Contact details: used when a phone number is typed without a country code, like +1 or +44. Default +1.")) : null,
-    on("tithi") ? h("div", { class: "form-row" }, field("Tithi day", tithiSel, "setting-field"),
-      h("div", { class: "hint setting-help" }, "Tithi: which day a death-anniversary tithi is kept on, when a tithi spans two days. Default aparahna.")) : null,
-    on("kin_names") ? h("div", { class: "form-row" }, field("Relationship names", kinSel, "narrow setting-field"),
-      h("div", { class: "hint setting-help", id: "help-relationship_language" },
-        "The household's language for relationship names: “uncle”, or “Babai — your father's younger brother”. Each person can choose their own in Settings. Default English.")) : null);
-  // ---- places map addresses (only while the map is on) ----
-  const tilesIn = h("input", { type: "url", value: s.values.map_tiles_url, spellcheck: "false", autocomplete: "off", "aria-label": "Map tiles address" });
-  const nomIn = h("input", { type: "url", value: s.values.nominatim_url, spellcheck: "false", autocomplete: "off", "aria-label": "Place search address" });
-  const mapStatus = h("div", { class: "hint" });
-  if (on("map")) {
-    api("api/map/status").then((m) => mount(mapStatus, `${m.located} of ${plural(m.places, "place")} found on the map` +
+  const folderControl = (page) => {
+    const pathInput = h("input", { type: "text", id: "set-media_path", value: page.value("media_path"), spellcheck: "false",
+      autocomplete: "off", autocapitalize: "off", "aria-describedby": "set-media_path-help" });
+    const pathResult = h("div", { class: "folder-check", role: "status", "aria-live": "polite" });
+    const drawCheck = (r) => {
+      const kind = r.refused ? "bad" : r.ok ? "good" : "warn";
+      const facts = [r.exists ? (r.writable ? "folder exists, writable" : "folder exists, read-only") : "folder doesn't exist yet",
+        markerWords[r.marker], plural(r.files, "photo file"), r.networkMount ? "network storage" : null].filter(Boolean).join(" · ");
+      mount(pathResult, h("div", { class: `sp-check ${kind}` },
+        h("div", null, { good: "✅ ", warn: "⚠️ ", bad: "⛔ " }[kind], r.message), h("div", { class: "sp-help" }, facts)));
+    };
+    const checkFolder = async () => {
+      const p = pathInput.value.trim();
+      mount(pathResult, h("div", { class: "hint" }, "Checking the folder…"));
+      try {
+        const r = await api("api/admin/settings/check-media-path", { method: "POST", body: { path: p } });
+        if (pathInput.value.trim() !== p) return null;           // typed on meanwhile
+        lastCheck = { path: p, result: r };
+        drawCheck(r);
+        return r;
+      } catch (e) { lastCheck = null; mount(pathResult, h("div", { class: "error-text" }, e.message)); return null; }
+    };
+    page.checkFolder = checkFolder;
+    pathInput.addEventListener("input", () => { lastCheck = null; clear(pathResult); page.set("media_path", pathInput.value.trim()); });
+    pathInput.addEventListener("change", () => { if (pathInput.value.trim() !== page.values.media_path) checkFolder(); });
+    const m = page.data.media;
+    const nowLine = h("div", { class: "hint" }, "In use now: ", h("code", null, m.path), " — ",
+      m.online ? h("span", null, h("span", { class: "status-dot ok" }), "reachable") : h("span", { style: "color:var(--warn)" }, `offline: ${m.reason || "not reachable"}`));
+    return h("div", { class: "sp-folder" },
+      h("div", { class: "sp-folder-row" }, pathInput, h("button", { type: "button", class: "btn-secondary", onclick: checkFolder }, "Check folder")),
+      nowLine, pathResult);
+  };
+
+  const mapStatus = (page) => {
+    if (!page.values.feature_map) return null;
+    const line = h("div", { class: "hint" });
+    api("api/map/status").then((m) => mount(line, `${m.located} of ${plural(m.places, "place")} found on the map` +
       (m.pending ? `, ${m.pending} still to look up` : "") + (m.failed ? `, ${m.failed} not found. ` : ". "),
       m.failed ? h("button", { type: "button", class: "link-btn", onclick: async () => {
         try { const r = await api("api/map/retry", { method: "POST" }); toast(`Looking up ${plural(r.retrying, "place")} again`); } catch (e) { fail(e); }
       } }, "Try the missing ones again") : null)).catch(() => {});
-  }
-  const mapRow = on("map") ? h("div", { class: "map-settings" },
-    h("h4", { class: "field-label" }, "Places map"),
-    h("div", { class: "form-row" }, field("Map tiles address", tilesIn, "wide"), field("Place search address", nomIn, "wide")),
-    h("div", { class: "hint" }, "Defaults: OpenStreetMap's tile server and Nominatim. Point them at your own servers if you have them."),
-    mapStatus) : null;
-  // ---- Features: every optional module has a switch ----
-  const featBoxes = {};
-  const GROUPS = [["general", "General"], ["regional", "Region- and culture-specific (off for a new install)"],
-    ["internet", "Uses the internet (off for a new install)"]];
-  const featuresCard = h("div", { class: "card", id: "featuresCard" }, h("h3", null, "Features"),
-    h("p", { class: "hint" }, "Turn parts of the app on or off for everyone. Turning something off only hides it — nothing is deleted, " +
-      "and turning it back on shows everything again. Background work for a module that's off (reminders, map look-ups, the inbox) stops."),
-    ...GROUPS.map(([kind, title]) => {
-      const items = (s.features || []).filter((f) => f.kind === kind);
-      if (!items.length) return null;
-      return h("div", { class: "feature-group" }, h("h4", { class: "field-label" }, title),
-        ...items.map((f) => {
-          const box = h("input", { type: "checkbox", checked: !!s.values[f.key], "aria-describedby": `help-${f.key}` });
-          featBoxes[f.key] = box;
-          return h("label", { class: "check-row feature-row" }, box, h("span", null, h("strong", null, f.label),
-            h("span", { class: "hint", id: `help-${f.key}` }, ` — ${f.help} Default: ${f.default ? "on" : "off"}.`)));
-        }));
-    }));
-  const save = h("button", { type: "button", class: "btn-primary", onclick: async () => {
-    err.textContent = "";
-    const body = {};
-    for (const [k, box] of Object.entries(featBoxes)) if (box.checked !== s.values[k]) body[k] = box.checked;
-    if (on("kin_names") && kinSel.value !== s.values.relationship_language) body.relationship_language = kinSel.value;
-    if (orderSel.value !== s.values.name_order) body.name_order = orderSel.value;
-    if (on("contacts") && phoneIn.value.trim() !== s.values.default_phone_code) body.default_phone_code = phoneIn.value.trim();
-    if (on("tithi") && tithiSel.value !== s.values.tithi_rule) body.tithi_rule = tithiSel.value;
-    if (on("map") && tilesIn.value.trim() !== s.values.map_tiles_url) body.map_tiles_url = tilesIn.value.trim();
-    if (on("map") && nomIn.value.trim() !== s.values.nominatim_url) body.nominatim_url = nomIn.value.trim();
-    for (const f of APP_SETTING_FIELDS) {
-      const raw = inputs[f.key].value.trim();
-      const n = Number(raw);
-      if (raw === "" || !Number.isInteger(n) || n < f.min || n > f.max) {
-        err.textContent = `${f.label} must be a whole number from ${f.min} to ${f.max}.`;
-        inputs[f.key].focus();
-        return;
-      }
-      if (n !== s.values[f.key]) body[f.key] = n;
-    }
-    const newPath = pathInput.value.trim();
-    if (newPath !== s.values.media_path) {
-      const r = lastCheck && lastCheck.path === newPath ? lastCheck.result : await checkFolder();
-      if (!r) { err.textContent = "Check the photo folder first."; return; }
-      if (r.verdict !== "current") {
-        if (r.refused) { err.textContent = r.message; return; }
-        if (!r.ok) {
-          if (!await confirmDialog("Change the photo folder", `${r.message} Change the photo folder anyway?`, "Change folder", true)) return;
-          body.confirm = true;
+    return line;
+  };
+
+  await SettingsPage.render(box, {
+    load: () => api("api/admin/settings"),
+    save: (body) => api("api/admin/settings", { method: "PUT", body }),
+    fields: { media_path: { control: folderControl } },
+    groups: { map: { bottom: mapStatus } },
+    footer: () => h("p", null, "Changes apply straight away, no restart needed. Only who is an admin (",
+      h("code", null, "admin_users"), ") stays in the app's Configuration tab in Home Assistant."),
+    beforeSave: async (body, page) => {
+      if ("media_path" in body) {
+        // checked before saving; changing it never moves files
+        const newPath = body.media_path;
+        const r = lastCheck && lastCheck.path === newPath ? lastCheck.result : await page.checkFolder();
+        if (!r) { page.setError("media_path", "Check the photo folder first."); return null; }
+        if (r.verdict === "current") delete body.media_path;
+        else {
+          if (r.refused) { page.setError("media_path", r.message); return null; }
+          if (!r.ok) {
+            if (!await confirmDialog("Change the photo folder", `${r.message} Change the photo folder anyway?`, "Change folder", true)) return null;
+            body.confirm = true;
+          }
         }
-        body.media_path = newPath;
       }
-    }
-    if (body.feature_map === true && !await confirmDialog("Turn on the places map",
-      "The map uses the internet: each place name in the tree (only the place — no names or dates) is sent to OpenStreetMap's place search, one a second, and everyone's browser downloads map pictures from the tile server. Turn it on?", "Turn on")) return;
-    if (!Object.keys(body).filter((k) => k !== "confirm").length) { toast("Nothing to save"); return; }
-    save.disabled = true;
-    try {
-      const r = await api("api/admin/settings", { method: "PUT", body });
+      if (body.feature_map === true && !await confirmDialog("Turn on the places map",
+        "The map uses the internet: each place name in the tree (only the place — no names or dates) is sent to OpenStreetMap's place search, one a second, and everyone's browser downloads map pictures from the tile server. Turn it on?", "Turn on")) return null;
+      return body;
+    },
+    afterSave: async (r, body) => {
       await loadMe().catch(() => {});                 // the photo-storage banner, default language and switches follow
       if ("media_path" in body && !r.media.online) toast(`Saved. Photo storage is offline: ${r.media.reason}`, { error: true });
       else toast("Settings saved");
       rerender();
-    } catch (e) { err.textContent = e.message; save.disabled = false; }
-  } }, "Save");
-  const saveBar = (id) => h("div", { class: "actions", id }, save);
-  return h("div", null,
-    h("div", { class: "card" }, h("h3", null, "App settings"), ...rows, orderRow, moreRows, folderRow,
-      mapRow ? h("hr", { class: "sep" }) : null, mapRow),
-    featuresCard, err, saveBar("settingsSave"),
-    h("p", { class: "hint", style: "margin-bottom:0" }, "Changes apply straight away, no restart needed. Only who is an admin (",
-      h("code", null, "admin_users"), ") stays in the app's Configuration tab in Home Assistant."));
+      return "Settings saved";
+    },
+  });
+  return box;
 }
 
+/* Admin → Users: the shared people page (common/people.js) with this app's access switch, "This is me" and,
+   while reminders are on, each person's phones and extra notify services. */
 async function viewAdminUsers() {
   const users = await api("api/admin/users");
-  const checkAgain = h("button", { type: "button", class: "link-btn", onclick: async () => {
-    checkAgain.disabled = true;
-    try { await api("api/admin/users?refresh=1"); toast("Read from Home Assistant"); rerender(); }
-    catch (e) { fail(e); checkAgain.disabled = false; }
-  } }, "Check Home Assistant again");
   const avail = feat("reminders") ? await api("api/admin/notify-services").catch(() => ({ available: false, services: [], entities: [] }))
     : { available: true, services: [], entities: [] };
-  const known = [...avail.services, ...avail.entities];
-  const listId = "notifyServiceList";
-  const datalist = h("datalist", { id: listId }, ...known.map((sv) => h("option", { value: sv })));
-  const list = h("div", { class: "card" });
-  for (const u of users) {
-    const toggle = h("input", { type: "checkbox", checked: !u.disabled, "aria-label": `Access for ${u.name}`, disabled: u.id === state.me.haUserId });
-    toggle.addEventListener("change", async () => {
-      try { await api(`api/users/${u.id}`, { method: "PATCH", body: { disabled: !toggle.checked } }); toast(toggle.checked ? "Access turned on" : "Access turned off"); }
-      catch (e) { fail(e); toggle.checked = !toggle.checked; }
-    });
-    list.appendChild(h("div", { class: "row" },
-      h("div", null, h("div", null, h("span", { class: "name" }, u.name), u.isAdmin ? h("span", { class: "badge-you" }, "admin") : null, u.id === state.me.haUserId ? h("span", { class: "badge-you" }, "you") : null),
-        h("div", { class: "hint" }, [u.username, u.haPerson, u.lastSeen ? `last seen ${fmtWhen(u.lastSeen)}` : "never opened Family Tree"].filter(Boolean).join(" · ")),
-        h("div", { class: "hint" }, "This is me: ", u.mePersonName ? h("strong", null, u.mePersonName) : "not set", " ",
-          h("button", { type: "button", class: "link-btn", onclick: () => setUserMe(u) }, "change"))),
-      h("label", { class: "check-row" }, toggle, "Can use Family Tree"),
-      feat("reminders") ? notifyEditor(u, listId) : null));
-  }
-  return h("div", null,
-    h("p", { class: "hint" }, "Everyone with a Home Assistant login is listed and can use Family Tree unless you turn their access off. Turned-off users see nothing and get no reminders."),
-    !feat("reminders") ? null : h("p", { class: "hint" }, "📱 Phones come from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. " +
-      "Set a phone up there once and every household app uses it. Add an extra notify service below (“Also”) only for something else — a speaker, a second service. " +
-      "Each person still turns their own reminders on in Settings. ", checkAgain,
-      avail.available ? null : h("span", { style: "color:var(--warn)" }, ` ${avail.error || "Home Assistant's notify services couldn't be listed"} — type the name instead.`)),
-    datalist, list, feat("quiz") ? await kidSessionsCard() : null);
-}
-
-/* Admin → Users: the person's phones from Home Assistant (read-only), their extra
-   notify services as removable chips ("Also"), + Add, Send test. */
-function notifyEditor(u, listId) {
-  const box = h("div", { class: "notify-edit" });
-  let services = [...(u.notify || [])];
-  const ha = u.ha || { known: false, person: null, phones: [] };
-  const haPhones = ha.phones.filter((p) => p.service);
-  const phoneChips = !ha.known
-    ? [h("span", { class: "hint" }, "Home Assistant's people couldn't be read yet.")]
-    : !ha.person
-      ? [h("span", { class: "hint" }, "No Home Assistant person is linked to this login (Settings → People → the person → Allow person to login).")]
-      : ha.phones.length
-        ? ha.phones.map((p) => p.service
-          ? h("span", { class: "chip big phone-chip", title: `${p.tracker || ""} → ${p.service}` }, "📱 " + p.label,
-              h("span", { class: "chip-hint" }, p.service))
-          : h("span", { class: "chip warn phone-chip", title: `${p.tracker || ""}: Home Assistant has no notify action for this phone` },
-              `⚠ ${p.label} — Companion app action not found`))
-        : [h("span", { class: "hint" }, `${ha.personName} has no phone in Home Assistant — Settings → People → ${ha.personName} → Track device.`)];
-  const draw = () => {
-    const input = h("input", { type: "text", list: listId, placeholder: "notify.mobile_app_phone", spellcheck: "false",
-      autocomplete: "off", autocapitalize: "off", "aria-label": `Add a notify service for ${u.name}` });
-    const add = async () => {
-      const v = input.value.trim();
-      if (!v) { input.focus(); return; }
-      try { services = (await api(`api/admin/users/${u.id}/notify`, { method: "POST", body: { service: v } })).notify; toast("Notify service added"); draw(); }
-      catch (e) { fail(e); }
-    };
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
-    mount(box,
-      h("div", { class: "chips" }, h("span", { class: "hint notify-label" }, "Phones:"), ...phoneChips,
-        u.remindersOn ? h("span", { class: "chip accent" }, "reminders on") : null),
-      h("div", { class: "chips" }, h("span", { class: "hint notify-label" }, "Also:"),
-        services.length ? services.map((sv) => h("span", { class: "chip big" }, sv,
-          h("button", { type: "button", class: "icon-btn", "aria-label": `Remove ${sv}`, title: "Remove", onclick: async () => {
-            try { services = (await api(`api/admin/users/${u.id}/notify/${encodeURIComponent(sv)}`, { method: "DELETE" })).notify; toast("Removed"); draw(); }
-            catch (e) { fail(e); }
-          } }, "✕")))
-          : h("span", { class: "hint" }, haPhones.length ? "nothing else" : "nothing — no reminders until a phone is linked in Home Assistant or a service is added here")),
-      h("div", { class: "form-row notify-add" }, input,
-        h("button", { type: "button", class: "btn-secondary btn-small", onclick: add }, "Add"),
-        services.length || haPhones.length ? h("button", { type: "button", class: "btn-ghost btn-small", title: "Send a short test notification to their phones and every service listed", onclick: async () => {
-          try { await api(`api/admin/users/${u.id}/notify-test`, { method: "POST" }); toast(`Test sent to ${u.name}`); } catch (e) { fail(e); }
-        } }, "Send test") : null));
-  };
-  draw();
-  return box;
+  const box = h("div");
+  PeoplePage.render(box, {
+    people: users,
+    intro: [
+      "Everyone with a Home Assistant login is listed and can use Family Tree unless you turn their access off. Turned-off users see nothing and get no reminders.",
+      feat("reminders") ? "📱 Phones come from Home Assistant: Settings → People → (the person) → Track device, picking their phone with the Home Assistant Companion app. " +
+        "Set a phone up there once and every household app uses it. Add an extra notify service below (“Also”) only for something else — a speaker, a second service. " +
+        "Each person still turns their own reminders on in Settings." : null,
+    ].filter(Boolean),
+    checkAgain: feat("reminders") ? async () => {
+      try { await api("api/admin/users?refresh=1"); toast("Read from Home Assistant"); rerender(); } catch (e) { fail(e); }
+    } : null,
+    person: (u) => ({
+      badges: [u.isAdmin ? ["admin", "accent"] : null, u.id === state.me.haUserId ? ["you"] : null],
+      sub: [u.username, u.haPerson, u.lastSeen ? `last seen ${fmtWhen(u.lastSeen)}` : "never opened Family Tree"].filter(Boolean).join(" · "),
+      controls: h("label", { class: "pp-toggle" }, "Can use Family Tree",
+        PeoplePage.accessSwitch(!u.disabled, async (on, input) => {
+          try { await api(`api/users/${u.id}`, { method: "PATCH", body: { disabled: !on } }); toast(on ? "Access turned on" : "Access turned off"); }
+          catch (e) { fail(e); input.checked = !on; }
+        }, { label: `Access for ${u.name}`, disabled: u.id === state.me.haUserId })),
+      blocks: h("div", { class: "pp-hint" }, "This is me: ", u.mePersonName ? h("strong", null, u.mePersonName) : "not set", " ",
+        h("button", { type: "button", class: "link-btn", onclick: () => setUserMe(u) }, "change")),
+    }),
+    notify: feat("reminders") ? {
+      api, services: avail, toast: (m, err) => toast(m, err ? { error: true } : undefined), fail,
+      path: (u) => `api/admin/users/${u.id}/notify`, testPath: (u) => `api/admin/users/${u.id}/notify-test`,
+      extraLine: (u) => (u.remindersOn ? h("span", { class: "pp-badge accent" }, "reminders on") : null),
+      texts: { none: (u, phones) => (phones ? "nothing else" : "nothing — no reminders until a phone is linked in Home Assistant or a service is added here") },
+    } : null,
+    empty: "Nobody has opened Family Tree yet.",
+  });
+  return h("div", null, box, feat("quiz") ? await kidSessionsCard() : null);
 }
 
 function setUserMe(u) {
@@ -4308,15 +4091,11 @@ function wireChrome() {
     collapse.setAttribute("aria-label", collapse.title);
   };
   collapse.addEventListener("click", () => {
-    const c = document.documentElement.getAttribute("data-sidebar") === "collapsed";
-    if (c) document.documentElement.removeAttribute("data-sidebar"); else document.documentElement.setAttribute("data-sidebar", "collapsed");
-    lsSet("sidebarCollapsed", c ? "0" : "1");
+    HouseholdTheme.setSidebarCollapsed(!HouseholdTheme.sidebarCollapsed());
     sync();
   });
   sync();
-  const themeSel = $("#themeSelect");
-  themeSel.value = window.__themeChoice || "heritage";
-  themeSel.addEventListener("change", () => applyTheme(themeSel.value));
+  HouseholdTheme.bindSelect($("#themeSelect"));
   $("#sidebarUser").addEventListener("click", () => go("whoami"));
   const up = +lsGet("treeUp"), down = +lsGet("treeDown");
   if (lsGet("treeUp") !== null && up >= 0 && up <= 10) state.tree.up = up;
@@ -4331,13 +4110,8 @@ function wireChrome() {
 /* First run: with the admin list empty nobody can open App settings. Everyone sees how to fix it;
    nobody is ever made admin automatically. */
 function showNoAdminBanner(me) {
-  const banner = $("#noAdminBanner");
-  if (!me || !me.noAdmin) { banner.hidden = true; return; }
-  const name = me.haUsername || me.haUserId;
-  mount(banner, h("span", null, "No admin yet — add your Home Assistant user name (", h("strong", null, name), ") to ",
-    h("code", null, me.adminOption || "admin_users"), " in the app's Configuration tab, save, and restart the app. "),
-    h("button", { type: "button", class: "link-btn", onclick: () => go("whoami") }, "How the app sees you"));
-  banner.hidden = false;
+  HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), me && me.noAdmin, me && (me.haUsername || me.haUserId),
+    { onOpen: () => go("whoami") });
 }
 
 async function init() {

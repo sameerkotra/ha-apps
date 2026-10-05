@@ -44,7 +44,7 @@
                 <td data-label="Category">{{ c.name }}</td>
                 <td data-label="">
                     <form method="post" action="custom-category-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-                          onsubmit="return confirm('Remove &quot;{{ c.name }}&quot; from the category list? Transactions and rules already using it keep it &mdash; it just won\'t be offered as a pick anymore.');">
+                          data-confirm="Remove &quot;{{ c.name }}&quot; from the category list? Transactions and rules already using it keep it &mdash; it just won't be offered as a pick anymore.">
                         <input type="hidden" name="id" value="{{ c.id }}">
                         <button type="submit" class="restart-btn">Remove</button>
                     </form>
@@ -113,7 +113,7 @@
                 <td data-label="Match type">{{ r.match_type }}</td>
                 <td data-label="">
                     <form method="post" action="category-rule-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-                          onsubmit="return confirm('Delete this rule? Transactions already categorized by it keep their category — only future auto-categorization is affected.');">
+                          data-confirm="Delete this rule? Transactions already categorized by it keep their category — only future auto-categorization is affected.">
                         <input type="hidden" name="id" value="{{ r.id }}">
                         <button type="submit" class="restart-btn">Delete</button>
                     </form>

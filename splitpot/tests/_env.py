@@ -1,15 +1,8 @@
 """Import this FIRST in every test module: points Splitpot at a scratch data
-directory and makes the app folder the working directory (main.py mounts
-the frontend from the relative path "public") before main is imported."""
-import os
-import sys
-import tempfile
+directory and puts the app folder on sys.path (so `from app import main`
+works) before main is imported."""
+from common_tests.env import app_root, no_home_assistant, scratch_data_dir
 
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
-os.chdir(_ROOT)
-
-if "DATA_DIR" not in os.environ:
-    os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="splitpot_test_")
-os.environ.pop("SUPERVISOR_TOKEN", None)   # never talk to a real Home Assistant
+app_root(__file__, chdir=True)
+scratch_data_dir("splitpot_test_")
+no_home_assistant()   # never talk to a real Home Assistant

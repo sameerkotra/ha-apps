@@ -1,5 +1,3 @@
-import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -10,13 +8,15 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, features, geocode, ha_client, ha_people, housekeeping, inbox, kidmode, media, reminders, settings
+from . import db, features, geocode, ha_client, housekeeping, inbox, kidmode, media, reminders, settings
+from .common import auth_core, ha_people, web_security
+from .common import housekeeping as jobs_core
 from .routers import (admin, events, export, families, history, kin as kin_router, me, media as media_router, people,
                       map as map_router, related as related_router, custom as custom_router,
                       sources as sources_router, contacts as contacts_router, duplicates as dup_router,
                       reminders as reminders_router, stories, tree, tithi as tithi_router, quiz as quiz_router, tree_import)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+jobs_core.setup_logging()
 logger = logging.getLogger("main")
 
 
@@ -33,19 +33,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Reading the people from Home Assistant failed")
     await run_in_threadpool(media.check)
-    loops = [asyncio.create_task(housekeeping.loop(), name="housekeeping"),
-             asyncio.create_task(reminders.loop(), name="reminders"),
-             asyncio.create_task(geocode.loop(), name="geocode"),
-             asyncio.create_task(inbox.loop(), name="inbox"),
-             asyncio.create_task(ha_people.loop(), name="ha_people")]
+    jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
+    jobs.add("housekeeping", housekeeping.loop)  # media check every 5 minutes; persons hourly; purge daily
+    jobs.add("reminders", reminders.loop)
+    jobs.add("geocode", geocode.loop)
+    jobs.add("inbox", inbox.loop)
+    jobs.add("ha_people", ha_people.loop)
+    jobs.start()
     try:
         yield
     finally:
-        for t in loops:
-            t.cancel()
-        for t in loops:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await t
+        await jobs.stop()
 
 
 app = FastAPI(title="Family Tree", lifespan=lifespan)
@@ -73,7 +71,7 @@ async def validation_error(request: Request, exc: RequestValidationError):
 
 # Only the Supervisor's ingress proxy (and local tests) may talk to us: other
 # apps on the internal network could otherwise forge X-Remote-User-* headers.
-_INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+# (the allowlist — the proxy and loopback — is app/common/auth_core.INGRESS_HOSTS)
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
@@ -88,11 +86,14 @@ def csp() -> str:
     return CSP.replace("img-src 'self' data: blob:", f"img-src 'self' data: blob: {tiles}")
 
 
+HEADERS = web_security.SecurityHeaders(lambda _request: csp(), referrer="same-origin")
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    client_host = request.client.host if request.client else None
-    if client_host not in _INGRESS_ALLOWED_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden — access only via Home Assistant"})
+    blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
+    if blocked is not None:
+        return blocked
     # Starlette spools a whole multipart body to disk before the route (and its
     # own size check) runs, so refuse oversized bodies up front. Backup restores
     # are admin-only and legitimately large (database + photos).
@@ -109,14 +110,7 @@ async def guard(request: Request, call_next):
         blocked = await run_in_threadpool(kidmode.check_blocking, request.method, request.url.path, device)
         if blocked:
             return JSONResponse(status_code=blocked[0], content={"detail": blocked[1], "kidMode": True})
-    response = await call_next(request)
-    response.headers.setdefault("Content-Security-Policy", csp())
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("Referrer-Policy", "same-origin")
-    path = request.url.path
-    if path == "/" or path.endswith(".html"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return response
+    return HEADERS.apply(request, await call_next(request))
 
 
 @app.get("/api/health")

@@ -1,5 +1,3 @@
-import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -10,10 +8,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, emergency, guest_wifi, ha_client, ha_people, reminders, sessions
+from . import config, db, emergency, guest_wifi, ha_client, reminders, sessions
+from .common import auth_core, ha_people, web_security
+from .common import housekeeping as jobs_core
 from .routers import admin, emergency as emergency_router, guest as guest_router, quick as quick_router, health as health_router, items as items_router, me, sheet, vaults
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+jobs_core.setup_logging()
 logger = logging.getLogger("main")
 
 
@@ -27,21 +27,16 @@ def _half_hourly() -> None:
         reminders.run(conn)
 
 
-async def housekeeping():
-    n = 0
-    while True:
-        try:
-            await run_in_threadpool(sessions.expire_idle)
-            if n % 3 == 0:
-                await run_in_threadpool(_minutely)
-            if n % 90 == 5:
-                await run_in_threadpool(_half_hourly)
-            if n % 15 == 1:
-                await run_in_threadpool(guest_wifi.ensure_blocking)
-        except Exception:
-            logger.exception("Housekeeping failed")
-        n += 1
-        await asyncio.sleep(20)
+async def housekeeping(n: int) -> None:
+    """Every 20 s: idle sessions; every minute: emergency access; every 30 minutes: reminders;
+    every 5 minutes: the guest Wi-Fi sensor."""
+    await run_in_threadpool(sessions.expire_idle)
+    if n % 3 == 0:
+        await run_in_threadpool(_minutely)
+    if n % 90 == 5:
+        await run_in_threadpool(_half_hourly)
+    if n % 15 == 1:
+        await run_in_threadpool(guest_wifi.ensure_blocking)
 
 
 @asynccontextmanager
@@ -56,16 +51,14 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(ha_people.refresh_blocking, True)
     except Exception:
         logger.exception("Reading the people's phones from Home Assistant failed")
-    tasks = [asyncio.create_task(housekeeping(), name="housekeeping"),
-             asyncio.create_task(ha_people.loop(), name="ha_people")]
+    jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
+    jobs.every("housekeeping", 20, housekeeping, thread=False, tick=True, log=logger, error="Housekeeping failed")
+    jobs.add("ha_people", ha_people.loop)
+    jobs.start()
     try:
         yield
     finally:
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+        await jobs.stop()
         sessions.end_all()
 
 
@@ -84,17 +77,18 @@ async def validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": "; ".join(msgs) or "Invalid request."})
 
 
-_INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+# Only Supervisor's ingress proxy and loopback get in: app/common/auth_core.INGRESS_HOSTS.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
        "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'")
 MAX_BODY = 25 * 1024 * 1024
+HEADERS = web_security.SecurityHeaders(CSP, referrer="no-referrer", api_no_store="set")
 
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    client_host = request.client.host if request.client else None
-    if client_host not in _INGRESS_ALLOWED_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden — access only via Home Assistant"})
+    blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
+    if blocked is not None:
+        return blocked
     if request.method in ("POST", "PUT", "PATCH"):
         try:
             length = int(request.headers.get("content-length") or 0)
@@ -103,16 +97,7 @@ async def guard(request: Request, call_next):
         limit = 300 * 1024 * 1024 if request.url.path == "/api/admin-storage-import-db" else MAX_BODY
         if length > limit:
             return JSONResponse(status_code=413, content={"detail": "That upload is too big."})
-    response = await call_next(request)
-    response.headers["Content-Security-Policy"] = CSP
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    path = request.url.path
-    if path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store"
-    elif path == "/" or path.endswith(".html"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return response
+    return HEADERS.apply(request, await call_next(request))
 
 
 @app.get("/api/health")

@@ -18,7 +18,8 @@ send is retried on the next tick inside the hour.
 import logging
 from datetime import date, datetime, timedelta
 
-from . import config, db, ha_client, ha_notify, maint_catalog as cat, maintenance as mt, reminders
+from . import config, db, ha_client, maint_catalog as cat, maintenance as mt, reminders
+from .common import ha_notify
 
 logger = logging.getLogger("maint_notify")
 

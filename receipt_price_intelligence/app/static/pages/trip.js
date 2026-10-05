@@ -1,0 +1,607 @@
+// trip.html: this page's own script (moved out of the page so the Content-Security-Policy can forbid inline scripts).
+    const { h, icon, api, money, toast, confirmDialog } = RPI;
+    const $ = (id) => document.getElementById(id);
+
+    let ctx = null, setup = null, setupOpen = null, available = [], picked = [], carId = null, maxStops = 0, roundTrip = true, manualCost = '', planning = false;
+    let departAt = '', timeCost = '', stopMinutes = '10', includeSales = true, includeWebDeals = true, refreshOnline = false, webConfigured = false, haAvailable = false;
+    const cur = () => (setup && setup.config.currency) || undefined;
+    const base = () => `api/v1/homes/${encodeURIComponent(ctx.homeId)}`;
+    const store = (k) => `trip:${k}:${ctx.homeId}`;
+    const card = (title, ...body) => h('div', { class: 'card' }, title ? h('div', { class: 'card-head' }, h('span', { class: 'card-title' }, title)) : null, h('div', { class: 'card-body stack' }, ...body));
+    const m = (n) => money(n, cur());
+    const mins = (n) => (n >= 60 ? `${Math.floor(n / 60)} h ${Math.round(n % 60)} min` : `${Math.max(1, Math.round(n))} min`);
+    const day = (d) => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+    // ---------------------------------------------------------------- load
+    async function load() {
+      const c = $('content');
+      c.replaceChildren(h('div', { class: 'skeleton', style: 'height:160px' }));
+      try {
+        [setup, available] = await Promise.all([api(`${base()}/planner/setup`), api(`${base()}/planner/items?limit=1000`)]);
+      } catch (e) {
+        return c.replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message), h('button', { class: 'btn btn-sm', onclick: load }, 'Retry')));
+      }
+      try { picked = JSON.parse(sessionStorage.getItem(store('items')) || '[]').filter((p) => available.some((a) => a.id === p.id)); } catch (_) { picked = []; }
+      try { haAvailable = !!(await api('api/v1/planner/config')).ha_available; } catch (_) { haAvailable = false; }
+      try { webConfigured = !!(await api('api/v1/webinfo/status')).configured; } catch (_) { webConfigured = false; }
+      try { const o = JSON.parse(localStorage.getItem(store('opts')) || '{}'); timeCost = o.timeCost ?? ''; stopMinutes = o.stopMinutes ?? '10'; includeSales = o.includeSales ?? true; includeWebDeals = o.includeWebDeals ?? true; maxStops = o.preferStops ?? 0; } catch (_) { /* defaults */ }
+      const saved = localStorage.getItem(store('car'));
+      carId = (setup.vehicles.find((v) => v.id === saved) || setup.vehicles.find((v) => v.is_default) || setup.vehicles[0] || {}).id || null;
+      // The last plan is shown again when the page opens (if the list is empty, or is the same list)
+      let lastPlan = null;
+      try { lastPlan = await api(`${base()}/planner/last`); } catch (_) { lastPlan = null; }
+      if (lastPlan && lastPlan.result) {
+        const items = (lastPlan.request.items || []).filter((i) => available.some((a) => a.id === i.item_id)).map((i) => ({ id: i.item_id, qty: i.qty }));
+        const same = (a, b) => a.length === b.length && a.every((x) => b.some((y) => y.id === x.id && Number(y.qty) === Number(x.qty)));
+        if (!picked.length && items.length) { picked = items; savePicked(); }
+        if (same(picked, items)) {
+          return render({ ...lastPlan.result, saved: { at: lastPlan.saved_at, hours_left: lastPlan.hours_left, last: true, current: lastPlan.current } });
+        }
+      }
+      render();
+    }
+    const saveOpts = () => localStorage.setItem(store('opts'), JSON.stringify({ timeCost, stopMinutes, includeSales, includeWebDeals, preferStops: maxStops }));
+    const savePicked = () => sessionStorage.setItem(store('items'), JSON.stringify(picked));
+
+    // ---------------------------------------------------------------- render
+    function render(result) {
+      const c = $('content');
+      c.replaceChildren(...[
+        setupCard(), itemsCard(), optionsCard(),
+        h('button', { class: 'btn btn-primary btn-block big', id: 'planBtn', type: 'button', disabled: planning, onclick: () => plan(false) }, icon('map'), planning ? 'Planning…' : 'Plan my trip'),
+        h('div', { id: 'result', class: 'stack' }),
+      ].filter(Boolean));
+      if (result) showResult(result);
+    }
+
+    function setupCard() {
+      const home = setup.home;
+      const address = h('input', { class: 'input', type: 'text', value: home.address || '', placeholder: 'Street, city, state and postal code', maxlength: '500', 'aria-label': 'Home address' });
+      const status = home.address
+        ? (home.located ? h('span', { class: 'pill ok status-pill' }, icon('check'), 'Found on the map') : h('span', { class: 'pill warn status-pill' }, 'Not found yet'))
+        : null;
+      const save = h('button', { class: 'btn btn-sm', type: 'button', onclick: async () => {
+        save.disabled = true;
+        try { const r = await api(`${base()}/planner/address`, { method: 'PUT', body: { address: address.value } }); setup.home = { address: r.address, latitude: r.latitude, longitude: r.longitude, located: r.located }; if (r.message) toast(r.message, 'error'); else if (r.located) toast('Address found', 'success'); }
+        catch (e) { toast(e.message, 'error'); }
+        render();
+      } }, 'Save and find');
+      address.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save.click(); } });
+
+      const cars = setup.vehicles.map((v) => h('div', { class: 'car', role: 'radio', tabindex: '0', 'aria-checked': String(v.id === carId),
+        onclick: () => { carId = v.id; localStorage.setItem(store('car'), carId); render(); } },
+        icon('car'), h('div', { class: 'grow' }, h('b', {}, v.name), h('span', { class: 'meta' }, `${kindLabel(v.kind)} · ${v.economy} ${v.kind === 'EV' ? setup.config.ev_consumption_unit : setup.config.fuel_economy_unit} · ${m(v.cost_per_distance)}/${setup.config.distance_unit} to drive`)),
+        h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Edit ${v.name}`, onclick: (e) => { e.stopPropagation(); carDialog(v); } }, icon('edit'))));
+
+      // stays as the person left it; opens by itself only while something is still missing
+      const box = h('details', { class: 'card', open: setupOpen == null ? (!home.located || !setup.vehicles.length) : setupOpen });
+      box.addEventListener('toggle', () => { setupOpen = box.open; });
+      box.append(
+        h('summary', { class: 'card-body', style: 'cursor:pointer;font-weight:650' }, 'Your home and car',
+          h('span', { class: 'note', style: 'font-weight:400;margin-left:8px' }, home.located ? (setup.vehicles.length ? '' : 'Add a car to include driving costs') : 'Add your address to start')),
+        h('div', { class: 'card-body stack', style: 'padding-top:0' },
+          h('label', { class: 'field' }, h('span', { class: 'label' }, 'Home address (where trips start and end)'), address),
+          h('div', { class: 'row-between' }, h('div', { class: 'grow' }, status), save),
+          h('p', { class: 'note' }, 'The address is looked up on OpenStreetMap. Store addresses are looked up the same way, once each.'),
+          h('div', { class: 'sect', style: 'margin-top:8px' }, 'Cars'),
+          setup.vehicles.length ? h('div', { class: 'cars', role: 'radiogroup', 'aria-label': 'Car for this trip' }, ...cars) : h('p', { class: 'note' }, 'No cars yet. A car gives the planner its fuel or electricity cost per mile.'),
+          h('div', {}, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => carDialog(null) }, icon('plus'), 'Add a car'))));
+      return box;
+    }
+    const kindLabel = (k) => ({ GAS: 'Gas', DIESEL: 'Diesel', HYBRID: 'Hybrid', EV: 'Electric' }[k] || k);
+
+    // ---------------------------------------------------------------- cars
+    function carDialog(car) {
+      const cfg = setup.config;
+      const f = (label, attrs) => { const input = h('input', { class: 'input', ...attrs }); return { input, el: h('label', { class: 'field' }, h('span', { class: 'label' }, label), input) }; };
+      const name = f('Name', { type: 'text', value: car ? car.name : '', placeholder: 'e.g. Family SUV', maxlength: '255' });
+      const kind = h('select', { class: 'select' }, ['GAS', 'DIESEL', 'HYBRID', 'EV'].map((k) => h('option', { value: k }, kindLabel(k))));
+      kind.value = car ? car.kind : 'GAS';
+      const eco = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: 'any', min: '0', value: car ? car.economy : '' });
+      const price = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: 'any', min: '0', value: car ? car.energy_price : '' });
+      const other = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: 'any', min: '0', value: car && car.other_cost_per_distance ? car.other_cost_per_distance : '' });
+      const range = h('input', { class: 'input', type: 'number', inputmode: 'decimal', step: 'any', min: '0', value: car && car.range ? car.range : '' });
+      const ecoLabel = h('span', { class: 'label' }), priceLabel = h('span', { class: 'label' }), ecoHint = h('span', { class: 'note' });
+      const cost = h('div', { class: 'note' });
+      const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+      function relabel() {
+        const ev = kind.value === 'EV';
+        ecoLabel.textContent = ev ? `Electricity use (${cfg.ev_consumption_unit})` : `Fuel economy (${cfg.fuel_economy_unit})`;
+        priceLabel.textContent = ev ? 'Electricity price (per kWh)' : `Fuel price (per ${cfg.volume_unit})`;
+        ecoHint.textContent = ev ? 'Lower is better. Around 30 kWh/100 mi (18.6 kWh/100 km) is typical.' : (cfg.unit_system === 'imperial' ? 'Miles per gallon: higher is better.' : 'Litres per 100 km: lower is better.');
+        eco.placeholder = ev ? (cfg.unit_system === 'imperial' ? '30' : '18.6') : (cfg.unit_system === 'imperial' ? '28' : '8.4');
+        price.placeholder = ev ? '0.15' : (cfg.unit_system === 'imperial' ? '3.50' : '1.60');
+        const e = parseFloat(eco.value), p = parseFloat(price.value);
+        if (e > 0 && p >= 0) {
+          const perUnitDist = ev ? (e / 100) * p : (cfg.unit_system === 'imperial' ? p / e : (e / 100) * p);
+          cost.textContent = `About ${m(perUnitDist + (parseFloat(other.value) || 0))} per ${cfg.distance_unit} to drive.`;
+        } else cost.textContent = '';
+      }
+      for (const el of [kind, eco, price, other]) el.addEventListener('input', relabel);
+      relabel();
+
+      const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, car ? 'Save' : 'Add car');
+      const dlg = h('dialog', { class: 'wide' }, h('form', { method: 'dialog' },
+        h('div', { class: 'dialog-body stack' }, h('h2', {}, car ? 'Edit car' : 'Add a car'),
+          name.el, h('label', { class: 'field' }, h('span', { class: 'label' }, 'Type'), kind),
+          h('label', { class: 'field' }, ecoLabel, eco, ecoHint), h('label', { class: 'field' }, priceLabel, price), cost,
+          h('label', { class: 'field' }, h('span', { class: 'label' }, `Other cost per ${cfg.distance_unit} (optional)`), other, h('span', { class: 'note' }, 'Tyres, servicing, depreciation. Leave empty to count only fuel or electricity.')),
+          h('label', { class: 'field' }, h('span', { class: 'label' }, `Range (${cfg.distance_unit}, optional)`), range, h('span', { class: 'note' }, 'Used to warn you when a trip is close to the car’s range.')),
+          error),
+        h('div', { class: 'dialog-actions' },
+          car ? h('button', { class: 'btn btn-danger', type: 'button', style: 'margin-right:auto', onclick: async () => {
+            if (!(await confirmDialog({ title: `Delete ${car.name}?`, confirmLabel: 'Delete', danger: true }))) return;
+            try { await api('api/v1/vehicles/' + car.id, { method: 'DELETE' }); dlg.close(); await refreshCars(); } catch (e) { error.textContent = e.message; error.hidden = false; }
+          } }, 'Delete') : null,
+          h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => dlg.close() }, 'Cancel'), submit)));
+      dlg.querySelector('form').addEventListener('submit', async (e) => {
+        e.preventDefault(); error.hidden = true; submit.disabled = true;
+        const body = { name: name.input.value, kind: kind.value, economy: eco.value, energy_price: price.value, other_cost_per_distance: other.value, range: range.value };
+        try {
+          const saved = car ? await api('api/v1/vehicles/' + car.id, { method: 'PATCH', body }) : await api(`${base()}/vehicles`, { method: 'POST', body });
+          carId = saved.id; localStorage.setItem(store('car'), carId);
+          dlg.close(); await refreshCars();
+        } catch (err) { error.textContent = err.message; error.hidden = false; }
+        submit.disabled = false;
+      });
+      dlg.addEventListener('close', () => dlg.remove());
+      document.body.append(dlg); dlg.showModal(); name.input.focus();
+    }
+    async function refreshCars() {
+      setup.vehicles = await api(`${base()}/vehicles`);
+      if (!setup.vehicles.some((v) => v.id === carId)) carId = (setup.vehicles.find((v) => v.is_default) || setup.vehicles[0] || {}).id || null;
+      render();
+    }
+
+    // ---------------------------------------------------------------- items
+    function itemsCard() {
+      const input = h('input', { class: 'input', type: 'search', placeholder: available.length ? 'Search your items and add them' : 'No priced items yet', 'aria-label': 'Add an item', disabled: !available.length });
+      RPI.attachCombobox(input, {
+        options: () => available.filter((a) => !picked.some((p) => p.id === a.id)).map((a) => ({ label: a.name, hint: `${a.purchases}×`, id: a.id })),
+        allowCreate: false, max: 8,
+        onPick: (opt) => { input.value = ''; add(opt.id); },
+      });
+      const popular = available.filter((a) => !picked.some((p) => p.id === a.id)).slice(0, 8);
+      const list = picked.map((p) => pickRow(p)).filter(Boolean);
+      return card('Shopping list',
+        h('div', { class: 'search' }, icon('search'), input),
+        haAvailable && available.length ? h('div', {}, h('button', { class: 'btn btn-sm', type: 'button', onclick: importList }, icon('receipt'), 'Import from a Home Assistant list')) : null,
+        popular.length ? h('div', { class: 'chips' }, popular.map((a) => h('button', { class: 'chip-btn', type: 'button', onclick: () => add(a.id) }, '+ ' + a.name))) : null,
+        picked.length ? h('div', { class: 'picked' }, ...list,
+          picked.length > 1 ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', style: 'justify-self:start', onclick: () => {
+            if (!confirm(`Remove all ${picked.length} items from the list?`)) return;
+            picked = []; savePicked(); render();
+          } }, icon('trash'), 'Clear list') : null) : h('p', { class: 'note' }, available.length ? 'Add the items you need. Each item appears once; set how many of it you want.' : 'Items appear here once you have approved receipts with prices.'));
+    }
+    // Read a Home Assistant to-do / shopping list and match its lines to items you have bought.
+    async function importList() {
+      let lists;
+      try { lists = await api('api/v1/planner/todo-lists'); } catch (e) { return toast(e.message, 'error'); }
+      if (!lists.length) return toast('No shopping or to-do lists were found in Home Assistant', 'error');
+
+      const select = h('select', { class: 'select' }, lists.map((l) => h('option', { value: l.entity_id }, l.name)));
+      const body = h('div', { class: 'stack' });
+      const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+      const readBtn = h('button', { class: 'btn btn-primary', type: 'button' }, 'Read list');
+      const addBtn = h('button', { class: 'btn btn-primary', type: 'button', hidden: true }, 'Add to trip');
+      let rows = [];
+
+      readBtn.addEventListener('click', async () => {
+        error.hidden = true; readBtn.disabled = true;
+        try {
+          const r = await api(`${base()}/planner/todo-import`, { method: 'POST', body: { entity_id: select.value } });
+          rows = r.lines.map((line) => {
+            const choice = h('select', { class: 'select', 'aria-label': `Item for ${line.text}` },
+              h('option', { value: '' }, "Don't add"),
+              ...line.candidates.map((c) => h('option', { value: c.id }, c.name)));
+            choice.value = line.match ? line.match.id : '';
+            const qty = h('input', { class: 'input', type: 'number', min: '0', step: 'any', value: String(line.qty), style: 'width:76px', 'aria-label': `Quantity of ${line.text}` });
+            return { line, choice, qty };
+          });
+          if (!rows.length) { body.replaceChildren(h('p', { class: 'note' }, 'The list has nothing left to buy.')); return; }
+          body.replaceChildren(h('p', { class: 'note' }, 'Check the matches. Lines that match nothing you have bought before can’t be planned, because they have no price on record.'),
+            ...rows.map(({ line, choice, qty }) => h('div', { class: 'stack', style: 'border-top:1px solid var(--line);padding-top:8px' },
+              h('div', { style: 'font-weight:600' }, line.text),
+              line.candidates.length ? h('div', { class: 'row-between' }, choice, qty) : h('div', { class: 'note' }, 'No matching item with a price on record.'))));
+          addBtn.hidden = false;
+        } catch (e) { error.textContent = e.message; error.hidden = false; }
+        readBtn.disabled = false;
+      });
+      addBtn.addEventListener('click', () => {
+        let added = 0;
+        for (const { line, choice, qty } of rows) {
+          if (!choice.value) continue;
+          const q = Math.max(0.5, parseFloat(qty.value) || line.qty || 1);
+          const existing = picked.find((p) => p.id === choice.value);
+          if (existing) existing.qty = q; else picked.push({ id: choice.value, qty: q });
+          added++;
+        }
+        savePicked(); dlg.close(); render();
+        toast(added ? `Added ${added} item${added === 1 ? '' : 's'} from the list` : 'Nothing was added', added ? 'success' : 'error');
+      });
+      const dlg = h('dialog', { class: 'wide' }, h('div', { class: 'dialog-body stack' }, h('h2', {}, 'Import a shopping list'),
+        h('label', { class: 'field' }, h('span', { class: 'label' }, 'List'), select), body, error),
+        h('div', { class: 'dialog-actions' }, h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => dlg.close() }, 'Cancel'), readBtn, addBtn));
+      dlg.addEventListener('close', () => dlg.remove());
+      document.body.append(dlg); dlg.showModal();
+    }
+
+    function add(id) {
+      if (picked.some((p) => p.id === id)) return toast('Already in your list', 'error');
+      picked.push({ id, qty: 1 }); savePicked(); render();
+    }
+    function pickRow(p) {
+      const item = available.find((a) => a.id === p.id);
+      if (!item) return null;  // no longer an item with a price (merged or removed): not shown
+      const weight = item.unit !== 'each';
+      const step = weight ? 0.5 : 1, min = weight ? 0.5 : 1;
+      const qty = h('input', { type: 'number', min: String(min), step: String(step), value: String(p.qty), inputmode: 'decimal', 'aria-label': `Quantity of ${item.name}` });
+      const set = (v) => { p.qty = Math.max(min, Math.round(v * 100) / 100 || min); qty.value = String(p.qty); savePicked(); };
+      qty.addEventListener('change', () => set(parseFloat(qty.value)));
+      return h('div', { class: 'pick' },
+        h('div', { class: 'grow' }, h('div', { class: 'name' }, item.name), weight ? h('div', { class: 'unit' }, `about ${item.amount} ${item.unit} each`) : null),
+        h('div', { class: 'stepper' },
+          h('button', { type: 'button', 'aria-label': 'Less', onclick: () => set(p.qty - step) }, '−'), qty,
+          h('button', { type: 'button', 'aria-label': 'More', onclick: () => set(p.qty + step) }, '+')),
+        h('button', { class: 'icon-btn remove', type: 'button', title: 'Remove from the list', 'aria-label': `Remove ${item.name}`,
+          onclick: () => { picked = picked.filter((x) => x !== p); savePicked(); render(); } }, icon('x')));
+    }
+
+    function optionsCard() {
+      const back = h('input', { type: 'checkbox', checked: roundTrip });
+      back.addEventListener('change', () => { roundTrip = back.checked; });
+      const sales = h('input', { type: 'checkbox', checked: includeSales });
+      sales.addEventListener('change', () => { includeSales = sales.checked; saveOpts(); });
+      const webDeals = h('select', { class: 'select', 'aria-label': 'Prices to use' },
+        h('option', { value: 'online' }, 'Online price when found, else my receipt price'),
+        h('option', { value: 'receipt' }, 'My receipt prices only (ignore online prices)'));
+      webDeals.value = includeWebDeals ? 'online' : 'receipt';
+      webDeals.addEventListener('change', () => { includeWebDeals = webDeals.value === 'online'; saveOpts(); render(); });
+      const refresh = h('input', { type: 'checkbox', checked: refreshOnline });
+      refresh.addEventListener('change', () => { refreshOnline = refresh.checked; });
+      const num = (label, hint, get, set, attrs) => {
+        const input = h('input', { class: 'input', type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: get(), ...attrs });
+        input.addEventListener('input', () => { set(input.value); saveOpts(); });
+        return h('label', { class: 'field' }, h('span', { class: 'label' }, label), input, hint ? h('span', { class: 'note' }, hint) : null);
+      };
+      const prefer = h('select', { class: 'select', 'aria-label': 'Prefer at most this many stores' },
+        [[0, 'No preference'], [1, 'One store'], [2, 'Two stores'], [3, 'Three stores'], [4, 'Four stores']].map(([v, l]) => h('option', { value: String(v) }, l)));
+      prefer.value = String(maxStops);
+      prefer.addEventListener('change', () => { maxStops = parseInt(prefer.value, 10) || 0; saveOpts(); });
+      const depart = h('input', { class: 'input', type: 'datetime-local', value: departAt });
+      depart.addEventListener('input', () => { departAt = depart.value; });
+      const manual = !setup.vehicles.length ? h('label', { class: 'field' }, h('span', { class: 'label' }, `Driving cost per ${setup.config.distance_unit} (no car added)`),
+        h('input', { class: 'input', type: 'number', min: '0', step: 'any', inputmode: 'decimal', value: manualCost, placeholder: '0.20', oninput: (e) => { manualCost = e.target.value; } })) : null;
+      return card('Options',
+        h('label', { class: 'row-between', style: 'cursor:pointer' }, back, h('span', { class: 'grow' }, 'Return home at the end')),
+        h('label', { class: 'row-between', style: 'cursor:pointer' }, sales, h('span', { class: 'grow' }, 'Use sale and member prices seen on receipts')),
+        h('label', { class: 'field' }, h('span', { class: 'label' }, 'Prices to use'), webDeals),
+        webConfigured && includeWebDeals ? h('label', { class: 'row-between', style: 'cursor:pointer' }, refresh, h('span', { class: 'grow' }, 'Check current prices online before planning (slower)')) : null,
+        manual,
+        h('details', {}, h('summary', { style: 'cursor:pointer;font-weight:600;padding:4px 0' }, 'More options'),
+          h('div', { class: 'stack', style: 'margin-top:8px' },
+            h('label', { class: 'field' }, h('span', { class: 'label' }, 'Prefer at most this many stores'), prefer,
+              h('span', { class: 'note' }, 'Optional. The planner works out how many stores are worth visiting. If your list needs more than you ask for, you still get the trip, with a note.')),
+            num(`Value of my time (${cur() || ''} per hour)`, 'Counts driving and shopping time. Leave empty to ignore time.', () => timeCost, (v) => { timeCost = v; }, { placeholder: '0' }),
+            num('Minutes spent in each store', null, () => stopMinutes, (v) => { stopMinutes = v; }, { placeholder: '10' }),
+            h('label', { class: 'field' }, h('span', { class: 'label' }, 'Leave at'), depart, h('span', { class: 'note' }, 'Empty means now. Stores with opening hours (set on the Stores page) must be open when you arrive.')))));
+    }
+
+    // ---------------------------------------------------------------- plan
+    let lastCheck = null;  // what the last online price check did, shown with the plan
+    let skipCheck = false;  // re-plan without a new online check (after choosing to ignore an online price)
+    let ignored = new Set();  // "item|chain" whose online prices you chose not to use
+    const ignoreKey = (item, chain) => `${item}|${chain}`;
+    async function setIgnored(itemId, chainId, on) {
+      try {
+        await api(`${base()}/online-price-ignores`, { method: 'POST', body: { item_id: itemId, chain_id: chainId, ignored: on } });
+        toast(on ? 'That online price will not be used; your receipt price is used instead' : 'The online price is used again', 'success');
+        skipCheck = true;
+        try { await plan(true); } finally { skipCheck = false; }
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    function ignoreControl(itemId, chainId, usesOnline, hasReceipt) {
+      if (!itemId || !chainId) return null;
+      if (ignored.has(ignoreKey(itemId, chainId))) return h('div', { class: 'iwhy' }, 'You chose not to use the online price here. ',
+        h('button', { class: 'linkbtn', type: 'button', onclick: () => setIgnored(itemId, chainId, false) }, 'Use online price again'));
+      if (!usesOnline) return null;
+      return h('div', {}, h('button', { class: 'linkbtn', type: 'button', title: hasReceipt ? '' : 'There is no receipt price at this store, so the plan will not buy it here',
+        onclick: () => setIgnored(itemId, chainId, true) }, hasReceipt ? 'Use receipt price instead' : 'Ignore this online price'));
+    }
+    async function refreshPrices() {
+      const ids = picked.map((p) => p.id);
+      const t = () => $('progText');
+      try {
+        if (t()) t().textContent = 'Checking current prices online…';
+        const job = await api(`${base()}/webinfo/prices/refresh`, { method: 'POST', body: { item_ids: ids, all_stores: true } });
+        const done = await RPI.followJob(job.id, (j) => { if (t()) t().textContent = `${j.message} (${j.done} of ${j.total})`; });
+        lastCheck = { checked: done.total, found: done.results, items: done.items || ids.length, stores: done.stores, skipped: job.skipped || 0, error: done.error };
+        if (done.error) toast(done.error, 'error');
+      } catch (e) {
+        // "Everything was already checked recently" is not a failure: the trip just uses the
+        // prices already on record, which is exactly what a short freshness window is for.
+        if (/already checked online within the last/.test(e.message)) lastCheck = { checked: 0, found: 0, recent: true };
+        else { lastCheck = { error: e.message }; toast('Online prices could not be checked: ' + e.message, 'error'); }
+      }
+    }
+
+    function planBody() {
+      const body = { items: picked.map((p) => ({ item_id: p.id, qty: p.qty })), round_trip: roundTrip, include_sales: includeSales, include_web_deals: includeWebDeals,
+        stop_minutes: stopMinutes === '' ? 0 : stopMinutes };
+      if (maxStops) body.max_stops = maxStops;
+      if (timeCost !== '') body.time_cost_per_hour = timeCost;
+      if (departAt) body.depart_at = departAt;
+      if (carId) body.vehicle_id = carId; else if (manualCost !== '') body.cost_per_distance = manualCost;
+      return body;
+    }
+
+    async function plan(fresh) {
+      if (!setup.home.located) { toast('Add your home address first', 'error'); setupOpen = true; render(); return; }
+      if (!picked.length) return toast('Add at least one item', 'error');
+      lastCheck = null;
+      // With "check current prices online" ticked, prices are checked first (quick when they were checked
+      // recently): a kept plan is only reused when those prices have not changed since it was made.
+      if (refreshOnline && webConfigured && includeWebDeals && fresh !== true && !skipCheck) {
+        const res = $('result');
+        res.replaceChildren(h('div', { class: 'card' }, h('div', { class: 'progress' }, h('strong', {}, `Checking current prices online for your ${picked.length} item${picked.length === 1 ? '' : 's'}…`), h('span', { class: 'note', id: 'progText' }, 'Only the items on this list, at each of your stores.'))));
+        await refreshPrices();
+      }
+      if (fresh !== true) {
+        // A plan made recently for exactly this list and these options, with nothing changed since, is shown
+        // straight away: no stores to find, no online prices to check, nothing to work out again.
+        try {
+          const kept = await api(`${base()}/planner/plan/saved`, { method: 'POST', body: planBody() });
+          if (kept.found) { render(kept); $('result').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+        } catch (_) { /* plan as usual */ }
+      }
+      planning = true; const res = $('result'); const btn = $('planBtn'); btn.disabled = true; btn.lastChild.textContent = 'Planning…';
+      const progress = h('div', { class: 'card' }, h('div', { class: 'progress' }, h('strong', {}, 'Finding your stores on the map…'), h('span', { class: 'note', id: 'progText' }, 'Each address is looked up once and remembered.')));
+      res.replaceChildren(progress);
+      progress.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      try {
+        const ids = picked.map((p) => p.id);
+        for (let guard = 0; guard < 40; guard++) {
+          const r = await api(`${base()}/planner/locate`, { method: 'POST', body: { item_ids: ids } });
+          if (r.unreachable || !r.pending) break;
+          $('progText').textContent = `${r.pending} more to find…`;
+        }
+        if (refreshOnline && webConfigured && includeWebDeals && fresh === true && !skipCheck) await refreshPrices();
+        $('progText').textContent = 'Working out the cheapest trip…';
+        const result = await api(`${base()}/planner/plan`, { method: 'POST', body: planBody() });
+        planning = false; render(result);
+        $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (e) {
+        planning = false; render();
+        $('result').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message)));
+      }
+    }
+
+    // ---------------------------------------------------------------- result
+    function savedBanner(r) {
+      if (!r.saved) return null;
+      const at = new Date(r.saved.at * 1000);
+      const time = at.toLocaleString(undefined, at.toDateString() === new Date().toDateString() ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      const stale = r.saved.last && r.saved.current === false;
+      return h('div', { class: 'banner ' + (stale ? 'warn' : 'info') }, icon(stale ? 'alert' : 'info'), h('div', { class: 'banner-body' },
+        h('strong', {}, r.saved.last ? `Your last plan, from ${time}. ` : `Saved plan from ${time}. `),
+        stale ? 'Something it uses has changed since (a receipt, online prices, stores or your car), so it may be out of date. '
+          : 'Nothing it uses has changed since, so nothing was looked up again. ',
+        !departAt ? 'Store hours were checked for leaving at that time. ' : '',
+        h('div', { style: 'margin-top:6px' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => plan(true) }, icon('refresh'), 'Plan again'),
+          r.saved.last ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', style: 'margin-left:6px', onclick: async () => {
+            try { await api(`${base()}/planner/last`, { method: 'DELETE' }); } catch (_) { /* nothing to clear */ }
+            render();
+          } }, 'Clear') : null)));
+    }
+
+    // ------------------------------------------------------------------ the plan
+    // Every item says which price the plan used: the store's current ONLINE price whenever one was found, else the
+    // RECEIPT price (what you last paid). The other price is shown beside it so the choice is easy to follow.
+    const unitOf = (u) => (u && u !== 'each' ? '/' + String(u).toLowerCase() : '');
+    const shortDay = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+    const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (_) { return ''; } };
+    const metric = (v, l, cls) => h('div', { class: 'metric ' + (cls || '') }, h('b', {}, v), h('span', {}, l));
+
+    const discountNote = (d) => [d.percent ? `−${+d.percent.toFixed(2)}%` : null, d.cents ? `−${+d.cents.toFixed(1)}¢/gal` : null].filter(Boolean).join(' ') + ' ' + d.names.join(' + ');
+    function whyText(l) {
+      if (l.price_source === 'deal') return 'a deal found online' + (l.deal_until ? ` until ${day(l.deal_until)}` : '');
+      if (l.price_source === 'online') return l.receipt_price ? "today's price on the store's website" : 'no receipt price at this store';
+      if (l.online_rejected) return `online price ${m(l.online_rejected.price)} ${l.online_rejected.reason}`;
+      return 'no online price found';
+    }
+    function priceChip(kind, price, unit, chosen, extra) {
+      return h('span', { class: 'pchip ' + kind + (chosen ? ' chosen' : '') },
+        h('span', { class: 'k' }, kind === 'online' ? 'Online' : kind === 'deal' ? 'Deal' : 'Receipt'),
+        h('b', {}, m(price) + unitOf(unit)), extra ? h('span', { class: 'x' }, extra) : null, chosen ? h('span', { class: 'tick' }, '✓') : null);
+    }
+    function itemRow(l, store) {
+      const usedOnline = l.price_source === 'online' || l.price_source === 'deal';
+      const chips = [];
+      const disc = !!l.discount;
+      if (l.price_source === 'deal') chips.push(priceChip('deal', disc ? l.before_discount : l.unit_price, l.unit, !disc));
+      if (l.online) chips.push(priceChip('online', l.online.price, l.unit, l.price_source === 'online' && !disc, shortDay(l.online.fetched_at)));
+      if (l.receipt_price) chips.push(priceChip('receipt', l.receipt_price, l.unit, l.price_source === 'receipt' && !disc,
+        (shortDay(l.receipt_date) || '') + (l.receipt_from_other_store ? ' · other branch' : '')));
+      if (!chips.length) chips.push(priceChip(l.price_source, l.unit_price, l.unit, true));
+      if (l.discount) chips.push(h('span', { class: 'pchip disc chosen' }, h('span', { class: 'k' }, 'You pay'), h('b', {}, m(l.unit_price) + unitOf(l.unit)),
+        h('span', { class: 'x' }, discountNote(l.discount))));
+      const src = l.online && l.online.url ? l.online.url : l.source_url;
+      const detail = usedOnline && l.online ? [l.online.product, l.online.note, src ? hostOf(src) : null].filter(Boolean).join(' · ') : null;
+      return h('div', { class: 'irow' },
+        h('div', { class: 'itop' },
+          h('div', { class: 'iname' }, `${l.name}${l.qty !== 1 ? ' × ' + l.qty : ''}`,
+            h('span', { class: 'used ' + (usedOnline ? 'on' : 'rc') }, usedOnline ? 'Used: online price' : 'Used: receipt price')),
+          h('b', { class: 'icost' }, m(l.cost))),
+        h('div', { class: 'chips2' }, ...chips),
+        h('div', { class: 'iwhy' }, whyText(l),
+          l.unit !== 'each' ? ` · ${+(l.amount * l.qty).toFixed(2)} ${String(l.unit).toLowerCase()}` : '',
+          detail ? ' · ' : '', detail && src ? h('a', { href: src, target: '_blank', rel: 'noopener' }, detail) : (detail || '')),
+        ignoreControl(l.item_id, store && store.chain_id, usedOnline && l.price_source === 'online', !!l.receipt_price));
+    }
+
+    function onlinePanel(r) {
+      const s = r.online_summary;
+      if (!s || r.include_web_deals === false) return r.include_web_deals === false ? h('p', { class: 'note' }, 'Online prices are turned off for this plan: every item uses its receipt price.') : null;
+      const diff = s.online_vs_receipts;
+      const parts = [
+        h('div', { class: 'op-big' }, h('b', {}, `${s.priced_online} of ${s.items}`), ' items use an online price'),
+        h('div', { class: 'op-row' },
+          h('span', { class: 'used on' }, `${s.priced_online} online`), h('span', { class: 'used rc' }, `${s.priced_receipt} receipt`),
+          s.online_rejected ? h('span', { class: 'used bad' }, `${s.online_rejected} online price${s.online_rejected === 1 ? '' : 's'} looked misread`) : null),
+        s.discounted ? h('div', { class: 'note' }, `Store discounts (cards, memberships) take ${m(s.discount_saved)} off ${s.discounted} item${s.discounted === 1 ? '' : 's'}.`) : null,
+        s.compared_with_receipt ? h('div', { class: 'note' }, Math.abs(diff) < 0.005 ? 'Online prices match what you paid for those items.'
+          : `For the ${s.compared_with_receipt} item${s.compared_with_receipt === 1 ? '' : 's'} you have also bought before, online prices come to ${m(Math.abs(diff))} ${diff > 0 ? 'more' : 'less'} than your receipts.`) : null,
+      ];
+      if (lastCheck) {
+        parts.push(h('div', { class: 'note' }, lastCheck.error ? `Online check failed: ${lastCheck.error}`
+          : lastCheck.recent ? 'Online prices were checked recently, so they were not checked again.'
+          : `Just checked your ${lastCheck.items} item${lastCheck.items === 1 ? '' : 's'}${lastCheck.stores ? ` at ${lastCheck.stores} store${lastCheck.stores === 1 ? '' : 's'}` : ''} online and found ${lastCheck.found} price${lastCheck.found === 1 ? '' : 's'}.`));
+      } else if (!refreshOnline && webConfigured) {
+        parts.push(h('div', { class: 'note' }, 'Using online prices already on record. Tick "Check current prices online" to look again.'));
+      }
+      if (webConfigured) parts.push(h('div', {}, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { refreshOnline = true; plan(true); } }, icon('refresh'), 'Check online prices now')));
+      return h('div', { class: 'oppanel' }, ...parts);
+    }
+
+    function routeSteps(r) {
+      const b = r.best, du = r.distance_unit;
+      const rows = [h('div', { class: 'step' }, h('div', { class: 'rail' }, h('div', { class: 'dot home' }, icon('home')), h('i')), h('div', {}, h('b', {}, 'Start at home')))];
+      b.stops.forEach((s, i) => {
+        rows.push(h('div', { class: 'step' }, h('div', { class: 'rail' }, h('div', { class: 'dot' }, String(i + 1)), h('i')), h('div', {},
+          h('div', { class: 'leg' }, h('span', {}, `${s.leg_distance} ${du} · ${mins(s.leg_minutes)}`),
+            s.arrive_at ? h('span', {}, `arrive ${new Date(s.arrive_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}${s.hours_known ? ' (open)' : ''}`) : null,
+            s.directions_url ? h('a', { href: s.directions_url, target: '_blank', rel: 'noopener' }, 'Directions') : null),
+          h('div', { class: 'stopbox' },
+            h('h3', {}, s.store.label, s.closed_on_arrival ? h('span', { class: 'pill danger', style: 'margin-left:8px' }, 'May be closed') : null),
+            s.store.address ? h('div', { class: 'note' }, s.store.address) : null,
+            ...s.items.map((l) => itemRow(l, s.store)),
+            h('div', { class: 'subtotal' }, h('span', {}, 'Subtotal'), h('span', {}, m(s.subtotal)))))));
+      });
+      if (r.round_trip) rows.push(h('div', { class: 'step' }, h('div', { class: 'rail' }, h('div', { class: 'dot home' }, icon('home'))), h('div', {},
+        h('div', { class: 'leg' }, h('span', {}, `${b.return_distance} ${du} · ${mins(b.return_minutes)}`)), h('b', {}, 'Back home'))));
+      return h('div', { class: 'route' }, ...rows);
+    }
+
+    // Every item at every store that has a price for it: the online and receipt prices side by side, which one
+    // counts there (online when found), and where the plan buys it.
+    function compareCard(r) {
+      const table = r.price_table || [];
+      if (!table.length) return null;
+      return h('details', { class: 'card', open: true },
+        h('summary', { class: 'card-body', style: 'cursor:pointer;font-weight:650' }, 'Prices at each store',
+          h('span', { class: 'note', style: 'font-weight:400;margin-left:8px' }, 'online price used when found, else receipt')),
+        h('div', { class: 'card-body stack', style: 'padding-top:0' },
+          ...table.map((it) => h('div', { class: 'cmp' },
+            h('div', { class: 'cmp-h' }, it.name, h('span', { class: 'note' }, it.online_found ? ` online price at ${it.online_found} store${it.online_found === 1 ? '' : 's'}` : ' no online price found')),
+            ...(it.stores.length ? it.stores.map((s) => h('div', { class: 'cmp-r' + (s.chosen ? ' chosen' : '') },
+              h('div', { class: 'cmp-s' }, s.store, s.chosen ? h('span', { class: 'pill ok', style: 'margin-left:6px' }, 'buying here') : null),
+              h('div', { class: 'chips2' },
+                s.price_source === 'deal' ? priceChip('deal', s.price, s.unit, true) : null,
+                s.online ? priceChip('online', s.online.price, s.unit, s.price_source === 'online') : h('span', { class: 'pchip none' }, 'Online: none'),
+                s.receipt_price ? priceChip('receipt', s.receipt_price, s.unit, s.price_source === 'receipt', s.receipt_from_other_store ? 'other branch' : shortDay(s.receipt_date)) : h('span', { class: 'pchip none' }, 'Receipt: none')),
+              s.discount ? h('div', { class: 'iwhy' }, `You pay ${m(s.price)}${unitOf(s.unit)} there after ${discountNote(s.discount)}`) : null,
+              s.online_rejected ? h('div', { class: 'iwhy' }, `Online ${m(s.online_rejected.price)} not used: ${s.online_rejected.reason}`) : null,
+              ignoreControl(it.item_id, s.chain_id, s.price_source === 'online', !!s.receipt_price)))
+              : [h('p', { class: 'note' }, 'No price at any store on this trip.')])))));
+    }
+
+    // Every online price found for these items and what happened to it
+    const METHOD_TEXT = { structured: 'product data on the page', text: 'price shown on the page', model: 'read by the model' };
+    function foundCard(r) {
+      const rows = r.online_prices || [];
+      if (!rows.length) return null;
+      const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+      return h('details', { class: 'card' },
+        h('summary', { class: 'card-body', style: 'cursor:pointer;font-weight:650' }, 'All online prices found',
+          h('span', { class: 'note', style: 'font-weight:400;margin-left:8px' }, `${rows.length} found · ${rows.filter((x) => x.in_route).length} in your route`)),
+        h('div', { class: 'card-body stack', style: 'padding-top:0' },
+          ...[...rows].sort((a, b) => (b.in_route ? 1 : 0) - (a.in_route ? 1 : 0)).map((x) => h('div', { class: 'li', style: 'align-items:flex-start' },
+            h('div', {},
+              h('div', { style: 'font-weight:600' }, `${x.item_name || x.product} at ${x.chain || 'a store'}`,
+                x.in_route ? h('span', { class: 'pill ok', style: 'margin-left:6px' }, 'in your route') : null,
+                x.kind === 'DEAL' ? h('span', { class: 'pill', style: 'margin-left:6px' }, 'deal') : null),
+              h('small', {}, [x.product, when(x.fetched_at), METHOD_TEXT[x.method] || 'read by the model', x.status].filter(Boolean).join(' · ')),
+              x.source_url ? h('small', {}, ' ', h('a', { href: x.source_url, target: '_blank', rel: 'noopener' }, x.source || 'page')) : null),
+            h('div', { class: 'r' }, h('b', {}, m(x.compare_price != null ? x.compare_price : x.price) + unitOf(x.compare_unit || x.unit)))))));
+    }
+
+    function showResult(r) {
+      ignored = new Set((r.online_ignored || []).map(([i, c]) => ignoreKey(i, c)));
+      const out = [savedBanner(r)];
+      if (!r.best) {
+        out.push(h('div', { class: 'empty' }, icon('map'), h('h2', {}, 'No trip to suggest'), h('p', {}, 'None of these items has a price at a store with a known location.')));
+        out.push(warnings(r));
+        return $('result').replaceChildren(...out.filter(Boolean));
+      }
+      const b = r.best, du = r.distance_unit, single = r.single_store, saved = r.savings_vs_single_store;
+      out.push(h('div', { class: 'sect' }, 'Best plan'));
+      out.push(card(null,
+        h('div', {}, h('h2', { style: 'font-size:1.15rem' }, b.stop_count === 1 ? `Buy everything at ${b.stops[0].store.label}` : `Visit ${b.stop_count} stores`),
+          r.stops_message ? h('p', { class: 'note', style: 'margin:4px 0' }, r.stops_message) : null,
+          saved > 0.005 ? h('div', { class: 'pill ok' }, `Saves ${m(saved)} vs shopping only at ${single.stops[0].store.label}`)
+            : (b.stop_count === 1 ? h('div', { class: 'note' }, 'Driving to other stores would cost more than it saves.') : null)),
+        h('div', { class: 'metrics' },
+          metric(m(b.total), 'Total', 'total'), metric(m(b.items_total), 'Items'),
+          metric(m(b.travel_cost), r.vehicle ? `Driving (${r.vehicle.kind === 'EV' ? 'electricity' : 'fuel'})` : 'Driving'),
+          b.time_cost > 0 ? metric(m(b.time_cost), 'Your time') : null,
+          metric(`${b.distance} ${du} · ${mins(b.duration_minutes)}`, b.shopping_minutes ? 'Drive + shopping' : 'Drive')),
+        onlinePanel(r),
+        routeSteps(r),
+        r.map ? routeMap(r.map, r.round_trip) : null));
+      out.push(compareCard(r));
+      if (r.alternatives.length) {
+        out.push(h('div', { class: 'sect' }, 'Other options'));
+        out.push(h('div', { class: 'card' }, ...r.alternatives.map((p) => h('div', { class: 'alt' },
+          h('div', {}, h('b', {}, `${p.stop_count} store${p.stop_count === 1 ? '' : 's'}`), h('div', { class: 'note' }, p.stops.map((s) => s.store.label).join(' → '))),
+          h('div', { class: 'r' }, h('b', {}, m(p.total)), h('div', { class: 'note' }, `${m(p.items_total)} items + ${m(p.travel_cost)} driving`), h('div', { class: 'note' }, `${p.distance} ${du}`))))));
+      }
+      out.push(foundCard(r));
+      out.push(warnings(r));
+      out.push(h('p', { class: 'note' }, `Online prices are today's prices from each store's website, used whenever one was found; otherwise the plan uses what you last paid (receipt), before tax. Driving cost uses ${r.vehicle ? r.vehicle.name : 'your manual cost'} at ${m(r.cost_per_distance)} per ${du}.`));
+      $('result').replaceChildren(...out.filter(Boolean));
+    }
+
+    // A small self-contained map: no tiles are loaded, so nothing about where you live is sent anywhere.
+    function routeMap(map, roundTrip = true) {
+      const W = 360, H = 220, pad = 22;
+      const pts = [map.home, ...map.stops];
+      const line = map.line && map.line.length > 1 ? map.line.map(([lat, lng]) => ({ lat, lng })) : null;
+      const all = pts.concat(line || []);
+      const lats = all.map((p) => p.lat), lngs = all.map((p) => p.lng);
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+      const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+      const spanX = Math.max((maxLng - minLng) * k, 1e-5), spanY = Math.max(maxLat - minLat, 1e-5);
+      const s = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
+      const ox = (W - spanX * s) / 2, oy = (H - spanY * s) / 2;
+      const X = (lng) => ox + (lng - minLng) * k * s, Y = (lat) => oy + (maxLat - lat) * s;
+      const NS = 'http://www.w3.org/2000/svg';
+      const el = (n, a, t) => { const e = document.createElementNS(NS, n); for (const [x, v] of Object.entries(a || {})) e.setAttribute(x, v); if (t != null) e.textContent = t; return e; };
+      const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, class: 'map', role: 'img', 'aria-label': 'Sketch of the route' });
+      const route = line || [map.home, ...map.stops, ...(roundTrip ? [map.home] : [])];
+      svg.append(el('polyline', { points: route.map((p) => `${X(p.lng).toFixed(1)},${Y(p.lat).toFixed(1)}`).join(' '), class: 'line' + (line ? '' : ' straight') }));
+      svg.append(el('circle', { cx: X(map.home.lng), cy: Y(map.home.lat), r: 9, class: 'h' }), el('text', { x: X(map.home.lng), y: Y(map.home.lat) }, 'H'));
+      map.stops.forEach((p, i) => {
+        svg.append(el('circle', { cx: X(p.lng), cy: Y(p.lat), r: 10, class: 's' }), el('text', { x: X(p.lng), y: Y(p.lat) }, String(i + 1)));
+      });
+      return svg;
+    }
+
+    function warnings(r) {
+      if (!r.warnings.length) return null;
+      return h('div', { class: 'banner warn' }, icon('alert'), h('div', { class: 'banner-body' }, h('ul', { class: 'small', style: 'margin-left:16px;display:grid;gap:4px' }, r.warnings.map((w) => h('li', {}, w.message)))));
+    }
+
+    // ---------------------------------------------------------------- start
+    async function init() {
+      try { ctx = await RPI.homeContext(); }
+      catch (e) { return $('content').replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message))); }
+      if (!ctx.homeId) return $('content').replaceChildren(h('div', { class: 'empty' }, icon('home'), h('h2', {}, 'No home yet'), h('p', {}, 'Create a home from the receipts page first.')));
+      const sw = RPI.homeSwitcher(ctx.homes, ctx.homeId, (id) => { ctx.homeId = id; paintHome(); load(); });
+      $('homeSwitch').replaceChildren(...(sw ? [sw] : []));
+      paintHome(); load();
+    }
+    function paintHome() {
+      const home = ctx.homes.find((x) => x.id === ctx.homeId);
+      $('homeLine').textContent = (home ? home.name + ' · ' : '') + 'where to shop, and the route';
+    }
+    init();

@@ -15,36 +15,29 @@ import json
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+
+from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.1"
 
 _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 
 
 def read_options_file() -> dict:
     """The raw contents of options.json ({} if missing or unreadable)."""
-    if os.path.isfile(_OPTIONS_PATH):
-        try:
-            with open(_OPTIONS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except (json.JSONDecodeError, OSError):
-            logger.warning("Could not read %s; using defaults", _OPTIONS_PATH)
-    return {}
+    return auth_core.read_options(_OPTIONS_PATH, log=logger, errors=(json.JSONDecodeError, OSError))
 
 
 _options = read_options_file()
 
 # Home Assistant login names / user ids allowed to open Admin. Deny by default:
 # an empty list means nobody is an admin (every page then shows "No admin yet").
-ADMIN_NAMES = {str(n).strip().strip("\"'").strip().lower()
-               for n in (_options.get("admin_users") or []) if str(n).strip().strip("\"'").strip()}
-_dev_admins = os.environ.get("DEV_ADMINS")
-if _dev_admins:
-    ADMIN_NAMES |= {n.strip().lower() for n in _dev_admins.split(",") if n.strip()}
+# Entries lose surrounding quotes; DEV_ADMINS (comma-separated) adds more for tests and local
+# development (app/common/auth_core.py).
+ADMIN_NAMES = (auth_core.admin_names(_options.get("admin_users") or [], strip_quotes=True)
+               | auth_core.env_admins("DEV_ADMINS"))
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "arcade.db")
@@ -66,12 +59,8 @@ INGRESS_PANEL = ("/hassio/ingress/" + _host.replace("-", "_")) if _host and _hos
 # ---------------------------------------------------------------------------
 # Time. `utcnow` is a module-level function so tests can replace it.
 # ---------------------------------------------------------------------------
-_DEFAULT_TZ_NAME = "UTC"
-try:
-    _tz: ZoneInfo | timezone = ZoneInfo(_DEFAULT_TZ_NAME)
-except Exception:  # ZoneInfoNotFoundError if the tz database is somehow missing
-    _tz = timezone.utc
-_tz_name = _DEFAULT_TZ_NAME
+# Home Assistant's zone (app/common/ha_time.py), read at startup by ha_client.load_timezone().
+ZONE = ha_time.Zone(logger)
 
 
 def utcnow() -> datetime:
@@ -81,27 +70,20 @@ def utcnow() -> datetime:
 def set_timezone(name: str) -> bool:
     """Set the zone `today()` / `now()` use. Returns False (and keeps the
     current zone) if `name` is not a known zone."""
-    global _tz, _tz_name
-    try:
-        _tz = ZoneInfo(name)
-        _tz_name = name
-        return True
-    except Exception as e:  # ZoneInfoNotFoundError, ValueError, ...
-        logger.warning("Unknown time zone %r (%s); staying on %s", name, e, _tz_name)
-        return False
+    return ZONE.set(name)
 
 
 def timezone_name() -> str:
-    return _tz_name
+    return ZONE.name
 
 
 def tz():
-    return _tz
+    return ZONE.tz
 
 
 def now() -> datetime:
     """Current time as an aware datetime in Home Assistant's time zone."""
-    return utcnow().astimezone(_tz)
+    return ZONE.now(utcnow())
 
 
 def today() -> date:
@@ -121,7 +103,7 @@ def parse_ts(iso_timestamp: str) -> datetime | None:
 
 def to_local_date(iso_timestamp: str) -> date | None:
     dt = parse_ts(iso_timestamp)
-    return dt.astimezone(_tz).date() if dt else None
+    return dt.astimezone(ZONE.tz).date() if dt else None
 
 
 def now_iso() -> str:
@@ -132,9 +114,10 @@ def now_iso() -> str:
 def local_day_bounds_utc(d: date) -> tuple[str, str]:
     """[start, end) of the local calendar day `d`, as UTC ISO strings (for
     comparing with stored *_at columns)."""
-    start = datetime(d.year, d.month, d.day, tzinfo=_tz)
+    zone = ZONE.tz
+    start = datetime(d.year, d.month, d.day, tzinfo=zone)
     end = start + timedelta(days=1)
     # normalise through UTC so DST days have the right length
-    end = datetime(end.year, end.month, end.day, tzinfo=_tz)
+    end = datetime(end.year, end.month, end.day, tzinfo=zone)
     return (start.astimezone(timezone.utc).isoformat(timespec="seconds"),
             end.astimezone(timezone.utc).isoformat(timespec="seconds"))

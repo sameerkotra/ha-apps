@@ -1,9 +1,10 @@
 """Who you are: /me, "This is me", the whoami page, and the user list."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from .. import config, db, features, graph as graph_mod, ha_notify, ha_people, kin, media, reminders, settings
+from .. import config, db, features, graph as graph_mod, kin, media, reminders, settings
+from ..common import ha_notify, ha_people, people_admin, whoami as whoami_core
 from ..auth import get_current_user, require_admin, require_user
-from ..common import Strict
+from ..models import Strict
 
 router = APIRouter(prefix="/api", tags=["me"])
 
@@ -59,20 +60,32 @@ def set_me(body: MePerson, user: dict = Depends(require_user)):
 
 
 @router.get("/whoami")
-def whoami(user: dict = Depends(get_current_user)):
-    """The 'How the app sees you' page. Works for disabled users too; counts only."""
+def whoami(request: Request, user: dict = Depends(get_current_user)):
+    """The 'How the app sees you' page (common/whoami.py). Works for disabled users too; counts only."""
     with db.get_conn() as conn:
-        return {
-            "haUserId": user["id"], "haUsername": user["username"], "haDisplayName": user["name"],
-            "nameSent": bool(user["username"]), "isAdmin": user["is_admin"],
-            "displayNameOnly": user["display_name_only"], "adminEntries": len(config.ADMIN_NAMES),
-            "noAdmin": not config.ADMIN_NAMES, "adminOption": "admin_users",     # first run: nobody is admin yet
-            "mePersonId": user["me_person_id"], "mePersonName": _person_name(conn, user["me_person_id"]),
-            "disabled": user["disabled"],
-            "notifyLinked": len(ha_notify.services_for(user, conn)),     # phones from HA + extras
-            "remindersOn": reminders.get_prefs(conn, user["id"])["enabled"],
-            "remindPeople": sum(1 for p in graph_mod.get(conn).people.values() if p.remind),
-        }
+        phones = len(ha_notify.services_for(user, conn))     # phones from HA + extras
+        me_name = _person_name(conn, user["me_person_id"])
+        rows = [whoami_core.row("This is me", me_name,
+                                action=None if me_name else {"label": "not set — set it", "target": "settings"})]
+        # the Reminders row: always for someone whose access is off (they can't see the features), else when it's on
+        if user["disabled"] or features.on("reminders"):
+            if phones:
+                on = "on" if reminders.get_prefs(conn, user["id"])["enabled"] else "off"
+                n = sum(1 for p in graph_mod.get(conn).people.values() if p.remind)
+                rows.append(whoami_core.row("Reminders", f"{on} · {'1 phone or service' if phones == 1 else f'{phones} phones or services'}"
+                                                         f" · {n} {'person' if n == 1 else 'people'} with 🔔 on"))
+            else:
+                rows.append(whoami_core.row(
+                    "Reminders", "No phone linked yet",
+                    "No phone is linked to you yet. In Home Assistant: Settings → People → you → Track device (your phone "
+                    "with the Companion app). It's picked up within 5 minutes; or ask an admin."))
+        rows.append(whoami_core.row("Account status", "Turned off by an admin" if user["disabled"] else "Enabled",
+                                    tone="danger" if user["disabled"] else None))
+        return whoami_core.build(
+            request, user_id=user["id"], username=user["username"], display_name=user["name"],
+            is_admin=user["is_admin"], admin_entries=len(config.ADMIN_NAMES),
+            display_name_only=user["display_name_only"], notify_linked=phones, extras=rows,
+            disabled=user["disabled"])                       # the page shows only the whoami card then
 
 
 @router.get("/users")
@@ -83,20 +96,14 @@ def users(user: dict = Depends(require_user)):
                  "mePersonName": _person_name(conn, r["me_person_id"])} for r in rows]
 
 
-def ha_person_json(user_id: str) -> dict:
-    """What Home Assistant says about the person (Settings → People): their person and phones."""
-    p = ha_people.person_for(user_id)
-    return {"known": ha_people.known(), "person": p["entityId"] if p else None, "personName": p["name"] if p else None,
-            "phones": [{"label": ph["label"], "service": f"notify.{ph['service']}" if ph["service"] else None,
-                        "tracker": ph["tracker"]} for ph in (p or {}).get("phones", [])]}
+ha_person_json = people_admin.ha_person_json          # their person and phones (common/people_admin.py)
 
 
 @router.get("/admin/users")
 def admin_users(refresh: bool = Query(default=False), admin: dict = Depends(require_admin)):
     """Admin → Users, with each person's phones from Home Assistant and any extra notify services.
     `refresh=1` reads Home Assistant's people again first (no DB connection is open meanwhile)."""
-    if refresh:
-        ha_people.refresh_blocking(True)
+    people_admin.refresh_people(refresh)
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM users ORDER BY disabled, name COLLATE NOCASE").fetchall()
         return [{"id": r["id"], "name": r["name"], "username": r["username"], "haPerson": r["ha_person"],

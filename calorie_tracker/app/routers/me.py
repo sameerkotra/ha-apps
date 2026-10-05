@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request
 
 from .. import config
 from ..auth import display_name_listed, get_current_user, no_admins
+from ..common import whoami as whoami_core
 
 router = APIRouter(prefix="/api/me", tags=["me"])
 whoami_router = APIRouter(prefix="/api", tags=["me"])
@@ -9,12 +10,12 @@ whoami_router = APIRouter(prefix="/api", tags=["me"])
 
 @router.get("")
 async def me(user: dict = Depends(get_current_user)):
-    """Who is signed in. `no_admins` is true while the admin_users option is
+    """Who is signed in. `noAdmin` is true while the admin_users option is
     empty (the frontend then shows the "No admin yet" banner to everyone,
     naming `username` — the login name to add, or the user id if HA didn't
     send one)."""
     return {"id": user["id"], "name": user["name"], "is_admin": user["is_admin"],
-            "username": user["username"] or user["id"], "no_admins": no_admins()}
+            "username": user["username"] or user["id"], "noAdmin": no_admins()}
 
 
 @whoami_router.get("/today")
@@ -35,14 +36,7 @@ async def whoami(request: Request, user: dict = Depends(get_current_user)):
     person (get_current_user, never the "acting as" user). Shows only the
     person's own identity values and a COUNT of list entries, never the list,
     and never the request's headers wholesale."""
-    return {
-        "haUserId": user["id"],
-        "haUsername": user["username"],
-        "haDisplayName": user["name"],
-        "nameSent": bool(user["username"]),
-        "viaIngress": "x-ingress-path" in request.headers,
-        "isAdmin": user["is_admin"],
-        "displayNameOnly": (not user["is_admin"]) and display_name_listed(user["name"]),
-        "adminEntries": len(config.ADMIN_USERS),
-        "noAdmins": no_admins(),
-    }
+    return whoami_core.build(
+        request, user_id=user["id"], username=user["username"], display_name=user["name"],
+        is_admin=user["is_admin"], admin_entries=len(config.ADMIN_USERS),
+        display_name_only=(not user["is_admin"]) and display_name_listed(user["name"]))

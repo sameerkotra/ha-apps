@@ -1,32 +1,17 @@
-import asyncio
-import contextlib
 import logging
 import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, ha_sync
+from .common import auth_core, web_security
+from .common import housekeeping as jobs_core
 from .routers import admin, ai, goals, logs, me, saved_foods, users, weight
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+jobs_core.setup_logging()
 logger = logging.getLogger("main")
-
-
-async def _periodic_ha_sync():
-    """Re-push every known user's daily-calories sensor periodically, mainly
-    so the value rolls over to 0 shortly after midnight even if nobody has
-    the app open, rather than waiting for their next food log change. Reads
-    the App setting every tick: while publishing is off it pushes nothing
-    (and retries removing the sensors if that failed when it was turned off)."""
-    while True:
-        await asyncio.sleep(900)  # 15 minutes
-        try:
-            await ha_sync.periodic_sync()
-        except Exception as e:
-            logger.warning("Periodic HA sync failed: %s", e)
 
 
 @asynccontextmanager
@@ -36,13 +21,19 @@ async def lifespan(app: FastAPI):
     (Replaces the deprecated @app.on_event("startup") hook.)"""
     db.init_db()
     await ha_sync.load_timezone()
-    sync_task = asyncio.create_task(_periodic_ha_sync(), name="ha_sync")
+    jobs = jobs_core.Jobs()
+    # Re-push every known user's daily-calories sensor every 15 minutes, mainly
+    # so the value rolls over to 0 shortly after midnight even if nobody has
+    # the app open, rather than waiting for their next food log change. Reads
+    # the App setting every tick: while publishing is off it pushes nothing
+    # (and retries removing the sensors if that failed when it was turned off).
+    jobs.every("ha_sync", 900, ha_sync.periodic_sync, thread=False, at_start=False, log=logger,
+               error="Periodic HA sync failed", traceback=False)
+    jobs.start()
     try:
         yield
     finally:
-        sync_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await sync_task
+        await jobs.stop()
 
 
 app = FastAPI(title="Calorie Tracker", lifespan=lifespan)
@@ -64,7 +55,7 @@ app.include_router(admin.router)
 # completely (see auth.py) precisely because Ingress is assumed to be the
 # only path in — so this check is what actually makes that assumption true,
 # rather than just a comment. Matches the same allowlist Splitpot uses.
-_INGRESS_ALLOWED_HOSTS = {"172.30.32.2", "127.0.0.1", "::1"}
+# The allowlist (Supervisor's ingress proxy and loopback) is app/common/auth_core.INGRESS_HOSTS.
 
 
 @app.middleware("http")
@@ -77,9 +68,9 @@ async def require_ha_ingress_auth(request: Request, call_next):
     /api/health stays reachable with no user context and every route's
     existing get_current_user/get_acting_user dependency keeps producing its
     own (more specific) 401 for a missing/unrecognized user."""
-    client_host = request.client.host if request.client else None
-    if client_host not in _INGRESS_ALLOWED_HOSTS:
-        return JSONResponse(status_code=403, content={"detail": "Forbidden — access only via Home Assistant"})
+    blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
+    if blocked is not None:
+        return blocked
     return await call_next(request)
 
 
@@ -88,20 +79,20 @@ def health():
     return {"status": "ok"}
 
 
-@app.middleware("http")
-async def no_cache_html_shell(request: Request, call_next):
-    """The HTML shell (index.html, served for "/") must never be cached by
-    the browser — it's what points at the versioned style.css?v=.../app.js?v=...
-    below, so a stale cached copy of JUST this one file can make a rebuilt
-    app look like the update never took effect, even after a normal
-    refresh. Static assets themselves aren't touched here: their
-    cache-busting query string (bumped alongside config.yaml's version) is
-    what invalidates them, so they can keep normal caching."""
-    response = await call_next(request)
-    if request.url.path == "/" or request.url.path.endswith(".html"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-    return response
+# Scripts only from the app itself (no inline scripts or handlers); a few inline style attributes remain.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+       "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+       "frame-ancestors 'self'")
+
+# The HTML shell (index.html, served for "/") must never be cached by
+# the browser — it's what points at the versioned style.css?v=.../app.js?v=...
+# below, so a stale cached copy of JUST this one file can make a rebuilt
+# app look like the update never took effect, even after a normal
+# refresh. Static assets themselves aren't touched here: their
+# cache-busting query string (bumped alongside config.yaml's version) is
+# what invalidates them, so they can keep normal caching.
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True)
+HEADERS.install(app)
 
 
 # Static frontend, built into the image at app/static/. Registered last so

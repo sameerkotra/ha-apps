@@ -1,5 +1,5 @@
 name: "Finance Dashboard"
-version: "1.0.1"
+version: "1.1.1"
 slug: "finance"
 description: >-
   Household finances: bank and card statements (PDF/CSV) read by the AI you
@@ -34,6 +34,13 @@ panel_title: Finance
 # the next update because of this -- expected, not a bug. Read-only: this
 # app never writes anything back to Home Assistant's config.
 homeassistant_api: true
+# No other Supervisor/HA API access, and the default AppArmor profile (these are the
+# Supervisor's defaults, spelled out like every other app's).
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
 
 # ADMIN_USERS (section 3) and the Ollama endpoint/model (section 4) are
 # app options for now — SPEC.md specs these as eventually

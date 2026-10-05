@@ -1,3 +1,4 @@
+import os
 """The six-section navigation (SPEC.md section 13)."""
 import re
 
@@ -82,6 +83,9 @@ def test_utility_actions_stay_on_the_utility_upload_page(env):
 
 
 def test_upload_nav_remembers_the_last_upload_page(env):
-    assert '"utilities?tab=upload"' in env.get("utilities?tab=upload").text.split("lastUploadPage")[0][-400:]
+    # the page tells static/base.js which upload page this is (data-upload-here); base.js remembers it
+    assert """data-upload-here='"utilities?tab=upload"'""" in env.get("utilities?tab=upload").text
     html = env.get("dashboard").text
-    assert "lastUploadPage" in html and "data-upload-nav" in html
+    assert """data-upload-here='""'""" in html and "data-upload-nav" in html and "static/base.js" in html
+    with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "base.js")) as f:
+        assert "lastUploadPage" in f.read()

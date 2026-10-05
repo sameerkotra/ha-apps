@@ -1,0 +1,15 @@
+# Only the app goes into the image.
+tests
+spec
+*.md
+!README.md
+icon.png
+logo.png
+translations
+requirements-dev.txt
+__pycache__
+**/__pycache__
+*.pyc
+*.db
+*.db-wal
+*.db-shm

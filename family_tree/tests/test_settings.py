@@ -15,11 +15,11 @@ import zipfile
 from datetime import timedelta
 from unittest import mock
 
-from fastapi.testclient import TestClient
 
 from app import config, db, housekeeping, media, settings
 from app.routers import export as export_router
 from app.main import app
+from common_tests.ingress import ingress_client
 
 FEATURE_DEFAULTS = {"feature_reminders": True, "feature_milestones": True, "feature_sides": True,
                     "feature_photo_tagging": True, "feature_photo_fixes": True, "feature_inbox": True,
@@ -44,7 +44,13 @@ class SettingsApi(ApiTestCase):
         body = self.ok(self.get("/api/admin/settings", user=ADMIN))
         self.assertEqual(body["values"], DEFAULTS)
         self.assertEqual(body["defaults"], DEFAULTS)
-        self.assertEqual(body["meta"], {k: {"restartRequired": False} for k in tuple(DEFAULTS)})
+        # meta describes each field for the shared page (common/static/settings.js); none needs a restart
+        self.assertEqual(set(body["meta"]), set(DEFAULTS))
+        self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
+        self.assertEqual(body["meta"]["trash_days"]["label"], "Days in trash")
+        self.assertEqual((body["meta"]["trash_days"]["min"], body["meta"]["trash_days"]["max"]), (7, 3650))
+        self.assertEqual(body["meta"]["feature_map"]["group"], "features_internet")
+        self.assertEqual(body["meta"]["map_tiles_url"]["showIf"], "feature_map")
         self.assertEqual(body["media"], {"path": _env.MEDIA_PATH, "online": True, "reason": None})
         self.assertNotIn("importedFromConfig", body)
         self.assertEqual(self.get("/api/admin/settings", user=ALICE).status_code, 403)
@@ -209,7 +215,7 @@ class NoLegacyOptions(ApiTestCase):
         async def idle():                 # the housekeeping loop's first round would outlive the client
             return None
         with mock.patch.object(housekeeping, "loop", idle):
-            with TestClient(app, client=("127.0.0.1", 12345)) as c:
+            with ingress_client(app) as c:
                 body = c.get("/api/admin/settings", headers=headers(ADMIN)).json()
         self.assertEqual(body["values"], DEFAULTS)
         self.assertNotIn("importedFromConfig", body)

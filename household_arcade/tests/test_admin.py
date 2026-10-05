@@ -24,7 +24,11 @@ class TestAppSettings(ApiBase):
             "ai_levels_daily_limit": 20, "ai_levels_review": False, "ai_price_in": 0.0, "ai_price_out": 0.0})
         self.assertEqual(body["secretsSet"], {"ai_api_key": False})
         self.assertEqual(body["values"], body["defaults"])
-        self.assertTrue(all(m == {"restartRequired": False} for m in body["meta"].values()))
+        # meta describes each field for the shared page (common/static/settings.js); none needs a restart
+        self.assertEqual(set(body["meta"]), set(body["values"]))
+        self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
+        self.assertEqual(body["meta"]["ai_api_key"]["kind"], "secret")
+        self.assertEqual([g["id"] for g in body["groups"]], ["games", "looks", "children", "ha", "ai"])
         self.assertEqual([g["id"] for g in body["games"]], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch"])   # only games that exist
         self.assertEqual([a["id"] for a in body["admins"]], ["u_asha"])
 
@@ -118,7 +122,7 @@ class TestNotifyServices(ApiBase):
         r = self.get("/api/admin/notify-services", ASHA).json()
         self.assertEqual(r["services"], ["notify.family", "notify.mobile_app_a"])
         config.SUPERVISOR_TOKEN = ""
-        from app import ha_notify
+        from app.common import ha_notify
         ha_notify._targets_cache = None
         r = self.get("/api/admin/notify-services?refresh=1", ASHA).json()
         self.assertFalse(r["available"])

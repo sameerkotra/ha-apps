@@ -96,6 +96,11 @@ write the SQL from a plain-English question.
 - **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
   before the built-in ones and the AI.
 
+### Look and feel
+- **Theme** (bottom of the menu; **More** on a phone): Midnight (the default), Slate, Daylight,
+  or Auto (Daylight when your device is set to light, Midnight when it is dark). It is
+  remembered by your browser; if you had picked Sandstone before, you now get Daylight.
+
 ### Admin (admins only)
 - **Storage**: stored PDFs, and database download / import for backups.
 - **Query**: read-only SQL on the data of the person you're acting as, and report editing.
@@ -132,3 +137,4 @@ Everything else is set inside the app on **Admin → App settings**.
 - Back up with **Admin → Storage → Download database**; Home Assistant backups of the app
   include its data too. Importing a database, even one from an older version of the app, brings
   it up to date straight away (the AI usage total included); restart the app afterwards.
+  Backups leave out access keys and passwords; after restoring on a new install, enter them again. (Importing keeps the AI access key this install already has.)

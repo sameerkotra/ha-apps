@@ -38,9 +38,10 @@ limit) while also failing to move the reconciliation total noticeably.
 They're cheap sanity checks, not a second full extraction.
 """
 import re
-import subprocess
 from collections import Counter
 from dataclasses import dataclass
+
+from ..common import sandbox_run
 
 
 class NoTextLayer(Exception):
@@ -96,11 +97,15 @@ def run_pdftotext(pdf_path: str) -> str:
     """Shells out to pdftotext -layout. -layout isn't load-bearing for
     either check here (no columns to line up — both scan the whole text),
     but it's kept because it's the one pdftotext call this path makes and
-    losing layout would only ever hurt, never help, either regex."""
-    result = subprocess.run(
-        ["pdftotext", "-layout", pdf_path, "-"],
-        capture_output=True, text=True, timeout=30,
-    )
+    losing layout would only ever hurt, never help, either regex.
+    Runs on a copy of the file as the unprivileged pdfworker user, with
+    resource limits (common/python/sandbox_run.py)."""
+    with sandbox_run.Scratch(prefix="pdftotext-") as box:
+        src = box.add_file(pdf_path, "in.pdf")
+        result = box.run(
+            ["pdftotext", "-layout", src, "-"],
+            capture_output=True, text=True, timeout=30,
+        )
     if result.returncode != 0:
         raise RuntimeError(f"pdftotext failed: {result.stderr.strip()}")
     return result.stdout

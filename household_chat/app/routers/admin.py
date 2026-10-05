@@ -4,6 +4,7 @@ App settings, the chat overview (metadata only — never content), storage, back
 
 Nothing here returns message text, file names or file contents of any chat.
 """
+import itertools
 import logging
 import os
 import re
@@ -15,12 +16,10 @@ import time
 import zipfile
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
-from pydantic import ValidationError
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
-from .. import avatars, chats, config, db, disappearing, files, ha_client, ha_notify, ha_people, presence, settings, shared_folders
+from .. import app_messages, avatars, chats, config, db, disappearing, files, ha_client, presence, settings, shared_folders
+from ..common import backup_core, db_core, ha_notify, ha_people, people_admin
 from ..auth import require_admin
 from ..live import hub
 from .conversations import delete_conversation
@@ -50,12 +49,7 @@ def _known(conn, uid: str):
 
 
 # ---------- people ----------
-def ha_person_json(user_id: str) -> dict:
-    """What Home Assistant says about the person (Settings → People): their person and phones."""
-    p = ha_people.person_for(user_id)
-    return {"known": ha_people.known(), "person": p["entityId"] if p else None, "personName": p["name"] if p else None,
-            "phones": [{"label": ph["label"], "service": f"notify.{ph['service']}" if ph["service"] else None,
-                        "tracker": ph["tracker"]} for ph in (p or {}).get("phones", [])]}
+ha_person_json = people_admin.ha_person_json          # their person and phones (common/people_admin.py)
 
 
 def _people_json(admin: dict) -> dict:
@@ -82,7 +76,7 @@ def people(refresh: bool = Query(default=False), admin: dict = Depends(require_a
     Assistant's people again first (no DB connection is open meanwhile)."""
     if refresh:
         _last_sync["t"] = 0.0
-        ha_people.refresh_blocking(True)
+    people_admin.refresh_people(refresh)
     _maybe_sync()
     return _people_json(admin)
 
@@ -107,18 +101,10 @@ def patch_person(uid: str, body: dict = Body(...), admin: dict = Depends(require
 
 @router.get("/admin/notify-services")
 def notify_services(refresh: bool = False, admin: dict = Depends(require_admin)):
-    try:
-        return {"available": True, "error": None, **ha_notify.list_notify_services_blocking(force=refresh)}
-    except ha_notify.NotifyListError as e:
-        return {"available": False, "error": f"Couldn't read the notify services from Home Assistant: {e}",
-                "services": [], "entities": []}
+    return people_admin.notify_services(refresh)
 
 
-def _service(value) -> str:
-    try:
-        return ha_notify.normalize_service(value)
-    except ValueError as e:
-        raise HTTPException(422, str(e))
+_service = people_admin.clean_service
 
 
 @router.post("/admin/people/{uid}/notify", status_code=201)
@@ -126,12 +112,8 @@ def add_notify(uid: str, body: dict = Body(...), admin: dict = Depends(require_a
     svc = _service(body.get("service"))
     with db.get_conn() as conn:
         _known(conn, uid)
-        current = ha_notify.assigned_services(conn, {"id": uid})
-        if svc not in current and len(current) >= MAX_SERVICES_PER_USER:
-            raise HTTPException(422, f"At most {MAX_SERVICES_PER_USER} notify services per person.")
-        conn.execute("INSERT OR IGNORE INTO user_notify (user_id, service, created_at, created_by) VALUES (?, ?, ?, ?)",
-                     (uid, svc, config.now_iso(), admin.get("username") or admin["id"]))
-        return {"notify": ha_notify.assigned_services(conn, {"id": uid})}
+        return {"notify": people_admin.add_service(conn, uid, svc, admin.get("username") or admin["id"], config.now_iso(),
+                                                   limit=MAX_SERVICES_PER_USER)}
 
 
 @router.delete("/admin/people/{uid}/notify/{svc}")
@@ -139,9 +121,8 @@ def remove_notify(uid: str, svc: str, admin: dict = Depends(require_admin)):
     svc = _service(svc)
     with db.get_conn() as conn:
         _known(conn, uid)
-        if not conn.execute("DELETE FROM user_notify WHERE user_id = ? AND service = ?", (uid, svc)).rowcount:
-            raise HTTPException(404, "That service isn't one of their extra services (phones are set in Home Assistant).")
-        return {"notify": ha_notify.assigned_services(conn, {"id": uid})}
+        return {"notify": people_admin.remove_service(
+            conn, uid, svc, "That service isn't one of their extra services (phones are set in Home Assistant).")}
 
 
 @router.post("/admin/people/{uid}/notify/test")
@@ -155,8 +136,7 @@ def test_notify(uid: str, admin: dict = Depends(require_admin)):
     results = ha_notify.send_to_services(services, config.APP_TITLE, f"Test from Household Chat for {row['name']} — "
                                          "new messages will arrive like this.", {"url": config.INGRESS_URL,
                                                                                  "clickAction": config.INGRESS_URL})
-    return {"results": [{"service": f"notify.{k}", "ok": v, "hint": "" if v else ha_notify.explain_failure(k)}
-                        for k, v in results.items()]}
+    return {"results": people_admin.test_results(results, as_list=True)}
 
 
 # ---------- home / away (§15.3) ----------
@@ -221,6 +201,12 @@ def get_settings(admin: dict = Depends(require_admin)):
     return _settings_out()
 
 
+@router.get("/admin/connected-apps")
+def connected_apps(admin: dict = Depends(require_admin)):
+    """The other household apps this one exchanges messages with (APP_MESSAGES_SPEC §5): read only."""
+    return app_messages.connected_apps()
+
+
 @router.put("/admin/settings")
 def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
     """Any subset of the settings. Changing the chat files folder never moves files: a folder that belongs to
@@ -232,7 +218,7 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
         raise HTTPException(422, "confirm must be true or false.")
     unknown = set(body) - set(settings.DEFAULTS)
     if unknown:
-        raise HTTPException(422, f"Unknown setting: {sorted(unknown)[0]}")
+        raise HTTPException(422, settings.unknown_message(unknown))
     switching = False
     if "files_path" in body:
         body["files_path"] = _clean_path(body["files_path"])
@@ -245,9 +231,8 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
                 raise HTTPException(409, info["message"] + " Confirm to switch anyway.")
     try:
         settings.update(body, admin.get("username") or admin["id"])
-    except ValidationError as e:
-        err = e.errors()[0]
-        raise HTTPException(422, f"{'.'.join(str(x) for x in err.get('loc', []))}: {err.get('msg')}")
+    except settings.SettingsError as e:
+        raise HTTPException(422, str(e))
     with db.get_conn() as conn:
         db.audit(conn, "settings_changed", None, None, admin["id"])
     if switching:
@@ -669,37 +654,36 @@ def download_backup(includeFiles: bool = False, admin: dict = Depends(require_ad
     os.close(fd)
     try:
         src = sqlite3.connect(config.DB_PATH)
-        dst = sqlite3.connect(tmp_db)
-        with dst:
-            src.backup(dst)
-        src.close()
-        dst.close()
+        try:
+            db_core.snapshot(src, tmp_db)
+        finally:
+            src.close()
         skip_files = disappearing.strip_from_copy(tmp_db)      # the app's backup never holds disappearing messages
-        with zipfile.ZipFile(tmp_zip, "w", zipfile.ZIP_DEFLATED) as z:
-            z.write(tmp_db, "chat.db")
-            if includeFiles:
-                root = files.share_root()
-                for dirpath, dirnames, filenames in os.walk(root):
-                    rel_dir = os.path.relpath(dirpath, root)
-                    top = rel_dir.split(os.sep)[0]
-                    if top in (files.THUMBS, files.DELETED) or files.DISAPPEARING in rel_dir.split(os.sep):
-                        dirnames[:] = []
-                        continue
-                    for f in filenames:
-                        if f.startswith(".upload-") or (dirpath == root and f.startswith(".")):
-                            continue          # the marker belongs to this install's folder, not to a backup
-                        full = os.path.join(dirpath, f)
-                        if os.path.islink(full) or os.path.relpath(full, root).replace(os.sep, "/") in skip_files:
-                            continue
-                        z.write(full, "files/" + os.path.relpath(full, root).replace(os.sep, "/"),
-                                compress_type=zipfile.ZIP_STORED)
+        members = [(tmp_db, "chat.db")]
+        if includeFiles:
+            root = files.share_root()
+
+            def prune(dirpath, dirnames):
+                rel_dir = os.path.relpath(dirpath, root)
+                if rel_dir.split(os.sep)[0] in (files.THUMBS, files.DELETED) or files.DISAPPEARING in rel_dir.split(os.sep):
+                    dirnames[:] = []
+                    return True
+
+            def keep(full, rel):
+                f = os.path.basename(full)
+                if f.startswith(".upload-") or ("/" not in rel and f.startswith(".")):
+                    return False          # the marker belongs to this install's folder, not to a backup
+                return not os.path.islink(full) and rel not in skip_files
+
+            members = itertools.chain(members, ((full, name, zipfile.ZIP_STORED) for full, name in
+                                                backup_core.walk(root, prefix="files/", prune=prune, keep=keep)))
+        backup_core.write_zip(tmp_zip, members)
     finally:
         os.remove(tmp_db)
     with db.get_conn() as conn:
         db.audit(conn, "backup_downloaded", None, None, admin["id"])
-    stamp = config.local_now().strftime("%Y-%m-%d")
-    return FileResponse(tmp_zip, media_type="application/zip", filename=f"household-chat-backup-{stamp}.zip",
-                        background=BackgroundTask(os.remove, tmp_zip))
+    name = backup_core.file_name("household-chat-backup", ".zip", now=config.local_now(), fmt="%Y-%m-%d")
+    return backup_core.send_file(tmp_zip, name, backup_core.ZIP_MEDIA_TYPE)
 
 
 def _check_db(path: str) -> None:
@@ -717,16 +701,9 @@ def _check_db(path: str) -> None:
 @router.post("/admin-storage-import-db")
 async def restore(request: Request, admin: dict = Depends(require_admin)):
     """The backup .zip as the request body. Replaces the database (and the files, if the zip has them)."""
-    os.makedirs(config.DATA_DIR, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".restore-", suffix=".zip", dir=config.DATA_DIR)
-    size = 0
+    tmp = await backup_core.receive(request, config.DATA_DIR, prefix=".restore-", suffix=".zip", max_bytes=RESTORE_MAX,
+                                    too_big=lambda: HTTPException(413, "That backup is too big."))
     try:
-        with os.fdopen(fd, "wb") as f:
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > RESTORE_MAX:
-                    raise HTTPException(413, "That backup is too big.")
-                f.write(chunk)
         return await run_in_threadpool(_restore_from, tmp, admin)
     finally:
         if os.path.exists(tmp):
@@ -740,12 +717,14 @@ def _restore_from(tmp: str, admin: dict) -> dict:
         names = z.namelist()
         if "chat.db" not in names:
             raise HTTPException(422, "The backup has no chat.db.")
-        for n in names:
+
+        def expected(info):
+            n = info.filename
             if n != "chat.db" and not n.startswith("files/") and not n.startswith("chat_photos/"):   # (chat_photos/ in older backups: ignored)
                 raise HTTPException(422, "Unexpected file in the backup.")
-            parts = n.split("/")
-            if n.startswith("/") or ".." in parts or "\\" in n:
-                raise HTTPException(422, "Unsafe path in the backup.")
+
+        backup_core.check_members(z, check=expected, check_first=True,
+                                  unsafe=lambda _n: HTTPException(422, "Unsafe path in the backup."))
         fd, new_db = tempfile.mkstemp(prefix=".restore-", suffix=".db", dir=config.DATA_DIR)
         os.close(fd)
         with z.open("chat.db") as src, open(new_db, "wb") as dst:
@@ -791,10 +770,7 @@ def _restore_from(tmp: str, admin: dict) -> dict:
             dest = os.path.realpath(os.path.join(root, rel))
             if not dest.startswith(root + os.sep):
                 continue
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with z.open(n) as src, open(dest + ".part", "wb") as dst:
-                shutil.copyfileobj(src, dst)
-            os.replace(dest + ".part", dest)
+            backup_core.copy_out(z, n, dest)
             restored_files += 1
     with db.get_conn() as conn:
         files.check_missing(conn)

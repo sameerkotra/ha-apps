@@ -8,7 +8,7 @@
 
 {% macro actions_cells(b, acting_qs, is_admin) %}<td data-label="">
     <form method="post" action="utility-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}"
-          onsubmit="return confirm('Delete this bill? The admin can restore it from Recently deleted for 30 days.');">
+          data-confirm="Delete this bill? The admin can restore it from Recently deleted for 30 days.">
         <input type="hidden" name="id" value="{{ b.id }}">
         <button type="submit" class="restart-btn">Delete</button>
     </form>

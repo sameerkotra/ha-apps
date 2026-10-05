@@ -1,0 +1,511 @@
+{
+  "_doc": "Which shared files each app gets, and where. Groups: python -> the app's Python package, static -> its browser files, tests -> its tests. Run tools/sync_common.py after any change.",
+  "apps": {
+    "calorie_tracker": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "web_security.py",
+          "backup_core.py",
+          "sensor_publisher.py",
+          "ai_client.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_sensor_publisher.py",
+          "test_ai_client.py"
+        ]
+      }
+    },
+    "family_tree": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "people_admin.py",
+          "web_security.py",
+          "backup_core.py",
+          "geo.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "fake_ha.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_people_admin.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_geo.py"
+        ]
+      }
+    },
+    "finance": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "whoami.py",
+          "auth_core.py",
+          "db_core.py",
+          "web_security.py",
+          "backup_core.py",
+          "ai_client.py",
+          "csv_export.py",
+          "sandbox_run.py"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_ai_client.py",
+          "test_csv_export.py",
+          "test_sandbox_run.py"
+        ],
+        "static": [
+          "theme-boot.js",
+          "themes.css",
+          "ui.js"
+        ]
+      }
+    },
+    "household_arcade": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "people_admin.py",
+          "web_security.py",
+          "backup_core.py",
+          "sensor_publisher.py",
+          "ai_client.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "fake_ha.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_people_admin.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_sensor_publisher.py",
+          "test_ai_client.py"
+        ]
+      }
+    },
+    "household_chat": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "ha_ws.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "people_admin.py",
+          "web_security.py",
+          "backup_core.py",
+          "app_bus.py"
+        ],
+        "static": [
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js",
+          "connected-apps.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_people_admin.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "fake_ha.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py"
+        ]
+      }
+    },
+    "household_todo": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "people_admin.py",
+          "web_security.py",
+          "backup_core.py",
+          "sensor_publisher.py",
+          "geo.py",
+          "csv_export.py",
+          "app_bus.py",
+          "ha_ws.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js",
+          "connected-apps.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "fake_ha.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_people_admin.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_sensor_publisher.py",
+          "test_geo.py",
+          "test_csv_export.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py"
+        ]
+      }
+    },
+    "household_vault": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "whoami.py",
+          "ha_client.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "people_admin.py",
+          "web_security.py",
+          "backup_core.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js",
+          "http-warning.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "fake_ha.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_people_admin.py",
+          "test_web_security.py",
+          "test_backup_core.py"
+        ]
+      }
+    },
+    "receipt_price_intelligence": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "whoami.py",
+          "ha_client.py",
+          "auth_core.py",
+          "settings_core.py",
+          "web_security.py",
+          "backup_core.py",
+          "sensor_publisher.py",
+          "geo.py",
+          "csv_export.py",
+          "sandbox_run.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_settings_core.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_sensor_publisher.py",
+          "test_geo.py",
+          "test_csv_export.py",
+          "test_sandbox_run.py"
+        ]
+      }
+    },
+    "splitpot": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "web_security.py",
+          "backup_core.py",
+          "sensor_publisher.py",
+          "csv_export.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_sensor_publisher.py",
+          "test_csv_export.py"
+        ]
+      }
+    },
+    "household_docs": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "auth_core.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "db_core.py",
+          "settings_core.py",
+          "people_admin.py",
+          "web_security.py",
+          "backup_core.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "csv_export.py",
+          "sensor_publisher.py",
+          "ai_client.py",
+          "app_bus.py",
+          "ha_ws.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "people.js",
+          "http-warning.js",
+          "connected-apps.js"
+        ],
+        "tests": [
+          "test_shared_copies.py",
+          "__init__.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "fake_ha.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_people_admin.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_csv_export.py",
+          "test_sensor_publisher.py",
+          "test_ai_client.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py"
+        ]
+      }
+    }
+  }
+}

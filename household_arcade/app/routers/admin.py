@@ -2,15 +2,13 @@
 The Users tab's routes are in users.py."""
 import os
 import re
-import tempfile
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 
 from .. import auth, config, db, games, ha_sensors, settings
 from ..auth import require_admin
+from ..common import backup_core
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
@@ -127,11 +125,10 @@ def delete_holiday(day: str, background: BackgroundTasks, admin: dict = Depends(
 @router.get("/admin-storage-download-db")
 def admin_storage_download_db(admin: dict = Depends(require_admin)):
     """A full, consistent snapshot of the whole database (sqlite's online
-    backup, never a plain copy of a WAL-mode file)."""
-    tmp_path = db.backup_to_tempfile()
-    filename = f"household-arcade-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-    return FileResponse(tmp_path, media_type="application/vnd.sqlite3", filename=filename,
-                        background=BackgroundTask(os.remove, tmp_path))
+    backup, never a plain copy of a WAL-mode file). The AI access key is
+    blanked in the copy: a backup file never carries it."""
+    return backup_core.send_file(db.backup_to_tempfile(after=settings.REGISTRY.scrub_secrets),
+                                 backup_core.file_name("household-arcade-backup", ".db"))
 
 
 @router.post("/admin-storage-import-db")
@@ -140,21 +137,18 @@ async def admin_storage_import_db(background: BackgroundTasks, file: UploadFile 
     """Replaces the ENTIRE database with an uploaded .db file — no merge, no
     undo. Validated first; an older database is migrated straight away. The
     scratch file is in DATA_DIR so the final os.replace() is a same-filesystem
-    rename."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".db", dir=config.DATA_DIR)
+    rename. A backup has no AI access key, so this install keeps its own."""
+    tmp_path = await backup_core.receive(
+        file, config.DATA_DIR, max_bytes=MAX_IMPORT_BYTES,
+        too_big=lambda: HTTPException(413, "That file is too big to be a Household Arcade database."))
     try:
-        size = 0
-        with os.fdopen(fd, "wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_IMPORT_BYTES:
-                    raise HTTPException(413, "That file is too big to be a Household Arcade database.")
-                out.write(chunk)
         try:
             db.validate_backup_file(tmp_path)
         except ValueError as e:
             raise HTTPException(400, str(e))
+        saved_secrets = settings.REGISTRY.saved_secrets()
         db.import_from_tempfile(tmp_path)
+        settings.REGISTRY.keep_secrets(saved_secrets)
         settings.invalidate()
     finally:
         if os.path.exists(tmp_path):

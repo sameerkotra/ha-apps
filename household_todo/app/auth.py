@@ -19,9 +19,10 @@ Three dependencies (SPEC §7):
 """
 import logging
 
-from fastapi import Depends, Header, HTTPException, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 
 from . import config, db
+from .common import auth_core
 
 logger = logging.getLogger("auth")
 
@@ -33,25 +34,16 @@ def _is_admin(user_id: str, username: str | None) -> bool:
     login name. The display name is deliberately NOT matched — it is the one
     thing a person may be able to edit about themselves, and matching it could
     let them rename themselves into admin."""
-    candidates = {str(n).strip().lower() for n in (user_id, username) if n}
-    return bool(candidates & config.ADMIN_NAMES)
+    return auth_core.is_admin(user_id, username, config.ADMIN_NAMES)
 
 
-async def get_current_user(
-    x_remote_user_id: str | None = Header(default=None),
-    x_remote_user_name: str | None = Header(default=None),
-    x_remote_user_display_name: str | None = Header(default=None),
-) -> dict:
-    user_id = x_remote_user_id
-    username = x_remote_user_name
-    display_name = x_remote_user_display_name or x_remote_user_name
+async def get_current_user(request: Request) -> dict:
+    ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
+    user_id = ident.user_id
+    username = ident.username
+    display_name = ident.display_name or ident.username
 
-    if not user_id:
-        raise HTTPException(
-            401,
-            "No Home Assistant user identified. Open Household Todo from its panel "
-            "in the Home Assistant sidebar.",
-        )
+    auth_core.require_user_id(user_id, "Household Todo")
 
     display_name = display_name or "Home Assistant User"
     with db.get_conn() as conn:
@@ -125,6 +117,6 @@ async def get_real_user_for_prefs(
 
 
 async def require_admin(current: dict = Depends(get_current_user)) -> dict:
-    if not current["is_admin"]:
-        raise HTTPException(403, "Only designated admins can do this. See the admin_users option on the app's Configuration tab.")
+    auth_core.require_admin_flag(current["is_admin"], "Only designated admins can do this. See the admin_users "
+                                                       "option on the app's Configuration tab.")
     return current

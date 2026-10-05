@@ -1,34 +1,27 @@
 :root {
-    /* Non-palette vars — shared across every theme below, not
-       redeclared per theme. */
+    /* Non-palette vars — the same in every theme. */
     --radius: 12px;
     --sidenav-width: 220px;
+}
 
-    /* Default palette (theme "midnight" — same as the household
-       calorie-tracker HA app, for visual consistency across the
-       household's apps). Acts as the fallback before the bootstrap
-       script in base.html applies a stored [data-theme] attribute (or
-       for a client with JS/localStorage unavailable), so it's kept
-       identical to the explicit [data-theme="midnight"] block below
-       rather than something themes can drift out of sync with. */
-    --bg: #10151c;
-    --panel: #1a2130;
-    --panel-alt: #202a3d;
-    --panel-hover: #26314a;
-    --border: #2b3549;
-    --text: #e7ecf5;
-    --text-dim: #93a0b8;
+/* ---------- Themes. The colours of Midnight, Slate and Daylight are shared by
+   every household app (static/common/themes.css, loaded first;
+   static/common/theme-boot.js applies the saved choice before first paint and
+   the sidenav pickers switch it instantly). Below: this app's names for the
+   shared state colours, then its own accent, code and chart colours — every
+   block sets the same variables, so no rule below needs a theme override. ---------- */
+:root {
+    --danger-bg: var(--danger-soft);
+    --warn-bg: var(--warn-soft);
+    --ok-bg: var(--ok-soft);
+    --info-bg: var(--info-soft);
+}
+
+/* midnight — dark, green accent (also the :root default). */
+:root, [data-theme="midnight"] {
     --accent: #5ee6a8;
     --accent-dim: #3a9c72;
     --accent-contrast: #0b1410;
-    --danger: #ef7b7b;
-    --danger-bg: #3a2229;
-    --warn: #f2c94c;
-    --warn-bg: #332c1a;
-    --ok: #5ee6a8;
-    --ok-bg: #1a2e26;
-    --info: #6aa6ff;
-    --info-bg: #1a2540;
     --code-bg: #0b0f15;
     --code-text: #b6c2d9;
     /* Categorical chart colours (toll groups): the dataviz skill's validated default order
@@ -41,73 +34,15 @@
     --cat-5: #d55181;
     --cat-muted: #93a0b8;   /* = --text-dim: already validated readable on this panel */
     --cat-none: #4b5568;
-    color-scheme: dark;
 }
 
-/* ---------- Themes. Every theme redeclares the same variables, so no rule
-   below needs a theme-specific override. base.html applies the saved theme
-   (localStorage, validated against these names) before first paint; the
-   sidenav picker switches instantly. ---------- */
-
-/* midnight — dark, green accent (the original/default palette above,
-   restated explicitly so every theme name has a real matching block
-   rather than the default relying on attribute-absence). */
-[data-theme="midnight"] {
-    --bg: #10151c;
-    --panel: #1a2130;
-    --panel-alt: #202a3d;
-    --panel-hover: #26314a;
-    --border: #2b3549;
-    --text: #e7ecf5;
-    --text-dim: #93a0b8;
-    --accent: #5ee6a8;
-    --accent-dim: #3a9c72;
-    --accent-contrast: #0b1410;
-    --danger: #ef7b7b;
-    --danger-bg: #3a2229;
-    --warn: #f2c94c;
-    --warn-bg: #332c1a;
-    --ok: #5ee6a8;
-    --ok-bg: #1a2e26;
-    --info: #6aa6ff;
-    --info-bg: #1a2540;
-    --code-bg: #0b0f15;
-    --code-text: #b6c2d9;
-    color-scheme: dark;
-    --cat-1: #3987e5;
-    --cat-2: #d95926;
-    --cat-3: #199e70;
-    --cat-4: #c98500;
-    --cat-5: #d55181;
-    --cat-muted: #93a0b8;
-    --cat-none: #4b5568;
-}
-
-/* slate — dark, blue accent. A second dark option, not just a rename
-   of midnight — different hue family so "dark" isn't a single fixed
-   look. */
+/* slate — dark, blue accent. */
 [data-theme="slate"] {
-    --bg: #0e1420;
-    --panel: #16202f;
-    --panel-alt: #1c2a3d;
-    --panel-hover: #23334a;
-    --border: #2a3a52;
-    --text: #e8edf7;
-    --text-dim: #8fa0ba;
     --accent: #6aa6ff;
     --accent-dim: #3f78c9;
     --accent-contrast: #071522;
-    --danger: #ff8a8a;
-    --danger-bg: #3a2129;
-    --warn: #ffcc66;
-    --warn-bg: #382c16;
-    --ok: #6ee7b7;
-    --ok-bg: #163328;
-    --info: #6aa6ff;
-    --info-bg: #17233d;
     --code-bg: #0a121e;
     --code-text: #a9bdda;
-    color-scheme: dark;
     /* Same validated 5-slot order as midnight (re-checked against this theme's own --panel) —
        the categorical set is shared across both dark themes rather than re-derived per theme. */
     --cat-1: #3987e5;
@@ -115,33 +50,17 @@
     --cat-3: #199e70;
     --cat-4: #c98500;
     --cat-5: #d55181;
-    --cat-muted: #8fa0ba;   /* = --text-dim */
+    --cat-muted: #93a3ba;   /* = --text-dim */
     --cat-none: #4d5b78;
 }
 
 /* daylight — light, blue accent. */
 [data-theme="daylight"] {
-    --bg: #f4f6fa;
-    --panel: #ffffff;
-    --panel-alt: #eef2f8;
-    --panel-hover: #e3e9f2;
-    --border: #d7dee9;
-    --text: #1c2430;
-    --text-dim: #5b6b82;
     --accent: #2f6fed;
     --accent-dim: #1e54c2;
     --accent-contrast: #ffffff;
-    --danger: #d5453f;
-    --danger-bg: #fbe4e2;
-    --warn: #b6790a;
-    --warn-bg: #fbeecb;
-    --ok: #1f9d63;
-    --ok-bg: #e0f5e9;
-    --info: #2f6fed;
-    --info-bg: #e5edfd;
     --code-bg: #eef1f6;
     --code-text: #33455e;
-    color-scheme: light;
     /* The dataviz skill's validated default order, light steps — passes every check against
        this theme's white --panel (the 3 sub-3:1 marks are the skill's documented light-mode
        relief case: the chart already ships hover tooltips and a "Show as a table" fallback). */
@@ -150,43 +69,8 @@
     --cat-3: #1baf7a;
     --cat-4: #eda100;
     --cat-5: #e87ba4;
-    --cat-muted: #5b6b82;   /* = --text-dim */
+    --cat-muted: #5b6577;   /* = --text-dim */
     --cat-none: #b9c1cf;
-}
-
-/* sandstone — light, warm amber accent. A second light option in a
-   different hue family, same reasoning as slate vs. midnight above. */
-[data-theme="sandstone"] {
-    --bg: #faf6ef;
-    --panel: #ffffff;
-    --panel-alt: #f3ead9;
-    --panel-hover: #ecdfc7;
-    --border: #e6d7bd;
-    --text: #2c2418;
-    --text-dim: #7a6b54;
-    --accent: #c9761f;
-    --accent-dim: #a25e15;
-    --accent-contrast: #fff8ee;
-    --danger: #c14b3f;
-    --danger-bg: #f6ddd8;
-    --warn: #b6790a;
-    --warn-bg: #f8ecc9;
-    --ok: #4f8f3f;
-    --ok-bg: #e6f0dd;
-    --info: #3f7ba8;
-    --info-bg: #e2eef6;
-    --code-bg: #f1e9da;
-    --code-text: #4a3c26;
-    color-scheme: light;
-    /* Same validated light-mode order as daylight (re-checked against this theme's own white
-       --panel) — shared across both light themes rather than re-derived per theme. */
-    --cat-1: #2a78d6;
-    --cat-2: #eb6834;
-    --cat-3: #1baf7a;
-    --cat-4: #eda100;
-    --cat-5: #e87ba4;
-    --cat-muted: #7a6b54;   /* = --text-dim */
-    --cat-none: #cabfa8;
 }
 
 * { box-sizing: border-box; }

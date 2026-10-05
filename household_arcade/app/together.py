@@ -28,7 +28,8 @@ import logging
 import secrets
 from datetime import datetime, timedelta
 
-from . import config, db, games, ha_notify, levels, limits, notify, settings
+from . import config, db, games, levels, limits, notify, settings
+from .common import ha_notify
 
 logger = logging.getLogger("together")
 

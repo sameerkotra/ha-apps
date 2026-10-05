@@ -189,3 +189,30 @@ def test_thirty_day_purge_covers_utility_bills_and_keeps_shared_pdfs(env):
     with env.db() as c:
         ids = {r[0] for r in c.execute("SELECT id FROM utility_bills")}
     assert ids == {sibling, recent} and os.path.exists(pdf)  # the live sibling still needs the PDF
+
+
+def test_csp_and_no_store_on_every_response(env):
+    from app import main
+    for url in ("dashboard", "static/style.css", "static/base.js"):
+        r = env.get(url)
+        assert r.headers["content-security-policy"] == main.CSP, url
+        assert r.headers["x-content-type-options"] == "nosniff", url
+        assert r.headers["cache-control"] == "no-store", url
+    assert "script-src 'self';" in main.CSP and "unsafe-eval" not in main.CSP
+
+
+def test_templates_keep_to_the_csp():
+    """No inline scripts, on* handler attributes, javascript: URLs, hx-on or htmx trigger filters (they need eval)."""
+    import glob
+    import os
+    import re
+    root = os.path.join(os.path.dirname(__file__), "..", "app", "templates")
+    for path in glob.glob(os.path.join(root, "*.html")):
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        name = os.path.basename(path)
+        assert not re.search(r"<script(?![^>]*\bsrc=)[^>]*>", html), name
+        assert not re.search(r"\son[a-z]+\s*=", html), name
+        assert "javascript:" not in html and "hx-on" not in html, name
+        for trigger in re.findall(r'hx-trigger="([^"]*)"', html):
+            assert "[" not in trigger, (name, trigger)
