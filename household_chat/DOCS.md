@@ -73,10 +73,11 @@ An admin turns calls on in **App settings → Voice calls** (off until then).
 - **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
 - **During a call**:
   - The microphone button mutes and unmutes you (muted, it's red with a line across the microphone); the other person sees that you've muted.
-  - ⚙ shows **where the call plays** — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth or wired headset — as buttons (computers, and phones whose browser lets an app choose). Where the phone doesn't allow it, ⚙ says so and what the browser reports, and the phone's own sound or Bluetooth menu does it. The choice is remembered on that device.
+  - ⚙ picks the **speaker or headset** the call plays through, where the browser allows it. The choice is remembered on that device.
   - Two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
   - 🔈 appears if your phone held back their sound: tap it to hear them.
   - The red button hangs up. The screen stays on while the call is on.
+  - There's no speaker button: a web page can't switch a phone to the loudspeaker. Use the phone's volume buttons, or its sound or Bluetooth menu.
 - **In the chat**, each call leaves a note: "📞 Outgoing call · 4 min", "📞 Missed call", "📞 No answer", "📞 Declined", with **Call back**. A missed call counts as unread and is notified like a message.
 - **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call.
 - **Quiet hours and muted chats**: your phone isn't rung, but open pages still ring. In quiet hours a missed call waits for the summary afterwards, like messages; in a muted chat it isn't notified.

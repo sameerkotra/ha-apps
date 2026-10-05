@@ -141,15 +141,14 @@ class CallsInBrowsers(unittest.TestCase):
         n.wait_for_function("(document.querySelector('#callHint') || {}).textContent === 'Tarun has muted their microphone.'", timeout=8000)
         t.click("#callScreen button.mute")
         self.assertTrue(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
-        # ⚙ (shown where outputs can be picked): the outputs as buttons; choosing one switches the call's sound
+        # ⚙: the sound output only (no microphone choice); picking one switches the call's sound
         t.click("#callScreen button.devices")
-        t.wait_for_selector("#callPanel:not([hidden]) .browser-line")
-        self.assertEqual(t.evaluate("document.querySelectorAll('#callPanel select').length"), 0)
-        if t.evaluate("async () => (await navigator.mediaDevices.enumerateDevices()).some((d) => d.kind === 'audiooutput')"):
-            t.wait_for_selector("#callPanel .out-btn")
-            t.click("#callPanel .out-btn")
-            t.wait_for_selector("#callPanel .out-btn.on")
-            self.assertEqual(t.evaluate("callAudio.sinkId"), t.evaluate("call.outputId"))
+        t.wait_for_selector("#callPanel:not([hidden])")
+        self.assertEqual(t.evaluate("[...document.querySelectorAll('#callPanel select')].map((s) => s.getAttribute('aria-label'))"),
+                         ["Sound output"] if t.evaluate("CAN_PICK_OUTPUT") else [])
+        if t.evaluate("CAN_PICK_OUTPUT"):
+            t.select_option("#callPanel select", index=0)
+            t.wait_for_function("callAudio.sinkId === call.outputId", timeout=5000)
         n.click("#callScreen button.hangup")
         for p in (n, t):
             p.wait_for_selector("#callScreen", state="detached", timeout=10000)

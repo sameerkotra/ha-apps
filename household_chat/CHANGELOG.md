@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.8
+
+- **Calls**: ⚙ is back to the list from 2.3.4, which worked, with just the microphone choice taken out. (2.3.5–2.3.7 tried buttons for Speakerphone, Earpiece and headset; they didn't work on the phone.)
+
 ## 2.3.7
 
 - **Calls**: the ⚙ buttons (Speakerphone, Earpiece, headset) are shown whenever the phone lists any outputs, even when its browser claims an app can't choose — the Home Assistant app on Android says that and still switches. Tapping one tries it and says if it doesn't work.

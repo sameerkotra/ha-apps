@@ -19,7 +19,7 @@ SHARE_DIR = os.environ.get("SHARE_DIR", "/share/household_chat")
 SHARE_ROOT = os.environ.get("SHARE_ROOT", os.path.dirname(SHARE_DIR.rstrip("/")) or "/share")
 AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
 OPTIONS_PATH = os.environ.get("OPTIONS_PATH", os.path.join(DATA_DIR, "options.json"))
-APP_VERSION = "2.3.7"
+APP_VERSION = "2.3.8"
 APP_TITLE = "Household Chat"
 
 

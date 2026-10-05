@@ -435,7 +435,5 @@ code.path { overflow-wrap: anywhere; word-break: break-all; }
 .call-hint { min-height: 1.3em; font-size: 0.86rem; color: var(--danger); max-width: 320px; }
 .call-panel { width: 100%; max-width: 320px; text-align: left; margin-top: 18px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px 4px; }
 .call-audio { display: none; }
-.out-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.out-btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 600; }
 .call-note.missed span { color: var(--danger); }
 .call-note .call-back { margin-left: 8px; font-size: inherit; }

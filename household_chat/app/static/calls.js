@@ -14,8 +14,13 @@ function micPossible() { return !!(window.isSecureContext && navigator.mediaDevi
 function noMicDialog() {
   openModal("Voice calls", h("p", null, "Calls need the microphone, and this browser can't use it here. It needs a secure (https) connection and permission — inside the Home Assistant app it may be blocked. Try Home Assistant in your phone's browser, or on a computer."));
 }
-const OUT_KEY = "hchat.callOut";
-function getMic() { return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+const MIC_KEY = "hchat.callMic", OUT_KEY = "hchat.callOut";
+function getMic(deviceId) {
+  const want = deviceId || lsGet(MIC_KEY);
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  if (want) audio.deviceId = deviceId ? { exact: deviceId } : { ideal: want };
+  return navigator.mediaDevices.getUserMedia({ audio });
+}
 
 // ---------- tones (made in the browser, no sound files) ----------
 let toneCtx = null, toneTimer = null;
@@ -78,64 +83,49 @@ function tapToHear() {
 }
 
 // ---------- sound output and microphone ----------
-// what the browser says about choosing outputs (some report "not possible" and still allow it, so it's only reported)
 const CAN_PICK_OUTPUT = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
-function canSetSink() { return !!(callAudio && typeof callAudio.setSinkId === "function"); }
 async function audioDevices(kind) {
   try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === kind); } catch (e) { return []; }
 }
 function applyOutput() {
   const id = call && call.outputId ? call.outputId : lsGet(OUT_KEY);
-  if (canSetSink() && id) callAudio.setSinkId(id).catch(() => {});
+  if (CAN_PICK_OUTPUT && callAudio && id) callAudio.setSinkId(id).catch(() => {});
 }
 async function setOutput(id) {
   if (!call) return;
   call.outputId = id;
   lsSet(OUT_KEY, id || "");
-  if (!canSetSink()) { toast("This browser doesn't let the app switch the output.", { error: true }); return false; }
-  try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); return false; }
-  return true;
+  if (CAN_PICK_OUTPUT && callAudio) { try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); } }
 }
-// ⚙: where the call plays — Speakerphone, Earpiece, Bluetooth headset (and anything else by name) — as buttons,
-// where the browser lets a page choose (setSinkId: the Home Assistant app on Android, computers; not iPhones).
-function outputKind(d, i) {
-  const l = (d.label || "").toLowerCase();
-  if (/bluetooth|\bbt\b|airpods|buds|headset|headphone|hands-?free|\bsco\b/.test(l)) return { key: "bluetooth", label: "Bluetooth headset", icon: "🎧" };
-  if (/wired|jack|usb/.test(l)) return { key: "wired", label: "Wired headset", icon: "🎧" };
-  if (/earpiece|receiver|handset/.test(l)) return { key: "earpiece", label: "Earpiece", icon: "📱" };
-  if (/speaker/.test(l)) return { key: "speaker", label: "Speakerphone", icon: "🔊" };
-  return { key: "other", label: d.label || `Output ${i + 1}`, icon: "🔈" };
-}
-function browserName() {
-  const ua = navigator.userAgent || "";
-  const m = ua.match(/(Chrome|Firefox|Safari)\/(\d+)/);
-  return (ua.includes("Home Assistant") ? "Home Assistant app, " : "") + (m ? `${m[1]} ${m[2]}` : "") + (/Android/.test(ua) ? ", Android" : /iPhone|iPad/.test(ua) ? ", iPhone" : "");
+async function switchMic(deviceId) {
+  if (!call || !call.stream) return;
+  let fresh;
+  try { fresh = await getMic(deviceId); } catch (e) { toast("Couldn't use that microphone.", { error: true }); return; }
+  if (!call) { fresh.getTracks().forEach((t) => t.stop()); return; }
+  const track = fresh.getAudioTracks()[0];
+  track.enabled = !call.muted;
+  const sender = call.pc && call.pc.getSenders().find((x) => x.track && x.track.kind === "audio");
+  if (sender) await sender.replaceTrack(track);
+  call.stream.getTracks().forEach((t) => t.stop());
+  call.stream = fresh;
+  lsSet(MIC_KEY, deviceId);
+  call.quietMic = 0;
+  setCallHint("");
 }
 async function audioPanel() {
   if (!call) return;
   const box = $("#callPanel");
   if (!box) return;
   if (!box.hidden) { box.hidden = true; return; }
-  await renderOutputs(box);
-  box.hidden = false;
-}
-async function renderOutputs(box) {
-  const listed = await audioDevices("audiooutput");
-  let outs = listed.filter((d) => d.deviceId && d.deviceId !== "communications");     // shown whatever the browser claims
-  if (outs.length > 1) outs = outs.filter((d) => d.deviceId !== "default");     // the alias of one of the others
-  if (!call) return;
-  const now = call.outputId || lsGet(OUT_KEY) || "";
-  const order = { speaker: 0, earpiece: 1, bluetooth: 2, wired: 3, other: 4 };
-  const rows = outs.map((d, i) => ({ d, k: outputKind(d, i) })).sort((a, b) => order[a.k.key] - order[b.k.key]);
+  const outs = CAN_PICK_OUTPUT ? await audioDevices("audiooutput") : [];
+  const opt = (d, i, word) => h("option", { value: d.deviceId }, d.label || `${word} ${i + 1}`);
+  const outNow = call.outputId || lsGet(OUT_KEY) || "default";
+  const outSel = h("select", { "aria-label": "Sound output", onchange: (e) => setOutput(e.target.value) }, outs.map((d, i) => opt(d, i, "Output")));
+  outSel.value = outs.some((d) => d.deviceId === outNow) ? outNow : (outs[0] || {}).deviceId || "";
   mount(box,
-    h("div", { class: "lbl-sm" }, "Sound comes out of"),
-    rows.length ? h("div", { class: "out-btns" }, rows.map(({ d, k }) =>
-      h("button", { class: "btn out-btn" + (d.deviceId === now ? " on" : ""), type: "button", "aria-pressed": d.deviceId === now ? "true" : "false",
-        onclick: async () => { if (await setOutput(d.deviceId)) renderOutputs(box); } }, k.icon + " " + k.label)))
-      : h("p", { class: "hint" }, "This browser doesn't let the app choose where the call plays. Use the phone's volume buttons, or its sound or Bluetooth menu."),
-    // what the browser reports, so a phone that can't be made to work can at least be described
-    h("p", { class: "hint browser-line" }, `Outputs the browser lists: ${listed.length}` + (listed.length ? " (" + listed.map((d, i) => d.label || `Output ${i + 1}`).join(", ") + ")" : "")
-      + `; the browser says choosing is ${CAN_PICK_OUTPUT ? "possible" : "not possible"}. ` + browserName()));
+    outs.length ? field("Sound comes out of", outSel)
+      : h("p", { class: "hint" }, "This browser plays the call through the phone's current output. Use your phone's volume buttons, or its sound or Bluetooth menu, to change it."));
+  box.hidden = false;
 }
 
 // ---------- is sound flowing? (levels from the connection's own statistics) ----------
@@ -164,7 +154,7 @@ async function watchSound() {
   else if (secs > 5 && c.noPackets >= 5) hint = "No sound is arriving from " + c.peerName + ". The connection may be blocked one way — try again, or both on the same Wi-Fi.";
   else if (c.peerMuted) hint = c.peerName + " has muted their microphone.";
   else if (secs > 5 && c.quietThem >= 6) hint = c.peerName + "'s microphone seems silent — it may be muted or blocked on their phone.";
-  else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app.";
+  else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app, or pick another in ⚙.";
   setCallHint(hint);
 }
 function meter(sel, level) {
@@ -224,7 +214,7 @@ function callBtn(label, cls, run, title) { return h("button", { class: "call-btn
 function inCallButtons() {
   return [
     callBtn(micIcon(!!(call && call.muted)), "mute" + (call && call.muted ? " on" : ""), toggleMute, call && call.muted ? "Unmute" : "Mute"),
-    callBtn("⚙", "devices", audioPanel, "Where the call plays"),
+    callBtn("⚙", "devices", audioPanel, "Sound output"),
     call && call.blocked ? callBtn("🔈", "hear on", tapToHear, "Tap to hear") : null,
     callBtn("📞", "hangup", () => hangUp(), "Hang up"),
   ].filter(Boolean);

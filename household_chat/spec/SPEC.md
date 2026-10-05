@@ -707,19 +707,13 @@ the rest are planned in §18.1.
   call's running time. A soft ringback tone plays while it rings. Once connected, both sides have:
   - **Mute** (the track is disabled; the other side is told over a small WebRTC data channel `hchat` that the
     caller opens, `{muted}`, and shows "Asha has muted their microphone").
-  - **No Speaker button**: the outputs are picked under ⚙ instead (an earlier Speaker button guessed the
-    loudspeaker by label and fell back to making the sound louder, which confused). The mute button is a drawn microphone (inline SVG) with a line across
+  - **No Speaker button**: a page can't choose a phone's loudspeaker (the Android Home
+    Assistant app lists no outputs), and making the sound louder through Web Audio didn't help. The phone's own
+    volume, sound or Bluetooth menu does it. The mute button is a drawn microphone (inline SVG) with a line across
     it when muted, since no emoji shows a muted microphone.
-  - **⚙ Where the call plays**: always shown, and the buttons whenever the browser lists any outputs — whether
-    or not it claims `setSinkId` (the Home Assistant app on Android says it can't and still switches); tapping one
-    tries it and says if it fails. The outputs (`enumerateDevices`, without the `communications` alias,
-    and without `default` when there are others) as buttons sorted and named by their labels — 🔊 Speakerphone
-    (`speaker`), 📱 Earpiece (`earpiece|receiver|handset`), 🎧 Bluetooth headset
-    (`bluetooth|bt|airpods|buds|headset|headphone|hands-free|sco`), 🎧 Wired headset (`wired|jack|usb`), else the
-    label itself or "Output n". Otherwise a note, and in both cases a line saying what the browser reports (how
-    many outputs it lists and their labels, whether choosing is possible, and the browser), so a phone that can't
-    be made to work can be described. The choice is kept in the
-    browser (`localStorage` `hchat.callOut`) for the next call. No microphone picker: the browser's default.
+  - **⚙ Sound output**: a panel with the outputs (`enumerateDevices`) where `setSinkId` exists; the choice is
+    kept in the browser (`localStorage` `hchat.callOut`) for the next call. No microphone choice (it was tried and
+    taken out).
   - **Is sound getting through?** Every second the page reads the connection's statistics: `inbound-rtp`
     packets and `audioLevel` (their sound) and `media-source` `audioLevel` (my microphone), drawn as two level
     bars. After 5 s a line says what's wrong: no packets arriving from them, their sound silent for 6 s, they've
@@ -822,7 +816,7 @@ the rest are planned in §18.1.
 counts; missed calls and their pushes; the phone's Decline; busy; offers that never come; quiet hours and muted
 chats; failures, disabling, the gone-side check and restarts; sizes; disappearing chats; a 2.2 database
 upgraded) and `tests/test_calls_browser.py` (the app in uvicorn and two headless Chromium pages with fake
-microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, the output buttons, hang up, decline, the notes; skipped without Playwright).
+microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, switching microphones, hang up, decline, the notes; skipped without Playwright).
 
 ## 16. More features
 
