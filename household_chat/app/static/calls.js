@@ -78,19 +78,23 @@ function tapToHear() {
 }
 
 // ---------- sound output and microphone ----------
+// what the browser says about choosing outputs (some report "not possible" and still allow it, so it's only reported)
 const CAN_PICK_OUTPUT = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+function canSetSink() { return !!(callAudio && typeof callAudio.setSinkId === "function"); }
 async function audioDevices(kind) {
   try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === kind); } catch (e) { return []; }
 }
 function applyOutput() {
   const id = call && call.outputId ? call.outputId : lsGet(OUT_KEY);
-  if (CAN_PICK_OUTPUT && callAudio && id) callAudio.setSinkId(id).catch(() => {});
+  if (canSetSink() && id) callAudio.setSinkId(id).catch(() => {});
 }
 async function setOutput(id) {
   if (!call) return;
   call.outputId = id;
   lsSet(OUT_KEY, id || "");
-  if (CAN_PICK_OUTPUT && callAudio) { try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); } }
+  if (!canSetSink()) { toast("This browser doesn't let the app switch the output.", { error: true }); return false; }
+  try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); return false; }
+  return true;
 }
 // ⚙: where the call plays — Speakerphone, Earpiece, Bluetooth headset (and anything else by name) — as buttons,
 // where the browser lets a page choose (setSinkId: the Home Assistant app on Android, computers; not iPhones).
@@ -117,7 +121,7 @@ async function audioPanel() {
 }
 async function renderOutputs(box) {
   const listed = await audioDevices("audiooutput");
-  let outs = CAN_PICK_OUTPUT ? listed.filter((d) => d.deviceId && d.deviceId !== "communications") : [];
+  let outs = listed.filter((d) => d.deviceId && d.deviceId !== "communications");     // shown whatever the browser claims
   if (outs.length > 1) outs = outs.filter((d) => d.deviceId !== "default");     // the alias of one of the others
   if (!call) return;
   const now = call.outputId || lsGet(OUT_KEY) || "";
@@ -127,11 +131,11 @@ async function renderOutputs(box) {
     h("div", { class: "lbl-sm" }, "Sound comes out of"),
     rows.length ? h("div", { class: "out-btns" }, rows.map(({ d, k }) =>
       h("button", { class: "btn out-btn" + (d.deviceId === now ? " on" : ""), type: "button", "aria-pressed": d.deviceId === now ? "true" : "false",
-        onclick: async () => { await setOutput(d.deviceId); renderOutputs(box); } }, k.icon + " " + k.label)))
+        onclick: async () => { if (await setOutput(d.deviceId)) renderOutputs(box); } }, k.icon + " " + k.label)))
       : h("p", { class: "hint" }, "This browser doesn't let the app choose where the call plays. Use the phone's volume buttons, or its sound or Bluetooth menu."),
     // what the browser reports, so a phone that can't be made to work can at least be described
     h("p", { class: "hint browser-line" }, `Outputs the browser lists: ${listed.length}` + (listed.length ? " (" + listed.map((d, i) => d.label || `Output ${i + 1}`).join(", ") + ")" : "")
-      + `; choosing one: ${CAN_PICK_OUTPUT ? "possible" : "not possible"}. ` + browserName()));
+      + `; the browser says choosing is ${CAN_PICK_OUTPUT ? "possible" : "not possible"}. ` + browserName()));
 }
 
 // ---------- is sound flowing? (levels from the connection's own statistics) ----------

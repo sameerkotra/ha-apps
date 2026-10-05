@@ -142,16 +142,14 @@ class CallsInBrowsers(unittest.TestCase):
         t.click("#callScreen button.mute")
         self.assertTrue(t.evaluate("call.stream.getAudioTracks()[0].enabled"))
         # ⚙ (shown where outputs can be picked): the outputs as buttons; choosing one switches the call's sound
-        if t.evaluate("CAN_PICK_OUTPUT"):
-            t.click("#callScreen button.devices")
-            t.wait_for_selector("#callPanel:not([hidden]) .out-btn")
-            self.assertEqual(t.evaluate("document.querySelectorAll('#callPanel select').length"), 0)
+        t.click("#callScreen button.devices")
+        t.wait_for_selector("#callPanel:not([hidden]) .browser-line")
+        self.assertEqual(t.evaluate("document.querySelectorAll('#callPanel select').length"), 0)
+        if t.evaluate("(await navigator.mediaDevices.enumerateDevices()).some((d) => d.kind === 'audiooutput')"):
+            t.wait_for_selector("#callPanel .out-btn")
             t.click("#callPanel .out-btn")
             t.wait_for_selector("#callPanel .out-btn.on")
             self.assertEqual(t.evaluate("callAudio.sinkId"), t.evaluate("call.outputId"))
-        else:
-            t.click("#callScreen button.devices")
-            t.wait_for_selector("#callPanel:not([hidden]) .browser-line")
         n.click("#callScreen button.hangup")
         for p in (n, t):
             p.wait_for_selector("#callScreen", state="detached", timeout=10000)

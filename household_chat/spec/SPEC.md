@@ -710,7 +710,9 @@ the rest are planned in §18.1.
   - **No Speaker button**: the outputs are picked under ⚙ instead (an earlier Speaker button guessed the
     loudspeaker by label and fell back to making the sound louder, which confused). The mute button is a drawn microphone (inline SVG) with a line across
     it when muted, since no emoji shows a muted microphone.
-  - **⚙ Where the call plays**: always shown. Where the browser can pick outputs (`setSinkId`), the outputs (`enumerateDevices`, without the `communications` alias,
+  - **⚙ Where the call plays**: always shown, and the buttons whenever the browser lists any outputs — whether
+    or not it claims `setSinkId` (the Home Assistant app on Android says it can't and still switches); tapping one
+    tries it and says if it fails. The outputs (`enumerateDevices`, without the `communications` alias,
     and without `default` when there are others) as buttons sorted and named by their labels — 🔊 Speakerphone
     (`speaker`), 📱 Earpiece (`earpiece|receiver|handset`), 🎧 Bluetooth headset
     (`bluetooth|bt|airpods|buds|headset|headphone|hands-free|sco`), 🎧 Wired headset (`wired|jack|usb`), else the

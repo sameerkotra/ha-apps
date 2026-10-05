@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.7
+
+- **Calls**: the ⚙ buttons (Speakerphone, Earpiece, headset) are shown whenever the phone lists any outputs, even when its browser claims an app can't choose — the Home Assistant app on Android says that and still switches. Tapping one tries it and says if it doesn't work.
+
 ## 2.3.6
 
 - **Calls**: ⚙ is always shown. Where the phone lets the app choose where the call plays, the buttons are there; where it doesn't, ⚙ says so and shows what the browser reports (the outputs it lists and the browser), so the problem can be described.
