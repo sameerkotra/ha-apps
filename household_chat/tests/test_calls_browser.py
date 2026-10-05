@@ -150,7 +150,8 @@ class CallsInBrowsers(unittest.TestCase):
             t.wait_for_selector("#callPanel .out-btn.on")
             self.assertEqual(t.evaluate("callAudio.sinkId"), t.evaluate("call.outputId"))
         else:
-            self.assertEqual(t.evaluate("document.querySelectorAll('#callScreen button.devices').length"), 0)
+            t.click("#callScreen button.devices")
+            t.wait_for_selector("#callPanel:not([hidden]) .browser-line")
         n.click("#callScreen button.hangup")
         for p in (n, t):
             p.wait_for_selector("#callScreen", state="detached", timeout=10000)

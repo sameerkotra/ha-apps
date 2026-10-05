@@ -73,7 +73,7 @@ An admin turns calls on in **App settings → Voice calls** (off until then).
 - **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
 - **During a call**:
   - The microphone button mutes and unmutes you (muted, it's red with a line across the microphone); the other person sees that you've muted.
-  - ⚙ shows **where the call plays** — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth or wired headset — as buttons (the Home Assistant app on Android, and computers; iPhones don't let an app choose, so there ⚙ isn't shown and the phone's own sound menu does it). The choice is remembered on that device.
+  - ⚙ shows **where the call plays** — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth or wired headset — as buttons (computers, and phones whose browser lets an app choose). Where the phone doesn't allow it, ⚙ says so and what the browser reports, and the phone's own sound or Bluetooth menu does it. The choice is remembered on that device.
   - Two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
   - 🔈 appears if your phone held back their sound: tap it to hear them.
   - The red button hangs up. The screen stays on while the call is on.

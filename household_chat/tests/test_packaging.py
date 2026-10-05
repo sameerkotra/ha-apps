@@ -9,7 +9,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "2.3.5"
+VERSION = "2.3.6"
 REPO_URL = pk.REPO_URL
 
 

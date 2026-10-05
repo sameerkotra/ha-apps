@@ -710,12 +710,13 @@ the rest are planned in §18.1.
   - **No Speaker button**: the outputs are picked under ⚙ instead (an earlier Speaker button guessed the
     loudspeaker by label and fell back to making the sound louder, which confused). The mute button is a drawn microphone (inline SVG) with a line across
     it when muted, since no emoji shows a muted microphone.
-  - **⚙ Where the call plays**: shown only where the browser can pick outputs (`setSinkId`: the Home Assistant
-    app on Android, computers; not iPhones). The outputs (`enumerateDevices`, without the `communications` alias,
+  - **⚙ Where the call plays**: always shown. Where the browser can pick outputs (`setSinkId`), the outputs (`enumerateDevices`, without the `communications` alias,
     and without `default` when there are others) as buttons sorted and named by their labels — 🔊 Speakerphone
     (`speaker`), 📱 Earpiece (`earpiece|receiver|handset`), 🎧 Bluetooth headset
     (`bluetooth|bt|airpods|buds|headset|headphone|hands-free|sco`), 🎧 Wired headset (`wired|jack|usb`), else the
-    label itself or "Output n". The choice is kept in the
+    label itself or "Output n". Otherwise a note, and in both cases a line saying what the browser reports (how
+    many outputs it lists and their labels, whether choosing is possible, and the browser), so a phone that can't
+    be made to work can be described. The choice is kept in the
     browser (`localStorage` `hchat.callOut`) for the next call. No microphone picker: the browser's default.
   - **Is sound getting through?** Every second the page reads the connection's statistics: `inbound-rtp`
     packets and `audioLevel` (their sound) and `media-source` `audioLevel` (my microphone), drawn as two level

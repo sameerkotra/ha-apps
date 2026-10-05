@@ -1,8 +1,12 @@
 # Changelog
 
+## 2.3.6
+
+- **Calls**: ⚙ is always shown. Where the phone lets the app choose where the call plays, the buttons are there; where it doesn't, ⚙ says so and shows what the browser reports (the outputs it lists and the browser), so the problem can be described.
+
 ## 2.3.5
 
-- **Calls**: ⚙ now shows **where the call plays** as buttons — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth headset — instead of lists, and no longer offers a microphone choice. Works in the Home Assistant app on Android and on computers; iPhones don't let an app choose, so there ⚙ isn't shown.
+- **Calls**: ⚙ now shows **where the call plays** as buttons — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth headset — instead of lists, and no longer offers a microphone choice. Shown where the browser lets the app choose.
 
 ## 2.3.4
 

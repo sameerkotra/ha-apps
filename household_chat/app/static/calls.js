@@ -102,6 +102,11 @@ function outputKind(d, i) {
   if (/speaker/.test(l)) return { key: "speaker", label: "Speakerphone", icon: "🔊" };
   return { key: "other", label: d.label || `Output ${i + 1}`, icon: "🔈" };
 }
+function browserName() {
+  const ua = navigator.userAgent || "";
+  const m = ua.match(/(Chrome|Firefox|Safari)\/(\d+)/);
+  return (ua.includes("Home Assistant") ? "Home Assistant app, " : "") + (m ? `${m[1]} ${m[2]}` : "") + (/Android/.test(ua) ? ", Android" : /iPhone|iPad/.test(ua) ? ", iPhone" : "");
+}
 async function audioPanel() {
   if (!call) return;
   const box = $("#callPanel");
@@ -111,7 +116,8 @@ async function audioPanel() {
   box.hidden = false;
 }
 async function renderOutputs(box) {
-  let outs = CAN_PICK_OUTPUT ? (await audioDevices("audiooutput")).filter((d) => d.deviceId && d.deviceId !== "communications") : [];
+  const listed = await audioDevices("audiooutput");
+  let outs = CAN_PICK_OUTPUT ? listed.filter((d) => d.deviceId && d.deviceId !== "communications") : [];
   if (outs.length > 1) outs = outs.filter((d) => d.deviceId !== "default");     // the alias of one of the others
   if (!call) return;
   const now = call.outputId || lsGet(OUT_KEY) || "";
@@ -122,7 +128,10 @@ async function renderOutputs(box) {
     rows.length ? h("div", { class: "out-btns" }, rows.map(({ d, k }) =>
       h("button", { class: "btn out-btn" + (d.deviceId === now ? " on" : ""), type: "button", "aria-pressed": d.deviceId === now ? "true" : "false",
         onclick: async () => { await setOutput(d.deviceId); renderOutputs(box); } }, k.icon + " " + k.label)))
-      : h("p", { class: "hint" }, "This browser doesn't let the app choose. Use the phone's volume buttons, or its sound or Bluetooth menu."));
+      : h("p", { class: "hint" }, "This browser doesn't let the app choose where the call plays. Use the phone's volume buttons, or its sound or Bluetooth menu."),
+    // what the browser reports, so a phone that can't be made to work can at least be described
+    h("p", { class: "hint browser-line" }, `Outputs the browser lists: ${listed.length}` + (listed.length ? " (" + listed.map((d, i) => d.label || `Output ${i + 1}`).join(", ") + ")" : "")
+      + `; choosing one: ${CAN_PICK_OUTPUT ? "possible" : "not possible"}. ` + browserName()));
 }
 
 // ---------- is sound flowing? (levels from the connection's own statistics) ----------
@@ -211,7 +220,7 @@ function callBtn(label, cls, run, title) { return h("button", { class: "call-btn
 function inCallButtons() {
   return [
     callBtn(micIcon(!!(call && call.muted)), "mute" + (call && call.muted ? " on" : ""), toggleMute, call && call.muted ? "Unmute" : "Mute"),
-    CAN_PICK_OUTPUT ? callBtn("⚙", "devices", audioPanel, "Where the call plays") : null,
+    callBtn("⚙", "devices", audioPanel, "Where the call plays"),
     call && call.blocked ? callBtn("🔈", "hear on", tapToHear, "Tap to hear") : null,
     callBtn("📞", "hangup", () => hangUp(), "Hang up"),
   ].filter(Boolean);
