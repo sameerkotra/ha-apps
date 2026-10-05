@@ -14,13 +14,8 @@ function micPossible() { return !!(window.isSecureContext && navigator.mediaDevi
 function noMicDialog() {
   openModal("Voice calls", h("p", null, "Calls need the microphone, and this browser can't use it here. It needs a secure (https) connection and permission — inside the Home Assistant app it may be blocked. Try Home Assistant in your phone's browser, or on a computer."));
 }
-const MIC_KEY = "hchat.callMic", OUT_KEY = "hchat.callOut";
-function getMic(deviceId) {
-  const want = deviceId || lsGet(MIC_KEY);
-  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-  if (want) audio.deviceId = deviceId ? { exact: deviceId } : { ideal: want };
-  return navigator.mediaDevices.getUserMedia({ audio });
-}
+const OUT_KEY = "hchat.callOut";
+function getMic() { return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
 
 // ---------- tones (made in the browser, no sound files) ----------
 let toneCtx = null, toneTimer = null;
@@ -97,39 +92,37 @@ async function setOutput(id) {
   lsSet(OUT_KEY, id || "");
   if (CAN_PICK_OUTPUT && callAudio) { try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); } }
 }
-async function switchMic(deviceId) {
-  if (!call || !call.stream) return;
-  let fresh;
-  try { fresh = await getMic(deviceId); } catch (e) { toast("Couldn't use that microphone.", { error: true }); return; }
-  if (!call) { fresh.getTracks().forEach((t) => t.stop()); return; }
-  const track = fresh.getAudioTracks()[0];
-  track.enabled = !call.muted;
-  const sender = call.pc && call.pc.getSenders().find((x) => x.track && x.track.kind === "audio");
-  if (sender) await sender.replaceTrack(track);
-  call.stream.getTracks().forEach((t) => t.stop());
-  call.stream = fresh;
-  lsSet(MIC_KEY, deviceId);
-  call.quietMic = 0;
-  setCallHint("");
+// ⚙: where the call plays — Speakerphone, Earpiece, Bluetooth headset (and anything else by name) — as buttons,
+// where the browser lets a page choose (setSinkId: the Home Assistant app on Android, computers; not iPhones).
+function outputKind(d, i) {
+  const l = (d.label || "").toLowerCase();
+  if (/bluetooth|\bbt\b|airpods|buds|headset|headphone|hands-?free|\bsco\b/.test(l)) return { key: "bluetooth", label: "Bluetooth headset", icon: "🎧" };
+  if (/wired|jack|usb/.test(l)) return { key: "wired", label: "Wired headset", icon: "🎧" };
+  if (/earpiece|receiver|handset/.test(l)) return { key: "earpiece", label: "Earpiece", icon: "📱" };
+  if (/speaker/.test(l)) return { key: "speaker", label: "Speakerphone", icon: "🔊" };
+  return { key: "other", label: d.label || `Output ${i + 1}`, icon: "🔈" };
 }
 async function audioPanel() {
   if (!call) return;
   const box = $("#callPanel");
   if (!box) return;
   if (!box.hidden) { box.hidden = true; return; }
-  const [mics, outs] = await Promise.all([audioDevices("audioinput"), CAN_PICK_OUTPUT ? audioDevices("audiooutput") : []]);
-  const micNow = call.stream && call.stream.getAudioTracks()[0] ? call.stream.getAudioTracks()[0].getSettings().deviceId : "";
-  const opt = (d, i, word) => h("option", { value: d.deviceId }, d.label || `${word} ${i + 1}`);
-  const micSel = h("select", { "aria-label": "Microphone", onchange: (e) => switchMic(e.target.value) }, mics.map((d, i) => opt(d, i, "Microphone")));
-  micSel.value = micNow;
-  const outNow = call.outputId || lsGet(OUT_KEY) || "default";
-  const outSel = h("select", { "aria-label": "Sound output", onchange: (e) => setOutput(e.target.value) }, outs.map((d, i) => opt(d, i, "Output")));
-  outSel.value = outs.some((d) => d.deviceId === outNow) ? outNow : (outs[0] || {}).deviceId || "";
-  mount(box,
-    field("Microphone", micSel),
-    outs.length ? field("Sound comes out of", outSel)
-      : h("p", { class: "hint" }, "This browser plays the call through the phone's current output. Use your phone's volume buttons, or its sound or Bluetooth menu, to change it."));
+  await renderOutputs(box);
   box.hidden = false;
+}
+async function renderOutputs(box) {
+  let outs = CAN_PICK_OUTPUT ? (await audioDevices("audiooutput")).filter((d) => d.deviceId && d.deviceId !== "communications") : [];
+  if (outs.length > 1) outs = outs.filter((d) => d.deviceId !== "default");     // the alias of one of the others
+  if (!call) return;
+  const now = call.outputId || lsGet(OUT_KEY) || "";
+  const order = { speaker: 0, earpiece: 1, bluetooth: 2, wired: 3, other: 4 };
+  const rows = outs.map((d, i) => ({ d, k: outputKind(d, i) })).sort((a, b) => order[a.k.key] - order[b.k.key]);
+  mount(box,
+    h("div", { class: "lbl-sm" }, "Sound comes out of"),
+    rows.length ? h("div", { class: "out-btns" }, rows.map(({ d, k }) =>
+      h("button", { class: "btn out-btn" + (d.deviceId === now ? " on" : ""), type: "button", "aria-pressed": d.deviceId === now ? "true" : "false",
+        onclick: async () => { await setOutput(d.deviceId); renderOutputs(box); } }, k.icon + " " + k.label)))
+      : h("p", { class: "hint" }, "This browser doesn't let the app choose. Use the phone's volume buttons, or its sound or Bluetooth menu."));
 }
 
 // ---------- is sound flowing? (levels from the connection's own statistics) ----------
@@ -158,7 +151,7 @@ async function watchSound() {
   else if (secs > 5 && c.noPackets >= 5) hint = "No sound is arriving from " + c.peerName + ". The connection may be blocked one way — try again, or both on the same Wi-Fi.";
   else if (c.peerMuted) hint = c.peerName + " has muted their microphone.";
   else if (secs > 5 && c.quietThem >= 6) hint = c.peerName + "'s microphone seems silent — it may be muted or blocked on their phone.";
-  else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app, or pick another in ⚙.";
+  else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app.";
   setCallHint(hint);
 }
 function meter(sel, level) {
@@ -218,7 +211,7 @@ function callBtn(label, cls, run, title) { return h("button", { class: "call-btn
 function inCallButtons() {
   return [
     callBtn(micIcon(!!(call && call.muted)), "mute" + (call && call.muted ? " on" : ""), toggleMute, call && call.muted ? "Unmute" : "Mute"),
-    callBtn("⚙", "devices", audioPanel, "Microphone and sound output"),
+    CAN_PICK_OUTPUT ? callBtn("⚙", "devices", audioPanel, "Where the call plays") : null,
     call && call.blocked ? callBtn("🔈", "hear on", tapToHear, "Tap to hear") : null,
     callBtn("📞", "hangup", () => hangUp(), "Hang up"),
   ].filter(Boolean);

@@ -707,13 +707,16 @@ the rest are planned in §18.1.
   call's running time. A soft ringback tone plays while it rings. Once connected, both sides have:
   - **Mute** (the track is disabled; the other side is told over a small WebRTC data channel `hchat` that the
     caller opens, `{muted}`, and shows "Asha has muted their microphone").
-  - **No Speaker button**: a page can't choose a phone's loudspeaker (the Android Home
-    Assistant app lists no outputs), and making the sound louder through Web Audio didn't help. The phone's own
-    volume, sound or Bluetooth menu does it. The mute button is a drawn microphone (inline SVG) with a line across
+  - **No Speaker button**: the outputs are picked under ⚙ instead (an earlier Speaker button guessed the
+    loudspeaker by label and fell back to making the sound louder, which confused). The mute button is a drawn microphone (inline SVG) with a line across
     it when muted, since no emoji shows a muted microphone.
-  - **⚙ Microphone and sound output**: a panel with the microphones (`enumerateDevices`; switching gets the new
-    one and `replaceTrack`s it into the call) and, where `setSinkId` exists, the outputs. Both choices are kept in
-    the browser (`localStorage` `hchat.callMic`, `hchat.callOut`) for the next call.
+  - **⚙ Where the call plays**: shown only where the browser can pick outputs (`setSinkId`: the Home Assistant
+    app on Android, computers; not iPhones). The outputs (`enumerateDevices`, without the `communications` alias,
+    and without `default` when there are others) as buttons sorted and named by their labels — 🔊 Speakerphone
+    (`speaker`), 📱 Earpiece (`earpiece|receiver|handset`), 🎧 Bluetooth headset
+    (`bluetooth|bt|airpods|buds|headset|headphone|hands-free|sco`), 🎧 Wired headset (`wired|jack|usb`), else the
+    label itself or "Output n". The choice is kept in the
+    browser (`localStorage` `hchat.callOut`) for the next call. No microphone picker: the browser's default.
   - **Is sound getting through?** Every second the page reads the connection's statistics: `inbound-rtp`
     packets and `audioLevel` (their sound) and `media-source` `audioLevel` (my microphone), drawn as two level
     bars. After 5 s a line says what's wrong: no packets arriving from them, their sound silent for 6 s, they've
@@ -816,7 +819,7 @@ the rest are planned in §18.1.
 counts; missed calls and their pushes; the phone's Decline; busy; offers that never come; quiet hours and muted
 chats; failures, disabling, the gone-side check and restarts; sizes; disappearing chats; a 2.2 database
 upgraded) and `tests/test_calls_browser.py` (the app in uvicorn and two headless Chromium pages with fake
-microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, switching microphones, hang up, decline, the notes; skipped without Playwright).
+microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, the output buttons, hang up, decline, the notes; skipped without Playwright).
 
 ## 16. More features
 

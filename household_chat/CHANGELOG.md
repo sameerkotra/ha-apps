@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.5
+
+- **Calls**: ⚙ now shows **where the call plays** as buttons — 🔊 Speakerphone, 📱 Earpiece, 🎧 Bluetooth headset — instead of lists, and no longer offers a microphone choice. Works in the Home Assistant app on Android and on computers; iPhones don't let an app choose, so there ⚙ isn't shown.
+
 ## 2.3.4
 
 - **Calls**: the Speaker button is gone — on phones a web page can't switch to the loudspeaker, and making the call louder didn't help. Use the phone's volume buttons, or its sound or Bluetooth menu.
