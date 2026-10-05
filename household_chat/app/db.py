@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id),
-  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll','card')),   -- 'card': shared from another app (§15.11)
+  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll','card','call')),   -- 'card': shared from another app (§15.11); 'call': a call note (§15.12)
   body TEXT NOT NULL DEFAULT '',
   reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,
   mentions TEXT,                             -- JSON list of user ids (server-checked)
@@ -142,6 +142,17 @@ CREATE TABLE IF NOT EXISTS app_cards (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_app_cards_app ON app_cards(app, message_id);
+-- voice calls (§15.12): one row per call that rang; its note in the chat is message_id (kind 'call')
+CREATE TABLE IF NOT EXISTS calls (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  caller_id TEXT NOT NULL, callee_id TEXT NOT NULL,
+  started_at TEXT NOT NULL,                  -- when it started ringing
+  answered_at TEXT, ended_at TEXT,
+  outcome TEXT CHECK (outcome IN ('answered','missed','declined','busy','failed')),   -- NULL while it's on
+  message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_calls_msg ON calls(message_id);
 CREATE TABLE IF NOT EXISTS stars (
   user_id TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL, PRIMARY KEY (user_id, message_id)
@@ -275,13 +286,15 @@ def _migrate_shared_folders(conn) -> None:
     conn.execute("DROP TABLE shared_folders")
 
 
-OLD_KINDS = "CHECK (kind IN ('text','file','system','poll'))"
-NEW_KINDS = "CHECK (kind IN ('text','file','system','poll','card'))"
+# messages.kind's CHECK in older databases, and today's (NEW_KINDS)
+OLD_KINDS = "CHECK (kind IN ('text','file','system','poll'))"                    # before 2.2.0
+CARD_KINDS = "CHECK (kind IN ('text','file','system','poll','card'))"            # 2.2.x
+NEW_KINDS = "CHECK (kind IN ('text','file','system','poll','card','call'))"      # 2.3.0: call notes
 
 
-def _allow_card_messages(conn) -> bool:
-    """Databases from before 2.2.0 have messages.kind CHECK (… 'poll') without 'card'. SQLite can't change a
-    CHECK in place, so the table is rebuilt as SQLite documents it (https://sqlite.org/lang_altertable.html,
+def _allow_new_kinds(conn) -> bool:
+    """Databases from before 2.3.0 have a messages.kind CHECK without 'call' (before 2.2.0 also without
+    'card'). SQLite can't change a CHECK in place, so the table is rebuilt as SQLite documents it (https://sqlite.org/lang_altertable.html,
     "other kinds of table schema changes"): foreign keys off; in ONE transaction a copy of the table with the
     new CHECK (the stored CREATE statement itself, so every column — also those added later by ALTER — keeps
     its place and definition), every row copied with its id, the old table dropped, the copy renamed, its
@@ -293,9 +306,10 @@ def _allow_card_messages(conn) -> bool:
     sql = row[0]
     if NEW_KINDS in sql:
         return False
-    if OLD_KINDS not in sql:
+    old = next((k for k in (CARD_KINDS, OLD_KINDS) if k in sql), None)
+    if old is None:
         raise RuntimeError("The messages table isn't the expected one; not changing it.")
-    create = sql.replace(OLD_KINDS, NEW_KINDS, 1)
+    create = sql.replace(old, NEW_KINDS, 1)
     head = create[:create.index("(")]
     create = head.replace("messages", "messages_new", 1) + create[len(head):]
     if conn.in_transaction:
@@ -333,6 +347,9 @@ def _allow_card_messages(conn) -> bool:
     return True
 
 
+_allow_card_messages = _allow_new_kinds      # its name before 2.3.0
+
+
 def init_db() -> None:
     os.makedirs(os.path.dirname(config.DB_PATH) or ".", exist_ok=True)
     conn = _connect()
@@ -341,7 +358,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         _migrate(conn)
         conn.commit()
-        _allow_card_messages(conn)
+        _allow_new_kinds(conn)
         app_bus.migrate(conn)          # messages between the household apps (bus_outbox, bus_seen, bus_apps)
         conn.commit()
     finally:

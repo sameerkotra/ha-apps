@@ -84,6 +84,8 @@ def title_for(conn, conv, sender_name: str) -> str:
 
 
 def text_for(conn, msg, level: str, sender_name: str, group: bool) -> str:
+    if msg["kind"] == "call" and level != "none":     # only missed calls are sent (§15.12)
+        return f"📞 Missed call from {sender_name}"
     if level == "none":
         return f"New message in {config.APP_TITLE}"
     if level == "sender":
@@ -132,6 +134,10 @@ def new_message(mid: int) -> None:
         msg = chats.message_row(conn, mid)
         if msg is None or msg["deleted_at"] or msg["kind"] == "system":
             return
+        if msg["kind"] == "call":       # a call note: only a missed call is news (§15.12)
+            c = chats.call_row(conn, mid)
+            if c is None or c["outcome"] not in ("missed", "busy"):
+                return
         conv = chats.conv_row(conn, msg["conversation_id"])
         if conv is None or conv["kind"] == "personal":
             return
@@ -268,7 +274,7 @@ def handle_action(action: str, reply_text: str | None) -> str:
     if not isinstance(action, str) or not action.startswith("HCHAT_"):
         return "ignored"
     kind, _, token = action[len("HCHAT_"):].partition("_")
-    if kind not in ("REPLY", "READ") or not token:
+    if kind not in ("REPLY", "READ", "DECLINE") or not token:
         return "ignored"
     out = chats.Outbox()
     with db.get_conn() as conn:
@@ -278,14 +284,16 @@ def handle_action(action: str, reply_text: str | None) -> str:
         made = config.parse_iso(t["created_at"])
         if made is None or config.utcnow() - made > timedelta(hours=TOKEN_HOURS):
             return "expired"
-        if not settings.get("notification_reply", conn):
+        if kind != "DECLINE" and not settings.get("notification_reply", conn):
             return "off"
         user = chats.user_row(conn, t["user_id"])
         conv = chats.conv_row(conn, t["conversation_id"])
         m = chats.member_row(conn, t["conversation_id"], t["user_id"]) if conv else None
         if user is None or user["disabled"] or m is None:
             return "refused"
-        if kind == "READ":
+        if kind == "DECLINE":           # a ringing call's Decline button (§15.12): ended below, after this connection
+            result = "decline"
+        elif kind == "READ":
             chats.mark_read(conn, out, conv, m, user["id"], conv["last_message_id"] or 0)
             result = "read"
         else:
@@ -297,5 +305,8 @@ def handle_action(action: str, reply_text: str | None) -> str:
             mid = chats.post_message(conn, out, conv, m, udict, text, via="notification")
             chats.mark_read(conn, out, conv, chats.member_row(conn, conv["id"], user["id"]), user["id"], mid)
             result = "replied"
+    if result == "decline":
+        from . import calls
+        return calls.decline_from_phone(t["user_id"], t["conversation_id"])
     out.flush()
     return result

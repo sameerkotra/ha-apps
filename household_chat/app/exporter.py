@@ -172,6 +172,9 @@ def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) 
                 parts.append(f'<div class="quote">{e(rt.get("author") or "")}: {e(rt.get("text") or "")}</div>')
             if msg["deleted"]:
                 parts.append('<div class="del">Message deleted</div>')
+            elif msg["call"]:
+                cl = msg["call"]
+                parts.append(f'<div class="poll">{e(chats.call_label(cl["outcome"], cl["seconds"]))}</div>')
             elif msg["card"]:
                 cd = msg["card"]
                 owner = f" ({cd['owner']}'s)" if cd.get("owner") else ""

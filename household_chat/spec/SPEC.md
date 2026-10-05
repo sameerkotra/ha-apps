@@ -27,11 +27,12 @@ A private chat and file-sharing app for the household, inside Home Assistant. Ea
 - **Remind me** (§16.1), **starred messages** (§16.2), **forward** (§16.3), **chat descriptions** (§16.6), **child accounts** (§16.5), **send later** (§16.7), **drafts across devices** (§16.8).
 - **Home / away** next to people's names and **photos**, from Home Assistant (§15.3, §15.3.1).
 - **Reply from the phone notification** without opening Home Assistant (§15.1).
+- **Voice calls** in direct chats, optional, on the home network (§15.12).
 - **Search** across the messages and file names of the chats you're in.
 - **Shared folders**: existing `/share` folders shared into chats (§12).
 - **Notifications** to phones through HA notify (§7).
 - **Out of scope.**
-  - Voice and video calls (planned as an optional feature, §18.1).
+  - Video calls, and voice calls from outside the home network (planned, §18.1).
   - End-to-end encryption: messages are in the app's SQLite database and files are plain files in `/share` (§4.1 says who can read them).
   - Access from outside HA (no public link sharing), and chatting with people who aren't HA users.
   - Bots, link previews (they'd fetch every shared link), GIFs and stickers, and an unread badge on HA's sidebar (app panels can't show one).
@@ -129,8 +130,10 @@ household_chat/
 | `who_can_announce` | `admins` | `admins`, or `admins_and_group_admins` (§15.7). |
 | `children_can_message_each_other` | false | §16.5. |
 | `export_max_mb` | 500 | Largest chat download, files included (§15.9). |
+| `calls_enabled` | false | Voice calls (§15.12). Off: no 📞, and the call routes answer 403. |
+| `calls_ring_seconds` | 30 | How long a call rings before it's missed (15–60; shown while calls are on). |
 
-The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, messages, retention, notifications) on the shared `settings_core.Registry` (`app/common/settings_core.py`). `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups, storage}` (`meta[key]` = label, help, group, kind, `restartRequired`, range, choices, …; `storage` as in §5.3.1); unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1) is also kept in `app_settings` but isn't a setting.
+The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, messages, retention, notifications, calls) on the shared `settings_core.Registry` (`app/common/settings_core.py`). `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups, storage}` (`meta[key]` = label, help, group, kind, `restartRequired`, range, choices, …; `storage` as in §5.3.1); unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1) is also kept in `app_settings` but isn't a setting.
 
 ## 4. Security & identity
 
@@ -225,8 +228,8 @@ CREATE TABLE members (conversation_id TEXT NOT NULL REFERENCES conversations(id)
 CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT,   -- global order; paging by id
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id),                   -- NULL for system messages
-  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll','card')),   -- card: §15.11
-  body TEXT NOT NULL DEFAULT '',                       -- ≤ 8000 chars; system: JSON {event, …}; card: its title
+  kind TEXT NOT NULL CHECK (kind IN ('text','file','system','poll','card','call')),   -- card: §15.11; call: §15.12
+  body TEXT NOT NULL DEFAULT '',                       -- ≤ 8000 chars; system: JSON {event, …}; card: its title; call: ''
   reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL, reply_gone INTEGER NOT NULL DEFAULT 0,
   mentions TEXT, mention_all INTEGER NOT NULL DEFAULT 0,   -- server-resolved user ids; @everyone
   forwarded INTEGER NOT NULL DEFAULT 0, via TEXT,      -- via = 'notification' for replies from the phone
@@ -255,6 +258,10 @@ CREATE TABLE app_cards (message_id INTEGER PRIMARY KEY REFERENCES messages(id) O
   item_id TEXT NOT NULL, title TEXT NOT NULL, owner_name TEXT,
   panel TEXT, target TEXT,                             -- the other app's page and the item's route in it
   shared_with_members INTEGER NOT NULL DEFAULT 0, bus_id TEXT, created_at TEXT NOT NULL);
+CREATE TABLE calls (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,   -- §15.12
+  caller_id TEXT NOT NULL, callee_id TEXT NOT NULL, started_at TEXT NOT NULL, answered_at TEXT, ended_at TEXT,
+  outcome TEXT CHECK (outcome IN ('answered','missed','declined','busy','failed')),   -- NULL while on
+  message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE);   -- its note
 -- bus_outbox, bus_seen, bus_apps: the app messages (APP_MESSAGES_SPEC.md §4, created by app_bus.migrate)
 ```
 
@@ -359,6 +366,7 @@ CREATE TABLE app_cards (message_id INTEGER PRIMARY KEY REFERENCES messages(id) O
 | POST `/conversations/{id}/scheduled` · GET `/me/scheduled` · PATCH / DELETE `/scheduled/{id}` · POST `/scheduled/{id}/send-now` | Send later (§16.7) |
 | GET `/conversations/{id}/export?from=&to=` | Download a chat (§15.9) |
 | GET `/conversations/{id}/folders` · GET `/folders/{linkId}/list\|file\|search` · POST `/folders/{linkId}/upload\|mkdir` | Shared folders (§12) |
+| POST `/calls` · POST `/calls/{id}/offer\|answer\|candidate\|decline\|end` · GET `/calls/current` | Voice calls (§15.12) |
 | GET `/stream` | Server-Sent Events (§8) |
 | GET `/health` | `{status, version}` |
 | Admin: GET `/admin/people[?refresh=1]` · PATCH `/admin/people/{id}` `{disabled, isChild}` · POST / DELETE `/admin/people/{id}/notify[/{svc}]` · POST `/admin/people/{id}/notify/test` · GET `/admin/notify-services` · GET `/admin/person-entities` · PUT `/admin/people/{id}/presence` | People, notify extras, home/away (§7, §15.3) |
@@ -403,7 +411,7 @@ No admin route returns message text, file names or file contents of chats the ad
 ## 8. Live updates (`live.py`)
 
 - **`GET /api/stream`.** Server-Sent Events, one per open tab, keyed to the user. The server sends a `: ping` every 20 s (ingress and proxies drop idle connections).
-- **Events:** `hello`; `message` (with its id, for `Last-Event-ID`); `message_updated` (edits, deletes, reactions, pins, poll votes and closing); `message_removed` (§15.8); `read`; `typing`; `conversation` (`{id, removed?}`); `unread`; `presence`; `reminder`; `scheduled`; `settings`; `storage`; `closed` (disabled or restored) and `reload`. Each event carries only what that user may see, re-checked against membership at send time.
+- **Events:** `hello`; `message` (with its id, for `Last-Event-ID`); `message_updated` (edits, deletes, reactions, pins, poll votes and closing); `message_removed` (§15.8); `read`; `typing`; `conversation` (`{id, removed?}`); `unread`; `presence`; `reminder`; `scheduled`; `settings`; `storage`; `call` (§15.12, only to the two people in the call); `closed` (disabled or restored) and `reload`. Each event carries only what that user may see, re-checked against membership at send time.
 - **Hub.** An in-memory map of user → queues, with a bounded queue per connection (a slow client is dropped and reconnects). This works because the app runs one process: uvicorn with 1 worker, and the Dockerfile says so.
 - **Resume.** The browser reconnects with `Last-Event-ID` (the newest message id it has); the server replays newer messages for the user's chats, up to 500, else tells the page to reload the chat. After reconnecting, the page also catches up through `GET …/messages?after=`.
 - **Fallback.** If SSE fails three times, the page polls every 5 s while visible and every 60 s while hidden, and tries SSE again after a minute.
@@ -447,6 +455,7 @@ No admin route returns message text, file names or file contents of chats the ad
 The 20-second loop is a `Jobs.every()` job of the shared runner (`app/common/housekeeping.py`) started in `main.py`'s lifespan and cancelled on shutdown; logging is set up by `housekeeping.setup_logging()`.
 
 - **Every tick (20 s).** The disappearing-message expiry pass (§15.8), held and quiet-hour pushes, due reminders, due scheduled messages, poll closing, the app-messages outbox (`app_bus.run_outbox_once`: re-sends, expiry, pruning, the six-hourly `hello`; §15.11).
+- **Every 2 seconds** (its own job, `calls.tick`). Calls (§15.12): rings that time out become missed calls, offers that never came are dropped, and an answered call ends when one side has been gone a minute.
 - **Every minute.** Home/away from `GET /api/states` while someone has the app open (§15.3); typing states older than 6 s and expired presence are dropped.
 - **Every 5 minutes.** Check the chat files folder (§5.3.1); refresh people and phones from HA (§7); scan shared folders (§12).
 - **Every 10 minutes.** People's photos (§15.3.1).
@@ -682,6 +691,115 @@ Household Docs' *Send to chat* (Docs spec §17.15) reaches Chat as app messages 
   (`common_tests/fake_ha_bus.py`) with a fake Household Docs, one shared socket, duplicates acted on once; plus
   `common_tests/test_app_bus.py` on the app's own copies.
 
+### 15.12 Voice calls (`calls.py`, `routers/calls.py`, `static/calls.js`)
+
+Optional, **off** until an admin turns it on (App settings → *Voice calls*, `calls_enabled`). One-to-one calls in
+direct chats, between two browsers on the **home network**. Calling from outside the home (STUN, a relay) and
+the rest are planned in §18.1.
+
+**What it does**
+
+- A **📞** button in the header of a **direct chat** the person may post in. Not in groups, not in "My room" (§17;
+  409 "Not possible in your personal room"), not in a read-only direct chat (§4: the other person has no access,
+  or two children while `children_can_message_each_other` is off; 409). Children (§16.5) can call wherever they
+  can post in a direct chat.
+- **The caller** sees a full-screen call screen: photo, name, "Calling…" → "Ringing…" → "Connecting…" → the
+  call's running time, with **Mute** and **Hang up**. A soft ringback tone plays while it rings. (A web page
+  can't switch between the earpiece and the loudspeaker, so there is no Speaker button.)
+- **The person called** gets a ringing screen in every open Chat tab, in a browser or the Companion app (a ring
+  tone made in the browser, and vibration where the phone allows it), and a phone notification (§7 phones and
+  extras): title the caller's name, "📞 Asha is calling" (preview level *none*: title "Household Chat",
+  "📞 Incoming call"), `tag: hchat_call_<call id>`, `ttl: 0`, `priority: high`, iOS
+  `push.interruption-level: time-sensitive`, and two buttons:
+  - **Answer** (`action: "URI"`, `uri` = the ingress URL) opens Chat. Notifications can't open a particular chat
+    (§18, deep links), so the page asks `GET /api/calls/current` when it opens (and on every live-update
+    `hello`, and on each poll while live updates are down) and shows the ringing screen above whatever page
+    it's on.
+  - **Decline** (`HCHAT_DECLINE_<token>`) is handled without opening anything, like *Mark as read* (§15.1): the
+    token is a `notify_tokens` row for the person and the chat; the action declines that person's ringing call
+    in that chat. It works even with `notification_reply` off.
+  - Answering in one tab stops the ringing in the others ("Answered on another device") and takes the
+    notification off the phone (`clear_notification` with the call's tag, sent to Companion-app services only —
+    other services would show the words).
+- **Unanswered** after *Ring for* (`calls_ring_seconds`, default 30 s): the call ends as **missed**.
+- **Busy**: one call at a time per person. Starting a call while in one: 409 "You're already in a call."
+  Calling someone who is in a call or being rung: 409 "Asha is on another call." (a busy tone), and a missed call
+  (`busy`) is noted for them. Starting a call counts toward the 30 messages a minute (§4), since it can leave a
+  note and a push.
+- **Quiet hours and mute** (§7): the phone isn't rung when the person called is in their quiet hours, their level
+  is `off`, or the chat is muted (`off` or `muted_until` in the future); open tabs still ring. The missed-call
+  push then follows §7 like a message (held for the quiet-hours summary; none for a muted chat).
+- **A call note** in the chat when it ends: a message of kind `call` from the caller, with an empty body, linked
+  to its `calls` row. The page words it for each side: "📞 Outgoing call · 4 min" / "📞 Incoming call · 4 min",
+  "📞 No answer" / "📞 Missed call", "📞 Busy" / "📞 Missed call", "📞 Declined" / "📞 You declined a call",
+  "📞 Call couldn't connect", with **Call back** while calling is possible. Chat-list previews, exports and pushes
+  use the neutral words ("📞 Call · 4 min", "📞 Missed call", "📞 Declined call").
+  - Only **missed** (and busy) notes are unread for the person called (`unread_counts`), and only they are
+    notified, as "📞 Missed call from Asha" (or "New message in Household Chat" at preview level *none*), through
+    `notifier.new_message` with the chat's usual tag and buttons.
+  - Notes follow the chat's disappearing setting and retention like other messages. They can't be edited or
+    forwarded, and have no message menu. Deleting a note (by the API) removes its `calls` row.
+  - A call that never rang (the offer never came) leaves no note.
+- While a call is connected, the page holds a screen **wake lock** where the browser has one.
+
+**How it works**
+
+- **The sound goes browser to browser** with WebRTC (Opus, always encrypted between the two, DTLS-SRTP). The app
+  never handles audio; it only passes the two browsers' descriptions and network candidates along.
+- **Signalling over what Chat already has**: live-update `call` events (§8), sent only to the two people, and
+  small POSTs:
+
+  | Route | |
+  |---|---|
+  | POST `/api/calls {conversationId}` | Start → 201 `{id, iceServers, ringSeconds, peerId, peerName}`. 403 feature off; 404 not your chat; 409 personal room, not a direct chat, read-only, you're in a call, they're on another call. |
+  | POST `/api/calls/{id}/offer {sdp}` | The caller's offer; the call starts ringing (its `calls` row is written). 409 unless the caller and the call is new. |
+  | GET `/api/calls/current` | `{call: null}` or my call: `{id, conversationId, state, role, peerId, peerName, ringLeft, iceServers}`, plus `offer` and the caller's early `candidates` while it rings for me, and `answer` for the caller once answered. |
+  | POST `/api/calls/{id}/answer {sdp}` | The person called answers. 409 unless they are, and it's ringing. |
+  | POST `/api/calls/{id}/candidate {candidate}` | A network candidate found after the description went: passed on as an event, or kept (up to 50) while the other side can't take it yet. 409 from the person called before answering. |
+  | POST `/api/calls/{id}/decline` | The person called declines while it rings. |
+  | POST `/api/calls/{id}/end {reason?}` | Hang up. `reason`: `failed` (couldn't connect) or `no_microphone` (Answer couldn't use the microphone). |
+
+  A description (`sdp`) is 1–16,000 characters, a candidate at most 1,000. The call routes answer 404 to anyone
+  but the two people (as for chats), and need an enabled person like every route.
+- **Events** (`call`, `{id, conversationId, state, …}`): `ringing` to the person called (`peerId`, `peerName`,
+  `ringSeconds` — never the offer, which is fetched) and to the caller; `answered` to the caller (with `sdp` and the
+  person called's early candidates) and to the person called (so their other tabs stop ringing); `candidate` to
+  the other side; `ended` to both (`outcome`, `by`, and `reason` for `no_microphone`). A page ignores events for
+  calls it isn't handling.
+- **Fewer round trips**: each page waits up to 3 s for its network candidates before sending its offer or
+  answer, so most calls connect with those two messages alone. That matters because Home Assistant Cloud and some
+  proxies can delay the event stream. While a page's live updates are down (§8 fallback), it asks
+  `GET /api/calls/current` every second during a call instead.
+- **States**: `new` (POST `/calls`; dropped without a note if no offer comes within 20 s) → `ringing` → `active`
+  (answered) → ended. A call answered but not connected within 30 s is ended by the page as `failed` ("Couldn't
+  connect. For now calls work when both phones are on the home network."), as is a connection that fails.
+- **Calls that are on live in memory** (`calls.py`), like the live-update hub (§8). This relies on uvicorn
+  running with **one worker**, as the Dockerfile says; don't raise it. A job every 2 s (§10) ends rings that time
+  out (missed), drops offers that never came, and ends an answered call when one side has had no live connection
+  for a minute (`hub.is_online`). Disabling someone ends their call (`failed`). An admin restore drops the calls
+  that are on. **A restart** ends them; at start-up (and after a restore) rows still open are closed as `failed`
+  with their note (`close_unfinished`).
+- **History**: `calls(id, conversation_id, caller_id, callee_id, started_at, answered_at, ended_at, outcome,
+  message_id)`, `outcome` one of `answered`, `missed`, `declined`, `busy`, `failed` (NULL while on). Durations are
+  `ended_at − answered_at`.
+- **The microphone** needs a secure address (https, or `localhost`) and permission, asked when the person presses
+  📞 or Answer. Ingress pages are same-origin iframes, so it works there as it does for voice messages (§15.6).
+  Without it, 📞 explains why; *Answer* ends the call with `no_microphone` and explains (the caller sees "They
+  couldn't answer here (no microphone)"). The Companion app's web view may block it.
+- **No change to the CSP**: the page talks only to the app (`connect-src 'self'`), and WebRTC connections aren't
+  covered by `connect-src`. The remote sound plays through an `<audio>` element's `srcObject` (not a URL).
+- **ICE servers**: none in this release (`calls.ice_servers()` returns `[]`), so the browsers find each other on
+  the home network only. §18.1 adds STUN and a relay.
+- **Older databases**: `messages.kind`'s CHECK gains `'call'`. SQLite can't change a CHECK in place, so the
+  messages table is rebuilt once at start-up exactly as for cards (§15.11; `db._allow_new_kinds`, which upgrades
+  both 2.1 and 2.2 databases); the `calls` table is new.
+
+**Tests**: `tests/test_calls.py` (who may call; ringing, answering, candidates, ending; the notes and unread
+counts; missed calls and their pushes; the phone's Decline; busy; offers that never come; quiet hours and muted
+chats; failures, disabling, the gone-side check and restarts; sizes; disappearing chats; a 2.2 database
+upgraded) and `tests/test_calls_browser.py` (the app in uvicorn and two headless Chromium pages with fake
+microphones: ring, answer, sound both ways, mute, hang up, decline, the notes; skipped without Playwright).
+
 ## 16. More features
 
 ### 16.1 Remind me about this
@@ -753,7 +871,7 @@ A private space for each person: notes to self, links, reminders and documents (
 - **Who gets one.** Everyone who is enabled, made when an admin enables them (and at start-up for anyone enabled who lacks one). Exactly one per person (`kind = 'personal'`, `created_by` = the person, the person as the only member with role `owner`; `idx_one_personal`).
 - **Who can see it.** Only its owner. Everyone else gets 404 on every route: messages, files, thumbnails, search, the live stream, pins, downloads, shared-folder links. **Admins are no exception**: the admin overview shows only "Nisha's room" and its size, and storage clean-up shows its files by type and size only (§15.10). The honest limit still applies: the text is in `/data/chat.db` and the files are in `<chat files folder>/<name> - personal (<id8>)/`, readable by anyone with the HA host, `/share` or backups (§4.1). The chat list says "Only you can see this".
 - **What you can do in it.** Text with formatting, files and photos, the Files view and viewer, pinned messages, forward in and out (files are copied), edit, delete, search, starred messages, remind me, voice memos, a description, disappearing notes (per message), downloads, drafts, and shared folders an admin shares into it.
-- **What it doesn't have.** No members to add, no leaving, renaming or deleting the room (you can delete messages), no polls, announcements, @mentions, typing indicator, "seen by", home/away, reactions or send later (use *remind me*). Those routes return 409 "Not possible in your personal room".
+- **What it doesn't have.** No members to add, no leaving, renaming or deleting the room (you can delete messages), no polls, announcements, @mentions, typing indicator, "seen by", home/away, reactions, calls or send later (use *remind me*). Those routes return 409 "Not possible in your personal room".
 - **Notifications.** Never sent for your own room; it has no unread count. Reminders you set (§16.1) notify as usual.
 - **Limits and settings.** The same file size limit, blocked types and folder quota as other chats. `message_retention_days` **doesn't apply** unless `retention_includes_personal` is on, since these are things people chose to keep.
 - **Disable and re-enable.** Disabling someone keeps their room and its files untouched but unreachable. Re-enabling gives it back as it was. The room is never given to anyone else.
@@ -765,98 +883,23 @@ A private space for each person: notes to self, links, reminders and documents (
 Ideas that are not built:
 
 - **PDF first-page thumbnails** in the Files view — waiting for a small, pure-Python dependency.
-- **Deep links** from a notification to the exact chat (the ingress URL would have to carry a route). Voice calls (§18.1) work around it by asking for a ringing call when the page opens.
+- **Deep links** from a notification to the exact chat (the ingress URL would have to carry a route). Voice calls (§15.12) work around it by asking for a ringing call when the page opens.
 - **Link previews**, if they can be made without fetching every shared link from the server.
 - **Deleting files in shared folders** from the app.
 
-### 18.1 Voice calls (optional — not built)
+### 18.1 Voice calls away from home, and later (not built)
 
-An optional feature, **off** until an admin turns it on (App settings → *Voice calls*). Nothing below exists
-yet; it is the plan if it is built. It replaces "Voice and video calls" in §1's *out of scope* list once built.
+Voice calls on the home network are built (§15.12). Nothing below exists yet; it is the plan.
 
-**Releases**
+**Release 2 — calls away from home** (small)
 
-1. **Calls at home** (one medium release): one-to-one calls on the home network, the call screen, ringing,
-   call notes and history. Settings: the switch and *Ring for* only.
-2. **Calls away from home** (one small release): the STUN and relay settings, relay credentials, *Test calling*.
-3. **Later** (small to medium each): video (camera on/off, flip camera); group calls of up to 4 people (each
-   phone connects to each other; more would need a media server); a **Calls** list (recent, missed, call back).
+`calls.ice_servers()` starts returning STUN and relay addresses; the browsers already pass them to WebRTC.
 
-**What it does**
-
-- A **📞 Call** button in a **direct chat** the person may post in: not in groups (until *Later*), not in
-  "My room" (§17; the route answers 409 "Not possible in your personal room"), and not in a direct chat that is
-  read-only (§4: the other person has no access, or two children while `children_can_message_each_other` is off).
-  Children (§16.5) can call and be called wherever they can post in a direct chat.
-- **The caller** sees a call screen: name, photo, "Ringing…", Mute, Speaker and Hang up.
-- **The person called** gets a ringing screen in every open Chat tab, in a browser or the Companion app, and a phone
-  notification (§7 phones and extras) — "📞 Asha is calling" — with **Answer** and **Decline**:
-  - **Answer** opens Chat (`data.actions` entry with `action: "URI"` and `uri` = the ingress URL). Notifications
-    can't open a particular chat (§18, deep links), so the page asks `GET /api/calls/current` when it opens
-    (and on every live-update `hello`) and shows the ringing screen above whatever page it's on.
-  - **Decline** is handled without opening anything, like *Mark as read* (§15.1): an `HCHAT_DECLINE_<token>`
-    action through `ha_events.py`, the token stored like the reply tokens and valid until the call ends.
-  - Answering in one tab stops the ringing in the others and on the phone (`clear_notification` with the call's
-    tag `hchat_call_<id>`).
-- **Unanswered** after *Ring for* (default 30 s): the call ends as missed and the phone notification is replaced
-  (same tag) by "📞 Missed call from Asha".
-- **Busy**: one call at a time per person. Calling someone who is in a call or being rung ends at once with
-  "Asha is on another call" and a short busy tone; it's noted as a missed call for them.
-- **Quiet hours** (§7 rule 3): someone in their quiet hours isn't rung on their phone; open tabs still show the
-  ringing screen. When the quiet hours end, the missed call is in the usual summary. A muted chat (`off`, or
-  `muted_until` in the future) is treated the same way.
-- **A call note** in the chat, a system message like the cards of §15.11: "📞 Call · 4 min", "📞 Missed call",
-  "📞 Declined", "📞 Couldn't connect". Missed calls are unread messages for the person called and follow §7 like
-  messages. Notes follow retention and disappearing settings like other messages; they can't be edited or
-  forwarded.
-- While a call is on, the page holds a screen **wake lock** (where the browser has one) so the screen doesn't
-  turn off and end the call.
-
-**How it works**
-
-- **The audio goes phone to phone** with the browser's built-in WebRTC (Opus audio, always encrypted between the
-  two phones, DTLS-SRTP). The app never handles audio; it only introduces the two phones to each other.
-- **Signalling over what Chat already has**: live-update `call` events (§8), sent only to the two people, carry
-  the offer, the answer, network candidates and the call's state; the browser sends its side as small POSTs:
-
-  | Route | |
-  |---|---|
-  | POST `/api/calls {conversationId}` | Start a call → 201 `{id, iceServers}`. 403 feature off; 409 busy, personal room, read-only chat or not a direct chat. |
-  | POST `/api/calls/{id}/offer {sdp}` | Caller's offer; starts the ringing. |
-  | GET `/api/calls/current` | My ringing or active call (with its offer and `iceServers`), or `null`. |
-  | POST `/api/calls/{id}/answer {sdp}` · `/decline` · `/end` | |
-  | POST `/api/calls/{id}/candidate {candidate}` | A late network candidate (up to 50 per side). |
-
-  A description (`sdp`) is at most 16 KB; only the two people in the call may use its routes (404 for anyone else,
-  as for chats). The page waits up to 3 s for its network candidates before sending the offer or answer, so most
-  calls connect with those two messages alone. That matters because Home Assistant Cloud and some proxies can
-  delay the event stream; while the page is on the polling fallback (§8), it polls `GET /api/calls/current`
-  every second during a call setup instead of every 5 s.
-- No new server technology: it works through Home Assistant's ingress, Home Assistant Cloud and a Cloudflare
-  Tunnel alike.
-- **Calls in progress live in memory**, in the same process as the live-update hub (§8 — this relies on uvicorn
-  running with **1 worker**, as the Dockerfile says; don't raise it). A restart ends them; their rows are closed
-  as "Couldn't connect" at start-up. A `calls` table keeps the history:
-  `calls(id, conversation_id, caller_id, callee_id, started_at, answered_at, ended_at, outcome, message_id)`, with
-  `outcome` one of `answered`, `missed`, `declined`, `busy`, `failed`, `cancelled`. Rows are deleted with their
-  note.
-- **https is required**: browsers only give a page the microphone on a secure address. The same check as voice
-  messages (§15.6): on plain `http://` (the shared `HttpWarning.isPlainHttp()`, `common/static/http-warning.js`)
-  the call button explains why and links to the docs.
-- **Microphone** permission is asked the first time, when the person presses Call or Answer. Ingress pages are
-  same-origin iframes, so the microphone works there as it does for voice messages. The Companion app's web view
-  may block it (§15.6); then *Answer* says so, offers the browser, and the caller sees "Asha couldn't answer here".
-- **No change to the CSP**: the page talks only to the app (`connect-src 'self'`); relay credentials are fetched
-  by the server, and the browser's WebRTC connections aren't covered by `connect-src`.
-
-**Connecting the two phones (the networking part)**
-
-1. **At home (same Wi-Fi)**: the phones connect directly. Nothing to set up.
-2. **Away from home, direct**: each phone asks a **STUN** server for its public address and the phones try to
-   connect directly. This works on many home and mobile networks. The STUN server is set in App settings (empty
-   by default, meaning home only). A public one such as Cloudflare's (`stun:stun.cloudflare.com:3478`, free, no
-   account) can be entered. Only the phones' network addresses go to it, never audio or names.
-3. **Away from home, relayed**: when the networks don't allow a direct link (common on mobile data and strict
+1. **Away from home, direct**: each phone asks a **STUN** server for its public address and the phones try to
+   connect directly. This works on many home and mobile networks. A public one such as Cloudflare's
+   (`stun:stun.cloudflare.com:3478`, free, no account) can be entered. Only the phones' network addresses go to
+   it, never audio or names.
+2. **Away from home, relayed**: when the networks don't allow a direct link (common on mobile data and strict
    Wi-Fi), the audio needs a **TURN relay**. A Cloudflare Tunnel carries the signalling but *not* the call audio
    (tunnels don't pass UDP for public hostnames), so the relay is separate:
    - **Option A — Cloudflare Realtime TURN** (recommended with a Cloudflare setup): the admin creates a TURN key in
@@ -870,22 +913,17 @@ yet; it is the plan if it is built. It replaces "Voice and video calls" in §1's
    - **Option B — your own TURN server** (e.g. a coturn app on Home Assistant): the admin enters its address and
      coturn's **shared secret** (`use-auth-secret` / `static-auth-secret`). The app makes short-lived
      credentials per call (user name `<expiry>:<call id>`, password = base64 HMAC-SHA1 of it with the secret), so
-     no long-lived password is ever given to a phone. Needs a router port forwarded to it. Offer
-     `turns:` on port 443 where it's set up, for networks that allow only web traffic.
+     no long-lived password is ever given to a phone. Needs a router port forwarded to it. Offer `turns:` on
+     port 443 where it's set up, for networks that allow only web traffic.
    - **No relay set**: calls that can't connect directly end with "Couldn't connect from here — an admin can add a
      call relay in App settings".
-- **Test calling** in App settings checks the microphone, STUN and the relay with a short loop-back call in the
-  admin's own browser.
+3. **Test calling** in App settings checks the microphone, STUN and the relay with a short loop-back call in the
+   admin's own browser.
 
-**App settings (group `calls`, *Voice calls*)**
-
-Declared in `settings.py` like every setting (§3.1), on the shared `settings_core.Registry`; everything but the
-switch has `show_if` the switch is on, and the relay fields `show_if` their relay choice.
+New settings in the `calls` group (each `show_if` calls are on; the relay fields `show_if` their relay choice):
 
 | Key | Default | |
 |---|---|---|
-| `calls_enabled` | false | The feature switch. Off: no call button, call routes answer 403. |
-| `calls_ring_seconds` | 30 | 15–60. |
 | `calls_stun` | empty | e.g. `stun:stun.cloudflare.com:3478`; empty = home network only. Must start `stun:` or `stuns:`. |
 | `calls_relay` | `none` | `none`, `cloudflare` or `turn`. |
 | `calls_cf_key_id` | empty | Cloudflare TURN key id. |
@@ -893,37 +931,25 @@ switch has `show_if` the switch is on, and the relay fields `show_if` their rela
 | `calls_turn_url` | empty | e.g. `turn:home.example.com:3478` (`turn:` / `turns:`). |
 | `calls_turn_secret` | empty | **Secret**: coturn's shared secret. |
 
-These are Chat's first secret settings, so the backup routes (Admin → Storage) must start using the
-shared `Registry.scrub_secrets` / `saved_secrets` / `keep_secrets` (`backup_core.blank_settings` /
-`saved_settings` / `keep_settings`): a downloaded backup never carries the token or the secret, and a restore
-keeps the ones this install has.
+These are Chat's first secret settings, so the backup routes (Admin → Storage) must start using the shared
+`Registry.scrub_secrets` / `saved_secrets` / `keep_secrets` (`backup_core.blank_settings` / `saved_settings` /
+`keep_settings`): a downloaded backup never carries the token or the secret, and a restore keeps the ones this
+install has.
 
-**Shared code it uses** (nothing new in `common/` at first)
+**Privacy (for DOCS)**: with a STUN server the phones' public network addresses go to it; with a relay the
+encrypted audio passes through it. Names, messages and recordings never do.
 
-`settings_core.py` and `settings.js` (the settings group, secrets, `show_if`), `backup_core.py` (secrets out of
-backups), `ha_notify.py` (the ringing and missed-call pushes, `clear_notification`), `ha_ws.py` through
-`ha_events.py` (the Decline button), `http-warning.js` (https check). If another household app ever wants calls,
-the browser side (call screen, WebRTC set-up) would move to `common/static/` then, not before.
+**Tests**: Cloudflare credential requests against a fake server (never the real one in tests), coturn
+credentials, `iceServers` in the call routes, secrets kept out of backups and kept over a restore, the settings
+checks.
 
-**Privacy (for DOCS)**: off by default. With only the home network nothing leaves the house. With a STUN server the
-phones' public network addresses go to it; with a relay the encrypted audio passes through it. Names, messages and
-recordings never do. Calls are never recorded. Call history (who called whom, when, how long) is in the database
-like messages (§4.1).
+**Later** (small to medium each)
 
-**Limits to say plainly in the docs**
-
-- Ringing is a notification, not a real phone call. It can take a few seconds, and the phone's own Do Not Disturb
-  silences it. Ringing like a normal call would need a native app.
-- On some phones the call needs Chat (or the Companion app) to stay open on screen; locking the screen or
-  switching apps may end it.
-- The Companion app may not allow the microphone; the browser always works over https.
-
-**Tests**: signalling and permissions (only the two people get the events and can use the routes; busy, ring
-time-out, decline, answered elsewhere, quiet hours and muted chats, children and read-only chats, personal room
-409, feature off 403), the Decline notification action, call history and chat notes, restart closing calls,
-Cloudflare credential requests against a fake server (never the real one in tests) and coturn credentials,
-secrets kept out of backups and kept over a restore, the settings checks, and a browser test with two pages and a
-fake microphone (Chromium's `--use-fake-device-for-media-stream`).
+- **Video** (camera on/off, flip camera).
+- **Group calls** of up to 4 people (each phone connects to each other; more would need a media server).
+- A **Calls** list (recent, missed, call back).
+- If another household app ever wants calls, the browser side (call screen, WebRTC set-up) would move to
+  `common/static/` then, not before.
 
 ## Security notes (2026-10)
 

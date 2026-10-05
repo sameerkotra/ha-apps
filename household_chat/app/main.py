@@ -8,11 +8,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import app_messages, avatars, chats, config, db, disappearing, files, ha_client, ha_events, housekeeping
+from . import app_messages, avatars, calls, chats, config, db, disappearing, files, ha_client, ha_events, housekeeping
 from .common import auth_core, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .live import hub
-from .routers import admin, conversations, extras, files as files_router, me, messages, search, stream
+from .routers import admin, calls as calls_router, conversations, extras, files as files_router, me, messages, search, stream
 
 jobs_core.setup_logging()
 logger = logging.getLogger("main")
@@ -50,6 +50,8 @@ def startup_blocking() -> None:
         logger.warning("Starting without the chat files folder: %s", st["reason"])
     # before anything is served: nothing past its time may come back after a restore (SPEC §15.8)
     disappearing.run_expiry()
+    if calls.close_unfinished():         # calls that were on when the app stopped (SPEC §15.12)
+        logger.info("Closed calls that were on when the app stopped.")
     tz = ha_client.load_time_zone_blocking()
     if tz:
         logger.info("Using Home Assistant's time zone %s.", tz)
@@ -95,6 +97,7 @@ async def lifespan(app: FastAPI):
     ha_events.start()
     jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
     jobs.every("housekeeping", 20, housekeeping_step, thread=False, tick=True, log=logger, error="Housekeeping failed")
+    jobs.every("calls", 2, calls.tick, log=logger, error="Checking calls failed")   # rings that time out
     jobs.add("ha_people", ha_people.loop)
     jobs.start()
     try:
@@ -104,10 +107,11 @@ async def lifespan(app: FastAPI):
         app_messages.stop()
         ha_events.stop()
         hub.reset()
+        calls.reset()
 
 
 app = FastAPI(title="Household Chat", lifespan=lifespan)
-for r in (me, conversations, messages, files_router, search, stream, admin, extras):
+for r in (me, conversations, messages, files_router, search, stream, admin, extras, calls_router):
     app.include_router(r.router)
 
 
