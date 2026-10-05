@@ -145,7 +145,7 @@ class CallsInBrowsers(unittest.TestCase):
         t.click("#callScreen button.devices")
         t.wait_for_selector("#callPanel:not([hidden]) .browser-line")
         self.assertEqual(t.evaluate("document.querySelectorAll('#callPanel select').length"), 0)
-        if t.evaluate("(await navigator.mediaDevices.enumerateDevices()).some((d) => d.kind === 'audiooutput')"):
+        if t.evaluate("async () => (await navigator.mediaDevices.enumerateDevices()).some((d) => d.kind === 'audiooutput')"):
             t.wait_for_selector("#callPanel .out-btn")
             t.click("#callPanel .out-btn")
             t.wait_for_selector("#callPanel .out-btn.on")
