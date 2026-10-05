@@ -14,13 +14,8 @@ function micPossible() { return !!(window.isSecureContext && navigator.mediaDevi
 function noMicDialog() {
   openModal("Voice calls", h("p", null, "Calls need the microphone, and this browser can't use it here. It needs a secure (https) connection and permission — inside the Home Assistant app it may be blocked. Try Home Assistant in your phone's browser, or on a computer."));
 }
-const MIC_KEY = "hchat.callMic", OUT_KEY = "hchat.callOut";
-function getMic(deviceId) {
-  const want = deviceId || lsGet(MIC_KEY);
-  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-  if (want) audio.deviceId = deviceId ? { exact: deviceId } : { ideal: want };
-  return navigator.mediaDevices.getUserMedia({ audio });
-}
+const OUT_KEY = "hchat.callOut";
+function getMic() { return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
 
 // ---------- tones (made in the browser, no sound files) ----------
 let toneCtx = null, toneTimer = null;
@@ -97,21 +92,6 @@ async function setOutput(id) {
   lsSet(OUT_KEY, id || "");
   if (CAN_PICK_OUTPUT && callAudio) { try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); } }
 }
-async function switchMic(deviceId) {
-  if (!call || !call.stream) return;
-  let fresh;
-  try { fresh = await getMic(deviceId); } catch (e) { toast("Couldn't use that microphone.", { error: true }); return; }
-  if (!call) { fresh.getTracks().forEach((t) => t.stop()); return; }
-  const track = fresh.getAudioTracks()[0];
-  track.enabled = !call.muted;
-  const sender = call.pc && call.pc.getSenders().find((x) => x.track && x.track.kind === "audio");
-  if (sender) await sender.replaceTrack(track);
-  call.stream.getTracks().forEach((t) => t.stop());
-  call.stream = fresh;
-  lsSet(MIC_KEY, deviceId);
-  call.quietMic = 0;
-  setCallHint("");
-}
 async function audioPanel() {
   if (!call) return;
   const box = $("#callPanel");
@@ -154,7 +134,7 @@ async function watchSound() {
   else if (secs > 5 && c.noPackets >= 5) hint = "No sound is arriving from " + c.peerName + ". The connection may be blocked one way — try again, or both on the same Wi-Fi.";
   else if (c.peerMuted) hint = c.peerName + " has muted their microphone.";
   else if (secs > 5 && c.quietThem >= 6) hint = c.peerName + "'s microphone seems silent — it may be muted or blocked on their phone.";
-  else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app, or pick another in ⚙.";
+  else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app.";
   setCallHint(hint);
 }
 function meter(sel, level) {
