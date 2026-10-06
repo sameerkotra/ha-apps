@@ -13,7 +13,7 @@ from common_tests import packaging_core as pk
 from base import ADMIN, ApiTestCase
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 REPO_URL = pk.REPO_URL
 
 

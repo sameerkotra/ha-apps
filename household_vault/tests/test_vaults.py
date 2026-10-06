@@ -5,7 +5,7 @@ import _env  # noqa: F401
 import io
 import unittest
 
-from app import kdbx, sessions
+from app import db, kdbx, sessions
 
 JOINT_PW = "saffron-lantern-meadow-violin-comet"
 
@@ -117,10 +117,21 @@ class SamePassword(ApiTestCase):
         self.ok(self.post(f"/api/vaults/{self.vid}/leave"))
         self.assertNotIn("Kiran & Neha", self.vaults())
 
-    def test_share_personal_with_same_password(self):
+    def test_personal_cannot_be_shared(self):
+        me = self.personal()
+        r = self.post(f"/api/vaults/{me['id']}/members", {"userId": "u-neha", "role": "editor"})
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("create a shared vault", r.json()["detail"])
+        self.assertEqual(self.post(f"/api/vaults/{me['id']}/members", {"userId": "u-neha", "role": "manager"}).status_code, 422)
+        self.assertNotIn("Kiran's Personal", self.vaults(NEHA))
+
+    def test_personal_shared_before_the_change_still_works(self):
+        from app import service
         me = self.personal()
         self.add_item(me["id"], title="My email", password="mail-pass")
-        self.assertEqual(self.post(f"/api/vaults/{me['id']}/members", {"userId": "u-neha", "role": "manager"}).status_code, 422)
+        with db.get_conn() as conn:                 # a membership from before Personal sharing was refused
+            service.add_member(conn, me["id"], "u-neha", "editor", "u-admin")
+        self.ok(self.post(f"/api/vaults/{me['id']}/members", {"userId": "u-neha", "role": "viewer"}))   # role changes still work
         self.ok(self.post(f"/api/vaults/{me['id']}/members", {"userId": "u-neha", "role": "editor"}))
         v = self.vaults(NEHA)["Kiran's Personal"]
         self.assertFalse(v["open"])

@@ -19,9 +19,14 @@ def show(user: dict = Depends(require_user)):
         row = guest_wifi.current(conn)
     if row is None:
         return {"published": False}
-    return {"published": True, "ssid": row["ssid"], "security": row["security"], "password": row["password"],
-            "picture": guest_wifi.picture(row), "vaultId": row["vault_id"], "itemId": row["item_id"],
-            "showPassword": bool(row["show_password"]), "entity": guest_wifi.ENTITY}
+    out = {"published": True, "ssid": row["ssid"], "security": row["security"],
+           "picture": guest_wifi.picture(row), "vaultId": row["vault_id"], "itemId": row["item_id"],
+           "showPassword": bool(row["show_password"]), "entity": guest_wifi.ENTITY}
+    # the password as text only when the publisher ticked "show the password as text too" (SPEC §12.9) — the
+    # QR code has to contain it to work, but text is one copy more (a screenshot, a copied field)
+    if row["show_password"] and row["security"] != "nopass":
+        out["password"] = row["password"]
+    return out
 
 
 class PublishIn(Strict):

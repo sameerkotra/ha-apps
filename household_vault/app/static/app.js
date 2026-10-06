@@ -1291,6 +1291,12 @@ function newVaultDialog() {
 }
 async function shareDialog(v) {
   if (!v) return;
+  if (v.kind === "personal") {                       // security review 2026-10: Personal vaults aren't shared any more
+    const m0 = openModal("Share your Personal vault", h("div", null,
+      h("div", { class: "notice" }, "Your Personal vault opens with your master password, so sharing it would mean giving that password away. Create a shared vault (e.g. “You & them”) instead and move the entries you want to share into it."),
+      h("div", { class: "actions" }, h("button", { class: "btn primary", type: "button", onclick: () => { m0.close(); newVaultDialog(); } }, "Create a shared vault"))));
+    return;
+  }
   let users = [];
   try { users = (await api("api/users")).users.filter((u) => !v.members.some((m) => m.id === u.id)); } catch (e) { fail(e); return; }
   if (!users.length) { toast("Everyone who's set up already has access (or nobody else is set up yet).", { ms: 4000 }); return; }
@@ -1298,16 +1304,13 @@ async function shareDialog(v) {
   const role = h("select", { "aria-label": "Role" }, h("option", { value: "editor" }, "Can edit"), h("option", { value: "viewer" }, "Can view"),
     v.kind !== "personal" ? h("option", { value: "manager" }, "Manager (can add people)") : null);
   const err = h("div", { class: "error" });
-  const note = v.passwordMode === "chosen" ? h("div", { class: "notice" }, v.kind === "personal"
-    ? "They'll open your Personal vault with your master password — so they'll know it. They still can't open your other vaults (they'd have to sign in to Home Assistant as you). If you'd rather keep your master password to yourself, create a shared vault (e.g. “You & them”) instead."
-    : "They'll need this vault's password the first time — tell them in person.")
+  const note = v.passwordMode === "chosen" ? h("div", { class: "notice" }, "They'll need this vault's password the first time — tell them in person.")
     : h("p", { class: "hint" }, "It opens for them automatically, with their own master password.");
   const m = openModal(`Share ${v.name}`, h("form", { onsubmit: async (e) => {
     e.preventDefault();
     try { await api(`api/vaults/${v.id}/members`, { method: "POST", body: { userId: who.value, role: role.value } }); m.close(); toast("Shared"); await afterChange(); }
     catch (x) { err.textContent = x.message; }
   } }, field("Person", who), field("Can", role), note,
-  v.kind === "personal" ? h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: () => { m.close(); newVaultDialog(); } }, "Create a shared vault instead")) : null,
   err, h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Share"))));
 }
 function membersDialog(v) {
@@ -1636,14 +1639,15 @@ async function guestPage() {
   const g = await api("api/guest-wifi");
   if (!g.published) return h("div", null, h("h2", null, "📶 Guest Wi-Fi"), h("div", { class: "card" }, h("p", null, "No guest network is shown yet."),
     h("p", { class: "hint" }, "Someone who can edit Household opens the Wi-Fi item → ⋯ → Show as guest Wi-Fi on the dashboard.")));
-  const pw = h("span", { class: "mono" }, g.security === "nopass" ? "(none — open network)" : "••••••••");
+  const pw = h("span", { class: "mono" }, g.security === "nopass" ? "(none — open network)" : g.password ? "••••••••" : "in the code only");
   let shown = false;
+  const hasText = g.security !== "nopass" && !!g.password;
   return h("div", null, h("h2", null, "📶 Guest Wi-Fi"),
     h("div", { class: "card guest-card" },
       h("img", { src: g.picture, alt: `QR code to join ${g.ssid}`, class: "guest-qr" }),
       h("div", { class: "kv" }, h("span", { class: "k" }, "Network"), h("strong", null, g.ssid),
-        h("span", { class: "k" }, "Password"), h("span", null, pw, " ", g.security === "nopass" ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Show password", onclick: () => { shown = !shown; pw.textContent = shown ? g.password : "••••••••"; } }, "👁"),
-          g.security === "nopass" ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Copy password", onclick: () => copyText(g.password, "plain") }, "📋"))),
+        h("span", { class: "k" }, "Password"), h("span", null, pw, " ", !hasText ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Show password", onclick: () => { shown = !shown; pw.textContent = shown ? g.password : "••••••••"; } }, "👁"),
+          !hasText ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Copy password", onclick: () => copyText(g.password, "plain") }, "📋"))),
       h("p", { class: "hint" }, "Point a phone's camera at the code to join.")),
     h("div", { class: "card" }, h("h3", null, "On your dashboard"),
       h("p", { class: "hint" }, "Edit a dashboard → Add card → Picture entity → entity ", h("code", null, g.entity), ", then turn on “Show name” / “Show state”. It updates by itself when the Wi-Fi item changes.")));

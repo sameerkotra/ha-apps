@@ -40,7 +40,12 @@ class GuestWifi(ApiTestCase):
         self.assertTrue(self.ok(self.get(f"/api/vaults/{self.hh}/items/{self.wifi['id']}"))["guestWifi"])
         # the page works without unlocking
         g = self.ok(self.get("/api/guest-wifi", NEHA, token=False))
-        self.assertEqual((g["ssid"], g["password"], g["security"]), ("Sharma-Guest", "sunny-day-42", "WPA"))
+        self.assertEqual((g["ssid"], g["security"]), ("Sharma-Guest", "WPA"))
+        self.assertNotIn("password", g)            # as text only when asked for (security review 2026-10); the QR has it
+        self.assertIn("P:sunny-day-42;", qrcode.wifi_text("Sharma-Guest", "sunny-day-42", "WPA"))
+        self.ok(self.publish(showPassword=True))
+        self.assertEqual(self.ok(self.get("/api/guest-wifi", NEHA, token=False))["password"], "sunny-day-42")
+        self.ok(self.publish())
         self.assertTrue(self.ok(self.get("/api/me", NEHA, token=False))["guestWifi"])
         # the sensor: network name as state, the QR code as its picture, no password attribute unless asked
         guest_wifi.push_blocking()
