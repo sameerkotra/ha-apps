@@ -815,7 +815,9 @@ three others; more would need a media server). Away from home needs §15.13.
   video transceiver; the answering side takes the one in the offer and sets it to `sendrecv` (a browser only
   reuses slots made by `addTrack`, so one added on the answering side would be left unused and the answer
   receive-only). The camera track is put in with `replaceTrack` (and taken out with `null`), so turning the camera
-  on or off, or switching cameras (`facingMode` user / environment), never needs a new negotiation. 640×480 at
+  on or off, or switching cameras (🔄 by `facingMode` user / environment, or any camera by `deviceId` from the ⚙
+  **Camera** list — `enumerateDevices` `videoinput`, remembered in `localStorage` `hchat.callCam`), never needs
+  a new negotiation. 640×480 at
   up to 24 fps is asked for. A video call that can't get a camera goes on with sound only. Each person's tile shows
   their video while their camera is on (told over the data channel, `{muted, video}`), else their photo; my own
   picture is a mirrored tile in the same grid (never over the buttons). While anyone's camera is on the screen

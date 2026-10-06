@@ -96,7 +96,7 @@ An admin turns calls on in **App settings → Voice calls** (off until then). Ca
 
 - **Microphone button**: mutes and unmutes you (muted, it's red with a line across the microphone). The others see that you've muted.
 - **Camera button**: turns your picture on or off, in any call. **🔄** switches between the front and back camera.
-- **⚙**: the **Microphone** list and, where the browser offers one, the **Sound comes out of** list. On a phone, the Microphone list is also how you switch between the speakerphone, earpiece and headset — see *On the phone* below. Your choices are remembered on that device.
+- **⚙**: the **Microphone** list, the **Camera** list (every camera the browser sees — the built-in one, a USB webcam, a phone's front and back; choosing one turns the camera on or switches it) and, where the browser offers one, the **Sound comes out of** list. On a phone, the Microphone list is also how you switch between the speakerphone, earpiece and headset — see *On the phone* below. Your choices are remembered on that device.
 - **Pictures**: each person has a tile showing their picture, or their photo while their camera is off. While anyone's camera is on, the pictures fill the screen and the name and time are a small line at the top. **Tap a picture to make it big**; the others shrink to a row above the buttons; tap again to go back. In a one-to-one video call the other person starts big.
 - **Sound bars**: in a voice call two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
 - **🔈** appears if your phone held back their sound: tap it to hear them.

@@ -164,6 +164,13 @@ class CallsInBrowsers(unittest.TestCase):
         if t.evaluate("CAN_PICK_OUTPUT"):
             t.select_option("#callPanel select[aria-label='Sound output']", index=0)
             t.wait_for_function("callAudio.sinkId === call.outputId", timeout=5000)
+        # the Camera list shows every camera; choosing one turns the camera on (or switches it) and the others get it
+        self.assertFalse(t.evaluate("call.cameraOn"))
+        t.select_option("#callPanel select[aria-label='Camera']", index=1)
+        t.wait_for_function("call.cameraOn && !!call.videoTrack", timeout=5000)
+        n.wait_for_selector(".call-tile.has-video video", timeout=10000)
+        t.click("#callScreen button.camera")
+        t.wait_for_function("!call.cameraOn", timeout=5000)
         n.click("#callScreen button.hangup")
         for p in (n, t):
             p.wait_for_selector("#callScreen", state="detached", timeout=10000)

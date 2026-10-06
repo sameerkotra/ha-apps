@@ -14,15 +14,20 @@ function micPossible() { return !!(window.isSecureContext && navigator.mediaDevi
 function noMicDialog() {
   openModal("Calls", h("p", null, "Calls need the microphone, and this browser can't use it here. It needs a secure (https) connection and permission — inside the Home Assistant app it may be blocked. Try Home Assistant in your phone's browser, or on a computer."));
 }
-const MIC_KEY = "hchat.callMic", OUT_KEY = "hchat.callOut";
+const MIC_KEY = "hchat.callMic", OUT_KEY = "hchat.callOut", CAM_KEY = "hchat.callCam";
 function getMic(deviceId) {
   const want = deviceId || lsGet(MIC_KEY);
   const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   if (want) audio.deviceId = deviceId ? { exact: deviceId } : { ideal: want };
   return navigator.mediaDevices.getUserMedia({ audio });
 }
-function getCamera(facing) {
-  return navigator.mediaDevices.getUserMedia({ video: { facingMode: facing || "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 24 } } });
+function getCamera(facing, deviceId) {
+  // a chosen camera (the ⚙ list: a USB webcam, the second camera, …), else the remembered one, else by facing
+  const video = { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 24 } };
+  const want = deviceId || (!facing && lsGet(CAM_KEY));
+  if (want) video.deviceId = deviceId ? { exact: deviceId } : { ideal: want };
+  else video.facingMode = facing || "user";
+  return navigator.mediaDevices.getUserMedia({ video });
 }
 
 // ---------- tones (made in the browser, no sound files) ----------
@@ -124,6 +129,22 @@ async function switchMic(deviceId) {
   call.quietMic = 0;
   setCallHint("");
 }
+async function switchCamera(deviceId) {
+  if (!call) return;
+  let s;
+  try { s = await getCamera(null, deviceId); } catch (e) { toast("Couldn't use that camera.", { error: true }); return; }
+  if (!call) { s.getTracks().forEach((t) => t.stop()); return; }
+  const track = s.getVideoTracks()[0];
+  for (const p of call.peers.values()) if (p.videoSender) p.videoSender.replaceTrack(track).catch(() => {});
+  if (call.videoTrack) call.videoTrack.stop();
+  call.videoTrack = track;
+  call.cameraOn = true;
+  call.facing = /back|rear|environment/i.test(track.label) ? "environment" : "user";
+  lsSet(CAM_KEY, deviceId);
+  sendControl();
+  renderCallButtons();
+  renderTiles();
+}
 async function audioPanel() {
   if (!call) return;
   const box = $("#callPanel");
@@ -131,7 +152,7 @@ async function audioPanel() {
   if (!box.hidden) { box.hidden = true; return; }
   // on Android the "microphones" are the phone's sound routes — Speakerphone, Earpiece, Bluetooth headset —
   // and picking one switches the whole call there; on a computer they're the microphones
-  const [mics, outs] = await Promise.all([audioDevices("audioinput"), audioDevices("audiooutput")]);
+  const [mics, outs, cams] = await Promise.all([audioDevices("audioinput"), audioDevices("audiooutput"), audioDevices("videoinput")]);
   const micNow = call.stream && call.stream.getAudioTracks()[0] ? call.stream.getAudioTracks()[0].getSettings().deviceId : "";
   const opt = (d, i, word) => h("option", { value: d.deviceId }, d.label || `${word} ${i + 1}`);
   const micSel = h("select", { "aria-label": "Microphone", onchange: (e) => switchMic(e.target.value) }, mics.map((d, i) => opt(d, i, "Microphone")));
@@ -139,9 +160,15 @@ async function audioPanel() {
   const outNow = call.outputId || lsGet(OUT_KEY) || "default";
   const outSel = h("select", { "aria-label": "Sound output", onchange: (e) => setOutput(e.target.value) }, outs.map((d, i) => opt(d, i, "Output")));
   outSel.value = outs.some((d) => d.deviceId === outNow) ? outNow : (outs[0] || {}).deviceId || "";
+  // every camera the browser sees: the built-in one, a USB webcam, a phone's front and back
+  const camNow = call.videoTrack ? call.videoTrack.getSettings().deviceId : (lsGet(CAM_KEY) || "");
+  const camSel = h("select", { "aria-label": "Camera", onchange: (e) => { if (e.target.value) switchCamera(e.target.value); else e.target.value = camNow; } },
+    h("option", { value: "" }, call.cameraOn ? "—" : "Off (choose one to turn it on)"), cams.map((d, i) => opt(d, i, "Camera")));
+  camSel.value = cams.some((d) => d.deviceId === camNow) ? camNow : "";
   mount(box,
     field("Microphone", micSel, /Android/.test(navigator.userAgent) ? "On a phone this also switches the call to the speakerphone, earpiece or headset." : null),
-    outs.length ? field("Sound comes out of", outSel) : null);
+    outs.length ? field("Sound comes out of", outSel) : null,
+    cams.length ? field("Camera", camSel, "Choosing one turns the camera on, or switches it during the call.") : null);
   box.hidden = false;
 }
 

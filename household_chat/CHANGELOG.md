@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.4
+
+- **Calls**: ⚙ now has a **Camera** list with every camera the browser sees — the built-in one, a USB webcam, a phone's front and back. Choosing one turns the camera on or switches it during the call; the choice is remembered on that device.
+
 ## 2.5.3
 
 - **Relay usage** in App settings → Voice calls: how much of your calls went through the relay this month and before, against Cloudflare's free allowance when that relay is set. The phones measure it during each call, so it's always current; **Refresh** re-reads it.
