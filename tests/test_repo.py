@@ -25,7 +25,7 @@ RECEIPTS = "receipt_price_intelligence"
 RECEIPTS_VERSION = "1.1.1"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.1.0"
+DOCS_VERSION = "1.1.1"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
