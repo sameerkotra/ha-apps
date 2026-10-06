@@ -163,6 +163,16 @@ CREATE TABLE IF NOT EXISTS call_members (
   PRIMARY KEY (call_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_call_members_user ON call_members(user_id);
+-- relay usage (§15.13): what each phone sent and received through the call relay, as the phone measured it
+CREATE TABLE IF NOT EXISTS call_usage (
+  call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  relay_bytes INTEGER NOT NULL DEFAULT 0,
+  month TEXT NOT NULL,                       -- "2026-10" in Home Assistant's time zone
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (call_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_call_usage_month ON call_usage(month);
 CREATE TABLE IF NOT EXISTS stars (
   user_id TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL, PRIMARY KEY (user_id, message_id)

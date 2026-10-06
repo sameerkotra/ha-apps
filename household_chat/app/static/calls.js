@@ -150,13 +150,22 @@ const SILENT = 0.002;
 async function watchSound() {
   const c = call;
   if (!c) return;
-  let micLevel = null;
+  let micLevel = null, relayBytes = 0;
   for (const peer of c.peers.values()) {
     if (!peer.pc) continue;
     let stats;
     try { stats = await peer.pc.getStats(); } catch (e) { continue; }
     if (call !== c) return;
     let inPackets = null, inLevel = null;
+    // relay usage: the bytes of connections whose own (local) address is a relayed one — each phone counts
+    // the relay it uses, so nothing is counted twice between two phones
+    const byId = {};
+    stats.forEach((x) => { byId[x.id] = x; });
+    stats.forEach((x) => {
+      if (x.type === "candidate-pair" && x.nominated && byId[x.localCandidateId] && byId[x.localCandidateId].candidateType === "relay") {
+        relayBytes += (x.bytesSent || 0) + (x.bytesReceived || 0);
+      }
+    });
     stats.forEach((x) => {
       if (x.type === "inbound-rtp" && x.kind === "audio") { inPackets = x.packetsReceived; if (typeof x.audioLevel === "number") inLevel = x.audioLevel; }
       if (x.type === "media-source" && x.kind === "audio" && typeof x.audioLevel === "number") micLevel = x.audioLevel;
@@ -168,6 +177,8 @@ async function watchSound() {
     peer.quiet = inLevel != null && inLevel < SILENT ? (peer.quiet || 0) + 1 : 0;
   }
   meter("#meterMe", c.muted ? 0 : micLevel);
+  c.relayBytes = Math.max(c.relayBytes || 0, relayBytes);
+  if (c.relayBytes && (!c.usageSentAt || Date.now() - c.usageSentAt > 20000)) reportUsage(c);
   c.quietMic = !c.muted && micLevel != null && micLevel < SILENT ? (c.quietMic || 0) + 1 : 0;
   const secs = (Date.now() - c.connectedAt) / 1000;
   let hint = "";
@@ -566,8 +577,14 @@ async function answerCall() {
 }
 
 // ---------- ending ----------
+function reportUsage(c) {
+  if (!c || !c.id || !c.relayBytes || c.relayBytes === c.usageSent) return;
+  c.usageSentAt = Date.now(); c.usageSent = c.relayBytes;
+  api(`api/calls/${c.id}/usage`, { method: "POST", body: { relayBytes: Math.round(c.relayBytes) } }).catch(() => {});
+}
 function hangUp(reason) {
   if (!call) return;
+  reportUsage(call);
   if (call.id) api(`api/calls/${call.id}/end`, { method: "POST", body: reason ? { reason } : {} }).catch(() => {});
   finish(reason === "failed" ? "Couldn't connect. Away from home, calls need the address lookup and a relay (App settings → Voice calls)." : "Call ended");
 }
@@ -575,6 +592,7 @@ function finish(text, tone) {
   const c = call;
   call = null;
   if (!c) return;
+  reportUsage(c);
   stopTone();
   clearInterval(c.clock); clearTimeout(c.connectTimer); clearInterval(c.poll);
   for (const p of c.peers.values()) { if (p.pc) { try { p.pc.close(); } catch (e) { /* closed */ } } if (p.audio) { p.audio.srcObject = null; p.audio._peer = null; } }

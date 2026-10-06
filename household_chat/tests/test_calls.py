@@ -566,3 +566,49 @@ class AwayFromHomeTests(ApiTestCase):
         self.ok(self.req("POST", "/api/admin-storage-import-db", ADMIN, content=backup))
         self.assertEqual(sql("SELECT value FROM app_settings WHERE key = 'calls_turn_secret'")[0]["value"], '"s3cret"')
         self.assertEqual(self.start()["iceServers"][1]["urls"], ["turn:h.example.com:3478"])
+
+
+class RelayUsageTests(ApiTestCase):
+    """Relay usage (§15.13): the phones report what went through the relay; App settings sums it per month."""
+
+    def setUp(self):
+        super().setUp()
+        calls.reset()
+        self.enable(ADMIN, NISHA, TARUN, LEELA)
+        self.ok(self.put("/api/admin/settings", {"calls_enabled": True, "calls_relay": "turn",
+                                                 "calls_turn_url": "turn:h.example.com:3478", "calls_turn_secret": "s"}))
+        self.direct = self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"]
+
+    def tearDown(self):
+        calls.reset()
+        super().tearDown()
+
+    def test_usage_is_counted_per_month(self):
+        u = self.ok(self.get("/api/admin/calls/usage"))
+        self.assertEqual((u["bytes"], u["relayedCalls"], u["calls"], u["relay"], u["freeBytes"]), (0, 0, 0, "turn", None))
+        c = self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
+        # each phone reports its own relayed bytes; the highest figure per phone counts
+        self.ok(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 5_000_000}, NISHA))
+        self.ok(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 8_000_000}, NISHA))
+        self.ok(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 7_000_000}, NISHA))
+        self.ok(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 2_000_000}, TARUN))
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 1}, LEELA).status_code, 404)
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": -1}, NISHA).status_code, 422)
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=TARUN))
+        # the last report comes after the call ended (the page sends it as it closes)
+        self.ok(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 9_000_000}, NISHA))
+        u = self.ok(self.get("/api/admin/calls/usage"))
+        self.assertEqual((u["bytes"], u["relayedCalls"], u["calls"]), (11_000_000, 1, 1))
+        self.assertEqual(u["month"], config.local_now().strftime("%Y-%m"))
+        self.assertEqual(u["months"], [{"month": u["month"], "bytes": 11_000_000, "calls": 1}])
+        self.assertEqual(self.get("/api/admin/calls/usage", NISHA).status_code, 403)
+        # a report an hour after the end is refused; Cloudflare's free allowance is shown with that relay
+        sql("UPDATE calls SET ended_at = ?", (config.iso(config.utcnow() - timedelta(hours=2)),))
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/usage", {"relayBytes": 1}, NISHA).status_code, 409)
+        self.ok(self.put("/api/admin/settings", {"calls_relay": "cloudflare", "calls_cf_key_id": "k", "calls_cf_api_token": "t"}))
+        self.assertEqual(self.ok(self.get("/api/admin/calls/usage"))["freeBytes"], 1000 * 10 ** 9)
+        # a deleted note takes the call's usage with it
+        [n] = [m for m in self.ok(self.get(f"/api/conversations/{self.direct}/messages", NISHA))["messages"] if m["kind"] == "call"]
+        self.ok(self.delete(f"/api/messages/{n['id']}", NISHA))
+        self.assertEqual(self.ok(self.get("/api/admin/calls/usage"))["bytes"], 0)

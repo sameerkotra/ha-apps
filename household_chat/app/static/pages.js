@@ -266,7 +266,7 @@ async function adminSettings() {
     save: (body) => api("api/admin/settings", { method: "PUT", body }),
     classes: { card: "card", primary: "btn primary", secondary: "btn", ghost: "btn" },
     fields: { files_path: { control: (page) => filesFolderControl(page, folder) } },
-    groups: { calls: { bottom: () => testCallingBlock() } },
+    groups: { calls: { bottom: () => [testCallingBlock(), relayUsageBlock()] } },
     // changing the chat files folder: checked first, refused or confirmed as the check says; never moves files
     beforeSave: async (body, page) => {
       if ("files_path" in body) {
@@ -307,6 +307,29 @@ function testCallingBlock() {
   const out = h("div", { class: "hint test-call-out", "aria-live": "polite" });
   const btn = h("button", { class: "btn", type: "button", onclick: () => runCallTest(out, btn) }, "Test calling");
   return h("div", { class: "test-call" }, btn, h("span", { class: "hint" }, " Checks the microphone, the address lookup and the relay with the saved settings."), out);
+}
+// Relay usage (§15.13): what the phones sent and received through the call relay, as they measured it — live,
+// no outside service asked
+function relayUsageBlock() {
+  const box = h("div", { class: "relay-usage" });
+  const draw = async () => {
+    let u;
+    try { u = await api("api/admin/calls/usage"); } catch (e) { mount(box, h("p", { class: "error" }, e.message)); return; }
+    const gb = (b) => (b / 1e9).toFixed(b < 1e8 ? 3 : 2) + " GB";
+    const free = u.freeBytes ? ` of ${(u.freeBytes / 1e9).toFixed(0)} GB free on Cloudflare` : "";
+    const month = new Date(u.month + "-01T00:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    mount(box,
+      h("div", { class: "lbl-sm" }, "Relay usage"),
+      h("div", { class: "row" },
+        h("div", { class: "grow" },
+          h("div", null, h("strong", null, gb(u.bytes)), ` this month (${month})${free}`),
+          h("div", { class: "hint" }, u.relay === "none" ? "No relay is set: calls connect directly and nothing is relayed."
+            : `${u.relayedCalls} of ${u.calls} call${u.calls === 1 ? "" : "s"} this month used the relay. Counted on the phones themselves as calls happen, so it's always current; a call still on is added when it ends.`)),
+        h("button", { class: "btn small", type: "button", onclick: draw }, "Refresh")),
+      u.months.length > 1 ? h("div", { class: "hint usage-months" }, u.months.slice(1, 7).map((m) => `${m.month}: ${gb(m.bytes)}`).join(" · ")) : null);
+  };
+  draw();
+  return box;
 }
 async function runCallTest(out, btn) {
   btn.disabled = true;

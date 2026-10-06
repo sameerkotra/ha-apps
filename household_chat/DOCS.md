@@ -122,6 +122,7 @@ At home nothing needs setting up: both phones must be on the home network. For c
 - An **address lookup (STUN) server**, so phones can find each other across the internet. Cloudflare's `stun:stun.cloudflare.com:3478` is free and needs no account.
 - A **call relay (TURN)**, for networks that block direct connections — common on mobile data. Either **Cloudflare Realtime TURN** (in your Cloudflare account, under **Realtime → TURN Server**, create a TURN key — not a Realtime *App* — and enter its **Token ID** as the key id and its **API token**; free up to a large monthly allowance) or **your own TURN server** (for example a coturn app with a router port forwarded; enter its address and shared secret). A Cloudflare Tunnel doesn't carry call sound, so the relay is separate.
 - **Test calling**, under those settings, checks the microphone, the lookup and the relay from your browser and says what's missing. The token and secret are never included in a backup.
+- **Relay usage**, under those settings, shows how much went through the relay this month (and the months before), against Cloudflare's free allowance when that relay is set. It's measured by the phones themselves during each call and sent to the app, so it's always current — **Refresh** re-reads it; a call still on is added when it ends. It isn't read from Cloudflare, so the figure can differ a little from Cloudflare's own bill (which also counts data the relay allocates but a phone never sees).
 
 **Requirements and limits**
 

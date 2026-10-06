@@ -897,6 +897,16 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
   microphone, fetches `GET /admin/calls/ice-servers` (`{iceServers, stun, relay, relayOk}`) and gathers ICE
   candidates for up to 8 s with them, reporting a local address (host), a public one (srflx: STUN works) and a
   relayed one (relay works), with a line for anything missing.
+- **Relay usage** (`call_usage(call_id, user_id, relay_bytes, month, updated_at)`): during a call each page
+  reads its connections' statistics every second (with the sound check) and sums `bytesSent + bytesReceived`
+  of nominated candidate pairs whose **local** candidate is `relay` — each phone counts the relay allocation it
+  owns, so a pair between two phones is never counted twice — and `POST /calls/{id}/usage {relayBytes}` every
+  20 s while it grows and once more as the call closes; the server keeps the highest figure per person per call
+  (accepted while the call is on and for an hour after, from someone in it) under the call's month in Home
+  Assistant's time zone. `GET /admin/calls/usage` → `{month, bytes, relayedCalls, calls, months: [{month, bytes,
+  calls}] (≤ 12), relay, freeBytes (1,000 GB for Cloudflare, else null), updatedAt}`, shown under Voice calls in
+  App settings with **Refresh**. Measured on the phones, not fetched from Cloudflare (no usage API is known), so
+  it can differ a little from Cloudflare's bill. Deleting a call's note deletes its usage with it.
 - **Settings checks**: `calls_stun` must look like `stun(s):host[:port]`; each TURN address like
   `turn(s):host[:port][?transport=udp|tcp]`; `cloudflare` needs its key id and token, `turn` its address and secret
   (422 otherwise).

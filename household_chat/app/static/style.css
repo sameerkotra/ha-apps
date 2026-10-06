@@ -478,5 +478,8 @@ code.path { overflow-wrap: anywhere; word-break: break-all; }
 .call-row.missed .hint { color: var(--danger); }
 .test-call { margin-top: 10px; }
 .test-call-out { margin-top: 8px; }
+.relay-usage { margin-top: 14px; }
+.relay-usage .row { display: flex; align-items: flex-start; gap: 10px; }
+.usage-months { margin-top: 4px; }
 .call-note.missed span { color: var(--danger); }
 .call-note .call-back { margin-left: 8px; font-size: inherit; }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.3
+
+- **Relay usage** in App settings → Voice calls: how much of your calls went through the relay this month and before, against Cloudflare's free allowance when that relay is set. The phones measure it during each call, so it's always current; **Refresh** re-reads it.
+
 ## 2.5.2
 
 - **Docs**: a warning box on calls — not a phone line, ringing is a notification, keep the app on screen, what leaves the house away from home and Cloudflare's charges, video's data use, iPhones untested — in the README and at the top of the calls section.

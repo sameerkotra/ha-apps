@@ -23,6 +23,10 @@ class SignalIn(Strict):
     candidate: dict[str, Any] | None = None
 
 
+class UsageIn(Strict):
+    relayBytes: int = Field(ge=0)
+
+
 class EndIn(Strict):
     reason: str | None = Field(default=None, pattern="^(failed|no_microphone)$")
 
@@ -50,6 +54,17 @@ def signal(call_id: str, body: SignalIn, user: dict = Depends(require_user)):
 @router.post("/calls/{call_id}/decline")
 def decline(call_id: str, user: dict = Depends(require_user)):
     return calls.decline(user, call_id)
+
+
+@router.post("/calls/{call_id}/usage")
+def usage(call_id: str, body: UsageIn, user: dict = Depends(require_user)):
+    return calls.report_usage(user, call_id, body.relayBytes)
+
+
+@router.get("/admin/calls/usage")
+def usage_summary(admin: dict = Depends(require_admin)):
+    """Relay usage this month and before, as the phones measured it (§15.13)."""
+    return calls.usage_summary()
 
 
 @router.get("/admin/calls/ice-servers")

@@ -570,6 +570,48 @@ def close_unfinished() -> int:
     return len(rows)
 
 
+# ---------- relay usage (§15.13) ----------
+def report_usage(user: dict, call_id: str, relay_bytes: int) -> dict:
+    """POST /calls/{id}/usage: the bytes this person's phone has sent and received through the relay in this call
+    so far (the phone counts its own relayed connections, so nothing is counted twice). Kept as the highest
+    figure reported; accepted while the call is on and for an hour after it ended."""
+    if not isinstance(relay_bytes, int) or relay_bytes < 0 or relay_bytes > 1 << 40:
+        raise HTTPException(422, "relayBytes is a byte count.")
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT started_at, ended_at FROM calls WHERE id = ?", (call_id,)).fetchone()
+        mine = conn.execute("SELECT 1 FROM call_members WHERE call_id = ? AND user_id = ?", (call_id, user["id"])).fetchone()
+        with _lock:
+            c = _calls.get(call_id)
+            in_memory = c is not None and user["id"] in c.members
+        if row is None or not (mine or in_memory):
+            raise HTTPException(404, "That call has ended.")
+        ended = config.parse_iso(row["ended_at"])
+        if ended and (config.utcnow() - ended).total_seconds() > 3600:
+            raise HTTPException(409, "That call is over.")
+        started = config.parse_iso(row["started_at"]) or config.utcnow()
+        month = started.astimezone(config.tz()).strftime("%Y-%m")
+        conn.execute("INSERT INTO call_usage (call_id, user_id, relay_bytes, month, updated_at) VALUES (?, ?, ?, ?, ?) "
+                     "ON CONFLICT(call_id, user_id) DO UPDATE SET relay_bytes = MAX(relay_bytes, excluded.relay_bytes), "
+                     "updated_at = excluded.updated_at", (call_id, user["id"], relay_bytes, month, config.now_iso()))
+    return {"ok": True}
+
+
+def usage_summary() -> dict:
+    """Admin → App settings: relayed bytes this month and the months before (Home Assistant's time zone)."""
+    this_month = config.local_now().strftime("%Y-%m")
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT month, SUM(relay_bytes) AS bytes, COUNT(DISTINCT call_id) AS calls FROM call_usage "
+                            "GROUP BY month ORDER BY month DESC LIMIT 12").fetchall()
+        calls_this_month = conn.execute("SELECT COUNT(*) FROM calls WHERE ended_at IS NOT NULL AND started_at >= ?",
+                                        (config.iso(config.local_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)),)).fetchone()[0]
+        values = settings.all_values(conn)
+    months = [{"month": r["month"], "bytes": r["bytes"] or 0, "calls": r["calls"]} for r in rows]
+    now = next((m for m in months if m["month"] == this_month), {"month": this_month, "bytes": 0, "calls": 0})
+    return {"month": this_month, "bytes": now["bytes"], "relayedCalls": now["calls"], "calls": calls_this_month,
+            "months": months, "relay": values["calls_relay"], "freeBytes": 1000 * 10 ** 9 if values["calls_relay"] == "cloudflare" else None,
+            "updatedAt": config.now_iso()}
+
+
 # ---------- the phone ----------
 def _wants_ring(conn, user, m) -> bool:
     """Ring their phone? Not when their level is off, the chat is muted, or it's their quiet hours (§15.12)."""
