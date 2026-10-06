@@ -27,7 +27,7 @@ A private chat and file-sharing app for the household, inside Home Assistant. Ea
 - **Remind me** (§16.1), **starred messages** (§16.2), **forward** (§16.3), **chat descriptions** (§16.6), **child accounts** (§16.5), **send later** (§16.7), **drafts across devices** (§16.8).
 - **Home / away** next to people's names and **photos**, from Home Assistant (§15.3, §15.3.1).
 - **Reply from the phone notification** without opening Home Assistant (§15.1).
-- **Voice calls** in direct chats, optional, on the home network (§15.12).
+- **Voice and video calls**, one-to-one and groups of up to four, optional (§15.12).
 - **Search** across the messages and file names of the chats you're in.
 - **Shared folders**: existing `/share` folders shared into chats (§12).
 - **Notifications** to phones through HA notify (§7).
@@ -698,18 +698,26 @@ Household Docs' *Send to chat* (Docs spec §17.15) reaches Chat as app messages 
   (`common_tests/fake_ha_bus.py`) with a fake Household Docs, one shared socket, duplicates acted on once; plus
   `common_tests/test_app_bus.py` on the app's own copies.
 
-### 15.12 Voice calls (`calls.py`, `routers/calls.py`, `static/calls.js`)
+### 15.12 Voice and video calls (`calls.py`, `routers/calls.py`, `static/calls.js`)
 
 Optional, **off** until an admin turns it on (App settings → *Voice calls*, `calls_enabled`). One-to-one calls in
-direct chats, between two browsers on the **home network**. Calling from outside the home (STUN, a relay) and
-the rest are planned in §18.1.
+direct chats and **group calls of up to four** in groups, audio or video, between browsers — a **mesh**: each
+person in the call has a WebRTC connection to each other, so four is the practical limit (each phone sends to
+three others; more would need a media server). Away from home needs §15.13.
 
 **What it does**
 
-- A **📞** button in the header of a **direct chat** the person may post in. Not in groups, not in "My room" (§17;
-  409 "Not possible in your personal room"), not in a read-only direct chat (§4: the other person has no access,
-  or two children while `children_can_message_each_other` is off; 409). Children (§16.5) can call wherever they
-  can post in a direct chat.
+- **📞** and **📹** buttons in the header of a direct chat or group the person may post in (`kind` `audio` or
+  `video`). Not in "My room" (§17; 409 "Not possible in your personal room"), not in a read-only direct chat (§4:
+  the other person has no access, or two children while `children_can_message_each_other` is off; 409). Children
+  (§16.5) can call wherever they can post. A group with nobody else in it: 409.
+- **Who is rung**: a direct chat's other person; in a group every enabled member but the caller. The caller is
+  **joined** from the start; each person rung is **ringing** until they answer (joined), decline, or the ring time
+  passes (missed). Someone already in a call isn't rung (`busy`; in a direct chat that's 409 "Asha is on another
+  call" for the caller, with a `busy` note for them). Two joined is a call; it **ends when fewer than two remain
+  and nobody is still ringing** — so in a group anyone can leave and the others carry on, and the caller hanging
+  up while it rings for everyone ends it as missed. Answering a call that already has four joined: 409 "The call
+  is full (4 people)".
 - **The caller** sees a full-screen call screen: photo, name, "Calling…" → "Ringing…" → "Connecting…" → the
   call's running time. A soft ringback tone plays while it rings. Once connected, both sides have:
   - **Mute** (the track is disabled; the other side is told over a small WebRTC data channel `hchat` that the
@@ -749,22 +757,26 @@ the rest are planned in §18.1.
   - Answering in one tab stops the ringing in the others ("Answered on another device") and takes the
     notification off the phone (`clear_notification` with the call's tag, sent to Companion-app services only —
     other services would show the words).
-- **Unanswered** after *Ring for* (`calls_ring_seconds`, default 30 s): the call ends as **missed**.
-- **Busy**: one call at a time per person. Starting a call while in one: 409 "You're already in a call."
-  Calling someone who is in a call or being rung: 409 "Asha is on another call." (a busy tone), and a missed call
-  (`busy`) is noted for them. Starting a call counts toward the 30 messages a minute (§4), since it can leave a
-  note and a push.
+- **Unanswered** after *Ring for* (`calls_ring_seconds`, default 30 s): everyone still ringing is **missed**; the
+  call ends unless two have joined.
+- **Busy**: one call at a time per person. Starting a call while in one: 409 "You're already in a call." Starting
+  a call counts toward the 30 messages a minute (§4), since it can leave a note and a push.
 - **Quiet hours and mute** (§7): the phone isn't rung when the person called is in their quiet hours, their level
   is `off`, or the chat is muted (`off` or `muted_until` in the future); open tabs still ring. The missed-call
   push then follows §7 like a message (held for the quiet-hours summary; none for a muted chat).
 - **A call note** in the chat when it ends: a message of kind `call` from the caller, with an empty body, linked
-  to its `calls` row. The page words it for each side: "📞 Outgoing call · 4 min" / "📞 Incoming call · 4 min",
-  "📞 No answer" / "📞 Missed call", "📞 Busy" / "📞 Missed call", "📞 Declined" / "📞 You declined a call",
-  "📞 Call couldn't connect", with **Call back** while calling is possible. Chat-list previews, exports and pushes
-  use the neutral words ("📞 Call · 4 min", "📞 Missed call", "📞 Declined call").
-  - Only **missed** (and busy) notes are unread for the person called (`unread_counts`), and only they are
-    notified, as "📞 Missed call from Asha" (or "New message in Household Chat" at preview level *none*), through
-    `notifier.new_message` with the chat's usual tag and buttons.
+  to its `calls` row (and `call_members`, how it went for each person). The page words it for each side:
+  "📞 Outgoing call · 4 min" / "📞 Incoming call · 4 min", "📞 No answer" / "📞 Missed call", "📞 Busy" /
+  "📞 Missed call", "📞 Declined" / "📞 You declined a call", "📞 Call couldn't connect"; 📹 and "video call" for
+  video; groups: "📞 Group call · 12 min · Asha, you, Tarun", "📞 Missed group call" (for someone who missed it) /
+  "📞 Group call · no answer", "… · declined", with **Call back** while calling is possible. Chat-list previews,
+  exports and pushes use the neutral words (`chats.call_label`: "📞 Call · 4 min", "📹 Missed video call",
+  "📞 Group call · 12 min", "📞 Declined group call").
+  - A note is unread only for the people whose `call_members` state is **missed** or **busy**
+    (`unread_counts`), and only they are notified — "📞 Missed call from Asha", "📹 Missed video call from
+    Asha", "📞 Missed group call from Asha" (or "New message in Household Chat" at preview level *none*) — through
+    `notifier.new_message`, which treats a call note like a direct message for the level (a missed call is for
+    you, whatever the chat).
   - Notes follow the chat's disappearing setting and retention like other messages. They can't be edited or
     forwarded, and have no message menu. Deleting a note (by the API) removes its `calls` row.
   - A call that never rang (the offer never came) leaves no note.
@@ -772,44 +784,58 @@ the rest are planned in §18.1.
 
 **How it works**
 
-- **The sound goes browser to browser** with WebRTC (Opus, always encrypted between the two, DTLS-SRTP). The app
-  never handles audio; it only passes the two browsers' descriptions and network candidates along.
-- **Signalling over what Chat already has**: live-update `call` events (§8), sent only to the two people, and
-  small POSTs:
+- **The sound and picture go browser to browser** with WebRTC (Opus, VP8/H.264, always encrypted between them,
+  DTLS-SRTP). The app never handles media; it only passes descriptions and network candidates between pairs.
+- **Signalling over what Chat already has**: live-update `call` events (§8), sent only to the people in the call,
+  and small POSTs:
 
   | Route | |
   |---|---|
-  | POST `/api/calls {conversationId}` | Start → 201 `{id, iceServers, ringSeconds, peerId, peerName}`. 403 feature off; 404 not your chat; 409 personal room, not a direct chat, read-only, you're in a call, they're on another call. |
-  | POST `/api/calls/{id}/offer {sdp}` | The caller's offer; the call starts ringing (its `calls` row is written). 409 unless the caller and the call is new. |
-  | GET `/api/calls/current` | `{call: null}` or my call: `{id, conversationId, state, role, peerId, peerName, ringLeft, iceServers}`, plus `offer` and the caller's early `candidates` while it rings for me, and `answer` for the caller once answered. |
-  | POST `/api/calls/{id}/answer {sdp}` | The person called answers. 409 unless they are, and it's ringing. |
-  | POST `/api/calls/{id}/candidate {candidate}` | A network candidate found after the description went: passed on as an event, or kept (up to 50) while the other side can't take it yet. 409 from the person called before answering. |
-  | POST `/api/calls/{id}/decline` | The person called declines while it rings. |
-  | POST `/api/calls/{id}/end {reason?}` | Hang up. `reason`: `failed` (couldn't connect) or `no_microphone` (Answer couldn't use the microphone). |
+  | POST `/api/calls {conversationId, kind?}` | Start → 201 `{id, kind, group, name, iceServers, ringSeconds, members: [{id, name, state}], peerId, peerName}` (the last two for a direct chat). The call rings at once (its `calls` row is written). 403 feature off; 404 not your chat; 409 personal room, read-only, nobody else in the group, you're in a call, they're on another call, everyone else is. 422 a kind other than `audio` / `video`. |
+  | POST `/api/calls/{id}/answer` | Join → `{id, kind, group, iceServers, members, peers: [{id, name}]}` — `peers` are the people already joined; **the newcomer sends an offer to each**, so two sides never offer at once. 409 unless ringing for me, or the call is full. |
+  | POST `/api/calls/{id}/signal {to, type, sdp?, candidate?}` | An `offer`, `answer` or `candidate` for one person, both joined (409 otherwise); delivered as an event and kept (up to 300 per person) for a page that polls. |
+  | GET `/api/calls/current` | `{call: null}` or my call: `{id, conversationId, kind, group, name, state (ringing for me / joined), role, peerId, peerName, ringLeft, members, iceServers, signals}` — `signals` are the ones waiting for me, drained on read; pages ignore signals they've seen (each has an `id`). |
+  | POST `/api/calls/{id}/decline` | Decline while it rings for me. |
+  | POST `/api/calls/{id}/end {reason?}` | Leave (the call goes on for the others while two remain). `reason`: `failed` (couldn't connect) or `no_microphone` (Answer couldn't use the microphone). |
 
-  A description (`sdp`) is 1–16,000 characters, a candidate at most 1,000. The call routes answer 404 to anyone
-  but the two people (as for chats), and need an enabled person like every route.
-- **Events** (`call`, `{id, conversationId, state, …}`): `ringing` to the person called (`peerId`, `peerName`,
-  `ringSeconds` — never the offer, which is fetched) and to the caller; `answered` to the caller (with `sdp` and the
-  person called's early candidates) and to the person called (so their other tabs stop ringing); `candidate` to
-  the other side; `ended` to both (`outcome`, `by`, and `reason` for `no_microphone`). A page ignores events for
-  calls it isn't handling.
-- **Fewer round trips**: each page waits up to 3 s for its network candidates before sending its offer or
-  answer, so most calls connect with those two messages alone. That matters because Home Assistant Cloud and some
-  proxies can delay the event stream. While a page's live updates are down (§8 fallback), it asks
-  `GET /api/calls/current` every second during a call instead.
-- **States**: `new` (POST `/calls`; dropped without a note if no offer comes within 20 s) → `ringing` → `active`
-  (answered) → ended. A call answered but not connected within 30 s is ended by the page as `failed` ("Couldn't
-  connect. For now calls work when both phones are on the home network."), as is a connection that fails.
+  A description (`sdp`) is 1–32,000 characters, a candidate at most 1,000. The call routes answer 404 to anyone
+  not in the call (as for chats), and need an enabled person like every route.
+- **Events** (`call`, `{id, conversationId, state, …}`): `ringing` to everyone rung (`kind`, `group`, `name` —
+  the group's or the caller's — `peerId`/`peerName` the caller, `ringSeconds`, `members`) and to the caller;
+  `joined` to the joiner (their other tabs stop ringing); `member` to the others when someone joined, left,
+  declined or was missed (`userId`, `memberState`, `members`, `reason`); `signal` to its one recipient
+  (`signal: {id, from, type, sdp | candidate}`); `ended` to everyone when the call is over (`outcome`, `by`,
+  `reason`), and to one person alone when only they are out of it (`outcome: null`: left, declined, missed, gone).
+  A page ignores events for calls it isn't handling.
+- **Candidates trickle** (each is a signal as it's found; one arriving before the description is kept until it
+  is), so the ringing starts at once and a joiner connects to each existing member in one offer–answer. While a
+  page's live updates are down (§8 fallback), it asks `GET /api/calls/current` every second during a call instead,
+  which carries the signals.
+- **Video**: every connection carries a **video slot** from the start — the offering side adds a `sendrecv`
+  video transceiver; the answering side takes the one in the offer and sets it to `sendrecv` (a browser only
+  reuses slots made by `addTrack`, so one added on the answering side would be left unused and the answer
+  receive-only). The camera track is put in with `replaceTrack` (and taken out with `null`), so turning the camera
+  on or off, or switching cameras (`facingMode` user / environment), never needs a new negotiation. 640×480 at
+  up to 24 fps is asked for. A video call that can't get a camera goes on with sound only. Each person's tile shows
+  their video while their camera is on (told over the data channel, `{muted, video}`), else their photo; my own
+  picture is a mirrored tile in the same grid (never over the buttons).
+- **Sound**: three `<audio>` elements (one per other person, at most) are made and started in the tap on 📞 or
+  Answer; each person's audio track goes into one when it arrives (§15.12 "Playing the other person's sound").
+- **States**: a joiner not connected to anyone within 30 s ends their side as `failed` ("Couldn't connect. Away
+  from home, calls need the address lookup and a relay (App settings → Voice calls)."); in a direct call a failed
+  connection ends the call, in a group it drops that one person.
 - **Calls that are on live in memory** (`calls.py`), like the live-update hub (§8). This relies on uvicorn
-  running with **one worker**, as the Dockerfile says; don't raise it. A job every 2 s (§10) ends rings that time
-  out (missed), drops offers that never came, and ends an answered call when one side has had no live connection
-  for a minute (`hub.is_online`). Disabling someone ends their call (`failed`). An admin restore drops the calls
+  running with **one worker**, as the Dockerfile says; don't raise it. A job every 2 s (§10) makes rings that time
+  out missed and drops someone joined who has had no live connection for a minute (`hub.is_online`), ending the
+  call when fewer than two remain. Disabling someone drops them from their call. An admin restore drops the calls
   that are on. **A restart** ends them; at start-up (and after a restore) rows still open are closed as `failed`
   with their note (`close_unfinished`).
 - **History**: `calls(id, conversation_id, caller_id, callee_id, started_at, answered_at, ended_at, outcome,
-  message_id)`, `outcome` one of `answered`, `missed`, `declined`, `busy`, `failed` (NULL while on). Durations are
-  `ended_at − answered_at`.
+  message_id, kind, is_group)` — `callee_id` is `''` for a group call — `outcome` one of `answered`, `missed`,
+  `declined`, `busy`, `failed` (NULL while on), and `call_members(call_id, user_id, state, joined_at, left_at)`
+  with `state` `left` (was in it), `missed`, `declined`, `busy` or `failed`. Durations are `ended_at −
+  answered_at` (the first join after the caller). Older databases get `kind`, `is_group` and `call_members`
+  (filled from the two columns) at start-up.
 - **The microphone** needs a secure address (https, or `localhost`) and permission, asked when the person presses
   📞 or Answer. Ingress pages are same-origin iframes, so it works there as it does for voice messages (§15.6).
   Without it, 📞 explains why; *Answer* ends the call with `no_microphone` and explains (the caller sees "They
@@ -818,18 +844,25 @@ the rest are planned in §18.1.
   covered by `connect-src`. The remote sound plays through an `<audio>` element's `srcObject` (not a URL).
 - **ICE servers**: from the App settings (§15.13); with none set the browsers find each other on the home network
   only.
-- **The Calls list** (⋯ → 📞 Calls, `GET /me/calls`): my last 100 ended calls, newest first — who, incoming or
-  outgoing, how it ended, when, how long — with **Missed** on top, **Call back** (where I may post in that chat)
-  and a button to the note in the chat. Calls still on aren't listed; nobody sees anyone else's.
+- **The Calls list** (⋯ → 📞 Calls, `GET /me/calls`): my last 100 ended calls I was in or rung for, newest first
+  — who (the group's name for a group call, with who was in it), audio or video, incoming or outgoing, how it
+  ended for me (`myState`), when, how long — with **Missed** on top, **Call back** (where I may post in that chat,
+  with the same kind) and a button to the note in the chat. Calls still on aren't listed; nobody sees anyone
+  else's.
 - **Older databases**: `messages.kind`'s CHECK gains `'call'`. SQLite can't change a CHECK in place, so the
   messages table is rebuilt once at start-up exactly as for cards (§15.11; `db._allow_new_kinds`, which upgrades
   both 2.1 and 2.2 databases); the `calls` table is new.
 
-**Tests**: `tests/test_calls.py` (who may call; ringing, answering, candidates, ending; the notes and unread
-counts; missed calls and their pushes; the phone's Decline; busy; offers that never come; quiet hours and muted
-chats; failures, disabling, the gone-side check and restarts; sizes; disappearing chats; a 2.2 database
-upgraded) and `tests/test_calls_browser.py` (the app in uvicorn and two headless Chromium pages with fake
-microphones, run with Chrome's strictest autoplay rule: ring, answer, sound both ways and both pages playing it, the level bars, mute (its icon) and the other side told, switching microphones, hang up, decline, the notes; skipped without Playwright).
+**Tests**: `tests/test_calls.py` (who may call; ringing, joining, signals and their polling queue, ending; the
+notes, `call_members` and unread counts; missed calls and their pushes; the phone's Decline; busy; quiet hours
+and muted chats; failures, disabling, the gone check and restarts; disappearing chats; video; group calls —
+joining up to four, leaving while others carry on, the end when one is left, missed / declined / busy, who is
+rung; a 2.2 database upgraded, a 2.4 one getting `call_members`) and `tests/test_calls_browser.py` (the app in
+uvicorn and headless Chromium pages with fake microphones and cameras, run with Chrome's strictest autoplay
+rule: a direct call — ring, answer, sound both ways and both pages playing it, the level bars, mute and the
+other side told, the camera turned on mid-call and its picture arriving, ⚙, hang up, decline, the notes, the
+Calls list and Call back; a three-person group video call — everyone hears and sees everyone, one leaving
+doesn't end it; the deep-link routes; Test calling; skipped without Playwright).
 
 ### 15.13 Calls away from home (STUN and a relay)
 
@@ -972,12 +1005,12 @@ Ideas that are not built:
 - **Link previews**, if they can be made without fetching every shared link from the server.
 - **Deleting files in shared folders** from the app.
 
-### 18.1 Voice calls — later (not built)
+### 18.1 Calls — possible later work (not built)
 
-Calls at home (§15.12) and away from home (§15.13) are built. Still planned, each small to medium:
+Calls at home (§15.12), away from home (§15.13), video and groups of up to four are built. Beyond that:
 
-- **Video** (camera on/off, flip camera).
-- **Group calls** of up to 4 people (each phone connects to each other; more would need a media server).
+- **Bigger group calls** would need a media server (an SFU) so each phone sends once: another piece of software
+  to run in the household, not planned.
 - If another household app ever wants calls, the browser side (call screen, WebRTC set-up) would move to
   `common/static/` then, not before.
 

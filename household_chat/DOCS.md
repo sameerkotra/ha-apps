@@ -65,12 +65,14 @@ Nobody is ever made an admin automatically, not even the first person to open th
 - **Blocked file types**: `.exe`, `.bat`, `.js`, `.html`, `.svg` and similar are refused (the list is an App setting).
 - **Where files are kept**: as ordinary files in the chat files folder (`/share/household_chat` unless an admin changed it), in `<chat name (id)>/<year-month>/`. Personal rooms are in `<name> - personal (id)`. You can reach them over Samba or the File editor too, but please don't rename or move them there, or the chat shows them as "no longer available".
 
-### Voice calls
+### Voice and video calls
 
 An admin turns calls on in **App settings → Voice calls** (off until then).
 
-- **📞** at the top of a direct chat calls that person. Calls are one-to-one, in direct chats only: not in groups or My room, and not in a direct chat that's read-only. Children can call the people they can message.
-- **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
+- **📞** at the top of a chat calls, **📹** starts a video call. In a direct chat it rings that person; in a group it rings everyone in the group, and whoever answers joins — **up to four people** in a call (a fifth is told it's full). Not in My room, and not in a direct chat that's read-only. Children can call the people they can message.
+- **Video**: in any call, the camera button turns your picture on or off, and 🔄 switches between the front and back camera. Each person's tile shows their picture, or their photo while their camera is off. Video uses more data than sound (roughly 100–300 MB an hour per person you see) — on mobile data, keep that in mind.
+- **Group calls**: the call goes on while two or more people are in it; anyone can leave, and the others carry on. Someone already in another call isn't rung. The note in the chat and the Calls list say who was in it.
+- **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" (or "…is starting a group call in Household") with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
 - **During a call**:
   - The microphone button mutes and unmutes you (muted, it's red with a line across the microphone); the other person sees that you've muted.
   - ⚙ picks the **microphone** — on a phone this list is also where you switch the call to the **speakerphone, earpiece or Bluetooth headset** — and, where the browser lists them, the **speaker or headset** the call plays through. The choices are remembered on that device.
@@ -226,7 +228,7 @@ Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your 
 | Phone notifications | What the preview setting allows shows on lock screens and in the Companion app's history. |
 | Notification replies | They pass through Home Assistant's event bus, where Home Assistant admins and automations can see them. |
 | Messages between the household apps | Household Docs and Chat talk over Home Assistant's event bus (`household_apps` events): ids, names, document titles and types, never document contents or chat messages. Your chat list goes without who is in each chat; the members of a chat are told only when you ask Docs to give that one chat's members access. Home Assistant admins, automations and every installed app with Home Assistant API access can see these events (and could send one), and Home Assistant's history keeps them unless you leave them out (below). Chat treats such a message only as a request the person could make themselves. |
-| Voice calls | The sound goes straight between the two phones or computers, encrypted; the app never handles it and calls are never recorded. With an address lookup (STUN) server set, the phones' public network addresses go to it; with a relay, the encrypted sound passes through it (Cloudflare or your own server) — names and messages never do. The app keeps who called whom, when and for how long (the notes in the chat and the Calls list), like messages. |
+| Voice and video calls | The sound and picture go straight between the phones or computers, encrypted; the app never handles it and calls are never recorded. With an address lookup (STUN) server set, the phones' public network addresses go to it; with a relay, the encrypted sound passes through it (Cloudflare or your own server) — names and messages never do. The app keeps who called whom, when and for how long (the notes in the chat and the Calls list), like messages. |
 | Home / away | Home Assistant already shows every user these states. |
 | Shared folders | Ordinary `/share` folders: anyone who can reach `/share` can read them. In the app, the members of each chat they're shared into. |
 | Chat downloads and backups | Anyone who has the file. |
@@ -249,7 +251,7 @@ recorder:
 - Built for a household: up to 20 people per group and 100 groups.
 - Messages up to 8000 characters, 10 files per message; 30 messages and 20 uploads a minute per person.
 - 10 pinned messages and 10 shared folders per chat; 50 open reminders and 20 scheduled messages per person; polls with 2–10 answers.
-- Voice calls are one-to-one; no video calls. No end-to-end encryption for messages, no link previews, and no access from outside Home Assistant or for people without a Home Assistant login.
+- Calls: up to four people (each phone sends to every other; more would need a media server). No end-to-end encryption for messages, no link previews, and no access from outside Home Assistant or for people without a Home Assistant login.
 - Home Assistant can't show an unread count on the sidebar.
 - PDFs have no preview picture in the Files view.
 - Notifications still waiting (batching, quiet hours) are dropped if the app restarts.

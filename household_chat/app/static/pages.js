@@ -37,13 +37,14 @@ async function starredPage() {
 async function callsPage() {
   const r = await api("api/me/calls");
   if (!r.calls.length) return h("p", { class: "hint" }, "Your calls will be listed here. Call someone with 📞 at the top of a direct chat.");
-  const word = (x) => x.outcome === "answered" ? (x.outgoing ? "Outgoing" : "Incoming") + (x.seconds == null ? "" : " · " + fmtDuration(x.seconds))
-    : x.missed ? "Missed" : x.outcome === "busy" ? "Busy" : x.outcome === "declined" ? (x.outgoing ? "Declined" : "You declined") : x.outcome === "missed" ? "No answer" : "Couldn't connect";
+  const word = (x) => (x.kind === "video" ? "📹 " : "") + (x.group ? "Group · " : "") + (x.outcome === "answered"
+    ? (x.myState === "left" ? (x.outgoing ? "Outgoing" : "Incoming") + (x.seconds == null ? "" : " · " + fmtDuration(x.seconds)) + (x.group && x.with.length ? " · with " + x.with.join(", ") : "") : "Missed")
+    : x.missed ? "Missed" : x.outcome === "busy" ? "Busy" : x.outcome === "declined" ? (x.outgoing ? "Declined" : "You declined") : x.outcome === "missed" ? "No answer" : "Couldn't connect");
   const row = (x) => h("div", { class: "result card-ish call-row" + (x.missed ? " missed" : "") },
-    avatar(x.peerName, x.peerId, { small: true, noDot: true }),
+    x.group ? h("span", { class: "avatar group small " + colorOf(x.peerName), "aria-hidden": "true" }, "👥") : avatar(x.peerName, x.peerId, { small: true, noDot: true }),
     h("div", { class: "grow" }, h("div", null, h("strong", null, x.peerName)),
       h("div", { class: "hint" }, (x.outgoing ? "↗ " : "↙ ") + word(x) + " · " + fmtFull(x.startedAt))),
-    x.canCallBack ? h("button", { class: "btn small", type: "button", onclick: () => { const c = convById(x.conversationId); if (c) startCall(c); } }, "📞 Call back") : null,
+    x.canCallBack ? h("button", { class: "btn small", type: "button", onclick: () => { const c = convById(x.conversationId); if (c) startCall(c, x.kind); } }, (x.kind === "video" ? "📹" : "📞") + " Call back") : null,
     h("button", { class: "icon-btn", type: "button", title: "Open the chat", "aria-label": "Open the chat", onclick: () => x.messageId ? openChatAt(x.conversationId, x.messageId) : openChat(x.conversationId) }, "💬"));
   const missed = r.calls.filter((x) => x.missed);
   return h("div", null,

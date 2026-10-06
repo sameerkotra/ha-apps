@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.0
+
+- **Video calls**: 📹 next to 📞 at the top of a chat starts a call with the camera on. In any call, the camera button turns your picture on or off, and 🔄 switches between the front and back camera. The picture goes straight between the phones like the sound; nothing is recorded.
+- **Group calls** of up to **four people**: 📞 or 📹 at the top of a group rings everyone in it; whoever answers joins, and the call goes on while two or more are in it. Each person's tile shows their picture or photo, and who's muted. A fifth person is told the call is full.
+- The chat note and the 📞 Calls list say whether it was a video or group call and who was in it; a missed group call is unread and notified for the people who missed it.
+- Under the hood, every call now works the same way for two people or four: each phone connects to each other, and the app only passes the connection details between them.
+
 ## 2.4.2
 
 - **Cloudflare relay**: fetching the credentials failed with "HTTP 403 … error code: 1010" — Cloudflare's bot filter refusing the app's default web client name. The app now identifies itself as Household Chat.

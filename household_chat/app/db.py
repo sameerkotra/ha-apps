@@ -150,9 +150,19 @@ CREATE TABLE IF NOT EXISTS calls (
   started_at TEXT NOT NULL,                  -- when it started ringing
   answered_at TEXT, ended_at TEXT,
   outcome TEXT CHECK (outcome IN ('answered','missed','declined','busy','failed')),   -- NULL while it's on
-  message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE
+  message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'audio',        -- audio | video
+  is_group INTEGER NOT NULL DEFAULT 0        -- a group call: callee_id is '' and call_members says who was in it
 );
 CREATE INDEX IF NOT EXISTS idx_calls_msg ON calls(message_id);
+CREATE TABLE IF NOT EXISTS call_members (
+  call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  state TEXT NOT NULL,                       -- left (was in it) | missed | declined | busy | failed
+  joined_at TEXT, left_at TEXT,
+  PRIMARY KEY (call_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_call_members_user ON call_members(user_id);
 CREATE TABLE IF NOT EXISTS stars (
   user_id TEXT NOT NULL, message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   created_at TEXT NOT NULL, PRIMARY KEY (user_id, message_id)
@@ -252,13 +262,26 @@ MIGRATIONS = {
                  ("announcement_closed_at", "TEXT"), ("announcement_reminded_at", "TEXT"),
                  ("reply_gone", "INTEGER NOT NULL DEFAULT 0")],
     "attachments": [("admin_deleted_at", "TEXT"), ("scheduled_id", "TEXT")],
+    "calls": [("kind", "TEXT NOT NULL DEFAULT 'audio'"), ("is_group", "INTEGER NOT NULL DEFAULT 0")],
 }
 
 
 def _migrate(conn) -> None:
     """Columns that older databases lack (CREATE TABLE IF NOT EXISTS never adds them)."""
-    db_core.add_missing_columns(conn, MIGRATIONS)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    db_core.add_missing_columns(conn, {t: cols for t, cols in MIGRATIONS.items() if t in tables})
     conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_expires ON messages(expires_at) WHERE expires_at IS NOT NULL")
+    # calls from before group calls: their members from the two columns
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'calls'").fetchone():
+        return
+    conn.execute("CREATE TABLE IF NOT EXISTS call_members (call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE, "
+                 "user_id TEXT NOT NULL, state TEXT NOT NULL, joined_at TEXT, left_at TEXT, PRIMARY KEY (call_id, user_id))")
+    conn.execute("INSERT OR IGNORE INTO call_members (call_id, user_id, state, joined_at, left_at) "
+                 "SELECT id, caller_id, 'left', started_at, ended_at FROM calls WHERE ended_at IS NOT NULL")
+    conn.execute("INSERT OR IGNORE INTO call_members (call_id, user_id, state, joined_at, left_at) "
+                 "SELECT id, callee_id, CASE WHEN outcome = 'answered' THEN 'left' WHEN outcome = 'declined' THEN 'declined' "
+                 "WHEN outcome = 'busy' THEN 'busy' WHEN outcome = 'failed' THEN 'failed' ELSE 'missed' END, answered_at, ended_at "
+                 "FROM calls WHERE ended_at IS NOT NULL AND callee_id != ''")
     _migrate_shared_folders(conn)
 
 

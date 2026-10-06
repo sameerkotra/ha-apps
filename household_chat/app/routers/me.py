@@ -157,17 +157,22 @@ def my_calls(user: dict = Depends(require_user)):
     """My recent calls, newest first (up to 100), for the Calls list (§15.12): who, when, how it ended."""
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT c.*, m.deleted_at FROM calls c JOIN members mb ON mb.conversation_id = c.conversation_id AND mb.user_id = ? "
-            "LEFT JOIN messages m ON m.id = c.message_id WHERE (c.caller_id = ? OR c.callee_id = ?) AND c.ended_at IS NOT NULL "
-            "ORDER BY c.started_at DESC LIMIT 100", (user["id"], user["id"], user["id"])).fetchall()
+            "SELECT c.*, cm.state AS my_state FROM calls c JOIN call_members cm ON cm.call_id = c.id AND cm.user_id = ? "
+            "JOIN members mb ON mb.conversation_id = c.conversation_id AND mb.user_id = ? "
+            "WHERE c.ended_at IS NOT NULL ORDER BY c.started_at DESC LIMIT 100", (user["id"], user["id"])).fetchall()
         out = []
         for r in rows:
-            other = r["callee_id"] if r["caller_id"] == user["id"] else r["caller_id"]
             conv = chats.conv_row(conn, r["conversation_id"])
+            group = bool(r["is_group"])
+            other = (r["callee_id"] if r["caller_id"] == user["id"] else r["caller_id"]) if not group else None
+            members = chats.call_members(conn, r["id"])
             out.append({"id": r["id"], "conversationId": r["conversation_id"], "messageId": r["message_id"],
-                        "peerId": other, "peerName": chats.shown_name(chats.user_row(conn, other)),
+                        "kind": r["kind"], "group": group, "peerId": other,
+                        "peerName": (conv["name"] if conv else "Group") if group else chats.shown_name(chats.user_row(conn, other)),
                         "outgoing": r["caller_id"] == user["id"], "outcome": r["outcome"],
-                        "missed": r["callee_id"] == user["id"] and r["outcome"] in ("missed", "busy"),
+                        "missed": r["my_state"] in ("missed", "busy"), "myState": r["my_state"],
+                        "with": [chats.shown_name(chats.user_row(conn, m["user_id"])) for m in members
+                                 if m["user_id"] != user["id"] and m["state"] == "left"],
                         "startedAt": r["started_at"], "seconds": chats.call_seconds(r),
                         "canCallBack": conv is not None and chats.can_post(conn, conv, user["id"])})
     return {"calls": out}

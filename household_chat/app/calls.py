@@ -1,18 +1,20 @@
-"""Voice calls (SPEC §15.12): one-to-one calls in direct chats, signalling only.
+"""Voice and video calls (SPEC §15.12): one-to-one calls in direct chats and group calls of up to four people
+in groups — signalling only.
 
-The sound goes straight between the two browsers (WebRTC). The app only passes
-their descriptions (`sdp`) and network candidates between them, rings the
-person called, and writes a note in the chat when the call ends.
+The sound and picture go straight between the browsers (WebRTC, a mesh: each person in the call connects to
+each other). The app only passes their descriptions (`sdp`) and network candidates between pairs, rings the
+people called, and writes a note in the chat when the call ends.
 
-Calls that are on live in memory, like the live-update hub (live.py): the app
-runs ONE process (uvicorn with 1 worker, see the Dockerfile), so a dict is the
-whole picture. A restart ends them; `close_unfinished()` closes their rows at
-start-up. The `calls` table keeps the history, one row per call that rang.
+Calls that are on live in memory, like the live-update hub (live.py): the app runs ONE process (uvicorn with
+1 worker, see the Dockerfile), so a dict is the whole picture. A restart ends them; `close_unfinished()` closes
+their rows at start-up. The `calls` table keeps the history (one row per call that rang) and `call_members` one
+row per person in it, how it ended for them.
 
-A call: `new` (made by POST /calls, waiting for the caller's offer) → `ringing`
-(the offer is here; the other person is rung) → `active` (answered) → ended.
-Live `call` events go only to the two people; each says which call it is about,
-and a page ignores calls it isn't handling.
+A call: POST /calls makes it, with the caller **joined** and everyone invited **ringing**; each person
+answers (joined), declines, or is missed when the ringing stops. Two people joined is a call; it ends when fewer
+than two remain and nobody is still ringing. Live `call` events go only to the people in the call; each says
+which call it is about, and a page ignores calls it isn't handling. Signals (offer, answer, candidate) go to
+one person each, and are also kept for a page whose live updates are down (it polls GET /calls/current).
 """
 import base64
 import hashlib
@@ -34,33 +36,49 @@ from .live import hub
 
 logger = logging.getLogger("calls")
 
-MAX_SDP = 16000
+MAX_SDP = 32000
 MAX_CANDIDATE = 1000
-MAX_CANDIDATES = 50
-OFFER_SECONDS = 20          # a call whose offer never comes is dropped (no note)
-GONE_SECONDS = 60           # an answered call ends when one side has had no live connection this long
+MAX_SIGNALS = 300           # kept per person for the polling fallback
+MAX_PARTICIPANTS = 4        # a mesh: each phone sends to every other; beyond four it would need a media server
+GONE_SECONDS = 60           # someone with no live connection this long has left
+KINDS = ("audio", "video")
 OUTCOMES = ("answered", "missed", "declined", "busy", "failed")
+MEMBER_STATES = ("ringing", "joined", "left", "declined", "missed", "busy", "failed")
+
+
+@dataclass
+class Member:
+    state: str = "ringing"                  # ringing | joined | left | declined | missed | busy | failed
+    joined_at: str | None = None
+    left_at: str | None = None
+    gone_since: float | None = None         # monotonic: first seen without a live connection
+    pushed: bool = False                    # a ringing notification went to their phone
+    signals: list = field(default_factory=list)     # for them, until their page fetched them
 
 
 @dataclass
 class Call:
     id: str
     conversation_id: str
+    kind: str                               # audio | video
+    group: bool
     caller: str
-    callee: str
-    state: str = "new"                      # new | ringing | active
-    made: float = field(default_factory=time.monotonic)
-    offer: str | None = None
-    answer: str | None = None
-    candidates: dict = field(default_factory=dict)   # user → [candidate] sent before the other side could take them
+    members: dict = field(default_factory=dict)      # user → Member (the caller too)
     ring_until: float = 0.0
-    started_at: str | None = None           # ISO, when it started ringing
-    answered_at: str | None = None
-    pushed: bool = False                    # a ringing notification went to the person called
-    gone_since: dict = field(default_factory=dict)   # user → monotonic time they were first seen offline
+    started_at: str | None = None
+    answered_at: str | None = None          # the first join after the caller
+    ended: bool = False
+    seq: int = 0
 
-    def other(self, uid: str) -> str:
-        return self.callee if uid == self.caller else self.caller
+    def joined(self) -> list:
+        return [u for u, m in self.members.items() if m.state == "joined"]
+
+    def ringing(self) -> list:
+        return [u for u, m in self.members.items() if m.state == "ringing"]
+
+    def in_call(self) -> list:
+        """Everyone who may still act on it: joined or ringing."""
+        return [u for u, m in self.members.items() if m.state in ("joined", "ringing")]
 
 
 _lock = threading.Lock()
@@ -129,9 +147,7 @@ def cloudflare_servers(key_id: str, token: str) -> list:
             _cf["error"] = why
         return []
     with _lock:
-        _cf["error"] = None
-    with _lock:
-        _cf.update(servers=servers, until=now + CF_CACHE, key=(key_id, token))
+        _cf.update(servers=servers, until=now + CF_CACHE, key=(key_id, token), error=None)
     return list(servers)
 
 
@@ -168,6 +184,7 @@ def relay_error() -> str | None:
         return _cf["error"]
 
 
+# ---------- lookups ----------
 def busy(uid: str) -> bool:
     with _lock:
         return uid in _by_user
@@ -177,13 +194,21 @@ def _get(cid: str, uid: str) -> Call:
     """The call, if `uid` is in it — 404 otherwise (as for chats)."""
     with _lock:
         c = _calls.get(cid) if isinstance(cid, str) else None
-    if c is None or uid not in (c.caller, c.callee):
+    if c is None or c.ended or uid not in c.members or c.members[uid].state not in ("joined", "ringing"):
         raise HTTPException(404, "That call has ended.")
     return c
 
 
 def _event(c: Call, uids, data: dict) -> None:
     hub.publish(uids, "call", {"id": c.id, "conversationId": c.conversation_id, **data})
+
+
+def _names(conn, uids) -> dict:
+    return {u: chats.shown_name(chats.user_row(conn, u)) for u in uids}
+
+
+def _members_out(c: Call, names: dict) -> list:
+    return [{"id": u, "name": names.get(u, "Someone"), "state": m.state} for u, m in c.members.items()]
 
 
 def _sdp(v) -> str:
@@ -193,172 +218,263 @@ def _sdp(v) -> str:
 
 
 # ---------- starting ----------
-def start(user: dict, conversation_id: str) -> dict:
-    """POST /calls: checks who may call whom here, then a `new` call waiting for the offer."""
+def start(user: dict, conversation_id: str, kind: str = "audio") -> dict:
+    """POST /calls: checks who may call whom here, then the call rings — the caller joined, everyone invited
+    ringing. A direct chat invites the other person (busy: a missed call for them, 409 for the caller); a group
+    invites every enabled member who isn't in a call."""
+    if kind not in KINDS:
+        raise HTTPException(422, "A call is audio or video.")
     with db.get_conn() as conn:
         if not enabled(conn):
             raise HTTPException(403, "Voice calls are turned off. An admin can turn them on in App settings.")
         conv, _m = chats.access(conn, conversation_id, user)
         chats.not_personal(conv)
-        if conv["kind"] != "direct":
-            raise HTTPException(409, "Calls are only possible in a direct chat.")
         chats.require_post(conn, conv, user["id"])
         chats.message_limit.take(user["id"])        # a call can leave a note and a push: counted like a message
-        other = chats.other_member(conn, conv, user["id"])
+        group = conv["kind"] == "group"
+        invitees = [u for u in chats.member_ids(conn, conv["id"]) if u != user["id"]]
         values = settings.all_values(conn)
-        other_name = chats.shown_name(other)
+        names = _names(conn, invitees + [user["id"]])
+        conv_name = conv["name"] if group else None
+    if not invitees:
+        raise HTTPException(409, "There's nobody else in this group to call.")
     ring = values["calls_ring_seconds"]
-    c = Call(id=db.new_id(), conversation_id=conv["id"], caller=user["id"], callee=other["id"])
+    now = config.now_iso()
+    c = Call(id=db.new_id(), conversation_id=conv["id"], kind=kind, group=group, caller=user["id"], started_at=now)
+    c.members[user["id"]] = Member(state="joined", joined_at=now)
     servers = ice_servers(values, c.id)          # after the connection: may ask Cloudflare
     with _lock:
         if user["id"] in _by_user:
             raise HTTPException(409, "You're already in a call.")
-        other_busy = other["id"] in _by_user
+        busy_ones = [u for u in invitees if u in _by_user]
+        other_busy = not group and bool(busy_ones)
         if not other_busy:
+            for u in invitees:
+                c.members[u] = Member(state="busy" if u in busy_ones else "ringing")
+            c.ring_until = time.monotonic() + ring
             _calls[c.id] = c
-            _by_user[c.caller] = c.id
-            _by_user[c.callee] = c.id
+            _by_user[user["id"]] = c.id
+            for u in invitees:
+                if u not in busy_ones:
+                    _by_user[u] = c.id
     if other_busy:
         # a missed call for them, noted in the chat; the caller hears the busy tone
-        c.started_at = config.now_iso()
-        _finish_note(c, "busy")
-        raise HTTPException(409, f"{other_name} is on another call.")
-    return {"id": c.id, "iceServers": servers, "ringSeconds": ring, "peerId": c.callee, "peerName": other_name}
+        c.members[invitees[0]] = Member(state="busy")
+        c.ended = True
+        _finish(c, "busy")
+        raise HTTPException(409, f"{names[invitees[0]]} is on another call.")
+    if group and len(busy_ones) == len(invitees):
+        _take(c.id)
+        raise HTTPException(409, "Everyone else is on another call.")
+    with db.get_conn() as conn:
+        conn.execute("INSERT INTO calls (id, conversation_id, caller_id, callee_id, started_at, kind, is_group) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?)", (c.id, c.conversation_id, c.caller, "" if group else invitees[0],
+                                                       c.started_at, kind, 1 if group else 0))
+    members = _members_out(c, names)
+    ringing = c.ringing()
+    _event(c, ringing, {"state": "ringing", "kind": kind, "group": group, "name": conv_name or names[user["id"]],
+                        "peerId": user["id"], "peerName": names[user["id"]], "ringSeconds": ring, "members": members})
+    _event(c, [user["id"]], {"state": "ringing", "members": members})
+    for u in ringing:
+        _spawn(_ring_push, c.id, u)
+    return {"id": c.id, "kind": kind, "group": group, "name": conv_name or names[invitees[0]],
+            "iceServers": servers, "ringSeconds": ring, "members": members,
+            "peerId": None if group else invitees[0], "peerName": None if group else names[invitees[0]]}
 
 
-def offer(user: dict, call_id: str, sdp) -> dict:
-    """The caller's offer: the call starts ringing."""
-    sdp = _sdp(sdp)
+# ---------- joining ----------
+def answer(user: dict, call_id: str) -> dict:
+    """The person called joins: they then send an offer to each person already in (the page does that from the
+    `peers` returned here — the newcomer always offers, so two sides never offer at once)."""
     c = _get(call_id, user["id"])
     with db.get_conn() as conn:
-        ring = settings.get("calls_ring_seconds", conn)
-        caller_name = chats.shown_name(chats.user_row(conn, c.caller))
+        values = settings.all_values(conn)
+        names = _names(conn, list(c.members))
+    servers = ice_servers(values, c.id)
     with _lock:
-        if c.caller != user["id"] or c.state != "new":
-            raise HTTPException(409, "That call has already started.")
-        c.offer, c.state = sdp, "ringing"
-        c.ring_until = time.monotonic() + ring
-        c.started_at = config.now_iso()
-    with db.get_conn() as conn:
-        conn.execute("INSERT INTO calls (id, conversation_id, caller_id, callee_id, started_at) VALUES (?, ?, ?, ?, ?)",
-                     (c.id, c.conversation_id, c.caller, c.callee, c.started_at))
-    _event(c, [c.callee], {"state": "ringing", "peerId": c.caller, "peerName": caller_name, "ringSeconds": ring})
-    _event(c, [c.caller], {"state": "ringing"})
-    _spawn(_ring_push, c.id)
-    return {"ok": True}
-
-
-# ---------- answering, candidates ----------
-def answer(user: dict, call_id: str, sdp) -> dict:
-    sdp = _sdp(sdp)
-    c = _get(call_id, user["id"])
-    with _lock:
-        if c.callee != user["id"] or c.state != "ringing":
+        m = c.members[user["id"]]
+        if m.state != "ringing":
             raise HTTPException(409, "That call can't be answered now.")
-        c.answer, c.state = sdp, "active"
-        c.answered_at = config.now_iso()
-        early = c.candidates.pop(c.callee, [])
-    with db.get_conn() as conn:
-        conn.execute("UPDATE calls SET answered_at = ? WHERE id = ?", (c.answered_at, c.id))
-    _event(c, [c.caller], {"state": "answered", "sdp": sdp, "candidates": early})
-    _event(c, [c.callee], {"state": "answered"})        # the person's other tabs stop ringing
-    _clear_push(c)
-    return {"ok": True}
+        if len(c.joined()) >= MAX_PARTICIPANTS:
+            raise HTTPException(409, f"The call is full ({MAX_PARTICIPANTS} people).")
+        m.state, m.joined_at = "joined", config.now_iso()
+        first = c.answered_at is None
+        if first:
+            c.answered_at = m.joined_at
+        peers = [u for u in c.joined() if u != user["id"]]
+        members = _members_out(c, names)
+    if first:
+        with db.get_conn() as conn:
+            conn.execute("UPDATE calls SET answered_at = ? WHERE id = ?", (c.answered_at, c.id))
+    _event(c, [u for u in c.in_call() if u != user["id"]],
+           {"state": "member", "userId": user["id"], "memberState": "joined", "members": members})
+    _event(c, [user["id"]], {"state": "joined", "members": members})      # the person's other tabs stop ringing
+    _clear_push(c, user["id"])
+    return {"id": c.id, "kind": c.kind, "group": c.group, "iceServers": servers, "members": members,
+            "peers": [{"id": u, "name": names.get(u, "Someone")} for u in peers]}
 
 
-def candidate(user: dict, call_id: str, cand) -> dict:
-    """A network candidate found after the offer or answer went: passed on now, or kept until the other side
-    has the call (the person called fetches the caller's with the offer)."""
-    if not isinstance(cand, dict) or len(str(cand)) > MAX_CANDIDATE:
-        raise HTTPException(422, "That isn't a network candidate.")
+def signal(user: dict, call_id: str, to: str, kind: str, payload) -> dict:
+    """An offer, answer or candidate from one person in the call to another (both joined)."""
     c = _get(call_id, user["id"])
+    if kind in ("offer", "answer"):
+        data = {"sdp": _sdp(payload)}
+    elif kind == "candidate":
+        if not isinstance(payload, dict) or len(str(payload)) > MAX_CANDIDATE:
+            raise HTTPException(422, "That isn't a network candidate.")
+        data = {"candidate": payload}
+    else:
+        raise HTTPException(422, "A signal is an offer, an answer or a candidate.")
     with _lock:
-        if c.state == "new" or (c.state == "ringing" and user["id"] == c.caller):
-            kept = c.candidates.setdefault(user["id"], [])
-            if len(kept) >= MAX_CANDIDATES:
-                raise HTTPException(429, "Too many network candidates.")
-            kept.append(cand)
-            return {"ok": True}
-        if c.state == "ringing":
-            raise HTTPException(409, "Answer the call first.")
-    _event(c, [c.other(user["id"])], {"state": "candidate", "candidate": cand})
+        if c.members[user["id"]].state != "joined":
+            raise HTTPException(409, "Join the call first.")
+        target = c.members.get(to) if isinstance(to, str) else None
+        if target is None or target.state != "joined":
+            raise HTTPException(409, "They aren't in the call.")
+        c.seq += 1
+        sig = {"id": c.seq, "from": user["id"], "type": kind, **data}
+        target.signals.append(sig)
+        if len(target.signals) > MAX_SIGNALS:
+            del target.signals[:-MAX_SIGNALS]
+    _event(c, [to], {"state": "signal", "signal": sig})
     return {"ok": True}
 
 
 def current(user: dict) -> dict | None:
-    """GET /calls/current: my call (with the caller's offer while it rings for me), or None."""
+    """GET /calls/current: my call — ringing for me, or the one I'm in — with the signals waiting for me (a page
+    whose live updates are down polls this; pages ignore signals they've seen), or None."""
     with _lock:
         cid = _by_user.get(user["id"])
         c = _calls.get(cid) if cid else None
-        if c is None:
+        if c is None or c.ended or user["id"] not in c.members:
             return None
-        mine = c.caller == user["id"]
-        data = {"id": c.id, "conversationId": c.conversation_id, "state": c.state,
-                "role": "caller" if mine else "callee", "peerId": c.other(user["id"]),
-                "ringLeft": max(0, round(c.ring_until - time.monotonic())) if c.state == "ringing" else None}
-        if not mine and c.state == "ringing":
-            data["offer"] = c.offer
-            data["candidates"] = list(c.candidates.get(c.caller, []))
-        if mine and c.state == "active":
-            data["answer"] = c.answer           # for a page whose live updates are down (it polls this)
+        m = c.members[user["id"]]
+        if m.state not in ("joined", "ringing"):
+            return None
+        signals = list(m.signals)
+        m.signals.clear()
+        data = {"id": c.id, "conversationId": c.conversation_id, "kind": c.kind, "group": c.group, "state": m.state,
+                "role": "caller" if c.caller == user["id"] else "callee",
+                "peerId": c.caller if c.caller != user["id"] else None,
+                "ringLeft": max(0, round(c.ring_until - time.monotonic())) if m.state == "ringing" else None,
+                "signals": signals}
+        uids = list(c.members)
     with db.get_conn() as conn:
-        data["peerName"] = chats.shown_name(chats.user_row(conn, data["peerId"]))
+        names = _names(conn, uids)
+        conv = chats.conv_row(conn, c.conversation_id)
         values = settings.all_values(conn)
+    with _lock:
+        data["members"] = _members_out(c, names)
+    if data["peerId"] is None and not c.group:
+        data["peerId"] = next((u for u in uids if u != user["id"]), None)
+    data["peerName"] = names.get(data["peerId"], "Someone")
+    data["name"] = (conv["name"] if conv and c.group else None) or data["peerName"]
     data["iceServers"] = ice_servers(values, c.id)
     return data
 
 
-# ---------- ending ----------
+# ---------- leaving and ending ----------
 def _take(call_id: str) -> Call | None:
     """Remove a call from what's on (once: a second ending finds nothing)."""
     with _lock:
         c = _calls.pop(call_id, None)
         if c is not None:
-            for u in (c.caller, c.callee):
+            c.ended = True
+            for u in c.members:
                 if _by_user.get(u) == c.id:
                     _by_user.pop(u, None)
     return c
 
 
+def _release(c: Call, uid: str) -> None:
+    """Someone who declined, was missed or left is free for other calls."""
+    with _lock:
+        if _by_user.get(uid) == c.id:
+            _by_user.pop(uid, None)
+
+
 def decline(user: dict, call_id: str) -> dict:
     c = _get(call_id, user["id"])
-    if c.callee != user["id"] or c.state != "ringing":
-        raise HTTPException(409, "That call can't be declined now.")
-    _end(c.id, "declined", by=user["id"])
+    with _lock:
+        m = c.members[user["id"]]
+        if m.state != "ringing":
+            raise HTTPException(409, "That call can't be declined now.")
+        m.state = "declined"
+    _release(c, user["id"])
+    _event(c, [user["id"]], {"state": "ended", "outcome": "declined", "by": user["id"]})     # their other tabs
+    _clear_push(c, user["id"])
+    _after_change(c, "declined", by=user["id"])
     return {"ok": True}
 
 
 def hang_up(user: dict, call_id: str, reason: str | None = None) -> dict:
-    """POST /calls/{id}/end. reason "failed": the connection couldn't be made (or the microphone couldn't be
-    used); "no_microphone" says the latter to the other side."""
+    """POST /calls/{id}/end: leave (the call goes on for the others while two remain). reason "failed": the
+    connection couldn't be made; "no_microphone": Answer couldn't use the microphone (told to the others)."""
     c = _get(call_id, user["id"])
-    if reason in ("failed", "no_microphone"):
-        outcome = "failed"
-    elif c.state == "active":
-        outcome = "answered"
-    elif c.state == "ringing":
-        outcome = "declined" if user["id"] == c.callee else "missed"
+    with _lock:
+        m = c.members[user["id"]]
+        was = m.state
+        m.state = "failed" if reason else ("left" if was == "joined" else "declined")
+        m.left_at = config.now_iso()
+    _release(c, user["id"])
+    _clear_push(c, user["id"])
+    _event(c, [user["id"]], {"state": "ended", "outcome": None, "by": user["id"], "reason": reason})
+    if was == "ringing" and not reason:
+        _after_change(c, "declined", by=user["id"])
     else:
-        outcome = None                          # the offer never went: nothing to note
-    _end(c.id, outcome, by=user["id"], reason=reason)
+        _after_change(c, "left", by=user["id"], reason=reason)
     return {"ok": True}
 
 
-def _end(call_id: str, outcome: str | None, by: str | None = None, reason: str | None = None) -> None:
+def _after_change(c: Call, what: str, by: str | None = None, reason: str | None = None) -> None:
+    """After someone declined, left or was missed: tell the others, or end the call when fewer than two remain
+    and nobody is still ringing."""
+    with _lock:
+        joined, ringing = c.joined(), c.ringing()
+        uids = list(c.members)
+    if joined and (len(joined) >= 2 or ringing):
+        with db.get_conn() as conn:
+            names = _names(conn, uids)
+        with _lock:
+            members = _members_out(c, names)
+            data = {"state": "member", "userId": by, "memberState": c.members[by].state if by else None, "members": members}
+            stay = c.in_call()
+        if reason:
+            data["reason"] = reason
+        _event(c, stay, data)
+        return
+    # the end: how it went
+    if reason and not c.answered_at:
+        outcome = "failed"
+    elif c.answered_at:
+        outcome = "answered"
+    elif not c.group and what == "declined" and by != c.caller:
+        outcome = "declined"
+    elif not c.group and by == c.caller:
+        outcome = "missed"                      # the caller gave up while it rang
+    else:
+        states = {m.state for u, m in c.members.items() if u != c.caller}
+        outcome = "declined" if states and states <= {"declined", "busy"} else "missed"
+    _end(c.id, outcome, by=by, reason=reason)
+
+
+def _end(call_id: str, outcome: str, by: str | None = None, reason: str | None = None) -> None:
     c = _take(call_id)
     if c is None:
         return
-    if outcome is not None and c.started_at is not None:
-        _clear_push(c)          # a missed call's notification follows as a message (§7)
-        _finish_note(c, outcome)
+    for u, m in c.members.items():
+        if m.state == "ringing":
+            m.state = "missed"
+        _clear_push(c, u)       # a missed call's notification follows as a message (§7)
+    _finish(c, outcome)
     data = {"state": "ended", "outcome": outcome, "by": by}      # after the note: pages see both
     if reason:
         data["reason"] = reason
-    _event(c, [c.caller, c.callee], data)
+    _event(c, list(c.members), data)
 
 
-def _finish_note(c: Call, outcome: str) -> None:
-    """The call's row is closed and its note posted in the chat (as the caller's message)."""
+def _finish(c: Call, outcome: str) -> None:
+    """The call's rows are closed and its note posted in the chat (as the caller's message)."""
     out = chats.Outbox()
     now = config.now_iso()
     with db.get_conn() as conn:
@@ -366,48 +482,78 @@ def _finish_note(c: Call, outcome: str) -> None:
         if conv is None:
             return
         mid = chats.insert_message(conn, conv, c.caller, kind="call", body="", expires_in=conv["disappear_seconds"])
-        if conn.execute("UPDATE calls SET ended_at = ?, outcome = ?, message_id = ? WHERE id = ?",
-                        (now, outcome, mid, c.id)).rowcount == 0:
+        if conn.execute("UPDATE calls SET ended_at = ?, outcome = ?, message_id = ?, answered_at = ? WHERE id = ?",
+                        (now, outcome, mid, c.answered_at, c.id)).rowcount == 0:
             conn.execute("INSERT INTO calls (id, conversation_id, caller_id, callee_id, started_at, answered_at, ended_at, "
-                         "outcome, message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (c.id, c.conversation_id, c.caller, c.callee, c.started_at or now, c.answered_at, now, outcome, mid))
+                         "outcome, message_id, kind, is_group) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (c.id, c.conversation_id, c.caller, "" if c.group else next((u for u in c.members if u != c.caller), ""),
+                          c.started_at or now, c.answered_at, now, outcome, mid, c.kind, 1 if c.group else 0))
+        conn.execute("DELETE FROM call_members WHERE call_id = ?", (c.id,))
+        for u, m in c.members.items():
+            state = "left" if m.state == "joined" else m.state
+            conn.execute("INSERT INTO call_members (call_id, user_id, state, joined_at, left_at) VALUES (?, ?, ?, ?, ?)",
+                         (c.id, u, state, m.joined_at, m.left_at or (now if m.joined_at else None)))
         chats.publish_message(conn, out, conv, chats.message_row(conn, mid))
-        if outcome in ("missed", "busy"):
+        if any(m.state in ("missed", "busy") for m in c.members.values()):
             out.job(notifier.new_message, mid)
-        out.event([c.callee], "unread", {"conversationId": conv["id"]})
+        for u in c.members:
+            if u != c.caller:
+                out.event([u], "unread", {"conversationId": conv["id"]})
     out.flush()
 
 
 def end_for_user(uid: str, outcome: str = "failed") -> None:
-    """Disabled (or gone): their call ends."""
+    """Disabled (or gone): they leave their call."""
     with _lock:
         cid = _by_user.get(uid)
-    if cid:
-        _end(cid, outcome)
+        c = _calls.get(cid) if cid else None
+        if c is None or uid not in c.members:
+            return
+        m = c.members[uid]
+        was = m.state
+        if was not in ("joined", "ringing"):
+            return
+        m.state = "failed" if was == "joined" else "missed"
+        m.left_at = config.now_iso()
+    _release(c, uid)
+    _clear_push(c, uid)
+    _event(c, [uid], {"state": "ended", "outcome": None, "by": uid, "reason": "gone"})
+    _after_change(c, "left", by=uid, reason="gone" if was == "joined" else None)
 
 
 def tick() -> int:
-    """Every 2 s: rings that time out become missed calls, offers that never came are dropped, and an answered
-    call ends when one side has had no live connection for a minute. → how many calls ended."""
+    """Every 2 s: rings that time out become missed, and someone joined with no live connection for a minute has
+    left. → how many calls changed."""
     now = time.monotonic()
-    ends = []
+    changed = 0
     with _lock:
         calls = list(_calls.values())
     for c in calls:
-        if c.state == "new" and now - c.made > OFFER_SECONDS:
-            ends.append((c.id, None))
-        elif c.state == "ringing" and now >= c.ring_until:
-            ends.append((c.id, "missed"))
-        elif c.state == "active":
-            for u in (c.caller, c.callee):
+        if c.ended:
+            continue
+        timed_out, gone = [], []
+        with _lock:
+            if c.ringing() and now >= c.ring_until:
+                for u in c.ringing():
+                    c.members[u].state = "missed"
+                    timed_out.append(u)
+            for u in c.joined():
+                m = c.members[u]
                 if hub.is_online(u):
-                    c.gone_since.pop(u, None)
-                elif now - c.gone_since.setdefault(u, now) > GONE_SECONDS:
-                    ends.append((c.id, "answered"))
-                    break
-    for cid, outcome in ends:
-        _end(cid, outcome)
-    return len(ends)
+                    m.gone_since = None
+                elif m.gone_since is None:
+                    m.gone_since = now
+                elif now - m.gone_since > GONE_SECONDS:
+                    m.state, m.left_at = "left", config.now_iso()
+                    gone.append(u)
+        for u in timed_out + gone:
+            _release(c, u)
+            _clear_push(c, u)
+            _event(c, [u], {"state": "ended", "outcome": None, "by": None, "reason": "gone" if u in gone else "missed"})
+        if timed_out or gone:
+            changed += 1
+            _after_change(c, "left" if gone else "missed")
+    return changed
 
 
 def close_unfinished() -> int:
@@ -415,9 +561,12 @@ def close_unfinished() -> int:
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM calls WHERE ended_at IS NULL").fetchall()
     for r in rows:
-        c = Call(id=r["id"], conversation_id=r["conversation_id"], caller=r["caller_id"], callee=r["callee_id"],
-                 started_at=r["started_at"], answered_at=r["answered_at"])
-        _finish_note(c, "failed")
+        c = Call(id=r["id"], conversation_id=r["conversation_id"], kind=r["kind"] or "audio", group=bool(r["is_group"]),
+                 caller=r["caller_id"], started_at=r["started_at"], answered_at=r["answered_at"], ended=True)
+        c.members[r["caller_id"]] = Member(state="left", joined_at=r["started_at"])
+        if r["callee_id"]:
+            c.members[r["callee_id"]] = Member(state="left" if r["answered_at"] else "missed")
+        _finish(c, "failed")
     return len(rows)
 
 
@@ -432,25 +581,33 @@ def _wants_ring(conn, user, m) -> bool:
     return not notifier.in_quiet_hours(user)
 
 
-def _ring_push(call_id: str) -> None:
+def _ring_push(call_id: str, uid: str) -> None:
     """"📞 Asha is calling" with Answer (opens the app) and Decline (handled without opening it)."""
     with _lock:
         c = _calls.get(call_id)
-    if c is None:
+    if c is None or uid not in c.members:
         return
     with db.get_conn() as conn:
-        user = chats.user_row(conn, c.callee)
-        m = chats.member_row(conn, c.conversation_id, c.callee)
+        user = chats.user_row(conn, uid)
+        m = chats.member_row(conn, c.conversation_id, uid)
         if not _wants_ring(conn, user, m):
             return
-        services = ha_notify.services_for({"id": c.callee}, conn)
+        services = ha_notify.services_for({"id": uid}, conn)
         if not services:
             return
         level = notifier.preview_level(user, conn)
         caller_name = chats.shown_name(chats.user_row(conn, c.caller))
-        token = notifier.new_token(conn, c.callee, c.conversation_id)
+        conv = chats.conv_row(conn, c.conversation_id)
+        token = notifier.new_token(conn, uid, c.conversation_id)
+    icon = "📹" if c.kind == "video" else "📞"
+    what = "video call" if c.kind == "video" else "call"
     title = config.APP_TITLE if level == "none" else caller_name
-    text = "📞 Incoming call" if level == "none" else f"📞 {caller_name} is calling"
+    if level == "none":
+        text = f"{icon} Incoming {what}"
+    elif c.group:
+        text = f"{icon} {caller_name} is starting a group {what} in {conv['name'] if conv else 'a group'}"
+    else:
+        text = f"{icon} {caller_name} is calling" + (" (video)" if c.kind == "video" else "")
     link = config.call_link(c.id)
     data = {"url": link, "clickAction": link, "tag": f"hchat_call_{c.id}",
             "group": "household_chat", "ttl": 0, "priority": "high",
@@ -458,21 +615,22 @@ def _ring_push(call_id: str) -> None:
             "actions": [{"action": "URI", "title": "Answer", "uri": link},
                         {"action": f"HCHAT_DECLINE_{token}", "title": "Decline"}]}
     with _lock:
-        if c.id not in _calls or c.state != "ringing":
+        if c.ended or c.members[uid].state != "ringing":
             return
-        c.pushed = True
+        c.members[uid].pushed = True
     notifier.deliver(services, title, text, data)
 
 
-def _clear_push(c: Call) -> None:
-    """Take the ringing notification off the phone (Companion app phones only: other services would show the
+def _clear_push(c: Call, uid: str) -> None:
+    """Take the ringing notification off their phone (Companion app phones only: other services would show the
     words)."""
     with _lock:
-        if not c.pushed:
+        m = c.members.get(uid)
+        if m is None or not m.pushed:
             return
-        c.pushed = False
+        m.pushed = False
     with db.get_conn() as conn:
-        services = [s for s in ha_notify.services_for({"id": c.callee}, conn) if s.startswith("mobile_app_")]
+        services = [s for s in ha_notify.services_for({"id": uid}, conn) if s.startswith("mobile_app_")]
     if services:
         _spawn(notifier.deliver, services, "", "clear_notification", {"tag": f"hchat_call_{c.id}"})
 
@@ -482,7 +640,8 @@ def decline_from_phone(uid: str, conversation_id: str) -> str:
     with _lock:
         cid = _by_user.get(uid)
         c = _calls.get(cid) if cid else None
-    if c is None or c.callee != uid or c.conversation_id != conversation_id or c.state != "ringing":
-        return "no call"
-    _end(c.id, "declined", by=uid)
+        if c is None or c.ended or c.conversation_id != conversation_id or uid not in c.members \
+                or c.members[uid].state != "ringing":
+            return "no call"
+    decline({"id": uid}, c.id)
     return "declined"

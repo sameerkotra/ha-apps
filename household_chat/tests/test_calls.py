@@ -1,4 +1,4 @@
-"""Voice calls (SPEC §15.12): who may call, ringing, answering, ending, notes, notifications."""
+"""Voice and video calls (SPEC §15.12): who may call, ringing, joining, signals, ending, notes, notifications."""
 import time
 from datetime import timedelta
 
@@ -37,14 +37,15 @@ class CallTests(ApiTestCase):
     def call_events(self, uid):
         return [d for uids, name, d in self.events if name == "call" and uid in uids]
 
-    def ring(self, caller=NISHA, cid=None):
-        c = self.ok(self.post("/api/calls", {"conversationId": cid or self.direct}, caller), 201)
-        self.ok(self.post(f"/api/calls/{c['id']}/offer", {"sdp": SDP}, caller))
-        return c
+    def ring(self, caller=NISHA, cid=None, kind="audio"):
+        return self.ok(self.post("/api/calls", {"conversationId": cid or self.direct, "kind": kind}, caller), 201)
 
-    def notes(self, cid=None):
-        return [m for m in self.ok(self.get(f"/api/conversations/{cid or self.direct}/messages", NISHA))["messages"]
+    def notes(self, cid=None, user=NISHA):
+        return [m for m in self.ok(self.get(f"/api/conversations/{cid or self.direct}/messages", user))["messages"]
                 if m["kind"] == "call"]
+
+    def states(self, call_id):
+        return {r["user_id"]: r["state"] for r in sql("SELECT user_id, state FROM call_members WHERE call_id = ?", (call_id,))}
 
     # ---------- who may call ----------
     def test_off_by_default_and_where_calls_are_possible(self):
@@ -55,19 +56,16 @@ class CallTests(ApiTestCase):
         me = self.ok(self.get("/api/me", NISHA))
         self.assertTrue(me["app"]["callsEnabled"])
         self.assertEqual(me["app"]["callRingSeconds"], 30)
-        # not in groups, not in my room, not in a chat I'm not in
-        r = self.post("/api/calls", {"conversationId": self.household()}, NISHA)
-        self.assertEqual(r.status_code, 409)
-        self.assertIn("direct chat", r.json()["detail"])
         r = self.post("/api/calls", {"conversationId": self.personal(NISHA)}, NISHA)
         self.assertEqual(r.status_code, 409)
         self.assertIn("personal room", r.json()["detail"])
         self.assertEqual(self.post("/api/calls", {"conversationId": self.direct}, LEELA).status_code, 404)
         self.assertEqual(self.post("/api/calls", {"conversationId": "nope"}, NISHA).status_code, 404)
+        self.assertEqual(self.post("/api/calls", {"conversationId": self.direct, "kind": "film"}, NISHA).status_code, 422)
         # ring time is a setting
         self.assertEqual(self.put("/api/admin/settings", {"calls_ring_seconds": 5}).status_code, 422)
         self.ok(self.put("/api/admin/settings", {"calls_ring_seconds": 45}))
-        self.assertEqual(self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)["ringSeconds"], 45)
+        self.assertEqual(self.ring()["ringSeconds"], 45)
 
     def test_read_only_chats_and_children(self):
         self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"disabled": True}))
@@ -75,21 +73,20 @@ class CallTests(ApiTestCase):
         self.assertEqual(r.status_code, 409)
         self.assertIn("read-only", r.json()["detail"])
         self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"disabled": False}))
-        # two children only while they may message each other
         d = self.ok(self.post("/api/conversations/direct", {"userId": LEELA["id"]}, TARUN))["id"]
         for u in (TARUN, LEELA):
             self.ok(self.patch(f"/api/admin/people/{u['id']}", {"isChild": True}))
         self.assertEqual(self.post("/api/calls", {"conversationId": d}, TARUN).status_code, 409)
-        # a child can call an adult
-        self.ok(self.post("/api/calls", {"conversationId": self.direct}, TARUN), 201)
+        self.ok(self.post("/api/calls", {"conversationId": self.direct}, TARUN), 201)       # a child can call an adult
 
     # ---------- a call that's answered ----------
-    def test_ring_answer_end(self):
+    def test_ring_answer_signal_end(self):
         c = self.ring()
+        self.assertEqual((c["peerId"], c["peerName"], c["kind"], c["group"]), (TARUN["id"], "Tarun", "audio", False))
+        self.assertEqual({m["id"]: m["state"] for m in c["members"]}, {NISHA["id"]: "joined", TARUN["id"]: "ringing"})
         ev = self.call_events(TARUN["id"])[-1]
-        self.assertEqual((ev["state"], ev["peerId"], ev["peerName"]), ("ringing", NISHA["id"], "Nisha"))
-        self.assertNotIn("sdp", ev)                     # the offer is fetched, not broadcast
-        # the phone rings: Answer opens the app, Decline is a notification action
+        self.assertEqual((ev["state"], ev["peerId"], ev["peerName"], ev["name"]), ("ringing", NISHA["id"], "Nisha", "Nisha"))
+        # the phone rings: Answer opens the app on the call, Decline is a notification action
         push = self.sent.items[-1]
         self.assertEqual((push["title"], push["message"]), ("Nisha", "📞 Nisha is calling"))
         self.assertEqual(push["data"]["tag"], f"hchat_call_{c['id']}")
@@ -97,33 +94,41 @@ class CallTests(ApiTestCase):
         self.assertEqual(push["data"]["actions"][0]["uri"], config.INGRESS_URL + "/call/" + c["id"])
         # Tarun's page finds the call when it opens; Leela isn't told anything
         cur = self.ok(self.get("/api/calls/current", TARUN))["call"]
-        self.assertEqual((cur["id"], cur["role"], cur["state"], cur["offer"]), (c["id"], "callee", "ringing", SDP))
+        self.assertEqual((cur["id"], cur["role"], cur["state"], cur["peerName"]), (c["id"], "callee", "ringing", "Nisha"))
         self.assertIsNone(self.ok(self.get("/api/calls/current", LEELA))["call"])
         self.assertEqual(self.ok(self.get("/api/calls/current", NISHA))["call"]["role"], "caller")
-        self.assertNotIn("offer", self.ok(self.get("/api/calls/current", NISHA))["call"])
         self.assertEqual(self.call_events(LEELA["id"]), [])
-        self.assertEqual(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP}, LEELA).status_code, 404)
-        self.assertEqual(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP}, NISHA).status_code, 409)
-        # a candidate from the caller while it rings is kept for the person called
-        self.ok(self.post(f"/api/calls/{c['id']}/candidate", {"candidate": {"candidate": "a", "sdpMid": "0"}}, NISHA))
-        self.assertEqual(self.ok(self.get("/api/calls/current", TARUN))["call"]["candidates"], [{"candidate": "a", "sdpMid": "0"}])
-        self.assertEqual(self.post(f"/api/calls/{c['id']}/candidate", {"candidate": {"candidate": "b"}}, TARUN).status_code, 409)
-        # answered: the caller gets the answer; the ringing notification is taken off the phone
-        self.ok(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP + "a=x\r\n"}, TARUN))
-        ans = self.call_events(NISHA["id"])[-1]
-        self.assertEqual((ans["state"], ans["sdp"]), ("answered", SDP + "a=x\r\n"))
-        self.assertEqual([d["state"] for d in self.call_events(TARUN["id"])][-1], "answered")
-        self.assertNotIn("sdp", self.call_events(TARUN["id"])[-1])
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/answer", user=LEELA).status_code, 404)
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/answer", user=NISHA).status_code, 409)
+        # no signals before joining
+        sig = {"to": NISHA["id"], "type": "offer", "sdp": SDP}
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/signal", sig, TARUN).status_code, 409)
+        # answered: the joiner is told who to offer to; the other side hears "joined"; the phone's ring is cleared
+        a = self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
+        self.assertEqual([p["id"] for p in a["peers"]], [NISHA["id"]])
+        self.assertEqual(self.call_events(NISHA["id"])[-1]["state"], "member")
+        self.assertEqual(self.call_events(NISHA["id"])[-1]["memberState"], "joined")
+        self.assertEqual(self.call_events(TARUN["id"])[-1]["state"], "joined")
         clear = self.sent.items[-1]
         self.assertEqual((clear["message"], clear["data"]), ("clear_notification", {"tag": f"hchat_call_{c['id']}"}))
-        # candidates now go straight to the other side
-        self.ok(self.post(f"/api/calls/{c['id']}/candidate", {"candidate": {"candidate": "c"}}, TARUN))
-        self.assertEqual(self.call_events(NISHA["id"])[-1]["candidate"], {"candidate": "c"})
+        # signals go to one person, and wait for a page that polls
+        self.ok(self.post(f"/api/calls/{c['id']}/signal", sig, TARUN))
+        got = self.call_events(NISHA["id"])[-1]
+        self.assertEqual((got["state"], got["signal"]["type"], got["signal"]["sdp"], got["signal"]["from"]), ("signal", "offer", SDP, TARUN["id"]))
+        self.assertEqual(self.call_events(TARUN["id"])[-1]["state"], "joined")      # not to the sender
+        self.ok(self.post(f"/api/calls/{c['id']}/signal", {"to": TARUN["id"], "type": "answer", "sdp": SDP}, NISHA))
+        self.ok(self.post(f"/api/calls/{c['id']}/signal", {"to": TARUN["id"], "type": "candidate", "candidate": {"candidate": "a"}}, NISHA))
+        cur = self.ok(self.get("/api/calls/current", TARUN))["call"]
+        self.assertEqual([x["type"] for x in cur["signals"]], ["answer", "candidate"])
+        self.assertEqual(self.ok(self.get("/api/calls/current", TARUN))["call"]["signals"], [])      # drained
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/signal", {"to": LEELA["id"], "type": "offer", "sdp": SDP}, NISHA).status_code, 409)
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/signal", {"to": TARUN["id"], "type": "offer", "sdp": "x" * (calls.MAX_SDP + 1)}, NISHA).status_code, 422)
         # busy while it's on
         r = self.post("/api/calls", {"conversationId": self.direct}, TARUN)
         self.assertEqual(r.status_code, 409)
         self.assertIn("already in a call", r.json()["detail"])
         sql("UPDATE calls SET answered_at = ?", (config.iso(config.utcnow() - timedelta(minutes=4, seconds=5)),))
+        calls._calls[c["id"]].answered_at = config.iso(config.utcnow() - timedelta(minutes=4, seconds=5))
         self.ok(self.post(f"/api/calls/{c['id']}/end", user=NISHA))
         self.assertEqual(self.call_events(TARUN["id"])[-1]["state"], "ended")
         self.assertEqual(self.call_events(TARUN["id"])[-1]["outcome"], "answered")
@@ -131,19 +136,19 @@ class CallTests(ApiTestCase):
         self.assertEqual(self.post(f"/api/calls/{c['id']}/end", user=NISHA).status_code, 404)
         # the note: from the caller, not unread for anyone, no notification
         [n] = self.notes()
-        self.assertEqual((n["userId"], n["call"]["outcome"], n["call"]["callerId"]), (NISHA["id"], "answered", NISHA["id"]))
+        self.assertEqual((n["userId"], n["call"]["outcome"], n["call"]["callerId"], n["call"]["kind"]), (NISHA["id"], "answered", NISHA["id"], "audio"))
         self.assertGreaterEqual(n["call"]["seconds"], 245)
+        self.assertEqual({m["id"]: m["state"] for m in n["call"]["members"]}, {NISHA["id"]: "left", TARUN["id"]: "left"})
         convs = {x["id"]: x for x in self.ok(self.get("/api/conversations", TARUN))["conversations"]}
         self.assertEqual(convs[self.direct]["unread"], 0)
         self.assertEqual(convs[self.direct]["lastMessage"]["preview"], "📞 Call · 4 min")
         self.assertFalse(any("Missed" in s["message"] for s in self.sent.items))
         row = sql("SELECT * FROM calls")[0]
-        self.assertEqual((row["outcome"], row["message_id"]), ("answered", n["id"]))
-        self.assertIsNotNone(row["ended_at"])
-        # a call note can't be edited or forwarded; deleting it removes its row
+        self.assertEqual((row["outcome"], row["message_id"], row["callee_id"]), ("answered", n["id"], TARUN["id"]))
         self.assertEqual(self.patch(f"/api/messages/{n['id']}", {"body": "x"}, NISHA).status_code, 403)
         self.ok(self.delete(f"/api/messages/{n['id']}", NISHA))
         self.assertEqual(sql("SELECT * FROM calls"), [])
+        self.assertEqual(sql("SELECT * FROM call_members"), [])
 
     # ---------- calls that aren't answered ----------
     def test_missed_after_ring_time(self):
@@ -153,11 +158,11 @@ class CallTests(ApiTestCase):
         self.assertEqual(self.call_events(NISHA["id"])[-1]["outcome"], "missed")
         [n] = self.notes()
         self.assertEqual(n["call"]["outcome"], "missed")
+        self.assertEqual(self.states(c["id"]), {NISHA["id"]: "left", TARUN["id"]: "missed"})
         convs = {x["id"]: x for x in self.ok(self.get("/api/conversations", TARUN))["conversations"]}
         self.assertEqual((convs[self.direct]["unread"], convs[self.direct]["lastMessage"]["preview"]), (1, "📞 Missed call"))
         mine = {x["id"]: x for x in self.ok(self.get("/api/conversations", NISHA))["conversations"]}
         self.assertEqual(mine[self.direct]["unread"], 0)
-        # the ringing notification is cleared, then the missed call is notified like a message
         self.assertEqual(self.sent.items[-2]["message"], "clear_notification")
         self.assertEqual((self.sent.items[-1]["title"], self.sent.items[-1]["message"]), ("Nisha", "📞 Missed call from Nisha"))
         self.assertEqual(self.sent.items[-1]["data"]["tag"], f"hchat_{self.direct}")
@@ -186,24 +191,16 @@ class CallTests(ApiTestCase):
         self.assertEqual(notifier.handle_action(action, None), "no call")
         self.assertNotIn(c["id"], calls._calls)
 
-    def test_busy_and_offer_never_sent(self):
+    def test_busy(self):
         d2 = self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, LEELA))["id"]
         self.ring()
         r = self.post("/api/calls", {"conversationId": d2}, LEELA)
         self.assertEqual(r.status_code, 409)
         self.assertIn("Tarun is on another call", r.json()["detail"])
-        notes = [m for m in self.ok(self.get(f"/api/conversations/{d2}/messages", LEELA))["messages"] if m["kind"] == "call"]
+        notes = self.notes(d2, LEELA)
         self.assertEqual(notes[0]["call"]["outcome"], "busy")
-        # calling again and again counts like messages
         codes = [self.post("/api/calls", {"conversationId": d2}, LEELA).status_code for _ in range(30)]
         self.assertEqual(codes[-1], 429)
-        # an offer that never comes: dropped without a note
-        calls.reset()
-        c = self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
-        calls._calls[c["id"]].made -= calls.OFFER_SECONDS + 1
-        calls.tick()
-        self.assertNotIn(c["id"], calls._calls)
-        self.assertEqual(self.notes(), [])
 
     def test_quiet_hours_and_mute_dont_ring_the_phone(self):
         self.ok(self.put(f"/api/conversations/{self.direct}/me",
@@ -213,7 +210,7 @@ class CallTests(ApiTestCase):
         self.assertEqual(len(self.sent.items), n)
         self.assertEqual(self.call_events(TARUN["id"])[-1]["state"], "ringing")     # open tabs still ring
         self.ok(self.post(f"/api/calls/{c['id']}/end", user=NISHA))
-        self.assertEqual(len(self.sent.items), n)                               # no clear, and no missed push (muted)
+        self.assertEqual(len(self.sent.items), n)
         self.ok(self.put(f"/api/conversations/{self.direct}/me", {"mutedUntil": None}, TARUN))
         self.ok(self.put("/api/me/settings", {"quietStart": "00:00", "quietEnd": "23:59"}, TARUN))
         self.ring()
@@ -227,18 +224,19 @@ class CallTests(ApiTestCase):
         self.assertEqual(self.post(f"/api/calls/{c['id']}/end", {"reason": "other"}, TARUN).status_code, 422)
         # disabling someone ends their call
         c = self.ring()
-        self.ok(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP}, TARUN))
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
         self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"disabled": True}))
         self.assertNotIn(c["id"], calls._calls)
-        self.assertEqual(self.notes()[-1]["call"]["outcome"], "failed")
+        self.assertEqual(self.notes()[-1]["call"]["outcome"], "answered")       # it had connected
         self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"disabled": False}))
         # an answered call ends when one side has been gone a minute
         c = self.ring()
-        self.ok(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP}, TARUN))
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
         calls.tick()
         self.assertIn(c["id"], calls._calls)
-        for u in calls._calls[c["id"]].gone_since:
-            calls._calls[c["id"]].gone_since[u] -= calls.GONE_SECONDS + 1
+        for m in calls._calls[c["id"]].members.values():
+            if m.gone_since is not None:
+                m.gone_since -= calls.GONE_SECONDS + 1
         calls.tick()
         self.assertNotIn(c["id"], calls._calls)
         self.assertEqual(self.notes()[-1]["call"]["outcome"], "answered")
@@ -249,17 +247,129 @@ class CallTests(ApiTestCase):
         self.assertEqual(self.notes()[-1]["call"]["outcome"], "failed")
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM calls WHERE ended_at IS NULL")[0]["n"], 0)
 
-    def test_sizes_and_disappearing_chats(self):
-        c = self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
-        self.assertEqual(self.post(f"/api/calls/{c['id']}/offer", {"sdp": "x" * (calls.MAX_SDP + 1)}, NISHA).status_code, 422)
-        self.assertEqual(self.post(f"/api/calls/{c['id']}/offer", {"sdp": " "}, NISHA).status_code, 422)
-        self.assertEqual(self.post(f"/api/calls/{c['id']}/offer", {"sdp": SDP}, TARUN).status_code, 409)
-        self.ok(self.post(f"/api/calls/{c['id']}/end", user=NISHA))
-        self.assertEqual(self.notes(), [])                  # never rang: no note
+    def test_disappearing_chats(self):
         self.ok(self.patch(f"/api/conversations/{self.direct}", {"disappearSeconds": 3600}, NISHA))
         c = self.ring()
         self.ok(self.post(f"/api/calls/{c['id']}/end", user=NISHA))
         self.assertIsNotNone(self.notes()[-1]["expiresAt"])
+
+    # ---------- video ----------
+    def test_video_call(self):
+        c = self.ring(kind="video")
+        self.assertEqual(c["kind"], "video")
+        self.assertEqual(self.sent.items[-1]["message"], "📹 Nisha is calling (video)")
+        self.assertEqual(self.ok(self.get("/api/calls/current", TARUN))["call"]["kind"], "video")
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=TARUN))
+        [n] = self.notes()
+        self.assertEqual((n["call"]["kind"], n["call"]["outcome"]), ("video", "answered"))
+        convs = {x["id"]: x for x in self.ok(self.get("/api/conversations", TARUN))["conversations"]}
+        self.assertTrue(convs[self.direct]["lastMessage"]["preview"].startswith("📹 Video call · "))
+        c = self.ring(kind="video")
+        calls._calls[c["id"]].ring_until = time.monotonic() - 1
+        calls.tick()
+        self.assertEqual(self.sent.items[-1]["message"], "📹 Missed video call from Nisha")
+
+    # ---------- group calls ----------
+    def test_group_call_up_to_four(self):
+        self.enable(ADMIN, NISHA, TARUN, LEELA)
+        from base import headers
+        meera = ADMIN
+        hh = self.household()
+        self.notify_to(LEELA, "mobile_app_leela")
+        c = self.ring(NISHA, hh)
+        self.assertTrue(c["group"])
+        self.assertEqual(c["name"], "Household")
+        self.assertIsNone(c["peerId"])
+        self.assertEqual({m["id"]: m["state"] for m in c["members"]},
+                         {NISHA["id"]: "joined", TARUN["id"]: "ringing", LEELA["id"]: "ringing", meera["id"]: "ringing"})
+        self.assertEqual(self.sent.items[-1]["message"], "📞 Nisha is starting a group call in Household")
+        ev = self.call_events(LEELA["id"])[-1]
+        self.assertEqual((ev["state"], ev["group"], ev["name"], ev["peerName"]), ("ringing", True, "Household", "Nisha"))
+        # Tarun joins: offers to Nisha only; Leela joins next: offers to both
+        a = self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
+        self.assertEqual([p["id"] for p in a["peers"]], [NISHA["id"]])
+        a = self.ok(self.post(f"/api/calls/{c['id']}/answer", user=LEELA))
+        self.assertEqual({p["id"] for p in a["peers"]}, {NISHA["id"], TARUN["id"]})
+        self.assertEqual(self.call_events(TARUN["id"])[-1]["memberState"], "joined")
+        # four is the limit: the fifth person would be refused
+        a = self.ok(self.post(f"/api/calls/{c['id']}/answer", user=meera))
+        self.assertEqual(len(a["peers"]), 3)
+        sixth = {"id": "u-six", "name": "six", "display": "Six"}
+        self.enable(sixth)
+        self.assertEqual(self.ok(self.get("/api/calls/current", sixth))["call"], None)     # wasn't invited (joined later)
+        # Tarun leaves: the call goes on for three; the others are told
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=TARUN))
+        self.assertIn(c["id"], calls._calls)
+        ev = self.call_events(LEELA["id"])[-1]
+        self.assertEqual((ev["state"], ev["userId"], ev["memberState"]), ("member", TARUN["id"], "left"))
+        self.assertIsNone(self.ok(self.get("/api/calls/current", TARUN))["call"])
+        # Tarun is free to take another call; it would be full for him anyway
+        d2 = self.ok(self.post("/api/conversations/direct", {"userId": sixth["id"]}, TARUN))["id"]
+        self.ok(self.post("/api/calls", {"conversationId": d2}, TARUN), 201)
+        # when only one is left the call ends
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=LEELA))
+        self.assertIn(c["id"], calls._calls)
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=meera))
+        self.assertNotIn(c["id"], calls._calls)
+        self.assertEqual(self.call_events(NISHA["id"])[-1]["outcome"], "answered")
+        [n] = self.notes(hh)
+        self.assertEqual((n["call"]["group"], n["call"]["outcome"]), (True, "answered"))
+        self.assertEqual({m["id"]: m["state"] for m in n["call"]["members"]},
+                         {NISHA["id"]: "left", TARUN["id"]: "left", LEELA["id"]: "left", meera["id"]: "left"})
+        self.assertEqual(sql("SELECT callee_id, is_group FROM calls WHERE id = ?", (c["id"],))[0], {"callee_id": "", "is_group": 1})
+        convs = {x["id"]: x for x in self.ok(self.get("/api/conversations", TARUN))["conversations"]}
+        self.assertEqual(convs[hh]["unread"], 0)
+        self.assertTrue(convs[hh]["lastMessage"]["preview"].startswith("📞 Group call · "))
+        # the Calls list says who was in it
+        mine = self.ok(self.get("/api/me/calls", NISHA))["calls"][0]
+        self.assertEqual((mine["group"], mine["peerName"], sorted(mine["with"])), (True, "Household", ["Leela", "Meera", "Tarun"]))
+
+    def test_group_call_missed_declined_and_full(self):
+        hh = self.household()
+        self.notify_to(LEELA, "mobile_app_leela")
+        # nobody answers: missed for everyone rung, one push each
+        c = self.ring(NISHA, hh)
+        calls._calls[c["id"]].ring_until = time.monotonic() - 1
+        calls.tick()
+        [n] = self.notes(hh)
+        self.assertEqual(n["call"]["outcome"], "missed")
+        self.assertEqual(self.states(c["id"])[LEELA["id"]], "missed")
+        missed_pushes = [s for s in self.sent.items if s["message"] == "📞 Missed group call from Nisha"]
+        self.assertEqual(sorted(sum((s["services"] for s in missed_pushes), [])), ["mobile_app_leela", "mobile_app_tarun"])
+        for u in (TARUN, LEELA, ADMIN):
+            convs = {x["id"]: x for x in self.ok(self.get("/api/conversations", u))["conversations"]}
+            self.assertEqual(convs[hh]["unread"], 1, u["display"])
+        # everyone declines: declined, nothing unread, no pushes
+        n_sent = len(self.sent.items)
+        c = self.ring(NISHA, hh)
+        for u in (TARUN, LEELA, ADMIN):
+            self.ok(self.post(f"/api/calls/{c['id']}/decline", user=u))
+        self.assertNotIn(c["id"], calls._calls)
+        self.assertEqual(self.notes(hh)[-1]["call"]["outcome"], "declined")
+        self.assertFalse(any("Missed" in s["message"] for s in self.sent.items[n_sent:]))
+        # one answers, the rest are missed when the ringing stops: the call goes on for two
+        c = self.ring(NISHA, hh)
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
+        calls._calls[c["id"]].ring_until = time.monotonic() - 1
+        calls.tick()
+        self.assertIn(c["id"], calls._calls)
+        self.assertEqual(self.ok(self.get("/api/calls/current", LEELA))["call"], None)
+        self.assertEqual(self.call_events(LEELA["id"])[-1]["reason"], "missed")
+        # the caller leaves while it rings for everyone: the call is over, missed for them
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=TARUN))
+        self.assertNotIn(c["id"], calls._calls)
+        c = self.ring(NISHA, hh)
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=NISHA))
+        self.assertNotIn(c["id"], calls._calls)
+        self.assertEqual(self.notes(hh)[-1]["call"]["outcome"], "missed")
+        # someone in another call isn't rung; a group with nobody free can't be called
+        d = self.ok(self.post("/api/conversations/direct", {"userId": LEELA["id"]}, TARUN))["id"]
+        self.ring(TARUN, d)
+        c = self.ring(NISHA, hh)
+        self.assertEqual({m["id"]: m["state"] for m in c["members"]}[TARUN["id"]], "busy")
+        self.assertEqual({m["id"]: m["state"] for m in c["members"]}[LEELA["id"]], "busy")
+        self.assertEqual({m["id"]: m["state"] for m in c["members"]}[ADMIN["id"]], "ringing")
 
     def test_a_2_2_database_gets_the_call_kind(self):
         import os
@@ -287,6 +397,20 @@ class CallTests(ApiTestCase):
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM calls")[0]["n"], 0)
         self.assertFalse(db._allow_new_kinds(db._connect()))
 
+    def test_a_2_4_database_gets_call_members(self):
+        """Calls from before group calls get their members from the caller and callee columns."""
+        from app import db
+        now = config.now_iso()
+        with db.get_conn() as conn:
+            conn.execute("DROP TABLE call_members")
+            conn.execute("INSERT INTO calls (id, conversation_id, caller_id, callee_id, started_at, answered_at, ended_at, outcome) "
+                         "VALUES ('old1', ?, ?, ?, ?, ?, ?, 'answered')", (self.direct, NISHA["id"], TARUN["id"], now, now, now))
+            conn.execute("INSERT INTO calls (id, conversation_id, caller_id, callee_id, started_at, ended_at, outcome) "
+                         "VALUES ('old2', ?, ?, ?, ?, ?, 'missed')", (self.direct, NISHA["id"], TARUN["id"], now, now))
+        db.init_db()
+        self.assertEqual(self.states("old1"), {NISHA["id"]: "left", TARUN["id"]: "left"})
+        self.assertEqual(self.states("old2"), {NISHA["id"]: "left", TARUN["id"]: "missed"})
+
 
 class CallsListAndLinksTests(ApiTestCase):
     def setUp(self):
@@ -305,14 +429,12 @@ class CallsListAndLinksTests(ApiTestCase):
         super().tearDown()
 
     def ring(self):
-        c = self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
-        self.ok(self.post(f"/api/calls/{c['id']}/offer", {"sdp": SDP}, NISHA))
-        return c
+        return self.ok(self.post("/api/calls", {"conversationId": self.direct}, NISHA), 201)
 
     def test_calls_list(self):
         self.assertEqual(self.ok(self.get("/api/me/calls", NISHA))["calls"], [])
         c = self.ring()
-        self.ok(self.post(f"/api/calls/{c['id']}/answer", {"sdp": SDP}, TARUN))
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
         self.ok(self.post(f"/api/calls/{c['id']}/end", user=TARUN))
         c2 = self.ring()
         self.ok(self.post(f"/api/calls/{c2['id']}/decline", user=TARUN))

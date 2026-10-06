@@ -371,24 +371,40 @@ def call_seconds(c) -> int | None:
 
 def call_text(c) -> str:
     """The note as anyone may see it (previews, exports); the page words it for the caller or the person called."""
-    return call_label(c["outcome"], call_seconds(c)) if c is not None else "📞 Call"
+    if c is None:
+        return "📞 Call"
+    return call_label(c["outcome"], call_seconds(c), c["kind"] if "kind" in c.keys() else "audio",
+                      bool(c["is_group"]) if "is_group" in c.keys() else False)
 
 
-def call_label(outcome: str | None, seconds: int | None) -> str:
+def call_label(outcome: str | None, seconds: int | None, kind: str = "audio", group: bool = False) -> str:
+    icon = "📹" if kind == "video" else "📞"
+    what = ("Group video call" if kind == "video" else "Group call") if group else ("Video call" if kind == "video" else "Call")
     if outcome == "answered":
         secs = seconds or 0
-        return "📞 Call · " + (f"{secs // 60} min" if secs >= 60 else f"{secs} s")
-    return {"missed": "📞 Missed call", "busy": "📞 Missed call", "declined": "📞 Declined call",
-            "failed": "📞 Call couldn't connect"}.get(outcome, "📞 Call")
+        return f"{icon} {what} · " + (f"{secs // 60} min" if secs >= 60 else f"{secs} s")
+    low = what[0].lower() + what[1:]
+    return {"missed": f"{icon} Missed {low}", "busy": f"{icon} Missed {low}", "declined": f"{icon} Declined {low}",
+            "failed": f"{icon} {what} couldn't connect"}.get(outcome, f"{icon} {what}")
+
+
+def call_members(conn, call_id: str) -> list:
+    return [dict(r) for r in conn.execute("SELECT user_id, state FROM call_members WHERE call_id = ? ORDER BY joined_at", (call_id,))]
 
 
 def calls_out(conn, ids) -> dict:
     if not ids:
         return {}
     q = ",".join("?" * len(ids))
-    return {c["message_id"]: {"id": c["id"], "outcome": c["outcome"], "callerId": c["caller_id"],
-                              "calleeId": c["callee_id"], "seconds": call_seconds(c), "startedAt": c["started_at"]}
-            for c in conn.execute(f"SELECT * FROM calls WHERE message_id IN ({q})", list(ids))}
+    out = {}
+    for c in conn.execute(f"SELECT * FROM calls WHERE message_id IN ({q})", list(ids)):
+        members = call_members(conn, c["id"])
+        out[c["message_id"]] = {"id": c["id"], "outcome": c["outcome"], "callerId": c["caller_id"],
+                                "calleeId": c["callee_id"] or None, "seconds": call_seconds(c), "startedAt": c["started_at"],
+                                "kind": c["kind"], "group": bool(c["is_group"]),
+                                "members": [{"id": m["user_id"], "name": shown_name(user_row(conn, m["user_id"])), "state": m["state"]}
+                                            for m in members]}
+    return out
 
 
 def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0) -> list:
@@ -532,8 +548,9 @@ def unread_counts(conn, cid: str, m, uid: str) -> tuple[int, int]:
     # a call note is unread only when it's a call you missed (§15.12)
     base = ("FROM messages WHERE conversation_id = ? AND id > ? AND id > ? AND deleted_at IS NULL "
             "AND kind != 'system' AND (user_id IS NULL OR user_id != ?) "
-            "AND (kind != 'call' OR id IN (SELECT message_id FROM calls WHERE outcome IN ('missed', 'busy')))")
-    args = (cid, m["last_read_id"], m["joined_message_id"], uid)
+            "AND (kind != 'call' OR id IN (SELECT c.message_id FROM calls c JOIN call_members cm ON cm.call_id = c.id "
+            "WHERE cm.user_id = ? AND cm.state IN ('missed', 'busy')))")
+    args = (cid, m["last_read_id"], m["joined_message_id"], uid, uid)
     n = conn.execute("SELECT COUNT(*) " + base, args).fetchone()[0]
     if not n:
         return 0, 0
