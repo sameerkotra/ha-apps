@@ -22,10 +22,12 @@ except ImportError:          # pragma: no cover
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PEOPLE = {"admin": ("u-admin", "admin", "Meera"), "nisha": ("u-nisha", "nisha", "Nisha"),
-          "tarun": ("u-tarun", "tarun", "Tarun")}
+          "tarun": ("u-tarun", "tarun", "Tarun"), "leela": ("u-leela", "leela", "Leela")}
 STATUS = "((document.querySelector('#callStatus') || {}).textContent || '')"
-INBOUND = """async () => { let r = 0; (await call.pc.getStats()).forEach((x) => {
-  if (x.type === 'inbound-rtp' && x.kind === 'audio') r = x.packetsReceived; }); return r; }"""
+INBOUND = """async () => { let r = 0; for (const p of call.peers.values()) { if (!p.pc) continue; (await p.pc.getStats()).forEach((x) => {
+  if (x.type === 'inbound-rtp' && x.kind === 'audio') r = Math.min(r || x.packetsReceived, x.packetsReceived); }); } return r; }"""
+VIDEO_IN = """async () => { let r = 0; for (const p of call.peers.values()) { if (!p.pc) continue; (await p.pc.getStats()).forEach((x) => {
+  if (x.type === 'inbound-rtp' && x.kind === 'video') r += x.framesDecoded || 0; }); } return r; }"""
 
 
 def headers(who):
@@ -128,9 +130,20 @@ class CallsInBrowsers(unittest.TestCase):
         self.assertGreater(t.evaluate(INBOUND), 10)
         # and each side actually plays it (desktop Chrome lets a page that uses the microphone play sound; phones are stricter)
         for p in (n, t):
-            self.assertEqual(p.evaluate("[callAudio.paused, callAudio.muted, !!callAudio.srcObject.getAudioTracks().length]"),
-                             [False, False, True])
-            p.wait_for_selector("#meterThem:not([hidden])", timeout=5000)
+            self.assertEqual(p.evaluate("[...call.peers.values()].map((x) => [x.audio.paused, x.audio.muted, x.audio.srcObject.getAudioTracks().length])"),
+                             [[False, False, 1]])
+            p.wait_for_selector(".call-tile .call-meter:not([hidden])", timeout=5000)
+        # the camera can be turned on in a voice call: the other side gets the picture without a new negotiation
+        n.click("#callScreen button.camera")
+        n.wait_for_selector("#callScreen button.camera.on")
+        t.wait_for_selector(".call-tile.has-video video", timeout=10000)
+        for _ in range(50):
+            if t.evaluate(VIDEO_IN) > 3:
+                break
+            time.sleep(0.2)
+        self.assertGreater(t.evaluate(VIDEO_IN), 3)
+        n.click("#callScreen button.camera")
+        t.wait_for_function("!document.querySelector('.call-tile.has-video')", timeout=5000)
         # the other side is told about mute
         self.assertEqual(t.eval_on_selector_all("#callScreen button.speaker", "els => els.length"), 0)
         self.assertEqual(t.evaluate("document.querySelectorAll('#callScreen button.mute svg path').length"), 2)
@@ -147,7 +160,7 @@ class CallsInBrowsers(unittest.TestCase):
         before = t.evaluate("call.stream.getAudioTracks()[0].id")
         t.select_option("#callPanel select[aria-label='Microphone']", index=t.evaluate("document.querySelector('#callPanel select').options.length") - 1)
         t.wait_for_function(f"call.stream.getAudioTracks()[0].id !== {json.dumps(before)}", timeout=5000)
-        self.assertEqual(t.evaluate("call.pc.getSenders().find((x) => x.track).track.id"), t.evaluate("call.stream.getAudioTracks()[0].id"))
+        self.assertEqual(t.evaluate("[...call.peers.values()][0].pc.getSenders().find((x) => x.track && x.track.kind === 'audio').track.id"), t.evaluate("call.stream.getAudioTracks()[0].id"))
         if t.evaluate("CAN_PICK_OUTPUT"):
             t.select_option("#callPanel select[aria-label='Sound output']", index=0)
             t.wait_for_function("callAudio.sinkId === call.outputId", timeout=5000)
@@ -180,6 +193,48 @@ class CallsInBrowsers(unittest.TestCase):
         t.click("#side button[title='More']")
         t.click(".menu button:has-text('📞 Calls')")
         t.wait_for_selector(".call-row.missed")
+        # a group video call with three people: everyone sees and hears everyone, one leaving doesn't end it
+        g = self.api("POST", "api/conversations", "nisha", {"name": "Trip", "memberIds": ["u-tarun", "u-leela"]})["id"]
+        le = self.page("leela")
+        for p in (n, t, le):
+            for attempt in range(3):                        # a reload can be cut short by the page's own navigation
+                try:
+                    p.goto(self.base)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.5)
+            p.wait_for_selector("#convList .conv")
+        n.click("#convList .conv:has-text('Trip')")
+        n.click("button[title='Video call']")
+        for p in (t, le):
+            p.wait_for_selector("#callScreen button.answer", timeout=15000)
+        self.assertIn("Incoming video call from Nisha", t.inner_text("#callStatus"))
+        t.click("#callScreen button.answer")
+        le.click("#callScreen button.answer")
+        for p in (n, t, le):
+            p.wait_for_function(f"/^\\d+:\\d\\d$/.test({STATUS})", timeout=20000)
+            p.wait_for_function("[...call.peers.values()].filter((x) => x.connected).length === 2", timeout=20000)
+        for _ in range(60):
+            if all(p.evaluate(INBOUND) > 10 and p.evaluate(VIDEO_IN) > 3 for p in (n, t, le)):
+                break
+            time.sleep(0.25)
+        for p in (n, t, le):
+            self.assertGreater(p.evaluate(INBOUND), 10)
+            self.assertGreater(p.evaluate(VIDEO_IN), 3)
+            self.assertEqual(p.evaluate("document.querySelectorAll('.call-tile.has-video:not(.mine)').length"), 2)
+        t.click("#callScreen button.hangup")
+        t.wait_for_selector("#callScreen", state="detached", timeout=10000)
+        for p in (n, le):
+            p.wait_for_function("call && call.peers.size === 1", timeout=10000)
+        n.click("#callScreen button.hangup")
+        le.wait_for_selector("#callScreen", state="detached", timeout=10000)
+        n.wait_for_selector("#callScreen", state="detached", timeout=10000)
+        gmsgs = self.api("GET", f"api/conversations/{g}/messages", "nisha")["messages"]
+        [gc] = [m["call"] for m in gmsgs if m["kind"] == "call"]
+        self.assertEqual((gc["group"], gc["kind"], gc["outcome"]), (True, "video", "answered"))
+        self.assertEqual({m["state"] for m in gc["members"]}, {"left"})
         # deep links: the route after the page's address opens a chat or the ringing screen
         self.assertEqual(n.evaluate(f"routeOf('/a1b2c3d4_household_chat/chat/{d}', '/a1b2c3d4_household_chat')"), {"kind": "chat", "id": d})
         self.assertEqual(n.evaluate("routeOf('/a1b2c3d4_household_chat/call/abc', '/a1b2c3d4_household_chat')"), {"kind": "call", "id": "abc"})
@@ -193,6 +248,7 @@ class CallsInBrowsers(unittest.TestCase):
         self.assertEqual(t.evaluate("state.current"), d)
         # Test calling (Admin → App settings): the microphone and a local address at least
         a = self.page("admin")
+        a.wait_for_selector("#convList .conv")
         a.click("#side button[title='More']")
         a.click(".menu button:has-text('Admin')")
         a.click(".tab:has-text('App settings')")

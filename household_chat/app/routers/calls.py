@@ -13,14 +13,18 @@ router = APIRouter(prefix="/api", tags=["calls"])
 
 class StartIn(Strict):
     conversationId: str = Field(max_length=64)
+    kind: str = Field(default="audio", pattern="^(audio|video)$")
 
 
-class SdpIn(Strict):
-    sdp: str = Field(max_length=calls.MAX_SDP)
+class SignalIn(Strict):
+    to: str = Field(max_length=64)
+    type: str = Field(pattern="^(offer|answer|candidate)$")
+    sdp: str | None = Field(default=None, max_length=calls.MAX_SDP)
+    candidate: dict[str, Any] | None = None
 
 
-class CandidateIn(Strict):
-    candidate: dict[str, Any]
+class UsageIn(Strict):
+    relayBytes: int = Field(ge=0)
 
 
 class EndIn(Strict):
@@ -29,7 +33,7 @@ class EndIn(Strict):
 
 @router.post("/calls", status_code=201)
 def start(body: StartIn, user: dict = Depends(require_user)):
-    return calls.start(user, body.conversationId)
+    return calls.start(user, body.conversationId, body.kind)
 
 
 @router.get("/calls/current")
@@ -37,24 +41,30 @@ def current(user: dict = Depends(require_user)):
     return {"call": calls.current(user)}
 
 
-@router.post("/calls/{call_id}/offer")
-def offer(call_id: str, body: SdpIn, user: dict = Depends(require_user)):
-    return calls.offer(user, call_id, body.sdp)
-
-
 @router.post("/calls/{call_id}/answer")
-def answer(call_id: str, body: SdpIn, user: dict = Depends(require_user)):
-    return calls.answer(user, call_id, body.sdp)
+def answer(call_id: str, user: dict = Depends(require_user)):
+    return calls.answer(user, call_id)
 
 
-@router.post("/calls/{call_id}/candidate")
-def candidate(call_id: str, body: CandidateIn, user: dict = Depends(require_user)):
-    return calls.candidate(user, call_id, body.candidate)
+@router.post("/calls/{call_id}/signal")
+def signal(call_id: str, body: SignalIn, user: dict = Depends(require_user)):
+    return calls.signal(user, call_id, body.to, body.type, body.candidate if body.type == "candidate" else body.sdp)
 
 
 @router.post("/calls/{call_id}/decline")
 def decline(call_id: str, user: dict = Depends(require_user)):
     return calls.decline(user, call_id)
+
+
+@router.post("/calls/{call_id}/usage")
+def usage(call_id: str, body: UsageIn, user: dict = Depends(require_user)):
+    return calls.report_usage(user, call_id, body.relayBytes)
+
+
+@router.get("/admin/calls/usage")
+def usage_summary(admin: dict = Depends(require_admin)):
+    """Relay usage this month and before, as the phones measured it (§15.13)."""
+    return calls.usage_summary()
 
 
 @router.get("/admin/calls/ice-servers")

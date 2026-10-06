@@ -1,18 +1,18 @@
-/* Voice calls (SPEC §15.12): the 📞 button, the ringing and call screens, and WebRTC between the two
-   browsers. The sound goes straight between them; the app only passes their descriptions and network
-   candidates along (api/calls…, and live `call` events). One call at a time. */
+/* Voice and video calls (SPEC §15.12): the 📞 / 📹 buttons, the ringing and call screens, and WebRTC between
+   the browsers. Each person in a call connects to each other (a mesh of up to four); the sound and picture go
+   straight between them, and the app only passes offers, answers and network candidates along (api/calls…,
+   and live `call` events). One call at a time. */
 "use strict";
 
-const GATHER_MS = 3000;          // wait this long for network candidates before sending the offer / answer
-const CONNECT_MS = 30000;        // answered but not connected after this: give up
-let call = null;                 // the call this page is in: {id, role, conversationId, peerId, peerName, pc, stream, …}
-let incoming = null;             // a call ringing for me, shown but not answered: {id, conversationId, peerId, peerName}
+const CONNECT_MS = 30000;        // joined but not connected to anyone after this: give up
+let call = null;                 // the call this page is in (see newCall)
+let incoming = null;             // a call ringing for me, shown but not answered: {id, conversationId, kind, group, name, peerId, peerName}
 
 function callsOn() { return !!(state.me && state.me.app && state.me.app.callsEnabled); }
-function canCallIn(c) { return callsOn() && !!c && c.kind === "direct" && !c.readOnly; }
+function canCallIn(c) { return callsOn() && !!c && (c.kind === "direct" || c.kind === "group") && !c.readOnly; }
 function micPossible() { return !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.RTCPeerConnection); }
 function noMicDialog() {
-  openModal("Voice calls", h("p", null, "Calls need the microphone, and this browser can't use it here. It needs a secure (https) connection and permission — inside the Home Assistant app it may be blocked. Try Home Assistant in your phone's browser, or on a computer."));
+  openModal("Calls", h("p", null, "Calls need the microphone, and this browser can't use it here. It needs a secure (https) connection and permission — inside the Home Assistant app it may be blocked. Try Home Assistant in your phone's browser, or on a computer."));
 }
 const MIC_KEY = "hchat.callMic", OUT_KEY = "hchat.callOut";
 function getMic(deviceId) {
@@ -20,6 +20,9 @@ function getMic(deviceId) {
   const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   if (want) audio.deviceId = deviceId ? { exact: deviceId } : { ideal: want };
   return navigator.mediaDevices.getUserMedia({ audio });
+}
+function getCamera(facing) {
+  return navigator.mediaDevices.getUserMedia({ video: { facingMode: facing || "user", width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { max: 24 } } });
 }
 
 // ---------- tones (made in the browser, no sound files) ----------
@@ -51,35 +54,41 @@ function startTone(name) {
 function stopTone() { if (toneTimer) { clearInterval(toneTimer); toneTimer = null; } if (navigator.vibrate) navigator.vibrate(0); }
 function closeTones() { stopTone(); if (toneCtx) { toneCtx.close().catch(() => {}); toneCtx = null; } }
 
-// ---------- the other person's sound ----------
-// Phones (and the Home Assistant app) only let a page play sound that a tap started. The call's <audio>
-// is therefore made and started in the tap on 📞 or Answer, and the other person's sound goes into that
-// same element when it arrives; if it's still refused, the screen offers "Tap to hear".
-let callAudio = null;
+// ---------- the other people's sound ----------
+// Phones (and the Home Assistant app) only let a page play sound that a tap started. Three <audio> elements
+// (one per other person, at most) are made and started in the tap on 📞 or Answer, and each person's sound goes
+// into one of them when it arrives; if playing is still refused, the screen offers "Tap to hear".
+const audioPool = [];
+let callAudio = null;            // the first of them (the output choice applies to all)
 function unlockAudio() {
-  if (!callAudio) {
-    callAudio = h("audio", { autoplay: true, playsinline: true, class: "call-audio" });
-    callAudio.setAttribute("playsinline", "");
-    document.body.appendChild(callAudio);
+  while (audioPool.length < 3) {
+    const a = h("audio", { autoplay: true, playsinline: true, class: "call-audio" });
+    a.setAttribute("playsinline", "");
+    document.body.appendChild(a);
+    audioPool.push(a);
   }
-  try { callAudio.srcObject = new MediaStream(); } catch (e) { /* old browser */ }
-  callAudio.muted = false;
-  const p = callAudio.play();
-  if (p && p.catch) p.catch(() => {});
+  callAudio = audioPool[0];
+  for (const a of audioPool) {
+    try { a.srcObject = new MediaStream(); } catch (e) { /* old browser */ }
+    a.muted = false;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {});
+  }
 }
-function playRemote(stream) {
+function takeAudio() { return audioPool.find((a) => !a._peer) || null; }
+function playRemote(peer) {
   if (!call) return;
-  call.remote = stream;
-  if (!callAudio) unlockAudio();
-  callAudio.srcObject = stream;
+  if (!peer.audio) { if (!audioPool.length) unlockAudio(); peer.audio = takeAudio(); if (peer.audio) peer.audio._peer = peer.id; }
+  if (!peer.audio) return;
+  peer.audio.srcObject = peer.stream;
   applyOutput();
-  const p = callAudio.play();
-  if (p && p.then) p.then(() => { if (call) { call.blocked = false; renderCallButtons(); } })
-    .catch(() => { if (call) { call.blocked = true; renderCallButtons(); setCallHint("Your browser held back the sound — tap 🔈 to hear " + call.peerName + "."); } });
+  const p = peer.audio.play();
+  if (p && p.then) p.then(() => { if (call) { peer.blocked = false; renderCallButtons(); } })
+    .catch(() => { if (call) { peer.blocked = true; renderCallButtons(); setCallHint("Your browser held back the sound — tap 🔈 to hear " + peer.name + "."); } });
 }
 function tapToHear() {
-  if (!call || !callAudio) return;
-  callAudio.play().then(() => { call.blocked = false; renderCallButtons(); setCallHint(""); }).catch(() => {});
+  if (!call) return;
+  for (const p of call.peers.values()) if (p.audio) p.audio.play().then(() => { p.blocked = false; renderCallButtons(); setCallHint(""); }).catch(() => {});
 }
 
 // ---------- sound output and microphone ----------
@@ -92,14 +101,14 @@ async function audioDevices(kind) {
 }
 function applyOutput() {
   const id = call && call.outputId ? call.outputId : lsGet(OUT_KEY);
-  if (canSetSink() && id) callAudio.setSinkId(id).catch(() => {});
+  if (canSetSink() && id) for (const a of audioPool) a.setSinkId(id).catch(() => {});
 }
 async function setOutput(id) {
   if (!call) return;
   call.outputId = id;
   lsSet(OUT_KEY, id || "");
   if (!canSetSink()) { toast("This browser doesn't let the app switch the output.", { error: true }); return; }
-  try { await callAudio.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); }
+  try { for (const a of audioPool) await a.setSinkId(id || ""); } catch (e) { toast("Couldn't switch to that output.", { error: true }); }
 }
 async function switchMic(deviceId) {
   if (!call || !call.stream) return;
@@ -108,8 +117,7 @@ async function switchMic(deviceId) {
   if (!call) { fresh.getTracks().forEach((t) => t.stop()); return; }
   const track = fresh.getAudioTracks()[0];
   track.enabled = !call.muted;
-  const sender = call.pc && call.pc.getSenders().find((x) => x.track && x.track.kind === "audio");
-  if (sender) await sender.replaceTrack(track);
+  for (const p of call.peers.values()) { const s = p.pc && p.pc.getSenders().find((x) => x.track && x.track.kind === "audio"); if (s) await s.replaceTrack(track); }
   call.stream.getTracks().forEach((t) => t.stop());
   call.stream = fresh;
   lsSet(MIC_KEY, deviceId);
@@ -137,32 +145,51 @@ async function audioPanel() {
   box.hidden = false;
 }
 
-// ---------- is sound flowing? (levels from the connection's own statistics) ----------
+// ---------- is sound flowing? (levels from each connection's statistics) ----------
 const SILENT = 0.002;
 async function watchSound() {
   const c = call;
-  if (!c || !c.pc) return;
-  let stats;
-  try { stats = await c.pc.getStats(); } catch (e) { return; }
-  if (call !== c) return;
-  let inPackets = null, inLevel = null, micLevel = null;
-  stats.forEach((x) => {
-    if (x.type === "inbound-rtp" && x.kind === "audio") { inPackets = x.packetsReceived; if (typeof x.audioLevel === "number") inLevel = x.audioLevel; }
-    if (x.type === "media-source" && x.kind === "audio" && typeof x.audioLevel === "number") micLevel = x.audioLevel;
-  });
-  meter("#meterThem", inLevel);
+  if (!c) return;
+  let micLevel = null, relayBytes = 0;
+  for (const peer of c.peers.values()) {
+    if (!peer.pc) continue;
+    let stats;
+    try { stats = await peer.pc.getStats(); } catch (e) { continue; }
+    if (call !== c) return;
+    let inPackets = null, inLevel = null;
+    // relay usage: the bytes of connections whose own (local) address is a relayed one — each phone counts
+    // the relay it uses, so nothing is counted twice between two phones
+    const byId = {};
+    stats.forEach((x) => { byId[x.id] = x; });
+    stats.forEach((x) => {
+      if (x.type === "candidate-pair" && x.nominated && byId[x.localCandidateId] && byId[x.localCandidateId].candidateType === "relay") {
+        relayBytes += (x.bytesSent || 0) + (x.bytesReceived || 0);
+      }
+    });
+    stats.forEach((x) => {
+      if (x.type === "inbound-rtp" && x.kind === "audio") { inPackets = x.packetsReceived; if (typeof x.audioLevel === "number") inLevel = x.audioLevel; }
+      if (x.type === "media-source" && x.kind === "audio" && typeof x.audioLevel === "number") micLevel = x.audioLevel;
+    });
+    meter(`#meter-${peer.id}`, inLevel);
+    const arriving = inPackets != null && inPackets > (peer.lastPackets || 0);
+    peer.lastPackets = inPackets || 0;
+    peer.noPackets = arriving ? 0 : (peer.noPackets || 0) + 1;
+    peer.quiet = inLevel != null && inLevel < SILENT ? (peer.quiet || 0) + 1 : 0;
+  }
   meter("#meterMe", c.muted ? 0 : micLevel);
-  const secs = (Date.now() - c.connectedAt) / 1000;
-  const arriving = inPackets != null && inPackets > (c.lastPackets || 0);
-  c.lastPackets = inPackets || 0;
-  c.noPackets = arriving ? 0 : (c.noPackets || 0) + 1;
-  c.quietThem = inLevel != null && inLevel < SILENT ? (c.quietThem || 0) + 1 : 0;
+  c.relayBytes = Math.max(c.relayBytes || 0, relayBytes);
+  if (c.relayBytes && (!c.usageSentAt || Date.now() - c.usageSentAt > 20000)) reportUsage(c);
   c.quietMic = !c.muted && micLevel != null && micLevel < SILENT ? (c.quietMic || 0) + 1 : 0;
+  const secs = (Date.now() - c.connectedAt) / 1000;
   let hint = "";
-  if (c.blocked) hint = "Your browser held back the sound — tap 🔈 to hear " + c.peerName + ".";
-  else if (secs > 5 && c.noPackets >= 5) hint = "No sound is arriving from " + c.peerName + ". The connection may be blocked one way — try again, or both on the same Wi-Fi.";
-  else if (c.peerMuted) hint = c.peerName + " has muted their microphone.";
-  else if (secs > 5 && c.quietThem >= 6) hint = c.peerName + "'s microphone seems silent — it may be muted or blocked on their phone.";
+  const blocked = [...c.peers.values()].find((p) => p.blocked);
+  const silentPeer = [...c.peers.values()].find((p) => p.connected && secs > 5 && p.noPackets >= 5);
+  const mutedPeer = [...c.peers.values()].find((p) => p.muted);
+  const quietPeer = [...c.peers.values()].find((p) => p.connected && secs > 5 && p.quiet >= 6 && !p.muted);
+  if (blocked) hint = "Your browser held back the sound — tap 🔈 to hear " + blocked.name + ".";
+  else if (silentPeer) hint = "No sound is arriving from " + silentPeer.name + ". The connection may be blocked one way — try again, or both on the same Wi-Fi.";
+  else if (mutedPeer) hint = mutedPeer.name + " has muted their microphone.";
+  else if (quietPeer) hint = quietPeer.name + "'s microphone seems silent — it may be muted or blocked on their phone.";
   else if (secs > 5 && c.quietMic >= 6) hint = "Your microphone seems silent. Check it isn't muted or used by another app.";
   setCallHint(hint);
 }
@@ -175,38 +202,91 @@ function meter(sel, level) {
 }
 function setCallHint(text) { const el = $("#callHint"); if (el && el.textContent !== text) el.textContent = text; }
 
-// ---------- telling the other side about mute (a small data channel next to the sound) ----------
-function useControl(ch) {
-  if (!call) return;
-  call.ctl = ch;
-  ch.onopen = () => sendControl();
+// ---------- telling the others about mute and the camera (a small data channel next to the sound) ----------
+function useControl(peer, ch) {
+  peer.ctl = ch;
+  ch.onopen = () => sendControl(peer);
   ch.onmessage = (e) => {
     let d = null; try { d = JSON.parse(e.data); } catch (x) { return; }
-    if (call && d && typeof d.muted === "boolean") { call.peerMuted = d.muted; }
+    if (!call || !d) return;
+    if (typeof d.muted === "boolean") peer.muted = d.muted;
+    if (typeof d.video === "boolean") { peer.videoOn = d.video; renderTiles(); }
   };
 }
-function sendControl() { if (call && call.ctl && call.ctl.readyState === "open") call.ctl.send(JSON.stringify({ muted: !!call.muted })); }
+function sendControl(peer) {
+  const msg = JSON.stringify({ muted: !!(call && call.muted), video: !!(call && call.cameraOn) });
+  for (const p of peer ? [peer] : (call ? call.peers.values() : [])) if (p.ctl && p.ctl.readyState === "open") p.ctl.send(msg);
+}
 
 // ---------- the screen ----------
-function callScreen(peerId, peerName, status, buttons) {
+function callScreen(title, status, buttons, opts = {}) {
   let el = $("#callScreen");
   if (!el) { el = h("div", { class: "call-screen", id: "callScreen", role: "dialog", "aria-modal": "true", "aria-label": "Call" }); document.body.appendChild(el); }
-  const inCall = !!(call && call.peerId === peerId && buttons.length && !incoming);
+  const inCall = !!(call && buttons.length && !incoming);
+  const video = inCall && anyVideo();
+  el.className = "call-screen" + (video ? " video" : "") + (inCall && call.group ? " group" : "");
   mount(el, h("div", { class: "call-box" },
-    avatar(peerName, peerId, { big: true, noDot: true }),
-    h("div", { class: "call-name" }, peerName),
-    h("div", { class: "call-status", id: "callStatus", role: "status" }, status),
-    inCall ? h("div", { class: "call-meters" },
-      h("div", { class: "call-meter", id: "meterMe", hidden: true, title: "Your microphone" }, h("b", null, "You"), h("i", null, h("span"))),
-      h("div", { class: "call-meter", id: "meterThem", hidden: true, title: peerName + "'s sound" }, h("b", null, peerName), h("i", null, h("span")))) : null,
+    opts.avatar && !video ? avatar(opts.avatar.name, opts.avatar.id, { big: true, noDot: true }) : null,
+    h("div", { class: "call-top" },
+      h("div", { class: "call-name" }, title),
+      h("div", { class: "call-status", id: "callStatus", role: "status" }, status)),
+    inCall ? h("div", { class: "call-stage", id: "callStage" }) : null,
+    inCall ? h("div", { class: "call-meter me", id: "meterMe", hidden: true, title: "Your microphone" }, h("b", null, "You"), h("i", null, h("span"))) : null,
     h("div", { class: "call-hint", id: "callHint", role: "status" }),
     h("div", { class: "call-actions", id: "callActions" }, buttons),
     inCall ? h("div", { class: "call-panel", id: "callPanel", hidden: true }) : null));
+  if (inCall) renderTiles();
   const first = el.querySelector("button.answer") || el.querySelector("button.hangup");
   if (first && FINE_POINTER) first.focus();
 }
 function setCallStatus(text) { const s = $("#callStatus"); if (s) s.textContent = text; }
+function anyVideo() { return !!(call && ((call.cameraOn && call.videoTrack) || [...call.peers.values()].some((p) => p.videoOn && p.videoTrack))); }
+// the picture is big when anyone's camera is on; tapping a tile makes that one the big one (tap again to go back)
+function focusTile(id) {
+  if (!call) return;
+  call.focus = call.focus === id ? null : id;
+  call.focusedByTap = true;
+  renderTiles();
+}
 function closeCallScreen() { const el = $("#callScreen"); if (el) el.remove(); }
+// one tile per other person (and my own picture while the camera is on); a tile shows their video when it's
+// on, else their photo, with a level bar and what's known about them
+function renderTiles() {
+  const stage = $("#callStage");
+  if (!stage || !call) return;
+  const video = anyVideo();
+  const screen = $("#callScreen");
+  if (screen) screen.classList.toggle("video", video);
+  if (screen) { const av = screen.querySelector(".call-box > .avatar"); if (av && video) av.remove(); }
+  // one-to-one with video: the other person is the big one until someone taps
+  if (!call.focusedByTap) call.focus = video && !call.group && call.peers.size === 1 ? [...call.peers.keys()][0] : null;
+  const tiles = [];
+  for (const p of call.peers.values()) {
+    const tile = h("div", { class: "call-tile" + (p.videoOn && p.videoTrack ? " has-video" : "") + (p.state === "ringing" ? " ringing" : "") + (call.focus === p.id ? " big" : ""),
+      id: "tile-" + p.id, role: "button", tabindex: "0", title: "Tap to make this picture big", onclick: () => focusTile(p.id) });
+    if (p.videoOn && p.videoTrack) {
+      if (!p.video) { p.video = h("video", { autoplay: true, playsinline: true, class: "call-video" }); p.video.setAttribute("playsinline", ""); p.video.muted = true; }
+      if (p.video.srcObject !== p.videoStream) p.video.srcObject = p.videoStream;
+      p.video.play().catch(() => {});
+      tile.appendChild(p.video);
+    } else tile.appendChild(avatar(p.name, p.id, { big: true, noDot: true }));
+    tile.appendChild(h("div", { class: "tile-name" }, p.name + (p.state === "ringing" ? " · ringing…" : p.muted ? " · muted" : !p.connected ? " · connecting…" : "")));
+    tile.appendChild(h("div", { class: "call-meter", id: "meter-" + p.id, hidden: true, title: p.name + "'s sound" }, h("i", null, h("span"))));
+    tiles.push(tile);
+  }
+  if (call.cameraOn && call.videoTrack) {
+    if (!call.preview) { call.preview = h("video", { autoplay: true, playsinline: true, class: "call-video mine" }); call.preview.setAttribute("playsinline", ""); call.preview.muted = true; }
+    const ms = new MediaStream([call.videoTrack]);
+    if (!call.preview.srcObject || call.preview.srcObject.getVideoTracks()[0] !== call.videoTrack) call.preview.srcObject = ms;
+    call.preview.play().catch(() => {});
+    tiles.push(h("div", { class: "call-tile mine has-video" + (call.facing === "environment" ? " back" : "") + (call.focus === "me" ? " big" : ""),
+      role: "button", tabindex: "0", title: "Tap to make this picture big", onclick: () => focusTile("me") }, call.preview, h("div", { class: "tile-name" }, "You")));
+  }
+  const focused = tiles.find((t) => t.classList.contains("big"));
+  stage.className = "call-stage n" + Math.min(4, tiles.length) + (focused ? " focused" : "");
+  if (focused) mount(stage, [focused, h("div", { class: "call-strip" }, tiles.filter((t) => t !== focused))]);
+  else mount(stage, tiles);
+}
 // a microphone, with a line across it when muted (no emoji shows that)
 function micIcon(off) {
   const NS = "http://www.w3.org/2000/svg";
@@ -219,17 +299,34 @@ function micIcon(off) {
   if (off) svg.appendChild(el("path", { d: "M3 3l18 18" }));
   return svg;
 }
+function camIcon(off) {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (name, attrs) => { const e = document.createElementNS(NS, name); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+  const svg = el("svg", { viewBox: "0 0 24 24", width: "26", height: "26", fill: "none", stroke: "currentColor",
+    "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" });
+  svg.appendChild(el("rect", { x: "3", y: "6", width: "13", height: "12", rx: "2" }));
+  svg.appendChild(el("path", { d: "M16 10l5-3v10l-5-3" }));
+  if (off) svg.appendChild(el("path", { d: "M3 3l18 18" }));
+  return svg;
+}
 function callBtn(label, cls, run, title) { return h("button", { class: "call-btn " + cls, type: "button", "aria-label": title || label, title: title || label, onclick: run }, label); }
 function inCallButtons() {
+  if (!call) return [];
+  const blocked = [...call.peers.values()].some((p) => p.blocked);
   return [
-    callBtn(micIcon(!!(call && call.muted)), "mute" + (call && call.muted ? " on" : ""), toggleMute, call && call.muted ? "Unmute" : "Mute"),
+    callBtn(micIcon(!!call.muted), "mute" + (call.muted ? " on" : ""), toggleMute, call.muted ? "Unmute" : "Mute"),
+    callBtn(camIcon(!call.cameraOn), "camera" + (call.cameraOn ? " on" : ""), toggleCamera, call.cameraOn ? "Turn the camera off" : "Turn the camera on"),
+    call.cameraOn && call.canFlip ? callBtn("🔄", "flip", flipCamera, "Switch camera") : null,
     callBtn("⚙", "devices", audioPanel, "Sound and microphone"),
-    call && call.blocked ? callBtn("🔈", "hear on", tapToHear, "Tap to hear") : null,
+    blocked ? callBtn("🔈", "hear on", tapToHear, "Tap to hear") : null,
     callBtn("📞", "hangup", () => hangUp(), "Hang up"),
   ].filter(Boolean);
 }
 function renderCallButtons() { const el = $("#callActions"); if (el && call) mount(el, inCallButtons()); }
-function showCallScreen(status) { if (call) callScreen(call.peerId, call.peerName, status, inCallButtons()); }
+function showCallScreen(status) {
+  if (!call) return;
+  callScreen(call.name, status, inCallButtons(), call.group ? {} : { avatar: { id: call.peerId, name: call.name } });
+}
 function toggleMute() {
   if (!call || !call.stream) return;
   call.muted = !call.muted;
@@ -237,40 +334,137 @@ function toggleMute() {
   sendControl();
   renderCallButtons();
 }
+// the camera: a video slot is in every connection from the start, so turning it on or off never needs a new
+// negotiation — the track is just put in (or taken out) with replaceTrack
+async function toggleCamera() {
+  if (!call) return;
+  if (call.cameraOn) {
+    call.cameraOn = false;
+    for (const p of call.peers.values()) if (p.videoSender) p.videoSender.replaceTrack(null).catch(() => {});
+    if (call.videoTrack) call.videoTrack.stop();
+    call.videoTrack = null;
+    if (call.preview) { call.preview.srcObject = null; call.preview = null; }
+  } else {
+    let s;
+    try { s = await getCamera(call.facing); } catch (e) { toast("Couldn't use the camera (permission, or no camera here).", { error: true }); return; }
+    if (!call) { s.getTracks().forEach((t) => t.stop()); return; }
+    call.videoTrack = s.getVideoTracks()[0];
+    call.cameraOn = true;
+    for (const p of call.peers.values()) if (p.videoSender) p.videoSender.replaceTrack(call.videoTrack).catch(() => {});
+    audioDevices("videoinput").then((cams) => { if (call) { call.canFlip = cams.length > 1; renderCallButtons(); } });
+  }
+  sendControl();
+  showCallScreen($("#callStatus") ? $("#callStatus").textContent : "");
+}
+async function flipCamera() {
+  if (!call || !call.cameraOn) return;
+  const facing = call.facing === "environment" ? "user" : "environment";
+  let s;
+  try { s = await getCamera(facing); } catch (e) { toast("Couldn't switch camera.", { error: true }); return; }
+  if (!call) { s.getTracks().forEach((t) => t.stop()); return; }
+  const track = s.getVideoTracks()[0];
+  for (const p of call.peers.values()) if (p.videoSender) p.videoSender.replaceTrack(track).catch(() => {});
+  if (call.videoTrack) call.videoTrack.stop();
+  call.videoTrack = track;
+  call.facing = facing;
+  renderTiles();
+}
 
-// ---------- WebRTC ----------
-function newPeer(iceServers) {
-  const pc = new RTCPeerConnection({ iceServers: iceServers || [] });
-  call.stream.getTracks().forEach((t) => pc.addTrack(t, call.stream));
-  pc.ontrack = (e) => { if (call && call.pc === pc) playRemote(e.streams[0] || new MediaStream([e.track])); };
-  pc.ondatachannel = (e) => { if (call && call.pc === pc) useControl(e.channel); };
-  pc.onicecandidate = (e) => {
-    // candidates found before the description went are inside it; later ones are passed on
-    if (e.candidate && call && call.pc === pc && call.descSent && call.id) {
-      api(`api/calls/${call.id}/candidate`, { method: "POST", body: { candidate: e.candidate.toJSON() } }).catch(() => {});
-    }
+// ---------- WebRTC: one connection per other person ----------
+function newCall(fields) {
+  return Object.assign({ id: null, kind: "audio", group: false, conversationId: null, name: "", peerId: null, role: "caller",
+    stream: null, videoTrack: null, cameraOn: false, facing: "user", canFlip: false, muted: false,
+    peers: new Map(), seen: new Set(), connectedAt: null, iceServers: [] }, fields);
+}
+function addPeer(id, name, memberState) {
+  if (!call) return null;
+  let p = call.peers.get(id);
+  if (!p) { p = { id, name, state: memberState || "joined", pc: null, stream: new MediaStream(), videoStream: new MediaStream(), pending: [] }; call.peers.set(id, p); }
+  else if (memberState) p.state = memberState;
+  return p;
+}
+function makePc(peer, offering) {
+  if (peer.pc) return peer.pc;
+  const pc = new RTCPeerConnection({ iceServers: call.iceServers || [] });
+  peer.pc = pc;
+  const audio = call.stream.getAudioTracks()[0];
+  if (audio) pc.addTrack(audio, call.stream);
+  // the video slot: the side that offers adds it; the side that answers takes the one in the offer (a browser
+  // only reuses slots made by addTrack, so one added here would be left unused and the answer receive-only)
+  if (offering) {
+    const tr = pc.addTransceiver("video", { direction: "sendrecv" });
+    peer.videoSender = tr.sender;
+    if (call.cameraOn && call.videoTrack) tr.sender.replaceTrack(call.videoTrack).catch(() => {});
+  }
+  pc.ontrack = (e) => {
+    if (!call || peer.pc !== pc) return;
+    if (e.track.kind === "audio") { peer.stream.addTrack(e.track); playRemote(peer); }
+    else { peer.videoTrack = e.track; peer.videoStream = e.streams[0] || new MediaStream([e.track]); e.track.onunmute = () => renderTiles(); renderTiles(); }
   };
+  pc.ondatachannel = (e) => { if (call && peer.pc === pc) useControl(peer, e.channel); };
+  pc.onicecandidate = (e) => { if (e.candidate && call && peer.pc === pc) signal(peer.id, "candidate", { candidate: e.candidate.toJSON() }); };
   const changed = () => {
-    if (!call || call.pc !== pc) return;
+    if (!call || peer.pc !== pc) return;
     const s = pc.connectionState || pc.iceConnectionState;
-    if ((s === "connected" || s === "completed") && !call.connectedAt) onConnected();
-    else if (s === "failed") hangUp("failed");
+    if (s === "connected" || s === "completed") { peer.connected = true; if (!call.connectedAt) onConnected(); renderTiles(); }
+    else if (s === "failed") { if (call.group) dropPeer(peer.id, "couldn't connect"); else hangUp("failed"); }
   };
   pc.onconnectionstatechange = changed;
   pc.oniceconnectionstatechange = changed;
   return pc;
 }
-function gathered(pc) {
-  return new Promise((resolve) => {
-    if (pc.iceGatheringState === "complete") { resolve(); return; }
-    const done = () => { if (pc.iceGatheringState === "complete") { pc.removeEventListener("icegatheringstatechange", done); resolve(); } };
-    pc.addEventListener("icegatheringstatechange", done);
-    setTimeout(resolve, GATHER_MS);
-  });
+function signal(to, type, data) {
+  if (!call || !call.id) return Promise.resolve();
+  return api(`api/calls/${call.id}/signal`, { method: "POST", body: { to, type, ...data } }).catch(() => {});
 }
-function addCandidates(list) {
-  if (!call || !call.pc) return;
-  for (const c of list || []) call.pc.addIceCandidate(c).catch(() => {});
+async function offerTo(peer) {
+  const pc = makePc(peer, true);
+  useControl(peer, pc.createDataChannel("hchat"));
+  try {
+    await pc.setLocalDescription(await pc.createOffer());
+    await signal(peer.id, "offer", { sdp: pc.localDescription.sdp });
+  } catch (e) { if (call && !call.group) hangUp("failed"); }
+}
+async function onSignal(sig) {
+  if (!call || !sig || call.seen.has(sig.id)) return;
+  call.seen.add(sig.id);
+  const peer = addPeer(sig.from, nameOf(sig.from) === "Someone" ? (sig.fromName || "Someone") : nameOf(sig.from));
+  const pc = makePc(peer);
+  try {
+    if (sig.type === "offer") {
+      await pc.setRemoteDescription({ type: "offer", sdp: sig.sdp });
+      const vt = pc.getTransceivers().find((x) => x.receiver && x.receiver.track && x.receiver.track.kind === "video");
+      if (vt) {
+        vt.direction = "sendrecv";
+        peer.videoSender = vt.sender;
+        if (call.cameraOn && call.videoTrack) await vt.sender.replaceTrack(call.videoTrack).catch(() => {});
+      }
+      await pc.setLocalDescription(await pc.createAnswer());
+      await signal(peer.id, "answer", { sdp: pc.localDescription.sdp });
+      flushCandidates(peer);
+    } else if (sig.type === "answer") {
+      await pc.setRemoteDescription({ type: "answer", sdp: sig.sdp });
+      flushCandidates(peer);
+    } else if (sig.type === "candidate") {
+      if (pc.remoteDescription) await pc.addIceCandidate(sig.candidate).catch(() => {});
+      else peer.pending.push(sig.candidate);
+    }
+  } catch (e) { if (!call.group) hangUp("failed"); }
+}
+function flushCandidates(peer) {
+  const list = peer.pending; peer.pending = [];
+  for (const c of list) peer.pc.addIceCandidate(c).catch(() => {});
+}
+function dropPeer(id, why) {
+  if (!call) return;
+  const p = call.peers.get(id);
+  if (!p) return;
+  if (call.focus === id) { call.focus = null; call.focusedByTap = false; }
+  if (p.pc) { try { p.pc.close(); } catch (e) { /* closed */ } }
+  if (p.audio) { p.audio.srcObject = null; p.audio._peer = null; }
+  call.peers.delete(id);
+  renderTiles();
+  if (why && call.group) toast(p.name + (why === "left" ? " left the call" : " " + why));
 }
 function onConnected() {
   closeTones();
@@ -282,6 +476,7 @@ function onConnected() {
   keepAwake();
 }
 function waitForConnection() {
+  clearTimeout(call.connectTimer);
   call.connectTimer = setTimeout(() => { if (call && !call.connectedAt) hangUp("failed"); }, CONNECT_MS);
 }
 async function keepAwake() {
@@ -290,51 +485,47 @@ async function keepAwake() {
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && call && call.connectedAt) keepAwake(); });
 
 // ---------- calling someone ----------
-async function startCall(conv) {
+async function getMedia(video) {
+  const stream = await getMic();
+  let videoTrack = null;
+  if (video) { try { videoTrack = (await getCamera("user")).getVideoTracks()[0]; } catch (e) { toast("No camera here — the call goes on with sound only.", { error: true }); } }
+  return { stream, videoTrack };
+}
+async function startCall(conv, kind = "audio") {
   if (call || incoming) { toast("You're already in a call."); return; }
   if (!micPossible()) { noMicDialog(); return; }
-  unlockAudio();                          // in the tap: phones then allow the other person's sound
-  let stream;
-  try { stream = await getMic(); } catch (e) { toast("Microphone permission was refused.", { error: true }); return; }
-  if (call) { stream.getTracks().forEach((t) => t.stop()); return; }
-  call = { id: null, role: "caller", conversationId: conv.id, peerId: conv.otherUserId, peerName: conv.name, stream };
+  unlockAudio();                          // in the tap: phones then allow the other people's sound
+  let media;
+  try { media = await getMedia(kind === "video"); } catch (e) { toast("Microphone permission was refused.", { error: true }); return; }
+  if (call) { media.stream.getTracks().forEach((t) => t.stop()); if (media.videoTrack) media.videoTrack.stop(); return; }
+  call = newCall({ kind, group: conv.kind === "group", conversationId: conv.id, peerId: conv.otherUserId || null, name: conv.name,
+    stream: media.stream, videoTrack: media.videoTrack, cameraOn: !!media.videoTrack });
   const mine = call;
   showCallScreen("Calling…");
   let r;
-  try { r = await api("api/calls", { method: "POST", body: { conversationId: conv.id } }); }
+  try { r = await api("api/calls", { method: "POST", body: { conversationId: conv.id, kind } }); }
   catch (e) { if (call === mine) finish(e.message, /another call/.test(e.message) ? "busy" : null); return; }
   if (call !== mine) { api(`api/calls/${r.id}/end`, { method: "POST", body: {} }).catch(() => {}); return; }   // hung up meanwhile
-  call.id = r.id;
-  try {
-    call.pc = newPeer(r.iceServers);
-    useControl(call.pc.createDataChannel("hchat"));
-    await call.pc.setLocalDescription(await call.pc.createOffer());
-    await gathered(call.pc);
-    if (call !== mine) return;
-    await api(`api/calls/${call.id}/offer`, { method: "POST", body: { sdp: call.pc.localDescription.sdp } });
-    call.descSent = true;
-    if (!call.answered) { setCallStatus("Ringing…"); startTone("back"); }
-  } catch (e) { if (call === mine) { fail(e); hangUp("failed"); } }
+  call.id = r.id; call.iceServers = r.iceServers || []; call.name = r.name || call.name;
+  for (const m of r.members || []) if (m.id !== state.me.id) addPeer(m.id, m.name, m.state);
+  setCallStatus("Ringing…");
+  startTone("back");
+  renderTiles();
+  if (call.cameraOn) audioDevices("videoinput").then((cams) => { if (call) { call.canFlip = cams.length > 1; renderCallButtons(); } });
   watchWithoutLive();
-}
-async function applyAnswer(sdp, candidates) {
-  if (!call || call.role !== "caller" || call.answered || !call.pc) return;
-  call.answered = true;
-  stopTone();
-  setCallStatus("Connecting…");
-  try { await call.pc.setRemoteDescription({ type: "answer", sdp }); addCandidates(candidates); waitForConnection(); }
-  catch (e) { hangUp("failed"); }
 }
 
 // ---------- someone is calling ----------
 function showIncoming(d) {
   if (incoming || (call && call.id === d.id)) return;
-  if (call) return;                       // the server says busy before ringing; nothing to show
-  incoming = { id: d.id, conversationId: d.conversationId, peerId: d.peerId, peerName: d.peerName || nameOf(d.peerId) };
-  callScreen(incoming.peerId, incoming.peerName, "📞 Incoming call", [
+  if (call) return;                       // busy: the server never rings someone in a call
+  incoming = { id: d.id, conversationId: d.conversationId, kind: d.kind || "audio", group: !!d.group, name: d.name || d.peerName,
+    peerId: d.peerId, peerName: d.peerName || nameOf(d.peerId) };
+  const what = (incoming.kind === "video" ? "📹 Incoming video call" : "📞 Incoming call") + (incoming.group ? " from " + incoming.peerName : "");
+  callScreen(incoming.name, what, [
     callBtn("✕", "decline", () => declineCall(), "Decline"),
-    callBtn("📞", "answer", () => answerCall(), "Answer"),
-  ]);
+    callBtn(incoming.kind === "video" ? "📹" : "📞", "answer", () => answerCall(), "Answer"),
+  ], { avatar: { id: incoming.group ? null : incoming.peerId, name: incoming.name }, video: incoming.kind === "video" });
   startTone("ring");
   clearTimeout(incoming.timer);
   incoming.timer = setTimeout(() => dismissIncoming(), ((d.ringSeconds || d.ringLeft || state.me.app.callRingSeconds || 30) + 5) * 1000);
@@ -355,7 +546,7 @@ async function declineCall() {
 async function answerCall() {
   const r = incoming;
   if (!r) return;
-  unlockAudio();                          // in the tap: phones then allow the other person's sound
+  unlockAudio();                          // in the tap: phones then allow the other people's sound
   clearTimeout(r.timer);
   incoming = null;
   closeTones();
@@ -365,45 +556,52 @@ async function answerCall() {
     noMicDialog();
   };
   if (!micPossible()) { noMic(); return; }
-  let stream;
-  try { stream = await getMic(); } catch (e) { noMic(); return; }
-  call = { id: r.id, role: "callee", conversationId: r.conversationId, peerId: r.peerId, peerName: r.peerName, stream };
+  let media;
+  try { media = await getMedia(r.kind === "video"); } catch (e) { noMic(); return; }
+  call = newCall({ id: r.id, kind: r.kind, group: r.group, conversationId: r.conversationId, name: r.name, peerId: r.peerId, role: "callee",
+    stream: media.stream, videoTrack: media.videoTrack, cameraOn: !!media.videoTrack });
   const mine = call;
   showCallScreen("Connecting…");
-  try {
-    const cur = (await api("api/calls/current")).call;
-    if (!cur || cur.id !== r.id || cur.state !== "ringing") { finish("The call has ended."); return; }
-    call.pc = newPeer(cur.iceServers);
-    await call.pc.setRemoteDescription({ type: "offer", sdp: cur.offer });
-    addCandidates(cur.candidates);
-    await call.pc.setLocalDescription(await call.pc.createAnswer());
-    await gathered(call.pc);
-    if (call !== mine) return;
-    await api(`api/calls/${call.id}/answer`, { method: "POST", body: { sdp: call.pc.localDescription.sdp } });
-    call.descSent = true;
-    waitForConnection();
-  } catch (e) { if (call === mine) { fail(e); hangUp("failed"); } }
+  let a;
+  try { a = await api(`api/calls/${r.id}/answer`, { method: "POST" }); }
+  catch (e) { if (call === mine) finish(e.message); return; }
+  if (call !== mine) return;
+  call.iceServers = a.iceServers || [];
+  for (const m of a.members || []) if (m.id !== state.me.id) addPeer(m.id, m.name, m.state);
+  renderTiles();
+  // the newcomer offers to everyone already in
+  for (const p of a.peers || []) offerTo(addPeer(p.id, p.name, "joined"));
+  waitForConnection();
+  if (call.cameraOn) audioDevices("videoinput").then((cams) => { if (call) { call.canFlip = cams.length > 1; renderCallButtons(); } });
   watchWithoutLive();
 }
 
 // ---------- ending ----------
+function reportUsage(c) {
+  if (!c || !c.id || !c.relayBytes || c.relayBytes === c.usageSent) return;
+  c.usageSentAt = Date.now(); c.usageSent = c.relayBytes;
+  api(`api/calls/${c.id}/usage`, { method: "POST", body: { relayBytes: Math.round(c.relayBytes) } }).catch(() => {});
+}
 function hangUp(reason) {
   if (!call) return;
+  reportUsage(call);
   if (call.id) api(`api/calls/${call.id}/end`, { method: "POST", body: reason ? { reason } : {} }).catch(() => {});
-  finish(reason === "failed" ? "Couldn't connect. For now calls work when both phones are on the home network." : "Call ended");
+  finish(reason === "failed" ? "Couldn't connect. Away from home, calls need the address lookup and a relay (App settings → Voice calls)." : "Call ended");
 }
 function finish(text, tone) {
   const c = call;
   call = null;
   if (!c) return;
+  reportUsage(c);
   stopTone();
   clearInterval(c.clock); clearTimeout(c.connectTimer); clearInterval(c.poll);
-  if (c.pc) { try { c.pc.close(); } catch (e) { /* closed */ } }
+  for (const p of c.peers.values()) { if (p.pc) { try { p.pc.close(); } catch (e) { /* closed */ } } if (p.audio) { p.audio.srcObject = null; p.audio._peer = null; } }
   if (c.stream) c.stream.getTracks().forEach((t) => t.stop());
-  if (callAudio) { callAudio.srcObject = null; callAudio.muted = false; }
+  if (c.videoTrack) c.videoTrack.stop();
+  for (const a of audioPool) { a.srcObject = null; a.muted = false; a._peer = null; }
   if (c.wake) c.wake.release().catch(() => {});
   if (tone) startTone(tone);
-  callScreen(c.peerId, c.peerName, text || "Call ended", []);
+  callScreen(c.name, text || "Call ended", [], c.group ? {} : { avatar: { id: c.peerId, name: c.name } });
   setTimeout(() => { if (!call && !incoming) closeCallScreen(); }, 2000);
 }
 function endedText(d) {
@@ -417,15 +615,18 @@ function endedText(d) {
 // ---------- live `call` events, and the call when the page opens ----------
 function onCallEvent(d) {
   if (d.state === "ringing" && d.peerId) { showIncoming(d); return; }
-  if (d.state === "answered") {
-    if (call && call.id === d.id && call.role === "caller" && d.sdp) applyAnswer(d.sdp, d.candidates);
-    else if (incoming && incoming.id === d.id) dismissIncoming("Answered on another device");
+  if (d.state === "joined") { if (incoming && incoming.id === d.id) dismissIncoming("Answered on another device"); return; }
+  if (d.state === "signal") { if (call && call.id === d.id) onSignal(d.signal); return; }
+  if (d.state === "member") {
+    if (!call || call.id !== d.id) return;
+    for (const m of d.members || []) if (m.id !== state.me.id) { if (m.state === "joined" || m.state === "ringing") addPeer(m.id, m.name, m.state); else if (call.peers.has(m.id)) dropPeer(m.id, call.peers.get(m.id).state === "joined" ? "left" : null); }
+    renderTiles();
+    if (call.group && d.memberState === "joined" && d.userId !== state.me.id) toast(nameOf(d.userId) + " joined the call");
     return;
   }
-  if (d.state === "candidate") { if (call && call.id === d.id) addCandidates([d.candidate]); return; }
   if (d.state === "ended") {
     if (call && call.id === d.id) { if (d.by !== state.me.id) finish(endedText(d)); }
-    else if (incoming && incoming.id === d.id) dismissIncoming(d.outcome === "missed" ? `Missed call from ${incoming.peerName}` : null);
+    else if (incoming && incoming.id === d.id) dismissIncoming(d.outcome === "missed" || d.reason === "missed" ? `Missed call from ${incoming.peerName}` : null);
   }
 }
 async function checkCurrentCall() {
@@ -433,12 +634,15 @@ async function checkCurrentCall() {
   let cur;
   try { cur = (await api("api/calls/current")).call; } catch (e) { return; }
   if (!cur) {
-    if (call && call.id && call.descSent) finish("Call ended");
+    if (call && call.id) finish("Call ended");
     if (incoming) dismissIncoming();
     return;
   }
-  if (cur.role === "callee" && cur.state === "ringing" && !call) showIncoming(cur);
-  else if (call && call.id === cur.id && cur.role === "caller" && cur.state === "active" && cur.answer) applyAnswer(cur.answer, []);
+  if (cur.state === "ringing" && !call) { showIncoming(cur); return; }
+  if (call && call.id === cur.id) {
+    for (const m of cur.members || []) if (m.id !== state.me.id && (m.state === "joined" || m.state === "ringing")) addPeer(m.id, m.name, m.state);
+    for (const s of cur.signals || []) onSignal(s);
+  }
 }
 // while live updates are down, the call is followed by asking every second
 function watchWithoutLive() {
@@ -486,23 +690,36 @@ function openFromRoute() {
 }
 
 // ---------- call notes in the chat ----------
-function callMissedByMe(m) { return !!(m.call && m.call.calleeId === state.me.id && (m.call.outcome === "missed" || m.call.outcome === "busy")); }
+function myCallState(m) { const me = m.call && (m.call.members || []).find((x) => x.id === state.me.id); return me ? me.state : null; }
+function callMissedByMe(m) { const s = myCallState(m); return s === "missed" || s === "busy"; }
 function callNoteText(m) {
   const c = m.call;
   if (!c) return "📞 Call";
+  const icon = c.kind === "video" ? "📹" : "📞";
+  const what = c.kind === "video" ? "video call" : "call";
   const out = c.callerId === state.me.id;
   const len = c.seconds == null ? "" : " · " + (c.seconds >= 60 ? Math.floor(c.seconds / 60) + " min" : c.seconds + " s");
+  if (c.group) {
+    const who = (c.members || []).filter((x) => x.state === "left").map((x) => x.id === state.me.id ? "you" : x.name);
+    const mine = myCallState(m);
+    switch (c.outcome) {
+      case "answered": return `${icon} Group ${what}` + len + (who.length ? " · " + who.join(", ") : "");
+      case "missed": return mine === "missed" || mine === "busy" ? `${icon} Missed group ${what}` : `${icon} Group ${what} · no answer`;
+      case "declined": return out ? `${icon} Group ${what} · declined` : `${icon} Group ${what} · you declined`;
+      default: return `${icon} Group ${what} couldn't connect`;
+    }
+  }
   switch (c.outcome) {
-    case "answered": return (out ? "📞 Outgoing call" : "📞 Incoming call") + len;
-    case "missed": return out ? "📞 No answer" : "📞 Missed call";
-    case "busy": return out ? "📞 Busy" : "📞 Missed call";
-    case "declined": return out ? "📞 Declined" : "📞 You declined a call";
-    default: return "📞 Call couldn't connect";
+    case "answered": return (out ? `${icon} Outgoing ${what}` : `${icon} Incoming ${what}`) + len;
+    case "missed": return out ? `${icon} No answer` : `${icon} Missed ${what}`;
+    case "busy": return out ? `${icon} Busy` : `${icon} Missed ${what}`;
+    case "declined": return out ? `${icon} Declined` : `${icon} You declined a ${what}`;
+    default: return `${icon} ${what[0].toUpperCase() + what.slice(1)} couldn't connect`;
   }
 }
 function callNoteEl(m) {
   const c = convById(m.conversationId) || state.detail;
   return h("div", { class: "sys call-note" + (callMissedByMe(m) ? " missed" : ""), id: "m" + m.id },
     h("span", null, callNoteText(m), " · ", fmtTime(m.createdAt),
-      canCallIn(c) && !m.deleted ? h("button", { class: "link-btn call-back", type: "button", onclick: () => startCall(c) }, "Call back") : null));
+      canCallIn(c) && !m.deleted ? h("button", { class: "link-btn call-back", type: "button", onclick: () => startCall(c, m.call ? m.call.kind : "audio") }, "Call back") : null));
 }

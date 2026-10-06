@@ -52,6 +52,8 @@ def wants(conn, user, m, conv, msg) -> bool:
     muted = config.parse_iso(m["muted_until"])
     if m["notify"] == "off" or (muted and muted > config.utcnow()):
         return False
+    if msg["kind"] == "call":           # a missed call is for you, like a direct message (§15.12)
+        return user["notify_level"] != "off"
     uid = user["id"]
     mentioned = bool(msg["mention_all"]) or (msg["mentions"] and uid in json.loads(msg["mentions"]))
     direct = conv["kind"] == "direct"
@@ -85,7 +87,10 @@ def title_for(conn, conv, sender_name: str) -> str:
 
 def text_for(conn, msg, level: str, sender_name: str, group: bool) -> str:
     if msg["kind"] == "call" and level != "none":     # only missed calls are sent (§15.12)
-        return f"📞 Missed call from {sender_name}"
+        c = chats.call_row(conn, msg["id"])
+        icon = "📹" if c and c["kind"] == "video" else "📞"
+        what = "video call" if c and c["kind"] == "video" else "call"
+        return f"{icon} Missed group {what} from {sender_name}" if c and c["is_group"] else f"{icon} Missed {what} from {sender_name}"
     if level == "none":
         return f"New message in {config.APP_TITLE}"
     if level == "sender":
@@ -135,9 +140,11 @@ def new_message(mid: int) -> None:
         msg = chats.message_row(conn, mid)
         if msg is None or msg["deleted_at"] or msg["kind"] == "system":
             return
-        if msg["kind"] == "call":       # a call note: only a missed call is news (§15.12)
+        missed = None
+        if msg["kind"] == "call":       # a call note: news only for those who missed it (§15.12)
             c = chats.call_row(conn, mid)
-            if c is None or c["outcome"] not in ("missed", "busy"):
+            missed = {m["user_id"] for m in chats.call_members(conn, c["id"]) if m["state"] in ("missed", "busy")} if c else set()
+            if not missed:
                 return
         conv = chats.conv_row(conn, msg["conversation_id"])
         if conv is None or conv["kind"] == "personal":
@@ -150,6 +157,8 @@ def new_message(mid: int) -> None:
         for r in rows:
             uid = r["user_id"]
             if msg["id"] <= r["joined_message_id"] or not wants(conn, r, r, conv, msg):
+                continue
+            if missed is not None and uid not in missed:
                 continue
             services = ha_notify.services_for({"id": uid}, conn)
             if not services or hub.is_looking(uid, conv["id"]):
