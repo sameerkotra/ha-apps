@@ -96,11 +96,11 @@ they're set up again. Household and shared vaults are kept.
 - **Share…** (vault ⋯ menu): pick a person and *Can edit*, *Can view* or
   *Manager* (can also add and remove people). Only people who are set up can be
   added. **People with access** shows who's in it.
-- You can share **your Personal vault with the same password** — they'll open it
-  with your master password, so they'll know it. They still can't open your
-  other vaults (they'd have to sign in to Home Assistant as you), but a separate
-  shared vault keeps your master password private, and the Share dialog suggests
-  one.
+- Your **Personal vault can't be shared**: it opens with your master password,
+  so sharing it would mean giving that password away. Make a shared vault (for
+  example "You & them") and move the entries into it — the Share dialog offers
+  that. Anyone you shared your Personal vault with before this rule keeps their
+  access until you remove them.
 - A vault you're in but haven't remembered shows 🔒 in the sidebar; tap it and
   type its password (tick *Remember* to open it with your master password from
   then on).
@@ -232,7 +232,9 @@ network. Off until someone publishes one.
 1. In **Household**, make a **Wi-Fi** item (network name + password) — or on an
    existing login: ⋯ → *This is a Wi-Fi network*.
 2. ⋯ → **Show as guest Wi-Fi on the dashboard**, pick the security, and whether
-   to show the password as text too.
+   to show the password as text too. Without that, the password is only inside
+   the QR code (which has to contain it for phones to join): the page and the
+   sensor don't show it as text, and the page has no Show or Copy button.
 3. On a dashboard: *Add card* → **Picture entity** → `sensor.household_vault_guest_wifi`.
 
 It follows the item: change the password and the dashboard updates; delete the

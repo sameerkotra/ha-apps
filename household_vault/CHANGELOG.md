@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.2
+
+- **Security**: your Personal vault can no longer be shared — it opens with your master password, so sharing it meant giving that password away. The Share dialog now offers to create a shared vault instead. People you shared it with before keep their access until you remove them.
+- **Security**: the guest Wi-Fi password is shown as text (on the app's Guest Wi-Fi page and in the sensor) only when you ticked *show the password as text* when publishing it. The QR code still contains it — that's how phones join.
+
 ## 2.1.1
 
 - **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.

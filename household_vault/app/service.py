@@ -447,6 +447,10 @@ def share(conn, s: sessions.Session, vault_id: str, user_id: str, role: str) -> 
         raise HTTPException(422, "Role must be manager, editor or viewer.")
     if v["kind"] == "personal" and role == "manager":
         raise HTTPException(422, "Only you can manage your Personal vault.")
+    if v["kind"] == "personal" and not role_of(conn, vault_id, user_id):
+        # security review 2026-10: a Personal vault opens with its owner's master password, so sharing it
+        # meant giving that password away. People added before this stay (their role can still change).
+        raise HTTPException(409, "Personal vaults can't be shared — create a shared vault and move the entries into it.")
     target = user_row(conn, user_id)
     if not target or target["disabled"] or target["status"] != "active":
         raise HTTPException(409, "They need to be enabled and set up (with their own master password) first.")

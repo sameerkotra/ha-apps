@@ -300,8 +300,10 @@ class Sheet(ApiTestCase):
         it2 = self.add_item(v["id"], title="Broker", password="p")
         self.assertEqual(self.put(f"/api/vaults/{v['id']}/items/{it2['id']}/sheet", {"include": True}).status_code, 409)
         self.assertEqual(self.get(f"/api/vaults/{v['id']}/sheet").status_code, 409)
-        # someone else's Personal vault shared with me: not mine to print
-        self.ok(self.post(f"/api/vaults/{mine}/members", {"userId": "u-neha", "role": "viewer"}))
+        # someone else's Personal vault shared with me (from before Personal sharing was refused): not mine to print
+        from app import db, service
+        with db.get_conn() as conn:
+            service.add_member(conn, mine, "u-neha", "viewer", "u-admin")
         self.ok(self.post(f"/api/vaults/{mine}/open", {"password": "maple-river-candle-orbit-zebra", "remember": False}, NEHA))
         self.assertEqual(self.get(f"/api/vaults/{mine}/sheet", NEHA).status_code, 409)
         # Wi-Fi needs a password unless it's an open network
