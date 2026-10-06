@@ -16,6 +16,10 @@ class StartIn(Strict):
     kind: str = Field(default="audio", pattern="^(audio|video)$")
 
 
+class PeopleIn(Strict):
+    userIds: list[str] = Field(min_length=1, max_length=20)
+
+
 class SignalIn(Strict):
     to: str = Field(max_length=64)
     type: str = Field(pattern="^(offer|answer|candidate)$")
@@ -34,6 +38,12 @@ class EndIn(Strict):
 @router.post("/calls", status_code=201)
 def start(body: StartIn, user: dict = Depends(require_user)):
     return calls.start(user, body.conversationId, body.kind)
+
+
+@router.post("/calls/chat")
+def chat_for_people(body: PeopleIn, user: dict = Depends(require_user)):
+    """The chat to call these people in (their direct chat, or a group with exactly them — made if needed)."""
+    return calls.chat_for_people(user, body.userIds)
 
 
 @router.get("/calls/current")

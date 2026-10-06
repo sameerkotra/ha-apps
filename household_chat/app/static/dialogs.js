@@ -13,6 +13,38 @@ async function newDirectDialog() {
     : h("p", { class: "hint" }, "Nobody else has access yet — an admin enables people in Admin → People."));
   const m = openModal("Direct message", body);
 }
+// a call to people you pick (SPEC §15.12): one person → their direct chat; more → a group with exactly them
+async function newCallDialog() {
+  await loadPeople();
+  const picks = new Set();
+  const err = h("div", { class: "error" });
+  const others = state.people.filter((p) => !p.you);
+  const list = h("div", { class: "people-pick" }, others.map((p) => h("label", { class: "person-row" },
+    h("input", { type: "checkbox", onchange: (e) => {
+      if (e.target.checked && picks.size >= 3) { e.target.checked = false; err.textContent = "A call is at most four people: you and three others."; return; }
+      err.textContent = "";
+      if (e.target.checked) picks.add(p.id); else picks.delete(p.id);
+    } }), avatar(p.name, p.id, { small: true }), h("span", null, p.name))));
+  const go = async (kind) => {
+    if (!picks.size) { err.textContent = "Pick at least one person."; return; }
+    try {
+      const r = await api("api/calls/chat", { method: "POST", body: { userIds: [...picks] } });
+      m.close();
+      await loadConvs();
+      await openChat(r.id);
+      const c = convById(r.id);
+      if (c) startCall(c, kind);
+    } catch (e) { err.textContent = e.message; }
+  };
+  const m = openModal("New call", h("div", null,
+    others.length ? list : h("p", { class: "hint" }, "Nobody else has access yet — an admin enables people in Admin → People."),
+    h("p", { class: "hint" }, "Up to three others. One person: your direct chat. More: a group with exactly these people (made for you if there isn't one), where the call's note goes."),
+    err,
+    h("div", { class: "row" }, h("span", { class: "grow" }),
+      h("button", { class: "btn", type: "button", onclick: () => m.close() }, "Cancel"),
+      h("button", { class: "btn", type: "button", onclick: () => go("video") }, "📹 Video call"),
+      h("button", { class: "btn primary", type: "button", onclick: () => go("audio") }, "📞 Call"))));
+}
 async function newGroupDialog() {
   await loadPeople();
   const name = h("input", { type: "text", maxlength: "60", "aria-label": "Group name", placeholder: "e.g. Family, School runs" });

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.5
+
+- **New call…** (⋯ menu, and on the Calls page): pick up to three people and call them, without a group chat first. One person: it's your direct chat. More: a group with exactly those people — made for you, named after them, if there isn't one — where the call's note goes.
+
 ## 2.5.4
 
 - **Calls**: ⚙ now has a **Camera** list with every camera the browser sees — the built-in one, a USB webcam, a phone's front and back. Choosing one turns the camera on or switches it during the call; the choice is remembered on that device.

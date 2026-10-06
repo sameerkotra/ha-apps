@@ -711,6 +711,12 @@ three others; more would need a media server). Away from home needs §15.13.
   `video`). Not in "My room" (§17; 409 "Not possible in your personal room"), not in a read-only direct chat (§4:
   the other person has no access, or two children while `children_can_message_each_other` is off; 409). Children
   (§16.5) can call wherever they can post. A group with nobody else in it: 409.
+- **A call to people you pick** (⋯ → 📞 New call…, and on the Calls page): `POST /calls/chat {userIds}` → the chat
+  it belongs to — one person: their direct chat (`get_or_create_direct`, so a child–child pair follows
+  `children_can_message_each_other`); more (≤ 3 others, 422 beyond, 422 for anyone without access): a group I'm
+  in with exactly these members (never the Household group), else `create_group` under its rules (children
+  can't; `who_can_create_groups`; the 100-group limit) named "Tarun & Leela" (the others' names, ≤ 60) with 📞,
+  → `{id, kind, created}`. The page then opens that chat and starts the call there.
 - **Who is rung**: a direct chat's other person; in a group every enabled member but the caller. The caller is
   **joined** from the start; each person rung is **ringing** until they answer (joined), decline, or the ring time
   passes (missed). Someone already in a call isn't rung (`busy`; in a direct chat that's 409 "Asha is on another

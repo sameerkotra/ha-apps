@@ -79,7 +79,7 @@ An admin turns calls on in **App settings → Voice calls** (off until then). Ca
 
 **Starting a call**
 
-- **📞** at the top of a chat calls; **📹** starts a video call.
+- **📞** at the top of a chat calls; **📹** starts a video call. **⋯ → 📞 New call…** (also on the Calls page) lets you pick people instead — up to three others. One person: it's their direct chat. More: a group with exactly those people, made for you (named after them, 📞) if there isn't one, under the usual rules for making groups; the call's note goes there.
 - In a **direct chat** it rings that person. In a **group** it rings everyone in the group, and whoever answers joins — **up to four people** in a call (a fifth is told it's full). The call goes on while two or more are in it; anyone can leave and the others carry on.
 - Not in My room, and not in a direct chat that's read-only. Children can call the people they can message.
 - **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call. In a group, someone already on a call isn't rung.

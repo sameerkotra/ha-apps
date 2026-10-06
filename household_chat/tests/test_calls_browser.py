@@ -242,6 +242,16 @@ class CallsInBrowsers(unittest.TestCase):
         [gc] = [m["call"] for m in gmsgs if m["kind"] == "call"]
         self.assertEqual((gc["group"], gc["kind"], gc["outcome"]), (True, "video", "answered"))
         self.assertEqual({m["state"] for m in gc["members"]}, {"left"})
+        # New call…: pick a person and call, without opening their chat first
+        n.click("#side button[title='More']")
+        n.click(".menu button:has-text('New call')")
+        n.wait_for_selector(".people-pick")
+        n.click(".people-pick label:has-text('Tarun') input")
+        n.click(".modal button:has-text('📞 Call'), button.primary:has-text('📞 Call')")
+        t.wait_for_selector("#callScreen button.answer", timeout=15000)
+        n.wait_for_function(f"{STATUS} === 'Ringing…'")
+        n.click("#callScreen button.hangup")
+        t.wait_for_selector("#callScreen", state="detached", timeout=10000)
         # deep links: the route after the page's address opens a chat or the ringing screen
         self.assertEqual(n.evaluate(f"routeOf('/a1b2c3d4_household_chat/chat/{d}', '/a1b2c3d4_household_chat')"), {"kind": "chat", "id": d})
         self.assertEqual(n.evaluate("routeOf('/a1b2c3d4_household_chat/call/abc', '/a1b2c3d4_household_chat')"), {"kind": "call", "id": "abc"})
@@ -264,4 +274,4 @@ class CallsInBrowsers(unittest.TestCase):
         a.wait_for_function("document.querySelector('.test-call-out') && document.querySelector('.test-call-out').textContent.includes('All good')", timeout=20000)
         self.assertIn("Microphone works", a.inner_text(".test-call-out"))
         msgs = self.api("GET", f"api/conversations/{d}/messages", "nisha")["messages"]
-        self.assertEqual([m["call"]["outcome"] for m in msgs if m["kind"] == "call"], ["answered", "declined", "missed"])
+        self.assertEqual([m["call"]["outcome"] for m in msgs if m["kind"] == "call"], ["answered", "declined", "missed", "missed"])

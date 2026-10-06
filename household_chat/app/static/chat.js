@@ -59,6 +59,7 @@ function mainMenu(anchor) {
     { label: "☆ Starred", run: () => showPage("starred") },
     { label: "⏰ Reminders", run: () => showPage("reminders") },
     callsOn() ? { label: "📞 Calls", run: () => showPage("calls") } : null,
+    callsOn() ? { label: "📞 New call…", run: () => newCallDialog() } : null,
     { label: "🕓 Scheduled", run: () => scheduledDialog(null) },
     { label: "📁 My files", run: () => showPage("files") },
     "-",
