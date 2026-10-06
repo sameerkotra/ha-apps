@@ -67,26 +67,59 @@ Nobody is ever made an admin automatically, not even the first person to open th
 
 ### Voice and video calls
 
-An admin turns calls on in **App settings → Voice calls** (off until then).
+An admin turns calls on in **App settings → Voice calls** (off until then). Calls are between the people's own phones or computers: the sound and picture go straight from one to the other, encrypted, and never through the app or anywhere else. Nothing is recorded.
 
-- **📞** at the top of a chat calls, **📹** starts a video call. In a direct chat it rings that person; in a group it rings everyone in the group, and whoever answers joins — **up to four people** in a call (a fifth is told it's full). Not in My room, and not in a direct chat that's read-only. Children can call the people they can message.
-- **Video**: in any call, the camera button turns your picture on or off, and 🔄 switches between the front and back camera. Each person's tile shows their picture, or their photo while their camera is off. **Tap a picture to make it big** (the others shrink to a row above the buttons; tap again to go back); in a one-to-one video call the other person starts big. Video uses more data than sound (roughly 100–300 MB an hour per person you see) — on mobile data, keep that in mind.
-- **Group calls**: the call goes on while two or more people are in it; anyone can leave, and the others carry on. Someone already in another call isn't rung. The note in the chat and the Calls list say who was in it.
-- **When someone calls you**, every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**, and your phone gets a notification "📞 Nisha is calling" (or "…is starting a group call in Household") with the same two buttons. **Answer** opens Household Chat, which shows the ringing screen; **Decline** works without opening anything. It rings for 30 seconds (an App setting), then it's a missed call.
-- **During a call**:
-  - The microphone button mutes and unmutes you (muted, it's red with a line across the microphone); the other person sees that you've muted.
-  - ⚙ picks the **microphone** — on a phone this list is also where you switch the call to the **speakerphone, earpiece or Bluetooth headset** — and, where the browser lists them, the **speaker or headset** the call plays through. The choices are remembered on that device.
-  - Two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
-  - 🔈 appears if your phone held back their sound: tap it to hear them.
-  - The red button hangs up. The screen stays on while the call is on.
-  - There's no speaker button: a web page can't switch a phone to the loudspeaker. Use the phone's volume buttons, or its sound or Bluetooth menu.
-- **In the chat**, each call leaves a note: "📞 Outgoing call · 4 min", "📞 Missed call", "📞 No answer", "📞 Declined", with **Call back**. A missed call counts as unread and is notified like a message.
-- **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call.
+**Starting a call**
+
+- **📞** at the top of a chat calls; **📹** starts a video call.
+- In a **direct chat** it rings that person. In a **group** it rings everyone in the group, and whoever answers joins — **up to four people** in a call (a fifth is told it's full). The call goes on while two or more are in it; anyone can leave and the others carry on.
+- Not in My room, and not in a direct chat that's read-only. Children can call the people they can message.
+- **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call. In a group, someone already on a call isn't rung.
+
+**When someone calls you**
+
+- Every Household Chat page you have open shows a ringing screen with **Answer** and **Decline**.
+- Your phone gets a notification — "📞 Nisha is calling", "📹 Nisha is calling (video)" or "📞 Nisha is starting a group call in Household" — with the same two buttons. **Answer** opens Household Chat on the ringing screen; **Decline** works without opening anything.
+- It rings for 30 seconds (an App setting), then it's a missed call.
 - **Quiet hours and muted chats**: your phone isn't rung, but open pages still ring. In quiet hours a missed call waits for the summary afterwards, like messages; in a muted chat it isn't notified.
-- **In the chat**, each call leaves a note. **⋯ → 📞 Calls** lists your recent calls, missed ones on top, with **Call back**.
-- **Away from home**: at home nothing needs setting up. For calls when someone's out, an admin adds an **address lookup (STUN) server** in App settings → Voice calls (Cloudflare's `stun:stun.cloudflare.com:3478` is free and needs no account), and for networks that block direct connections — common on mobile data — a **call relay**: either **Cloudflare Realtime TURN** (make a TURN key under Realtime → TURN in your Cloudflare account, free up to a large monthly allowance, and enter its key id and API token) or **your own TURN server** (for example a coturn app with a router port forwarded; enter its address and shared secret). A Cloudflare Tunnel doesn't carry call sound, so the relay is separate. **Test calling** under those settings checks the microphone, the lookup and the relay from your browser. The token and secret are never included in a backup.
-- **The microphone needs https** and permission, as for voice messages. The Home Assistant phone app may block it; then Answer says so, the call ends as "couldn't connect", and a browser works instead.
-- **Ringing is a notification, not a real phone call**: it can take a few seconds, and your phone's own Do Not Disturb silences it. On some phones the call needs Household Chat to stay open on screen; locking the phone or switching apps may end it.
+- Ringing is a notification, not a real phone call: it can take a few seconds, and the phone's own Do Not Disturb silences it.
+
+**During a call**
+
+- **Microphone button**: mutes and unmutes you (muted, it's red with a line across the microphone). The others see that you've muted.
+- **Camera button**: turns your picture on or off, in any call. **🔄** switches between the front and back camera.
+- **⚙**: the **Microphone** list and, where the browser offers one, the **Sound comes out of** list. On a phone, the Microphone list is also how you switch between the speakerphone, earpiece and headset — see *On the phone* below. Your choices are remembered on that device.
+- **Pictures**: each person has a tile showing their picture, or their photo while their camera is off. While anyone's camera is on, the pictures fill the screen and the name and time are a small line at the top. **Tap a picture to make it big**; the others shrink to a row above the buttons; tap again to go back. In a one-to-one video call the other person starts big.
+- **Sound bars**: in a voice call two small bars show your microphone and the other person's sound. If something's wrong a line says what: no sound arriving from them, their microphone seems silent, they've muted, or yours seems silent.
+- **🔈** appears if your phone held back their sound: tap it to hear them.
+- **The red button** hangs up. The screen stays on while the call is on.
+
+**On the phone (the Home Assistant app)**
+
+- **Speakerphone, earpiece, Bluetooth headset**: Android lists these as *microphones*, and picking one switches the **whole call** — the sound in and out — to it. So during a call, tap **⚙** and choose from the **Microphone** list: *Speakerphone* to hold the phone away from your ear, *Earpiece* to hold it to your ear, *Bluetooth headset* (or *Wired headset*) when one is connected. There is no separate speaker button, because a web page can't switch a phone's loudspeaker on its own; the Microphone list is the switch. The phone's volume buttons and its own sound or Bluetooth menu work too.
+- The **Sound comes out of** list on a phone usually shows just one entry: the phone's current output. It's the Microphone list that matters there; on a computer it's the other way round.
+- **Permissions**: the Home Assistant app needs the phone's microphone (and camera, for video) — Android Settings → Apps → Home Assistant → Permissions. If the app still can't use the microphone, Answer says so, the call ends as "couldn't connect", and a browser works instead.
+- **Keep the app on screen** during a call: on some phones, locking the screen or switching apps ends it.
+- **Data**: sound is about 30–60 MB an hour. Video is roughly 100–300 MB an hour per person you see; on mobile data, keep that in mind, or turn the camera off.
+
+**Afterwards**
+
+- Each call leaves a note in the chat: "📞 Outgoing call · 4 min", "📹 Incoming video call · 12 min", "📞 Missed call", "📞 No answer", "📞 Declined", "📞 Group call · 12 min · you, Tarun, Leela", with **Call back**. A missed call counts as unread and is notified like a message, to the people who missed it.
+- **⋯ → 📞 Calls** lists your recent calls, missed ones on top, with **Call back** and a button to the chat.
+
+**Away from home**
+
+At home nothing needs setting up: both phones must be on the home network. For calls when someone's out, an admin sets up, in **App settings → Voice calls**:
+
+- An **address lookup (STUN) server**, so phones can find each other across the internet. Cloudflare's `stun:stun.cloudflare.com:3478` is free and needs no account.
+- A **call relay (TURN)**, for networks that block direct connections — common on mobile data. Either **Cloudflare Realtime TURN** (in your Cloudflare account, under **Realtime → TURN Server**, create a TURN key — not a Realtime *App* — and enter its **Token ID** as the key id and its **API token**; free up to a large monthly allowance) or **your own TURN server** (for example a coturn app with a router port forwarded; enter its address and shared secret). A Cloudflare Tunnel doesn't carry call sound, so the relay is separate.
+- **Test calling**, under those settings, checks the microphone, the lookup and the relay from your browser and says what's missing. The token and secret are never included in a backup.
+
+**Requirements and limits**
+
+- The microphone and camera need **https** (a secure connection) and permission, as for voice messages.
+- Up to four people in a call: each phone sends to every other, so more would need a media server.
+- The call history (who called whom, when, how long) is kept like messages; see *Who can see what*.
 
 ### Search, starred and reminders
 
@@ -271,6 +304,7 @@ recorder:
 - **Live updates stop**: the dot next to your name turns amber when the page falls back to checking every few seconds; it reconnects by itself.
 - **The microphone doesn't work**: it needs https and permission; in the Home Assistant phone app, try a browser instead.
 - **Only one person can be heard**: look at the bars and the line on the call screen. "No sound is arriving" means the connection lets sound through only one way (try again, both on the same Wi-Fi); "their microphone seems silent" means their phone isn't giving the call its microphone (muted, used by another app, or blocked — try a browser instead of the Home Assistant app, or another choice in ⚙). If 🔈 shows, tap it.
+- **The call plays from the earpiece and I want the loudspeaker** (Home Assistant app on Android): during the call, ⚙ → **Microphone** → *Speakerphone*. That list switches the whole call's sound in and out; there's no separate speaker button.
 - **A call says "Couldn't connect"**: away from home it needs the address lookup and, on mobile data, a relay (App settings → Voice calls → Test calling says what's missing); and the microphone must be allowed. A call also ends if one side loses its connection to Home Assistant for a minute.
 - **The back gesture**: on Android (Home Assistant app or browser), Back closes an open menu or dialog first, then goes from a chat or page back to the chat list; only Back from the list leaves the app.
 - **"Open in Docs" does nothing, or Docs isn't in Connected apps**: Household Docs and Chat find each other when they start and every few hours; restart Household Docs, then look at Admin → App settings → Connected apps. Both apps must run inside Home Assistant (messages between apps are off outside it).

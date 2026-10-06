@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.2
+
+- **Docs**: the *Voice and video calls* section rewritten in one piece, with a part on the Home Assistant phone app — the Microphone list under ⚙ is how you switch the call to the speakerphone, earpiece or headset — and a troubleshooting line for it.
+
 ## 2.5.1
 
 - **Video calls fill the screen**: the pictures take the whole screen, the big photo is gone, and the name and time are a small line at the top.
