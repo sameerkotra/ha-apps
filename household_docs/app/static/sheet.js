@@ -1115,7 +1115,36 @@
       inp.focus();
       try { inp.setSelectionRange(p, p); } catch (e) { /* ignore */ }
     }
+    // Pointing with the arrow keys: while a formula is being typed, right after "=", an operator, "(" or ",",
+    // an arrow key picks the cell next to the one being edited and writes its address in; more arrows move that
+    // pick, Shift extends it to a range; typing anything else ends the pointing (as in other spreadsheets).
+    const POINT_AFTER = /[=+\-*/^&<>(,;]\s*$/;
+    const REF_AT_END = /(\$?[A-Z]{1,3}\$?\d+)(:\$?[A-Z]{1,3}\$?\d+)?$/;
+    function pointWithArrow(e, inp) {
+      const moves = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+      const mv = moves[e.key];
+      if (!mv || !st.editing || !st.editing.formula || st.editing.tab !== cur().name) return false;
+      const v = inp.value, pos = inp.selectionStart ?? v.length;
+      const before = v.slice(0, pos);
+      const pt = st.editing.point;
+      const pointing = pt && pt.end === pos && pt.input === inp;
+      if (!pointing && !POINT_AFTER.test(before)) return false;
+      const from = pointing ? (e.shiftKey ? pt.head : pt) : { c: st.editing.c, r: st.editing.r };
+      const to = { c: Math.max(0, Math.min(S.MAXC - 1, from.c + mv[0])), r: Math.max(0, Math.min(S.MAXR - 1, from.r + mv[1])) };
+      const anchor = pointing && e.shiftKey ? pt.anchor : to;
+      const text = e.shiftKey && pointing ? rangeText(rangeOf({ c1: anchor.c, r1: anchor.r, c2: to.c, r2: to.r })) : S.addr(to.c, to.r);
+      const m = pointing ? REF_AT_END.exec(before) : null;
+      const start = m ? m.index : pos;
+      const nv = v.slice(0, start) + text + v.slice(pos);
+      inp.value = nv; (inp === bar ? cellInput : bar).value = nv;
+      const end = start + text.length;
+      try { inp.setSelectionRange(end, end); } catch (x) { /* ignore */ }
+      st.editing.point = { c: to.c, r: to.r, head: to, anchor: e.shiftKey && pointing ? anchor : to, end, input: inp };
+      e.preventDefault(); e.stopPropagation();
+      return true;
+    }
     function editKeys(e, inp) {
+      if (suggest.hidden && pointWithArrow(e, inp)) return;
       if (["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"].includes(e.key)) e.stopPropagation();   // the grid (its parent) mustn't move too
       if (!suggest.hidden && ["ArrowDown", "ArrowUp", "Tab", "Enter"].includes(e.key)) {
         const items = [...suggest.querySelectorAll("button")];
@@ -1130,7 +1159,7 @@
     function onType(inp) {
       const other = inp === bar ? cellInput : bar;
       other.value = inp.value;
-      if (st.editing) st.editing.formula = inp.value.startsWith("=");
+      if (st.editing) { st.editing.formula = inp.value.startsWith("="); st.editing.point = null; }
       autocomplete(inp);
     }
     cellInput.addEventListener("keydown", (e) => editKeys(e, cellInput));

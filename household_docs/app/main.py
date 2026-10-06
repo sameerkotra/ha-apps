@@ -204,7 +204,7 @@ _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 @app.get("/quick-note")
 def quick_note_page():
     """⚡ Quick note from outside (§17.13): Home Assistant's ingress panel passes a sub-path on to the app
-    (`/hassio/ingress/household_docs/quick-note`), so a dashboard button can open a new quick note. The page is the
+    (`/<full slug>/quick-note`), so a dashboard button can open a new quick note. The page is the
     app itself (its relative URLs still work from here); it sees the path and opens #quick-note."""
     from fastapi.responses import FileResponse
     return FileResponse(os.path.join(_STATIC_DIR, "index.html"), media_type="text/html",

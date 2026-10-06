@@ -256,7 +256,7 @@
     try { ppl = (await D.people()).filter((p) => !p.you); } catch (e) { fail(e); return; }
     const me = D.state.me;
     const who = h("select", { "aria-label": "Share with", id: "bulkShareWho" }, h("option", { value: "" }, "Choose a person…"),
-      me.app.everyoneShares ? h("option", { value: "*" }, "🏡 Everyone") : null, ppl.map((p) => h("option", { value: p.id }, p.name)));
+      me.app.everyoneShares ? h("option", { value: "*" }, "👪 Everyone") : null, ppl.map((p) => h("option", { value: p.id }, p.name)));
     const role = h("select", { "aria-label": "Role", id: "bulkShareRole" }, h("option", { value: "viewer" }, "Can view"), h("option", { value: "editor" }, "Can edit"));
     who.addEventListener("change", () => { if (who.value === "*") role.value = me.app.everyoneDefaultRole; });
     const err = h("div", { class: "error-text", role: "alert" });

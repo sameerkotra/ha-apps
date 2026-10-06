@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- **Notifications open the app again**: tapping a Docs notification on a phone opened a "404: Not Found" page in current Home Assistant. They now open the app's sidebar page (or its Settings → Apps page when it has no sidebar entry). The dashboard address for a quick note is `/<full slug>/quick-note` too — see DOCS.md.
+- **Sheets**: right after `=`, an operator, `(` or `,` in a formula, the arrow keys pick a cell and put its address in (Shift for a range), as in Excel and Google Sheets.
+- **One Activity page** with tabs **Recent · Activity · Trash · Storage** instead of four sidebar entries; **Home** shows pins, favourites and My docs (no Recent list any more).
+- **Everyone** has its own icon (👪) so it no longer looks like Home.
+- **Send to Todo** no longer says "This checklist has no items" for a checklist that has them: the dialog reads the checklist fresh instead of an old copy.
+
 ## 1.0.1
 
 - **Security**: backups no longer include the AI access key, and restoring a backup keeps the key this install already has. After restoring on a new install, enter the key again in Admin → App settings.

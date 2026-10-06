@@ -390,7 +390,7 @@
       return s;
     };
     const el = h("div", { class: "access-table" },
-      h("div", { class: "access-row everyone" }, h("span", null, "🏡 Everyone", h("span", { class: "hint" }, " — people added later too")), sel("*", "Everyone")),
+      h("div", { class: "access-row everyone" }, h("span", null, "👪 Everyone", h("span", { class: "hint" }, " — people added later too")), sel("*", "Everyone")),
       people.map((p) => h("div", { class: "access-row" }, h("span", null, p.name, p.disabled ? h("span", { class: "chip warn" }, "turned off") : null), sel(p.id, p.name))));
     return { el, value: () => state };
   }

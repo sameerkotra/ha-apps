@@ -36,14 +36,15 @@ and why you are (or aren't) an admin.
 
 The sidebar (on a phone: the bar at the bottom — **Docs · Search · ➕ · Shared · More**) has:
 
-- **Home** — your **📌 pinned** documents and folders, recent documents, favourites and the top of My docs.
+- **Home** — your **📌 pinned** documents and folders, favourites and the top of My docs.
 - **📄 My docs** — your folder, with folders inside it as deep as you like (ten levels).
 - **👥 Shared with me** — what others shared with you, each with its owner. **Show hidden** brings back what you hid.
-- **🏡 Everyone** — what people shared with Everyone (your own too).
+- **👪 Everyone** — what people shared with Everyone (your own too).
 - **📁 Shared folders** — folders in `/share` an admin opened up for you (shown when you have any), each 🔒 read
   only or ✏️ read and write.
-- **⭐ Favourites**, **🕘 Recent**, **🏷 Tags** (your most used tags, with counts — shown once there are tags),
-  **🔎 Saved searches** (pinned ones are listed under it) and **🗑 Trash**.
+- **⭐ Favourites**, **🏷 Tags** (your most used tags, with counts — shown once there are tags) and
+  **🔎 Saved searches** (pinned ones are listed under it).
+- **🕑 Activity** — one page with tabs: **Recent**, **Activity**, **Trash** and **Storage**.
 
 **➕ New** makes a **Note** (plain text or Markdown, as you chose in Settings — the other kind is listed too), a
 **Checklist**, a **Sheet** or a **Folder**, or **Upload files**, in the folder you're looking at (or in My docs when
@@ -108,7 +109,8 @@ file written elsewhere that isn't a pure task list opens as a Markdown note.
 **⚡ Quick note** at the top of every page — or **N** on a keyboard — makes a note in **My docs → Inbox** called
 "Note 2026-10-03 20-41" and opens it. When you leave it, it's named after its first line ("Call the plumber
 about the sink"); an empty quick note isn't kept. For a Home Assistant dashboard button or a phone shortcut, open
-`/hassio/ingress/household_docs/quick-note` (a button card with *Tap action → Navigate*); the app's own address
+the app's sidebar address with `/quick-note` on the end — `/a0d7b954_household_docs/quick-note`, where the first part
+is what the browser shows when you open **Docs** from the sidebar (a button card with *Tap action → Navigate*); the app's own address
 with `#quick-note` at the end does the same.
 
 ## Checklists
@@ -140,7 +142,9 @@ the box on its left shows where you are — type `C14` (or `Car!B4`) there to ju
 
 **Formulas** start with `=`: `=B2*C2`, `=SUM(B2:B20)`, `=IF(B2>100,"Over","OK")`, `=VLOOKUP("Car",A2:C20,3,FALSE)`,
 `=SUMIFS(C:C,A:A,"Food",B:B,">=2026-01-01")`. Tap **ƒ** for every function with an example; typing `=SU`
-suggests SUM, SUMIF, SUMIFS. While typing a formula, click cells to put their address in. `$` keeps a reference
+suggests SUM, SUMIF, SUMIFS. While typing a formula, click cells to put their address in — or, right after `=`, an
+operator, `(` or `,`, press the arrow keys: they pick a cell and put its address in (hold Shift for a range like
+`B2:B5`), and the next operator you type keeps it. `$` keeps a reference
 fixed when you fill or copy (`$B$1`); `B:B` is the whole column; `'Car'!B4` is cell B4 on the tab **Car**.
 Functions: SUM, AVERAGE, MIN, MAX, MEDIAN, COUNT, COUNTA, ROUND, ROUNDUP, ROUNDDOWN, ABS, IF, AND, OR, NOT, IFERROR,
 SUMIF, COUNTIF, AVERAGEIF, SUMIFS, COUNTIFS, AVERAGEIFS, VLOOKUP, HLOOKUP, XLOOKUP, INDEX, MATCH, LEN, UPPER, LOWER,
@@ -228,7 +232,8 @@ reorder (on a phone too); **⋯ → Unpin from home** takes it off. Pins are you
 
 ## Activity and following
 
-**🕑 Activity** lists what changed — added, edited, renamed, moved, deleted, restored, shared with you — in
+**🕑 Activity** is one page with four tabs — **Recent** (what you opened lately), **Activity**, **Trash** and
+**Storage**. The **Activity** tab lists what changed — added, edited, renamed, moved, deleted, restored, shared with you — in
 everything you can open: your own documents, what's shared with you and your shared folders. Changes made over
 Samba or the File editor show as "Someone outside the app" (the app finds them when it scans). Edits are grouped
 ("Alex edited “Budget” 4 times"), and several files added at once are one line ("Alex added 12 items", with

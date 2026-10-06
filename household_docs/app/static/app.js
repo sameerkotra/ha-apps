@@ -269,7 +269,7 @@ Docs.addNew({ id: "folder", icon: "📁", label: "Folder", order: 90, run: async
 Docs.addSpace({ id: "home", icon: "🏠", label: "Home", order: 0, hash: "#/" });
 Docs.addSpace({ id: "mine", icon: "📄", label: "My docs", order: 10, hash: "#/mine" });
 Docs.addSpace({ id: "shared", icon: "👥", label: "Shared with me", order: 20, hash: "#/shared" });
-Docs.addSpace({ id: "everyone", icon: "🏡", label: "Everyone", order: 30, hash: "#/everyone", show: () => !isChild() });
+Docs.addSpace({ id: "everyone", icon: "👪", label: "Everyone", order: 30, hash: "#/everyone", show: () => !isChild() });
 // a parent an admin let view a child's My docs (§17.20)
 Docs.addSpace({ id: "kids", icon: "🧒", label: "Kids' docs", order: 35, hash: "#/kids",
   show: () => !!(Docs.state.me && Docs.state.me.kidsView && Docs.state.me.kidsView.length),
@@ -277,11 +277,9 @@ Docs.addSpace({ id: "kids", icon: "🧒", label: "Kids' docs", order: 35, hash: 
 Docs.addSpace({ id: "folders", icon: "📁", label: "Shared folders", order: 40, hash: "#/folders",
   show: () => Docs.state.me && Docs.state.me.sharedFolders && Docs.state.me.sharedFolders.length > 0 });
 Docs.addSpace({ id: "favourites", icon: "⭐", label: "Favourites", order: 50, hash: "#/favourites" });
-Docs.addSpace({ id: "recent", icon: "🕘", label: "Recent", order: 60, hash: "#/recent" });
 Docs.addSpace({ id: "searches", icon: "🔎", label: "Saved searches", order: 65, hash: "#/searches",
   children: () => ((Docs.state.me && Docs.state.me.pinnedSearches) || []).map((s) => ({ id: "saved-" + s.id, label: s.name,
     hash: searchHash(Object.assign({ q: s.q }, s.filters)) })) });
-Docs.addSpace({ id: "trash", icon: "🗑", label: "Trash", order: 70, hash: "#/trash" });
 Docs.addSpace({ id: "settings", icon: "⚙️", label: "Settings", order: 90, hash: "#/settings", sep: true });
 Docs.addSpace({ id: "admin", icon: "🛡️", label: "Admin", order: 95, hash: "#/admin", show: () => Docs.state.me && Docs.state.me.isAdmin });
 
@@ -289,6 +287,7 @@ function activeSpace() {
   const r = Docs.state.route;
   if (r === "folder") return Docs.state.currentSpace || "mine";
   if (r === "doc") return Docs.state.currentSpace || null;
+  if (["recent", "trash", "storage"].includes(r)) return "activity";     // tabs of the Activity page
   return r === "" ? "home" : r;
 }
 function drawNav() {
@@ -432,15 +431,13 @@ Object.assign(Docs, { itemRow, itemList, roleLabel, itemMeta });
 // ---------- Home ----------
 Docs.route("", async (page, _args, current) => {
   mount(page, pageHead("Home"), spinner());
-  const [me, recent, favs, mine] = await Promise.all([refreshMe(), api("api/space/recent"), api("api/space/favourites"),
+  const [me, favs, mine] = await Promise.all([refreshMe(), api("api/space/favourites"),
     api("api/space/mine").catch(() => ({ items: [] }))]);
   if (!current()) return;
   const parts = [pageHead(`Hello, ${me.name}`, newButton())];
   if (me.disabled) { mount(page, pageHead("Household Docs"), h("div", { class: "card banner-card danger" }, me.disabledMessage)); return; }
   if (me.isAdmin && me.docsFolder && !me.docsFolder.confirmed) parts.push(Docs.firstRunCard ? Docs.firstRunCard() : null);
   if (Docs.pinsSection) parts.push(Docs.pinsSection());
-  const recentItems = recent.items.filter((x) => x.kind !== "folder").slice(0, 8);
-  if (recentItems.length) parts.push(h("section", { class: "card" }, h("h3", null, "Recent"), itemList(recentItems, { showOwner: true })));
   if (favs.items.length) parts.push(h("section", { class: "card" }, h("h3", null, "Favourites"), itemList(favs.items, { showOwner: true })));
   const sf = (me.sharedFolders || []).filter((x) => x.exists);
   if (sf.length) parts.push(h("section", { class: "card", id: "homeFolders" }, h("div", { class: "card-head" }, h("h3", null, "Shared folders"), h("a", { class: "link-btn", href: "#/folders" }, "All")),
