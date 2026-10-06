@@ -623,6 +623,21 @@ class LinkTests(BusBase):
         self.assertIsNone(am.learn_panel(info=None, hostname=""))
         self.assertEqual(self.ok(self.get("/api/me"))["apps"]["panel"], None)
 
+    def test_notifications_open_the_sidebar_page_never_hassio_ingress(self):
+        from app import config
+        before = config.INGRESS_URL
+        try:
+            am.learn_panel(info={"slug": "a1b2c3d4_household_docs", "ingress_panel": True})
+            self.assertEqual(config.INGRESS_URL, "/a1b2c3d4_household_docs")
+            am.learn_panel(info={"slug": "a1b2c3d4_household_docs", "ingress_panel": False})   # no sidebar page
+            self.assertEqual(config.INGRESS_URL, "/app/a1b2c3d4_household_docs")
+            am.learn_panel(info={"slug": "Bad Slug"})                                          # keeps the last one
+            self.assertEqual(config.INGRESS_URL, "/app/a1b2c3d4_household_docs")
+            self.assertNotIn("/hassio/ingress", config.INGRESS_URL)
+        finally:
+            config.INGRESS_URL = before
+            am.learn_panel(info=None, hostname="")
+
     def test_deep_link_redirect_and_no_access(self):
         n = self.note("Private plan", text="hush")
         r = self.c.get(f"/doc/{n['id']}", headers=MEERA, follow_redirects=False)

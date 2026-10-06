@@ -185,7 +185,7 @@
           onchange: (e) => send(s.userId, s.role, e.target.checked) }), "Viewers may tick items") : null;
         const leaveMine = s.userId === D.state.me.id;
         return h("div", { class: "share-row", dataset: { user: s.userId } },
-          h("span", { class: "share-who" }, s.userId === "*" ? "🏡 Everyone" : s.name, leaveMine ? h("span", { class: "badge-you" }, "you") : null),
+          h("span", { class: "share-who" }, s.userId === "*" ? "👪 Everyone" : s.name, leaveMine ? h("span", { class: "badge-you" }, "you") : null),
           sel, tick,
           data.canShare || leaveMine ? h("button", { class: "icon-btn danger", type: "button", title: leaveMine ? "Leave" : "Remove", "aria-label": `Remove ${s.name}`, onclick: async () => {
             try { draw(await api(`api/nodes/${it.id}/shares/${encodeURIComponent(s.userId)}`, { method: "DELETE" })); if (leaveMine) { m.close(); D.render(); } }
@@ -196,14 +196,14 @@
       const choices = ppl.filter((p) => !taken.has(p.id));
       const who = h("select", { "aria-label": "Share with", id: "shareWho" },
         h("option", { value: "" }, "Choose a person…"),
-        data.everyoneAllowed && !taken.has("*") ? h("option", { value: "*" }, "🏡 Everyone") : null,
+        data.everyoneAllowed && !taken.has("*") ? h("option", { value: "*" }, "👪 Everyone") : null,
         choices.map((p) => h("option", { value: p.id }, p.name)));
       const role = h("select", { "aria-label": "Role", id: "shareRole" }, roleOptions());
       who.addEventListener("change", () => { if (who.value === "*") role.value = data.everyoneDefaultRole; });
       const add = data.canShare ? h("div", { class: "share-add" }, who, role,
         h("button", { class: "btn-primary", type: "button", id: "shareAdd", onclick: () => { if (!who.value) { err.textContent = "Choose who to share with."; return; } send(who.value, role.value, true); } }, "Share")) : null;
       const inherited = data.inherited.length ? h("div", { class: "share-inherited" }, h("div", { class: "hint" }, "From folders above (remove it there):"),
-        data.inherited.map((s) => h("div", { class: "share-row inherited" }, h("span", { class: "share-who" }, s.userId === "*" ? "🏡 Everyone" : s.name),
+        data.inherited.map((s) => h("div", { class: "share-row inherited" }, h("span", { class: "share-who" }, s.userId === "*" ? "👪 Everyone" : s.name),
           h("span", { class: "chip" }, D.roleLabel(s.role)), h("span", { class: "hint" }, "from ", s.from)))) : null;
       mount(body,
         h("div", { class: "share-row owner" }, h("span", { class: "share-who" }, data.owner.name || "—"), h("span", { class: "chip on" }, "Owner")),

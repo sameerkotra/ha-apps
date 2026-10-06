@@ -275,7 +275,6 @@
       : h("div", { class: "hint" }, "No files yet.");
   }
 
-  D.addSpace({ id: "storage", icon: "💾", label: "Storage", order: 75, hash: "#/storage" });
   D.route("storage", async (page, args, current) => {
     mount(page, pageHead("Storage"), spinner());
     const place = args[0] || "mine";
@@ -343,6 +342,21 @@
       h("div", { class: "card" }, h("h3", null, "Growth over 12 months"), growthChart(growthAll)),
       h("div", { class: "card" }, h("h3", null, "Trash"), h("p", { class: "hint" }, `${r.trashItems} deleted item${r.trashItems === 1 ? "" : "s"} across everyone's Trash and the shared folders' Trash.`), h("div", { class: "actions" }, empty)));
   } });
+
+  // ---------- one page, four tabs: Recent, Activity, Trash, Storage ----------
+  // The routes keep their addresses (#/recent, #/activity, #/trash, #/storage/…); the sidebar shows one entry,
+  // 🕑 Activity, and each page draws the tab strip above what it drew before.
+  const TABS = [["recent", "🕘 Recent"], ["activity", "🕑 Activity"], ["trash", "🗑 Trash"], ["storage", "💾 Storage"]];
+  for (const [name] of TABS) {
+    const orig = D.routes[name];
+    if (!orig) continue;
+    D.routes[name] = (page, args, current) => {
+      const inner = h("div", { class: "tab-page" });
+      mount(page, h("div", { class: "page-tabs", role: "tablist" }, TABS.map(([id, label]) =>
+        h("a", { class: "tab-btn" + (id === name ? " active" : ""), role: "tab", href: "#/" + id, "aria-selected": id === name ? "true" : "false", dataset: { tab: id } }, label))), inner);
+      return orig(inner, args, current);
+    };
+  }
 
   Object.assign(D, { bars, columns, sensorDialog, toggleFollow });
 })();

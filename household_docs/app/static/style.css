@@ -873,3 +873,9 @@ span.doc-link { color: var(--text-dim); border-bottom-color: var(--border); }
   .todo-where .form-row, .todo-lists { margin-left: 0; }
   .template-grid { grid-template-columns: 1fr; }
 }
+
+/* Activity page tabs (Recent · Activity · Trash · Storage share one page) */
+.page-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin: 0 0 14px; padding: 0 0 6px; }
+.page-tabs .tab-btn { display: inline-block; padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: .92rem; }
+.page-tabs .tab-btn:hover { background: var(--panel-alt); color: var(--text); }
+.page-tabs .tab-btn.active { background: var(--panel-alt); color: var(--accent); }

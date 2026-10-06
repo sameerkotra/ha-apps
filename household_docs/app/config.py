@@ -19,7 +19,7 @@ from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.0"
 APP_TITLE = "Household Docs"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
@@ -37,7 +37,9 @@ SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/
 # The Supervisor's own API: GET /addons/self/info tells the app its full slug and whether it has a sidebar page
 # (APP_MESSAGES_SPEC §6.5 — "Open in Docs" links from Household Chat).
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
-INGRESS_URL = "/hassio/ingress/household_docs"
+# Where phone notifications open: set at start-up by app_messages.learn_panel to the app's sidebar page
+# ("/a1b2c3d4_household_docs"); this bare value is only for outside Home Assistant (tests, development).
+INGRESS_URL = "/household_docs"
 
 # Background loops (housekeeping, people) start in main.py's lifespan unless BACKGROUND_LOOPS=0 (tests).
 BACKGROUND_LOOPS = os.environ.get("BACKGROUND_LOOPS", "1").strip().lower() not in ("0", "false", "no", "off")

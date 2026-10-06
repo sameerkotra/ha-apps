@@ -560,9 +560,11 @@ columns `users.is_child`, `users.seen_from`, `users.child_since` (security revie
 ### 6.1 Spaces (the sidebar)
 - **📄 My docs** — your folder, as a tree.
 - **👥 Shared with me** — documents and folders others shared with you, each showing its owner.
-- **🏠 Everyone** — items shared with Everyone.
+- **👪 Everyone** — items shared with Everyone.
 - **📁 Shared folders** — the admin's folders you have access to (§9), each with 🔒 (read only) or ✏️.
-- **⭐ Favourites · 🕘 Recent · 🔎 Saved searches (pinned) · 🗑 Trash.**
+- **⭐ Favourites · 🔎 Saved searches (pinned).**
+- **🕑 Activity** — one page with tabs **Recent · Activity · Trash · Storage** (`#/recent`, `#/activity`, `#/trash`,
+  `#/storage` stay as addresses; the sidebar shows Activity for all four). Home shows pins, favourites and My docs — not Recent.
 
 ### 6.2 Ownership
 - In people folders the **owner is the person whose folder it is**. Things an editor creates inside someone's shared
@@ -755,7 +757,9 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
   every column up to the used ones + a few (≤ 100); frozen rows and columns and the header row / row numbers are
   `position: sticky` cells. Selecting doesn't rebuild the grid (the cell under the pointer must stay in place).
   Typing starts editing in the cell (desktop) or through the cell editor bar at the top (phones: tap a cell, tap the
-  bar); clicking cells while typing a formula puts their address in. Keys: arrows (Shift extends), Tab / Enter,
+  bar); clicking cells while typing a formula puts their address in, and so do the **arrow keys** right after `=`, an
+  operator, `(` or `,` (`sheet.js` `pointWithArrow`: the first arrow inserts the neighbouring cell's address, later
+  ones move it, Shift extends it to a range; typing anything else keeps the reference and ends pointing). Keys: arrows (Shift extends), Tab / Enter,
   F2, Delete, Ctrl+C / X / V (tab-separated text to and from Excel and Google Sheets — a copy within the sheet keeps
   formulas, moved), Ctrl+D / Ctrl+R (fill down / right), Ctrl+B, Ctrl+Z / Ctrl+Y (undo / redo within the visit),
   Ctrl+A. Right-click — or a long press on phones — on a column letter, row number or cell opens their menu: insert
@@ -1041,6 +1045,10 @@ which keeps names and filters near the 300 ms target and FTS under 500 ms.
   *(built)* Only a **new** share with a person notifies (not a role change, not Everyone shares — those would
   notify the whole household); a transfer tells the new owner. The per-person toggle is `notifyShares` in Settings
   (on by default).
+  *(built)* A notification's `url` / `clickAction` is `config.INGRESS_URL`, set by `app_messages.learn_panel` at
+  start-up from the Supervisor's `addons/self/info`: the sidebar page `/<full slug>` (`/a0d7b954_household_docs`),
+  or `/app/<full slug>` when the app has no sidebar page. The older `/hassio/ingress/<slug>` is a 404 in current
+  Home Assistant, so it is never used.
 
 ## 12. API (ingress; 404 when you can't see it)
 
@@ -1501,7 +1509,8 @@ in `.xlsx`; `sheetcalc.test.js`; packaging (`map` exactly `share`, port, version
   `PUT /api/me/pins`. ⋯ → Pin to home / Unpin; pinning a sheet asks for the cell (optional).
   Quick note: ⚡ in the top bar, `N` (not while typing or in an editor), `#quick-note`, and the page
   `/quick-note` (*decision*: Home Assistant's ingress panel passes a sub-path to the app but not a hash, so a
-  dashboard button opens `/hassio/ingress/household_docs/quick-note`). "Inbox" is reused when it exists (any
+  dashboard button opens `/<full slug>/quick-note`, e.g. `/a0d7b954_household_docs/quick-note`; `/hassio/ingress/…`
+  is a 404 in current Home Assistant). "Inbox" is reused when it exists (any
   case); the name uses Home Assistant's time zone, " (2)" when the minute is taken. Leaving it calls `finish`:
   while the name is still the quick one, it becomes the first line with something in it (Markdown marks and
   `[[ ]]` taken out, cut at a word to 60 characters, cleaned for Windows, " (2)" on a clash); an empty quick note

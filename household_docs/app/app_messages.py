@@ -74,6 +74,7 @@ def learn_panel(info: dict | None = None, hostname: str | None = None) -> str | 
     if info is None:
         info = fetch_self_info()
     panel = None
+    slug = None
     if isinstance(info, dict) and isinstance(info.get("slug"), str):
         slug = info["slug"]
         if info.get("ingress_panel") is not False and PANEL_RE.match("/" + slug):
@@ -84,6 +85,13 @@ def learn_panel(info: dict | None = None, hostname: str | None = None) -> str | 
         if PANEL_SLUG_RE.match(slug):
             panel = "/" + slug
     _panel.update(value=panel, known=True)
+    # where phone notifications open (§11): the sidebar page; without one, the app's Settings → Apps page.
+    # "/hassio/ingress/<slug>" is older Home Assistant's address and a 404 now (APP_MESSAGES_SPEC §6.5)
+    if panel:
+        config.INGRESS_URL = panel
+    elif slug and PANEL_SLUG_RE.match(slug):
+        config.INGRESS_URL = "/app/" + slug
+    logger.info("Notifications open %s in Home Assistant.", config.INGRESS_URL)
     return panel
 
 

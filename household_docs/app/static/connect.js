@@ -146,7 +146,7 @@
     const body = h("div", { class: "bus-box", id: "todoSend" }, spinner());
     const m = openModal(`Send “${titleOf(it)}” to Todo`, body, { wide: true, focus: false });
     let doc;
-    try { doc = it.items ? it : await api(`api/docs/${encodeURIComponent(it.id)}`); }
+    try { doc = await api(`api/docs/${encodeURIComponent(it.id)}`); }     // fresh: the open page's copy may be stale
     catch (e) { mount(body, h("div", { class: "error-text" }, e.message)); return; }
     if (!doc.items) { mount(body, h("div", { class: "error-text" }, "This isn't a checklist any more.")); return; }
     const items = doc.items;
