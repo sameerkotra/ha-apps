@@ -412,6 +412,63 @@ class CallTests(ApiTestCase):
         self.assertEqual(self.states("old2"), {NISHA["id"]: "left", TARUN["id"]: "missed"})
 
 
+class CallToPeopleTests(ApiTestCase):
+    """A call to people you pick (§15.12): the chat it belongs to."""
+
+    def setUp(self):
+        super().setUp()
+        calls.reset()
+        self.enable(ADMIN, NISHA, TARUN, LEELA)
+        self.ok(self.put("/api/admin/settings", {"calls_enabled": True}))
+
+    def tearDown(self):
+        calls.reset()
+        super().tearDown()
+
+    def test_one_person_is_their_direct_chat(self):
+        r = self.ok(self.post("/api/calls/chat", {"userIds": [TARUN["id"]]}, NISHA))
+        d = self.ok(self.post("/api/conversations/direct", {"userId": TARUN["id"]}, NISHA))["id"]
+        self.assertEqual((r["id"], r["kind"], r["created"]), (d, "direct", False))
+        self.ok(self.post("/api/calls", {"conversationId": r["id"]}, NISHA), 201)
+
+    def test_more_people_find_or_make_a_group(self):
+        r = self.ok(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"], NISHA["id"]]}, NISHA))   # me in the list: ignored
+        self.assertEqual((r["kind"], r["created"]), ("group", True))
+        g = self.ok(self.get(f"/api/conversations/{r['id']}", NISHA))
+        self.assertEqual((g["groupName"], g["icon"], sorted(m["id"] for m in g["members"])),
+                         ("Tarun & Leela", "📞", sorted([NISHA["id"], TARUN["id"], LEELA["id"]])))
+        again = self.ok(self.post("/api/calls/chat", {"userIds": [LEELA["id"], TARUN["id"]]}, NISHA))
+        self.assertEqual((again["id"], again["created"]), (r["id"], False))          # the same group, found
+        other = self.ok(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"]]}, ADMIN))
+        self.assertNotEqual(other["id"], r["id"])                                     # a different set of people
+        c = self.ok(self.post("/api/calls", {"conversationId": r["id"]}, NISHA), 201)
+        self.assertEqual({m["id"] for m in c["members"]}, {NISHA["id"], TARUN["id"], LEELA["id"]})
+        # the Household group is never the one, even with exactly these members
+        hh = self.household()
+        self.ok(self.post(f"/api/conversations/{hh}/leave", user=ADMIN))
+        r2 = self.ok(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"]]}, NISHA))
+        self.assertEqual(r2["id"], r["id"])
+
+    def test_limits_and_rules(self):
+        five = {"id": "u-five", "name": "five", "display": "Five"}
+        self.enable(five)
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"], ADMIN["id"], five["id"]]}, NISHA).status_code, 422)
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": [NISHA["id"]]}, NISHA).status_code, 422)     # only me
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": ["nobody"]}, NISHA).status_code, 422)
+        self.ok(self.patch(f"/api/admin/people/{LEELA['id']}", {"disabled": True}))
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"]]}, NISHA).status_code, 422)
+        self.ok(self.patch(f"/api/admin/people/{LEELA['id']}", {"disabled": False}))
+        # a group is made under the rules for groups: children can't, nor anyone when only admins may
+        self.ok(self.patch(f"/api/admin/people/{TARUN['id']}", {"isChild": True}))
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": [NISHA["id"], LEELA["id"]]}, TARUN).status_code, 403)
+        self.ok(self.post("/api/calls/chat", {"userIds": [NISHA["id"]]}, TARUN))                              # a child's direct chat with an adult
+        self.ok(self.put("/api/admin/settings", {"who_can_create_groups": "admins"}))
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"]]}, NISHA).status_code, 403)
+        self.ok(self.post("/api/calls/chat", {"userIds": [TARUN["id"], LEELA["id"]]}, ADMIN))
+        self.ok(self.put("/api/admin/settings", {"calls_enabled": False}))
+        self.assertEqual(self.post("/api/calls/chat", {"userIds": [TARUN["id"]]}, NISHA).status_code, 403)
+
+
 class CallsListAndLinksTests(ApiTestCase):
     def setUp(self):
         super().setUp()

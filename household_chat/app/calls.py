@@ -217,6 +217,44 @@ def _sdp(v) -> str:
     return v
 
 
+# ---------- a call to people you pick (§15.12) ----------
+MAX_OTHERS = MAX_PARTICIPANTS - 1
+
+
+def chat_for_people(user: dict, user_ids) -> dict:
+    """POST /calls/chat {userIds}: the chat a call with these people belongs to — their direct chat for one
+    person; for more, a group with exactly these members (found, else made and named after them, 📞), under the
+    rules for making groups. → {id, kind, created}."""
+    ids = [u for u in dict.fromkeys(user_ids or []) if isinstance(u, str) and u != user["id"]]
+    if not ids:
+        raise HTTPException(422, "Pick at least one person.")
+    if len(ids) > MAX_OTHERS:
+        raise HTTPException(422, f"A call is at most {MAX_PARTICIPANTS} people: you and {MAX_OTHERS} others.")
+    out = chats.Outbox()
+    with db.get_conn() as conn:
+        if not enabled(conn):
+            raise HTTPException(403, "Voice calls are turned off. An admin can turn them on in App settings.")
+        names = []
+        for u in ids:
+            r = chats.user_row(conn, u)
+            if r is None or r["disabled"]:
+                raise HTTPException(422, "Everyone in a call must have access to Household Chat.")
+            names.append(r["name"])
+        if len(ids) == 1:
+            cid = chats.get_or_create_direct(conn, user["id"], ids[0])
+            out.flush()
+            return {"id": cid, "kind": "direct", "created": False}
+        want = set(ids) | {user["id"]}
+        for r in conn.execute("SELECT c.id FROM conversations c JOIN members m ON m.conversation_id = c.id "
+                              "WHERE m.user_id = ? AND c.kind = 'group' AND c.is_household = 0", (user["id"],)).fetchall():
+            if set(chats.member_ids(conn, r["id"], enabled_only=False)) == want:
+                return {"id": r["id"], "kind": "group", "created": False}
+        name = (", ".join(names[:-1]) + " & " + names[-1]) if len(names) > 1 else names[0]
+        cid = chats.create_group(conn, out, user, name[:60], "📞", ids, None)
+    out.flush()
+    return {"id": cid, "kind": "group", "created": True}
+
+
 # ---------- starting ----------
 def start(user: dict, conversation_id: str, kind: str = "audio") -> dict:
     """POST /calls: checks who may call whom here, then the call rings — the caller joined, everyone invited

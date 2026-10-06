@@ -36,7 +36,8 @@ async function starredPage() {
 
 async function callsPage() {
   const r = await api("api/me/calls");
-  if (!r.calls.length) return h("p", { class: "hint" }, "Your calls will be listed here. Call someone with 📞 at the top of a direct chat.");
+  const newBtn = h("div", { class: "row" }, h("span", { class: "grow" }), h("button", { class: "btn primary", type: "button", onclick: () => newCallDialog() }, "📞 New call…"));
+  if (!r.calls.length) return h("div", null, newBtn, h("p", { class: "hint" }, "Your calls will be listed here. Call someone with 📞 at the top of a chat, or pick people with New call."));
   const word = (x) => (x.kind === "video" ? "📹 " : "") + (x.group ? "Group · " : "") + (x.outcome === "answered"
     ? (x.myState === "left" ? (x.outgoing ? "Outgoing" : "Incoming") + (x.seconds == null ? "" : " · " + fmtDuration(x.seconds)) + (x.group && x.with.length ? " · with " + x.with.join(", ") : "") : "Missed")
     : x.missed ? "Missed" : x.outcome === "busy" ? "Busy" : x.outcome === "declined" ? (x.outgoing ? "Declined" : "You declined") : x.outcome === "missed" ? "No answer" : "Couldn't connect");
@@ -47,7 +48,7 @@ async function callsPage() {
     x.canCallBack ? h("button", { class: "btn small", type: "button", onclick: () => { const c = convById(x.conversationId); if (c) startCall(c, x.kind); } }, (x.kind === "video" ? "📹" : "📞") + " Call back") : null,
     h("button", { class: "icon-btn", type: "button", title: "Open the chat", "aria-label": "Open the chat", onclick: () => x.messageId ? openChatAt(x.conversationId, x.messageId) : openChat(x.conversationId) }, "💬"));
   const missed = r.calls.filter((x) => x.missed);
-  return h("div", null,
+  return h("div", null, newBtn,
     missed.length ? h("div", { class: "lbl-sm" }, "Missed") : null, missed.length ? h("div", { class: "result-list" }, missed.map(row)) : null,
     h("div", { class: "lbl-sm" }, "Recent"), h("div", { class: "result-list" }, r.calls.map(row)));
 }
