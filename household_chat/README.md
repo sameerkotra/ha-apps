@@ -16,4 +16,6 @@ A private chat and file-sharing app for a household, inside Home Assistant. Ever
 - `/share` folders shared into chats, chat downloads, backups and storage clean-up
 - Cards from **Household Docs**: a document sent to a chat shows up as a card with **Open in Docs** (Admin → App settings → Connected apps)
 
+> ⚠️ **About calls.** They're a household convenience, **not a phone line**: no emergency numbers, and a call can fail without warning when Home Assistant, the network or the phone's notifications are off. Ringing is a notification and can arrive late or be silenced by Do Not Disturb. Away from home, the address lookup sends the phones' public addresses to the STUN server and a relay (Cloudflare or your own) carries the encrypted sound and video — Cloudflare charges past its free allowance. Video uses a lot of mobile data and battery. Tested on Android and desktop Chromium; iPhones are untested.
+
 See the **Documentation** tab (DOCS.md) for setup and the full user guide.

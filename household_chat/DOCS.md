@@ -69,6 +69,14 @@ Nobody is ever made an admin automatically, not even the first person to open th
 
 An admin turns calls on in **App settings → Voice calls** (off until then). Calls are between the people's own phones or computers: the sound and picture go straight from one to the other, encrypted, and never through the app or anywhere else. Nothing is recorded.
 
+> ⚠️ **Before relying on calls**
+> - **Not a phone line.** There are no emergency numbers, and a call can fail without warning when Home Assistant, the network or the phone's notifications are off. Don't count on a call to reach someone urgently.
+> - **Ringing is a notification.** It can arrive late or not at all — Do Not Disturb, battery saving, or notifications turned off for the Home Assistant app all silence it.
+> - **Keep the app on screen** during a call; on some phones locking the screen or switching apps ends it.
+> - **Away from home** (see below): the address lookup sends the phones' public network addresses to the STUN server, and a relay carries the call's encrypted sound and video — Cloudflare can't listen in, but it carries them and **charges past its free allowance**.
+> - **Video uses a lot of data and battery**: roughly 100–300 MB an hour per person you see; a four-person video call works an older phone hard.
+> - **Tested on Android and desktop Chromium.** iPhones and the iPhone Home Assistant app are untested; they may not give a web page the microphone or camera.
+
 **Starting a call**
 
 - **📞** at the top of a chat calls; **📹** starts a video call.

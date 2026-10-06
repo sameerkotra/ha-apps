@@ -2,6 +2,7 @@
 
 ## 2.5.2
 
+- **Docs**: a warning box on calls — not a phone line, ringing is a notification, keep the app on screen, what leaves the house away from home and Cloudflare's charges, video's data use, iPhones untested — in the README and at the top of the calls section.
 - **Docs**: the *Voice and video calls* section rewritten in one piece, with a part on the Home Assistant phone app — the Microphone list under ⚙ is how you switch the call to the speakerphone, earpiece or headset — and a troubleshooting line for it.
 
 ## 2.5.1
