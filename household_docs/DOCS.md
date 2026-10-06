@@ -143,8 +143,8 @@ the box on its left shows where you are — type `C14` (or `Car!B4`) there to ju
 **Formulas** start with `=`: `=B2*C2`, `=SUM(B2:B20)`, `=IF(B2>100,"Over","OK")`, `=VLOOKUP("Car",A2:C20,3,FALSE)`,
 `=SUMIFS(C:C,A:A,"Food",B:B,">=2026-01-01")`. Tap **ƒ** for every function with an example; typing `=SU`
 suggests SUM, SUMIF, SUMIFS. While typing a formula, click cells to put their address in — or, right after `=`, an
-operator, `(` or `,`, press the arrow keys: they pick a cell and put its address in (hold Shift for a range like
-`B2:B5`), and the next operator you type keeps it. `$` keeps a reference
+operator, `(` or `,`, press the arrow keys: they pick a cell, outline it on the grid and put its address in (hold Shift
+for a range like `B2:B5`), and the next operator you type keeps it. `$` keeps a reference
 fixed when you fill or copy (`$B$1`); `B:B` is the whole column; `'Car'!B4` is cell B4 on the tab **Car**.
 Functions: SUM, AVERAGE, MIN, MAX, MEDIAN, COUNT, COUNTA, ROUND, ROUNDUP, ROUNDDOWN, ABS, IF, AND, OR, NOT, IFERROR,
 SUMIF, COUNTIF, AVERAGEIF, SUMIFS, COUNTIFS, AVERAGEIFS, VLOOKUP, HLOOKUP, XLOOKUP, INDEX, MATCH, LEN, UPPER, LOWER,

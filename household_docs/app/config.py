@@ -19,7 +19,7 @@ from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 APP_TITLE = "Household Docs"
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")

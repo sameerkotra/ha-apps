@@ -684,6 +684,7 @@
       if (!lastDraw || cur().kind !== "grid") { draw(); return; }
       const sel = rangeOf(st.sel);
       for (const el of table.querySelectorAll("td.sel, td.active")) el.classList.remove("sel", "active");
+      if (!st.editing || !st.editing.point) for (const el of table.querySelectorAll("td.point")) el.classList.remove("point");
       for (const el of table.querySelectorAll("th.on")) el.classList.remove("on");
       for (const td of table.querySelectorAll("tbody td.cell")) {
         const c = +td.dataset.c, r = +td.dataset.r;
@@ -1140,8 +1141,20 @@
       const end = start + text.length;
       try { inp.setSelectionRange(end, end); } catch (x) { /* ignore */ }
       st.editing.point = { c: to.c, r: to.r, head: to, anchor: e.shiftKey && pointing ? anchor : to, end, input: inp };
+      paintPoint(rangeOf({ c1: anchor.c, r1: anchor.r, c2: to.c, r2: to.r }));
       e.preventDefault(); e.stopPropagation();
       return true;
+    }
+    // the picked cell (or range) gets a dashed outline while it's being pointed at; nothing when `range` is null
+    function paintPoint(range) {
+      for (const el of table.querySelectorAll("td.point")) el.classList.remove("point");
+      if (!range) return;
+      let first = null;
+      for (const td of table.querySelectorAll("tbody td.cell")) {
+        const c = +td.dataset.c, r = +td.dataset.r;
+        if (c >= range.c1 && c <= range.c2 && r >= range.r1 && r <= range.r2) { td.classList.add("point"); if (!first || (r === range.r1 && c === range.c1)) first = td; }
+      }
+      if (first) try { first.scrollIntoView({ block: "nearest", inline: "nearest" }); } catch (x) { /* ignore */ }
     }
     function editKeys(e, inp) {
       if (suggest.hidden && pointWithArrow(e, inp)) return;
@@ -1159,7 +1172,7 @@
     function onType(inp) {
       const other = inp === bar ? cellInput : bar;
       other.value = inp.value;
-      if (st.editing) { st.editing.formula = inp.value.startsWith("="); st.editing.point = null; }
+      if (st.editing) { st.editing.formula = inp.value.startsWith("="); if (st.editing.point) { st.editing.point = null; paintPoint(null); } }
       autocomplete(inp);
     }
     cellInput.addEventListener("keydown", (e) => editKeys(e, cellInput));

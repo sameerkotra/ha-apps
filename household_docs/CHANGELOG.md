@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- **Sheets**: the cell (or range) the arrow keys pick while you type a formula is now outlined on the grid, so you can see what you're pointing at.
+
 ## 1.1.0
 
 - **Notifications open the app again**: tapping a Docs notification on a phone opened a "404: Not Found" page in current Home Assistant. They now open the app's sidebar page (or its Settings → Apps page when it has no sidebar entry). The dashboard address for a quick note is `/<full slug>/quick-note` too — see DOCS.md.

@@ -470,6 +470,7 @@ main.sheet-page { max-width: none; }
 .sheet-table td.excel { background-image: linear-gradient(225deg, var(--info) 5px, transparent 5px); }
 .sheet-table td.sel { background: var(--accent-soft); }
 .sheet-table td.active { box-shadow: inset 0 0 0 2px var(--accent); }
+.sheet-table td.point { box-shadow: inset 0 0 0 2px var(--accent); outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
 .sheet-table tfoot td, .sheet-table tfoot th { position: sticky; bottom: 0; z-index: 2; background: var(--panel-alt); font-weight: 700; border-top: 2px solid var(--accent-dim); }
 .sheet-table tfoot th { z-index: 3; color: var(--accent); }
 .sheet-table tfoot td.total { cursor: pointer; }
