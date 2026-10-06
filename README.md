@@ -82,7 +82,8 @@ Each app folder has `spec/SPEC.md` (how it works), its own tests
 (`python3 -m unittest discover -s tests` inside the folder, or `pytest` for Finance Dashboard, with its
 `requirements-dev.txt`), and
 `DOCS.md` (the user guide). `HA_ADDON_PATTERNS.md` and `WHOAMI_PAGE_SPEC.md` describe the
-conventions they share. The tests in `tests/` check the repository as a whole:
+conventions they share; `APP_MESSAGES_SPEC.md` is how the apps talk to each other, and
+`HOUSEHOLD_ASSISTANT_SPEC.md` is a draft of an assistant that answers questions from what they know. The tests in `tests/` check the repository as a whole:
 `python3 -m unittest discover -s tests` from the repository root.
 
 **Shared code.** Code the apps have in common (the ingress and admin checks, "How the app sees you",
