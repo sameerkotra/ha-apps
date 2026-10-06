@@ -818,7 +818,11 @@ three others; more would need a media server). Away from home needs §15.13.
   on or off, or switching cameras (`facingMode` user / environment), never needs a new negotiation. 640×480 at
   up to 24 fps is asked for. A video call that can't get a camera goes on with sound only. Each person's tile shows
   their video while their camera is on (told over the data channel, `{muted, video}`), else their photo; my own
-  picture is a mirrored tile in the same grid (never over the buttons).
+  picture is a mirrored tile in the same grid (never over the buttons). While anyone's camera is on the screen
+  is the **video layout**: no big photo, name and time as one small line on top, the tiles filling the rest,
+  the buttons under them. **Tapping a tile makes it the big one** (`call.focus`; the others become a strip of
+  small tiles above the buttons; tapping again goes back to the grid); a one-to-one video call starts with the
+  other person big until someone taps.
 - **Sound**: three `<audio>` elements (one per other person, at most) are made and started in the tap on 📞 or
   Answer; each person's audio track goes into one when it arrives (§15.12 "Playing the other person's sound").
 - **States**: a joiner not connected to anyone within 30 s ends their side as `failed` ("Couldn't connect. Away

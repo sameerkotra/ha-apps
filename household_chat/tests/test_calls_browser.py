@@ -197,7 +197,14 @@ class CallsInBrowsers(unittest.TestCase):
         g = self.api("POST", "api/conversations", "nisha", {"name": "Trip", "memberIds": ["u-tarun", "u-leela"]})["id"]
         le = self.page("leela")
         for p in (n, t, le):
-            p.goto(self.base)
+            for attempt in range(3):                        # a reload can be cut short by the page's own navigation
+                try:
+                    p.goto(self.base)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.5)
             p.wait_for_selector("#convList .conv")
         n.click("#convList .conv:has-text('Trip')")
         n.click("button[title='Video call']")

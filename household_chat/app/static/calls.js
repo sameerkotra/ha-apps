@@ -212,12 +212,13 @@ function callScreen(title, status, buttons, opts = {}) {
   let el = $("#callScreen");
   if (!el) { el = h("div", { class: "call-screen", id: "callScreen", role: "dialog", "aria-modal": "true", "aria-label": "Call" }); document.body.appendChild(el); }
   const inCall = !!(call && buttons.length && !incoming);
-  const video = inCall && call.kind === "video" || (call && call.cameraOn) || opts.video;
+  const video = inCall && anyVideo();
   el.className = "call-screen" + (video ? " video" : "") + (inCall && call.group ? " group" : "");
   mount(el, h("div", { class: "call-box" },
-    opts.avatar ? avatar(opts.avatar.name, opts.avatar.id, { big: true, noDot: true }) : null,
-    h("div", { class: "call-name" }, title),
-    h("div", { class: "call-status", id: "callStatus", role: "status" }, status),
+    opts.avatar && !video ? avatar(opts.avatar.name, opts.avatar.id, { big: true, noDot: true }) : null,
+    h("div", { class: "call-top" },
+      h("div", { class: "call-name" }, title),
+      h("div", { class: "call-status", id: "callStatus", role: "status" }, status)),
     inCall ? h("div", { class: "call-stage", id: "callStage" }) : null,
     inCall ? h("div", { class: "call-meter me", id: "meterMe", hidden: true, title: "Your microphone" }, h("b", null, "You"), h("i", null, h("span"))) : null,
     h("div", { class: "call-hint", id: "callHint", role: "status" }),
@@ -228,15 +229,30 @@ function callScreen(title, status, buttons, opts = {}) {
   if (first && FINE_POINTER) first.focus();
 }
 function setCallStatus(text) { const s = $("#callStatus"); if (s) s.textContent = text; }
+function anyVideo() { return !!(call && ((call.cameraOn && call.videoTrack) || [...call.peers.values()].some((p) => p.videoOn && p.videoTrack))); }
+// the picture is big when anyone's camera is on; tapping a tile makes that one the big one (tap again to go back)
+function focusTile(id) {
+  if (!call) return;
+  call.focus = call.focus === id ? null : id;
+  call.focusedByTap = true;
+  renderTiles();
+}
 function closeCallScreen() { const el = $("#callScreen"); if (el) el.remove(); }
 // one tile per other person (and my own picture while the camera is on); a tile shows their video when it's
 // on, else their photo, with a level bar and what's known about them
 function renderTiles() {
   const stage = $("#callStage");
   if (!stage || !call) return;
+  const video = anyVideo();
+  const screen = $("#callScreen");
+  if (screen) screen.classList.toggle("video", video);
+  if (screen) { const av = screen.querySelector(".call-box > .avatar"); if (av && video) av.remove(); }
+  // one-to-one with video: the other person is the big one until someone taps
+  if (!call.focusedByTap) call.focus = video && !call.group && call.peers.size === 1 ? [...call.peers.keys()][0] : null;
   const tiles = [];
   for (const p of call.peers.values()) {
-    const tile = h("div", { class: "call-tile" + (p.videoOn && p.videoTrack ? " has-video" : "") + (p.state === "ringing" ? " ringing" : ""), id: "tile-" + p.id });
+    const tile = h("div", { class: "call-tile" + (p.videoOn && p.videoTrack ? " has-video" : "") + (p.state === "ringing" ? " ringing" : "") + (call.focus === p.id ? " big" : ""),
+      id: "tile-" + p.id, role: "button", tabindex: "0", title: "Tap to make this picture big", onclick: () => focusTile(p.id) });
     if (p.videoOn && p.videoTrack) {
       if (!p.video) { p.video = h("video", { autoplay: true, playsinline: true, class: "call-video" }); p.video.setAttribute("playsinline", ""); p.video.muted = true; }
       if (p.video.srcObject !== p.videoStream) p.video.srcObject = p.videoStream;
@@ -252,10 +268,13 @@ function renderTiles() {
     const ms = new MediaStream([call.videoTrack]);
     if (!call.preview.srcObject || call.preview.srcObject.getVideoTracks()[0] !== call.videoTrack) call.preview.srcObject = ms;
     call.preview.play().catch(() => {});
-    tiles.push(h("div", { class: "call-tile mine has-video" + (call.facing === "environment" ? " back" : "") }, call.preview, h("div", { class: "tile-name" }, "You")));
+    tiles.push(h("div", { class: "call-tile mine has-video" + (call.facing === "environment" ? " back" : "") + (call.focus === "me" ? " big" : ""),
+      role: "button", tabindex: "0", title: "Tap to make this picture big", onclick: () => focusTile("me") }, call.preview, h("div", { class: "tile-name" }, "You")));
   }
-  stage.className = "call-stage n" + Math.min(4, tiles.length);
-  mount(stage, tiles);
+  const focused = tiles.find((t) => t.classList.contains("big"));
+  stage.className = "call-stage n" + Math.min(4, tiles.length) + (focused ? " focused" : "");
+  if (focused) mount(stage, [focused, h("div", { class: "call-strip" }, tiles.filter((t) => t !== focused))]);
+  else mount(stage, tiles);
 }
 // a microphone, with a line across it when muted (no emoji shows that)
 function micIcon(off) {
@@ -429,6 +448,7 @@ function dropPeer(id, why) {
   if (!call) return;
   const p = call.peers.get(id);
   if (!p) return;
+  if (call.focus === id) { call.focus = null; call.focusedByTap = false; }
   if (p.pc) { try { p.pc.close(); } catch (e) { /* closed */ } }
   if (p.audio) { p.audio.srcObject = null; p.audio._peer = null; }
   call.peers.delete(id);

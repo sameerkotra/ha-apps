@@ -416,6 +416,27 @@ code.path { overflow-wrap: anywhere; word-break: break-all; }
 .call-screen { position: fixed; inset: 0; z-index: 65; background: var(--bg); display: flex; align-items: safe center; justify-content: center; padding: 24px 16px; overflow: auto; }
 .call-box { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; max-width: 360px; width: 100%; margin: auto; }   /* margin auto: a tall box scrolls instead of overflowing the top */
 .call-screen.video .call-box, .call-screen.group .call-box { max-width: 900px; }
+/* a video call: the picture fills the screen; name and time are a small line on top, the buttons sit on it */
+.call-screen.video { padding: 0; }
+.call-screen.video .call-box { max-width: none; height: 100%; margin: 0; gap: 0; }
+.call-screen.video .call-top { display: flex; gap: 10px; align-items: baseline; justify-content: center; padding: 8px 12px 4px; }
+.call-screen.video .call-name { font-size: 1.05rem; }
+.call-screen.video .call-stage { flex: 1 1 auto; min-height: 0; padding: 0 6px; }
+.call-screen.video .call-meter.me { display: none; }
+.call-screen.video .call-hint { padding: 0 12px; }
+.call-screen.video .call-actions { margin: 8px 0 14px; }
+.call-screen.video .call-stage.n1 .call-tile.has-video { aspect-ratio: auto; height: 100%; }
+.call-screen.video .call-stage.n2:not(.focused), .call-screen.video .call-stage.n3:not(.focused), .call-screen.video .call-stage.n4:not(.focused) { grid-auto-rows: 1fr; }
+.call-screen.video .call-stage:not(.focused) .call-tile.has-video { aspect-ratio: auto; min-height: 0; }
+.call-stage.focused { display: flex; flex-direction: column; gap: 8px; }
+.call-stage.focused .call-tile.big { flex: 1 1 auto; min-height: 0; aspect-ratio: auto; max-width: none; }
+.call-strip { display: flex; gap: 8px; justify-content: center; flex: 0 0 auto; }
+.call-strip .call-tile { width: 96px; min-height: 72px; padding: 4px; }
+.call-strip .call-tile.has-video { width: 110px; aspect-ratio: 4 / 3; }
+.call-strip .call-tile .avatar.big { width: 44px; height: 44px; font-size: 1rem; }
+.call-strip .tile-name { font-size: 0.7rem; }
+.call-strip .call-meter { display: none; }
+.call-tile[role="button"] { cursor: pointer; }
 .call-stage { display: grid; gap: 8px; width: 100%; }
 .call-stage.n0 { display: none; }
 .call-stage.n1 { grid-template-columns: 1fr; }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.5.1
+
+- **Video calls fill the screen**: the pictures take the whole screen, the big photo is gone, and the name and time are a small line at the top.
+- **Tap a picture to make it big**: the others shrink to a row of small ones above the buttons; tap it again to go back to the grid. In a one-to-one video call the other person starts big.
+
 ## 2.5.0
 
 - **Video calls**: 📹 next to 📞 at the top of a chat starts a call with the camera on. In any call, the camera button turns your picture on or off, and 🔄 switches between the front and back camera. The picture goes straight between the phones like the sound; nothing is recorded.
