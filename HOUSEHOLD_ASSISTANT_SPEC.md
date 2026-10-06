@@ -370,3 +370,19 @@ without Home Assistant's identity headers.
 - **No message search in Chat, nothing from Vault, Finance memos never**: the most private text stays where it is.
 - **Actions only on a tap**: the model proposes, the person confirms, the app checks. No autonomous changes.
 - **The page is the card**: an iframe card and Assist both need things apps can't do alone today (§2.2).
+
+## 12. How much each app changes
+
+Yardstick: Household Todo receiving two kinds from Docs is `app_messages.py` (≈180 lines) plus its tests.
+
+| App | Already has | Needs | Size |
+|---|---|---|---|
+| **Household Assistant** (new) | the shared skeleton (identity, people, settings, backups, themes, AI block, Connected apps) | the plan → call → answer loop, the page, the two kinds in `app_bus`, fake-app tests | the biggest piece: about a Splitpot-sized app |
+| Todo, Docs, Chat | bus, `ha_ws`, settings, people; Docs and Chat know their sidebar page | `tools.py` (catalogue + a handler per tool, wrapping queries their routes already run), the admin and per-person switches, Todo copies Docs' `learn_panel`, spec / DOCS / tests | ≈150–250 lines each; Chat least (unread counts only) |
+| Splitpot, Calorie, Arcade, Family Tree | settings, HA client | `app_bus.py` + `ha_ws.py` copied in, `bus.start` in the lifespan, bus tables in migrations (≈30 lines, as Todo), then 1–3 tools; Splitpot and Calorie have no people admin yet (admin switch only at first) | about a day each |
+| Receipt Price Intelligence | settings, HA client; SQLAlchemy | a sqlite3 connection for the bus tables (from the engine, or a small adapter in `app_bus`) — one decision; then 4 tools over the shopping-list and price queries | 2× a bus-ready app |
+| Finance Dashboard | only `ai_client` and the security modules; own settings, pytest | adopt `settings_core` or wire the switch into its own settings, bus tables in its migrations, 4 tools over its reports with the per-person sharing filter applied | the largest outside the assistant, 2–3× a bus-ready app |
+| Household Vault | — | nothing, by design | — |
+
+Order by effort, smallest first: Chat, Arcade, Family Tree, Calorie, Splitpot, Todo, Docs, Receipt, Finance, the
+assistant. The build plan (§10) makes the assistant useful after phase 2 with Todo and Docs alone.
