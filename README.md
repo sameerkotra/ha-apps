@@ -11,7 +11,7 @@ your own Home Assistant.
 | App | AI | What it does |
 |---|---|---|
 | [Family Tree](family_tree) | — | A shared family tree with photos, stories, relationship names, upcoming birthdays with phone reminders, exports and full change history. Optional parts (including Indian relationship names, Telugu/Hindi names and tithi dates) can be switched on or off. |
-| [Household Chat](household_chat) | — | Private chat and file sharing: direct chats, groups, a personal room for each person, voice messages, polls, notifications with Reply on the phone. |
+| [Household Chat](household_chat) | — | Private chat and file sharing: direct chats, groups, a personal room for each person, voice messages, polls, notifications with Reply on the phone. Optional **voice and video calls**, one-to-one or groups of up to four, phone to phone (at home, or away with a STUN server and a relay such as Cloudflare's), with a ringing notification and a Calls list. |
 | [Household Todo](household_todo) | — | Shared and personal task lists, a calendar, a schedule of recurring things like trash day, house maintenance, and reminders through Home Assistant. |
 | [Calorie Tracker](calorie_tracker) | 🤖 Optional | Food, macros, weight and goals for each person, with optional AI estimates through your own Ollama, an OpenAI-compatible service or Anthropic Claude. |
 | [Finance Dashboard](finance) | 🤖 **Needed** | **64-bit only.** Bank and credit-card statements (PDF or CSV) read by the AI you choose, with categories and rules, transfers, recurring charges, a dashboard, saved reports and per-person data with optional sharing. Utility bills and toll statements are optional extras. |
