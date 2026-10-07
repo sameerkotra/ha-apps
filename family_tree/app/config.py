@@ -11,7 +11,6 @@ which applies without a restart.
 """
 import logging
 import os
-import re
 from datetime import date, datetime, timezone
 
 from .common import auth_core, ha_time
@@ -27,10 +26,9 @@ SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/c
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")   # the app bus
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 APP_TITLE = "Family Tree"
-# The app's sidebar page in Home Assistant ("/<full slug>"), for links in the Household Assistant's answers: from the
-# container's host name (the full slug with "-"), refined at start-up from the Supervisor (app_messages.learn_panel).
-_host = os.environ.get("HOSTNAME", "").strip().lower()
-INGRESS_PANEL = ("/" + _host.replace("-", "_")) if re.match(r"^([0-9a-f]{8}|local)-family-tree$", _host) else None
+# The app's sidebar page in Home Assistant ("/<full slug>"), for links in the Household Assistant's answers: set at
+# start-up from the Supervisor, or the container's host name (app_messages.learn_panel).
+INGRESS_PANEL = None
 
 _DEFAULTS = {
     "admin_users": [],

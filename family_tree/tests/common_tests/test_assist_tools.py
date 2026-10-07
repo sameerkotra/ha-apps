@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=2cea736b17d82626a372bc5e4341456481521025a8778da2c947b822e6785690
+# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=027e53f19a27be00ac068e632dc46779ac1e893ff2f3972fecf0f85f364c6e42
 """Answering the Household Assistant (common/python/assist_tools.py): the catalogue, argument checks, the
 switches, result fitting and links, and both kinds through two real app buses in this process.
 HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6.
@@ -206,6 +206,26 @@ class CatalogueTests(unittest.TestCase):
             Arg("list")
         with self.assertRaises(ValueError):
             Arg("enum")
+
+
+class SidebarPageTests(unittest.TestCase):
+    def test_from_the_supervisors_answer(self):
+        page = assist_tools.sidebar_page
+        self.assertEqual(page("family_tree", info={"slug": "a1b2c3d4_family_tree", "ingress_panel": True}),
+                         "/a1b2c3d4_family_tree")
+        self.assertEqual(page("family_tree", info={"slug": "local_family_tree"}), "/local_family_tree")
+        self.assertIsNone(page("family_tree", info={"slug": "a1b2c3d4_family_tree", "ingress_panel": False}))
+        for bad in ("a1b2c3d4_household_chat", "x_family_tree", "../family_tree", "A1B2C3D4_family_tree"):
+            self.assertIsNone(page("family_tree", info={"slug": bad}), bad)
+
+    def test_from_the_host_name(self):
+        page = assist_tools.sidebar_page
+        self.assertEqual(page("splitpot", hostname="a1b2c3d4-splitpot"), "/a1b2c3d4_splitpot")
+        self.assertEqual(page("family_tree", hostname="local-family-tree"), "/local_family_tree")
+        self.assertIsNone(page("family_tree", hostname="somewhere-else"))
+        self.assertIsNone(page("family_tree", hostname=""))
+        # no token: the Supervisor isn't asked
+        self.assertEqual(page("splitpot", token="", hostname="local-splitpot"), "/local_splitpot")
 
 
 class OverTheBusTests(unittest.TestCase):

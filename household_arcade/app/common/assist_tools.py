@@ -1,4 +1,4 @@
-# Shared file: edit common/python/assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=845d516d0f9cf268ccdf0c7c63fbb7940b7739586a033ea8d2ec5c2ac04978b3
+# Shared file: edit common/python/assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=a202089788e86c51195a0c46f3b23a3e1630b57ecce5aa70965605afc5952de9
 """Answering the Household Assistant: an app's tools, like tools on an MCP server, over the app bus
 (HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6).
 
@@ -41,7 +41,10 @@ Every handler answers as `requested_by` would see it in the app. Unknown argumen
 fields are everywhere on the bus (APP_MESSAGES_SPEC §6); the model is told the arguments, not trusted with them.
 """
 import json
+import logging
+import os
 import re
+import urllib.request
 from datetime import date
 
 from . import app_bus
@@ -62,6 +65,32 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _QUESTION_RE = re.compile(r"^[0-9A-Za-z_-]{1,64}$")
 _PANEL_RE = re.compile(r"^/[a-z0-9]{1,16}_[a-z0-9_]{1,64}$")
+
+
+logger = logging.getLogger("assist_tools")
+
+
+def sidebar_page(app_slug: str, *, token: str = "", supervisor_api: str = "http://supervisor", info=None,
+                 hostname: str | None = None) -> str | None:
+    """The app's sidebar page in Home Assistant, "/<full slug>", for the links in its answers (APP_MESSAGES_SPEC
+    §6.5), or None when it has none. From the Supervisor (`GET /addons/self/info`: `slug`, `ingress_panel`; allowed
+    for every app with its token); when that can't be asked, from the container's host name, which the Supervisor
+    sets to the full slug with "-" for "_". Accepted only as `/<8 hex or local>_<app_slug>`."""
+    ok = re.compile(rf"^([0-9a-f]{{8}}|local)_{re.escape(app_slug)}$")
+    if info is None and token:
+        req = urllib.request.Request(f"{supervisor_api.rstrip('/')}/addons/self/info",
+                                     headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = json.loads(resp.read(256 * 1024).decode("utf-8"))
+            info = body.get("data") if isinstance(body, dict) else None
+        except Exception as e:                                   # noqa: BLE001 — the host name below
+            logger.info("Couldn't read this app's info from the Supervisor (%s).", type(e).__name__)
+    if isinstance(info, dict) and isinstance(info.get("slug"), str):
+        return "/" + info["slug"] if ok.match(info["slug"]) and info.get("ingress_panel") is not False else None
+    host = (hostname if hostname is not None else os.environ.get("HOSTNAME", "")).strip().lower()
+    slug = host.replace("-", "_")
+    return "/" + slug if ok.match(slug) else None
 
 
 def _size(obj) -> int:

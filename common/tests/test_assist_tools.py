@@ -207,6 +207,26 @@ class CatalogueTests(unittest.TestCase):
             Arg("enum")
 
 
+class SidebarPageTests(unittest.TestCase):
+    def test_from_the_supervisors_answer(self):
+        page = assist_tools.sidebar_page
+        self.assertEqual(page("family_tree", info={"slug": "a1b2c3d4_family_tree", "ingress_panel": True}),
+                         "/a1b2c3d4_family_tree")
+        self.assertEqual(page("family_tree", info={"slug": "local_family_tree"}), "/local_family_tree")
+        self.assertIsNone(page("family_tree", info={"slug": "a1b2c3d4_family_tree", "ingress_panel": False}))
+        for bad in ("a1b2c3d4_household_chat", "x_family_tree", "../family_tree", "A1B2C3D4_family_tree"):
+            self.assertIsNone(page("family_tree", info={"slug": bad}), bad)
+
+    def test_from_the_host_name(self):
+        page = assist_tools.sidebar_page
+        self.assertEqual(page("splitpot", hostname="a1b2c3d4-splitpot"), "/a1b2c3d4_splitpot")
+        self.assertEqual(page("family_tree", hostname="local-family-tree"), "/local_family_tree")
+        self.assertIsNone(page("family_tree", hostname="somewhere-else"))
+        self.assertIsNone(page("family_tree", hostname=""))
+        # no token: the Supervisor isn't asked
+        self.assertEqual(page("splitpot", token="", hostname="local-splitpot"), "/local_splitpot")
+
+
 class OverTheBusTests(unittest.TestCase):
     """Both kinds between two real app buses, delivered by calling each other's receive()."""
 
