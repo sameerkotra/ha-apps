@@ -176,12 +176,16 @@ _REPORTED = [
     ["Previous Balance $14.01", "New Balance $0.00"],          # owed 14.01 before, nothing now
     ["Previous Balance $0.00", "New Balance $14.01-"],         # trailing minus
 ])
-def test_the_reported_statement_comes_out_the_right_way_round(env, capture_vision, balances):
+@pytest.mark.parametrize("model_signs", ["backwards", "right"])
+def test_the_reported_statement_comes_out_the_right_way_round(env, capture_vision, balances, model_signs):
+    """Whichever way round the model signed it, and however the balances were read — including the real cause:
+    the model signed it RIGHT, the credit balance was read as owing 14.01, and the balance check then
+    "corrected" the signs into the wrong way round."""
     calls, setter = capture_vision
     from app.parser import pipeline as pl
     from app.routes.upload import statement_flows
     acct, sid = _statement(env, balances + [f"{d} {desc} {abs(a):.2f}" for d, a, desc in _REPORTED], type_="credit_card")
-    setter(_REPORTED)
+    setter(_REPORTED if model_signs == "backwards" else [(d, -a, desc) for d, a, desc in _REPORTED])
     pl.process_statement(sid, "tester", acct, "http://x", "m")
     with env.db() as c:
         flow = statement_flows(c, "tester", sid)[sid]
@@ -190,4 +194,4 @@ def test_the_reported_statement_comes_out_the_right_way_round(env, capture_visio
     assert (round(flow["money_in"], 2), round(flow["money_out"], 2)) == (283.08, 269.07)
     assert refund == -14.01
     assert st["balance_mismatch"] is None
-    assert "Signs flipped" in (st["duplicate_transactions"] or "")
+    assert ("Signs flipped" in (st["duplicate_transactions"] or "")) == (model_signs == "backwards")

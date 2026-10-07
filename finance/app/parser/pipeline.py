@@ -246,41 +246,57 @@ def _check_reconciliation(
 _CARD_PAYMENT_WORDS = re.compile(r"\b(?:payment|autopay|auto\s*pay|thank\s*you)\b", re.IGNORECASE)
 
 
-def _card_payments_backwards(rows) -> bool:
-    """Every line worded like a card payment came out positive (a charge) and most other lines negative:
-    the model signed the card like a bank account. On a card a payment always reduces what is owed."""
+def _card_payment_signs(rows) -> str | None:
+    """What a card's payment lines say about the signs: "backwards" when every line worded like a card payment
+    came out positive (a charge) and most other lines negative — the model signed the card like a bank account;
+    "right" when every payment line is negative (a payment always reduces what is owed); None when there are no
+    payment lines (or they disagree with each other)."""
     payments = [t for t in rows if _CARD_PAYMENT_WORDS.search(t.description or "")]
     others = [t for t in rows if not _CARD_PAYMENT_WORDS.search(t.description or "")]
-    return bool(payments and others and all(t.amount > 0 for t in payments)
-                and sum(1 for t in others if t.amount < 0) * 2 > len(others))
+    if not payments:
+        return None
+    if all(t.amount > 0 for t in payments) and others and sum(1 for t in others if t.amount < 0) * 2 > len(others):
+        return "backwards"
+    if all(t.amount < 0 for t in payments):
+        return "right"
+    return None
 
 
 def _fix_card_signs(previous_balance, new_balance, for_reconciliation, to_insert):
     """A card's purchases are stored positive (app/matching.py). If the model signed every line the
     other way round, every sign is flipped. Returns (for_reconciliation, to_insert, note, new_balance) —
-    new_balance corrected when the statement's printed credit balance was read without its sign.
+    new_balance corrected when the statement's printed balance was read with the wrong sign.
 
-    1. The payments' own wording decides first: card payments that came out as charges, with the
-       purchases negative, can only be a backwards reading. If the printed balances seemed to agree with
-       that reading, they were read the wrong way round too (a credit balance printed without a minus
-       sign the label search could see), so the movement is taken the other way round.
-    2. Otherwise the printed balances decide when they can: the extracted total exactly the negative of
-       the balance movement means backwards."""
+    1. The payments' own wording decides when there are payment lines: payments that came out as charges
+       (with the purchases negative) are a backwards reading and are flipped; payments that came out
+       negative are right and are never flipped. Either way, if the printed balance movement points the
+       other way, it was the balance that was misread — typically a credit balance ("you're owed $14.01")
+       printed in a way the label search reads as an amount owed — so its movement is taken the other way
+       round and the statement still reconciles.
+    2. With no payment lines, the printed balances decide: the extracted total exactly the negative of the
+       balance movement means backwards."""
     if not for_reconciliation:
         return for_reconciliation, to_insert, None, new_balance
-    total = round(sum(t.amount for t in for_reconciliation), 2)
     flip = lambda rows: [dataclasses.replace(t, amount=-t.amount) for t in rows]
     have_balances = previous_balance is not None and new_balance is not None
     printed = round(new_balance - previous_balance, 2) if have_balances else None
-    if _card_payments_backwards(for_reconciliation):
+    verdict = _card_payment_signs(for_reconciliation)
+    note = None
+    if verdict == "backwards":
         n = sum(1 for t in for_reconciliation if _CARD_PAYMENT_WORDS.search(t.description or ""))
+        for_reconciliation, to_insert = flip(for_reconciliation), flip(to_insert)
         note = (f"Signs flipped: the model signed purchases and payments the opposite way round ({n} card "
                 f"payment(s) came out as charges); purchases are stored as money out on a card.")
-        if have_balances and total != 0 and abs(total - printed) <= RECONCILIATION_TOLERANCE:
+    if verdict is not None:
+        total = round(sum(t.amount for t in for_reconciliation), 2)
+        if have_balances and total != 0 and abs(total - printed) > RECONCILIATION_TOLERANCE \
+                and abs(-total - printed) <= RECONCILIATION_TOLERANCE:
             new_balance = round(previous_balance - printed, 2)
-            note += (f" The printed balance movement ({printed:+.2f}) was read without its sign and is taken as "
-                     f"{-printed:+.2f}.")
-        return flip(for_reconciliation), flip(to_insert), note, new_balance
+            note = ((note + " ") if note else "") + (
+                f"The printed balance movement ({printed:+.2f}) was read with the wrong sign (a credit balance) "
+                f"and is taken as {-printed:+.2f}.")
+        return for_reconciliation, to_insert, note, new_balance
+    total = round(sum(t.amount for t in for_reconciliation), 2)
     if have_balances and total != 0 and abs(total - printed) > RECONCILIATION_TOLERANCE \
             and abs(-total - printed) <= RECONCILIATION_TOLERANCE:
         return flip(for_reconciliation), flip(to_insert), (

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.6
+
+- **Credit-card money in and out — the real cause**: the model had read the card statement the right way round all
+  along. The statement's credit balance ("you're owed $14.01") was read as owing $14.01, and the check that catches a
+  backwards reading then took the *right* reading for a backwards one and swapped every sign. Now a card's payment
+  lines decide whenever there are any: payments that came out negative are right and are never swapped (payments
+  that came out as charges still are), and a balance that points the other way is taken as a misread credit
+  balance, so the statement still reconciles. Press **Re-extract** on the statement (or delete and upload it again
+  if it was confirmed).
+
 ## 1.2.5
 
 - **Credit-card money in and out, for real this time**: a card statement read backwards (payments as charges,

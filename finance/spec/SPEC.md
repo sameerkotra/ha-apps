@@ -167,17 +167,17 @@ the acting user's id, and every write by id first checks ownership.
 - **Credit-card prompt.** A credit-card statement is sent with its own prompt:
   purchases, fees and interest positive, payments, credits and refunds negative
   (section 8), so a card's charges come out as money out.
-- **Card signs backwards.** If a card's extracted transactions add up to exactly
-  the negative of the printed balance movement, the model signed every line the
-  wrong way round: all signs are flipped, the statement reconciles, and a
-  "Signs flipped" note is kept with the statement's other notes. The payments'
-  wording decides first, though: every line worded like a card payment
-  ("payment", "autopay", "thank you") positive and most other lines negative
-  flips every sign, with the same note — and if the printed balances seemed to
-  agree with the backwards reading, the balance was read without its sign (a
-  credit balance), so its movement is taken the other way round and the
-  statement still reconciles. A printed balance keeps its sign: "-$14.01",
-  "$-14.01", "($14.01)", "$14.01-" and "$14.01 CR" are all a credit of 14.01.
+- **Card signs.** A card's payment lines (worded "payment", "autopay", "thank
+  you") decide whenever there are any: all of them positive with most other
+  lines negative means the model signed the card like a bank account, and every
+  sign is flipped ("Signs flipped" note); all of them negative means the signs
+  are right and they are never flipped. Either way, a printed balance movement
+  pointing exactly the other way was misread (a credit balance read as an
+  amount owed): it is taken the other way round, with a note, and the statement
+  reconciles. Only with no payment lines do the balances decide: the extracted
+  total exactly the negative of the printed movement flips every sign. A printed
+  balance keeps its sign: "-$14.01", "$-14.01", "($14.01)", "$14.01-" and
+  "$14.01 CR" are all a credit of 14.01.
 - Sign convention: section 8.
 
 ## 6. PDF storage and duplicate detection
