@@ -810,8 +810,7 @@
         }
         steps++;
         evs = evs.concat(impl.step() || []);
-        ls.advance(impl.checksum);
-        ls.flush(false);
+        ls.advance(impl.checksum);          // (what this phone has to say goes out once a frame, below)
       } else {
         steps++;
         evs = impl.step() || [];
@@ -848,7 +847,9 @@
     }
     var renderer = createRenderer(canvas, lookId, { onInvalidate: function () { if (state !== "running" && state !== "destroyed") draw(); } });
     renderer.setReduceMotion(reduce());
-    var loop = createLoop({ step: tick, draw: function (a) { alpha = a; draw(); }, onHidden: function () { inst.pause(); }, doc: canvas.ownerDocument,
+    // a live duel sends its word once a frame, after the frame's updates (one message, however many updates)
+    var loop = createLoop({ step: tick, draw: function (a) { if (ls && !ls.turns && state === "running") ls.flush(false); alpha = a; draw(); },
+      onHidden: function () { inst.pause(); }, doc: canvas.ownerDocument,
       extra: ls && !ls.turns ? function () { return ls.behind() > 2 ? 1 : 0; } : null });
     if (Sound && opts.sound !== undefined) Sound.setEnabled(soundOn);
     draw();

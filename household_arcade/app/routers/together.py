@@ -38,7 +38,7 @@ MAX_WAIT = 25.0          # longest a long poll holds
 POLL_STEP = 0.2          # how often a waiting request looks for a change
 WS_IDLE = 30.0           # a phone that sends nothing for this long (it sends every 2 s) is gone
 WS_PUSH_AT_LEAST = 3.0   # push a fresh picture at least this often
-LIVE_SEND_STEP = 0.01    # a live duel's connection looks for messages to send this often
+LIVE_SEND_STEP = 0.05    # a live duel's connection is woken for each message, and looks for itself this often
 LIVE_CHECK_EVERY = 0.5   # … and at the room's clock (a quiet phone, the count-in) this often
 LIVE_WATCH_EVERY = 5.0   # … and at the players' play time (children) this often
 LIVE_POLL_MAX = 15.0     # longest a live duel's HTTP fallback request holds
@@ -349,6 +349,9 @@ async def _live_socket(ws: WebSocket, match_id: str, uid: str, first_snapshot: d
     await ws.accept()
     replies: asyncio.Queue = asyncio.Queue()
     cursor = {"since": None}            # None until the phone says hello (it says which numbered message it has)
+    wake = asyncio.Event()              # set when there is something to send: a reply, or a message for this phone
+    main_loop = asyncio.get_running_loop()
+    room.wake_with(seat, lambda: main_loop.call_soon_threadsafe(wake.set))
 
     async def sender():
         loop = asyncio.get_running_loop()
@@ -375,7 +378,11 @@ async def _live_socket(ws: WebSocket, match_id: str, uid: str, first_snapshot: d
                     return
                 await ws.send_text(json.dumps({"t": "match", **snap}))
                 last_v, pushed = snap["v"], now
-            await asyncio.sleep(LIVE_SEND_STEP)
+            try:
+                await asyncio.wait_for(wake.wait(), LIVE_SEND_STEP)
+            except asyncio.TimeoutError:
+                pass
+            wake.clear()
 
     async def reader():
         while True:
@@ -397,9 +404,11 @@ async def _live_socket(ws: WebSocket, match_id: str, uid: str, first_snapshot: d
             else:
                 out = room.receive(seat, msg)
             together.mark_seen(match_id, uid)
+            await _write_end(room)          # a shot (Carrom) is in the database before it is acknowledged
             for r in out:
                 replies.put_nowait(r)
-            await _write_end(room)
+            if out:
+                wake.set()
             if room.closing(seat):
                 return
 
@@ -409,6 +418,7 @@ async def _live_socket(ws: WebSocket, match_id: str, uid: str, first_snapshot: d
     except Exception:
         pass
     finally:
+        room.wake_with(seat, None)
         for t in tasks:
             t.cancel()
         for t in tasks:
