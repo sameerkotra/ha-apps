@@ -268,7 +268,7 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
     settle-up), paid_by, amount, your_share}`.
 - **Off by default** (App settings → **Answer the Household Assistant**, `assistant_answers`: money is private); a
   person can also turn it off on My settings (`users.assistant_ok`, default on; `PUT /me/prefs {assistantOk}`).
-  Otherwise `nack not_allowed` (`off` / `person_off`). Links are the sidebar page only (no sub-path routes).
+  Otherwise `nack not_allowed` (`off` / `person_off`). Links open each group in the answer on the sidebar page (`/group/<id>`, as the notifications do).
 
 ## 8. Background jobs
 

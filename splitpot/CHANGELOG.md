@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.2
+
+- The Household Assistant's answers link straight to each group they mention, not just to Splitpot.
+
 ## 2.4.1
 
 - **Notifications open the group for everyone**: tapping a new-charge or payment notification opened the admin's Settings → Apps page — or nothing, for anyone who isn't an admin — and lost the group. It now opens Splitpot's own sidebar page on that group (`/<page>/group/<id>`).

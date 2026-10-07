@@ -107,7 +107,7 @@ class ToolTests(unittest.TestCase):
         self.assertEqual({(i["from"], i["to"], i["amount"]) for i in res["items"]},
                          {("Mia", "Asha", 40.0), ("Ravi", "Asha", 10.0)})
         self.assertTrue(all(i["group"] == "Flat" for i in res["items"]))       # not the Trip
-        self.assertEqual(res["links"], [{"label": "Splitpot", "panel": "/a1b2c3d4_splitpot"}])
+        self.assertEqual(res["links"], [{"label": "Flat in Splitpot", "panel": "/a1b2c3d4_splitpot", "target": f"/group/{self.flat}"}])
         res = call("splitpot.balances", "ha_ravi", group="trip")
         self.assertIn("you owe Mia $100.00", res["text"])
         self.assertNack(call("splitpot.balances", "ha_asha", group="Trip"), "not_found", "group")

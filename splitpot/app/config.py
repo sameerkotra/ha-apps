@@ -10,7 +10,7 @@ SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/c
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 APP_TITLE = "Splitpot"
-APP_VERSION = "2.4.1"           # config.yaml's version: the app bus says it in its hello
+APP_VERSION = "2.4.2"           # config.yaml's version: the app bus says it in its hello
 # The app's sidebar page ("/<full slug>", open to everyone): what a phone notification and the Household Assistant's
 # links open. Set at start-up from the Supervisor or the host name; None when the app isn't in the sidebar.
 SIDEBAR_PAGE = None
