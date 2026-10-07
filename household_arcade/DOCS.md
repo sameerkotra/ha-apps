@@ -62,11 +62,9 @@ a still picture of the game:
   Your choice is remembered.
 - **Practice** — play without saving the score.
 - **Play** — starts the game. For a child, the start screen also shows the
-  time left today. A *Two phones* mode (Snake Duel, Paddle Duel, Tank Battle)
-  has no Play button: it is played with someone, each on their own phone —
-  **Play with someone** (see *Playing together live*). So have Carrom's *Two phones (live, taking turns)*, the
-  board games' and Chess's *Two phones (turn by turn)* and Ludo's and Snakes and Ladders' *Phones (turn by turn,
-  2–4)* (see *Playing turn by turn*).
+  time left today. A *Two phones (turn by turn)* mode (the board games and Chess) and Ludo's and Snakes and
+  Ladders' *Phones (turn by turn, 2–4)* have no Play button: they are played with someone, each on their own
+  phone — **Play with someone** (see *Playing turn by turn*).
 
 ### Snake
 
@@ -122,12 +120,6 @@ beat the last one and you've won. Every mode plays the list of opponents, each
 with its own speed, aim, serve and points to win (ten to start with; Easy,
 Normal and Hard make every opponent a little slower or quicker). The ball is
 served after a moment (Space or a tap serves at once).
-
-*Two phones* is two people, each on their own phone: each of you sees your own
-paddle at the bottom (the other phone shows the court turned round). First to 7
-points wins; a return scores 10, a point 100 and the match 1,000. The ball is
-served to whoever lost the last point, and they can serve it at once (Space or a
-tap).
 
 ### Lane Racer
 
@@ -220,17 +212,6 @@ tanks but shells fly over it, and tanks can hide in bushes. A hit costs a life
 lives left or when a shell hits the flag. Every mode plays the list of arenas;
 clearing the last one wins.
 
-Two tanks, each driven from its own phone: **Two phones · Together** — you both
-guard one flag against one and a half times as many enemies; each of you has
-your own lives, and a tank scores 100 for whoever hit it (an arena cleared 500
-for both). Your shells don't hurt each other. The game ends when the flag falls
-or you are both out of lives; the higher score wins the match. **Two phones ·
-Against each other** — no enemies: an arena of its own (the same seen from either
-side) with a flag each; your own flag is always at the bottom of your screen.
-Hit the other tank (100) or shoot their flag; a round is won by taking their
-flag or all their lives (300), the match by the first to win 2 rounds (500). A
-round lasts at most 2 minutes (then it's a draw) and a match at most 5 rounds.
-
 ### Sky Defenders
 
 A marching formation of little critters comes down from the sky. Move your
@@ -268,8 +249,6 @@ match. *Against the computer*: win a match to move on to the next arena —
 faster, more walls, a smarter opponent; lose one and the game is over; win the
 last arena to win the game. *Two players*: two people share one screen or
 keyboard for one match. The score is player 1's (green, the person signed in).
-*Two phones*: the same match with each of you on your own phone, steering your
-own snake (the one who invited is green); each of you gets your own score.
 
 ### Sudoku
 
@@ -506,9 +485,8 @@ saved for later.
 ### Carrom
 
 Flick the striker to knock your coins into the four corner pockets. The **Mode**: **Computer · Easy (gentle)**,
-**Medium** or **Hard**; **Two players (one screen)**; **Doubles** (four players in two teams on one screen, partners
-opposite); and **Two phones (live, taking turns)** with someone else, each on your own phone at the same time (see
-*Playing together live*).
+**Medium** or **Hard**; **Two players (one screen)**; or **Doubles** (four players in two teams on one screen,
+partners opposite).
 
 - **Shooting**: drag the striker along your baseline to place it, then pull back from it like a catapult — the line
   shows where it will go and how hard — and let go. Keys: ← → place it, ↑ ↓ aim, hold **Space** for power (it rises
@@ -519,8 +497,6 @@ opposite); and **Two phones (live, taking turns)** with someone else, each on yo
   does one of yours already pocketed. Your last coin can't go down while the queen is still on the board. The first
   to pocket all nine of their coins wins the board, with a point for each of the other's coins left and 3 for the
   queen. A board still going after 300 shots ends there, on the coins pocketed.
-- **Two phones**: the second phone sees the board turned round, so your baseline is always at the bottom. You have
-  30 seconds a shot (shown under the board); after that a gentle shot is played for you.
 
 Score: a win scores 100 (Easy), 250 (Medium) or 500 (Hard, and against a person), plus 20 a point, at most as much
 again; a board on one screen, a loss, or a board ended early isn't saved.
@@ -566,7 +542,7 @@ the scores.
 | Sky Defenders | ← → move, Space fires (hold to keep firing) | Drag on the game to move, tap to fire, or ◀ ▶ and **Fire** |
 | Rocks | ← → turn, ↑ thrust, Space fires | ⟲ ⟳ ▲ and **Fire**; a tap on the game fires |
 | Road Hop | Arrow keys (or W A S D) hop, Space hops forward | Swipe, tap to hop forward, or the arrow pad |
-| Snake Duel | Green: arrow keys; blue: W A S D (*Two phones*: the arrows or W A S D steer your own snake) | Swipe on the right half for green, the left half for blue (*Two phones*: swipe anywhere) |
+| Snake Duel | Green: arrow keys; blue: W A S D | Swipe on the right half for green, the left half for blue |
 | Bubble Pop | ← → aim, Space or ↑ shoots, ↓ or C swaps in the next bubble | Drag on the game (or the strip below it) to aim, let go to shoot, or **Shoot**; tap the next bubble to swap |
 | Gem Swap | Arrows move the ring, Space picks a gem up, then an arrow swaps it; C shows a move | Tap a gem and then its neighbour, or drag a gem toward the one to swap with; **Hint** |
 | Tower Stack | Space, ↑ or ↓ drops the block | Tap the game, or **Drop** |
@@ -680,8 +656,7 @@ Game by game:
 
 **Two controllers**: in Snake Duel (*Two players*) the controller connected
 first steers green (player 1) and the second one blue (player 2). In every other
-game — and in the *Two phones* modes, where each phone has its own player — any
-connected controller plays.
+game any connected controller plays.
 
 **If the controller isn't noticed**
 
@@ -762,45 +737,9 @@ Good to know:
   board, picture, heap, code or falling words). In Slide Puzzle and Lights Out the first to solve wins (finished in
   the same second: fewer moves); Picture Logic and Tile Match go by the score (the time with hints and shuffles
   added); Code Breaker by fewer rows, then time; Type Rain by the score, and the same score goes to the quicker
-  typist. Snake Duel, Paddle Duel and Tank
-  Battle are played against each other live instead (next section).
+  typist. Two-player games (Snake Duel, Paddle Duel, Tank Battle) aren't raced.
 - An admin can turn the phone notification off with **Invites by phone notification** in **App settings**;
   everyone can also turn off **Receive notifications** on Settings. The pop-up and the Games page card stay.
-
-### Playing together live (two phones)
-
-Snake Duel, Paddle Duel and Tank Battle have **Two phones** modes: one game, played live by two people at the
-same moment, each on their own phone (Snake Duel and Paddle Duel: against each other; Tank Battle: *Together*
-against the enemies, or *Against each other*). Carrom's **Two phones (live, taking turns)** works the same way,
-except that you take turns: each shot is sent to both phones and played the same on both, and you have 30 seconds
-for a shot.
-
-1. On the game's start screen pick the *Two phones* mode (Tank Battle: *Together* or *Against each other*) and
-   tap **Play with someone**; the invite, the notification with **Join** / **Not now**, **Waiting for you** and
-   **Cancel** work as for a race.
-2. When they join, both phones get ready and count in 3, 2, 1 together. Each of you plays your own snake,
-   paddle or tank with your phone's usual controls (keys, buttons, swipes or a controller). The bar at the top
-   shows the other player's name, their score and how it's going.
-3. Both phones play exactly the same game. If the other phone's moves are late, your game waits a moment
-   ("waiting…" on the bar). If their phone goes quiet for 10 seconds both games pause ("Waiting for Kabir…") and
-   go on by themselves when it's back; after a minute without it, you win. A short drop of the connection (a
-   tunnel, a Wi-Fi hiccup) just picks up again.
-4. **Pause** pauses both phones; either of you can **Resume** (a pause lasts at most 5 minutes). **Give up** —
-   or leaving the game page — ends the match and the other player wins; your score so far still counts.
-5. At the end both phones show both scores and who won; each score is saved for each of you as a normal game in
-   that mode (unless it was Practice), and the win, loss or draw counts in **Against others**. **Rematch**
-   works as for a race.
-
-Good to know:
-
-- If the two phones ever disagreed about the game (that shouldn't happen), the match ends **Out of step — no
-  result**, and nothing is saved.
-- A child's limits apply: they need play time left and no quiet hours to join, their time counts as for any
-  game, and if their time runs out (or their quiet hours begin) in the middle, the match ends for both as a draw
-  and both scores so far are kept.
-- A live game can't be saved for later. The *Two phones* modes can't be played alone.
-- The link is a WebSocket through Home Assistant (it reconnects by itself), or, if the network doesn't allow
-  WebSockets, ordinary requests — then the game may wait a little more often.
 
 ### Playing turn by turn (two phones)
 
@@ -1097,9 +1036,6 @@ plus any extra services an admin adds on **Admin → Users**.
   say why they can't play now.
 - **The other phone's score doesn't move** — the bar's dot is grey when that phone has gone quiet. Races still
   work when your network blocks WebSockets; they just check in more often.
-- **A two-phone game keeps stopping ("waiting…")** — the other phone's moves are arriving late: a weak Wi-Fi
-  signal or a slow connection from away. Moving nearer the Wi-Fi helps; the game always waits rather than letting
-  the two phones disagree.
 - **A child can't start a game** — the start screen says why: no time left
   today, or quiet hours. An admin can add extra time on **Admin → Users** or
   from **Games**.

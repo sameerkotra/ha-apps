@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.8.0
+
+- **Phone notifications open the right page.** Tapping a notification (an invite's **Join** / **Not now**, a
+  your-move notice, a new record, "5 minutes left" with **Add 15 minutes**) used to open the admin's Settings → Apps
+  page — or nothing, for anyone who isn't an admin — and lost the part that said which page to show. Notifications
+  now open the app's own sidebar page at the right place (the invite, the game, the leaderboard, the child's card).
+  The app's page is read from the Supervisor at start-up; an app without a sidebar page sends notifications without
+  a link.
+- **Live duels on two phones removed**: the *Two phones* modes of Snake Duel, Paddle Duel and Tank Battle (Together /
+  Against each other) and Carrom's *Two phones (live, taking turns)* are gone, with the relay behind them. They ran
+  in lockstep, which stops and starts on anything slower than a quiet home network, and weren't playable enough to
+  keep. What stays: Snake Duel's *Two players* and the board games' and Carrom's one-screen modes, racing, and turn
+  by turn from two phones (the board games, Chess, Ludo, Snakes and Ladders). A live match from before shows as
+  ended without a result.
+
 ## 1.7.2
 
 - **Live duels (two phones) are playable on a slow link**: Snake Duel, Paddle Duel and Tank Battle on two phones used

@@ -3,7 +3,7 @@
 Classic arcade games for everyone in a Home Assistant home, with personal
 bests, a household leaderboard and play-time limits for children. This file
 describes the app as it is now; playing together from two phones (§13: races,
-live duels and turn by turn are built) and the games still to come are at the end.
+turn by turn are built; live duels were removed) and the games still to come are at the end.
 
 ## 1. Scope
 
@@ -53,11 +53,11 @@ app/
   limits.py       children: day type, quiet hours, time used/left, limits validation
   scores.py       saving, personal bests, records, leaderboard, retention
   notify.py       record notifications, limit warnings to parents
+  panel.py        the sidebar page notifications open (from the Supervisor or HOSTNAME, §8)
   ha_sensors.py   the optional sensors (on common sensor_publisher)
   housekeeping.py stale sessions, Keep scores for (loop = common housekeeping.periodic)
   ha_client.py    thin: re-exports the shared Core API client (app/common/ha_client.py) + load_timezone
   together.py     playing together: invites, matches, the live numbers, winners, head to head (§13)
-  live.py         live duels: the relay and referee for lockstep play on two phones (rooms in memory, §13.4)
   turns.py        turn by turn: starting, moves checked by the rules, dice, resigning, 7 days, scores, your-move
                   notifications (§13.5)
   rules/          the server's rules of the turn-by-turn games, one module each (fourrow, tictactoe, checkers,
@@ -70,7 +70,7 @@ app/
     index.html style.css app.js play.js admin.js together.js
     common/       shared browser files (copies): theme-boot.js themes.css ui.js settings.js settings.css
                   people.js backnav.js whoami.js
-    games/        the games (see spec/GAMES.md): kit.js sound.js registry.js lockstep.js, then <game>-logic.js
+    games/        the games (see spec/GAMES.md): kit.js sound.js registry.js, then <game>-logic.js
                   (rules) and <game>.js (drawing) for each of the 42 games; boardkit.js (wave 7's shared board-game
                   logic and drawing) before the wave 7 files, dicekit.js (Ludo's and Snakes and Ladders' shared dice
                   logic and drawing) before theirs; chess-worker.js (the chess computer in a Web Worker)
@@ -311,8 +311,22 @@ sent by `backup_core.send_file`.
   everyone else switched on with `receive_notifications` (not a child whose
   leaderboard is hidden); "5 minutes left" to the chosen admins once per child
   per day, with `url`/`clickAction` and an `actions: [{action: "URI", title:
-  "Add 15 minutes", uri: …#/admin/users/<id>}]` when the app knows its panel
-  path.
+  "Add 15 minutes", uri: …/admin/users/<id>}]` when the app knows its page.
+- **Where a notification opens** (`panel.py`, 1.8.0; the pattern is Docs' "Open in Docs", APP_MESSAGES_SPEC
+  §6.5): the app's **sidebar page** `/<full slug>` (`/local_household_arcade`, `/a1b2c3d4_household_arcade`),
+  learnt at start-up from the Supervisor (`GET /addons/self/info`: `slug`, `ingress_panel`; allowed for every app)
+  or from `HOSTNAME` (the slug with `-`; accepted only as `^([0-9a-f]{8}|local)-household-arcade$`), with the
+  app's route as a **sub-path**: `/<page>/leaderboard`, `/<page>/home/join/<id>`, `/<page>/home/decline/<id>`,
+  `/<page>/home/turn/<id>`, `/<page>/admin/users/<id>`. Home Assistant opens the page and hands the rest of the
+  path on; `app.js` takes it from the top page's address (same origin) at start-up and from the
+  `home-assistant/properties` message (after `home-assistant/subscribe-properties`) at any time, shows that
+  route, and puts the top page's address back to the bare page so a reload doesn't open it again. The app also
+  answers the sub-path itself (`main.py`: `/home`, `/scores`, `/leaderboard`, `/settings`, `/play`, `/admin`, with
+  up to two arguments of `A–Z a–z 0–9 _ -`, 1–64) with a relative redirect to `#/…`, so a link opened straight
+  at the app works too; the static files keep their own paths. No sidebar page → no link in the notification
+  (`/api/me` → `panel` null). Before 1.8.0 the links were `/hassio/ingress/<slug>#/…`: the admin's Settings →
+  Apps page (not open to everyone) and a fragment Home Assistant drops on the way in, so a tap opened the wrong
+  page or nothing.
 - Sensors (`ha_sensors.py`), only with `ha_sensors` on:
   `sensor.household_arcade_<game>_record`,
   `sensor.household_arcade_<person>_played_today` (minutes; child attributes),
@@ -329,7 +343,7 @@ sent by `backup_core.send_file`.
 - `index.html` loads `common/theme-boot.js`, `common/themes.css`,
   `common/settings.css` and `style.css` in `<head>`, then `common/ui.js`,
   `common/settings.js`, `common/people.js`, `common/backnav.js`,
-  `common/whoami.js`, the game files in the order of spec/GAMES.md (`lockstep.js` right after `registry.js`), then
+  `common/whoami.js`, the game files in the order of spec/GAMES.md, then
   `app.js`, `play.js`, `admin.js`, `together.js`, all with `?v=<version>`.
 - Page themes: Midnight (default, teal accent), Slate, Daylight and Auto
   (Daylight on a light device, else Midnight), from `common/themes.css` and
@@ -630,28 +644,26 @@ highest scores a 500-level list could reach are within each game's most.
   **Resume**, **Save for later** (asks first when it would replace a saved
   game), **End game**.
 
-## 13. Playing together from two phones (steps 1, 2 and 3 are built)
+## 13. Playing together from two phones (steps 1 and 3 are built; step 2 was removed)
 
 Two people in the household, each signed in to Home Assistant on their own
 phone (or computer), play one game together. It comes in three steps, each a
 release of its own. **Step 1 (Race, §13.3) is built**: invites, the match tables
 (migration 6), the live link with its long-poll fallback, the race screen,
 Rematch, head to head and the App setting *Invites by phone notification*.
-**Step 2 (live duels, §13.4) is built**: lockstep play of Snake Duel, Paddle
-Duel and Tank Battle's *Two phones* modes (`games/lockstep.js`, `app/live.py`).
+**Step 2 (live duels, §13.4) was built and then removed in 1.8.0** (see §13.4).
 **Step 3 (turn by turn, §13.5) is built** with wave 7's board games: moves checked by
 the server's own rules (`app/rules/`, `app/turns.py`, migration 8), "Your games", your-move
 notifications, and the 2–4 player plumbing (seats, starting with those who joined, server
 dice, the computer standing in for a player who left) that wave 8's Ludo and Snakes and Ladders use; Chess is
-turn by turn too. **Live turn-taking** (§13.4, Carrom's *Two phones* mode) is built on the live duels' relay.
+turn by turn too.
 The sections below say "Built" where they describe what exists.
 
 ### 13.1 What it does
 
-*Built for races (§13.3) and live duels (§13.4). In a race a running game always
+*Built for races (§13.3). In a race a running game always
 finishes, as everywhere (§7), and each child's own limits decide whether they
-can start or join; in a live duel a child out of time — or whose quiet hours
-begin — ends the match for both, as a draw (both scores so far are kept).*
+can start or join.*
 
 - **Invite.** On a game's start screen, **Play with someone** lists the people
   in the household who may play that game now (people switched off, children
@@ -706,49 +718,7 @@ link per player, chosen automatically in the browser:
   apps and Home Assistant Cloud; the fallback is what makes that safe to
   ship. The test release the plan asks for before step 2 is still to do.
 
-**Built (live duels).** The same route, `GET /api/matches/{id}/live`, carries a
-live duel's lockstep messages both ways once its invite has been accepted (before
-that, and for races, it pushes the match picture as above). The browser side is
-`Together.liveLink` (`together.js`): a WebSocket that is opened again after a drop
-(after 0.5, 1, 2 and 4 s), then plain HTTP — `POST /api/matches/{id}/live
-{since, msgs, wait, v}` (§13.7) — with one request waiting for messages and
-another sending this phone's own every 30 ms. Every (re)connection starts with
-`hello {since}`; the phone pings every 2 s (which also measures the round trip
-for the input delay).
-
-- **The server is a relay and referee, not a game engine** (`app/live.py`). It
-  never runs the games (they are JavaScript in the browser). It passes inputs
-  between the two phones in order, keeps the match's record, compares the
-  phones' checksums and their reports of the end (they must agree) and applies
-  the usual honest-score limits to each player's own score.
-- **Lockstep.** The games run in fixed updates (60 a second) from a seed, so
-  both phones run the *same* game: both get the seed, the mode and the level
-  list from their session (`POST /api/sessions {game, matchId}`, which also
-  says the phone's `seat`); each phone sends only its own inputs, stamped with
-  the update they apply to; an input is played `delay` updates after it was made
-  (the server chooses the starting delay when both phones are ready: the time
-  phone to phone — half of each phone's round trip — in updates, plus 4 for
-  sending, drawing and jitter: 4 to 6 at home, at most 16, 0.27 s), so both
-  phones apply every input at the same update and the games stay identical. A
-  phone that hasn't got the other's inputs for an update waits (the game freezes
-  briefly; the bar says "waiting…"), and a phone that has fallen behind plays
-  one extra update a frame to catch up. **The delay adapts**: the
-  server's delay is the least; each phone raises its own input delay by a step
-  when it has had to wait at 3 or more updates in a second (two steps from 8),
-  at most every half second, up to 30 (half a second), and lowers it a step
-  after 10 clean seconds — a slow link (Home Assistant Cloud, a phone away from
-  home) costs a little input lag rather than a game that stops and starts. The
-  two phones' delays add up: a round trip has to fit in `delay₁ + delay₂ − 2`
-  updates for the game to run at full speed. After 10 s of silence both are paused,
-  after 60 s the match ends (§13.4). Every second each phone sends a checksum of
-  its game state; if they ever differ the match ends as "out of step" with no
-  result (and a log line), which the tests make sure never happens.
-- **Pausing**: either player's pause (or their phone hiding the app) pauses
-  both. Saving a live match for later is not offered.
-- Measured on localhost through a WebSocket-forwarding ingress proxy (the
-  browser test): the delay comes out at 4–5 updates. Not measured yet: the
-  companion apps and Home Assistant Cloud (the HTTP fallback is what makes that
-  safe to ship).
+*(The live duels' use of this link — the lockstep messages and the HTTP fallback — went with them in 1.8.0.)*
 
 ### 13.3 Step 1 — Race (built)
 
@@ -849,152 +819,19 @@ delay doesn't matter.
   change in the games' rules files beyond reporting a small `status()` —
   score, level, over).
 
-### 13.4 Step 2 — Live duels (built)
+### 13.4 Step 2 — Live duels (removed in 1.8.0)
 
-**As built.** A live duel is a `matches` row of kind `live` for one of a game's
-*live modes* (`games.py` `live.modes`; the game file registers `lockstep: true`
-and the same `liveModes`):
-
-| Game | Mode | | Each player's score | The match's winner |
-|---|---|---|---|---|
-| Snake Duel | `phones` Two phones | one match on an arena from the seed (the list's), seat 1 green, seat 2 blue | food 10, round 100, match 500 × min(arena, 10) | the match (a drawn match: a draw) |
-| Paddle Duel | `phones` Two phones | seat 1's paddle at the bottom, seat 2's at the top — seat 2's phone draws the court turned half-way round (x → 240 − x, y → 320 − y) and turns its left/right and finger round the same way; first to 7; whole-number physics (1/256 px, a sine table, no `Math.sin`) | return 10, point 100, match 1,000 | the match |
-| Tank Battle | `together` Two phones · Together | both tanks guard one flag against 1½ × the arena's enemies (the arena list); own lives; friendly shells stop harmlessly; over when the flag falls or both are out of lives | a tank 100 to whoever hit it, an arena 500 to both | the higher score (a tie: a draw) |
-| Tank Battle | `against` Two phones · Against each other | no enemies; four built-in arenas the same turned half-way round (`VERSUS_LEVELS`, not the AI list), a flag each; seat 2's phone draws the arena turned round (its flag at the bottom); a round: their flag or all their lives, at most 2 minutes (then drawn); a match: first to 2 rounds, at most 5 | a hit 100, a round 300, the match 500 | the match (all drawn: a draw) |
-
-Single-player Tank Battle, Paddle Duel's computer modes and Snake Duel's other
-modes are unchanged (the same random numbers in the same order; checked
-against the previous rules over 175 random games when this was built).
-
-- **Invite and start**: `POST /api/matches {kind: "live"}` (or no `kind`: a
-  live mode means live) → the invite, notification, Waiting for you, Cancel and
-  one-at-a-time rules of a race. Accepting opens the match's room. Each phone
-  starts its session (`matchId`; children's limits, allowed games and quiet
-  hours checked as for any session; a live mode without a match is refused,
-  422), opens the live link, measures its round trip and says `ready`; when
-  both have, the server sends both `start {delay, inMs: 3000}` and both count
-  in 3-2-1 and play update 1. A phone not ready within 2 minutes of the
-  accept: the one that was ready wins (`left`), neither: no result.
-- **The rules** take inputs per player: `press(s, action, down, player)` (player
-  0 or 1; `down` is 1/0 for a button, or a small whole number for `aim` /
-  `steer`), stay deterministic, and gain `checksum(s)` (FNV-1a over the state
-  that matters, an unsigned 32-bit number) and `report(s)` → `{scores: [p1,
-  p2], levels, winner: 1 | 2 | 0}`; `result(s, player)` is that player's own.
-  Nothing in live play uses `Math.sin`/`cos`/`pow`/`random`/`Date` (engines may
-  differ in their last digit; the tests run the rules with those replaced by
-  functions that throw).
-- **Each phone's inputs**: keys, buttons, swipes and controller buttons are
-  turned into the game's actions on the phone (Snake Duel: a direction; Paddle
-  Duel: left/right held, `fire` to serve, `aim` = the finger's x on the court;
-  Tank Battle: the arrows and `fire` held, `steer` = 1 + the direction toward a
-  finger, 0 when it lifts; a tap on your own tank fires). The kit
-  (`createSession` with `opts.live`) hands them to `ArcadeLockstep`
-  (`games/lockstep.js`), which plays each at update + delay on both phones,
-  seat 1's before seat 2's (each in the order made), at most 6 per player per
-  update (an `aim`/`steer` changed again before it is sent replaces the last).
-- **Ending**: the game ends on the same update on both phones; each posts its
-  own score to `POST /api/scores` as any game (honest-score limits, Practice,
-  under 3 s, personal bests, records), with `report = {tick, sum, scores,
-  levels, winner}` (its view of the end). When both are in and identical, and
-  each posted score is the one both reported for that player, the match is
-  `finished` with the reported winner; otherwise it is `out_of_step` with no
-  result. One phone's report alone decides after 60 s if the other never sends
-  one. Other ends: **Give up** (pause screen) or leaving the game page
-  (`POST /api/matches/{id}/resign`, also sent on `pagehide`) → `resigned`, the
-  other wins; a phone silent for 60 s → `left`, the other wins (both: no
-  result); a child out of time or into quiet hours (checked every 5 s by the
-  server, `together.live_watch`) → `time_limit`, a draw; a pause over 5 minutes,
-  or the app restarting mid-match (the room is gone) → `timeout`, no result.
-  After `left`, `resigned` and `time_limit` the remaining phones post their
-  score so far (a game ended early, §12); after `out_of_step` and `timeout`
-  the sessions end without a score.
-- **Protocol** (`app/live.py`; the message list and the checks are in §13.7):
-  - *Ticks*: updates are numbered 1, 2, 3 …; ticks 1 … delay − 1 have no inputs.
-    A phone that has played tick `t` has its inputs final up to `t + delay − 1`
-    (its own, adapted delay) and says so in `upto`, with the tick it is at in
-    `at` (the other phone paces its catching up by it); it may play tick `k`
-    only when the other's `upto ≥ k`. So a phone can never speak for more than
-    `delay − 1` ticks beyond the other's word — the server refuses an `upto`
-    above the other's + 30 (the most a delay can be). What a phone has to say
-    goes out once a frame (one message however many updates the frame played),
-    and only when there is something new: an input, a moved-on tick, a checksum.
-  - *Ordering and idempotence*: a phone's input messages carry `seq` 1, 2, 3 …;
-    the server accepts only `seq` = last + 1 (an older one is answered with
-    `ack` again and dropped; a later one with `error {why: "gap", inSeq}`), so
-    each phone's inputs reach the other once, in order. The server numbers what
-    it sends each phone (`n` 1, 2, 3 …) and keeps it until that phone
-    acknowledges it (`hello.since`, `ack` on its messages); the phone takes
-    numbered messages in order, holding one that came early until the gap is
-    filled, and ignores repeats. After a reconnection `welcome {inSeq}` tells
-    the phone which of its messages to send again (same `seq`). The lockstep
-    itself also ignores a repeated `seq` and holds an early one.
-  - *Limits*: 2,048 bytes a message (a WebSocket closes on a bigger one; the
-    HTTP fallback answers `error "too big"` for it and takes at most 64 a
-    request); 90 messages a second with a burst of 180 (a phone sends at most
-    one an update and a ping every 2 s; more → `error "slow down"`, dropped);
-    32 inputs a message, 8 a player a tick; only the game's actions with values
-    in their range (`games.py` `live.actions`); an `upto` may move at most 600
-    ticks at once; a checksum only every 60 ticks, for a tick already played
-    by that phone (≤ `upto − delay + 1`). 30 refused messages close the
-    connection. At most 6,000 numbered messages wait for a phone (more: it has
-    left).
-  - *Who*: the WebSocket checks the source address, the Origin and the identity
-    as for a race; the seat comes from the person, never from the message; a
-    third person gets nothing (the socket is closed, the HTTP fallback is 404).
-  - *A phone gone or stalled*: any message (pings every 2 s) counts as heard.
-    Silent 10 s while playing → both get `pause {by, why: "lost"}` (only that
-    phone coming back resumes it); silent 60 s → `left`.
-- **Children**: as any session at the start; the server ends the match as a
-  draw when a child's time runs out or their quiet hours begin (heartbeats keep
-  the time used up to date every 15 s).
-
-**Live turn-taking (built, wave 8: Carrom's `phones` *Two phones (live, taking turns)*).** The same relay, room,
-link, invite, count-in, pause, resign, children's checks, end reports and results as a duel, for a game whose
-`games.py` `live` has `turns: true` (and a `timeout_shot`), registered `lockstep: "turns"`:
-
-- *A shot is one input*: `[place 0–1000 along the shooter's baseline, angle 100–1700 (tenths of a degree in the
-  shooter's own view, 900 straight ahead), power 1–100]` (`live.actions.shot`). The phone whose turn it is sends
-  `in {seq, upto: k, ev: [[k, "shot", value]]}` with `k` = shots so far + 1; the server checks the seat is the
-  mover, `k` is exactly the next number and the value is in range, then relays it to **both** phones (`in {seat,
-  seq, upto: k, ev}`) — a phone plays its own shot only when it comes back, so the server's order is the only order
-  and there is no input delay (`start {delay: 0, inMs, turns: true, first}`; `first` = the seat that breaks,
-  `seed % 2 + 1`).
-- *After a shot* has stopped moving each phone sends `in {seq, upto: k, ev: [], sum: [k, checksum], next}` (`next`:
-  the seat whose shot it is now, 0 when the board is over). The checksums are compared as in a duel (different →
-  `out_of_step`, no result); the first `next` for that shot sets the mover.
-- *30 s a shot*: the clock runs from the first report of the last shot (or the count-in's end); at 30 s + 2 s
-  grace the server plays the game's weak `timeout_shot` (`[500, 900, 12]`: the middle, straight ahead, gently) for
-  the mover — `in {seat, seq: 0, upto: k, ev, timer: true}` to both — and a shot of theirs arriving after that is
-  acknowledged (`ack {seq, late: true}`) and dropped. Paused time doesn't count; the picture's `live.turns =
-  {shots, mover, left}` shows the seconds left.
-- *Stored*: each shot goes into `match_moves` (`{shot: value, timer}`, when the match ends), for the record.
-- *Ending*: the board's end on both phones (identical, as the checksums show) → each posts its score with the
-  report (`tick` = shots played) as in a duel; the side that pockets all its coins wins, or after 300 shots the side
-  with more points (spec/GAMES.md, "Carrom").
-- The kit (`createSession` with `opts.live`, `ArcadeLockstep.createTurns`) steps the board freely while a shot moves
-  and waits only for the next shot; the second phone draws the board turned round, so each player's own baseline is
-  at the bottom. The plug-in points are in spec/GAMES.md ("Live duels").
-
-The plan, as before:
-
-- **Snake Duel** first (both modes become: against the computer, two players on
-  one screen, **two phones**), then **Paddle Duel** (a new "two phones" mode:
-  each player sees their own paddle at the bottom — the second phone draws the
-  court upside down), then **Tank Battle** (two tanks: *together* — protect one
-  flag — or *against each other* in an arena with a flag each).
-- **Carrom** — *built (above)*: two players, live, taking turns — each shot is
-  the striker's position, aim and power, sent to both phones, and both phones
-  play the same shot with the same physics. The physics use whole-number
-  (fixed-point) maths, not floating point, so every phone gets exactly the
-  same result; a checksum after each shot confirms it (out of step ends the
-  match with no result). A player has 30 s to take a shot (then a weak shot is
-  played for them). Doubles (four players, two teams) are on one screen only.
-- A duel game registers `players: 2` and `lockstep: true`; its rules take
-  inputs per player (`press(s, action, down, player)`), are already
-  deterministic, and gain `checksum(s)`.
-- Score: each player's own (Snake Duel: food, rounds and matches won for that
-  player; Paddle Duel: as now from each side). Honest-score limits as now,
-  checked for each player.
+Built in an earlier version and removed in 1.8.0: the *Two phones* modes of Snake Duel, Paddle Duel and Tank Battle
+(Together / Against each other) played in lockstep from two phones, and Carrom's *Two phones (live, taking
+turns)*, with `app/live.py` (the relay and referee: input delay, ordering, checksums, pauses, a phone that went
+quiet), `games/lockstep.js`, `Together.liveLink`, the kit's lockstep session and the `kind: "live"` match plumbing.
+They proved too slow to play on anything but a quiet home network (the phones waited on each other on most
+frames), and were taken out rather than kept half-working. A `matches` row of kind `live` from before is only
+shown as it ended (`settle` closes a leftover one as `timeout`, no result). What remains of two-player play: the
+one-screen modes (Snake Duel's *Two players*, the board games, Carrom's *Two players* / *Doubles*) and turn by
+turn (§13.5). The rules files keep their two-player code paths (`tanks-logic.js` `two`, `duel-logic.js` and
+`snakeduel-logic.js` `phones`, `carrom-logic.js` `phones`), unreachable from the game files, so the logic tests
+still cover them; a later clean-up may take them out.
 
 ### 13.5 Step 3 — Turn by turn (built)
 
@@ -1057,7 +894,7 @@ wave 8's Chess (the same mode) and Ludo and Snakes and Ladders (*Phones (turn by
   had taken over (Ludo, Snakes and Ladders: the computer playing a leaver's seat can finish first; the result card
   then says "Ludo: Kabir wins (Meera's seat was the computer's)"). Head to head counts it like any match.
 - **Your-move notifications** (`turns.notify_blocking`, App setting `notify_turns` "Your-move notifications", on;
-  the person's *Receive notifications*): "Your move in Four in a Row against Asha." (with `Open` → `#/home/turn/<id>`,
+  the person's *Receive notifications*): "Your move in Four in a Row against Asha." (with `Open` → `/<page>/home/turn/<id>`,
   tag `arcade-turn-<id>`) to each person whose move it now is. At most one every **15 minutes** per match and
   person (`match_players.notified_at`); none during a child's **quiet hours**; one that can't go yet stays owed
   (`notify_due`) and housekeeping (every 10 minutes) sends it once it may — unless the person has opened the match
@@ -1095,15 +932,7 @@ one who didn't move.
 
 ### 13.6 Data (migration 6; migration 8 for turn by turn)
 
-**Built (live duels):** no new tables. A live duel is a `matches` row with kind
-`live`; its room (`live.ROOMS`: seats, phases waiting / countin / running /
-paused / ended, each phone's last `seq`, `upto`, checksums and the numbered
-messages waiting for it) and the two end reports (`live.REPORTS`) live in memory
-only, like the race numbers; they are forgotten 10 minutes after the end
-(housekeeping). End reasons: `finished`, `left`, `resigned`, `out_of_step`,
-`time_limit`, `timeout`. Each player's score is a normal `scores` row in the
-live mode (`phones`, `together`, `against`), so bests and the leaderboard are per
-mode as always.
+*(Live duels had no tables of their own; their rooms and reports lived in memory. Gone in 1.8.0.)*
 
 **Built (migration 6):** `matches` and `match_players` as below (the live
 picture's version number `v` is in memory, not in the table), plus
@@ -1153,40 +982,9 @@ panel path; behind the App setting `notify_invites` (default on, label
 *Invites by phone notification*, group Home Assistant) and the person's
 *Receive notifications*.
 
-**Built (live duels):** `GET /api/players` and `GET /api/games` (with
-`liveModes` per game) know live games; `POST /api/matches {..., kind: "live"}`
-(a live duel of a mode that isn't a live mode, or a race of a live mode: 422; a
-game with no live modes, or a race of a game that isn't raced: 409); the match picture
-gains `live` (`{phase, delay, pausedBy, why, seats: {1: {connected, ready}, 2:
-…}}`, `null` before the accept) and has `startsInMs: null` (the count-in comes
-with `start`); `POST /api/sessions {game, matchId}` answers `seat`;
-`POST /api/scores` takes `report` (above); `POST /api/matches/{id}/resign`
-(409 unless a live duel being played; the other wins). The live link's messages
-(JSON objects, ≤ 2,048 bytes):
-
-| From a phone | |
-|---|---|
-| `hello {since}` | first on every connection: the last numbered message it has |
-| `ping {id, ack?}` | every 2 s; answered with `pong {id}` |
-| `ready {rtt}` | its session is open; `rtt` = its median round trip in ms (0–5,000) |
-| `in {seq, upto, ev: [[tick, action, value], …], sum?: [tick, checksum], ack?}` | its inputs (above) |
-| `pause`, `resume` | for both phones |
-
-| To a phone (numbered `n`, kept until acknowledged) | |
-|---|---|
-| `in {seat, seq, upto, ev}` | the other phone's inputs |
-| `start {delay, inMs}` | count in, then play tick 1 |
-| `pause {by, why: "player" \| "lost"}`, `resume` | |
-| `end {reason, winner}` | `winner` 1, 2, 0 (a draw) or null (no result) |
-
-and, not numbered: `welcome {protocol: 1, seat, inSeq, delay, phase, last}`,
-`ack {seq}`, `pong {id}`, `error {why, inSeq}` (`why`: `gap`, `seq`, `upto`,
-`ahead`, `ev`, `tick`, `too many`, `action`, `value`, `sum`, `not started`,
-`not a message`, `slow down`), and the match picture `{t: "match", …}` (pushed on
-a change and every 3 s). Without a WebSocket: `POST /api/matches/{id}/live
-{since, msgs: [≤ 64 messages], wait: ≤ 15 s, v?}` → `{msgs: [the replies, then
-the numbered messages after since], match?: the picture when its v isn't v}`
-(404 for a match without a room or a person not in it).
+*(The live duels' API — `kind: "live"`, the match picture's `live`, `POST /api/scores` `report`, the lockstep
+messages over the link and `POST /api/matches/{id}/live` — was removed in 1.8.0. `POST /api/matches/{id}/resign`
+is for turn-by-turn matches only.)*
 
 The plan, as before:
 
@@ -1201,7 +999,7 @@ The plan, as before:
   `peer` (connected, waiting, gone), `end` {reason, results}.
 - `POST /api/matches/{id}/result {score, level, seconds}` — each player's own;
   stored when both have reported (or the other has gone), checked against the
-  honest limits; live duels' results must match each other.
+  honest limits.
 - `POST /api/matches/{id}/move {move}` (turn by turn) — 409 if it isn't your
   turn, 422 if the move isn't legal. *Built (§13.5), with `GET /api/matches/{id}/turns`, `POST
   /api/matches/{id}/roll`, `POST /api/matches/{id}/start`, `GET /api/players?game=&mode=` (→ `kind`,
@@ -1228,19 +1026,8 @@ Cancel, a race that is starting). The page re-fits with the bar (`fitStage`
 measures from the play area down). Pausing a race has no Save for later and
 the end button reads "Give up (score kept)".
 
-**Built (live duels):** a *Two phones* mode's start card has no Play button —
-**👥 Play with someone** is the way in, with the line "Two phones: you each play
-on your own phone, live, in the same game." The invite sheet, the waiting
-overlay ("Live duel"), the count-in (from the server's `start`), the bar (the
-other's first name, a connection dot, their score taken from this phone's own
-game, and "playing / waiting… / paused / connection lost? / getting ready") and
-the result card (with the headlines "Out of step — no result", "Kabir gave up.
-You win!", "Play time ran out — a draw", "Ended — no result") are the race's.
-The pause overlay says who paused ("Kabir paused the game." — Resume and Give up)
-or "Waiting for Kabir… Their phone went quiet." (no Resume). Each phone plays its
-own player with every key: W A S D and the arrows are both "mine", a second
-controller isn't player 2. The Games page card reads "Your duel with Kabir is
-starting" / **Join the duel**.
+*(The live duels' screens — the "Two phones" start card, "Live duel" overlays, the bar's waiting / connection
+states and the "Out of step" headline — went in 1.8.0.)*
 
 **Built (turn by turn):** a turn mode's start card has no Play button — **👥 Play with someone** and the line
 "Two phones: take turns from your own phones — they needn't be open at the same time." The waiting card adds that
@@ -1283,35 +1070,7 @@ agreeing with the game file, a race of each game through the API with its own
 rule — solved first, fewer moves in the same second, the counted time, rows, the
 shorter game — and saving) and `tests/js/wave6.test.js`.
 
-**Built (live duels):** `tests/js/live.test.js` — the lockstep (waiting for the
-other's word, delay, seat order, what a message may claim, checksums every 60
-ticks, aim coalescing and the per-tick cap, duplicates and early messages, the
-resend after a welcome, catching up); for each duel mode the rules are
-deterministic with `Math.sin`/`cos`/`pow`/`random`/`Date.now` made to throw, the
-checksum follows the state, and each player's score stays inside the honest
-limits (25 bot games); two phones (two sandboxes with the real game files and the
-kit) through a fake relay with the server's rules stay identical tick for tick
-with 5–70 ms delays in any order, 8 % duplicated messages and a 1.8 s dropped
-connection, and at 30 Hz against 144 Hz on a slow link; a deliberately changed
-game is caught at the next checksum; a phone that hears nothing more waits; the
-rules of each two-phone mode (Paddle Duel's court is exactly the same turned
-round); both seats draw in every look; seat 2's turned-round inputs; the kit's
-end report; the browser link (hello, numbered messages once and in order,
-pings, reconnecting, the HTTP fallback, falling back after four failed tries),
-the bar and headlines. `tests/test_live.py` — the room (start and delay,
-relaying in order once each, every refusal, rate limit, closing, hello and
-replay, checksums, quiet / gone / both gone, pauses and the 5-minute limit,
-never ready, ends from elsewhere, an unread outbox, reports) and the match
-(invites for the live modes, the room and the picture, sessions and seats, a
-live mode never played alone, children at the start, the notification,
-results that agree / differ / don't match the posted score / break the honest
-limits, Practice, one report after a minute, resigning, a phone gone, a
-restart, a child out of time and quiet hours as draws, housekeeping, the
-WebSocket with two phones, a reconnection, the end pushed, who may connect, a
-message too big, the HTTP fallback and its checks). The browser check plays
-every mode with two Playwright contexts (two users, desktop + phone, two looks)
-through ingress-like proxies that forward WebSockets (and with one phone
-without WebSockets).
+*(`tests/js/live.test.js` and `tests/test_live.py`, the live duels' tests, went with them in 1.8.0.)*
 
 **Built (turn by turn):** `tests/test_wave7.py` — the game table and honest limits, each rules module (Four in a
 Row lines and refusals, Tic-tac-toe, Checkers' compulsory captures, multi-jumps that must carry on, a choice of
@@ -1352,9 +1111,6 @@ end, the computer's levels, two phones taking turns through a fake relay with de
 round view); every mode in all six looks. `tests/js/backnav.test.js` and the repository's
 `tests/test_common_static.py` (`BackNavJs`) — a link or notification changing the address isn't Back; Back still is.
 
-- Lockstep: two game instances fed the same inputs with random delays and
-  reordering through a fake relay stay identical (checksums) for every duel
-  game; a dropped peer pauses then ends the match.
 - Server: invites (who can be invited, children's limits, one live invite at a
   time, expiry), accept/decline/cancel, results (both agree, honest limits,
   practice), head-to-head totals, turn-by-turn move checking and turn order,

@@ -14,13 +14,14 @@ can't be read, the app stays on UTC.
 import json
 import logging
 import os
+import re
 from datetime import date, datetime, timedelta, timezone
 
 from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.7.2"
+APP_VERSION = "1.8.0"
 
 _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 
@@ -49,12 +50,15 @@ BACKGROUND_LOOPS = os.environ.get("BACKGROUND_LOOPS", "1").strip().lower() not i
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
 
-# The app's panel in Home Assistant, for notifications to open (the container's
-# host name is the app's slug with - for _, e.g. local-household-arcade →
-# /hassio/ingress/local_household_arcade).
-_host = os.environ.get("HOSTNAME", "")
-INGRESS_PANEL = ("/hassio/ingress/" + _host.replace("-", "_")) if _host and _host.replace("-", "").isalnum() \
-    and _host.endswith("household-arcade") else None
+SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
+
+# The app's sidebar page in Home Assistant ("/local_household_arcade", "/a1b2c3d4_household_arcade"), where phone
+# notifications open (SPEC §7.3): a page everyone can open, unlike the admin's Settings → Apps page
+# (/hassio/ingress/…), and one Home Assistant hands a sub-path on to (/<page>/leaderboard). Learnt at start-up by
+# panel.learn() from the Supervisor (GET /addons/self/info: slug, ingress_panel); until then, and as the fallback,
+# the container's host name, which is the slug with - for _ (local-household-arcade).
+_host = os.environ.get("HOSTNAME", "").strip()
+INGRESS_PANEL = ("/" + _host.replace("-", "_")) if re.match(r"^([0-9a-f]{8}|local)-household-arcade$", _host) else None
 
 # ---------------------------------------------------------------------------
 # Time. `utcnow` is a module-level function so tests can replace it.

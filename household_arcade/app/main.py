@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, ha_client, ha_sensors, housekeeping
+from . import auth, config, db, ha_client, ha_sensors, housekeeping, panel
 from .common import auth_core, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, levels, me, play, prefs, together, users
@@ -25,6 +25,10 @@ async def lifespan(app: FastAPI):
     (UTC if it can't be read) and people, then start the background loops
     (sensors, housekeeping, people) unless BACKGROUND_LOOPS=0 (the tests)."""
     db.init_db()
+    try:
+        await run_in_threadpool(panel.learn)            # where notifications open (the sidebar page)
+    except Exception:
+        logger.exception("working out the app's page failed")
     await ha_client.load_timezone()
     try:
         await run_in_threadpool(ha_people.refresh_blocking, True)
@@ -118,6 +122,31 @@ async def guard(request: Request, call_next):
 def health():
     return {"status": "ok", "version": config.APP_VERSION}
 
+
+# A link from a notification (SPEC §7.3): Home Assistant opens the app's sidebar page and hands the rest of the
+# path on — /leaderboard, /home/join/<id>, /admin/users/<id> — which the page itself turns into its #/ route
+# (app.js). When the frontend asks this app for the sub-path instead, a relative redirect to the route keeps it
+# inside Ingress; nothing is looked up here. Only the page's own tabs, so the static files (common/, games/) and
+# /api are never caught.
+_DEEP_TABS = ("home", "scores", "leaderboard", "settings", "play", "admin")
+_DEEP_ARG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _deep_link(tab: str, arg: str | None = None, arg2: str | None = None):
+    from fastapi import HTTPException
+    from fastapi.responses import RedirectResponse
+    if tab not in _DEEP_TABS or any(a is not None and not _DEEP_ARG.match(a) for a in (arg, arg2)):
+        raise HTTPException(404, "Not found.")
+    parts = [p for p in (tab, arg, arg2) if p is not None]
+    return RedirectResponse("../" * len(parts) + "#/" + "/".join(parts), status_code=307,
+                            headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+for _tab in _DEEP_TABS:                     # fixed paths, so the static files keep their own
+    app.add_api_route(f"/{_tab}", (lambda t: lambda: _deep_link(t))(_tab), methods=["GET"], include_in_schema=False)
+    app.add_api_route(f"/{_tab}/{{arg}}", (lambda t: lambda arg: _deep_link(t, arg))(_tab), methods=["GET"], include_in_schema=False)
+    app.add_api_route(f"/{_tab}/{{arg}}/{{arg2}}", (lambda t: lambda arg, arg2: _deep_link(t, arg, arg2))(_tab), methods=["GET"],
+                      include_in_schema=False)
 
 # Static frontend, mounted LAST so /api/* always wins.
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

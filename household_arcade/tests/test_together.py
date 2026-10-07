@@ -81,14 +81,9 @@ class TestPlayers(Together):
 
     def test_unknown_or_unraceable_game(self):
         self.assertEqual(self.get("/api/players?game=pinball").status_code, 404)
-        # two-player games can't be raced, but they are played live on two phones (step 2)
+        # two-player games can't be raced (and live duels on two phones are gone since 1.8.0)
         for g in ("duel", "snakeduel", "tanks"):
-            self.assertEqual(self.get(f"/api/players?game={g}").status_code, 200, g)
-        old = games.GAMES["duel"].pop("live")
-        try:
-            self.assertEqual(self.get("/api/players?game=duel").status_code, 409)       # neither raced nor live
-        finally:
-            games.GAMES["duel"]["live"] = old
+            self.assertEqual(self.get(f"/api/players?game={g}").status_code, 409, g)
         self.assertEqual(self.get("/api/players").status_code, 422)
 
     def test_race_list_and_games_flag(self):
@@ -160,7 +155,7 @@ class TestInvites(Together):
         self.assertEqual(self.invite(game="duel", mode="normal").status_code, 409)
         # a game that isn't played turn by turn (SPEC §13.5)
         self.assertEqual(self.post("/api/matches", {"game": GAME, "mode": MODE, "opponents": ["u_meera"], "kind": "turns"}, KABIR).status_code, 409)
-        self.assertEqual(self.invite(kind="live").status_code, 409)                      # Lane Racer has no live duel
+        self.assertEqual(self.invite(kind="live").status_code, 422)                      # no such kind any more
         self.settings({"disabled_games": ["racer"]})
         self.assertEqual(self.invite().status_code, 409)
         self.settings({"disabled_games": []})
@@ -269,7 +264,7 @@ class TestNotification(Together):
         self.post("/api/admin/users/u_kabir/notify", {"service": "notify.kabir_phone"}, ASHA)
         self.ha.requests.clear()
         self._panel = config.INGRESS_PANEL
-        config.INGRESS_PANEL = "/hassio/ingress/local_household_arcade"
+        config.INGRESS_PANEL = "/local_household_arcade"
 
     def tearDown(self):
         config.INGRESS_PANEL = self._panel
@@ -280,10 +275,10 @@ class TestNotification(Together):
         self.assertEqual([n for n, _ in sent], ["meera_phone"])
         body = sent[0][1]
         self.assertEqual(body["message"], "Kabir Rao challenges you to Lane Racer.")
-        self.assertEqual(body["data"]["url"], f"/hassio/ingress/local_household_arcade#/home/join/{mid}")
+        self.assertEqual(body["data"]["url"], f"/local_household_arcade/home/join/{mid}")
         self.assertEqual([(a["title"], a["uri"]) for a in body["data"]["actions"]],
-                         [("Join", f"/hassio/ingress/local_household_arcade#/home/join/{mid}"),
-                          ("Not now", f"/hassio/ingress/local_household_arcade#/home/decline/{mid}")])
+                         [("Join", f"/local_household_arcade/home/join/{mid}"),
+                          ("Not now", f"/local_household_arcade/home/decline/{mid}")])
 
     def test_practice_and_rematch_wording(self):
         self.invite(practice=True)

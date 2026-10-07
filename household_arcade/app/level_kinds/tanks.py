@@ -43,7 +43,7 @@ KIND = {
     "game": "tanks",
     "label": "Tank Battle · Arenas",
     "noun": "arena",
-    "modes": ["classic", "easy", "together"],          # Against each other has its own arenas (VERSUS_LEVELS)
+    "modes": ["classic", "easy"],
     # Ranges keep the honest-score limit true for any arena: enemies come in at most one every 1.5 s whatever
     # the arena, so points (100 a tank, 500 an arena of at least 4 tanks) stay under 150 a second.
     "fields": {

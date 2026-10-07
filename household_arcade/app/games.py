@@ -92,17 +92,11 @@ GAMES: dict[str, dict] = {
             {"id": "easy", "label": "Easy"},
             {"id": "normal", "label": "Normal"},
             {"id": "hard", "label": "Hard"},
-            {"id": "phones", "label": "Two phones"},
         ],
         "level_modes": ["easy", "normal", "hard"],
         "levels_end": True,
         "default_mode": "normal",
         "state_version": 1,
-        # Live duels on two phones (SPEC §13.4): the modes played that way only, and the inputs a phone may send,
-        # with the lowest and highest value of each (1/0 for a button pressed / let go; "aim" is where the finger
-        # is on the court, in logical px). Two phones: first to 7, a return 10, a point 100, the match 1,000.
-        "live": {"modes": ["phones"],
-                 "actions": {"left": (0, 1), "right": (0, 1), "fire": (0, 1), "aim": (0, 240)}},
         # a point takes the ball at least ~0.6 s across the court: 100 × match, +1,000 × match for a match won
         "max_score": 10_000_000,
         "per_second": 3_500,
@@ -259,19 +253,11 @@ GAMES: dict[str, dict] = {
         "modes": [
             {"id": "classic", "label": "Classic"},
             {"id": "easy", "label": "Easy"},
-            {"id": "together", "label": "Two phones · Together"},
-            {"id": "against", "label": "Two phones · Against each other"},
         ],
-        # Together plays the arena list; Against each other plays its own built-in arenas (a flag each)
-        "level_modes": ["classic", "easy", "together"],
+        "level_modes": ["classic", "easy"],
         "levels_end": True,
         "default_mode": "classic",
         "state_version": 1,
-        # "steer" is a finger on the game: 1 + the direction toward it, 0 when it lifts
-        "live": {"modes": ["together", "against"],
-                 "actions": {"up": (0, 1), "down": (0, 1), "left": (0, 1), "right": (0, 1), "fire": (0, 1),
-                             "steer": (0, 4)}},
-        # each player's own score; against each other: a hit 100, a round 300 (≥ ~4 s with its intro), a match 500
         # enemies come in at most one every 90 updates; 100 a tank + 500 an arena of ≥ 4 tanks: ≤ 150 a second
         "max_score": 1_500_000,
         "per_second": 160,
@@ -334,11 +320,8 @@ GAMES: dict[str, dict] = {
         "modes": [
             {"id": "cpu", "label": "Against the computer"},
             {"id": "two", "label": "Two players"},
-            {"id": "phones", "label": "Two phones"},
         ],
-        "level_modes": ["cpu", "two", "phones"],
-        "live": {"modes": ["phones"],
-                 "actions": {"up": (0, 1), "down": (0, 1), "left": (0, 1), "right": (0, 1)}},
+        "level_modes": ["cpu", "two"],
         "levels_end": True,
         "default_mode": "cpu",
         "state_version": 1,
@@ -774,9 +757,7 @@ GAMES: dict[str, dict] = {
         "per_second": 1_000,
         "base": 1_000,
     },
-    # Carrom: the computer (three levels), two or four (two teams) on one phone, or live from two phones taking turns
-    # (SPEC §13.4 "live turn-taking"): a shot is one input [striker place 0–1000 along the baseline, angle in tenths
-    # of a degree 100–1700 (900 straight ahead), power 1–100], played on both phones with whole-number physics.
+    # Carrom: the computer (three levels), two or four (two teams) on one phone (whole-number physics).
     "carrom": {
         "name": "Carrom",
         "icon": "🎯",
@@ -786,18 +767,12 @@ GAMES: dict[str, dict] = {
             {"id": "hard", "label": "Computer · Hard"},
             {"id": "two", "label": "Two players (one screen)"},
             {"id": "doubles", "label": "Doubles: four, two teams (one screen)"},
-            {"id": "phones", "label": "Two phones (live, taking turns)"},
         ],
         "level_modes": [],
         "default_mode": "easy",
         "state_version": 1,
         "unfinished_zero": True,
         "race": False,
-        "live": {"modes": ["phones"], "turns": True,
-                 "actions": {"shot": [(0, 1000), (100, 1700), (1, 100)]},
-                 # the weak shot the server plays for a player who hasn't shot in SHOT_SECONDS: the middle of the
-                 # baseline, straight ahead, power 12
-                 "timeout_shot": [500, 900, 12]},
         # a win: the level's base (100 / 250 / 500; 500 from two phones) + 20 a board point (the other's coins left,
         # +3 for the queen), at most the base again
         "max_score": 1_000,
@@ -840,27 +815,6 @@ def mode_label(game: str, mode: str) -> str:
     if isinstance(mode, str) and mode.startswith("daily-"):          # a daily challenge's scores (daily.py)
         return "Daily challenge · " + mode[6:]
     return mode
-
-
-def live_modes(game: str) -> list[str]:
-    """The modes of a game that are played live on two phones (SPEC §13.4); [] for most games."""
-    return list(GAMES.get(game, {}).get("live", {}).get("modes", []))
-
-
-def is_live(game: str, mode) -> bool:
-    return isinstance(mode, str) and mode in live_modes(game)
-
-
-def live_actions(game: str) -> dict:
-    """The inputs a phone may send in a live duel of this game: {action: (lowest, highest value)}, or for a game whose
-    players take turns live (Carrom) {action: [(lowest, highest) of each whole number in the value's list]}."""
-    return dict(GAMES.get(game, {}).get("live", {}).get("actions", {}))
-
-
-def live_turns(game: str) -> dict | None:
-    """A game played live taking turns (SPEC §13.4, Carrom): {"timeout_shot": [...]}; None for a lockstep duel."""
-    lv = GAMES.get(game, {}).get("live", {})
-    return {"timeout_shot": list(lv.get("timeout_shot", []))} if lv.get("turns") else None
 
 
 def turn_modes(game: str) -> list[str]:

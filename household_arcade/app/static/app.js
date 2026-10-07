@@ -462,6 +462,52 @@ function syncNoAdminBanner() {
     state.me && (state.me.nameSent ? state.me.username : state.me.id), { onOpen: openWhoamiCard, linkId: "noAdminWhoami" });
 }
 
+// ---------- links from phone notifications (SPEC §7.3) ----------
+// A notification opens the app's sidebar page in Home Assistant with the app's route as a sub-path
+// (/local_household_arcade/home/join/<id>; app/panel.py says why not a #/ fragment). Home Assistant hands the rest
+// of the path to this page: current versions in a "home-assistant/properties" message (route.path, after the page
+// asks with "home-assistant/subscribe-properties"); in any version the top page's own address is readable from
+// here (the same origin), so the path after `panel` is taken from it. Once used, the top page's address is put
+// back to the bare page, so a reload doesn't open the link again.
+function deepLinkHash(panel, routePath) {
+  const ok = typeof panel === "string" && /^\/[a-z0-9_]{1,80}$/.test(panel) ? panel : null;
+  const fromPath = (p) => {
+    if (typeof p !== "string") return null;
+    const sub = ok && (p === ok || p.startsWith(ok + "/")) ? p.slice(ok.length) : null;
+    if (!sub || sub === "/") return null;
+    const r = parseHash("#" + sub.replace(/\/+$/, ""));
+    return r ? routeHash(r.tab, r.arg, r.arg2) : null;
+  };
+  if (routePath !== undefined) return fromPath(routePath);
+  try { return window.parent !== window ? fromPath(window.parent.location.pathname) : null; } catch (e) { return null; }
+}
+function forgetDeepLink(panel) {
+  try {
+    if (window.parent === window || !panel) return;
+    const pp = window.parent.location.pathname;
+    if (pp !== panel && pp.startsWith(panel + "/")) window.parent.history.replaceState(window.parent.history.state, "", panel);
+  } catch (e) { /* the top page isn't reachable */ }
+}
+// Kept listening for as long as the page is open: a notification tapped while the app is already open in Home
+// Assistant changes the page's route without reloading it.
+function listenForHaRoute(panel, handled) {
+  if (window.parent === window) return;
+  let last = handled || null;
+  window.addEventListener("message", (e) => {
+    if (e.origin !== location.origin || e.source !== window.parent) return;
+    const d = e.data;
+    if (!d || d.type !== "home-assistant/properties" || !d.route || typeof d.route.path !== "string") return;
+    const hash = deepLinkHash(panel, d.route.path);
+    if (!hash) { last = null; return; }                  // back on the bare page: the next link counts again
+    if (hash === last) return;
+    last = hash;
+    forgetDeepLink(panel);
+    const r = parseHash(hash);
+    if (r && state.me) showTab(r.tab, r);
+  });
+  try { window.parent.postMessage({ type: "home-assistant/subscribe-properties" }, location.origin); } catch (e) { /* older frames */ }
+}
+
 async function init() {
   wireChrome();
   try { await refreshMe(); }
@@ -479,6 +525,10 @@ async function init() {
   syncNoAdminBanner();
   try { await refreshGames(); } catch (e) { fail(e); }
   if (window.Together && !state.me.disabled) Together.watch();         // an invite for me pops up wherever I am
+  const panel = state.me.panel || null;
+  const deep = deepLinkHash(panel);                                   // a phone notification's link (above)
+  if (deep) { try { history.replaceState(history.state, "", deep); } catch (e) { /* sandboxed frame */ } forgetDeepLink(panel); }
+  listenForHaRoute(panel, deep);
   const start = parseHash(location.hash);
   showTab(start ? start.tab : "home", start || {});
   initBackNav();

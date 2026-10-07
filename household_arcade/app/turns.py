@@ -543,7 +543,7 @@ def notify_blocking(match_id: str) -> int:
     for p, services, against in sends:
         message = f"Your move in {games.name(m['game'])} against {against}."
         data = {"tag": f"arcade-turn-{match_id}"}
-        link = notify._link(f"#/home/turn/{match_id}")
+        link = notify._link(f"/home/turn/{match_id}")
         if link:
             data.update(link)
             data["actions"] = [{"action": "URI", "title": "Open", "uri": link["url"]}]

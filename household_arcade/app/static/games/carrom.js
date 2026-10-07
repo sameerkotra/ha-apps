@@ -6,30 +6,23 @@
    the aim, hold Space for power (it rises and falls) and let go to shoot; C sets the aim straight again. A controller:
    the d-pad and A. The on-screen buttons do the same.
 
-   Live from two phones (SPEC §13.4, "taking turns"): each shot goes to the server as one input and comes back to both
-   phones, which play it with the same whole-number physics; the second phone sees the board turned round, so your own
-   baseline is always at the bottom. 30 seconds a shot, then the server plays a weak one for you.
-
    The board is drawn from shapes: the frame, four pockets, the baselines with their red circles, the middle circles
    and the corner arrows. White coins are light, black ones dark, the queen red — and on Retro LCD hollow, solid and
    solid with a dot. */
 (function (root) {
   "use strict";
   var Logic = root.CarromLogic, BK = root.BoardKit, Kit = root.ArcadeKit;
-  var U = Logic.U, X0 = 12, Y0 = 40, SIDE_PX = Logic.BOARD / U, PULL_PX = 70, SHOT_SECONDS = 30;
+  var U = Logic.U, X0 = 12, Y0 = 40, SIDE_PX = Logic.BOARD / U, PULL_PX = 70;
 
   function create(canvas, opts) {
     opts = opts || {};
-    var live = opts.live && opts.live.lockstep ? opts.live : null;
-    var s = null, aim = null, drag = null, held = {}, sent = -1, lastTurnKey = "", turnStart = 0, overAt = 0, pend = [];
+    var s = null, aim = null, drag = null, held = {}, lastTurnKey = "", overAt = 0, pend = [];
 
-    function flip() { return !!(live && s && s.me === 1); }
-    function toScreen(x, y) { var f = flip(); return [X0 + (f ? Logic.BOARD - x : x) / U, Y0 + (f ? Logic.BOARD - y : y) / U]; }
-    function toBoard(px, py) { var x = (px - X0) * U, y = (py - Y0) * U; return flip() ? [Logic.BOARD - x, Logic.BOARD - y] : [x, y]; }
+    function toScreen(x, y) { return [X0 + x / U, Y0 + y / U]; }
+    function toBoard(px, py) { return [(px - X0) * U, (py - Y0) * U]; }
     /** The seat the person at this phone may shoot for now, or −1. */
     function shooter() {
       if (!s || s.over || s.moving) return -1;
-      if (live) return s.turn === s.me && sent !== s.shots ? s.me : -1;
       if (s.cpu >= 0 && s.turn === s.cpu) return -1;
       return s.turn;
     }
@@ -38,16 +31,15 @@
       var key = s.shots + "/" + s.turn + "/" + (s.moving ? 1 : 0);
       if (key !== lastTurnKey) {
         lastTurnKey = key;
-        if (!s.moving) { aim = freshAim(); turnStart = s.updates; drag = null; }
+        if (!s.moving) { aim = freshAim(); drag = null; }
       }
     }
     function value() { return [Math.round(aim.pos), Math.round(aim.angle), Math.max(1, Math.min(100, Math.round(aim.power)))]; }
-    function fire(act) {
+    function fire() {
       var seat = shooter();
       if (seat < 0 || aim.power < 3) { aim.power = 0; aim.charging = false; return; }
       var v = value();
       aim.charging = false;
-      if (live) { if (act) act("shot", v); sent = s.shots; return; }
       pend = pend.concat(Logic.shoot(s, seat, v));
     }
     /** A board point's place along the shooter's baseline (0–1000) and how far in front of it (px). */
@@ -59,10 +51,10 @@
 
     var impl = {
       init: function (seed) {
-        s = Logic.create({ mode: opts.mode, seed: seed, seat: live ? live.seat - 1 : 0 });
-        aim = freshAim(); lastTurnKey = ""; sent = -1; pend = [];
+        s = Logic.create({ mode: opts.mode, seed: seed, seat: 0 });
+        aim = freshAim(); lastTurnKey = ""; pend = [];
       },
-      save: live ? undefined : function () { return Logic.save(s); },
+      save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data); aim = freshAim(); lastTurnKey = ""; },
       step: function () {
         syncTurn();
@@ -84,35 +76,27 @@
         var seen = {}, out = [];
         for (var i = 0; i < evs.length; i++) { if (seen[evs[i].type] && evs[i].type !== "settled") continue; seen[evs[i].type] = 1; out.push(evs[i]); }
         if (s.over && out.some(function (e) { return e.type === "board"; })) {
-          var me = live ? s.me : 0, won = s.winnerTeam === Logic.teamOf(s, me);
+          var won = s.winnerTeam === Logic.teamOf(s, 0);
           out.push({ type: s.mode === "two" || s.mode === "doubles" || won ? "win" : s.winnerTeam < 0 ? "draw" : "lose" });
         }
         return out;
       },
       logic: function () { return s; },
-      score: function () { return Logic.score(s, live ? s.me : 0); },
+      score: function () { return Logic.score(s, 0); },
       level: function () { return 1; },
       isOver: function () { return s.over && s.updates - overAt >= 90; },
-      result: function () { return Logic.result(s, live ? s.me : 0); },
+      result: function () { return Logic.result(s, 0); },
       sounds: { shot: "launch", clack: "hit", cushion: "bounce", pocket: "eat", queen: "bonus", foul: "lose", fouled: null,
         covered: "powerup", queenBack: "wall", lastCoin: "wall", board: null, settled: null, win: "win", lose: "gameover", draw: "level" },
-      // live play (taking turns): the kit plays each shot from the server on both phones
-      apply: function (player, action, v) { return Logic.press(s, action, v, player); },
-      turn: function () { return Logic.turn(s); },
-      shots: function () { return s.shots; },
-      settledShots: function () { return s.moving ? s.shots - 1 : s.shots; },
-      nextSeat: function () { return s.over ? 0 : s.turn + 1; },
-      checksum: function () { return Logic.checksum(s); },
-      report: function () { return Logic.report(s); },
-      input: function (action, down, act) {
+      input: function (action, down) {
         if (action === "left" || action === "right" || action === "up" || action === "down") { held[action] = down; return; }
         if (shooter() < 0) { if (!down) aim.charging = false; return; }
         if (action === "fire") {
           if (down) { aim.charging = true; aim.power = Math.max(2, aim.power); aim.dir = 1; }
-          else if (aim.charging) fire(act);
+          else if (aim.charging) fire();
         } else if (action === "alt" && down) { var p = aim.pos; aim = freshAim(); aim.pos = p; }
       },
-      pointer: function (kind, lx, ly, x, y, act) {
+      pointer: function (kind, lx, ly) {
         var seat = shooter();
         if (seat < 0) { drag = null; return; }
         var b = toBoard(lx, ly);
@@ -137,7 +121,7 @@
         var len = Math.sqrt(ex * ex + ey * ey) / U;
         if (dv > U * 2) { aim.angle = Math.max(100, Math.min(1700, Logic.angleTo(du, dv))); aim.power = Math.min(100, len / PULL_PX * 100); aim.ok = true; }
         else { aim.power = 0; aim.ok = false; }
-        if (kind === "up") { drag = null; if (aim.ok) fire(act); else aim.power = 0; }
+        if (kind === "up") { drag = null; if (aim.ok) fire(); else aim.power = 0; }
       },
       draw: draw,
     };
@@ -206,34 +190,25 @@
       void i;
     }
     function names() {
-      if (live) {
-        var n = opts.names || [];
-        return [first(n[0]) || "Player 1", first(n[1]) || "Player 2"];
-      }
       if (s.mode === "doubles") return ["Player 1", "Player 2", "Player 3", "Player 4"];
       if (s.mode === "two") return ["Player 1", "Player 2"];
       return ["You", "Computer"];
     }
-    function first(n) { return String(n || "").trim().split(" ")[0]; }
     function status(nm, info) {
       if (s.over) {
-        var me = live ? s.me : 0, t = s.winnerTeam;
+        var t = s.winnerTeam;
         if (t < 0) return "A draw — the same points after " + Logic.MAX_SHOTS + " shots";
         if (s.mode === "doubles") return "Team " + (t + 1) + " (" + nm[t] + " & " + nm[t + 2] + ") wins · " + s.points + " pts";
         if (s.mode === "two") return nm[t] + " wins the board · " + s.points + " pts";
-        return (t === Logic.teamOf(s, me) ? "You win the board" : nm[t] + " wins the board") + " · " + s.points + " pts";
+        return (t === Logic.teamOf(s, 0) ? "You win the board" : nm[t] + " wins the board") + " · " + s.points + " pts";
       }
       if (s.moving) return "";
       var seat = s.turn, mine = shooter() === seat;
-      var secs = live ? Math.max(0, SHOT_SECONDS - Math.floor((s.updates - turnStart) / 60)) : -1;
-      var clock = live && info.state === "running" ? " · " + secs + " s" : "";
-      if (live && s.turn !== s.me) return nm[seat] + "'s shot" + clock;
-      if (live && sent === s.shots) return "Shooting…";
       if (s.cpu >= 0 && seat === s.cpu) return info.short ? "Computer aiming…" : "The computer is aiming…";
       var who = s.mode === "two" || s.mode === "doubles" ? nm[seat] + ": " : "";
       if (!mine) return "";
       if (drag && drag.kind === "aim") return aim.ok ? "Let go to shoot · power " + Math.round(aim.power) : "Pull back, away from the board";
-      return who + (info.short ? "place, pull back" : "place the striker, pull back from it") + clock;
+      return who + (info.short ? "place, pull back" : "place the striker, pull back from it");
     }
     function header(g, nm) {
       var lcd = g.kind === "lcd", white = s.white;
@@ -275,8 +250,7 @@
           // where it goes: the aim line, longer for more power
           var S = Logic.SIDES[side], c = Logic.cosT(Math.round(aim.angle)) / 16384, sn = Logic.sinT(Math.round(aim.angle)) / 16384;
           var dx = c * S.ux + sn * S.vx, dy = c * S.uy + sn * S.vy;
-          if (flip()) { dx = -dx; dy = -dy; }
-          var len = 22 + aim.power * 0.9;
+            var len = 22 + aim.power * 0.9;
           g.line(sp[0] + dx * 9, sp[1] + dy * 9, sp[0] + dx * (9 + len), sp[1] + dy * (9 + len), lcd ? 0 : 7, 1.6, { dash: [3, 3], a: 0.9 });
           if (drag && drag.kind === "aim" && aim.ok) g.line(sp[0], sp[1], sp[0] - dx * aim.power * PULL_PX / 100, sp[1] - dy * aim.power * PULL_PX / 100, lcd ? 0 : 1, 2, { a: 0.7 });
           if (!info.reduce && Math.floor(s.updates / 30) % 2 === 0) g.ring(sp[0], sp[1], Logic.RS / U + 3, lcd ? 0 : 7, 1.2);
@@ -304,7 +278,7 @@
   root.ArcadeGames.register({
     id: "carrom",
     name: "Carrom",
-    modes: Logic.MODES.map(function (m) { return { id: m.id, label: m.label }; }),
+    modes: Logic.MODES.filter(function (m) { return m.id !== "phones"; }).map(function (m) { return { id: m.id, label: m.label }; }),
     defaultMode: "easy",
     controls: "touch",
     buttons: [
@@ -315,9 +289,7 @@
       { action: "fire", label: "Shoot", aria: "Hold for power, let go to shoot", wide: true },
     ],
     race: false,
-    lockstep: "turns",
-    liveModes: ["phones"],
-    help: "Pocket your own coins (the first player plays White) with the striker, then the red queen — and cover it by pocketing one of yours in the same or the next shot. Pocketing yours or the queen gives another shot. Pocketing the striker is a foul: a coin comes back. Drag along your baseline to place the striker, then pull back from it and let go (or ← → place, ↑ ↓ aim, hold Space for power). Play the computer, two or four (two teams) on one screen, or live from two phones (👥 Play with someone; 30 s a shot).",
+    help: "Pocket your own coins (the first player plays White) with the striker, then the red queen — and cover it by pocketing one of yours in the same or the next shot. Pocketing yours or the queen gives another shot. Pocketing the striker is a foul: a coin comes back. Drag along your baseline to place the striker, then pull back from it and let go (or ← → place, ↑ ↓ aim, hold Space for power). Play the computer, or two or four (two teams) on one screen.",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

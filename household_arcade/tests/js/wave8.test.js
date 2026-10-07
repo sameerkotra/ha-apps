@@ -5,15 +5,13 @@
 // rolls); Chess's perft counts, the rules through taps (castling, en passant, the promotion chooser), the engine at
 // every level (legal, the same move for the same position, mates found, Hard beating Easy) and its thinking off the
 // main thread; Carrom's whole-number physics (the same on two "phones" bit for bit, with Math.sin & co. made to throw),
-// its rules (fouls, the queen and its cover, the last coin, the board's end), the computer's levels, the turn-taking
-// lockstep and two phones through a fake relay (the server's order, the weak shot after 30 s, a late shot dropped,
-// a divergence caught by the checksums); saving; scores within the honest-score limits; every mode in all six looks.
+// its rules (fouls, the queen and its cover, the last coin, the board's end), the computer's levels; saving; scores
+// within the honest-score limits; every mode in all six looks.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { makeSandbox, loadLogic } = require("./helpers");
 const BK = loadLogic("boardkit.js");
 const Ludo = loadLogic("ludo-logic.js"), Snakes = loadLogic("snakes-logic.js"), Chess = loadLogic("chess-logic.js"), Carrom = loadLogic("carrom-logic.js");
-const Lockstep = loadLogic("lockstep.js");
 const LOOKS = ["modern", "lcd", "neon", "pixel", "paper", "contrast"];
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const LIMIT = 1000;                     // games.py: max_score 1,000 (and base 1,000) for all four
@@ -29,7 +27,6 @@ test("the four wave 8 games register after wave 7: modes, touch controls, turns 
     assert.deepEqual(plain(G(id).modes.map((m) => m.id)), ["cpu", "pass", "phones"]);
     assert.equal(G(id).turns, true);
     assert.deepEqual(plain(G(id).turnModes), ["phones"]);
-    assert.equal(G(id).lockstep, false);
   }
   assert.deepEqual(plain(G("ludo").options.map((o) => [o.id, o.default])), [["players", "4"], ["fill", "no"]]);
   assert.deepEqual(plain(G("snakes").options.map((o) => [o.id, o.default])), [["players", "2"], ["fill", "no"], ["board", "classic"], ["finish", "any"]]);
@@ -37,10 +34,7 @@ test("the four wave 8 games register after wave 7: modes, touch controls, turns 
   assert.deepEqual(plain(G("chess").options.map((o) => [o.id, o.default])), [["side", "white"]]);
   assert.equal(G("chess").turns, true);
   const c = G("carrom");
-  assert.deepEqual(plain(c.modes.map((m) => m.id)), ["easy", "medium", "hard", "two", "doubles", "phones"]);
-  assert.equal(c.lockstep, true);
-  assert.equal(c.liveTurns, true);
-  assert.deepEqual(plain(c.liveModes), ["phones"]);
+  assert.deepEqual(plain(c.modes.map((m) => m.id)), ["easy", "medium", "hard", "two", "doubles"]);
   assert.equal(c.turns, false);
   assert.deepEqual(plain(c.buttons.map((b) => b.action)), ["left", "right", "up", "down", "fire"]);
   for (const id of ["ludo", "snakes", "carrom", "chess"]) {
@@ -542,157 +536,8 @@ test("carrom: doubles go round the table, partners opposite; the computer's leve
   assert.throws(() => Carrom.restore(Object.assign(plain(Carrom.save(s)), { mode: "phones" })));
 });
 
-test("carrom: the turn-taking lockstep — one message a shot, played when it comes back, reports, resends, late shots", () => {
-  const sent = [];
-  const ls = Lockstep.createTurns({ seat: 1, send: (m) => sent.push(m) });
-  assert.equal(ls.turns, true);
-  assert.equal(ls.local("shot", [1, 900, 50]), true);
-  assert.equal(ls.local("shot", [2, 900, 50]), false, "one shot a number");
-  assert.deepEqual(plain(sent[0]), { t: "in", seq: 1, upto: 1, ev: [[1, "shot", [1, 900, 50]]] });
-  assert.equal(ls.nextShot(), null, "not played until the server sends it back");
-  ls.receive({ t: "in", seat: 2, seq: 0, upto: 1, ev: [[1, "shot", [500, 900, 12]]], timer: true, n: 2 });      // the timer won
-  ls.receive({ t: "ack", seq: 1, late: true });
-  assert.deepEqual(plain(ls.nextShot()), [2, "shot", [500, 900, 12]]);
-  assert.equal(ls.tick, 1);
-  ls.receive({ t: "in", seat: 2, seq: 0, upto: 1, ev: [[1, "shot", [500, 900, 12]]] });
-  assert.equal(ls.stats.dup, 1);
-  ls.report(1, 12345, 1);
-  assert.deepEqual(plain(sent[1]), { t: "in", seq: 2, upto: 1, ev: [], sum: [1, 12345], next: 1 });
-  ls.receive({ t: "in", seat: 1, seq: 3, upto: 3, ev: [[3, "shot", [9, 900, 9]]] });                      // early: held
-  assert.equal(ls.nextShot(), null);
-  ls.receive({ t: "in", seat: 1, seq: 2, upto: 2, ev: [[2, "shot", [8, 900, 8]]] });
-  assert.deepEqual(plain([ls.nextShot(), ls.nextShot()]), [[1, "shot", [8, 900, 8]], [1, "shot", [9, 900, 9]]]);
-  const before = sent.length;
-  ls.receive({ t: "welcome", inSeq: 1 });
-  assert.deepEqual(plain(sent.slice(before)), [plain(sent[1])], "what the server doesn't have goes again");
-});
-
-/** Two phones (two sandboxes with the real game files and the kit) playing Carrom live through a fake relay with the
-    server's turn-taking rules. opts: seed, shots (how many to play), lazy: {seat, k} (that phone doesn't shoot then:
-    the relay's timer plays the weak shot), diverge: {seat, at} (that phone's game is nudged after shot `at`). */
-function carromPhones(opts) {
-  const seed = opts.seed || 7, r = rng(seed * 31 + 7), first = seed % 2 + 1;
-  const relay = { shots: 0, mover: first, seq: { 1: 0, 2: 0 }, sums: { 1: {}, 2: {} }, mismatch: null, queue: [], n: { 1: 0, 2: 0 }, timerShots: 0, late: 0 };
-  const phones = {};
-  function toPhone(seat, msg) { relay.queue.push([seat, msg]); }
-  function shot(seat, k, v, timer) {
-    relay.shots = k; relay.mover = null;
-    for (const to of [1, 2]) toPhone(to, Object.assign({ t: "in", seat, seq: timer ? 0 : relay.seq[seat], upto: k, ev: [[k, "shot", v]] }, timer ? { timer: true } : {}));
-  }
-  function arrive(seat, msg) {
-    if (msg.t !== "in") return;
-    if (msg.seq <= relay.seq[seat]) { toPhone(seat, { t: "ack", seq: relay.seq[seat] }); return; }
-    assert.equal(msg.seq, relay.seq[seat] + 1, "in order");
-    relay.seq[seat] = msg.seq;
-    if (msg.ev.length) {
-      const k = msg.ev[0][0];
-      if (k <= relay.shots) { relay.late++; toPhone(seat, { t: "ack", seq: msg.seq, late: true }); return; }
-      assert.equal(k, relay.shots + 1, "the next shot");
-      assert.equal(relay.mover, seat, `seat ${seat} shoots only on its turn`);
-      shot(seat, k, msg.ev[0][2], false);
-      toPhone(seat, { t: "ack", seq: msg.seq });
-      return;
-    }
-    const [k, v] = msg.sum;
-    relay.sums[seat][k] = v;
-    const theirs = relay.sums[3 - seat][k];
-    if (theirs !== undefined && theirs !== v && !relay.mismatch) relay.mismatch = k;
-    if (k === relay.shots && relay.mover === null && msg.next) relay.mover = msg.next;
-    toPhone(seat, { t: "ack", seq: msg.seq });
-  }
-  for (const seat of [1, 2]) {
-    const sb = makeSandbox();
-    const P = phones[seat] = { sb, seat, ends: [] };
-    P.ls = sb.win.ArcadeLockstep.createTurns({ seat, send: (m) => arrive(seat, plain(m)) });
-    P.inst = sb.win.ArcadeGames.get("carrom").create(sb.canvas(390, 487), { mode: "phones", seed, look: seat === 1 ? "modern" : "pixel",
-      names: ["Kabir Rao", "Meera Rao"], live: { seat, lockstep: P.ls }, onEnd: (res) => P.ends.push(res) });
-    P.inst.start();
-  }
-  let idle = 0;
-  for (let frame = 0; frame < 200000; frame++) {
-    for (const seat of [1, 2]) {
-      const P = phones[seat], s = P.inst.logic;
-      if (!s.over && !s.moving && s.turn === seat - 1 && relay.mover === seat && P.aiming === undefined && P.ls.tick === s.shots) {
-        const k = s.shots + 1;
-        if (opts.lazy && opts.lazy.seat === seat && opts.lazy.k === k) {
-          if (!P.lazyAt) P.lazyAt = frame;
-          if (frame - P.lazyAt > 30) {                // the server's 30 s: its weak shot — and the player's own, a moment late
-            relay.timerShots++; shot(seat, k, [500, 900, 12], true); P.lazyAt = 0; opts.lazy.k = -1;
-            P.ls.local("shot", [100, 900, 90]);
-          }
-        } else {
-          // aim with the keys like a person: move the striker, turn, hold fire for power, let go
-          P.aiming = { left: Math.floor(r() * 25), turn: Math.floor(r() * 20), dir: r() < 0.5 ? "up" : "down", hold: 8 + Math.floor(r() * 60) };
-        }
-      }
-      if (P.aiming) {
-        const A = P.aiming;
-        if (A.left > 0) { P.inst.input(r() < 0.5 ? "left" : "right", true); P.sb.frames(1); P.inst.input("left", false); P.inst.input("right", false); A.left--; }
-        else if (A.turn > 0) { P.inst.input(A.dir, true); P.sb.frames(1); P.inst.input(A.dir, false); A.turn--; }
-        else if (A.hold === -1) { P.aiming = undefined; }
-        else if (!A.held) { P.inst.input("fire", true); A.held = true; }
-        else if (--A.hold <= 0) { P.inst.input("fire", false); A.hold = -1; }
-      }
-      P.sb.frames(1);
-    }
-    // the relay delivers in order, sometimes a frame late
-    const q = relay.queue; relay.queue = [];
-    for (const [seat, msg] of q) {
-      if (r() < 0.3) { relay.queue.push([seat, msg]); continue; }
-      phones[seat].ls.receive(msg);
-    }
-    if (opts.diverge && phones[opts.diverge.seat].inst.logic.shots === opts.diverge.at && !opts.diverge.done && !phones[opts.diverge.seat].inst.logic.moving) {
-      opts.diverge.done = true;
-      phones[opts.diverge.seat].inst.logic.pieces[5].x += 256;
-    }
-    if (relay.mismatch && opts.diverge) break;
-    if (phones[1].ends.length && phones[2].ends.length) break;
-    if (relay.shots >= (opts.shots || 1e9) && !phones[1].inst.logic.moving && !phones[2].inst.logic.moving) { if (++idle > 3) break; }
-  }
-  return { phones, relay };
-}
-
-test("carrom live: two phones through the relay stay identical shot for shot, to the end", () => {
-  const { phones, relay } = carromPhones({ seed: 7, shots: 14 });
-  assert.equal(relay.mismatch, null);
-  assert.ok(relay.shots >= 14);
-  const a = phones[1].inst.logic, b = phones[2].inst.logic;
-  assert.equal(Carrom.checksum(a), Carrom.checksum(b));
-  assert.deepEqual(plain(a.pieces), plain(b.pieces));
-  assert.deepEqual(relay.sums[1], relay.sums[2]);
-  assert.ok(Object.keys(relay.sums[1]).length >= 13, "a checksum after every shot");
-  // the second phone sees its own baseline at the bottom
-  assert.equal(phones[2].inst.liveStatus().seat, 2);
-});
-
-test("carrom live: a player out of time gets the weak shot on both phones; their late shot is dropped", () => {
-  const seed = 9, first = seed % 2 + 1;
-  const { phones, relay } = carromPhones({ seed, shots: 3, lazy: { seat: first, k: 1 } });
-  assert.equal(relay.timerShots, 1);
-  assert.equal(relay.late, 1, "the player's own shot came after the timer's and was dropped");
-  assert.equal(relay.mismatch, null);
-  assert.equal(phones[1].ls.stats.timer + phones[2].ls.stats.timer, 2, "both phones played the weak shot");
-  assert.equal(phones[first].ls.stats.late, 1);
-  const a = phones[1].inst.logic, b = phones[2].inst.logic;
-  assert.ok(a.shots >= 3);
-  assert.equal(Carrom.checksum(a), Carrom.checksum(b));
-});
-
-test("carrom live: a changed game is caught by the checksum after the next shot", () => {
-  const { relay } = carromPhones({ seed: 11, shots: 6, diverge: { seat: 2, at: 2 } });
-  assert.ok(relay.mismatch !== null && relay.mismatch >= 3, `caught at shot ${relay.mismatch}`);
-});
-
-test("carrom: every mode in every look, the live seat-2 view, touch aiming", () => {
+test("carrom: every mode in every look, touch aiming", () => {
   drawEveryLook("carrom", ["easy", "two", "doubles"]);
-  for (const look of LOOKS) {
-    const sb = makeSandbox();
-    const ls = sb.win.ArcadeLockstep.createTurns({ seat: 2, send: () => {} });
-    const inst = sb.win.ArcadeGames.get("carrom").create(sb.canvas(390, 487), { mode: "phones", look, seed: 4, live: { seat: 2, lockstep: ls } });
-    inst.start(); sb.frames(20);
-    assert.ok(!sb.counts.nonFinite, look);
-    inst.destroy();
-  }
   // a drag back from the striker shoots, the way the finger pulls
   const sb = makeSandbox();
   const inst = sb.win.ArcadeGames.get("carrom").create(sb.canvas(240, 300), { mode: "two", look: "modern", seed: 2 });
