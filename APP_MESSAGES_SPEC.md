@@ -3,7 +3,7 @@
 Status: **in use (2026-10-04).** The shared `app_bus.py` was built in the shared-code work (`SHARED_CODE_PLAN.md`,
 phase 4b). First users: **Household Chat 2.2.0** and **Household Todo 2.3.0** receive what Household Docs sends
 (§6.3 Send to chat, §6.4 Checklist → Todo list, §6.5 links between app pages); Household Docs 1.0.0 sends them.
-Arcade's duel planning (§6.2, §7) and the Household Assistant's tools (§6.6, draft) are still to come. Each use gets its own short spec section and ships as an update
+Arcade's duel planning (§6.2, §7) and the Household Assistant app itself (§6.6; every app's side of it is built) are still to come. Each use gets its own short spec section and ships as an update
 of the apps involved.
 
 ## 1. Purpose
@@ -266,22 +266,26 @@ Researched 2026-10-04 (Home Assistant core `components/hassio/addon_panel.py`, f
   not its title, its owner or even whether it exists — exactly as for a deleted one (Docs spec §17.15).
 - **No `panel` known:** the card says "Open Household Docs from the sidebar to see it" instead of a link.
 
-### 6.6 Household Assistant tools (apps → Household Assistant) — draft, not built
+### 6.6 Household Assistant tools (apps → Household Assistant) — the apps' side built, the assistant not yet
 
 A summary; `HOUSEHOLD_ASSISTANT_SPEC.md` §4–7 is the full spec. The assistant asks each app what it can answer and
 then asks it questions on a person's behalf, like tools on an MCP server.
 
 | Kind | Data | Answer |
 |---|---|---|
-| `assist.tools.list` | `{}` (to one app, or `*` at the assistant's start-up) | `ack {result: {tools: [{name, what, args, returns, acts, scope, examples}]}}` |
+| `assist.tools.list` | `{}` (to one app, or `*` at the assistant's start-up) | `ack {result: {tools: [{name, what, args, returns, acts, scope, examples}], on}}` |
 | `assist.tool.call` | `{tool, args, requested_by, question, confirm?, confirmed_at?}` | `ack {result: {question, tool, text, items[], links[], more}}` |
 
 - **Who sends, who answers.** Only Household Assistant sends these; an app answers if it lists `assist.tools.list`
   in its `hello` `can`. Tool names stay within the answering app's own area (`todo.tasks`, `docs.search`); an unknown
   tool is `nack not_found` with `detail: tool`, a bad argument `nack invalid` with the argument's name.
 - **`requested_by` is the actor**, as for every request kind (§6): the app answers exactly what that person could see
-  in it, and `nack no_access` when they aren't an enabled user there, or the app's admin hasn't turned on *Answer
-  the Household Assistant*, or the person turned off *Let the Household Assistant answer for me*.
+  in it. Refusals are `nack not_allowed` with `detail` `no_access` (not an enabled user there), `off` (the app's
+  admin hasn't turned on *Answer the Household Assistant*), `person_off` (the person turned off *Let the Household
+  Assistant answer for me*), `child` or `confirm`.
+- **Shared code**: `common/python/assist_tools.py` (the catalogue, checks, switches, fitting and links); each app's
+  `tools.py` holds its own tools. Answering today: Chat, Arcade, Family Tree, Calorie Tracker, Splitpot, Todo,
+  Docs, Receipt Price Intelligence, Finance Dashboard (HOUSEHOLD_ASSISTANT_SPEC §13).
 - **Short-lived, never retried.** Both kinds go with `expires_in` ≈ 2 minutes (`assist.tools.list`) or **20 seconds**
   (`assist.tool.call`); the outbox doesn't retry them, and a lost call is shown as "didn't answer".
 - **Actions only after a tap.** A tool marked `acts: true` (add a task, a shopping item, a note) is refused with

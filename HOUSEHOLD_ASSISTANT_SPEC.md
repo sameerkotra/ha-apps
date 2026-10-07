@@ -1,6 +1,8 @@
 # Household Assistant — spec
 
-Status: **draft (2026-10-06), nothing built.** A new app, `household_assistant`, that answers questions about the
+Status: **draft (2026-10-06); the apps' side is built (2026-10-07), the assistant app itself is not.** Every app in
+§4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
+the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
 list today?", "Is milk on the shopping list, and where is it cheapest?", "Find the note about the boiler"), using
 the AI model the household already chose, and links every answer back to the app that holds the facts. The apps
@@ -171,7 +173,7 @@ and category; the admin can turn Finance's tools off altogether (§8.2).
 
 | Kind | Data | Answer |
 |---|---|---|
-| `assist.tools.list` | `{}` (to one app, or `*` at start-up) | `ack {result: {tools: [{name, what, args, returns, acts, scope, examples}]}}` |
+| `assist.tools.list` | `{}` (to one app, or `*` at start-up) | `ack {result: {tools: [{name, what, args, returns, acts, scope, examples}], on}}` — `on` is the app's admin switch |
 
 - Sent to every app with `assist.tools.list` in its `hello` `can`, at the assistant's start-up and whenever an app
   says `hello` with a new version; also by *Refresh* on the admin page. Expires in 2 minutes, like the other list
@@ -191,8 +193,9 @@ and category; the admin can turn Finance's tools off altogether (§8.2).
 ```
 
 - `requested_by` is the actor, exactly as in `APP_MESSAGES_SPEC` §6: the app answers as if that person asked in
-  the app, from their own access, and `nack no_access` when they aren't an enabled user there (or the admin turned
-  the assistant off for them in that app, §8.2).
+  the app, from their own access. Refusals are `nack not_allowed` with a `detail` the assistant can word: `no_access`
+  (not an enabled user there), `off` (the app's admin switch, §7.2), `person_off` (the person's own switch), `child`
+  (a tool not open to children), `confirm` (an action without the tap, §6.4).
 - `question` is the assistant's question id, echoed in the answer's `result.question` and used only to group the
   app's log lines.
 - `expires_in` is **20 seconds**: an answer later than that is useless. The assistant never re-sends a tool call
@@ -386,3 +389,35 @@ Yardstick: Household Todo receiving two kinds from Docs is `app_messages.py` (�
 
 Order by effort, smallest first: Chat, Arcade, Family Tree, Calorie, Splitpot, Todo, Docs, Receipt, Finance, the
 assistant. The build plan (§10) makes the assistant useful after phase 2 with Todo and Docs alone.
+
+## 13. As built (2026-10-07): the apps' side
+
+The shared `common/python/assist_tools.py` holds what every app had in common: the catalogue (`Catalogue.tool`, the
+§4.1 rules checked when the app starts), the argument checks (§4.1 types; unknown arguments ignored, as everywhere on
+the bus), both switches, children, actions only with `confirm`, results fitted to 6 KB (items first, then text), links
+only to the app's own sidebar page and its own route patterns, and `sidebar_page()` — the page from the Supervisor's
+`addons/self/info`, else the host name (§6.3). Each app's `tools.py` is its catalogue and handlers.
+
+| App (version) | Tools | Default | Per-person switch | Links |
+|---|---|---|---|---|
+| Chat 2.6.0 | `chat.unread` | on | Settings → You | `/chat/<id>` |
+| Arcade 1.9.0 | `arcade.scores` (household; not for children), `arcade.mine` (new: a person's own bests) | on | Settings | `/leaderboard`, `/scores` |
+| Family Tree 2.3.0 | `tree.birthdays` (+ `everyone?`: the whole tree instead of close family) | on | Settings | the page |
+| Calorie Tracker 2.2.0 | `calorie.today` | on | — (no per-person settings) | the page |
+| Splitpot 2.4.0 | `splitpot.balances`, `splitpot.recent` (the group page's first 20) — only the person's own groups, by their Home Assistant login | **off** | My settings | the page |
+| Todo 2.4.0 | `todo.tasks`, `todo.lists`, `todo.schedule`, `todo.items.add` (acts; `list` by name) | on | Settings | the page |
+| Docs 1.2.0 | `docs.search`, `docs.read`, `docs.checklist`, `docs.note.create` (acts) | on | Settings → You | `/doc/<id>`, `/folder/<id>`, `/file/<id>` |
+| Receipt Price Intelligence 1.2.0 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | — | the page |
+| Finance Dashboard 1.2.0 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | — | the page |
+
+Differences from the draft above:
+
+- **Links**: only Chat, Arcade and Docs open a route after their sidebar page today; the others' links open the app
+  (no `target`), as §2.1 allows. Giving Todo, Splitpot and the rest sub-path routes is later work.
+- **Receipt Price Intelligence** keeps the bus's tables in their own `app_bus.db` (the §12 decision): a bus answer
+  holds a write lock for its length, which would block the tools' own SQLAlchemy writes to the app's file.
+- **Finance** keeps the bus's tables in its own database and hides them from Query and Reports.
+- **Recorder**: every answering app's DOCS shows the `recorder: exclude` snippet (§7.1); Docs, Todo and Finance say
+  it is a must once the assistant is used.
+- **Not yet**: the assistant app (§10 phase 1); Chat's *Ask the assistant* entry (§10 phase 5).
+
