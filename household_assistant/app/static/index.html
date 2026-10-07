@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Assistant</title>
-<script src="common/theme-boot.js?v=1.1.0"></script>
-<link rel="stylesheet" href="common/themes.css?v=1.1.0">
-<link rel="stylesheet" href="common/settings.css?v=1.1.0">
-<link rel="stylesheet" href="style.css?v=1.1.0">
+<script src="common/theme-boot.js?v=1.1.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.1.1">
+<link rel="stylesheet" href="common/settings.css?v=1.1.1">
+<link rel="stylesheet" href="style.css?v=1.1.1">
 </head>
 <body>
 <header class="topbar">
@@ -24,8 +24,6 @@
 <main id="askView" class="column">
   <div id="privacyNote" class="note" hidden></div>
   <div id="cantAsk" class="note warn" hidden></div>
-  <div id="conversation" class="conversation" aria-live="polite"></div>
-  <div id="suggestions" class="suggestions"></div>
   <form id="askForm" class="ask-box" autocomplete="off">
     <textarea id="askInput" rows="1" maxlength="1000" placeholder="Ask about the household…" aria-label="Your question"></textarea>
     <button type="button" id="micBtn" class="btn-ghost" title="Speak" aria-label="Speak" hidden>🎤</button>
@@ -35,6 +33,8 @@
     <button type="button" id="whatBtn" class="link-btn">What can I ask?</button>
     <button type="button" id="clearBtn" class="link-btn">Clear my questions</button>
   </div>
+  <div id="suggestions" class="suggestions"></div>
+  <div id="conversation" class="conversation" aria-live="polite"></div>
 </main>
 
 <main id="adminView" class="column wide" hidden>
@@ -62,11 +62,11 @@
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=1.1.0"></script>
-<script src="common/settings.js?v=1.1.0"></script>
-<script src="common/backnav.js?v=1.1.0"></script>
-<script src="common/whoami.js?v=1.1.0"></script>
-<script src="common/connected-apps.js?v=1.1.0"></script>
-<script src="app.js?v=1.1.0"></script>
+<script src="common/ui.js?v=1.1.1"></script>
+<script src="common/settings.js?v=1.1.1"></script>
+<script src="common/backnav.js?v=1.1.1"></script>
+<script src="common/whoami.js?v=1.1.1"></script>
+<script src="common/connected-apps.js?v=1.1.1"></script>
+<script src="app.js?v=1.1.1"></script>
 </body>
 </html>

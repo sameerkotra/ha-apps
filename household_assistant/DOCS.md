@@ -54,10 +54,10 @@ The app can't check this for you; until you tick it in **App settings → Privac
 
 ## Asking
 
-- Type a question and press **Enter** (Shift+Enter for a new line), or tap a suggestion. On a phone, 🎤 uses
+- Type a question in the box at the top and press **Enter** (Shift+Enter for a new line), or tap a suggestion. On a phone, 🎤 uses
   the browser's own speech recognition where it has one; nothing is recorded by the app.
 - While it works you see which apps it is asking, with **Stop**. 🔊 on an answer reads it aloud; a question asked with 🎤 is read aloud when it's answered (the browser's own voice). A question takes at most 5 minutes (Admin → App settings → Limits → *Longest a question may take*); if the model runs out of time after the apps answered, you see what the apps said instead; with Ollama, a model that hasn't been used for a few minutes is woken up first ("Waking up the model…"), which doesn't count.
-- The answer is short, with **Sources**: one link per app it used, straight to the right page in that app.
+- Answers appear under the box, the newest first (**Earlier questions** at the bottom). Each is short, with **Sources**: one link per app it used, straight to the right page in that app.
 - **What was shared** (under the answer) lists each question the assistant asked an app and exactly what the
   app returned.
 - **Changes need a tap.** When you ask for a change ("add milk to the shopping list"), the answer shows a button

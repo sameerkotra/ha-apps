@@ -88,12 +88,11 @@ a.chip:hover, button.chip:hover { border-color: var(--accent); }
 .action.done { color: var(--ok); }
 .action.failed { color: var(--danger); }
 
-.ask-box { position: sticky; bottom: 0; display: flex; gap: 8px; align-items: flex-end; padding: 10px 0;
-  background: var(--bg); }
+.ask-box { display: flex; gap: 8px; align-items: flex-end; padding: 4px 0 6px; }
 .ask-box textarea { flex: 1; resize: none; min-height: 42px; max-height: 160px; padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; }
 .ask-box textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; }
-.ask-foot { display: flex; justify-content: space-between; font-size: 0.85rem; }
+.ask-foot { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 14px; }
 
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 .tab { background: none; border: 0; padding: 8px 12px; color: var(--text-dim); cursor: pointer; font: inherit;

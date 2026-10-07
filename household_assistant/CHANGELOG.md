@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.1
+
+- **The ask box is at the top**, with the answers under it, the newest first; **Earlier questions** is at the
+  bottom.
+
 ## 1.1.0
 
 - **Answers read aloud**: 🔊 on an answer reads it out with the browser's own voice; a question asked with 🎤 is

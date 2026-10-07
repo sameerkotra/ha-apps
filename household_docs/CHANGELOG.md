@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.3
+
+- **The Household Assistant finds your sheets**: asked about "the budget sheet", it found nothing, because the
+  word "sheet" isn't in the sheet itself. Words that only say what kind of thing it is ("sheet", "note", "list",
+  "file") are now left out of the search, "sheets" on its own lists your sheets (uploaded spreadsheets too), and
+  when nothing has every word, what has any of them is given.
+
 ## 1.2.2
 
 - **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.

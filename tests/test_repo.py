@@ -25,10 +25,10 @@ RECEIPTS = "receipt_price_intelligence"
 RECEIPTS_VERSION = "1.2.2"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.2.2"
+DOCS_VERSION = "1.2.3"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.1.0"
+ASSISTANT_VERSION = "1.1.1"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION))
 # Paths that .gitignore keeps out of the repository.

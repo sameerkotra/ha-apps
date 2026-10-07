@@ -1,7 +1,10 @@
 """What Docs answers the Household Assistant (HOUSEHOLD_ASSISTANT_SPEC.md §4.2; the shared app/common/assist_tools.py).
 
 - `docs.search`: the Search page's own search (search/engine.py, with its access check), first 10 results with the
-  search page's snippet;
+  search page's snippet. A model writes "budget sheet" or "the boiler note", and the search box wants every word:
+  words that only name a type ("sheet", "note", "list", "file", …) and filler words are left out; with nothing
+  else left, the type's items are listed (newest first); when no item has every word, items with any of them
+  are given, those with the most words first;
 - `docs.read`: up to 4 KB of a note's or checklist's text, or a sheet's cells as "Tab A1: value" lines, from `offset`
   on (`more` when there is more) — read-only: opening through the assistant doesn't count as opening it here;
 - `docs.checklist`: a checklist's items, ticked or open;
@@ -12,6 +15,8 @@ seen"); Kids' space rules hold (no sheets for children, no making notes). Answer
 Household Assistant* is on and the person hasn't turned off *Let the Household Assistant answer for me* (Settings →
 You). Links open the item in Docs (`/doc/<id>`, `/folder/<id>`, `/file/<id>` after the sidebar page, §6.5).
 """
+import re
+
 from fastapi import HTTPException
 
 from . import app_messages, db, documents, docops, kids, links, notify, pins, settings, sharing
@@ -26,6 +31,28 @@ READ_CHARS = 4000
 SEARCH_RESULTS = 10
 ID = r"[A-Za-z0-9_-]{1,64}"
 KINDS = ("note", "markdown", "checklist", "sheet", "folder", "pdf", "image", "spreadsheet", "document")
+# Words that only say what kind of thing is wanted, and the kinds they mean when nothing else is asked for.
+TYPE_WORDS = {"sheet": ("sheet", "spreadsheet"), "spreadsheet": ("sheet", "spreadsheet"), "note": ("note", "markdown"),
+              "checklist": ("checklist",), "list": ("checklist",), "folder": ("folder",), "pdf": ("pdf",),
+              "doc": (), "document": (), "file": ()}
+# A kind the model chose, widened to what a person means by it (a "sheet" may be an uploaded .xlsx).
+KIND_MEANS = {"sheet": ("sheet", "spreadsheet"), "spreadsheet": ("sheet", "spreadsheet"), "note": ("note", "markdown")}
+FILLER = {"a", "an", "the", "my", "our", "me", "about", "for", "of", "in", "on", "with", "called", "named", "titled",
+          "find", "show", "open", "read", "any", "all", "some", "household", "docs"}
+_WORD = re.compile(r"[^\s,;:!?\"“”()]+")
+
+
+def _search_words(query: str) -> tuple[list[str], tuple | None]:
+    """The words worth searching for, and the kinds the type words named (None: no type word)."""
+    words, kinds_named = [], None
+    for w in _WORD.findall(query):
+        lw = w.lower().strip(".'’")
+        base = lw[:-1] if lw.endswith("s") and lw[:-1] in TYPE_WORDS else lw
+        if base in TYPE_WORDS:
+            kinds_named = (kinds_named or ()) + TYPE_WORDS[base]
+        elif lw and lw not in FILLER:
+            words.append(w)
+    return words, kinds_named
 
 
 def _busy() -> None:
@@ -81,21 +108,26 @@ def _text(ctx, node) -> str:
 
 @tools.tool("docs.search",
             "Finds documents, checklists, sheets, folders and files by name or by the words in them, among what the "
-            "person can open. `kind` narrows it.",
+            "person can open. `kind` narrows it; a query of just a type (\"sheets\", \"notes\") lists those, newest "
+            "first.",
             args={"query": Arg("string", "words to look for", required=True),
                   "kind": Arg("enum", "only this type", values=KINDS)},
             returns="up to 10 matches: id, name, type, folder, a snippet", examples=("Find the note about the boiler",),
             children=True)
 def search(ctx):
-    raw = {"q": ctx.args["query"], "match": "any", "scope": ["all"]}
-    if "kind" in ctx.args:
-        raw["type"] = [ctx.args["kind"]]
-    try:
-        res = engine.run(ctx.conn, ctx.user, engine.options(raw), limit=SEARCH_RESULTS)
-        out = engine.describe(ctx.conn, ctx.user, res, 1)
-    except HTTPException:
-        raise bus.Nack("invalid", "query") from None
-    rows = [r for r in out["results"] if not r.get("inTrash")]
+    words, kinds_named = _search_words(ctx.args["query"])
+    types = KIND_MEANS.get(ctx.args["kind"], (ctx.args["kind"],)) if "kind" in ctx.args else None
+    if not words:                                       # "sheets", "my notes": that kind's items, newest first
+        types = types or (tuple(dict.fromkeys(kinds_named)) if kinds_named else None)
+    rows, more = _run_search(ctx, " ".join(words) if words else "*", types, sort_new=not words)
+    if not rows and len(words) > 1:                     # no item has every word: any of them, most words first
+        hits: dict[str, tuple[int, int, dict]] = {}
+        for w in words:
+            for i, r in enumerate(_run_search(ctx, w, types)[0]):
+                n, first, _ = hits.get(r["id"], (0, i, r))
+                hits[r["id"]] = (n + 1, min(first, i), r)
+        ranked = sorted(hits.values(), key=lambda h: (-h[0], h[1]))
+        rows, more = [h[2] for h in ranked[:SEARCH_RESULTS]], len(ranked) > SEARCH_RESULTS
     if not rows:
         return ctx.result(f"Nothing in Household Docs matches “{ctx.args['query']}”.",
                           links=[ctx.link("Household Docs")])
@@ -105,7 +137,22 @@ def search(ctx):
             + "; ".join(f"{r['name']} ({r['typeLabel'].lower()}, in {r['location']})" for r in rows[:5])
             + ("…" if len(rows) > 5 else "") + ".")
     found = [ctx.link(r["name"], _target(r)) for r in rows[:assist_tools.MAX_LINKS]]
-    return ctx.result(text, items=items, links=found, more=out["more"] or len(out["results"]) >= SEARCH_RESULTS)
+    return ctx.result(text, items=items, links=found, more=more)
+
+
+def _run_search(ctx, q: str, types, sort_new: bool = False) -> tuple[list[dict], bool]:
+    """The Search page's search as the person: (results not in the trash, whether there are more)."""
+    raw = {"q": q, "match": "any", "scope": ["all"]}
+    if types:
+        raw["type"] = list(types)
+    if sort_new:
+        raw["sort"] = "modified"
+    try:
+        res = engine.run(ctx.conn, ctx.user, engine.options(raw), limit=SEARCH_RESULTS)
+        out = engine.describe(ctx.conn, ctx.user, res, 1)
+    except HTTPException:
+        raise bus.Nack("invalid", "query") from None
+    return [r for r in out["results"] if not r.get("inTrash")], out["more"] or len(out["results"]) >= SEARCH_RESULTS
 
 
 @tools.tool("docs.read",
