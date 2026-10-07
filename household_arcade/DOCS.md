@@ -821,6 +821,8 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
 - **Look**, **Sound**, **On-screen controls** (right- or left-handed),
   **Reduce motion** and **Receive notifications** (new household records,
   when an admin has switched them on).
+- **Let the Household Assistant answer for me** (on) — shown while an admin
+  lets the Household Assistant ask Arcade.
 - **Your limits** — for a child: today's time left, daily minutes, quiet hours
   and games, read-only.
 - **How the app sees you** — the user name and id Home Assistant sent, and
@@ -829,6 +831,33 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
   light or dark setting) — in the sidebar on a computer, on Settings on a phone.
   If you had picked Ink before, you now get Midnight. The game looks below are
   separate and unchanged.
+
+## The Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it about
+Arcade — "Who has the high score in Snake?", "What's my best in Falling Blocks?". Arcade
+tells it:
+
+- the **leaderboard**: one game's top 10 (all time or this month), or who holds
+  the record in each game — only while the leaderboard is on, and never to a
+  child;
+- **your own scores**: your best in each game and how long you played this
+  week (children can ask for their own).
+
+Each answer links back to the Leaderboard or My scores. An admin can turn this
+off for everyone (**App settings → Household Assistant**), and you can turn it
+off for yourself on **Settings → Let the Household Assistant answer for me**.
+
+The answers travel through Home Assistant's event bus, which Home Assistant's
+recorder keeps in its history unless told not to. Add this to Home Assistant's
+`configuration.yaml` and restart Home Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
+```
 
 ## Children and limits
 
@@ -873,7 +902,7 @@ notification when a child has 5 minutes left (once a day per child). Its
 ### App settings
 
 The settings are in cards (Games, Looks and scores, Children, Home Assistant,
-AI levels), with a line under each setting saying what it does, its range and
+Household Assistant, AI levels), with a line under each setting saying what it does, its range and
 its default. Changes are kept until you select **Save** at the bottom (it shows
 how many unsaved changes there are); **Discard changes** puts everything back.
 A number out of range is flagged at the field before anything is saved.
@@ -892,6 +921,7 @@ A number out of range is flagged at the field before anything is saved.
 | Invites by phone notification | on | A phone notification (with Join and Not now) when someone invites you to play together. The invite also shows in the app. |
 | Show daily challenges | off | Today's challenges on Home, a try on each game's start screen and a Daily tab on the leaderboard. |
 | Sudoku hints per puzzle | 3 | 0 to 20; Practice has no limit. |
+| Answer the Household Assistant | on | Lets the Household Assistant app tell people the leaderboard and their own bests (see *The Household Assistant*). |
 | Home Assistant sensors | off | See below. |
 | AI levels | off | More levels made by an AI model. See *AI levels* below. |
 

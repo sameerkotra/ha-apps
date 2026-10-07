@@ -580,7 +580,7 @@ class TestManyPlayers(Turns):
 class TestMigration(ApiBase):
     def test_tables(self):
         with db.get_conn() as conn:
-            self.assertEqual(db.schema_version(conn), 8)
+            self.assertEqual(db.schema_version(conn), db.LATEST)
             cols = {r[1] for r in conn.execute("PRAGMA table_info(match_moves)")}
             self.assertEqual(cols, {"match_id", "number", "seat", "move", "dice", "at"})
             m = {r[1] for r in conn.execute("PRAGMA table_info(matches)")}

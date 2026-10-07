@@ -21,7 +21,8 @@ from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
+APP_TITLE = "Household Arcade"
 
 _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 
@@ -49,6 +50,7 @@ BACKGROUND_LOOPS = os.environ.get("BACKGROUND_LOOPS", "1").strip().lower() not i
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
+SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")   # the app bus
 
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 

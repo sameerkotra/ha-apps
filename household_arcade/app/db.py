@@ -331,6 +331,12 @@ ALTER TABLE match_players ADD COLUMN notify_due INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE match_players ADD COLUMN left_at TEXT
 """
 
+# The Household Assistant (app/tools.py): each person's "Let the Household Assistant answer for me". The app
+# bus's own tables (bus_outbox, bus_seen, bus_apps) are made by app_bus when it starts.
+_M9_ASSISTANT = """
+ALTER TABLE users ADD COLUMN assistant_ok INTEGER NOT NULL DEFAULT 1
+"""
+
 # (number, description, SQL). Append only.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "people, play sessions, scores, app settings", _M1_CORE),
@@ -341,6 +347,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (6, "playing together: matches", _M6_TOGETHER),
     (7, "daily challenge, per-person game choices", _M7_DAILY),
     (8, "turn-by-turn matches: moves, state, notifications", _M8_TURNS),
+    (9, "the Household Assistant: each person's switch", _M9_ASSISTANT),
 ]
 LATEST = MIGRATIONS[-1][0]
 

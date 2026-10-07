@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import auth, config, db, ha_client, ha_sensors, housekeeping, panel
+from . import app_messages, auth, config, db, ha_client, ha_sensors, housekeeping, panel
 from .common import auth_core, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, levels, me, play, prefs, together, users
@@ -38,6 +38,10 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(ha_notify.check_targets_blocking)
     except Exception:
         logger.exception("notify service check failed")
+    try:
+        await run_in_threadpool(app_messages.start)     # the household apps bus (the Household Assistant asks)
+    except Exception:
+        logger.exception("starting the app bus failed")
     jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
     if config.BACKGROUND_LOOPS:
         jobs.add("ha_sensors", ha_sensors.loop)
@@ -50,6 +54,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await jobs.stop()
+        await run_in_threadpool(app_messages.stop)
 
 
 app = FastAPI(title="Household Arcade", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)

@@ -9,7 +9,7 @@ from .me import game_prefs, prefs_json
 router = APIRouter(prefix="/api", tags=["prefs"])
 
 _COLUMNS = {"look": "look", "sound": "sound", "handedness": "handedness", "reduceMotion": "reduce_motion",
-            "receiveNotifications": "receive_notifications"}
+            "receiveNotifications": "receive_notifications", "assistantOk": "assistant_ok"}
 
 import json
 import re

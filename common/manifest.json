@@ -160,7 +160,10 @@
           "web_security.py",
           "backup_core.py",
           "sensor_publisher.py",
-          "ai_client.py"
+          "ai_client.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -187,7 +190,10 @@
           "test_web_security.py",
           "test_backup_core.py",
           "test_sensor_publisher.py",
-          "test_ai_client.py"
+          "test_ai_client.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
