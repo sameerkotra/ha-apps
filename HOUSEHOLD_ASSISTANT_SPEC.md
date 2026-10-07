@@ -461,7 +461,8 @@ Claude (§1), and the built-in model is off until an admin turns it on and downl
   the natural owner of one, and one model server for the whole household saves RAM (two Ollamas would load two
   copies of a model).
 - **Not** a general model server for the network: it is reachable only by other apps on the Supervisor's internal
-  network, and only with a key (§14.4). Opening it to the LAN is an explicit admin choice (§14.4).
+  network by default, with no access key needed there (§14.4). Opening it to the LAN, and requiring a key, are
+  explicit admin choices (§14.4).
 - **Not** fast. CPU-only means seconds for a short text answer from a 3B model and from about 30 seconds to several
   minutes for a receipt photo or a statement page from a vision model (§14.6). The admin page says so before the
   first download.
@@ -489,9 +490,10 @@ Claude (§1), and the built-in model is off until an admin turns it on and downl
   stopped"), not a block.
 - **Use it here**: the assistant's own AI block (§8.2) gets a fourth provider choice, *Built-in model*, with a
   model picker of the downloaded text models. It talks to the server on `127.0.0.1` with no key.
-- **Use it in other apps**: one row per key (§14.4) — *app label, created, last used, requests and tokens this
-  month, Revoke* — and **New key**, which shows once the exact values to paste into that app's *Admin → App
-  settings → AI* (§14.5).
+- **Use it in other apps**: the exact values to paste into another app's *Admin → App settings → AI* (§14.5),
+  and one row per app that has used it — *host name (or address), last used, requests and tokens this month*.
+- **Require an access key** (off): when on, the rows become keys — *label, created, last used, usage, Revoke* — and
+  **New key** shows a key once (§14.4).
 - **When models stay loaded** (§14.6): *Keep loaded* model and its daytime hours, *Unload after* for day and
   night, *Load at the start of the day*, *Models loaded at once*.
 - **Limits** (§14.6): threads, context length, queue length.
@@ -535,31 +537,41 @@ on port 11434:
   `POST /api/embed`, and the OpenAI-compatible `GET /v1/models`, `POST /v1/chat/completions`. Everything else
   (`/api/pull`, `/api/delete`, `/api/create`, `/api/copy`, `/api/push`, blobs) is 404 — model management is only
   on the admin page, behind ingress and the admin check.
-- **Needs a key**: `Authorization: Bearer <key>`, 32 random bytes (base64url), shown once, stored as a SHA-256 hash
-  with its label. No key or a wrong one → 401 (and 10 failures a minute from one address → 429 for a minute).
-  The shared `ai_client` already sends `Authorization: Bearer` for both the Ollama and the OpenAI-compatible
-  providers when an access key is set (`auth_headers`), so the other apps need no change.
+- **No key by default.** The model is on the Supervisor's internal network only, with no outside access, so
+  *Require an access key* is **off**: any app there may use it, and the other apps' *Access key* field stays
+  empty. The allow-list above still holds without a key, so no caller can download, delete or replace models.
+  Callers are told apart by their address on the internal network (each app container has its own); the gateway
+  shows the app's host name for it where the Supervisor's DNS gives one back (checked when building), else the
+  address. Usage, the per-caller queue limit (§14.6) and the admin page's rows work per caller the same way.
+- **Require an access key** (setting, off): then every request needs `Authorization: Bearer <key>` — 32 random
+  bytes (base64url), shown once, stored as a SHA-256 hash with its label; no key or a wrong one → 401 (10 failures
+  a minute from one address → 429 for a minute), and callers are told apart by key. The shared `ai_client`
+  already sends `Authorization: Bearer` for both the Ollama and the OpenAI-compatible providers when an access key
+  is set (`auth_headers`), so the other apps need no change either way. Turn it on if a community app you don't
+  trust is installed, or when the model is shown on the network.
 - **Models**: a request for a model that isn't downloaded is 404 with "Download <model> in the Household
-  Assistant first" (no pull on demand). An admin may limit a key to some models.
+  Assistant first" (no pull on demand). With keys on, an admin may limit a key to some models.
 - **Where it listens**: the Supervisor's internal network, where every app reaches another by its host name — the
   full slug with `_` turned into `-` (APP_MESSAGES_SPEC §6.5), e.g. `http://a1b2c3d4-household-assistant:11434`.
   `config.yaml` has **no** published port by default. *Show on my network* is the app's `ports:` entry
   `11434/tcp: null`, which the admin sets on the app's **Network** tab in Home Assistant (the page explains how);
-  then other machines can use it with a key too, and the admin page warns that the key is all that protects it and
-  that plain HTTP on the LAN shows the key to anyone listening.
-- **Other apps on the internal network** (community apps too) can reach the port but get nothing without a key.
-- **Logging**: per key, per request: time, model, path, input/output tokens, seconds, queue wait; never prompts,
-  images or answers. Kept 30 days, shown on the admin page as usage per key per day.
+  then other machines on the LAN can use it too. Turning *Show on my network* on with *Require an access key* off
+  shows a standing warning ("Anyone on your network can use the model and its CPU"); the page offers to turn keys
+  on, and says plain HTTP on the LAN shows a key to anyone listening.
+- **Other apps on the internal network** (community apps too) can use the model without a key while keys are off —
+  the accepted trade-off of the default; they still can't manage models, and the queue limits them like any app.
+- **Logging**: per caller (key, or host name/address), per request: time, model, path, input/output tokens, seconds, queue wait; never prompts,
+  images or answers. Kept 30 days, shown on the admin page as usage per caller per day.
 
 ### 14.5 Pointing another app at it
 
-The values *New key* shows, for the app's existing *Admin → App settings → AI* block:
+The values the admin page shows, for the app's existing *Admin → App settings → AI* block:
 
 | Field | Value |
 |---|---|
 | Provider | **Ollama** (or *OpenAI-compatible* — then the address ends in `/v1`) |
 | Address | `http://<assistant host name>:11434` (the page fills in the real host name) |
-| Access key | the new key |
+| Access key | empty (or the new key, when *Require an access key* is on) |
 | Model / Vision model | one of the downloaded models (*Test connection* lists them) |
 
 - **Which apps**: Calorie Tracker, Household Docs, Household Arcade (text), Receipt Price Intelligence and Finance
@@ -569,10 +581,11 @@ The values *New key* shows, for the app's existing *Admin → App settings → A
   app may send `ai.server` `{}` → `ack {result: {address, models: [{name, kind}], openai_path: "/v1"}}` — the
   address and model names only, **never a key** (the bus is readable by HA admins and every app with
   `homeassistant_api`, APP_MESSAGES_SPEC §8). An app's AI block can then show "Household Assistant has a built-in
-  model — Use it", filling Provider, Address and the model list; the admin still pastes the key. That is a change
+  model — Use it", filling Provider, Address and the model list — all that's needed while keys are off (with keys
+  on, the admin still pastes the key). That is a change
   to the shared `settings.js` / each app's AI block and is not needed for the first release.
 - **Turning it off** stops the server; other apps then get "unreachable" from their own *Test connection* and AI
-  buttons, as with any stopped Ollama. Revoking a key makes that app's requests 401 at once.
+  buttons, as with any stopped Ollama. With keys on, revoking a key makes that app's requests 401 at once.
 
 ### 14.6 Sharing one CPU fairly
 
@@ -583,7 +596,7 @@ So the gateway, not Ollama, queues:
   is never interrupted.
 - **Queue length** (default 4 waiting, setting): beyond it, and for any request that has waited 120 s, the gateway
   answers **503 with `Retry-After: 30`**, which the shared `ai_client` already retries (its `RETRY_STATUSES`). Each
-  key may have at most 2 requests waiting, so one app reading a pile of receipts can't starve the others.
+  caller may have at most 2 requests waiting, so one app reading a pile of receipts can't starve the others.
 - **Model switches**: by default one model is loaded at a time (*Models loaded at once* 1); a request for another
   model waits for the running one, then loads (a few seconds from an SSD, up to a minute from an SD card). The page
   suggests one text model for everything text and one vision model, and shows when switching is frequent ("Loaded
@@ -634,17 +647,19 @@ RAM. So an admin sets a daytime window when the household asks most, and a short
   loaded), `builtin_night_unload_min` (10; 0 = right after each answer), `builtin_preload` (true),
   `builtin_max_loaded` (1; 1–2), `builtin_context` (8192; 2048–32768), `builtin_queue` (4),
   `builtin_question_timeout` (180). The assistant's `ai_provider` gains `builtin`.
-- Tables in `/data/assistant.db`:
+- `builtin_require_key` (false).
+- Tables in `/data/assistant.db` (`model_keys` is used only with keys on; `caller` is a key id, or the host name or
+  address when keys are off):
 
 ```sql
 CREATE TABLE model_keys (id TEXT PRIMARY KEY, label TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
   models TEXT, created_at TEXT NOT NULL, created_by TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT);
-CREATE TABLE model_usage (day TEXT NOT NULL, key_id TEXT NOT NULL, model TEXT NOT NULL, requests INTEGER NOT NULL,
+CREATE TABLE model_usage (day TEXT NOT NULL, caller TEXT NOT NULL, model TEXT NOT NULL, requests INTEGER NOT NULL,
   input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, seconds REAL NOT NULL, waited REAL NOT NULL,
-  PRIMARY KEY (day, key_id, model));
+  PRIMARY KEY (day, caller, model));
 ```
 
-  `key_id` `builtin` is the assistant itself. Keys are hashes, so backups carry no usable key; restoring a backup
+  `caller` `builtin` is the assistant itself. Keys are hashes, so backups carry no usable key; restoring a backup
   keeps the keys working (same hashes).
 - API (ingress, admin): `GET /api/admin/model` (state, machine, models, keys), `PUT /api/admin/model` (on/off and
   limits), `POST /api/admin/model/pull` `{name}` → progress via `GET /api/admin/model/pull/{id}`, `DELETE
@@ -658,9 +673,10 @@ CREATE TABLE model_usage (day TEXT NOT NULL, key_id TEXT NOT NULL, model TEXT NO
    allowance for this one app's multi-stage image. Measure the image size (target under 600 MB) and a cold start.
 2. The child process (start, watch, restart, stop), the admin page (machine, models, pull/delete), *Built-in model*
    as the assistant's provider. Tests with a fake `ollama serve` (a tiny HTTP server answering the few routes).
-3. The gateway on 11434: allow-list, keys, queue with priority and per-key limits, usage. Tests: a key-less and a
-   revoked key are refused, `/api/pull` is 404, a third waiting request from one key is 503, the assistant jumps
-   the queue. Then check each AI app's *Test connection* and one real request against it (Ollama provider and
+3. The gateway on 11434: allow-list, callers by address (and the host-name lookup), the optional keys, queue with
+   priority and per-caller limits, usage. Tests: without keys any internal caller is served and `/api/pull` is
+   still 404; with keys a key-less and a revoked key are refused; a third waiting request from one caller is 503;
+   the assistant jumps the queue. Then check each AI app's *Test connection* and one real request against it (Ollama provider and
    `/v1`), on amd64 and on a Raspberry Pi 5.
 4. Later: `ai.server` discovery (§14.5) and a *Use the Household Assistant's model* button in the shared AI block;
    embeddings for Docs' search through `/api/embed`.
@@ -670,9 +686,13 @@ CREATE TABLE model_usage (day TEXT NOT NULL, key_id TEXT NOT NULL, model TEXT NO
 - **Inside the assistant, not a separate app**: one install, one model in RAM for everyone, and the assistant —
   the one app that always needs a model — works out of the box on a machine with nothing else. The cost is a bigger
   Debian-based image for this app only; a household that already has an Ollama elsewhere leaves it off.
-- **A gateway with keys, not raw Ollama on the internal network**: any community app can reach the internal
-  network, and raw Ollama would let it pull or delete models and use the CPU without limit.
-- **Keys pasted, not sent over the bus**: the bus is readable by HA admins and every app with
+- **A gateway, not raw Ollama on the internal network**: any community app can reach the internal network, and raw
+  Ollama would let it pull or delete models and use the CPU without limit. The gateway's allow-list and queue
+  stop that with or without keys.
+- **No key by default** (decided 2026-10-07): the model has no outside access, and an internal network shared only
+  with the household's own apps doesn't need one; pasting keys into every app was friction for no real gain.
+  Keys stay as a switch for a household that installs untrusted apps or shows the model on its LAN.
+- **Keys (when on) pasted, not sent over the bus**: the bus is readable by HA admins and every app with
   `homeassistant_api`; a key there is a key for all of them.
 - **Off by default, no automatic downloads**: a model is gigabytes of disk and RAM on the machine that runs the
   home; the admin chooses with the numbers in front of them.
