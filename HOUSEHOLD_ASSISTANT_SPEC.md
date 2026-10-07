@@ -492,7 +492,9 @@ Claude (§1), and the built-in model is off until an admin turns it on and downl
 - **Use it in other apps**: one row per key (§14.4) — *app label, created, last used, requests and tokens this
   month, Revoke* — and **New key**, which shows once the exact values to paste into that app's *Admin → App
   settings → AI* (§14.5).
-- **Limits** (§14.6): threads, *Unload a model after* idle minutes, context length, queue length.
+- **When models stay loaded** (§14.6): *Keep loaded* model and its daytime hours, *Unload after* for day and
+  night, *Load at the start of the day*, *Models loaded at once*.
+- **Limits** (§14.6): threads, context length, queue length.
 - **Show on my network** (off): the LAN switch (§14.4).
 
 ### 14.3 How it runs
@@ -509,8 +511,9 @@ Claude (§1), and the built-in model is off until an admin turns it on and downl
   there and the app uses an outside provider.)
 - **A child process**, started by the app's lifespan when *Built-in model* is on: `ollama serve` under `nice -n 10`
   (Home Assistant itself stays responsive while a model works), listening on **`127.0.0.1:11435` only**, with
-  `OLLAMA_MODELS=/data/models`, `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_KEEP_ALIVE` from
-  *Unload a model after*, `OLLAMA_CONTEXT_LENGTH` from *Context length*, `OLLAMA_NO_CLOUD`/telemetry off where the
+  `OLLAMA_MODELS=/data/models`, `OLLAMA_MAX_LOADED_MODELS` from *Models loaded at once*, `OLLAMA_NUM_PARALLEL=1`,
+  `OLLAMA_KEEP_ALIVE` from the night *Unload after* (the gateway sets each request's own, §14.6),
+  `OLLAMA_CONTEXT_LENGTH` from *Context length*, `OLLAMA_NO_CLOUD`/telemetry off where the
   version has it. The app watches it (`/api/version` every 30 s), restarts it on exit with 5 s → 5 min back-off,
   shows the last 50 lines of its log on the admin page, and stops it with SIGTERM on shutdown (10 s, then SIGKILL).
 - **The gateway.** The app itself serves the model to other apps on a **second port, 11434**, through a small
@@ -581,12 +584,41 @@ So the gateway, not Ollama, queues:
 - **Queue length** (default 4 waiting, setting): beyond it, and for any request that has waited 120 s, the gateway
   answers **503 with `Retry-After: 30`**, which the shared `ai_client` already retries (its `RETRY_STATUSES`). Each
   key may have at most 2 requests waiting, so one app reading a pile of receipts can't starve the others.
-- **Model switches**: only one model is loaded (`OLLAMA_MAX_LOADED_MODELS=1`); a request for another model waits
-  for the running one, then loads (a few seconds to a minute from disk). The page suggests one text model for
-  everything text and one vision model, and shows when switching is frequent ("Loaded 40 times today — consider
-  using one model in more apps").
-- **Threads** (default: all cores but one, at least 1) and *Unload a model after* (default 5 minutes; 0 = keep
-  loaded) are settings. Unloading frees the RAM for Home Assistant between uses.
+- **Model switches**: by default one model is loaded at a time (*Models loaded at once* 1); a request for another
+  model waits for the running one, then loads (a few seconds from an SSD, up to a minute from an SD card). The page
+  suggests one text model for everything text and one vision model, and shows when switching is frequent ("Loaded
+  40 times today — consider using one model in more apps"). *Models loaded at once* may be 2 when the RAM allows
+  both (the page adds up the two models' RAM and warns when that leaves Home Assistant under 4 GB).
+- **Threads** (default: all cores but one, at least 1) is a setting.
+
+**When models stay loaded (day and night).** Loading costs seconds to a minute; keeping a model loaded costs its
+RAM. So an admin sets a daytime window when the household asks most, and a shorter rule for the rest:
+
+| Setting | Default | What it does |
+|---|---|---|
+| *Keep loaded* | the assistant's model | The model that stays in memory during the daytime window (*None*: no model is kept). |
+| *Daytime* | **05:00–22:00** | In Home Assistant's time zone (`ha_time`), so it follows daylight saving. A window that passes midnight (22:00–06:00) is allowed. |
+| *During the day, unload after* | **Never** (the *Keep loaded* model); 10 min (any other model) | How long after its last use a model is unloaded in the daytime. |
+| *At night, unload after* | **10 min** | Every model, the kept one included, unloads this long after its last use outside the window (0 = right after each answer). |
+| *Load at the start of the day* | on | At the window's start, the *Keep loaded* model is loaded before anyone asks, so the first question of the morning doesn't wait for it. |
+
+- **How it is done.** Ollama keeps a model loaded for the `keep_alive` of the last request that used it. The gateway
+  sets `keep_alive` on every native request it passes on (`-1` for the kept model in the day, otherwise the
+  minutes above); for `/v1` requests, which don't carry it, the gateway sends Ollama an empty
+  `POST /api/generate {model, keep_alive}` after the answer, which only resets the timer. At the window's start
+  (with *Load at the start of the day*) the same empty request with `keep_alive: -1` loads the kept model; at the
+  window's end the gateway sends it again with the night value, so a model idle for longer is unloaded at once and
+  one in use unloads that long after its last request. The clock is checked every minute and at start-up, so a
+  restart mid-day loads the kept model again, and a restart at night loads nothing.
+- **Other models** never displace the kept one when *Models loaded at once* is 2: a vision request loads the vision
+  model next to it and the vision model unloads by its own rule. With 1, the vision request unloads the kept model,
+  and the gateway loads it back after the vision model's last request, in the daytime only.
+- **The admin page shows** what is loaded now, since when, until when ("`qwen2.5:3b` — kept until 22:00, then
+  unloads 10 min after its last use"), and **Unload now** (until the next request, or the next day's start).
+- **Example: 16 GB RAM, SSD.** *Keep loaded* `qwen2.5:3b` (~3 GB) 05:00–22:00, *Models loaded at once* 2,
+  `qwen2.5vl:7b` (~7 GB) for receipts and statements unloading 10 minutes after use, night 10 minutes. In the day
+  about 3 GB is always in use and 10 GB while a receipt is being read; Home Assistant keeps 6 GB or more. A load
+  from the SSD is a few seconds, so the night rule costs little.
 - **The assistant's budget** (§3.2, §7.4) with the built-in model: the question timeout becomes a setting, default
   60 s for outside providers and **180 s** for the built-in model; the page's "Asking…/Reading the answer…" status
   adds "Waiting for the model (another app is using it)" while queued. The JSON plan (§3 step 2) uses Ollama's
@@ -597,7 +629,10 @@ So the gateway, not Ollama, queues:
 ### 14.7 Settings and data
 
 - Settings (Admin → App settings, `settings_core`), group **Built-in model**: `builtin_on` (false), `builtin_threads`
-  (0 = automatic), `builtin_keep_alive_min` (5), `builtin_context` (8192; 2048–32768), `builtin_queue` (4),
+  (0 = automatic), `builtin_keep_model` (the assistant's model; empty = none), `builtin_day_start` (`05:00`),
+  `builtin_day_end` (`22:00`), `builtin_day_unload_min` (10; for models other than the kept one, which stays
+  loaded), `builtin_night_unload_min` (10; 0 = right after each answer), `builtin_preload` (true),
+  `builtin_max_loaded` (1; 1–2), `builtin_context` (8192; 2048–32768), `builtin_queue` (4),
   `builtin_question_timeout` (180). The assistant's `ai_provider` gains `builtin`.
 - Tables in `/data/assistant.db`:
 
