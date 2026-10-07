@@ -142,8 +142,13 @@ class AssistantTests(unittest.TestCase):
         answer_prompt = model.prompts[2][2]
         data = answer_prompt[answer_prompt.index("<data>"):answer_prompt.index("</data>")]
         self.assertIn("IGNORE YOUR INSTRUCTIONS", data)            # the injection stays inside the data block
-        with db.get_conn() as conn:
-            q2 = conn.execute("SELECT * FROM questions WHERE id = ?", (q["id"],)).fetchone()
+        end = time.monotonic() + 5
+        while time.monotonic() < end:                    # the tokens are written just after the answer
+            with db.get_conn() as conn:
+                q2 = conn.execute("SELECT * FROM questions WHERE id = ?", (q["id"],)).fetchone()
+            if q2["seconds"] is not None:
+                break
+            time.sleep(0.02)
         self.assertEqual((q2["rounds"], q2["input_tokens"], q2["output_tokens"]), (1, 300, 60))
         usage = self.c.get("/api/admin/usage", headers=ADMIN).json()["days"][0]
         self.assertEqual((usage["questions"], usage["calls"]), (1, 1))
@@ -216,7 +221,7 @@ class AssistantTests(unittest.TestCase):
 
     def test_too_long_and_stop(self):
         slow = lambda prompt, purpose: (time.sleep(0.4), '{"answer": "late"}')[1]
-        with mock.patch.object(engine, "QUESTION_TIMEOUT", 0.2):
+        with mock.patch.object(engine, "question_timeout", return_value=0.2):
             q = self.ask(model=Model(slow))
         self.assertEqual((q["state"], q["error"]), ("failed", "That took too long — try a narrower question."))
         with mock.patch.object(ai_client, "generate", Model(slow)):
@@ -245,7 +250,7 @@ class AssistantTests(unittest.TestCase):
             time.sleep(0.3)
             return True
         with mock.patch.object(ai_client, "needs_warmup", return_value=True), \
-                mock.patch.object(ai_client, "warmup_sync", slow_hi), mock.patch.object(engine, "QUESTION_TIMEOUT", 0.2):
+                mock.patch.object(ai_client, "warmup_sync", slow_hi), mock.patch.object(engine, "question_timeout", return_value=0.2):
             q = self.ask(model=Model('{"answer": "Hi."}'))
         self.assertEqual((q["state"], q["answer"]), ("done", "Hi."))
         self.assertEqual(seen[1], "Waking up the model…")
@@ -256,6 +261,31 @@ class AssistantTests(unittest.TestCase):
             raise ai_client.AIError("Couldn't reach Ollama at http://192.0.2.1:11434: refused.", "unreachable")
         q = self.ask(model=Model(broken))
         self.assertEqual((q["state"], q["error"]), ("failed", "Couldn't reach Ollama at http://192.0.2.1:11434: refused."))
+
+    def test_the_apps_words_when_the_model_fails_after_they_answered(self):
+        def times_out(prompt, purpose):
+            raise ai_client.AIError("Ollama at http://192.0.2.1:11434 didn't answer within 152 s.", "timeout")
+        q = self.ask(model=Model(plan_call("todo.tasks", when="today"), times_out))
+        self.assertEqual(q["state"], "done")
+        self.assertEqual(q["answer"], "The model didn't answer (Ollama at http://192.0.2.1:11434 didn't answer within "
+                                      "152 s.), so here is what the apps said:\n\n"
+                                      "- **Household Todo**: 2 tasks today: Bins, Call plumber.")
+        self.assertEqual(q["shared"][0]["state"], "ok")
+
+        def slow(prompt, purpose):
+            time.sleep(0.4)
+            return '{"answer": "late"}'
+        with mock.patch.object(engine, "question_timeout", return_value=0.3):
+            q = self.ask(model=Model(plan_call("todo.tasks", when="today"), slow))
+        self.assertEqual(q["state"], "done")
+        self.assertTrue(q["answer"].startswith("The model took too long, so here is what the apps said:"))
+
+    def test_question_timeout_setting(self):
+        self.assertEqual(engine.question_timeout(), 300)
+        settings.update({"question_timeout": 600}, None)
+        self.assertEqual(engine.question_timeout(), 600)
+        with self.assertRaises(settings.SettingsError):
+            settings.update({"question_timeout": 10}, None)
 
     # ---------------------------------------------------------------------------------------- who and how much
     def test_limits(self):

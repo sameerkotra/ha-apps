@@ -33,16 +33,25 @@ MAX_ROUNDS = 3
 MAX_PER_ROUND = 4
 MAX_CALLS = 8
 CALL_TIMEOUT = 20.0
-QUESTION_TIMEOUT = 180.0                            # end to end; a model on a CPU needs a minute a step
 RESULTS_BUDGET = 24 * 1024
 HISTORY_TURNS = 6
 MAX_QUESTION = 1000
 MAX_ANSWER = 4000
 RUNNING = ("planning", "calling", "answering")
-STALE_RUNNING = timedelta(minutes=6)                # longer than a warm-up and a whole question
 
 _PANEL_RE = re.compile(r"^/[a-z0-9]{1,16}_([a-z0-9_]{1,64})$")
 _TARGET_RE = re.compile(r"^/[A-Za-z0-9_\-./%~]{0,200}(\?[A-Za-z0-9_\-.=&%~]{0,200})?$")
+
+
+def question_timeout() -> float:
+    """Seconds a question may take end to end (App settings → Limits); a warm-up isn't counted."""
+    return float(settings.get("question_timeout"))
+
+
+def _stale_running() -> timedelta:
+    """A question older than this can't still be running: its timeout, a warm-up (120 s) and a minute to spare."""
+    return timedelta(seconds=question_timeout() + ai_client.WARMUP_TIMEOUT + 60)
+
 
 _lock = threading.Lock()
 _stops: dict[str, threading.Event] = {}            # question id -> its Stop
@@ -93,7 +102,7 @@ def ask(user: dict, text: str) -> str:
     with db.get_conn() as conn:
         conn.execute("BEGIN IMMEDIATE")
         busy = conn.execute(f"SELECT 1 FROM questions WHERE user_id = ? AND state IN ({','.join('?' * len(RUNNING))}) "
-                            "AND asked_at > ?", (user["id"], *RUNNING, _iso(now - STALE_RUNNING))).fetchone()
+                            "AND asked_at > ?", (user["id"], *RUNNING, _iso(now - _stale_running()))).fetchone()
         if busy:
             raise LimitError("Still answering the last question.")
         hour = conn.execute("SELECT COUNT(*) FROM questions WHERE user_id = ? AND asked_at > ?",
@@ -132,7 +141,8 @@ class _Run:
     def __init__(self, qid: str, user: dict, stop_event: threading.Event):
         self.qid, self.user, self.stop = qid, user, stop_event
         self.started = time.monotonic()
-        self.deadline = self.started + QUESTION_TIMEOUT
+        self.deadline = self.started + question_timeout()
+        self.done: list[dict] = []            # the apps' results so far (kept for an answer without the model)
         self.input_tokens = self.output_tokens = 0
         self.counted = False
         self.calls_made = 0
@@ -187,14 +197,25 @@ def run(qid: str, user: dict, stop_event: threading.Event) -> None:
     except Stopped:
         pass
     except TooLong:
-        r.state("failed", error="That took too long — try a narrower question.")
+        _failed(r, "That took too long — try a narrower question.",
+                "The model took too long, so here is what the apps said:")
     except ai_client.AIError as e:
-        r.state("failed", error=str(e)[:500])
+        _failed(r, str(e)[:500], f"The model didn't answer ({str(e)[:300]}), so here is what the apps said:")
     except Exception:
         logger.exception("Answering a question failed")
         r.state("failed", error="Something went wrong while answering. Try again.")
     finally:
         _finish(r)
+
+
+def _failed(r: _Run, error: str, lead: str) -> None:
+    """The model failed: when apps had already answered, their own words are the answer; else the question failed."""
+    said = [f"- **{d['appName']}**: {str(d['result'].get('text') or '').strip()}" for d in r.done
+            if d["state"] == "ok" and isinstance(d.get("result"), dict) and str(d["result"].get("text") or "").strip()]
+    if said:
+        r.state("done", answer=(lead + "\n\n" + "\n".join(said))[:MAX_ANSWER], rounds=_rounds(r.qid))
+    else:
+        r.state("failed", error=error)
 
 
 def _finish(r: _Run) -> None:
@@ -230,7 +251,7 @@ def _answer_question(r: _Run) -> str:
         return NO_TOOLS
     system = system_prompt(r.user)
     turns = [(h["text"], h["answer"] or "") for h in reversed(history)]
-    done: list[dict] = []              # results so far: {call, app, appName, tool, args, state, result, reason}
+    done = r.done                      # results so far: {call, app, appName, tool, args, state, result, reason}
     proposals: list[dict] = []
     for round_no in range(1, MAX_ROUNDS + 1):
         r.state("planning")

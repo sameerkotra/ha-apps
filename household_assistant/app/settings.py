@@ -5,7 +5,8 @@ Admins change them inside the app, without a restart. Only `admin_users` stays o
 - AI: `ai_provider` ("" | "ollama" | "openai" | "anthropic"), `ai_url`, `ai_model`, `ai_api_key` (SECRET: never
   returned or shown, only sent to the provider in a header; blanked in backups, kept on restore), `ai_max_tokens`.
 - People: `children_may_ask` (off).
-- Limits: `questions_per_hour` (per person, 30), `questions_per_day` (the household, 200), `keep_days` (30).
+- Limits: `questions_per_hour` (per person, 30), `questions_per_day` (the household, 200),
+  `question_timeout` (seconds, 300; 60–900), `keep_days` (30).
 - Privacy: `recorder_excluded` (the admin's tick that `household_apps` is out of the recorder), `shared_open`
   ("What was shared" open by default).
 
@@ -94,6 +95,11 @@ SETTINGS = [
     Setting("questions_per_hour", 30, "Questions per person per hour", group="limits", min=1, max=500, strict=True),
     Setting("questions_per_day", 200, "Questions per day, the whole household", group="limits", min=1, max=5000,
             strict=True),
+    Setting("question_timeout", 300, "Longest a question may take (seconds)", group="limits", min=60, max=900,
+            strict=True,
+            help="From the question to the answer, waking up a local model not counted. A model on the Home "
+                 "Assistant machine's CPU needs 300 or more; a cloud model answers well within 60. When the model "
+                 "runs out of time after the apps answered, the apps' own words are shown instead."),
     Setting("keep_days", 30, "Keep questions for (days)", group="limits", min=1, max=365, strict=True,
             help="Each person's questions and answers are deleted after this many days. Anyone can clear their own "
                  "at any time."),

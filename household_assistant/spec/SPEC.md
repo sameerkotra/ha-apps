@@ -11,7 +11,7 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   name). No "act as".
 - `app/settings.py` — App settings (`settings_core` registry): AI (`ai_provider`, `ai_url`, `ai_model`,
   `ai_api_key` secret, `ai_max_tokens`), `children_may_ask` (off), `questions_per_hour` (30), `questions_per_day`
-  (200), `keep_days` (30, 1–365), `recorder_excluded` (off), `shared_open` (off).
+  (200), `question_timeout` (300 s, 60–900), `keep_days` (30, 1–365), `recorder_excluded` (off), `shared_open` (off).
 - `app/ai_client.py` — the shared `common/ai_client.py` with this app's wording; `generate()` is the only way to the
   model (tests replace it).
 - `app/catalogue.py` — the tools the apps offer (`assist.tools.list`), per person.
@@ -55,7 +55,8 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   theirs is still running (younger than 5 minutes), over *Questions per person per hour*, or over *Questions per
   day* (the household; `usage_days`). Then a thread answers it.
 - Warm-up: with Ollama, when the model hasn't answered for 4 minutes, `warmup_sync()` sends "hi" first (up to 120 s; progress "Waking up the model…"); the question's clock starts after it.
-- The loop (at most 3 rounds, 180 seconds in all, `Stopped` / `TooLong` checked between steps):
+- The loop (at most 3 rounds, *Longest a question may take* in all — `question_timeout`, 300 s, 60–900; `Stopped` / `TooLong` checked between steps; a `TooLong` or `AIError` after some apps answered ends the question
+  `done` with the apps' own `text`s, one line each, under a line saying the model didn't finish):
   1. **Plan**: `generate(want_json=True)` with the system prompt (§3.1, the person's name, today's date and time
      zone), the tools as one line each (name, app, CHANGES DATA for `acts`, what, arguments with type, values,
      range, required, returns), the last 6 done questions and answers, the results so far in a `<data>` block,

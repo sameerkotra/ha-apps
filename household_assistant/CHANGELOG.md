@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+- **The apps' answers aren't lost**: when the model runs out of time or fails after the apps have answered, the
+  answer is what the apps said, in their own words, with a line saying the model didn't finish (before, the whole
+  question failed although **What was shared** showed the apps' answers).
+- **How long a question may take is a setting**: Admin → App settings → Limits → *Longest a question may take*,
+  300 seconds by default (was a fixed 180), 60–900. A model on the Home Assistant machine's CPU needs 300 or more.
+
 ## 1.0.1
 
 - **More time for an answer**: a question may take up to 3 minutes end to end (was 1), so a model on the Home
