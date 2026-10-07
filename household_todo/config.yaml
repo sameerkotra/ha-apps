@@ -1,5 +1,5 @@
 name: "Household Todo"
-version: "2.3.2"
+version: "2.4.0"
 slug: household_todo
 description: >-
   Shared and personal household task lists with a calendar, a schedule of
@@ -27,8 +27,9 @@ panel_admin: false
 # homeassistant_api lets the app call the Supervisor's Core API proxy
 # (http://supervisor/core/api/, auto-injected SUPERVISOR_TOKEN) to send
 # notify.* reminders, publish one binary_sensor per schedule item, read the
-# time zone and the people, and list the notify services on Admin -> Users.
-# No other Supervisor/HA API access is requested.
+# time zone and the people, list the notify services on Admin -> Users and
+# exchange the household apps' messages (Household Docs, the Household
+# Assistant). No other Supervisor/HA API access is requested.
 homeassistant_api: true
 hassio_api: false
 auth_api: false

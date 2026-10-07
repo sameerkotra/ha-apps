@@ -281,9 +281,30 @@ People can't choose their own service, so nobody can send to someone else's
 device. If a send fails, the log shows Home Assistant's reason and the
 closest real service name.
 
-## Settings (everyone)
+## The Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it
+"What's on my list today?" or "Add milk to Shopping". Todo tells it, as you'd
+see it here:
+
+- **your tasks** — today's and overdue ones, this week's, overdue only, or all
+  open tasks (one list, if you name it): titles, due dates, lists and who
+  they're assigned to — never notes or links;
+- **your lists** with how many tasks are open;
+- **the schedule** for the next days (trash day and the like; private items only
+  your own).
+
+It can also **add a task** to one of your lists, but only after you tap the
+exact change it proposes ("Add *milk* to *Shopping*"); the task then shows
+"from Assistant". Its answers link back to Todo.
+
+An admin can turn this off for everyone (**App settings → Household Assistant**),
+and you can turn it off for yourself on **Settings → Household Assistant**.
+
 
 - **Reminders** (above; only as yourself, not while acting as someone).
+- **Household Assistant** — *Let the Household Assistant answer for me* (on),
+  shown while an admin lets the Household Assistant ask Todo.
 - **How the app sees you** — the user name and user id Home Assistant sent
   (copyable), whether you're an admin, how many names are in `admin_users`,
   whether a reminder service is linked, and what to do if something's wrong.
@@ -331,6 +352,7 @@ the field before anything is saved.
 | Address lookup server (Nominatim) | `https://nominatim.openstreetmap.org` | A Nominatim-compatible server. Blank = the public default. |
 | Avoid toll roads | On | Estimate on routes without toll roads when there is one. |
 | Maintenance files folder | blank | A folder inside `/share` for maintenance files. Blank = attaching files is off. |
+| Answer the Household Assistant | On | Lets the Household Assistant app tell people their tasks, lists and schedule, and add a task when they tap to confirm (see *The Household Assistant*). |
 
 Maintenance's own settings are on **Admin → Maintenance**. The daily reminder
 time isn't an App setting: each person picks their own.
@@ -365,10 +387,12 @@ time isn't an App setting: each person picks their own.
   Nominatim and/or OSRM server and enter its address in App settings.
 - **Messages between the household apps.** Household Docs and Todo talk
   over Home Assistant's event bus (`household_apps` events): ids, names,
-  list names and checklist item texts, never anything else from Docs. Home
-  Assistant admins and automations can see them, and Home Assistant's
-  history keeps them unless you leave them out with this in Home Assistant's
-  `configuration.yaml` (then restart Home Assistant):
+  list names and checklist item texts, never anything else from Docs. The
+  Household Assistant's answers from Todo travel the same way and hold task
+  titles, dates, list and people's names. Home Assistant admins and
+  automations can see them, and Home Assistant's history keeps them unless you
+  leave them out — **do this if you use the Household Assistant** — with this
+  in Home Assistant's `configuration.yaml` (then restart Home Assistant):
 
   ```yaml
   recorder:

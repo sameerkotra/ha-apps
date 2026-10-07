@@ -5,7 +5,7 @@ import time
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from .. import config, db, ha_client
+from .. import config, db, ha_client, settings
 from ..common import ha_notify
 from ..auth import get_real_user_for_prefs
 
@@ -67,6 +67,9 @@ def _prefs_json(conn, user: dict) -> dict:
         "maintenanceRecipient": _maint_recipient(conn, user["id"]),
         "canNotify": can,
         "canNotifyReason": reason,
+        "assistant": bool(settings.get("assistant_answers")),   # the admin lets the Household Assistant ask (tools.py)
+        "assistantOk": bool(conn.execute("SELECT assistant_ok FROM users WHERE id = ?",
+                                         (user["id"],)).fetchone()["assistant_ok"]),
     }
 
 
@@ -106,6 +109,11 @@ def put_prefs(body: dict = Body(...), user: dict = Depends(get_real_user_for_pre
                 raise HTTPException(422, "digestTime must be a time like 08:00, or null to reset it to 08:00.")
             else:
                 digest_time = t
+
+        if "assistantOk" in body:
+            if not isinstance(body["assistantOk"], bool):
+                raise HTTPException(422, "assistantOk must be true or false.")
+            conn.execute("UPDATE users SET assistant_ok = ? WHERE id = ?", (int(body["assistantOk"]), user["id"]))
 
         maint_on = bool(cur["maintenance_notify"]) if cur else True
         if "maintenanceNotify" in body:

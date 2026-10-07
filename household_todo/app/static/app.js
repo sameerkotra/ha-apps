@@ -1865,6 +1865,8 @@ async function renderSettings() {
   const cards = [];
   try {
     cards.push(await remindersCard());
+    const assistant = await assistantCard();
+    if (assistant) cards.push(assistant);
     cards.push(await whoamiCard());
     cards.push(await typesCard());
     cards.push(h("div", { class: "card mobile-only" }, h("h3", null, "Appearance"), themeSelect({ style: "width:100%" })));
@@ -1974,6 +1976,21 @@ async function remindersCard() {
   };
   paint(p);
   return card;
+}
+
+// "Let the Household Assistant answer for me" — shown while an admin lets the Household Assistant ask Todo.
+async function assistantCard() {
+  if (isActingAsOther()) return null;
+  const p = await api("/api/prefs");
+  if (!p.assistant) return null;
+  return h("div", { class: "card", id: "assistantCard" }, h("h3", null, "Household Assistant"),
+    h("div", { class: "switch-row" },
+      h("div", null, h("div", null, "Let the Household Assistant answer for me"),
+        h("div", { class: "sub" }, "When you ask the Household Assistant app, it can tell you your tasks, lists and what's coming up, and add a task when you tap to confirm.")),
+      toggleSwitch(p.assistantOk, async (on) => {
+        try { await api("/api/prefs", { method: "PUT", body: { assistantOk: on } }); toast("Saved"); }
+        catch (e) { toast(e.message, true); renderSettings(); }
+      }, { label: "Let the Household Assistant answer for me" })));
 }
 
 async function typesCard() {

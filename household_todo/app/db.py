@@ -459,6 +459,7 @@ MIGRATIONS = [
     ("schedule_items", "visibility", "TEXT NOT NULL DEFAULT 'household' CHECK (visibility IN ('household', 'private'))"),
     ("schedule_items", "expose_sensor", "INTEGER NOT NULL DEFAULT 1"),
     ("schedule_items", "url", "TEXT"),                                   # optional link
+    ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),             # "Let the Household Assistant answer for me"
 ]
 
 
