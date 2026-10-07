@@ -63,7 +63,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.4.2"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.4.3"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -712,10 +712,13 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   list (`#/lists/<id>`); a request for one of those paths reaching the app itself is redirected to `#/…` (the shared
   `deeplinks.py`).
 - **Tools** (everything as the person sees it: shared lists and their own personal lists, `taskview.VISIBLE_SQL`):
-  - `todo.tasks` (`when` today|week|overdue|all, `list?` by name, any case): open tasks; *today* = overdue + due
-    today, *week* = overdue + due within 7 days, *overdue* = overdue (completion-required and past, §8l), sorted as
-    the dashboard (`all`: by due date); `{title, due, time, list, who, overdue}`, at most 50 (`more`). Never notes
-    or links.
+  - `todo.tasks` (`when` today|tomorrow|week|overdue|all, `list?` by name, any case): open tasks; *today* = overdue
+    + due today, *tomorrow* = due tomorrow, *week* = overdue + due within 7 days, *overdue* = overdue
+    (completion-required and past, §8l), sorted as the dashboard (`all`: by due date); `{title, due, time, list, who,
+    overdue}`, at most 50 (`more`). Never notes or links. For today, tomorrow and week without `list`, the schedule's
+    visible occurrences on those days follow as items with `list: "Schedule"` (at most 30) and an "On the schedule:"
+    sentence, with a Schedule link; when those days have no tasks, the text adds "Next due:" with up to 3 tasks due
+    after them.
   - `todo.lists`: `{list, kind, open}`.
   - `todo.schedule` (`days?` 1–14, default 7): every effective date of the visible schedule items
     (`schedule_logic.effective_dates_between`) as `{date, what, time, for}`.

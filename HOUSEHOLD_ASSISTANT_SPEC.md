@@ -144,7 +144,7 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 
 | App | Tool | Args | Returns (text + items + links) |
 |---|---|---|---|
-| Household Todo | `todo.tasks` | `when: today\|week\|overdue\|all`, `list?` | tasks with due date, who, list; link to Today / the list |
+| Household Todo | `todo.tasks` | `when: today\|tomorrow\|week\|overdue\|all`, `list?` (2.4.3: + the schedule those days) | tasks with due date, who, list; link to Today / the list |
 | | `todo.lists` | — | the person's lists with open counts; links |
 | | `todo.items.add` *(acts)* | `list`, `text`, `due?` | the added task; link |
 | | `todo.schedule` | `days?` (1–14) | upcoming scheduled things (trash day, maintenance due); link to Schedule |
@@ -413,7 +413,7 @@ only to the app's own sidebar page and its own route patterns, and `sidebar_page
 | Family Tree 2.3.0 | `tree.birthdays` (+ `everyone?`: the whole tree instead of close family) | on | Settings | the page |
 | Calorie Tracker 2.2.2 | `calorie.today` | on | Goals | `/foodlog/<date>` |
 | Splitpot 2.4.0 | `splitpot.balances`, `splitpot.recent` (the group page's first 20) — only the person's own groups, by their Home Assistant login | **off** | My settings | the page |
-| Todo 2.4.0 | `todo.tasks`, `todo.lists`, `todo.schedule`, `todo.items.add` (acts; `list` by name) | on | Settings | the page |
+| Todo 2.4.3 | `todo.tasks` (with the schedule those days, `tomorrow`, "Next due"), `todo.lists`, `todo.schedule`, `todo.items.add` (acts; `list` by name) | on | Settings | the page |
 | Docs 1.2.0 | `docs.search`, `docs.read`, `docs.checklist`, `docs.note.create` (acts) | on | Settings → You | `/doc/<id>`, `/folder/<id>`, `/file/<id>` |
 | Receipt Price Intelligence 1.2.2 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | Who am I | `/list`, `/insights` |
 | Finance Dashboard 1.2.2 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | Who am I | `/month/<YYYY-MM>`, `/recurring` |
