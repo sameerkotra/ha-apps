@@ -3,7 +3,7 @@
 Status: **in use (2026-10-04).** The shared `app_bus.py` was built in the shared-code work (`SHARED_CODE_PLAN.md`,
 phase 4b). First users: **Household Chat 2.2.0** and **Household Todo 2.3.0** receive what Household Docs sends
 (§6.3 Send to chat, §6.4 Checklist → Todo list, §6.5 links between app pages); Household Docs 1.0.0 sends them.
-Arcade's duel planning (§6.2, §7) is still to come. Each use gets its own short spec section and ships as an update
+Arcade's duel planning (§6.2, §7) and the Household Assistant's tools (§6.6, draft) are still to come. Each use gets its own short spec section and ships as an update
 of the apps involved.
 
 ## 1. Purpose
@@ -266,6 +266,34 @@ Researched 2026-10-04 (Home Assistant core `components/hassio/addon_panel.py`, f
   not its title, its owner or even whether it exists — exactly as for a deleted one (Docs spec §17.15).
 - **No `panel` known:** the card says "Open Household Docs from the sidebar to see it" instead of a link.
 
+### 6.6 Household Assistant tools (apps → Household Assistant) — draft, not built
+
+A summary; `HOUSEHOLD_ASSISTANT_SPEC.md` §4–7 is the full spec. The assistant asks each app what it can answer and
+then asks it questions on a person's behalf, like tools on an MCP server.
+
+| Kind | Data | Answer |
+|---|---|---|
+| `assist.tools.list` | `{}` (to one app, or `*` at the assistant's start-up) | `ack {result: {tools: [{name, what, args, returns, acts, scope, examples}]}}` |
+| `assist.tool.call` | `{tool, args, requested_by, question, confirm?, confirmed_at?}` | `ack {result: {question, tool, text, items[], links[], more}}` |
+
+- **Who sends, who answers.** Only Household Assistant sends these; an app answers if it lists `assist.tools.list`
+  in its `hello` `can`. Tool names stay within the answering app's own area (`todo.tasks`, `docs.search`); an unknown
+  tool is `nack not_found` with `detail: tool`, a bad argument `nack invalid` with the argument's name.
+- **`requested_by` is the actor**, as for every request kind (§6): the app answers exactly what that person could see
+  in it, and `nack no_access` when they aren't an enabled user there, or the app's admin hasn't turned on *Answer
+  the Household Assistant*, or the person turned off *Let the Household Assistant answer for me*.
+- **Short-lived, never retried.** Both kinds go with `expires_in` ≈ 2 minutes (`assist.tools.list`) or **20 seconds**
+  (`assist.tool.call`); the outbox doesn't retry them, and a lost call is shown as "didn't answer".
+- **Actions only after a tap.** A tool marked `acts: true` (add a task, a shopping item, a note) is refused with
+  `nack not_allowed` unless the call carries `confirm: true`, which the assistant sets only when the person tapped
+  the proposed change.
+- **Contents may travel** — the one exception to §3's "no contents" besides §6.4's checklist items: results carry
+  amounts, task and document text, because the person asked for exactly that. A result is at most 6 KB, a
+  catalogue at most 8 KB; never anything from Household Vault, Chat message text or Finance memo text. Every app
+  that answers makes the recorder exclusion (§8) a must in its DOCS.
+- **Links** in a result follow §6.5: `panel` is the answering app's own page, `target` one of its own routes, and
+  the assistant checks both before showing them.
+
 ## 7. First use (to be specified and built later): planning a duel in Household Arcade
 
 1. Arcade → *Play with someone* → **Plan for later**: pick the person (or people), the game, and 2–4 times.
@@ -296,8 +324,9 @@ checklist; Family Tree birthdays into the household chat. (Docs → Chat and Doc
 - **Least revealing answers:** an answer says only what the asking dialog needs at that moment — the chat list
   names no members; a chat's member ids come only for the one chat the person picked, only when they asked to give
   its members access (§6.3).
-- **History:** HA's recorder stores events. Envelopes hold only ids, names, times and choices (§3). DOCS.md of every
-  app that uses the bus shows how to keep them out of HA's history:
+- **History:** HA's recorder stores events. Envelopes hold only ids, names, times and choices (§3) — except the
+  Household Assistant's tool results (§6.6), which is why every app that answers them makes this a must, not a tip.
+  DOCS.md of every app that uses the bus shows how to keep them out of HA's history:
   ```yaml
   recorder:
     exclude:
