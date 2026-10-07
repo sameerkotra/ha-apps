@@ -15,7 +15,8 @@ async def me(user: dict = Depends(get_current_user)):
     naming `username` — the login name to add, or the user id if HA didn't
     send one)."""
     return {"id": user["id"], "name": user["name"], "is_admin": user["is_admin"],
-            "username": user["username"] or user["id"], "noAdmin": no_admins()}
+            "username": user["username"] or user["id"], "noAdmin": no_admins(),
+            "page": config.INGRESS_PANEL}       # the sidebar page: links open a tab or a day there (deeplink.js)
 
 
 @whoami_router.get("/today")

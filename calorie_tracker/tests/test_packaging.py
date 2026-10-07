@@ -10,7 +10,7 @@ from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
 REPO_URL = pk.REPO_URL
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 
 NEEDLES = pk.NEEDLES + ("c:\\" + "users",)
 ALLOWED_ADDRESSES = {"192.168.1.10", "169.254.1.2", "10.0.0.5", "10.0.0.9", "10.9.9.9", "172.30.32.2", "172.30.33.7"}

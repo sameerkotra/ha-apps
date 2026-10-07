@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+
+- **Links open the right page**: the Household Assistant's answer opens that day's Food Log. Links ending in `/foodlog/<date>`, `/dashboard`, `/weight` or `/goals` open that page.
+
 ## 2.2.0
 
 - **Answers the Household Assistant**: the new Household Assistant app can ask Calorie Tracker "How many calories do I have left today?" and gets only that person's own day — calories and macros against their goals, and what they logged at each meal; never anyone else's, never weight — with a link back to the app. On by default; an admin can turn it off with **Answer the Household Assistant** in App settings.
