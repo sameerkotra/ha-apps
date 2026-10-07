@@ -406,7 +406,7 @@ only to the app's own sidebar page and its own route patterns, and `sidebar_page
 
 | App (version) | Tools | Default | Per-person switch | Links |
 |---|---|---|---|---|
-| Chat 2.6.0 | `chat.unread` | on | Settings → You | `/chat/<id>` |
+| Chat 2.6.1 | `chat.unread`; ➕ → *Ask the assistant* | on | Settings → You | `/chat/<id>` |
 | Arcade 1.9.0 | `arcade.scores` (household; not for children), `arcade.mine` (new: a person's own bests) | on | Settings | `/leaderboard`, `/scores` |
 | Family Tree 2.3.0 | `tree.birthdays` (+ `everyone?`: the whole tree instead of close family) | on | Settings | the page |
 | Calorie Tracker 2.2.2 | `calorie.today` | on | Goals | `/foodlog/<date>` |
@@ -443,4 +443,4 @@ Each item is ticked in the commit that finishes it.
 - [x] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
 - [x] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
   the admin pages, tests.
-- [ ] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).
+- [x] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).

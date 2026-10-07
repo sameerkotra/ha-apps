@@ -39,6 +39,7 @@ function composer(c) {
     state.detail && state.detail.canAnnounce ? { label: state.announce[cid] ? "📢 Don't send as announcement" : "📢 Send as announcement", run: () => { state.announce[cid] = !state.announce[cid]; renderBanner(); } } : null,
     c.kind !== "personal" ? { label: "🕓 Send later…", run: () => scheduleDialog() } : null,
     { label: "Aa Formatting", run: () => openModal("Formatting", formattingHelp()) },
+    state.me && state.me.assistantPage ? { label: "💬 Ask the assistant", run: () => askAssistant(ta.value) } : null,
   ]) }, "＋");
   const emojiBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Emoji", title: "Emoji", onclick: (e) => emojiPicker(e.currentTarget, (em) => insertAtCaret(ta, em)) }, "😊");
   const row = h("div", { class: "composer-row", id: "composerRow" }, attach, ta, emojiBtn, micBtn, sendBtn, fileIn, camIn);
@@ -66,6 +67,11 @@ function composer(c) {
   el.addEventListener("drop", (e) => { e.preventDefault(); el.classList.remove("drop"); addFiles([...e.dataTransfer.files]); });
   setTimeout(() => { autosize(ta); renderBanner(); renderPending(); updateSendButtons(); if (FINE_POINTER) ta.focus(); }, 0);
   return el;
+}
+// The Household Assistant's page, with what is typed here as the question (its ?q=); nothing is sent from Chat.
+function askAssistant(text) {
+  const q = (text || "").trim().slice(0, 1000);
+  ConnectedApps.openAppPage(state.me.assistantPage + (q ? "?q=" + encodeURIComponent(q) : ""));
 }
 function autosize(ta) { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 180) + "px"; }
 function insertAtCaret(ta, text) {

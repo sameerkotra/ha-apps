@@ -191,3 +191,20 @@ def connected_apps() -> dict:
     """Admin → Connected apps (APP_MESSAGES_SPEC §5)."""
     on = bool(bus.default.started and bus.default.token)
     return {"on": on, "connected": bus.default.connected, "apps": bus.apps() if bus.default.started else []}
+
+
+ASSISTANT = "household_assistant"
+_OWN_PAGE = re.compile(r"/(?:app/)?([0-9a-f]{8}|local)_household_chat")
+
+
+def assistant_page() -> str | None:
+    """The Household Assistant's sidebar page for the ➕ menu's "Ask the assistant" (HOUSEHOLD_ASSISTANT_SPEC §10,
+    phase 5), or None: only while the assistant is on the bus (said hello in the last 24 hours), and only when this
+    app knows its own page — apps installed from one repository share its id, so the assistant's page is
+    "/<that id>_household_assistant"."""
+    if not bus.default.started:
+        return None
+    if not any(a["slug"] == ASSISTANT and a["active"] for a in bus.apps()):
+        return None
+    m = _OWN_PAGE.fullmatch(config.INGRESS_URL or "")
+    return f"/{m.group(1)}_{ASSISTANT}" if m else None

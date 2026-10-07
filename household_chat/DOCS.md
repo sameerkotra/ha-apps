@@ -194,6 +194,8 @@ If the household also uses the **Household Assistant** app, you can ask it "Do I
 
 - An admin can turn this off for everyone: **Admin → App settings → Household Assistant → Answer the Household Assistant**.
 - You can turn it off for yourself: **Settings → You → Let the Household Assistant answer for me**.
+- **➕ → Ask the assistant** opens the Household Assistant with what you typed as the question, ready to send.
+  It appears while the assistant is running.
 
 ## Notifications
 

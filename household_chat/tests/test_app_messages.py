@@ -596,3 +596,28 @@ class EndToEndTests(ApiTestCase):
         # shutdown closes the one socket and leaves no bus threads
         wait_until(lambda: self.fake.subscribers() == 1, what="Chat's socket closed")
         self.assertFalse(app_bus.default.started)
+
+
+class AskTheAssistantTests(ApiTestCase):
+    """The ➕ menu's "Ask the assistant": the assistant's page, only while it is on the bus (HOUSEHOLD_ASSISTANT_SPEC
+    §10, phase 5)."""
+
+    def test_the_assistants_page(self):
+        from unittest import mock
+        self.enable(ADMIN, NISHA, LEELA)
+        apps = [{"slug": "household_assistant", "active": True}]
+        with mock.patch.object(app_bus.default, "started", True), \
+                mock.patch.object(app_bus, "apps", lambda: apps), \
+                mock.patch.object(config, "INGRESS_URL", "/a1b2c3d4_household_chat"):
+            self.assertEqual(app_messages.assistant_page(), "/a1b2c3d4_household_assistant")
+            self.assertEqual(self.ok(self.get("/api/me", NISHA))["assistantPage"], "/a1b2c3d4_household_assistant")
+            sql("UPDATE users SET is_child = 1 WHERE id = ?", (LEELA["id"],))
+            self.assertIsNone(self.ok(self.get("/api/me", LEELA))["assistantPage"])     # not for children
+            apps[0]["active"] = False                              # not heard from in a day: no entry
+            self.assertIsNone(app_messages.assistant_page())
+            apps[0]["active"] = True
+            with mock.patch.object(config, "INGRESS_URL", "/household_chat"):     # outside Home Assistant
+                self.assertIsNone(app_messages.assistant_page())
+            with mock.patch.object(config, "INGRESS_URL", "/local_household_chat"):
+                self.assertEqual(app_messages.assistant_page(), "/local_household_assistant")
+        self.assertIsNone(app_messages.assistant_page())          # the bus is off
