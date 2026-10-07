@@ -459,7 +459,8 @@ loaded. The assistant needs nothing special for it — it is an ordinary Ollama 
   AI's page shows these values.
 - **Answered first**: Household AI's queue puts the assistant's requests ahead of other apps' by default
   (`household_ai/spec/SPEC.md` §6.1), because a person is waiting on the page.
-- **Question timeout** (§7.4): becomes a setting in the assistant's *Limits* (`question_timeout`, 60 s; 30–600).
+- **Question timeout** (§7.4): today a fixed 60 s (`household_assistant/app/engine.py`, `QUESTION_TIMEOUT`); to
+  become a setting in the assistant's *Limits* (`question_timeout`, 60 s; 30–600) when Household AI is built.
   With a CPU model the page suggests 180 s, and the "Asking…/Reading the answer…" status adds "Waiting for the
   model" while a request is queued (Household AI answers 503 with `Retry-After` when its queue is full, which
   `ai_client` retries).

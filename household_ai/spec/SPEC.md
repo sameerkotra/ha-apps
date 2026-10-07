@@ -1,8 +1,7 @@
 # Household AI — spec
 
 Status: **draft (2026-10-07), not built** (only this spec exists in `household_ai/` so far). Moved out of
-`HOUSEHOLD_ASSISTANT_SPEC.md` (where it was §14, "Built-in
-model") into an app of its own. A new app, `household_ai`, that runs an AI model on the Home Assistant machine's
+`HOUSEHOLD_ASSISTANT_SPEC.md` (where it was drafted as a "Built-in model"; §15 there now points here) into an app of its own. A new app, `household_ai`, that runs an AI model on the Home Assistant machine's
 **CPU**, with no GPU and no other server: Ollama, started inside the app's container, behind a small gateway. The
 Household Assistant and every other household app with AI use it as an ordinary Ollama or OpenAI-compatible
 address in their existing AI settings. **No other app's code changes.**
@@ -13,8 +12,8 @@ address in their existing AI settings. **No other app's code changes.**
   Ollama app and wire every app to it by hand. Household AI is that model server made for these apps: models
   chosen with the RAM and disk in front of you, one model in memory for everyone (two Ollamas would load two copies
   of a model), a fair queue, and a day/night schedule for keeping models loaded.
-- **A separate app, not part of the assistant**: the assistant (and every other app) stays a small Alpine image
-  that installs everywhere, including 32-bit systems; only this app carries Ollama's bigger Debian-based image and
+- **A separate app, not part of the assistant**: the assistant (built as `household_assistant` 1.0.0) and every
+  other app stay small Alpine images; only this app carries Ollama's bigger Debian-based image and
   is 64-bit only (§3). A household that already has an Ollama, a cloud provider or Claude simply doesn't install
   it. And the model server can be restarted, updated or turned off without touching the assistant.
 - **Not** a general model server for the network: by default it is reachable only by other apps on the
@@ -140,7 +139,7 @@ The values the page shows, for the app's existing *Admin → App settings → AI
 | Access key | empty (or the new key, when *Require an access key* is on) |
 | Model / Vision model | one of the downloaded models (*Test connection* lists them) |
 
-- **Which apps**: Household Assistant (text; `HOUSEHOLD_ASSISTANT_SPEC.md` §14), Calorie Tracker, Household Docs,
+- **Which apps**: Household Assistant (text; `HOUSEHOLD_ASSISTANT_SPEC.md` §15), Calorie Tracker, Household Docs,
   Household Arcade (text), Receipt Price Intelligence and Finance Dashboard (vision; slow, §6). Each app's own
   timeout settings matter: Receipt's *timeout* should be raised to at least 300 s for a CPU vision model, and
   *receipts read at the same time* set to 1; the page lists this.
@@ -250,14 +249,14 @@ CREATE TABLE model_usage (day TEXT NOT NULL, caller TEXT NOT NULL, model TEXT NO
 4. **Later**: `ai.server` discovery (§5.1) and a *Use Household AI* button in the shared AI block; embeddings for
    Docs' search through `/api/embed`.
 
-Size: about Calorie Tracker's (≈1,500 lines of Python, ≈700 of page, ≈2,000 of tests); it can be built before,
-after or alongside the Household Assistant, which needs nothing from it beyond an Ollama address.
+Size: about Calorie Tracker's (≈1,500 lines of Python, ≈700 of page, ≈2,000 of tests); the Household Assistant
+(already built) needs nothing from it beyond an Ollama address.
 
 ## 9. Decisions
 
 - **Its own app, not inside the assistant** (decided 2026-10-07, reversing the first draft): the model server is
-  shared by every AI app, not the assistant's; keeping it apart leaves the assistant a small Alpine app that runs
-  everywhere, puts the 64-bit-only Debian image and its heavier updates in one optional place, and lets each be
+  shared by every AI app, not the assistant's; keeping it apart leaves the assistant a small Alpine app,
+  puts the Debian image and its heavier updates in one optional place, and lets each be
   restarted or updated alone. The cost: one more app to install, and the assistant reaches its model over the
   internal network rather than `127.0.0.1` (a millisecond, next to seconds of model time).
 - **A gateway, not raw Ollama on the internal network**: any community app can reach the internal network, and raw
