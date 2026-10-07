@@ -1,7 +1,8 @@
 /* Household Assistant — the page (HOUSEHOLD_ASSISTANT_SPEC.md §2.1).
  *
- * One column: the conversation (each question, its answer as short Markdown — lists and bold only, built as DOM
- * nodes, never HTML — its Sources, "What was shared" and any proposed actions), suggestions, and the ask box.
+ * One column: the ask box at the top, then the suggestions and the conversation, newest first (each question, its
+ * answer as short Markdown — lists and bold only, built as DOM nodes, never HTML — its Sources, "What was shared"
+ * and any proposed actions).
  * A question is answered on the server; the page follows it live (GET api/ask/<id>/events, Server-Sent Events)
  * until it is done, or polls GET api/ask/<id> every second where the stream can't be opened.
  * 🔊 reads an answer aloud with the browser's speech synthesis; a question asked with 🎤 is read aloud when done.
@@ -198,10 +199,8 @@
         await new Promise((r) => setTimeout(r, 1000));
       }
     } catch (e) { toast(e.message, true); }
-    finally { state.polling.delete(id); scrollDown(); }
+    finally { state.polling.delete(id); }
   }
-
-  function scrollDown() { window.scrollTo(0, document.body.scrollHeight); }
 
   async function ask(text) {
     text = (text || "").trim();
@@ -215,8 +214,7 @@
       autosize();
       $("#suggestions").hidden = true;
       const q = await api(`api/ask/${id}`);
-      $("#conversation").append(questionNode(q));
-      scrollDown();
+      $("#conversation").prepend(questionNode(q));          // newest first, just under the ask box
       poll(id);
     } catch (e) { toast(e.message, true); }
     finally { $("#askBtn").disabled = false; }
@@ -251,11 +249,11 @@
     const qs = more && state.oldest ? `?before=${encodeURIComponent(state.oldest)}` : "";
     const r = await api(`api/history${qs}`);
     const box = $("#conversation");
-    const nodes = r.questions.slice().reverse().map(questionNode);
+    const nodes = r.questions.map(questionNode);              // newest first, as the server sends them
     if (more) {
       const btn = $("#olderBtn");
       if (btn) btn.remove();
-      box.prepend(...nodes);
+      box.append(...nodes);
     } else {
       mount(clear(box), nodes);
     }
@@ -263,7 +261,7 @@
     if (r.more) {
       const older = h("button", { type: "button", class: "link-btn", id: "olderBtn" }, "Earlier questions");
       older.addEventListener("click", () => loadHistory(true));
-      box.prepend(older);
+      box.append(older);
     }
     r.questions.filter((q) => RUNNING.includes(q.state)).forEach((q) => poll(q.id));
     $("#suggestions").hidden = r.questions.length > 0;
@@ -477,7 +475,6 @@
       await loadHistory(false);
       const q = typedQuestion();
       if (q && state.me.canAsk) { $("#askInput").value = q; autosize(); $("#askInput").focus(); }
-      scrollDown();
     } catch (e) {
       mount(clear($("#conversation")), h("div", { class: "note warn" }, h("h3", null, "Can't identify a Home Assistant user"),
         h("p", null, e.message), h("p", null, "Open the assistant from its page in the Home Assistant sidebar.")));

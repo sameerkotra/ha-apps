@@ -117,6 +117,15 @@ class PageInBrowser(Household):
             p.click("#askBtn")
             self.until(p, "window.__said.length === 2")
         self.assertEqual(p.evaluate("window.__said[1]"), "Two tasks: Bins and the plumber.")
+        # the ask box comes first, then the answers, newest first
+        self.assertEqual(p.evaluate("[...document.querySelectorAll('#askForm, #conversation')].map((e) => e.id)"),
+                         ["askForm", "conversation"])
+        self.assertEqual(p.evaluate("[...document.querySelectorAll('.turn .question')].map((e) => e.textContent)"),
+                         ["Anything tomorrow?", "What's on today?"])
+        p.reload()                                                      # and so after a reload
+        p.wait_for_selector(".turn .question")
+        self.assertEqual(p.evaluate("[...document.querySelectorAll('.turn .question')].map((e) => e.textContent)"),
+                         ["Anything tomorrow?", "What's on today?"])
         # followed live: each question read once and then its stream, never polled
         self.assertEqual([a.split("/", 2)[2] if a.count("/") > 1 else "" for a in asked], ["", "events", "", "events"])
 
