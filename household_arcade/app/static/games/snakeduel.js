@@ -1,11 +1,13 @@
 /* Household Arcade — Snake Duel: input and drawing around the rules in snakeduel-logic.js.
    Registers itself as "snakeduel" with window.ArcadeGames (a two-player game: the shell sends player 2's keys,
-   W A S D, as up2 / down2 / left2 / right2). */
+   W A S D, as up2 / down2 / left2 / right2). Mode "phones" is a live duel on two phones (SPEC §13.4): each
+   phone steers its own snake (seat 1 green, seat 2 blue) with every key, button and swipe. */
 (function (root) {
   "use strict";
   var Kit = root.ArcadeKit, Logic = root.SnakeDuelLogic;
 
-  var MODES = [{ id: "cpu", label: "Against the computer" }, { id: "two", label: "Two players" }];
+  var MODES = [{ id: "cpu", label: "Against the computer" }, { id: "two", label: "Two players" }, { id: "phones", label: "Two phones" }];
+  var TURNS = { up: "up", down: "down", left: "left", right: "right", up2: "up", down2: "down", left2: "left", right2: "right" };
   var SWIPE_PX = 18;     // CSS pixels of finger travel that count as a swipe (as in Snake)
   var COLOURS = [4, 5];  // player 1 green, player 2 blue
 
@@ -14,8 +16,13 @@
   function create(canvas, opts) {
     opts = opts || {};
     var s = null, touches = [];
+    var me = opts.live && opts.live.seat === 2 ? 1 : 0;       // which snake is mine on two phones
+    var other = String((opts.names && opts.names[1 - me]) || "").split(" ")[0].toUpperCase().slice(0, 5) || (me ? "P1" : "P2");
 
-    function names() { return s.mode === "two" ? ["P1", "P2"] : ["YOU", "CPU"]; }
+    function names() {
+      if (s.mode === "phones") return me === 0 ? ["YOU", other] : [other, "YOU"];
+      return s.mode === "two" ? ["P1", "P2"] : ["YOU", "CPU"];
+    }
     function geometry(g) {
       // Cells sit exactly on the coarse grids: 9 px = 6 Retro LCD dots, 10 px = 5 Pixel pixels.
       var cs = g.kind === "lcd" ? 9 : 10;
@@ -41,15 +48,22 @@
       restore: function (data) { s = Logic.restore(data, opts.levels); touches = []; },
       step: function () { return Logic.step(s); },
       logic: function () { return s; },
-      score: function () { return s.score; },
+      score: function () { return me ? s.score2 : s.score; },
       level: function () { return s.level; },
       isOver: function () { return s.over; },
-      result: function () { return Logic.result(s); },
+      result: function () { return Logic.result(s, me); },
       sounds: { eat: "eat", crash: "hit", go: "turn", match: "bonus", level: "level", win: "win", gameover: "gameover" },
-      input: function (action, down) { Logic.press(s, action, down); },
-      pointer: function (kind, lx, ly, x, y) {
+      // live duel (two phones): inputs reach the rules here, on both phones on the same update
+      apply: function (player, action, value) { return Logic.press(s, action, value, player); },
+      checksum: function () { return Logic.checksum(s); },
+      report: function () { return Logic.report(s); },
+      input: function (action, down, act) {
+        if (act) { if (down && TURNS[action]) act(TURNS[action], 1); return; }   // every key steers my snake
+        Logic.press(s, action, down);
+      },
+      pointer: function (kind, lx, ly, x, y, act) {
         if (kind === "down") {
-          var p = s.mode === "two" && lx < Kit.W / 2 ? 1 : 0;
+          var p = s.mode === "two" && lx < Kit.W / 2 ? 1 : s.mode === "phones" ? me : 0;
           touches = s.mode === "two" ? touches.filter(function (t) { return t.p !== p; }) : [];
           touches.push({ ax: x, ay: y, x: x, y: y, p: p });
           return;
@@ -61,13 +75,14 @@
         t.x = x; t.y = y;
         var dx = x - t.ax, dy = y - t.ay;
         if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_PX) return;
-        Logic.turn(s, t.p, Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
+        var dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up");
+        if (act) act(dir, 1); else Logic.turn(s, t.p, dir);
         t.ax = x; t.ay = y;          // keep swiping for the next turn without lifting the finger
       },
       draw: function (g, info) {
         var G = geometry(g), cs = G.cs, ox = G.ox, oy = G.oy, fmt = Kit.fmt, i;
         var who = names(), lcd = g.kind === "lcd";
-        g.hud("SCORE " + fmt(s.score), "ARENA " + s.level + "/" + s.arenas.length);
+        g.hud("SCORE " + fmt(me ? s.score2 : s.score), "ARENA " + s.level + "/" + s.arenas.length);
         g.board(ox, oy, cs * Logic.COLS, cs * Logic.ROWS);
 
         // walls: a cached layer, redrawn for a new arena or look (solid, so they differ from the snakes)
@@ -94,9 +109,11 @@
         var py = 256;
         g.text(who[1], 10, py + 4, { size: 11, ci: lcd ? 0 : 5 });
         g.text(who[0], 230, py + 4, { size: 11, ci: lcd ? 0 : 4, align: "right" });
+        // the pips start after the name (a name is at most 5 letters, about 8 px each)
+        var l0 = Math.max(44, 16 + who[1].length * 8), r0 = Math.min(196, 224 - who[0].length * 8);
         for (i = 0; i < Logic.WIN_ROUNDS; i++) {
-          pip(g, 44 + i * 12, py, s.wins[1] > i, 5);
-          pip(g, 196 - i * 12, py, s.wins[0] > i, 4);
+          pip(g, l0 + i * 12, py, s.wins[1] > i, 5);
+          pip(g, r0 - i * 12, py, s.wins[0] > i, 4);
         }
         g.text("ROUND " + s.round, Kit.W / 2, py + 4, { size: 11, align: "center", a: 0.8 });
 
@@ -104,13 +121,14 @@
         var msg = null, sub = null;
         if (s.over) {
           if (s.won) { msg = "ALL ARENAS WON!"; sub = "WELL PLAYED"; }
+          else if (s.mode === "phones") { msg = !s.matchWinner ? "A DRAWN MATCH" : s.matchWinner === me + 1 ? "YOU WIN THE MATCH!" : who[s.matchWinner - 1] + " WINS THE MATCH"; sub = "ARENA " + s.level; }
           else if (s.mode === "two") { msg = s.matchWinner ? who[s.matchWinner - 1] + " WINS THE MATCH" : "A DRAWN MATCH"; sub = "ARENA " + s.level; }
           else { msg = s.matchWinner === 2 ? "CPU WINS THE MATCH" : "A DRAWN MATCH"; sub = "ARENA " + s.level; }
         } else if (s.phase === "ready") {
           msg = s.round === 1 ? "ARENA " + s.level : "GET READY";
           sub = s.round === 1 ? s.arenaName.toUpperCase() : null;
         } else if (s.phase === "end") {
-          msg = s.roundWinner ? who[s.roundWinner - 1] + (s.roundWinner === 1 && s.mode === "cpu" ? " WIN" : " WINS") + " THE ROUND"
+          msg = s.roundWinner ? who[s.roundWinner - 1] + (who[s.roundWinner - 1] === "YOU" ? " WIN" : " WINS") + " THE ROUND"
             : s.roundCause === "time" ? "TIME UP: A DRAW" : "BOTH CRASHED: A DRAW";
           sub = s.roundCause === "time" ? "THE LONGER SNAKE WINS" : s.roundCause === "head" ? "HEAD ON" : null;
         } else if (s.phase === "match") {
@@ -182,9 +200,12 @@
     defaultMode: "cpu",
     controls: "touch",
     players: 2,
+    lockstep: true,
+    liveModes: ["phones"],
     help: "Make the other snake crash! Green (player 1, on the right): arrow keys. Blue (player 2, on the left): W A S D. " +
       "On a phone, swipe on the right half of the game to steer green and on the left half to steer blue (against the " +
-      "computer, swipe anywhere). Heads meeting is a draw. First to 3 rounds wins the match. P or Esc pauses.",
+      "computer, swipe anywhere). Two phones: each of you steers your own snake with the arrows, W A S D or a swipe " +
+      "anywhere. Heads meeting is a draw. First to 3 rounds wins the match. P or Esc pauses.",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

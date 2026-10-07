@@ -32,7 +32,8 @@ from ..level_common import LevelError, check_name
 
 # The games with a kind module here, in the order of the game table.
 GAMES = ("blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers",
-         "tanks", "invaders", "rocks", "hop", "snakeduel")
+         "tanks", "invaders", "rocks", "hop", "snakeduel", "bubbles", "gems", "stack", "runner", "lander", "defense",
+         "typerain")
 
 
 # ---------------------------------------------------------------------------

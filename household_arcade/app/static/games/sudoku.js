@@ -5,7 +5,9 @@
    same size); a tap on the grid selects a cell. Number lines are drawn here: the cells holding the focus number
    are highlighted and every cell in their rows, columns and boxes gets one even, soft shade (worked out once
    by Logic.lines, so crossings don't get darker); the empty cells left clear are the only places that number
-   can still go. */
+   can still go. The start-screen option picks rows, columns and boxes (default), rows and columns only, or
+   none; the selected cell's own row/column/box tint follows the same choice. The focus number's cells and the
+   selected cell are always highlighted. */
 (function (root) {
   "use strict";
   var Kit = root.ArcadeKit, Logic = root.SudokuLogic;
@@ -13,7 +15,8 @@
   var MODES = [{ id: "easy", label: "Easy" }, { id: "medium", label: "Medium" }, { id: "hard", label: "Hard" }, { id: "expert", label: "Expert" }];
   var OPTIONS = [
     { id: "mistakes", label: "Mistakes", default: "now", choices: [{ id: "now", label: "Shown at once (+10 s each)" }, { id: "end", label: "Shown when the grid is full" }] },
-    { id: "lines", label: "Number lines", default: "on", choices: [{ id: "on", label: "On" }, { id: "off", label: "Off" }] },
+    // "on" keeps its id from when this was On / Off, so a saved On stays rows, columns and boxes and a saved Off is None
+    { id: "lines", label: "Number lines", default: "on", choices: [{ id: "on", label: "Rows, columns and boxes" }, { id: "rows", label: "Rows and columns only" }, { id: "off", label: "None" }] },
   ];
   var BUTTONS = [
     { action: "n1", label: "1", place: [1, 1, 1, 1] }, { action: "n2", label: "2", place: [2, 1, 1, 1] }, { action: "n3", label: "3", place: [3, 1, 1, 1] },
@@ -29,7 +32,7 @@
 
   function create(canvas, opts) {
     opts = opts || {};
-    var o = opts.options || {}, s = null, pending = [], linesOn = o.lines !== "off";
+    var o = opts.options || {}, s = null, pending = [], lineMode = Logic.lineMode(o.lines), linesOn = lineMode !== "off";
 
     function queue(evs) { for (var i = 0; i < evs.length; i++) pending.push(evs[i]); }
     function cellAt(x, y) {
@@ -73,7 +76,7 @@
       g.hud(left, Logic.clock(Logic.effective(s)));
       g.text(hl < 0 ? "HINTS ANY" : "HINTS " + hl, 120, 24, { size: 9, align: "center", a: 0.85 });
 
-      var focus = s.focus, ln = linesOn && focus ? Logic.lines(s, focus) : null;
+      var focus = s.focus, ln = linesOn && focus ? Logic.lines(s, focus, lineMode) : null;
       var wrong = {};
       if (s.mistakesNow || s.checking) Logic.wrongCells(s).forEach(function (w) { wrong[w] = true; });
       var hintCells = {};
@@ -83,7 +86,8 @@
       if (ln) for (i = 0; i < 81; i++) if (ln.covered[i] && s.vals[i] !== focus && !(g.kind === "lcd" && s.vals[i])) shade(g, i);
       for (i = 0; i < 81; i++) {
         r = Math.floor(i / 9); c = i % 9; x = GX + c * CS; y = GY + r * CS;
-        if (s.sel >= 0 && i !== s.sel && !(ln && ln.covered[i]) && (Logic.ROW[i] === Logic.ROW[s.sel] || Logic.COL[i] === Logic.COL[s.sel] || Logic.BOX[i] === Logic.BOX[s.sel]) && !lowres)
+        // the selected cell's own row, column and box get a faint tint, following the same kind of lines (none with None)
+        if (s.sel >= 0 && i !== s.sel && !(ln && ln.covered[i]) && Logic.linked(s.sel, i, lineMode) && !lowres)
           g.rect(x, y, CS, CS, 8, { a: 0.35, r: 0, solid: true });
         if (hintCells[i]) g.rect(x, y, CS, CS, 3, { a: 0.4, r: 0, solid: fillSolid });
         if (wrong[i] && !lowres) g.rect(x + 1, y + 1, CS - 2, CS - 2, 1, { a: 0.28, r: 2, solid: fillSolid });
@@ -188,7 +192,7 @@
     buttons: BUTTONS,
     options: OPTIONS,
     typed: true,
-    help: "Fill the grid so every row, column and 3 × 3 box has 1–9 once. Tap a cell, then a number (keyboard: arrows and 1–9). Notes writes small pencil marks; Fill notes writes every possible number; placing a number clears it from the notes around it. Number lines show where a number can still go. Hint explains a move first, tap it again to fill it in (+30 s). Keyboard: N notes, H hint, U undo, Backspace erase. Esc pauses.",
+    help: "Fill the grid so every row, column and 3 × 3 box has 1–9 once. Tap a cell, then a number (keyboard: arrows and 1–9). Notes writes small pencil marks; Fill notes writes every possible number; placing a number clears it from the notes around it. Number lines (start screen: rows, columns and boxes, rows and columns only, or none) show where a number can still go. Hint explains a move first, tap it again to fill it in (+30 s). Keyboard: N notes, H hint, U undo, Backspace erase. Esc pauses.",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

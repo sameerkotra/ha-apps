@@ -10,7 +10,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERSION = "1.1.1"
+VERSION = "1.1.3"
 REPO_URL = pk.REPO_URL
 
 
@@ -62,7 +62,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_changelog(self):
         versions = pk.check_changelog(HERE, VERSION)
-        self.assertEqual(versions, ["1.1.1", "1.1.0", "1.0.1", "1.0.0"])
+        self.assertEqual(versions, ["1.1.3", "1.1.2", "1.1.1", "1.1.0", "1.0.1", "1.0.0"])
         self.assertIn("First release", read("CHANGELOG.md"))
 
     def test_icon_and_logo_sizes(self):

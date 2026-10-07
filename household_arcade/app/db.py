@@ -309,6 +309,28 @@ CREATE TABLE IF NOT EXISTS daily_challenges (
 ALTER TABLE play_sessions ADD COLUMN daily TEXT
 """
 
+# Playing turn by turn (SPEC §13.5, §13.6): each move as the server checked it, the rules' state (kept on the server
+# only: Sea Battle's fleets are hidden information), the match's options (Dots and Boxes' size, Sea Battle's fleet),
+# when the current turn began (7 days without a move ends it), and the your-move notifications per player.
+_M8_TURNS = """
+CREATE TABLE IF NOT EXISTS match_moves (
+    match_id TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    number INTEGER NOT NULL,             -- 1, 2, 3 … (never two with one number: the second phone's move is refused)
+    seat INTEGER NOT NULL,               -- 1–4
+    move TEXT NOT NULL,                  -- JSON, as the rules recorded it (Sea Battle: the shot and its result)
+    dice INTEGER,                        -- the server's roll for this move (Ludo, Snakes and Ladders)
+    at TEXT NOT NULL,
+    PRIMARY KEY (match_id, number)
+);
+
+ALTER TABLE matches ADD COLUMN options TEXT;
+ALTER TABLE matches ADD COLUMN state TEXT;
+ALTER TABLE matches ADD COLUMN turn_at TEXT;
+ALTER TABLE match_players ADD COLUMN notified_at TEXT;
+ALTER TABLE match_players ADD COLUMN notify_due INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE match_players ADD COLUMN left_at TEXT
+"""
+
 # (number, description, SQL). Append only.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "people, play sessions, scores, app settings", _M1_CORE),
@@ -318,6 +340,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (5, "AI usage", _M5_AI_CALLS),
     (6, "playing together: matches", _M6_TOGETHER),
     (7, "daily challenge, per-person game choices", _M7_DAILY),
+    (8, "turn-by-turn matches: moves, state, notifications", _M8_TURNS),
 ]
 LATEST = MIGRATIONS[-1][0]
 

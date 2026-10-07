@@ -510,3 +510,102 @@ test("number lines shade cells instead of drawing a line through the middle", ()
   const none = recordDraw("modern", (s) => { s.focus = 0; s.sel = -1; s.hint = null; });
   assert.equal(none.calls.fill.length, 0);
 });
+
+// ---------- number lines: three kinds (rows, columns and boxes / rows and columns only / none) ----------
+
+test("number lines kinds: 'on' is rows, columns and boxes, 'rows' leaves the boxes out, 'off' shades nothing", () => {
+  const s = S.create({ mode: "medium", seed: 31, hints: null });
+  const d = 7;
+  const holders = s.vals.map((v, i) => (v === d ? i : -1)).filter((i) => i >= 0);
+  assert.deepEqual(S.LINE_MODES, ["on", "rows", "off"]);
+  const on = S.lines(s, d, "on"), rows = S.lines(s, d, "rows");
+  assert.deepEqual(on.covered, S.lines(s, d).covered, "no kind given = rows, columns and boxes");
+  assert.equal(on.mode, "on"); assert.equal(rows.mode, "rows");
+  assert.deepEqual(rows.boxes, []);
+  assert.deepEqual(rows.rows, on.rows); assert.deepEqual(rows.cols, on.cols); assert.deepEqual(rows.holders, holders);
+  let boxOnly = 0;
+  for (let i = 0; i < 81; i++) {
+    const rc = holders.some((h) => S.ROW[h] === S.ROW[i] || S.COL[h] === S.COL[i]);
+    assert.equal(rows.covered[i], rc, `rows-only cell ${i}`);
+    if (on.covered[i] && !rc) boxOnly++;
+    if (!rows.covered[i] && !s.vals[i]) assert.ok(rows.open.includes(i));
+  }
+  assert.ok(boxOnly > 0, "the sample has cells that only a box covers, so the kinds differ");
+  assert.equal(S.lines(s, d, "off"), null);
+  assert.equal(S.lines(s, 0, "rows"), null);
+  // an old or odd saved choice reads as the default
+  for (const odd of [undefined, null, "", "On", "boxes"]) assert.equal(S.lineMode(odd), "on");
+  assert.equal(S.lineMode("rows"), "rows"); assert.equal(S.lineMode("off"), "off");
+  // linked: which cells the selected cell's own tint reaches
+  const a = 40;                                  // centre cell
+  assert.ok(S.linked(a, 4, "on") && S.linked(a, 4, "rows"), "same column");
+  assert.ok(S.linked(a, 36, "rows"), "same row");
+  assert.ok(S.linked(a, 30, "on") && !S.linked(a, 30, "rows"), "same box only");
+  assert.ok(!S.linked(a, 4, "off") && !S.linked(a, 0, "on"));
+});
+
+test("sudoku: the start-screen option offers the three kinds; old On / Off choices keep working", () => {
+  const sb = makeSandbox({ extra: ["sudoku-logic.js", "sudoku.js"] });
+  const def = sb.win.ArcadeGames.get("sudoku");
+  const op = def.options.find((o) => o.id === "lines");
+  assert.equal(op.default, "on");
+  assert.equal(JSON.stringify(op.choices.map((c) => c.id)), JSON.stringify(["on", "rows", "off"]));
+  assert.equal(JSON.stringify(op.choices.map((c) => c.label)), JSON.stringify(["Rows, columns and boxes", "Rows and columns only", "None"]));
+  assert.ok(!op.offInRaces, "a display choice: races and daily challenges keep each person's own");
+  // the option never reaches the rules' state: the same seed gives the same saved state whatever the kind
+  const states = ["on", "rows", "off"].map((k) => {
+    const inst = def.create(sb.canvas(), { mode: "easy", seed: 5, look: "modern", options: { lines: k } });
+    inst.start(); inst.input("n4", true); sb.frames(2);
+    inst.pause(); const st = JSON.stringify(inst.save().state); inst.destroy(); return st;
+  });
+  assert.equal(states[0], states[1]); assert.equal(states[1], states[2]);
+});
+
+// Count the number-line fills of one frame (the per-look shade) for a kind of lines.
+function shadeCount(look, kind, setup) {
+  const sb = makeSandbox({ extra: ["sudoku-logic.js", "sudoku.js"] });
+  let impl = null;
+  const real = sb.win.ArcadeKit.createSession;
+  sb.win.ArcadeKit.createSession = (c, o, i) => { impl = i; return real(c, o, i); };
+  const opts = { mode: "easy", seed: 12, look };
+  if (kind !== undefined) opts.options = { lines: kind };
+  const inst = sb.win.ArcadeGames.get("sudoku").create(sb.canvas(), opts);
+  inst.start(); sb.frames(1);
+  const s = impl.logic();
+  setup(s);
+  const calls = { fill: [], rect: [] };
+  const ctx = { fillRect: (...a) => calls.fill.push(a), set fillStyle(v) {}, get fillStyle() { return ""; } };
+  const g = { kind: look, lowres: look === "lcd" || look === "pixel", k: look === "lcd" ? 2 / 3 : look === "pixel" ? 0.5 : 1, ctx,
+    col: () => "rgba(0,0,0,0.2)", hud() {}, text() {}, poly() {}, line() {}, rect: (...a) => calls.rect.push(a) };
+  impl.draw(g, {});
+  inst.destroy();
+  return { s, calls };
+}
+
+test("number lines kinds are drawn in every look: one shade per covered cell, none with None", () => {
+  for (const look of LOOKS) {
+    for (const kind of ["on", "rows", "off", undefined, "Off-ish"]) {
+      const { s, calls } = shadeCount(look, kind, (s) => { s.focus = 5; s.sel = -1; s.hint = null; });
+      const ln = S.lines(s, 5, kind);
+      const want = ln ? ln.covered.filter((c, i) => c && s.vals[i] !== 5 && !(look === "lcd" && s.vals[i])).length : 0;
+      // the focus cells' own highlight is drawn with rect (colour 3) in every kind
+      const focusRects = calls.rect.filter((r) => r[4] === 3).length;
+      assert.equal(focusRects, s.vals.filter((v) => v === 5).length, `${look}/${kind}: the number's cells stay highlighted`);
+      if (look === "lcd") {
+        const dots = calls.rect.filter((r) => r[2] < 2 && r[4] === 0).length;
+        if (want) assert.ok(dots > want, `${look}/${kind}: dithered`); else assert.equal(dots, 0, `${look}/${kind}: no dither`);
+      } else if (look === "pixel") assert.equal(calls.rect.filter((r) => r[4] === 7).length, want, `${look}/${kind}`);
+      else assert.equal(calls.fill.length, want, `${look}/${kind}`);
+    }
+  }
+});
+
+test("the selected cell's own tint follows the kind: row, column and box / row and column / none", () => {
+  const sel = 40;
+  for (const [kind, n] of [["on", 20], ["rows", 16], ["off", 0]]) {
+    const { calls } = shadeCount("modern", kind, (s) => { s.focus = 0; s.sel = sel; s.hint = null; });
+    // the tint is a solid colour-8 rect the size of a cell
+    const tints = calls.rect.filter((r) => r[4] === 8 && r[2] === 23 && r[5] && r[5].solid).length;
+    assert.equal(tints, n, kind);
+  }
+});

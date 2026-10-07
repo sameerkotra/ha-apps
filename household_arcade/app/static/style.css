@@ -629,6 +629,10 @@ body[data-route="play"] main { max-width: none; padding-bottom: 12px; }
 .tg-cards { display: contents; }
 .tg-card { display: flex; flex-direction: column; gap: 8px; }
 .tg-card h3 { margin: 0; }
+/* Your games (turn by turn): my move first, marked with the accent */
+.tg-game.my-turn { border-color: var(--accent-dim); }
+.tg-turn { font-weight: 600; }
+.tg-turn.mine { color: var(--accent); }
 .tg-vs { border-top: 1px solid var(--border); padding: 8px 0; }
 .tg-vs summary { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .tg-tally { color: var(--text-dim); font-size: 0.85rem; }

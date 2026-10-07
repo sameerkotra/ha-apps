@@ -22,7 +22,7 @@ class TestAccess(ApiBase):
         self.assertEqual(r.status_code, 403)
 
     def test_health_needs_no_user(self):
-        self.assertEqual(self.c.get("/api/health").json(), {"status": "ok", "version": "1.6.1"})
+        self.assertEqual(self.c.get("/api/health").json(), {"status": "ok", "version": "1.7.1"})
 
     def test_admin_routes_refuse_non_admins(self):
         for method, path in (("get", "/api/admin/settings"), ("get", "/api/admin/users"),
@@ -73,7 +73,7 @@ class TestMe(ApiBase):
         self.assertTrue(me["leaderboard"])
         self.assertIsNone(me["playTime"]["leftSeconds"])
         self.assertEqual(me["today"], "2026-09-21")
-        self.assertEqual(me["version"], "1.6.1")
+        self.assertEqual(me["version"], "1.7.1")
 
     def test_whoami_echoes_identity_and_counts_only(self):
         w = self.get("/api/whoami", KABIR).json()
@@ -94,7 +94,7 @@ class TestMe(ApiBase):
 class TestGames(ApiBase):
     def test_games_list(self):
         g = self.get("/api/games").json()["games"]
-        self.assertEqual([x["id"] for x in g], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch"])
+        self.assertEqual([x["id"] for x in g], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"])
         snake = g[0]
         self.assertEqual([m["id"] for m in snake["modes"]],
                          ["walls-slow", "walls-normal", "walls-fast", "wrap-slow", "wrap-normal", "wrap-fast", "maze"])
@@ -145,11 +145,11 @@ class TestPrefs(ApiBase):
 class TestStaticShell(ApiBase):
     def test_index_loads_the_contract_scripts_in_order(self):
         html = self.c.get("/", headers=KABIR).text
-        order = ["common/backnav.js", "common/whoami.js", "games/kit.js", "games/sound.js", "games/registry.js", "games/snake-logic.js",
+        order = ["common/backnav.js", "common/whoami.js", "games/kit.js", "games/sound.js", "games/registry.js", "games/lockstep.js", "games/snake-logic.js",
                  "games/snake.js", "games/brick-logic.js", "games/brick.js", "games/blocks-logic.js", "games/blocks.js",
                  "games/duel-logic.js", "games/duel.js", "games/racer-logic.js", "games/racer.js", "games/flap-logic.js",
-                 "games/flap.js", "games/mines-logic.js", "games/mines.js", "games/merge-logic.js", "games/merge.js", "games/colours-logic.js", "games/colours.js", "games/cards-logic.js", "games/cards.js", "games/mole-logic.js", "games/mole.js", "games/numbers-logic.js", "games/numbers.js", "games/tanks-logic.js", "games/tanks.js", "games/invaders-logic.js", "games/invaders.js", "games/rocks-logic.js", "games/rocks.js", "games/hop-logic.js", "games/hop.js", "games/snakeduel-logic.js", "games/snakeduel.js", "games/sudoku-logic.js", "games/sudoku.js", "games/wordguess-words.js", "games/wordguess-logic.js", "games/wordguess.js", "games/wordsearch-words.js", "games/wordsearch-logic.js", "games/wordsearch.js", "app.js", "play.js", "admin.js"]
-        pos = [html.index(f'src="{name}?v=1.6.1"') for name in order]
+                 "games/flap.js", "games/mines-logic.js", "games/mines.js", "games/merge-logic.js", "games/merge.js", "games/colours-logic.js", "games/colours.js", "games/cards-logic.js", "games/cards.js", "games/mole-logic.js", "games/mole.js", "games/numbers-logic.js", "games/numbers.js", "games/tanks-logic.js", "games/tanks.js", "games/invaders-logic.js", "games/invaders.js", "games/rocks-logic.js", "games/rocks.js", "games/hop-logic.js", "games/hop.js", "games/snakeduel-logic.js", "games/snakeduel.js", "games/sudoku-logic.js", "games/sudoku.js", "games/wordguess-words.js", "games/wordguess-logic.js", "games/wordguess.js", "games/wordsearch-words.js", "games/wordsearch-logic.js", "games/wordsearch.js", "games/bubbles-logic.js", "games/bubbles.js", "games/gems-logic.js", "games/gems.js", "games/stack-logic.js", "games/stack.js", "games/runner-logic.js", "games/runner.js", "games/lander-logic.js", "games/lander.js", "games/defense-logic.js", "games/defense.js", "games/slide-logic.js", "games/slide.js", "games/lights-logic.js", "games/lights.js", "games/nonogram-logic.js", "games/nonogram.js", "games/tiles-logic.js", "games/tiles.js", "games/codebreak-logic.js", "games/codebreak.js", "games/typerain-words.js", "games/typerain-logic.js", "games/typerain.js", "games/boardkit.js", "games/fourrow-logic.js", "games/fourrow.js", "games/tictactoe-logic.js", "games/tictactoe.js", "games/checkers-logic.js", "games/checkers.js", "games/reversi-logic.js", "games/reversi.js", "games/dots-logic.js", "games/dots.js", "games/seabattle-logic.js", "games/seabattle.js", "app.js", "play.js", "admin.js"]
+        pos = [html.index(f'src="{name}?v=1.7.1"') for name in order]
         self.assertEqual(pos, sorted(pos))
         self.assertNotIn("<script>", html)            # no inline script (CSP)
         self.assertNotIn("onclick=", html)

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.7.1
+
+- **Sudoku: choose how number lines shade**: **Rows, columns and boxes** (as before), **Rows and columns only**, or **None**, in the **Number lines** choice on Sudoku's start screen. If you had number lines off, you get None. It only changes what you see, never the score.
+
+## 1.7.0
+
+- **22 new games** (42 in all):
+  - **Arcade**: Bubble Pop, Gem Swap, Tower Stack, Runner, Lander and City Defense.
+  - **Puzzles**: Slide Puzzle, Lights Out, Picture Logic, Tile Match, Code Breaker and Type Rain.
+  - **Board games**: Four in a Row, Tic-tac-toe, Checkers, Reversi, Dots and Boxes and Sea Battle — against the
+    computer (three strengths) or another person.
+  - **Classics**: Ludo, Snakes and Ladders, Carrom and Chess (all the rules; the computer thinks in the background so the
+    page never freezes).
+  Every new game works in all six looks, with keyboard, touch and a game controller, and can be paused, saved and
+  resumed. The arcade and puzzle games can be raced with someone (Play with someone).
+- **Play live (two phones)**: Snake Duel, Paddle Duel and Tank Battle can now be played against another person on
+  their own phone, in step, as one game. Carrom is played live too, taking turns at the board. If a phone goes quiet
+  both games pause; after a minute without it, the other player wins.
+- **Play turn by turn (phones)**: the board games and Chess against another person, and Ludo and Snakes and
+  Ladders with up to three others, one move at a time, over minutes or days. The app checks every move, rolls the dice itself and
+  keeps Sea Battle's ships hidden from the other player. Several games can run at once; they are listed under
+  **Your games** on the Games page.
+- **Your-move notifications**: a phone notification when it is your move in a turn-by-turn game (at most one every
+  15 minutes per game, none during a child's quiet hours). An admin can switch it off in Admin → App settings
+  (**Your-move notifications**); each person's **Receive notifications** on Settings applies too.
+- Children's limits apply to every new way of playing: a game that isn't one of theirs, quiet hours or no play time
+  left stop a child starting or moving, and a live match ends as a draw if their time runs out.
+- **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back.
+
 ## 1.6.1
 
 - **Security**: backups no longer include the AI access key, and restoring a backup keeps the key this install already has. After restoring on a new install, enter the key again in Admin → App settings.

@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at   TEXT NOT NULL,
     ha_entity_id TEXT,                       -- sync key, e.g. 'person.ann' (migration-added)
     disabled     INTEGER NOT NULL DEFAULT 0, -- 1 = hidden from pickers, history kept (migration-added)
-    ha_user_id   TEXT                        -- the Person's HA user id (attributes.user_id), lower-case; identifies the signed-in person (migration-added)
+    ha_user_id   TEXT,                       -- the Person's HA user id (attributes.user_id), lower-case; identifies the signed-in person (migration-added)
+    receive_notifications INTEGER NOT NULL DEFAULT 1  -- the person's own choice under My settings (migration-added)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ha_entity ON users(ha_entity_id)
     WHERE ha_entity_id IS NOT NULL;
@@ -50,6 +51,8 @@ CREATE TABLE IF NOT EXISTS expenses (
 );
 CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
 CREATE INDEX IF NOT EXISTS idx_expenses_date  ON expenses(date);
+-- The group ledger newest first, a page at a time (keyset on date + id; SPEC §6).
+CREATE INDEX IF NOT EXISTS idx_expenses_group_date ON expenses(group_id, date, id);
 
 -- Each person's share of one expense; shares sum to expenses.amount.
 -- Payments have exactly one row: the recipient, for the full amount.
@@ -74,9 +77,21 @@ CREATE TABLE IF NOT EXISTS events (
 );
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
 
+-- Admin → Users: extra notify services per person, on top of the phones Home
+-- Assistant links to them (common/ha_notify.py, people_admin.py). Keyed by
+-- Splitpot's own users.id (not the HA user id).
+CREATE TABLE IF NOT EXISTS user_notify (
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service     TEXT NOT NULL,               -- "notify.<name>", name matching ^[a-z0-9_]+$
+    created_at  TEXT NOT NULL,
+    created_by  TEXT,                        -- the admin's login name (or user id)
+    PRIMARY KEY (user_id, service)
+);
+
 -- Admin → App settings. One row per setting that has been saved
--- (ha_sync_enabled, sync_interval_minutes, currency); a missing row means
--- the default (sync on, 5 minutes, USD).
+-- (ha_sync_enabled, sync_interval_minutes, currency, notify_charges,
+-- notify_payments); a missing row means the default (sync on, 5 minutes,
+-- USD, charge notifications off, settle-up notifications on).
 CREATE TABLE IF NOT EXISTS app_settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,               -- JSON, e.g. '10' or '"EUR"'

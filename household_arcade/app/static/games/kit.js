@@ -18,7 +18,9 @@
      refresh rate; it never runs while the page is hidden.
    - createSession(canvas, opts, impl): the part every game shares — start, pause,
      resume, looks, sound, reduce motion, active seconds, scores and the end
-     result — so a game file only has its rules, input and drawing.
+     result — so a game file only has its rules, input and drawing. With
+     opts.live (a live duel on two phones, SPEC §13.4) the session plays in
+     lockstep: an update runs only when both players' inputs for it are known.
 
    No DOM access outside the canvas it is given (and the page's theme for the
    Modern look). Nothing is loaded from the network. */
@@ -114,8 +116,9 @@
     "+": ["...", ".#.", "###", ".#.", "..."], "!": ["#", "#", "#", ".", "#"], "?": ["##.", "..#", ".#.", "...", ".#."],
     "/": ["..#", "..#", ".#.", "#..", "#.."], "'": ["#", "#", ".", ".", "."], "%": ["#.#", "..#", ".#.", "#..", "#.#"],
     "×": ["...", "#.#", ".#.", "#.#", "..."], "(": [".#", "#.", "#.", "#.", ".#"], ")": ["#.", ".#", ".#", ".#", "#."],
-    "=": ["...", "###", "...", "###", "..."], "÷": [".#.", "...", "###", "...", ".#."], "−": ["...", "...", "###", "...", "..."],
+    "=": ["...", "###", "...", "###", "..."], "÷": [".#.", "...", "###", "...", ".#."], "−": ["...", "...", "###", "...", "..."], "—": ["....", "....", "####", "....", "...."], "–": ["...", "...", "###", "...", "..."],
     "♥": [".#.#.", "#####", "#####", ".###.", "..#.."], "→": ["....", "..#.", "####", "..#.", "...."],
+    "…": [".....", ".....", ".....", ".....", "#.#.#"], "&": [".#..", "#.#.", ".#..", "#.#.", ".#.#"],
   };
   function glyph(ch) { return GLYPHS[ch] || GLYPHS[String(ch).toUpperCase()] || GLYPHS["?"]; }
   function bitmapWidth(s, scale) {
@@ -692,6 +695,9 @@
   // 60 updates a second whatever the refresh rate. A small tolerance keeps a 60 Hz
   // screen at exactly one update per frame (no 0/2 judder from timestamp jitter);
   // after a stall the game doesn't fast-forward. Stops itself when the page is hidden.
+  // Lockstep (o.step() returns false: the other phone's inputs aren't here yet): the
+  // update waits and at most 4 updates of time are kept for when they arrive; o.extra()
+  // (> 0 when this phone is behind the other) adds one update a frame to catch up.
   function createLoop(o) {
     var doc = o.doc || root.document;
     var raf = root.requestAnimationFrame ? root.requestAnimationFrame.bind(root) : function (cb) { return setTimeout(function () { cb(now()); }, 16); };
@@ -706,9 +712,11 @@
       if (dt > 250) dt = STEP_MS;
       if (dt < 0) dt = 0;
       acc += dt;
+      if (o.extra && o.extra() > 0) acc += STEP_MS;
       var n = 0;
       while (acc >= STEP_MS * 0.9 && running) {
-        o.step(); acc -= STEP_MS;
+        if (o.step() === false) { if (acc > STEP_MS * 4) acc = STEP_MS * 4; break; }
+        acc -= STEP_MS;
         if (++n >= 8) { acc = 0; break; }
       }
       if (!running) return;
@@ -735,6 +743,18 @@
   // impl: { init(seed), step() → events, input(action, isDown), pointer(kind, lx, ly, cssX, cssY),
   //         draw(g, info), score(), level(), isOver(), result() → { score, level, stats },
   //         sounds: { eventType: soundName } }
+  // Taking turns live (opts.live.lockstep from ArcadeLockstep.createTurns, Carrom): impl also has turn() (whose move,
+  // −1 while one is moving), shots(), settledShots() (shots that have stopped), nextSeat() (1 / 2, 0 at the end),
+  // apply(), checksum() and report(); each shot from the server is applied when it is a player's turn, and each one
+  // that has stopped is reported with the checksum.
+  // A live duel (opts.live = { seat, lockstep } — lockstep from ArcadeLockstep.create): impl also has
+  //   apply(player, action, value)  an input of player 0 or 1, played on both phones on the same update,
+  //   checksum()                    the rules' checksum (compared between the phones),
+  //   report()                      { scores: [p1, p2], levels, winner } at the end,
+  // Turn by turn (opts.turns = { seat, picture, send(move) }, SPEC §13.5): impl.turnSync(picture) takes the match as
+  // the server has it after every move (inst.turnSync); the game sends its own moves with opts.turns.send.
+  // and its input()/pointer() get a third/sixth argument act(action, value) that sends this phone's input
+  // (instead of touching the rules: an input only reaches the rules through apply(), on both phones).
   function createSession(canvas, opts, impl) {
     opts = opts || {};
     function cb(name) { return typeof opts[name] === "function" ? opts[name] : null; }
@@ -746,6 +766,8 @@
       : (Number(opts.seed) >>> 0);
     var Sound = root.ArcadeSound;
     var state = "ready", steps = 0, alpha = 0, lastScore = -1, lastLevel = -1;
+    var live = opts.live && opts.live.lockstep ? opts.live : null, ls = live ? live.lockstep : null;
+    function act(action, value) { if (ls && state === "running") ls.local(action, value); }
 
     function safe(fn) {
       if (!fn) return;
@@ -765,9 +787,35 @@
       var sc = impl.score(), lv = impl.level();
       if (sc !== lastScore || lv !== lastLevel) { lastScore = sc; lastLevel = lv; safe(onScore, sc, lv); }
     }
+    var reported = 0;
     function tick() {
-      steps++;
-      var evs = impl.step() || [];
+      var evs;
+      if (ls && ls.turns) {                  // taking turns live: a shot moving runs freely; a turn waits for its shot
+        steps++;
+        evs = [];
+        if (impl.turn() >= 0) {
+          var sh = ls.nextShot();
+          if (sh) evs = impl.apply(sh[0] - 1, sh[1], sh[2]) || [];
+        }
+        evs = evs.concat(impl.step() || []);
+        var done = impl.settledShots();
+        if (done > reported) { reported = done; ls.report(done, impl.checksum() >>> 0, impl.nextSeat()); }
+      } else if (ls) {                       // lockstep: both players' inputs for this update, or wait
+        var ins = ls.next(now());
+        if (!ins) return false;
+        evs = [];
+        for (var k = 0; k < ins.length; k++) {
+          var more = impl.apply(ins[k][0] - 1, ins[k][1], ins[k][2]);
+          if (more && more.length) evs = evs.concat(more);
+        }
+        steps++;
+        evs = evs.concat(impl.step() || []);
+        ls.advance(impl.checksum);
+        ls.flush(false);
+      } else {
+        steps++;
+        evs = impl.step() || [];
+      }
       for (var i = 0; i < evs.length; i++) {
         var ev = evs[i];
         play(impl.sounds && impl.sounds[ev.type]);
@@ -781,7 +829,14 @@
       loop.stop();
       draw();
       var r = impl.result() || {};
-      safe(onEnd, { score: r.score || 0, level: r.level || 1, seconds: Math.round(steps / 60), stats: r.stats || {} });
+      var out = { score: r.score || 0, level: r.level || 1, seconds: Math.round(steps / 60), stats: r.stats || {} };
+      if (ls) {                              // what both phones must agree on (SPEC §13.4)
+        ls.finish();
+        var rep = impl.report ? impl.report() : {};
+        // taking turns, the phones agree on the shots played (each counts its own updates while waiting for a shot)
+        out.live = { tick: ls.turns ? impl.shots() : steps, sum: impl.checksum() >>> 0, scores: rep.scores, levels: rep.levels, winner: rep.winner };
+      }
+      safe(onEnd, out);
     }
 
     impl.init(seed);
@@ -793,7 +848,8 @@
     }
     var renderer = createRenderer(canvas, lookId, { onInvalidate: function () { if (state !== "running" && state !== "destroyed") draw(); } });
     renderer.setReduceMotion(reduce());
-    var loop = createLoop({ step: tick, draw: function (a) { alpha = a; draw(); }, onHidden: function () { inst.pause(); }, doc: canvas.ownerDocument });
+    var loop = createLoop({ step: tick, draw: function (a) { alpha = a; draw(); }, onHidden: function () { inst.pause(); }, doc: canvas.ownerDocument,
+      extra: ls && !ls.turns ? function () { return ls.behind() > 2 ? 1 : 0; } : null });
     if (Sound && opts.sound !== undefined) Sound.setEnabled(soundOn);
     draw();
 
@@ -830,6 +886,30 @@
         return { score: impl.score(), level: impl.level(), over: state === "over", paused: state === "paused" };
       },
       get paused() { return state === "paused"; },
+      /** Why this game, ended now, would not be saved (the game's own words, e.g. "Board not finished — not saved"), or "". */
+      unfinishedNote: function () {
+        var r = null;
+        try { r = impl.result && impl.result(); } catch (e) { r = null; }
+        return (r && r.stats && r.stats.notSaved) || "";
+      },
+      /** A live duel: the update reached, how long (ms) it has been waiting for the other phone, its seat. */
+      liveStatus: function () {
+        if (!ls) return null;
+        var rep = impl.report ? impl.report() : null;
+        return { tick: ls.tick, waitingMs: state === "running" ? ls.waiting(now()) : 0, seat: live.seat, delay: ls.delay,
+          scores: rep ? rep.scores : null };
+      },
+      /** Turn by turn (SPEC §13.5): the match as the server now has it (a move made here or on another phone). The
+          game rebuilds its board from it; the events it returns play their sounds; a match that ended ends the game. */
+      turnSync: function (picture) {
+        if (state === "destroyed" || !impl.turnSync) return;
+        var evs = impl.turnSync(picture) || [];
+        for (var i = 0; i < evs.length; i++) { play(impl.sounds && impl.sounds[evs[i].type]); emit(evs[i].type, evs[i]); }
+        reportScore();
+        if (state !== "running") draw();
+      },
+      /** A live duel the server ended (out of step, left, …): stop where it is, without a result. */
+      stop: function () { if (state === "running" || state === "paused") { state = "over"; loop.stop(); draw(); } },
       get state() { return state; },
       get seconds() { return Math.round(steps / 60); },
       get score() { return impl.score(); },
@@ -854,12 +934,14 @@
           return;
         }
         if (state !== "running") return;
-        impl.input(action, isDown !== false);
+        if (ls) impl.input(action, isDown !== false, act);
+        else impl.input(action, isDown !== false);
       },
       pointer: function (kind, x, y) {
         if (state !== "running" || !impl.pointer) return;
         var p = renderer.toLogical(x, y);
-        impl.pointer(kind, p.x, p.y, x, y);
+        if (ls) impl.pointer(kind, p.x, p.y, x, y, act);
+        else impl.pointer(kind, p.x, p.y, x, y);
       },
       resize: function () {
         if (state === "destroyed") return;

@@ -80,15 +80,21 @@ class TestPlayers(Together):
         self.assertIn("Quiet hours until 13:00", people["u_dev"]["reason"])
 
     def test_unknown_or_unraceable_game(self):
-        self.assertEqual(self.get("/api/players?game=chess").status_code, 404)
-        self.assertEqual(self.get("/api/players?game=duel").status_code, 409)            # two-player games can't be raced
-        self.assertEqual(self.get("/api/players?game=snakeduel").status_code, 409)
+        self.assertEqual(self.get("/api/players?game=pinball").status_code, 404)
+        # two-player games can't be raced, but they are played live on two phones (step 2)
+        for g in ("duel", "snakeduel", "tanks"):
+            self.assertEqual(self.get(f"/api/players?game={g}").status_code, 200, g)
+        old = games.GAMES["duel"].pop("live")
+        try:
+            self.assertEqual(self.get("/api/players?game=duel").status_code, 409)       # neither raced nor live
+        finally:
+            games.GAMES["duel"]["live"] = old
         self.assertEqual(self.get("/api/players").status_code, 422)
 
     def test_race_list_and_games_flag(self):
         mine = {g["id"]: g["race"] for g in self.get("/api/games").json()["games"]}
         for g in ("snake", "brick", "blocks", "racer", "flap", "mines", "merge", "colours", "cards", "mole",
-                  "numbers", "invaders", "rocks", "hop"):
+                  "numbers", "invaders", "rocks", "hop", "bubbles", "gems", "stack", "runner", "lander", "defense"):
             self.assertTrue(mine[g], g)
         for g in ("duel", "tanks", "snakeduel"):
             self.assertFalse(mine[g], g)
@@ -146,12 +152,15 @@ class TestInvites(Together):
                      {"game": GAME, "mode": "zzz", "opponents": ["u_meera"]},
                      {"game": GAME, "mode": MODE, "opponents": ["u_meera"], "practice": "yes"},
                      {"game": GAME, "mode": MODE, "opponents": ["u_kabir"]},
-                     {"game": GAME, "mode": MODE, "opponents": ["u_meera"], "kind": "live"},
+                     {"game": GAME, "mode": MODE, "opponents": ["u_meera"], "kind": "duo"},
                      {"game": GAME, "mode": MODE, "opponents": ["u_meera"], "rematchOf": 5}):
             self.assertEqual(self.post("/api/matches", body, KABIR).status_code, 422, body)
-        self.assertEqual(self.post("/api/matches", {"game": "chess", "mode": "x", "opponents": ["u_meera"]}).status_code, 404)
+        self.assertEqual(self.post("/api/matches", {"game": "pinball", "mode": "x", "opponents": ["u_meera"]}).status_code, 404)
         self.assertEqual(self.invite(to="u_nobody").status_code, 404)
         self.assertEqual(self.invite(game="duel", mode="normal").status_code, 409)
+        # a game that isn't played turn by turn (SPEC §13.5)
+        self.assertEqual(self.post("/api/matches", {"game": GAME, "mode": MODE, "opponents": ["u_meera"], "kind": "turns"}, KABIR).status_code, 409)
+        self.assertEqual(self.invite(kind="live").status_code, 409)                      # Lane Racer has no live duel
         self.settings({"disabled_games": ["racer"]})
         self.assertEqual(self.invite().status_code, 409)
         self.settings({"disabled_games": []})

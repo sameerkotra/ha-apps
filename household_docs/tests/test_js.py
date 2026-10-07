@@ -26,5 +26,32 @@ class BrowserCode(unittest.TestCase):
             self.assertEqual(r.returncode, 0, name + ": " + r.stderr)
 
 
+class EditorHeader(unittest.TestCase):
+    """SPEC §13: the editor's header is one line — ← name (cut with "…") Share ⋯ — so a phone keeps the height for the text.
+    (The layout itself is checked in a browser; this guards the pieces against drifting back.)"""
+
+    def read(self, name):
+        with open(os.path.join(HERE, "app", "static", name), encoding="utf-8") as f:
+            return f.read()
+
+    def test_share_and_more_sit_on_the_name_line(self):
+        js = self.read("docs.js")
+        head = js[js.index("function editorHead("):js.index("D.editorHead = editorHead;")]
+        self.assertIn('h("div", { class: "doc-head-row" }, back, title, h("div", { class: "head-actions doc-actions" }, actions))', head)
+        self.assertIn('id: "docShare"', head)
+        self.assertIn('id: "docMore"', head)
+        self.assertIn('"aria-label": "More actions"', head)
+        self.assertIn("title: name", head)                  # the full name as the tooltip when it's cut
+        self.assertNotIn("status", head[head.index("doc-head-row"):head.index("doc-sub-row")])   # save state on the small line
+
+    def test_the_name_is_cut_not_wrapped(self):
+        css = self.read("style.css")
+        rule = css[css.index(".doc-title {"):]
+        rule = rule[:rule.index("}")]
+        for want in ("white-space: nowrap", "overflow: hidden", "text-overflow: ellipsis", "min-width: 0"):
+            self.assertIn(want, rule)
+        self.assertIn(".doc-actions { flex: none;", css)
+
+
 if __name__ == "__main__":
     unittest.main()

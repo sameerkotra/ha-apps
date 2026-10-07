@@ -138,7 +138,7 @@ async function renderHome() {
     parts.push(h("div", { class: "game-grid view-" + view, id: "gameGrid", dataset: { view } }, state.games.map((g) => gameTile(g, view))));
   }
   mount(root, parts);
-  if (window.Together && (state.arg === "join" || state.arg === "decline")) Together.afterHome(state.arg, state.arg2);   // a phone notification's button
+  if (window.Together && (state.arg === "join" || state.arg === "decline" || state.arg === "turn")) Together.afterHome(state.arg, state.arg2);   // a phone notification's button
 }
 
 // Today's challenges: three games with the same puzzle for everyone, one ranked try each (Practice any time).

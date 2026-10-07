@@ -84,6 +84,11 @@ A note is a plain-text file (`.txt`) or a **Markdown** note (`.md`). Type and it
 stop (and when you leave); the header says **Saved**, **Saving…** or **Offline — will retry**. **Wrap lines** and
 **Monospace** change how it looks on this device. The title is the file name: tap it to rename.
 
+The top of every open document (note, checklist or sheet) is one line — **←**, the name (a long one ends in "…";
+point at it to see it all), **Share** and **⋯** for everything else (Rename, Move, History, Download, Delete…) —
+with who changed it and **Saved** in small print under it, so a phone keeps the screen for the text. Share only
+shows for people who may share.
+
 - **🔍 Find & replace** (or **Ctrl+F**): Enter / ↓ for the next match, Shift+Enter / ↑ for the one before, **Aa**
   to match case, **Replace** one at a time or **All**. People who can only view get Find.
 - **Links**: web addresses (`https://…`) in a note are listed under it, tap to open them (in a new tab).

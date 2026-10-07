@@ -29,6 +29,7 @@
   let ignorePops = 0;         // pops we caused ourselves (removing the guard)
   let dropTimer = null;
   let lastHref = location.href;
+  let guardBase = null;       // the address under the guard (where Back lands when it pops the guard)
   let scheduled = false;
 
   const layers = () => { try { return (cfg && cfg.openLayers && cfg.openLayers()) || []; } catch (e) { return []; } };
@@ -39,7 +40,7 @@
     clearTimeout(dropTimer);
     dropTimer = null;
     if (guard) return;
-    try { history.pushState({ backnav: true }, "", location.href); guard = true; } catch (e) { /* sandboxed frame */ }
+    try { guardBase = location.href; history.pushState({ backnav: true }, "", location.href); guard = true; } catch (e) { /* sandboxed frame */ }
   }
 
   function sync() {
@@ -65,6 +66,14 @@
       // one, so the app's hashchange listener stays on the page that's showing
       ignorePops--;
       if (location.href !== lastHref) { try { history.replaceState(history.state, "", lastHref); } catch (e) { /* ignore */ } }
+      return;
+    }
+    // A link or a notification that changed the address (setting location.hash adds a history entry and fires
+    // popstate too) isn't the back gesture: leave the new address for the app's hashchange listener to show. Back
+    // lands exactly on the address under the guard; anything else is a navigation (with no guard, any change is).
+    if (location.href !== lastHref && (!guard || location.href !== guardBase)) {
+      lastHref = location.href;
+      setTimeout(sync, 0);
       return;
     }
     guard = false;

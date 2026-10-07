@@ -3,7 +3,13 @@
    You play the bottom paddle against the computer's top paddle in the 240 × 300 area. Each match is
    against the next opponent of the list (its own paddle speed, aim, serve and points to win); win it
    and the next comes on. Lose a match and the game ends; beat the last opponent and you've won.
-   One call to step() is one update (60 a second). */
+   One call to step() is one update (60 a second).
+
+   Mode `phones` (SPEC §13.4) is two people on two phones, one court: seat 1's paddle at the bottom, seat 2's at
+   the top (seat 2's phone draws the court turned round, so each player sees their own paddle at the bottom).
+   It is worked out in whole numbers only (positions in 1/256 px, angles from a table, no sin/cos), so every
+   phone — whatever its JavaScript engine — computes exactly the same game; `checksum(s)` is compared every
+   second. First to 7 points wins; each player's own score: a return 10, a point 100, the match 1,000. */
 (function () {
   "use strict";
 
@@ -72,6 +78,7 @@
 
   function create(o) {
     o = o || {};
+    if (o.mode === "phones") return createPhones(o);
     var s = {
       mode: MODES[o.mode] ? o.mode : "normal", rng: (o.seed >>> 0) || 1,
       level: 1, score: 0, me: 0, cpu: 0,
@@ -176,6 +183,7 @@
   }
 
   function step(s) {
+    if (s.mode === "phones") return stepPhones(s);
     var evs = [];
     if (s.over) return evs;
     s.updates++;
@@ -215,11 +223,145 @@
     return evs;
   }
 
-  function press(s, action, down) {
+  function press(s, action, down, player) {
+    if (s.mode === "phones") return pressPhones(s, action, down, player === 1 ? 1 : 0);
     if (action === "left" || action === "right") s.input[action] = !!down;
     else if ((action === "fire" || action === "up") && down && s.serve > 0 && s.updates >= s.shownUntil - SERVE_DELAY) s.serve = 1;
   }
-  function setTarget(s, x) { s.input.target = clamp(x, WALL_L + PW / 2, WALL_R - PW / 2); }
+  function setTarget(s, x) {
+    if (s.mode === "phones") { pressPhones(s, "aim", Math.round(x), 0); return; }
+    s.input.target = clamp(x, WALL_L + PW / 2, WALL_R - PW / 2);
+  }
+
+  // ---------- two phones (mode "phones"): whole numbers only ----------
+  var FP = 256;                                // 1 px = 256
+  var P_TOP = 46, P_BOTTOM = 266;              // the paddles' top edges: seat 2 at the top, seat 1 at the bottom
+  var OUT_TOP = 34, OUT_BOTTOM = 286;          // past these the ball is out (the court is the same from either end: y ↔ 320 − y)
+  var MIRROR = P_TOP + PH + P_BOTTOM;          // 320
+  var PHONES_TO_WIN = 7;
+  var F_BASE = 614, F_GAIN = 31, F_MAX = 1536, F_KEY = 1280, F_FOLLOW_MAX = 30 * FP;   // 2.4, 0.12, 6, 5, 30 px
+  // sin and cos of 0°, 5.5°, 11° … 55°, × 4096 (index = how far off the paddle's middle the ball hit, in tenths)
+  var SIN = [0, 393, 782, 1163, 1534, 1891, 2231, 2550, 2845, 3115, 3355];
+  var COS = [4096, 4077, 4021, 3927, 3798, 3633, 3435, 3206, 2946, 2660, 2349];
+  var PAD_LO = (WALL_L + PW / 2) * FP, PAD_HI = (WALL_R - PW / 2) * FP;
+  var BALL_LO = (WALL_L + BALL_R) * FP, BALL_HI = (WALL_R - BALL_R) * FP;
+
+  function trunc(v) { return v < 0 ? Math.ceil(v) : Math.floor(v); }
+  function newPad() { return { x: (W / 2) * FP, v: 0, left: false, right: false, target: null }; }
+  function createPhones(o) {
+    var s = {
+      mode: "phones", rng: (o.seed >>> 0) || 1, level: 1, score: 0, score2: 0, points: [0, 0],
+      pads: [newPad(), newPad()], ball: { x: (W / 2) * FP, y: (MIRROR / 2) * FP, vx: 0, vy: 0, speed: F_BASE },
+      serve: SERVE_DELAY * 2, serveTo: 0, rally: 0, over: false, won: false, winner: 0, updates: 0,
+      shownUntil: SERVE_DELAY * 2,
+      stats: [{ returns: 0, pointsWon: 0, pointsLost: 0, longestRally: 0 }, { returns: 0, pointsWon: 0, pointsLost: 0, longestRally: 0 }],
+      opponents: usableLevels(o.levels),
+    };
+    s.serveTo = rand(s) < 0.5 ? 0 : 1;          // who gets the first ball comes from the seed
+    return s;
+  }
+  function launchPhones(s) {
+    var i = Math.floor(rand(s) * 11) - 5, a = i < 0 ? -i : i, b = s.ball;
+    b.speed = F_BASE;
+    b.vx = (i < 0 ? -1 : 1) * trunc(b.speed * SIN[a] / 4096);
+    b.vy = (s.serveTo === 0 ? 1 : -1) * trunc(b.speed * COS[a] / 4096);
+    s.serve = 0; s.rally = 0;
+  }
+  function movePad(p) {
+    if (p.left || p.right) {
+      p.target = null;
+      var want = (p.right ? F_KEY : 0) - (p.left ? F_KEY : 0);
+      p.v += trunc((want - p.v) * 3 / 5);
+      p.x += p.v;
+    } else if (p.target !== null) {
+      p.v = 0;
+      p.x += clamp(trunc((p.target - p.x) * 3 / 4), -F_FOLLOW_MAX, F_FOLLOW_MAX);
+    } else p.v = 0;
+    p.x = clamp(p.x, PAD_LO, PAD_HI);
+  }
+  /** The ball meets player i's paddle: off the middle sets the angle (in steps of 5.5°, at most 55°). */
+  function bouncePhones(s, i) {
+    var b = s.ball, p = s.pads[i];
+    // rounded the same way on either side, so the court is exactly the same from either end
+    var d = (b.x - p.x) * 20, q = Math.min(10, Math.round(Math.abs(d) / (PW * FP))), idx = d < 0 ? -q : q, a = q;
+    b.speed = Math.min(F_MAX, b.speed + F_GAIN);
+    b.vx = (idx < 0 ? -1 : 1) * trunc(b.speed * SIN[a] / 4096);
+    b.vy = (i === 0 ? -1 : 1) * trunc(b.speed * COS[a] / 4096);
+    s.rally++; s.stats[i].returns++;
+    if (i === 0) s.score += RETURN_POINTS; else s.score2 += RETURN_POINTS;
+  }
+  function pointPhones(s, w, evs) {
+    var l = 1 - w;
+    s.points[w]++;
+    s.stats[w].pointsWon++; s.stats[l].pointsLost++;
+    s.stats[0].longestRally = s.stats[1].longestRally = Math.max(s.stats[0].longestRally, s.rally);
+    if (w === 0) s.score += POINT_POINTS; else s.score2 += POINT_POINTS;
+    evs.push({ type: "point", player: w + 1, points: s.points.slice() });
+    s.ball.x = (W / 2) * FP; s.ball.y = (MIRROR / 2) * FP; s.ball.vx = 0; s.ball.vy = 0; s.ball.speed = F_BASE;
+    s.serveTo = l; s.serve = SERVE_DELAY; s.shownUntil = s.updates + SERVE_DELAY;
+    if (s.points[w] >= PHONES_TO_WIN) {
+      if (w === 0) s.score += MATCH_POINTS; else s.score2 += MATCH_POINTS;
+      s.over = true; s.winner = w + 1; s.won = w === 0;
+      evs.push({ type: w === 0 ? "win" : "gameover", winner: w + 1, score: s.score, score2: s.score2 });
+    }
+  }
+  function stepPhones(s) {
+    var evs = [];
+    if (s.over) return evs;
+    s.updates++;
+    movePad(s.pads[0]); movePad(s.pads[1]);
+    if (s.serve > 0) {
+      if (--s.serve === 0) { launchPhones(s); evs.push({ type: "launch" }); }
+      return evs;
+    }
+    var b = s.ball, n = Math.max(1, Math.ceil(b.speed / (2 * FP))), r = BALL_R * FP;
+    for (var k = 0; k < n; k++) {
+      var oy = b.y, dx = trunc(b.vx / n), dy = trunc(b.vy / n);
+      b.x += dx; b.y += dy;
+      if (b.x < BALL_LO) { b.x = 2 * BALL_LO - b.x; b.vx = Math.abs(b.vx); evs.push({ type: "wall" }); }
+      if (b.x > BALL_HI) { b.x = 2 * BALL_HI - b.x; b.vx = -Math.abs(b.vx); evs.push({ type: "wall" }); }
+      // seat 1's paddle (bottom)
+      if (b.vy > 0 && oy + r <= (P_BOTTOM + 2) * FP && b.y + r >= P_BOTTOM * FP && Math.abs(b.x - s.pads[0].x) <= (PW / 2 + BALL_R) * FP) {
+        b.y = (P_BOTTOM - BALL_R) * FP;
+        bouncePhones(s, 0);
+        evs.push({ type: "paddle", player: 1 });
+        break;
+      }
+      // seat 2's paddle (top)
+      if (b.vy < 0 && oy - r >= (P_TOP + PH - 2) * FP && b.y - r <= (P_TOP + PH) * FP && Math.abs(b.x - s.pads[1].x) <= (PW / 2 + BALL_R) * FP) {
+        b.y = (P_TOP + PH + BALL_R) * FP;
+        bouncePhones(s, 1);
+        evs.push({ type: "paddle", player: 2 });
+        break;
+      }
+      if (b.y > OUT_BOTTOM * FP) { pointPhones(s, 1, evs); break; }
+      if (b.y < OUT_TOP * FP) { pointPhones(s, 0, evs); break; }
+    }
+    return evs;
+  }
+  function pressPhones(s, action, down, i) {
+    var p = s.pads[i];
+    if (!p || s.over) return [];
+    if (action === "left" || action === "right") p[action] = !!down;
+    else if (action === "aim") p.target = clamp(Math.round(Number(down) || 0) * FP, PAD_LO, PAD_HI);
+    else if ((action === "fire" || action === "up") && down && s.serve > 0 && s.serveTo === i && s.updates >= s.shownUntil - SERVE_DELAY) s.serve = 1;
+    return [];
+  }
+
+  function hash(str) {          // FNV-1a, unsigned 32-bit (the same as ArcadeLockstep.hash)
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  }
+  /** What both phones must agree on (SPEC §13.4). */
+  function checksum(s) {
+    var b = s.ball, parts = [s.updates, s.serve, s.serveTo, s.rally, s.points[0], s.points[1], s.score, s.score2, s.rng,
+      b.x, b.y, b.vx, b.vy, b.speed, s.over ? 1 : 0, s.winner];
+    s.pads.forEach(function (p) { parts.push(p.x, p.v, p.left ? 1 : 0, p.right ? 1 : 0, p.target === null ? "n" : p.target); });
+    return hash(parts.join(","));
+  }
+  /** Both players' results for the match: each score, and who won (1 or 2). */
+  function report(s) { return { scores: [s.score, s.score2], levels: [1, 1], winner: s.winner || 0 }; }
 
   var STATE_VERSION = 1;
   function save(s) {
@@ -240,7 +382,13 @@
     return s;
   }
 
-  function result(s) {
+  function result(s, player) {
+    if (s.mode === "phones") {
+      var i = player === 1 ? 1 : 0, st = s.stats[i];
+      return { score: i ? s.score2 : s.score, level: 1, stats: { won: s.winner === i + 1, cause: s.over ? (s.winner === i + 1 ? "won" : "lost") : null,
+        matches: s.winner === i + 1 ? 1 : 0, pointsWon: st.pointsWon, pointsLost: st.pointsLost, returns: st.returns,
+        longestRally: st.longestRally, mode: s.mode } };
+    }
     return {
       score: s.score, level: s.level,
       stats: { won: s.won, cause: s.won ? "won" : s.over ? "lost" : null, matches: s.stats.matches, pointsWon: s.stats.pointsWon, pointsLost: s.stats.pointsLost,
@@ -254,7 +402,8 @@
     opponent: opponent, toWin: toWin, mult: mult, MULT_MAX: MULT_MAX, SERVE_DELAY: SERVE_DELAY, NAMES: NAMES, MODES: MODES,
     RETURN_POINTS: RETURN_POINTS, POINT_POINTS: POINT_POINTS, MATCH_POINTS: MATCH_POINTS, STATE_VERSION: STATE_VERSION,
     create: create, step: step, press: press, setTarget: setTarget, predictX: predictX, cpuSpeed: cpuSpeed,
-    missChance: missChance, save: save, restore: restore, result: result, rand: rand,
+    missChance: missChance, save: save, restore: restore, result: result, rand: rand, checksum: checksum, report: report,
+    FP: FP, P_TOP: P_TOP, P_BOTTOM: P_BOTTOM, OUT_TOP: OUT_TOP, OUT_BOTTOM: OUT_BOTTOM, MIRROR: MIRROR, PHONES_TO_WIN: PHONES_TO_WIN,
   };
   if (typeof module === "object" && module.exports) module.exports = DuelLogic; else self.DuelLogic = DuelLogic;
 })();

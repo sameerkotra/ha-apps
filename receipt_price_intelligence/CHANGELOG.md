@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.
+
 ## 1.1.1
 
 - **Security**: backups (Backup → Export) no longer include the access keys and passwords from App settings (the model's access key, the mailbox password, the web search key and token), and importing a backup keeps the ones this install already has. After restoring on a new install, enter them again in Admin → App settings.

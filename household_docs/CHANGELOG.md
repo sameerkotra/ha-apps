@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.3
+
+- **More room to edit on a phone**: Share and the ⋯ menu now sit on the same line as the document's name (a long name is cut with "…"; tap it to rename), with the save state and "changed … by" in small print underneath. Notes, checklists and sheets get up to about 100 px more editing space on a phone.
+
+## 1.1.2
+
+- **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.
+
 ## 1.1.1
 
 - **Sheets**: the cell (or range) the arrow keys pick while you type a formula is now outlined on the grid, so you can see what you're pointing at.

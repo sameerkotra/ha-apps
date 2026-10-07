@@ -417,7 +417,10 @@
           "web_security.py",
           "backup_core.py",
           "sensor_publisher.py",
-          "csv_export.py"
+          "csv_export.py",
+          "ha_notify.py",
+          "ha_people.py",
+          "people_admin.py"
         ],
         "static": [
           "backnav.js",
@@ -442,7 +445,9 @@
           "test_web_security.py",
           "test_backup_core.py",
           "test_sensor_publisher.py",
-          "test_csv_export.py"
+          "test_csv_export.py",
+          "fake_ha.py",
+          "test_people_admin.py"
         ]
       }
     },

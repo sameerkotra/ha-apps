@@ -16,7 +16,14 @@ const state = {
   adminTab: 'settings',
   adminUsers: [],
   editingExpenseId: null,
+  ledgerLoading: false,   // a "Load more" request is on its way
 };
+
+// The group ledger loads a page at a time (newest first): LEDGER_PAGE entries when the group opens, then
+// LEDGER_PAGE more per "Load more". Balances, counts and the CSV export always come from the server's view of
+// every entry, never from the loaded page.
+const LEDGER_PAGE = 20;
+const LEDGER_MAX = 500;   // the server's largest page
 
 const { $, $$ } = UI;
 
@@ -95,6 +102,12 @@ HouseholdTheme.bindSelect(document.getElementById('theme-select'));
 const ADMIN_TABS = ['settings', 'users', 'storage'];
 const SHORT_ADMIN_ROUTES = { '#/people': 'users', '#/users': 'users', '#/storage': 'storage', '#/settings': 'settings' };
 
+// A notification links to its group: #/group/<id> opens it (once; the address is then cleared).
+function groupFromHash(hash) {
+  const m = /^#\/group\/([\w-]+)$/.exec(hash || '');
+  return m ? m[1] : null;
+}
+
 function adminTabFromHash(hash) {
   if (Object.prototype.hasOwnProperty.call(SHORT_ADMIN_ROUTES, hash)) return SHORT_ADMIN_ROUTES[hash];
   const m = /^#\/admin(?:\/([\w-]*))?\/?$/.exec(hash);
@@ -105,7 +118,7 @@ function adminTabFromHash(hash) {
 function showView(name) {
   $$('.view').forEach((v) => v.classList.remove('active'));
   $$('.tab').forEach((t) => t.classList.remove('active'));
-  if (name === 'dashboard' || name === 'groups' || name === 'admin') {
+  if (name === 'dashboard' || name === 'groups' || name === 'me' || name === 'admin') {
     $(`.tab[data-view="${name}"]`).classList.add('active');
   }
   $(`#view-${name}`).classList.add('active');
@@ -125,14 +138,18 @@ $('#tabs').addEventListener('click', (e) => {
   showView(btn.dataset.view);
   if (btn.dataset.view === 'groups') loadGroups();
   if (btn.dataset.view === 'dashboard') loadDashboard();
+  if (btn.dataset.view === 'me') loadMyPrefs();
 });
 
 // Hash routes: a typed/pasted #/admin/... address or BackNav.go(). Back
 // doesn't come through here — backnav.js handles it (see "Back gesture").
 window.addEventListener('hashchange', () => {
   const tab = adminTabFromHash(location.hash);
+  const groupId = groupFromHash(location.hash);
   if (tab) {
     openAdmin(tab);
+  } else if (groupId && state.groups.some((g) => g.id === groupId)) {
+    openGroup(groupId);
   } else if (!location.hash && $('#view-admin').classList.contains('active')) {
     showView('dashboard');   // Back from the Admin area
     loadDashboard();
@@ -173,6 +190,54 @@ async function loadWhoami() {
 }
 
 $('#sidebarUser').addEventListener('click', openWhoami);
+$('#myPrefsWhoami').addEventListener('click', openWhoami);
+
+// ---------- My settings (each person's own choices) ----------
+// Matched to you by your Home Assistant login, never by name. Today: whether you get phone notifications.
+async function loadMyPrefs() {
+  const body = $('#myPrefsBody');
+  let p;
+  try {
+    p = await api('/me/prefs');
+  } catch (err) {
+    UI.mount(body, UI.h('p', { class: 'error', role: 'alert' }, err.message));
+    return;
+  }
+  renderMyPrefs(p);
+}
+
+function renderMyPrefs(p) {
+  const h = UI.h;
+  const save = async (on, input) => {
+    try {
+      const next = await api('/me/prefs', { method: 'PUT', body: JSON.stringify({ receiveNotifications: on }) });
+      toast(on ? 'You\'ll get notifications' : 'Notifications off for you');
+      renderMyPrefs(next);
+    } catch (err) {
+      input.checked = !on;
+      toast(err.message, true);
+    }
+  };
+  let status = null;
+  if (!p.linked) {
+    status = 'Home Assistant doesn\'t link your login to a person in Splitpot yet, so there is nothing to set here. In Home Assistant: Settings → People → you → Allow person to login.';
+  } else if (!p.notifyCharges) {
+    status = 'Phone notifications are switched off for the whole household — an admin can switch them on in Admin → App settings.';
+  } else if (!p.reachable) {
+    status = 'No phone is linked to you in Home Assistant yet (Settings → People → you → Track device, with the Companion app), so nothing can reach you.';
+  }
+  const what = p.notifyPayments
+    ? 'A phone notification when someone else adds a charge you paid for or have a share in, and when a settle-up payment to or from you is recorded.'
+    : 'A phone notification when someone else adds a charge you paid for or have a share in.';
+  UI.mount($('#myPrefsBody'),
+    h('div', { class: 'sp-card my-prefs', id: 'myPrefsCard' },
+      h('h2', { class: 'first' }, 'Notifications'),
+      h('div', { class: 'pref-row' },
+        h('div', null, h('div', { class: 'pref-label' }, 'Receive notifications'), h('div', { class: 'hint' }, what)),
+        PeoplePage.accessSwitch(p.linked ? p.receiveNotifications : false, save,
+          { label: 'Receive notifications', disabled: !p.linked })),
+      status ? h('p', { class: 'field-help warn', id: 'myPrefsStatus' }, status) : null));
+}
 $('#whoamiBtn').addEventListener('click', openWhoami);
 
 // ---------- users (picker list, for everyone) ----------
@@ -252,25 +317,53 @@ async function loadSettings() {
 }
 
 // -- Users --
-async function loadAdminUsers() {
+// refresh: "Check Home Assistant again" (reads HA's people and their phones now).
+async function loadAdminUsers(refresh = false) {
   const errBox = $('#usersError');
   errBox.textContent = '';
   try {
-    state.adminUsers = await api('/admin/users');
+    state.adminUsers = await api(`/admin/users${refresh ? '?refresh=1' : ''}`);
   } catch (err) {
     errBox.textContent = err.message;
     return;
   }
+  // The notify list comes from Home Assistant; the page still works without it.
+  try {
+    state.notifyServices = await api(`/admin/notify-services${refresh ? '?refresh=1' : ''}`);
+  } catch (err) {
+    state.notifyServices = { available: false, services: [], entities: [], error: err.message };
+  }
   renderAdminUsers();
 }
 
-// The shared people list (common/people.js): each person with Enable / Disable.
+// A short message at the bottom of the screen (common/ui.js; styled in style.css).
+function toast(msg, isError) {
+  UI.toast(msg, { error: !!isError, role: isError ? 'alert' : 'status' });
+}
+
+// The shared people list (common/people.js): each person with Enable / Disable, their phones from Home Assistant
+// and extra notify services (with Send a test).
 function renderAdminUsers() {
   const h = UI.h;
   PeoplePage.render($('#usersList'), {
     people: state.adminUsers,
     cardClass: 'sp-card',
+    checkAgain: async () => { await loadAdminUsers(true); },
     empty: 'No Home Assistant users found yet — add people under Settings → People in Home Assistant.',
+    notify: {
+      api: (path, opts = {}) => api(path.replace(/^api/, ''), opts.body !== undefined && typeof opts.body !== 'string'
+        ? { ...opts, body: JSON.stringify(opts.body) } : opts),
+      services: state.notifyServices || { available: false, services: [], entities: [], error: null },
+      toast,
+      fail: (err) => toast(err.message, true),
+      buttonClass: 'btn ghost',
+      ghostClass: 'btn ghost',
+      path: (u) => `api/admin/users/${encodeURIComponent(u.id)}/notify`,
+      testPath: (u) => `api/admin/users/${encodeURIComponent(u.id)}/notify/test`,
+      retry: () => loadAdminUsers(true),
+      extraLine: (u) => (u.receiveNotifications ? null : h('span', { class: 'pp-hint' }, ' · turned notifications off')),
+      texts: { none: (u, phones) => (phones ? 'None' : 'None — no notifications until a phone is linked in Home Assistant or a service is added here.') },
+    },
     person: (u) => {
       const groups = `In ${u.groupCount} group${u.groupCount === 1 ? '' : 's'}`;
       return {
@@ -398,7 +491,7 @@ async function toggleGroupDefault(id, makeDefault) {
 $('#groupDeleteBtn').addEventListener('click', async () => {
   const g = state.currentGroup;
   if (!g) return;
-  const n = g.expenses.length;
+  const n = g.ledgerTotal;
   const what = n ? ` and its ${n} expense${n === 1 ? '' : 's'}/payment${n === 1 ? '' : 's'}` : '';
   if (!confirm(`Delete the group "${g.name}"${what}? Balances from it disappear too. This can't be undone.`)) return;
   try {
@@ -456,8 +549,15 @@ async function openGroup(id) {
   resetExpenseForm();
 }
 
-async function refreshGroup() {
-  const g = await api(`/groups/${state.currentGroupId}`);
+// How many ledger entries to (re)load: the first page, or — after a change, so the list doesn't jump back —
+// as many as are showing now.
+function ledgerLimit(keep) {
+  const shown = keep && state.currentGroup && state.currentGroup.id === state.currentGroupId ? state.currentGroup.expenses.length : 0;
+  return Math.min(LEDGER_MAX, Math.max(LEDGER_PAGE, shown));
+}
+
+async function refreshGroup(keep = false) {
+  const g = await api(`/groups/${state.currentGroupId}?limit=${ledgerLimit(keep)}`);
   state.currentGroup = g;
   const disabledIds = new Set(state.users.filter((u) => u.disabled).map((u) => u.id));
   state.splitParticipants = new Set(g.memberIds.filter((id) => !disabledIds.has(id)));
@@ -480,8 +580,8 @@ function renderGroupDetail() {
   // Export is for everyone; it sits beside Delete (relative URL: ingress serves the app under a sub-path)
   const exportBtn = $('#groupExportBtn');
   exportBtn.href = `api/groups/${encodeURIComponent(g.id)}/export.csv`;
-  exportBtn.classList.toggle('disabled', !g.expenses.length);
-  exportBtn.title = g.expenses.length ? 'Download every expense and payment in this group as a CSV file for a spreadsheet' : 'Nothing to export yet';
+  exportBtn.classList.toggle('disabled', !g.ledgerTotal);
+  exportBtn.title = g.ledgerTotal ? 'Download every expense and payment in this group as a CSV file for a spreadsheet' : 'Nothing to export yet';
 
   const paidBySel = $('#expPaidBy');
   paidBySel.innerHTML = selectableMembers.map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('');
@@ -692,7 +792,7 @@ $('#addExpenseForm').addEventListener('submit', async (e) => {
       await api(`/groups/${state.currentGroupId}/expenses`, { method: 'POST', body: JSON.stringify(payload) });
     }
     resetExpenseForm();
-    await refreshGroup();
+    await refreshGroup(true);
   } catch (err) {
     errBox.textContent = err.message;
   }
@@ -758,63 +858,99 @@ function startEditExpense(id) {
 
 $('#expCancelEditBtn').addEventListener('click', resetExpenseForm);
 
+// One ledger row (UI.h: names and descriptions are set as text).
+function expenseRow(e) {
+  const h = UI.h;
+  const when = parseWhen(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const payer = h('span', { class: payerClass(e.paidBy) }, e.paidByName);
+  // Deleting is admin-only (enforced server-side); others don't get a button that would just be refused.
+  const deleteBtn = state.isAdmin ? h('button', { class: 'btn danger-text', type: 'button', dataset: { removeExpense: e.id } }, 'Delete') : null;
+  if (e.splitType === 'payment') {
+    // A settle-up payment: paidBy paid the one person in splits back.
+    const to = e.splits[0] ? e.splits[0].name : 'someone';
+    return h('li', { class: `payment-row payer-row ${payerRowClass(e.paidBy)}`, dataset: { expenseId: e.id } },
+      h('div', { class: 'row-main' },
+        h('span', { class: 'row-title' }, '💸 ', payer, ` paid ${to}`),
+        h('span', { class: 'row-sub' }, `${when} · settle-up payment`)),
+      h('div', { class: 'row-actions' }, h('span', { class: 'row-amount' }, money(e.amount)), deleteBtn));
+  }
+  // Percent splits: "split by percentage · Ann 60% ($30.00) · …"
+  const splitDesc = e.splitType === 'percent'
+    ? 'by percentage · ' + e.splits.map((s) => `${s.name} ${+Number(s.percent).toFixed(2)}% (${money(s.amount)})`).join(' · ')
+    : e.splits.map((s) => `${s.name} ${fmt(s.amount)}`).join(' · ');
+  return h('li', { class: `payer-row ${payerRowClass(e.paidBy)}`, dataset: { expenseId: e.id } },
+    h('div', { class: 'row-main' },
+      h('span', { class: 'row-title' }, e.description),
+      h('span', { class: 'row-sub' }, `${when} · paid by `, payer, ` · split ${splitDesc}`)),
+    h('div', { class: 'row-actions' },
+      h('span', { class: 'row-amount' }, money(e.amount)),
+      h('button', { class: 'btn ghost', type: 'button', dataset: { editExpense: e.id } }, 'Edit'),
+      deleteBtn));
+}
+
 function renderExpenseList() {
   const list = $('#expenseList');
   const g = state.currentGroup;
-  list.innerHTML = '';
   if (g.expenses.length === 0) {
-    list.innerHTML = '<li class="empty-note">No expenses logged yet.</li>';
-    return;
+    UI.mount(list, UI.h('li', { class: 'empty-note' }, 'No expenses logged yet.'));
+  } else {
+    UI.mount(list, g.expenses.map(expenseRow));
   }
-  g.expenses.forEach((e) => {
-    const li = document.createElement('li');
-    const when = parseWhen(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    // Deleting is admin-only (enforced server-side); others don't get a
-    // button that would just be refused.
-    const deleteBtn = state.isAdmin ? `<button class="btn danger-text" data-remove-expense="${e.id}">Delete</button>` : '';
-    if (e.splitType === 'payment') {
-      // A settle-up payment: paidBy paid the one person in splits back.
-      const to = e.splits[0] ? e.splits[0].name : 'someone';
-      li.className = `payment-row payer-row ${payerRowClass(e.paidBy)}`;
-      li.innerHTML = `
-      <div class="row-main">
-        <span class="row-title">💸 ${payerName(e.paidBy, e.paidByName)} paid ${escapeHtml(to)}</span>
-        <span class="row-sub">${when} · settle-up payment</span>
-      </div>
-      <div style="display:flex; align-items:center; gap:14px;">
-        <span class="row-amount">${money(e.amount)}</span>
-        ${deleteBtn}
-      </div>
-    `;
-    } else {
-      // Percent splits: "split by percentage · Ann 60% ($30.00) · …"
-      const splitDesc = e.splitType === 'percent'
-        ? 'by percentage · ' + e.splits.map((s) => `${escapeHtml(s.name)} ${+Number(s.percent).toFixed(2)}% (${money(s.amount)})`).join(' · ')
-        : e.splits.map((s) => `${escapeHtml(s.name)} ${fmt(s.amount)}`).join(' · ');
-      li.className = `payer-row ${payerRowClass(e.paidBy)}`;
-      li.innerHTML = `
-      <div class="row-main">
-        <span class="row-title">${escapeHtml(e.description)}</span>
-        <span class="row-sub">${when} · paid by ${payerName(e.paidBy, e.paidByName)} · split ${splitDesc}</span>
-      </div>
-      <div style="display:flex; align-items:center; gap:14px;">
-        <span class="row-amount">${money(e.amount)}</span>
-        <button class="btn ghost" data-edit-expense="${e.id}">Edit</button>
-        ${deleteBtn}
-      </div>
-    `;
-    }
-    list.appendChild(li);
-  });
+  renderLedgerMore();
 }
 
+// "Showing 20 of 63" and the Load more button under the ledger.
+function renderLedgerMore() {
+  const g = state.currentGroup;
+  const box = $('#ledgerMore');
+  const shown = g.expenses.length;
+  const total = g.ledgerTotal == null ? shown : g.ledgerTotal;
+  box.hidden = !g.nextCursor && shown >= total;
+  $('#ledgerCount').textContent = shown ? `Showing ${shown} of ${total} ${total === 1 ? 'entry' : 'entries'}` : '';
+  const btn = $('#ledgerMoreBtn');
+  btn.hidden = !g.nextCursor;
+  btn.disabled = state.ledgerLoading;
+  btn.textContent = state.ledgerLoading ? 'Loading…' : `Load ${Math.min(LEDGER_PAGE, Math.max(0, total - shown)) || LEDGER_PAGE} more`;
+}
+
+// Load more: the next page after the last row shown (keyset cursor from the server, so entries added meanwhile
+// don't shift or repeat what's already on screen).
+async function loadMoreLedger() {
+  const g = state.currentGroup;
+  if (!g || !g.nextCursor || state.ledgerLoading) return;
+  state.ledgerLoading = true;
+  renderLedgerMore();
+  const groupId = g.id;
+  try {
+    const page = await api(`/groups/${encodeURIComponent(groupId)}/ledger?limit=${LEDGER_PAGE}&cursor=${encodeURIComponent(g.nextCursor)}`);
+    if (state.currentGroup !== g) return;   // the group was reloaded or left meanwhile
+    const seen = new Set(g.expenses.map((e) => e.id));
+    const fresh = page.expenses.filter((e) => !seen.has(e.id));
+    g.expenses.push(...fresh);
+    g.nextCursor = page.nextCursor;
+    g.ledgerTotal = page.total;
+    const list = $('#expenseList');
+    if (fresh.length) {
+      if (list.querySelector('.empty-note')) list.replaceChildren();
+      fresh.forEach((e) => list.appendChild(expenseRow(e)));
+    }
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    state.ledgerLoading = false;
+    if (state.currentGroup === g) renderLedgerMore();
+  }
+}
+
+$('#ledgerMoreBtn').addEventListener('click', loadMoreLedger);
+
 $('#expenseList').addEventListener('click', async (e) => {
-  const editId = e.target.dataset.editExpense;
+  const editId = e.target.closest('[data-edit-expense]')?.dataset.editExpense;
   if (editId) {
     startEditExpense(editId);
     return;
   }
-  const id = e.target.dataset.removeExpense;
+  const id = e.target.closest('[data-remove-expense]')?.dataset.removeExpense;
   if (!id) return;
   const expense = state.currentGroup.expenses.find((x) => x.id === id);
   const label = expense ? `'${expense.description}' (${money(expense.amount)})` : 'this expense';
@@ -822,7 +958,7 @@ $('#expenseList').addEventListener('click', async (e) => {
   try {
     await api(`/expenses/${id}`, { method: 'DELETE' });
     if (state.editingExpenseId === id) resetExpenseForm();
-    await refreshGroup();
+    await refreshGroup(true);
   } catch (err) {
     alert(err.message);
   }
@@ -844,7 +980,7 @@ $('#balancesBox').addEventListener('click', async (e) => {
     return;
   }
   try {
-    state.currentGroup = await api(`/groups/${g.id}/payments`, {
+    state.currentGroup = await api(`/groups/${g.id}/payments?limit=${ledgerLimit(true)}`, {
       method: 'POST',
       body: JSON.stringify({ fromUserId: from, toUserId: to, amount, date: localDateInputValue() }),
     });
@@ -1094,8 +1230,11 @@ function renderNoAdminBanner(who) {
   await loadGroups();
   const defaultGroup = state.groups.find((g) => g.isDefault);
   const adminTab = adminTabFromHash(location.hash);   // deep link to an Admin tab
+  const linkedGroup = groupFromHash(location.hash);   // a notification's link to its group
   if (adminTab) {
     openAdmin(adminTab);
+  } else if (linkedGroup && state.groups.some((g) => g.id === linkedGroup)) {
+    await openGroup(linkedGroup);
   } else if (defaultGroup) {
     await openGroup(defaultGroup.id);
   } else {

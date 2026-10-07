@@ -10,7 +10,8 @@
    Notes (pencil marks, auto-removed when a number is placed in the row, column or box), Fill notes, Undo,
    Erase, Hints that first explain and then fill (each adds 30 s; the number allowed is set by the app, null =
    unlimited), mistakes shown at once (+10 s each) or only when the grid is full, and "number lines": the focus
-   number's cells, rows, columns and boxes (see sudoku.js; the rules only keep the focus number).
+   number's cells and their rows and columns, with or without their boxes, or none (lines(); drawn in sudoku.js;
+   the rules only keep the focus number, the kind of lines is a display choice outside the state).
    The clock is the updates the game ran (60 a second). The score is TOP − the effective seconds (time + the
    penalties) once the puzzle is solved, otherwise 0, so the fastest effective time ranks first.
    One call to step() is one update. */
@@ -601,18 +602,33 @@
     return [{ type: "select", cell: s.sel }];
   }
 
-  /** Cells the focus number's lines cover: the rows, columns and boxes of every cell holding it. */
-  function lines(s, d) {
-    var rows = {}, cols = {}, boxes = {}, holders = [], i;
-    if (!d) return null;
-    for (i = 0; i < 81; i++) if (s.vals[i] === d) { holders.push(i); rows[ROW[i]] = 1; cols[COL[i]] = 1; boxes[BOX[i]] = 1; }
+  /* Number lines come in three kinds (the start-screen option "lines"; a display choice only, never in the state):
+       "on"   rows, columns and boxes (the default, and what "On" always meant)
+       "rows" rows and columns only (no box shading)
+       "off"  none
+     Anything else (an old or odd saved choice) is read as the default. */
+  var LINE_MODES = ["on", "rows", "off"];
+  function lineMode(v) { return LINE_MODES.indexOf(v) >= 0 ? v : "on"; }
+  /** Whether cell b shares a row or a column (and, in "on", a box) with cell a for this kind of number lines. */
+  function linked(a, b, mode) {
+    mode = lineMode(mode);
+    if (mode === "off") return false;
+    return ROW[a] === ROW[b] || COL[a] === COL[b] || (mode === "on" && BOX[a] === BOX[b]);
+  }
+  /** Cells the focus number's lines cover: the rows, columns (and, unless mode is "rows", boxes) of every cell
+      holding it. null with nothing in focus or with mode "off". */
+  function lines(s, d, mode) {
+    mode = lineMode(mode);
+    var rows = {}, cols = {}, boxes = {}, holders = [], i, withBoxes = mode === "on";
+    if (!d || mode === "off") return null;
+    for (i = 0; i < 81; i++) if (s.vals[i] === d) { holders.push(i); rows[ROW[i]] = 1; cols[COL[i]] = 1; if (withBoxes) boxes[BOX[i]] = 1; }
     var covered = [], open = [];
     for (i = 0; i < 81; i++) {
       var c = !!(rows[ROW[i]] || cols[COL[i]] || boxes[BOX[i]]);
       covered.push(c);
       if (!c && !s.vals[i]) open.push(i);
     }
-    return { holders: holders, rows: Object.keys(rows).map(Number), cols: Object.keys(cols).map(Number), boxes: Object.keys(boxes).map(Number), covered: covered, open: open };
+    return { mode: mode, holders: holders, rows: Object.keys(rows).map(Number), cols: Object.keys(cols).map(Number), boxes: Object.keys(boxes).map(Number), covered: covered, open: open };
   }
   function counts(s) { var n = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; for (var i = 0; i < 81; i++) if (s.vals[i] && s.vals[i] === s.solution.charCodeAt(i) - 48) n[s.vals[i]]++; return n; }
 
@@ -671,7 +687,7 @@
     generate: generate, countSolutions: countSolutions, gradeSolve: gradeSolve, levelOfGrade: levelOfGrade, candidates: candidates,
     findHint: findHint, digitList: digitList, parse: parse,
     create: create, step: step, tap: tap, digit: digit, erase: erase, toggleNotes: toggleNotes, fillNotes: fillNotes, undo: undo, hint: hint,
-    press: press, lines: lines, counts: counts, wrongCells: wrongCells, hintsLeft: hintsLeft,
+    press: press, lines: lines, LINE_MODES: LINE_MODES, lineMode: lineMode, linked: linked, counts: counts, wrongCells: wrongCells, hintsLeft: hintsLeft,
     seconds: seconds, effective: effective, scoreOf: scoreOf, status: status, clock: clock,
     save: save, restore: restore, result: result, rand: rand,
   };

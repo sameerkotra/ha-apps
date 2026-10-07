@@ -53,7 +53,7 @@ SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/c
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
 
 # Said to the other household apps in `hello` (app_messages.py); equals config.yaml's version.
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 APP_TITLE = "Household Todo"
 
 # Maintenance: read from Home Assistant's GET /config at start-up (ha_client). A negative latitude

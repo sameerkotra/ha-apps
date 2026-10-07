@@ -20,7 +20,7 @@ class TestSaving(ApiBase):
         with db.get_conn() as conn:
             row = conn.execute("SELECT * FROM scores").fetchone()
         self.assertEqual((row["score"], row["level"], row["seconds"], row["app_version"], row["mode"]),
-                         (150, 2, 60, "1.6.1", "walls-normal"))
+                         (150, 2, 60, "1.7.1", "walls-normal"))
         # a lower score: neither flag
         body = self.play(100).json()
         self.assertTrue(body["saved"])
@@ -160,7 +160,7 @@ class TestLeaderboard(ApiBase):
     def test_validation(self):
         self.assertEqual(self.board(mode="sideways").status_code, 422)
         self.assertEqual(self.board(period="year").status_code, 422)
-        self.assertEqual(self.board(game="chess").status_code, 404)
+        self.assertEqual(self.board(game="pinball").status_code, 404)
         self.settings({"disabled_games": ["brick"]})
         self.assertEqual(self.board(game="brick", mode="classic").status_code, 404)
 

@@ -22,10 +22,12 @@ test("the kit has the six looks, each with a label", () => {
 test("registry: the games with the agreed modes and controls", () => {
   const { win } = makeSandbox();
   const G = win.ArcadeGames;
-  assert.deepEqual(plain(G.list().map((g) => g.id)), ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel"]);
+  assert.deepEqual(plain(G.list().map((g) => g.id)), ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel",
+    "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain",
+    "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"]);
   const want = {
     blocks: ["Falling Blocks", ["classic", "fast", "rising", "challenge"], "classic", "buttons"],
-    duel: ["Paddle Duel", ["easy", "normal", "hard"], "normal", "paddle"],
+    duel: ["Paddle Duel", ["easy", "normal", "hard", "phones"], "normal", "paddle"],
     racer: ["Lane Racer", ["three", "four", "rush", "stages"], "three", "buttons"],
     flap: ["Flap", ["easy", "normal", "moving", "course"], "normal", "buttons"],
   };

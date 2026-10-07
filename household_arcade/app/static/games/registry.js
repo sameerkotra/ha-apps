@@ -6,7 +6,10 @@
        "buttons" games, optional for "touch" games that are played on the game itself), padLabel (the
        paddle games' button, default "Launch"), help: "short controls text",
        stateVersion (saved games' format, 0 = can't be saved), options (start-screen choices), typed (keyboard
-       typing goes to the game), create(canvas, opts) }
+       typing goes to the game), lockstep + liveModes (the modes played live on two phones, SPEC §13.4: the rules
+       take each player's inputs and have a checksum; lockstep: "turns" for a game whose players take turns live —
+       one input a move, liveTurns in the entry), turns + turnModes (the modes played turn by turn from two
+       phones, SPEC §13.5: the server checks every move; the game's opts.turns carries the match), create(canvas, opts) }
    Adding a game later = its files in games/ plus one register() call (and its
    entry in the server's game table). */
 (function (root) {
@@ -16,7 +19,9 @@
   var CONTROLS = ["dpad", "paddle", "buttons", "touch"];
   var ACTIONS = ["up", "down", "left", "right", "fire", "alt", "up2", "down2", "left2", "right2", "fire2",
     // puzzle games' buttons (Sudoku's number pad and tools)
-    "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "notes", "fill", "hint", "undo", "erase", "auto"];
+    "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "notes", "fill", "hint", "undo", "erase", "auto",
+    // Tile Match
+    "shuffle"];
 
   function fail(msg) { throw new Error("ArcadeGames.register: " + msg); }
 
@@ -67,6 +72,14 @@
       typed: def.typed === true,        // true: the shell passes typed keys to input() as "key:A", "key:7", "key:ENTER", "key:BACKSPACE", "key:DELETE"
       stateVersion: typeof def.stateVersion === "number" ? def.stateVersion : 0,   // 0: games can't be saved
       race: def.race !== false && def.players !== 2,   // can be raced on two phones (SPEC §13.3); two-player games can't
+      // live duels on two phones (SPEC §13.4): the game runs in lockstep, and these modes are played that way only
+      // (lockstep: "turns" — the players take turns live, one input a move: Carrom; the same link and relay)
+      lockstep: def.lockstep === true || def.lockstep === "turns",
+      liveTurns: def.lockstep === "turns",
+      liveModes: (def.lockstep === true || def.lockstep === "turns") && Array.isArray(def.liveModes) ? def.liveModes.filter(function (m) { return modeIds.indexOf(m) >= 0; }) : [],
+      // turn by turn from two phones (SPEC §13.5): these modes are played only with someone, each move checked by the server
+      turns: def.turns === true,
+      turnModes: def.turns === true && Array.isArray(def.turnModes) ? def.turnModes.filter(function (m) { return modeIds.indexOf(m) >= 0; }) : [],
       create: def.create,
     };
     var at = -1;

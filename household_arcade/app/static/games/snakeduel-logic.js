@@ -5,7 +5,10 @@
    wins the match; then the next arena (cpu mode). One call to step() is one update (60 a second).
 
    Player 1 (index 0, green) starts on the right heading left; player 2 (index 1, blue, the computer in `cpu`)
-   starts on the left heading right. The score is player 1's. */
+   starts on the left heading right. The score is player 1's; `score2` is player 2's (each player's own score
+   when two phones play one match, mode `phones`, SPEC §13.4: food 10, round 100, match 500 × min(arena, 10)).
+   Live play on two phones only uses whole numbers and Math.imul (no sin/cos/pow), so every phone computes the
+   same game; `checksum(s)` is compared between the phones every second. */
 (function () {
   "use strict";
 
@@ -13,7 +16,7 @@
   var DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
   var OPP = { up: "down", down: "up", left: "right", right: "left" };
   var DIR_LIST = ["up", "right", "down", "left"];
-  var MODES = ["cpu", "two"];
+  var MODES = ["cpu", "two", "phones"];
   var START_LEN = 4;
   // where each snake's head starts and which way it heads (the body runs behind it)
   var STARTS = [{ x: 18, y: 10, dir: "left" }, { x: 5, y: 9, dir: "right" }];
@@ -258,12 +261,13 @@
       arenas: usableLevels(o.levels), level: 1, arenaName: "", cps: 6, foodCount: 1, walls: null, wallsVersion: 0,
       snakes: null, food: [], phase: "ready", timer: 0, round: 0, roundTime: 0, wins: [0, 0],
       roundWinner: null, roundCause: null, matchWinner: null,
-      score: 0, over: false, won: false, updates: 0, pending: [],
+      score: 0, score2: 0, over: false, won: false, updates: 0, pending: [],
       stats: { foods: 0, foodsOther: 0, rounds: 0, roundsLost: 0, draws: 0, matches: 0, matchesLost: 0, arenas: 0,
         moves: 0, winner: null, cause: null },
     };
-    // Against the computer the arenas come in order; two players play one match on an arena picked by the seed.
-    var first = s.mode === "two" ? 1 + Math.floor(rand(s) * s.arenas.length) : 1;
+    // Against the computer the arenas come in order; two players (one screen or two phones) play one match on an
+    // arena picked by the seed.
+    var first = s.mode !== "cpu" ? 1 + Math.floor(rand(s) * s.arenas.length) : 1;
     loadArena(s, first);
     return s;
   }
@@ -393,7 +397,7 @@
       if (fi >= 0) {
         s.food.splice(fi, 1); eaten++;
         me.grow++;
-        if (i === 0) { s.score += FOOD_POINTS; s.stats.foods++; } else s.stats.foodsOther++;
+        if (i === 0) { s.score += FOOD_POINTS; s.stats.foods++; } else { s.score2 += FOOD_POINTS; s.stats.foodsOther++; }
         ev.push({ type: "eat", player: i + 1, x: t[i].x, y: t[i].y });
       }
       if (me.grow > 0) me.grow--; else me.body.pop();
@@ -410,7 +414,7 @@
   function endRound(s, winner, cause, ev) {
     s.phase = "end"; s.timer = ROUND_END; s.roundWinner = winner; s.roundCause = cause;
     if (winner) s.wins[winner - 1]++;
-    if (winner === 1) { s.score += ROUND_POINTS; s.stats.rounds++; } else if (winner === 2) s.stats.roundsLost++; else s.stats.draws++;
+    if (winner === 1) { s.score += ROUND_POINTS; s.stats.rounds++; } else if (winner === 2) { s.score2 += ROUND_POINTS; s.stats.roundsLost++; } else s.stats.draws++;
     ev.push({ type: "round", winner: winner, cause: cause, wins: s.wins.slice(), round: s.round });
     if (s.wins[0] >= WIN_ROUNDS || s.wins[1] >= WIN_ROUNDS) endMatch(s, s.wins[0] >= WIN_ROUNDS ? 1 : 2, ev);
     else if (s.round >= MAX_ROUNDS) endMatch(s, s.wins[0] > s.wins[1] ? 1 : s.wins[1] > s.wins[0] ? 2 : 0, ev);
@@ -419,9 +423,9 @@
   function endMatch(s, winner, ev) {
     s.matchWinner = winner;
     if (winner === 1) { s.score += MATCH_POINTS * Math.min(s.level, MATCH_CAP); s.stats.matches++; }
-    else if (winner === 2) s.stats.matchesLost++;
+    else if (winner === 2) { s.score2 += MATCH_POINTS * Math.min(s.level, MATCH_CAP); s.stats.matchesLost++; }
     ev.push({ type: "match", winner: winner, arena: s.level });
-    if (s.mode === "two") { finish(s, winner === 1, "match", ev); s.stats.winner = winner; return; }
+    if (s.mode !== "cpu") { finish(s, winner === 1, "match", ev); s.stats.winner = winner; return; }
     if (winner !== 1) { finish(s, false, winner === 2 ? "lost" : "draw", ev); return; }
     s.stats.arenas++;
     if (s.level >= s.arenas.length) {
@@ -490,12 +494,35 @@
   var P1 = { up: "up", down: "down", left: "left", right: "right" };
   var P2 = { up2: "up", down2: "down", left2: "left", right2: "right" };
   /** Keys: up/down/left/right steer player 1; up2/down2/left2/right2 (W A S D) player 2 — or player 1 too when
-      playing the computer. fire does nothing. */
-  function press(s, action, down) {
+      playing the computer. fire does nothing. With `player` (0 or 1: live play, each phone's inputs) the
+      arrows steer that player. */
+  function press(s, action, down, player) {
     if (!down) return [];
+    if (player === 0 || player === 1) { if (P1[action]) turn(s, player, P1[action]); return []; }
     if (P1[action]) turn(s, 0, P1[action]);
     else if (P2[action]) turn(s, s.mode === "two" ? 1 : 0, P2[action]);
     return [];
+  }
+
+  /** What both phones must agree on (SPEC §13.4): every number the next updates depend on. */
+  function checksum(s) {
+    var parts = [s.updates, s.phase, s.timer, s.round, s.roundTime, s.level, s.wins[0], s.wins[1], s.score, s.score2,
+      s.rng, s.over ? 1 : 0, s.matchWinner, s.roundWinner];
+    s.food.forEach(function (f) { parts.push(f.x, f.y); });
+    s.snakes.forEach(function (sn) {
+      parts.push(sn.dir, sn.queue.join(""), sn.grow, sn.pu, sn.crashed ? 1 : 0, sn.body.length);
+      sn.body.forEach(function (c) { parts.push(c.x * 32 + c.y); });
+    });
+    return hash(parts.join(","));
+  }
+  function hash(str) {          // FNV-1a, unsigned 32-bit (the same as ArcadeLockstep.hash)
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  }
+  /** Both players' results, for the match (SPEC §13.4): each score, and who won the match (1, 2, or 0 a draw). */
+  function report(s) {
+    return { scores: [s.score, s.score2], levels: [s.level, s.level], winner: s.matchWinner || 0 };
   }
 
   /** A saved game (SPEC §12): the rules state as plain data, without the arena list (the server keeps it). */
@@ -519,6 +546,7 @@
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
     s.pending = [];
+    if (typeof s.score2 !== "number") s.score2 = 0;         // saves made before player 2 had a score
     s.arenas = usableLevels(levels);
     if (Array.isArray(data.walls) && data.walls.length === COLS * ROWS) s.walls = Uint8Array.from(data.walls);
     else { var A = s.arenas[Math.min(s.level, s.arenas.length) - 1]; s.walls = new Uint8Array(COLS * ROWS);
@@ -527,8 +555,14 @@
     return s;
   }
 
-  function result(s) {
+  /** The result as player 1 sees it, or with `player` 1 as player 2 sees it (their own score, wins and losses). */
+  function result(s, player) {
     var t = s.stats;
+    if (player === 1) {
+      return { score: s.score2, level: s.level, stats: { won: s.matchWinner === 2, cause: t.cause, foods: t.foodsOther,
+        rounds: t.roundsLost, roundsLost: t.rounds, draws: t.draws, matches: t.matchesLost, matchesLost: t.matches,
+        arenas: t.arenas, winner: t.winner, moves: null, mode: s.mode } };
+    }
     return { score: s.score, level: s.level, stats: { won: !!s.won, cause: t.cause, foods: t.foods, rounds: t.rounds,
       roundsLost: t.roundsLost, draws: t.draws, matches: t.matches, matchesLost: t.matchesLost, arenas: t.arenas,
       winner: t.winner, moves: t.moves, mode: s.mode } };
@@ -541,6 +575,7 @@
     MATCH_END: MATCH_END, ROUND_LIMIT: ROUND_LIMIT, MAX_QUEUE: MAX_QUEUE, EARLY_TURN: EARLY_TURN,
     LEVELS: LEVELS, usableLevels: usableLevels, STATE_VERSION: STATE_VERSION,
     create: create, step: step, turn: turn, press: press, save: save, restore: restore, result: result,
+    checksum: checksum, report: report,
     isWall: isWall, foodAt: foodAt, bodyAt: bodyAt, placeFood: placeFood, loadArena: loadArena, startRound: startRound,
     cpuDecide: cpuDecide, skill: skill, rand: rand,
   };

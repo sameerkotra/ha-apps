@@ -18,7 +18,7 @@ from ..auth import require_admin, require_user
 from .common import Strict
 
 router = APIRouter(prefix="/api", tags=["admin"])
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.1.3"
 _last_sync = {"t": 0.0}
 
 

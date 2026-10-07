@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.0
+
+- **Notifications for new charges**: when someone adds a charge, everyone in it (who paid and everyone with a share) gets a phone notification through Home Assistant — who added what, the amount, the group and their share; tapping it opens the group. Settle-up payments can notify both people too. Off until an admin turns on **Notify people about new charges** in Admin → App settings → Notifications; each person can turn off **Receive notifications** on the new **My settings** page. Only people linked to a Home Assistant login with a phone or an extra notify service are notified.
+- **Admin → Users** now has phones from Home Assistant, extra notify services and **Send a test**, like the other household apps.
+- **Group ledger loads 20 at a time**: a group opens with its newest 20 entries and a **Load 20 more** button, so big groups open quickly. Balances, totals and the CSV export still cover every entry.
+- On a phone, ledger rows wrap so the amount and buttons sit under the text.
+
+## 2.2.2
+
+- **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.
+
 ## 2.2.1
 
 - **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.

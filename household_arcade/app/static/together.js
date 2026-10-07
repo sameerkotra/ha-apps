@@ -1,10 +1,13 @@
 "use strict";
-/* Playing together from two phones, step 1: Race (spec/SPEC.md §13).
+/* Playing together from two phones: races (spec/SPEC.md §13.3), live duels (§13.4) and turn by turn (§13.5).
 
    This file is everything about it that isn't the game page itself:
    - the live link between the two phones (a WebSocket, or when it can't open, a long poll),
+   - a live duel's link (liveLink): the lockstep messages both ways, numbered by the server so a reconnection
+     picks up where it left off; a WebSocket that reconnects after a drop, else HTTP,
    - the invite sheet ("Play with someone"), the invite that arrives (a sheet, and a card on the Games page),
-   - the race bar and the result card, and "Against others" on My scores.
+   - the race bar and the result card, and "Against others" on My scores,
+   - "Your games" on the Games page: the turn-by-turn matches going on, whose move, the last move.
    play.js owns the game page and calls into this; app.js calls homeCards(), againstCard(), afterHome() and watch().
    Every piece of text from the server or a person goes in with textContent (via h()), never innerHTML. */
 
@@ -13,6 +16,9 @@ const Together = (() => {
   const STATE_EVERY_MS = 400;          // my score goes out this often, when it changed
   const KEEPALIVE_MS = 2000;           // and at least this often, so the other phone sees I'm still here
   const WS_OPEN_MS = 3000;             // a socket that isn't open by now isn't going to be
+  const PING_MS = 2000;                // a live duel's phone says it's here this often (and measures the round trip)
+  const LIVE_RETRIES = [500, 1000, 2000, 4000];   // a dropped live socket is opened again after these waits …
+  const LIVE_POLL_SEND_MS = 30;        // … then plain HTTP: what this phone has to say goes out this often
 
   let pending = null;                  // a match to take into the game page (set before showTab("play"))
   let shown = new Set();               // invites already shown as a sheet
@@ -24,7 +30,21 @@ const Together = (() => {
   function me(m) { return (m.players || []).find((p) => p.you) || null; }
   function clock(sec) {
     sec = Math.max(0, Math.round(sec));
+    // a turn-by-turn invite lasts 7 days: days and hours, not minutes
+    if (sec >= 2 * 86400) return `${Math.floor(sec / 86400)} days`;
+    if (sec >= 3600) return `${Math.floor(sec / 3600)} h ${Math.floor((sec % 3600) / 60)} min`;
     return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+  }
+  // "3 min ago", "2 h ago", "yesterday", "4 days ago" (an ISO time from the server)
+  function ago(iso) {
+    const t = Date.parse(iso || "");
+    if (!isFinite(t)) return "";
+    const sec = Math.max(0, (Date.now() - t) / 1000);
+    if (sec < 90) return "just now";
+    if (sec < 3600) return `${Math.round(sec / 60)} min ago`;
+    if (sec < 86400) return `${Math.round(sec / 3600)} h ago`;
+    if (sec < 2 * 86400) return "yesterday";
+    return `${Math.floor(sec / 86400)} days ago`;
   }
   // The time left in an invite, from when this picture arrived.
   function inviteLeft(m) { return m.expiresIn === null || m.expiresIn === undefined ? null : Math.max(0, m.expiresIn - (now() - (m._at || now())) / 1000); }
@@ -113,9 +133,135 @@ const Together = (() => {
   }
 
   // =====================================================================
+  // A live duel's link (spec §13.4)
+  // =====================================================================
+  // handlers: { message(msg) — every lockstep message from the server (numbered ones once each, in order),
+  //             match(m) — the match picture, transport(kind) }.
+  // Returns { send(msg), rtt(), close(), transport }. Every (re)connection starts with hello {since}: the server
+  // sends again the numbered messages after `since`, and a welcome with the last input message it has from this
+  // phone (the lockstep sends again the ones after it).
+  function liveLink(id, handlers) {
+    const L = { transport: "connecting", send, close, rtt, get open() { return !closed; }, get since() { return since; } };
+    let closed = false, ws = null, since = 0, tries = 0, polling = false, pingId = 0, pingTimer = null, sendTimer = null;
+    let queue = [], lastV = null, pollBusy = false;
+    const pings = {}, rtts = [], early = {};      // early: numbered messages that came before the ones before them
+
+    function setTransport(kind) { L.transport = kind; if (handlers.transport) handlers.transport(kind); }
+    function got(msg) {
+      if (closed || !msg || typeof msg !== "object") return;
+      if (msg.t === "match") { lastV = msg.v; if (handlers.match) handlers.match(stamp(msg)); return; }
+      if (msg.t === "pong") {
+        const at = pings[msg.id];
+        if (at !== undefined) { delete pings[msg.id]; rtts.push(now() - at); if (rtts.length > 9) rtts.shift(); }
+        return;
+      }
+      if (typeof msg.n === "number") {
+        // in order, once each: an older one was sent again (a reconnection), a later one waits for those before
+        // it (two HTTP requests can answer out of order); the server sends again everything after `since`
+        if (msg.n <= since) return;
+        if (msg.n > since + 1) { early[msg.n] = msg; return; }
+        since = msg.n;
+        handlers.message(msg);
+        while (early[since + 1]) { const m = early[since + 1]; delete early[since + 1]; since = m.n; handlers.message(m); }
+        return;
+      }
+      handlers.message(msg);
+    }
+    function rtt() {
+      if (!rtts.length) return null;
+      const s = rtts.slice().sort((a, b) => a - b);
+      return Math.round(s[Math.floor(s.length / 2)]);
+    }
+    function ping() {
+      pingId++;
+      pings[pingId] = now();
+      send({ t: "ping", id: pingId });
+    }
+    function send(msg) {
+      if (closed) return;
+      const m = (msg.t === "in" || msg.t === "ping") ? Object.assign({ ack: since }, msg) : msg;
+      if (ws && ws.readyState === 1) {
+        try { ws.send(JSON.stringify(m)); return; } catch (e) { /* the socket is going: the lockstep sends again */ }
+      }
+      if (polling) queue.push(m);
+    }
+
+    function openSocket() {
+      let url;
+      try {
+        url = new URL(`api/matches/${id}/live`, location.href);
+        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(url.href);
+      } catch (e) { startPolling(); return; }
+      const sock = ws;
+      let opened = false;
+      const giveUp = setTimeout(() => { if (!opened && ws === sock) dropped(); }, WS_OPEN_MS);
+      ws.onopen = () => {
+        opened = true; clearTimeout(giveUp); tries = 0;
+        setTransport("websocket");
+        try { sock.send(JSON.stringify({ t: "hello", since })); } catch (e) { /* onclose follows */ }
+        ping();
+      };
+      ws.onmessage = (ev) => { let m = null; try { m = JSON.parse(ev.data); } catch (e) { return; } got(m); };
+      ws.onclose = ws.onerror = () => { clearTimeout(giveUp); if (ws === sock) dropped(); };
+    }
+    // the socket went (or never came): try it again a few times, then use plain HTTP
+    function dropped() {
+      if (closed || polling) return;
+      try { if (ws) { ws.onclose = ws.onerror = ws.onmessage = ws.onopen = null; ws.close(); } } catch (e) { /* ignore */ }
+      ws = null;
+      if (tries < LIVE_RETRIES.length && typeof WebSocket === "function") {
+        setTransport("reconnecting");
+        setTimeout(() => { if (!closed && !polling) openSocket(); }, LIVE_RETRIES[tries++]);
+      } else startPolling();
+    }
+
+    async function post(msgs, wait) {
+      const r = await api(`api/matches/${id}/live`, { method: "POST", body: { since, msgs, wait, v: lastV } });
+      if (r && r.match) got(Object.assign({ t: "match" }, r.match));
+      (r && r.msgs || []).forEach(got);
+    }
+    async function pollLoop() {
+      while (!closed) {
+        try { await post([], 10); }
+        catch (e) { if (e && e.status === 404) return; await new Promise((r) => setTimeout(r, 1000)); }
+      }
+    }
+    function startPolling() {
+      if (closed || polling) return;
+      polling = true;
+      try { if (ws) { ws.onclose = ws.onerror = ws.onmessage = ws.onopen = null; ws.close(); } } catch (e) { /* ignore */ }
+      ws = null;
+      setTransport("poll");
+      queue.unshift({ t: "hello", since });
+      sendTimer = setInterval(async () => {
+        if (closed || pollBusy || !queue.length) return;
+        pollBusy = true;
+        const batch = queue.splice(0, 32);
+        try { await post(batch, 0); }
+        catch (e) { queue.unshift({ t: "hello", since }); }      // the server says again what it has (welcome)
+        pollBusy = false;
+      }, LIVE_POLL_SEND_MS);
+      pollLoop();
+    }
+    function close() {
+      closed = true;
+      clearInterval(pingTimer); clearInterval(sendTimer);
+      try { if (ws) { ws.onclose = ws.onerror = ws.onmessage = ws.onopen = null; ws.close(); } } catch (e) { /* ignore */ }
+      ws = null;
+    }
+
+    pingTimer = setInterval(ping, PING_MS);
+    api(`api/matches/${id}`).then((m) => got(Object.assign({ t: "match" }, m)), () => {});
+    if (typeof WebSocket === "function") openSocket(); else startPolling();
+    return L;
+  }
+
+  // =====================================================================
   // Invite sheet: "Play with someone"
   // =====================================================================
-  // opts: { game, gameName, mode, modeLabel, practice }. Resolves with the new match (an invite is out) or null.
+  // opts: { game, gameName, mode, modeLabel, practice, live, turns, options }. Resolves with the new match (an invite is
+  // out) or null. A turn-by-turn game for more than two (maxPlayers from the server) lets the inviter tick up to three.
   function invite(opts) {
     return new Promise((resolve) => {
       let done = false;
@@ -123,23 +269,46 @@ const Together = (() => {
       const list = h("div", { class: "tg-people", id: "tgPeople" }, spinner());
       const err = h("div", { class: "hint warn", role: "alert", hidden: true });
       const sheet = openModal("Play with someone", h("div", null,
-        h("p", { class: "hint" }, `${opts.gameName} · ${opts.modeLabel}${opts.practice ? " · Practice (not saved)" : ""}. You both play the same game at the same time on your own phones; the better score wins.`),
+        h("p", { class: "hint" }, `${opts.gameName} · ${opts.modeLabel}${opts.practice ? " · Practice (not saved)" : ""}. ` +
+          (opts.live ? "You play against each other live, each on your own phone, in the same game."
+            : opts.turns ? "You take turns from your own phones — they needn't be open at the same time; each of you is told when it's your move."
+              : "You both play the same game at the same time on your own phones; the better score wins.")),
         list, err), { sheet: true, onClose: () => finish(null) });
+      const send = async (ids, btn) => {
+        btn.disabled = true; err.hidden = true;
+        try {
+          const body = { game: opts.game, mode: opts.mode, practice: !!opts.practice, opponents: ids, kind: opts.live ? "live" : opts.turns ? "turns" : "race" };
+          if (opts.turns && opts.options) body.options = opts.options;
+          const m = await api("api/matches", { method: "POST", body });
+          finish(stamp(m)); sheet.close();
+        } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; }
+      };
       const load = async () => {
         let data;
-        try { data = await api(`api/players?game=${encodeURIComponent(opts.game)}`); }
+        try { data = await api(`api/players?game=${encodeURIComponent(opts.game)}&mode=${encodeURIComponent(opts.mode)}`); }
         catch (e) { mount(list, h("div", { class: "hint warn" }, e.message)); return; }
         if (!data.players.length) { mount(list, h("div", { class: "empty" }, "Nobody else has opened the app yet.")); return; }
+        if ((data.maxPlayers || 2) > 2) {           // 2–4 players: tick up to three, then Invite
+          const most = data.maxPlayers - 1, picked = new Set();
+          const go = h("button", { class: "btn-primary", type: "button", id: "inviteManyBtn", disabled: true, onclick: (ev) => send([...picked], ev.target) }, "Invite");
+          mount(list, data.players.map((p) => {
+            const box = h("input", { type: "checkbox", disabled: !p.canPlay, "aria-label": `Invite ${p.name}` });
+            box.addEventListener("change", () => {
+              if (box.checked && picked.size >= most) { box.checked = false; toast(`At most ${most} others.`, true); return; }
+              if (box.checked) picked.add(p.id); else picked.delete(p.id);
+              go.disabled = !picked.size;
+            });
+            return h("label", { class: "tg-person" + (p.canPlay ? "" : " off"), dataset: { id: p.id } },
+              h("div", { class: "tg-who" }, h("strong", null, p.name), p.canPlay ? (p.active ? h("span", { class: "chip on" }, "here now") : null)
+                : h("div", { class: "hint" }, p.reason)), box);
+          }), h("div", { class: "hint" }, `Up to ${most} others; the game starts when all have joined, or when you start it with those who have.`),
+          h("div", { class: "actions" }, go));
+          return;
+        }
         mount(list, data.players.map((p) => h("div", { class: "tg-person" + (p.canPlay ? "" : " off"), dataset: { id: p.id } },
           h("div", { class: "tg-who" }, h("strong", null, p.name), p.canPlay ? (p.active ? h("span", { class: "chip on" }, "here now") : null)
             : h("div", { class: "hint" }, p.reason)),
-          p.canPlay ? h("button", { class: "btn-primary btn-small", type: "button", "aria-label": `Invite ${p.name}`, onclick: async (ev) => {
-            ev.target.disabled = true; err.hidden = true;
-            try {
-              const m = await api("api/matches", { method: "POST", body: { game: opts.game, mode: opts.mode, practice: !!opts.practice, opponents: [p.id], kind: "race" } });
-              finish(stamp(m)); sheet.close();
-            } catch (e) { err.textContent = e.message; err.hidden = false; ev.target.disabled = false; }
-          } }, "Invite") : null)));
+          p.canPlay ? h("button", { class: "btn-primary btn-small", type: "button", "aria-label": `Invite ${p.name}`, onclick: (ev) => send([p.id], ev.target) }, "Invite") : null)));
       };
       load();
     });
@@ -204,9 +373,11 @@ const Together = (() => {
             try { await api(`api/matches/${m.id}/cancel`, { method: "POST" }); } catch (e) { fail(e); }
             load();
           } }, "Cancel")))));
-      data.playing.filter((m) => { const p = me(m); return p && !p.started; }).forEach((m) => cards.push(h("div", { class: "card tg-card", id: "raceStarted" },
-        h("div", { class: "tg-text" }, h("strong", null, `Race with ${who(m)} is starting`), h("div", { class: "hint" }, modeLine(m))),
-        h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, "Join the race")))));
+      const games = data.playing.filter((m) => m.kind === "turns");
+      if (games.length) cards.push(yourGames(games));
+      data.playing.filter((m) => { const p = me(m); return m.kind !== "turns" && p && !p.started; }).forEach((m) => cards.push(h("div", { class: "card tg-card", id: "raceStarted" },
+        h("div", { class: "tg-text" }, h("strong", null, m.kind === "live" ? `Your duel with ${who(m)} is starting` : `Race with ${who(m)} is starting`), h("div", { class: "hint" }, modeLine(m))),
+        h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, m.kind === "live" ? "Join the duel" : "Join the race")))));
       mount(box, cards);
     }
     timer = setInterval(() => { if (!document.hidden) load(); }, INVITE_POLL_MS / 2);
@@ -214,13 +385,38 @@ const Together = (() => {
     return box;
   }
 
-  // A hash link (a phone notification's Join / Not now): #/home/join/<id> and #/home/decline/<id>.
+  // "Your games": the turn-by-turn matches going on — my move first, then theirs, each with the last move's time.
+  function yourGames(list) {
+    const mine = (m) => !!(m.turns && m.turns.myTurn);
+    list = list.slice().sort((a, b) => (mine(b) - mine(a)) || String(b.turns && b.turns.lastMoveAt).localeCompare(String(a.turns && a.turns.lastMoveAt)));
+    return h("div", { class: "card tg-card", id: "yourGames" }, h("h3", null, "Your games"),
+      list.map((m) => {
+        const others = (m.players || []).filter((p) => !p.you).map((p) => first(p.name));
+        const toMove = (m.players || []).filter((p) => m.turns && m.turns.toMove.indexOf(p.seat) >= 0 && !p.you).map((p) => first(p.name));
+        const whose = mine(m) ? "Your move" : toMove.length ? `${toMove.join(" and ")}'s move` : "Waiting";
+        return h("div", { class: "tg-invite tg-game" + (mine(m) ? " my-turn" : ""), dataset: { match: m.id } },
+          h("div", { class: "tg-text" }, h("strong", null, `${m.icon} ${m.gameName}`), ` with ${others.join(", ")}`,
+            h("div", { class: "hint" }, h("span", { class: mine(m) ? "tg-turn mine" : "tg-turn" }, whose),
+              m.turns && m.turns.number ? ` · last move ${ago(m.turns.lastMoveAt)}` : ` · started ${ago(m.turns && m.turns.lastMoveAt)}`,
+              m.practice ? " · Practice" : "")),
+          h("div", { class: "tg-actions" }, h("button", { class: mine(m) ? "btn-primary btn-small" : "btn-secondary btn-small", type: "button",
+            "aria-label": `Open ${m.gameName} with ${others.join(", ")}`, onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, mine(m) ? "Play" : "Open")));
+      }));
+  }
+
+  // A hash link (a phone notification's Join / Not now, or a your-move notification): #/home/join/<id>,
+  // #/home/decline/<id>, #/home/turn/<id>.
   async function afterHome(arg, id) {
-    if (arg !== "join" && arg !== "decline") return;
+    if (arg !== "join" && arg !== "decline" && arg !== "turn") return;
     try { history.replaceState(history.state, "", "#/home"); } catch (e) { /* ignore */ }
     state.arg = null; state.arg2 = null;
     let m;
     try { m = await api(`api/matches/${encodeURIComponent(id)}`); } catch (e) { fail(e); return; }
+    if (arg === "turn") {
+      if (m.status === "playing" && m.kind === "turns") { pending = stamp(m); showTab("play", { arg: m.game }); }
+      else toast(m.status === "done" ? "That match is over." : "That match isn't being played.", true);
+      return;
+    }
     if (m.status !== "invited" || m.mine) {
       toast(m.status === "expired" ? "That invite has run out." : "That invite isn't open any more.", true);
       return;
@@ -258,10 +454,44 @@ const Together = (() => {
   // On the game page
   // =====================================================================
   // The race bar: the other player's name, score, level and whether they are still playing.
-  function barContent(m, transport) {
+  // A live duel (spec §13.4): `live` = { scores: [mine, theirs] known from the game itself, state: "playing" |
+  // "waiting" (their inputs are late) | "paused" | "lost" (their phone went quiet) | "ready" | "over" }.
+  function barContent(m, transport, liveInfo) {
     const o = m ? other(m) : null;
     if (!o) return [];
     let text, cls = "";
+    if (m.kind === "live" && m.status === "playing" && liveInfo) {
+      const st = liveInfo.state;
+      text = st === "waiting" ? "waiting…" : st === "paused" ? "paused" : st === "lost" ? "connection lost?" : st === "ready" ? "getting ready" : st === "over" ? "finished" : "playing";
+      cls = st === "playing" ? "live" : st === "lost" ? "lost" : st === "over" ? "done" : "wait";
+      const here = o.connected;
+      return [
+        h("span", { class: "rb-dot " + (here ? "on" : "off"), "aria-hidden": "true", title: transport ? `Live link: ${transport}` : "" }),
+        h("span", { class: "rb-name" }, first(o.name)),
+        liveInfo.scores ? h("span", { class: "rb-score", id: "raceScore" }, fmtNum(liveInfo.scores[1])) : null,
+        h("span", { class: "rb-state " + cls, id: "raceState" }, text),
+      ].filter(Boolean);
+    }
+    if (m.kind === "turns") {
+      const tm = (m.turns && m.turns.toMove) || [], you = me(m);
+      const others = (m.players || []).filter((p) => !p.you && (m.status !== "playing" || p.invite !== "declined"));
+      const many = others.length > 1;
+      const winner = (m.players || []).find((p) => p.result === "won");
+      const mover = others.find((p) => tm.indexOf(p.seat) >= 0);
+      if (m.status === "invited") { text = many ? "have been invited" : "has been invited"; cls = "wait"; }
+      else if (m.status === "done") {
+        text = you && you.result === "won" ? "you won" : you && you.result === "draw" ? "a draw" : winner && many ? `${first(winner.name)} won` : you && you.result === "lost" ? "won" : "over";
+        cls = "done";
+      } else if (you && tm.indexOf(you.seat) >= 0) { text = "your move"; cls = "live"; }
+      else { text = many && mover ? `${first(mover.name)}'s move` : "their move"; cls = "wait"; }
+      // 3–4 players: a dot for each of the others (here now or not), their first names
+      const dots = (many ? others : [o]).map((p) => h("span", { class: "rb-dot " + (p.connected ? "on" : "off"), "aria-hidden": "true",
+        title: `${first(p.name)}: ${p.connected ? "here now" : "not here now"}${p.computer ? " (the computer plays)" : ""}` }));
+      return dots.concat([
+        h("span", { class: "rb-name" }, many ? others.map((p) => first(p.name) + (p.computer ? "🤖" : "")).join(", ") : first(o.name)),
+        h("span", { class: "rb-state " + cls, id: "raceState" }, text),
+      ]);
+    }
     if (m.status === "invited") { text = "has been invited"; cls = "wait"; }
     else if (o.final || o.over) {
       text = o.final ? (o.seconds !== null && o.seconds !== undefined ? `finished in ${clock(o.seconds)}` : "finished") : "finishing…";
@@ -284,22 +514,39 @@ const Together = (() => {
   function headline(m) {
     const you = me(m), o = other(m);
     if (!you || !o) return "";
+    if (m.endReason === "out_of_step") return "Out of step — no result";
+    if (m.endReason === "timeout" && !you.result) return "Ended — no result";
+    if (m.endReason === "timeout" && you.result === "won") return `🏆 ${first(o.name)} didn't move for 7 days. You win!`;
+    if (m.endReason === "timeout" && you.result === "lost") return "No move for 7 days — a loss";
+    if (m.endReason === "time_limit") return "Play time ran out — a draw";
+    const others = (m.players || []).filter((p) => !p.you);
+    if (others.length > 1 && (m.endReason === "resigned" || m.endReason === "timeout")) {
+      if (you.result === "won") return "🏆 The others left the game. You win!";
+      const w = others.find((p) => p.result === "won");
+      return w ? `${first(w.name)} won${you.left ? " (you left the game)" : ""}.` : "Ended — no result";
+    }
+    if (m.endReason === "resigned" && you.result === "won") return `🏆 ${first(o.name)} gave up. You win!`;
+    if (m.endReason === "resigned" && you.result === "lost") return `${first(o.name)} won (you gave up).`;
+    if (m.endReason === "left" && !you.result) return "Both left — no result";
     if (m.endReason === "left" && you.result === "won") return `🏆 ${first(o.name)} left the game. You win!`;
     if (m.endReason === "left" && you.result === "lost") return `${first(o.name)} won (you left the game).`;
     if (you.result === "won") return "🏆 You won!";
+    const winner = (m.players || []).find((p) => p.result === "won");
+    if (you.result === "lost" && winner && !winner.you) return `${first(winner.name)} won`;
     if (you.result === "lost") return `${first(o.name)} won`;
     if (you.result === "draw") return "A draw";
     return "";
   }
   // The result card: both results side by side. `mine` = my own final numbers (they may be ahead of the match's).
   function resultTable(m) {
+    const turns = m.kind === "turns";       // no levels; the time is the time each spent on the match's page
     const rows = (m.players || []).map((p) => h("tr", { class: p.you ? "me" : "", dataset: { id: p.id } },
-      h("td", null, p.you ? "You" : first(p.name), p.result === "won" ? " 🏆" : ""),
+      h("td", null, p.you ? "You" : first(p.name), p.result === "won" ? " 🏆" : "", p.left ? " (left)" : ""),
       h("td", { class: "num" }, p.final ? h("strong", null, fmtNum(p.score)) : (p.over ? "…" : fmtNum(p.score))),
-      h("td", { class: "num" }, p.final || p.over ? `L${p.level}` : "playing"),
+      turns ? null : h("td", { class: "num" }, p.final || p.over ? `L${p.level}` : "playing"),
       h("td", { class: "num" }, p.final ? fmtDuration(p.seconds) : "")));
     return h("table", { class: "data tg-result", id: "raceResult" },
-      h("thead", null, h("tr", null, h("th", null, ""), h("th", { class: "num" }, "Score"), h("th", { class: "num" }, "Level"), h("th", { class: "num" }, "Time"))),
+      h("thead", null, h("tr", null, h("th", null, ""), h("th", { class: "num" }, "Score"), turns ? null : h("th", { class: "num" }, "Level"), h("th", { class: "num" }, "Time"))),
       h("tbody", null, rows));
   }
 
@@ -318,7 +565,7 @@ const Together = (() => {
     return box;
   }
 
-  return { link, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable,
-    inviteLeft, startsIn, stamp, other, me, first, clock, acceptInvite, _internal: { get pending() { return pending; }, set pending(v) { pending = v; } } };
+  return { link, liveLink, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable,
+    inviteLeft, startsIn, stamp, other, me, first, clock, ago, acceptInvite, yourGames, _internal: { get pending() { return pending; }, set pending(v) { pending = v; } } };
 })();
 window.Together = Together;

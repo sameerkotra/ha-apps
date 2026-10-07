@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.2
+
+- **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.
+
 ## 2.1.1
 
 - **Security**: the app now ignores forwarded-address headers (`X-Forwarded-For`): only Home Assistant's ingress proxy itself can reach it, whatever a request claims. No visible change.

@@ -218,7 +218,7 @@ class TestBuilder(AiBase):
         r = self.post("/api/admin/levels/build", {"game": "brick", "count": 3}, ASHA)
         self.assertEqual(r.status_code, 409)
         self.ai_on()
-        self.assertEqual(self.post("/api/admin/levels/build", {"game": "chess", "count": 3}, ASHA).status_code, 404)
+        self.assertEqual(self.post("/api/admin/levels/build", {"game": "pinball", "count": 3}, ASHA).status_code, 404)
         self.assertEqual(self.post("/api/admin/levels/build", {"game": "brick", "count": 21}, ASHA).status_code, 422)
         self.assertEqual(self.post("/api/admin/levels/build", {"game": "brick", "count": 3}, KABIR).status_code, 403)
 

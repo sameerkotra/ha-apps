@@ -217,16 +217,24 @@ mark { background: var(--mark); color: var(--text); border-radius: 3px; padding:
 .share-box > .hint { margin-top: 12px; }
 
 /* ---------- editors ---------- */
-.doc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.doc-head-left { display: flex; align-items: flex-start; gap: 8px; min-width: 0; flex: 1 1 260px; }
-.back-link { font-size: 1.2rem; }
-.doc-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.doc-title { margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; overflow-wrap: anywhere; }
-button.doc-title { background: transparent; border: 1px solid transparent; padding: 2px 6px; margin-left: -6px; cursor: text; text-align: left; }
+/* the editor's header (SPEC §13): one line ← name … Share ⋯, then a small line (who/when, save state) */
+.doc-head { margin-bottom: 8px; min-width: 0; }
+.doc-head-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.back-link { font-size: 1.2rem; flex: none; }
+.doc-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.doc-title { display: block; color: inherit; font-family: inherit; background: transparent; border: 1px solid transparent; border-radius: 6px;
+  padding: 2px 6px; margin-left: -6px; cursor: text; text-align: left; }
 button.doc-title:hover { border-color: var(--border); }
-.doc-sub { margin-top: 2px; }
+.doc-actions { flex: none; flex-wrap: nowrap; gap: 4px; }
+.head-share { padding: 5px 12px; font-size: .85rem; }
+.head-more { font-size: 1.2rem; padding: 2px 10px; }
+.doc-sub-row { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 2px 0 0 38px; }
+.doc-sub-row .chip { flex: none; }
+.doc-sub { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .save-state { color: var(--text-dim); font-size: .82rem; min-width: 60px; text-align: right; }
 .save-state.warn { color: var(--warn); }
+.doc-sub-row .save-state, .doc-sub-row .editing-chip { flex: none; }
 .doc-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .editor-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 0; overflow: hidden; }
 .note-text { display: block; width: 100%; min-height: 60vh; border: none; border-radius: 0; background: transparent; padding: 16px 18px;
@@ -399,6 +407,8 @@ button.doc-title:hover { border-color: var(--border); }
   .toast-root { bottom: calc(var(--bar-h) + 16px); }
   .modal-backdrop { padding: 3vh 8px; }
   .save-state { min-width: 0; }
+  .doc-title { font-size: 1.1rem; }
+  .doc-sub-row { margin-left: 34px; }
   .res-head { display: none; }
   .res-row { grid-template-columns: 28px minmax(0, 1fr) 36px; grid-template-areas: "tick name more" ". meta meta"; padding: 4px 0 6px; }
   .res-row .row-tick { grid-area: tick; }
@@ -540,7 +550,7 @@ main.sheet-page { max-width: none; }
 .filter-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: .88rem; overflow-wrap: anywhere; }
 .sheet-table td.flash { animation: flash 2.2s ease-out; }
 @media (max-width: 760px) {
-  .sheet-wrap { height: calc(100vh - 420px); height: calc(100dvh - 420px); min-height: 220px; }
+  .sheet-wrap { height: calc(100vh - 374px); height: calc(100dvh - 374px); min-height: 220px; }  /* 420 before the one-line header (§13) */
   .sheet-tools { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
   .sheet-ref { width: 64px; }
   .sheet-table { font-size: .82rem; }

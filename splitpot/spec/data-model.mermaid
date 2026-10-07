@@ -6,6 +6,7 @@ erDiagram
     expenses ||--|{ expense_splits : "split into (cascade)"
     users ||--o{ expense_splits : "owes share"
     groups |o..o{ events : "group_id (soft, no FK)"
+    users ||--o{ user_notify : "extra notify services (cascade)"
 
     users {
         TEXT id PK
@@ -14,6 +15,14 @@ erDiagram
         TEXT ha_entity_id UK "person.x, partial unique"
         INTEGER disabled "0/1"
         TEXT ha_user_id "HA user id of the Person"
+        INTEGER receive_notifications "0/1, My settings"
+    }
+
+    user_notify {
+        TEXT user_id PK "FK users.id"
+        TEXT service PK "notify.<name>"
+        TEXT created_at
+        TEXT created_by
     }
 
     groups {

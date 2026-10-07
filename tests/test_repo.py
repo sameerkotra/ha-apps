@@ -11,21 +11,21 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"calorie_tracker": "2.1.1", "family_tree": "2.2.1", "household_chat": "2.5.5", "household_todo": "2.3.1",
-            "household_vault": "2.1.2", "splitpot": "2.2.1"}
+VERSIONS = {"calorie_tracker": "2.1.2", "family_tree": "2.2.2", "household_chat": "2.5.5", "household_todo": "2.3.2",
+            "household_vault": "2.1.3", "splitpot": "2.3.0"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
 FINANCE_VERSION = "1.1.1"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.6.1"
+ARCADE_VERSION = "1.7.1"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.1.1"
+RECEIPTS_VERSION = "1.1.2"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.1.1"
+DOCS_VERSION = "1.1.3"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}

@@ -32,10 +32,20 @@ const Play = (() => {
     // playing together (a race, spec §13.3): the match, its live link and what the result card needs
     match: null, link: null, linkKind: "", raceTimer: null, raceOver: null, rematchTimer: null, rematchInvite: null,
     waitTimer: null, countTimer: null,
+    // a live duel (spec §13.4): { seat, ls (the lockstep), buffer (messages before the game exists), state, … }
+    live: null,
+    // turn by turn (spec §13.5): { id, number (moves this page has), status, readOnly (why this person can't move
+    // now, e.g. a child's quiet hours), fetching }
+    turns: null,
   };
 
   // ---------- helpers ----------
-  function keymap() { return S.def && S.def.players === 2 ? KEYMAP2 : KEYMAP; }
+  // A live duel: each phone plays its own player, so every key is "mine" (W A S D too).
+  function keymap() { return S.def && S.def.players === 2 && !S.live ? KEYMAP2 : KEYMAP; }
+  // The modes of this game that are played live on two phones only (spec §13.4).
+  function isLiveMode(mode) { return !!(S.server && (S.server.liveModes || []).indexOf(mode) >= 0); }
+  // The modes played turn by turn from two phones only (spec §13.5).
+  function isTurnMode(mode) { return !!(S.server && (S.server.turnModes || []).indexOf(mode) >= 0); }
   const now = () => performance.now();
   function activeSeconds() { return (S.activeMs + (S.runSince !== null ? now() - S.runSince : 0)) / 1000; }
   function reduceMotion() {
@@ -188,7 +198,9 @@ const Play = (() => {
     const practice = h("input", { type: "checkbox", id: "practiceBox", checked: S.practice });
     practice.addEventListener("change", () => { S.practice = practice.checked; });
     const blocked = blockReason();
-    const playBtn = h("button", { class: S.server.saved ? "btn-secondary" : "btn-primary", type: "button", id: "playBtn", disabled: !!blocked, onclick: () => startGame() }, S.server.saved ? "▶ New game" : "▶ Play");
+    const liveMode = isLiveMode(S.mode), turnMode = isTurnMode(S.mode);
+    // a two-phone mode is only played with someone: no Play button, Play with someone is the way in
+    const playBtn = liveMode || turnMode ? null : h("button", { class: S.server.saved ? "btn-secondary" : "btn-primary", type: "button", id: "playBtn", disabled: !!blocked, onclick: () => startGame() }, S.server.saved ? "▶ New game" : "▶ Play");
     setOverlay(
       h("div", { class: "start-card" },
         h("h3", null, S.server.name),
@@ -200,12 +212,15 @@ const Play = (() => {
         optionFields.length ? h("div", { class: "start-fields", id: "startOptions" }, optionFields) : null,
         dailyBlock(blocked),
         h("label", { class: "mini-toggle", title: "Nothing is saved in Practice" }, practice, "Practice (not saved)"),
+        liveMode ? h("div", { class: "hint", id: "liveHint" }, "Two phones: you each play on your own phone, live, in the same game.") : null,
+        turnMode ? h("div", { class: "hint", id: "turnsHint" }, "Two phones: take turns from your own phones — they needn't be open at the same time. Your games on the Games page shows whose move it is.") : null,
         message ? h("div", { class: "hint warn", role: "alert" }, message) : null,
         blocked ? h("div", { class: "hint warn", id: "startBlocked", role: "alert" }, blocked) : null,
         h("div", { class: "ov-row" }, playBtn, raceBtn(blocked))));
     S.el.overlay.classList.add("start");
     const dailyBtn = $("#dailyBtn");
-    if (!blocked) (S.openDaily && dailyBtn ? dailyBtn : playBtn).focus({ preventScroll: true });
+    const first = S.openDaily && dailyBtn ? dailyBtn : playBtn || $("#togetherBtn");
+    if (!blocked && first) first.focus({ preventScroll: true });
   }
   // Today's challenge (only while an admin has daily challenges on): the day's mode and puzzle, one ranked try
   // each; after that, Practice. A daily game can't be put aside to finish later.
@@ -226,7 +241,16 @@ const Play = (() => {
   // "Play with someone": a race on two phones (offered for the games that can be raced, to a person who isn't
   // blocked themselves).
   function raceBtn(blocked) {
-    if (!window.Together || !S.server.race || S.def.race === false || S.def.players === 2) return null;
+    if (!window.Together) return null;
+    if (isTurnMode(S.mode)) {
+      if (!S.def.turns) return null;
+      return h("button", { class: "btn-primary", type: "button", id: "togetherBtn", disabled: !!blocked, onclick: inviteSomeone }, "👥 Play with someone");
+    }
+    if (isLiveMode(S.mode)) {
+      if (!window.ArcadeLockstep || !S.def.lockstep) return null;
+      return h("button", { class: "btn-primary", type: "button", id: "togetherBtn", disabled: !!blocked, onclick: inviteSomeone }, "👥 Play with someone");
+    }
+    if (!S.server.race || S.def.race === false || S.def.players === 2) return null;
     return h("button", { class: "btn-secondary", type: "button", id: "togetherBtn", disabled: !!blocked, onclick: inviteSomeone }, "👥 Play with someone");
   }
   function savedBlock(blocked) {
@@ -251,6 +275,8 @@ const Play = (() => {
   }
 
   function showPaused() {
+    if (S.live) { showLivePaused(); return; }
+    if (S.turns) { showTurnPaused(); return; }
     const canSave = !!(S.server.canSave && S.inst && S.inst.canSave) && !S.match && !S.daily;   // a race or a daily challenge can't be put aside
     setOverlay(h("h3", null, "Paused"),
       h("div", { class: "hint" }, `${runLabel()}${S.practice || (S.daily && S.daily.practice) ? " · Practice" : ""}${S.match ? " · Race" : ""}`),
@@ -268,7 +294,8 @@ const Play = (() => {
     else if (saved && saved.personalBest) badges.push(h("span", { class: "badge best" }, "⭐ New personal best!"));
     if (saved && saved.reason === "practice") badges.push(h("span", { class: "badge note" }, "Practice — not saved"));
     if (saved && saved.reason === "short") badges.push(h("span", { class: "badge note" }, "Under 3 seconds — not saved"));
-    if (saved && saved.reason === "unfinished") badges.push(h("span", { class: "badge note" }, "Not solved — not saved"));
+    // a game that keeps nothing unless won says why in its own words (the board games: "Not a win — not saved")
+    if (saved && saved.reason === "unfinished") badges.push(h("span", { class: "badge note" }, (result.stats && result.stats.notSaved) || "Not solved — not saved"));
     if (error) badges.push(h("span", { class: "badge note" }, "Not saved: " + error));
     if (result.stats && result.stats.won && result.stats.mazesCleared) badges.push(h("span", { class: "badge best" }, "🏁 Every maze cleared!"));
     if (saved && saved.levelsComing) badges.push(h("span", { class: "badge note", id: "levelsComing" }, "✨ New levels are on the way"));
@@ -338,12 +365,22 @@ const Play = (() => {
       showStart(e.message);
       return;
     }
+    if (how.match && how.match.kind === "live") {
+      // a live duel: both phones get ready, then the server counts both in (spec §13.4)
+      S.session = session;
+      liveBegin(session, how.match);
+      return;
+    }
     if (how.match) {
       // both phones count in together; the session is already open, so a child out of time is known by now
       S.session = session;
       const ok = await countIn(session);
       if (!ok) return;
     }
+    launch(session);
+  }
+  // Make the game for this session and start it (opts.live for a live duel).
+  function launch(session, live) {
     destroyInstance();
     if (session.saved) { S.mode = session.mode; S.practice = !!session.practice; session.resumedFrom = true; }
     S.session = session;
@@ -362,6 +399,7 @@ const Play = (() => {
       onEnd: (result) => finish(result),
       onEvent: (type, data) => { if (type === "pause") gamePaused(!!(data && data.paused)); },
     };
+    if (live) { opts.live = live; opts.names = liveNames(); }
     try {
       S.inst = S.def.create(S.el.canvas, opts);
       setOverlay();
@@ -378,7 +416,12 @@ const Play = (() => {
     }
     S.beatTimer = setInterval(beat, BEAT_MS);
     S.tickTimer = setInterval(syncTime, 1000);
-    if (S.match) startRaceState();
+    if (S.match && !S.live) startRaceState();
+    if (S.live) {
+      S.raceTimer = setInterval(liveTick, 250);
+      if (S.live.state === "paused" || S.live.state === "lost") { S.live.remote = true; pause(); S.live.remote = false; }   // paused during the count-in
+      else S.live.state = "playing";
+    }
     syncButtons();
     syncTime();
     startGamepad();
@@ -395,6 +438,7 @@ const Play = (() => {
   // Leaving the page in the middle of a game ends it, and its score so far counts like a finished game.
   function endWithScore(keepalive) {
     if (!S.session) return;
+    if (S.turns) { endSession(keepalive); return; }      // a turn-by-turn match's result comes from its moves
     const r = S.inst ? safe(() => currentResult()) : null;
     if (!r || (r.score <= 0 && r.seconds < 3)) { endSession(keepalive); return; }
     const id = S.session.id;
@@ -411,9 +455,11 @@ const Play = (() => {
   }
   async function finish(result) {
     if (S.phase !== "running" && S.phase !== "paused") return;
+    if (S.turns) { turnFinished(result); return; }
     if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
     S.phase = "over";
-    sendRaceState(true);
+    if (S.live && S.live.state !== "ended") S.live.state = "over";
+    if (!S.live) sendRaceState(true);
     stopTimers();
     releaseAll();
     const session = S.session;
@@ -425,6 +471,7 @@ const Play = (() => {
       try {
         const body = { sessionId: session.id, score: result.score || 0, level: result.level || 1, seconds };
         if (S.match) body.won = !!(result.stats && result.stats.won);      // a race: who solved it counts for puzzles
+        if (S.live && result.live) body.report = result.live;              // a live duel: the end as this phone saw it
         saved = await api("api/scores", { method: "POST", body });
         if (saved.playTime) state.me.playTime = saved.playTime;
         if (saved.best !== null && saved.best !== undefined && S.server.bestByMode) S.server.bestByMode[S.mode] = saved.best;
@@ -443,7 +490,7 @@ const Play = (() => {
     if (!bar) return;
     const was = bar.hidden;
     bar.hidden = !S.match;
-    if (S.match) mount(bar, Together.barContent(S.match, S.linkKind));
+    if (S.match) mount(bar, Together.barContent(S.match, S.linkKind, S.live ? liveInfo() : null));
     if (was !== bar.hidden) fitStage(true);
   }
   function openLink(m) {
@@ -456,18 +503,26 @@ const Play = (() => {
   }
   // Leave the match this page is in (the page is closing, or going back to the start screen). An invite
   // still out is withdrawn; a match being played is left to settle by itself: the score so far was sent.
-  function leaveMatch() {
+  function leaveMatch(keepalive) {
     const m = S.match;
     clearInterval(S.waitTimer); clearInterval(S.rematchTimer); clearTimeout(S.countTimer);
     S.waitTimer = S.rematchTimer = S.countTimer = null;
-    if (m && m.status === "invited" && m.mine) api(`api/matches/${m.id}/cancel`, { method: "POST" }).catch(() => { /* it expires */ });
+    // (a turn-by-turn invite lasts days and stays out: it is on the Games page with its own Cancel)
+    if (m && m.status === "invited" && m.mine && m.kind !== "turns") api(`api/matches/${m.id}/cancel`, { method: "POST" }).catch(() => { /* it expires */ });
+    // leaving a live duel that is still on gives it up, so the other phone isn't left waiting
+    if (m && S.live && m.status === "playing" && S.live.state !== "over" && S.live.state !== "ended") {
+      api(`api/matches/${m.id}/resign`, { method: "POST", keepalive: !!keepalive }).catch(() => { /* it ends when the phone goes quiet */ });
+    }
+    if (S.live) { clearTimeout(S.live.readyTimer); clearTimeout(S.live.countTimer); }
     closeLink();
-    S.match = null; S.raceOver = null; S.rematchInvite = null;
+    S.match = null; S.raceOver = null; S.rematchInvite = null; S.live = null; S.turns = null;
     showRaceBar();
   }
   async function inviteSomeone() {
     if (S.phase !== "idle") return;
-    const m = await Together.invite({ game: S.gameId, gameName: S.server.name, mode: S.mode, modeLabel: modeLabel(S.mode), practice: S.practice });
+    const turns = isTurnMode(S.mode);
+    const m = await Together.invite({ game: S.gameId, gameName: S.server.name, mode: S.mode, modeLabel: modeLabel(S.mode), practice: S.practice,
+      live: isLiveMode(S.mode), turns, options: turns ? optionValues() : undefined });
     if (m && S.phase === "idle" && state.tab === "play") { S.match = m; openLink(m); showWaiting(); showRaceBar(); }
     else if (m) api(`api/matches/${m.id}/cancel`, { method: "POST" }).catch(() => { /* it expires */ });
   }
@@ -479,15 +534,35 @@ const Play = (() => {
       if (!m || S.phase !== "waiting") return;
       const o = Together.other(m);
       const left = Together.inviteLeft(m);
-      setOverlay(h("h3", null, "Race"),
-        h("div", { class: "hint", id: "waitingFor" }, `Waiting for ${o ? Together.first(o.name) : "them"} to join…`),
+      const turns = m.kind === "turns";
+      // 3–4 players: who has joined besides the inviter, who is still invited; only the inviter can start early
+      const joined = (m.players || []).filter((p) => !p.you && p.invite === "accepted" && p.id !== m.createdBy).length;
+      const waitingOn = (m.players || []).filter((p) => !p.you && p.invite === "invited").map((p) => Together.first(p.name));
+      const many = (m.players || []).filter((p) => !p.you).length > 1;
+      const inviter = (m.players || []).find((p) => p.id === m.createdBy);
+      const names = waitingOn.length > 1 ? waitingOn.slice(0, -1).join(", ") + " and " + waitingOn[waitingOn.length - 1] : waitingOn[0] || (o ? Together.first(o.name) : "them");
+      const countLine = !many ? null : m.mine ? (joined ? `${joined} joined so far — start now with ${joined + 1} of you, or wait for the rest.` : "Nobody has joined yet.")
+        : `You've joined. The game starts when everyone has, or when ${inviter ? Together.first(inviter.name) : "the one who invited you"} starts it.`;
+      setOverlay(h("h3", null, m.kind === "live" ? "Live duel" : turns ? "Turn by turn" : "Race"),
+        h("div", { class: "hint", id: "waitingFor" }, `Waiting for ${names} to join…`),
+        countLine ? h("div", { class: "hint", id: "joinedCount" }, countLine) : null,
         h("div", { class: "hint" }, `${modeLabel(m.mode)}${m.practice ? " · Practice (not saved)" : ""}`),
+        turns ? h("div", { class: "hint", id: "turnsWaitHint" }, "They'll get a notification. You needn't wait here: the game shows under Your games on the Games page, and you'll be told when it's your move.") : null,
         left !== null ? h("div", { class: "hint", id: "inviteLeft" }, `The invite runs out in ${Together.clock(left)}`) : null,
-        h("div", { class: "ov-row" }, h("button", { class: "btn-ghost", type: "button", id: "cancelInviteBtn", onclick: cancelInvite }, "Cancel")));
+        h("div", { class: "ov-row" },
+          turns && m.mine && joined && m.turns && (m.turns.maxPlayers || 2) > 2 ? h("button", { class: "btn-primary", type: "button", id: "startNowBtn", onclick: startNow }, `Start with ${joined + 1}`) : null,
+          turns ? h("button", { class: "btn-secondary", type: "button", id: "waitBackBtn", onclick: () => showTab("home") }, "Back to games") : null,
+          m.mine ? h("button", { class: "btn-ghost", type: "button", id: "cancelInviteBtn", onclick: cancelInvite }, "Cancel") : null));
     };
     draw();
     clearInterval(S.waitTimer);
     S.waitTimer = setInterval(draw, 1000);
+  }
+  // Turn by turn with 3–4 players: start with those who have joined.
+  async function startNow() {
+    const m = S.match;
+    if (!m) return;
+    try { const m2 = await api(`api/matches/${m.id}/start`, { method: "POST" }); onMatch(Together.stamp(m2)); } catch (e) { fail(e); }
   }
   async function cancelInvite() {
     const m = S.match;
@@ -502,8 +577,10 @@ const Play = (() => {
     if (!S.match || m.id !== S.match.id) return;
     S.match = m;
     showRaceBar();
+    if (S.turns && S.inst) { turnCheck(m); return; }
     if (S.phase === "waiting") {
-      if (m.status === "playing") { clearInterval(S.waitTimer); S.waitTimer = null; S.phase = "idle"; setOverlay(); startGame({ match: m }); }
+      if (m.status === "playing" && m.kind === "turns") { clearInterval(S.waitTimer); S.waitTimer = null; S.phase = "idle"; setOverlay(); turnBegin(m); }
+      else if (m.status === "playing") { clearInterval(S.waitTimer); S.waitTimer = null; S.phase = "idle"; setOverlay(); startGame({ match: m }); }
       else if (m.status !== "invited") {
         const o = Together.other(m), name = o ? Together.first(o.name) : "They";
         const text = m.status === "declined" ? `${name} said not now.` : m.status === "expired" ? `${name} didn't answer in time.` : "The invite was cancelled.";
@@ -522,7 +599,8 @@ const Play = (() => {
   function enterMatch(m) {
     S.match = m; S.mode = m.mode; S.practice = !!m.practice;
     S.phase = "idle";
-    openLink(m);
+    if (m.kind === "turns") { if (m.status === "invited") { openLink(m); showWaiting(); showRaceBar(); } else turnBegin(m); return; }
+    if (m.kind !== "live") openLink(m);          // a live duel opens its own link once the session is open
     showRaceBar();
     startGame({ match: m });
   }
@@ -561,6 +639,136 @@ const Play = (() => {
     renderRaceOver();
     pollRematch();
   }
+
+  // ---------- a live duel (spec §13.4) ----------
+  // The two players' names in seat order (for the game's own labels).
+  function liveNames() {
+    const ps = (S.match && S.match.players) || [];
+    const by = (n) => { const p = ps.find((x) => x.seat === n); return p ? p.name : ""; };
+    return [by(1), by(2)];
+  }
+  function otherFirst() { const o = S.match && Together.other(S.match); return o ? Together.first(o.name) : "them"; }
+  // What the bar shows: the other's score (from the game itself, the same on both phones) and how it's going.
+  function liveInfo() {
+    const L = S.live;
+    if (!L) return null;
+    let scores = null, state = L.state;
+    const st = S.inst && S.inst.liveStatus ? safe(() => S.inst.liveStatus()) : null;
+    if (st && st.scores) scores = L.seat === 2 ? [st.scores[1], st.scores[0]] : st.scores;
+    if (state === "playing" && st && st.waitingMs > 300) state = "waiting";
+    return { state, scores };
+  }
+  function liveTick() { if (S.live) showRaceBar(); }
+  // My session is open: open the live link, measure the round trip, say I'm ready; the server's `start` counts both in.
+  function liveBegin(session, m) {
+    closeLink();
+    S.live = { seat: session.seat || 1, ls: null, buffer: [], state: "ready", readySent: false, readyTimer: null, countTimer: null, remote: false };
+    S.phase = "starting";
+    syncButtons();
+    S.link = Together.liveLink(m.id, { message: onLive, match: onMatch, transport: (kind) => { S.linkKind = kind; showRaceBar(); } });
+    setOverlay(h("h3", null, "Live duel"), h("div", { class: "hint", id: "liveWaiting" }, `Getting ready with ${otherFirst()}…`),
+      h("div", { class: "ov-row" }, h("button", { class: "btn-ghost", type: "button", id: "liveCancelBtn", onclick: () => { leaveMatch(); endSession(false); S.phase = "idle"; showStart(); } }, "Leave")));
+    showRaceBar();
+    // the first round trips take a moment; say ready after them (or now, if they never come)
+    S.live.readyTimer = setTimeout(sendReady, 1200);
+  }
+  function sendReady() {
+    const L = S.live;
+    if (!L || !S.link || L.ls) return;
+    L.readySent = true;
+    S.link.send({ t: "ready", rtt: S.link.rtt() });
+  }
+  // Every lockstep message from the server, in order.
+  function onLive(msg) {
+    const L = S.live;
+    if (!L) return;
+    const t = msg.t;
+    if (t === "in" || t === "ack" || t === "error" || t === "welcome") {
+      if (L.ls) L.ls.receive(msg); else if (t === "in") L.buffer.push(msg);
+      if (t === "welcome" && msg.phase === "waiting" && L.readySent) sendReady();     // said again after a reconnection
+      return;
+    }
+    if (t === "start") { if (!L.ls && S.phase === "starting") liveCountIn(msg); return; }
+    if (t === "pause") {
+      L.state = msg.why === "lost" ? "lost" : "paused";
+      L.pausedBy = msg.by; L.why = msg.why;
+      if (S.phase === "running") { L.remote = true; pause(); L.remote = false; }
+      else if (S.phase === "paused") showPaused();
+      showRaceBar();
+      return;
+    }
+    if (t === "resume") {
+      L.state = "playing";
+      if (S.phase === "paused") { L.remote = true; resume(); L.remote = false; }
+      showRaceBar();
+      return;
+    }
+    if (t === "end") liveEnded(msg);
+  }
+  // 3-2-1 from the server's start (relative, so the clocks needn't agree), then the game in lockstep.
+  function liveCountIn(msg) {
+    const L = S.live, at = performance.now() + (msg.inMs || 0);
+    L.state = "countin";
+    const send = (m) => { if (S.link) S.link.send(m); };
+    // a game whose players take turns live (Carrom): one input a shot, played when it comes back from the server
+    L.ls = msg.turns ? ArcadeLockstep.createTurns({ seat: L.seat, send }) : ArcadeLockstep.create({ seat: L.seat, delay: msg.delay, send });
+    L.buffer.splice(0).forEach((m) => L.ls.receive(m));
+    const tick = () => {
+      if (S.live !== L || S.phase !== "starting") return;
+      const left = at - performance.now();
+      if (left <= 0) { setOverlay(); launch(S.session, { seat: L.seat, lockstep: L.ls }); return; }
+      setOverlay(h("div", { class: "hint" }, `Live duel with ${otherFirst()}`),
+        h("div", { class: "big countin", id: "countIn", "aria-live": "assertive" }, String(Math.ceil(left / 1000))));
+      L.countTimer = setTimeout(tick, Math.min(200, Math.max(30, left % 1000 || 200)));
+    };
+    tick();
+  }
+  function showLivePaused() {
+    const L = S.live, lost = L.state === "lost", mine = L.pausedBy === L.seat;
+    setOverlay(h("h3", null, lost ? `Waiting for ${otherFirst()}…` : "Paused"),
+      h("div", { class: "hint", id: "livePaused" }, lost ? "Their phone went quiet. The game goes on as soon as it's back."
+        : mine || !L.pausedBy ? "You paused the game for both of you." : `${otherFirst()} paused the game.`),
+      h("div", { class: "hint" }, `${runLabel()}${S.practice ? " · Practice" : ""} · Live duel`),
+      h("div", { class: "ov-row" },
+        lost ? null : h("button", { class: "btn-primary", type: "button", id: "resumeBtn", onclick: resume }, "▶ Resume")),
+      h("div", { class: "ov-row" },
+        h("button", { class: "btn-ghost", type: "button", id: "quitBtn", onclick: giveUp }, "Give up")));
+    const b = $("#resumeBtn");
+    if (b) b.focus({ preventScroll: true });
+  }
+  // Giving up a live duel: the other player wins; my score so far is kept like any game ended early.
+  async function giveUp() {
+    const m = S.match;
+    if (!m || !S.live) { quit(); return; }
+    S.live.state = "ended";
+    try { await api(`api/matches/${m.id}/resign`, { method: "POST" }); } catch (e) { /* it ends when the phone goes quiet */ }
+    if (S.inst && (S.phase === "running" || S.phase === "paused")) {
+      const r = currentResult();
+      safe(() => S.inst.stop());
+      finish(Object.assign(r, { stats: { quit: true } }));
+    }
+  }
+  // The server ended the match: out of step, someone left or gave up, a child's play time, …
+  function liveEnded(msg) {
+    const L = S.live;
+    if (!L) return;
+    if (msg.reason === "finished" || L.state === "over") return;     // the games ended by themselves on both phones
+    L.state = "ended";
+    const keep = msg.reason === "left" || msg.reason === "resigned" || msg.reason === "time_limit";
+    if (S.inst && (S.phase === "running" || S.phase === "paused")) {
+      const r = currentResult();
+      safe(() => S.inst.stop());
+      if (keep) { finish(Object.assign(r, { stats: { quit: true, ended: msg.reason } })); return; }
+      if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
+      S.phase = "over"; stopTimers(); releaseAll(); endSession(false);
+      raceFinished(Object.assign(r, { stats: { ended: msg.reason } }), { reason: "nothing" }, null);
+      return;
+    }
+    if (S.phase === "starting") {                  // never got going
+      S.phase = "over"; endSession(false);
+      raceFinished({ score: 0, level: 1, seconds: 0, stats: { ended: msg.reason } }, { reason: "nothing" }, null);
+    }
+  }
   function renderRaceOver() {
     const m = S.match, ro = S.raceOver;
     if (!m || !ro || S.phase !== "over") return;
@@ -571,18 +779,22 @@ const Play = (() => {
     else if (saved && saved.personalBest) badges.push(h("span", { class: "badge best" }, "⭐ New personal best!"));
     if (saved && saved.reason === "practice") badges.push(h("span", { class: "badge note" }, "Practice — not saved"));
     if (saved && saved.reason === "short") badges.push(h("span", { class: "badge note" }, "Under 3 seconds — not saved"));
-    if (saved && saved.reason === "unfinished") badges.push(h("span", { class: "badge note" }, "Not solved — scores 0"));
+    if (saved && saved.reason === "unfinished") badges.push(h("span", { class: "badge note" }, (result && result.stats && result.stats.notSaved) || "Not solved — scores 0"));
+    if (saved && saved.reason === "nothing") badges.push(h("span", { class: "badge note" }, "No result — not saved"));
+    if (saved && saved.reason === "note") badges.push(h("span", { class: "badge note" }, saved.note));
     if (error) badges.push(h("span", { class: "badge note" }, "Not saved: " + error));
     const blocked = blockReason();
     const rematch = S.rematchInvite;
+    const liveDuel = m.kind === "live";
     const summary = result.stats && Array.isArray(result.stats.summary) && result.stats.summary.length ? result.stats.summary : null;
-    setOverlay(h("h3", null, done ? (Together.headline(m) || "Race over") : "You finished"),
+    setOverlay(h("h3", null, done ? (Together.headline(m) || (liveDuel ? "Duel over" : "Race over")) : liveDuel ? "Game over" : "You finished"),
       h("div", { class: "big race-big", id: "finalScore" }, fmtNum(result.score)),
-      h("div", { class: "hint race-hint" }, `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${modeLabel(S.mode)}`),
+      h("div", { class: "hint race-hint" }, m.kind === "turns" ? `${fmtDuration(result.seconds)} on this page · ${modeLabel(S.mode)}`
+        : `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${modeLabel(S.mode)}`),
       summary ? h("div", { class: "hint over-summary", id: "overSummary" }, summary.map((x) => h("div", null, x))) : null,     // a puzzle: how it went ("Found it in 3 tries")
       badges.length ? h("div", { class: "ov-row", id: "overBadges" }, badges) : null,
       done ? Together.resultTable(m)
-        : h("div", { class: "hint", id: "waitingToFinish" }, o ? `Waiting for ${Together.first(o.name)} to finish… ${fmtNum(o.score)} · level ${o.level}` : "Waiting for the other player…"),
+        : h("div", { class: "hint", id: "waitingToFinish" }, liveDuel ? "Waiting for the result…" : o ? `Waiting for ${Together.first(o.name)} to finish… ${fmtNum(o.score)} · level ${o.level}` : "Waiting for the other player…"),
       blocked ? h("div", { class: "hint warn", role: "alert", id: "overBlocked" }, blocked) : null,
       h("div", { class: "ov-row" },
         done && rematch ? h("button", { class: "btn-primary", type: "button", id: "joinRematchBtn", disabled: !!blocked, onclick: () => joinRematch(rematch) }, `Join ${Together.first(o.name)}'s rematch`)
@@ -594,7 +806,12 @@ const Play = (() => {
     const m = S.match, o = m && Together.other(m);
     if (!m || !o) return;
     try {
-      const m2 = await api("api/matches", { method: "POST", body: { game: m.game, mode: m.mode, practice: !!m.practice, opponents: [o.id], kind: "race", rematchOf: m.id } });
+      const body = { game: m.game, mode: m.mode, practice: !!m.practice, opponents: [o.id], kind: m.kind || "race", rematchOf: m.id };
+      if (m.kind === "turns") {
+        body.opponents = (m.players || []).filter((p) => !p.you).map((p) => p.id);
+        if (m.turns && m.turns.options) body.options = m.turns.options;
+      }
+      const m2 = await api("api/matches", { method: "POST", body });
       leaveMatch();
       S.match = Together.stamp(m2); S.mode = m2.mode; S.practice = !!m2.practice;
       openLink(m2); showWaiting(); showRaceBar();
@@ -625,9 +842,166 @@ const Play = (() => {
     look();
   }
 
+  // ---------- turn by turn (spec §13.5) ----------
+  // The page of a turn-by-turn match: an ordinary play session (so the time spent here counts as play time — a child
+  // out of time or in quiet hours sees the board but can't move), the board from the server's picture, each move
+  // sent to the server (which checks it), and the picture pushed or polled when the other player moves.
+  async function turnBegin(m) {
+    closeLink();
+    S.match = m; S.mode = m.mode; S.practice = !!m.practice;
+    S.turns = { id: m.id, number: -1, status: m.status, readOnly: null, fetching: false, again: false };
+    const T = S.turns;
+    S.phase = "starting";
+    syncButtons();
+    openLink(m);
+    showRaceBar();
+    setOverlay(h("div", { class: "hint", id: "turnOpening" }, "Opening the match…"));
+    let session = null, pic = null;
+    if (m.status === "playing") {
+      try { session = await api("api/sessions", { method: "POST", body: { game: S.gameId, matchId: m.id } }); }
+      catch (e) { T.readOnly = e.message; }
+    }
+    try { pic = await api(`api/matches/${m.id}/turns`); }
+    catch (e) {
+      if (S.turns !== T) return;
+      if (session) { S.session = session; endSession(false); }
+      leaveMatch(); S.phase = "idle"; showStart(e.message); return;
+    }
+    if (S.turns !== T || S.phase !== "starting") { if (session) api(`api/sessions/${session.id}/end`, { method: "POST", body: { activeSeconds: 0 } }).catch(() => {}); return; }
+    turnLaunch(session, pic);
+  }
+  function turnLaunch(session, pic) {
+    destroyInstance();
+    const T = S.turns;
+    S.session = session;
+    S.daily = null;
+    S.activeMs = 0; S.runSince = null; S.warned = false; S.timeUpShown = false;
+    if (session) { S.leftBase = session.playTime.leftSeconds; S.activeAtBase = 0; state.me.playTime = session.playTime; }
+    T.number = pic.number; T.status = pic.status;
+    const names = [1, 2, 3, 4].map((n) => { const p = (pic.players || []).find((x) => x.seat === n); return p ? p.name : ""; }).filter(Boolean);
+    const opts = {
+      mode: pic.mode, look: look(), sound: sound(), reduceMotion: reduceMotion(), handedness: hand(), seed: pic.seed,
+      options: pic.options || {}, names,
+      turns: { seat: pic.seat, picture: pic, send: turnSend, roll: turnRoll },
+      onScore: () => {}, onEnd: (result) => finish(result),
+      onEvent: (type, data) => { if (type === "pause") gamePaused(!!(data && data.paused)); },
+    };
+    try {
+      S.inst = S.def.create(S.el.canvas, opts);
+      setOverlay();
+      S.phase = "running";
+      S.runSince = now();
+      safe(() => S.inst.resize());
+      S.inst.start();
+    } catch (e) {
+      console.error(e);      // eslint-disable-line no-console
+      endSession(false); leaveMatch(); S.phase = "idle";
+      showStart(`${S.server.name} couldn't start: ${e.message || e}`);
+      return;
+    }
+    if (session) S.beatTimer = setInterval(beat, BEAT_MS);
+    S.tickTimer = setInterval(syncTime, 1000);
+    S.raceTimer = setInterval(() => { if (S.link) S.link.send({ paused: S.phase === "paused" }); showRaceBar(); }, 2000);
+    if (T.readOnly) toast(T.readOnly, true);
+    syncButtons(); syncTime(); startGamepad();
+    S.el.stage.focus({ preventScroll: true });
+  }
+  // A move made here: to the server; its answer is the new board (or why not).
+  async function turnSend(move) {
+    const T = S.turns;
+    if (!T) throw new Error("The match isn't open.");
+    if (T.readOnly) { toast(T.readOnly, true); throw new Error(T.readOnly); }
+    try {
+      const body = { move, n: T.number };
+      if (S.session) { body.sessionId = S.session.id; body.activeSeconds = activeSeconds(); }     // the time so far, as a heartbeat
+      const pic = await api(`api/matches/${T.id}/move`, { method: "POST", body });
+      if (S.turns === T) turnApply(pic);
+    } catch (e) {
+      if (S.turns === T && e && e.status === 409) turnFetch();      // the board moved on meanwhile: show it as it is
+      throw e;
+    }
+  }
+  // A dice game's roll (Ludo, Snakes and Ladders): the server rolls (and plays a move the roll leaves no choice about).
+  async function turnRoll() {
+    const T = S.turns;
+    if (!T) throw new Error("The match isn't open.");
+    if (T.readOnly) { toast(T.readOnly, true); throw new Error(T.readOnly); }
+    try {
+      const r = await api(`api/matches/${T.id}/roll`, { method: "POST" });
+      if (S.turns === T && r.picture) turnApply(r.picture);
+    } catch (e) {
+      if (S.turns === T && e && e.status === 409) turnFetch();
+      throw e;
+    }
+  }
+  function turnApply(pic) {
+    const T = S.turns;
+    if (!T || !S.inst) return;
+    if (pic.number < T.number && pic.status === T.status) return;      // an older answer
+    T.number = pic.number; T.status = pic.status;
+    safe(() => S.inst.turnSync(pic));
+    showRaceBar();
+  }
+  async function turnFetch() {
+    const T = S.turns;
+    if (!T || T.fetching) { if (T) T.again = true; return; }
+    T.fetching = true;
+    try { const pic = await api(`api/matches/${T.id}/turns`); if (S.turns === T) turnApply(pic); }
+    catch (e) { /* the next push tries again */ }
+    T.fetching = false;
+    if (T.again && S.turns === T) { T.again = false; turnFetch(); }
+  }
+  // The match picture (pushed over the live link or long-polled): another move, or the end, fetches the board.
+  function turnCheck(m) {
+    const T = S.turns;
+    if (!T) return;
+    S.match = m;
+    showRaceBar();
+    const n = m.turns ? m.turns.number : T.number;
+    if (n !== T.number || m.status !== T.status) turnFetch();
+    if (S.phase === "over" && S.raceOver) {
+      const key = [m.status, m.endReason, m.winner].join("|");
+      if (key !== S.raceKey) { S.raceKey = key; renderRaceOver(); }
+    }
+  }
+  function showTurnPaused() {
+    setOverlay(h("h3", null, "Paused"),
+      h("div", { class: "hint" }, `${runLabel()}${S.practice ? " · Practice" : ""} · turn by turn`),
+      h("div", { class: "ov-row" }, h("button", { class: "btn-primary", type: "button", id: "resumeBtn", onclick: resume }, "▶ Resume")),
+      h("div", { class: "ov-row" },
+        h("button", { class: "btn-secondary", type: "button", id: "turnBackBtn", onclick: () => showTab("home") }, "Back to games (the match waits)"),
+        h("button", { class: "btn-ghost", type: "button", id: "resignBtn", onclick: resignTurns }, "Resign")));
+    const b = $("#resumeBtn");
+    if (b) b.focus({ preventScroll: true });
+  }
+  async function resignTurns() {
+    const T = S.turns, o = S.match && Together.other(S.match);
+    if (!T) return;
+    if (!(await confirmDialog("Resign this match?", `${o ? Together.first(o.name) : "The other player"} wins. It can't be undone.`, "Resign"))) return;
+    try { await api(`api/matches/${T.id}/resign`, { method: "POST" }); } catch (e) { fail(e); return; }
+    if (S.turns === T) { resume(); turnFetch(); }
+  }
+  // The match ended (the board says so): the session ends (its time was play time), then the result card.
+  async function turnFinished(result) {
+    if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
+    S.phase = "over";
+    stopTimers(); releaseAll();
+    if (S.session) endSession(false);
+    try { const m = await api(`api/matches/${S.turns.id}`); S.match = Together.stamp(m); } catch (e) { /* the pushed one */ }
+    try { await refreshMe(); } catch (e) { /* keep the old picture */ }
+    if (state.tab !== "play" || S.phase !== "over" || !S.turns) return;
+    syncTime();
+    const me = S.match && Together.me(S.match);
+    const note = result && result.stats && result.stats.notSaved;
+    const saved = { reason: S.match && S.match.practice ? "practice" : me && me.result === "won" ? null : note ? "note" : null, note };
+    raceFinished({ score: me && me.final ? me.score : (result.score || 0), level: 1, seconds: Math.round(S.activeMs / 1000), stats: result.stats || {} }, saved, null);
+  }
+
   // ---------- pause / resume ----------
   function markPaused() {
     if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
+    // a live duel: my pause pauses both phones (a pause that came from the server isn't sent back)
+    if (S.live && !S.live.remote && S.link) { S.live.state = "paused"; S.live.pausedBy = S.live.seat; S.link.send({ t: "pause" }); }
     S.phase = "paused";
     releaseAll();
     showPaused();
@@ -640,6 +1014,8 @@ const Play = (() => {
   }
   function resume() {
     if (S.phase !== "paused" || !S.inst) return;
+    if (S.live && S.live.state === "lost" && !S.live.remote) return;      // the other phone has to come back first
+    if (S.live && !S.live.remote && S.link) { S.live.state = "playing"; S.link.send({ t: "resume" }); }
     S.phase = "running";
     S.runSince = now();
     setOverlay();
@@ -654,9 +1030,11 @@ const Play = (() => {
   }
   // End the game where it is: the score so far is saved like a finished game.
   function quit() {
+    if (S.live) { giveUp(); return; }
     if (!S.inst || !(S.phase === "running" || S.phase === "paused")) return;
     const r = currentResult();
-    finish(Object.assign(r, { stats: { quit: true } }));
+    const note = S.inst.unfinishedNote ? S.inst.unfinishedNote() : "";
+    finish(Object.assign(r, { stats: note ? { quit: true, notSaved: note } : { quit: true } }));
   }
   function currentResult() {
     return { score: S.inst.score || 0, level: S.inst.level || 1, seconds: S.inst.seconds || 0 };
@@ -703,7 +1081,7 @@ const Play = (() => {
     if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
     if (S.phase === "running" || S.phase === "paused") endWithScore(keepalive);
     else if (S.phase === "starting" && S.session) endSession(keepalive);          // left during the count-in
-    leaveMatch();
+    leaveMatch(keepalive);
     stopTimers();
     releaseAll();
     destroyInstance();
@@ -878,7 +1256,14 @@ const Play = (() => {
 
   // the game never runs in the background: hiding the page (another tab or app, screen off) pauses it
   document.addEventListener("visibilitychange", () => { if (document.hidden) pause(); });
-  window.addEventListener("pagehide", () => { pause(); if (S.session) endWithScore(true); });
+  window.addEventListener("pagehide", () => {
+    pause();
+    if (S.live && S.match && S.live.state !== "over" && S.live.state !== "ended") {     // a live duel can't wait for this page
+      api(`api/matches/${S.match.id}/resign`, { method: "POST", keepalive: true }).catch(() => { /* it ends when the phone goes quiet */ });
+      S.live.state = "ended";
+    }
+    if (S.session) endWithScore(true);
+  });
   window.addEventListener("blur", () => releaseAll());
 
   // ---------- game controller (optional) ----------

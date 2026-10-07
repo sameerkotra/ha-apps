@@ -4,12 +4,14 @@
   went to sleep): a session without a heartbeat for 2 minutes ends at its last
   heartbeat, keeping the active seconds it had reported;
 - Keep scores for (App settings): remove older games, keeping each person's
-  best per game and mode (scores.prune).
+  best per game and mode (scores.prune);
+- playing together: invites that ran out, matches left behind, turn-by-turn matches with no move for 7 days, and the
+  your-move notifications that had to wait.
 """
 import logging
 from datetime import timedelta
 
-from . import ai_usage, config, db, ha_sensors, scores, settings, together
+from . import ai_usage, config, db, ha_sensors, scores, settings, together, turns
 from .common import housekeeping as jobs_core
 
 logger = logging.getLogger("housekeeping")
@@ -33,6 +35,7 @@ def run_blocking() -> dict:
         if years:
             together.prune(conn, (config.utcnow() - timedelta(days=365 * years)).isoformat(timespec="seconds"))
         ai_usage.prune(conn)
+    turns.send_due_blocking()        # your-move notifications that waited (quiet hours, at most one every 15 minutes)
     if removed:
         logger.info("Keep scores for: removed %d old game(s)", removed)
     if closed:

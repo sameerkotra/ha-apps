@@ -125,6 +125,13 @@ Open a group and use **Add an expense** on the left:
   date, payer and how it was split. Each payer has their own colour (the name
   and a coloured left edge on the row), so you can see at a glance who paid
   what. The Dashboard's transaction list uses the same colours.
+- **Load more**: a group opens with its **latest 20** ledger entries, so a
+  long history doesn't slow the page down. Under the list, "Showing 20 of 65
+  entries" and **Load 20 more** fetch the next older ones; repeat until
+  everything is shown. Balances, the delete confirmation's count and **Export
+  CSV** always cover every entry, however many are showing. After you add,
+  edit, delete or record a payment the list keeps as many entries as you had
+  loaded.
 
 Anyone can add and edit expenses and record payments. Only administrators
 can delete. Every change, including each edit and delete, is written to the
@@ -162,6 +169,38 @@ The first item in the sidebar:
 - **Activity log**: the latest 50 changes (groups created, members added,
   expenses added/edited/deleted, payments, default group, users disabled or
   enabled, settings changed), newest first, with who did it and when.
+
+## Phone notifications
+
+When an administrator switches on **Notify people about new charges** (Admin →
+App settings → Notifications; off on a new install and after an update),
+Splitpot sends a phone notification through Home Assistant whenever someone
+adds a charge, to **everyone in it** — whoever paid and everyone with a
+share — **except the person who added it**, e.g.
+
+> Asha added 'Dinner' ($90.00) to Trip, paid by Ravi. Your share: $30.00.
+
+Tapping it opens Splitpot on that group. With **Also notify settle-up
+payments** (on unless switched off) the two people in a recorded settle-up
+payment are told too ("Ravi paid you $25.00 in Trip"), again not whoever
+recorded it. Editing or deleting an entry never sends a notification; the
+activity log shows those.
+
+- **Which phones**: the ones Home Assistant links to the person — Settings →
+  People → the person → **Track device**, picking their phone with the Home
+  Assistant Companion app — plus any extra notify service an administrator
+  adds under Admin → Users. A person whose Home Assistant login isn't linked
+  (Settings → People → Allow person to login) or who has no phone gets
+  nothing.
+- **Turning them off for yourself**: **My settings** (bell icon in the
+  sidebar) → **Receive notifications**. It's matched to you by your Home
+  Assistant login.
+- Notifications are sent in the background: adding a charge never waits for
+  them, and if Home Assistant can't be reached nothing fails — the app just
+  notes it in its log.
+- The text (names, description, amounts, group) is handed to Home Assistant,
+  which delivers it to the phone the way it delivers its own notifications
+  (for the Companion app, through its push service).
 
 ## Look and navigation
 
@@ -205,7 +244,8 @@ page", and the server refuses its functions. It has three tabs.
 
 ### App settings
 
-Household-wide settings, in two cards (Money and Home Assistant), with a
+Household-wide settings, in three cards (Money, Home Assistant and
+Notifications), with a
 line under each setting saying what it does, its range and its default. Your
 changes are kept until you select **Save settings** at the bottom (it shows
 how many unsaved changes there are); **Discard changes** puts everything back.
@@ -218,12 +258,24 @@ activity log.
 | Currency code | `USD` | A 3-letter ISO 4217 code such as USD, EUR, GBP or INR (upper or lower case). Used for every amount in the app and for new activity log entries (older entries keep their text), and as the balance sensors' unit. The page shows a preview, e.g. "€1,234.50". |
 | Sync balances to Home Assistant | on | Publishes the balance sensors described above. Off removes them from Home Assistant and stops updating them; on publishes them at once. If Splitpot has no connection to Home Assistant, a note says nothing is published. |
 | Sensor sync interval (minutes) | `5` | How often the sensors are refreshed in the background, 1–60, on top of the instant update after every change. A new value applies from the next cycle. Greyed out while sync is off. |
+| Notify people about new charges | off | Phone notifications for new charges (see *Phone notifications* above). |
+| Also notify settle-up payments | on | The two people in a recorded settle-up payment are told too. Greyed out while the switch above is off. |
 
 ### Users
 
 Everyone Splitpot knows from Home Assistant, with how many groups they're in,
 their Home Assistant Person entity, and a **Disable/Enable** button (see
-*Disabled users* above).
+*Disabled users* above). For notifications each card also shows:
+
+- **Phones**: the phones Home Assistant links to the person (read-only; set
+  them up in Home Assistant), and a note when no person or phone is linked.
+- **Also**: extra notify services for this person (a speaker, a second
+  service): pick one Home Assistant offers or type a name like
+  `notify.mobile_app_phone`; ✕ removes it.
+- **Send a test**: a short test notification to all of them.
+
+**Check Home Assistant again** re-reads the people and phones straight away
+(otherwise every few minutes).
 
 ### Storage
 
@@ -265,8 +317,10 @@ instead.
 - **Access** is only through Home Assistant's Ingress. The app has no
   published port, and it refuses requests that don't come through Home
   Assistant's ingress proxy with a signed-in user.
-- **Home Assistant**: Splitpot reads `person.*` entities and Home
-  Assistant's time zone, and writes the balance sensors, through the
+- **Home Assistant**: Splitpot reads `person.*` entities, the people's
+  Companion-app phones, the notify services and Home Assistant's time zone,
+  writes the balance sensors and (when switched on) sends phone
+  notifications, through the
   Supervisor's API (the app asks for `homeassistant_api` for this; Home
   Assistant doesn't offer a narrower permission). Anything that can read your
   Home Assistant states can read the balance sensors.

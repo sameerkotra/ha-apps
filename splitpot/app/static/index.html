@@ -6,10 +6,10 @@
 <title>Splitpot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-<script src="common/theme-boot.js?v=2.2.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.2.1" />
-<link rel="stylesheet" href="common/settings.css?v=2.2.1" />
-<link rel="stylesheet" href="style.css?v=2.2.1" />
+<script src="common/theme-boot.js?v=2.3.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.3.0" />
+<link rel="stylesheet" href="common/settings.css?v=2.3.0" />
+<link rel="stylesheet" href="style.css?v=2.3.0" />
 </head>
 <body>
   <div class="app">
@@ -28,6 +28,10 @@
         <button class="tab" data-view="groups" title="Groups">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="8" r="3.2"/><circle cx="16.5" cy="9" r="2.6"/><path d="M2.5 20c0-3.4 2.8-6 6-6s6 2.6 6 6"/><path d="M14.5 14.3c2.5.5 4.3 2.6 4.3 5.2"/></svg>
           <span class="tab-label">Groups</span>
+        </button>
+        <button class="tab" data-view="me" title="My settings">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+          <span class="tab-label">My settings</span>
         </button>
         <!-- Admin-only (the server enforces it too): App settings | Users | Storage -->
         <button class="tab" data-view="admin" id="adminTabBtn" title="Admin" hidden>
@@ -116,6 +120,15 @@
         </div>
       </section>
 
+      <!-- My settings: each person's own choices (matched by their Home Assistant login) -->
+      <section id="view-me" class="view">
+        <div class="ledger-panel">
+          <h1>My settings</h1>
+          <p class="hint">Your own choices in Splitpot — they change nothing for anyone else. <button type="button" class="link-btn" id="myPrefsWhoami">How the app sees you</button></p>
+          <div id="myPrefsBody"><p class="hint">Loading…</p></div>
+        </div>
+      </section>
+
       <!-- Admin view (admins only): #/admin/settings | #/admin/users | #/admin/storage -->
       <section id="view-admin" class="view">
         <div class="ledger-panel">
@@ -145,6 +158,12 @@
                 they'll show up here automatically. Disabling a user hides them
                 from every picker (Acting as, Paid by, group members) without
                 touching their history.
+              </p>
+              <p class="hint">
+                📱 Phone notifications (switched on in App settings) go to the phones Home Assistant links to each
+                person: <strong>Settings → People → (the person) → Track device</strong>, with the Home Assistant
+                Companion app. Add an extra notify service below only for something else (a speaker, a second
+                service). Each person can still turn notifications off under My settings.
               </p>
               <div id="usersList"></div>
               <div id="usersError" class="error"></div>
@@ -251,16 +270,23 @@
 
           <h2>Ledger</h2>
           <ul id="expenseList" class="row-list ledger-list"></ul>
+          <!-- the ledger loads a page at a time (newest first) -->
+          <div id="ledgerMore" class="ledger-more" hidden>
+            <span id="ledgerCount" class="hint" aria-live="polite"></span>
+            <button type="button" id="ledgerMoreBtn" class="btn ghost">Load more</button>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <script src="common/ui.js?v=2.2.1"></script>
-  <script src="common/settings.js?v=2.2.1"></script>
-  <script src="common/people.js?v=2.2.1"></script>
-  <script src="common/backnav.js?v=2.2.1"></script>
-  <script src="common/whoami.js?v=2.2.1"></script>
-  <script src="app.js?v=2.2.1"></script>
+  <div id="toastRoot" class="toast-root" aria-live="polite"></div>
+
+  <script src="common/ui.js?v=2.3.0"></script>
+  <script src="common/settings.js?v=2.3.0"></script>
+  <script src="common/people.js?v=2.3.0"></script>
+  <script src="common/backnav.js?v=2.3.0"></script>
+  <script src="common/whoami.js?v=2.3.0"></script>
+  <script src="app.js?v=2.3.0"></script>
 </body>
 </html>

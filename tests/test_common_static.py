@@ -233,3 +233,102 @@ globalThis.document = { createElement: (tag) => ({ tag, attrs: {}, kids: [], cla
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(NODE, "node not installed")
+class BackNavJs(unittest.TestCase):
+    """common/static/backnav.js in a small fake browser history: a link or a notification that changes the address
+    (setting location.hash adds an entry and fires popstate, then hashchange, as Chrome does) is a navigation the app
+    must see, not the back gesture; the real Back still pops the guard (home first, an open dialog closed first)."""
+    HARNESS = r"""
+const vm = require("node:vm");
+const SRC = %s;
+function browser(startHash) {
+  const base = "http://h/app/";
+  const listeners = {};
+  const entries = [{ href: base + startHash, state: null }];
+  let idx = 0;
+  const timers = [];
+  const location = {
+    get href() { return entries[idx].href; },
+    get hash() { const h = entries[idx].href; const i = h.indexOf("#"); return i < 0 ? "" : h.slice(i); },
+  };
+  const fire = (type, ev) => { for (const fn of (listeners[type] || []).slice()) fn(Object.assign({ type }, ev || {})); };
+  const history = {
+    get length() { return entries.length; },
+    get state() { return entries[idx].state; },
+    pushState(state, _t, url) { entries.splice(idx + 1); entries.push({ href: abs(url), state }); idx++; },
+    replaceState(state, _t, url) { entries[idx] = { href: abs(url), state }; },
+    back() { if (idx > 0) { const old = location.href; idx--; timers.push(() => { fire("popstate"); if (old.split("#")[1] !== location.href.split("#")[1]) fire("hashchange", { newURL: location.href, oldURL: old }); }); } },
+  };
+  function abs(url) { return url.startsWith("#") ? base + url : url; }
+  const win = {
+    location, history,
+    addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
+    dispatchEvent(ev) { fire(ev.type, ev); },
+    requestAnimationFrame(fn) { timers.push(fn); },
+    setTimeout(fn) { timers.push(fn); },
+    clearTimeout() {},
+    MutationObserver: class { observe() {} },
+    HashChangeEvent: class { constructor(type, o) { this.type = type; Object.assign(this, o || {}); } },
+    document: { body: {}, addEventListener() {} },
+  };
+  win.window = win;
+  vm.createContext(win);
+  vm.runInContext(SRC, win);
+  return {
+    win, location, history, entries,
+    /** Let the queued timers and animation frames run. */
+    run() { for (let k = 0; k < 20 && timers.length; k++) timers.splice(0).forEach((fn) => fn()); },
+    /** What setting location.hash does: a new entry, then popstate and hashchange. */
+    setHash(h) { const old = location.href; entries.splice(idx + 1); entries.push({ href: base + h, state: null }); idx++; fire("popstate"); fire("hashchange", { newURL: location.href, oldURL: old }); },
+    on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+  };
+}
+
+function app(b, startTab) {
+  const A = { tab: startTab, home: 0, closed: 0, layers: [], seen: [] };
+  b.win.BackNav.init({
+    atHome: () => A.tab === "home",
+    goHome: () => { A.home++; A.tab = "home"; b.history.replaceState(b.history.state, "", "#/home"); },
+    openLayers: () => A.layers.slice(),
+    closeLayer: (l) => { A.closed++; A.layers.splice(A.layers.indexOf(l), 1); },
+  });
+  // the app's own hashchange listener (as app.js): it shows whatever the address now says
+  b.on("hashchange", () => { A.seen.push(b.location.hash); A.tab = b.location.hash.split("/")[1] || "home"; });
+  b.run();
+  return A;
+}
+"""
+
+    def run_js(self, body):
+        return run_node(self.HARNESS % json.dumps(read("backnav.js")) + "\n" + body)
+
+    def test_link_hash_change_at_home_is_not_back(self):
+        r = self.run_js(r"""
+          const b = browser("#/home"); const A = app(b, "home");
+          const guard = b.entries.length;
+          b.setHash("#/home/turn/abc"); b.run();
+          process.stdout.write(JSON.stringify({ guard, hash: b.location.hash, seen: A.seen, home: A.home }));""")
+        self.assertEqual(r, {"guard": 1, "hash": "#/home/turn/abc", "seen": ["#/home/turn/abc"], "home": 0})
+
+    def test_link_hash_change_with_guard_is_not_back(self):
+        r = self.run_js(r"""
+          const b = browser("#/play/ludo"); const A = app(b, "play");
+          const guard = b.entries.length;
+          b.setHash("#/home/turn/xyz"); b.run();
+          process.stdout.write(JSON.stringify({ guard, hash: b.location.hash, home: A.home, closed: A.closed }));""")
+        self.assertEqual(r, {"guard": 2, "hash": "#/home/turn/xyz", "home": 0, "closed": 0})
+
+    def test_real_back_still_goes_home_or_closes_a_dialog(self):
+        r = self.run_js(r"""
+          const b = browser("#/play/ludo"); const A = app(b, "play");
+          b.history.replaceState(b.history.state, "", "#/scores"); A.tab = "scores";
+          b.win.BackNav.sync(); b.run();
+          b.history.back(); b.run();
+          const c = browser("#/home"); const B = app(c, "home");
+          B.layers.push("dialog"); c.win.BackNav.sync(); c.run();
+          const guard = c.entries.length;
+          c.history.back(); c.run();
+          process.stdout.write(JSON.stringify({ home: A.home, hash: b.location.hash, guard, closed: B.closed, home2: B.home }));""")
+        self.assertEqual(r, {"home": 1, "hash": "#/home", "guard": 2, "closed": 1, "home2": 0})

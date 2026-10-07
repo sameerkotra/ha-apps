@@ -13,6 +13,10 @@ const RACE = {
   snake: "walls-normal", brick: "classic", blocks: "classic", racer: "three", flap: "normal", mines: "easy",
   merge: "classic", colours: "classic", cards: "small", mole: "classic", numbers: "add", invaders: "classic",
   rocks: "classic", hop: "classic",
+  // wave 5 (more on them, with their level-list modes, in wave5.test.js)
+  bubbles: "classic", gems: "timed", stack: "classic", runner: "classic", lander: "classic", defense: "classic",
+  // wave 6 (more on them in wave6.test.js)
+  slide: "four", lights: "classic", nonogram: "ten", tiles: "classic", codebreak: "classic", typerain: "classic",
 };
 const NOT_RACE = ["snakeduel"];     // two players on one screen; Paddle Duel and Tank Battle are left out by the server (games.py / together.RACE_DEFAULT)
 

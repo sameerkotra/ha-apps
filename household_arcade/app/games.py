@@ -11,6 +11,22 @@ games" only ever list the games in this table.
 MAX_SECONDS = 6 * 3600
 MAX_LEVEL = 100          # games without a level list; with one, see max_level()
 
+# Wave 7's modes (static/games/boardkit.js MODES): the computer's three levels, one screen, two phones.
+TURN_GAME_MODES = [
+    {"id": "easy", "label": "Computer · Easy (gentle)"},
+    {"id": "medium", "label": "Computer · Medium"},
+    {"id": "hard", "label": "Computer · Hard"},
+    {"id": "two", "label": "Two players (one screen)"},
+    {"id": "phones", "label": "Two phones (turn by turn)"},
+]
+
+# Wave 8's dice games (static/games/dicekit.js MODES): you and the computer, everyone on one phone, 2–4 phones.
+DICE_GAME_MODES = [
+    {"id": "cpu", "label": "You and the computer"},
+    {"id": "pass", "label": "One phone (pass and play)"},
+    {"id": "phones", "label": "Phones (turn by turn, 2–4)"},
+]
+
 GAMES: dict[str, dict] = {
     "snake": {
         "name": "Snake",
@@ -76,11 +92,17 @@ GAMES: dict[str, dict] = {
             {"id": "easy", "label": "Easy"},
             {"id": "normal", "label": "Normal"},
             {"id": "hard", "label": "Hard"},
+            {"id": "phones", "label": "Two phones"},
         ],
         "level_modes": ["easy", "normal", "hard"],
         "levels_end": True,
         "default_mode": "normal",
         "state_version": 1,
+        # Live duels on two phones (SPEC §13.4): the modes played that way only, and the inputs a phone may send,
+        # with the lowest and highest value of each (1/0 for a button pressed / let go; "aim" is where the finger
+        # is on the court, in logical px). Two phones: first to 7, a return 10, a point 100, the match 1,000.
+        "live": {"modes": ["phones"],
+                 "actions": {"left": (0, 1), "right": (0, 1), "fire": (0, 1), "aim": (0, 240)}},
         # a point takes the ball at least ~0.6 s across the court: 100 × match, +1,000 × match for a match won
         "max_score": 10_000_000,
         "per_second": 3_500,
@@ -237,11 +259,19 @@ GAMES: dict[str, dict] = {
         "modes": [
             {"id": "classic", "label": "Classic"},
             {"id": "easy", "label": "Easy"},
+            {"id": "together", "label": "Two phones · Together"},
+            {"id": "against", "label": "Two phones · Against each other"},
         ],
-        "level_modes": ["classic", "easy"],
+        # Together plays the arena list; Against each other plays its own built-in arenas (a flag each)
+        "level_modes": ["classic", "easy", "together"],
         "levels_end": True,
         "default_mode": "classic",
         "state_version": 1,
+        # "steer" is a finger on the game: 1 + the direction toward it, 0 when it lifts
+        "live": {"modes": ["together", "against"],
+                 "actions": {"up": (0, 1), "down": (0, 1), "left": (0, 1), "right": (0, 1), "fire": (0, 1),
+                             "steer": (0, 4)}},
+        # each player's own score; against each other: a hit 100, a round 300 (≥ ~4 s with its intro), a match 500
         # enemies come in at most one every 90 updates; 100 a tank + 500 an arena of ≥ 4 tanks: ≤ 150 a second
         "max_score": 1_500_000,
         "per_second": 160,
@@ -304,8 +334,11 @@ GAMES: dict[str, dict] = {
         "modes": [
             {"id": "cpu", "label": "Against the computer"},
             {"id": "two", "label": "Two players"},
+            {"id": "phones", "label": "Two phones"},
         ],
-        "level_modes": ["cpu", "two"],
+        "level_modes": ["cpu", "two", "phones"],
+        "live": {"modes": ["phones"],
+                 "actions": {"up": (0, 1), "down": (0, 1), "left": (0, 1), "right": (0, 1)}},
         "levels_end": True,
         "default_mode": "cpu",
         "state_version": 1,
@@ -374,6 +407,419 @@ GAMES: dict[str, dict] = {
         "per_second": 150,
         "base": 1_500,
     },
+    # Wave 5. Each has a level list (level_kinds/<game>.py) played by one mode, and is raced from the seed: the same
+    # boards, gems, blocks, course, landing sites and missiles on both phones; the higher score wins (Lander's score
+    # includes the fuel left, so a landing with more fuel left wins).
+    "bubbles": {
+        "name": "Bubble Pop",
+        "icon": "🫧",
+        "modes": [
+            {"id": "classic", "label": "Classic"},
+            {"id": "relaxed", "label": "Relaxed (gentle)"},
+            {"id": "puzzle", "label": "Puzzles"},
+            {"id": "endless", "label": "Endless"},
+        ],
+        "level_modes": ["puzzle"],
+        "levels_end": True,
+        "default_mode": "classic",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # points only for bubbles that leave the board (10 popped, 20 dropped) and a cleared board (500): a board
+        # holds at most 64 and the next comes 90 updates after a clear (≤ 1,780 per 103 updates), a shot adds one
+        # (≥ 13 updates apart), Endless a row of 8 every ≥ 4 shots — at most ~1,320 a second together
+        "max_score": 25_000_000,
+        "per_second": 1_400,
+        "base": 2_000,
+    },
+    "gems": {
+        "name": "Gem Swap",
+        "icon": "💎",
+        "modes": [
+            {"id": "timed", "label": "Timed (90 s)"},
+            {"id": "moves", "label": "Moves (levels)"},
+            {"id": "zen", "label": "Zen (no clock)"},
+        ],
+        "level_modes": ["moves"],
+        "levels_end": True,
+        "default_mode": "timed",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # a gem cleared ≤ 10 × 5 (cascade), a special made ≤ 200; a step clears ≤ 64 and takes ≥ 12 updates plus
+        # the fall that refills it (7 updates a row); a level's moves left ≤ 40 × 50, ≥ 1.5 s apart
+        "max_score": 50_000_000,
+        "per_second": 5_500,
+        "base": 3_000,
+    },
+    "stack": {
+        "name": "Tower Stack",
+        "icon": "🏗️",
+        "modes": [
+            {"id": "classic", "label": "Classic"},
+            {"id": "fast", "label": "Fast"},
+            {"id": "easy", "label": "Easy (3 tries)"},
+            {"id": "towers", "label": "Towers"},
+        ],
+        "level_modes": ["towers"],
+        "levels_end": True,
+        "default_mode": "classic",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # a floor ≤ 10 + 50 (a perfect run), blocks ≥ 10 updates apart (≤ 360 a second); a tower 200 (≥ 8 floors)
+        "max_score": 3_000_000,
+        "per_second": 450,
+        "base": 500,
+    },
+    "runner": {
+        "name": "Runner",
+        "icon": "🏃",
+        "modes": [
+            {"id": "classic", "label": "Endless"},
+            {"id": "easy", "label": "Easy (3 lives)"},
+            {"id": "courses", "label": "Courses"},
+        ],
+        "level_modes": ["courses"],
+        "levels_end": True,
+        "default_mode": "classic",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # 1 a 10 px at ≤ 8 px an update (48 a second), coins ≤ 5 × 10 a 60 px segment (≤ 400 a second),
+        # a course 100 (≥ 14 segments)
+        "max_score": 5_000_000,
+        "per_second": 500,
+        "base": 500,
+    },
+    "lander": {
+        "name": "Lander",
+        "icon": "🚀",
+        "modes": [
+            {"id": "classic", "label": "Classic"},
+            {"id": "easy", "label": "Easy"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": ["levels"],
+        "levels_end": True,
+        "default_mode": "classic",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # a landing ≤ 5 × 100 + 1,000 fuel / 2; the fall from the start takes ≥ 60 updates (the engine can only
+        # slow it) and the next level comes 120 updates after a landing
+        "max_score": 5_000_000,
+        "per_second": 350,
+        "base": 1_000,
+    },
+    "defense": {
+        "name": "City Defense",
+        "icon": "🏙️",
+        "modes": [
+            {"id": "classic", "label": "Classic"},
+            {"id": "easy", "label": "Easy"},
+            {"id": "waves", "label": "Waves"},
+        ],
+        "level_modes": ["waves"],
+        "levels_end": True,
+        "default_mode": "classic",
+        "state_version": 1,
+        "race": {"rule": "score"},
+        # a wave sends ≤ 50 missiles (25), 4 fliers (100) and pays ≤ 45 × 5 ammo + 6 × 100 cities (≤ 2,475 in all);
+        # it lasts ≥ 360 updates and the next starts 150 updates after it
+        "max_score": 5_000_000,
+        "per_second": 300,
+        "base": 2_500,
+    },
+    # Wave 6. The four puzzles and Code Breaker make their boards, heaps, pictures and codes from the seed (no level
+    # list); Type Rain has a stage list. All are raced from the seed. Slide Puzzle and Lights Out rank the fewest moves
+    # (score = 10,000 − moves) and a race goes to whoever solves first, fewer moves breaking a tie; Picture Logic and
+    # Tile Match score 10,000 − the counted seconds like Sudoku; Code Breaker 1,000 × (rows left + 1) + up to 999 for
+    # speed like Word Guess; Type Rain's higher score wins, and the shorter game (more words a minute) breaks a tie.
+    "slide": {
+        "name": "Slide Puzzle",
+        "icon": "🖼️",
+        "modes": [
+            {"id": "three", "label": "3 × 3"},
+            {"id": "four", "label": "4 × 4"},
+            {"id": "five", "label": "5 × 5"},
+            {"id": "picture", "label": "Picture 3 × 3 (gentle)"},
+            {"id": "picture4", "label": "Picture 4 × 4"},
+        ],
+        "level_modes": [],
+        "default_mode": "four",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − tiles moved (at least 10), only for a solved tray; it can come at once
+        "max_score": 10_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "lights": {
+        "name": "Lights Out",
+        "icon": "💡",
+        "modes": [
+            {"id": "little", "label": "Little 3 × 3 (gentle)"},
+            {"id": "classic", "label": "5 × 5"},
+            {"id": "big", "label": "7 × 7"},
+            {"id": "climb", "label": "Climb (3 × 3 to 7 × 7)"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − presses − 5 × hints (at least 10), only when every light is off; level = the Climb board (≤ 5)
+        "max_score": 10_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "nonogram": {
+        "name": "Picture Logic",
+        "icon": "🎨",
+        "modes": [
+            {"id": "five", "label": "5 × 5 (gentle)"},
+            {"id": "eight", "label": "8 × 8"},
+            {"id": "ten", "label": "10 × 10"},
+            {"id": "fifteen", "label": "15 × 15"},
+        ],
+        "level_modes": [],
+        "default_mode": "ten",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "score"},
+        # score = 10,000 − the counted seconds (time + 30 s a hint + 10 s a mistake shown at once), only when solved
+        "max_score": 10_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "tiles": {
+        "name": "Tile Match",
+        "icon": "🔷",
+        "modes": [
+            {"id": "little", "label": "Little (gentle)"},
+            {"id": "classic", "label": "Classic"},
+            {"id": "big", "label": "Big heap"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "score"},
+        # score = 10,000 − the counted seconds (time + 15 s a hint + 30 s a shuffle), only when the heap is cleared
+        "max_score": 10_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "codebreak": {
+        "name": "Code Breaker",
+        "icon": "🔐",
+        "modes": [
+            {"id": "little", "label": "Little (3 of 4, gentle)"},
+            {"id": "classic", "label": "Classic (4 of 6)"},
+            {"id": "norepeat", "label": "No repeats (4 of 6)"},
+            {"id": "master", "label": "Master (5 of 8)"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "score"},
+        # score = 1,000 × (rows left + 1) + (999 − seconds, at least 0) for a cracked code: at most 12 rows (Master)
+        "max_score": 12_999,
+        "per_second": 13_000,
+        "base": 13_000,
+    },
+    "typerain": {
+        "name": "Type Rain",
+        "icon": "⌨️",
+        "modes": [
+            {"id": "letters", "label": "Little ones (letters)"},
+            {"id": "easy", "label": "Easy (short words)"},
+            {"id": "classic", "label": "Classic"},
+            {"id": "stages", "label": "Stages"},
+        ],
+        "level_modes": ["stages"],
+        "levels_end": True,
+        "default_mode": "classic",
+        "state_version": 1,
+        "race": {"rule": "score", "tiebreak": "faster"},
+        # a word ≤ 10 letters × 10 × 3 (a run of 25), words ≥ 40 updates apart (≤ 450 a second); a stage 200 (≥ 5 words
+        # and a 2 s break: ≤ 38 a second)
+        "max_score": 5_000_000,
+        "per_second": 600,
+        "base": 1_000,
+    },
+    # Wave 7: two-player board games, played against the computer (Easy / Medium / Hard), two players on one screen,
+    # or turn by turn from two phones (SPEC §13.5): the `turns` modes are played only with someone, each move checked by
+    # the server's rules (app/rules/<game>.py). Score: a win 100 / 250 / 500 (Easy / Medium / Hard; 500 against a person)
+    # plus a bonus for how well, at most as much again; a draw a quarter; a loss and one-screen games 0 (not kept,
+    # `unfinished_zero`). A win can come within seconds, so the base is the most (as for the puzzles). No race, no levels.
+    "fourrow": {
+        "name": "Four in a Row",
+        "icon": "🔴",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # 10 for each empty place left at a win (at most the win's base again)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "tictactoe": {
+        "name": "Tic-tac-toe",
+        "icon": "⭕",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # 25 for each empty square left at a win (at most the win's base again)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "checkers": {
+        "name": "Checkers",
+        "icon": "🏁",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # 30 for each of your pieces left at a win (at most the win's base again)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "reversi": {
+        "name": "Reversi",
+        "icon": "⚫",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # 5 for each disc more than the other side's at a win (at most the win's base again)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "dots": {
+        "name": "Dots and Boxes",
+        "icon": "🔲",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # 20 for each box more than the other side's at a win (at most the win's base again)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "seabattle": {
+        "name": "Sea Battle",
+        "icon": "🚢",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # 15 for each square of your fleet not hit, at a win (at most the win's base again)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    # Wave 8. Ludo and Snakes and Ladders: 2–4 players, against the computer, on one phone, or turn by turn from 2–4
+    # phones with the server's dice (SPEC §13.5).
+    "ludo": {
+        "name": "Ludo",
+        "icon": "🎲",
+        "modes": DICE_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "cpu",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # a win: against the computer 100 a computer player (+10 a token of theirs not home), from phones 500 (+25 a
+        # token), at most the base again; a win can come at once (a saved game continued), so the base is the most
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "snakes": {
+        "name": "Snakes and Ladders",
+        "icon": "🪜",
+        "modes": DICE_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "cpu",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # a win: 100 against the computer, 500 from phones, + 5 a square the nearest other still had to go (≤ the base)
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    # Carrom: the computer (three levels), two or four (two teams) on one phone, or live from two phones taking turns
+    # (SPEC §13.4 "live turn-taking"): a shot is one input [striker place 0–1000 along the baseline, angle in tenths
+    # of a degree 100–1700 (900 straight ahead), power 1–100], played on both phones with whole-number physics.
+    "carrom": {
+        "name": "Carrom",
+        "icon": "🎯",
+        "modes": [
+            {"id": "easy", "label": "Computer · Easy (gentle)"},
+            {"id": "medium", "label": "Computer · Medium"},
+            {"id": "hard", "label": "Computer · Hard"},
+            {"id": "two", "label": "Two players (one screen)"},
+            {"id": "doubles", "label": "Doubles: four, two teams (one screen)"},
+            {"id": "phones", "label": "Two phones (live, taking turns)"},
+        ],
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "live": {"modes": ["phones"], "turns": True,
+                 "actions": {"shot": [(0, 1000), (100, 1700), (1, 100)]},
+                 # the weak shot the server plays for a player who hasn't shot in SHOT_SECONDS: the middle of the
+                 # baseline, straight ahead, power 12
+                 "timeout_shot": [500, 900, 12]},
+        # a win: the level's base (100 / 250 / 500; 500 from two phones) + 20 a board point (the other's coins left,
+        # +3 for the queen), at most the base again
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
+    "chess": {
+        "name": "Chess",
+        "icon": "♞",
+        "modes": TURN_GAME_MODES,
+        "level_modes": [],
+        "default_mode": "easy",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": False,
+        "turns": {"modes": ["phones"]},
+        # a win: the level's base (100 / 250 / 500; 500 from two phones) + 10 a point of material left (≤ the base);
+        # a draw a quarter of the base
+        "max_score": 1_000,
+        "per_second": 1_000,
+        "base": 1_000,
+    },
 }
 
 GAME_IDS = tuple(GAMES)
@@ -394,6 +840,36 @@ def mode_label(game: str, mode: str) -> str:
     if isinstance(mode, str) and mode.startswith("daily-"):          # a daily challenge's scores (daily.py)
         return "Daily challenge · " + mode[6:]
     return mode
+
+
+def live_modes(game: str) -> list[str]:
+    """The modes of a game that are played live on two phones (SPEC §13.4); [] for most games."""
+    return list(GAMES.get(game, {}).get("live", {}).get("modes", []))
+
+
+def is_live(game: str, mode) -> bool:
+    return isinstance(mode, str) and mode in live_modes(game)
+
+
+def live_actions(game: str) -> dict:
+    """The inputs a phone may send in a live duel of this game: {action: (lowest, highest value)}, or for a game whose
+    players take turns live (Carrom) {action: [(lowest, highest) of each whole number in the value's list]}."""
+    return dict(GAMES.get(game, {}).get("live", {}).get("actions", {}))
+
+
+def live_turns(game: str) -> dict | None:
+    """A game played live taking turns (SPEC §13.4, Carrom): {"timeout_shot": [...]}; None for a lockstep duel."""
+    lv = GAMES.get(game, {}).get("live", {})
+    return {"timeout_shot": list(lv.get("timeout_shot", []))} if lv.get("turns") else None
+
+
+def turn_modes(game: str) -> list[str]:
+    """The modes of a game played turn by turn from two (or more) phones (SPEC §13.5); [] for most games."""
+    return list(GAMES.get(game, {}).get("turns", {}).get("modes", []))
+
+
+def is_turns(game: str, mode) -> bool:
+    return isinstance(mode, str) and mode in turn_modes(game)
 
 
 def name(game: str) -> str:

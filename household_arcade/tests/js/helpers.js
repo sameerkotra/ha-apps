@@ -6,10 +6,17 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const GAMES_DIR = path.join(__dirname, "..", "..", "app", "static", "games");
-const LOAD_ORDER = ["kit.js", "sound.js", "registry.js", "snake-logic.js", "snake.js", "brick-logic.js", "brick.js",
+const LOAD_ORDER = ["kit.js", "sound.js", "registry.js", "lockstep.js", "snake-logic.js", "snake.js", "brick-logic.js", "brick.js",
   "blocks-logic.js", "blocks.js", "duel-logic.js", "duel.js", "racer-logic.js", "racer.js", "flap-logic.js", "flap.js",
   "mines-logic.js", "mines.js", "merge-logic.js", "merge.js", "colours-logic.js", "colours.js", "cards-logic.js", "cards.js", "mole-logic.js", "mole.js", "numbers-logic.js", "numbers.js",
-  "tanks-logic.js", "tanks.js", "invaders-logic.js", "invaders.js", "rocks-logic.js", "rocks.js", "hop-logic.js", "hop.js", "snakeduel-logic.js", "snakeduel.js"];
+  "tanks-logic.js", "tanks.js", "invaders-logic.js", "invaders.js", "rocks-logic.js", "rocks.js", "hop-logic.js", "hop.js", "snakeduel-logic.js", "snakeduel.js",
+  "bubbles-logic.js", "bubbles.js", "gems-logic.js", "gems.js", "stack-logic.js", "stack.js", "runner-logic.js", "runner.js",
+  "lander-logic.js", "lander.js", "defense-logic.js", "defense.js",
+  "slide-logic.js", "slide.js", "lights-logic.js", "lights.js", "nonogram-logic.js", "nonogram.js", "tiles-logic.js", "tiles.js",
+  "codebreak-logic.js", "codebreak.js", "typerain-words.js", "typerain-logic.js", "typerain.js",
+  "boardkit.js", "fourrow-logic.js", "fourrow.js", "tictactoe-logic.js", "tictactoe.js", "checkers-logic.js", "checkers.js",
+  "reversi-logic.js", "reversi.js", "dots-logic.js", "dots.js", "seabattle-logic.js", "seabattle.js",
+  "dicekit.js", "ludo-logic.js", "ludo.js", "snakes-logic.js", "snakes.js", "carrom-logic.js", "carrom.js", "chess-logic.js", "chess.js"];
 
 function fakeContext(canvas, counts) {
   const state = { font: "10px sans-serif" };

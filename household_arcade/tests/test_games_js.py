@@ -16,7 +16,7 @@ class TestGamesJs(unittest.TestCase):
         js = os.path.join(HERE, "tests", "js")
         if not os.path.isdir(js) or not any(n.endswith((".js", ".mjs")) for n in os.listdir(js)):
             self.skipTest("no JavaScript tests yet")
-        r = subprocess.run(["node", "--test", "tests/js"], cwd=HERE, capture_output=True, text=True, timeout=300)
+        r = subprocess.run(["node", "--test", "tests/js"], cwd=HERE, capture_output=True, text=True, timeout=900)
         self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
 
     def test_shell_scripts_parse(self):

@@ -15,12 +15,20 @@ shared leaderboard. The games run in the browser and are written from scratch:
 no ROMs, no emulators, no internet. See the Documentation tab (DOCS.md) for the
 full guide.
 
-- **17 games** — Snake, Brick Breaker, Falling Blocks, Paddle Duel, Lane
+- **42 games** — Snake, Brick Breaker, Falling Blocks, Paddle Duel, Lane
   Racer, Flap, Mines, Merge, Colour Memory, Memory Cards, Tap the Mole, Number
-  Dash, Tank Battle, Sky Defenders, Rocks, Road Hop and Snake Duel (two players
-  on one screen, or against the computer). More games are planned. The Games
+  Dash, Tank Battle, Sky Defenders, Rocks, Road Hop, Snake Duel (two players
+  on one screen, against the computer or on two phones), Sudoku, Word Guess,
+  Word Search, Bubble Pop, Gem Swap, Tower Stack, Runner, Lander, City
+  Defense, Slide Puzzle, Lights Out, Picture Logic, Tile Match, Code Breaker,
+  Type Rain, and the board games Four in a Row, Tic-tac-toe, Checkers,
+  Reversi, Dots and Boxes and Sea Battle (against the computer, two on one
+  screen, or turn by turn from two phones), Chess, Ludo and Snakes and Ladders
+  (2–4 players: the computer, one phone, or turn by turn from 2–4 phones with
+  the app rolling the dice) and Carrom (the computer, two or four on one
+  screen, or live from two phones taking turns). The Games
   page shows them as a list, small squares or large squares.
-- **Levels that keep coming** — every game has a list of levels (mazes,
+- **Levels that keep coming** — most games have a list of levels (mazes,
   layouts, courses, arenas, challenges …); optionally an AI model (your own
   Ollama, an OpenAI-compatible service or Anthropic Claude) makes more when
   someone gets near the end, or when an admin asks. Every level is checked by

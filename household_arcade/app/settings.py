@@ -113,6 +113,10 @@ SETTINGS = [
     Setting("notify_invites", True, "Invites by phone notification", group="ha",
             help="A phone notification when someone invites another person to play together (with Join and Not now). "
                  "The invite also shows on the Games page. Each person can opt out on Settings."),
+    # "Your move in Four in a Row against Asha" for turn-by-turn matches (SPEC §13.5)
+    Setting("notify_turns", True, "Your-move notifications", group="ha",
+            help="A phone notification when it is someone's move in a turn-by-turn game (at most one every 15 minutes "
+                 "per match, none during a child's quiet hours). Each person can opt out on Settings."),
     Setting("ha_sensors", False, "Home Assistant sensors", group="ha",
             help="Publishes sensor.household_arcade_<game>_record, sensor.household_arcade_<person>_played_today and "
                  "binary_sensor.household_arcade_<person>_playing."),

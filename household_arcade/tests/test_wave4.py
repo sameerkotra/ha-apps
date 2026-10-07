@@ -124,7 +124,13 @@ class TestGamePrefs(ApiBase):
         r = self.put("/api/prefs", {"gamePrefs": {"sudoku": {"lines": "on"}}})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.get("/api/prefs").json()["gamePrefs"], {"sudoku": {"mistakes": "end", "lines": "on"}})
-        self.assertEqual(self.put("/api/prefs", {"gamePrefs": {"chess": {"a": "b"}}}).status_code, 422, "unknown game")
+        self.assertEqual(self.put("/api/prefs", {"gamePrefs": {"pinball": {"a": "b"}}}).status_code, 422, "unknown game")
+
+    def test_sudoku_number_lines_three_way_choice_is_kept(self):
+        # Rows, columns and boxes ("on", also what an old "On" means), rows and columns only ("rows"), none ("off")
+        for choice in ("rows", "off", "on"):
+            self.assertEqual(self.put("/api/prefs", {"gamePrefs": {"sudoku": {"lines": choice}}}).status_code, 200)
+            self.assertEqual(self.get("/api/me").json()["prefs"]["gamePrefs"]["sudoku"]["lines"], choice)
 
 
 class TestSavedPuzzles(ApiBase):
@@ -351,7 +357,7 @@ class TestDaily(ApiBase):
         self.settings({"leaderboard": True})
         self.make_child(MEERA, leaderboard="hidden")
         self.assertEqual(self.get(f"/api/daily/board?game={gid}", MEERA).status_code, 403)
-        self.assertEqual(self.get("/api/daily/board?game=chess").status_code, 404)
+        self.assertEqual(self.get("/api/daily/board?game=pinball").status_code, 404)
         self.assertEqual(self.get(f"/api/daily/board?game={gid}&date=soon").status_code, 422)
 
     def test_a_childs_game_limits_apply(self):

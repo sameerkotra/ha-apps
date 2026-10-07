@@ -14,6 +14,7 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | `kit.js` | `window.ArcadeKit`: the six looks, the renderer, the fixed-step loop and the shared game session (start, pause, scores, end result) |
 | `sound.js` | `window.ArcadeSound`: short Web Audio effects, off by default |
 | `registry.js` | `window.ArcadeGames`: `register(def)`, `get(id)`, `list()` |
+| `lockstep.js` | `window.ArcadeLockstep` (or `module.exports`): the lockstep for live duels on two phones — inputs per tick, the delay, ordering, checksums (SPEC §13.4; "Live duels" below) |
 | `snake-logic.js` | Snake rules — pure, no DOM, deterministic for a seed (`self.SnakeLogic`, or `module.exports` in Node) |
 | `snake.js` | Snake input and drawing; registers `snake` |
 | `brick-logic.js` | Brick Breaker rules — pure, no DOM, deterministic for a seed (`self.BrickLogic` / `module.exports`) |
@@ -36,11 +37,44 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | `sudoku-logic.js`, `sudoku.js` | Sudoku rules (`SudokuLogic`; seeded puzzles with one solution, notes, hints) and drawing; registers `sudoku` |
 | `wordguess-words.js`, `wordguess-logic.js`, `wordguess.js` | Word Guess word lists, rules (`WordGuessLogic`) and drawing (a keyboard on the canvas); registers `wordguess` |
 | `wordsearch-words.js`, `wordsearch-logic.js`, `wordsearch.js` | Word Search word lists, grid maker (`WordSearchLogic`) and drawing; registers `wordsearch` |
+| `bubbles-logic.js`, `bubbles.js` | Bubble Pop rules (`BubblesLogic`) and drawing; registers `bubbles` |
+| `gems-logic.js`, `gems.js` | Gem Swap rules (`GemsLogic`) and drawing; registers `gems` |
+| `stack-logic.js`, `stack.js` | Tower Stack rules (`StackLogic`) and drawing; registers `stack` |
+| `runner-logic.js`, `runner.js` | Runner rules (`RunnerLogic`) and drawing; registers `runner` |
+| `lander-logic.js`, `lander.js` | Lander rules (`LanderLogic`) and drawing; registers `lander` |
+| `defense-logic.js`, `defense.js` | City Defense rules (`DefenseLogic`) and drawing; registers `defense` |
+| `slide-logic.js`, `slide.js` | Slide Puzzle rules (`SlideLogic`; solvable shuffles from the seed) and drawing (numbers, or a picture drawn from shapes); registers `slide` |
+| `lights-logic.js`, `lights.js` | Lights Out rules (`LightsLogic`; boards from the seed, the exact fewest presses) and drawing; registers `lights` |
+| `nonogram-logic.js`, `nonogram.js` | Picture Logic rules (`NonogramLogic`; puzzles with one answer, checked by a line solver) and drawing; registers `nonogram` |
+| `tiles-logic.js`, `tiles.js` | Tile Match rules (`TilesLogic`; clearable deals from the seed) and drawing (symbols drawn from shapes and numbers); registers `tiles` |
+| `codebreak-logic.js`, `codebreak.js` | Code Breaker rules (`CodeBreakLogic`) and drawing (symbol keys on the canvas); registers `codebreak` |
+| `typerain-words.js`, `typerain-logic.js`, `typerain.js` | Type Rain word list, rules (`TypeRainLogic`) and drawing (a keyboard on the canvas); registers `typerain` |
+| `boardkit.js` | `window.BoardKit` (or `module.exports`): what wave 7's board games share — `BoardKit.game(R)` makes a game's Logic from its rules (modes, whose move, the computer's moves, the cursor, scores, saving, the turn-by-turn picture), `BoardKit.session(canvas, opts, spec)` the drawing around the board (players, whose move, the end, "pass the phone", sending a move) |
+| `fourrow-logic.js`, `fourrow.js` | Four in a Row rules (`FourRowLogic`) and drawing; registers `fourrow` |
+| `tictactoe-logic.js`, `tictactoe.js` | Tic-tac-toe rules (`TicTacToeLogic`) and drawing; registers `tictactoe` |
+| `checkers-logic.js`, `checkers.js` | Checkers (English draughts) rules (`CheckersLogic`) and drawing; registers `checkers` |
+| `reversi-logic.js`, `reversi.js` | Reversi rules (`ReversiLogic`) and drawing; registers `reversi` |
+| `dots-logic.js`, `dots.js` | Dots and Boxes rules (`DotsLogic`) and drawing; registers `dots` |
+| `seabattle-logic.js`, `seabattle.js` | Sea Battle rules (`SeaBattleLogic`) and drawing; registers `seabattle` |
+| `dicekit.js` | `window.DiceKit` (or `module.exports`): what wave 8's dice games share — `DiceKit.game(R)` makes a game's Logic from its rules (modes, seats and the computer, rolling, moves a roll leaves no choice about, the cursor, scores, saving, the turn-by-turn picture), `DiceKit.session(canvas, opts, spec)` the die, the line under the board, the end and the roll sent to the server |
+| `ludo-logic.js`, `ludo.js` | Ludo rules (`LudoLogic`) and drawing; registers `ludo` |
+| `snakes-logic.js`, `snakes.js` | Snakes and Ladders rules (`SnakesLogic`) and drawing (the board drawn from shapes); registers `snakes` |
+| `carrom-logic.js`, `carrom.js` | Carrom rules and whole-number physics (`CarromLogic`) and drawing; registers `carrom` (live: `lockstep: "turns"`) |
+| `chess-logic.js`, `chess.js` | Chess rules and the computer's engine (`ChessLogic`) and drawing; registers `chess` |
+| `chess-worker.js` | not a script tag: the Web Worker the chess computer thinks in (`new Worker("games/chess-worker.js?v=…")`, which `importScripts` boardkit.js and chess-logic.js with the same `?v=`) |
 
 ## The contract with the shell
 
 **Game definition** (from `ArcadeGames.get(id)` / `list()`):
-`{ id, name, modes: [{ id, label }], defaultMode, controls: "dpad" | "paddle" | "buttons" | "touch", buttons, padLabel, players, tap, help, stateVersion, create(canvas, opts) }`
+`{ id, name, modes: [{ id, label }], defaultMode, controls: "dpad" | "paddle" | "buttons" | "touch", buttons, padLabel, players, tap, help, stateVersion, lockstep, liveModes, turns, turnModes, create(canvas, opts) }`
+
+- `turns: true` and `turnModes` (mode ids): the modes played turn by turn from two (or more) phones only (SPEC §13.5;
+  `games.py` `turns.modes` names the same). The game is created with `opts.turns = { seat, picture, send(move) }`
+  (below) and the instance's `turnSync(picture)` takes each new picture.
+
+- `lockstep: true` and `liveModes` (mode ids): the modes played live on two phones only (SPEC §13.4; the server's
+  `games.py` `live.modes` names the same). `players: 2` still means "two people on one screen" (W A S D is player 2);
+  a live mode has one player per phone.
 
 - `dpad`: the shell draws an arrow pad and turns swipes on the game into `up`/`down`/`left`/`right`; with `tap`
   set, a touch that doesn't swipe sends that action (Road Hop: `up`).
@@ -50,7 +84,8 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
   — one wrapping row, or a grid when every button has `place: [col, row, colSpan, rowSpan]` — and the game gets
   the canvas pointer (`down` / `move` while pressed / `up`).
 - `touch`: like `buttons`, but the buttons are optional (the game is played on the canvas itself).
-- Actions: `up`, `down`, `left`, `right`, `fire`, `alt` (C, F or Shift; a controller's X/Y) and, for
+- Actions: `up`, `down`, `left`, `right`, `fire`, `alt` (C, F or Shift; a controller's X/Y), the puzzle games' button
+  actions (`n1`–`n9`, `notes`, `fill`, `hint`, `undo`, `erase`, `auto`, and `shuffle` for Tile Match) and, for
   `players: 2`, `up2`, `down2`, `left2`, `right2`, `fire2`: then the arrows, Space and Enter are player 1 and
   W A S D, Q and E player 2.
 
@@ -59,7 +94,7 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | Snake | `snake` | `walls-slow` Walls · Slow, `walls-normal` Walls · Normal, `walls-fast` Walls · Fast, `wrap-slow` Wrap · Slow, `wrap-normal` Wrap · Normal, `wrap-fast` Wrap · Fast, `maze` Maze | `walls-normal` | `dpad` |
 | Brick Breaker | `brick` | `powerups` Power-ups, `classic` Classic | `powerups` | `paddle` (Launch) |
 | Falling Blocks | `blocks` | `classic` Classic, `fast` Fast start, `rising` Rising floor, `challenge` Challenges | `classic` | `buttons` Hold ◀ ↻ ▶ ▼ Drop |
-| Paddle Duel | `duel` | `easy` Easy, `normal` Normal, `hard` Hard | `normal` | `paddle` (Serve) |
+| Paddle Duel | `duel` | `easy` Easy, `normal` Normal, `hard` Hard, `phones` Two phones (live) | `normal` | `paddle` (Serve) |
 | Lane Racer | `racer` | `three` 3 lanes, `four` 4 lanes, `rush` Rush (one life), `stages` Stages | `three` | `buttons` ◀ ▶ |
 | Flap | `flap` | `easy` Easy, `normal` Normal, `moving` Moving gates, `course` Courses | `normal` | `buttons` Flap |
 | Mines | `mines` | `easy` Easy, `medium` Medium, `hard` Hard, `boards` Shaped boards | `easy` | `touch` 🚩 Flag |
@@ -68,14 +103,27 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | Memory Cards | `cards` | `small` 4 × 4, `medium` 4 × 5, `large` 5 × 6, `challenge` Challenges | `small` | `touch` |
 | Tap the Mole | `mole` | `classic` Classic, `big` Big garden, `rush` 60 seconds, `gardens` Gardens | `classic` | `touch` |
 | Number Dash | `numbers` | `add` Add & take away, `times` Times tables, `mixed` Mixed, `challenge` Challenges | `add` | `touch` |
-| Tank Battle | `tanks` | `classic` Classic, `easy` Easy | `classic` | `buttons` ◀ ▲ ▼ ▶ Fire |
+| Tank Battle | `tanks` | `classic` Classic, `easy` Easy, `together` Two phones · Together (live), `against` Two phones · Against each other (live) | `classic` | `buttons` ◀ ▲ ▼ ▶ Fire |
 | Sky Defenders | `invaders` | `classic` Classic, `easy` Easy, `waves` Waves | `classic` | `buttons` ◀ ▶ Fire |
 | Rocks | `rocks` | `classic` Classic, `calm` Calm, `waves` Waves | `classic` | `buttons` ⟲ ⟳ ▲ Fire |
 | Road Hop | `hop` | `classic` Classic, `easy` Easy, `levels` Levels | `classic` | `dpad`, tap = `up` |
 | Sudoku | `sudoku` | `easy`, `medium`, `hard`, `expert` | `easy` | `buttons` number pad (5-column `place` grid), `typed` |
 | Word Guess | `wordguess` | `classic` Six tries, `easy` Eight tries, `strict` Strict | `classic` | `touch`, `typed` |
 | Word Search | `wordsearch` | `little`, `kids`, `family`, `puzzler` | `kids` | `touch` Hint |
-| Snake Duel | `snakeduel` | `cpu` Against the computer, `two` Two players | `cpu` | `touch`, two players |
+| Snake Duel | `snakeduel` | `cpu` Against the computer, `two` Two players, `phones` Two phones (live) | `cpu` | `touch`, two players |
+| Bubble Pop | `bubbles` | `classic` Classic, `relaxed` Relaxed (gentle), `puzzle` Puzzles, `endless` Endless | `classic` | `paddle` (Shoot) |
+| Gem Swap | `gems` | `timed` Timed (90 s), `moves` Moves (levels), `zen` Zen (no clock) | `timed` | `touch` Hint |
+| Tower Stack | `stack` | `classic` Classic, `fast` Fast, `easy` Easy (3 tries), `towers` Towers | `classic` | `buttons` Drop |
+| Runner | `runner` | `classic` Endless, `easy` Easy (3 lives), `courses` Courses | `classic` | `buttons` ▼ Duck, ▲ Jump |
+| Lander | `lander` | `classic` Classic, `easy` Easy, `levels` Levels | `classic` | `buttons` ⟲ ⟳ ▲ Engine (`place` grid) |
+| City Defense | `defense` | `classic` Classic, `easy` Easy, `waves` Waves | `classic` | `touch` |
+| Slide Puzzle | `slide` | `three` 3 × 3, `four` 4 × 4, `five` 5 × 5, `picture` Picture 3 × 3 (gentle), `picture4` Picture 4 × 4 | `four` | `touch` 👁 Peek (held, `alt`) |
+| Lights Out | `lights` | `little` Little 3 × 3 (gentle), `classic` 5 × 5, `big` 7 × 7, `climb` Climb (3 × 3 to 7 × 7) | `classic` | `touch` 💡 Hint (`alt`) |
+| Picture Logic | `nonogram` | `five` 5 × 5 (gentle), `eight` 8 × 8, `ten` 10 × 10, `fifteen` 15 × 15 | `ten` | `touch` ■ / ✕ (`notes`), Hint, Undo; `typed` |
+| Tile Match | `tiles` | `little` Little (gentle), `classic` Classic, `big` Big heap | `classic` | `touch` Hint, Shuffle (`shuffle`), Undo; `typed` |
+| Code Breaker | `codebreak` | `little` Little (3 of 4, gentle), `classic` Classic (4 of 6), `norepeat` No repeats (4 of 6), `master` Master (5 of 8) | `classic` | `touch`, `typed` |
+| Type Rain | `typerain` | `letters` Little ones (letters), `easy` Easy (short words), `classic` Classic, `stages` Stages | `classic` | `touch`, `typed` |
+| Four in a Row, Tic-tac-toe, Checkers, Reversi, Dots and Boxes, Sea Battle | `fourrow`, `tictactoe`, `checkers`, `reversi`, `dots`, `seabattle` | `easy` Computer · Easy (gentle), `medium` Computer · Medium, `hard` Computer · Hard, `two` Two players (one screen), `phones` Two phones (turn by turn) | `easy` | `touch` (no buttons; cursor keys + Space); options: Dots and Boxes `size` 3 / 4 / 5 (4), Sea Battle `fleet` classic / small (classic) |
 
 The shell hides `powerups` when the App setting "Brick Breaker power-ups" is off.
 
@@ -85,7 +133,11 @@ for a game that opts out) says the game can be played in a race: both phones cre
 `status()` a few times a second and its final result like any game. Which games the server offers a race for, and
 how the winner is decided, is the game's `race` entry in `app/games.py`.
 
-**`create(canvas, opts)`** — `opts = { mode, look, sound, reduceMotion, handedness, seed, onScore(score, level), onEnd(result), onEvent(type, data) }`.
+**`create(canvas, opts)`** — `opts = { mode, look, sound, reduceMotion, handedness, seed, onScore(score, level), onEnd(result), onEvent(type, data), live, names, turns }`.
+`turns = { seat, picture, send(move) → Promise }` plays a turn-by-turn match (wave 7): the board comes from `picture`
+(`GET /api/matches/{id}/turns`), a move made here goes to `send` (the shell posts it; the server's answer comes back
+through `inst.turnSync(picture)`), and the game ends when a picture says the match is over.
+`live = { seat: 1 | 2, lockstep }` plays a live duel (below); `names` = the two players' names in seat order.
 All are optional. `look` is a look id (unknown → `modern`); `seed` makes a game repeatable (default: random);
 `handedness` is accepted and not used by the games (the on-screen controls are the shell's).
 One optional extra: `best` (a number) shows "BEST n" in the Snake and Flap HUD instead of the level.
@@ -101,12 +153,17 @@ One optional extra: `best` (a number) shows "BEST n" in the Snake and Flap HUD i
 | `input(action, isDown)` | `up`, `down`, `left`, `right`, `fire`, `pause` (each game's use: the tables above and below). Snake turns on key-down. Brick Breaker: `left`/`right` held move the paddle, `fire` (or `up`) launches. `pause` toggles pause. Ignored unless the game is running. |
 | `pointer(kind, x, y)` | `down` / `move` / `up`, x and y in CSS pixels relative to the canvas. Snake: a swipe of 18 px turns (the page itself turns after 14 px) (keep swiping for more turns). Brick Breaker: the paddle follows x from anywhere on the canvas (the finger needn't cover the paddle); `up` launches a waiting ball. Mouse `move` without a button also moves the paddle (Paddle Duel too; `up` serves). Falling Blocks: drag, tap, flick (above). Lane Racer: `down` on the left / right half changes lane. Flap: `down` flaps. |
 | `resize()` | Call after the canvas's CSS size changes (a ResizeObserver also does this). |
+| `liveStatus()` | A live duel: `{ tick, waitingMs, seat, delay, scores }` (`waitingMs` > 0 while it waits for the other phone; `scores` = both players' from the game itself); `null` otherwise. |
+| `stop()` | A live duel the server ended (out of step, left, …): stops where it is, without `onEnd`. |
+| `turnSync(picture)` | Turn by turn: the match as the server now has it (a move made here or on the other phone, or its end); the game rebuilds its board, plays the move's sound, and ends when it's over. |
 | `destroy()` | Stops everything and frees the off-screen canvases. |
 | also | `state` (`ready`, `running`, `paused`, `over`, `destroyed`), `seconds`, `score`, `level`, `renderer`, `logic` (the rules state, read-only, for tests). |
 
 **Callbacks**: `onScore(score, level)` whenever either changes (and `0, 1` at start).
 `onEnd({ score, level, seconds, stats })` once, when the game ends; `seconds` is whole seconds of
-active play (pauses excluded), counted from the fixed updates. `onEvent(type, data)`:
+active play (pauses excluded), counted from the fixed updates. In a live duel `score` is this phone's player's and
+the result also has `live = { tick, sum, scores: [p1, p2], levels, winner: 1 | 2 | 0 }` — the end both phones must
+agree on (sent with the score, SPEC §13.4). `onEvent(type, data)`:
 `start`; `pause` with `{ paused: true | false }` on every pause change, including the game pausing
 itself when the page is hidden; Snake `eat`, `bonus`, `bonusSpawn`, `bonusGone`, `speed`, `die`, `win`;
 Brick Breaker `launch`, `paddle`, `wall`, `hit`, `break`, `drop`, `powerup`, `powerEnd`, `lifeLost`,
@@ -121,8 +178,23 @@ Number Dash `question`, `right`, `wrong`, `streak`, `level`, `win`, `gameover`; 
 `brick`, `steel`, `hit`, `lifeLost`, `clear`, `level`, `win`, `gameover`; Sky Defenders `fire`, `hit`, `bonus`,
 `ship`, `zap`, `chip`, `lifeLost`, `level`, `win`, `gameover`; Rocks `fire`, `break`, `saucer`, `saucerHit`,
 `lifeLost`, `clear`, `level`, `win`, `gameover`; Road Hop `hop`, `bump`, `land`, `home`, `splat`, `level`, `win`,
-`gameover`; Snake Duel `go`, `eat`, `crash`, `round`, `match`, `level`, `win`, `gameover`. A callback that throws
-is logged and doesn't stop the game.
+`gameover`; Snake Duel `go`, `eat`, `crash`, `round`, `match`, `level`, `win`, `gameover`; Tank Battle with two tanks
+also `round` (against each other), and `fire` / `hit` / `lifeLost` say which `player`; Paddle Duel · Two phones `point`
+and `paddle` say which `player`; Bubble Pop `shoot`, `bounce`, `stick`, `fizzle`, `pop`, `clear`, `lower`, `push`,
+`swapNext`, `low`, `refill`, `level`, `win`, `gameover`; Gem Swap `cursor`, `pick`, `swap`, `nope`, `match`, `cascade`,
+`special`, `shuffle`, `hint`, `hurry`, `clear`, `level`, `win`, `gameover`; Tower Stack `place`, `cut`, `perfect`, `miss`,
+`tower`, `level`, `win`, `gameover`; Runner `jump`, `land`, `coin`, `hit`, `course`, `level`, `win`, `gameover`; Lander
+`land`, `crash`, `empty`, `retry`, `level`, `win`, `gameover`; City Defense `fire`, `burst`, `hit`, `flier`, `flierHit`,
+`split`, `thud`, `cityLost`, `baseLost`, `lastCity`, `empty`, `clear`, `rebuild`, `level`, `win`, `gameover`; Slide Puzzle
+`slide`, `nope`, `peek`, `win`; Lights Out `press`, `cursor`, `hint`, `nohint`, `clear`, `level`, `win`; Picture Logic `fill`,
+`cross`, `clear`, `wrong`, `cursor`, `mode`, `hint`, `nohint`, `undo`, `check`, `win`; Tile Match `select`, `unselect`, `match`,
+`nomatch`, `blocked`, `cursor`, `hint`, `shuffle`, `undo`, `stuck`, `win`; Code Breaker `place`, `clear`, `slot`, `cursor`, `refuse`,
+`guess`, `win`, `lose`; Type Rain `spawn`, `key`, `word`, `slip`, `letgo`, `land`, `stage`, `level`, `win`, `gameover`; the wave 7
+board games `move`, `cursor`, `nope`, `send` (a move on its way to the server), `win`, `lose`, `draw`, `ready` (pass the
+phone), and Four in a Row `drop`, `line`; Tic-tac-toe `mark`, `line`; Checkers `step`, `capture`, `king`, `pick`; Reversi
+`place`, `pass`; Dots and Boxes `line`, `box`, `again`; Sea Battle `placed`, `shuffle`, `turnship`, `moveship`, `pick`, `hit`,
+`miss`, `sunk`. A callback that
+throws is logged and doesn't stop the game.
 
 `stats` — Snake: `length, foods, bonus, won, cause ("wall" | "self" | null), mode, moves`.
 Brick Breaker: `bricks, levelsCleared, powerups, paddleHits, livesLeft, mode`.
@@ -140,6 +212,18 @@ Sky Defenders: `critters, ships, shots, waves, livesLeft, won, cause ("bombed" |
 Rocks: `rocks, shots, saucers, waves, livesLeft, livesLost, won, cause, mode`.
 Road Hop: `hops, homes, levels, deaths, livesLeft, won, cause ("car" | "water" | "swept" | "time" | "won"), mode`.
 Snake Duel: `won, cause, foods, rounds, roundsLost, draws, matches, matchesLost, arenas, winner, moves, mode`.
+Bubble Pop: `shots, popped, dropped, boards, bestPop, won, cause ("low" | "won"), mode`.
+Gem Swap: `swaps, gems, bestChain, lines, blasts, stars, locks, shuffles, levels, won, cause ("time" | "moves" | "won"), mode`.
+Tower Stack: `floors, perfects, bestStreak, towers, misses, livesLeft, won, cause ("miss" | "won"), mode`.
+Runner: `distance, coins, jumps, hits, courses, livesLeft, won, cause ("box" | "pit" | "bar" | "flier" | "won"), mode`.
+Lander: `landings, crashes, fuelUsed, best, levels, livesLeft, won, cause ("ground" | "tilt" | "fast" | "won"), mode`.
+City Defense: `missiles, fliers, shots, waves, citiesLeft, citiesLost, won, cause ("cities" | "won"), mode`.
+Slide Puzzle: `won, cause, mode, moves, slides, size, summary`. Lights Out: `won, cause, mode, moves, hints, boards, fewest, summary`.
+Picture Logic: `won, cause, mode, size, hints, mistakes, givens, effective, filled, crossed, summary`.
+Tile Match: `won, cause, mode, pairs, left, hints, shuffles, undone, effective, summary`.
+Code Breaker: `won, cause ("won" | "rows"), mode, rows, maxRows, code (at the end), summary`.
+Type Rain: `typed, letters, slips, landed, bestRun, stages, wpm, livesLeft, won, cause ("landed" | "won"), mode, summary`.
+Wave 7: `won, lost, draw, winner (0 | 1 | −1), mode, moves, summary, notSaved` (why a score of 0 isn't kept, for the shell's badge).
 
 **Canvas**: the shell gives the canvas its CSS size (any shape); the game draws its 240 × 300 logical
 playfield and HUD (score, level, lives / mode) centred in it, letterboxed in the look's background
@@ -271,10 +355,184 @@ it stops on pause, game over, `destroy()` and when the page is hidden.
 - **Snake Duel** (`snakeduel-logic.js`): two snakes on 24 × 20; player 1 green (right side, arrows), player 2 blue
   (left side, W A S D, or the computer). Crashing into a wall, yourself or the other snake loses the round; heads
   meeting is a draw; first to 3 round wins takes the match (rounds at most 60 s, matches at most 9 rounds). Player
-  1's score: food 10, round 100, match 500 × min(arena, 10). Against the computer the arenas come in order and
-  losing a match ends the game; two players play one match. On a phone, swipes on the right half steer green and
-  on the left half blue. Both modes play the arena list (walls, speed, foods).
-- All seventeen stay inside the server's honest-score limits during play, also with the hardest levels their
+  1's score: food 10, round 100, match 500 × min(arena, 10) (`score2` the same for player 2). Against the computer
+  the arenas come in order and losing a match ends the game; two players (one screen, or *Two phones*: seat 1
+  green, seat 2 blue, each steering with every key and a swipe anywhere) play one match on an arena from the seed.
+  On one phone, swipes on the right half steer green and on the left half blue. Every mode plays the arena list
+  (walls, speed, foods).
+- **Paddle Duel · Two phones** (`duel-logic.js`, mode `phones`): seat 1's paddle at the bottom (top edge 266), seat
+  2's at the top (bottom edge 54); the court is the same from either end (y ↔ 320 − y; the ball is out above 34 or
+  below 286). Everything in whole numbers: positions and speeds in 1/256 px, the angle from where the ball meets
+  the paddle in 21 steps of 5.5° from a table of sines (× 4096), rounded the same way on either side, so seat 2's
+  game is exactly seat 1's turned round. The ball starts at 2.4 px an update (+0.12 a return, at most 6), served
+  after 1 s (or at once by the receiver) to whoever lost the point — the first to a player chosen by the seed, at
+  up to ±27.5°. A finger sends `aim` (its x on the court; seat 2's turned round), the keys left/right held. First to
+  7: a return 10, a point 100, the match 1,000.
+- **Tank Battle · two tanks** (`tanks-logic.js`, modes `together` and `against`): player 2's tank (`p2`, its controls
+  in `ctl2`, its shells owner −1) starts right of the flag (together) or at the top facing down (against). Together:
+  1½ × the arena's enemies (rounded up), who chase the nearer tank; each player's own lives (3) and score (a tank
+  100 to whoever hit it, an arena 500 to both); friendly shells stop on the other tank; a player out of lives
+  stays out (also in the next arena); over when the flag falls or both are out. Against each other: no enemies,
+  `VERSUS_LEVELS` (four arenas whose bottom half is the top half turned round), the first from the seed and the
+  next each round; `FLAG2` at the top is player 2's; a hit 100 (the other tank's shield still protects it), a
+  round 300 (their flag — any shell, theirs too — or all their lives; 3 lives a round), the match 500 (first to 2
+  rounds; at most 5 rounds, a round at most 2 minutes, then drawn). `steer` = 1 + the direction toward a finger
+  (worked out on the phone with `steerFor`). Single-player Tank Battle is unchanged.
+- **Bubble Pop** (`bubbles-logic.js`): rows of 8 bubbles (24 px, every other row half a bubble to the right) hang
+  from the ceiling; the launcher at the bottom turns 1.6° an update (←/→ held) up to 78° either way, or points at a
+  finger (above the launcher; on the strip below it the finger's x sets the angle). A shot flies 7 px an update in
+  2 px sub-steps, bounces off the side walls and sticks next to the bubble or ceiling it touches; three or more of a
+  colour touching pop (10 each) and everything no longer hanging from the ceiling drops (20 each). The next shot is
+  ready 10 updates after the last one sticks. The bubble to shoot and the next one are always colours still on the board (↓ or C, or a
+  tap on the next bubble, swaps them). Every `drop` shots the ceiling comes down a row (*Endless*: a new row pushes in
+  from the top instead); a bubble below the dashed line ends the game (`cause: "low"`). Clearing the board scores
+  500 and brings the next (1.5 s). *Classic*: boards from the seed, 3–6 colours and the ceiling every 9 down to 5 shots
+  as the boards go on; *Relaxed* (gentle, for small children): at most 4 colours, at most 6 rows, the ceiling every 14
+  shots; *Puzzles*: the puzzle list (`rows`, `colours`, `drop`; every bubble hangs from the top row); *Endless*: 4–6
+  colours, a new row every 8 down to 4 shots, never cleared. Each colour has its own mark too (none, a line across, a
+  dot, a line down, a cross, a peak), so colours are never told apart by colour alone (also on Retro LCD).
+- **Gem Swap** (`gems-logic.js`): 8 × 8 gems of 4–6 kinds (each its own shape and colour). Swapping two neighbours
+  (8 updates) that makes a line of three or more clears it (12 updates); a swap that doesn't swaps back. Gems fall
+  4 px an update and new ones drop in from the seed; each further clear in a row is a cascade (10 a gem × the cascade
+  step, at most × 5). Four in a line leaves a line gem (its row or column), an L or T a blast gem (3 × 3), five a star
+  (swapped: every gem of that kind; two stars: the most common kind); making one scores 50 / 100 / 200. Locked gems
+  can't move; a clear through one unlocks it. No move left: the board is shuffled (40 updates). The board never
+  starts with a line. *Timed*: 90 s (a "hurry" at 10 s); *Moves*: the level list — reach the level's `goal` points and
+  break its `locks` within its `moves` (50 a move left), the last level wins; *Zen*: no clock, no end (End game keeps
+  the score). Keys: the arrows move a ring, Space picks a gem up and an arrow swaps it; `alt` (Hint) rings a move for
+  2 s.
+- **Tower Stack** (`stack-logic.js`): a 14 px block slides between x 8 and 232 at the tower's speed (+ `ramp` a floor,
+  at most 5 px an update); a press drops it (at least 10 updates after it appears). The overhang is cut off and
+  falls; within 3 px of the floor below is a perfect drop that lines up exactly (10 + 10 × the run of perfect drops,
+  at most 5), and from the third perfect drop in a row the block grows back 4 px (when the tower allows). A floor
+  scores 10; a level every 10 floors. Missing the tower completely ends the game — in *Easy* (150 wide, speed 1, three
+  tries) and *Towers* it costs one of 3 lives and that floor is tried again. *Classic* 120 wide at 1.3, *Fast* 100 at
+  2.2. *Towers*: the tower list (`floors`, `width`, `speed`, `ramp`, `grow`), a tower 200 and the next one after
+  1.5 s; the last wins. The camera follows the top of the tower.
+- **Runner** (`runner-logic.js`): the runner runs right on its own (3.6 px an update, *Easy* 3, +0.3 every 3,000 px,
+  at most 8 / 6.5); the world is 60 px segments holding at most one thing: a box, a tall box, a pit, a hanging bar,
+  a flier, or coins on the ground or in an arc (10 each). After a hazard the next is at least `ceil(50 × speed / 60)`
+  segments on, so there is always room to land and jump again (a test runs every speed). Jump 7.4 px an update up
+  (held: less gravity for up to 12 updates — a higher jump), ↓ ducks (in the air: falls faster). 1 point a 10 px. A
+  hit or a pit costs a life (*Endless* 1, *Easy* and *Courses* 3) and 1.5 s of safety. *Courses*: the course list
+  (`speed`, `ramp` every 10 segments, a `pattern` of segment letters `. b B p h f c o`), 100 for each finished; the
+  last wins. A finger: down jumps (held: higher), dragging down 18 px ducks.
+- **Lander** (`lander-logic.js`): gravity (`gravity` px an update²), a sideways `wind`, the engine 0.06 px an update²
+  the way the lander points (it turns 3° an update, up to 90°), one fuel an update. The ground is 13 heights 20 px
+  apart; pads are flat stretches marked ×1–×5 (the small ones pay more). Touching down on a pad within 10° of upright,
+  at most 0.9 px an update down and 0.6 sideways lands: multiplier × 100 + half the fuel left, and the next level
+  after 2 s; anything else crashes and costs one of 3 lives (the level again). The HUD's speeds turn green when a
+  landing would be safe. *Classic* and *Easy* (lighter gravity, wide ×1 pads, no wind, lots of fuel) make levels from
+  the seed; *Levels* plays the list (`heights`, `pads`, `start`, `drift`, `gravity`, `wind`, `fuel` — enough fuel for a
+  full stop from the highest start, checked); the last wins. Fuel left breaks a race between two good landings.
+- **City Defense** (`defense-logic.js`): six cities and three bases (left, middle, right; the middle one's shots are
+  faster) along the ground. A tap (or the crosshair, moved 3 px an update by the arrows, and Space) sends an
+  interceptor from the nearest base with ammo to that point (at most 8 in the air); it bursts into a cloud that grows
+  to 20 px, holds and shrinks, and stops every missile and flier inside it (25 / 100). Some missiles split into three
+  on the way down; fliers cross the sky and drop missiles of their own. Missiles aim at cities and bases (a base that is
+  hit is out for the rest of the wave). A wave ends when everything it sent is gone: 5 for each shot left, 100 for each city
+  standing; the bases are refilled, and every third wave a lost city is rebuilt. No city left ends the game.
+  *Classic* and *Easy* (slower, fewer missiles, 12 shots a base) make their waves endlessly; *Waves* plays the list
+  (`missiles`, `speed`, `splits`, `fliers`, `ammo`, with enough ammo for what comes); the last wins.
+- **Slide Puzzle** (`slide-logic.js`): an n × n tray (3, 4 or 5) of tiles and one gap. A tap on a tile in the gap's row or
+  column slides it and the tiles between into the gap; an arrow (or a swipe of 12 px) slides the tile on that side of the
+  gap that way (↑: the tile below the gap moves up). Each tile moved is a move. The shuffle is a random order with the gap at
+  the bottom right, made even by swapping two tiles when it comes out odd (so it can always be solved), at least a set
+  distance from solved (the sum of every tile's rows and columns from home: 8 / 24 / 50). Solved: the score is 10,000 −
+  moves (at least 10), so the fewest moves rank first; unsolved scores 0. *Picture* modes show one of six pictures drawn
+  from shapes (a house, a boat, a rocket, a flower, a fish, a balloon), picked by the seed, with small numbers in the
+  corners (the start screen's **Numbers on picture tiles**); **Peek** (held: the button, C or a controller's X) shows the
+  finished picture or the numbers in order. A slide animates over 6 updates (none with reduce motion).
+- **Lights Out** (`lights-logic.js`): pressing a light switches it and its four neighbours. A board is made from the seed by
+  pressing 3–5 (3 × 3) … 10–18 (7 × 7) random lights on a dark board (so it can be solved), with at least 3 / 4 / 6 / 8 / 10
+  presses needed; the fewest presses are worked out exactly (Gaussian elimination over on/off, then the smallest of the
+  equivalent answers — 5 × 5 has 4, 4 × 4 16). Score: 10,000 − presses − 5 a hint once every light is off; unsolved 0.
+  *Climb* plays 3 × 3, 4 × 4, 5 × 5, 6 × 6 and 7 × 7 with a 75-update pause between (the last wins; level = the board).
+  The start screen's **Hints** (off by default, and always off in races, `offInRaces`): Hint (`alt`) rings a light from the
+  fewest presses, the one nearest the cursor. Keys: the arrows move a cursor (wrapping), Space presses.
+- **Picture Logic** (`nonogram-logic.js`): numbers beside each row and above each column give its runs of filled squares.
+  A puzzle is a random pattern from the seed (density 0.52–0.6; smoothed into blobs once on 8 × 8 and 10 × 10, twice on 15 ×
+  15; mirrored half the time; 30–75 % filled, at most one empty line) that a line solver — every row and column on its own,
+  from what the numbers allow (a dynamic programme over the runs) — works out completely; 40 tries are made and, when none
+  works out, squares of the answer are given at the start (fixed, shown with a dot) until it does. So every puzzle has
+  exactly one answer and needs no guessing. A tap fills a square (or crosses it: the ■ / ✕ button, `notes`, or M) and tapping
+  it again empties it; dragging carries the same change along the row or column it started in, to squares that were like
+  the first; Undo takes back a whole stroke. Mistakes (start screen, like Sudoku): *shown at once* — a wrong fill or cross
+  is put right, fixed and adds 10 s — or *when the grid has as many filled squares as the answer*, then the wrong ones are
+  marked. Hint (3 a puzzle, +30 s): puts a wrong square right first, else fills in a square the numbers decide (the line
+  solver's next step from what is right so far). Numbers dim when their line already matches. Solved when the filled
+  squares are exactly the answer (crosses don't matter): 10,000 − the counted seconds (time + penalties), at least 10.
+  Keys: arrows, Space fills, X / `alt` crosses, M switches, H hint, U / Z undo. The layout (number widths, square size) is
+  worked out from the puzzle and the look's font, so 15 × 15 still fits the coarse looks.
+- **Tile Match** (`tiles-logic.js`): tiles lie in layers (positions in half-tile units; *Little* 20 tiles in 2 layers, *Classic*
+  72 in 3, *Big heap* 104 in 4), four of each symbol. A tile is free when no tile lies on it and its left or right side is
+  open; two free tiles with the same symbol go together. A deal is made by clearing the empty heap first — taking pairs of
+  places free at that moment and giving each pair the next symbol (from a shuffled list) — so that order clears it and
+  every deal can be cleared; two tiles of one symbol are never dealt on top of each other (the last pair could otherwise
+  end up stacked, a dead end no shuffle mends). Hint rings a free pair for 2.5 s (+15 s); Shuffle deals the tiles left the same way (+30 s);
+  Undo puts the last pair back (free; a pair keeps its own symbol, so it works after a shuffle too). With no free pair left
+  the game says so (Shuffle or Undo). Cleared: 10,000 − the counted seconds, at least 10. Keys: the arrows move a ring to
+  the nearest tile that way, Space picks, H / `alt` hint, S shuffle, U / Z undo. Symbols (tiles.js): *Little* a circle,
+  square, triangle, star and diamond; the others a number 1–9 with a suit shape under it (circle, diamond, triangle), each
+  suit its own colour too.
+- **Code Breaker** (`codebreak-logic.js`): a hidden code of 3–5 symbols from 4–8 (each a number, a colour and a shape:
+  circle, square, triangle, diamond, star, hexagon, plus, a triangle pointing down). A row is checked when full: a solid dot
+  for each symbol in the right place, a hollow ring for each other symbol in the code but elsewhere (each code symbol
+  counted once). Modes: *Little* 3 of 4, no repeats, 8 rows; *Classic* 4 of 6, repeats, 10 rows; *No repeats* 4 of 6, 10
+  rows (a row with a symbol twice is refused); *Master* 5 of 8, repeats, 12 rows. Cracked: 1,000 × (rows left + 1) +
+  (999 − seconds, at least 0); otherwise 0 and the code is shown. Keys 1–8, Enter, Backspace; a controller: ← → pick on the
+  keys, A places, ↑ checks, ↓ (or X) deletes.
+- **Type Rain** (`typerain-logic.js`): words fall from y 46 to the ground at 196 (words of 7 letters or more at 85 % of the
+  speed). The first letter typed picks the lowest word starting with it, then its letters in order; a wrong letter is a slip
+  (the run ends, the word stays picked); Backspace lets go. A word: 10 a letter × 1, 2 (from 10 words in a row without a slip
+  or a landing) or 3 (from 25). A landed word costs a life (3; *Little ones* 5). What falls (the word, where, when) comes only
+  from the seed and the clock — never from the typing — so both phones of a race get the same words in the same order:
+  *Little ones* single letters, *Easy* 3–4 letters, *Classic* 3–4 letters at first and up to 10 (longest 4 + level ÷ 2,
+  shortest 3 + level ÷ 4, at most 6), a level every 20 s (up to 30) making them faster (0.3 + 0.035 a level, at most 1.3 px an
+  update) and closer (130 updates apart − 4 a level, at least 40). *Stages* plays the stage list (`words`, `speed`, `gap`,
+  `shortest`, `longest`; 1 and 1 = letters; a word must take at least 1 + 0.35 × longest seconds to fall); each stage's words
+  come from the seed and the stage number, a cleared stage scores 200 and the next follows after 2 s; the last wins. The
+  keyboard on the canvas lights the key for the next letter (and, in the gentle modes, the lowest word's first letter);
+  a controller (or the arrow keys) moves a ring over it, A (Space) types the ringed key and X lets go of a word.
+- **The wave 7 board games** (`boardkit.js` + `<game>-logic.js`): two players, seat 0 and seat 1. Against the computer
+  you are seat 0 and move first, the computer (seat 1) moves `CPU_WAIT` (36) updates after it becomes its turn; on one
+  screen seat 0 moves first; from two phones who moves first comes from the seed (`seed % 2`, as the server's rules).
+  The rules are the server's (`app/rules/<game>.py`) move for move: the same moves (canonical JSON), the same
+  refusals, the same state (`digest`) — checked on 2,400 random games. A move is made with a tap on the board or the
+  cursor (arrows) and `fire`; an illegal one says so on the bottom line (`nope`). Score: a win the level's base
+  (`LEVEL_BASE` 100 / 250 / 500, two phones `PHONES_BASE` 500) + a bonus up to the base, a draw base ÷ 4, a loss and
+  one screen 0. The game ends 80 updates after the last move (the winning line shows first).
+  - **Four in a Row** (`fourrow-logic.js`): 7 × 6, `{col}`; four in any line wins, a full frame draws; ↓ drops too.
+    Computer: Easy wins when it can, blocks 60 % of the time, else near the middle at random; Medium and Hard search 4
+    and 7 moves ahead (negamax with alpha-beta, scoring the open fours; one more ply when needed so the leaves have as
+    many discs of each colour), ties from the seed. Bonus 10 an empty place.
+  - **Tic-tac-toe**: `{cell}` 0–8; ✕ moves first. Easy takes wins, blocks half the time; Medium always wins / blocks
+    and likes the middle; Hard is perfect (minimax). Bonus 25 an empty square.
+  - **Checkers** — English draughts: 8 × 8, dark squares; the first mover is dark at the bottom; men one square
+    diagonally forward, kings both ways; captures compulsory; a jump that can continue must continue (any capture may
+    be chosen, not necessarily the longest); jumped pieces leave at the end and can't be jumped twice; reaching the
+    far row crowns and ends the move; no legal move loses; 80 plies without a capture or a man moving draws.
+    `{path: [from, to, …]}`. Taps: a piece (dots: where it can go), then each landing square (finished by itself
+    when one way on is left); `alt` lets go. The second phone of a match draws the board turned round (its arrows
+    too). Easy plays any legal move; Medium 3 plies counting pieces (king 175, man 100); Hard 6 plies, also advanced
+    men, the middle and the back row. Bonus 30 a piece left.
+  - **Reversi**: `{cell}`; a disc must flip; no place → the turn passes automatically (`passed`, a `pass` event);
+    neither → over, more discs wins. Easy random; Medium the best square by a value table; Hard 4 plies with the table
+    and mobility. Bonus 5 a disc more.
+  - **Dots and Boxes**: `size` 3–5 boxes; `{edge}` (across lines first, row by row, then up-and-down); a box's fourth
+    side claims it and the same player goes again. The cursor walks the lines (← → along, ↑ ↓ to the crossing ones).
+    Easy takes a box 75 % of the time, else any line; Medium always takes, avoids third sides, then gives away the
+    fewest; Hard also leaves the last two boxes of a run (a double-cross) to keep control. Bonus 20 a box more.
+  - **Sea Battle**: `fleet` classic (10 × 10: 5 4 3 3 2) or small (8 × 8: 4 3 3 2); ships may touch, never overlap;
+    `{place: [[row, col, length, 0 across | 1 down] …]}` once each (both place in any order), then `{shot}`
+    alternating (a hit doesn't shoot again); the server's record of a shot adds `hit`, `sunk`, `cells`. Placing: a
+    random arrangement from the seed; tap a ship to pick, again to turn, a square to move it there; Shuffle / Turn /
+    Ready are drawn on the canvas and are on the cursor's path (below the sea). One screen: after each move the
+    result shows `PASS_DELAY` (70) updates, then "Pass to …" until a tap. Two phones: the state comes from the
+    server's `view` (`fromView`) — the other fleet is never known here; a shot's result comes back from the server.
+    The computer only reads its own shots' results: Easy at random (35 % next to a hit), Medium hunts then follows
+    hits along a line, Hard also hunts where the ships still afloat fit most often. Bonus 15 a square unhit.
+- All of them stay inside the server's honest-score limits during play, also with the hardest levels their
   lists allow (checked by the tests with quick bots).
 
 ## Looks and drawing
@@ -353,29 +611,230 @@ state means is a new `STATE_VERSION` (and the same number in `games.py`), so old
 
 ## Wave 4 additions to the contract
 
-- Definition fields `options` (start-screen choices stored per person, passed as `opts.options`; Sudoku: Show mistakes, Number lines) and `typed: true` (the shell sends physical keys as `input("key:A" | "key:ENTER" | "key:BACKSPACE", true)`, and P no longer pauses). A `preview` opt makes the still picture behind the start card.
+- Definition fields `options` (start-screen choices stored per person, passed as `opts.options`; Sudoku: Show mistakes, Number lines (three kinds)) and `typed: true` (the shell sends physical keys as `input("key:A" | "key:ENTER" | "key:BACKSPACE", true)`, and P no longer pauses). A `preview` opt makes the still picture behind the start card.
 - Daily play passes `opts.seed` and a mode from the day's challenge; none of the three have level lists, so no `level_kinds` entry (the puzzles are made from the seed).
 - Results carry `stats.summary` and `stats.won`; scores are higher-is-better. `unfinished_zero` games score nothing until solved.
 
 ## Sudoku: number lines
 
 When a number is in focus (a filled cell is tapped, or a number is picked on the pad), every cell in the **row**,
-the **column** and the **3 × 3 box** of each cell holding that number gets one even, soft shade — no line through
-the middle, no dots.
+the **column** and (by default) the **3 × 3 box** of each cell holding that number gets one even, soft shade — no
+line through the middle, no dots.
 
-- **One shade per cell.** `Logic.lines(s, focus).covered` (81 booleans) is worked out first and each covered cell is
-  filled once, so crossings don't get darker. The selected cell's own row/column/box tint is skipped where the
-  number lines already shade.
+- **Three kinds** — the start-screen option **Number lines** (id `lines`), saved per person with the other
+  start-screen choices (`users.game_prefs`, `PUT /api/prefs {gamePrefs: {sudoku: {lines}}}`):
+
+  | Choice | id | Number lines shade | Selected cell's own tint |
+  |---|---|---|---|
+  | **Rows, columns and boxes** (default) | `on` | rows, columns and boxes of the number's cells | its row, column and box |
+  | **Rows and columns only** | `rows` | rows and columns only, no box | its row and column |
+  | **None** | `off` | nothing | none |
+
+  The ids are the ones the old **On / Off** switch saved, so someone who had it on keeps rows, columns and boxes
+  and someone who had it off gets None; anything else saved reads as the default (`Logic.lineMode`). In every
+  kind the cells holding the focus number keep their strong highlight and the selected cell keeps its fill and
+  outline (that is how you see which number and which cell you're on); "None" removes all row/column/box
+  shading, including the faint tint around the selected cell. With rows and columns only, the empty cells left
+  clear are where the number isn't ruled out by a row or column — its box may still rule some out.
+- **A display choice only:** it lives in the game file (`opts.options.lines`), never in the rules' state, so it
+  doesn't change the score, a saved game (any saved game resumes with whatever kind is chosen now), a race or a
+  daily challenge (each person sees their own choice; it is not `offInRaces`).
+- **One shade per cell.** `Logic.lines(s, focus, kind).covered` (81 booleans; `null` with no focus or kind
+  `off`) is worked out first and each covered cell is filled once, so crossings don't get darker. The selected
+  cell's own row/column/box tint (`Logic.linked(sel, i, kind)`) is skipped where the number lines already shade.
 - **What stands out:** the cells holding the focus number (the strong highlight), the **empty cells left clear**
   (the only places the number can still go), and the selected cell's outline on top.
 - **Looks:** the shade is palette colour 7 (each look's accent) at low strength, filled straight on the context
   with no outline: 0.2 (Modern, Paper), 0.3 (High contrast), 0.08 on Neon so the glow doesn't bloom; Pixel uses
   the same per-cell fill on its coarse grid (0.24). Retro LCD has only ink, so its empty covered cells get a
   sparse dither (one dot in sixteen) and filled cells are left plain so the digits stay clear; the focus cells
-  are solid ink with a light digit.
-- **Option:** **Number lines: On / Off** (id `lines`); the line under the board says "Number lines: 5".
-- **Tests:** the covered set for a sample puzzle; the drawing test records every `line` call inside the grid and
-  checks it lies on a grid line, and counts one fill per covered cell in each look.
+  are solid ink with a light digit. The low-resolution looks (Retro LCD, Pixel) have no selected-cell tint in
+  any kind. All three kinds use the same drawing, so they work in every look.
+- **Input:** nothing changes — keyboard, touch and controller pick the focus number the same way; the kind is
+  chosen on the start screen (a select, so it works by touch, keyboard and controller like the other options).
+- The line under the board says "Number lines: 5" while a number is in focus (not with None).
+- **Tests:** the covered set for a sample puzzle for each kind (rows-only = the rows and columns of the number's
+  cells, None = null), `lineMode` for old/odd values, `linked`; the option's choices and ids; the saved state is
+  identical whatever the kind; the drawing test records every `line` call inside the grid and checks it lies on a
+  grid line, and counts one fill per covered cell in each look for each kind (none with None), the focus cells'
+  highlight in every kind, and the selected cell's tint (20 / 16 / 0 cells).
+
+## Live duels (SPEC §13.4)
+
+Both phones run the same rules from the same seed; each sends only its own player's inputs and plays every input
+of both players on the same update, so the two games never differ. What a game needs:
+
+- **Registration**: `lockstep: true`, `liveModes: [...]`.
+- **Rules** (`<game>-logic.js`): `press(s, action, down, player)` with `player` 0 (seat 1) or 1 (seat 2) — `down` 1/0
+  for a button, or a small whole number for an analogue input (Paddle Duel's `aim`, Tank Battle's `steer`); deterministic
+  given the seed and the inputs; **no `Math.sin`/`cos`/`tan`/`atan2`/`exp`/`log`/`pow`/`hypot`/`random`, no `Date`** in
+  anything a live mode runs (JavaScript engines may differ in their last digit; `+ − × ÷`, `Math.floor`/`round`/
+  `sqrt`/`imul`/`abs`/`min`/`max` are exact everywhere — the tests replace the others with functions that throw);
+  `checksum(s)` (FNV-1a of the numbers that decide the next updates, unsigned 32-bit); `report(s)` →
+  `{ scores: [p1, p2], levels: [p1, p2], winner: 1 | 2 | 0 }`; `result(s, player)` → that player's own result.
+- **Game file** (`<game>.js`): `impl.apply(player, action, value)` (→ the rules' `press`), `impl.checksum()`,
+  `impl.report()`; with `opts.live` its `input(action, down, act)` and `pointer(kind, lx, ly, x, y, act)` turn this
+  phone's keys, buttons and fingers into `act(action, value)` — never touching the rules directly (an input reaches
+  the rules only through `apply`, on both phones). A turned-round view (seat 2 of Paddle Duel and Tank Battle ·
+  Against each other) turns its inputs round too (left ↔ right, the finger's position) and draws every point at
+  (W − x, H − y) of its court; score, result and labels are the phone's own player's.
+- **The kit** (`createSession` with `opts.live = { seat, lockstep }`): each update asks `lockstep.next()` for the
+  inputs of the next tick (seat 1's, then seat 2's) and waits (no update, drawing goes on) until it has them; then
+  `apply` each, `step()`, `lockstep.advance(checksum)` (a checksum every 60 ticks) and `lockstep.flush()`. A phone
+  more than 2 ticks behind the other plays one extra update a frame. `onEnd` adds the `live` report.
+- **The lockstep** (`lockstep.js`, `ArcadeLockstep.create({ seat, delay, send })`): `local(action, value)` plays an
+  input at tick + delay (at most 6 a tick; an `aim`/`steer` that changes again before it is sent replaces the last);
+  `flush()` sends `{t: "in", seq, upto, ev: [[tick, action, value]], sum?}` — `upto` = the last tick this phone's
+  inputs are final for (a message never claims a tick whose inputs it doesn't carry); `receive(msg)` takes the other
+  phone's messages (a repeated `seq` is ignored, an early one waits for the ones before it), `ack`s, and `welcome` /
+  `error gap` (it sends again what the server doesn't have); `waiting(now)`, `behind()`, `finish()`.
+- **The shell** (`play.js`): a live mode has no Play button (Play with someone); the session gives the `seat`; the
+  link (`Together.liveLink`) carries the messages; pause and resume go to both phones; the server's `end` stops the
+  game (`stop()`).
+
+**Live turn-taking — as built for Carrom (wave 8).** A game whose players take turns live (each move is a single
+input event applied on both phones; no per-update stream is needed) registers `lockstep: "turns"` (the registry's
+`liveTurns`) and its live mode, and uses the same link, relay and checks. What was built (SPEC §13.4):
+
+- *Game file*: `impl.turn()` (the seat to shoot, −1 while a shot moves or the board is over), `impl.apply(player,
+  "shot", value)`, `impl.step()`, `impl.settledShots()` (shots that have stopped), `impl.nextSeat()` (1 or 2 after a
+  settled shot, 0 at the end), `impl.shots()`, `impl.checksum()`, `impl.report()`. Its own shot goes out with
+  `act("shot", [place, angle, power])` — never played directly.
+- *Kit*: each update, when `impl.turn() >= 0` it asks `lockstep.nextShot()` and applies it (or waits — the board
+  just stands still), then `step()`; when `settledShots()` grows it sends `report(k, checksum, nextSeat)`. No
+  catch-up updates (nothing to catch up between shots). The end report's `tick` is the shots played.
+- *Lockstep* (`ArcadeLockstep.createTurns({ seat, send })`): `local("shot", value)` sends `{t: "in", seq, upto: k, ev:
+  [[k, "shot", value]]}` once per shot number; `receive(msg)` keeps the server's shots by number (repeats and old
+  ones ignored; `timer: true` counted), `ack {late: true}` counted, `welcome` / `error gap` resend what wasn't
+  acknowledged; `nextShot()`; `report(k, sum, next)`; `stats` (sent, received, dup, resent, late, timer).
+- *Shell*: the count-in uses `createTurns` when `start.turns` is set; the bar and result card are a duel's; the 30 s
+  clock shows in the board's bottom line ("place the striker, pull back from it · 23 s", "Kabir's shot · 23 s").
+
+The plan it followed:
+
+- *Rules*: `turn(s)` → whose move it is (0 or 1) or −1 while a shot is still moving; `press(s, "shot", value,
+  player)` with `value` the shot packed into whole numbers (e.g. striker position, angle and power, each in its range
+  — the server's `live.actions` gives each its range; a list of up to 3 whole numbers is the planned value form);
+  `step(s)` runs the shot's fixed-point physics (whole numbers only, as above); `checksum(s)` after each shot; a 30 s
+  shot timer: the rules' `timeoutShot(s)` gives the weak shot the server plays for a player who doesn't move.
+- *Kit*: instead of asking the lockstep every update, the session steps freely while `turn(s) < 0` (a shot moving: no
+  inputs can matter) and waits only when it is a player's turn and their shot hasn't arrived; the mover's own shot
+  is `act("shot", value)`, sent at once as one `in` message whose `ev` is `[[shot number, "shot", value]]` and whose
+  `upto` is the shot number (`upto` counts shots, not updates).
+- *Relay* (`live.py`): the same `seq` ordering, numbering, `welcome` / `hello` replay, rate and size limits; for a
+  `turns` room `upto` is checked to grow by exactly one a shot and only from the player whose turn it is; `sum` is
+  `[shot number, checksum]` after each shot (the same comparison, out of step → no result); the server keeps a 30 s
+  timer per turn and, when it runs out, relays the `timeoutShot` on the player's behalf (an `in` it numbers itself).
+  Shots go into `match_moves` too (SPEC §13.6), so a phone that drops can catch up from them.
+- *Ending and results*: as for live duels (`report`, both must agree).
+
+## Wave 5 additions
+
+- The six games are single-player, have a level list played by one mode each (`level_kinds/<game>.py`) and are raced
+  (`games.py` `race: {"rule": "score"}`, also in `together.RACE_DEFAULT`): both phones get the same seed and level
+  list, so the same boards, gems, blocks, course, terrain and missiles. Lander's score includes half the fuel left,
+  so of two equal landings the one with more fuel wins.
+- **The same numbers on every browser.** A race only needs both phones to start the same, but the rules go further:
+  they use only `+ − × ÷` and `Math.floor/round/sqrt/abs/min/max/imul` (exact everywhere). Bubble Pop's aim and
+  Lander's thrust need sines; they are worked out once by their series (`dsin`, only `+ − × ÷`) rather than with
+  `Math.sin`, whose last digit may differ between engines. `wave5.test.js` plays every mode with
+  `Math.sin/cos/atan2/pow/random/…` and `Date.now` made to throw. (A finger's angle in Bubble Pop uses `Math.atan2` on
+  the phone, but it is rounded to tenths of a degree before it reaches the rules.)
+- Gentle modes for small children: Bubble Pop *Relaxed*, Tower Stack *Easy*, Runner *Easy*, Lander *Easy*, City
+  Defense *Easy*; Gem Swap *Zen* has no clock.
+
+## Wave 6 additions
+
+- The six games are single-player and raced from the seed. Slide Puzzle, Lights Out, Picture Logic, Tile Match and Code
+  Breaker make their boards, heaps, pictures and codes from the seed (no level list, like Sudoku: `level_modes` empty,
+  `unfinished_zero`); Type Rain has a stage list (`level_kinds/typerain.py`, mode `stages`).
+- How a race is decided (`games.py` `race`): Slide Puzzle and Lights Out `{"rule": "fastest", "tiebreak": "score"}` —
+  solved first wins, and of two solved in the same second the higher score (fewer moves); their own score ranks the fewest
+  moves on the leaderboard. Picture Logic and Tile Match `{"rule": "score"}` with 10,000 − the counted seconds (penalties
+  included, so hints aren't free in a race); Code Breaker `{"rule": "score"}` (fewer rows, then faster); Type Rain
+  `{"rule": "score", "tiebreak": "faster"}` (the same score: the shorter game, so more words a minute).
+- **The same numbers on every browser**: the rules use only `+ − × ÷` and `Math.floor/round/abs/min/max/imul`;
+  `wave6.test.js` makes every mode's board and plays it with `Math.sin/cos/pow/random/…` and `Date.now` made to throw.
+- A new registry action `shuffle` (Tile Match's button). Picture Logic, Tile Match, Code Breaker and Type Rain are `typed`
+  (letters and digits go to the game; Esc pauses). Type Rain and Code Breaker draw their own keys on the canvas for phones,
+  as Word Guess does.
+- Lights Out's **Hints** option is `offInRaces` with the default *Off*, so a race is always played without hints.
+- Gentle modes for small children: Slide Puzzle *Picture 3 × 3*, Lights Out *Little 3 × 3*, Picture Logic *5 × 5*, Tile Match
+  *Little*, Code Breaker *Little*, Type Rain *Little ones (letters)*.
+- Looks: every game draws in all six looks; the coarse looks get bigger number badges (Slide Puzzle), numbers in a box
+  instead of small shapes (Code Breaker), a layout measured with the pixel font (Picture Logic), and solid/outlined
+  marks instead of colour (Lights Out on and off, Code Breaker's dots and rings, Tile Match's selection).
+
+## Wave 7 additions — turn by turn
+
+- **Registration**: `turns: true`, `turnModes: ["phones"]`, `race: false`; no levels; `stateVersion` 1 (the two-phone
+  mode can't be saved: the session's `save` is undefined there).
+- **Logic** (from `BoardKit.game(R)`): `create({mode, seed, options, seat})`, `step`, `press(action, down)`,
+  `tap(target)`, `play(seat, move)` (phones: returns `send` instead of playing), `moves`, `legal`, `toMove`, `mySeat` (the
+  seat the person at this screen may move now, or −1), `score`, `result`, `save`/`restore`, `fromTurns(picture)` (the
+  board from the server: the moves replayed, or Sea Battle's `fromView`), `sync(old, picture)` → `{s, events}`
+  (keeping the cursor, Sea Battle's unsent arrangement, and an animation for the other's move), `digest`, and `R` (the
+  rules: `init`, `moves`, `apply`, `digest`, `bonus`, `ai(s, seat, level)`, cursor helpers, `tap`, optional `toMove`,
+  `legal`, `step`, `fromView`, `keep`, `passDelay`, `check`, `summary`).
+- **Drawing** (`BoardKit.session`): the two players at the top (a mark, the name, the count; a line under whose move it
+  is), the board (the game's `drawBoard`), the bottom line (whose move / the computer thinking / sending / waiting for
+  the other / what just happened), the end banner, "Pass to …". Pieces always differ by shape, not only colour: Four in
+  a Row's second disc has a ring, Checkers' light pieces a light middle and kings a star, Reversi's light discs a ring,
+  Dots and Boxes' boxes a round or a diamond mark, Sea Battle crosses and dots; Retro LCD solid and hollow.
+  `BoardKit.toneCi` picks "dark" and "light" piece colours that stay dark and light in every look (Modern's dark theme
+  swaps ink and paper).
+- **The same rules on both sides**: only `+ − × ÷` and exact `Math` functions; `tests/js/turns-fuzz.js` plays random
+  games with the JavaScript rules for `tests/test_wave7.py` to replay through the Python rules.
+
+## Wave 8 additions — dice, Carrom and Chess
+
+- **Registration**: Ludo and Snakes and Ladders `turns: true`, `turnModes: ["phones"]`, modes `cpu` (*You and the
+  computer*), `pass` (*One phone (pass and play)*), `phones` (*Phones (turn by turn, 2–4)*), options `players` 2/3/4
+  (Ludo 4, Snakes and Ladders 2 by default) and `fill` (*One phone: empty seats* — left empty, or the computer fills
+  them up to four); Snakes and Ladders also `board` (classic / gentle) and `finish` (any / exact), which are the
+  match's options from phones (the server's `OPTIONS`). Chess `turns: true` with wave 7's modes and the option
+  `side` (against the computer: White, Black, or either from the seed). Carrom `lockstep: "turns"`, `liveModes:
+  ["phones"]`. All `race: false`, no levels, `stateVersion` 1; the phone modes can't be saved.
+- **Dice from the server**: from phones the die is never rolled in the browser. Tapping the die (or Space) sends
+  `opts.turns.roll()` (play.js: `POST /api/matches/{id}/roll`), and the picture in the answer is drawn (with the
+  token's hop animated). On one phone the die comes from the seed (`rand(s)`), the same for a seed.
+- **Rule sets** (the server's and the browser's rules are the same, move for move):
+  - *Ludo*: 52-square track, 4 tokens each, a 6 to come out onto your start, clockwise then up your own 5-square
+    home column, home only with the exact roll; landing on other colours' tokens sends them all home except on the 8
+    safe squares (the four starts and the stars eight squares on); your own tokens may share; a 6 gives another roll,
+    a third 6 in a row loses the turn; a roll no token can use is passed; the first with all four home wins, the
+    rest placed by tokens home, then progress. Colours: 2 players red and yellow (opposite), 3 red, green, yellow, 4
+    all. The computer: capture, then home, then out of the yard, then into the home column or onto a safe square,
+    else the furthest token.
+  - *Snakes and Ladders*: 1–100, boustrophedon, everyone starts off the board; ladders up, snakes down (never
+    chained); no extra rolls; Finish *Reach 100* (passing it wins too — kind to small children) or *Exactly on 100*
+    (a roll that would pass it is lost). Two original boards: Classic (9 ladders, 10 snakes), Gentle (7 ladders, 6
+    short snakes, ≤ 12 squares). The board, ladders and snakes are drawn from shapes.
+  - *Carrom* (a common family rule set): 9 white, 9 black and the red queen; the first to shoot plays White and
+    breaks; pocketing your own coin or the queen gives another shot; the queen must be covered by one of yours in the
+    same or the next shot or it goes back; pocketing the striker is a foul (the shot's coins back, plus one of yours
+    as a penalty); your last coin can't go down while the queen is on the board; the side that pockets all nine wins
+    the board and scores the other side's coins left + 3 for the queen; a board still going after 300 shots ends on
+    points (coins pocketed, + 3 for a covered queen), equal points a draw. Doubles: four on one screen, partners
+    opposite, turns going round. Shot = `[place 0–1000, angle 100–1700 tenths of a degree (900 straight ahead), power
+    1–100]`. Physics: whole numbers (1/256 px, 4 sub-steps an update, exact integer division and square roots, a sine
+    table built from its series, no `Math.sin`/`random`), FNV-1a checksum. The computer tries cuts of each coin into
+    each pocket from seven places, the same off each cushion and a few seeded shots, on a copy, and keeps the best
+    (Easy 6 tried and aimed a little off, Medium 16, Hard 46; of shots that pocket nothing, the one leaving its coins
+    nearer the pockets).
+  - *Chess*: the FIDE moves and automatic draws (SPEC §13.5); promotion always asks (Queen, Rook, Bishop, Knight).
+    The engine: negamax alpha-beta, iterative deepening, quiescence, a transposition table with fixed Zobrist keys,
+    MVV-LVA / killer / history ordering, material + piece-square evaluation; strength by node budgets, never the clock,
+    so a position always gets the same move (Easy 2 plies choosing among moves within ~1.5 pawns, Medium 3 plies,
+    Hard up to 7 plies in 220,000 nodes, ≈ 1 s on a phone). It thinks in `chess-worker.js` (same origin, allowed by
+    the strict CSP); without a worker, on the page in a timer. Perft numbers (start position to depth 4, Kiwipete and
+    positions 3–5) pass in both languages.
+- **Looks**: tokens and pieces differ by shape as well as colour (Ludo red ●, green ■, yellow ▲, blue ◆; Carrom's
+  coins hollow / solid / dotted on Retro LCD; chess pieces drawn from shapes, Black's turned-round view at the bottom
+  for whoever plays Black); the die face is drawn light with dark pips in every look; the coarse looks (Pixel, Retro
+  LCD) get shorter status lines and names ("CPU 2").
+- **Agreement**: `tests/js/wave8-fuzz.js` plays random Ludo, Snakes and Ladders and Chess games with the JavaScript
+  rules for `tests/test_wave8.py` to replay through the Python rules (legal moves before each move, the state after).
 
 ## Start-screen options that stay off in races
 
@@ -416,6 +875,45 @@ entry. Nothing else in the kit or the shell changes.
   (also switching looks, reduce motion and size mid-game), dark Modern, pointer mapping, pause by
   input / hidden page / `pagehide`, 60 updates a second at 30–144 Hz, no fast-forward after a stall,
   end results, sound off by default, a throwing callback.
+
+- `wave5.test.js`: the six wave 5 games register (modes, controls, saving, a race); two phones with the same seed
+  (and the same level list) and the same keys and taps end identical in the default and the level-list mode; a
+  different seed differs; `status()`; the rules with engine-dependent maths made to throw. They are also in
+  `race.test.js`'s list of raced games and in `games.test.js`'s registry order. Each has its own
+  `<game>-logic.test.js` as above (rules, levels, determinism, save/restore, every look, honest scores, a fuzz run).
+
+- `wave6.test.js`: the six wave 6 games register (modes, controls, saving, a race, something gentle, typed); two phones with
+  the same seed (and Type Rain's stage list) and the same keys, typed keys and taps end identical in two modes each; a
+  different seed differs; `status()`; every mode made and played with engine-dependent maths made to throw. They are in
+  `race.test.js`'s list and `games.test.js`'s registry order, and each has its own `<game>-logic.test.js` (Slide Puzzle:
+  solvability against a search, solving trays through the game file; Lights Out: the fewest presses against trying every set;
+  Picture Logic: the line solver, one answer counted on 5 × 5; Tile Match: every deal's own order clears it; Code Breaker:
+  the feedback; Type Rain: the same words whatever the typing, runs, stages, honest scores with a perfect typist).
+
+- `live.test.js`: the lockstep, and for each live mode: deterministic rules without engine-dependent maths, the
+  checksum, honest scores for both players, two phones staying identical through a hostile fake relay (delays in any
+  order, duplicates, a dropped connection, different refresh rates), a divergence caught by the checksums, drawing
+  both seats in every look, turned-round inputs, the end report, and the browser's live link (SPEC §13.9).
+
+- `wave7.test.js`: the six wave 7 games register (modes, touch, turns, no race, options); first movers; the computer's
+  moves legal and the same for a seed at every level, the levels' strength (Hard beats Medium beats Easy; Tic-tac-toe's
+  Hard never loses); scores; each game's rules and taps (Checkers' taps finishing a multi-jump, the turned-round second
+  phone, Reversi's pass, Dots and Boxes' cursor, Sea Battle's placing); one screen's pass-the-phone; turn by turn (the
+  board from the server's moves, a move sent and not played, syncing, an end the server decided, Sea Battle from its
+  view with no other fleet); saving; a fuzz run; no engine-dependent maths; every mode in all six looks and a match from
+  a picture through the game file. `turns-fuzz.js` (not a test file): random games for the Python agreement test.
+
+- `wave8.test.js`: the four wave 8 games register (modes, touch, turns / live turns, options); DiceKit on one phone
+  (the computer, pass and play, filling seats), forced moves, the same game for a seed; Ludo's and Snakes and
+  Ladders' rules; dice from phones (a roll sent, never rolled here; the board from the server's moves); saving, honest
+  scores, every mode in every look; Chess perft, taps (castling, en passant, the promotion chooser, a refused move),
+  the engine (legal, deterministic, mates in one, within budget, Hard and Medium beating Easy), the worker's move the
+  same, a match from a picture; Carrom's whole-number physics bit for bit on two instances without engine-dependent
+  maths, its rules (fouls, the queen, the last coin, the 300-shot end), doubles, the computer's levels, the turn-taking
+  lockstep, two phones through a fake relay to the end, the timer shot, a changed game caught by the checksum, every
+  mode in every look. `wave8-fuzz.js` (not a test file): random games for the Python agreement test.
+- `backnav.test.js`: this app's copy of the shared back gesture — a link or notification changing the address is
+  followed, not taken as Back; Back still goes home or closes a dialog.
 
 `tests/js/helpers.js` loads the browser files into a small fake DOM (recording canvas contexts and a
 hand-driven `requestAnimationFrame`); `tests/js/index.js` lets `node --test tests/js` find the tests.

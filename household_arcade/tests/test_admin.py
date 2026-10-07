@@ -17,7 +17,7 @@ class TestAppSettings(ApiBase):
         self.assertEqual(body["values"], {
             "disabled_games": [], "default_look": "modern", "brick_powerups": True, "leaderboard": True,
             "school_days": [1, 2, 3, 4, 5], "limit_warnings": False, "limit_warning_admins": [],
-            "notify_records": False, "notify_invites": True, "ha_sensors": False, "keep_scores_years": 0,
+            "notify_records": False, "notify_invites": True, "notify_turns": True, "ha_sensors": False, "keep_scores_years": 0,
             "show_daily_challenges": False, "sudoku_hints": 3,
             "ai_levels_enabled": False, "ai_provider": "ollama", "ai_url": "", "ai_model": "", "ai_api_key": "",
             "ai_max_output_tokens": 4000, "ai_levels_auto": True, "ai_levels_ahead": 2, "ai_levels_batch": 5,
@@ -29,12 +29,12 @@ class TestAppSettings(ApiBase):
         self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
         self.assertEqual(body["meta"]["ai_api_key"]["kind"], "secret")
         self.assertEqual([g["id"] for g in body["groups"]], ["games", "looks", "children", "ha", "ai"])
-        self.assertEqual([g["id"] for g in body["games"]], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch"])   # only games that exist
+        self.assertEqual([g["id"] for g in body["games"]], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"])   # only games that exist
         self.assertEqual([a["id"] for a in body["admins"]], ["u_asha"])
 
     def test_validation_saves_nothing(self):
         for bad in ({"unknown": 1}, {"leaderboard": "yes"}, {"leaderboard": 1}, {"default_look": "sepia"},
-                    {"disabled_games": ["chess"]}, {"school_days": [9]}, {"keep_scores_years": 10},
+                    {"disabled_games": ["pinball"]}, {"school_days": [9]}, {"keep_scores_years": 10},
                     {"keep_scores_years": "1"}, {"ha_sensors": None}):
             r = self.put("/api/admin/settings", bad, ASHA)
             self.assertEqual(r.status_code, 422, bad)
@@ -54,7 +54,7 @@ class TestAppSettings(ApiBase):
     def test_game_switch_applies_at_once(self):
         self.play(100, game="brick", mode="classic")
         self.settings({"disabled_games": ["brick"]})
-        self.assertEqual([g["id"] for g in self.get("/api/games").json()["games"]], ["snake", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch"])
+        self.assertEqual([g["id"] for g in self.get("/api/games").json()["games"]], ["snake", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"])
         r = self.start("brick", "classic")
         self.assertEqual(r.status_code, 409)
         self.settings({"disabled_games": []})

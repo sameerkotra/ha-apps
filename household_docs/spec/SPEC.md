@@ -1110,6 +1110,17 @@ which keeps names and filters near the 300 ms target and FTS under 500 ms.
   drop on a computer (also files from the computer → upload). Files added outside the app show "added outside the app".
 - **Editors:** §1 and §8; header with name, save state ("Saved" / "Saving…" / "Offline — will retry"), Share, ⋯
   (History, Export, Copy, Move, Show where it's stored — the path under `/share`, Delete).
+  *(R2)* The header is **one line** for every kind (note, Markdown note, checklist, sheet), at every width: **←** · the
+  name (takes the rest of the line, cut with "…" when long; its tooltip is the full name, and it is still the Rename
+  button for editors — Rename is also in ⋯) · **Share** (only for people who may share; no gap when it's absent) ·
+  **⋯** ("More actions", the same menu as before, which also holds Share…). Under it one small line: the role chip
+  for someone else's document, where / who / when (cut with "…"), "X is editing", the save state. Keyboard order
+  ← · name · Share · ⋯. On a phone (≤ 760 px) the freed height goes to the editor: a note's text box reaches down to
+  the bottom bar (never shorter than before; refitted when the width changes, not when the keyboard opens) and the
+  sheet's grid is 46 px taller (`100dvh − 374px`). Measured with the same documents (editor area visible above the
+  bottom bar, before → after): 390×844 note 466 → 575, checklist 575 → 621, sheet 424 → 470, a viewer's note 466 →
+  611; 360×640 note 262 → 371, sheet 220 → 266. Desktop is the same one line (no change in height). Uploaded files
+  (PDFs, pictures…) open in the file panel, not the editor, and are unchanged.
 - **Search page** (§10). *(built, step 4)* The box (with a **?** of tips), a panel "Where to look, how to match,
   filters" (open on computers, folded on phones), the chips, then the results as a table on computers (name,
   location, modified, by, size, type, ⋯) and rows on phones, with tick boxes and the selection bar, sort / direction

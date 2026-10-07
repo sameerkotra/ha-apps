@@ -20,7 +20,7 @@ from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.7.1"
 
 _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")
 

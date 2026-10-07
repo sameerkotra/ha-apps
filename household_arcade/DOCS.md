@@ -51,17 +51,22 @@ a still picture of the game:
   one side, come back in the other), each at *Slow*, *Normal* or *Fast*, or
   *Maze* (a series of mazes, below).
   Brick Breaker: *Power-ups* or *Classic*. Falling Blocks: *Classic*, *Fast
-  start* or *Rising floor*. Paddle Duel: *Easy*, *Normal* or *Hard*. Lane
+  start* or *Rising floor*. Paddle Duel: *Easy*, *Normal* or *Hard* (or *Two
+  phones*, below). Lane
   Racer: *3 lanes*, *4 lanes* or *Rush*. Flap: *Easy*, *Normal* or *Moving
   gates*. Most games also have a mode that plays a **list of levels** (below:
-  *Challenges*, *Stages*, *Courses*, *Waves*, *Gardens* …); with AI levels on,
+  *Challenges*, *Stages*, *Courses*, *Waves*, *Gardens*, *Puzzles*, *Towers* …); with AI levels on,
   the list keeps growing. Every mode has its own bests and its own leaderboard.
 - **Look** (a drop-down) — how the game is drawn (see *Looks*). The picture
   behind changes as soon as you pick one, so you can see it before playing.
   Your choice is remembered.
 - **Practice** — play without saving the score.
 - **Play** — starts the game. For a child, the start screen also shows the
-  time left today.
+  time left today. A *Two phones* mode (Snake Duel, Paddle Duel, Tank Battle)
+  has no Play button: it is played with someone, each on their own phone —
+  **Play with someone** (see *Playing together live*). So have Carrom's *Two phones (live, taking turns)*, the
+  board games' and Chess's *Two phones (turn by turn)* and Ludo's and Snakes and Ladders' *Phones (turn by turn,
+  2–4)* (see *Playing turn by turn*).
 
 ### Snake
 
@@ -117,6 +122,12 @@ beat the last one and you've won. Every mode plays the list of opponents, each
 with its own speed, aim, serve and points to win (ten to start with; Easy,
 Normal and Hard make every opponent a little slower or quicker). The ball is
 served after a moment (Space or a tap serves at once).
+
+*Two phones* is two people, each on their own phone: each of you sees your own
+paddle at the bottom (the other phone shows the court turned round). First to 7
+points wins; a return scores 10, a point 100 and the match 1,000. The ball is
+served to whoever lost the last point, and they can serve it at once (Space or a
+tap).
 
 ### Lane Racer
 
@@ -209,6 +220,17 @@ tanks but shells fly over it, and tanks can hide in bushes. A hit costs a life
 lives left or when a shell hits the flag. Every mode plays the list of arenas;
 clearing the last one wins.
 
+Two tanks, each driven from its own phone: **Two phones · Together** — you both
+guard one flag against one and a half times as many enemies; each of you has
+your own lives, and a tank scores 100 for whoever hit it (an arena cleared 500
+for both). Your shells don't hurt each other. The game ends when the flag falls
+or you are both out of lives; the higher score wins the match. **Two phones ·
+Against each other** — no enemies: an arena of its own (the same seen from either
+side) with a flag each; your own flag is always at the bottom of your screen.
+Hit the other tank (100) or shoot their flag; a round is won by taking their
+flag or all their lives (300), the match by the first to win 2 rounds (500). A
+round lasts at most 2 minutes (then it's a draw) and a match at most 5 rounds.
+
 ### Sky Defenders
 
 A marching formation of little critters comes down from the sky. Move your
@@ -246,6 +268,8 @@ match. *Against the computer*: win a match to move on to the next arena —
 faster, more walls, a smarter opponent; lose one and the game is over; win the
 last arena to win the game. *Two players*: two people share one screen or
 keyboard for one match. The score is player 1's (green, the person signed in).
+*Two phones*: the same match with each of you on your own phone, steering your
+own snake (the one who invited is green); each of you gets your own score.
 
 ### Sudoku
 
@@ -255,7 +279,11 @@ fills one square (3 a puzzle, an admin can change that; unlimited in Practice). 
 get fewer clues. The start screen has **Show mistakes** (a wrong number turns red at once — it
 adds 10 seconds to your time) and **Number lines**: tap a number (on the pad or in the grid) and every
 square holding it is highlighted, and the rows, columns and boxes it covers get a soft shade; the empty
-squares left clear are the only places that number can still go. Your score is
+squares left clear are the only places that number can still go. Choose how much is shaded:
+**Rows, columns and boxes** (the usual), **Rows and columns only** (no box shading), or **None** (no shading
+at all — the squares holding the number and the square you picked are still highlighted). Your choice is
+remembered for you, and it's only how the board looks: it doesn't change your score, races, daily challenges
+or saved games. Your score is
 10,000 minus your time in seconds, with 30 seconds added for each hint, so the fastest finish ranks first.
 A puzzle you didn't finish scores nothing and isn't kept. A game can be saved and carried on later.
 
@@ -277,6 +305,237 @@ direction except on **Little ones**, where they only run right and down). **Litt
 (7 × 7, 5 words), **Kids** (9 × 9), **Everyone** (11 × 11) and **Puzzler** (13 × 13, 12 words).
 **Hint** shows one word to look for and costs 25 points. Each word is worth 100, with a bonus for
 finishing quickly.
+
+### Bubble Pop
+
+Coloured bubbles hang from the ceiling. Aim the launcher at the bottom and shoot: the bubble flies straight,
+bounces off the side walls and sticks where it touches. Three or more of a colour touching each other pop (10
+each), and any bubbles left hanging from nothing drop (20 each). The bubble you shoot and the next one (shown
+beside the launcher — swap them with ↓, C or a tap on it) are always colours still on the board. Every few shots
+the ceiling comes down a row (the dots beside the launcher count down); a bubble below the dashed line ends the
+game. Clearing the board scores 500 and brings the next one. Each colour also has its own small mark, so the
+colours can be told apart without colour too.
+
+**Classic** gets harder board by board; **Relaxed** is the gentle one for little ones (at most four colours,
+small boards, the ceiling only every 14 shots); **Puzzles** plays the list of puzzles (the last one wins);
+**Endless** pushes a new row in from the top instead of lowering the ceiling, and never ends until the bubbles
+come too low.
+
+### Gem Swap
+
+Swap two neighbouring gems to line up three or more of the same kind (each kind has its own shape as well as
+its colour). The line clears, the gems above fall and new ones drop in — and any new lines clear too, each one
+in a row worth more (up to five times). A swap that makes no line swaps back. Four in a line leaves a **line
+gem** (it clears its whole row or column when it goes), an L or T shape a **blast gem** (the 3 × 3 around it),
+and five in a line a **star** (swap it with any gem to clear every gem of that kind). Locked gems can't be moved
+until a line through them breaks the lock. When no move is left the board is shuffled. **Hint** shows a move.
+
+**Timed (90 s)** — as many points as you can in a minute and a half. **Moves (levels)** — each level asks for a
+number of points (and to break its locks) within a number of moves; moves left over score 50 each; the last
+level wins. **Zen** — no clock and no end: play as long as you like and end the game from the pause screen.
+
+### Tower Stack
+
+A block slides from side to side above your tower; drop it on the one below. Whatever hangs over the edge is
+cut off and falls, so the next block is only as wide as what was left. Line it up within a hair for a **perfect
+drop**: it keeps the full width, scores extra, and a run of three or more grows the block back a little. Each
+floor is a little faster. Missing the tower completely ends the game.
+
+**Classic**, **Fast**, **Easy (3 tries)** — wide and slow, and a miss only costs one of three tries: good for
+little ones — and **Towers**, a list of buildings with their own height, width and speed (3 tries for the whole
+list; finishing the last one wins).
+
+### Runner
+
+Your runner races to the right on their own. Jump over boxes and pits (hold the jump for a higher one — the
+tall boxes need it), duck under hanging bars, and jump or duck the fliers. Coins along the way are 10 each, and
+every 10 steps of ground is a point. It gets faster as you go. **Endless** has one life; **Easy** is slower with
+three lives; **Courses** plays a list of set courses (3 lives for the whole list; 100 for each finished, the
+last one wins). After a bump you get a moment to get going again.
+
+### Lander
+
+Bring the lander down gently on a landing pad. Gravity pulls it down; the engine pushes the way the lander
+points and uses fuel. Turn it with the left and right buttons and fire the engine to slow down. Land upright
+and slowly — the speeds at the top turn green when a landing would be safe — on one of the pads: the small
+ones (×3 to ×5) score more than the wide ones (×1, ×2). A landing scores the pad × 100 plus half the fuel left,
+and the next level comes. Anything else is a crash and costs one of 3 landers (that level again). Out of fuel,
+the lander just falls. Some levels have wind.
+
+**Classic** gets harder level by level; **Easy** has lighter gravity, wide pads, no wind and plenty of fuel;
+**Levels** plays the list of levels (the last one wins).
+
+### City Defense
+
+Missiles fall toward your six cities and three bases. Tap the sky where an interceptor should burst: the
+nearest base with ammo fires it, and its cloud stops every missile inside it (25 each). Aim a little ahead of
+the missiles. Some split into three on the way down, and fliers cross the sky dropping missiles of their own
+(100). Each base has a few shots a wave, and a base that is hit is out until the next wave. When a wave is over,
+each shot left is worth 5 and each city still standing 100; every third wave a lost city is rebuilt. The game
+ends when no city is left.
+
+**Classic**, **Easy** (slower and fewer missiles, more shots) and **Waves** (a list of waves; the last one
+wins).
+
+### Slide Puzzle
+
+Put the tiles back in order — 1, 2, 3 … with the gap at the bottom right. Tap a tile in the gap's row or column
+to slide it (and the tiles between) into the gap, or swipe; the arrow keys slide the tile next to the gap that way.
+**3 × 3**, **4 × 4** and **5 × 5** have numbers; **Picture 3 × 3** (the gentle one for little ones) and **Picture
+4 × 4** show a picture cut into pieces — a house, a boat, a rocket, a flower, a fish or a balloon — with small numbers
+in the corners to help (the start screen's **Numbers on picture tiles** turns them off). Hold **👁 Peek** (or C) to see
+how it should look. Every shuffle can be solved. Each tile moved is a move: your score is 10,000 minus your moves,
+so the fewest moves rank first. A tray you didn't finish scores nothing.
+
+### Lights Out
+
+Switch every light off. Pressing a light switches it and its four neighbours — lit ones off, dark ones on. Tap a
+light, or move the ring with the arrows and press Space. **Little 3 × 3** is the gentle one, then **5 × 5** and
+**7 × 7**; **Climb** plays five boards from 3 × 3 up to 7 × 7. Every board can be solved, and when it's done the game
+tells you the fewest presses it could have taken. Your score is 10,000 minus your presses. With **Hints** turned on
+(start screen), **💡 Hint** (or C) rings a light to press; each one costs 5 points. Races are always played without
+hints.
+
+### Picture Logic
+
+Fill squares to find a hidden picture. The numbers beside each row and above each column are its runs of filled
+squares, in order: "3 1" means three filled squares, a gap of at least one, then one more. Tap a square to fill it,
+tap again to empty it, and drag to fill a line. **■ / ✕** switches your taps to crosses — your own notes for squares
+that stay empty. The numbers of a line dim once it's right. Every puzzle has exactly one answer and can be worked out
+from the numbers alone, without guessing (now and then a square or two are given at the start, marked with a dot).
+**5 × 5** is the gentle one; **8 × 8**, **10 × 10** and **15 × 15** are bigger. The start screen's **Mistakes** choice
+works as in Sudoku: shown at once (the square is put right, +10 seconds) or only when the grid has as many filled
+squares as the answer. **Hint** puts one square right (+30 seconds, 3 a puzzle); **Undo** takes back your last stroke.
+Your score is 10,000 minus your time in seconds with the extra seconds added, so the fastest finish ranks first.
+
+### Tile Match
+
+Clear the heap two tiles at a time: tap two **free** tiles with the same symbol (the same number and the same small
+shape under it) and they go. A tile is free when nothing lies on it and its left or right side is open; tiles that
+aren't free are a little dimmer. Every deal can be cleared. **Hint** shows a pair (+15 seconds), **Shuffle** deals
+the tiles left again so they can still be cleared (+30 seconds) and **Undo** puts the last pair back. **Little** (20
+tiles with plain shapes, for little ones), **Classic** (72 tiles) and **Big heap** (104). Your score is 10,000 minus
+your time in seconds with the extra seconds added.
+
+### Code Breaker
+
+Find the hidden code. Fill a row with symbols — tap them, or type their numbers — and press **Check** (Enter). A
+**solid dot** means one symbol is right and in the right place; a **hollow ring** means one is in the code but
+somewhere else. Tap a placed symbol (or press Backspace) to take it out. Every symbol has its own number and shape as
+well as its colour, so the colours never have to be told apart. **Little** (3 symbols from 4, no repeats, 8 rows) is
+the gentle one; **Classic** (4 from 6, repeats allowed, 10 rows), **No repeats** (4 from 6) and **Master** (5 from 8,
+12 rows). Score: 1,000 for each row left (plus one) and up to 999 for speed — fewer rows rank first, then the faster
+time. A code you didn't crack scores nothing (the code is shown).
+
+### Type Rain
+
+Words fall from the sky: type each one before it lands. The first letter you type picks the lowest word that starts
+with it; then type the rest of its letters (the key for the next one lights up). A wrong letter is a slip; Backspace
+lets go of a word. A word scores 10 a letter, doubled after 10 words in a row without a slip and tripled after 25.
+A word that lands costs one of your raindrops (lives). Type on a keyboard, or tap the keys drawn on the game on a
+phone. **Little ones** drops single letters slowly, with 5 raindrops; **Easy** has short words; **Classic** gets
+faster and the words longer every 20 seconds; **Stages** plays a list of stages (200 for each one cleared; the last
+one wins).
+
+### Board games: Four in a Row, Tic-tac-toe, Checkers, Reversi, Dots and Boxes, Sea Battle
+
+Six games for two, each played three ways (the **Mode** on the start screen):
+
+- **Computer · Easy (gentle)**, **Medium** or **Hard** — you against the app, and you always move first. Hard is
+  strong (in Tic-tac-toe it never loses, so a draw against it is a good result).
+- **Two players (one screen)** — take turns on one phone or computer. Nothing is saved.
+- **Two phones (turn by turn)** — with someone else in the household, each on your own phone; you don't need to be
+  online at the same time (next section *Playing turn by turn*).
+
+Tap where you want to play, or move the cursor with the arrows and press **Space** (a controller: the d-pad and A).
+The two players are named at the top (with their discs, pieces or boxes so far); a line under one shows whose move
+it is, and the line at the bottom says what's happening. Pieces always differ by shape as well as colour.
+
+- **Four in a Row** — drop discs into the frame; four in a row across, up and down or slanting wins. Tap a column
+  (or ← → and Space or ↓).
+- **Tic-tac-toe** — three in a row on a 3 × 3 grid. ✕ goes first.
+- **Checkers** — English draughts: men move one square diagonally forward, reaching the far row crowns a king (★,
+  moves both ways); jumping is compulsory, and a jump that can carry on must carry on (multi-jumps); you may choose
+  which capture when there are several. Take all the other's pieces, or leave them no move, to win; 40 moves each
+  without a capture or a man moving is a draw. Tap a piece (dots show where it can go), then the square; a
+  multi-jump finishes by itself when there's only one way on, otherwise tap each landing square. C lets go of a
+  piece. On the second phone of a match the board is turned round so your pieces are at the bottom.
+- **Reversi** — place a disc to trap a line of the other's discs, which turn over. Dots show where you may play; a
+  player with nowhere to play passes automatically. When neither can play, more discs wins.
+- **Dots and Boxes** — draw a line between two dots next to each other; drawing a box's fourth side claims it and
+  you draw again. More boxes wins. **Size** on the start screen: 3 × 3, 4 × 4 or 5 × 5 boxes.
+- **Sea Battle** — place your fleet (it starts arranged at random: tap a ship to pick it, again to turn it, tap a
+  square to move it; **Shuffle**, then **Ready**), then take turns firing at the other's hidden sea: a cross is a
+  hit, a dot a miss, a sunk ship is outlined. Sink the whole fleet to win. Your own sea is the small one at the
+  bottom. **Fleet** on the start screen: *Classic* 10 × 10 with five ships or *Small* 8 × 8 with four. On one screen,
+  a "Pass to …" screen hides the seas between turns — hand the phone over and tap when ready.
+
+Score (against the computer and from two phones): a win scores 100 (Easy), 250 (Medium) or 500 (Hard, and against
+a person), plus a bonus for how well you won (empty places left, pieces or discs or boxes more than the other, your
+fleet unhit), at most as much again; a draw scores a quarter; a loss isn't saved. Each mode has its own leaderboard.
+Games against the computer and on one screen can be saved for later.
+
+### Ludo and Snakes and Ladders
+
+Dice games for 2 to 4 players, each played three ways (the **Mode**):
+
+- **You and the computer** — you against one to three computer players (**Players** on the start screen).
+- **One phone (pass and play)** — everyone on one phone or computer, taking turns; with **One phone: empty seats**
+  set to *The computer fills them*, the computer plays the seats up to four. Nothing is saved.
+- **Phones (turn by turn, 2–4)** — with up to three others in the household, each on your own phone, whenever suits
+  you (see *Playing turn by turn*). The app rolls the die for whoever's turn it is: nobody can choose or re-roll.
+
+Tap the die (or press **Space**) to roll. When the roll leaves no choice (no token can move, or only one way to
+move), the move is made for you.
+
+- **Ludo** — get all four of your tokens home first. A **6** brings a token out of your yard onto your start square
+  and gives you another roll (three 6s in a row lose the turn). Tokens go round the board clockwise, then up your own
+  coloured column; home needs the exact roll. Landing on other players' tokens sends them back to their yards —
+  except on the starred squares and the start squares, which are safe. Your own tokens may share a square. Tap one
+  of your ringed tokens to move it (or the arrows and Space). Tokens differ by shape as well as colour: red ●,
+  green ■, yellow ▲, blue ◆.
+- **Snakes and Ladders** — race to square 100: a ladder's foot takes you up, a snake's head slides you down. Your
+  token moves by itself. **Board**: *Classic* or *Gentle* (short snakes, for small children). **Finish**: *Reach 100*
+  (passing it wins too) or *Exactly on 100* (a roll that would go past is lost).
+
+Score: winning against the computer scores 100 for each computer player in Ludo (100 in Snakes and Ladders), from
+phones 500, plus a bonus (Ludo: the others' tokens not home; Snakes and Ladders: how far the nearest other player
+still had to go), at most as much again; a loss isn't saved. Games against the computer and on one phone can be
+saved for later.
+
+### Carrom
+
+Flick the striker to knock your coins into the four corner pockets. The **Mode**: **Computer · Easy (gentle)**,
+**Medium** or **Hard**; **Two players (one screen)**; **Doubles** (four players in two teams on one screen, partners
+opposite); and **Two phones (live, taking turns)** with someone else, each on your own phone at the same time (see
+*Playing together live*).
+
+- **Shooting**: drag the striker along your baseline to place it, then pull back from it like a catapult — the line
+  shows where it will go and how hard — and let go. Keys: ← → place it, ↑ ↓ aim, hold **Space** for power (it rises
+  and falls) and let go to shoot; **C** sets the aim straight again. A controller: the d-pad and A.
+- **The rules** (a common family set): the first player plays White and breaks. Pocketing one of your coins (or the
+  red queen) gives you another shot. The queen must be **covered**: pocket one of yours in the same or your next
+  shot, or the queen goes back to the middle. Pocketing the striker is a **foul**: the shot's coins come back, and so
+  does one of yours already pocketed. Your last coin can't go down while the queen is still on the board. The first
+  to pocket all nine of their coins wins the board, with a point for each of the other's coins left and 3 for the
+  queen. A board still going after 300 shots ends there, on the coins pocketed.
+- **Two phones**: the second phone sees the board turned round, so your baseline is always at the bottom. You have
+  30 seconds a shot (shown under the board); after that a gentle shot is played for you.
+
+Score: a win scores 100 (Easy), 250 (Medium) or 500 (Hard, and against a person), plus 20 a point, at most as much
+again; a board on one screen, a loss, or a board ended early isn't saved.
+
+### Chess
+
+Chess with all the rules: castling, en passant, promotion (you choose Queen, Rook, Bishop or Knight), check,
+checkmate and stalemate; draws by the same position three times, 50 moves each without a capture or a pawn move,
+and too few pieces to mate come by themselves. The **Mode**: **Computer · Easy (gentle)**, **Medium** or **Hard**
+(it thinks for up to a second or two), **Two players (one screen)**, or **Two phones (turn by turn)** (see *Playing
+turn by turn*). Against the computer, **Against the computer, play** picks White, Black or either.
+
+Tap a piece (dots show where it can go), then its square; or the arrows and Space, **C** to let go. The last move is
+marked and a king in check is ringed. Playing Black, the board is turned round so your pieces are at the bottom.
+Score as for the board games above (a win 100 / 250 / 500 plus 10 a point of material left; a draw a quarter).
 
 ### Daily challenges
 
@@ -303,11 +562,28 @@ the scores.
 | Memory Cards | Arrows move the ring, Space turns a card | Tap a card |
 | Tap the Mole | Arrows move the ring, Space bonks | Tap a mole |
 | Number Dash | ↑ ← → ↓ pick the answer in that direction | Tap an answer |
-| Tank Battle | Arrow keys drive, Space fires | The arrow buttons and **Fire** |
+| Tank Battle | Arrow keys drive, Space fires | The arrow buttons and **Fire**, or hold a finger on the game to drive toward it and tap your tank to fire |
 | Sky Defenders | ← → move, Space fires (hold to keep firing) | Drag on the game to move, tap to fire, or ◀ ▶ and **Fire** |
 | Rocks | ← → turn, ↑ thrust, Space fires | ⟲ ⟳ ▲ and **Fire**; a tap on the game fires |
 | Road Hop | Arrow keys (or W A S D) hop, Space hops forward | Swipe, tap to hop forward, or the arrow pad |
-| Snake Duel | Green: arrow keys; blue: W A S D | Swipe on the right half for green, the left half for blue |
+| Snake Duel | Green: arrow keys; blue: W A S D (*Two phones*: the arrows or W A S D steer your own snake) | Swipe on the right half for green, the left half for blue (*Two phones*: swipe anywhere) |
+| Bubble Pop | ← → aim, Space or ↑ shoots, ↓ or C swaps in the next bubble | Drag on the game (or the strip below it) to aim, let go to shoot, or **Shoot**; tap the next bubble to swap |
+| Gem Swap | Arrows move the ring, Space picks a gem up, then an arrow swaps it; C shows a move | Tap a gem and then its neighbour, or drag a gem toward the one to swap with; **Hint** |
+| Tower Stack | Space, ↑ or ↓ drops the block | Tap the game, or **Drop** |
+| Runner | Space or ↑ jumps (hold for higher), ↓ ducks | Tap the game to jump (hold for higher), drag down to duck; or **▲ Jump** and **▼ Duck** |
+| Lander | ← → turn, ↑ or Space fires the engine | ⟲ ⟳ and **▲ Engine**; or hold a finger on the game for the engine |
+| City Defense | Arrows move the crosshair, Space fires | Tap the sky where the interceptor should burst |
+| Slide Puzzle | Arrow keys slide the tile next to the gap; hold C to peek | Tap a tile or swipe; hold **👁 Peek** |
+| Lights Out | Arrows move the ring, Space presses; C hint (when hints are on) | Tap a light; **💡 Hint** |
+| Picture Logic | Arrows move the ring, Space fills, X crosses, M switches fill / cross, H hint, U undo | Tap or drag; **■ / ✕**, **💡 Hint**, **↶ Undo** |
+| Tile Match | Arrows move the ring, Space picks; H (or C) hint, S shuffle, U undo | Tap two tiles; **💡 Hint**, **🔀 Shuffle**, **↶ Undo** |
+| Code Breaker | 1–8 place a symbol, Enter checks, Backspace takes one out | Tap the symbols, **Check** and **Delete**; tap a placed symbol to take it out |
+| Type Rain | Type the letters; Backspace lets go of a word | Tap the keys on the game |
+| Four in a Row | ← → pick the column, Space or ↓ drops | Tap a column |
+| Tic-tac-toe, Reversi | Arrows move the cursor, Space plays | Tap a square |
+| Checkers | Arrows move the cursor, Space picks a piece and then where it goes; C lets go | Tap a piece, then where it goes |
+| Dots and Boxes | ← → move the dashed line along, ↑ ↓ to the lines that cross; Space draws it | Tap between two dots |
+| Sea Battle | Arrows move over the sea (and, while placing, down to Shuffle / Turn / Ready); Space acts; C turns the picked ship | Tap a ship, a square or a button; tap their sea to fire |
 | Pause / resume | P or Esc | The ⏸ button at the top |
 
 The arrow keys and Space only belong to the game while a game is on screen, so
@@ -391,10 +667,21 @@ Game by game:
 | Sky Defenders | ← → move | Fire (hold to keep firing) | — |
 | Rocks | ← → turn, ↑ thrust | Fire | — |
 | Snake Duel | Steer your snake | — | — |
+| Bubble Pop | ← → aim | Shoot | Swap in the next bubble |
+| Gem Swap | Move the ring (then: swap that way) | Pick up a gem | Show a move |
+| Tower Stack | — | Drop | — |
+| Runner | ↑ jump, ↓ duck | Jump (hold for higher) | — |
+| Lander | ← → turn, ↑ engine | Engine | — |
+| City Defense | Move the crosshair | Fire | — |
+| Slide Puzzle | Slide the tile next to the gap | — | Peek (hold) |
+| Lights Out, Picture Logic, Tile Match | Move the ring | Press / fill / pick | Hint (Lights Out, Tile Match), cross (Picture Logic) |
+| Code Breaker | ← → pick a symbol, ↑ check, ↓ delete | Place the symbol | Delete |
+| Type Rain | Move a ring over the keys drawn on the game | Type the ringed key | Let go of a word |
 
 **Two controllers**: in Snake Duel (*Two players*) the controller connected
 first steers green (player 1) and the second one blue (player 2). In every other
-game any connected controller plays.
+game — and in the *Two phones* modes, where each phone has its own player — any
+connected controller plays.
 
 **If the controller isn't noticed**
 
@@ -449,7 +736,7 @@ same sums), at the same moment, each on their own phone or computer. The better 
 3. When they join, both phones count in 3, 2, 1 and play. A bar above the game shows the other player's score,
    level and whether they are still playing (a green dot: the phones are connected). When one of you is done
    first, you keep playing; the bar shows "finished in 6:12" and the result card waits for the other.
-4. When both have finished you see both results side by side and who won (or a draw). For Sudoku and Word Guess
+4. When both have finished you see both results side by side and who won (or a draw). For the puzzles (Sudoku, Word Guess and the wave 6 puzzles)
    the card also says how your game went ("Found SMALL in 3 tries of 6"), and a puzzle you didn't solve shows
    **Not solved — scores 0**. Each score is also saved
    as a normal game for each of you (unless it was Practice). **Rematch** sends a new invite the other can accept
@@ -468,10 +755,87 @@ Good to know:
   minutes while you finish, you win.
 - A race can't be saved for later. Pausing pauses only your own game (the other player sees "paused").
 - Racing is offered for Snake, Brick Breaker, Falling Blocks, Lane Racer, Flap, Mines, Merge, Colour Memory,
-  Memory Cards, Tap the Mole, Number Dash, Sky Defenders, Rocks and Road Hop. The two-player games are for one
-  screen (live play on two phones is planned).
+  Memory Cards, Tap the Mole, Number Dash, Sky Defenders, Rocks, Road Hop, Sudoku, Word Guess, Word Search,
+  Bubble Pop, Gem Swap, Tower Stack, Runner, Lander and City Defense (the same boards, gems, blocks, course,
+  ground or missiles on both phones; in Lander fuel left counts in the score, so of two landings the one with more
+  fuel left wins), and Slide Puzzle, Lights Out, Picture Logic, Tile Match, Code Breaker and Type Rain (the same tray,
+  board, picture, heap, code or falling words). In Slide Puzzle and Lights Out the first to solve wins (finished in
+  the same second: fewer moves); Picture Logic and Tile Match go by the score (the time with hints and shuffles
+  added); Code Breaker by fewer rows, then time; Type Rain by the score, and the same score goes to the quicker
+  typist. Snake Duel, Paddle Duel and Tank
+  Battle are played against each other live instead (next section).
 - An admin can turn the phone notification off with **Invites by phone notification** in **App settings**;
   everyone can also turn off **Receive notifications** on Settings. The pop-up and the Games page card stay.
+
+### Playing together live (two phones)
+
+Snake Duel, Paddle Duel and Tank Battle have **Two phones** modes: one game, played live by two people at the
+same moment, each on their own phone (Snake Duel and Paddle Duel: against each other; Tank Battle: *Together*
+against the enemies, or *Against each other*). Carrom's **Two phones (live, taking turns)** works the same way,
+except that you take turns: each shot is sent to both phones and played the same on both, and you have 30 seconds
+for a shot.
+
+1. On the game's start screen pick the *Two phones* mode (Tank Battle: *Together* or *Against each other*) and
+   tap **Play with someone**; the invite, the notification with **Join** / **Not now**, **Waiting for you** and
+   **Cancel** work as for a race.
+2. When they join, both phones get ready and count in 3, 2, 1 together. Each of you plays your own snake,
+   paddle or tank with your phone's usual controls (keys, buttons, swipes or a controller). The bar at the top
+   shows the other player's name, their score and how it's going.
+3. Both phones play exactly the same game. If the other phone's moves are late, your game waits a moment
+   ("waiting…" on the bar). If their phone goes quiet for 10 seconds both games pause ("Waiting for Kabir…") and
+   go on by themselves when it's back; after a minute without it, you win. A short drop of the connection (a
+   tunnel, a Wi-Fi hiccup) just picks up again.
+4. **Pause** pauses both phones; either of you can **Resume** (a pause lasts at most 5 minutes). **Give up** —
+   or leaving the game page — ends the match and the other player wins; your score so far still counts.
+5. At the end both phones show both scores and who won; each score is saved for each of you as a normal game in
+   that mode (unless it was Practice), and the win, loss or draw counts in **Against others**. **Rematch**
+   works as for a race.
+
+Good to know:
+
+- If the two phones ever disagreed about the game (that shouldn't happen), the match ends **Out of step — no
+  result**, and nothing is saved.
+- A child's limits apply: they need play time left and no quiet hours to join, their time counts as for any
+  game, and if their time runs out (or their quiet hours begin) in the middle, the match ends for both as a draw
+  and both scores so far are kept.
+- A live game can't be saved for later. The *Two phones* modes can't be played alone.
+- The link is a WebSocket through Home Assistant (it reconnects by itself), or, if the network doesn't allow
+  WebSockets, ordinary requests — then the game may wait a little more often.
+
+### Playing turn by turn (two phones)
+
+The board games' and Chess's **Two phones (turn by turn)** mode, and Ludo's and Snakes and Ladders' **Phones (turn
+by turn, 2–4)**: you and others in the household play one game, each on your own phone, taking turns — whenever
+suits you. A game can last minutes or days.
+
+- **Ludo and Snakes and Ladders**: tick up to three people in **Play with someone**. The game starts when everyone
+  has joined — or the one who invited can tap **Start with 2** (or 3) to begin with those who have. The app rolls the
+  die. If someone resigns, the computer plays their tokens to the end (🤖 next to their name); the best-placed
+  person still playing wins.
+
+1. On the game's start screen pick **Two phones (turn by turn)** (and the Size or Fleet), tap **Play with
+   someone** and pick a person. They get the invite as for a race (notification, pop-up, **Waiting for you**); a
+   turn-by-turn invite lasts **7 days**. You don't have to wait on the page: **Back to games**.
+2. When they join, the game starts; who moves first is chosen at random. The one whose move it is gets a phone
+   notification "Your move in Four in a Row against Asha" (tap it to open the game). The **Games** page has
+   **Your games**: every match going on, whose move it is and when the last move was — tap **Play** or **Open**.
+3. Make your move; it goes to the app, which checks it (an illegal move, or one from the wrong phone, is refused)
+   and tells the other player. If they have the game open too, their board updates within a moment.
+4. Pause offers **Back to games (the match waits)** and **Resign** (the other player wins). If a player doesn't move
+   for 7 days, the match ends and they lose.
+5. At the end both see who won; each player's score is saved as a game of the *Two phones* mode (not Practice; a
+   loss isn't saved), the result counts in **Against others**, and **Rematch** invites again.
+
+Good to know:
+
+- You can have several turn-by-turn games going at once, and they don't stop you playing anything else or racing.
+- Sea Battle's fleets stay on the app: your phone never gets the other player's ships — only where your shots hit
+  or missed and which ships sank — until the game is over.
+- Children: every move checks their limits — a game that isn't one of theirs, quiet hours or no play time left
+  means they can see the board but not move until they may. The time spent on the game's page counts as play time,
+  whoever's move it is. They aren't sent your-move notifications during their quiet hours (it comes afterwards).
+- Your-move notifications come at most once every 15 minutes per game. An admin can turn them off with
+  **Your-move notifications** in App settings; everyone can turn off **Receive notifications** on Settings.
 
 ### Looks and sound
 
@@ -594,9 +958,11 @@ A number out of range is flagged at the field before anything is saved.
 
 ### AI levels
 
-Every game has a list of levels — Brick Breaker's layouts, Snake's mazes,
-Flap's courses, Tank Battle's arenas, Number Dash's challenges and so on — that
-starts with built-in levels. With **AI levels** on, an AI model makes more, so
+Most games have a list of levels — Brick Breaker's layouts, Snake's mazes,
+Flap's courses, Tank Battle's arenas, Number Dash's challenges, Type Rain's
+stages and so on — that starts with built-in levels (the puzzle and word games —
+Sudoku, Word Guess, Word Search, Slide Puzzle, Lights Out, Picture Logic, Tile
+Match and Code Breaker — make a fresh puzzle each game instead). With **AI levels** on, an AI model makes more, so
 the games keep going:
 
 - **Provider, Address, Model, Access key** — the same settings as Finance
@@ -694,6 +1060,10 @@ child's time is nearly up. Turning the switch off marks them unavailable.
 **Notify new records** sends "Asha set a new Snake record: 1,240" to everyone
 else who hasn't turned off **Receive notifications** on their Settings.
 
+**Your-move notifications** (on by default) sends "Your move in Checkers against Asha" to the player whose move it
+is in a turn-by-turn game, with an **Open** button, at most once every 15 minutes per game and never in a child's
+quiet hours (it is sent when they end). It follows the person's **Receive notifications** choice too.
+
 **Invites by phone notification** (on by default) sends "Asha challenges you to Lane Racer" to the person
 invited to play together, with **Join** and **Not now** buttons that open the app (when the app knows its panel
 path in Home Assistant). It follows the person's **Receive notifications** choice too.
@@ -727,6 +1097,9 @@ plus any extra services an admin adds on **Admin → Users**.
   say why they can't play now.
 - **The other phone's score doesn't move** — the bar's dot is grey when that phone has gone quiet. Races still
   work when your network blocks WebSockets; they just check in more often.
+- **A two-phone game keeps stopping ("waiting…")** — the other phone's moves are arriving late: a weak Wi-Fi
+  signal or a slow connection from away. Moving nearer the Wi-Fi helps; the game always waits rather than letting
+  the two phones disagree.
 - **A child can't start a game** — the start screen says why: no time left
   today, or quiet hours. An admin can add extra time on **Admin → Users** or
   from **Games**.

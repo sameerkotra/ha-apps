@@ -7,10 +7,10 @@
 <title>Household Arcade</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8E%AE%3C/text%3E%3C/svg%3E">
 <!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
-<script src="common/theme-boot.js?v=1.6.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=1.6.1">
-<link rel="stylesheet" href="common/settings.css?v=1.6.1">
-<link rel="stylesheet" href="style.css?v=1.6.1">
+<script src="common/theme-boot.js?v=1.7.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.7.1">
+<link rel="stylesheet" href="common/settings.css?v=1.7.1">
+<link rel="stylesheet" href="style.css?v=1.7.1">
 </head>
 <body>
 <div id="app">
@@ -53,60 +53,108 @@
 <div id="modalRoot"></div>
 <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-<script src="common/ui.js?v=1.6.1"></script>
-<script src="common/settings.js?v=1.6.1"></script>
-<script src="common/people.js?v=1.6.1"></script>
-<script src="common/backnav.js?v=1.6.1"></script>
-<script src="common/whoami.js?v=1.6.1"></script>
+<script src="common/ui.js?v=1.7.1"></script>
+<script src="common/settings.js?v=1.7.1"></script>
+<script src="common/people.js?v=1.7.1"></script>
+<script src="common/backnav.js?v=1.7.1"></script>
+<script src="common/whoami.js?v=1.7.1"></script>
 <!-- The games (static/games/): looks kit, sound, registry, then each game's rules and drawing. -->
-<script src="games/kit.js?v=1.6.1"></script>
-<script src="games/sound.js?v=1.6.1"></script>
-<script src="games/registry.js?v=1.6.1"></script>
-<script src="games/snake-logic.js?v=1.6.1"></script>
-<script src="games/snake.js?v=1.6.1"></script>
-<script src="games/brick-logic.js?v=1.6.1"></script>
-<script src="games/brick.js?v=1.6.1"></script>
-<script src="games/blocks-logic.js?v=1.6.1"></script>
-<script src="games/blocks.js?v=1.6.1"></script>
-<script src="games/duel-logic.js?v=1.6.1"></script>
-<script src="games/duel.js?v=1.6.1"></script>
-<script src="games/racer-logic.js?v=1.6.1"></script>
-<script src="games/racer.js?v=1.6.1"></script>
-<script src="games/flap-logic.js?v=1.6.1"></script>
-<script src="games/flap.js?v=1.6.1"></script>
-<script src="games/mines-logic.js?v=1.6.1"></script>
-<script src="games/mines.js?v=1.6.1"></script>
-<script src="games/merge-logic.js?v=1.6.1"></script>
-<script src="games/merge.js?v=1.6.1"></script>
-<script src="games/colours-logic.js?v=1.6.1"></script>
-<script src="games/colours.js?v=1.6.1"></script>
-<script src="games/cards-logic.js?v=1.6.1"></script>
-<script src="games/cards.js?v=1.6.1"></script>
-<script src="games/mole-logic.js?v=1.6.1"></script>
-<script src="games/mole.js?v=1.6.1"></script>
-<script src="games/numbers-logic.js?v=1.6.1"></script>
-<script src="games/numbers.js?v=1.6.1"></script>
-<script src="games/tanks-logic.js?v=1.6.1"></script>
-<script src="games/tanks.js?v=1.6.1"></script>
-<script src="games/invaders-logic.js?v=1.6.1"></script>
-<script src="games/invaders.js?v=1.6.1"></script>
-<script src="games/rocks-logic.js?v=1.6.1"></script>
-<script src="games/rocks.js?v=1.6.1"></script>
-<script src="games/hop-logic.js?v=1.6.1"></script>
-<script src="games/hop.js?v=1.6.1"></script>
-<script src="games/snakeduel-logic.js?v=1.6.1"></script>
-<script src="games/snakeduel.js?v=1.6.1"></script>
-<script src="games/sudoku-logic.js?v=1.6.1"></script>
-<script src="games/sudoku.js?v=1.6.1"></script>
-<script src="games/wordguess-words.js?v=1.6.1"></script>
-<script src="games/wordguess-logic.js?v=1.6.1"></script>
-<script src="games/wordguess.js?v=1.6.1"></script>
-<script src="games/wordsearch-words.js?v=1.6.1"></script>
-<script src="games/wordsearch-logic.js?v=1.6.1"></script>
-<script src="games/wordsearch.js?v=1.6.1"></script>
-<script src="app.js?v=1.6.1"></script>
-<script src="play.js?v=1.6.1"></script>
-<script src="admin.js?v=1.6.1"></script>
-<script src="together.js?v=1.6.1"></script>
+<script src="games/kit.js?v=1.7.1"></script>
+<script src="games/sound.js?v=1.7.1"></script>
+<script src="games/registry.js?v=1.7.1"></script>
+<script src="games/lockstep.js?v=1.7.1"></script>
+<script src="games/snake-logic.js?v=1.7.1"></script>
+<script src="games/snake.js?v=1.7.1"></script>
+<script src="games/brick-logic.js?v=1.7.1"></script>
+<script src="games/brick.js?v=1.7.1"></script>
+<script src="games/blocks-logic.js?v=1.7.1"></script>
+<script src="games/blocks.js?v=1.7.1"></script>
+<script src="games/duel-logic.js?v=1.7.1"></script>
+<script src="games/duel.js?v=1.7.1"></script>
+<script src="games/racer-logic.js?v=1.7.1"></script>
+<script src="games/racer.js?v=1.7.1"></script>
+<script src="games/flap-logic.js?v=1.7.1"></script>
+<script src="games/flap.js?v=1.7.1"></script>
+<script src="games/mines-logic.js?v=1.7.1"></script>
+<script src="games/mines.js?v=1.7.1"></script>
+<script src="games/merge-logic.js?v=1.7.1"></script>
+<script src="games/merge.js?v=1.7.1"></script>
+<script src="games/colours-logic.js?v=1.7.1"></script>
+<script src="games/colours.js?v=1.7.1"></script>
+<script src="games/cards-logic.js?v=1.7.1"></script>
+<script src="games/cards.js?v=1.7.1"></script>
+<script src="games/mole-logic.js?v=1.7.1"></script>
+<script src="games/mole.js?v=1.7.1"></script>
+<script src="games/numbers-logic.js?v=1.7.1"></script>
+<script src="games/numbers.js?v=1.7.1"></script>
+<script src="games/tanks-logic.js?v=1.7.1"></script>
+<script src="games/tanks.js?v=1.7.1"></script>
+<script src="games/invaders-logic.js?v=1.7.1"></script>
+<script src="games/invaders.js?v=1.7.1"></script>
+<script src="games/rocks-logic.js?v=1.7.1"></script>
+<script src="games/rocks.js?v=1.7.1"></script>
+<script src="games/hop-logic.js?v=1.7.1"></script>
+<script src="games/hop.js?v=1.7.1"></script>
+<script src="games/snakeduel-logic.js?v=1.7.1"></script>
+<script src="games/snakeduel.js?v=1.7.1"></script>
+<script src="games/sudoku-logic.js?v=1.7.1"></script>
+<script src="games/sudoku.js?v=1.7.1"></script>
+<script src="games/wordguess-words.js?v=1.7.1"></script>
+<script src="games/wordguess-logic.js?v=1.7.1"></script>
+<script src="games/wordguess.js?v=1.7.1"></script>
+<script src="games/wordsearch-words.js?v=1.7.1"></script>
+<script src="games/wordsearch-logic.js?v=1.7.1"></script>
+<script src="games/wordsearch.js?v=1.7.1"></script>
+<script src="games/bubbles-logic.js?v=1.7.1"></script>
+<script src="games/bubbles.js?v=1.7.1"></script>
+<script src="games/gems-logic.js?v=1.7.1"></script>
+<script src="games/gems.js?v=1.7.1"></script>
+<script src="games/stack-logic.js?v=1.7.1"></script>
+<script src="games/stack.js?v=1.7.1"></script>
+<script src="games/runner-logic.js?v=1.7.1"></script>
+<script src="games/runner.js?v=1.7.1"></script>
+<script src="games/lander-logic.js?v=1.7.1"></script>
+<script src="games/lander.js?v=1.7.1"></script>
+<script src="games/defense-logic.js?v=1.7.1"></script>
+<script src="games/defense.js?v=1.7.1"></script>
+<script src="games/slide-logic.js?v=1.7.1"></script>
+<script src="games/slide.js?v=1.7.1"></script>
+<script src="games/lights-logic.js?v=1.7.1"></script>
+<script src="games/lights.js?v=1.7.1"></script>
+<script src="games/nonogram-logic.js?v=1.7.1"></script>
+<script src="games/nonogram.js?v=1.7.1"></script>
+<script src="games/tiles-logic.js?v=1.7.1"></script>
+<script src="games/tiles.js?v=1.7.1"></script>
+<script src="games/codebreak-logic.js?v=1.7.1"></script>
+<script src="games/codebreak.js?v=1.7.1"></script>
+<script src="games/typerain-words.js?v=1.7.1"></script>
+<script src="games/typerain-logic.js?v=1.7.1"></script>
+<script src="games/typerain.js?v=1.7.1"></script>
+<script src="games/boardkit.js?v=1.7.1"></script>
+<script src="games/fourrow-logic.js?v=1.7.1"></script>
+<script src="games/fourrow.js?v=1.7.1"></script>
+<script src="games/tictactoe-logic.js?v=1.7.1"></script>
+<script src="games/tictactoe.js?v=1.7.1"></script>
+<script src="games/checkers-logic.js?v=1.7.1"></script>
+<script src="games/checkers.js?v=1.7.1"></script>
+<script src="games/reversi-logic.js?v=1.7.1"></script>
+<script src="games/reversi.js?v=1.7.1"></script>
+<script src="games/dots-logic.js?v=1.7.1"></script>
+<script src="games/dots.js?v=1.7.1"></script>
+<script src="games/seabattle-logic.js?v=1.7.1"></script>
+<script src="games/seabattle.js?v=1.7.1"></script>
+<script src="games/dicekit.js?v=1.7.1"></script>
+<script src="games/ludo-logic.js?v=1.7.1"></script>
+<script src="games/ludo.js?v=1.7.1"></script>
+<script src="games/snakes-logic.js?v=1.7.1"></script>
+<script src="games/snakes.js?v=1.7.1"></script>
+<script src="games/carrom-logic.js?v=1.7.1"></script>
+<script src="games/carrom.js?v=1.7.1"></script>
+<script src="games/chess-logic.js?v=1.7.1"></script>
+<script src="games/chess.js?v=1.7.1"></script>
+<script src="app.js?v=1.7.1"></script>
+<script src="play.js?v=1.7.1"></script>
+<script src="admin.js?v=1.7.1"></script>
+<script src="together.js?v=1.7.1"></script>
 </body>
 </html>

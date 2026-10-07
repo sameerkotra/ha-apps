@@ -278,7 +278,7 @@ class TestChildRules(LimitsBase):
         self.make_child()
         for bad in ({"minutesSchool": -5}, {"minutesSchool": 2000}, {"minutesSchool": 10.5}, {"minutesSchool": "30"},
                     {"quietSchoolFrom": "21:00"}, {"quietSchoolFrom": "25:00", "quietSchoolTo": "07:00"},
-                    {"quietWeekendFrom": "07:00", "quietWeekendTo": "07:00"}, {"allowedGames": ["chess"]},
+                    {"quietWeekendFrom": "07:00", "quietWeekendTo": "07:00"}, {"allowedGames": ["pinball"]},
                     {"leaderboard": "sometimes"}, {"bedtime": "20:00"}):
             self.assertEqual(self.put("/api/admin/users/u_kabir/limits", bad, ASHA).status_code, 422, bad)
         self.assertEqual(self.put("/api/admin/users/u_meera/limits", {}, ASHA).status_code, 409)

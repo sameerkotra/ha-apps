@@ -38,7 +38,7 @@ calorie_tracker/
 - `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync; `tests/common_tests/test_shared_copies.py` fails if a copy was changed.
 
 ## 3. Manifest & options
-`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.1.1"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
+`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.1.2"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
 
 | Option | Schema | Default | Effect |
 |---|---|---|---|

@@ -6,7 +6,15 @@
    a time. Brick walls break a half-square strip at a time, steel walls don't break, water stops tanks but not
    shells, bushes hide tanks. A hit costs a life; the game ends with no lives left or when a shell hits the flag.
    Destroying every enemy of an arena clears it and the next arena of the list starts; clearing the last one wins.
-   Every mode plays the arena list (the arenas are the levels). One call to step() is one update (60 a second). */
+   Every mode plays the arena list (the arenas are the levels). One call to step() is one update (60 a second).
+
+   Two tanks (SPEC §13.4, two phones, live): mode `together` — both players defend one flag against the enemies
+   (one and a half times as many), each with their own lives and score (a tank 100 to whoever hit it, an arena
+   500 to both); friendly shells stop harmlessly on the other tank. Mode `against` — the two tanks in an arena
+   of their own (the same turned half-way round, VERSUS_LEVELS), a flag each and no enemies: hitting the other
+   tank 100, a round (their flag, or all their lives) 300, the match (first to 2 rounds) 500; a round lasts at
+   most 2 minutes (then it is drawn) and a match at most 5 rounds. Player 1 is seat 1 (its tank starts at the
+   bottom), player 2 seat 2. Single-player Tank Battle is unchanged (the same random numbers in the same order). */
 (function () {
   "use strict";
 
@@ -30,7 +38,14 @@
   var MODES = {
     classic: { lives: 3, speed: 1, fire: 1, shell: 1 },
     easy: { lives: 5, speed: 0.75, fire: 0.6, shell: 0.8 },
+    together: { lives: 3, speed: 1, fire: 1, shell: 1, two: "together" },
+    against: { lives: 3, speed: 1, fire: 1, shell: 1, two: "against" },
   };
+  // Two tanks: where player 2 starts (together: right of the flag; against: the top, the other way round)
+  var P2_START = { x: 8 * TILE, y: 12 * TILE }, P2_TOP = { x: 8 * TILE, y: 0 };
+  var FLAG2 = { x: 6 * TILE, y: 0 };
+  var V_HIT = 100, V_ROUND = 300, V_MATCH = 500, V_WIN_ROUNDS = 2, V_MAX_ROUNDS = 5, V_ROUND_LIMIT = 120 * 60;
+  var TOGETHER_ENEMIES = 1.5;
 
   // The arenas (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. An arena is
   // { name, map: [13 strings of 13 of ". b s w g"], enemies, speed, fire }.
@@ -71,6 +86,24 @@
       ".............", ".b.b.b.b.b.b.", ".b.b.bsb.b.b.", ".............", "ss.bbb.bbb.ss", "...g.....g...",
       ".w.ggg.ggg.w.", ".w...s.s...w.", ".....s.s.....", "bb.b.....b.bb", ".....bbb.....", ".s..bbbbb..s.",
       "..b..b.b..b.."] },
+  ];
+
+  /** An arena for two tanks against each other: its top seven rows; the bottom six are the top ones turned
+      half-way round (so both sides are the same) and the middle row reads the same both ways. */
+  function mirrored(name, top) {
+    var rows = top.slice();
+    for (var r = 5; r >= 0; r--) rows.push(top[r].split("").reverse().join(""));
+    return { name: name, map: rows };
+  }
+  var VERSUS_LEVELS = [
+    mirrored("Face off", [".....b.b.....", ".....bbb.....", "..s.......s..", ".bb..b.b..bb.", "......w......",
+      "bb..s...s..bb", "..g.bb.bb.g.."]),
+    mirrored("Bush maze", [".....b.b.....", "..g..bbb..g..", ".ggg.....ggg.", "...b.s.s.b...", "w.b.......b.w",
+      "..b..bbb..b..", ".s....g....s."]),
+    mirrored("The river", [".....b.b.....", ".s...bbb...s.", ".............", "bb.bb...bb.bb", ".............",
+      "...s.....s...", "ww.wwwwwww.ww"]),
+    mirrored("Brick yard", [".....b.b.....", ".b.b.bbb.b.b.", ".b.b.....b.b.", ".....s.s.....", "bbb.bbbbb.bbb",
+      ".............", ".b.bb.s.bb.b."]),
   ];
 
   function isInt(v, lo, hi) { return typeof v === "number" && v === Math.floor(v) && v >= lo && v <= hi; }
@@ -118,6 +151,7 @@
   function fireChance(s) { return s.arenaFire * MODES[s.mode].fire / 3600; }
 
   function loadArena(s) {
+    if (s.two === "against") { loadVersus(s); return; }
     var a = arena(s), m = [];
     for (var cy = 0; cy < N; cy++) for (var cx = 0; cx < N; cx++) m.push(CHARS[a.map[cy >> 1][cx >> 1]]);
     s.map = m; s.mapVer++;
@@ -125,9 +159,34 @@
     s.total = a.enemies; s.spawned = 0; s.enemies = []; s.shells = []; s.booms = [];
     s.arenaT = 0; s.intro = INTRO; s.clear = 0; s.entryNext = 1;
     placePlayer(s);
+    if (s.two === "together") {
+      clearTile(s, 12, 8);                       // player 2's start
+      s.total = Math.ceil(a.enemies * TOGETHER_ENEMIES);
+      if (s.lives2 > 0 || !s.p2) placeP2(s); else s.p2.dead = 1e9;
+      if (s.lives <= 0) s.player.dead = 1e9;     // a player out of lives stays out in the next arena
+    }
+  }
+  function clearTile(s, row, col) {
+    for (var cy = row * 2; cy < row * 2 + 2; cy++) for (var cx = col * 2; cx < col * 2 + 2; cx++) s.map[cy * N + cx] = EMPTY;
+  }
+  /** A round of two tanks against each other: the round's arena, both tanks at their starts, full lives. */
+  function loadVersus(s) {
+    var a = VERSUS_LEVELS[(s.vStart + s.level - 1) % VERSUS_LEVELS.length], m = [];
+    for (var cy = 0; cy < N; cy++) for (var cx = 0; cx < N; cx++) m.push(CHARS[a.map[cy >> 1][cx >> 1]]);
+    s.map = m; s.mapVer++;
+    s.arenaSpeed = 0.5; s.arenaFire = 10; s.name = a.name;
+    s.total = 0; s.spawned = 0; s.enemies = []; s.shells = []; s.booms = [];
+    s.arenaT = 0; s.intro = INTRO; s.clear = 0; s.entryNext = 1;
+    s.lives = MODES[s.mode].lives; s.lives2 = MODES[s.mode].lives;
+    s.flagDown = false; s.flag2Down = false; s.roundWinner = null;
+    placePlayer(s); placeP2(s);
   }
   function placePlayer(s) {
     s.player = { x: PLAYER_START.x, y: PLAYER_START.y, dir: 0, acc: 0, dead: 0, shield: SHIELD };
+  }
+  function placeP2(s) {
+    var at = s.two === "against" ? P2_TOP : P2_START;
+    s.p2 = { x: at.x, y: at.y, dir: s.two === "against" ? 2 : 0, acc: 0, dead: 0, shield: SHIELD };
   }
 
   function create(o) {
@@ -142,9 +201,30 @@
       arenas: usableLevels(o.levels),
       stats: { kills: 0, shots: 0, arenas: 0, livesLost: 0, bricks: 0, cause: null },
     };
+    if (MODES[mode].two) {
+      s.two = MODES[mode].two; s.p2 = null; s.lives2 = MODES[mode].lives; s.score2 = 0;
+      s.ctl2 = { held: [], fireHeld: false, fireReq: 0, touchDir: -1, tapDir: -1 };
+      s.stats2 = { kills: 0, shots: 0, livesLost: 0 };
+      if (s.two === "against") {
+        s.arenas = VERSUS_LEVELS;
+        s.vStart = Math.floor(rand(s) * VERSUS_LEVELS.length);    // the first arena comes from the seed
+        s.wins = [0, 0]; s.matchWinner = null; s.draws = 0; s.flag2Down = false; s.roundWinner = null;
+      }
+    }
     loadArena(s);
     return s;
   }
+
+  // ---------- the players: one tank, or two ----------
+  /** The players' tanks: [player 1] or [player 1, player 2]. */
+  function humans(s) { return s.two ? [s.player, s.p2] : [s.player]; }
+  /** Where player i's controls are kept (player 1's on the state itself, as always). */
+  function ctlOf(s, i) { return i === 1 ? s.ctl2 : s; }
+  /** The owner of player i's shells (enemies are 1, 2, 3 …). */
+  function ownerOf(i) { return i === 1 ? -1 : 0; }
+  function humanOf(owner) { return owner === 0 ? 0 : owner === -1 ? 1 : -1; }
+  /** Which side a shell is on, for shells meeting head on. */
+  function side(s, owner) { return owner > 0 ? "e" : s.two === "against" ? "p" + owner : "h"; }
 
   // ---------- the map and tanks ----------
   function cellAt(s, cx, cy) { return s.map[cy * N + cx]; }
@@ -161,12 +241,14 @@
   function overlaps(ax, ay, bx, by) { return Math.abs(ax - bx) < TILE && Math.abs(ay - by) < TILE; }
   function tanks(s) {
     var out = s.player && !s.player.dead ? [s.player] : [];
+    if (s.two && s.p2 && !s.p2.dead) out.push(s.p2);
     return out.concat(s.enemies);
   }
   /** Can `tank` move to (nx, ny)? Tanks that already overlap (a respawn) may drive apart. */
   function canPlace(s, tank, nx, ny) {
     if (nx < 0 || ny < 0 || nx > MAXP || ny > MAXP) return false;
     if (blocked(s, nx, ny) || overlaps(nx, ny, FLAG.x, FLAG.y)) return false;
+    if (s.two === "against" && overlaps(nx, ny, FLAG2.x, FLAG2.y)) return false;
     var all = tanks(s);
     for (var i = 0; i < all.length; i++) {
       var t = all[i];
@@ -235,14 +317,21 @@
       if (--s.clear === 0) { s.level++; loadArena(s); evs.push({ type: "level", level: s.level }); }
       return evs;
     }
-    if (s.intro > 0) { s.intro--; s.fireReq = 0; s.tapDir = -1; return evs; }
+    if (s.intro > 0) {
+      s.intro--; s.fireReq = 0; s.tapDir = -1;
+      if (s.two) { s.ctl2.fireReq = 0; s.ctl2.tapDir = -1; }
+      return evs;
+    }
     s.arenaT++;
+    if (s.two === "against") return stepVersus(s, evs);
     spawn(s, evs);
     movePlayer(s, evs);
+    if (s.two) movePlayer2(s, evs);
     moveEnemies(s);
     moveShells(s, evs);
     if (!s.over && s.spawned >= s.total && !s.enemies.length) {
       s.score += CLEAR_POINTS; s.stats.arenas++;
+      if (s.two) s.score2 += CLEAR_POINTS;
       evs.push({ type: "clear", level: s.level, score: s.score });
       if (s.level >= s.arenas.length) {
         s.won = true; s.over = true; s.stats.cause = "won";
@@ -266,27 +355,38 @@
     }
   }
 
-  function movePlayer(s, evs) {
-    var p = s.player;
+  function movePlayer(s, evs) { moveHuman(s, 0, evs); }
+  function movePlayer2(s, evs) { moveHuman(s, 1, evs); }
+  function moveHuman(s, i, evs) {
+    var p = i === 1 ? s.p2 : s.player, c = ctlOf(s, i), owner = ownerOf(i);
     if (p.dead > 0) {
-      s.fireReq = 0; s.tapDir = -1;
-      if (--p.dead === 0) placePlayer(s);
+      c.fireReq = 0; c.tapDir = -1;
+      if (--p.dead === 0) { if (i === 1) placeP2(s); else placePlayer(s); }
       return;
     }
     if (p.shield > 0) p.shield--;
     // the direction held now, else a direction tapped since the last update (a quick tap still turns and moves)
-    var dir = s.held.length ? s.held[s.held.length - 1] : s.touchDir >= 0 ? s.touchDir : s.tapDir;
+    var dir = c.held.length ? c.held[c.held.length - 1] : c.touchDir >= 0 ? c.touchDir : c.tapDir;
     if (dir >= 0) { face(p, dir); drive(s, p, PLAYER_SPEED, true); }
-    s.tapDir = -1;
-    if ((s.fireReq > 0 || s.fireHeld) && !hasShell(s, 0)) {
-      fire(s, p, 0, PLAYER_SHELL); s.stats.shots++;
-      evs.push({ type: "fire" });
-      s.fireReq = 0;
-    } else if (s.fireReq > 0) s.fireReq--;
+    c.tapDir = -1;
+    if ((c.fireReq > 0 || c.fireHeld) && !hasShell(s, owner)) {
+      fire(s, p, owner, PLAYER_SHELL);
+      if (i === 1) s.stats2.shots++; else s.stats.shots++;
+      evs.push({ type: "fire", player: i + 1 });
+      c.fireReq = 0;
+    } else if (c.fireReq > 0) c.fireReq--;
+  }
+  /** The enemies' target: the nearer player still playing (player 1 when only one tank plays). */
+  function prey(s, e) {
+    if (!s.two) return s.player;
+    var a = s.player, b = s.p2;
+    if (a.dead && !b.dead) return b;
+    if (b.dead || a.dead) return a;
+    return Math.abs(b.x - e.x) + Math.abs(b.y - e.y) < Math.abs(a.x - e.x) + Math.abs(a.y - e.y) ? b : a;
   }
 
   function chooseDir(s, e) {
-    var hunt = s.arenaT > HUNT_AFTER, p = s.player;
+    var hunt = s.arenaT > HUNT_AFTER, p = prey(s, e);
     var toward = rand(s) < (hunt ? 0.8 : 0.5);
     if (toward) {
       var t = (hunt || p.dead || rand(s) < 0.25) ? FLAG : p;
@@ -303,6 +403,7 @@
   function inLine(s, e) {
     var targets = s.arenaT > HUNT_AFTER ? [FLAG] : [];
     if (!s.player.dead) targets.push(s.player);
+    if (s.two && s.p2 && !s.p2.dead) targets.push(s.p2);
     for (var i = 0; i < targets.length; i++) {
       var t = targets[i];
       if (e.dir & 1) { if (Math.abs(t.y - e.y) < 9 && (t.x - e.x) * DX[e.dir] > 0) return true; }
@@ -339,7 +440,7 @@
     // shells meeting head on cancel each other
     for (i = 0; i < s.shells.length; i++) for (var j = i + 1; j < s.shells.length; j++) {
       var a = s.shells[i], b = s.shells[j];
-      if (!a.dead && !b.dead && (a.owner === 0) !== (b.owner === 0) && Math.abs(a.x - b.x) < 5 && Math.abs(a.y - b.y) < 5) {
+      if (!a.dead && !b.dead && side(s, a.owner) !== side(s, b.owner) && Math.abs(a.x - b.x) < 5 && Math.abs(a.y - b.y) < 5) {
         a.dead = true; b.dead = true;
       }
     }
@@ -366,9 +467,10 @@
         if (cx >= 0 && cy >= 0 && cx < N && cy < N && s.map[cy * N + cx] === BRICK) { s.map[cy * N + cx] = EMPTY; broke++; }
       }
       if (broke) { s.mapVer++; s.stats.bricks += broke; evs.push({ type: "brick" }); }
-      else if (sh.owner === 0) evs.push({ type: "steel" });
+      else if (sh.owner <= 0) evs.push({ type: "steel" });
       return true;
     }
+    if (s.two) return shellHits2(s, sh, evs, x, y);
     // the flag
     if (boxHitsTank(x, y, FLAG)) {
       s.flagDown = true; s.booms.push({ x: FLAG.x + 9, y: FLAG.y + 9, t: 0, big: true });
@@ -392,16 +494,50 @@
     }
     return false;
   }
+  /** Two tanks: flags, enemies and the players' tanks. */
+  function shellHits2(s, sh, evs, x, y) {
+    var shooter = humanOf(sh.owner), i;
+    if (boxHitsTank(x, y, FLAG)) {
+      s.flagDown = true; s.booms.push({ x: FLAG.x + 9, y: FLAG.y + 9, t: 0, big: true });
+      s.stats.flagBy = sh.owner > 0 ? "enemy" : shooter === 0 ? "p1" : "p2";
+      if (s.two === "against") roundOver(s, 0, "flag", evs); else end(s, evs, "flag");        // player 1's flag
+      return true;
+    }
+    if (s.two === "against" && boxHitsTank(x, y, FLAG2)) {
+      s.flag2Down = true; s.booms.push({ x: FLAG2.x + 9, y: FLAG2.y + 9, t: 0, big: true });
+      roundOver(s, 1, "flag", evs);                                                            // player 2's flag
+      return true;
+    }
+    if (shooter >= 0) {
+      for (i = 0; i < s.enemies.length; i++) {
+        if (boxHitsTank(x, y, s.enemies[i])) { killEnemy(s, i, evs, shooter); return true; }
+      }
+    }
+    var hs = humans(s);
+    for (i = 0; i < hs.length; i++) {
+      var p = hs[i];
+      if (i === shooter || !p || p.dead || !boxHitsTank(x, y, p)) continue;
+      if (shooter >= 0 && s.two !== "against") return true;          // a friendly shell stops on the other tank
+      if (p.shield > 0) return true;
+      if (shooter >= 0) {                                             // against each other: a hit
+        if (shooter === 0) s.score += V_HIT; else s.score2 += V_HIT;
+        evs.push({ type: "hit", player: shooter + 1, score: s.score });
+      }
+      loseLifeOf(s, i, evs);
+      return true;
+    }
+    return false;
+  }
   function cellOr(s, cx, cy) { return cx < 0 || cy < 0 || cx >= N || cy >= N ? EMPTY : s.map[cy * N + cx]; }
 
-  /** An enemy is destroyed (by your shell). */
-  function killEnemy(s, i, evs) {
+  /** An enemy is destroyed (by your shell; with two tanks, by player `by`'s). */
+  function killEnemy(s, i, evs, by) {
     var e = s.enemies[i];
     s.enemies.splice(i, 1);
     for (var k = 0; k < s.shells.length; k++) if (s.shells[k].owner === e.id) s.shells[k].dead = true;
     s.booms.push({ x: e.x + 9, y: e.y + 9, t: 0, big: false });
-    s.score += KILL_POINTS; s.stats.kills++;
-    evs.push({ type: "hit", score: s.score, left: s.total - s.stats.kills });
+    if (by === 1) { s.score2 += KILL_POINTS; s.stats2.kills++; } else { s.score += KILL_POINTS; s.stats.kills++; }
+    evs.push({ type: "hit", score: s.score, player: (by || 0) + 1, left: s.total - s.stats.kills - (s.two ? s.stats2.kills : 0) });
   }
 
   function loseLife(s, evs) {
@@ -414,6 +550,49 @@
     p.dead = RESPAWN;
   }
 
+  /** Player i's tank is hit (two tanks): a life, then back at the start with a shield — or out. */
+  function loseLifeOf(s, i, evs) {
+    if (i === 0 && !s.two) { loseLife(s, evs); return; }
+    var p = i === 1 ? s.p2 : s.player;
+    s.booms.push({ x: p.x + 9, y: p.y + 9, t: 0, big: true });
+    var left;
+    if (i === 1) { s.lives2--; s.stats2.livesLost++; left = s.lives2; } else { s.lives--; s.stats.livesLost++; left = s.lives; }
+    var owner = ownerOf(i);
+    for (var k = 0; k < s.shells.length; k++) if (s.shells[k].owner === owner) s.shells[k].dead = true;
+    evs.push({ type: "lifeLost", player: i + 1, lives: left });
+    if (left > 0) { p.dead = RESPAWN; return; }
+    p.dead = 1e9;
+    if (s.two === "against") roundOver(s, i, "lives", evs);
+    else if (s.player.dead && s.p2.dead) end(s, evs, "lives");          // together: over when both are out
+  }
+
+  // ---------- two tanks against each other ----------
+  function stepVersus(s, evs) {
+    movePlayer(s, evs);
+    movePlayer2(s, evs);
+    moveShells(s, evs);
+    if (!s.over && s.clear === 0 && s.arenaT >= V_ROUND_LIMIT) roundOver(s, -1, "time", evs);
+    return evs;
+  }
+  /** The round is lost by player `loser` (0 or 1; -1: nobody, time ran out). */
+  function roundOver(s, loser, cause, evs) {
+    if (s.clear > 0 || s.over) return;
+    var w = loser < 0 ? -1 : 1 - loser;
+    s.roundWinner = w + 1;
+    if (w === 0) s.score += V_ROUND; else if (w === 1) s.score2 += V_ROUND;
+    if (w >= 0) s.wins[w]++; else s.draws++;
+    evs.push({ type: "round", winner: w + 1, cause: cause, wins: s.wins.slice() });
+    if (w >= 0 && s.wins[w] >= V_WIN_ROUNDS) { matchOver(s, w, evs); return; }
+    if (s.level >= V_MAX_ROUNDS) { matchOver(s, s.wins[0] > s.wins[1] ? 0 : s.wins[1] > s.wins[0] ? 1 : -1, evs); return; }
+    s.clear = CLEAR_PAUSE;
+  }
+  function matchOver(s, w, evs) {
+    s.matchWinner = w + 1;
+    if (w === 0) s.score += V_MATCH; else if (w === 1) s.score2 += V_MATCH;
+    s.won = w === 0;
+    end(s, evs, w < 0 ? "draw" : "match");
+  }
+
   function end(s, evs, cause) {
     if (s.over) return;
     s.over = true; s.stats.cause = cause;
@@ -422,15 +601,21 @@
 
   // ---------- input ----------
   var DIRS = { up: 0, right: 1, down: 2, left: 3 };
-  function press(s, action, down) {
+  /** A key or button for player 1 — or, with `player` (0 or 1: two tanks), for that player. `steer` (two phones)
+      is a finger on the game: its value is 1 + the direction toward the finger, or 0 when it lifts. */
+  function press(s, action, down, player) {
     if (s.over) return [];
+    var c = player === 1 && s.two ? s.ctl2 : s;
     if (action in DIRS) {
-      var d = DIRS[action], at = s.held.indexOf(d);
-      if (at >= 0) s.held.splice(at, 1);
-      if (down) { s.held.push(d); s.tapDir = d; }
+      var d = DIRS[action], at = c.held.indexOf(d);
+      if (at >= 0) c.held.splice(at, 1);
+      if (down) { c.held.push(d); c.tapDir = d; }
     } else if (action === "fire") {
-      s.fireHeld = !!down;
-      if (down) s.fireReq = FIRE_BUFFER;
+      c.fireHeld = !!down;
+      if (down) c.fireReq = FIRE_BUFFER;
+    } else if (action === "steer") {
+      var v = Math.round(Number(down) || 0);
+      c.touchDir = v >= 1 && v <= 4 ? v - 1 : -1;
     }
     return [];
   }
@@ -441,6 +626,39 @@
     var p = s.player, dx = x - OX - (p.x + 9), dy = y - OY - (p.y + 9);
     if (Math.abs(dx) < 14 && Math.abs(dy) < 14) { if (isDown) s.fireReq = FIRE_BUFFER; s.touchDir = -1; return; }
     s.touchDir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
+  }
+  /** Where a finger at arena point (ax, ay) sends player i's tank: "fire" on the tank, else 1 + a direction
+      (the value of a `steer` input; two phones work it out on the phone and send it). */
+  function steerFor(s, i, ax, ay) {
+    var p = i === 1 ? s.p2 : s.player;
+    if (!p) return 0;
+    var dx = ax - (p.x + 9), dy = ay - (p.y + 9);
+    if (Math.abs(dx) < 14 && Math.abs(dy) < 14) return "fire";
+    return 1 + (Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0));
+  }
+
+  // ---------- two phones ----------
+  function hash(str) {          // FNV-1a, unsigned 32-bit (the same as ArcadeLockstep.hash)
+    var h = 0x811c9dc5;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return h >>> 0;
+  }
+  function tankParts(t) { return t ? [t.x, t.y, t.dir, t.acc, t.dead, t.shield] : null; }
+  /** What both phones must agree on (SPEC §13.4): the map, every tank and shell, scores, lives and the dice. */
+  function checksum(s) {
+    var c2 = s.ctl2 || {};
+    return hash(JSON.stringify([s.updates, s.rng, s.level, s.score, s.score2, s.lives, s.lives2, s.over, s.intro, s.clear,
+      s.arenaT, s.sinceSpawn, s.spawned, s.total, s.nextId, s.entryNext, s.flagDown, s.flag2Down || false, s.wins || null,
+      tankParts(s.player), tankParts(s.p2), s.held, s.fireHeld, s.fireReq, s.touchDir, c2.held || null, c2.fireHeld || false,
+      c2.fireReq || 0, c2.touchDir == null ? -1 : c2.touchDir,
+      s.enemies.map(function (e) { return [e.id, e.x, e.y, e.dir, e.acc, e.arrive, e.turn, e.stuck]; }),
+      s.shells.map(function (sh) { return [sh.x, sh.y, sh.dir, sh.v, sh.owner]; }), s.map.join("")]));
+  }
+  /** Both players' results for the match: each score, and who won (1 or 2; 0 a draw). Together: the higher
+      score; against each other: the match. */
+  function report(s) {
+    var w = s.two === "against" ? (s.matchWinner || 0) : s.score > s.score2 ? 1 : s.score2 > s.score ? 2 : 0;
+    return { scores: [s.score, s.score2 || 0], levels: [s.level, s.level], winner: w };
   }
 
   // ---------- saving ----------
@@ -465,7 +683,18 @@
     return s;
   }
 
-  function result(s) {
+  function result(s, player) {
+    if (s.two && player === 1) {
+      return { score: s.score2, level: s.level, stats: { kills: s.stats2.kills, shots: s.stats2.shots, arenas: s.stats.arenas,
+        bricks: s.stats.bricks, livesLeft: Math.max(0, s.lives2), livesLost: s.stats2.livesLost,
+        won: s.two === "against" ? s.matchWinner === 2 : !!s.won, cause: s.stats.cause, flagBy: s.stats.flagBy || null, mode: s.mode } };
+    }
+    if (s.two === "against") {
+      var r = { score: s.score, level: s.level, stats: { kills: 0, shots: s.stats.shots, arenas: 0, bricks: s.stats.bricks,
+        livesLeft: Math.max(0, s.lives), livesLost: s.stats.livesLost, won: s.matchWinner === 1, cause: s.stats.cause,
+        flagBy: null, mode: s.mode } };
+      return r;
+    }
     return { score: s.score, level: s.level, stats: { kills: s.stats.kills, shots: s.stats.shots, arenas: s.stats.arenas,
       bricks: s.stats.bricks, livesLeft: Math.max(0, s.lives), livesLost: s.stats.livesLost, won: !!s.won,
       cause: s.stats.cause, flagBy: s.stats.flagBy || null, mode: s.mode } };
@@ -478,6 +707,9 @@
     CLEAR_PAUSE: CLEAR_PAUSE, RESPAWN: RESPAWN, SHIELD: SHIELD, HUNT_AFTER: HUNT_AFTER, KILL_POINTS: KILL_POINTS,
     CLEAR_POINTS: CLEAR_POINTS, MODES: MODES, STATE_VERSION: STATE_VERSION, LEVELS: LEVELS, usableLevels: usableLevels,
     mapOk: mapOk, create: create, step: step, press: press, touch: touch, save: save, restore: restore, result: result,
+    checksum: checksum, report: report, steerFor: steerFor, humans: humans, VERSUS_LEVELS: VERSUS_LEVELS, FLAG2: FLAG2,
+    P2_START: P2_START, P2_TOP: P2_TOP, V_HIT: V_HIT, V_ROUND: V_ROUND, V_MATCH: V_MATCH, V_WIN_ROUNDS: V_WIN_ROUNDS,
+    V_MAX_ROUNDS: V_MAX_ROUNDS, V_ROUND_LIMIT: V_ROUND_LIMIT,
     rand: rand, canPlace: canPlace, blocked: blocked, killEnemy: killEnemy, cellAt: cellAt, enemySpeed: enemySpeed,
   };
   if (typeof module === "object" && module.exports) module.exports = TanksLogic; else self.TanksLogic = TanksLogic;

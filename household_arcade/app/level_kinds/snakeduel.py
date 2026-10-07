@@ -35,7 +35,7 @@ KIND = {
     "game": "snakeduel",
     "label": "Snake Duel · Arenas",
     "noun": "arena",
-    "modes": ["cpu", "two"],
+    "modes": ["cpu", "two", "phones"],
     # The ranges keep the honest-score limits true for any arena: at most 12 cells a second (one food, 10, a
     # cell), and a match won is worth 500 × min(arena, 10) whatever the list's length.
     "fields": {

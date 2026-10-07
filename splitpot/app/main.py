@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -16,13 +17,15 @@ from typing import List, Literal, Optional
 
 import tempfile
 
-from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
+from . import config
 from .common import auth_core, backup_core, csv_export, db_core, ha_time, sensor_publisher, settings_core, web_security
+from .common import ha_client as ha_core, ha_notify, ha_people, people_admin
 from .common import housekeeping as jobs_core
 from .common import whoami as whoami_core
 
@@ -60,7 +63,7 @@ def load_ha_options() -> dict:
 
 
 HA_OPTIONS = load_ha_options()
-SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
+SUPERVISOR_TOKEN = config.SUPERVISOR_TOKEN or None   # the shared HA modules read config.SUPERVISOR_TOKEN
 
 # The `currency` App setting (an ISO 4217 code like "USD" or "EUR") drives
 # both the HA sensors' unit and how amounts are written in the app and the
@@ -400,6 +403,7 @@ MIGRATIONS = [
     ("users", "ha_user_id", "TEXT"),                      # the HA login behind each Person
     ("expense_splits", "percent", "REAL"),
     ("groups", "is_default", "INTEGER NOT NULL DEFAULT 0"),
+    ("users", "receive_notifications", "INTEGER NOT NULL DEFAULT 1"),   # the person's own opt-out (My settings)
 ]
 
 
@@ -465,10 +469,22 @@ def init_db() -> None:
                 updated_by TEXT
             );
 
+            -- Admin → Users: extra notify services per person ("notify.<name>"), on top of the phones
+            -- Home Assistant links to them (common/ha_notify.py, people_admin.py).
+            CREATE TABLE IF NOT EXISTS user_notify (
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                service TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                created_by TEXT,
+                PRIMARY KEY (user_id, service)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
             CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
             CREATE INDEX IF NOT EXISTS idx_expense_splits_expense ON expense_splits(expense_id);
             CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+            -- the group ledger, newest first, a page at a time (keyset on date + id)
+            CREATE INDEX IF NOT EXISTS idx_expenses_group_date ON expenses(group_id, date, id);
             CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
             """
         )
@@ -545,8 +561,21 @@ SETTINGS = [
                                                "KRW"]},
         help="ISO 4217 code such as USD, EUR, GBP or INR. Used for every amount in the app and the activity log, and as "
              "the balance sensors' unit."),
+    settings_core.Setting(
+        "notify_charges", False, "Notify people about new charges", group="notify", strict=True,
+        help="When someone adds a charge, everyone in it — whoever paid and everyone with a share — gets a phone "
+             "notification through Home Assistant, except whoever added it: who added what, the amount, the group and "
+             "their share. Phones come from Home Assistant (Settings → People → the person → Track device); extra "
+             "notify services can be added under Admin → Users. Each person can turn them off under My settings."),
+    settings_core.Setting(
+        "notify_payments", True, "Also notify settle-up payments", group="notify", strict=True,
+        enabled_if="notify_charges",
+        help="When a settle-up payment is recorded, the two people in it are told too (not whoever recorded it)."),
 ]
-SETTINGS_GROUPS = [settings_core.Group("money", "Money"), settings_core.Group("ha", "Home Assistant")]
+SETTINGS_GROUPS = [settings_core.Group("money", "Money"), settings_core.Group("ha", "Home Assistant"),
+                   settings_core.Group("notify", "Notifications",
+                                       "Phone notifications through Home Assistant. Edits and deletions are never "
+                                       "notified; the activity log on the Dashboard shows them.")]
 
 
 def _settings_log_event(conn, changed, current, merged, user):
@@ -555,6 +584,10 @@ def _settings_log_event(conn, changed, current, merged, user):
             return f"sensor sync {'on' if merged[k] else 'off'}"
         if k == "sync_interval_minutes":
             return f"sync interval {current[k]} → {merged[k]} min"
+        if k == "notify_charges":
+            return f"charge notifications {'on' if merged[k] else 'off'}"
+        if k == "notify_payments":
+            return f"settle-up notifications {'on' if merged[k] else 'off'}"
         return f"currency {current[k]} → {merged[k]}"
     what = ", ".join(describe(k) for k in changed)
     log_event(conn, "settings_changed", f"{user or 'Someone'} changed the app settings: {what}", actor=user)
@@ -703,37 +736,96 @@ def log_event(conn, event_type: str, message: str, group_id: Optional[str] = Non
     )
 
 
-def serialize_group(conn, group_id: str) -> dict:
+# ---------- the group ledger, a page at a time ----------
+# Newest first by (date, id) — `date` sorts as a string (a bare YYYY-MM-DD below that day's timestamps) and the
+# id breaks ties, so the order is total and a cursor (the last row's date and id) points at the same place however
+# many entries are added meanwhile. Balances and counts never come from a page: they are worked out from every
+# entry, in SQL.
+LEDGER_PAGE = 20          # what the group page loads first, and per "Load more"
+LEDGER_MAX_LIMIT = 500
+
+
+def encode_cursor(date: str, expense_id: str) -> str:
+    """The position after a ledger row, opaque to the browser."""
+    return base64.urlsafe_b64encode(json.dumps([date, expense_id]).encode()).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str) -> tuple[str, str]:
+    """(date, id) from encode_cursor, or a 400."""
+    try:
+        date, eid = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if isinstance(date, str) and isinstance(eid, str) and date and eid:
+            return date, eid
+    except (ValueError, TypeError, UnicodeDecodeError):
+        pass
+    raise HTTPException(400, "That ledger position isn't valid — reload the group.")
+
+
+def _expense_json(conn, group_id: str, e, names: dict) -> dict:
+    splits = fetch_expense_splits(conn, e["id"])
+    return {
+        "id": e["id"],
+        "groupId": group_id,
+        "description": e["description"],
+        "amount": e["amount"],
+        "paidBy": e["paid_by"],
+        "paidByName": names.get(e["paid_by"], "Unknown"),
+        "splitType": e["split_type"],
+        "date": e["date"],
+        "splits": [{**s, "name": names.get(s["userId"], "Unknown")} for s in splits],
+    }
+
+
+def ledger_page(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None):
+    """(entries, next cursor) — the group's expenses and payments newest first, starting after `cursor`;
+    at most `limit` of them (None = all, and no next cursor)."""
+    sql = "SELECT id, description, amount, paid_by, split_type, date FROM expenses WHERE group_id = ?"
+    args: list = [group_id]
+    if cursor:
+        date, eid = decode_cursor(cursor)
+        sql += " AND (date < ? OR (date = ? AND id < ?))"
+        args += [date, date, eid]
+    sql += " ORDER BY date DESC, id DESC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        args.append(limit + 1)                 # one more: is there a next page?
+    rows = conn.execute(sql, args).fetchall()
+    more = limit is not None and len(rows) > limit
+    rows = rows[:limit] if limit is not None else rows
+    names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
+    entries = [_expense_json(conn, group_id, r, names) for r in rows]
+    return entries, (encode_cursor(rows[-1]["date"], rows[-1]["id"]) if more else None)
+
+
+def ledger_total(conn, group_id: str) -> int:
+    """Every entry in the group's ledger (expenses and payments)."""
+    return conn.execute("SELECT COUNT(*) AS c FROM expenses WHERE group_id = ?", (group_id,)).fetchone()["c"]
+
+
+def group_net(conn, group_id: str, member_ids: List[str]) -> dict:
+    """Each person's net in the group from EVERY entry (paid − shares), in SQL, in whole cents (so the sum is exact
+    whatever the order), then as 2-dp amounts. Members first in their order, then anyone else with an entry."""
+    cents = {m: 0 for m in member_ids}
+    for r in conn.execute("SELECT paid_by AS u, SUM(CAST(ROUND(amount * 100) AS INTEGER)) AS c FROM expenses "
+                          "WHERE group_id = ? GROUP BY paid_by ORDER BY paid_by", (group_id,)):
+        cents[r["u"]] = cents.get(r["u"], 0) + r["c"]
+    for r in conn.execute("SELECT s.user_id AS u, SUM(CAST(ROUND(s.amount * 100) AS INTEGER)) AS c "
+                          "FROM expense_splits s JOIN expenses e ON e.id = s.expense_id "
+                          "WHERE e.group_id = ? GROUP BY s.user_id ORDER BY s.user_id", (group_id,)):
+        cents[r["u"]] = cents.get(r["u"], 0) - r["c"]
+    return {k: round(v / 100, 2) for k, v in cents.items()}
+
+
+def serialize_group(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None) -> dict:
+    """The group. `expenses` is the whole ledger, or with `limit` its newest `limit` entries (`nextCursor` then
+    points at the rest: GET /groups/{id}/ledger). Balances and `ledgerTotal` always cover every entry."""
     g = conn.execute("SELECT id, name, created_at, is_default FROM groups WHERE id = ?", (group_id,)).fetchone()
     if not g:
         raise HTTPException(404, "Group not found")
 
     member_ids = group_member_ids(conn, group_id)
-
-    expense_rows = conn.execute(
-        "SELECT id, description, amount, paid_by, split_type, date FROM expenses "
-        "WHERE group_id = ? ORDER BY date DESC",
-        (group_id,),
-    ).fetchall()
-
-    expenses = []
-    for e in expense_rows:
-        splits = fetch_expense_splits(conn, e["id"])
-        expenses.append(
-            {
-                "id": e["id"],
-                "groupId": group_id,
-                "description": e["description"],
-                "amount": e["amount"],
-                "paidBy": e["paid_by"],
-                "paidByName": user_name(conn, e["paid_by"]),
-                "splitType": e["split_type"],
-                "date": e["date"],
-                "splits": [{**s, "name": user_name(conn, s["userId"])} for s in splits],
-            }
-        )
-
-    net, transfers = compute_balances(member_ids, expenses)
+    expenses, next_cursor = ledger_page(conn, group_id, limit, cursor)
+    net, transfers = settle_up(group_net(conn, group_id, member_ids))
 
     return {
         "id": g["id"],
@@ -743,6 +835,8 @@ def serialize_group(conn, group_id: str) -> dict:
         "memberIds": member_ids,
         "members": [{"id": m, "name": user_name(conn, m)} for m in member_ids],
         "expenses": expenses,
+        "ledgerTotal": ledger_total(conn, group_id),
+        "nextCursor": next_cursor,
         "balances": {
             "net": [{"userId": uid, "name": user_name(conn, uid), "amount": amt} for uid, amt in net.items()],
             "transfers": [
@@ -763,8 +857,11 @@ def compute_balances(member_ids: List[str], expenses: list[dict]):
         net[e["paidBy"]] = net.get(e["paidBy"], 0.0) + e["amount"]
         for s in e["splits"]:
             net[s["userId"]] = net.get(s["userId"], 0.0) - s["amount"]
-    net = {k: round(v, 2) for k, v in net.items()}
+    return settle_up({k: round(v, 2) for k, v in net.items()})
 
+
+def settle_up(net: dict):
+    """(net, transfers): the greedy settle-up of 2-dp nets — largest debtor pays largest creditor."""
     debtors = sorted(
         ({"userId": k, "amount": -v} for k, v in net.items() if v < -0.001),
         key=lambda x: -x["amount"],
@@ -1001,14 +1098,169 @@ def write_splits(conn, expense_id: str, splits: list) -> None:
         )
 
 
+# ---------- phone notifications (Admin → App settings → Notifications) ----------
+# Through Home Assistant, with the shared common/ha_notify.py: a person is reached on the phones Home Assistant
+# links to them (Settings → People → Track device; common/ha_people.py, matched by their HA user id,
+# users.ha_user_id) plus any extra notify services an admin adds under Admin → Users (user_notify, keyed by
+# Splitpot's own users.id). Someone with neither — e.g. a Person whose login isn't known yet — just isn't told.
+# Sent from a background task after the response, with no DB connection open while Home Assistant is called;
+# failures are logged, never raised.
+NOTIFY_TITLE = "Splitpot"
+MAX_SERVICES_PER_USER = 10
+TEST_INTERVAL_SECONDS = 10
+_TEST_LIMITER = people_admin.TestLimiter(TEST_INTERVAL_SECONDS)
+
+
+def person_services(conn, row) -> list[str]:
+    """Bare notify names (what ha_notify.send_notify takes) that reach this Splitpot person: their phones from
+    Home Assistant, then the extra services assigned here, without duplicates. Reads only the cached people."""
+    phones = ha_people.phones_for(row["ha_user_id"]) if row["ha_user_id"] else []
+    extra = [ha_notify.bare(s) for s in ha_notify.assigned_services(conn, {"id": row["id"]})]
+    return list(dict.fromkeys(phones + extra))
+
+
+def linked_user_id(ha_user_id: Optional[str]) -> Optional[str]:
+    """The Splitpot person (users.id, disabled or not) whose Home Assistant login this is — by users.ha_user_id,
+    else through the cached Person list. Never by name. May ask Home Assistant (cached): no connection is held."""
+    uid = (ha_user_id or "").strip().lower()
+    if not uid:
+        return None
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM users WHERE ha_user_id = ?", (uid,)).fetchone()
+    if row:
+        return row["id"]
+    entity = next((p["entity_id"] for p in cached_ha_persons() if (p.get("user_id") or "").strip().lower() == uid), None)
+    if not entity:
+        return None
+    with get_conn() as conn:
+        row = conn.execute("SELECT id FROM users WHERE ha_entity_id = ?", (entity,)).fetchone()
+    return row["id"] if row else None
+
+
+def notify_link(group_id: str) -> Optional[dict]:
+    """Tapping the notification opens the app on the group (iOS reads `url`, Android `clickAction`)."""
+    if not config.INGRESS_PANEL:
+        return None
+    url = f"{config.INGRESS_PANEL}#/group/{group_id}"
+    return {"url": url, "clickAction": url}
+
+
+def send_notices(notices: list, data: Optional[dict]) -> int:
+    """[(users.id, message)] → how many notifications Home Assistant accepted. Skips anyone disabled, switched
+    off under My settings, or with no phone or service."""
+    sent = 0
+    for uid, message in notices:
+        with get_conn() as conn:
+            row = conn.execute("SELECT id, ha_user_id, disabled, receive_notifications FROM users WHERE id = ?",
+                               (uid,)).fetchone()
+            if not row or row["disabled"] or not row["receive_notifications"]:
+                continue
+            services = person_services(conn, row)
+        if not services:                       # the connection is closed before Home Assistant is called
+            continue
+        results = ha_notify.send_to_services(services, NOTIFY_TITLE, message, data)
+        sent += sum(1 for ok in results.values() if ok)
+    return sent
+
+
+def _entry_for_notice(expense_id: str):
+    """(expense row + group name, splits, names) for a just-added entry, or None if it's gone."""
+    with get_conn() as conn:
+        e = conn.execute("SELECT e.id, e.group_id, e.description, e.amount, e.paid_by, e.split_type, "
+                         "g.name AS group_name FROM expenses e JOIN groups g ON g.id = e.group_id WHERE e.id = ?",
+                         (expense_id,)).fetchone()
+        if not e:
+            return None
+        splits = fetch_expense_splits(conn, expense_id)
+        names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
+    return e, splits, names
+
+
+def charge_notices(e, splits, names, actor_id: Optional[str], actor: str) -> list:
+    """Who hears about a new charge, and what: whoever paid and everyone with a share, except the person who
+    added it. "Asha added 'Dinner' ($90.00) to Trip, paid by Ravi. Your share: $30.00." """
+    shares = {s["userId"]: s["amount"] for s in splits}
+    involved = list(dict.fromkeys([e["paid_by"]] + [s["userId"] for s in splits]))
+    head = f"{actor} added '{e['description']}' ({money(e['amount'])}) to {e['group_name']}"
+    out = []
+    for uid in involved:
+        if uid == actor_id:
+            continue
+        if uid == e["paid_by"]:
+            text = f"{head}, paid by you. " + (f"Your share: {money(shares[uid])}." if uid in shares
+                                               else "You're not in the split.")
+        else:
+            text = f"{head}, paid by {names.get(e['paid_by'], 'someone')}. Your share: {money(shares[uid])}."
+        out.append((uid, text))
+    return out
+
+
+def payment_notices(e, splits, names, actor_id: Optional[str], actor: str) -> list:
+    """The two people in a settle-up payment, except whoever recorded it."""
+    if not splits:
+        return []
+    payer, payee = e["paid_by"], splits[0]["userId"]
+    amount, group = money(e["amount"]), e["group_name"]
+    payer_name, payee_name = names.get(payer, "Someone"), names.get(payee, "someone")
+    out = []
+    if payee != actor_id:
+        out.append((payee, f"{payer_name} paid you {amount} in {group} (a settle-up payment)." if actor_id == payer
+                    else f"{actor} recorded {payer_name} paying you {amount} in {group}."))
+    if payer != actor_id:
+        out.append((payer, f"{payee_name} recorded your payment of {amount} to them in {group}." if actor_id == payee
+                    else f"{actor} recorded you paying {payee_name} {amount} in {group}."))
+    return out
+
+
+def notify_new_charge(expense_id: str, actor_ha_id: Optional[str], actor: str) -> int:
+    """Background task after a charge is added (when "Notify people about new charges" is on)."""
+    try:
+        if not get_setting("notify_charges") or not ha_core.has_token():
+            return 0
+        found = _entry_for_notice(expense_id)
+        if not found:
+            return 0
+        e, splits, names = found
+        notices = charge_notices(e, splits, names, linked_user_id(actor_ha_id), actor)
+        return send_notices(notices, notify_link(e["group_id"]))
+    except Exception:          # a notification problem must never surface anywhere
+        logger.exception("Sending the new-charge notifications failed")
+        return 0
+
+
+def notify_payment(expense_id: str, actor_ha_id: Optional[str], actor: str) -> int:
+    """Background task after a settle-up payment is recorded (both notification switches on)."""
+    try:
+        if not (get_setting("notify_charges") and get_setting("notify_payments")) or not ha_core.has_token():
+            return 0
+        found = _entry_for_notice(expense_id)
+        if not found:
+            return 0
+        e, splits, names = found
+        notices = payment_notices(e, splits, names, linked_user_id(actor_ha_id), actor)
+        return send_notices(notices, notify_link(e["group_id"]))
+    except Exception:
+        logger.exception("Sending the settle-up notifications failed")
+        return 0
+
+
 # ---------- app ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await load_ha_timezone()
+    if ha_connected():
+        # The phones Home Assistant links to each person (ha_people), and a warning for any notify service that
+        # Home Assistant can't deliver to. Best effort: Splitpot works without them.
+        try:
+            await asyncio.to_thread(ha_people.refresh_blocking, True)
+            await asyncio.to_thread(ha_notify.check_targets_blocking)
+        except Exception:
+            logger.exception("Reading the people and notify services from Home Assistant failed")
 
     jobs = jobs_core.Jobs()
     if ha_connected():   # sync on/off is checked live inside the loop
         jobs.add("sensor_sync", periodic_sync)
+        jobs.add("ha_people", ha_people.loop)
     jobs.start()
     yield
     await jobs.stop()
@@ -1083,7 +1335,7 @@ def synced_user_rows() -> list:
     with _lock, get_conn() as conn:
         sync_users_from_ha(conn, persons)
         return conn.execute(
-            "SELECT u.id, u.name, u.created_at, u.disabled, u.ha_entity_id, "
+            "SELECT u.id, u.name, u.created_at, u.disabled, u.ha_entity_id, u.ha_user_id, u.receive_notifications, "
             "(SELECT COUNT(*) FROM group_members gm WHERE gm.user_id = u.id) AS group_count "
             "FROM users u ORDER BY u.disabled, u.name COLLATE NOCASE"
         ).fetchall()
@@ -1098,20 +1350,129 @@ def list_users():
     ]
 
 
+def _admin_user_json(conn, r) -> dict:
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "createdAt": r["created_at"],
+        "disabled": bool(r["disabled"]),
+        "haEntityId": r["ha_entity_id"],
+        "groupCount": r["group_count"],
+        "receiveNotifications": bool(r["receive_notifications"]),   # their own choice (My settings)
+        "notify": ha_notify.assigned_services(conn, {"id": r["id"]}),    # extra services added here
+        "ha": people_admin.ha_person_json(r["ha_user_id"]),            # their person and phones in Home Assistant
+    }
+
+
 @router.get("/admin/users")
-def admin_list_users(_admin: None = Depends(require_admin)):
-    """Admin → Users: the same people plus what an admin needs to manage them."""
-    return [
-        {
-            "id": r["id"],
-            "name": r["name"],
-            "createdAt": r["created_at"],
-            "disabled": bool(r["disabled"]),
-            "haEntityId": r["ha_entity_id"],
-            "groupCount": r["group_count"],
-        }
-        for r in synced_user_rows()
-    ]
+def admin_list_users(refresh: bool = Query(default=False), _admin: None = Depends(require_admin)):
+    """Admin → Users: the same people plus what an admin needs to manage them (with their phones from Home
+    Assistant and extra notify services). `?refresh=1` ("Check Home Assistant again") reads HA's people first."""
+    people_admin.refresh_people(refresh)        # network: no lock or connection held
+    rows = synced_user_rows()
+    with get_conn() as conn:
+        return [_admin_user_json(conn, r) for r in rows]
+
+
+# -- Admin → Users: extra notify services and "Send a test" (common/people_admin.py, as in the other apps) --
+def _admin_user_row(conn, user_id: str):
+    row = conn.execute(
+        "SELECT u.id, u.name, u.created_at, u.disabled, u.ha_entity_id, u.ha_user_id, u.receive_notifications, "
+        "(SELECT COUNT(*) FROM group_members gm WHERE gm.user_id = u.id) AS group_count FROM users u WHERE u.id = ?",
+        (user_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return row
+
+
+def _admin_who(request: Request) -> str:
+    ident = auth_core.identity(request)
+    return ident.username or ident.user_id or "admin"
+
+
+@router.get("/admin/notify-services")
+def admin_notify_services(refresh: bool = Query(default=False), _admin: None = Depends(require_admin)):
+    """The notify actions and entities Home Assistant has (for the Add pick-list); available=false if it can't
+    be asked."""
+    return people_admin.notify_services(refresh)
+
+
+@router.post("/admin/users/{user_id}/notify", status_code=201)
+def admin_add_notify(user_id: str, request: Request, body: dict = Body(...), _admin: None = Depends(require_admin)):
+    service = people_admin.clean_service(body.get("service") if isinstance(body, dict) else None)
+    with _lock, get_conn() as conn:
+        _admin_user_row(conn, user_id)
+        people_admin.add_service(conn, user_id, service, _admin_who(request), now_iso(), limit=MAX_SERVICES_PER_USER)
+        conn.commit()
+        return _admin_user_json(conn, _admin_user_row(conn, user_id))
+
+
+@router.delete("/admin/users/{user_id}/notify/{service}")
+def admin_remove_notify(user_id: str, service: str, _admin: None = Depends(require_admin)):
+    service = people_admin.clean_service(service)
+    with _lock, get_conn() as conn:
+        row = _admin_user_row(conn, user_id)
+        people_admin.remove_service(conn, user_id, service, f"{service} isn't assigned to {row['name']}.")
+        conn.commit()
+        return _admin_user_json(conn, row)
+
+
+@router.post("/admin/users/{user_id}/notify/test")
+def admin_test_notify(user_id: str, _admin: None = Depends(require_admin)):
+    """A short test notification to every phone and service the person has (at most one every few seconds)."""
+    with get_conn() as conn:
+        row = _admin_user_row(conn, user_id)
+        services = person_services(conn, row)
+    if not services:
+        raise HTTPException(400, f"{row['name']} has no phone linked in Home Assistant (Settings → People) "
+                                 "and no extra notify service here.")
+    _TEST_LIMITER.check(user_id)
+    sent = ha_notify.send_to_services(services, NOTIFY_TITLE,
+                                      f"Test notification from Splitpot for {row['name']}, sent by an admin.")
+    results = people_admin.test_results(sent)
+    people_admin.require_one_sent(results, services[0], ha_core.has_token)
+    return {"results": results}
+
+
+# -- My settings: each person's own choices --
+class MyPrefsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receiveNotifications: StrictBool
+
+
+def _my_prefs(user_id: Optional[str]) -> dict:
+    s = settings_all()
+    out = {"linked": False, "name": None, "receiveNotifications": None, "reachable": False,
+           "notifyCharges": bool(s["notify_charges"]), "notifyPayments": bool(s["notify_payments"]),
+           "haConnected": ha_connected()}
+    if user_id:
+        with get_conn() as conn:
+            row = conn.execute("SELECT id, name, ha_user_id, receive_notifications FROM users WHERE id = ?",
+                               (user_id,)).fetchone()
+            if row:
+                out.update(linked=True, name=row["name"], receiveNotifications=bool(row["receive_notifications"]),
+                           reachable=bool(person_services(conn, row)))
+    return out
+
+
+@router.get("/me/prefs")
+def get_my_prefs(request: Request):
+    """The signed-in person's own settings (matched by their Home Assistant login, never by name), plus whether
+    notifications are switched on for the household and whether a phone reaches them."""
+    return _my_prefs(linked_user_id(auth_core.identity(request).user_id))
+
+
+@router.put("/me/prefs")
+def put_my_prefs(payload: MyPrefsUpdate, request: Request):
+    user_id = linked_user_id(auth_core.identity(request).user_id)
+    if not user_id:
+        raise HTTPException(404, "Home Assistant doesn't link your login to a person in Splitpot yet "
+                                 "(Settings → People → you → Allow person to login).")
+    with _lock, get_conn() as conn:
+        conn.execute("UPDATE users SET receive_notifications = ? WHERE id = ?",
+                     (1 if payload.receiveNotifications else 0, user_id))
+        conn.commit()
+    return _my_prefs(user_id)
 
 
 class UserUpdate(BaseModel):
@@ -1215,14 +1576,27 @@ def create_group(payload: GroupCreate, request: Request):
     return {"id": group_id, "name": name, "createdAt": created_at, "memberIds": payload.memberIds}
 
 
+# `limit` (on every route that answers with the group): only the newest `limit` ledger entries, plus `nextCursor`
+# for the rest. Without it the whole ledger, as before.
 @router.get("/groups/{group_id}")
-def get_group(group_id: str):
+def get_group(group_id: str, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
     with get_conn() as conn:
-        return serialize_group(conn, group_id)
+        return serialize_group(conn, group_id, limit)
+
+
+@router.get("/groups/{group_id}/ledger")
+def get_group_ledger(group_id: str, limit: int = Query(LEDGER_PAGE, ge=1, le=LEDGER_MAX_LIMIT),
+                     cursor: Optional[str] = Query(None, max_length=1000)):
+    """The next page of the group's ledger ("Load more"): entries after `cursor` (from the group's or the previous
+    page's `nextCursor`; none = from the newest), newest first. `nextCursor` is null on the last page."""
+    with get_conn() as conn:
+        group_name_or_404(conn, group_id)
+        entries, next_cursor = ledger_page(conn, group_id, limit, cursor)
+        return {"expenses": entries, "nextCursor": next_cursor, "total": ledger_total(conn, group_id)}
 
 
 @router.post("/groups/{group_id}/members")
-def add_member(group_id: str, payload: MemberAdd, request: Request):
+def add_member(group_id: str, payload: MemberAdd, request: Request, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
     actor = ha_actor_name(request)
     with _lock, get_conn() as conn:
         group_name = group_name_or_404(conn, group_id)
@@ -1252,7 +1626,7 @@ def add_member(group_id: str, payload: MemberAdd, request: Request):
                 actor=actor,
             )
             conn.commit()
-        return serialize_group(conn, group_id)
+        return serialize_group(conn, group_id, limit)
 
 
 # Text for a CSV cell. A leading = + - @ would make a spreadsheet run it as a formula, so it gets a '.
@@ -1304,7 +1678,7 @@ def delete_group(group_id: str, request: Request, _admin: None = Depends(require
 
 
 @router.put("/groups/{group_id}/default")
-def set_group_default(group_id: str, payload: GroupDefaultUpdate, request: Request):
+def set_group_default(group_id: str, payload: GroupDefaultUpdate, request: Request, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
     """Marks (or unmarks) this group as the one the app opens straight into
     instead of the Dashboard. At most one group can be default at a time —
     setting one clears any other, enforced here and backstopped by a partial
@@ -1320,12 +1694,12 @@ def set_group_default(group_id: str, payload: GroupDefaultUpdate, request: Reque
             conn.execute("UPDATE groups SET is_default = 0 WHERE id = ?", (group_id,))
             log_event(conn, "group_default_cleared", f"{actor} removed '{group_name}' as the default group", group_id=group_id, actor=actor)
         conn.commit()
-        return serialize_group(conn, group_id)
+        return serialize_group(conn, group_id, limit)
 
 
 # -- expenses --
 @router.post("/groups/{group_id}/expenses", status_code=201)
-def add_expense(group_id: str, payload: ExpenseCreate, request: Request):
+def add_expense(group_id: str, payload: ExpenseCreate, request: Request, background: BackgroundTasks):
     actor = ha_actor_name(request)
     description = payload.description.strip()
     if not description:
@@ -1350,6 +1724,8 @@ def add_expense(group_id: str, payload: ExpenseCreate, request: Request):
         conn.commit()
 
     push_balances_to_ha()
+    # after the response is sent: adding a charge never waits for (or fails because of) a notification
+    background.add_task(notify_new_charge, expense_id, auth_core.identity(request).user_id, actor)
     return {
         "id": expense_id,
         "groupId": group_id,
@@ -1363,7 +1739,7 @@ def add_expense(group_id: str, payload: ExpenseCreate, request: Request):
 
 
 @router.put("/expenses/{expense_id}")
-def edit_expense(expense_id: str, payload: ExpenseCreate, request: Request):
+def edit_expense(expense_id: str, payload: ExpenseCreate, request: Request, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
     """Edit an expense in place — description, amount, payer, split and date
     are all replaced (same body and validation as adding one). Settle-up
     payments aren't edited here: delete and re-record them instead."""
@@ -1400,13 +1776,14 @@ def edit_expense(expense_id: str, payload: ExpenseCreate, request: Request):
             actor=actor,
         )
         conn.commit()
-        result = serialize_group(conn, row["group_id"])
+        result = serialize_group(conn, row["group_id"], limit)
     push_balances_to_ha()
     return result
 
 
 @router.post("/groups/{group_id}/payments", status_code=201)
-def record_payment(group_id: str, payload: PaymentCreate, request: Request):
+def record_payment(group_id: str, payload: PaymentCreate, request: Request, background: BackgroundTasks,
+                   limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
     """Record that one member paid another back ("settle up"). Balances move
     exactly as if the payer had covered an expense entirely for the
     recipient, which cancels out what they owed."""
@@ -1436,8 +1813,9 @@ def record_payment(group_id: str, payload: PaymentCreate, request: Request):
             actor=actor,
         )
         conn.commit()
-        result = serialize_group(conn, group_id)
+        result = serialize_group(conn, group_id, limit)
     push_balances_to_ha()
+    background.add_task(notify_payment, expense_id, auth_core.identity(request).user_id, actor)
     return result
 
 
@@ -1664,10 +2042,17 @@ def whoami(request: Request):
     # list itself and never the request's headers wholesale. This is always the
     # real signed-in person, not whoever the "Acting as" picker is set to.
     admin = is_admin(request)
+    me = linked_user_id(request.headers.get("x-remote-user-id"))
+    linked = False
+    if me:
+        with get_conn() as conn:
+            row = conn.execute("SELECT id, ha_user_id FROM users WHERE id = ?", (me,)).fetchone()
+            linked = bool(row and person_services(conn, row))
     return whoami_core.build(
         request, user_id=request.headers.get("x-remote-user-id"), username=request.headers.get("x-remote-user-name"),
         display_name=request.headers.get("x-remote-user-display-name"), is_admin=admin,
         admin_entries=len(ADMIN_NAMES), display_name_only=(not admin) and display_name_listed(request),
+        notify_linked=linked, extras=[whoami_core.notify_row(linked)],
         # for the app's own code: the Splitpot person this HA user is, and the sensor switches
         userId=splitpot_user_for(request), sensorSyncEnabled=sensor_sync_enabled(), haConnected=ha_connected())
 

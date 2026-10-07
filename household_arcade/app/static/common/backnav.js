@@ -1,4 +1,4 @@
-// Shared file: edit common/static/backnav.js and run tools/sync_common.py; don't edit this copy. sha256=cd41184623c7a4c010bc76074a580f4ad244a6bdb2cb71d2ac7e9464da8ec09a
+// Shared file: edit common/static/backnav.js and run tools/sync_common.py; don't edit this copy. sha256=37af6a9baf85f11632c6b4cf6c0aa58742effa91bbfb96d039b2eec54f81d69e
 /* backnav.js — the back gesture inside Home Assistant (shared: common/static/backnav.js).
  *
  * Android's back gesture in the Home Assistant app (and a browser's Back) should never leave this app
@@ -30,6 +30,7 @@
   let ignorePops = 0;         // pops we caused ourselves (removing the guard)
   let dropTimer = null;
   let lastHref = location.href;
+  let guardBase = null;       // the address under the guard (where Back lands when it pops the guard)
   let scheduled = false;
 
   const layers = () => { try { return (cfg && cfg.openLayers && cfg.openLayers()) || []; } catch (e) { return []; } };
@@ -40,7 +41,7 @@
     clearTimeout(dropTimer);
     dropTimer = null;
     if (guard) return;
-    try { history.pushState({ backnav: true }, "", location.href); guard = true; } catch (e) { /* sandboxed frame */ }
+    try { guardBase = location.href; history.pushState({ backnav: true }, "", location.href); guard = true; } catch (e) { /* sandboxed frame */ }
   }
 
   function sync() {
@@ -66,6 +67,14 @@
       // one, so the app's hashchange listener stays on the page that's showing
       ignorePops--;
       if (location.href !== lastHref) { try { history.replaceState(history.state, "", lastHref); } catch (e) { /* ignore */ } }
+      return;
+    }
+    // A link or a notification that changed the address (setting location.hash adds a history entry and fires
+    // popstate too) isn't the back gesture: leave the new address for the app's hashchange listener to show. Back
+    // lands exactly on the address under the guard; anything else is a navigation (with no guard, any change is).
+    if (location.href !== lastHref && (!guard || location.href !== guardBase)) {
+      lastHref = location.href;
+      setTimeout(sync, 0);
       return;
     }
     guard = false;

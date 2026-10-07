@@ -262,19 +262,47 @@
     const editing = h("span", { class: "chip warn editing-chip", id: "editingChip", hidden: !doc.editing }, doc.editing ? `${doc.editing} is editing` : "");
     const backHash = doc.parentRef ? D.folderHash(doc.parentRef) : (doc.ownerId === D.state.me.id ? "#/mine" : "#/shared");
     const back = h("a", { class: "icon-btn back-link", href: backHash, "aria-label": "Back to the folder", title: "Back to the folder" }, "←");
+    // One line: ← | the name (takes what's left, "…" when long; the full name is its tooltip) | Share | ⋯ — so the editor
+    // gets the height (SPEC §13). Everything else in the ⋯ menu as before; Rename is also there when the name is cut.
+    const name = titleOf(doc);
     const title = doc.canEdit
-      ? h("button", { class: "doc-title editable", type: "button", title: "Rename", onclick: () => renameDialog(doc, () => D.render()) }, titleOf(doc))
-      : h("h2", { class: "doc-title" }, titleOf(doc));
-    const right = [editing, status];
-    if (doc.canShare) right.push(h("button", { class: "btn-secondary", type: "button", id: "docShare", onclick: () => shareDialog(doc) }, "Share"));
-    right.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More", id: "docMore", onclick: (e) => D.itemMenu(e.currentTarget, doc, { inEditor: true }) }, "⋯"));
+      ? h("button", { class: "doc-title editable", type: "button", id: "docTitle", title: `${name} — Rename`, onclick: () => renameDialog(doc, () => D.render()) }, name)
+      : h("h2", { class: "doc-title", id: "docTitle", title: name }, name);
+    const actions = [];
+    if (doc.canShare) actions.push(h("button", { class: "btn-secondary btn-small head-share", type: "button", id: "docShare", title: "Share with people", onclick: () => shareDialog(doc) }, "Share"));
+    actions.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More actions", title: "More actions", "aria-haspopup": "menu", id: "docMore", onclick: (e) => D.itemMenu(e.currentTarget, doc, { inEditor: true }) }, "⋯"));
     const role = doc.role !== "owner" ? h("span", { class: "chip role-" + doc.role }, D.roleLabel(doc.role, doc.rootKind)) : null;
-    const sub = h("div", { class: "doc-sub hint" }, doc.rootKind === "shared" ? `${doc.rootLabel} · ` : (doc.role !== "owner" && doc.ownerName ? `${doc.ownerName}'s · ` : ""),
-      doc.modified ? `changed ${fmtWhen(doc.modified)}` : "", doc.updatedByName ? ` by ${doc.updatedByName}` : (doc.outside ? " outside the app" : ""));
+    const subText = [doc.rootKind === "shared" ? `${doc.rootLabel} · ` : (doc.role !== "owner" && doc.ownerName ? `${doc.ownerName}'s · ` : ""),
+      doc.modified ? `changed ${fmtWhen(doc.modified)}` : "", doc.updatedByName ? ` by ${doc.updatedByName}` : (doc.outside ? " outside the app" : "")].join("");
+    const sub = h("span", { class: "doc-sub hint", title: subText }, subText);
     const extras = (D.headExtras || []).map((fn) => fn(doc, ctx)).filter(Boolean);
-    return { el: h("div", { class: "doc-head-wrap" }, h("div", { class: "doc-head" }, h("div", { class: "doc-head-left" }, back, h("div", null, h("div", { class: "doc-title-row" }, title, role), sub)), h("div", { class: "head-actions" }, right)), extras), status, editing };
+    return { el: h("div", { class: "doc-head-wrap" }, h("div", { class: "doc-head" },
+      h("div", { class: "doc-head-row" }, back, title, h("div", { class: "head-actions doc-actions" }, actions)),
+      h("div", { class: "doc-sub-row" }, role, sub, editing, status)), extras), status, editing };
   }
   D.editorHead = editorHead;
+  // On a phone the note's text box reaches down to the bottom bar, so the height the one-line header frees goes to the
+  // text (SPEC §13). Only grows (never below the CSS min-height); refits when the width changes (turning the phone),
+  // not when the on-screen keyboard opens.
+  function fitToScreen(el) {
+    if (!matchMedia("(max-width: 760px)").matches || !document.body.contains(el) || !el.offsetParent) { el.style.minHeight = ""; return; }
+    const bb = document.querySelector(".bottombar");
+    const bottom = bb && getComputedStyle(bb).display !== "none" ? bb.getBoundingClientRect().top : window.innerHeight;
+    const room = Math.floor(bottom - el.getBoundingClientRect().top - 10);
+    el.style.minHeight = "";
+    if (room > el.offsetHeight) el.style.minHeight = room + "px";
+  }
+  function keepFitted(el) {
+    let w = window.innerWidth;
+    const onResize = () => {
+      if (!document.body.contains(el)) { window.removeEventListener("resize", onResize); return; }
+      if (window.innerWidth !== w) { w = window.innerWidth; fitToScreen(el); }
+    };
+    window.addEventListener("resize", onResize);
+    requestAnimationFrame(() => fitToScreen(el));
+    return () => fitToScreen(el);
+  }
+  D.fitToScreen = fitToScreen;
   function setEditing(chip, who) { chip.hidden = !who; chip.textContent = who ? `${who} is editing` : ""; }
 
   // ---------- the secret hint (SPEC §3.3): a light check in the browser, nothing is sent ----------
@@ -475,7 +503,9 @@
       modeBtns.forEach((b) => { b.classList.toggle("on", b.dataset.mode === m); b.setAttribute("aria-pressed", String(b.dataset.mode === m)); });
       mdTools.hidden = m === "preview" || !doc.canEdit;
       drawPreview();
+      refit();
     }
+    let refit = () => {};
     const modeBtns = isMd ? [["edit", "Edit"], ["preview", "Preview"], ["split", "Split"]].map(([m, l]) => h("button", { type: "button", class: "chip-toggle" + (mode === m ? " on" : ""),
       dataset: { mode: m }, "aria-pressed": String(mode === m), id: "mdMode-" + m, onclick: () => setMode(m) }, l)) : [];
     function wrapSel(before, after, placeholder) {
@@ -546,6 +576,7 @@
     applyLook();
     const secret = secretHint();
     mount(page, head.el, tools, mdTools, find.el, box, linksBox, secret.el);
+    refit = keepFitted(ta);
     secret.check(ta.value);
     setStatus(doc.canEdit ? "Saved" : "");
     drawPreview();
