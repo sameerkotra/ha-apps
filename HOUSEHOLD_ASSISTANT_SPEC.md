@@ -65,7 +65,9 @@ release, each for a reason that may change:
 - Plugging into **Assist** (Home Assistant's own voice assistant, so "Hey Jarvis, what's on my list") needs a
   custom *integration* (a conversation agent), not an app; apps can't register one. A small companion integration
   that forwards Assist's text to this app and reads the answer back is the natural second step and is listed in
-  §10 (step 6) — the API in §9 is shaped so that integration needs nothing more.
+  §10 (step 6). Built in 1.1.0 as `custom_components/household_assistant`; it talks to the app over the household
+  apps bus (`assist.ask` / `assist.answer`, `APP_MESSAGES_SPEC.md` §6.7) rather than the §9 API, which only
+  Supervisor's ingress proxy may reach.
 - A **sensor** with the last answer: pointless without the question.
 
 ## 3. How an answer is made
@@ -340,7 +342,7 @@ Each app that offers tools adds, in its own App settings, *Answer the Household 
 |---|---|---|
 | `GET /api/me` | user | `{user, canAsk, suggestions[], apps: [{slug, name, on, panel}]}` |
 | `POST /api/ask` `{text}` | user | starts a question → `{id}`; 429 when over a limit or one is still running |
-| `GET /api/ask/{id}` | owner | `{state, answer?, sources[], shared[], actions[], error?}`; the page polls every second (SSE later) |
+| `GET /api/ask/{id}` | owner | `{state, answer?, sources[], shared[], actions[], error?}`; `GET /api/ask/{id}/events` sends it live (SSE, 1.1.0); polling every second is the fallback |
 | `POST /api/ask/{id}/stop` | owner | stops after the current step |
 | `POST /api/ask/{id}/act/{call_id}` | owner | taps a proposed action → sends the confirmed call → `{result}` |
 | `GET /api/history?before=` | user | the person's questions, newest first |
@@ -366,8 +368,10 @@ without Home Assistant's identity headers.
 5. **Chat, Arcade, Family Tree** small catalogues; a *Ask the assistant* entry in Chat's ➕ menu that opens the
    assistant with the question typed (a `panel` link with `?q=`), nothing more.
 6. **Later**: native tool calling in the shared `ai_client` (OpenAI `tools`, Anthropic `tool_use`, Ollama chat
-   tools) replacing the JSON plan where the model supports it; SSE instead of polling; a companion Home Assistant
-   integration that makes the assistant an Assist conversation agent (§2.2); speech on the page.
+   tools) replacing the JSON plan where the model supports it (done in 1.1.0); SSE instead of polling (done in 1.1.0); a companion
+   Home Assistant integration that makes the assistant an Assist conversation agent (§2.2; done in 1.1.0:
+   `custom_components/household_assistant`, over the bus, `APP_MESSAGES_SPEC.md` §6.7); speech on the page
+   (done in 1.1.0).
 
 ## 11. Decisions
 
@@ -377,7 +381,8 @@ without Home Assistant's identity headers.
 - **A catalogue in code, not a schema language**: flat arguments and plain-words descriptions are what small local
   models follow; apps don't ship JSON Schema. Nesting can come as a `kv: 2` later.
 - **JSON plan first, native tool calls later**: works with every provider and model the apps support today; the
-  loop is the same, only the transport of "which tool" changes.
+  loop is the same, only the transport of "which tool" changes. Native tool calls came in 1.1.0 (App settings →
+  *Tool calls*, "auto" by default, the JSON plan for models without them).
 - **No message search in Chat, nothing from Vault, Finance memos never**: the most private text stays where it is.
 - **Actions only on a tap**: the model proposes, the person confirms, the app checks. No autonomous changes.
 - **The page is the card**: an iframe card and Assist both need things apps can't do alone today (§2.2).

@@ -28,6 +28,11 @@ Source and issues: https://github.com/sameerkotra/ha-apps
   and an access key where the service needs one.
 - **Anthropic** Claude: the model (e.g. `claude-sonnet-4-5`) and an access key.
 
+**Tool calls**: the assistant lets the model pick the apps' tools with its own tool calling where the model has it
+(Claude, GPT, Qwen 2.5, Llama 3.1 and newer), and asks other models for a short JSON plan instead — it notices which
+on the first question. With tool calling, the answer usually comes in the same step as the last plan, one model call
+fewer per question. If a model picks tools badly, set **Tool calls** to *Always ask the model for a JSON plan*.
+
 The access key is stored in the app's database, never shown again, never logged, and left out of backups.
 With a provider outside your network, the page says so above the ask box: the question, the last few questions
 and answers, and what the apps returned are sent to it.
@@ -51,7 +56,7 @@ The app can't check this for you; until you tick it in **App settings → Privac
 
 - Type a question and press **Enter** (Shift+Enter for a new line), or tap a suggestion. On a phone, 🎤 uses
   the browser's own speech recognition where it has one; nothing is recorded by the app.
-- While it works you see which apps it is asking, with **Stop**. A question takes at most 5 minutes (Admin → App settings → Limits → *Longest a question may take*); if the model runs out of time after the apps answered, you see what the apps said instead; with Ollama, a model that hasn't been used for a few minutes is woken up first ("Waking up the model…"), which doesn't count.
+- While it works you see which apps it is asking, with **Stop**. 🔊 on an answer reads it aloud; a question asked with 🎤 is read aloud when it's answered (the browser's own voice). A question takes at most 5 minutes (Admin → App settings → Limits → *Longest a question may take*); if the model runs out of time after the apps answered, you see what the apps said instead; with Ollama, a model that hasn't been used for a few minutes is woken up first ("Waking up the model…"), which doesn't count.
 - The answer is short, with **Sources**: one link per app it used, straight to the right page in that app.
 - **What was shared** (under the answer) lists each question the assistant asked an app and exactly what the
   app returned.
@@ -65,6 +70,27 @@ The app can't check this for you; until you tick it in **App settings → Privac
 Each app answers only what you could see in it yourself, and only while both its admin's **Answer the Household
 Assistant** and your own **Let the Household Assistant answer for me** (that app's settings, on unless you turn
 it off) are on. Household Vault is never asked: passwords stay there.
+
+## Asking with your voice: Assist
+
+The assistant can answer **Assist**, Home Assistant's own voice assistant ("What's on my list today?" to a phone,
+a voice satellite or the Assist dialog), through a small companion **integration** from this repository:
+
+1. **Install the integration.** With HACS: HACS → ⋮ → **Custom repositories**, add
+   `https://github.com/sameerkotra/ha-apps` as an *Integration*, then install **Household Assistant**. Without
+   HACS: copy the repository's `custom_components/household_assistant` folder into your Home Assistant
+   configuration folder's `custom_components`. Restart Home Assistant.
+2. **Add it**: Settings → Devices & services → **Add integration** → *Household Assistant*.
+3. **Turn on Answer Assist** in this app: Admin → App settings → People.
+4. **Choose it in a voice assistant**: Settings → Voice assistants → a voice assistant → *Conversation agent*:
+   **Household Assistant**.
+
+Each question is asked as the Home Assistant user speaking, with everything above (their own apps, switches and
+limits; their question appears in their history here). A voice satellite doesn't say who is speaking: in the
+integration's **Configure**, choose the person whose questions it asks, or leave it at *Nobody* and it says so.
+The answer is spoken without its links; **Sources** and **What was shared** are on this page. Questions and
+answers travel over Home Assistant's event bus like the apps' answers (keep `household_apps` out of the recorder,
+above). Assist waits up to 5 minutes for an answer (the integration's **Configure**).
 
 ## Admin
 

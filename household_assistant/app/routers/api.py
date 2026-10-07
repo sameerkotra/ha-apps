@@ -2,10 +2,13 @@
 question, answer and action is the signed-in person's own — admins can't see or ask "as" anyone else.
 """
 import asyncio
+import json
 import os
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from .. import ai_client, app_messages, auth, catalogue, config, db, engine, settings
 from ..auth import get_current_user, require_admin
@@ -13,8 +16,9 @@ from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
 
 router = APIRouter(prefix="/api")
+PING_SECONDS = 20                     # a comment line on a quiet stream, so proxies keep it open
 
-_AI_KEYS = {"ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens"}
+_AI_KEYS = {"ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens", "ai_tool_calls"}
 DEFAULT_SUGGESTIONS = ["What's on my list today?", "Spending this month", "What's on the shopping list?",
                        "Find a document"]
 
@@ -89,6 +93,39 @@ def _own(conn, qid: str, user: dict):
 def get_question(qid: str, user: dict = Depends(get_current_user)):
     with db.get_conn() as conn:
         return engine.view(conn, _own(conn, qid, user))
+
+
+@router.get("/ask/{qid}/events")
+async def question_events(qid: str, request: Request, user: dict = Depends(get_current_user)):
+    """The question as GET /api/ask/{qid} gives it, sent again each time it changes (Server-Sent Events), until it
+    is answered, failed or stopped. The page falls back to polling when the stream can't be opened."""
+    def load() -> dict:
+        with db.get_conn() as conn:
+            return engine.view(conn, _own(conn, qid, user))
+
+    first = await run_in_threadpool(load)
+
+    async def gen():
+        yield "retry: 3000\n\n"
+        q, last, seen, quiet = first, None, 0, 0.0
+        while True:
+            body = json.dumps(q, separators=(",", ":"))
+            if body != last:
+                yield f"event: question\ndata: {body}\n\n"
+                last, quiet = body, 0.0
+            if q["state"] not in engine.RUNNING:
+                return
+            if quiet >= PING_SECONDS:
+                if await request.is_disconnected():
+                    return
+                yield ": ping\n\n"
+                quiet = 0.0
+            seen = await run_in_threadpool(engine.wait_change, qid, seen, 1.0)   # a change, or a second
+            quiet += 1.0
+            q = await run_in_threadpool(load)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 @router.post("/ask/{qid}/stop")

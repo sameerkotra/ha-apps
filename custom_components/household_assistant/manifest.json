@@ -1,0 +1,13 @@
+{
+  "domain": "household_assistant",
+  "name": "Household Assistant",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/sameerkotra/ha-apps/tree/main/custom_components/household_assistant",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/sameerkotra/ha-apps/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

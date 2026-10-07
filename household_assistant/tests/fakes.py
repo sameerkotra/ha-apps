@@ -125,8 +125,28 @@ class Model:
         return ai_client.Reply(text=text, input_tokens=100, output_tokens=20)
 
 
-def set_up_ai():
-    settings.update({"ai_provider": "ollama", "ai_url": "http://192.0.2.1:11434", "ai_model": "tiny"}, None)
+class NativeModel:
+    """A model with native tool calling, scripted: each step is (calls, text) — calls as [(name, args)] with the
+    provider's names ("todo__tasks") — or a function(prompt, specs) -> (calls, text). Patches generate_tools."""
+
+    def __init__(self, *script):
+        self.script = list(script)
+        self.prompts: list[tuple[str, str]] = []             # (prompt, the tool names offered)
+        self.specs: list[dict] = []
+
+    def __call__(self, prompt, specs, *, system=None, temperature=None, timeout=None, purpose="", cfg=None):
+        self.prompts.append((prompt, ",".join(s["name"] for s in specs)))
+        self.specs = specs
+        step = self.script.pop(0) if self.script else ([], "Nothing more.")
+        calls, text = step(prompt, specs) if callable(step) else step
+        return ai_client.Reply(text=text, input_tokens=50, output_tokens=10,
+                               calls=[{"name": n, "args": a} for n, a in calls])
+
+
+def set_up_ai(tool_calls="json"):
+    """The AI set up (a scripted model stands in); the JSON plan unless `tool_calls` is "auto"."""
+    settings.update({"ai_provider": "ollama", "ai_url": "http://192.0.2.1:11434", "ai_model": "tiny",
+                     "ai_tool_calls": tool_calls}, None)
 
 
 def wait_done(qid: str, timeout: float = 10.0) -> dict:
@@ -140,4 +160,4 @@ def wait_done(qid: str, timeout: float = 10.0) -> dict:
         time.sleep(0.02)
 
 
-__all__ = ["Router", "FakeApp", "make_household", "Model", "set_up_ai", "wait_done", "config"]
+__all__ = ["Router", "FakeApp", "make_household", "Model", "NativeModel", "set_up_ai", "wait_done", "config"]

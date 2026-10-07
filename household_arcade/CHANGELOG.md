@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.1
+
+- **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.
+
 ## 1.9.0
 
 - **Answers the Household Assistant**: the new Household Assistant app can ask Arcade for the leaderboard ("Who has the high score in Snake?" — one game's top 10, or who holds each game's record) and for a person's own bests and play time this week, with a link back to the Leaderboard or My scores. The leaderboard is never given to a child, and nothing while it's switched off. On by default; an admin can turn it off in **App settings → Household Assistant**, and each person on **Settings → Let the Household Assistant answer for me**.

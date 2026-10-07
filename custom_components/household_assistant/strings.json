@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Household Assistant",
+        "description": "Assist will be able to ask the Household Assistant app. In the app, an admin turns on App settings → Answer Assist; then choose Household Assistant as the conversation agent of a voice assistant (Settings → Voice assistants)."
+      }
+    },
+    "abort": {
+      "already_configured": "The Household Assistant is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Household Assistant",
+        "data": {
+          "voice_user": "Answer voice satellites as",
+          "timeout": "Wait for an answer (seconds)"
+        },
+        "data_description": {
+          "voice_user": "A voice satellite doesn't say who is speaking. Its questions are asked as this person, with their access in each app, or not at all.",
+          "timeout": "A model on the Home Assistant machine's CPU can take several minutes; the answer is also on the app's page."
+        }
+      }
+    }
+  }
+}

@@ -57,7 +57,14 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 - Warm-up: with Ollama, when the model hasn't answered for 4 minutes, `warmup_sync()` sends "hi" first (up to 120 s; progress "Waking up the model…"); the question's clock starts after it.
 - The loop (at most 3 rounds, *Longest a question may take* in all — `question_timeout`, 300 s, 60–900; `Stopped` / `TooLong` checked between steps; a `TooLong` or `AIError` after some apps answered ends the question
   `done` with the apps' own `text`s, one line each, under a line saying the model didn't finish):
-  1. **Plan**: `generate(want_json=True)` with the system prompt (§3.1, the person's name, today's date and time
+  1. **Plan**, with *Tool calls* "auto" (the default) and a model that takes them: `generate_tools()` — the
+     shared `Client.tool_call` (Ollama `/api/chat` tools, OpenAI `tools`, Claude `tools`) — with the person's
+     catalogue as native tools (`tool_specs`: `todo.tasks` → `todo__tasks`, flat arguments as JSON Schema, the
+     app's name and CHANGES DATA in the description) and `native_prompt` (no tool list or format; with results,
+     the answer rules, so words in reply are the final answer and there is no separate answer step). A 400
+     (no tool support) is remembered for that provider, address and model until the AI settings change, and that
+     round and later ones use the JSON plan. Otherwise (*Tool calls* "json"):
+     `generate(want_json=True)` with the system prompt (§3.1, the person's name, today's date and time
      zone), the tools as one line each (name, app, CHANGES DATA for `acts`, what, arguments with type, values,
      range, required, returns), the last 6 done questions and answers, the results so far in a `<data>` block,
      the proposed changes, the reply format and the question. `parse_plan` takes the first JSON object:
@@ -80,6 +87,9 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   at most 8), `shared` (each call: app, tool, args, state, text, items, links, `problem` in words) and `actions`.
 - `POST /api/ask/{id}/act/{call id}` → the proposal is sent with `confirm: true` and `confirmed_at`, as the
   person, if the tool is still offered to them (403 otherwise; 409 when already done; 404 for someone else's).
+- `GET /api/ask/{id}/events` → Server-Sent Events: `event: question` with the same view each time it changes (the
+  engine's `touch(qid)` on every state change, warm-up, call sent and answer; checked again every second anyway),
+  until the question ends; `: ping` every 20 s while quiet.
 - `POST /api/ask/{id}/stop` → state `stopped` at once; the thread ends at its next check.
 
 ## API
@@ -89,7 +99,7 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/me` | user | `user`, `canAsk`, `why`, `noAdmin`, `suggestions` (one example per app, else four defaults), `apps`, `privacy` (a cloud provider), `sharedOpen`, `recorderWarning` (admins, until ticked), `version` |
 | `GET /api/whoami` | user | the shared whoami contract |
 | `GET /api/tools` | user | the person's tools in words |
-| `POST /api/ask` · `GET /api/ask/{id}` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
+| `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
 | `GET /api/history?before=&limit=` · `DELETE /api/history` | user | own questions, newest first; clear (not a running one) |
 | `GET/PUT /api/admin/settings` · `POST /api/admin/settings/test-ai` | admin | App settings; Test connection |
 | `GET /api/admin/tools` · `POST /api/admin/tools/refresh` · `PUT /api/admin/tools/{app}` `{enabled}` | admin | Apps |
@@ -105,9 +115,31 @@ from the app.
 One column: the conversation (question; answer as Markdown built as DOM nodes — paragraphs, lists, bold; never
 HTML), proposed actions as buttons, **Sources** chips (opened with `ConnectedApps.openAppPage`), **What was
 shared** (`<details>`), the suggestions and the ask box (Enter sends, Shift+Enter a new line, 🎤 where the browser
-has speech recognition). It polls a running question every second. `?q=` (on the page or the sidebar page's
+has speech recognition; 🔊 on an answer reads it with `speechSynthesis`, and a question asked with 🎤 is read aloud
+when done). It follows a running question live (`/events`; polling every second where the stream can't be opened). `?q=` (on the page or the sidebar page's
 address) fills in the question. Admins get Admin: Apps (with Connected apps), App settings (`settings.js`, with
 Test connection), People, Usage, Storage.
+
+## Assist (the companion integration)
+
+`custom_components/household_assistant` (repository root; HACS via `hacs.json`) is a Home Assistant integration: a
+config entry, a `conversation` entity (the agent), options *Answer voice satellites as* (an HA user) and *Wait for
+an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds the messages; on the bus it is
+`ha_assist`:
+
+- `assist.ask` (`{requested_by, name?, text}`, expires in 5 minutes; ref `assist:<id>`) → `app_messages.on_ask`:
+  `nack not_allowed off` while *Answer Assist* (`assist_answers`) is off, `nack invalid <field>`; else `ack {}` and,
+  after the bus commits (the bus holds the database), `auth.user_by_id` (the users row made with the name Home
+  Assistant gave) and `engine.ask` — the same checks and limits as the page; a refusal becomes a `failed` answer.
+- `engine.when_done(qid, fn)` → `assist.answer` as a reply to the ask (`reply_to`, same `ref`, 5 minutes):
+  `{question, state, answer? (≤ 3000), error?, sources: [app names]}`; the integration acks it, and its outbox
+  re-sends it until then.
+- The integration waits 15 s for the `ack` ("The Household Assistant app isn't answering…"), then up to its wait
+  for the answer, and speaks it without Markdown (`protocol.plain`). A turn without a user (a voice satellite)
+  is asked as the chosen person, or answered "I don't know who is asking…".
+
+`integration_tests/` runs it in a real Home Assistant core (pytest-homeassistant-custom-component);
+`tests/test_assistant.py` runs `protocol.py` against this app.
 
 ## Jobs
 

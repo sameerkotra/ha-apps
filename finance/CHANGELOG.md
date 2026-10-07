@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3
+
+- **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.
+
 ## 1.2.2
 
 - **Your own Household Assistant switch**: while an administrator lets the Household Assistant ask, the **Who am I** page has **Let the Household Assistant answer for me**. Turn it off and the assistant won't answer your questions from Finance.
