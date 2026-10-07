@@ -105,7 +105,8 @@ from the app.
 One column: the conversation (question; answer as Markdown built as DOM nodes — paragraphs, lists, bold; never
 HTML), proposed actions as buttons, **Sources** chips (opened with `ConnectedApps.openAppPage`), **What was
 shared** (`<details>`), the suggestions and the ask box (Enter sends, Shift+Enter a new line, 🎤 where the browser
-has speech recognition). It polls a running question every second. `?q=` (on the page or the sidebar page's
+has speech recognition; 🔊 on an answer reads it with `speechSynthesis`, and a question asked with 🎤 is read aloud
+when done). It polls a running question every second. `?q=` (on the page or the sidebar page's
 address) fills in the question. Admins get Admin: Apps (with Connected apps), App settings (`settings.js`, with
 Test connection), People, Usage, Storage.
 

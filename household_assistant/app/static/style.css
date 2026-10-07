@@ -63,6 +63,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .answer { background: var(--card); border: 1px solid var(--border); padding: 10px 14px; border-radius: 14px 14px 14px 4px;
   overflow-wrap: anywhere; }
 .answer.error { color: var(--danger); }
+.answer .read-aloud { float: right; margin: -4px -8px 0 8px; font-size: 1rem; text-decoration: none; }
 .md p { margin: 0 0 6px; }
 .md p:last-child, .md ul:last-child, .md ol:last-child { margin-bottom: 0; }
 .md ul, .md ol { margin: 0 0 6px; padding-left: 22px; }

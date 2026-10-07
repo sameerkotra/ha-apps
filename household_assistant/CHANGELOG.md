@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0
+
+- **Answers read aloud**: 🔊 on an answer reads it out with the browser's own voice; a question asked with 🎤 is
+  read aloud by itself when it's answered. Nothing is sent anywhere for this.
+
 ## 1.0.2
 
 - **The apps' answers aren't lost**: when the model runs out of time or fails after the apps have answered, the

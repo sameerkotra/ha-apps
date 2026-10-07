@@ -33,7 +33,8 @@ def plan_call(tool, **args):
     return json.dumps({"call": [{"tool": tool, "args": args}]})
 
 
-class AssistantTests(unittest.TestCase):
+class Household(unittest.TestCase):
+    """The app (its start-up run once) and, for each test, a fresh database and fake household on one bus."""
     @classmethod
     def setUpClass(cls):
         cls._ctx = ingress_client(app)
@@ -86,6 +87,8 @@ class AssistantTests(unittest.TestCase):
             q = wait_done(r.json()["id"])
         return q
 
+
+class AssistantTests(Household):
     # ---------------------------------------------------------------------------------------- catalogue
     def test_catalogue_is_learned_and_never_vaults(self):
         rows = self.c.get("/api/admin/tools", headers=ADMIN).json()["apps"]

@@ -3,6 +3,7 @@
  * One column: the conversation (each question, its answer as short Markdown — lists and bold only, built as DOM
  * nodes, never HTML — its Sources, "What was shared" and any proposed actions), suggestions, and the ask box.
  * A question is answered on the server; the page polls GET api/ask/<id> every second until it is done.
+ * 🔊 reads an answer aloud with the browser's speech synthesis; a question asked with 🎤 is read aloud when done.
  * Admins also get Admin: Apps, App settings, People, Usage, Storage (and Connected apps).
  */
 (function () {
@@ -15,7 +16,7 @@
   });
   const toast = (msg, error) => UI.toast(msg, { error: !!error });
 
-  const state = { me: null, polling: new Map(), oldest: null, more: false };
+  const state = { me: null, polling: new Map(), oldest: null, more: false, heard: null, spoken: new Set() };
 
   HouseholdTheme.bindSelect($("#theme-select"));
 
@@ -57,6 +58,29 @@
     }
     flush();
     return box;
+  }
+
+  // ---------- reading answers aloud: the browser's own speech, nothing leaves the device ----------
+  const Voice = window.speechSynthesis && window.SpeechSynthesisUtterance ? window.speechSynthesis : null;
+
+  function plainText(text) {
+    return String(text || "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, "")
+      .replace(/^#+\s*/gm, "").replace(/\n{2,}/g, ".\n");
+  }
+
+  function speak(text) {
+    if (!Voice) return;
+    Voice.cancel();
+    const u = new SpeechSynthesisUtterance(plainText(text));
+    u.lang = navigator.language || "en-US";
+    Voice.speak(u);
+  }
+
+  function readAloudBtn(q) {
+    if (!Voice) return null;
+    const b = h("button", { type: "button", class: "link-btn read-aloud", title: "Read aloud", "aria-label": "Read the answer aloud" }, "🔊");
+    b.addEventListener("click", () => { if (Voice.speaking) Voice.cancel(); else speak(q.answer); });
+    return b;
   }
 
   // ---------- links back to the apps (§6.3) ----------
@@ -126,7 +150,7 @@
       stop.addEventListener("click", () => api(`api/ask/${q.id}/stop`, { method: "POST" }).then(() => poll(q.id)).catch((e) => toast(e.message, true)));
       parts.push(h("div", { class: "progress" }, h("span", { class: "spinner" }), " ", q.progress || "Working…", " ", stop));
     } else if (q.state === "done") {
-      parts.push(h("div", { class: "answer" }, markdown(q.answer)));
+      parts.push(h("div", { class: "answer" }, readAloudBtn(q), markdown(q.answer)));
     } else if (q.state === "stopped") {
       parts.push(h("div", { class: "answer dim" }, "Stopped."));
     } else {
@@ -149,7 +173,10 @@
         const q = await api(`api/ask/${id}`);
         const node = $(`.turn[data-id="${id}"]`);
         if (node) fillQuestion(node, q);
-        if (!["planning", "calling", "answering"].includes(q.state)) break;
+        if (!["planning", "calling", "answering"].includes(q.state)) {
+          if (state.spoken.delete(id) && q.state === "done") speak(q.answer);   // asked by voice: answered by voice
+          break;
+        }
         await new Promise((r) => setTimeout(r, 1000));
       }
     } catch (e) { toast(e.message, true); }
@@ -164,6 +191,8 @@
     $("#askBtn").disabled = true;
     try {
       const { id } = await api("api/ask", { method: "POST", body: { text } });
+      if (state.heard && state.heard === text) state.spoken.add(id);
+      state.heard = null;
       $("#askInput").value = "";
       autosize();
       $("#suggestions").hidden = true;
@@ -194,7 +223,7 @@
     $("#micBtn").addEventListener("click", () => {
       const rec = new Speech();
       rec.lang = navigator.language || "en-US";
-      rec.onresult = (e) => { $("#askInput").value = e.results[0][0].transcript; autosize(); };
+      rec.onresult = (e) => { state.heard = e.results[0][0].transcript.trim(); $("#askInput").value = state.heard; autosize(); };
       rec.onerror = () => toast("Couldn't hear that.", true);
       rec.start();
     });
