@@ -5,7 +5,8 @@ Admins change them inside the app, without a restart. Only `admin_users` stays o
 - AI: `ai_provider` ("" | "ollama" | "openai" | "anthropic"), `ai_url`, `ai_model`, `ai_api_key` (SECRET: never
   returned or shown, only sent to the provider in a header; blanked in backups, kept on restore), `ai_max_tokens`,
   `ai_tool_calls` ("auto": the model's native tool calling where it has it; "json": always the JSON plan).
-- People: `children_may_ask` (off).
+- People: `assist_answers` (off: questions from Home Assistant's Assist, via the companion integration),
+  `children_may_ask` (off).
 - Limits: `questions_per_hour` (per person, 30), `questions_per_day` (the household, 200),
   `question_timeout` (seconds, 300; 60–900), `keep_days` (30).
 - Privacy: `recorder_excluded` (the admin's tick that `household_apps` is out of the recorder), `shared_open`
@@ -96,6 +97,13 @@ SETTINGS = [
             help="Most current models (Claude, GPT, Qwen 2.5, Llama 3.1 and newer) choose tools natively, which is "
                  "more reliable. A model without it is noticed on its first question and asked for a JSON plan "
                  "from then on. Choose the JSON plan if a model calls tools badly."),
+    Setting("assist_answers", False, "Answer Assist (Home Assistant's voice assistant)", group="people",
+            strict=True,
+            help="With the Household Assistant integration installed in Home Assistant, Assist can pass questions "
+                 "here and speak the answers. Each question is asked as the Home Assistant user speaking (or the "
+                 "integration's chosen person, for voice satellites), with all the same checks. The answer goes "
+                 "back over Home Assistant's event bus, like the apps' answers: keep household_apps out of the "
+                 "recorder."),
     Setting("children_may_ask", False, "Children may ask", group="people", strict=True,
             help="People marked as children on Admin → People may ask too — and then only about their own things, "
                  "from the apps that let children ask."),

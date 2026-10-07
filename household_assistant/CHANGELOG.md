@@ -11,6 +11,10 @@
   choose the apps' tools natively, which they do more reliably than writing a JSON plan, and usually answer in the
   same step — one model call fewer per question, which matters most on a CPU. Other models are noticed on their
   first question and get the JSON plan as before. App settings → AI → **Tool calls** can force the JSON plan.
+- **Ask with Assist, Home Assistant's voice assistant**: with the companion *Household Assistant* integration from
+  this repository (HACS or `custom_components`), Assist on a phone, a voice satellite or the Assist dialog asks
+  here as the person speaking and says the answer. An admin turns it on: App settings → People → **Answer Assist**
+  (off until then). See *Asking with your voice* in the Documentation.
 
 ## 1.0.2
 

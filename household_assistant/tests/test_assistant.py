@@ -320,6 +320,95 @@ class AssistantTests(Household):
         self.c.put("/api/admin/settings", json={"ai_model": "bigger"}, headers=ADMIN)
         self.assertTrue(ai_client.tools_supported())        # another model: asked again
 
+    # ---------------------------------------------------------------------------------------- Assist
+    def assist(self, text="What's on my list today?", uid="u_alice", name="Alice"):
+        """What the companion integration fires: an assist.ask from "ha_assist"."""
+        now = config.utcnow()
+        env = {"id": bus.new_ulid(now), "v": 1, "from": "ha_assist", "to": config.SLUG, "kind": "assist.ask",
+               "kv": 1, "reply_to": None, "ref": "assist:c1", "sent": now.isoformat(),
+               "expires": (now + timedelta(minutes=5)).isoformat(),
+               "data": {"requested_by": uid, "name": name, "text": text}}
+        self.router.post(env)
+        return env
+
+    def replies(self, env, kind, timeout=10.0):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            got = [e for e in self.router.sent if e.get("to") == "ha_assist" and e.get("reply_to") == env["id"]
+                   and e["kind"] == kind]
+            if got:
+                return got
+            time.sleep(0.02)
+        self.fail(f"no {kind} for {env['data']}")
+
+    def test_assist_asks_and_hears_the_answer(self):
+        env = self.assist()
+        self.assertEqual(self.replies(env, "nack")[0]["data"], {"reason": "not_allowed", "detail": "off"})
+        settings.update({"assist_answers": True}, None)
+        model = Model(plan_call("todo.tasks", when="today"), '{"answer": "x"}', "Two tasks today: **Bins** and Call plumber.")
+        with mock.patch.object(ai_client, "generate", model):
+            env = self.assist()
+            self.assertEqual(self.replies(env, "ack")[0]["data"], {"result": {}})
+            answer = self.replies(env, "assist.answer")[0]
+        self.assertEqual(answer["ref"], "assist:c1")
+        self.assertEqual({k: v for k, v in answer["data"].items() if k != "question"},
+                         {"state": "done", "answer": "Two tasks today: **Bins** and Call plumber.",
+                          "sources": ["Household Todo"]})
+        with db.get_conn() as conn:
+            q = conn.execute("SELECT user_id, text FROM questions WHERE id = ?", (answer["data"]["question"],)).fetchone()
+        self.assertEqual(tuple(q), ("u_alice", "What's on my list today?"))     # one of Alice's own questions
+        model = Model('{"answer": "Hello, Carol."}')
+        with mock.patch.object(ai_client, "generate", model):
+            answer = self.replies(self.assist("Hi", uid="u_carol", name="Carol"), "assist.answer")[0]["data"]
+        self.assertEqual(answer["answer"], "Hello, Carol.")
+        self.assertIn("You are answering Carol.", model.prompts[0][1])         # never opened the page: known now
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT name FROM users WHERE id = 'u_carol'").fetchone()[0], "Carol")
+
+    def test_assist_refusals_in_words(self):
+        settings.update({"assist_answers": True}, None)
+        self.assertEqual(self.replies(self.assist(text=" "), "nack")[0]["data"], {"reason": "invalid", "detail": "text"})
+        self.assertEqual(self.replies(self.assist(uid="bad id!"), "nack")[0]["data"],
+                         {"reason": "invalid", "detail": "requested_by"})
+        self.c.put("/api/admin/people/u_bob", json={"enabled": False}, headers=ADMIN)
+        answer = self.replies(self.assist(uid="u_bob", name="Bob"), "assist.answer")[0]["data"]
+        self.assertEqual(answer, {"question": None, "state": "failed", "sources": [],
+                                  "error": "An admin has turned the assistant off for you (Admin → People)."})
+
+    def test_with_the_integrations_protocol(self):
+        """The companion integration's own protocol.py (custom_components/, in the repository) against the app."""
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        path = os.path.join(repo, "custom_components", "household_assistant", "protocol.py")
+        if not os.path.exists(path):
+            self.skipTest("not in the repository")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ha_assist_protocol", path)
+        protocol = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(protocol)
+        settings.update({"assist_answers": True}, None)
+        env = protocol.ask("What's on my list today?", "u_alice", "Alice")
+        ex = protocol.Exchange(env)
+        with mock.patch.object(ai_client, "generate", Model(plan_call("todo.tasks", when="today"), '{"answer": "x"}',
+                                                           "- **Bins**\n- Call plumber")):
+            self.router.post(env)
+            end = time.monotonic() + 10
+            while ex.outcome is None and time.monotonic() < end:
+                for e in list(self.router.sent):
+                    reply = ex.feed(e)
+                    if reply:
+                        self.router.post(reply)                 # the integration acks the answer
+                time.sleep(0.02)
+        self.assertTrue(ex.acked)
+        self.assertEqual(ex.words(), "Bins. Call plumber")
+        end = time.monotonic() + 5
+        while time.monotonic() < end:
+            with db.get_conn() as conn:
+                state = conn.execute("SELECT state FROM bus_outbox WHERE kind = 'assist.answer'").fetchone()[0]
+            if state == "acked":
+                break
+            time.sleep(0.02)
+        self.assertEqual(state, "acked")                       # so the app stops re-sending it
+
     def test_live_events(self):
         def slow_plan(prompt, purpose):
             time.sleep(0.3)

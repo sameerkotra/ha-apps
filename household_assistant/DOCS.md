@@ -71,6 +71,27 @@ Each app answers only what you could see in it yourself, and only while both its
 Assistant** and your own **Let the Household Assistant answer for me** (that app's settings, on unless you turn
 it off) are on. Household Vault is never asked: passwords stay there.
 
+## Asking with your voice: Assist
+
+The assistant can answer **Assist**, Home Assistant's own voice assistant ("What's on my list today?" to a phone,
+a voice satellite or the Assist dialog), through a small companion **integration** from this repository:
+
+1. **Install the integration.** With HACS: HACS → ⋮ → **Custom repositories**, add
+   `https://github.com/sameerkotra/ha-apps` as an *Integration*, then install **Household Assistant**. Without
+   HACS: copy the repository's `custom_components/household_assistant` folder into your Home Assistant
+   configuration folder's `custom_components`. Restart Home Assistant.
+2. **Add it**: Settings → Devices & services → **Add integration** → *Household Assistant*.
+3. **Turn on Answer Assist** in this app: Admin → App settings → People.
+4. **Choose it in a voice assistant**: Settings → Voice assistants → a voice assistant → *Conversation agent*:
+   **Household Assistant**.
+
+Each question is asked as the Home Assistant user speaking, with everything above (their own apps, switches and
+limits; their question appears in their history here). A voice satellite doesn't say who is speaking: in the
+integration's **Configure**, choose the person whose questions it asks, or leave it at *Nobody* and it says so.
+The answer is spoken without its links; **Sources** and **What was shared** are on this page. Questions and
+answers travel over Home Assistant's event bus like the apps' answers (keep `household_apps` out of the recorder,
+above). Assist waits up to 5 minutes for an answer (the integration's **Configure**).
+
 ## Admin
 
 - **Apps**: each app that offered tools, its switch here (both this one and the app's own must be on), whether

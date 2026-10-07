@@ -298,6 +298,21 @@ then asks it questions on a person's behalf, like tools on an MCP server.
 - **Links** in a result follow §6.5: `panel` is the answering app's own page, `target` one of its own routes, and
   the assistant checks both before showing them.
 
+### 6.7 Assist (Home Assistant's voice assistant → Household Assistant)
+
+The companion integration `custom_components/household_assistant` runs inside Home Assistant and is `ha_assist` on
+the bus. It keeps no outbox or database: it fires and listens to `household_apps` events directly.
+
+| Kind | Direction | Data | Answer |
+|---|---|---|---|
+| `assist.ask` | integration → assistant | `{requested_by: <HA user id>, name?, text (≤ 1000)}` | `ack {}` at once; `nack not_allowed off` while the assistant's *Answer Assist* is off; `nack invalid <field>` |
+| `assist.answer` | assistant → integration, a reply to the ask (same `ref`) | `{question, state: done \| failed \| stopped, answer?, error?, sources: [app names]}` | `ack` (the assistant re-sends until then; 5 minutes) |
+
+`requested_by` is the person speaking (Assist's context), or the person the integration's options name for voice
+satellites; the assistant asks as them, with every check of its page (§6). Questions and answers are contents
+(§6.6), so the recorder exclusion (§8) applies. The integration says `hello` (`can: ["assist.answer"]`) when it
+starts, so the assistant's Connected apps shows it.
+
 ## 7. First use (to be specified and built later): planning a duel in Household Arcade
 
 1. Arcade → *Play with someone* → **Plan for later**: pick the person (or people), the game, and 2–4 times.

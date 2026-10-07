@@ -120,6 +120,27 @@ when done). It follows a running question live (`/events`; polling every second 
 address) fills in the question. Admins get Admin: Apps (with Connected apps), App settings (`settings.js`, with
 Test connection), People, Usage, Storage.
 
+## Assist (the companion integration)
+
+`custom_components/household_assistant` (repository root; HACS via `hacs.json`) is a Home Assistant integration: a
+config entry, a `conversation` entity (the agent), options *Answer voice satellites as* (an HA user) and *Wait for
+an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds the messages; on the bus it is
+`ha_assist`:
+
+- `assist.ask` (`{requested_by, name?, text}`, expires in 5 minutes; ref `assist:<id>`) → `app_messages.on_ask`:
+  `nack not_allowed off` while *Answer Assist* (`assist_answers`) is off, `nack invalid <field>`; else `ack {}` and,
+  after the bus commits (the bus holds the database), `auth.user_by_id` (the users row made with the name Home
+  Assistant gave) and `engine.ask` — the same checks and limits as the page; a refusal becomes a `failed` answer.
+- `engine.when_done(qid, fn)` → `assist.answer` as a reply to the ask (`reply_to`, same `ref`, 5 minutes):
+  `{question, state, answer? (≤ 3000), error?, sources: [app names]}`; the integration acks it, and its outbox
+  re-sends it until then.
+- The integration waits 15 s for the `ack` ("The Household Assistant app isn't answering…"), then up to its wait
+  for the answer, and speaks it without Markdown (`protocol.plain`). A turn without a user (a voice satellite)
+  is asked as the chosen person, or answered "I don't know who is asking…".
+
+`integration_tests/` runs it in a real Home Assistant core (pytest-homeassistant-custom-component);
+`tests/test_assistant.py` runs `protocol.py` against this app.
+
 ## Jobs
 
 - Every minute: `catalogue.check()`.

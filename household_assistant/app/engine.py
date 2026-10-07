@@ -57,6 +57,7 @@ _lock = threading.Lock()
 _stops: dict[str, threading.Event] = {}            # question id -> its Stop
 _warming: set[str] = set()                         # question ids waiting for the model to load
 _waiters: dict[str, tuple[threading.Event, dict]] = {}  # call id -> (answered, the answer)
+_done_hooks: dict[str, object] = {}               # question id -> fn(question view), when it ends (Assist)
 _changed = threading.Condition()
 _versions: dict[str, int] = {}                     # question id -> how many times it changed (for the live page)
 
@@ -145,6 +146,12 @@ def ask(user: dict, text: str) -> str:
         _stops[qid] = stop
     threading.Thread(target=run, args=(qid, user, stop), name=f"ask-{qid[-6:]}", daemon=True).start()
     return qid
+
+
+def when_done(qid: str, fn) -> None:
+    """Call fn(the question as view() gives it) once question `qid` has ended (answered, failed or stopped)."""
+    with _lock:
+        _done_hooks[qid] = fn
 
 
 def stop(qid: str, user_id: str) -> bool:
@@ -270,6 +277,15 @@ def _finish(r: _Run) -> None:
     with _changed:                                 # the streams read the final state and end
         _versions.pop(r.qid, None)
         _changed.notify_all()
+    with _lock:
+        hook = _done_hooks.pop(r.qid, None)
+    if hook:
+        try:
+            with db.get_conn() as conn:
+                q = conn.execute("SELECT * FROM questions WHERE id = ?", (r.qid,)).fetchone()
+                hook(view(conn, q))
+        except Exception:
+            logger.exception("Telling the asker that a question ended failed")
 
 
 def _rounds(qid: str) -> int:

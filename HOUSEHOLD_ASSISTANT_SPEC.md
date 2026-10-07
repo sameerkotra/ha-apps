@@ -65,7 +65,9 @@ release, each for a reason that may change:
 - Plugging into **Assist** (Home Assistant's own voice assistant, so "Hey Jarvis, what's on my list") needs a
   custom *integration* (a conversation agent), not an app; apps can't register one. A small companion integration
   that forwards Assist's text to this app and reads the answer back is the natural second step and is listed in
-  §10 (step 6) — the API in §9 is shaped so that integration needs nothing more.
+  §10 (step 6). Built in 1.1.0 as `custom_components/household_assistant`; it talks to the app over the household
+  apps bus (`assist.ask` / `assist.answer`, `APP_MESSAGES_SPEC.md` §6.7) rather than the §9 API, which only
+  Supervisor's ingress proxy may reach.
 - A **sensor** with the last answer: pointless without the question.
 
 ## 3. How an answer is made
@@ -367,7 +369,8 @@ without Home Assistant's identity headers.
    assistant with the question typed (a `panel` link with `?q=`), nothing more.
 6. **Later**: native tool calling in the shared `ai_client` (OpenAI `tools`, Anthropic `tool_use`, Ollama chat
    tools) replacing the JSON plan where the model supports it (done in 1.1.0); SSE instead of polling (done in 1.1.0); a companion
-   Home Assistant integration that makes the assistant an Assist conversation agent (§2.2); speech on the page
+   Home Assistant integration that makes the assistant an Assist conversation agent (§2.2; done in 1.1.0:
+   `custom_components/household_assistant`, over the bus, `APP_MESSAGES_SPEC.md` §6.7); speech on the page
    (done in 1.1.0).
 
 ## 11. Decisions

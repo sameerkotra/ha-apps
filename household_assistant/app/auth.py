@@ -43,6 +43,17 @@ async def get_current_user(request: Request) -> dict:
             "enabled": bool(row["enabled"]), "is_child": bool(row["is_child"])}
 
 
+def user_by_id(user_id: str, name: str | None = None) -> dict:
+    """The person a bus message asks for (Assist): their row, made on first use with the name Home Assistant gave."""
+    name = (name or "").strip()[:80] or None
+    with db.get_conn() as conn:
+        conn.execute("INSERT INTO users (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET "
+                     "name = COALESCE(excluded.name, users.name)", (user_id, name or "Home Assistant User"))
+        row = conn.execute("SELECT name, enabled, is_child FROM users WHERE id = ?", (user_id,)).fetchone()
+    return {"id": user_id, "name": row["name"], "username": None, "is_admin": _is_admin(user_id, row["name"], None),
+            "enabled": bool(row["enabled"]), "is_child": bool(row["is_child"])}
+
+
 async def require_admin(request: Request) -> dict:
     user = await get_current_user(request)
     auth_core.require_admin_flag(user["is_admin"], "Only admins can do this. See admin_users on the app's "
