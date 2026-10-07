@@ -64,7 +64,7 @@ class TestInvites(Turns):
         self.assertEqual(self.invite(mode="hard").status_code, 409)                        # can't be raced
         self.assertEqual(self.invite(mode="hard", kind="turns").status_code, 422)          # not a two-phone mode
         self.assertEqual(self.invite(kind="race").status_code, 409)                         # not raced
-        self.assertEqual(self.invite(kind="live").status_code, 409)                        # no live modes
+        self.assertEqual(self.invite(kind="live").status_code, 422)                        # no such kind (1.8.0)
         self.assertEqual(self.invite(to=("u_meera", "u_asha")).status_code, 422)            # two players only
         self.assertEqual(self.invite(to=("u_kabir",)).status_code, 422)
         self.assertEqual(self.invite(to=("u_nobody",)).status_code, 404)
@@ -288,7 +288,7 @@ class TestNotifications(Turns):
         self.post("/api/admin/users/u_meera/notify", {"service": "notify.meera_phone"}, ASHA)
         self.post("/api/admin/users/u_kabir/notify", {"service": "notify.kabir_phone"}, ASHA)
         self._panel = config.INGRESS_PANEL
-        config.INGRESS_PANEL = "/hassio/ingress/local_household_arcade"
+        config.INGRESS_PANEL = "/local_household_arcade"
 
     def tearDown(self):
         config.INGRESS_PANEL = self._panel
@@ -309,7 +309,7 @@ class TestNotifications(Turns):
         other = "Kabir" if first is KABIR else "Meera"
         self.assertEqual(notes[0][0], svc)
         self.assertEqual(notes[0][1]["message"], f"Your move in Tic-tac-toe against {other}.")
-        self.assertEqual(notes[0][1]["data"]["url"], f"/hassio/ingress/local_household_arcade#/home/turn/{mid}")
+        self.assertEqual(notes[0][1]["data"]["url"], f"/local_household_arcade/home/turn/{mid}")
         self.assertEqual(notes[0][1]["data"]["tag"], f"arcade-turn-{mid}")
         self.ha.requests.clear()
         self.move(mid, {"cell": 0}, second)

@@ -1,10 +1,8 @@
 "use strict";
-/* Playing together from two phones: races (spec/SPEC.md §13.3), live duels (§13.4) and turn by turn (§13.5).
+/* Playing together from two phones: races (spec/SPEC.md §13.3) and turn by turn (§13.5).
 
    This file is everything about it that isn't the game page itself:
    - the live link between the two phones (a WebSocket, or when it can't open, a long poll),
-   - a live duel's link (liveLink): the lockstep messages both ways, numbered by the server so a reconnection
-     picks up where it left off; a WebSocket that reconnects after a drop, else HTTP,
    - the invite sheet ("Play with someone"), the invite that arrives (a sheet, and a card on the Games page),
    - the race bar and the result card, and "Against others" on My scores,
    - "Your games" on the Games page: the turn-by-turn matches going on, whose move, the last move.
@@ -16,9 +14,6 @@ const Together = (() => {
   const STATE_EVERY_MS = 400;          // my score goes out this often, when it changed
   const KEEPALIVE_MS = 2000;           // and at least this often, so the other phone sees I'm still here
   const WS_OPEN_MS = 3000;             // a socket that isn't open by now isn't going to be
-  const PING_MS = 2000;                // a live duel's phone says it's here this often (and measures the round trip)
-  const LIVE_RETRIES = [500, 1000, 2000, 4000];   // a dropped live socket is opened again after these waits …
-  const LIVE_POLL_SEND_MS = 30;        // … then plain HTTP: what this phone has to say goes out this often
 
   let pending = null;                  // a match to take into the game page (set before showTab("play"))
   let shown = new Set();               // invites already shown as a sheet
@@ -133,134 +128,9 @@ const Together = (() => {
   }
 
   // =====================================================================
-  // A live duel's link (spec §13.4)
-  // =====================================================================
-  // handlers: { message(msg) — every lockstep message from the server (numbered ones once each, in order),
-  //             match(m) — the match picture, transport(kind) }.
-  // Returns { send(msg), rtt(), close(), transport }. Every (re)connection starts with hello {since}: the server
-  // sends again the numbered messages after `since`, and a welcome with the last input message it has from this
-  // phone (the lockstep sends again the ones after it).
-  function liveLink(id, handlers) {
-    const L = { transport: "connecting", send, close, rtt, get open() { return !closed; }, get since() { return since; } };
-    let closed = false, ws = null, since = 0, tries = 0, polling = false, pingId = 0, pingTimer = null, sendTimer = null;
-    let queue = [], lastV = null, pollBusy = false;
-    const pings = {}, rtts = [], early = {};      // early: numbered messages that came before the ones before them
-
-    function setTransport(kind) { L.transport = kind; if (handlers.transport) handlers.transport(kind); }
-    function got(msg) {
-      if (closed || !msg || typeof msg !== "object") return;
-      if (msg.t === "match") { lastV = msg.v; if (handlers.match) handlers.match(stamp(msg)); return; }
-      if (msg.t === "pong") {
-        const at = pings[msg.id];
-        if (at !== undefined) { delete pings[msg.id]; rtts.push(now() - at); if (rtts.length > 9) rtts.shift(); }
-        return;
-      }
-      if (typeof msg.n === "number") {
-        // in order, once each: an older one was sent again (a reconnection), a later one waits for those before
-        // it (two HTTP requests can answer out of order); the server sends again everything after `since`
-        if (msg.n <= since) return;
-        if (msg.n > since + 1) { early[msg.n] = msg; return; }
-        since = msg.n;
-        handlers.message(msg);
-        while (early[since + 1]) { const m = early[since + 1]; delete early[since + 1]; since = m.n; handlers.message(m); }
-        return;
-      }
-      handlers.message(msg);
-    }
-    function rtt() {
-      if (!rtts.length) return null;
-      const s = rtts.slice().sort((a, b) => a - b);
-      return Math.round(s[Math.floor(s.length / 2)]);
-    }
-    function ping() {
-      pingId++;
-      pings[pingId] = now();
-      send({ t: "ping", id: pingId });
-    }
-    function send(msg) {
-      if (closed) return;
-      const m = (msg.t === "in" || msg.t === "ping") ? Object.assign({ ack: since }, msg) : msg;
-      if (ws && ws.readyState === 1) {
-        try { ws.send(JSON.stringify(m)); return; } catch (e) { /* the socket is going: the lockstep sends again */ }
-      }
-      if (polling) queue.push(m);
-    }
-
-    function openSocket() {
-      let url;
-      try {
-        url = new URL(`api/matches/${id}/live`, location.href);
-        url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-        ws = new WebSocket(url.href);
-      } catch (e) { startPolling(); return; }
-      const sock = ws;
-      let opened = false;
-      const giveUp = setTimeout(() => { if (!opened && ws === sock) dropped(); }, WS_OPEN_MS);
-      ws.onopen = () => {
-        opened = true; clearTimeout(giveUp); tries = 0;
-        setTransport("websocket");
-        try { sock.send(JSON.stringify({ t: "hello", since })); } catch (e) { /* onclose follows */ }
-        ping();
-      };
-      ws.onmessage = (ev) => { let m = null; try { m = JSON.parse(ev.data); } catch (e) { return; } got(m); };
-      ws.onclose = ws.onerror = () => { clearTimeout(giveUp); if (ws === sock) dropped(); };
-    }
-    // the socket went (or never came): try it again a few times, then use plain HTTP
-    function dropped() {
-      if (closed || polling) return;
-      try { if (ws) { ws.onclose = ws.onerror = ws.onmessage = ws.onopen = null; ws.close(); } } catch (e) { /* ignore */ }
-      ws = null;
-      if (tries < LIVE_RETRIES.length && typeof WebSocket === "function") {
-        setTransport("reconnecting");
-        setTimeout(() => { if (!closed && !polling) openSocket(); }, LIVE_RETRIES[tries++]);
-      } else startPolling();
-    }
-
-    async function post(msgs, wait) {
-      const r = await api(`api/matches/${id}/live`, { method: "POST", body: { since, msgs, wait, v: lastV } });
-      if (r && r.match) got(Object.assign({ t: "match" }, r.match));
-      (r && r.msgs || []).forEach(got);
-    }
-    async function pollLoop() {
-      while (!closed) {
-        try { await post([], 10); }
-        catch (e) { if (e && e.status === 404) return; await new Promise((r) => setTimeout(r, 1000)); }
-      }
-    }
-    function startPolling() {
-      if (closed || polling) return;
-      polling = true;
-      try { if (ws) { ws.onclose = ws.onerror = ws.onmessage = ws.onopen = null; ws.close(); } } catch (e) { /* ignore */ }
-      ws = null;
-      setTransport("poll");
-      queue.unshift({ t: "hello", since });
-      sendTimer = setInterval(async () => {
-        if (closed || pollBusy || !queue.length) return;
-        pollBusy = true;
-        const batch = queue.splice(0, 32);
-        try { await post(batch, 0); }
-        catch (e) { queue.unshift({ t: "hello", since }); }      // the server says again what it has (welcome)
-        pollBusy = false;
-      }, LIVE_POLL_SEND_MS);
-      pollLoop();
-    }
-    function close() {
-      closed = true;
-      clearInterval(pingTimer); clearInterval(sendTimer);
-      try { if (ws) { ws.onclose = ws.onerror = ws.onmessage = ws.onopen = null; ws.close(); } } catch (e) { /* ignore */ }
-      ws = null;
-    }
-
-    pingTimer = setInterval(ping, PING_MS);
-    api(`api/matches/${id}`).then((m) => got(Object.assign({ t: "match" }, m)), () => {});
-    if (typeof WebSocket === "function") openSocket(); else startPolling();
-    return L;
-  }
-
-  // =====================================================================
   // Invite sheet: "Play with someone"
   // =====================================================================
-  // opts: { game, gameName, mode, modeLabel, practice, live, turns, options }. Resolves with the new match (an invite is
+  // opts: { game, gameName, mode, modeLabel, practice, turns, options }. Resolves with the new match (an invite is
   // out) or null. A turn-by-turn game for more than two (maxPlayers from the server) lets the inviter tick up to three.
   function invite(opts) {
     return new Promise((resolve) => {
@@ -270,14 +140,13 @@ const Together = (() => {
       const err = h("div", { class: "hint warn", role: "alert", hidden: true });
       const sheet = openModal("Play with someone", h("div", null,
         h("p", { class: "hint" }, `${opts.gameName} · ${opts.modeLabel}${opts.practice ? " · Practice (not saved)" : ""}. ` +
-          (opts.live ? "You play against each other live, each on your own phone, in the same game."
-            : opts.turns ? "You take turns from your own phones — they needn't be open at the same time; each of you is told when it's your move."
+          (opts.turns ? "You take turns from your own phones — they needn't be open at the same time; each of you is told when it's your move."
               : "You both play the same game at the same time on your own phones; the better score wins.")),
         list, err), { sheet: true, onClose: () => finish(null) });
       const send = async (ids, btn) => {
         btn.disabled = true; err.hidden = true;
         try {
-          const body = { game: opts.game, mode: opts.mode, practice: !!opts.practice, opponents: ids, kind: opts.live ? "live" : opts.turns ? "turns" : "race" };
+          const body = { game: opts.game, mode: opts.mode, practice: !!opts.practice, opponents: ids, kind: opts.turns ? "turns" : "race" };
           if (opts.turns && opts.options) body.options = opts.options;
           const m = await api("api/matches", { method: "POST", body });
           finish(stamp(m)); sheet.close();
@@ -376,8 +245,8 @@ const Together = (() => {
       const games = data.playing.filter((m) => m.kind === "turns");
       if (games.length) cards.push(yourGames(games));
       data.playing.filter((m) => { const p = me(m); return m.kind !== "turns" && p && !p.started; }).forEach((m) => cards.push(h("div", { class: "card tg-card", id: "raceStarted" },
-        h("div", { class: "tg-text" }, h("strong", null, m.kind === "live" ? `Your duel with ${who(m)} is starting` : `Race with ${who(m)} is starting`), h("div", { class: "hint" }, modeLine(m))),
-        h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, m.kind === "live" ? "Join the duel" : "Join the race")))));
+        h("div", { class: "tg-text" }, h("strong", null, `Race with ${who(m)} is starting`), h("div", { class: "hint" }, modeLine(m))),
+        h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, "Join the race")))));
       mount(box, cards);
     }
     timer = setInterval(() => { if (!document.hidden) load(); }, INVITE_POLL_MS / 2);
@@ -454,24 +323,10 @@ const Together = (() => {
   // On the game page
   // =====================================================================
   // The race bar: the other player's name, score, level and whether they are still playing.
-  // A live duel (spec §13.4): `live` = { scores: [mine, theirs] known from the game itself, state: "playing" |
-  // "waiting" (their inputs are late) | "paused" | "lost" (their phone went quiet) | "ready" | "over" }.
-  function barContent(m, transport, liveInfo) {
+  function barContent(m, transport) {
     const o = m ? other(m) : null;
     if (!o) return [];
     let text, cls = "";
-    if (m.kind === "live" && m.status === "playing" && liveInfo) {
-      const st = liveInfo.state;
-      text = st === "waiting" ? "waiting…" : st === "paused" ? "paused" : st === "lost" ? "connection lost?" : st === "ready" ? "getting ready" : st === "over" ? "finished" : "playing";
-      cls = st === "playing" ? "live" : st === "lost" ? "lost" : st === "over" ? "done" : "wait";
-      const here = o.connected;
-      return [
-        h("span", { class: "rb-dot " + (here ? "on" : "off"), "aria-hidden": "true", title: transport ? `Live link: ${transport}` : "" }),
-        h("span", { class: "rb-name" }, first(o.name)),
-        liveInfo.scores ? h("span", { class: "rb-score", id: "raceScore" }, fmtNum(liveInfo.scores[1])) : null,
-        h("span", { class: "rb-state " + cls, id: "raceState" }, text),
-      ].filter(Boolean);
-    }
     if (m.kind === "turns") {
       const tm = (m.turns && m.turns.toMove) || [], you = me(m);
       const others = (m.players || []).filter((p) => !p.you && (m.status !== "playing" || p.invite !== "declined"));
@@ -514,7 +369,6 @@ const Together = (() => {
   function headline(m) {
     const you = me(m), o = other(m);
     if (!you || !o) return "";
-    if (m.endReason === "out_of_step") return "Out of step — no result";
     if (m.endReason === "timeout" && !you.result) return "Ended — no result";
     if (m.endReason === "timeout" && you.result === "won") return `🏆 ${first(o.name)} didn't move for 7 days. You win!`;
     if (m.endReason === "timeout" && you.result === "lost") return "No move for 7 days — a loss";
@@ -565,7 +419,7 @@ const Together = (() => {
     return box;
   }
 
-  return { link, liveLink, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable,
+  return { link, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable,
     inviteLeft, startsIn, stamp, other, me, first, clock, ago, acceptInvite, yourGames, _internal: { get pending() { return pending; }, set pending(v) { pending = v; } } };
 })();
 window.Together = Together;

@@ -14,7 +14,6 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | `kit.js` | `window.ArcadeKit`: the six looks, the renderer, the fixed-step loop and the shared game session (start, pause, scores, end result) |
 | `sound.js` | `window.ArcadeSound`: short Web Audio effects, off by default |
 | `registry.js` | `window.ArcadeGames`: `register(def)`, `get(id)`, `list()` |
-| `lockstep.js` | `window.ArcadeLockstep` (or `module.exports`): the lockstep for live duels on two phones — inputs per tick, the delay, ordering, checksums (SPEC §13.4; "Live duels" below) |
 | `snake-logic.js` | Snake rules — pure, no DOM, deterministic for a seed (`self.SnakeLogic`, or `module.exports` in Node) |
 | `snake.js` | Snake input and drawing; registers `snake` |
 | `brick-logic.js` | Brick Breaker rules — pure, no DOM, deterministic for a seed (`self.BrickLogic` / `module.exports`) |
@@ -59,22 +58,20 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | `dicekit.js` | `window.DiceKit` (or `module.exports`): what wave 8's dice games share — `DiceKit.game(R)` makes a game's Logic from its rules (modes, seats and the computer, rolling, moves a roll leaves no choice about, the cursor, scores, saving, the turn-by-turn picture), `DiceKit.session(canvas, opts, spec)` the die, the line under the board, the end and the roll sent to the server |
 | `ludo-logic.js`, `ludo.js` | Ludo rules (`LudoLogic`) and drawing; registers `ludo` |
 | `snakes-logic.js`, `snakes.js` | Snakes and Ladders rules (`SnakesLogic`) and drawing (the board drawn from shapes); registers `snakes` |
-| `carrom-logic.js`, `carrom.js` | Carrom rules and whole-number physics (`CarromLogic`) and drawing; registers `carrom` (live: `lockstep: "turns"`) |
+| `carrom-logic.js`, `carrom.js` | Carrom rules and whole-number physics (`CarromLogic`) and drawing; registers `carrom` |
 | `chess-logic.js`, `chess.js` | Chess rules and the computer's engine (`ChessLogic`) and drawing; registers `chess` |
 | `chess-worker.js` | not a script tag: the Web Worker the chess computer thinks in (`new Worker("games/chess-worker.js?v=…")`, which `importScripts` boardkit.js and chess-logic.js with the same `?v=`) |
 
 ## The contract with the shell
 
 **Game definition** (from `ArcadeGames.get(id)` / `list()`):
-`{ id, name, modes: [{ id, label }], defaultMode, controls: "dpad" | "paddle" | "buttons" | "touch", buttons, padLabel, players, tap, help, stateVersion, lockstep, liveModes, turns, turnModes, create(canvas, opts) }`
+`{ id, name, modes: [{ id, label }], defaultMode, controls: "dpad" | "paddle" | "buttons" | "touch", buttons, padLabel, players, tap, help, stateVersion, turns, turnModes, create(canvas, opts) }`
 
 - `turns: true` and `turnModes` (mode ids): the modes played turn by turn from two (or more) phones only (SPEC §13.5;
   `games.py` `turns.modes` names the same). The game is created with `opts.turns = { seat, picture, send(move) }`
   (below) and the instance's `turnSync(picture)` takes each new picture.
 
-- `lockstep: true` and `liveModes` (mode ids): the modes played live on two phones only (SPEC §13.4; the server's
-  `games.py` `live.modes` names the same). `players: 2` still means "two people on one screen" (W A S D is player 2);
-  a live mode has one player per phone.
+- `players: 2` means "two people on one screen" (W A S D is player 2).
 
 - `dpad`: the shell draws an arrow pad and turns swipes on the game into `up`/`down`/`left`/`right`; with `tap`
   set, a touch that doesn't swipe sends that action (Road Hop: `up`).
@@ -94,7 +91,7 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | Snake | `snake` | `walls-slow` Walls · Slow, `walls-normal` Walls · Normal, `walls-fast` Walls · Fast, `wrap-slow` Wrap · Slow, `wrap-normal` Wrap · Normal, `wrap-fast` Wrap · Fast, `maze` Maze | `walls-normal` | `dpad` |
 | Brick Breaker | `brick` | `powerups` Power-ups, `classic` Classic | `powerups` | `paddle` (Launch) |
 | Falling Blocks | `blocks` | `classic` Classic, `fast` Fast start, `rising` Rising floor, `challenge` Challenges | `classic` | `buttons` Hold ◀ ↻ ▶ ▼ Drop |
-| Paddle Duel | `duel` | `easy` Easy, `normal` Normal, `hard` Hard, `phones` Two phones (live) | `normal` | `paddle` (Serve) |
+| Paddle Duel | `duel` | `easy` Easy, `normal` Normal, `hard` Hard | `normal` | `paddle` (Serve) |
 | Lane Racer | `racer` | `three` 3 lanes, `four` 4 lanes, `rush` Rush (one life), `stages` Stages | `three` | `buttons` ◀ ▶ |
 | Flap | `flap` | `easy` Easy, `normal` Normal, `moving` Moving gates, `course` Courses | `normal` | `buttons` Flap |
 | Mines | `mines` | `easy` Easy, `medium` Medium, `hard` Hard, `boards` Shaped boards | `easy` | `touch` 🚩 Flag |
@@ -103,14 +100,14 @@ Loaded as classic scripts in this order, each with `?v=<app version>`:
 | Memory Cards | `cards` | `small` 4 × 4, `medium` 4 × 5, `large` 5 × 6, `challenge` Challenges | `small` | `touch` |
 | Tap the Mole | `mole` | `classic` Classic, `big` Big garden, `rush` 60 seconds, `gardens` Gardens | `classic` | `touch` |
 | Number Dash | `numbers` | `add` Add & take away, `times` Times tables, `mixed` Mixed, `challenge` Challenges | `add` | `touch` |
-| Tank Battle | `tanks` | `classic` Classic, `easy` Easy, `together` Two phones · Together (live), `against` Two phones · Against each other (live) | `classic` | `buttons` ◀ ▲ ▼ ▶ Fire |
+| Tank Battle | `tanks` | `classic` Classic, `easy` Easy | `classic` | `buttons` ◀ ▲ ▼ ▶ Fire |
 | Sky Defenders | `invaders` | `classic` Classic, `easy` Easy, `waves` Waves | `classic` | `buttons` ◀ ▶ Fire |
 | Rocks | `rocks` | `classic` Classic, `calm` Calm, `waves` Waves | `classic` | `buttons` ⟲ ⟳ ▲ Fire |
 | Road Hop | `hop` | `classic` Classic, `easy` Easy, `levels` Levels | `classic` | `dpad`, tap = `up` |
 | Sudoku | `sudoku` | `easy`, `medium`, `hard`, `expert` | `easy` | `buttons` number pad (5-column `place` grid), `typed` |
 | Word Guess | `wordguess` | `classic` Six tries, `easy` Eight tries, `strict` Strict | `classic` | `touch`, `typed` |
 | Word Search | `wordsearch` | `little`, `kids`, `family`, `puzzler` | `kids` | `touch` Hint |
-| Snake Duel | `snakeduel` | `cpu` Against the computer, `two` Two players, `phones` Two phones (live) | `cpu` | `touch`, two players |
+| Snake Duel | `snakeduel` | `cpu` Against the computer, `two` Two players | `cpu` | `touch`, two players |
 | Bubble Pop | `bubbles` | `classic` Classic, `relaxed` Relaxed (gentle), `puzzle` Puzzles, `endless` Endless | `classic` | `paddle` (Shoot) |
 | Gem Swap | `gems` | `timed` Timed (90 s), `moves` Moves (levels), `zen` Zen (no clock) | `timed` | `touch` Hint |
 | Tower Stack | `stack` | `classic` Classic, `fast` Fast, `easy` Easy (3 tries), `towers` Towers | `classic` | `buttons` Drop |
@@ -133,11 +130,10 @@ for a game that opts out) says the game can be played in a race: both phones cre
 `status()` a few times a second and its final result like any game. Which games the server offers a race for, and
 how the winner is decided, is the game's `race` entry in `app/games.py`.
 
-**`create(canvas, opts)`** — `opts = { mode, look, sound, reduceMotion, handedness, seed, onScore(score, level), onEnd(result), onEvent(type, data), live, names, turns }`.
+**`create(canvas, opts)`** — `opts = { mode, look, sound, reduceMotion, handedness, seed, onScore(score, level), onEnd(result), onEvent(type, data), turns }`.
 `turns = { seat, picture, send(move) → Promise }` plays a turn-by-turn match (wave 7): the board comes from `picture`
 (`GET /api/matches/{id}/turns`), a move made here goes to `send` (the shell posts it; the server's answer comes back
 through `inst.turnSync(picture)`), and the game ends when a picture says the match is over.
-`live = { seat: 1 | 2, lockstep }` plays a live duel (below); `names` = the two players' names in seat order.
 All are optional. `look` is a look id (unknown → `modern`); `seed` makes a game repeatable (default: random);
 `handedness` is accepted and not used by the games (the on-screen controls are the shell's).
 One optional extra: `best` (a number) shows "BEST n" in the Snake and Flap HUD instead of the level.
@@ -153,17 +149,14 @@ One optional extra: `best` (a number) shows "BEST n" in the Snake and Flap HUD i
 | `input(action, isDown)` | `up`, `down`, `left`, `right`, `fire`, `pause` (each game's use: the tables above and below). Snake turns on key-down. Brick Breaker: `left`/`right` held move the paddle, `fire` (or `up`) launches. `pause` toggles pause. Ignored unless the game is running. |
 | `pointer(kind, x, y)` | `down` / `move` / `up`, x and y in CSS pixels relative to the canvas. Snake: a swipe of 18 px turns (the page itself turns after 14 px) (keep swiping for more turns). Brick Breaker: the paddle follows x from anywhere on the canvas (the finger needn't cover the paddle); `up` launches a waiting ball. Mouse `move` without a button also moves the paddle (Paddle Duel too; `up` serves). Falling Blocks: drag, tap, flick (above). Lane Racer: `down` on the left / right half changes lane. Flap: `down` flaps. |
 | `resize()` | Call after the canvas's CSS size changes (a ResizeObserver also does this). |
-| `liveStatus()` | A live duel: `{ tick, waitingMs, seat, delay, scores }` (`waitingMs` > 0 while it waits for the other phone; `scores` = both players' from the game itself); `null` otherwise. |
-| `stop()` | A live duel the server ended (out of step, left, …): stops where it is, without `onEnd`. |
+| `stop()` | A match the server ended (someone left, …): stops where it is, without `onEnd`. |
 | `turnSync(picture)` | Turn by turn: the match as the server now has it (a move made here or on the other phone, or its end); the game rebuilds its board, plays the move's sound, and ends when it's over. |
 | `destroy()` | Stops everything and frees the off-screen canvases. |
 | also | `state` (`ready`, `running`, `paused`, `over`, `destroyed`), `seconds`, `score`, `level`, `renderer`, `logic` (the rules state, read-only, for tests). |
 
 **Callbacks**: `onScore(score, level)` whenever either changes (and `0, 1` at start).
 `onEnd({ score, level, seconds, stats })` once, when the game ends; `seconds` is whole seconds of
-active play (pauses excluded), counted from the fixed updates. In a live duel `score` is this phone's player's and
-the result also has `live = { tick, sum, scores: [p1, p2], levels, winner: 1 | 2 | 0 }` — the end both phones must
-agree on (sent with the score, SPEC §13.4). `onEvent(type, data)`:
+active play (pauses excluded), counted from the fixed updates. `onEvent(type, data)`:
 `start`; `pause` with `{ paused: true | false }` on every pause change, including the game pausing
 itself when the page is hidden; Snake `eat`, `bonus`, `bonusSpawn`, `bonusGone`, `speed`, `die`, `win`;
 Brick Breaker `launch`, `paddle`, `wall`, `hit`, `break`, `drop`, `powerup`, `powerEnd`, `lifeLost`,
@@ -356,8 +349,8 @@ it stops on pause, game over, `destroy()` and when the page is hidden.
   (left side, W A S D, or the computer). Crashing into a wall, yourself or the other snake loses the round; heads
   meeting is a draw; first to 3 round wins takes the match (rounds at most 60 s, matches at most 9 rounds). Player
   1's score: food 10, round 100, match 500 × min(arena, 10) (`score2` the same for player 2). Against the computer
-  the arenas come in order and losing a match ends the game; two players (one screen, or *Two phones*: seat 1
-  green, seat 2 blue, each steering with every key and a swipe anywhere) play one match on an arena from the seed.
+  the arenas come in order and losing a match ends the game; two players (one screen) play one match on an arena
+  from the seed.
   On one phone, swipes on the right half steer green and on the left half blue. Every mode plays the arena list
   (walls, speed, foods).
 - **Paddle Duel · Two phones** (`duel-logic.js`, mode `phones`): seat 1's paddle at the bottom (top edge 266), seat
@@ -659,74 +652,13 @@ line through the middle, no dots.
   grid line, and counts one fill per covered cell in each look for each kind (none with None), the focus cells'
   highlight in every kind, and the selected cell's tint (20 / 16 / 0 cells).
 
-## Live duels (SPEC §13.4)
+## Live duels (removed in 1.8.0)
 
-Both phones run the same rules from the same seed; each sends only its own player's inputs and plays every input
-of both players on the same update, so the two games never differ. What a game needs:
-
-- **Registration**: `lockstep: true`, `liveModes: [...]`.
-- **Rules** (`<game>-logic.js`): `press(s, action, down, player)` with `player` 0 (seat 1) or 1 (seat 2) — `down` 1/0
-  for a button, or a small whole number for an analogue input (Paddle Duel's `aim`, Tank Battle's `steer`); deterministic
-  given the seed and the inputs; **no `Math.sin`/`cos`/`tan`/`atan2`/`exp`/`log`/`pow`/`hypot`/`random`, no `Date`** in
-  anything a live mode runs (JavaScript engines may differ in their last digit; `+ − × ÷`, `Math.floor`/`round`/
-  `sqrt`/`imul`/`abs`/`min`/`max` are exact everywhere — the tests replace the others with functions that throw);
-  `checksum(s)` (FNV-1a of the numbers that decide the next updates, unsigned 32-bit); `report(s)` →
-  `{ scores: [p1, p2], levels: [p1, p2], winner: 1 | 2 | 0 }`; `result(s, player)` → that player's own result.
-- **Game file** (`<game>.js`): `impl.apply(player, action, value)` (→ the rules' `press`), `impl.checksum()`,
-  `impl.report()`; with `opts.live` its `input(action, down, act)` and `pointer(kind, lx, ly, x, y, act)` turn this
-  phone's keys, buttons and fingers into `act(action, value)` — never touching the rules directly (an input reaches
-  the rules only through `apply`, on both phones). A turned-round view (seat 2 of Paddle Duel and Tank Battle ·
-  Against each other) turns its inputs round too (left ↔ right, the finger's position) and draws every point at
-  (W − x, H − y) of its court; score, result and labels are the phone's own player's.
-- **The kit** (`createSession` with `opts.live = { seat, lockstep }`): each update asks `lockstep.next()` for the
-  inputs of the next tick (seat 1's, then seat 2's) and waits (no update, drawing goes on) until it has them; then
-  `apply` each, `step()`, `lockstep.advance(checksum)` (a checksum every 60 ticks) and `lockstep.flush()`. A phone
-  more than 2 ticks behind the other plays one extra update a frame. `onEnd` adds the `live` report.
-- **The lockstep** (`lockstep.js`, `ArcadeLockstep.create({ seat, delay, send })`): `local(action, value)` plays an
-  input at tick + delay (at most 6 a tick; an `aim`/`steer` that changes again before it is sent replaces the last);
-  `flush()` sends `{t: "in", seq, upto, ev: [[tick, action, value]], sum?}` — `upto` = the last tick this phone's
-  inputs are final for (a message never claims a tick whose inputs it doesn't carry); `receive(msg)` takes the other
-  phone's messages (a repeated `seq` is ignored, an early one waits for the ones before it), `ack`s, and `welcome` /
-  `error gap` (it sends again what the server doesn't have); `waiting(now)`, `behind()`, `finish()`.
-- **The shell** (`play.js`): a live mode has no Play button (Play with someone); the session gives the `seat`; the
-  link (`Together.liveLink`) carries the messages; pause and resume go to both phones; the server's `end` stops the
-  game (`stop()`).
-
-**Live turn-taking — as built for Carrom (wave 8).** A game whose players take turns live (each move is a single
-input event applied on both phones; no per-update stream is needed) registers `lockstep: "turns"` (the registry's
-`liveTurns`) and its live mode, and uses the same link, relay and checks. What was built (SPEC §13.4):
-
-- *Game file*: `impl.turn()` (the seat to shoot, −1 while a shot moves or the board is over), `impl.apply(player,
-  "shot", value)`, `impl.step()`, `impl.settledShots()` (shots that have stopped), `impl.nextSeat()` (1 or 2 after a
-  settled shot, 0 at the end), `impl.shots()`, `impl.checksum()`, `impl.report()`. Its own shot goes out with
-  `act("shot", [place, angle, power])` — never played directly.
-- *Kit*: each update, when `impl.turn() >= 0` it asks `lockstep.nextShot()` and applies it (or waits — the board
-  just stands still), then `step()`; when `settledShots()` grows it sends `report(k, checksum, nextSeat)`. No
-  catch-up updates (nothing to catch up between shots). The end report's `tick` is the shots played.
-- *Lockstep* (`ArcadeLockstep.createTurns({ seat, send })`): `local("shot", value)` sends `{t: "in", seq, upto: k, ev:
-  [[k, "shot", value]]}` once per shot number; `receive(msg)` keeps the server's shots by number (repeats and old
-  ones ignored; `timer: true` counted), `ack {late: true}` counted, `welcome` / `error gap` resend what wasn't
-  acknowledged; `nextShot()`; `report(k, sum, next)`; `stats` (sent, received, dup, resent, late, timer).
-- *Shell*: the count-in uses `createTurns` when `start.turns` is set; the bar and result card are a duel's; the 30 s
-  clock shows in the board's bottom line ("place the striker, pull back from it · 23 s", "Kabir's shot · 23 s").
-
-The plan it followed:
-
-- *Rules*: `turn(s)` → whose move it is (0 or 1) or −1 while a shot is still moving; `press(s, "shot", value,
-  player)` with `value` the shot packed into whole numbers (e.g. striker position, angle and power, each in its range
-  — the server's `live.actions` gives each its range; a list of up to 3 whole numbers is the planned value form);
-  `step(s)` runs the shot's fixed-point physics (whole numbers only, as above); `checksum(s)` after each shot; a 30 s
-  shot timer: the rules' `timeoutShot(s)` gives the weak shot the server plays for a player who doesn't move.
-- *Kit*: instead of asking the lockstep every update, the session steps freely while `turn(s) < 0` (a shot moving: no
-  inputs can matter) and waits only when it is a player's turn and their shot hasn't arrived; the mover's own shot
-  is `act("shot", value)`, sent at once as one `in` message whose `ev` is `[[shot number, "shot", value]]` and whose
-  `upto` is the shot number (`upto` counts shots, not updates).
-- *Relay* (`live.py`): the same `seq` ordering, numbering, `welcome` / `hello` replay, rate and size limits; for a
-  `turns` room `upto` is checked to grow by exactly one a shot and only from the player whose turn it is; `sum` is
-  `[shot number, checksum]` after each shot (the same comparison, out of step → no result); the server keeps a 30 s
-  timer per turn and, when it runs out, relays the `timeoutShot` on the player's behalf (an `in` it numbers itself).
-  Shots go into `match_moves` too (SPEC §13.6), so a phone that drops can catch up from them.
-- *Ending and results*: as for live duels (`report`, both must agree).
+The two-phone lockstep play of Snake Duel, Paddle Duel, Tank Battle and Carrom (SPEC §13.4) was removed in 1.8.0
+with `lockstep.js`, the kit's lockstep session (`opts.live`, `liveStatus()`), the `lockstep` / `liveModes` /
+`liveTurns` registration and the games' seat-2 views and input forwarding. The rules files keep their two-player
+code (`tanks-logic.js` `two` modes, `duel-logic.js` / `snakeduel-logic.js` / `carrom-logic.js` `phones`), unreachable
+from the game files; the logic tests still cover them.
 
 ## Wave 5 additions
 
@@ -793,8 +725,8 @@ The plan it followed:
   (Ludo 4, Snakes and Ladders 2 by default) and `fill` (*One phone: empty seats* — left empty, or the computer fills
   them up to four); Snakes and Ladders also `board` (classic / gentle) and `finish` (any / exact), which are the
   match's options from phones (the server's `OPTIONS`). Chess `turns: true` with wave 7's modes and the option
-  `side` (against the computer: White, Black, or either from the seed). Carrom `lockstep: "turns"`, `liveModes:
-  ["phones"]`. All `race: false`, no levels, `stateVersion` 1; the phone modes can't be saved.
+  `side` (against the computer: White, Black, or either from the seed). All `race: false`, no levels, `stateVersion`
+  1; the phone modes can't be saved.
 - **Dice from the server**: from phones the die is never rolled in the browser. Tapping the die (or Space) sends
   `opts.turns.roll()` (play.js: `POST /api/matches/{id}/roll`), and the picture in the answer is drawn (with the
   token's hop animated). On one phone the die comes from the seed (`rand(s)`), the same for a seed.
@@ -890,10 +822,6 @@ entry. Nothing else in the kit or the shell changes.
   Picture Logic: the line solver, one answer counted on 5 × 5; Tile Match: every deal's own order clears it; Code Breaker:
   the feedback; Type Rain: the same words whatever the typing, runs, stages, honest scores with a perfect typist).
 
-- `live.test.js`: the lockstep, and for each live mode: deterministic rules without engine-dependent maths, the
-  checksum, honest scores for both players, two phones staying identical through a hostile fake relay (delays in any
-  order, duplicates, a dropped connection, different refresh rates), a divergence caught by the checksums, drawing
-  both seats in every look, turned-round inputs, the end report, and the browser's live link (SPEC §13.9).
 
 - `wave7.test.js`: the six wave 7 games register (modes, touch, turns, no race, options); first movers; the computer's
   moves legal and the same for a seed at every level, the levels' strength (Hard beats Medium beats Easy; Tic-tac-toe's
@@ -909,9 +837,8 @@ entry. Nothing else in the kit or the shell changes.
   scores, every mode in every look; Chess perft, taps (castling, en passant, the promotion chooser, a refused move),
   the engine (legal, deterministic, mates in one, within budget, Hard and Medium beating Easy), the worker's move the
   same, a match from a picture; Carrom's whole-number physics bit for bit on two instances without engine-dependent
-  maths, its rules (fouls, the queen, the last coin, the 300-shot end), doubles, the computer's levels, the turn-taking
-  lockstep, two phones through a fake relay to the end, the timer shot, a changed game caught by the checksum, every
-  mode in every look. `wave8-fuzz.js` (not a test file): random games for the Python agreement test.
+  maths, its rules (fouls, the queen, the last coin, the 300-shot end), doubles, the computer's levels, every mode in
+  every look. `wave8-fuzz.js` (not a test file): random games for the Python agreement test.
 - `backnav.test.js`: this app's copy of the shared back gesture — a link or notification changing the address is
   followed, not taken as Back; Back still goes home or closes a dialog.
 

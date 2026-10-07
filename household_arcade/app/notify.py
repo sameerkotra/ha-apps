@@ -24,10 +24,12 @@ logger = logging.getLogger("notify")
 TITLE = "Household Arcade"
 
 
-def _link(fragment: str = "") -> dict | None:
+def _link(path: str = "") -> dict | None:
+    """Where a notification opens: the app's sidebar page with the app's own route as a sub-path
+    ("/local_household_arcade/leaderboard"; panel.py says why not "#/leaderboard"). None without a sidebar page."""
     if not config.INGRESS_PANEL:
         return None
-    url = config.INGRESS_PANEL + fragment
+    url = config.INGRESS_PANEL + path
     return {"url": url, "clickAction": url}
 
 
@@ -60,7 +62,7 @@ def record_blocking(scorer_id: str, game: str, mode: str, score: int) -> int:
                if not (r["is_child"] and not auth.is_admin_identity(r["id"], r["username"])
                        and r["leaderboard"] == "hidden")]
     message = f"{scorer['name']} set a new {games.name(game)} record: {score:,} ({games.mode_label(game, mode)})."
-    return _send(targets, message, _link("#/leaderboard"))
+    return _send(targets, message, _link("/leaderboard"))
 
 
 def warning_admins(conn) -> list[str]:
@@ -85,7 +87,7 @@ def limit_warning_blocking(child_id: str) -> int:
         targets = warning_admins(conn) if n else []
     if not targets:
         return 0
-    link = _link(f"#/admin/users/{child_id}")
+    link = _link(f"/admin/users/{child_id}")
     data = dict(link) if link else {}
     if link:
         data["actions"] = [{"action": "URI", "title": "Add 15 minutes", "uri": link["url"]}]

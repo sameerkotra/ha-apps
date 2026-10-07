@@ -62,7 +62,6 @@ test("the six wave 5 games register with their modes, controls, saving and a rac
     assert.equal(g.stateVersion, 1);
     assert.equal(g.race, true, id);
     assert.equal(g.players, 1);
-    assert.equal(g.lockstep, false);
     assert.ok(g.help.length > 60, id);
     if (controls === "buttons") assert.ok(g.buttons.length >= 1);
   }

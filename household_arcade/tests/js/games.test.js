@@ -27,7 +27,7 @@ test("registry: the games with the agreed modes and controls", () => {
     "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"]);
   const want = {
     blocks: ["Falling Blocks", ["classic", "fast", "rising", "challenge"], "classic", "buttons"],
-    duel: ["Paddle Duel", ["easy", "normal", "hard", "phones"], "normal", "paddle"],
+    duel: ["Paddle Duel", ["easy", "normal", "hard"], "normal", "paddle"],
     racer: ["Lane Racer", ["three", "four", "rush", "stages"], "three", "buttons"],
     flap: ["Flap", ["easy", "normal", "moving", "course"], "normal", "buttons"],
   };

@@ -54,8 +54,6 @@ def list_games(current: dict = Depends(get_current_user)):
                     "best": mine.get(gid),
                     "bestByMode": {m["id"]: bests_by_mode.get((gid, m["id"])) for m in modes},
                     "canSave": bool(g.get("state_version")), "saved": saved.get(gid), "race": together.race_ok(gid), "daily": todays.get(gid),
-                    # live duels on two phones (SPEC §13.4): these modes are played only with someone, each on a phone
-                    "liveModes": [m["id"] for m in modes if games.is_live(gid, m["id"])],
                     # turn by turn from two phones (SPEC §13.5): these modes are played only with someone
                     "turnModes": [m["id"] for m in modes if games.is_turns(gid, m["id"])],
                     "plays": played.get(gid, (0, None))[0], "lastPlayed": played.get(gid, (0, None))[1],
@@ -141,7 +139,7 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         mode = daily_row["mode"]
     if not isinstance(mode, str) or not settings.mode_allowed(game, mode):
         raise HTTPException(422, "That mode isn't available.")
-    if (games.is_live(game, mode) or games.is_turns(game, mode)) and not match:
+    if games.is_turns(game, mode) and not match:
         raise HTTPException(422, "That mode is played on two phones: start it with Play with someone.")
     if not isinstance(practice, bool):
         raise HTTPException(422, "practice must be true or false.")
@@ -182,7 +180,7 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
             "seed": match["match"]["seed"] if match else daily_row["seed"] if daily_row
             else int(config.utcnow().timestamp() * 1000) % 2_147_483_647,
             "matchId": match_id if match else None,
-            # a live duel: which player this phone is (1 or 2) and the other player's name
+            # playing together: which seat this phone has (1 or 2)
             "seat": match["seat"] if match else None,
             "daily": daily_row["date"] if daily_row else None,
             # the app's settings a game reads: Sudoku's hints per puzzle (none = unlimited, as in Practice)
@@ -295,7 +293,7 @@ def post_score(background: BackgroundTasks, body: dict = Body(...), current: dic
                           scoreId=saved["id"], best=None if daily_day else max(int(score), result["best"] or 0))
         saves.consumed_by(conn, current["id"], row)
         if row["match_id"]:             # a race: the same score is the player's result in the match
-            together.record_result(conn, row, score, level, seconds, body.get("won"), body.get("report"))
+            together.record_result(conn, row, score, level, seconds, body.get("won"))
         status = _status_json(conn, current)
     result["playTime"] = status
     result["levelsComing"] = _auto_levels(row, int(level))

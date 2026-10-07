@@ -373,7 +373,7 @@ for (const mode of ["cpu", "two"]) {
       assert.equal(def.controls, "touch");
       assert.equal(def.players, 2);
       assert.equal(def.stateVersion, 1);
-      assert.deepEqual(JSON.parse(JSON.stringify(def.modes.map((m) => m.id))), ["cpu", "two", "phones"]);
+      assert.deepEqual(JSON.parse(JSON.stringify(def.modes.map((m) => m.id))), ["cpu", "two"]);
       const inst = def.create(canvas, { mode, look, seed: 5, onEnd: (r) => ends.push(r) });
       assert.ok((sb.counts.fillRect || 0) + (sb.counts.drawImage || 0) > 0);
       inst.start();

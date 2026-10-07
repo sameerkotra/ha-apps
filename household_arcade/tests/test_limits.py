@@ -327,7 +327,7 @@ class TestParentWarnings(LimitsBase):
     def test_once_a_day_with_add_15_action(self):
         self.settings({"limit_warnings": True})
         old = config.INGRESS_PANEL
-        config.INGRESS_PANEL = "/hassio/ingress/local_household_arcade"
+        config.INGRESS_PANEL = "/local_household_arcade"
         try:
             self.ha.requests.clear()
             self.assertTrue(self.beat_to(26)["playTime"]["warn"])
@@ -337,7 +337,7 @@ class TestParentWarnings(LimitsBase):
             self.assertEqual(name, "asha_phone")
             self.assertIn("Kabir Rao has 5 minutes", body["message"])
             self.assertEqual(body["data"]["actions"][0]["title"], "Add 15 minutes")
-            self.assertTrue(body["data"]["actions"][0]["uri"].endswith("#/admin/users/u_kabir"))
+            self.assertTrue(body["data"]["actions"][0]["uri"].endswith("/local_household_arcade/admin/users/u_kabir"))
             self.ha.requests.clear()
             self.beat_to(1)
             self.assertEqual(self.ha.notifications(), [])           # not again today

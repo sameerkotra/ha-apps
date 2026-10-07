@@ -3,10 +3,8 @@ safe squares, the exact roll home, three sixes; Snakes and Ladders' boards and f
 promotion, check, mate, stalemate, repetition, 50 moves, too little material and the perft counts), the JavaScript and
 Python rules agreeing move by move on random games (tests/js/wave8-fuzz.js), 2–4 player matches through the API with the
 server's dice (a roll the player can't choose or repeat, moves the roll leaves no choice about played at once, starting
-with those who joined, a leaver played by the computer), a chess match from two phones, and Carrom's live turn-taking
-room (shots in the server's order to both phones, only from the player whose turn it is, a late shot dropped, the
-checksums after each shot, the 30 s shot timer and the weak shot, the clock standing still in a pause, shots kept in
-match_moves, and the whole match over the WebSocket)."""
+with those who joined, a leaver played by the computer) and a chess match from two phones. (Carrom's live turn-taking
+room went with the live duels in 1.8.0.)"""
 import _env  # noqa: F401  (must be first)
 
 import hashlib
@@ -17,10 +15,9 @@ import shutil
 import subprocess
 import unittest
 
-from app import db, games, level_kinds, live, rules, together
+from app import db, games, level_kinds, rules, together
 from app.rules import chess, ludo, snakes
 from base import ASHA, DEV, KABIR, MEERA, ApiBase
-from test_live import FakeClock, Live
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NEW = {"ludo": "Ludo", "snakes": "Snakes and Ladders", "carrom": "Carrom", "chess": "Chess"}
@@ -63,12 +60,9 @@ class TestGameTable(ApiBase):
             self.assertEqual(rules.get(gid).DICE, 6)
         self.assertEqual(games.turn_modes("chess"), ["phones"])
         self.assertEqual(rules.get("chess").PLAYERS, (2, 2))
-        self.assertEqual(games.live_modes("carrom"), ["phones"])
-        self.assertEqual(listed["carrom"]["liveModes"], ["phones"])
-        self.assertEqual(games.live_turns("carrom"), {"timeout_shot": [500, 900, 12]})
-        self.assertIsNone(games.live_turns("duel"))
         self.assertIsNone(rules.get("carrom"))
-        self.assertEqual([m["id"] for m in games.GAMES["carrom"]["modes"]], ["easy", "medium", "hard", "two", "doubles", "phones"])
+        self.assertEqual([m["id"] for m in games.GAMES["carrom"]["modes"]], ["easy", "medium", "hard", "two", "doubles"])
+        self.assertNotIn("live", games.GAMES["carrom"])
         self.assertIn("gentle", games.GAMES["carrom"]["modes"][0]["label"])
         self.assertIn("gentle", games.GAMES["chess"]["modes"][0]["label"])
 
@@ -77,7 +71,7 @@ class TestGameTable(ApiBase):
         self.assertEqual(self.get("/api/players?game=ludo&mode=phones").json()["maxPlayers"], 4)
         self.assertEqual(self.get("/api/players?game=snakes").json()["kind"], "turns")
         self.assertEqual(self.get("/api/players?game=chess&mode=phones").json()["maxPlayers"], 2)
-        self.assertEqual(self.get("/api/players?game=carrom&mode=phones").json()["kind"], "live")
+        self.assertEqual(self.get("/api/players?game=carrom").status_code, 409)         # one screen only
 
     def test_honest_limits_and_scores(self):
         for gid in NEW:
@@ -96,7 +90,6 @@ class TestGameTable(ApiBase):
     def test_a_two_phone_mode_is_never_played_alone(self):
         for gid in ("ludo", "snakes", "chess"):
             self.assertEqual(self.post("/api/sessions", {"game": gid, "mode": "phones"}).status_code, 422)
-        self.assertEqual(self.post("/api/sessions", {"game": "carrom", "mode": "phones"}).status_code, 422)
         self.assertEqual(self.post("/api/sessions", {"game": "carrom", "mode": "doubles"}).status_code, 201)
 
 
@@ -584,175 +577,6 @@ class TestChessMatch(Matches):
         self.post(f"/api/matches/{mid}/accept", None, MEERA)
         m = self.post(f"/api/matches/{mid}/resign", None, KABIR).json()
         self.assertEqual((m["status"], m["winner"]), ("done", "u_meera"))
-
-
-# ---------------------------------------------------------------------------
-# Carrom: taking turns live
-# ---------------------------------------------------------------------------
-
-SHOT = games.live_actions("carrom")
-
-
-def turns_room(first=1, now=0.0):
-    r = live.Room("c1", "carrom", SHOT, {"a": 1, "b": 2}, now=now, turns=games.live_turns("carrom"), first=first)
-    r.receive(1, {"t": "ready", "rtt": 30}, now + 0.1)
-    r.receive(2, {"t": "ready", "rtt": 30}, now + 0.2)
-    r.check(now + 3.3)
-    return r
-
-
-def shot_msg(seq, k, v=(500, 900, 50)):
-    return {"t": "in", "seq": seq, "upto": k, "ev": [[k, "shot", list(v)]]}
-
-
-def done_msg(seq, k, sm, nxt):
-    return {"t": "in", "seq": seq, "upto": k, "ev": [], "sum": [k, sm], "next": nxt}
-
-
-class TestTurnsRoom(unittest.TestCase):
-    def setUp(self):
-        self.old = live.clock
-        live.clock = FakeClock()
-
-    def tearDown(self):
-        live.clock = self.old
-
-    def test_the_start_and_shots_to_both_phones_in_order(self):
-        r = turns_room(first=2)
-        start = r.pull(1, 0)[0]
-        self.assertEqual((start["t"], start["delay"], start["turns"], start["first"]), ("start", 0, True, 2))
-        self.assertEqual(r.phase, "running")
-        self.assertEqual(r.receive(1, shot_msg(1, 1), 4)[0]["why"], "turn")              # not seat 1's turn
-        self.assertEqual(r.receive(2, shot_msg(1, 1, (500, 900, 101)), 4)[0]["why"], "value")
-        self.assertEqual(r.receive(2, shot_msg(1, 1, (500, 99, 50)), 4)[0]["why"], "value")
-        self.assertEqual(r.receive(2, {"t": "in", "seq": 1, "upto": 1, "ev": [[1, "shot", 5]]}, 4)[0]["why"], "value")
-        self.assertEqual(r.receive(2, {"t": "in", "seq": 1, "upto": 1, "ev": [[1, "aim", [1, 2, 3]]]}, 4)[0]["why"], "action")
-        self.assertEqual(r.receive(2, shot_msg(1, 2), 4)[0]["why"], "upto")                # not the next number
-        self.assertEqual(r.receive(2, shot_msg(1, 1), 4), [{"t": "ack", "seq": 1}])
-        for seat in (1, 2):                                       # both phones get it, the shooter too
-            ins = [m for m in r.pull(seat, 1) if m["t"] == "in"]
-            self.assertEqual([(m["seat"], m["upto"], m["ev"]) for m in ins], [(2, 1, [[1, "shot", [500, 900, 50]]])])
-        self.assertIsNone(r.mover)
-        self.assertEqual(r.take_shots(), [{"k": 1, "seat": 2, "value": [500, 900, 50], "timer": False}])
-        self.assertEqual(r.take_shots(), [])
-        # nobody shoots while one is moving; the first report says whose turn it is
-        self.assertEqual(r.receive(2, shot_msg(2, 2), 5)[0]["why"], "turn")
-        self.assertEqual(r.receive(1, done_msg(1, 1, 777, 1), 6), [{"t": "ack", "seq": 1}])
-        self.assertEqual(r.mover, 1)
-        self.assertEqual(r.receive(2, done_msg(2, 1, 777, 1), 6)[0]["t"], "ack")
-        self.assertEqual(r.phase, "running")
-        self.assertEqual(r.receive(1, shot_msg(2, 2), 7)[0]["t"], "ack")
-        self.assertEqual(r.picture(7)["turns"], {"shots": 2, "mover": None, "left": None})
-
-    def test_reports_that_differ_are_out_of_step(self):
-        r = turns_room()
-        r.receive(1, shot_msg(1, 1), 4)
-        r.receive(1, done_msg(2, 1, 111, 2), 5)
-        r.receive(2, done_msg(1, 1, 112, 2), 5)
-        self.assertEqual((r.phase, r.take_end()), ("ended", ("out_of_step", None)))
-        bad = turns_room()
-        for msg in (done_msg(1, 1, 5, 2), done_msg(1, 0, 5, 2), {"t": "in", "seq": 1, "upto": 0, "ev": [], "sum": [0, 1]},
-                    done_msg(1, 1, -1, 2)):
-            self.assertEqual(bad.receive(1, msg, 4)[0]["why"], "sum", msg)              # nothing shot yet / bad values
-
-    def test_the_shot_timer_plays_the_weak_shot(self):
-        r = turns_room()                                          # the count-in ends at 3.2: seat 1's turn from then
-
-        def alive(t):
-            for seat in (1, 2):
-                r.receive(seat, {"t": "ping", "id": 1}, t)
-        self.assertEqual(r.picture(10)["turns"]["left"], 24)
-        for t in range(10, 35, 8):
-            alive(t)
-        alive(34)
-        r.check(3.2 + 31)
-        self.assertEqual(r.shots, 0)                              # 30 s and the grace
-        r.check(3.2 + live.SHOT_SECONDS + live.SHOT_GRACE + 0.1)
-        self.assertEqual(r.shots, 1)
-        ins = [m for m in r.pull(2, 0) if m["t"] == "in"]
-        self.assertEqual((ins[0]["seat"], ins[0]["ev"], ins[0]["timer"]), (1, [[1, "shot", [500, 900, 12]]], True))
-        self.assertEqual(r.take_shots()[0]["timer"], True)
-        # the player's own shot coming late is acknowledged and dropped
-        self.assertEqual(r.receive(1, shot_msg(1, 1, (100, 900, 90)), 40), [{"t": "ack", "seq": 1, "late": True}])
-        self.assertEqual(r.shots, 1)
-        self.assertEqual([m for m in r.pull(2, 0) if m["t"] == "in"], ins)
-        # a pause stops the clock: the next turn's 30 s don't run while paused
-        r.receive(1, done_msg(2, 1, 9, 2), 41)
-        r.receive(2, done_msg(1, 1, 9, 2), 41)
-        r.receive(1, {"t": "pause"}, 50)
-        r.receive(2, {"t": "ping", "id": 1}, 100)
-        r.receive(1, {"t": "ping", "id": 1}, 100)
-        r.receive(1, {"t": "resume"}, 100)
-        r.check(100.5)
-        self.assertEqual(r.shots, 1, "41 → 50 played, 50 → 100 paused")
-        self.assertEqual(r.picture(100.5)["turns"]["left"], 21)
-        r.receive(1, {"t": "ping", "id": 2}, 120); r.receive(2, {"t": "ping", "id": 2}, 120)
-        r.check(124)
-        self.assertEqual(r.shots, 2)
-
-    def test_a_duel_room_is_unchanged(self):
-        r = live.Room("m1", "snakeduel", games.live_actions("snakeduel"), {"a": 1, "b": 2}, now=0.0)
-        self.assertFalse(r.turns)
-        self.assertNotIn("turns", r.picture(0))
-
-
-class TestCarromMatch(Live):
-    def test_a_live_carrom_match_over_the_websocket_and_shots_kept(self):
-        r = self.invite(game="carrom", mode="phones")
-        self.assertEqual(r.status_code, 201, r.text)
-        self.assertEqual(r.json()["kind"], "live")
-        mid = r.json()["id"]
-        self.post(f"/api/matches/{mid}/accept", None, MEERA)
-        s = self.sessions(mid, game="carrom")
-        self.assertEqual(s["u_kabir"]["seed"], s["u_meera"]["seed"])
-        first = s["u_kabir"]["seed"] % 2 + 1
-        rm = live.get(mid)
-        self.assertTrue(rm.turns)
-        self.assertEqual(rm.mover, first)
-        with self.c.websocket_connect(f"/api/matches/{mid}/live", headers=KABIR) as a, \
-                self.c.websocket_connect(f"/api/matches/{mid}/live", headers=MEERA) as b:
-            ws = {1: a, 2: b}
-            for w in (a, b):
-                w.send_json({"t": "hello", "since": 0})
-                w.send_json({"t": "ready", "rtt": 20})
-
-            def recv(w, t):
-                for _ in range(80):
-                    m = w.receive_json()
-                    if m.get("t") == t:
-                        return m
-                self.fail(t)
-            st = recv(a, "start")
-            self.assertEqual((st["turns"], st["first"], st["delay"]), (True, first, 0))
-            recv(b, "start")
-            self.clock2.t += 3.5
-            rm.check()
-            ws[first].send_json(shot_msg(1, 1, (480, 910, 77)))
-            for w in (a, b):
-                seen = {}
-                for _ in range(80):
-                    m = w.receive_json()
-                    seen.setdefault(m.get("t"), m)
-                    if "in" in seen and ("ack" in seen or w is not ws[first]):
-                        break
-                got = seen["in"]
-                self.assertEqual((got["seat"], got["ev"]), (first, [[1, "shot", [480, 910, 77]]]))
-                if w is ws[first]:
-                    self.assertEqual(seen["ack"]["seq"], 1)
-        with db.get_conn() as conn:
-            rows = conn.execute("SELECT number, seat, move FROM match_moves WHERE match_id = ?", (mid,)).fetchall()
-        self.assertEqual([(x["number"], x["seat"], json.loads(x["move"])) for x in rows],
-                         [(1, first, {"shot": [480, 910, 77], "timer": False})])
-
-    def test_results_must_agree(self):
-        mid = self.new_match(game="carrom")
-        s = self.sessions(mid, game="carrom")
-        self.start(mid)
-        rep = {"tick": 31, "sum": 4242, "scores": [740, 0], "levels": [1, 1], "winner": 1}
-        self.assertTrue(self.score(s["u_kabir"]["id"], KABIR, 740, rep, seconds=300).json()["saved"])
-        self.score(s["u_meera"]["id"], MEERA, 0, rep, seconds=300)
-        m = self.match(mid)
-        self.assertEqual((m["status"], m["endReason"], m["winner"]), ("done", "finished", "u_kabir"))
 
 
 if __name__ == "__main__":

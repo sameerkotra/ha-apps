@@ -71,6 +71,7 @@ def me(current: dict = Depends(get_current_user)):
         "isChild": current["is_child"],
         "disabled": current["disabled"],
         "noAdmin": len(config.ADMIN_NAMES) == 0,        # nobody can open Admin yet: every page says how to fix it
+        "panel": config.INGRESS_PANEL,                 # the app's sidebar page in Home Assistant (links from notifications)
         "nameSent": bool(current["username"]),
         "prefs": prefs_json(row, s["default_look"]),
         "looks": [{"id": k, "label": v} for k, v in games.LOOKS.items()],

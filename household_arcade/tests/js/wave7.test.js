@@ -52,7 +52,6 @@ test("the six wave 7 games register after wave 6: modes, touch controls, turn by
     assert.equal(g.turns, true);
     assert.deepEqual(plain(g.turnModes), ["phones"]);
     assert.equal(g.race, false);
-    assert.equal(g.lockstep, false);
     assert.equal(g.stateVersion, 1);
     assert.ok(g.help.length > 150, id);
   }

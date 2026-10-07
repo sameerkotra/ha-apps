@@ -1,4 +1,4 @@
-"""Playing together from two phones: step 1, Race, and step 2, live duels (SPEC §13).
+"""Playing together from two phones: Race and turn by turn (SPEC §13).
 
 Two people in the household play the same single-player game at the same moment, each on their own phone, with
 the same seed, mode and level list. The server is a relay and referee, not a game engine:
@@ -22,11 +22,8 @@ the same seed, mode and level list. The server is a relay and referee, not a gam
   are checked by the game's Python rules and stored (`turns.py`); an invite lasts 7 days, a match can last days, a
   person can have several going at once, and they don't stop anyone playing anything else meanwhile.
 
-- **Live duels** (kind `live`, SPEC §13.4: Snake Duel, Paddle Duel and Tank Battle's "Two phones" modes): both
-  phones run the same game in lockstep; `live.py` relays their inputs and referees (checksums, a phone that went
-  quiet or away, pauses). The match starts when both phones are ready; each player's score is saved like any
-  game's, sent with the end of the game as their phone saw it (`report`); the two must agree for a result
-  (`_settle_live`), otherwise the match ends "out of step" with none.
+(Live duels in lockstep — kind `live`, the two-phone modes of Snake Duel, Paddle Duel, Tank Battle and Carrom —
+were removed in 1.8.0: a match of that kind from before is only shown as it ended.)
 
 The live numbers live in memory (`LIVE`); the match and its results are in `matches` / `match_players`
 (migration 6). Blocking functions (they take a DB connection or open their own) - call them from a thread.
@@ -51,14 +48,13 @@ logger = logging.getLogger("together")
 RACE_DEFAULT = ("snake", "brick", "blocks", "racer", "flap", "mines", "merge", "colours", "cards", "mole",
                 "numbers", "invaders", "rocks", "hop", "bubbles", "gems", "stack", "runner", "lander", "defense")
 RULES = ("score", "fastest")
-KINDS = ("race", "live", "turns")
+KINDS = ("race", "turns")
 
 INVITE_SECONDS = 5 * 60            # an invite to a live game lasts 5 minutes
 COUNT_IN_SECONDS = 4.0             # 3 - 2 - 1 - go, from the moment the invite is accepted
 GONE_AFTER = 120                   # a player with no session this long after the start, or a stale one, has left
 CONNECTED_WITHIN = 6.0             # a phone that spoke in the last 6 s is "connected" (they send every 2 s)
 MATCH_MAX_SECONDS = 7 * 3600       # nobody plays a race longer than the longest game
-REPORT_GRACE = 60                  # live: one phone's result in, the other's not this long after → it alone decides
 ACTIVE_WITHIN = 180                # "recently open" for the people list
 RECENT_N = 10
 
@@ -92,11 +88,6 @@ def race_ok(game: str) -> bool:
     return race_rule(game) is not None
 
 
-def live_ok(game: str) -> bool:
-    """Can this game be played as a live duel on two phones (SPEC §13.4)?"""
-    return bool(games.live_modes(game))
-
-
 def turns_ok(game: str) -> bool:
     """Can this game be played turn by turn from two (or more) phones (SPEC §13.5)?"""
     from . import turns
@@ -104,15 +95,13 @@ def turns_ok(game: str) -> bool:
 
 
 def together_ok(game: str) -> bool:
-    return race_ok(game) or live_ok(game) or turns_ok(game)
+    return race_ok(game) or turns_ok(game)
 
 
 def kind_for(game: str, mode=None) -> str:
-    """The kind of match a game (and mode) is played as together: a live mode is a live duel, a turn mode turn by
-    turn, a game that can only be played turn by turn too; anything else a race."""
-    if games.is_live(game, mode):
-        return "live"
-    if games.is_turns(game, mode) or (mode is None and turns_ok(game) and not race_ok(game) and not live_ok(game)):
+    """The kind of match a game (and mode) is played as together: a turn mode turn by turn, a game that can only be
+    played turn by turn too; anything else a race."""
+    if games.is_turns(game, mode) or (mode is None and turns_ok(game) and not race_ok(game)):
         return "turns"
     return "race"
 
@@ -167,7 +156,7 @@ def _player_live(match_id: str, user_id: str) -> dict:
 
 
 def mark_seen(match_id: str, user_id: str) -> None:
-    """A live duel's phone spoke (any message): it is "connected" for the picture. No database."""
+    """A phone spoke (a move, a poll): it is "connected" for the picture. No database."""
     st = _player_live(match_id, user_id)
     was = st["seen"] is not None and _mono() - st["seen"] < CONNECTED_WITHIN
     st["seen"] = _mono()
@@ -311,14 +300,6 @@ def _end(conn, m, status: str, reason: str | None, winner: str | None = None, re
     for uid, res in (results or {}).items():
         conn.execute("UPDATE match_players SET result = ? WHERE match_id = ? AND user_id = ?", (res, m["id"], uid))
     touch(m["id"])
-    if m["kind"] == "live":                # both phones hear it on the live link
-        from . import live
-        seat = None
-        if winner:
-            seat = next((p["seat"] for p in _players(conn, m["id"]) if p["user_id"] == winner), None)
-        elif results:
-            seat = 0                       # a draw
-        live.on_end(m["id"], reason, seat)
 
 
 def _gone(conn, m, p) -> bool:
@@ -359,8 +340,9 @@ def settle(conn, match_id: str):
         return m
     if m["status"] != "playing":
         return m
-    if m["kind"] == "live":
-        return _settle_live(conn, m)
+    if m["kind"] == "live":                # from before 1.8.0: the app can't play it on; no result
+        _end(conn, m, "done", "timeout", None, None)
+        return get(conn, match_id)
     if m["kind"] == "turns":
         from . import turns
         turns.timeouts(conn, m)                           # 7 days without a move
@@ -387,104 +369,16 @@ def settle(conn, match_id: str):
     return m
 
 
-def _settle_live(conn, m):
-    """A live duel: both results in and the same → its result; different → out of step. The room's own ends (a
-    phone that went away, checksums that differ) are written here too; no room at all means the app restarted
-    in the middle (the game can't go on: no result)."""
-    from . import live
-    mid = m["id"]
-    ps = _players(conn, mid)
-    done = [p for p in ps if p["finished_at"]]
-    reports = live.REPORTS.get(mid, {})
-    if done and (len(done) == len(ps) or _older_than(done[0]["finished_at"], REPORT_GRACE)):
-        mine = {p["seat"]: reports.get(p["seat"]) for p in done}
-        first = next(iter(mine.values()))
-        same = first is not None and all(r == first for r in mine.values())
-        honest = same and all(first["scores"][p["seat"] - 1] == p["score"] for p in done)
-        if honest:
-            end_live(conn, mid, "finished", first["winner"])
-        else:
-            logger.warning("Live match %s (%s): the two results differ: %s", mid, m["game"], mine)
-            end_live(conn, mid, "out_of_step", None)
-        return get(conn, mid)
-    room = live.get(mid)
-    if room is None:
-        end_live(conn, mid, "timeout", None)
-        return get(conn, mid)
-    room.check()
-    ended = room.take_end()
-    if ended:
-        end_live(conn, mid, *ended)
-        return get(conn, mid)
-    started = config.parse_ts(m["started_at"]) if m["started_at"] else None
-    if started and (config.utcnow() - started).total_seconds() > MATCH_MAX_SECONDS:
-        end_live(conn, mid, "timeout", None)
-    return get(conn, mid)
-
-
-def _older_than(ts: str | None, seconds: float) -> bool:
-    t = config.parse_ts(ts) if ts else None
-    return bool(t and (config.utcnow() - t).total_seconds() > seconds)
-
-
-def end_live(conn, match_id: str, reason: str, winner_seat) -> None:
-    """Write the end of a live duel: `winner_seat` 1 or 2 wins, 0 is a draw, None no result (out of step, nobody
-    there). Left / resigned / finished name a winner; a child out of time is a draw for both (SPEC §13.1)."""
-    m = get(conn, match_id)
-    if not m or m["status"] != "playing":
-        return
-    ps = _players(conn, match_id)
-    by_seat = {p["seat"]: p["user_id"] for p in ps}
-    winner, results = None, None
-    if winner_seat in (1, 2) and winner_seat in by_seat:
-        winner = by_seat[winner_seat]
-        results = {uid: ("won" if uid == winner else "lost") for uid in by_seat.values()}
-    elif winner_seat == 0:
-        results = {uid: "draw" for uid in by_seat.values()}
-    _end(conn, m, "done", reason, winner, results)
-
-
-def store_shots(conn, match_id: str, shots: list) -> None:
-    """The shots of a match whose players take turns live (Carrom, SPEC §13.6), as the room accepted them."""
-    for sh in shots:
-        conn.execute("INSERT OR IGNORE INTO match_moves (match_id, number, seat, move, dice, at) VALUES (?, ?, ?, ?, NULL, ?)",
-                     (match_id, sh["k"], sh["seat"], json.dumps({"shot": sh["value"], "timer": bool(sh["timer"])}),
-                      config.now_iso()))
-
-
 def resign(conn, match_id: str, current: dict):
-    """Giving up a live duel (or leaving its page): the other player wins. Turn by turn: turns.resign."""
+    """Giving up a turn-by-turn match: turns.resign."""
     m = _need(conn, match_id, current)
-    if m["kind"] == "turns":
-        from . import turns
-        try:
-            return turns.resign(conn, match_id, current)
-        except turns.TurnsError as e:
-            raise TogetherError(e.status, str(e))
-    if m["kind"] != "live" or m["status"] != "playing":
-        raise TogetherError(409, "That match isn't being played live.")
-    seat = next(p["seat"] for p in _players(conn, match_id) if p["user_id"] == current["id"])
-    end_live(conn, match_id, "resigned", 3 - seat)
-    return get(conn, match_id)
-
-
-def live_watch(match_id: str) -> None:
-    """Every few seconds during a live duel: a child whose play time ran out (or whose quiet hours began) ends it
-    for both, as a draw (SPEC §13.1); the room's own ends are written."""
-    from . import live
-    with db.get_conn() as conn:
-        m = get(conn, match_id)
-        if not m or m["kind"] != "live" or m["status"] != "playing":
-            return
-        room = live.get(match_id)
-        if room is not None and room.phase in ("running", "paused", "countin"):
-            for p in conn.execute("SELECT u.* FROM match_players p JOIN users u ON u.id = p.user_id "
-                                  "WHERE p.match_id = ?", (match_id,)).fetchall():
-                st = _user_status(conn, p)
-                if st["isChild"] and not st["canStart"]:
-                    end_live(conn, match_id, "time_limit", 0)
-                    return
-        settle(conn, match_id)
+    if m["kind"] != "turns":
+        raise TogetherError(409, "That match can't be resigned.")
+    from . import turns
+    try:
+        return turns.resign(conn, match_id, current)
+    except turns.TurnsError as e:
+        raise TogetherError(e.status, str(e))
 
 
 def create(conn, current: dict, body) -> dict:
@@ -496,24 +390,18 @@ def create(conn, current: dict, body) -> dict:
     opponents, rematch = body.get("opponents"), body.get("rematchOf")
     if not isinstance(game, str) or not games.exists(game):
         raise TogetherError(404, "Unknown game.")
-    if kind is None:                       # the mode says it: a live mode is a live duel, a turn mode turn by turn
+    if kind is None:                       # the mode says it: a turn mode turn by turn
         kind = kind_for(game, mode)
     if kind not in KINDS:
-        raise TogetherError(422, "kind must be race, live or turns.")
+        raise TogetherError(422, "kind must be race or turns.")
     if kind == "race" and not race_ok(game):
         raise TogetherError(409, f"{games.name(game)} can't be raced yet.")
-    if kind == "live" and not live_ok(game):
-        raise TogetherError(409, f"{games.name(game)} can't be played live on two phones.")
     if kind == "turns" and not turns_ok(game):
         raise TogetherError(409, f"{games.name(game)} can't be played turn by turn.")
     if not settings.game_enabled(game):
         raise TogetherError(409, f"{games.name(game)} is switched off on App settings.")
     if not isinstance(mode, str) or not settings.mode_allowed(game, mode):
         raise TogetherError(422, "That mode isn't available.")
-    if kind == "live" and not games.is_live(game, mode):
-        raise TogetherError(422, "Pick one of the game's two-phone modes for a live duel.")
-    if kind == "race" and games.is_live(game, mode):
-        raise TogetherError(422, "That mode is played live on two phones, not raced.")
     if kind == "turns" and not games.is_turns(game, mode):
         raise TogetherError(422, "Pick one of the game's two-phone modes to play turn by turn.")
     if kind != "turns" and games.is_turns(game, mode):
@@ -615,11 +503,6 @@ def accept(conn, match_id: str, current: dict):
                  (match_id, current["id"]))
     conn.execute("UPDATE matches SET status = 'playing', started_at = ? WHERE id = ?", (_ts(start), match_id))
     LIVE.pop(match_id, None)
-    if m["kind"] == "live":                # the relay for the two phones; play starts when both are ready
-        from . import live
-        seats = {p["user_id"]: p["seat"] for p in _players(conn, match_id)}
-        live.open_room(match_id, m["game"], games.live_actions(m["game"]), seats,
-                       turns=games.live_turns(m["game"]), first=int(m["seed"]) % 2 + 1)
     touch(match_id)
     return get(conn, match_id)
 
@@ -697,19 +580,11 @@ def attach_session(conn, match_id: str, user_id: str, session_id: str) -> None:
     touch(match_id)
 
 
-def record_result(conn, session, score, level, seconds, won=None, report=None) -> None:
-    """A player's final result, from the score they sent for their match session (0 if it wasn't a possible score).
-    A live duel's phone sends the end of the game as it saw it with it (`report`, compared in _settle_live)."""
+def record_result(conn, session, score, level, seconds, won=None) -> None:
+    """A player's final result, from the score they sent for their match session (0 if it wasn't a possible score)."""
     mid = session["match_id"]
     if not mid:
         return
-    m = get(conn, mid)
-    if m and m["kind"] == "live":
-        from . import live
-        seat = conn.execute("SELECT seat FROM match_players WHERE match_id = ? AND user_id = ?",
-                            (mid, session["user_id"])).fetchone()
-        if seat:
-            live.store_report(mid, seat["seat"], report)
     ok = isinstance(score, (int, float)) and not isinstance(score, bool) and score == score
     conn.execute(
         "UPDATE match_players SET score = ?, level = ?, seconds = ?, won = ?, finished_at = ? "
@@ -748,13 +623,8 @@ def view(conn, m, user_id: str) -> dict:
             "computer": bool(p["computer"]), "left": bool(p["left_at"]) if "left_at" in p.keys() else False,
         })
     starts = None
-    if m["status"] == "playing" and m["started_at"] and m["kind"] != "live":     # a live duel counts in from `start`
+    if m["status"] == "playing" and m["started_at"]:
         starts = max(0, int((config.parse_ts(m["started_at"]) - config.utcnow()).total_seconds() * 1000))
-    live_pic = None
-    if m["kind"] == "live":
-        from . import live
-        room = live.get(m["id"])
-        live_pic = room.picture() if room is not None else None
     expires = None
     if m["status"] == "invited" and m["expires_at"]:
         expires = max(0, int((config.parse_ts(m["expires_at"]) - config.utcnow()).total_seconds()))
@@ -765,7 +635,6 @@ def view(conn, m, user_id: str) -> dict:
         "mine": m["created_by"] == user_id, "createdAt": m["created_at"], "expiresIn": expires,
         "startsInMs": starts, "endReason": m["end_reason"], "winner": m["winner"], "rematchOf": m["rematch_of"],
         "rule": (race_rule(m["game"]) or {}).get("rule") if m["kind"] == "race" else None,
-        "live": live_pic,
         "turns": _turns_brief(conn, m, user_id) if m["kind"] == "turns" else None,
         "v": signature(m["id"]), "players": ps,
     }
@@ -873,7 +742,7 @@ def invite_blocking(match_id: str) -> int:
     message = f"{inviter['name']} {verb} {games.name(m['game'])}"
     message += " (Practice, nothing is saved)." if m["practice"] else "."
     data = {"tag": f"arcade-invite-{match_id}"}
-    join, later = notify._link(f"#/home/join/{match_id}"), notify._link(f"#/home/decline/{match_id}")
+    join, later = notify._link(f"/home/join/{match_id}"), notify._link(f"/home/decline/{match_id}")
     if join:
         data.update(join)
         data["actions"] = [{"action": "URI", "title": "Join", "uri": join["url"]},
@@ -896,8 +765,6 @@ def housekeeping(conn) -> int:
         m = settle(conn, r["id"])
         if m and m["status"] != r["status"]:
             n += 1
-    from . import live
-    live.cleanup()
     for mid in list(LIVE):
         m = get(conn, mid)
         if not m:
