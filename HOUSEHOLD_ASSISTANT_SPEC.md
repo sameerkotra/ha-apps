@@ -1,7 +1,8 @@
 # Household Assistant — spec
 
 Status: **draft (2026-10-06); the apps' side and the assistant app (phase 1, `household_assistant` 1.0.0) are built
-(2026-10-07); its own `spec/SPEC.md` says how.** Every app in
+(2026-10-07); its own `spec/SPEC.md` says how.** A local model on the CPU for it and the other apps is
+its own app, Household AI (`household_ai/spec/SPEC.md`; §15 here). Every app in
 §4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
 the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
@@ -19,7 +20,8 @@ in `APP_MESSAGES_SPEC.md` §6.6.
 - Every answer says where it came from and links there ("Open in Finance Dashboard → September"), so the app is a
   tap away and the person can check the facts.
 - Works with any of the three model providers the apps already support (Ollama, an OpenAI-compatible server,
-  Anthropic Claude), with the same shared `ai_client.py`. 🤖 **Needed**: the app does nothing without a model.
+  Anthropic Claude), with the same shared `ai_client.py`. 🤖 **Needed**: the app does nothing without a model — a household
+  with no other model server can install Household AI (§15) for one on the Home Assistant machine's CPU.
 
 Not in scope: a general chatbot (the model answers from the apps' facts, or says it can't), automations or
 device control (Home Assistant's own Assist does that), and anything from Household Vault (§7).
@@ -444,3 +446,24 @@ Each item is ticked in the commit that finishes it.
 - [x] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
   the admin pages, tests.
 - [x] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).
+
+## 15. A local model: Household AI
+
+The model server that was drafted here as a "built-in model" is its own app, **Household AI** (`household_ai`),
+specified in `household_ai/spec/SPEC.md`: Ollama on the Home Assistant machine's CPU, behind a gateway every household
+app can use, with a model list sized to the machine, a fair queue and a day/night schedule for keeping models
+loaded. The assistant needs nothing special for it — it is an ordinary Ollama address in the AI block (§8.2):
+
+- **Setting it up**: *Provider* Ollama, *Address* `http://<Household AI's host name>:11434`, no access key (unless
+  Household AI's *Require an access key* is on), *Model* a downloaded text model such as `qwen2.5:3b`. Household
+  AI's page shows these values.
+- **Answered first**: Household AI's queue puts the assistant's requests ahead of other apps' by default
+  (`household_ai/spec/SPEC.md` §6.1), because a person is waiting on the page.
+- **Question timeout** (§7.4): today a fixed 60 s (`household_assistant/app/engine.py`, `QUESTION_TIMEOUT`); to
+  become a setting in the assistant's *Limits* (`question_timeout`, 60 s; 30–600) when Household AI is built.
+  With a CPU model the page suggests 180 s, and the "Asking…/Reading the answer…" status adds "Waiting for the
+  model" while a request is queued (Household AI answers 503 with `Retry-After` when its queue is full, which
+  `ai_client` retries).
+- **Small models**: the JSON plan (§3 step 2) uses Ollama's `format: "json"`, which 1.5B–3B models follow reliably
+  for this short, flat schema; the catalogue shown to the model is cut to the tools of the apps the person may use
+  (§3 step 1), which keeps the prompt within a small context window (Household AI's default 8192).
