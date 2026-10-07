@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.2
+
+- **Links open the right page**: a maintenance notification opens the Maintenance tab, and the Household Assistant's answers open the Dashboard, the list they talk about, Lists or Schedule. `#/lists/<id>` opens a list.
+
 ## 2.4.1
 
 - **Notifications open the app for everyone**: tapping a maintenance notification opened the admin's Settings → Apps page (`/hassio/ingress/…`) — or nothing, for anyone who isn't an admin. It now opens Todo's own sidebar page, learnt from the Supervisor at start-up; an app that isn't in the sidebar sends notifications without a link.

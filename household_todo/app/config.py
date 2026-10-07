@@ -59,7 +59,7 @@ SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/
 SIDEBAR_PAGE = None
 
 # Said to the other household apps in `hello` (app_messages.py); equals config.yaml's version.
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.2"
 APP_TITLE = "Household Todo"
 
 # Maintenance: read from Home Assistant's GET /config at start-up (ha_client). A negative latitude

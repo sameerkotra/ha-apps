@@ -9,7 +9,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "2.4.1"
+VERSION = "2.4.2"
 REPO_URL = pk.REPO_URL
 
 
@@ -26,7 +26,7 @@ class PackagingTests(unittest.TestCase):
     def test_versions_match(self):
         # theme-boot.js, themes.css, settings.css, style.css, ui.js, settings.js, people.js, backnav.js, whoami.js,
         # connected-apps.js, app.js, maintenance.js
-        pk.check_cache_busting(HERE, VERSION, count=12, static_files="top")
+        pk.check_cache_busting(HERE, VERSION, count=13, static_files="top")
 
     def test_app_version_said_to_other_apps(self):
         from app import config as app_config

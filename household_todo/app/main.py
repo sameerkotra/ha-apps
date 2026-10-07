@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (app_messages, config, db, drive_time, geocode, ha_client, ha_sensors, housekeeping, maint_files,
                maint_notify, reminders)
-from .common import auth_core, ha_notify, ha_people, web_security
+from .common import auth_core, deeplinks, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, calendar, dashboard, lists, maintenance, me, places, prefs, schedule, task_types, tasks, users
 
@@ -73,6 +73,9 @@ app.include_router(dashboard.router)
 app.include_router(prefs.router)
 app.include_router(maintenance.router)
 app.include_router(admin.router)
+# "/<page>/lists/<id>", "/<page>/dashboard" … asked of the app itself: a redirect to the page's "#/…" (deeplink.js)
+deeplinks.add(app, {"dashboard": 0, "calendar": 0, "schedule": 0, "lists": 0, "maintenance": 0})
+app.add_api_route("/lists/{a}", lambda a: deeplinks.redirect(["lists", a]), methods=["GET"], include_in_schema=False)
 
 # Only Home Assistant's own Supervisor ingress proxy should ever be able to
 # reach this container directly (it has no `ports:` mapping in config.yaml,

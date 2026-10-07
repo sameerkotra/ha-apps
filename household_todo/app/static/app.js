@@ -2272,6 +2272,8 @@ function parseHash(hash) {
   if (LEGACY_ROUTES[tab]) [tab, sub] = LEGACY_ROUTES[tab];
   if (!TABS.includes(tab)) return null;
   if (tab === "admin") sub = ADMIN_TABS.some(([k]) => k === sub) ? sub : "settings";
+  else if (tab === "lists") sub = /^[A-Za-z0-9_-]{1,64}$/.test(sub || "") ? sub : null;   // #/lists/<id>: that list
+  else sub = null;
   return { tab, sub };
 }
 
@@ -2281,6 +2283,7 @@ function showTab(tab, opts = {}) {
   if (LEGACY_ROUTES[tab]) { opts = { ...opts, sub: LEGACY_ROUTES[tab][1] }; tab = "admin"; }
   if (!TABS.includes(tab)) tab = "calendar";
   if (tab === "admin" && opts.sub) state.adminTab = opts.sub;
+  if (tab === "lists" && opts.sub) listUI.openId = opts.sub;      // renderLists falls back to the first list
   state.tab = tab;
   const want = routeHash(tab, state.adminTab);
   if (location.hash !== want) {
@@ -2358,7 +2361,13 @@ async function init() {
     }
   } catch (e) { fail(e); }
   syncActingUI();
-  const start = parseHash(location.hash);
+  let start = parseHash(location.hash);
+  // A link from Home Assistant opens "/<page>/lists/<id>", "/<page>/dashboard", … (common/static/deeplink.js): that
+  // page now, and any tapped later while the app is open
+  HouseholdDeepLink.start(state.me.page, (route) => parseHash("#" + route), (r) => {
+    if (!start) start = r;
+    else showTab(r.tab, { sub: r.sub });
+  });
   showTab(start ? start.tab : "calendar", { force: true, sub: start && start.sub });
   initBackNav();
 }

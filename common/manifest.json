@@ -23,7 +23,8 @@
           "ai_client.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "deeplinks.py"
         ],
         "static": [
           "backnav.js",
@@ -33,7 +34,8 @@
           "ui.js",
           "settings.js",
           "settings.css",
-          "people.js"
+          "people.js",
+          "deeplink.js"
         ],
         "tests": [
           "__init__.py",
@@ -52,7 +54,8 @@
           "fake_ha_bus.py",
           "test_app_bus.py",
           "test_assist_tools.py",
-          "fake_ha.py"
+          "fake_ha.py",
+          "test_deeplinks.py"
         ]
       }
     },
@@ -80,7 +83,8 @@
           "geo.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "deeplinks.py"
         ],
         "static": [
           "backnav.js",
@@ -90,7 +94,8 @@
           "ui.js",
           "settings.js",
           "settings.css",
-          "people.js"
+          "people.js",
+          "deeplink.js"
         ],
         "tests": [
           "__init__.py",
@@ -109,7 +114,8 @@
           "test_geo.py",
           "fake_ha_bus.py",
           "test_app_bus.py",
-          "test_assist_tools.py"
+          "test_assist_tools.py",
+          "test_deeplinks.py"
         ]
       }
     },
@@ -132,7 +138,8 @@
           "sandbox_run.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "deeplinks.py"
         ],
         "tests": [
           "__init__.py",
@@ -149,12 +156,14 @@
           "fake_ha.py",
           "fake_ha_bus.py",
           "test_app_bus.py",
-          "test_assist_tools.py"
+          "test_assist_tools.py",
+          "test_deeplinks.py"
         ],
         "static": [
           "theme-boot.js",
           "themes.css",
-          "ui.js"
+          "ui.js",
+          "deeplink.js"
         ]
       }
     },
@@ -298,7 +307,8 @@
           "csv_export.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "deeplinks.py"
         ],
         "static": [
           "backnav.js",
@@ -309,7 +319,8 @@
           "settings.js",
           "settings.css",
           "people.js",
-          "connected-apps.js"
+          "connected-apps.js",
+          "deeplink.js"
         ],
         "tests": [
           "__init__.py",
@@ -330,7 +341,8 @@
           "test_csv_export.py",
           "fake_ha_bus.py",
           "test_app_bus.py",
-          "test_assist_tools.py"
+          "test_assist_tools.py",
+          "test_deeplinks.py"
         ]
       }
     },
@@ -404,7 +416,8 @@
           "sandbox_run.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "deeplinks.py"
         ],
         "static": [
           "backnav.js",
@@ -413,7 +426,8 @@
           "themes.css",
           "ui.js",
           "settings.js",
-          "settings.css"
+          "settings.css",
+          "deeplink.js"
         ],
         "tests": [
           "__init__.py",
@@ -431,7 +445,8 @@
           "fake_ha_bus.py",
           "fake_ha.py",
           "test_app_bus.py",
-          "test_assist_tools.py"
+          "test_assist_tools.py",
+          "test_deeplinks.py"
         ]
       }
     },
