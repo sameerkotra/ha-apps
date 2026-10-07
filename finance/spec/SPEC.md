@@ -744,6 +744,26 @@ re-run of the AI.
 - **Re-extract a utility bill** (the review page, any provider, while the PDF is kept and the bill isn't confirmed): notes on what was wrong (up to 2,000 characters) are saved on the upload's first row (`utility_bills.extraction_notes`) and sent with the PDF; the whole upload is read again (Xcel's gas with its electric) and returns to Upload → Utility bill. The debug re-send uses the same prompt and notes.
 - Other providers appear in the Dashboard's provider filter once they have bills.
 
+## 23a. The household apps bus and the Household Assistant (`app/app_messages.py`, `app/tools.py`)
+
+- The shared `app_bus.py` (with `ha_ws.py`) starts in the lifespan on the app's own database (`db.get_db`); it makes
+  its tables (`bus_outbox`, `bus_seen`, `bus_apps`) itself, and `query_engine.HIDDEN_TABLES` keeps them out of
+  Query and Reports. Its own WebSocket; the outbox thread only with a Supervisor token. The tools only read, inside
+  the bus's transaction.
+- It answers the **Household Assistant** (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`,
+  APP_MESSAGES_SPEC §6.6). `requested_by` must be in `known_users` (has opened the app), else `nack not_allowed
+  no_access`. Whose data: theirs, or with `person` (a name or id) an owner `user_access` lets them see; anyone else
+  is `nack not_found person`. The admin's "act as" never applies.
+  - `finance.summary` (`month?`): income, spending, net and the top 5 categories, with the Overview's rules (clean
+    rows; no transfers or excluded rows; income only on checking/savings; a card purchase is spend).
+  - `finance.spending` (`month?`, `category?`): spend by category, or a category's 10 largest charges as
+    `{date, merchant (the bank's description), amount, account}` — **never `note`**.
+  - `finance.recurring`: `recurring.scan_recurring`'s recurring series as `{merchant, amount, frequency, next, last,
+    category, account}`; `finance.bills` (`days?` 1–60, default 14): those whose next date falls in the window.
+- **Off by default** (App settings → Household Assistant → `assistant_answers`, `nack not_allowed off`): money is
+  private. No per-person switch (no per-person settings). Links: the sidebar page from `assist_tools.sidebar_page`
+  (server-rendered pages have no sub-path routes).
+
 ## 24. Packaging for other installs
 
 - **App repository:** `repository.yaml` at the root (name, url `https://github.com/sameerkotra/ha-apps`, maintainer), shared with the other household apps; this app in `finance/`. Home Assistant builds the image on install from the `Dockerfile` (multi-arch Python base; amd64 and aarch64); no prebuilt images.

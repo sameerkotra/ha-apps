@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import features, jobs, purge, security, settings
+from . import app_messages, features, jobs, purge, security, settings
 from .common import sandbox_run, web_security
 from .version import APP_VERSION
 from .db import DB_PATH, normalize_legacy_transaction_dates, run_migrations
@@ -26,7 +26,9 @@ async def lifespan(app: FastAPI):
     jobs.recover_interrupted_jobs()       # the in-memory queue did not survive the restart
     jobs.start(asyncio.get_running_loop())
     purge.start_purge_worker()            # 30-day soft-delete purge (SPEC.md section 11)
+    app_messages.start()                  # the household apps bus: the Household Assistant asks (tools.py)
     yield
+    app_messages.stop()
 
 
 app = FastAPI(title="Finance Dashboard", lifespan=lifespan)

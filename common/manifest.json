@@ -129,7 +129,10 @@
           "backup_core.py",
           "ai_client.py",
           "csv_export.py",
-          "sandbox_run.py"
+          "sandbox_run.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "tests": [
           "__init__.py",
@@ -142,7 +145,11 @@
           "test_backup_core.py",
           "test_ai_client.py",
           "test_csv_export.py",
-          "test_sandbox_run.py"
+          "test_sandbox_run.py",
+          "fake_ha.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ],
         "static": [
           "theme-boot.js",

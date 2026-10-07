@@ -112,9 +112,35 @@ write the SQL from a plain-English question.
   (reading PDFs, categories, Write SQL) and by model. Re-processing or deleting a statement
   doesn't lower it. An install that already had statements starts the total from the AI usage
   stored on each of them (their last processing run only).
-- **App settings**: AI, AI usage display and prices, and Features. Changes apply at once.
+- **App settings**: AI, AI usage display and prices, Features, and Household Assistant. Changes apply at once.
 
 Admins can **act as** any user (the switch at the top right) to see and fix their data.
+
+### The Household Assistant
+
+If the household also uses the **Household Assistant** app, an admin can let it ask Finance
+(**Admin → App settings → Household Assistant → Answer the Household Assistant**; **off** until
+turned on, because money is private). Then each person can ask about **their own** money — and
+about the data an admin shared with them on **Users**, by that person's name — never anyone
+else's. An admin's "act as" doesn't apply to the assistant.
+
+- "How did we do this month?" — a month's income, spending, net and top categories, counted
+  exactly as the Overview counts them (transfers and excluded rows left out);
+- "How much did we spend on groceries in September?" — spending by category, or one category's
+  10 largest charges: the bank's description, date, amount and account — **never your notes**;
+- "What subscriptions do we pay for?" and "What bills are coming up?" — the recurring charges,
+  with their next expected date.
+
+The answers travel through Home Assistant's event bus, which Home Assistant's recorder keeps in
+its history unless told not to. **If you turn this on**, add this to Home Assistant's
+`configuration.yaml` and restart Home Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
+```
 
 ## Configuration (the app's Configuration tab)
 
