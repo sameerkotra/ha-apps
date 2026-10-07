@@ -28,9 +28,13 @@ DOCS = "household_docs"
 DOCS_VERSION = "1.2.3"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.1.1"
+ASSISTANT_VERSION = "1.1.2"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION))
+# Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
+# others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
+HOUSEHOLD_AI = "household_ai"
+HOUSEHOLD_AI_VERSION = "1.0.1"
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",
@@ -83,7 +87,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Unofficial apps", text[:600])
         self.assertIn("Claude", text[:600])
         self.assertIn(REPO_URL, text)
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, HOUSEHOLD_AI):
             self.assertIn(f"]({slug})", text, slug)
         self.assertIn("](LICENSE)", text)
         self.assertIn("](SECURITY.md)", text)
@@ -102,7 +106,8 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn(["*.png", "binary"], lines)
 
     def test_changelogs_start_at_the_release(self):
-        for slug, version in [(s, VERSIONS.get(s, VERSION)) for s in ADDONS] + [(FINANCE, FINANCE_VERSION), *NEWER]:
+        for slug, version in [(s, VERSIONS.get(s, VERSION)) for s in ADDONS] + [(FINANCE, FINANCE_VERSION), *NEWER,
+                                                                               (HOUSEHOLD_AI, HOUSEHOLD_AI_VERSION)]:
             with self.subTest(slug):
                 log = read(slug, "CHANGELOG.md")
                 self.assertTrue(log.startswith("# Changelog\n"))
@@ -118,7 +123,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_user_facing_text_says_app_not_add_on(self):
         """Home Assistant 2026.2 renamed add-ons to apps; what people read says "app"."""
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, HOUSEHOLD_AI):
             for name in ("README.md", "DOCS.md", "CHANGELOG.md", os.path.join("translations", "en.yaml")):
                 with self.subTest(f"{slug}/{name}"):
                     text = read(slug, name).replace("ha-apps", "")
@@ -175,6 +180,24 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("64-bit only", readme[:1200])
         self.assertEqual(re.findall(r"(?m)^  - (\w+)$", config.split("arch:", 1)[1].split("\n\n")[0])[:2],
                          ["amd64", "aarch64"])
+
+    def test_household_ai(self):
+        config = read(HOUSEHOLD_AI, "config.yaml")
+        self.assertIn(f'version: "{HOUSEHOLD_AI_VERSION}"', config)
+        self.assertIn(f"slug: {HOUSEHOLD_AI}", config)
+        self.assertIn(f"url: {REPO_URL}", config)
+        self.assertRegex(config, r"(?m)^panel_admin: true")             # admins only
+        self.assertRegex(config, r"(?m)^ports:\n  11434/tcp: null$")     # declared, never published by default
+        for name in ("README.md", "DOCS.md", "Dockerfile", "icon.png", "logo.png", "CHANGELOG.md",
+                     ".dockerignore", os.path.join("translations", "en.yaml"), os.path.join("spec", "SPEC.md")):
+            self.assertTrue(os.path.isfile(os.path.join(ROOT, HOUSEHOLD_AI, name)), f"{HOUSEHOLD_AI}/{name}")
+        readme = read(HOUSEHOLD_AI, "README.md")
+        self.assertIn("Unofficial app.", readme[:600])
+        self.assertIn("Claude", readme[:600])
+        self.assertIn("[Household AI](household_ai) | — | **64-bit only.**", read("README.md"))
+        self.assertIn("Household AI", read("SECURITY.md"))
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):      # no other app publishes a port
+            self.assertNotRegex(read(slug, "config.yaml"), r"(?m)^ports:")
 
     def test_arcade_is_under_development(self):
         self.assertRegex(read(ARCADE, "config.yaml"), r"(?m)^stage: experimental")

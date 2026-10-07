@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.2
+
+- **How long each answer took**: under every answer, "⏱ Took 42 s" — from asking to the answer (also for a question
+  that failed). Useful to see how a model on the Home Assistant machine's CPU is doing.
+
 ## 1.1.1
 
 - **The ask box is at the top**, with the answers under it, the newest first; **Earlier questions** is at the

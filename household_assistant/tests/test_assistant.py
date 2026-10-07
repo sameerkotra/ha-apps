@@ -153,6 +153,8 @@ class AssistantTests(Household):
                 break
             time.sleep(0.02)
         self.assertEqual((q2["rounds"], q2["input_tokens"], q2["output_tokens"]), (1, 300, 60))
+        self.assertIsInstance(q["seconds"], float)                    # how long it took, under the answer
+        self.assertGreaterEqual(q["seconds"], 0)
         usage = self.c.get("/api/admin/usage", headers=ADMIN).json()["days"][0]
         self.assertEqual((usage["questions"], usage["calls"]), (1, 1))
 

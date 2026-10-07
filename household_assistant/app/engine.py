@@ -206,6 +206,8 @@ class _Run:
         return max(1.0, self.deadline - time.monotonic())
 
     def state(self, state: str, **cols) -> None:
+        if state not in RUNNING:
+            cols["seconds"] = round(time.monotonic() - self.started, 2)     # how long it took, shown under the answer
         sets = ", ".join(f"{k} = ?" for k in ("state", *cols))
         with db.get_conn() as conn:
             conn.execute(f"UPDATE questions SET {sets} WHERE id = ? AND state != 'stopped'",
@@ -797,7 +799,7 @@ def view(conn, q) -> dict:
                     seen.add(k)
                     sources.append({"app": c["app"], "appName": app_name, **link})
     return {"id": q["id"], "text": q["text"], "askedAt": q["asked_at"], "state": q["state"], "answer": q["answer"],
-            "error": q["error"], "progress": _progress(q["id"], q["state"], shared),
+            "error": q["error"], "seconds": q["seconds"], "progress": _progress(q["id"], q["state"], shared),
             "sources": sources[:8], "shared": shared, "actions": actions}
 
 

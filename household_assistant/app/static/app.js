@@ -139,6 +139,20 @@
     return h("div", { class: "action failed" }, `✗ ${a.say}: ${a.problem || "it didn't work."}`);
   }
 
+  // "Took 42 s" / "Took 1 min 12 s" under an answer (the question to the end of the answer).
+  function took(seconds) {
+    if (seconds === null || seconds === undefined) return null;
+    const s = Math.max(0, Math.round(seconds));
+    if (s < 60) return seconds < 10 ? `${(Math.round(seconds * 10) / 10).toString()} s` : `${s} s`;
+    const m = Math.floor(s / 60);
+    return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
+  }
+
+  function tookLine(q) {
+    const t = took(q.seconds);
+    return t ? h("div", { class: "took dim", title: "From asking to the answer" }, `⏱ Took ${t}`) : null;
+  }
+
   function questionNode(q) {
     const node = h("article", { class: "turn", dataset: { id: q.id } });
     fillQuestion(node, q);
@@ -160,6 +174,7 @@
       parts.push(h("div", { class: "answer error" }, q.error || "Something went wrong."));
     }
     if (!running) {
+      parts.push(tookLine(q));
       parts.push((q.actions || []).map((a) => actionBlock(q, a)));
       parts.push(sourcesLine(q.sources || []));
       parts.push(sharedBlock(q));
