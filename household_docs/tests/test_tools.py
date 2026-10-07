@@ -78,6 +78,22 @@ class ToolTests(ApiBase):
         self.assertFalse(rest["more"])
         self.assertIn("x" * 1000, rest["text"])
 
+    def test_search_as_a_model_words_it(self):
+        sheet = self.ok(self.post("/api/docs", {"kind": "sheet", "name": "Budget", "format": "csv"}), 201)
+        write(self.real(sheet["id"]), b"Item,Cost\nRent,1200\nFood,35.5\n")
+        self.ok(self.post("/api/docs", {"kind": "sheet", "name": "Groceries 2026", "format": "xlsx"}), 201)
+        self.scan()
+        names = lambda **a: [i["name"] for i in call("docs.search", **a)["items"]]
+        for q in ("budget sheet", "the Budget spreadsheet", "my budget sheets", "Budget"):
+            self.assertEqual(names(query=q), ["Budget.csv"], q)                 # type and filler words left out
+        self.assertEqual(names(query="budget", kind="sheet"), ["Budget.csv"])
+        self.assertEqual(names(query="rent sheet"), ["Budget.csv"])            # a cell's words find the sheet
+        self.assertEqual(sorted(names(query="sheets")), ["Budget.csv", "Groceries 2026.xlsx"])   # "what sheets…"
+        self.assertEqual(sorted(names(query="sheet", kind="sheet")), ["Budget.csv", "Groceries 2026.xlsx"])
+        both = names(query="budget groceries zebra")                          # no item has every word: any of them
+        self.assertEqual(sorted(both), ["Budget.csv", "Groceries 2026.xlsx"])
+        self.assertIn("Nothing in Household Docs matches", call("docs.search", query="zebra sheet")["text"])
+
     def test_read_a_sheet(self):
         sheet = self.ok(self.post("/api/docs", {"kind": "sheet", "name": "Budget", "format": "csv"}), 201)
         path = self.real(sheet["id"])

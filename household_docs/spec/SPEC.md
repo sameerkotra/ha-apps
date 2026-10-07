@@ -1777,7 +1777,11 @@ with reminders on documents (Household Vault already does expiry reminders for w
 - **Tools** (all through `sharing.require` / the search's own access check: what the person could open here; in
   Trash, or not theirs to see → `nack not_found document`, the app's 404):
   - `docs.search` (`query`, `kind?` note|markdown|checklist|sheet|folder|pdf|image|spreadsheet|document): the Search
-    page's `engine.run` + `describe`, first 10 results as `{id, name, type, folder, snippet, modified}`.
+    page's `engine.run` + `describe`, first 10 results as `{id, name, type, folder, snippet, modified}`. Since 1.2.3
+    the query is read as a model writes it: type words (sheet, spreadsheet, note, checklist, list, folder, pdf, doc,
+    document, file, and their plurals) and filler words are left out; nothing left → that type's items (sheet means
+    sheet + spreadsheet, note means note + markdown; `kind` too), newest first; no item with every word → items
+    with any word, the most words first.
   - `docs.read` (`id`, `offset?`): 4000 characters of a note's or checklist's text from `offset` (`more`,
     `next_offset`), or a sheet's cells as `"Tab A1: value"` lines (`sheet_model.index_text`); read-only — no
     `touch_opened`, no "changed since" mark, no index refresh. A child gets no sheets (Kids' space).
