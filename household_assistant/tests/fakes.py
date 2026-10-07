@@ -110,9 +110,14 @@ class Model:
     def __init__(self, *script):
         self.script = list(script)
         self.prompts: list[tuple[str, str, str]] = []      # (purpose, system, prompt)
+        self.warmups = 0                                    # "hi"s that load the model, outside the script
         self.lock = threading.Lock()
 
     def __call__(self, prompt, *, system=None, want_json=False, temperature=None, timeout=None, purpose="", cfg=None):
+        if purpose == "Warm-up":
+            with self.lock:
+                self.warmups += 1
+            return ai_client.Reply(text="Hello!", input_tokens=1, output_tokens=2)
         with self.lock:
             self.prompts.append((purpose, system or "", prompt))
             step = self.script.pop(0) if self.script else '{"answer": "Nothing more."}'

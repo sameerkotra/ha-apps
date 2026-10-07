@@ -226,6 +226,31 @@ class AssistantTests(unittest.TestCase):
             q = wait_done(qid)
         self.assertEqual(q["state"], "stopped")
 
+    def test_a_cold_model_is_warmed_up_first(self):
+        model = Model('{"answer": "Hi."}')
+        with mock.patch.object(ai_client, "is_warm", return_value=False):
+            q = self.ask(model=model)
+        self.assertEqual((q["state"], model.warmups, [p[0] for p in model.prompts]), ("done", 1, ["Plan"]))
+        model = Model('{"answer": "Hi."}')
+        with mock.patch.object(ai_client, "is_warm", return_value=True):
+            self.ask(model=model)
+        self.assertEqual(model.warmups, 0)
+
+        seen = []
+
+        def slow_hi():                                  # the warm-up's time isn't counted against the question
+            with engine._lock:
+                seen.extend(engine._warming)
+            seen.append(engine._progress(seen[0], "planning", []))
+            time.sleep(0.3)
+            return True
+        with mock.patch.object(ai_client, "needs_warmup", return_value=True), \
+                mock.patch.object(ai_client, "warmup_sync", slow_hi), mock.patch.object(engine, "QUESTION_TIMEOUT", 0.2):
+            q = self.ask(model=Model('{"answer": "Hi."}'))
+        self.assertEqual((q["state"], q["answer"]), ("done", "Hi."))
+        self.assertEqual(seen[1], "Waking up the model…")
+        self.assertEqual(engine._progress(seen[0], "planning", []), "Thinking…")
+
     def test_model_errors_are_readable(self):
         def broken(prompt, purpose):
             raise ai_client.AIError("Couldn't reach Ollama at http://192.0.2.1:11434: refused.", "unreachable")

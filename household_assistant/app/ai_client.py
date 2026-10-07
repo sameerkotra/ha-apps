@@ -211,7 +211,12 @@ def test_connection(cfg: Config) -> dict:
 
 # ---- what the app asks ------------------------------------------------------------------------------
 
-def _sync_warmup() -> bool:
+def needs_warmup() -> bool:
+    """An Ollama model that hasn't answered anything for a few minutes may have been unloaded."""
+    return settings.ai_provider() == "ollama" and settings.ai_configured() and not is_warm()
+
+
+def warmup_sync() -> bool:
     """Ollama only: a tiny "hi" loads the model into memory. For a cloud
     provider it would only cost money, so it is skipped (returns True)."""
     cfg = current()
@@ -225,12 +230,12 @@ def _sync_warmup() -> bool:
 
 
 async def warmup() -> bool:
-    return await run_in_threadpool(_sync_warmup)
+    return await run_in_threadpool(warmup_sync)
 
 
 async def ensure_warm() -> None:
     """Warm the Ollama model only if it hasn't answered anything recently."""
-    if settings.ai_provider() == "ollama" and settings.ai_configured() and not is_warm():
+    if needs_warmup():
         await warmup()
 
 

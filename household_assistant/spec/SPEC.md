@@ -54,7 +54,8 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   may ask* is off; the AI not set up), 422 for an empty or too long question (1000 characters), 429 while one of
   theirs is still running (younger than 5 minutes), over *Questions per person per hour*, or over *Questions per
   day* (the household; `usage_days`). Then a thread answers it.
-- The loop (at most 3 rounds, 60 seconds in all, `Stopped` / `TooLong` checked between steps):
+- Warm-up: with Ollama, when the model hasn't answered for 4 minutes, `warmup_sync()` sends "hi" first (up to 120 s; progress "Waking up the model…"); the question's clock starts after it.
+- The loop (at most 3 rounds, 180 seconds in all, `Stopped` / `TooLong` checked between steps):
   1. **Plan**: `generate(want_json=True)` with the system prompt (§3.1, the person's name, today's date and time
      zone), the tools as one line each (name, app, CHANGES DATA for `acts`, what, arguments with type, values,
      range, required, returns), the last 6 done questions and answers, the results so far in a `<data>` block,
