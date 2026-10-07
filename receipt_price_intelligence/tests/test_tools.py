@@ -1,6 +1,6 @@
 """What Receipt Price Intelligence answers the Household Assistant (app/tools.py; HOUSEHOLD_ASSISTANT_SPEC §4.2).
 
-- off until an admin turns it on; the asking person must have opened the app;
+- off until an admin turns it on; the asking person must have opened the app and not turned off their own switch;
 - receipt.shopping_list, receipt.price, receipt.spending from receipts made here; one home, or `home` with several;
 - receipt.shopping_list.add only with the tap;
 - the bus keeps its tables in its own database file, never in the app's.
@@ -105,6 +105,21 @@ class ToolTests(unittest.TestCase):
         self.assertNack(self.call("receipt.spending"), "not_allowed", "off")
         self.app_settings.update({"assistant_answers": True}, "test")
         self.assertNack(self.call("receipt.spending", uid="u_stranger"), "not_allowed", "no_access")
+
+    def test_persons_own_switch(self):
+        from fastapi.testclient import TestClient
+        from app import main
+        c = TestClient(main.app, client=("172.30.32.2", 50000))
+        pat = {"X-Remote-User-Id": "u_pat"}
+        me = c.get("/api/v1/me", headers=pat).json()
+        self.assertEqual((me["assistant"], me["assistantOk"]), (True, True))
+        r = c.put("/api/v1/me/assistant", json={"assistantOk": False}, headers=pat)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(r.json()["assistantOk"])
+        self.assertNack(self.call("receipt.spending"), "not_allowed", "person_off")
+        self.assertEqual(c.put("/api/v1/me/assistant", json={"assistantOk": "no"}, headers=pat).status_code, 422)
+        c.put("/api/v1/me/assistant", json={"assistantOk": True}, headers=pat)
+        self.assertIn("text", self.call("receipt.spending"))
 
     def test_price(self):
         res = self.call("receipt.price", item="milk")

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- **Your own Household Assistant switch**: while an administrator lets the Household Assistant ask, the **Who am I** page has **Let the Household Assistant answer for me**. Turn it off and the assistant won't answer your questions from this app's shopping list, prices or spending.
+
 ## 1.2.1
 
 - **Links open the right page**: the Household Assistant's answers open the shopping list or Insights. Links ending in `/list`, `/receipts`, `/insights`, `/deals`, `/trip` or `/stores` open that page.

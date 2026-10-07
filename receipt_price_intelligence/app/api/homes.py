@@ -7,7 +7,7 @@ administrators (the app's admin_users option) create, rename and delete homes.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -41,6 +41,12 @@ class MeResponse(BaseModel):
     anonymous: bool = False
     noAdmin: bool = False          # admin_users is empty: every page shows "No admin yet"
     page: str | None = None        # the app's sidebar page: links open one of its pages there (deeplink.js)
+    assistant: bool = False        # an admin lets the Household Assistant ask (App settings)
+    assistantOk: bool = True       # this person's own "Let the Household Assistant answer for me"
+
+
+class AssistantIn(BaseModel):
+    assistantOk: StrictBool
 
 
 class HomeResponse(BaseModel):
@@ -107,7 +113,32 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         is_admin=user.is_admin,
         noAdmin=no_admin_yet(),
         page=tools.PANEL["value"],
+        **_assistant(user.id),
     )
+
+
+def _assistant(user_id: str) -> dict:
+    from app import app_settings
+    from app.db import get_db_session
+    from app.db.models import User
+    with get_db_session()() as db:
+        u = db.get(User, user_id)
+        ok = bool(u.assistant_ok) if u is not None and u.assistant_ok is not None else True
+    return {"assistant": bool(app_settings.values().get("assistant_answers")), "assistantOk": ok}
+
+
+@router.put("/me/assistant")
+async def set_assistant(body: AssistantIn, user: CurrentUser = Depends(get_current_user)):
+    """The person's own "Let the Household Assistant answer for me" (tools.py)."""
+    from app.db import get_db_session
+    from app.db.models import User
+    with get_db_session()() as db:
+        u = db.get(User, user.id)
+        if u is None:
+            raise HTTPException(status_code=404, detail="Open the app once first")
+        u.assistant_ok = 1 if body.assistantOk else 0
+        db.commit()
+    return _assistant(user.id)
 
 
 @router.get("/whoami")

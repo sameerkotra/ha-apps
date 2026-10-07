@@ -9,8 +9,8 @@ app/common/assist_tools.py).
 Everyone who has opened the app sees every home here, so the asking person needs only to be known (a `users` row);
 with more than one home, `home` names it. The bus's own transaction is on a separate small database (app_messages.py),
 so each tool reads and writes the app's data in its own SQLAlchemy session. Prices and spending are private: the
-admin's *Answer the Household Assistant* is **off** until turned on. There are no per-person settings, so there is no
-per-person switch. Links open the shopping list or Insights on the app's sidebar page.
+admin's *Answer the Household Assistant* is **off** until turned on, and each person can turn off *Let the Household
+Assistant answer for me* (Who am I). Links open the shopping list or Insights on the app's sidebar page.
 """
 from __future__ import annotations
 
@@ -37,7 +37,8 @@ def _actor(conn, uid: str):
     from app.db.models import User
     with _session() as db:
         u = db.get(User, uid)
-        return {"id": u.id, "name": u.display_name or uid} if u else None
+        return {"id": u.id, "name": u.display_name or uid,
+                "assistant_ok": u.assistant_ok is None or bool(u.assistant_ok)} if u else None
 
 
 def _panel():
@@ -45,7 +46,8 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "receipt", targets=[r"/list", r"/insights"], actor=_actor, enabled=lambda conn: bool(app_settings.values().get("assistant_answers")), panel=_panel)
+    "receipt", targets=[r"/list", r"/insights"], actor=_actor, enabled=lambda conn: bool(app_settings.values().get("assistant_answers")),
+    person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel)
 
 _HOME = Arg("string", "which home, when there is more than one", max_length=255)
 

@@ -403,11 +403,11 @@ only to the app's own sidebar page and its own route patterns, and `sidebar_page
 | Chat 2.6.0 | `chat.unread` | on | Settings → You | `/chat/<id>` |
 | Arcade 1.9.0 | `arcade.scores` (household; not for children), `arcade.mine` (new: a person's own bests) | on | Settings | `/leaderboard`, `/scores` |
 | Family Tree 2.3.0 | `tree.birthdays` (+ `everyone?`: the whole tree instead of close family) | on | Settings | the page |
-| Calorie Tracker 2.2.0 | `calorie.today` | on | — (no per-person settings) | the page |
+| Calorie Tracker 2.2.2 | `calorie.today` | on | Goals | `/foodlog/<date>` |
 | Splitpot 2.4.0 | `splitpot.balances`, `splitpot.recent` (the group page's first 20) — only the person's own groups, by their Home Assistant login | **off** | My settings | the page |
 | Todo 2.4.0 | `todo.tasks`, `todo.lists`, `todo.schedule`, `todo.items.add` (acts; `list` by name) | on | Settings | the page |
 | Docs 1.2.0 | `docs.search`, `docs.read`, `docs.checklist`, `docs.note.create` (acts) | on | Settings → You | `/doc/<id>`, `/folder/<id>`, `/file/<id>` |
-| Receipt Price Intelligence 1.2.0 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | — | the page |
+| Receipt Price Intelligence 1.2.2 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | Who am I | `/list`, `/insights` |
 | Finance Dashboard 1.2.0 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | — | the page |
 
 Differences from the draft above:
