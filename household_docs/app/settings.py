@@ -18,6 +18,9 @@ GROUPS = [
     Group("extras", "Activity, Home Assistant and imports"),
     Group("ai", "AI", "Optional. Nothing is sent anywhere until this is turned on and set up."),
     Group("backup", "Backups"),
+    Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
+          "apps know. Docs lets it find and read what the asking person could open here, and make a note when they "
+          "tap to confirm."),
 ]
 
 # AI (§17.6): the same three providers and settings as the other household apps with AI
@@ -118,6 +121,10 @@ SETTINGS = [
             help="Off: Admin → Backup downloads the database only (sharing, the index, settings); the documents "
                  "are in Home Assistant's backups when Share is ticked. On: the zip also holds every file in the "
                  "documents folder, which can be large."),
+    Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
+            help="Lets the Household Assistant search and read the documents a person can open here (their own, and "
+                 "those shared with them), and make a note in their Inbox when they tap to confirm. Each person can "
+                 "turn it off in Settings → You."),
 ]
 
 

@@ -2,8 +2,9 @@
 
 Household Docs asks Household Chat for the chats a person may post in (`chat.chats.list`) and has it post a card
 (`chat.card`); it asks Household Todo for the lists a person may add to (`todo.lists.list`) and turns checklist
-items into tasks (`todo.items.add`). Docs only sends: it has no handlers of its own (`can` is empty), and every
-request names the person (`requested_by`) — Chat and Todo check everything against their own rules.
+items into tasks (`todo.items.add`). Every request names the person (`requested_by`) — Chat and Todo check
+everything against their own rules. The only kinds Docs answers are the Household Assistant's (`assist.tools.list`,
+`assist.tool.call`; tools.py), installed at start.
 
 - **Requests** (`bus_requests`): each send is a row the page polls (`GET /api/bus/requests/{id}`). Answers find
   their row by the message's `ref` ("chats:<id>", "card:<id>", "lists:<id>", "todo:<send id>:<part>"). The reply
@@ -34,6 +35,7 @@ logger = logging.getLogger("app_messages")
 SLUG = "household_docs"
 CHAT, TODO = "household_chat", "household_todo"
 WANTS = ["chat.card", "chat.chats.list", "todo.items.add", "todo.lists.list"]
+CAN = ["assist.tool.call", "assist.tools.list"]               # the Household Assistant asks (tools.py)
 LIST_EXPIRES = timedelta(minutes=2)            # a list is answered at once or not at all (§6 there)
 MAX_DATA = 6800                                # bytes of a message's data: the whole event stays under 8 KB
 TODO_MAX_ITEMS = 200                           # per message (Todo's own limit)
@@ -111,7 +113,9 @@ def start(thread: bool = True, **options) -> None:
         logger.exception("Learning this app's page path failed")
     opts = dict(api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
     opts.update(options)
-    bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, can=[], wants=WANTS, db=db.get_conn,
+    from . import tools                                         # the Household Assistant's two kinds (tools.py)
+    tools.tools.install(bus)
+    bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, can=CAN, wants=WANTS, db=db.get_conn,
               outbox_thread=False, **opts)
     _stop.clear()
     if thread:

@@ -426,6 +426,26 @@ recorder:
       - household_apps
 ```
 
+## The Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it "Find the note about the boiler", "What's
+still open on the packing checklist?" or "Make a note: call the plumber on Monday". Docs answers **as you**, from
+what you could open here yourself (your own documents and what's shared with you — Kids' space rules included):
+
+| It can | What goes to the assistant |
+|---|---|
+| **Search** | up to 10 matches: name, type, folder and the search page's snippet |
+| **Read** a note, checklist or sheet | up to 4,000 characters of its text at a time (a sheet's cells as "Tab A1: value" lines) |
+| **Show a checklist** | its items, ticked or open |
+| **Make a note** in My docs → Inbox | only after you tap the exact note it proposes |
+
+Each answer links back to the document in Docs. Reading through the assistant doesn't count as opening the document
+(no "seen" mark, no activity). An admin can turn this off for everyone (**App settings → Household Assistant**),
+and you can turn it off for yourself (**Settings → You → Let the Household Assistant answer for me**).
+
+These answers carry document text, so keep them out of Home Assistant's history with the `recorder` exclusion above
+— **do this if you use the Household Assistant**.
+
 ## Templates
 
 **➕ New → From a template…**: built-in **Meeting notes**, **Home maintenance log** (a sheet: date, what, who, cost),
@@ -603,8 +623,8 @@ admin can turn them off in App settings.
 
 **Settings** (everyone): tell me when something is shared with me, notify me about what I follow and quiet hours,
 how folders are sorted, whether new sheets are `.xlsx` or `.csv`, the number style for sheets, whether new notes are
-plain text or Markdown, scan file names, show AI buttons (when AI is set up), the theme, How the app sees you, and
-where your folder is.
+plain text or Markdown, scan file names, show AI buttons (when AI is set up), let the Household Assistant answer for
+me (while an admin allows it), the theme, How the app sees you, and where your folder is.
 
 ### App settings (Admin → App settings)
 
@@ -625,6 +645,7 @@ They apply at once.
   *Vision model* (empty: the text model), *Most tokens a month* (0 = no limit), prices per million tokens (for the
   cost estimate only), and **Test connection**.
 - **Backups** — *Backup includes the documents themselves* (off).
+- **Household Assistant** — *Answer the Household Assistant* (on; see *The Household Assistant*).
 
 ### The app option (Configuration tab)
 

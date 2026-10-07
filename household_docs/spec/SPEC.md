@@ -1768,6 +1768,28 @@ people to Docs folders (the two apps stay separate), dated logs,
 appending from automations / voice, a wall-tablet view, a visitor sheet, comments with @mentions, and expiry dates
 with reminders on documents (Household Vault already does expiry reminders for what matters).
 
+### 17.23 Answering the Household Assistant (`tools.py`; HOUSEHOLD_ASSISTANT_SPEC.md §4.2)
+- **Over the bus**: `app_messages.start()` installs `tools.tools` (the shared `assist_tools.py`, APP_MESSAGES_SPEC
+  §6.6) and says `can: ["assist.tool.call", "assist.tools.list"]` in its hello — the only kinds Docs answers.
+  `requested_by` is the actor (an enabled `users` row as `auth.user_dict`, never with an admin's powers); `nack busy`
+  while a backup is restored (`db.RESTORING`). Links: the sidebar page (`app_messages.panel()`, §6.5 there) and
+  `/doc/<id>`, `/folder/<id>` or `/file/<id>`.
+- **Tools** (all through `sharing.require` / the search's own access check: what the person could open here; in
+  Trash, or not theirs to see → `nack not_found document`, the app's 404):
+  - `docs.search` (`query`, `kind?` note|markdown|checklist|sheet|folder|pdf|image|spreadsheet|document): the Search
+    page's `engine.run` + `describe`, first 10 results as `{id, name, type, folder, snippet, modified}`.
+  - `docs.read` (`id`, `offset?`): 4000 characters of a note's or checklist's text from `offset` (`more`,
+    `next_offset`), or a sheet's cells as `"Tab A1: value"` lines (`sheet_model.index_text`); read-only — no
+    `touch_opened`, no "changed since" mark, no index refresh. A child gets no sheets (Kids' space).
+  - `docs.checklist` (`id`): `{item, done, level}` per item.
+  - `docs.note.create` (`acts`; `name`, `text` ≤ 4000): only with `confirm: true`; `docops.create` into My docs →
+    Inbox (the quick note's folder, `pins._inbox`), links updated; not for children.
+- **Switches**: App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and Settings → You
+  → **Let the Household Assistant answer for me** (`prefs.assistantOk`, default on). Otherwise `nack not_allowed`
+  (`off` / `person_off`); a turned-off or unknown person is `no_access`.
+- **Privacy**: results carry document text, so DOCS.md makes the recorder exclusion a must for anyone using the
+  assistant (APP_MESSAGES_SPEC §8).
+
 ## Security notes (2026-10)
 
 From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):

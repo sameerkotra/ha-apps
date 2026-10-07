@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- **Answers the Household Assistant**: the new Household Assistant app can search Docs ("Find the note about the boiler"), read a note, checklist or sheet (4,000 characters at a time), show a checklist's open items, and — only after the person taps the exact note it proposes — make a note in My docs → Inbox. Always as that person, from what they could open here; Kids' space rules hold. Each answer links back to the document. On by default; an admin can turn it off in **App settings → Household Assistant**, and each person in **Settings → You**.
+
 ## 1.1.3
 
 - **More room to edit on a phone**: Share and the ⋯ menu now sit on the same line as the document's name (a long name is cut with "…"; tap it to rename), with the save state and "changed … by" in small print underneath. Notes, checklists and sheets get up to about 100 px more editing space on a phone.
