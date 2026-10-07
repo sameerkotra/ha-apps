@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.3
+
+- **The Household Assistant sees the schedule too**: asked for tasks for today, tomorrow or the week, Todo also
+  says what's on the Schedule those days (as the Calendar shows both), so "tasks for today and tomorrow" no longer
+  misses a dentist appointment or trash day. A new *tomorrow* choice, and when the days asked about have no tasks,
+  the next ones due after them, so "nothing today" isn't read as "nothing this week".
+
 ## 2.4.2
 
 - **Links open the right page**: a maintenance notification opens the Maintenance tab, and the Household Assistant's answers open the Dashboard, the list they talk about, Lists or Schedule. `#/lists/<id>` opens a list.

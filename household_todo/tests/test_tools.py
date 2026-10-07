@@ -83,6 +83,26 @@ class ToolTests(ApiBase):
         self.assertNotIn("Bob's secret", blob)                  # never someone else's personal list
         self.assertNack(call("todo.tasks"), "invalid", "when")
 
+    def test_tomorrow_the_schedule_and_whats_next(self):
+        self.assertEqual(self.titles(call("todo.tasks", when="tomorrow")), [])
+        res = call("todo.tasks", when="tomorrow")
+        self.assertEqual(res["text"], "No tasks for tomorrow. Next due: Call plumber (Thu 24 Sep).")
+        r = self.post("/api/schedule", {"name": "Dentist", "rule": "weeks:1:2", "anchor_date": "2026-09-15"})
+        self.assertEqual(r.status_code, 201, r.text)       # Tuesdays: tomorrow (22nd), then the 29th
+        res = call("todo.tasks", when="tomorrow")
+        self.assertEqual(res["text"], "No tasks for tomorrow. Next due: Call plumber (Thu 24 Sep). "
+                                      "On the schedule: tomorrow: Dentist.")
+        self.assertEqual([(i["title"], i["due"], i["list"]) for i in res["items"]],
+                         [("Dentist", "2026-09-22", "Schedule")])
+        self.assertEqual(res["links"][1]["target"], "/schedule")
+        week = call("todo.tasks", when="week")
+        self.assertEqual(self.titles(week), ["Pay water bill", "Bins", "Call plumber", "Dentist"])
+        self.assertTrue(week["text"].endswith("On the schedule: tomorrow: Dentist."))  # the 29th is after the week
+        self.assertNotIn("Dentist", json.dumps(call("todo.tasks", when="today")["items"]))
+        self.assertNotIn("Dentist", json.dumps(call("todo.tasks", when="all")))
+        shared = next(l["name"] for l in self.lists() if l["kind"] == "shared")
+        self.assertNotIn("Dentist", json.dumps(call("todo.tasks", when="week", list=shared)))
+
     def test_a_list_by_name(self):
         shared = next(l["name"] for l in self.lists() if l["kind"] == "shared")
         res = call("todo.tasks", when="all", list=shared.upper())
