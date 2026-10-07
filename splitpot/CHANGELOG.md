@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.0
+
+- **Can answer the Household Assistant**: once an admin turns on **Answer the Household Assistant** (Admin → App settings; off by default, because money is private), the new Household Assistant app can ask Splitpot "Who owes me money?" or "What did we spend on the trip?" — balances and the newest 20 entries of **only the groups that person is in**, matched by their Home Assistant login — with a link back to Splitpot. Each person can turn it off for themselves on **My settings**.
+- Splitpot now joins the household apps' message bus (Home Assistant's event bus). The **DOCS** show how to keep those messages out of Home Assistant's history.
+
 ## 2.3.0
 
 - **Notifications for new charges**: when someone adds a charge, everyone in it (who paid and everyone with a share) gets a phone notification through Home Assistant — who added what, the amount, the group and their share; tapping it opens the group. Settle-up payments can notify both people too. Off until an admin turns on **Notify people about new charges** in Admin → App settings → Notifications; each person can turn off **Receive notifications** on the new **My settings** page. Only people linked to a Home Assistant login with a phone or an extra notify service are notified.

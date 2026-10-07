@@ -236,7 +236,25 @@ function renderMyPrefs(p) {
         h('div', null, h('div', { class: 'pref-label' }, 'Receive notifications'), h('div', { class: 'hint' }, what)),
         PeoplePage.accessSwitch(p.linked ? p.receiveNotifications : false, save,
           { label: 'Receive notifications', disabled: !p.linked })),
-      status ? h('p', { class: 'field-help warn', id: 'myPrefsStatus' }, status) : null));
+      status ? h('p', { class: 'field-help warn', id: 'myPrefsStatus' }, status) : null),
+    p.assistant ? h('div', { class: 'sp-card my-prefs', id: 'myAssistantCard' },
+      h('h2', { class: 'first' }, 'Household Assistant'),
+      h('div', { class: 'pref-row' },
+        h('div', null, h('div', { class: 'pref-label' }, 'Let the Household Assistant answer for me'),
+          h('div', { class: 'hint' }, 'When you ask the Household Assistant app, it can tell you the balances and recent expenses of the groups you are in.')),
+        PeoplePage.accessSwitch(p.linked ? p.assistantOk : false, saveAssistant,
+          { label: 'Let the Household Assistant answer for me', disabled: !p.linked }))) : null);
+}
+
+async function saveAssistant(on, input) {
+  try {
+    const next = await api('/me/prefs', { method: 'PUT', body: JSON.stringify({ assistantOk: on }) });
+    toast(on ? 'The Household Assistant can answer for you' : 'The Household Assistant won\'t answer for you');
+    renderMyPrefs(next);
+  } catch (err) {
+    input.checked = !on;
+    toast(err.message, true);
+  }
 }
 $('#whoamiBtn').addEventListener('click', openWhoami);
 

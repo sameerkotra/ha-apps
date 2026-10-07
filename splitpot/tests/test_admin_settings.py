@@ -22,7 +22,7 @@ from test_app import ADMIN, ALICE, Base, hdr
 IMPOSTOR = hdr("u_eve", "adminy", "eve")   # admin's display name, but not listed
 # notifications are off on a new install (and on an existing one: no row means the default)
 DEFAULTS = {"ha_sync_enabled": True, "sync_interval_minutes": 5, "currency": "USD", "notify_charges": False,
-            "notify_payments": True}
+            "notify_payments": True, "assistant_answers": False}
 
 
 class FakeHA:

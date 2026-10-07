@@ -1,5 +1,5 @@
 name: "Splitpot"
-version: "2.3.0"
+version: "2.4.0"
 slug: splitpot
 description: >-
   Split shared household expenses and see who owes whom. Everyone signs in
@@ -18,9 +18,10 @@ ingress_port: 8099
 panel_icon: mdi:cash-multiple
 panel_title: Splitpot
 panel_admin: false
-# Lets the app read person.* entities and publish balance sensors via the
-# Supervisor's Core API proxy (http://supervisor/core/api/, auto-injected
-# SUPERVISOR_TOKEN). Nothing else is requested; the lines below spell out
+# Lets the app read person.* entities, publish balance sensors and exchange the
+# household apps' messages (the Household Assistant asks, when an admin allows
+# it) via the Supervisor's Core API proxy (http://supervisor/core/api/,
+# auto-injected SUPERVISOR_TOKEN). Nothing else is requested; the lines below spell out
 # the (default) denials.
 homeassistant_api: true
 hassio_api: false
