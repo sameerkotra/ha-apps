@@ -75,7 +75,9 @@ READY_SECONDS = 120.0            # both phones must be ready this soon after the
 PAUSE_MAX_SECONDS = 300.0        # a pause lasts at most 5 minutes
 COUNT_IN_SECONDS = 3.0
 CONNECTED_WITHIN = 6.0
-DELAY_MIN, DELAY_MAX, DELAY_DEFAULT_RTT = 3, 12, 60.0
+DELAY_MIN, DELAY_MAX, DELAY_DEFAULT_RTT = 4, 16, 60.0
+DELAY_HEADROOM = 4               # ticks on top of the one-way time: a frame to send, a frame to draw, and two of jitter
+MAX_INPUT_DELAY = 30             # a phone may raise its own input delay to this (games/lockstep.js) when the link is slow
 SHOT_SECONDS = 30.0              # taking turns live: a player has this long to shoot …
 SHOT_GRACE = 2.0                 # … plus this for the network, then the server plays the weak shot for them
 OUTBOX_MAX = 6000                # numbered messages waiting for a phone that doesn't read them
@@ -88,11 +90,12 @@ _rooms_lock = threading.Lock()
 
 
 def choose_delay(rtts) -> int:
-    """The input delay in ticks: the time an input takes from one phone through the app to the other (half of
-    each phone's round trip), plus 3 ticks for sending every update and drawing; 3 at home, at most 12 (0.2 s)."""
+    """The input delay in ticks to start with: the time an input takes from one phone through the app to the other
+    (half of each phone's round trip), plus DELAY_HEADROOM ticks for sending, drawing and jitter; 4 at home, at most
+    16 (0.27 s). It is the least: each phone raises its own delay while the link makes it wait (games/lockstep.js)."""
     known = [r for r in rtts if isinstance(r, (int, float)) and not isinstance(r, bool) and r == r]
     one_way = sum(known) / 2 if len(known) == 2 else (known[0] if known else DELAY_DEFAULT_RTT)
-    return max(DELAY_MIN, min(DELAY_MAX, math.ceil(one_way / TICK_MS) + 3))
+    return max(DELAY_MIN, min(DELAY_MAX, math.ceil(one_way / TICK_MS) + DELAY_HEADROOM))
 
 
 def _int(v) -> bool:
@@ -138,6 +141,7 @@ class Room:
         self.created = now
         self.phase = "waiting"             # waiting | countin | running | paused | ended
         self.delay: int | None = None
+        self.wakers: dict = {}             # seat → called when a message is put out for it (wake_with)
         self.start_at: float | None = None
         self.paused_by, self.pause_why, self.paused_at = 0, None, None
         self.end: tuple | None = None       # (reason, winner seat 1/2, 0 draw, None no result)
@@ -164,6 +168,21 @@ class Room:
         if len(p.out) > OUTBOX_MAX and self.phase != "ended":
             logger.warning("Live match %s: seat %s isn't reading; ending the match", self.match_id, seat)
             self._finish("left", 3 - seat)
+        waker = self.wakers.get(seat)
+        if waker is not None:
+            try:
+                waker()
+            except Exception:                   # a connection that is going: its reader is closing anyway
+                pass
+
+    def wake_with(self, seat: int, waker) -> None:
+        """Called (from any thread) whenever a numbered message is put out for `seat`: the phone's connection
+        sends it at once instead of looking every few milliseconds. None to stop."""
+        with self.lock:
+            if waker is None:
+                self.wakers.pop(seat, None)
+            else:
+                self.wakers[seat] = waker
 
     def _broadcast(self, msg: dict) -> None:
         for seat in self.players:
@@ -270,9 +289,12 @@ class Room:
         if not _int(upto) or upto < p.upto or upto - p.upto > MAX_AHEAD:
             return [self._bad(p, "upto")]
         # a phone plays tick k only with the other's inputs for it, so it can't speak for ticks further ahead
-        # than the other phone's last word plus the delay
-        if upto > other.upto + self.delay:
+        # than the other phone's last word plus the most its own input delay can be
+        if upto > other.upto + MAX_INPUT_DELAY:
             return [self._bad(p, "ahead")]
+        at = msg.get("at")                  # the tick the phone is at (the other phone paces itself by it)
+        if at is not None and (not _int(at) or at < 0 or at > upto):
+            return [self._bad(p, "at")]
         if not isinstance(ev, list) or len(ev) > MAX_EV:
             return [self._bad(p, "ev")]
         last, per = p.upto + 1, 0
@@ -297,7 +319,10 @@ class Room:
                 return [self._bad(p, "sum")]
         # accepted: on to the other phone
         p.seq, p.upto = seq, upto
-        self._push(other.seat, {"t": "in", "seat": p.seat, "seq": seq, "upto": upto, "ev": ev})
+        relay = {"t": "in", "seat": p.seat, "seq": seq, "upto": upto, "ev": ev}
+        if at is not None:
+            relay["at"] = at
+        self._push(other.seat, relay)
         if sm is not None:
             self._checksum(p, sm[0], sm[1])
         return [{"t": "ack", "seq": seq}]

@@ -11,9 +11,17 @@
    - next(): the inputs of the next tick, ordered seat 1 then seat 2 (each in the order they were made), or null
      while the other phone's inputs for it haven't arrived (the game waits);
    - advance(sumFn): that tick was played; every SUM_EVERY ticks the game's checksum goes out with the inputs;
-   - flush(): what this phone has to say goes out as one message {t:"in", seq, upto, ev, sum?}: `upto` is the
-     last tick whose inputs from this phone are final (no input can be added at or before it any more).
+   - flush(): what this phone has to say goes out as one message {t:"in", seq, at, upto, ev, sum?}: `at` is the
+     tick this phone is at, `upto` the last tick whose inputs from this phone are final (no input can be added at
+     or before it any more). The game calls it once a frame: it sends when there is something new to say.
    Messages are kept until the server acknowledges them and are sent again after a reconnection (resend()).
+
+   The delay adapts to the connection. The input delay is this phone's own: the server's `delay` is the least it
+   can be; an input is played `delay` ticks after it is made, and `upto` runs `delay - 1` ticks ahead of the phone.
+   The two phones' delays added together are the time a word has to travel round: when this phone finds itself
+   waiting for the other (next() gives null) in a few ticks of a second, it raises its own delay by one, which
+   lets the other phone run further ahead and so stall less, and the other does the same — a slow link costs a
+   little input lag rather than a game that stops and starts; after ten clean seconds a step goes back.
 
    Wire format of an input: [tick, action, value] — value 1/0 for a button pressed/let go, or a small whole
    number (Paddle Duel's "aim": where the finger is, Tank Battle's "steer": the direction toward the finger). */
@@ -23,8 +31,13 @@
   var SUM_EVERY = 60;          // a checksum every second of play
   var MAX_PER_TICK = 6;        // inputs one player can put on one tick (the server allows 8)
   var MAX_EV = 32;             // inputs in one message (the server's limit)
-  var IDLE_FLUSH = 2;          // with nothing new, `upto` goes out every 2 ticks
   var MAX_HELD = 4000;         // remote messages waiting for an earlier one (more = something is badly wrong)
+  var MAX_DELAY = 30;          // the input delay can grow to this (half a second)
+  var RAISE_STALLS = 3;        // this many waits within RAISE_WINDOW ticks …
+  var RAISE_WINDOW = 60;       // … (a second) raise the delay by one (by two from RAISE_HARD waits)
+  var RAISE_HARD = 8;
+  var RAISE_COOL = 30;         // then no more for half a second (the other phone has to hear of it: a round trip)
+  var LOWER_AFTER = 600;       // ten clean seconds lower it by one
 
   /** FNV-1a over a string, as an unsigned 32-bit number: the rules' checksums. */
   function hash(str) {
@@ -41,23 +54,30 @@
   function create(o) {
     o = o || {};
     var seat = o.seat === 2 ? 2 : 1, other = 3 - seat;
-    var delay = Math.max(2, Math.min(30, (o.delay | 0) || 4));
+    var delay0 = Math.max(2, Math.min(MAX_DELAY, (o.delay | 0) || 4));   // the agreed delay: the least
+    var delay = delay0, adapt = o.adapt !== false;
     var send = typeof o.send === "function" ? o.send : function () {};
     var sumEvery = o.sumEvery || SUM_EVERY;
     var t = 0;                              // ticks played
     var upto = {}; upto[1] = delay - 1; upto[2] = delay - 1;   // ticks 1 … delay-1 never have inputs
+    var at = {}; at[1] = 0; at[2] = 0;      // the tick each phone was at, by its last word
     var frames = {}; frames[1] = {}; frames[2] = {};            // seat → tick → [[action, value], …]
     var outEv = [];                         // my inputs not sent yet: [tick, action, value]
-    var sentUpto = delay - 1, seq = 0, unacked = [], pendingSum = null;
+    var sentUpto = delay - 1, sentAt = -1, seq = 0, unacked = [], pendingSum = null;
     var rSeq = 0, held = {}, heldN = 0;     // the other's messages: last applied seq, and those waiting for a gap
-    var waitSince = null, lastNext = null, stats = { sent: 0, received: 0, dup: 0, early: 0, resent: 0 };
+    var waitSince = null, lastNext = null, stats = { sent: 0, received: 0, dup: 0, early: 0, resent: 0, raised: 0, lowered: 0 };
+    var stallTicks = [], coolUntil = 0, cleanSince = 0, stalledAt = -1;   // the delay's bookkeeping
 
     function frame(s, tick) { return frames[s][tick] || (frames[s][tick] = []); }
 
-    /** An input made on this phone now: played at tick t + delay on both phones. */
+    /** The last tick this phone's inputs are final up to: `delay - 1` ahead, and never behind what was said. */
+    function horizon() { return Math.max(t + delay - 1, sentUpto); }
+
+    /** An input made on this phone now: played at tick t + delay on both phones (later, if that tick was already
+        given as final after the delay came down). */
     function local(action, value) {
       if (typeof action !== "string") return false;
-      var tick = t + delay, f = frame(seat, tick);
+      var tick = horizon() + 1, f = frame(seat, tick);
       value = value === true ? 1 : value === false || value == null ? 0 : Math.round(Number(value)) || 0;
       // an aim/steer that changes again before it is sent replaces the last one on the same tick
       for (var i = outEv.length - 1; i >= 0; i--) {
@@ -75,9 +95,9 @@
       return true;
     }
 
-    /** Send what is final: inputs up to `t + delay - 1`, with a checksum when one is due. */
+    /** Send what is final: inputs up to the horizon, with a checksum when one is due. Nothing new: nothing sent. */
     function flush(force) {
-      var u = t + delay - 1;
+      var u = horizon();
       var ready = [];
       while (outEv.length && outEv[0][0] <= u && ready.length < MAX_EV) ready.push(outEv.shift());
       // more than one message's worth: this one stops before the first tick it can't carry whole (a message
@@ -87,12 +107,11 @@
         while (ready.length && ready[ready.length - 1][0] === cut) outEv.unshift(ready.pop());
         u = cut - 1;
       }
-      if (!force && !ready.length && pendingSum === null && u - sentUpto < IDLE_FLUSH) return null;
-      if (u <= sentUpto && !ready.length && pendingSum === null && !force) return null;
-      var msg = { t: "in", seq: ++seq, upto: Math.max(u, sentUpto), ev: ready };
-      // a checksum goes with the message that is final up to that tick's inputs and the delay after it
-      if (pendingSum !== null && pendingSum[0] <= msg.upto - delay + 1) { msg.sum = pendingSum; pendingSum = null; }
-      sentUpto = msg.upto;
+      if (u <= sentUpto && t <= sentAt && !ready.length && pendingSum === null && !force) return null;
+      var msg = { t: "in", seq: ++seq, at: t, upto: Math.max(u, sentUpto), ev: ready };
+      // a checksum goes with the message that is final up to that tick's inputs and the agreed delay after it
+      if (pendingSum !== null && pendingSum[0] <= msg.upto - delay0 + 1) { msg.sum = pendingSum; pendingSum = null; }
+      sentUpto = msg.upto; sentAt = t;
       unacked.push(msg);
       stats.sent++;
       send(msg);
@@ -105,6 +124,7 @@
         if (e[0] > t) frame(other, e[0]).push([e[1], e[2]]);
       }
       if (msg.upto > upto[other]) upto[other] = msg.upto;
+      if (typeof msg.at === "number" && msg.at > at[other]) at[other] = msg.at;
     }
 
     /** Messages from the server: the other phone's inputs, acks, and the welcome after a (re)connection. */
@@ -122,9 +142,12 @@
         while (held[rSeq + 1]) { var m = held[rSeq + 1]; delete held[rSeq + 1]; heldN--; apply(m); rSeq = m.seq; }
       } else if (msg.t === "ack") {
         ackTo(msg.seq);
-      } else if (msg.t === "welcome" || (msg.t === "error" && msg.why === "gap")) {
+      } else if (msg.t === "welcome") {
         // the server has my messages up to inSeq: anything after it goes again (same seq, so never twice)
         if (typeof msg.inSeq === "number") { ackTo(msg.inSeq); resend(); }
+      } else if (msg.t === "error" && msg.why === "gap" && typeof msg.inSeq === "number") {
+        // a message reached the server before the one before it (which it dropped): everything after inSeq again
+        ackTo(msg.inSeq); resend();
       }
     }
     function ackTo(n) {
@@ -142,6 +165,7 @@
       if (upto[other] < n) {
         if (waitSince === null) waitSince = nowMs == null ? 0 : nowMs;
         lastNext = nowMs;
+        if (stalledAt !== n) { stalledAt = n; stallTicks.push(n); }     // one wait a tick, however many frames
         return null;
       }
       waitSince = null;
@@ -157,21 +181,35 @@
       t++;
       delete frames[1][t]; delete frames[2][t];
       if (t % sumEvery === 0 && typeof sumFn === "function") pendingSum = [t, sumFn() >>> 0];
+      if (adapt) adjust();
       return t;
+    }
+    /** The delay follows the connection: up a step after RAISE_STALLS waits in a second, down after a clean while. */
+    function adjust() {
+      while (stallTicks.length && stallTicks[0] <= t - RAISE_WINDOW) stallTicks.shift();
+      if (stallTicks.length) cleanSince = t;
+      if (stallTicks.length >= RAISE_STALLS && t >= coolUntil && delay < MAX_DELAY) {
+        delay = Math.min(MAX_DELAY, delay + (stallTicks.length >= RAISE_HARD ? 2 : 1)); stats.raised++;
+        stallTicks = []; coolUntil = t + RAISE_COOL; cleanSince = t;
+      } else if (delay > delay0 && t - cleanSince >= LOWER_AFTER) {
+        delay--; stats.lowered++;
+        cleanSince = t;
+      }
     }
 
     return {
       get tick() { return t; },
       get seat() { return seat; },
       get delay() { return delay; },
-      get upto() { var u = { 1: upto[1], 2: upto[2] }; u[seat] = t + delay - 1; return u; },
+      get upto() { var u = { 1: upto[1], 2: upto[2] }; u[seat] = horizon(); return u; },
+      get delay0() { return delay0; },
       get unacked() { return unacked.length; },
       get stats() { return stats; },
       local: local, flush: flush, receive: receive, next: next, advance: advance, resend: resend,
       /** How long (ms, by the clock given to next()) the game has been waiting for the other phone; 0 if it isn't. */
       waiting: function (nowMs) { return waitSince === null ? 0 : Math.max(0, (nowMs == null ? lastNext : nowMs) - waitSince); },
       /** How many ticks the other phone is ahead of this one (from what it has said): > 2 means catch up. */
-      behind: function () { return Math.max(0, upto[other] - delay + 1 - t); },
+      behind: function () { return Math.max(0, at[other] - t); },
       /** The final word at the end of the game (my inputs are complete up to here and beyond). */
       finish: function () { return flush(true); },
     };
@@ -235,6 +273,7 @@
     };
   }
 
-  var ArcadeLockstep = { create: create, createTurns: createTurns, hash: hash, sum: sum, SUM_EVERY: SUM_EVERY, MAX_PER_TICK: MAX_PER_TICK, MAX_EV: MAX_EV };
+  var ArcadeLockstep = { create: create, createTurns: createTurns, hash: hash, sum: sum, SUM_EVERY: SUM_EVERY, MAX_PER_TICK: MAX_PER_TICK,
+    MAX_EV: MAX_EV, MAX_DELAY: MAX_DELAY, RAISE_STALLS: RAISE_STALLS, RAISE_WINDOW: RAISE_WINDOW, RAISE_COOL: RAISE_COOL, LOWER_AFTER: LOWER_AFTER };
   if (typeof module === "object" && module.exports) module.exports = ArcadeLockstep; else self.ArcadeLockstep = ArcadeLockstep;
 })();

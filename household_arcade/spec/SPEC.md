@@ -726,12 +726,20 @@ for the input delay).
   list from their session (`POST /api/sessions {game, matchId}`, which also
   says the phone's `seat`); each phone sends only its own inputs, stamped with
   the update they apply to; an input is played `delay` updates after it was made
-  (chosen by the server when both phones are ready: half of each phone's round
-  trip in updates, plus 3 — 3 to 5 at home, at most 12, 0.2 s), so both phones
-  apply every input at the same update and the games stay identical. A phone
-  that hasn't got the other's inputs for an update waits (the game freezes
+  (the server chooses the starting delay when both phones are ready: the time
+  phone to phone — half of each phone's round trip — in updates, plus 4 for
+  sending, drawing and jitter: 4 to 6 at home, at most 16, 0.27 s), so both
+  phones apply every input at the same update and the games stay identical. A
+  phone that hasn't got the other's inputs for an update waits (the game freezes
   briefly; the bar says "waiting…"), and a phone that has fallen behind plays
-  one extra update a frame to catch up. After 10 s of silence both are paused,
+  one extra update a frame to catch up. **The delay adapts**: the
+  server's delay is the least; each phone raises its own input delay by a step
+  when it has had to wait at 3 or more updates in a second (two steps from 8),
+  at most every half second, up to 30 (half a second), and lowers it a step
+  after 10 clean seconds — a slow link (Home Assistant Cloud, a phone away from
+  home) costs a little input lag rather than a game that stops and starts. The
+  two phones' delays add up: a round trip has to fit in `delay₁ + delay₂ − 2`
+  updates for the game to run at full speed. After 10 s of silence both are paused,
   after 60 s the match ends (§13.4). Every second each phone sends a checksum of
   its game state; if they ever differ the match ends as "out of step" with no
   result (and a log line), which the tests make sure never happens.
@@ -903,9 +911,13 @@ against the previous rules over 175 random games when this was built).
 - **Protocol** (`app/live.py`; the message list and the checks are in §13.7):
   - *Ticks*: updates are numbered 1, 2, 3 …; ticks 1 … delay − 1 have no inputs.
     A phone that has played tick `t` has its inputs final up to `t + delay − 1`
-    and says so in `upto`; it may play tick `k` only when the other's `upto ≥
-    k`. So a phone can never speak for more than `delay − 1` ticks beyond the
-    other's word — the server refuses an `upto` above the other's + `delay`.
+    (its own, adapted delay) and says so in `upto`, with the tick it is at in
+    `at` (the other phone paces its catching up by it); it may play tick `k`
+    only when the other's `upto ≥ k`. So a phone can never speak for more than
+    `delay − 1` ticks beyond the other's word — the server refuses an `upto`
+    above the other's + 30 (the most a delay can be). What a phone has to say
+    goes out once a frame (one message however many updates the frame played),
+    and only when there is something new: an input, a moved-on tick, a checksum.
   - *Ordering and idempotence*: a phone's input messages carry `seq` 1, 2, 3 …;
     the server accepts only `seq` = last + 1 (an older one is answered with
     `ack` again and dropped; a later one with `error {why: "gap", inSeq}`), so

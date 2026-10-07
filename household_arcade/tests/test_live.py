@@ -53,10 +53,23 @@ class TestRelay(unittest.TestCase):
         r.check(4.6)
         self.assertEqual(r.phase, "running")
 
+    def test_a_connection_is_woken_for_each_message(self):
+        r = room()
+        woken = []
+        r.wake_with(2, lambda: woken.append(1))
+        r.receive(1, {"t": "in", "seq": 1, "upto": r.delay, "ev": []}, 1)
+        self.assertEqual(len(woken), 1, "seat 2's connection is woken: there is a message for it")
+        r.wake_with(2, None)
+        r.receive(1, {"t": "in", "seq": 2, "upto": r.delay + 1, "ev": []}, 1)
+        self.assertEqual(len(woken), 1)
+        r.wake_with(1, lambda: 1 / 0)                       # a waker that fails never troubles the relay
+        self.assertEqual(r.receive(2, {"t": "in", "seq": 1, "upto": r.delay, "ev": []}, 1), [{"t": "ack", "seq": 1}])
+
     def test_the_delay(self):
-        self.assertEqual(live.choose_delay([20, 20]), 5)       # 20 ms one way → 2 ticks + 3
-        self.assertEqual(live.choose_delay([0, 0]), 3)
-        self.assertEqual(live.choose_delay([4, 6]), 4)
+        self.assertEqual(live.choose_delay([20, 20]), 2 + live.DELAY_HEADROOM)    # 20 ms one way → 2 ticks + headroom
+        self.assertEqual(live.choose_delay([0, 0]), live.DELAY_MIN)
+        self.assertEqual(live.choose_delay([4, 6]), max(live.DELAY_MIN, 1 + live.DELAY_HEADROOM))
+        self.assertEqual(live.choose_delay([150, 150]), 9 + live.DELAY_HEADROOM)  # 75 ms each way to the app: 150 ms phone to phone → 9 ticks + headroom
         self.assertEqual(live.choose_delay([None, None]), live.choose_delay([60, 60]))
         self.assertEqual(live.choose_delay([600, 900]), live.DELAY_MAX)
         self.assertEqual(live.choose_delay([True, "x"]), live.choose_delay([]))
@@ -76,10 +89,13 @@ class TestRelay(unittest.TestCase):
         self.assertEqual(r.receive(1, {"t": "in", "seq": 3, "upto": d + 2, "ev": []}, 1),
                          [{"t": "error", "why": "gap", "inSeq": 1}])
         self.assertEqual(r.receive(1, {"t": "in", "seq": 2, "upto": d + 2, "ev": []}, 1), [{"t": "ack", "seq": 2}])
+        # the tick the phone is at goes along to the other phone (it paces itself by it)
+        self.assertEqual(r.receive(1, {"t": "in", "seq": 3, "at": 2, "upto": d + 2, "ev": []}, 1), [{"t": "ack", "seq": 3}])
+        self.assertEqual(numbered(r, 2)[-1], {"t": "in", "seat": 1, "seq": 3, "at": 2, "upto": d + 2, "ev": [], "n": 4})
         # a phone never gets its own messages back; the one who acknowledges drops them
         self.assertEqual([m["t"] for m in numbered(r, 1)], ["start"])
         self.assertEqual(numbered(r, 2, since=2), [m for m in numbered(r, 2) if m["n"] > 2])
-        self.assertEqual(len(r.pull(2, 3)), 0)
+        self.assertEqual(len(r.pull(2, 4)), 0)
         self.assertEqual(len(r.players[2].out), 0, "acknowledged messages are dropped")
 
     def test_what_a_phone_may_say(self):
@@ -90,7 +106,10 @@ class TestRelay(unittest.TestCase):
             ({"t": "in", "seq": "1", "upto": d}, "seq"),
             ({"t": "in", "seq": 1, "upto": d - 2, "ev": []}, "upto"),                  # backwards
             ({"t": "in", "seq": 1, "upto": True, "ev": []}, "upto"),
-            ({"t": "in", "seq": 1, "upto": d - 1 + d + 1, "ev": []}, "ahead"),         # further than the other's word + delay
+            ({"t": "in", "seq": 1, "upto": d - 1 + live.MAX_INPUT_DELAY + 1, "ev": []}, "ahead"),   # further than the other's word + the most a delay can be
+            ({"t": "in", "seq": 1, "upto": d, "at": -1, "ev": []}, "at"),
+            ({"t": "in", "seq": 1, "upto": d, "at": d + 1, "ev": []}, "at"),             # a phone is never past its own word
+            ({"t": "in", "seq": 1, "upto": d, "at": "1", "ev": []}, "at"),
             ({"t": "in", "seq": 1, "upto": d, "ev": "x"}, "ev"),
             ({"t": "in", "seq": 1, "upto": d, "ev": [[d, "up", 1]] * 33}, "ev"),
             ({"t": "in", "seq": 1, "upto": d, "ev": [[d, "up"]]}, "ev"),
@@ -168,9 +187,10 @@ class TestRelay(unittest.TestCase):
             if sm:
                 msg["sum"] = sm
             return r.receive(seat, msg, 11)[0]["t"]
-        # both play on, a little at a time (neither can speak further ahead than the other's word + the delay)
+        # both play on, a little at a time (neither can speak further ahead than the other's word + the most a delay can be)
         for u in range(d, 60 + d - 1, d):
             self.assertEqual((say(1, u), say(2, u)), ("ack", "ack"))
+        self.assertEqual(r.receive(1, {"t": "in", "seq": seq[1] + 1, "upto": r.players[2].upto + live.MAX_INPUT_DELAY + 1, "ev": []}, 11)[0]["why"], "ahead")
         # equal checksums at 60: nothing happens
         self.assertEqual(say(1, 60 + d - 1, [60, 777]), "ack")
         self.assertEqual(say(2, 60 + d - 1, [60, 777]), "ack")

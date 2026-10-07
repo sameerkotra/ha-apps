@@ -18,7 +18,7 @@ const Together = (() => {
   const WS_OPEN_MS = 3000;             // a socket that isn't open by now isn't going to be
   const PING_MS = 2000;                // a live duel's phone says it's here this often (and measures the round trip)
   const LIVE_RETRIES = [500, 1000, 2000, 4000];   // a dropped live socket is opened again after these waits …
-  const LIVE_POLL_SEND_MS = 30;        // … then plain HTTP: what this phone has to say goes out this often
+  const LIVE_POLL_SEND_MS = 15;        // … then plain HTTP: what this phone has to say goes out this often (one request at a time)
 
   let pending = null;                  // a match to take into the game page (set before showTab("play"))
   let shown = new Set();               // invites already shown as a sheet
@@ -234,14 +234,18 @@ const Together = (() => {
       ws = null;
       setTransport("poll");
       queue.unshift({ t: "hello", since });
-      sendTimer = setInterval(async () => {
+      // one request at a time (the server wants the messages in order); the next goes as soon as it is answered
+      const drain = async () => {
         if (closed || pollBusy || !queue.length) return;
         pollBusy = true;
-        const batch = queue.splice(0, 32);
-        try { await post(batch, 0); }
-        catch (e) { queue.unshift({ t: "hello", since }); }      // the server says again what it has (welcome)
+        while (!closed && queue.length) {
+          const batch = queue.splice(0, 32);
+          try { await post(batch, 0); }
+          catch (e) { queue.unshift({ t: "hello", since }); break; }      // the server says again what it has (welcome)
+        }
         pollBusy = false;
-      }, LIVE_POLL_SEND_MS);
+      };
+      sendTimer = setInterval(drain, LIVE_POLL_SEND_MS);
       pollLoop();
     }
     function close() {

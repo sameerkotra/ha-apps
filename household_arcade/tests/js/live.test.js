@@ -63,13 +63,14 @@ test("lockstep: a message only claims ticks whose inputs it carries; checksums g
   const { a, sent } = pair(4);
   a.local("right", 1);                                 // tick 4
   a.next(0); a.advance(); a.flush(false);              // after tick 1: final up to 4, so the input goes
-  assert.deepEqual(plain(sent[1][0]), { t: "in", seq: 1, upto: 4, ev: [[4, "right", 1]] });
+  assert.deepEqual(plain(sent[1][0]), { t: "in", seq: 1, at: 1, upto: 4, ev: [[4, "right", 1]] });
   a.flush(false);
   assert.equal(sent[1].length, 1, "nothing new: nothing sent");
   a.advance(); a.flush(false);
-  assert.equal(sent[1].length, 1, "upto goes out every 2 ticks when there is nothing else");
+  assert.equal(sent[1].length, 2, "the phone moved on: its word goes out (once a frame, from the game)");
+  assert.deepEqual([sent[1][1].at, sent[1][1].upto], [2, 5]);
   a.advance(); a.flush(false);
-  assert.equal(sent[1][1].upto, 6);
+  assert.equal(sent[1][2].upto, 6);
   for (let t = a.tick; t < 60; t++) { a.advance(() => 0xC0FFEE); }
   a.flush(false);
   const last = sent[1][sent[1].length - 1];
@@ -424,11 +425,12 @@ function simulate(game, mode, opts) {
     if (msg.t !== "in") return;
     if (msg.seq <= S.seq) { toPhone(seat, { t: "ack", seq: S.seq }); return; }
     if (msg.seq !== S.seq + 1) { relay.gaps++; toPhone(seat, { t: "error", why: "gap", inSeq: S.seq }); return; }
-    assert.ok(msg.upto >= S.upto && msg.upto <= O.upto + delay, `seat ${seat} claims ${msg.upto} with the other at ${O.upto}`);
+    assert.ok(msg.upto >= S.upto && msg.upto <= O.upto + Lockstep.MAX_DELAY, `seat ${seat} claims ${msg.upto} with the other at ${O.upto}`);
+    assert.ok(Number.isInteger(msg.at) && msg.at >= 0 && msg.at <= msg.upto, "the tick the phone is at, inside what it speaks for");
     for (const e of msg.ev) assert.ok(e[0] > S.upto && e[0] <= msg.upto, "an input inside the ticks the message speaks for");
     S.seq = msg.seq; S.upto = msg.upto;
     relay.forwarded++;
-    numbered(3 - seat, { t: "in", seat, seq: msg.seq, upto: msg.upto, ev: msg.ev });
+    numbered(3 - seat, { t: "in", seat, seq: msg.seq, at: msg.at, upto: msg.upto, ev: msg.ev });
     toPhone(seat, { t: "ack", seq: msg.seq });
     if (msg.sum) {
       S.sums[msg.sum[0]] = msg.sum[1];
@@ -486,8 +488,8 @@ function simulate(game, mode, opts) {
   return { phones, relay };
 }
 
-// Tank players who mostly drive up and fire (away from their own flag), so the games last
-const BOTS = { tanks: { keys: ["up", "up", "up", "fire", "fire", "left", "right", "down"], fingers: 0.005 } };
+// Tank players who drive up and fire (away from their own flag, which their own shells would knock down), so the games last
+const BOTS = { tanks: { keys: ["up", "up", "up", "fire", "fire"], fingers: 0 } };
 
 function sameGame(res, label) {
   const [a, b] = [res.phones[1], res.phones[2]];
@@ -523,12 +525,48 @@ for (const [game, mode] of DUELS) {
 
   test(`${game} · ${mode}: a phone whose game went its own way is caught by the checksums`, () => {
     const L = LOGIC[game];
-    const res = simulate(game, mode, { seed: 3, delay: 6, latency: [5, 40], ms: 15000, diverge: { seat: 2, at: 200, fn: (s) => { s.rng = (s.rng + 12345) | 0; s.score += 1; } } });
+    const res = simulate(game, mode, Object.assign({ seed: 3, delay: 6, latency: [5, 40], ms: 15000, diverge: { seat: 2, at: 200, fn: (s) => { s.rng = (s.rng + 12345) | 0; s.score += 1; } } }, BOTS[game]));
+    assert.ok(Math.min(res.phones[1].ls.tick, res.phones[2].ls.tick) > 240, "the game lasted past the first checksum after the change");
     assert.ok(res.relay.mismatch !== null, "out of step");
     assert.ok(res.relay.mismatch <= 240, `found at the first checksum after the change (${res.relay.mismatch})`);
     assert.ok(L.checksum);
   });
 }
+
+test("tanks · against: a slow link (a far-away phone) raises the phones' delays and the game keeps its speed", () => {
+  // 150–165 ms each way over a socket (in order, as TCP is: a 320 ms round trip) with the server's starting delay
+  // for that: without adapting, the phones would wait on most frames and play slow; each raises its own delay instead
+  const res = simulate("tanks", "against", Object.assign({ seed: 9, latency: [150, 165], delay: 14, ms: 20000 }, BOTS.tanks));
+  sameGame(res, "tanks/against far");
+  const [a, b] = [res.phones[1].ls, res.phones[2].ls];
+  assert.ok(a.stats.raised > 0 && b.stats.raised > 0, `both raised their delay (${a.stats.raised}, ${b.stats.raised})`);
+  assert.ok(a.delay > a.delay0 && a.delay <= Lockstep.MAX_DELAY, `seat 1's delay is ${a.delay} (from ${a.delay0})`);
+  // 20 s at 60 updates a second is 1200 ticks: a stalling game would fall well short
+  assert.ok(Math.min(a.tick, b.tick) >= 1100, `the game kept up: ${a.tick}, ${b.tick} ticks in 20 s`);
+});
+
+test("lockstep: the delay goes down again after ten clean seconds, never below the agreed one", () => {
+  const { a, b, sent } = pair(4);
+  const relayAll = () => { sent[1].splice(0).forEach((m) => b.receive(relayed(m, 1))); sent[2].splice(0).forEach((m) => a.receive(relayed(m, 2))); };
+  // seat 2 is silent for a while: seat 1 waits at several ticks and raises its delay
+  for (let i = 0; i < 20; i++) { if (a.next(i)) { a.advance(); a.flush(false); } }
+  assert.equal(a.stats.raised, 0, "waiting at one tick, however long, is one wait");
+  for (let round = 0; round < 6; round++) {
+    for (let i = 0; i < 3; i++) { b.next(0); b.advance(); b.flush(false); }
+    relayAll();
+    for (let i = 0; i < 6; i++) { if (a.next(0)) { a.advance(); a.flush(false); } }
+  }
+  assert.ok(a.delay > 4 && a.stats.raised >= 1, `raised to ${a.delay}`);
+  const raised = a.delay;
+  // then both run freely for a long while
+  for (let i = 0; i < Lockstep.LOWER_AFTER * (raised - 4) + 700; i++) {
+    for (const [me, s] of [[a, 1], [b, 2]]) { if (me.next(0)) { me.advance(); me.flush(false); } }
+    relayAll();
+  }
+  assert.equal(a.delay, 4, "back at the agreed delay");
+  assert.ok(a.stats.lowered >= raised - 4);
+  assert.equal(b.delay, 4);
+});
 
 test("a phone that hears nothing more from the other stops and waits (it never runs ahead)", () => {
   const res = simulate("snakeduel", "phones", { seed: 4, drop: { seat: 2, from: 2000, to: 1e9 }, ms: 6000 });
