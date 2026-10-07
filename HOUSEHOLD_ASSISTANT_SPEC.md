@@ -29,7 +29,7 @@ The app's own ingress page, opened from the sidebar (**Assistant**) or a dashboa
 to `/<full slug>`, as Docs' quick note does). One column:
 
 - **The ask box** at the bottom ("Ask about the household…"), with a few suggestions above it the first time, built
-  from the catalogue (§5): *What's on my list today?* · *Spending this month* · *What's on the shopping list?* ·
+  from the catalogue (§4): *What's on my list today?* · *Spending this month* · *What's on the shopping list?* ·
   *Find a document*. Enter sends; Shift+Enter is a new line. A microphone button uses the browser's speech
   recognition where it exists (the Home Assistant app on phones has it); nothing is recorded by the app.
 - **The conversation**: each question, then its answer as short Markdown (lists and bold only — the shared `md.js`
@@ -43,7 +43,7 @@ to `/<full slug>`, as Docs' quick note does). One column:
   with the exact change; nothing is sent until it is tapped (§6.4). After the tap the button turns into the result
   with its link ("Added to Shopping · Open").
 - **While it works**: "Asking Household Todo…", "Reading the answer…" under the question, with **Stop**. A question
-  takes at most 60 seconds end to end (§4.3); then "That took too long — try a narrower question".
+  takes at most 60 seconds end to end (§7.4); then "That took too long — try a narrower question".
 - A conversation is per person and kept for 30 days (Settings → *Keep questions for*; **Clear** removes it now).
   Admins never see other people's questions.
 
@@ -60,7 +60,7 @@ release, each for a reason that may change:
 - Plugging into **Assist** (Home Assistant's own voice assistant, so "Hey Jarvis, what's on my list") needs a
   custom *integration* (a conversation agent), not an app; apps can't register one. A small companion integration
   that forwards Assist's text to this app and reads the answer back is the natural second step and is listed in
-  §11 — the API in §9 is shaped so that integration needs nothing more.
+  §10 (step 6) — the API in §9 is shaped so that integration needs nothing more.
 - A **sensor** with the last answer: pointless without the question.
 
 ## 3. How an answer is made
@@ -71,7 +71,7 @@ question ──► plan (model, JSON) ──► tool calls over the bus (≤ 4) 
                  └──── results so far ───────┘   (the plan is asked again after each round, at most 3 rounds)
 ```
 
-1. **Catalogue in hand.** The assistant keeps the tool catalogue every app offered (§5), refreshed on each `hello`.
+1. **Catalogue in hand.** The assistant keeps the tool catalogue every app offered (§4, fetched with §5), refreshed on each `hello`.
    Only tools of apps the admin turned on (§8.2), and only those the asking person may use (§7), are shown to
    the model.
 2. **Plan.** One model call in JSON mode (`want_json`, which all three providers support in `ai_client`), with the
@@ -80,7 +80,7 @@ question ──► plan (model, JSON) ──► tool calls over the bus (≤ 4) 
    `{"call": [{"tool": "todo.tasks", "args": {"when": "today"}}, …]}` (up to 4 tools in one round, run in
    parallel), `{"answer": "…"}` (enough is known, or nothing applies), or `{"ask": "Which month?"}` (a question
    back, shown as the answer). Native tool calling (OpenAI `tools`, Anthropic `tool_use`, Ollama `/api/chat` tools)
-   is a later improvement to the shared `ai_client` (§11); the JSON plan works with every model today, including
+   is a later improvement to the shared `ai_client` (§10, step 6); the JSON plan works with every model today, including
    small local ones.
 3. **Call.** Each planned call becomes one bus message `assist.tool.call` (§6.2) to the app that owns the tool,
    with `requested_by` = the asking person. Answers come back as `ack {result}` within 20 seconds or the call
@@ -156,7 +156,7 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 | | `receipt.spending` | `month?`, `store?` | spend by store or by category; link |
 | | `receipt.shopping_list.add` *(acts)* | `item`, `qty?` | the added item with its cheapest store; link |
 | Splitpot | `splitpot.balances` | `group?` | who owes whom, for the person's groups; link |
-| | `splitpot.recent` | `group?`, `days?` | recent expenses (what, who paid, amount); link |
+| | `splitpot.recent` | `group?`, `days?` | the newest 20 expenses (what, who paid, amount), as the group page's own first page, with `more`; link |
 | Calorie Tracker | `calorie.today` | `date?` | the person's own day: calories, macros, against goals; link |
 | Household Chat | `chat.unread` | — | chats with unread counts (names and counts only — never message text); links |
 | Household Arcade | `arcade.scores` | `game?` | the household leaderboard; link |
@@ -379,7 +379,7 @@ Yardstick: Household Todo receiving two kinds from Docs is `app_messages.py` (�
 |---|---|---|---|
 | **Household Assistant** (new) | the shared skeleton (identity, people, settings, backups, themes, AI block, Connected apps) | the plan → call → answer loop, the page, the two kinds in `app_bus`, fake-app tests | the biggest piece: about a Splitpot-sized app |
 | Todo, Docs, Chat | bus, `ha_ws`, settings, people; Docs and Chat know their sidebar page | `tools.py` (catalogue + a handler per tool, wrapping queries their routes already run), the admin and per-person switches, Todo copies Docs' `learn_panel`, spec / DOCS / tests | ≈150–250 lines each; Chat least (unread counts only) |
-| Splitpot, Calorie, Arcade, Family Tree | settings, HA client | `app_bus.py` + `ha_ws.py` copied in, `bus.start` in the lifespan, bus tables in migrations (≈30 lines, as Todo), then 1–3 tools; Splitpot and Calorie have no people admin yet (admin switch only at first) | about a day each |
+| Splitpot, Calorie, Arcade, Family Tree | settings, HA client | `app_bus.py` + `ha_ws.py` copied in, `bus.start` in the lifespan, bus tables in migrations (≈30 lines, as Todo), then 1–3 tools; Calorie has no people admin yet (admin switch only at first), Splitpot has had it since 2.3.0 (both switches) | about a day each |
 | Receipt Price Intelligence | settings, HA client; SQLAlchemy | a sqlite3 connection for the bus tables (from the engine, or a small adapter in `app_bus`) — one decision; then 4 tools over the shopping-list and price queries | 2× a bus-ready app |
 | Finance Dashboard | only `ai_client` and the security modules; own settings, pytest | adopt `settings_core` or wire the switch into its own settings, bus tables in its migrations, 4 tools over its reports with the per-person sharing filter applied | the largest outside the assistant, 2–3× a bus-ready app |
 | Household Vault | — | nothing, by design | — |
