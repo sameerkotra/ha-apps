@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- **Sheets keep their formula results in .xlsx**: a saved .xlsx held each formula but not its result, so Excel and other apps (and Docs' own Home Assistant sensor for a cell) saw an empty value until the sheet was recalculated. The results are written again.
+
 ## 1.2.0
 
 - **Answers the Household Assistant**: the new Household Assistant app can search Docs ("Find the note about the boiler"), read a note, checklist or sheet (4,000 characters at a time), show a checklist's open items, and — only after the person taps the exact note it proposes — make a note in My docs → Inbox. Always as that person, from what they could open here; Kids' space rules hold. Each answer links back to the document. On by default; an admin can turn it off in **App settings → Household Assistant**, and each person in **Settings → You**.

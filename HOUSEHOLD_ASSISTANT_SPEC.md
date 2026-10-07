@@ -428,7 +428,7 @@ Each item is ticked in the commit that finishes it.
 
 - [x] **Notification links (Todo, Splitpot)**: phone notifications open the sidebar page, not the admin's
   `/hassio/ingress/<slug>` page (as Arcade 1.8.0 did).
-- [ ] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
+- [x] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
 - [ ] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
   Finance, and their tools' link targets.
 - [ ] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.

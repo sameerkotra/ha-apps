@@ -537,11 +537,13 @@ def _chart(ws, kind: str, rng: str, title: str):
     return ch
 
 
-_FORMULA_CELL = re.compile(r'<c r="([A-Z]{1,3}[0-9]{1,7})"((?: [A-Za-z:]+="[^"]*")*)><f>(.*?)</f><v\s*/></c>', re.S)
+# openpyxl leaves a formula's value empty: <v/> in older versions, <v></v> in 3.1
+_FORMULA_CELL = re.compile(r'<c r="([A-Z]{1,3}[0-9]{1,7})"((?: [A-Za-z:]+="[^"]*")*)><f>(.*?)</f>(?:<v\s*/>|<v>\s*</v>)</c>',
+                           re.S)
 
 
 def _put_cached_values(data: bytes, cached: dict[int, dict]) -> bytes:
-    """openpyxl writes <f>…</f><v/>: put the computed value into <v> (and the type into t=)."""
+    """openpyxl writes <f>…</f> with an empty <v>: put the computed value into <v> (and the type into t=)."""
     if not any(cached.values()):
         return data
     zin = zipfile.ZipFile(io.BytesIO(data))
