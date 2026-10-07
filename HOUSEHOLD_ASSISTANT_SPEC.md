@@ -1,7 +1,8 @@
 # Household Assistant — spec
 
 Status: **draft (2026-10-06); the apps' side and the assistant app (phase 1, `household_assistant` 1.0.0) are built
-(2026-10-07); its own `spec/SPEC.md` says how.** Every app in
+(2026-10-07); its own `spec/SPEC.md` says how.** A local model on the CPU for it and the other apps is
+its own app, Household AI (`HOUSEHOLD_AI_SPEC.md`; §15 here). Every app in
 §4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
 the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
@@ -19,8 +20,8 @@ in `APP_MESSAGES_SPEC.md` §6.6.
 - Every answer says where it came from and links there ("Open in Finance Dashboard → September"), so the app is a
   tap away and the person can check the facts.
 - Works with any of the three model providers the apps already support (Ollama, an OpenAI-compatible server,
-  Anthropic Claude), with the same shared `ai_client.py`. 🤖 **Needed**: the app does nothing without a model — or it
-  can run its own on the CPU (§14), which the other household apps can then use as well.
+  Anthropic Claude), with the same shared `ai_client.py`. 🤖 **Needed**: the app does nothing without a model — a household
+  with no other model server can install Household AI (§15) for one on the Home Assistant machine's CPU.
 
 Not in scope: a general chatbot (the model answers from the apps' facts, or says it can't), automations or
 device control (Home Assistant's own Assist does that), and anything from Household Vault (§7).
@@ -446,255 +447,22 @@ Each item is ticked in the commit that finishes it.
   the admin pages, tests.
 - [x] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).
 
-## 14. Built-in model (Ollama inside the assistant) — draft 2026-10-07, not built
+## 15. A local model: Household AI
 
-The assistant app can run its **own** AI model, on the Home Assistant machine's CPU, with no GPU and no other
-server: Ollama, started inside the assistant's container. The assistant uses it, and every other household app
-can use it too, as an ordinary Ollama or OpenAI-compatible address in its existing AI settings. **No other app's
-code changes.** It is optional: the assistant keeps working with an outside Ollama, an OpenAI-compatible server or
-Claude (§1), and the built-in model is off until an admin turns it on and downloads a model.
+The model server that was drafted here as a "built-in model" is its own app, **Household AI** (`household_ai`),
+specified in `HOUSEHOLD_AI_SPEC.md`: Ollama on the Home Assistant machine's CPU, behind a gateway every household
+app can use, with a model list sized to the machine, a fair queue and a day/night schedule for keeping models
+loaded. The assistant needs nothing special for it — it is an ordinary Ollama address in the AI block (§8.2):
 
-### 14.1 Why here, and what it is not
-
-- A household that wants AI but runs only Home Assistant (no second machine) today has to install a separate
-  community Ollama app and wire every app to it. The assistant is the one app that always needs a model, so it is
-  the natural owner of one, and one model server for the whole household saves RAM (two Ollamas would load two
-  copies of a model).
-- **Not** a general model server for the network: it is reachable only by other apps on the Supervisor's internal
-  network by default, with no access key needed there (§14.4). Opening it to the LAN, and requiring a key, are
-  explicit admin choices (§14.4).
-- **Not** fast. CPU-only means seconds for a short text answer from a 3B model and from about 30 seconds to several
-  minutes for a receipt photo or a statement page from a vision model (§14.6). The admin page says so before the
-  first download.
-
-### 14.2 What an admin sees (Admin → Built-in model)
-
-- **Built-in model: Off / On.** On starts the model server (§14.3). The page shows its state (*Starting* ·
-  *Ready* · *Stopped — <reason>*), the Ollama version, the machine's RAM (total / free, from `/proc/meminfo`), CPU
-  cores, and free disk under `/data`.
-- **Models.** A short **recommended list** shipped with the app (name, download size, RAM needed, *Text* or
-  *Vision*, which apps it suits), each with **Download** / **Delete**, plus *Other model…* for any Ollama model name.
-  Download shows progress (Ollama's `/api/pull` stream) and can be cancelled. First-release list (sizes checked at
-  build time and kept in one table in code):
-
-  | Model | Kind | Approx. RAM | Suits |
-  |---|---|---|---|
-  | `qwen2.5:1.5b` | Text | ~1.5 GB | the assistant on a Raspberry Pi; Docs, Calorie, Arcade extras |
-  | `qwen2.5:3b` (**default suggestion**) | Text | ~2.5 GB | the assistant (JSON plan); Docs, Calorie, Arcade extras; Finance's optional text model |
-  | `llama3.2:3b` | Text | ~2.5 GB | the same, an alternative |
-  | `qwen2.5vl:3b` | Vision | ~4 GB | Receipt Price Intelligence, Docs' text from scans; slow on CPU |
-  | `qwen2.5vl:7b` | Vision | ~7 GB | Finance Dashboard statements, Receipt (better reading); 16 GB machines |
-
-  A model whose RAM need is more than the machine's free RAM plus what the server already holds gets a warning
-  ("This model needs about 7 GB; this machine has 3.1 GB free — Home Assistant may slow down or the app may be
-  stopped"), not a block.
-- **Use it here**: the assistant's own AI block (§8.2) gets a fourth provider choice, *Built-in model*, with a
-  model picker of the downloaded text models. It talks to the server on `127.0.0.1` with no key.
-- **Use it in other apps**: the exact values to paste into another app's *Admin → App settings → AI* (§14.5),
-  and one row per app that has used it — *host name (or address), last used, requests and tokens this month*.
-- **Require an access key** (off): when on, the rows become keys — *label, created, last used, usage, Revoke* — and
-  **New key** shows a key once (§14.4).
-- **When models stay loaded** (§14.6): *Keep loaded* model and its daytime hours, *Unload after* for day and
-  night, *Load at the start of the day*, *Models loaded at once*.
-- **Limits** (§14.6): threads, context length, queue length.
-- **Show on my network** (off): the LAN switch (§14.4).
-
-### 14.3 How it runs
-
-- **One container.** The assistant's image carries the Ollama server binary and its **CPU** libraries only (no
-  CUDA/ROCm, which are most of Ollama's own image). Ollama is built against glibc, so the assistant's image is
-  `python:3.12-slim` (Debian), not the Alpine the other apps use; the Ollama files come from a pinned
-  `FROM ollama/ollama:<version> AS ollama` stage (`COPY --from=ollama` of the binary and `lib/ollama` CPU backends —
-  the exact paths checked when building, since Ollama has moved them between releases). The final `FROM` stays a
-  pinned `python:3.x`, so `tools/check_build.py` passes; the Ollama version is pinned and bumped with the app's
-  version, with a CHANGELOG line.
-- **Architectures**: Ollama ships amd64 and arm64 only. The assistant's `arch` is `amd64` and `aarch64`; on those
-  the built-in model is available. (If the assistant is ever built for armv7, the built-in model section is hidden
-  there and the app uses an outside provider.)
-- **A child process**, started by the app's lifespan when *Built-in model* is on: `ollama serve` under `nice -n 10`
-  (Home Assistant itself stays responsive while a model works), listening on **`127.0.0.1:11435` only**, with
-  `OLLAMA_MODELS=/data/models`, `OLLAMA_MAX_LOADED_MODELS` from *Models loaded at once*, `OLLAMA_NUM_PARALLEL=1`,
-  `OLLAMA_KEEP_ALIVE` from the night *Unload after* (the gateway sets each request's own, §14.6),
-  `OLLAMA_CONTEXT_LENGTH` from *Context length*, `OLLAMA_NO_CLOUD`/telemetry off where the
-  version has it. The app watches it (`/api/version` every 30 s), restarts it on exit with 5 s → 5 min back-off,
-  shows the last 50 lines of its log on the admin page, and stops it with SIGTERM on shutdown (10 s, then SIGKILL).
-- **The gateway.** The app itself serves the model to other apps on a **second port, 11434**, through a small
-  gateway in Python (§14.4); Ollama is never reachable from outside the container directly.
-- **Storage**: models live in `/data/models` and are **left out of backups** with `backup_exclude: ["models"]`
-  in `config.yaml` (a 5 GB model in every nightly backup would fill the disk). After a restore the admin page lists
-  the models the settings name that are missing, with **Download again**. Free disk under 2 GB more than a download's
-  size refuses the download with the numbers.
-- **Memory**: the Supervisor doesn't cap an app's RAM; Linux's OOM killer may stop Ollama (or, worse, something
-  else) if a model is too big. The app sees Ollama exit with a kill signal and says "The model server was stopped
-  for lack of memory — choose a smaller model or unload sooner".
-
-### 14.4 Who can reach it (the gateway)
-
-Ollama has no authentication and its API can download and delete models, so it is never exposed raw. The gateway
-on port 11434:
-
-- **Allows only** `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/generate`, `POST /api/chat`,
-  `POST /api/embed`, and the OpenAI-compatible `GET /v1/models`, `POST /v1/chat/completions`. Everything else
-  (`/api/pull`, `/api/delete`, `/api/create`, `/api/copy`, `/api/push`, blobs) is 404 — model management is only
-  on the admin page, behind ingress and the admin check.
-- **No key by default.** The model is on the Supervisor's internal network only, with no outside access, so
-  *Require an access key* is **off**: any app there may use it, and the other apps' *Access key* field stays
-  empty. The allow-list above still holds without a key, so no caller can download, delete or replace models.
-  Callers are told apart by their address on the internal network (each app container has its own); the gateway
-  shows the app's host name for it where the Supervisor's DNS gives one back (checked when building), else the
-  address. Usage, the per-caller queue limit (§14.6) and the admin page's rows work per caller the same way.
-- **Require an access key** (setting, off): then every request needs `Authorization: Bearer <key>` — 32 random
-  bytes (base64url), shown once, stored as a SHA-256 hash with its label; no key or a wrong one → 401 (10 failures
-  a minute from one address → 429 for a minute), and callers are told apart by key. The shared `ai_client`
-  already sends `Authorization: Bearer` for both the Ollama and the OpenAI-compatible providers when an access key
-  is set (`auth_headers`), so the other apps need no change either way. Turn it on if a community app you don't
-  trust is installed, or when the model is shown on the network.
-- **Models**: a request for a model that isn't downloaded is 404 with "Download <model> in the Household
-  Assistant first" (no pull on demand). With keys on, an admin may limit a key to some models.
-- **Where it listens**: the Supervisor's internal network, where every app reaches another by its host name — the
-  full slug with `_` turned into `-` (APP_MESSAGES_SPEC §6.5), e.g. `http://a1b2c3d4-household-assistant:11434`.
-  `config.yaml` has **no** published port by default. *Show on my network* is the app's `ports:` entry
-  `11434/tcp: null`, which the admin sets on the app's **Network** tab in Home Assistant (the page explains how);
-  then other machines on the LAN can use it too. Turning *Show on my network* on with *Require an access key* off
-  shows a standing warning ("Anyone on your network can use the model and its CPU"); the page offers to turn keys
-  on, and says plain HTTP on the LAN shows a key to anyone listening.
-- **Other apps on the internal network** (community apps too) can use the model without a key while keys are off —
-  the accepted trade-off of the default; they still can't manage models, and the queue limits them like any app.
-- **Logging**: per caller (key, or host name/address), per request: time, model, path, input/output tokens, seconds, queue wait; never prompts,
-  images or answers. Kept 30 days, shown on the admin page as usage per caller per day.
-
-### 14.5 Pointing another app at it
-
-The values the admin page shows, for the app's existing *Admin → App settings → AI* block:
-
-| Field | Value |
-|---|---|
-| Provider | **Ollama** (or *OpenAI-compatible* — then the address ends in `/v1`) |
-| Address | `http://<assistant host name>:11434` (the page fills in the real host name) |
-| Access key | empty (or the new key, when *Require an access key* is on) |
-| Model / Vision model | one of the downloaded models (*Test connection* lists them) |
-
-- **Which apps**: Calorie Tracker, Household Docs, Household Arcade (text), Receipt Price Intelligence and Finance
-  Dashboard (vision; slow, §14.6). Each app's own timeout settings matter: Receipt's *timeout* should be raised to
-  at least 300 s for a CPU vision model, and *receipts read at the same time* set to 1; the admin page lists this.
-- **Discovery over the bus** (later, step 3 of §14.8): the assistant lists `ai.server` in its `hello` `can`, and an
-  app may send `ai.server` `{}` → `ack {result: {address, models: [{name, kind}], openai_path: "/v1"}}` — the
-  address and model names only, **never a key** (the bus is readable by HA admins and every app with
-  `homeassistant_api`, APP_MESSAGES_SPEC §8). An app's AI block can then show "Household Assistant has a built-in
-  model — Use it", filling Provider, Address and the model list — all that's needed while keys are off (with keys
-  on, the admin still pastes the key). That is a change
-  to the shared `settings.js` / each app's AI block and is not needed for the first release.
-- **Turning it off** stops the server; other apps then get "unreachable" from their own *Test connection* and AI
-  buttons, as with any stopped Ollama. With keys on, revoking a key makes that app's requests 401 at once.
-
-### 14.6 Sharing one CPU fairly
-
-One model answers one request at a time (`OLLAMA_NUM_PARALLEL=1`); a vision request can hold the CPU for minutes.
-So the gateway, not Ollama, queues:
-
-- **Priority**: the assistant's own questions first, then other apps in arrival order. A request already running
-  is never interrupted.
-- **Queue length** (default 4 waiting, setting): beyond it, and for any request that has waited 120 s, the gateway
-  answers **503 with `Retry-After: 30`**, which the shared `ai_client` already retries (its `RETRY_STATUSES`). Each
-  caller may have at most 2 requests waiting, so one app reading a pile of receipts can't starve the others.
-- **Model switches**: by default one model is loaded at a time (*Models loaded at once* 1); a request for another
-  model waits for the running one, then loads (a few seconds from an SSD, up to a minute from an SD card). The page
-  suggests one text model for everything text and one vision model, and shows when switching is frequent ("Loaded
-  40 times today — consider using one model in more apps"). *Models loaded at once* may be 2 when the RAM allows
-  both (the page adds up the two models' RAM and warns when that leaves Home Assistant under 4 GB).
-- **Threads** (default: all cores but one, at least 1) is a setting.
-
-**When models stay loaded (day and night).** Loading costs seconds to a minute; keeping a model loaded costs its
-RAM. So an admin sets a daytime window when the household asks most, and a shorter rule for the rest:
-
-| Setting | Default | What it does |
-|---|---|---|
-| *Keep loaded* | the assistant's model | The model that stays in memory during the daytime window (*None*: no model is kept). |
-| *Daytime* | **05:00–22:00** | In Home Assistant's time zone (`ha_time`), so it follows daylight saving. A window that passes midnight (22:00–06:00) is allowed. |
-| *During the day, unload after* | **Never** (the *Keep loaded* model); 10 min (any other model) | How long after its last use a model is unloaded in the daytime. |
-| *At night, unload after* | **10 min** | Every model, the kept one included, unloads this long after its last use outside the window (0 = right after each answer). |
-| *Load at the start of the day* | on | At the window's start, the *Keep loaded* model is loaded before anyone asks, so the first question of the morning doesn't wait for it. |
-
-- **How it is done.** Ollama keeps a model loaded for the `keep_alive` of the last request that used it. The gateway
-  sets `keep_alive` on every native request it passes on (`-1` for the kept model in the day, otherwise the
-  minutes above); for `/v1` requests, which don't carry it, the gateway sends Ollama an empty
-  `POST /api/generate {model, keep_alive}` after the answer, which only resets the timer. At the window's start
-  (with *Load at the start of the day*) the same empty request with `keep_alive: -1` loads the kept model; at the
-  window's end the gateway sends it again with the night value, so a model idle for longer is unloaded at once and
-  one in use unloads that long after its last request. The clock is checked every minute and at start-up, so a
-  restart mid-day loads the kept model again, and a restart at night loads nothing.
-- **Other models** never displace the kept one when *Models loaded at once* is 2: a vision request loads the vision
-  model next to it and the vision model unloads by its own rule. With 1, the vision request unloads the kept model,
-  and the gateway loads it back after the vision model's last request, in the daytime only.
-- **The admin page shows** what is loaded now, since when, until when ("`qwen2.5:3b` — kept until 22:00, then
-  unloads 10 min after its last use"), and **Unload now** (until the next request, or the next day's start).
-- **Example: 16 GB RAM, SSD.** *Keep loaded* `qwen2.5:3b` (~3 GB) 05:00–22:00, *Models loaded at once* 2,
-  `qwen2.5vl:7b` (~7 GB) for receipts and statements unloading 10 minutes after use, night 10 minutes. In the day
-  about 3 GB is always in use and 10 GB while a receipt is being read; Home Assistant keeps 6 GB or more. A load
-  from the SSD is a few seconds, so the night rule costs little.
-- **The assistant's budget** (§3.2, §7.4) with the built-in model: the question timeout becomes a setting, default
-  60 s for outside providers and **180 s** for the built-in model; the page's "Asking…/Reading the answer…" status
-  adds "Waiting for the model (another app is using it)" while queued. The JSON plan (§3 step 2) uses Ollama's
-  `format: "json"`, which 1.5B–3B models follow reliably for this short, flat schema; the catalogue shown to the
-  model is cut to the tools of the apps the person may use (§3 step 1), which keeps the prompt within a small
-  context window (default *Context length* 8192).
-
-### 14.7 Settings and data
-
-- Settings (Admin → App settings, `settings_core`), group **Built-in model**: `builtin_on` (false), `builtin_threads`
-  (0 = automatic), `builtin_keep_model` (the assistant's model; empty = none), `builtin_day_start` (`05:00`),
-  `builtin_day_end` (`22:00`), `builtin_day_unload_min` (10; for models other than the kept one, which stays
-  loaded), `builtin_night_unload_min` (10; 0 = right after each answer), `builtin_preload` (true),
-  `builtin_max_loaded` (1; 1–2), `builtin_context` (8192; 2048–32768), `builtin_queue` (4),
-  `builtin_question_timeout` (180). The assistant's `ai_provider` gains `builtin`.
-- `builtin_require_key` (false).
-- Tables in `/data/assistant.db` (`model_keys` is used only with keys on; `caller` is a key id, or the host name or
-  address when keys are off):
-
-```sql
-CREATE TABLE model_keys (id TEXT PRIMARY KEY, label TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE,
-  models TEXT, created_at TEXT NOT NULL, created_by TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT);
-CREATE TABLE model_usage (day TEXT NOT NULL, caller TEXT NOT NULL, model TEXT NOT NULL, requests INTEGER NOT NULL,
-  input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, seconds REAL NOT NULL, waited REAL NOT NULL,
-  PRIMARY KEY (day, caller, model));
-```
-
-  `caller` `builtin` is the assistant itself. Keys are hashes, so backups carry no usable key; restoring a backup
-  keeps the keys working (same hashes).
-- API (ingress, admin): `GET /api/admin/model` (state, machine, models, keys), `PUT /api/admin/model` (on/off and
-  limits), `POST /api/admin/model/pull` `{name}` → progress via `GET /api/admin/model/pull/{id}`, `DELETE
-  /api/admin/model/{name}`, `POST /api/admin/model/keys` `{label, models?}` → `{key}` once, `DELETE
-  /api/admin/model/keys/{id}`, `GET /api/admin/model/log`. All behind the ingress check, the admin check and the
-  cross-site guard.
-
-### 14.8 Build plan (after §10 phase 1)
-
-1. Image: the Ollama stage, `python:3.12-slim`, `backup_exclude`, `arch` amd64/aarch64; a `check_build.py`
-   allowance for this one app's multi-stage image. Measure the image size (target under 600 MB) and a cold start.
-2. The child process (start, watch, restart, stop), the admin page (machine, models, pull/delete), *Built-in model*
-   as the assistant's provider. Tests with a fake `ollama serve` (a tiny HTTP server answering the few routes).
-3. The gateway on 11434: allow-list, callers by address (and the host-name lookup), the optional keys, queue with
-   priority and per-caller limits, usage. Tests: without keys any internal caller is served and `/api/pull` is
-   still 404; with keys a key-less and a revoked key are refused; a third waiting request from one caller is 503;
-   the assistant jumps the queue. Then check each AI app's *Test connection* and one real request against it (Ollama provider and
-   `/v1`), on amd64 and on a Raspberry Pi 5.
-4. Later: `ai.server` discovery (§14.5) and a *Use the Household Assistant's model* button in the shared AI block;
-   embeddings for Docs' search through `/api/embed`.
-
-### 14.9 Decisions
-
-- **Inside the assistant, not a separate app**: one install, one model in RAM for everyone, and the assistant —
-  the one app that always needs a model — works out of the box on a machine with nothing else. The cost is a bigger
-  Debian-based image for this app only; a household that already has an Ollama elsewhere leaves it off.
-- **A gateway, not raw Ollama on the internal network**: any community app can reach the internal network, and raw
-  Ollama would let it pull or delete models and use the CPU without limit. The gateway's allow-list and queue
-  stop that with or without keys.
-- **No key by default** (decided 2026-10-07): the model has no outside access, and an internal network shared only
-  with the household's own apps doesn't need one; pasting keys into every app was friction for no real gain.
-  Keys stay as a switch for a household that installs untrusted apps or shows the model on its LAN.
-- **Keys (when on) pasted, not sent over the bus**: the bus is readable by HA admins and every app with
-  `homeassistant_api`; a key there is a key for all of them.
-- **Off by default, no automatic downloads**: a model is gigabytes of disk and RAM on the machine that runs the
-  home; the admin chooses with the numbers in front of them.
-- **No GPU support in the first release**: Home Assistant OS machines rarely have one usable from an app; the
-  gateway and settings would not change if a GPU build were added later.
+- **Setting it up**: *Provider* Ollama, *Address* `http://<Household AI's host name>:11434`, no access key (unless
+  Household AI's *Require an access key* is on), *Model* a downloaded text model such as `qwen2.5:3b`. Household
+  AI's page shows these values.
+- **Answered first**: Household AI's queue puts the assistant's requests ahead of other apps' by default
+  (`HOUSEHOLD_AI_SPEC.md` §6.1), because a person is waiting on the page.
+- **Question timeout** (§7.4): becomes a setting in the assistant's *Limits* (`question_timeout`, 60 s; 30–600).
+  With a CPU model the page suggests 180 s, and the "Asking…/Reading the answer…" status adds "Waiting for the
+  model" while a request is queued (Household AI answers 503 with `Retry-After` when its queue is full, which
+  `ai_client` retries).
+- **Small models**: the JSON plan (§3 step 2) uses Ollama's `format: "json"`, which 1.5B–3B models follow reliably
+  for this short, flat schema; the catalogue shown to the model is cut to the tools of the apps the person may use
+  (§3 step 1), which keeps the prompt within a small context window (Household AI's default 8192).
