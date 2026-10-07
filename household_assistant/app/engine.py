@@ -33,19 +33,20 @@ MAX_ROUNDS = 3
 MAX_PER_ROUND = 4
 MAX_CALLS = 8
 CALL_TIMEOUT = 20.0
-QUESTION_TIMEOUT = 60.0
+QUESTION_TIMEOUT = 180.0                            # end to end; a model on a CPU needs a minute a step
 RESULTS_BUDGET = 24 * 1024
 HISTORY_TURNS = 6
 MAX_QUESTION = 1000
 MAX_ANSWER = 4000
 RUNNING = ("planning", "calling", "answering")
-STALE_RUNNING = timedelta(minutes=5)
+STALE_RUNNING = timedelta(minutes=6)                # longer than a warm-up and a whole question
 
 _PANEL_RE = re.compile(r"^/[a-z0-9]{1,16}_([a-z0-9_]{1,64})$")
 _TARGET_RE = re.compile(r"^/[A-Za-z0-9_\-./%~]{0,200}(\?[A-Za-z0-9_\-.=&%~]{0,200})?$")
 
 _lock = threading.Lock()
 _stops: dict[str, threading.Event] = {}            # question id -> its Stop
+_warming: set[str] = set()                         # question ids waiting for the model to load
 _waiters: dict[str, tuple[threading.Event, dict]] = {}  # call id -> (answered, the answer)
 
 
@@ -142,6 +143,22 @@ class _Run:
         if time.monotonic() >= self.deadline:
             raise TooLong()
 
+    def warm_up(self) -> None:
+        """A local model that hasn't answered anything for a few minutes is sent a "hi" first, so it is loaded
+        before the plan. The question's own clock starts again once it is ready."""
+        if not ai_client.needs_warmup():
+            return
+        began = time.monotonic()
+        with _lock:
+            _warming.add(self.qid)
+        try:
+            ai_client.warmup_sync()
+        finally:
+            with _lock:
+                _warming.discard(self.qid)
+        self.deadline += time.monotonic() - began
+        self.check()
+
     def left(self) -> float:
         return max(1.0, self.deadline - time.monotonic())
 
@@ -164,6 +181,7 @@ class _Run:
 def run(qid: str, user: dict, stop_event: threading.Event) -> None:
     r = _Run(qid, user, stop_event)
     try:
+        r.warm_up()
         answer = _answer_question(r)
         r.state("done", answer=answer[:MAX_ANSWER], rounds=_rounds(qid))
     except Stopped:
@@ -576,7 +594,11 @@ def safe_link(app: str, link) -> dict | None:
 
 # --------------------------------------------------------------------------------------------- the page
 
-def _progress(state: str, calls: list) -> str | None:
+def _progress(qid: str, state: str, calls: list) -> str | None:
+    with _lock:
+        warming = qid in _warming
+    if state == "planning" and warming:
+        return "Waking up the model…"
     if state == "planning":
         return "Thinking…"
     if state == "calling":
@@ -614,7 +636,7 @@ def view(conn, q) -> dict:
                     seen.add(k)
                     sources.append({"app": c["app"], "appName": app_name, **link})
     return {"id": q["id"], "text": q["text"], "askedAt": q["asked_at"], "state": q["state"], "answer": q["answer"],
-            "error": q["error"], "progress": _progress(q["state"], shared),
+            "error": q["error"], "progress": _progress(q["id"], q["state"], shared),
             "sources": sources[:8], "shared": shared, "actions": actions}
 
 

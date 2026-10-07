@@ -48,7 +48,7 @@ to `/<full slug>`, as Docs' quick note does). One column:
   with the exact change; nothing is sent until it is tapped (§6.4). After the tap the button turns into the result
   with its link ("Added to Shopping · Open").
 - **While it works**: "Asking Household Todo…", "Reading the answer…" under the question, with **Stop**. A question
-  takes at most 60 seconds end to end (§7.4); then "That took too long — try a narrower question".
+  takes at most 180 seconds end to end (§7.4); then "That took too long — try a narrower question".
 - A conversation is per person and kept for 30 days (Settings → *Keep questions for*; **Clear** removes it now).
   Admins never see other people's questions.
 
@@ -293,7 +293,7 @@ not used (links come from the apps' results, checked by §6.3).
 
 ### 7.4 Limits
 
-30 questions per person per hour and 200 per household per day (settings), the bus's own rate limits, the 60-second
+30 questions per person per hour and 200 per household per day (settings), the bus's own rate limits, the 180-second
 question timeout, and the model's usage shown on the admin page (questions, calls, tokens per day for 30 days), as
 Docs and Finance show theirs.
 
@@ -459,9 +459,9 @@ loaded. The assistant needs nothing special for it — it is an ordinary Ollama 
   AI's page shows these values.
 - **Answered first**: Household AI's queue puts the assistant's requests ahead of other apps' by default
   (`household_ai/spec/SPEC.md` §6.1), because a person is waiting on the page.
-- **Question timeout** (§7.4): today a fixed 60 s (`household_assistant/app/engine.py`, `QUESTION_TIMEOUT`); to
-  become a setting in the assistant's *Limits* (`question_timeout`, 60 s; 30–600) when Household AI is built.
-  With a CPU model the page suggests 180 s, and the "Asking…/Reading the answer…" status adds "Waiting for the
+- **Question timeout** (§7.4): a fixed 180 s since 1.0.1 (`household_assistant/app/engine.py`, `QUESTION_TIMEOUT`),
+  after a "hi" that loads an Ollama model idle for 4 minutes ("Waking up the model…", not counted); to become a
+  setting in the assistant's *Limits* (`question_timeout`, 180 s; 30–600) when Household AI is built. The "Asking…/Reading the answer…" status adds "Waiting for the
   model" while a request is queued (Household AI answers 503 with `Retry-After` when its queue is full, which
   `ai_client` retries).
 - **Small models**: the JSON plan (§3 step 2) uses Ollama's `format: "json"`, which 1.5B–3B models follow reliably
