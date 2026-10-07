@@ -340,7 +340,7 @@ Each app that offers tools adds, in its own App settings, *Answer the Household 
 |---|---|---|
 | `GET /api/me` | user | `{user, canAsk, suggestions[], apps: [{slug, name, on, panel}]}` |
 | `POST /api/ask` `{text}` | user | starts a question → `{id}`; 429 when over a limit or one is still running |
-| `GET /api/ask/{id}` | owner | `{state, answer?, sources[], shared[], actions[], error?}`; the page polls every second (SSE later) |
+| `GET /api/ask/{id}` | owner | `{state, answer?, sources[], shared[], actions[], error?}`; `GET /api/ask/{id}/events` sends it live (SSE, 1.1.0); polling every second is the fallback |
 | `POST /api/ask/{id}/stop` | owner | stops after the current step |
 | `POST /api/ask/{id}/act/{call_id}` | owner | taps a proposed action → sends the confirmed call → `{result}` |
 | `GET /api/history?before=` | user | the person's questions, newest first |
@@ -366,8 +366,9 @@ without Home Assistant's identity headers.
 5. **Chat, Arcade, Family Tree** small catalogues; a *Ask the assistant* entry in Chat's ➕ menu that opens the
    assistant with the question typed (a `panel` link with `?q=`), nothing more.
 6. **Later**: native tool calling in the shared `ai_client` (OpenAI `tools`, Anthropic `tool_use`, Ollama chat
-   tools) replacing the JSON plan where the model supports it; SSE instead of polling; a companion Home Assistant
-   integration that makes the assistant an Assist conversation agent (§2.2); speech on the page.
+   tools) replacing the JSON plan where the model supports it; SSE instead of polling (done in 1.1.0); a companion
+   Home Assistant integration that makes the assistant an Assist conversation agent (§2.2); speech on the page
+   (done in 1.1.0).
 
 ## 11. Decisions
 

@@ -4,6 +4,9 @@
 
 - **Answers read aloud**: 🔊 on an answer reads it out with the browser's own voice; a question asked with 🎤 is
   read aloud by itself when it's answered. Nothing is sent anywhere for this.
+- **Answers appear as they happen**: the page follows a question live instead of asking every second, so each step
+  ("Asking Household Todo…") and the answer show up at once; where a proxy doesn't allow that, it still asks every
+  second.
 
 ## 1.0.2
 

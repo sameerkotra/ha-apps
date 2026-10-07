@@ -57,6 +57,29 @@ _lock = threading.Lock()
 _stops: dict[str, threading.Event] = {}            # question id -> its Stop
 _warming: set[str] = set()                         # question ids waiting for the model to load
 _waiters: dict[str, tuple[threading.Event, dict]] = {}  # call id -> (answered, the answer)
+_changed = threading.Condition()
+_versions: dict[str, int] = {}                     # question id -> how many times it changed (for the live page)
+
+
+def touch(qid: str | None) -> None:
+    """Something the page shows about question `qid` changed: wake its live streams."""
+    if not qid:
+        return
+    with _changed:
+        _versions[qid] = _versions.get(qid, 0) + 1
+        _changed.notify_all()
+
+
+def wait_change(qid: str, seen: int, timeout: float) -> int:
+    """Wait until question `qid` changed after version `seen`, or `timeout` seconds; the version now."""
+    with _changed:
+        _changed.wait_for(lambda: _versions.get(qid, 0) != seen, timeout)
+        return _versions.get(qid, 0)
+
+
+def _touch_call(conn, cid: str) -> None:
+    row = conn.execute("SELECT question_id FROM calls WHERE id = ?", (cid,)).fetchone()
+    touch(row[0] if row else None)
 
 
 class LimitError(Exception):
@@ -132,6 +155,7 @@ def stop(qid: str, user_id: str) -> bool:
         ev = _stops.get(qid)
     if ev:
         ev.set()
+    touch(qid)
     return bool(n)
 
 
@@ -161,11 +185,13 @@ class _Run:
         began = time.monotonic()
         with _lock:
             _warming.add(self.qid)
+        touch(self.qid)
         try:
             ai_client.warmup_sync()
         finally:
             with _lock:
                 _warming.discard(self.qid)
+            touch(self.qid)
         self.deadline += time.monotonic() - began
         self.check()
 
@@ -177,6 +203,7 @@ class _Run:
         with db.get_conn() as conn:
             conn.execute(f"UPDATE questions SET {sets} WHERE id = ? AND state != 'stopped'",
                          (state, *cols.values(), self.qid))
+        touch(self.qid)
 
     def model(self, prompt: str, *, system: str, want_json: bool, purpose: str) -> str:
         self.check()
@@ -229,6 +256,9 @@ def _finish(r: _Run) -> None:
                      (config.utcnow().date().isoformat(), r.calls_made, r.input_tokens, r.output_tokens))
     with _lock:
         _stops.pop(r.qid, None)
+    with _changed:                                 # the streams read the final state and end
+        _versions.pop(r.qid, None)
+        _changed.notify_all()
 
 
 def _rounds(qid: str) -> int:
@@ -390,6 +420,7 @@ def _on_call_answer(msg, conn) -> None:
         result, reason = None, f"{msg.reason}:{str(detail)[:60]}" if detail else str(msg.reason)
     conn.execute("UPDATE calls SET state = ?, result = ?, reason = ?, answered_at = ? WHERE id = ? AND state = 'sent'",
                  (state, json.dumps(result, separators=(",", ":")) if result is not None else None, reason, _iso(), cid))
+    _touch_call(conn, cid)
     with _lock:
         w = _waiters.get(cid)
     if w:
@@ -435,6 +466,7 @@ def _no_answer(cid: str, state: str, reason: str | None) -> dict:
     with db.get_conn() as conn:
         conn.execute("UPDATE calls SET state = ?, reason = ?, answered_at = ? WHERE id = ? AND state = 'sent'",
                      (state, reason, _iso(), cid))
+        _touch_call(conn, cid)
         row = conn.execute("SELECT state, result, reason FROM calls WHERE id = ?", (cid,)).fetchone()
     return {"state": row["state"], "result": json.loads(row["result"]) if row["result"] else None,
             "reason": row["reason"]}
@@ -449,6 +481,7 @@ def _run_calls(r: _Run, tools, calls, round_no: int) -> list[dict]:
                          "(?, ?, ?, ?, ?, ?, 'sent', ?)", (cid, r.qid, tools[name]["app"], name,
                                                           json.dumps(args, sort_keys=True), round_no, _iso()))
             rows.append((cid, name, args))
+    touch(r.qid)
     r.calls_made += len(rows)
     wait = min(CALL_TIMEOUT, r.left())
     with ThreadPoolExecutor(max_workers=MAX_PER_ROUND) as pool:

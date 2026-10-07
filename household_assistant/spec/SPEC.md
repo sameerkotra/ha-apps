@@ -80,6 +80,9 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   at most 8), `shared` (each call: app, tool, args, state, text, items, links, `problem` in words) and `actions`.
 - `POST /api/ask/{id}/act/{call id}` → the proposal is sent with `confirm: true` and `confirmed_at`, as the
   person, if the tool is still offered to them (403 otherwise; 409 when already done; 404 for someone else's).
+- `GET /api/ask/{id}/events` → Server-Sent Events: `event: question` with the same view each time it changes (the
+  engine's `touch(qid)` on every state change, warm-up, call sent and answer; checked again every second anyway),
+  until the question ends; `: ping` every 20 s while quiet.
 - `POST /api/ask/{id}/stop` → state `stopped` at once; the thread ends at its next check.
 
 ## API
@@ -89,7 +92,7 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/me` | user | `user`, `canAsk`, `why`, `noAdmin`, `suggestions` (one example per app, else four defaults), `apps`, `privacy` (a cloud provider), `sharedOpen`, `recorderWarning` (admins, until ticked), `version` |
 | `GET /api/whoami` | user | the shared whoami contract |
 | `GET /api/tools` | user | the person's tools in words |
-| `POST /api/ask` · `GET /api/ask/{id}` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
+| `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
 | `GET /api/history?before=&limit=` · `DELETE /api/history` | user | own questions, newest first; clear (not a running one) |
 | `GET/PUT /api/admin/settings` · `POST /api/admin/settings/test-ai` | admin | App settings; Test connection |
 | `GET /api/admin/tools` · `POST /api/admin/tools/refresh` · `PUT /api/admin/tools/{app}` `{enabled}` | admin | Apps |
@@ -106,7 +109,7 @@ One column: the conversation (question; answer as Markdown built as DOM nodes �
 HTML), proposed actions as buttons, **Sources** chips (opened with `ConnectedApps.openAppPage`), **What was
 shared** (`<details>`), the suggestions and the ask box (Enter sends, Shift+Enter a new line, 🎤 where the browser
 has speech recognition; 🔊 on an answer reads it with `speechSynthesis`, and a question asked with 🎤 is read aloud
-when done). It polls a running question every second. `?q=` (on the page or the sidebar page's
+when done). It follows a running question live (`/events`; polling every second where the stream can't be opened). `?q=` (on the page or the sidebar page's
 address) fills in the question. Admins get Admin: Apps (with Connected apps), App settings (`settings.js`, with
 Test connection), People, Usage, Storage.
 

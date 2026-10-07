@@ -1,5 +1,5 @@
 """The page in headless Chromium (Playwright), against the real app served by uvicorn in this process and the fake
-household of test_assistant: an answer arrives and is drawn; 🔊 reads it aloud with the browser's speech synthesis,
+household of test_assistant: an answer arrives live (Server-Sent Events, no polling) and is drawn; 🔊 reads it aloud with the browser's speech synthesis,
 and a question asked with 🎤 is read aloud when it is answered. Skipped when Playwright (or a browser) isn't there."""
 import _env  # noqa: F401  (must be first)
 
@@ -80,7 +80,7 @@ class PageInBrowser(Household):
         super().tearDownClass()
 
     def open_page(self):
-        ctx = self.browser.new_context(extra_http_headers=ALICE, bypass_csp=True)
+        ctx = self.browser.new_context(extra_http_headers=ALICE)          # with the page's own CSP
         self.addCleanup(ctx.close)
         ctx.add_init_script(SPEECH)
         p = ctx.new_page()
@@ -91,10 +91,20 @@ class PageInBrowser(Household):
         p.wait_for_selector("#askInput")
         return p
 
+    def until(self, p, js, timeout=10.0):
+        """Wait for `js` to be true (wait_for_function would need eval, which the page's policy refuses)."""
+        end = time.monotonic() + timeout
+        while not p.evaluate(js):
+            if time.monotonic() > end:
+                self.fail(f"never true: {js}")
+            time.sleep(0.05)
+
     def test_read_aloud(self):
         model = Model('{"answer": "x"}', '{"answer": "Two tasks: **Bins** and the plumber."}')
         with mock.patch.object(ai_client, "generate", model):
             p = self.open_page()
+            asked = []
+            p.on("request", lambda req: asked.append(req.url.split("/api/", 1)[1]) if "/api/ask/" in req.url else None)
             p.fill("#askInput", "What's on today?")
             p.click("#askBtn")
             p.wait_for_selector(".answer .md")
@@ -103,10 +113,12 @@ class PageInBrowser(Household):
             self.assertEqual(p.evaluate("window.__said"), ["x"])
             p.evaluate("window.__heard = 'Anything tomorrow?'")
             p.click("#micBtn")
-            p.wait_for_function("document.querySelector('#askInput').value === 'Anything tomorrow?'")
+            self.until(p, "document.querySelector('#askInput').value === 'Anything tomorrow?'")
             p.click("#askBtn")
-            p.wait_for_function("window.__said.length === 2", timeout=10000)
+            self.until(p, "window.__said.length === 2")
         self.assertEqual(p.evaluate("window.__said[1]"), "Two tasks: Bins and the plumber.")
+        # followed live: each question read once and then its stream, never polled
+        self.assertEqual([a.split("/", 2)[2] if a.count("/") > 1 else "" for a in asked], ["", "events", "", "events"])
 
 
 if __name__ == "__main__":

@@ -259,6 +259,25 @@ class AssistantTests(Household):
         self.assertEqual(seen[1], "Waking up the model…")
         self.assertEqual(engine._progress(seen[0], "planning", []), "Thinking…")
 
+    def test_live_events(self):
+        def slow_plan(prompt, purpose):
+            time.sleep(0.3)
+            return plan_call("todo.tasks", when="today")
+        with mock.patch.object(ai_client, "generate", Model(slow_plan, '{"answer": "x"}', "Two tasks today.")):
+            qid = self.c.post("/api/ask", json={"text": "Today?"}, headers=ALICE).json()["id"]
+            self.assertEqual(self.c.get(f"/api/ask/{qid}/events", headers=BOB).status_code, 404)
+            with self.c.stream("GET", f"/api/ask/{qid}/events", headers=ALICE) as r:
+                self.assertEqual(r.headers["content-type"].split(";")[0], "text/event-stream")
+                events = [json.loads(line[len("data: "):]) for line in r.iter_lines() if line.startswith("data: ")]
+        states = [e["state"] for e in events]
+        self.assertEqual(states[0], "planning")
+        self.assertIn("calling", states)
+        self.assertEqual((states[-1], events[-1]["answer"]), ("done", "Two tasks today."))
+        self.assertEqual(len({json.dumps(e, sort_keys=True) for e in events}), len(events))   # only changes are sent
+        with self.c.stream("GET", f"/api/ask/{qid}/events", headers=ALICE) as r:      # a done one: once, then the end
+            self.assertEqual([line for line in r.iter_lines() if line.startswith("data: ")],
+                             ["data: " + json.dumps(events[-1], separators=(",", ":"))])
+
     def test_model_errors_are_readable(self):
         def broken(prompt, purpose):
             raise ai_client.AIError("Couldn't reach Ollama at http://192.0.2.1:11434: refused.", "unreachable")
