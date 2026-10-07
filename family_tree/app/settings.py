@@ -57,6 +57,8 @@ GROUPS = [
                                   "work for a module that's off (reminders, map look-ups, the inbox) stops."),
     Group("features_regional", "Region- and culture-specific features (off for a new install)"),
     Group("features_internet", "Features that use the internet (off for a new install)"),
+    Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
+          "apps know. Family Tree tells it the birthdays and anniversaries coming up."),
 ]
 
 SETTINGS = [
@@ -90,6 +92,9 @@ SETTINGS = [
             min_length=10, max_length=300, validators=[_tiles], show_if="feature_map"),
     Setting("nominatim_url", NOMINATIM_DEFAULT, "Place search address", group="map", kind="url", strict=True,
             min_length=10, max_length=300, validators=[_nominatim], show_if="feature_map"),
+    Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant", strict=True,
+            help="Lets the Household Assistant tell people the birthdays and anniversaries coming up, as Upcoming "
+                 "shows them. Each person can turn it off on Settings."),
     # one strict true/false per feature switch (features.py)
     *[Setting(f.key, f.default, f.label, group=_FEATURE_GROUPS[f.kind], strict=True, help=f.help)
       for f in features.FEATURES],

@@ -2393,10 +2393,23 @@ async function viewSettings() {
     state.me.isAdmin && feat("custom_fields") ? await customFieldsCard() : null,
     feat("milestones") ? await milestonesCard() : null,
     feat("quiz") ? await kidPinCard() : null,
+    state.user.assistant ? assistantCard() : null,
     h("div", { class: "card" }, h("h3", null, "Display"),
       h("div", { class: "form-row" }, field("Theme", theme), field("When typing dates like 12/03/1950", order)),
       h("div", { class: "hint" }, "Both are remembered in this browser.")),
     await whoamiCard());
+}
+
+/* Settings → the Household Assistant: "Let the Household Assistant answer for me". */
+function assistantCard() {
+  const box = h("input", { type: "checkbox", checked: state.user.assistantOk });
+  box.addEventListener("change", async () => {
+    try { await api("api/me/assistant", { method: "PUT", body: { assistantOk: box.checked } }); await loadMe(); toast("Saved"); }
+    catch (e) { box.checked = !box.checked; fail(e); }
+  });
+  return h("div", { class: "card" }, h("h3", null, "Household Assistant"),
+    h("label", { class: "check-row" }, box, " Let the Household Assistant answer for me"),
+    h("p", { class: "hint" }, "When you ask the Household Assistant app, it can tell you the birthdays and anniversaries coming up, as Upcoming shows them."));
 }
 
 const KIN_LANGS = { en: "English", te: "Telugu (తెలుగు)", hi: "Hindi (हिन्दी)" };

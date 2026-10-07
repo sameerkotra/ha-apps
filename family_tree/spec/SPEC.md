@@ -789,6 +789,22 @@ ALTER TABLE media ADD COLUMN edit TEXT;   -- JSON {rotate, angle, crop:{x,y,w,h}
 ALTER TABLE people ADD COLUMN never_export INTEGER NOT NULL DEFAULT 0;
 ```
 
+### 13.21 Answering the Household Assistant (`tools.py`, `app_messages.py`; HOUSEHOLD_ASSISTANT_SPEC.md §4.2)
+- **The household apps bus**: `app_messages.start()` in the lifespan starts the shared `app_bus.py` (its own WebSocket
+  and outbox thread; off without a Supervisor token, e.g. in the tests). Its tables (`bus_outbox`, `bus_seen`,
+  `bus_apps`) are made by `app_bus` itself. For now Family Tree only answers the **Household Assistant**
+  (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`, APP_MESSAGES_SPEC §6.6).
+- **One tool, `tree.birthdays`** (`days?` 1–90, default 30; `everyone?`): `upcoming.entries` for the asking person —
+  close family (3 steps from their "This is me") unless `everyone` or no "This is me", relationship names in their
+  own language, no remembrance days — as `{date, in_days, what, title, years, relationship}`. Names, dates, ages
+  and relationships only: no photos, contacts, notes or ids.
+- **Switches**: App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and Settings →
+  **Let the Household Assistant answer for me** (`users.assistant_ok`, default on; `PUT /api/me/assistant`);
+  otherwise `nack not_allowed` (`off` / `person_off`); a disabled or unknown user is `no_access`.
+- **Link**: the app's sidebar page only (`config.INGRESS_PANEL`: from `HOSTNAME`, refined at start-up from the
+  Supervisor's `GET /addons/self/info`, accepted only as `/<8 hex or local>_family_tree` with `ingress_panel` on).
+  The page doesn't open sub-paths, so there is no `target`.
+
 ## 14. Possible future work
 - **GEDCOM import and export** (5.5.1 `.ged` in UTF-8/UTF-16/ANSEL, 7.0 `.ged`/`.gdz` with media) through the same Export options, with a preview step, *empty* / *append* / *merge* (matched with the duplicate scorer, §13.4) import modes as one undoable batch, and mappings for the modules: photo regions as `OBJE`/`CROP`, script names as `NAME`/`TRAN` (7.0) or an extra `NAME` with `_LANG` (5.5.1), custom fields as `FACT`/`TYPE`, sources as `SOUR`/`PAGE`/`QUAY`, tithis as a `_TITHI` extension tag, ceremonies as `EVEN`/`TYPE`, and year-less dates as date phrases. The `gedcom_id` / `gedcom_extra` columns are reserved for it.
 - **HEIC uploads** converted to JPEG on the server.

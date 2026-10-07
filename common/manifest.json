@@ -70,7 +70,10 @@
           "people_admin.py",
           "web_security.py",
           "backup_core.py",
-          "geo.py"
+          "geo.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -96,7 +99,10 @@
           "test_people_admin.py",
           "test_web_security.py",
           "test_backup_core.py",
-          "test_geo.py"
+          "test_geo.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },

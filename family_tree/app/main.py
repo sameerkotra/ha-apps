@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import db, features, geocode, ha_client, housekeeping, inbox, kidmode, media, reminders, settings
+from . import app_messages, db, features, geocode, ha_client, housekeeping, inbox, kidmode, media, reminders, settings
 from .common import auth_core, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import (admin, events, export, families, history, kin as kin_router, me, media as media_router, people,
@@ -33,6 +33,10 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Reading the people from Home Assistant failed")
     await run_in_threadpool(media.check)
+    try:
+        await run_in_threadpool(app_messages.start)     # the household apps bus (the Household Assistant asks)
+    except Exception:
+        logger.exception("starting the app bus failed")
     jobs = jobs_core.Jobs()                      # started in this order, cancelled on shutdown
     jobs.add("housekeeping", housekeeping.loop)  # media check every 5 minutes; persons hourly; purge daily
     jobs.add("reminders", reminders.loop)
@@ -44,6 +48,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await jobs.stop()
+        await run_in_threadpool(app_messages.stop)
 
 
 app = FastAPI(title="Family Tree", lifespan=lifespan)
