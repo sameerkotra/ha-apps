@@ -113,7 +113,10 @@ async function settingsPage() {
         h("div", { class: "grow" }, h("div", null, me.name),
           h("div", { class: "hint" }, "Your name and photo come from Home Assistant. To change your photo, change your picture in Home Assistant (Settings → People); it shows here within 10 minutes."))),
       h("label", { class: "check" }, h("input", { type: "checkbox", checked: s.hideOnline, onchange: (e) => save({ hideOnline: e.target.checked }) }),
-        h("span", null, "Hide my online status and last seen"))),
+        h("span", null, "Hide my online status and last seen")),
+      me.app.assistant ? h("label", { class: "check" }, h("input", { type: "checkbox", checked: s.assistantOk, onchange: (e) => save({ assistantOk: e.target.checked }) }),
+        h("span", null, "Let the Household Assistant answer for me")) : null,
+      me.app.assistant ? h("p", { class: "hint" }, "It can tell you which of your chats have unread messages and how many — never what anyone wrote.") : null),
     h("div", { class: "card" }, h("h3", null, "Look"), field("Theme", themeSel, "Shared with the other household apps.")),
     privacyCard(),
     h("p", { class: "hint" }, `Household Chat ${me.version}.`));

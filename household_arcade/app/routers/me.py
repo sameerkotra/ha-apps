@@ -34,6 +34,7 @@ def prefs_json(row, default_look: str) -> dict:
         "handedness": row["handedness"],
         "reduceMotion": bool(row["reduce_motion"]),
         "receiveNotifications": bool(row["receive_notifications"]),
+        "assistantOk": bool(row["assistant_ok"]),     # "Let the Household Assistant answer for me"
         "gamePrefs": game_prefs(row),              # small per-person game choices: {game: {option: choice}}
     }
 
@@ -84,6 +85,7 @@ def me(current: dict = Depends(get_current_user)):
         "timeZone": config.timezone_name(),
         "version": config.APP_VERSION,
         "dailyChallenges": bool(s["show_daily_challenges"]),
+        "assistant": bool(s["assistant_answers"]),     # the Household Assistant may ask (Settings shows the switch)
         "lowTimeChildren": low,
     }
 

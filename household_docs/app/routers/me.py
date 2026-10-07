@@ -17,7 +17,8 @@ PREF_DEFAULTS = {"notifyShares": True, "foldersFirst": True, "sort": "name", "ne
                  "numberStyle": "auto", "defaultNote": "note",
                  # step 8–11 (§17.14): follow notifications and quiet hours, AI buttons, the scan's file name
                  "notifyFollows": True, "quietFrom": "22:00", "quietTo": "07:00", "showAi": True,
-                 "scanName": "Scan {date} {time}"}
+                 "scanName": "Scan {date} {time}",
+                 "assistantOk": True}             # "Let the Household Assistant answer for me" (tools.py)
 # More fields for /api/me from later steps: fn(conn, user) -> {field: value}
 ME_EXTRAS: list = []
 # numberStyle (sheets, §4): "auto" = the device's own, "en" = 1,234.56, "de" = 1.234,56, "in" = 12,34,567.89
@@ -66,7 +67,7 @@ def me(user: dict = Depends(get_current_user)):
                     "everyoneDefaultRole": s["everyone_default_role"],
                     "secretHint": s["secret_hint"], "maxDocMb": s["max_doc_mb"], "uploadMb": s["upload_mb"],
                     "regexSearch": s["regex_search"] and not user["is_child"], "currency": config.currency(),
-                    "timeZone": config.timezone_name()},
+                    "timeZone": config.timezone_name(), "assistant": s["assistant_answers"]},
             "pinnedSearches": pinned, "sharedFolders": folders, "tags": tag_list,
             "version": config.APP_VERSION, **more}
 
@@ -83,6 +84,7 @@ class PrefsIn(Strict):
     quietTo: str | None = Field(default=None, pattern="^([01][0-9]|2[0-3]):[0-5][0-9]$")
     showAi: bool | None = None
     scanName: str | None = Field(default=None, min_length=1, max_length=120)
+    assistantOk: bool | None = None
 
 
 @router.put("/me/settings")

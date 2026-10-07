@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.0
+
+- **Answers the Household Assistant**: the new Household Assistant app can ask Arcade for the leaderboard ("Who has the high score in Snake?" — one game's top 10, or who holds each game's record) and for a person's own bests and play time this week, with a link back to the Leaderboard or My scores. The leaderboard is never given to a child, and nothing while it's switched off. On by default; an admin can turn it off in **App settings → Household Assistant**, and each person on **Settings → Let the Household Assistant answer for me**.
+- Arcade now joins the household apps' message bus (Home Assistant's event bus). The **DOCS** show how to keep those messages out of Home Assistant's history.
+
 ## 1.8.0
 
 - **Phone notifications open the right page.** Tapping a notification (an invite's **Join** / **Not now**, a

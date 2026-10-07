@@ -229,6 +229,9 @@ class DeliveryTest(BusCase):
 
     def test_logs_never_show_data(self):
         a, b = self.pair({"poll.create": lambda m, c: {"poll_id": "SECRET-RESULT"}})
+        disabled = logging.root.manager.disable                 # an app's tests may turn logging off
+        logging.disable(logging.NOTSET)
+        self.addCleanup(logging.disable, disabled)
         logger = logging.getLogger("app_bus")
         logger.setLevel(logging.INFO)
         with self.assertLogs("app_bus", "INFO") as logs:

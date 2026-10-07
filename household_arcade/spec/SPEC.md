@@ -312,7 +312,7 @@ sent by `backup_core.send_file`.
   leaderboard is hidden); "5 minutes left" to the chosen admins once per child
   per day, with `url`/`clickAction` and an `actions: [{action: "URI", title:
   "Add 15 minutes", uri: …/admin/users/<id>}]` when the app knows its page.
-- **Where a notification opens** (`panel.py`, 1.8.0; the pattern is Docs' "Open in Docs", APP_MESSAGES_SPEC
+- **Where a notification opens** (`panel.py`; the pattern is Docs' "Open in Docs", APP_MESSAGES_SPEC
   §6.5): the app's **sidebar page** `/<full slug>` (`/local_household_arcade`, `/a1b2c3d4_household_arcade`),
   learnt at start-up from the Supervisor (`GET /addons/self/info`: `slug`, `ingress_panel`; allowed for every app)
   or from `HOSTNAME` (the slug with `-`; accepted only as `^([0-9a-f]{8}|local)-household-arcade$`), with the
@@ -324,9 +324,20 @@ sent by `backup_core.send_file`.
   answers the sub-path itself (`main.py`: `/home`, `/scores`, `/leaderboard`, `/settings`, `/play`, `/admin`, with
   up to two arguments of `A–Z a–z 0–9 _ -`, 1–64) with a relative redirect to `#/…`, so a link opened straight
   at the app works too; the static files keep their own paths. No sidebar page → no link in the notification
-  (`/api/me` → `panel` null). Before 1.8.0 the links were `/hassio/ingress/<slug>#/…`: the admin's Settings →
+  (`/api/me` → `panel` null). Earlier versions' links were `/hassio/ingress/<slug>#/…`: the admin's Settings →
   Apps page (not open to everyone) and a fragment Home Assistant drops on the way in, so a tap opened the wrong
   page or nothing.
+- **The household apps bus** (`app_messages.py`, the shared `app_bus.py` and `ha_ws.py`, APP_MESSAGES_SPEC):
+  started in the lifespan with its own WebSocket; the outbox runs on its own thread while the background loops do.
+  Its tables (`bus_outbox`, `bus_seen`, `bus_apps`) are made by `app_bus` itself. For now Arcade only answers the
+  **Household Assistant** (`tools.py`, the shared `assist_tools.py`; HOUSEHOLD_ASSISTANT_SPEC §4.2, APP_MESSAGES_SPEC
+  §6.6): `arcade.scores` (`game?` by id or name ignoring case and punctuation, `period?` all|month; household
+  scope, not for children) is the Leaderboard tab's top 10 for the game's default mode, or each enabled game's
+  record holder (`scores.records`), and "switched off" while `leaderboard` is off; `arcade.mine` (person scope,
+  children too) is My scores' bests and minutes this week. Links: `/leaderboard`, `/scores` on the sidebar page.
+  Answered only with App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and the
+  person's own **Let the Household Assistant answer for me** (`users.assistant_ok`, migration 9, default on);
+  otherwise `nack not_allowed` (`off` / `person_off`); a switched-off or unknown person is `no_access`.
 - Sensors (`ha_sensors.py`), only with `ha_sensors` on:
   `sensor.household_arcade_<game>_record`,
   `sensor.household_arcade_<person>_played_today` (minutes; child attributes),
@@ -651,7 +662,7 @@ phone (or computer), play one game together. It comes in three steps, each a
 release of its own. **Step 1 (Race, §13.3) is built**: invites, the match tables
 (migration 6), the live link with its long-poll fallback, the race screen,
 Rematch, head to head and the App setting *Invites by phone notification*.
-**Step 2 (live duels, §13.4) was built and then removed in 1.8.0** (see §13.4).
+**Step 2 (live duels, §13.4) was built and then removed** (see §13.4).
 **Step 3 (turn by turn, §13.5) is built** with wave 7's board games: moves checked by
 the server's own rules (`app/rules/`, `app/turns.py`, migration 8), "Your games", your-move
 notifications, and the 2–4 player plumbing (seats, starting with those who joined, server
@@ -718,7 +729,7 @@ link per player, chosen automatically in the browser:
   apps and Home Assistant Cloud; the fallback is what makes that safe to
   ship. The test release the plan asks for before step 2 is still to do.
 
-*(The live duels' use of this link — the lockstep messages and the HTTP fallback — went with them in 1.8.0.)*
+*(The live duels' use of this link — the lockstep messages and the HTTP fallback — went with them.)*
 
 ### 13.3 Step 1 — Race (built)
 
@@ -819,9 +830,9 @@ delay doesn't matter.
   change in the games' rules files beyond reporting a small `status()` —
   score, level, over).
 
-### 13.4 Step 2 — Live duels (removed in 1.8.0)
+### 13.4 Step 2 — Live duels (removed)
 
-Built in an earlier version and removed in 1.8.0: the *Two phones* modes of Snake Duel, Paddle Duel and Tank Battle
+Built in an earlier version and removed since: the *Two phones* modes of Snake Duel, Paddle Duel and Tank Battle
 (Together / Against each other) played in lockstep from two phones, and Carrom's *Two phones (live, taking
 turns)*, with `app/live.py` (the relay and referee: input delay, ordering, checksums, pauses, a phone that went
 quiet), `games/lockstep.js`, `Together.liveLink`, the kit's lockstep session and the `kind: "live"` match plumbing.
@@ -932,7 +943,7 @@ one who didn't move.
 
 ### 13.6 Data (migration 6; migration 8 for turn by turn)
 
-*(Live duels had no tables of their own; their rooms and reports lived in memory. Gone in 1.8.0.)*
+*(Live duels had no tables of their own; their rooms and reports lived in memory. Gone since.)*
 
 **Built (migration 6):** `matches` and `match_players` as below (the live
 picture's version number `v` is in memory, not in the table), plus
@@ -983,7 +994,7 @@ panel path; behind the App setting `notify_invites` (default on, label
 *Receive notifications*.
 
 *(The live duels' API — `kind: "live"`, the match picture's `live`, `POST /api/scores` `report`, the lockstep
-messages over the link and `POST /api/matches/{id}/live` — was removed in 1.8.0. `POST /api/matches/{id}/resign`
+messages over the link and `POST /api/matches/{id}/live` — was removed. `POST /api/matches/{id}/resign`
 is for turn-by-turn matches only.)*
 
 The plan, as before:
@@ -1027,7 +1038,7 @@ measures from the play area down). Pausing a race has no Save for later and
 the end button reads "Give up (score kept)".
 
 *(The live duels' screens — the "Two phones" start card, "Live duel" overlays, the bar's waiting / connection
-states and the "Out of step" headline — went in 1.8.0.)*
+states and the "Out of step" headline — went with them.)*
 
 **Built (turn by turn):** a turn mode's start card has no Play button — **👥 Play with someone** and the line
 "Two phones: take turns from your own phones — they needn't be open at the same time." The waiting card adds that
@@ -1070,7 +1081,7 @@ agreeing with the game file, a race of each game through the API with its own
 rule — solved first, fewer moves in the same second, the counted time, rows, the
 shorter game — and saving) and `tests/js/wave6.test.js`.
 
-*(`tests/js/live.test.js` and `tests/test_live.py`, the live duels' tests, went with them in 1.8.0.)*
+*(`tests/js/live.test.js` and `tests/test_live.py`, the live duels' tests, went with them.)*
 
 **Built (turn by turn):** `tests/test_wave7.py` — the game table and honest limits, each rules module (Four in a
 Row lines and refusals, Tic-tac-toe, Checkers' compulsory captures, multi-jumps that must carry on, a choice of

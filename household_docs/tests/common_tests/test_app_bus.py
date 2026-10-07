@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=868b468e05b5a93fcd0c8ec34ded055e959cef6baecd5102c87f99147c43e0b4
+# Shared file: edit common/tests/test_app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=0bd03e38222743682623196dad90d39cbe642199f5f4c9d349568b5f7ca7e372
 """The shared app bus (common/python/app_bus.py, ha_ws.py) against a fake Home Assistant event bus
 (common/tests/fake_ha_bus.py), with two or three fake apps in this process. APP_MESSAGES_SPEC.md §3–§6, §9.
 
@@ -230,6 +230,9 @@ class DeliveryTest(BusCase):
 
     def test_logs_never_show_data(self):
         a, b = self.pair({"poll.create": lambda m, c: {"poll_id": "SECRET-RESULT"}})
+        disabled = logging.root.manager.disable                 # an app's tests may turn logging off
+        logging.disable(logging.NOTSET)
+        self.addCleanup(logging.disable, disabled)
         logger = logging.getLogger("app_bus")
         logger.setLevel(logging.INFO)
         with self.assertLogs("app_bus", "INFO") as logs:

@@ -84,6 +84,8 @@ GROUPS = [
     Group("looks", "Looks and scores"),
     Group("children", "Children"),
     Group("ha", "Home Assistant"),
+    Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
+          "apps know. Arcade tells it scores: the household leaderboard and a person's own bests."),
     Group("ai", "AI levels", "More levels for every game, made by an AI model: your own (Ollama) or a service. Only the "
                              "game's rules and recent levels are sent, never anything about the people here. Every level "
                              "is checked before anyone plays it."),
@@ -117,6 +119,9 @@ SETTINGS = [
     Setting("notify_turns", True, "Your-move notifications", group="ha",
             help="A phone notification when it is someone's move in a turn-by-turn game (at most one every 15 minutes "
                  "per match, none during a child's quiet hours). Each person can opt out on Settings."),
+    Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
+            help="Lets the Household Assistant tell people the leaderboard (only while the leaderboard is on) and their "
+                 "own bests. Children can only ask for their own. Each person can turn it off on Settings."),
     Setting("ha_sensors", False, "Home Assistant sensors", group="ha",
             help="Publishes sensor.household_arcade_<game>_record, sensor.household_arcade_<person>_played_today and "
                  "binary_sensor.household_arcade_<person>_playing."),

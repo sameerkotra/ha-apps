@@ -3,9 +3,10 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 
-from . import db, ha_sync
+from . import app_messages, db, ha_sync
 from .common import auth_core, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, ai, goals, logs, me, saved_foods, users, weight
@@ -21,6 +22,10 @@ async def lifespan(app: FastAPI):
     (Replaces the deprecated @app.on_event("startup") hook.)"""
     db.init_db()
     await ha_sync.load_timezone()
+    try:
+        await run_in_threadpool(app_messages.start)     # the household apps bus (the Household Assistant asks)
+    except Exception:
+        logger.exception("starting the app bus failed")
     jobs = jobs_core.Jobs()
     # Re-push every known user's daily-calories sensor every 15 minutes, mainly
     # so the value rolls over to 0 shortly after midnight even if nobody has
@@ -34,6 +39,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await jobs.stop()
+        await run_in_threadpool(app_messages.stop)
 
 
 app = FastAPI(title="Calorie Tracker", lifespan=lifespan)

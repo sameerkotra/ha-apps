@@ -20,7 +20,10 @@
           "web_security.py",
           "backup_core.py",
           "sensor_publisher.py",
-          "ai_client.py"
+          "ai_client.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -45,7 +48,11 @@
           "test_web_security.py",
           "test_backup_core.py",
           "test_sensor_publisher.py",
-          "test_ai_client.py"
+          "test_ai_client.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py",
+          "fake_ha.py"
         ]
       }
     },
@@ -70,7 +77,10 @@
           "people_admin.py",
           "web_security.py",
           "backup_core.py",
-          "geo.py"
+          "geo.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -96,7 +106,10 @@
           "test_people_admin.py",
           "test_web_security.py",
           "test_backup_core.py",
-          "test_geo.py"
+          "test_geo.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
@@ -116,7 +129,10 @@
           "backup_core.py",
           "ai_client.py",
           "csv_export.py",
-          "sandbox_run.py"
+          "sandbox_run.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "tests": [
           "__init__.py",
@@ -129,7 +145,11 @@
           "test_backup_core.py",
           "test_ai_client.py",
           "test_csv_export.py",
-          "test_sandbox_run.py"
+          "test_sandbox_run.py",
+          "fake_ha.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ],
         "static": [
           "theme-boot.js",
@@ -160,7 +180,10 @@
           "web_security.py",
           "backup_core.py",
           "sensor_publisher.py",
-          "ai_client.py"
+          "ai_client.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -187,7 +210,10 @@
           "test_web_security.py",
           "test_backup_core.py",
           "test_sensor_publisher.py",
-          "test_ai_client.py"
+          "test_ai_client.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
@@ -213,7 +239,8 @@
           "people_admin.py",
           "web_security.py",
           "backup_core.py",
-          "app_bus.py"
+          "app_bus.py",
+          "assist_tools.py"
         ],
         "static": [
           "whoami.js",
@@ -240,7 +267,8 @@
           "test_backup_core.py",
           "fake_ha.py",
           "fake_ha_bus.py",
-          "test_app_bus.py"
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
@@ -269,7 +297,8 @@
           "geo.py",
           "csv_export.py",
           "app_bus.py",
-          "ha_ws.py"
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -300,7 +329,8 @@
           "test_geo.py",
           "test_csv_export.py",
           "fake_ha_bus.py",
-          "test_app_bus.py"
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
@@ -371,7 +401,10 @@
           "sensor_publisher.py",
           "geo.py",
           "csv_export.py",
-          "sandbox_run.py"
+          "sandbox_run.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -394,7 +427,11 @@
           "test_sensor_publisher.py",
           "test_geo.py",
           "test_csv_export.py",
-          "test_sandbox_run.py"
+          "test_sandbox_run.py",
+          "fake_ha_bus.py",
+          "fake_ha.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
@@ -420,7 +457,10 @@
           "csv_export.py",
           "ha_notify.py",
           "ha_people.py",
-          "people_admin.py"
+          "people_admin.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -447,7 +487,10 @@
           "test_sensor_publisher.py",
           "test_csv_export.py",
           "fake_ha.py",
-          "test_people_admin.py"
+          "test_people_admin.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },
@@ -476,7 +519,8 @@
           "sensor_publisher.py",
           "ai_client.py",
           "app_bus.py",
-          "ha_ws.py"
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -508,7 +552,8 @@
           "test_sensor_publisher.py",
           "test_ai_client.py",
           "fake_ha_bus.py",
-          "test_app_bus.py"
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     }

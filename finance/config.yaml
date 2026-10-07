@@ -1,5 +1,5 @@
 name: "Finance Dashboard"
-version: "1.1.1"
+version: "1.2.0"
 slug: "finance"
 description: >-
   Household finances: bank and card statements (PDF/CSV) read by the AI you
@@ -32,7 +32,9 @@ panel_title: Finance
 # the SUPERVISOR_TOKEN this flag causes Supervisor to inject as an env var.
 # HA shows a one-time prompt that the app now requests new permissions on
 # the next update because of this -- expected, not a bug. Read-only: this
-# app never writes anything back to Home Assistant's config.
+# app never writes anything back to Home Assistant's config. The same access
+# carries the household apps' messages (the Household Assistant asks, when an
+# admin allows it).
 homeassistant_api: true
 # No other Supervisor/HA API access, and the default AppArmor profile (these are the
 # Supervisor's defaults, spelled out like every other app's).

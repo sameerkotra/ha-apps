@@ -249,6 +249,27 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
 - **Quiet and safe**: no token → nothing is tried (no warning per charge); HA unreachable → `ha_notify` logs a warning, the request already succeeded; any other error in the task is logged (`logger.exception`), never raised. No DB connection is open while Home Assistant is called (`send_notices` closes it per person before sending).
 - At startup (with a token) `ha_people.refresh_blocking` and `ha_notify.check_targets_blocking` (warns about assigned services HA doesn't have) run once in a thread.
 
+### 7.2 The household apps bus and the Household Assistant (`app_messages.py`, `tools.py`)
+
+- `app_messages.start()` in the lifespan learns the sidebar page into `config.SIDEBAR_PAGE` (the shared
+  `assist_tools.sidebar_page`: the Supervisor's `addons/self/info`, else `HOSTNAME`; `/<8 hex or local>_splitpot`
+  only — not the admin's `/hassio/ingress/…` page the notifications use) and starts the shared `app_bus.py` (its own
+  WebSocket; the outbox thread only with a token). The bus's tables (`bus_outbox`, `bus_seen`, `bus_apps`) are made
+  by `app_bus` itself.
+- It answers the **Household Assistant** (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`,
+  APP_MESSAGES_SPEC §6.6; HOUSEHOLD_ASSISTANT_SPEC §4.2). `requested_by` (an HA user id) is matched to a Splitpot
+  person by `users.ha_user_id` only, never by name; unlinked or disabled → `nack not_allowed no_access`. Only the
+  groups that person is a member of (`group_members`), or the one named in `group` (any case; else `nack not_found
+  group`).
+  - `splitpot.balances` (`group?`): per group the settle-up transfers (`settle_up(group_net(…))`, as the group
+    page) as `{group, from, to, amount}`, and the person's overall net in the text.
+  - `splitpot.recent` (`group?`, `days?` 1–90): each group's newest 20 entries (`ledger_page`), merged newest
+    first, the first 20 kept (`more` when there were more) as `{date (local day), group, what ("payment" for a
+    settle-up), paid_by, amount, your_share}`.
+- **Off by default** (App settings → **Answer the Household Assistant**, `assistant_answers`: money is private); a
+  person can also turn it off on My settings (`users.assistant_ok`, default on; `PUT /me/prefs {assistantOk}`).
+  Otherwise `nack not_allowed` (`off` / `person_off`). Links are the sidebar page only (no sub-path routes).
+
 ## 8. Background jobs
 
 - `lifespan` (not `on_event`):

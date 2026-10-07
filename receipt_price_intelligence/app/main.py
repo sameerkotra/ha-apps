@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.api import admin, alerts, analysis, backup, budgets, deals, drafts, export, extraction, homes, images, imports, items, lookout, nearby, notifications, planner, shoplist, stores, webdebug, webinfo
-from app import app_settings
+from app import app_messages, app_settings
 from app.common import sandbox_run, web_security
 from app.auth import ingress_gate, sync_roles
 from app.config import APP_VERSION, get_settings
@@ -66,9 +66,16 @@ async def lifespan(app: FastAPI):
     # Daily best-price check (also catches up on anything out of date right now)
     scheduler.start()
 
+    # The household apps bus: the Household Assistant asks (app_messages.py, tools.py)
+    try:
+        app_messages.start()
+    except Exception as e:
+        logger.error("Could not join the household apps bus: %s", e)
+
     yield
 
     # Shutdown
+    app_messages.stop()
     scheduler.stop()
     logger.info("Shutting down Receipt Price Intelligence...")
 

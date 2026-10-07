@@ -239,7 +239,7 @@ class FrontendEscaping(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 DEFAULT_VALUES = {"ai_provider": "", "ai_url": "", "ai_model": "", "ai_max_tokens": 4096,
-                  "expose_daily_calories_sensor": True}
+                  "expose_daily_calories_sensor": True, "assistant_answers": True}
 
 
 class AppSettingsApi(ApiBase):
@@ -255,8 +255,8 @@ class AppSettingsApi(ApiBase):
         self.assertEqual(set(j["meta"]), set(settings.DEFAULTS))
         # meta describes each field for the shared page (common/static/settings.js); none needs a restart
         self.assertTrue(all(m["restartRequired"] is False for m in j["meta"].values()))
-        self.assertTrue(all(m["label"] and m["group"] in {"ai", "ha"} for m in j["meta"].values()))
-        self.assertEqual([g["id"] for g in j["groups"]], ["ai", "ha"])
+        self.assertTrue(all(m["label"] and m["group"] in {"ai", "ha", "assistant"} for m in j["meta"].values()))
+        self.assertEqual([g["id"] for g in j["groups"]], ["ai", "ha", "assistant"])
         self.assertEqual(j["meta"]["ai_api_key"]["kind"], "secret")
         self.assertEqual((j["meta"]["ai_max_tokens"]["min"], j["meta"]["ai_max_tokens"]["max"]), (256, 200000))
         self.assertEqual(j["secretsSet"], {"ai_api_key": False})

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.0
+
+- **Answers the Household Assistant**: the new Household Assistant app can ask Family Tree "Whose birthday is coming up?" and gets what Upcoming would show that person — names, dates, ages and relationships, never photos, contacts or notes — with a link back to Family Tree. On by default; an admin can turn it off in **App settings → Household Assistant**, and each person in **Settings → Household Assistant**.
+- Family Tree now joins the household apps' message bus (Home Assistant's event bus). The **DOCS** show how to keep those messages out of Home Assistant's history.
+
 ## 2.2.2
 
 - **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.

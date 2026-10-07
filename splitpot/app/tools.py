@@ -1,0 +1,143 @@
+"""What Splitpot answers the Household Assistant (HOUSEHOLD_ASSISTANT_SPEC.md §4.2; the shared
+app/common/assist_tools.py).
+
+- `splitpot.balances`: who owes whom in the groups the asking person is in (the group page's settle-up), and
+  where they stand overall;
+- `splitpot.recent`: the newest expenses and payments in those groups (what, who paid, how much, their share),
+  like the group page's first page of 20.
+
+Only the groups the person is a member of, matched to their Home Assistant login (`users.ha_user_id`), never by
+name. Money is private, so the admin's *Answer the Household Assistant* is **off** until turned on; each person can
+also turn it off for themselves (My settings). Splitpot's page doesn't open sub-paths, so links open the app.
+"""
+import re
+from datetime import datetime, timedelta, timezone
+
+from . import config
+from .common import app_bus as bus
+from .common import assist_tools
+from .common.assist_tools import Arg
+
+PAGE = 20                                     # the group page's first page (main.LEDGER_PAGE)
+_PANEL_RE = re.compile(r"^/[a-z0-9]{1,16}_splitpot$")
+
+
+def _main():
+    from . import main                        # at call time: main imports this module
+    return main
+
+
+def _actor(conn, uid: str):
+    r = conn.execute("SELECT id, name, disabled, assistant_ok FROM users WHERE ha_user_id = ?",
+                     (uid.strip().lower(),)).fetchone()
+    if r is None or r["disabled"]:
+        return None
+    return {"id": r["id"], "name": r["name"], "assistant_ok": bool(r["assistant_ok"])}
+
+
+def _panel():
+    return config.SIDEBAR_PAGE if _PANEL_RE.match(config.SIDEBAR_PAGE or "") else None
+
+
+tools = assist_tools.Catalogue(
+    "splitpot", actor=_actor, enabled=lambda conn: bool(_main().get_setting("assistant_answers")),
+    person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel)
+
+_GROUP = Arg("string", "a group's name; leave out for all the person's groups", max_length=60)
+
+
+def _groups(ctx) -> list:
+    """The person's groups (id, name), or the one named in `group` (any case); Nack not_found otherwise."""
+    rows = ctx.conn.execute("SELECT g.id, g.name FROM groups g JOIN group_members m ON m.group_id = g.id "
+                            "WHERE m.user_id = ? ORDER BY g.is_default DESC, g.created_at", (ctx.user["id"],)).fetchall()
+    want = ctx.args.get("group")
+    if want is not None:
+        rows = [r for r in rows if r["name"].strip().lower() == want.strip().lower()]
+        if not rows:
+            raise bus.Nack("not_found", "group")
+    return rows
+
+
+def _names(conn) -> dict:
+    return {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
+
+
+@tools.tool("splitpot.balances",
+            "Who owes whom in the Splitpot groups the person is in, after the simplest settle-up, and what the person "
+            "owes or is owed overall.",
+            args={"group": _GROUP},
+            returns="per group: transfers (from, to, amount) and the person's net",
+            examples=("Who owes me money?",))
+def balances(ctx):
+    m = _main()
+    groups = _groups(ctx)
+    link = ctx.link("Splitpot")
+    if not groups:
+        return ctx.result(f"{ctx.user['name']} isn't in any Splitpot group.", links=[link])
+    names, me = _names(ctx.conn), ctx.user["id"]
+    items, lines, overall = [], [], 0.0
+    for g in groups:
+        net, transfers = m.settle_up(m.group_net(ctx.conn, g["id"], m.group_member_ids(ctx.conn, g["id"])))
+        mine = net.get(me, 0.0)
+        overall += mine
+        for t in transfers:
+            items.append({"group": g["name"], "from": names.get(t["from"], "Unknown"),
+                          "to": names.get(t["to"], "Unknown"), "amount": t["amount"]})
+        if not transfers:
+            lines.append(f"{g['name']}: all settled")
+            continue
+        parts = []
+        for t in transfers:
+            who_from = "you" if t["from"] == me else names.get(t["from"], "Unknown")
+            who_to = "you" if t["to"] == me else names.get(t["to"], "Unknown")
+            verb = "owe" if t["from"] == me else "owes"
+            parts.append(f"{who_from} {verb} {who_to} {m.money(t['amount'])}")
+        lines.append(f"{g['name']}: " + "; ".join(parts))
+    if abs(overall) < 0.005:
+        stand = f"{ctx.user['name']} is square overall"
+    elif overall > 0:
+        stand = f"{ctx.user['name']} is owed {m.money(overall)} overall"
+    else:
+        stand = f"{ctx.user['name']} owes {m.money(-overall)} overall"
+    return ctx.result(f"{stand}. " + ". ".join(lines) + ".", items=items, links=[link])
+
+
+@tools.tool("splitpot.recent",
+            "The newest expenses and settle-up payments in the person's Splitpot groups: what, who paid, how much and "
+            "the person's share.",
+            args={"group": _GROUP, "days": Arg("number", "only the last N days, 1 to 90", min=1, max=90)},
+            returns="entries newest first (at most 20): date, group, what, paid by, amount, your share",
+            examples=("What did we spend on the trip?",))
+def recent(ctx):
+    m = _main()
+    groups = _groups(ctx)
+    link = ctx.link("Splitpot")
+    since = None
+    if "days" in ctx.args:
+        since = datetime.now(timezone.utc) - timedelta(days=int(ctx.args["days"]))
+    entries, more = [], False
+    for g in groups:
+        page, cursor = m.ledger_page(ctx.conn, g["id"], PAGE)
+        more = more or bool(cursor)
+        for e in page:
+            at = m.parse_date(e["date"])                    # a UTC timestamp or a local calendar day
+            if since and at < since:
+                continue
+            share = next((s["amount"] for s in e["splits"] if s["userId"] == ctx.user["id"]), None)
+            entries.append({"date": at.astimezone(m.tz()).date().isoformat(), "group": g["name"],
+                            "what": "payment" if e["splitType"] == "payment" else e["description"],
+                            "paid_by": e["paidByName"], "amount": e["amount"], "your_share": share,
+                            "_at": at})
+    entries.sort(key=lambda x: x["_at"], reverse=True)
+    if len(entries) > PAGE:
+        entries, more = entries[:PAGE], True
+    for x in entries:
+        del x["_at"]
+    if not entries:
+        when = f" in the last {int(ctx.args['days'])} days" if "days" in ctx.args else ""
+        return ctx.result(f"Nothing in {ctx.user['name']}'s Splitpot groups{when}.", links=[link])
+    spent = sum(x["amount"] for x in entries if x["what"] != "payment")
+    text = (f"{len(entries)} recent entries (spent {m.money(spent)}): "
+            + "; ".join(f"{x['date']} {x['what']} {m.money(x['amount'])} paid by {x['paid_by']} ({x['group']})"
+                        for x in entries[:6]) + ("…" if len(entries) > 6 else "") + ".")
+    return ctx.result(text, items=entries, links=[link], more=more)

@@ -67,6 +67,14 @@ ADMIN_USERS = auth_core.admin_names(_raw_admins) | auth_core.env_admins("DEV_ADM
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = "http://supervisor/core/api"
+SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")   # the app bus
+SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
+
+APP_TITLE = "Calorie Tracker"
+APP_VERSION = "2.2.0"           # config.yaml's version: the app bus says it in its hello
+# The app's sidebar page ("/<full slug>") for links in the Household Assistant's answers; set at start-up
+# (app_messages.start, from the Supervisor or the container's host name).
+INGRESS_PANEL = None
 
 # ---------------------------------------------------------------------------
 # Time zone. The container's own clock is UTC (standard for Docker images),

@@ -63,7 +63,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.3.2"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.4.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -697,6 +697,31 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   end to end on the fake event bus (`common_tests/fake_ha_bus.py`) with a fake Household Docs: lists, a new list
   and a second batch, a duplicate acted on once, a refusal, the lifespan starting and stopping the bus; plus
   `common_tests/test_app_bus.py` on the app's own copies.
+
+## 16. Answering the Household Assistant (`tools.py`; HOUSEHOLD_ASSISTANT_SPEC.md §4.2)
+
+- **Over the bus**: `tools.tools.install(bus)` in `app_messages.py` adds `assist.tools.list` and `assist.tool.call`
+  (the shared `assist_tools.py`, APP_MESSAGES_SPEC §6.6) to the kinds Todo answers. `requested_by` is the actor
+  (an enabled `users` row; "acting as" never applies), answered inside the bus's transaction; `nack busy` during a
+  restore. The sidebar page for links (`config.SIDEBAR_PAGE`) comes from `assist_tools.sidebar_page` at start-up —
+  not `INGRESS_PANEL`, the admin's page the notifications use. Todo's page has no sub-path routes, so links carry
+  no `target`.
+- **Tools** (everything as the person sees it: shared lists and their own personal lists, `taskview.VISIBLE_SQL`):
+  - `todo.tasks` (`when` today|week|overdue|all, `list?` by name, any case): open tasks; *today* = overdue + due
+    today, *week* = overdue + due within 7 days, *overdue* = overdue (completion-required and past, §8l), sorted as
+    the dashboard (`all`: by due date); `{title, due, time, list, who, overdue}`, at most 50 (`more`). Never notes
+    or links.
+  - `todo.lists`: `{list, kind, open}`.
+  - `todo.schedule` (`days?` 1–14, default 7): every effective date of the visible schedule items
+    (`schedule_logic.effective_dates_between`) as `{date, what, time, for}`.
+  - `todo.items.add` (`acts`; `list`, `text` 1–200, `due?`): only with `confirm: true` (the person's tap), to a list
+    they can see (`not_found list` otherwise, someone else's personal list included); `source` "Assistant", no
+    notification.
+- **Switches**: App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and each person's
+  **Let the Household Assistant answer for me** (`users.assistant_ok`, default on; `GET/PUT /api/prefs`
+  `assistantOk`, Settings → Household Assistant). Otherwise `nack not_allowed` (`off` / `person_off`); an unknown
+  or disabled person is `no_access`.
+- **Tests**: `tests/test_tools.py`, and `common_tests/test_assist_tools.py` on the app's own copy.
 
 ## Security notes (2026-10)
 

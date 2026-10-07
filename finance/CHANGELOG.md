@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0
+
+- **Can answer the Household Assistant**: once an admin turns on **Answer the Household Assistant** (Admin → App settings; off by default, because money is private), the new Household Assistant app can ask Finance about a person's own month — income, spending, net and top categories, a category's largest charges (never notes), recurring charges and bills coming up — and about the data an admin shared with them. Each answer links back to the app.
+- Finance now joins the household apps' message bus (Home Assistant's event bus); its small tables are kept out of Query and Reports. The **DOCS** show how to keep those messages out of Home Assistant's history.
+
 ## 1.1.1
 
 - **Security**: PDFs are now read by the PDF tools (poppler) as a separate user without any rights, with memory, time and file-size limits, on a copy of the file — they can't reach the app's database or other files.

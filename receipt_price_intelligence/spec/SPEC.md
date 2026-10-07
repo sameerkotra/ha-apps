@@ -102,6 +102,28 @@ references are in [`docs/`](../docs): the API (`API.md`), the database (`DATABAS
 - Backups: `services/backup.py` names the file with `backup_core.file_name`; `api/backup.py` sends it with
   `backup_core.send_file` and receives an upload with `backup_core.receive`; the safety copies are unchanged.
 
+## 5a. The household apps bus and the Household Assistant (`app/app_messages.py`, `app/tools.py`)
+
+- The shared `app_bus.py` (with `ha_ws.py`) starts in the lifespan (its own WebSocket; the outbox thread only with a
+  Supervisor token). **Its tables are in a database of its own**, `app_bus.db` next to the app's: the bus wants plain
+  sqlite3 and holds a write lock for the length of each answer, which would block the tools' own SQLAlchemy writes to
+  the app's file (the HOUSEHOLD_ASSISTANT_SPEC §12 decision). Nothing in it needs backing up: the outbox, the ids
+  already answered (7 days) and the apps heard from.
+- It answers the **Household Assistant** (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`,
+  APP_MESSAGES_SPEC §6.6). Each tool opens its own SQLAlchemy session inside `reqcache.scope()`. `requested_by` must
+  have a `users` row (has opened the app), else `nack not_allowed no_access`. Every home is visible to everyone here,
+  so a tool takes `home?` (by name, any case); with several homes and none named, `nack invalid home`.
+  - `receipt.shopping_list`: `shoplist.get_list(online=False)` — unticked items `{item, qty, cheapest_at, price}`,
+    grouped by cheapest store in the text.
+  - `receipt.price` (`item`): the item by `shoplist._match`, else a name containing it; `analytics.compare_stores`
+    over a year — `{store, latest, date, lowest, unit, trend}`, cheapest first.
+  - `receipt.spending` (`month?`, `store?`): `analytics.summarize_spend` of the month (or the last 30 days), by store.
+  - `receipt.shopping_list.add` (`acts`; `item`, `qty?`): only with `confirm: true`; `shoplist.add` (as the person),
+    then the cheapest store.
+- **Off by default** (App settings → Household Assistant → `assistant_answers`; `nack not_allowed off`). No
+  per-person switch: the app has no per-person settings beyond notifications. Links: the sidebar page from
+  `assist_tools.sidebar_page` (the pages have no sub-path routes).
+
 ## 6. Tests
 
 `python3 -m pytest` (see `requirements-dev.txt`). `tests/test_app_settings.py` needs only pydantic;

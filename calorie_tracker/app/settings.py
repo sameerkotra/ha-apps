@@ -70,6 +70,8 @@ GROUPS = [
     Group("ai", "🤖 AI", "Used by \"✨ Estimate with AI\" and the AI Assistant. Leave the provider on \"Not set up\" to "
           "run without AI — everything else works."),
     Group("ha", "🏠 Home Assistant"),
+    Group("assistant", "💬 Household Assistant", "The Household Assistant app answers questions from what the household "
+          "apps know. Calorie Tracker tells a person only their own day: calories and macros against their goals."),
 ]
 
 # Every key applies live (read at the moment it's used); none needs a restart.
@@ -102,6 +104,9 @@ SETTINGS = [
             help="Publishes only each person's calories logged today, as sensor.calorie_tracker_<user>_daily_calories "
                  "— never macros, weight or food names. Turning it on publishes everyone's sensor right away; turning "
                  "it off removes those sensors from Home Assistant."),
+    Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant", strict=True,
+            help="Lets the Household Assistant tell each person their own day — calories, macros and meals against "
+                 "their goals — never anyone else's, and never weight."),
 ]
 
 

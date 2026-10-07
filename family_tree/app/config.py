@@ -23,6 +23,12 @@ OPTIONS_PATH = os.environ.get("OPTIONS_PATH", os.path.join(DATA_DIR, "options.js
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api")
+SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")   # the app bus
+SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
+APP_TITLE = "Family Tree"
+# The app's sidebar page in Home Assistant ("/<full slug>"), for links in the Household Assistant's answers: set at
+# start-up from the Supervisor, or the container's host name (app_messages.learn_panel).
+INGRESS_PANEL = None
 
 _DEFAULTS = {
     "admin_users": [],

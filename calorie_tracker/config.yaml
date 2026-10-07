@@ -1,5 +1,5 @@
 name: "Calorie Tracker"
-version: "2.1.2"
+version: "2.2.0"
 slug: calorie_tracker
 description: >-
   A food, macro, weight and goal tracker for everyone in your household, using
@@ -27,8 +27,9 @@ panel_admin: false
 
 # Lets the app call the Home Assistant Core REST API (via
 # http://supervisor/core/api/, using the auto-injected SUPERVISOR_TOKEN) so
-# it can publish each user's daily-calories sensor and read HA's time zone.
-# No other Supervisor API access is requested.
+# it can publish each user's daily-calories sensor, read HA's time zone and
+# exchange the household apps' messages (the Household Assistant asks about a
+# person's own day). No other Supervisor API access is requested.
 homeassistant_api: true
 hassio_api: false
 auth_api: false

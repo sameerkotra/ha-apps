@@ -202,6 +202,34 @@ activity log shows those.
   which delivers it to the phone the way it delivers its own notifications
   (for the Companion app, through its push service).
 
+## The Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it
+"Who owes me money?" or "What did we spend on the trip?". Splitpot tells it, for
+**only the groups you're in**:
+
+- **balances** — who owes whom after the simplest settle-up, and where you stand
+  overall;
+- **recent expenses** — the newest 20 entries: what, who paid, how much and your
+  share (optionally one group, or the last few days).
+
+Money is private, so this is **off until an admin turns it on** (**Admin → App
+settings → Household Assistant → Answer the Household Assistant**). You can also
+turn it off for yourself on **My settings → Let the Household Assistant answer
+for me**. You're matched by your Home Assistant login, never by name; a person
+whose login isn't linked gets no answers.
+
+The answers travel through Home Assistant's event bus, which Home Assistant's
+recorder keeps in its history unless told not to. Add this to Home Assistant's
+`configuration.yaml` and restart Home Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
+```
+
 ## Look and navigation
 
 - **Theme**: Midnight (dark, the default), Slate (dark blue-grey), Daylight
@@ -244,8 +272,8 @@ page", and the server refuses its functions. It has three tabs.
 
 ### App settings
 
-Household-wide settings, in three cards (Money, Home Assistant and
-Notifications), with a
+Household-wide settings, in four cards (Money, Home Assistant, Notifications
+and Household Assistant), with a
 line under each setting saying what it does, its range and its default. Your
 changes are kept until you select **Save settings** at the bottom (it shows
 how many unsaved changes there are); **Discard changes** puts everything back.
@@ -260,6 +288,7 @@ activity log.
 | Sensor sync interval (minutes) | `5` | How often the sensors are refreshed in the background, 1–60, on top of the instant update after every change. A new value applies from the next cycle. Greyed out while sync is off. |
 | Notify people about new charges | off | Phone notifications for new charges (see *Phone notifications* above). |
 | Also notify settle-up payments | on | The two people in a recorded settle-up payment are told too. Greyed out while the switch above is off. |
+| Answer the Household Assistant | off | Lets the Household Assistant app tell people the balances and recent expenses of their own groups (see *The Household Assistant*). |
 
 ### Users
 

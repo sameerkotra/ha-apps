@@ -459,6 +459,7 @@ MIGRATIONS = [
     ("reminder_prefs", "milestones", "INTEGER NOT NULL DEFAULT 1"),
     ("people", "photo_region_id", "TEXT REFERENCES media_regions(id) ON DELETE SET NULL"),
     ("people", "remind", "INTEGER NOT NULL DEFAULT 0"),                               # off for everyone
+    ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),                          # the Household Assistant (tools.py)
 ]
 
 

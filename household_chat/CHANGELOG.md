@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.0
+
+- **Answers the Household Assistant**: the new Household Assistant app can ask Chat which of a person's chats have unread messages and how many — names and counts only, never what anyone wrote — with a link that opens each chat. On by default; an admin can turn it off in **Admin → App settings → Household Assistant**, and each person in **Settings → You → Let the Household Assistant answer for me**.
+
 ## 2.5.5
 
 - **New call…** (⋯ menu, and on the Calls page): pick up to three people and call them, without a group chat first. One person: it's your direct chat. More: a group with exactly those people — made for you, named after them, if there isn't one — where the call's note goes.

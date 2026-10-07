@@ -71,7 +71,8 @@ REGISTRY: dict[str, TableSpec] = {
 
 # Deliberately never queryable. Every table in the database must be in REGISTRY or here (tested).
 HIDDEN_TABLES = {"known_users", "app_settings", "ai_usage_log", "schema_version", "sqlite_sequence", "saved_reports", "user_access",
-                 "skipped_duplicates"}
+                 "skipped_duplicates",
+                 "bus_outbox", "bus_seen", "bus_apps"}          # the household apps bus (app_messages.py): not anyone's data
 
 # Convenience views, built on the scoped views above.
 EXTRA_VIEWS: dict[str, tuple[str, str]] = {

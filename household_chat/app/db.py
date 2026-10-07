@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
   notify_preview TEXT NOT NULL DEFAULT 'full' CHECK (notify_preview IN ('full','sender','none')),
   quiet_start TEXT, quiet_end TEXT,          -- "22:00"/"07:00" in HA's time zone
   hide_online INTEGER NOT NULL DEFAULT 0,
+  assistant_ok INTEGER NOT NULL DEFAULT 1,   -- "Let the Household Assistant answer for me" (tools.py)
   last_seen TEXT,
   created_at TEXT NOT NULL
 );
@@ -266,7 +267,8 @@ def get_conn():
 MIGRATIONS = {
     "users": [("is_child", "INTEGER NOT NULL DEFAULT 0"),
               # the photo is a copy of their person.* entity's picture (avatars.py)
-              ("avatar_src", "TEXT"), ("avatar_version", "INTEGER NOT NULL DEFAULT 0")],
+              ("avatar_src", "TEXT"), ("avatar_version", "INTEGER NOT NULL DEFAULT 0"),
+              ("assistant_ok", "INTEGER NOT NULL DEFAULT 1")],
     "conversations": [("disappear_seconds", "INTEGER")],
     "messages": [("expires_at", "TEXT"), ("announcement", "INTEGER NOT NULL DEFAULT 0"),
                  ("announcement_closed_at", "TEXT"), ("announcement_reminded_at", "TEXT"),

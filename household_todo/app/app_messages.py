@@ -1,7 +1,8 @@
 """Messages from the other household apps (APP_MESSAGES_SPEC.md §6.4; SPEC §17).
 
 Household Docs asks Todo for the lists a person may add to (`todo.lists.list`) and turns a checklist into
-tasks (`todo.items.add`). Every request is checked against Todo's own rules exactly as if that person did it
+tasks (`todo.items.add`); the Household Assistant asks through tools.py (`assist.tools.list`,
+`assist.tool.call`). Every request is checked against Todo's own rules exactly as if that person did it
 in the app (`requested_by` is the actor; "acting as" never applies; who sent the message never matters),
 inside the transaction that records the answer (app/common/app_bus.py).
 
@@ -11,8 +12,9 @@ loop (every 60 s).
 import json
 import logging
 
-from . import config, db, taskview
+from . import config, db, taskview, tools
 from .common import app_bus as bus
+from .common import assist_tools
 
 logger = logging.getLogger("app_messages")
 
@@ -158,11 +160,17 @@ def on_items_add(msg, conn):
     return result
 
 
+# ---------- the Household Assistant (tools.py; HOUSEHOLD_ASSISTANT_SPEC §5–6) ----------
+tools.tools.install(bus)
+
+
 # ---------- life cycle ----------
 def start() -> None:
     """In the lifespan. Off (nothing connects) without a Supervisor token, e.g. in the tests."""
     if bus.default.started:
         return
+    config.SIDEBAR_PAGE = assist_tools.sidebar_page(SLUG, token=config.SUPERVISOR_TOKEN,
+                                                    supervisor_api=config.SUPERVISOR_API)
     bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, db=db.get_conn, outbox_thread=False,
               api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
 

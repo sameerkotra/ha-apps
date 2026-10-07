@@ -350,7 +350,9 @@ async function renderSettings() {
       row("Reduce motion", "No glow pulses, trails or screen shake. Also follows your device's own setting.",
         toggleSwitch(p.reduceMotion, (v) => save({ reduceMotion: v }), { label: "Reduce motion" })),
       row("Receive notifications", "New household records (when an admin has switched record notifications on).",
-        toggleSwitch(p.receiveNotifications, (v) => save({ receiveNotifications: v }), { label: "Receive notifications" }))),
+        toggleSwitch(p.receiveNotifications, (v) => save({ receiveNotifications: v }), { label: "Receive notifications" })),
+      state.me.assistant ? row("Let the Household Assistant answer for me", "It can tell you the leaderboard and your own bests when you ask it.",
+        toggleSwitch(p.assistantOk, (v) => save({ assistantOk: v }), { label: "Let the Household Assistant answer for me" })) : null),
   ];
   if (state.me.isChild) cards.push(limitsCard(state.me));
   cards.push(whoamiCard(who));

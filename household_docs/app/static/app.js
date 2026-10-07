@@ -656,6 +656,8 @@ Docs.route("settings", async (page, args, current) => {
       row("Number style for sheets", "How numbers look in sheets, and how the numbers you type are read (1.234,56 reads a decimal comma). Formulas keep commas between values.", numberStyle),
       row("New notes are", "➕ New → Note makes this kind; the other is in the menu too. Markdown adds headings, lists and tick boxes with a preview.", defaultNote),
       Docs.settingsRows.map((fn) => fn(me, save, row)),
+      me.app.assistant ? row("Let the Household Assistant answer for me", "When you ask the Household Assistant app, it can find and read the documents you can open here, and make a note in your Inbox when you tap to confirm.",
+        toggleSwitch(me.prefs.assistantOk !== false, (v) => save({ assistantOk: v }), "Let the Household Assistant answer for me")) : null,
       row("Theme", "The same choice in every household app on this device.", HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" })))),
     h("div", { class: "card", id: "whoamiCard" }, h("h3", null, "How the app sees you"),
       HouseholdWhoami.panel(who, { appName: "Household Docs", adviceTag: "div", adviceStyle: "margin-top:8px", onCopy: (t) => copyText(t) })),

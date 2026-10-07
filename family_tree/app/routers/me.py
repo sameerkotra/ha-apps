@@ -1,5 +1,6 @@
 """Who you are: /me, "This is me", the whoami page, and the user list."""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import StrictBool
 
 from .. import config, db, features, graph as graph_mod, kin, media, reminders, settings
 from ..common import ha_notify, ha_people, people_admin, whoami as whoami_core
@@ -37,6 +38,7 @@ def me(user: dict = Depends(require_user)):
                 "kinLangApp": settings.get("relationship_language") if features.on("kin_names") else "en",
                 "mapEnabled": features.on("map"), "features": features.states(), "noAdmin": not config.ADMIN_NAMES,
                 "nameDisplay": user["name_display"], "nameOrderApp": settings.get("name_order"),
+                "assistant": settings.get("assistant_answers"), "assistantOk": user["assistant_ok"],
                 "kidPinSet": bool(conn.execute("SELECT kid_pin_hash FROM users WHERE id = ?", (user["id"],)).fetchone()[0]),
                 "media": {"online": media.is_online(), "reason": media.status()["reason"]}}
 
@@ -57,6 +59,18 @@ def set_me(body: MePerson, user: dict = Depends(require_user)):
     with db.get_conn() as conn:
         _claim(conn, user["id"], body.personId)
         return {"mePersonId": body.personId, "mePersonName": _person_name(conn, body.personId)}
+
+
+class AssistantIn(Strict):
+    assistantOk: StrictBool
+
+
+@router.put("/me/assistant")
+def set_assistant(body: AssistantIn, user: dict = Depends(require_user)):
+    """"Let the Household Assistant answer for me" (tools.py)."""
+    with db.get_conn() as conn:
+        conn.execute("UPDATE users SET assistant_ok = ? WHERE id = ?", (1 if body.assistantOk else 0, user["id"]))
+    return {"assistantOk": body.assistantOk}
 
 
 @router.get("/whoami")

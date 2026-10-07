@@ -1,5 +1,5 @@
 name: Receipt Price Intelligence
-version: "1.1.2"
+version: "1.2.0"
 slug: receipt_price_intelligence
 description: >-
   Scan receipts with your own AI model, track prices, and find where to shop
@@ -16,8 +16,9 @@ ingress_port: 8099
 panel_icon: mdi:cart-outline
 panel_title: Shopping
 panel_admin: false
-# Sensors, events, notifications and the to-do list sync go through the
-# Supervisor's Core API proxy (SUPERVISOR_TOKEN). Nothing else is requested.
+# Sensors, events, notifications, the to-do list sync and the household apps'
+# messages (the Household Assistant asks, when an admin allows it) go through
+# the Supervisor's Core API proxy (SUPERVISOR_TOKEN). Nothing else is requested.
 homeassistant_api: true
 hassio_api: false
 auth_api: false

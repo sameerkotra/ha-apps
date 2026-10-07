@@ -21,9 +21,9 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, FastAPI, File, HT
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator, model_validator
 
-from . import config
+from . import app_messages, config
 from .common import auth_core, backup_core, csv_export, db_core, ha_time, sensor_publisher, settings_core, web_security
 from .common import ha_client as ha_core, ha_notify, ha_people, people_admin
 from .common import housekeeping as jobs_core
@@ -404,6 +404,7 @@ MIGRATIONS = [
     ("expense_splits", "percent", "REAL"),
     ("groups", "is_default", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "receive_notifications", "INTEGER NOT NULL DEFAULT 1"),   # the person's own opt-out (My settings)
+    ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),            # "Let the Household Assistant answer for me"
 ]
 
 
@@ -571,11 +572,19 @@ SETTINGS = [
         "notify_payments", True, "Also notify settle-up payments", group="notify", strict=True,
         enabled_if="notify_charges",
         help="When a settle-up payment is recorded, the two people in it are told too (not whoever recorded it)."),
+    settings_core.Setting(
+        "assistant_answers", False, "Answer the Household Assistant", group="assistant", strict=True,
+        help="Lets the Household Assistant tell a person the balances and recent expenses of the groups they are in — "
+             "who owes whom, and what was spent, by whom and how much. Off until an admin turns it on; each person can "
+             "still turn it off for themselves under My settings."),
 ]
 SETTINGS_GROUPS = [settings_core.Group("money", "Money"), settings_core.Group("ha", "Home Assistant"),
                    settings_core.Group("notify", "Notifications",
                                        "Phone notifications through Home Assistant. Edits and deletions are never "
-                                       "notified; the activity log on the Dashboard shows them.")]
+                                       "notified; the activity log on the Dashboard shows them."),
+                   settings_core.Group("assistant", "Household Assistant",
+                                       "The Household Assistant app answers questions from what the household apps "
+                                       "know. Money is private, so Splitpot doesn't answer it until you turn this on.")]
 
 
 def _settings_log_event(conn, changed, current, merged, user):
@@ -1257,6 +1266,10 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Reading the people and notify services from Home Assistant failed")
 
+    try:
+        await asyncio.to_thread(app_messages.start)     # the household apps bus (the Household Assistant asks)
+    except Exception:
+        logger.exception("Starting the app bus failed")
     jobs = jobs_core.Jobs()
     if ha_connected():   # sync on/off is checked live inside the loop
         jobs.add("sensor_sync", periodic_sync)
@@ -1264,6 +1277,7 @@ async def lifespan(app: FastAPI):
     jobs.start()
     yield
     await jobs.stop()
+    await asyncio.to_thread(app_messages.stop)
 
 
 app = FastAPI(title="Splitpot", lifespan=lifespan)
@@ -1437,21 +1451,28 @@ def admin_test_notify(user_id: str, _admin: None = Depends(require_admin)):
 # -- My settings: each person's own choices --
 class MyPrefsUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    receiveNotifications: StrictBool
+    receiveNotifications: Optional[StrictBool] = None
+    assistantOk: Optional[StrictBool] = None
+
+    @model_validator(mode="after")
+    def _something(self):
+        if self.receiveNotifications is None and self.assistantOk is None:
+            raise ValueError("send receiveNotifications or assistantOk")
+        return self
 
 
 def _my_prefs(user_id: Optional[str]) -> dict:
     s = settings_all()
     out = {"linked": False, "name": None, "receiveNotifications": None, "reachable": False,
            "notifyCharges": bool(s["notify_charges"]), "notifyPayments": bool(s["notify_payments"]),
-           "haConnected": ha_connected()}
+           "haConnected": ha_connected(), "assistant": bool(s["assistant_answers"]), "assistantOk": None}
     if user_id:
         with get_conn() as conn:
-            row = conn.execute("SELECT id, name, ha_user_id, receive_notifications FROM users WHERE id = ?",
-                               (user_id,)).fetchone()
+            row = conn.execute("SELECT id, name, ha_user_id, receive_notifications, assistant_ok FROM users "
+                               "WHERE id = ?", (user_id,)).fetchone()
             if row:
                 out.update(linked=True, name=row["name"], receiveNotifications=bool(row["receive_notifications"]),
-                           reachable=bool(person_services(conn, row)))
+                           reachable=bool(person_services(conn, row)), assistantOk=bool(row["assistant_ok"]))
     return out
 
 
@@ -1469,8 +1490,11 @@ def put_my_prefs(payload: MyPrefsUpdate, request: Request):
         raise HTTPException(404, "Home Assistant doesn't link your login to a person in Splitpot yet "
                                  "(Settings → People → you → Allow person to login).")
     with _lock, get_conn() as conn:
-        conn.execute("UPDATE users SET receive_notifications = ? WHERE id = ?",
-                     (1 if payload.receiveNotifications else 0, user_id))
+        if payload.receiveNotifications is not None:
+            conn.execute("UPDATE users SET receive_notifications = ? WHERE id = ?",
+                         (1 if payload.receiveNotifications else 0, user_id))
+        if payload.assistantOk is not None:
+            conn.execute("UPDATE users SET assistant_ok = ? WHERE id = ?", (1 if payload.assistantOk else 0, user_id))
         conn.commit()
     return _my_prefs(user_id)
 

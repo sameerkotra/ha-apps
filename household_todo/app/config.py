@@ -51,9 +51,13 @@ DB_PATH = os.path.join(DATA_DIR, "household.db")
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
+SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
+# The app's sidebar page ("/<full slug>", open to everyone) for links in the Household Assistant's answers; set at
+# start-up (app_messages.start: the Supervisor's addons/self/info, else the host name).
+SIDEBAR_PAGE = None
 
 # Said to the other household apps in `hello` (app_messages.py); equals config.yaml's version.
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.4.0"
 APP_TITLE = "Household Todo"
 
 # Maintenance: read from Home Assistant's GET /config at start-up (ha_client). A negative latitude

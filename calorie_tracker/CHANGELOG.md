@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.0
+
+- **Answers the Household Assistant**: the new Household Assistant app can ask Calorie Tracker "How many calories do I have left today?" and gets only that person's own day — calories and macros against their goals, and what they logged at each meal; never anyone else's, never weight — with a link back to the app. On by default; an admin can turn it off with **Answer the Household Assistant** in App settings.
+- Calorie Tracker now joins the household apps' message bus (Home Assistant's event bus). The **DOCS** show how to keep those messages out of Home Assistant's history.
+
 ## 2.1.2
 
 - **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.

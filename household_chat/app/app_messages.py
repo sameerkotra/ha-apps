@@ -14,7 +14,7 @@ import re
 
 from fastapi import HTTPException
 
-from . import chats, config, db
+from . import chats, config, db, tools
 from .common import app_bus as bus
 
 logger = logging.getLogger("app_messages")
@@ -162,6 +162,10 @@ def on_card(msg, conn):
     if share:
         result["member_ids"] = [u for u in chats.member_ids(conn, cid) if u != user["id"]]
     return result
+
+
+# ---------- the Household Assistant (tools.py; HOUSEHOLD_ASSISTANT_SPEC §5–6) ----------
+tools.tools.install(bus)
 
 
 # ---------- life cycle ----------

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.0
+
+- **Answers the Household Assistant**: the new Household Assistant app can ask Todo for a person's tasks ("What's on my list today?" — today's and overdue, this week's, overdue or all; titles, dates, lists and who, never notes), their lists, and what's coming up on the schedule, with a link back to Todo. It can also **add a task** to one of their lists, but only after the person taps the exact change it proposes; the task shows "from Assistant". On by default; an admin can turn it off in **App settings → Household Assistant**, and each person on **Settings → Household Assistant**.
+
 ## 2.3.2
 
 - **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.

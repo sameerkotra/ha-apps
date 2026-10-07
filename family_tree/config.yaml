@@ -1,5 +1,5 @@
 name: "Family Tree"
-version: "2.2.2"
+version: "2.3.0"
 slug: family_tree
 description: >-
   A shared family tree for your household, with photos, stories, relationship
@@ -24,8 +24,9 @@ panel_admin: false
 map:
   - type: share
     read_only: false
-# Reads person.* states (the user list) and HA's time zone, lists notify services
-# and calls notify for reminders. Nothing else.
+# Reads person.* states (the user list) and HA's time zone, lists notify services,
+# calls notify for reminders and exchanges the household apps' messages (the
+# Household Assistant asks for birthdays). Nothing else.
 homeassistant_api: true
 hassio_api: false
 auth_api: false

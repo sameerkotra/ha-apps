@@ -174,6 +174,28 @@ a day and a month. 29 February birthdays show on 28 February in other years.
 With reminders on, each entry has a bell: 🔔 means that person is included in
 reminders; tap it to switch.
 
+### Asking the Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it
+"Whose birthday is coming up?". Family Tree tells it what **Upcoming** would
+show you — names, dates, ages and how each person is related to you (close
+family once you've said "This is me", or everyone if you ask) — and nothing
+else: no photos, contact details or notes. Its answer links back to Family
+Tree. An admin can turn this off for everyone (**App settings → Household
+Assistant**), and you can turn it off for yourself in **Settings → Household
+Assistant**.
+
+The answers travel through Home Assistant's event bus, which Home Assistant's
+recorder keeps in its history unless told not to. Add this to Home Assistant's
+`configuration.yaml` and restart Home Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
+```
+
 ## Reminders
 
 A short daily message to your phone through Home Assistant: "🎂 Lakshmi (your
@@ -429,7 +451,8 @@ disappears; after that, the switch is yours.
 ## App settings
 
 **Admin → App settings** (admins only). The settings are in cards (App
-settings, Places map, Features and the two groups of optional features), with
+settings, Places map, Features, the two groups of optional features and
+Household Assistant), with
 a line under each setting saying what it does, its range and its default; a
 module's own settings show while its switch is on. Changes are kept until you
 select **Save** at the bottom (it shows how many unsaved changes there are);
@@ -448,6 +471,7 @@ the field before anything is saved. Saved changes apply straight away.
 | Map tiles address | OpenStreetMap's tile server | Places map: where map pictures come from (`https://…/{z}/{x}/{y}.png`). Shown while the map is on. |
 | Place search address | `https://nominatim.openstreetmap.org` | Places map: the Nominatim server place names are looked up on. Shown while the map is on. |
 | Features | see above | The switches for every optional part of the app. |
+| Answer the Household Assistant | on | Lets the Household Assistant app tell people the birthdays and anniversaries coming up (see *Asking the Household Assistant*). |
 
 The app's **Configuration** tab has only one option:
 

@@ -60,6 +60,7 @@ async def get_current_user(request: Request) -> dict:
         "me_person_id": row["me_person_id"],
         "kin_lang": row["kin_lang"],
         "name_display": row["name_display"] or "en",
+        "assistant_ok": bool(row["assistant_ok"]),
     }
 
 

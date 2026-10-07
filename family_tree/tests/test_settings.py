@@ -30,7 +30,7 @@ FEATURE_DEFAULTS = {"feature_reminders": True, "feature_milestones": True, "feat
 DEFAULTS = {"trash_days": 90, "max_upload_mb": 20, "media_path": _env.MEDIA_PATH, "relationship_language": "en", "name_order": "given_first",
             "default_phone_code": "+1", "tithi_rule": "aparahna",
             "map_tiles_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            "nominatim_url": "https://nominatim.openstreetmap.org", **FEATURE_DEFAULTS}
+            "nominatim_url": "https://nominatim.openstreetmap.org", "assistant_answers": True, **FEATURE_DEFAULTS}
 
 
 def V(**changed):

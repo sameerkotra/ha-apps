@@ -386,7 +386,8 @@ class ChatTests(BusBase):
         self.assertEqual(self.get("/api/admin/connected-apps").status_code, 403)
         hello = [e for e in self.fake.events() if e.get("kind") == "hello" and e.get("from") == "household_docs"][0]
         self.assertEqual((hello["data"]["can"], hello["data"]["wants"]),
-                         ([], ["chat.card", "chat.chats.list", "todo.items.add", "todo.lists.list"]))
+                         (["assist.tool.call", "assist.tools.list"],                 # the Household Assistant asks
+                          ["chat.card", "chat.chats.list", "todo.items.add", "todo.lists.list"]))
 
 
 class NotThereTests(BusBase):

@@ -150,9 +150,12 @@ def fake_vision(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _no_llm_categorization(monkeypatch):
-    """Keep categorization's LLM fallback from trying the network in every test."""
+def _no_llm_categorization(monkeypatch, request):
+    """Keep categorization's LLM fallback from trying the network in every test. (Not the shared tests in
+    common_tests/: the app bus's talk to their own fake Home Assistant on 127.0.0.1.)"""
     import urllib.request
+    if "common_tests" in str(request.node.path):
+        return
 
     def refuse(*a, **k):
         raise OSError("network disabled in tests")

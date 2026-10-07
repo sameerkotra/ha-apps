@@ -1,5 +1,5 @@
 name: "Household Arcade"
-version: "1.8.0"
+version: "1.9.0"
 slug: household_arcade
 description: >-
   Classic arcade games for everyone in the home, played from the Home Assistant
@@ -28,8 +28,9 @@ panel_admin: false
 # X-Remote-User-* safe.
 # homeassistant_api lets the app call the Supervisor's Core API proxy
 # (http://supervisor/core/api/, auto-injected SUPERVISOR_TOKEN) to read the
-# time zone and the people, publish the optional sensors and send the optional
-# notifications. No other Supervisor/HA API access is requested.
+# time zone and the people, publish the optional sensors, send the optional
+# notifications and exchange the household apps' messages (the Household
+# Assistant asks for scores). No other Supervisor/HA API access is requested.
 homeassistant_api: true
 hassio_api: false
 auth_api: false
