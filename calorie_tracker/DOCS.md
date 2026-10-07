@@ -135,7 +135,7 @@ last AI request, and every request is written to the app's **Log** tab with its 
   last request. With Ollama, **Wake up model** loads the model in advance.
 
 ### Admin (admins only)
-- **App settings**: the AI setup (above) and **Publish daily calories to Home Assistant**.
+- **App settings**: the AI setup (above), **Publish daily calories to Home Assistant** and **Answer the Household Assistant**.
   Changes apply immediately.
 - **Users**: everyone who has opened the app. A switch hides someone from the user switcher (an
   old account, a guest); it doesn't delete their data or lock them out.
@@ -163,6 +163,25 @@ Home Assistant display name. The value updates whenever that day's log changes a
 minutes, so it returns to 0 after midnight. Turning the setting off removes these sensors from
 Home Assistant; turning it on publishes everyone's again at once.
 
+## The Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it "How many calories do I
+have left today?". Calorie Tracker tells it **only your own day** — calories, protein, carbs and fat
+against your goals, and what you logged at each meal — never anyone else's, and never your weight.
+Its answer links back to Calorie Tracker. An admin can turn this off for everyone with **Answer the
+Household Assistant** in App settings.
+
+The answers travel through Home Assistant's event bus, which Home Assistant's recorder keeps in its
+history unless told not to. Add this to Home Assistant's `configuration.yaml` and restart Home
+Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
+```
+
 ## App settings
 
 All in **🛡️ Admin → App settings**; changes apply immediately, no restart. Each group of settings
@@ -179,6 +198,7 @@ before anything is saved.
 | Access key | none | Needed for Claude and most cloud services; never shown again, left out of backups |
 | Longest answer (tokens) | 4096 | Output limit per answer (Claude requires one; others ignore it) |
 | Publish daily calories to Home Assistant | on | The per-person daily-calories sensor |
+| Answer the Household Assistant | on | Lets the Household Assistant app tell each person their own day (see *The Household Assistant*) |
 
 ## Configuration (the app's Configuration tab)
 

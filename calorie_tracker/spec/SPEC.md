@@ -149,6 +149,20 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 - No DB connection is ever held during an HA call.
 - The slug comes from the display name: renaming a user creates a new entity, and two users with the same display name share one sensor.
 
+**The household apps bus and the Household Assistant** (`app_messages.py`, `tools.py`; the shared `app_bus.py`,
+`ha_ws.py`, `assist_tools.py`; APP_MESSAGES_SPEC §6.6, HOUSEHOLD_ASSISTANT_SPEC §4.2)
+- `app_messages.start()` in the lifespan learns the sidebar page (`assist_tools.sidebar_page`: the Supervisor's
+  `addons/self/info`, else `HOSTNAME`) into `config.INGRESS_PANEL` and starts the bus (its own WebSocket; the outbox
+  thread only with a Supervisor token). The bus's tables (`bus_outbox`, `bus_seen`, `bus_apps`) are made by
+  `app_bus` itself.
+- One tool, `calorie.today` (`date?`, not in the future; default today): the asking person's own food log for that
+  day — totals against their goals (the goals row, or the defaults) and each entry's meal, food, servings, kcal and
+  macros. Never another person's day (`requested_by` only; the admin switcher's "acting as" never applies) and
+  never weight. `requested_by` must have opened the app (a `users` row), else `nack not_allowed no_access`.
+- Only while App settings → **Answer the Household Assistant** (`assistant_answers`, default on); otherwise `nack
+  not_allowed off`. No per-person switch: the app has no per-person settings. The link is the sidebar page only
+  (the page has no sub-path routes).
+
 **Time zone**
 - At startup, `load_timezone()` (`ha_time.load(config.ZONE)`, `app/common/ha_time.py`) calls `GET http://supervisor/core/api/config` through the shared `ha_client`, reads `time_zone`, and sets `config.ZONE` (an `ha_time.Zone`; `config.set_timezone()` / `timezone_name()` / `now()` / `today()` are backed by it).
 - If the call fails, the app stays on UTC. The zone is read once, so a change in HA needs an app restart.
