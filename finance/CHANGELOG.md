@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- **Your own Household Assistant switch**: while an administrator lets the Household Assistant ask, the **Who am I** page has **Let the Household Assistant answer for me**. Turn it off and the assistant won't answer your questions from Finance.
+
 ## 1.2.1
 
 - **Links open the right page**: the Household Assistant's answers open that month's dashboard or Recurring. Links ending in `/month/<YYYY-MM>`, `/dashboard` or `/recurring` open that page.

@@ -408,7 +408,7 @@ only to the app's own sidebar page and its own route patterns, and `sidebar_page
 | Todo 2.4.0 | `todo.tasks`, `todo.lists`, `todo.schedule`, `todo.items.add` (acts; `list` by name) | on | Settings | the page |
 | Docs 1.2.0 | `docs.search`, `docs.read`, `docs.checklist`, `docs.note.create` (acts) | on | Settings → You | `/doc/<id>`, `/folder/<id>`, `/file/<id>` |
 | Receipt Price Intelligence 1.2.2 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | Who am I | `/list`, `/insights` |
-| Finance Dashboard 1.2.0 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | — | the page |
+| Finance Dashboard 1.2.2 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | Who am I | `/month/<YYYY-MM>`, `/recurring` |
 
 Differences from the draft above:
 
@@ -434,7 +434,7 @@ Each item is ticked in the commit that finishes it.
 - [x] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
 - [x] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
   Finance, and their tools' link targets.
-- [ ] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
+- [x] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
 - [ ] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
   the admin pages, tests.
 - [ ] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).

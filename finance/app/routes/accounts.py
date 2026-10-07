@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
+from .. import settings
 from ..db import get_db
 from ..version import APP_VERSION
 
@@ -89,7 +90,27 @@ def whoami(request: Request, current: User = Depends(get_current_user)):
         admin_entries=len(ADMIN_USERS))
     return templates.TemplateResponse(request, "whoami.html", {
         "user": current, "acting_qs": "", "acting_as_banner": None, "active_page": "whoami", "w": w,
+        "assistant": _assistant(current.id),
     })
+
+
+def _assistant(user_id: str) -> dict | None:
+    """The person's own "Let the Household Assistant answer for me" — None while the admin's switch is off."""
+    if not settings.get_bool("assistant_answers"):
+        return None
+    with get_db() as conn:
+        r = conn.execute("SELECT assistant_ok FROM known_users WHERE id = ?", (user_id,)).fetchone()
+    return {"ok": r is None or bool(r["assistant_ok"])}
+
+
+@router.post("/whoami/assistant")
+def set_assistant(assistant_ok: str = Form(""), current: User = Depends(get_current_user)):
+    """Always the signed-in person's own switch (never the "view as" person's); tools.py reads it."""
+    with get_db() as conn:
+        conn.execute("UPDATE known_users SET assistant_ok = ? WHERE id = ?",
+                     (1 if assistant_ok == "1" else 0, current.id))
+        conn.commit()
+    return RedirectResponse(url="../whoami", status_code=303)
 
 
 @router.get("/accounts")

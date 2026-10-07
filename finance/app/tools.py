@@ -10,8 +10,8 @@ Whose data: the asking person's own, or — with `person` — one whose data an 
 user_access grants the pages use; an admin's "view as anyone" never applies to the assistant). Only clean rows,
 with transfers and excluded rows left out, as the Overview counts them. **Never** a transaction's note (text a person
 typed): only the bank's description (the merchant), date, amount, category and account. Money is private, so the
-admin's *Answer the Household Assistant* is **off** until turned on. Finance has no per-person settings, so there is
-no per-person switch. Links open the month's dashboard or Recurring on the app's sidebar page.
+admin's *Answer the Household Assistant* is **off** until turned on, and each person can turn off *Let the Household
+Assistant answer for me* (Who am I). Links open the month's dashboard or Recurring on the app's sidebar page.
 """
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ INCOME = "(t.amount > 0 AND a.type IN ('checking', 'savings'))"
 
 
 def _actor(conn, uid: str):
-    r = conn.execute("SELECT id, name FROM known_users WHERE id = ?", (uid,)).fetchone()
-    return {"id": r["id"], "name": r["name"]} if r else None
+    r = conn.execute("SELECT id, name, assistant_ok FROM known_users WHERE id = ?", (uid,)).fetchone()
+    return {"id": r["id"], "name": r["name"], "assistant_ok": bool(r["assistant_ok"])} if r else None
 
 
 def _panel():
@@ -44,7 +44,9 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "finance", targets=[r"/month/\d{4}-(0[1-9]|1[0-2])", r"/recurring"], actor=_actor, enabled=lambda conn: settings.get_bool("assistant_answers"), panel=_panel)
+    "finance", targets=[r"/month/\d{4}-(0[1-9]|1[0-2])", r"/recurring"], actor=_actor,
+    enabled=lambda conn: settings.get_bool("assistant_answers"), person_enabled=lambda conn, user: user["assistant_ok"],
+    panel=_panel)
 
 _PERSON = Arg("string", "whose data, when an admin shared someone's with the asker (default their own)", max_length=100)
 _MONTH = Arg("month", "the month (default this month)")
