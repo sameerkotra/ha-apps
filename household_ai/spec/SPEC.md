@@ -1,6 +1,7 @@
 # Household AI — spec
 
-Status: **draft (2026-10-07), not built.** Moved out of `HOUSEHOLD_ASSISTANT_SPEC.md` (where it was §14, "Built-in
+Status: **draft (2026-10-07), not built** (only this spec exists in `household_ai/` so far). Moved out of
+`HOUSEHOLD_ASSISTANT_SPEC.md` (where it was §14, "Built-in
 model") into an app of its own. A new app, `household_ai`, that runs an AI model on the Home Assistant machine's
 **CPU**, with no GPU and no other server: Ollama, started inside the app's container, behind a small gateway. The
 Household Assistant and every other household app with AI use it as an ordinary Ollama or OpenAI-compatible

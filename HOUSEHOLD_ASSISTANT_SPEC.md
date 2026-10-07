@@ -2,7 +2,7 @@
 
 Status: **draft (2026-10-06); the apps' side and the assistant app (phase 1, `household_assistant` 1.0.0) are built
 (2026-10-07); its own `spec/SPEC.md` says how.** A local model on the CPU for it and the other apps is
-its own app, Household AI (`HOUSEHOLD_AI_SPEC.md`; §15 here). Every app in
+its own app, Household AI (`household_ai/spec/SPEC.md`; §15 here). Every app in
 §4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
 the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
@@ -450,7 +450,7 @@ Each item is ticked in the commit that finishes it.
 ## 15. A local model: Household AI
 
 The model server that was drafted here as a "built-in model" is its own app, **Household AI** (`household_ai`),
-specified in `HOUSEHOLD_AI_SPEC.md`: Ollama on the Home Assistant machine's CPU, behind a gateway every household
+specified in `household_ai/spec/SPEC.md`: Ollama on the Home Assistant machine's CPU, behind a gateway every household
 app can use, with a model list sized to the machine, a fair queue and a day/night schedule for keeping models
 loaded. The assistant needs nothing special for it — it is an ordinary Ollama address in the AI block (§8.2):
 
@@ -458,7 +458,7 @@ loaded. The assistant needs nothing special for it — it is an ordinary Ollama 
   Household AI's *Require an access key* is on), *Model* a downloaded text model such as `qwen2.5:3b`. Household
   AI's page shows these values.
 - **Answered first**: Household AI's queue puts the assistant's requests ahead of other apps' by default
-  (`HOUSEHOLD_AI_SPEC.md` §6.1), because a person is waiting on the page.
+  (`household_ai/spec/SPEC.md` §6.1), because a person is waiting on the page.
 - **Question timeout** (§7.4): becomes a setting in the assistant's *Limits* (`question_timeout`, 60 s; 30–600).
   With a CPU model the page suggests 180 s, and the "Asking…/Reading the answer…" status adds "Waiting for the
   model" while a request is queued (Household AI answers 503 with `Retry-After` when its queue is full, which
