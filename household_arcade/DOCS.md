@@ -44,8 +44,22 @@ buttons at the top right change how: **☰ List** (a row each, with your best),
 **▦ Small squares** (just the icon and name — the quickest to scan) and **◼ Large
 squares** (everything: your best, the modes, how many levels the game has, a
 saved game, how often you've played and when, and how to play). Your choice is
-remembered on that device. Pick a game to open its start screen, which sits over
-a still picture of the game:
+remembered on that device. Tap a game's **☆** to make it a favourite: your
+**★ Favourites** then come first on the page, in the order you marked them, and
+**All games** below (the star in a game's header does the same). Favourites are
+your own and follow you to any phone.
+
+The **Search games** box above the games finds them as you type, in every
+view: by name (`tic` finds Tic-tac-toe, `sea` Sea Battle), by kind — *arcade*,
+*puzzle*, *word*, *board*, *cards*, *dice*, *levels*, *two players* (or
+*together*), *turn by turn*, *gentle* (or *kids*, *easy*) — or by a mode
+(`7 x 7`). Every word you type has to match. In the large view a game found by
+its kind or mode says why ("Mode: 7 × 7"). Press **/** to jump to the box,
+**Esc** to clear it, and **Enter** to open the game when only one is left. What
+you typed stays while the app is open and is never sent anywhere.
+
+Pick a game to open its start screen,
+which sits over a still picture of the game:
 
 - **Mode** (a drop-down) — Snake: *Walls* (hitting the edge ends the game) or *Wrap* (go out
   one side, come back in the other), each at *Slow*, *Normal* or *Fast*, or
@@ -57,6 +71,14 @@ a still picture of the game:
   gates*. Most games also have a mode that plays a **list of levels** (below:
   *Challenges*, *Stages*, *Courses*, *Waves*, *Gardens*, *Puzzles*, *Towers* …); with AI levels on,
   the list keeps growing. Every mode has its own bests and its own leaderboard.
+- **Level** (a drop-down, in modes that carry on) — where a level is a puzzle or a goal (the
+  new puzzles' *Levels*, Snake's *Maze*, Mines' *Boards*, Merge's *Goals*, Lights Out's *Climb*,
+  Flap's *Course* and the other level lists), the app remembers the levels you've cleared —
+  Practice games included — and the next game starts at the first one you haven't:
+  *Level 9 (next)*. Pick an earlier level to play it again. When you've cleared them all, the
+  next game starts at level 1. The leaderboard and your personal bests count only games
+  started from level 1; races and daily challenges always start there. **My scores → Level
+  progress** lists your progress with a **Start over** button.
 - **Look** (a drop-down) — how the game is drawn (see *Looks*). The picture
   behind changes as soon as you pick one, so you can see it before playing.
   Your choice is remembered.
@@ -512,6 +534,38 @@ turn by turn*). Against the computer, **Against the computer, play** picks White
 Tap a piece (dots show where it can go), then its square; or the arrows and Space, **C** to let go. The last move is
 marked and a king in check is ringed. Playing Black, the board is turned round so your pieces are at the bottom.
 Score as for the board games above (a win 100 / 250 / 500 plus 10 a point of material left; a draw a quarter).
+
+### The calm puzzles: Arrow Release, Car Park, Colour Sort, Bolt Sort, Dot Connect, Untangle
+
+Six puzzles without a rush. Each has a gentle mode, bigger ones, and **Levels**: 200 numbered boards, the same for
+everyone, that get harder as you go; a cleared board leads to the next, the score adds up, and the next game starts
+at your next level (see *Level* above). End a Levels run from the pause screen to keep its score. Every board is
+checked to be solvable before it's shown. A board scores 10,000 less its costs (at least 10), only when it's solved;
+an unfinished one scores nothing. The start screen's **Hints** option (off by default, always off in races) adds a
+💡 **Hint** button (or **C**) that costs 200 points a hint. With the keyboard, the arrows move a ring and **Space**
+acts. Every piece carries a number or shape as well as its colour.
+
+- **Arrow Release** — tap an arrow and it flies off the way it points, if nothing is in its way; if something is, it
+  bumps and you lose a heart (three; *Little 5 × 5* has none, and *Levels* gives one back for each cleared board).
+  Releasing arrows only ever makes room, so look for the ones with a clear way out. Modes: *Little 5 × 5*,
+  *8 × 8*, *12 × 12*, *Twisty 10 × 10* (bent arrows) and *Levels*. Costs: 10 a second, 300 a bump.
+- **Car Park** — get the red car out through the gap on the right. Cars and lorries only move along their length:
+  drag one, or ring it, press Space and slide it with the arrows. One slide, however far, is one move; the fewest
+  moves is shown, and **Undo** takes a slide back. Modes: *Little*, *Classic*, *Hard*, *Levels*. Costs: 5 a second,
+  50 a move over the fewest.
+- **Colour Sort** — tap a tube, then another: the top colour pours across (every layer of it that fits) onto an
+  empty tube or the same colour. Sort every colour into a full tube of its own. **Undo** and **Restart**. Modes:
+  *3 colours*, *7 colours*, *10 colours*, *Levels*. Costs: 5 a second, 10 a pour.
+- **Bolt Sort** — the same idea one nut at a time: a nut moves onto an empty bolt or a nut of its colour with room.
+  In *6 colours, hidden* (and later levels) the nuts below the top show "?" until they reach the top. Modes:
+  *3 colours*, *6 colours*, *6 colours, hidden*, *Levels*. Costs: 5 a second, 10 a move.
+- **Dot Connect** — join each pair of dots with the same number by a line through neighbouring squares. Lines can't
+  cross (drawing over one cuts it) and every square must be filled (*Little 5 × 5* only asks for the pairs). Drag
+  from a dot or a line's end; with the keyboard, Space on a dot starts a line, the arrows draw and Space lets go.
+  Modes: *Little 5 × 5*, *7 × 7*, *9 × 9*, *Levels*. Costs: 10 a second.
+- **Untangle** — drag the points until no two lines cross; lines that cross are dashed, and the count is under the
+  board. With the keyboard, Space picks the next point and the arrows move it. Modes: *6 points*, *10 points*,
+  *16 points*, *Levels*. Costs: 10 a second, 20 a move.
 
 ### Daily challenges
 
@@ -991,7 +1045,9 @@ Everyone who has opened the app at least once, with their phones from Home
 Assistant. Per person: **Can play** (switch someone off), **Child** and their
 limits, extra notify services (a phone is picked up automatically from
 **Settings → People → (person) → Track device** in Home Assistant; add a
-`notify.…` service here for anything else) and **Send a test**.
+`notify.…` service here for anything else) and **Send a test**. **Level
+progress** shows the levels the person has cleared, with **Start over** for a
+game and mode (their scores are kept).
 
 ### Storage
 

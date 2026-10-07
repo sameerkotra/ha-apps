@@ -16,7 +16,8 @@ const LOAD_ORDER = ["kit.js", "sound.js", "registry.js", "snake-logic.js", "snak
   "codebreak-logic.js", "codebreak.js", "typerain-words.js", "typerain-logic.js", "typerain.js",
   "boardkit.js", "fourrow-logic.js", "fourrow.js", "tictactoe-logic.js", "tictactoe.js", "checkers-logic.js", "checkers.js",
   "reversi-logic.js", "reversi.js", "dots-logic.js", "dots.js", "seabattle-logic.js", "seabattle.js",
-  "dicekit.js", "ludo-logic.js", "ludo.js", "snakes-logic.js", "snakes.js", "carrom-logic.js", "carrom.js", "chess-logic.js", "chess.js"];
+  "dicekit.js", "ludo-logic.js", "ludo.js", "snakes-logic.js", "snakes.js", "carrom-logic.js", "carrom.js", "chess-logic.js", "chess.js",
+  "arrows-logic.js", "arrows.js", "parking-logic.js", "parking.js", "watersort-logic.js", "watersort.js", "bolts-logic.js", "bolts.js", "connect-logic.js", "connect.js", "untangle-logic.js", "untangle.js"];
 
 function fakeContext(canvas, counts) {
   const state = { font: "10px sans-serif" };

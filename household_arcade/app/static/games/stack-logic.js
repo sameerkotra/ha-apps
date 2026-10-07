@@ -10,6 +10,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, LEFT = 8, RIGHT = 232, BH = 14;
   var PERFECT = 3, SPAWN = 10, GROW = 4, GROW_AFTER = 3, MAX_V = 5, CLEAR_T = 90, MISS_T = 60, MAX_LEVEL = 100;
   var FLOOR_POINTS = 10, PERFECT_POINTS = 10, PERFECT_CAP = 5, TOWER_POINTS = 200;
@@ -72,6 +75,7 @@
       towers: mode === "towers" ? usableLevels(o.levels) : null,
       stats: { floors: 0, perfects: 0, bestStreak: 0, towers: 0, misses: 0, cause: null },
     };
+    if (s.towers) s.level = startAt(o.startLevel, s.towers.length);
     startTower(s);
     return s;
   }

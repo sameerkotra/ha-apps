@@ -21,7 +21,7 @@ function rng(seed) { const s = { rng: seed >>> 0 || 1 }; return () => BK.rand(s)
 test("the four wave 8 games register after wave 7: modes, touch controls, turns or live turns, options", () => {
   const { win } = makeSandbox();
   const ids = plain(win.ArcadeGames.list().map((g) => g.id));
-  assert.deepEqual(ids.slice(-4), ["ludo", "snakes", "carrom", "chess"]);
+  assert.deepEqual(ids.slice(ids.indexOf("ludo"), ids.indexOf("ludo") + 4), ["ludo", "snakes", "carrom", "chess"]);
   const G = (id) => win.ArcadeGames.get(id);
   for (const id of ["ludo", "snakes"]) {
     assert.deepEqual(plain(G(id).modes.map((m) => m.id)), ["cpu", "pass", "phones"]);

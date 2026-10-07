@@ -13,7 +13,7 @@
     var s = null, pending = [], prevDist = 0, prevX = 0, shake = 0, reduceFlag = !!opts.reduceMotion;
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; prevDist = s.dist; prevX = s.x; shake = 0; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; prevDist = s.dist; prevX = s.x; shake = 0; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; prevDist = s.dist; prevX = s.x; shake = 0; },
       step: function () {

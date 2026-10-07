@@ -12,6 +12,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var N = 8, CELL = 28, X0 = 8, Y0 = 58, FALL_V = 4;
   var SWAP_T = 8, CLEAR_T = 12, SHUFFLE_T = 40, LEVEL_T = 90, TIMED = 90 * 60, MAX_CHAIN = 5, MAX_LEVEL = 100;
   var GEM_POINTS = 10, LINE_BONUS = 50, BLAST_BONUS = 100, STAR_BONUS = 200, MOVE_BONUS = 50;
@@ -169,6 +172,7 @@
       list: mode === "moves" ? usableLevels(o.levels) : null,
       stats: { swaps: 0, gems: 0, bestChain: 0, lines: 0, blasts: 0, stars: 0, locks: 0, shuffles: 0, levels: 0, cause: null },
     };
+    if (s.list) s.level = startAt(o.startLevel, s.list.length);
     startLevel(s);
     return s;
   }

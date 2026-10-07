@@ -14,7 +14,7 @@
 
     function camTarget() { return Math.max(0, (s.height + 2) * BH - (GROUND - VIEW_TOP)); }
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; prevX = s.block ? s.block.x : 0; cam = camTarget(); },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; prevX = s.block ? s.block.x : 0; cam = camTarget(); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; prevX = s.block ? s.block.x : 0; cam = camTarget(); },
       step: function () {

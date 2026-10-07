@@ -10,6 +10,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var UPS = 60;
   var MODES = { classic: { n: 4 }, big: { n: 5 }, small: { n: 3 }, goals: { n: 0, list: true } };
   var MOVE_GAP = 6;          // updates a slide takes; the soonest the next move can be made
@@ -108,6 +111,7 @@
     };
     if (MODES[mode].list) {
       s.goals = usableLevels(o.levels);
+      s.level = startAt(o.startLevel, s.goals.length);
       freshBoard(s);
       return s;
     }

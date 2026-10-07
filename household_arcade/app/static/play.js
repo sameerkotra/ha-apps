@@ -66,12 +66,22 @@ const Play = (() => {
   function runLabel() { return S.daily ? "Today's challenge · " + modeLabel(S.daily.mode) : modeLabel(S.mode); }
   function modeLabel(id) { const m = S.server && S.server.modes.find((x) => x.id === id); return m ? m.label : id; }
   function isRunning() { return state.tab === "play" && S.phase === "running"; }
+  // Carrying on from the next level (spec §14): the person's progress in a mode, and the level the next game starts at.
+  function progressFor(mode) { return (S.server && S.server.progress && S.server.progress[mode]) || null; }
+  function chosenStart(mode) {
+    const p = progressFor(mode);
+    if (!p || !p.cleared || isTurnMode(mode)) return 1;
+    const top = Math.max(1, Math.min(p.cleared + 1, p.total || p.cleared + 1));
+    const pick = S.levelChoice && S.levelChoice[mode];
+    return pick >= 1 && pick <= top ? pick : p.next;
+  }
   function onScreen() { return state.tab === "play" && !!S.inst && (S.phase === "running" || S.phase === "paused"); }
 
   // ---------- page ----------
   async function render(gameId, which) {
     stopEverything(false);
     S.gameId = gameId;
+    S.levelChoice = {};
     S.openDaily = which === "daily";       // arrived from Home's "Today's challenges"
     S.daily = null;
     const root = $("#tab-play");
@@ -113,7 +123,8 @@ const Play = (() => {
     mount(root,
       h("div", { class: "play-head" },
         h("button", { class: "icon-btn", type: "button", id: "backBtn", title: "Back to games", "aria-label": "Back to games", onclick: () => showTab("home") }, "‹"),
-        h("h2", null, `${S.server.icon} ${S.server.name}`), el.timeSlot, el.helpBtn, el.soundBtn, el.pauseBtn, el.raceBar),
+        h("h2", null, `${S.server.icon} ${S.server.name}`), el.favSlot = h("span", { id: "favSlot" }, favButton(S.server)),
+        el.timeSlot, el.helpBtn, el.soundBtn, el.pauseBtn, el.raceBar),
       el.help,
       el.area);
     syncSoundBtn();
@@ -190,6 +201,23 @@ const Play = (() => {
       });
       return h("label", { class: "field" }, op.label, sel);
     });
+    // Where the next game starts (spec §14): the next uncleared level, or any cleared one again
+    const prog = isTurnMode(S.mode) ? null : progressFor(S.mode);
+    let levelField = null, levelLine = null;
+    if (prog && prog.cleared > 0) {
+      const top = Math.max(1, Math.min(prog.cleared + 1, prog.total || prog.cleared + 1));
+      const all = prog.total && prog.cleared >= prog.total;
+      const opts = [];
+      for (let n = top; n >= 1; n--) {
+        const label = n === 1 ? "Level 1 (from the start)" : n === prog.next && !all ? `Level ${n} (next)` : `Level ${n}`;
+        opts.push(h("option", { value: String(n) }, label));
+      }
+      const levelSel = h("select", { id: "startLevel", "aria-label": "Level", value: String(chosenStart(S.mode)) }, opts);
+      levelSel.addEventListener("change", () => { S.levelChoice[S.mode] = Number(levelSel.value) || 1; });
+      levelField = h("label", { class: "field" }, "Level", levelSel);
+      levelLine = h("div", { class: "hint", id: "progressLine" }, all ? `All ${prog.total} levels cleared ✓` :
+        `Level${prog.cleared === 1 ? " 1" : `s 1–${prog.cleared}`} cleared${prog.total ? ` · ${prog.total} in all` : ""}. Best scores count games from level 1.`);
+    }
     const practice = h("input", { type: "checkbox", id: "practiceBox", checked: S.practice });
     practice.addEventListener("change", () => { S.practice = practice.checked; });
     const blocked = blockReason();
@@ -203,7 +231,9 @@ const Play = (() => {
         bestLine(),
         h("div", { class: "start-fields" },
           S.server.modes.length > 1 ? h("label", { class: "field" }, "Mode", modeSel) : null,
+          levelField,
           h("label", { class: "field" }, "Look", lookSel)),
+        levelLine,
         optionFields.length ? h("div", { class: "start-fields", id: "startOptions" }, optionFields) : null,
         dailyBlock(blocked),
         h("label", { class: "mini-toggle", title: "Nothing is saved in Practice" }, practice, "Practice (not saved)"),
@@ -288,11 +318,21 @@ const Play = (() => {
     if (error) badges.push(h("span", { class: "badge note" }, "Not saved: " + error));
     if (result.stats && result.stats.won && result.stats.mazesCleared) badges.push(h("span", { class: "badge best" }, "🏁 Every maze cleared!"));
     if (saved && saved.levelsComing) badges.push(h("span", { class: "badge note", id: "levelsComing" }, "✨ New levels are on the way"));
+    // carrying on (spec §14): what this game cleared and where the next one starts
+    let progLine = null;
+    if (saved && saved.progress && saved.progress.total) {
+      const from = result.startLevel || 1, upTo = result.stats && result.stats.won ? result.level : (result.level || 1) - 1;
+      const cleared = upTo >= from ? (upTo === from ? `Cleared level ${from}` : `Cleared levels ${from}–${upTo}`) : "No level cleared";
+      progLine = h("div", { class: "hint", id: "overProgress" }, saved.progress.cleared >= saved.progress.total
+        ? `${cleared} · all ${saved.progress.total} levels cleared ✓` : `${cleared} · next time: level ${saved.progress.next}`);
+    }
+    if (saved && saved.startLevel > 1) badges.push(h("span", { class: "badge note" }, `From level ${saved.startLevel} — not on the leaderboard`));
     const blocked = blockReason();
     setOverlay(h("h3", null, "Game over"),
       h("div", { class: "big", id: "finalScore" }, fmtNum(result.score)),
       h("div", { class: "hint" }, `Level ${result.level || 1} · ${fmtDuration(result.seconds)} · ${runLabel()}`),
       Array.isArray(result.stats.summary) && result.stats.summary.length ? h("div", { class: "hint over-summary", id: "overSummary" }, result.stats.summary.map((t) => h("div", null, t))) : null,
+      progLine,
       badges.length ? h("div", { class: "ov-row", id: "overBadges" }, badges) : null,
       saved && saved.best !== null && saved.best !== undefined ? h("div", { class: "hint" }, "Your best: ", h("strong", null, fmtNum(saved.best))) : null,
       blocked ? h("div", { class: "hint warn", role: "alert", id: "overBlocked" }, blocked) : null,
@@ -346,7 +386,8 @@ const Play = (() => {
       session = await api("api/sessions", { method: "POST", body: how.match ? { game: S.gameId, matchId: how.match.id }
         : how.resume ? { game: S.gameId, resume: true }
         : how.daily === true ? { game: S.gameId, mode: S.mode, practice: how.practice === true, daily: true }
-        : { game: S.gameId, mode: S.mode, practice: S.practice } });
+        : Object.assign({ game: S.gameId, mode: S.mode, practice: S.practice },
+          chosenStart(S.mode) > 1 ? { startLevel: chosenStart(S.mode) } : {}) });
     } catch (e) {
       S.phase = prev === "over" ? "over" : "idle";
       try { await refreshMe(); } catch (e2) { /* keep the old picture */ }
@@ -377,6 +418,7 @@ const Play = (() => {
       best: session.best || 0,
       options: optionValues(), config: session.config || undefined,   // the person's start-screen choices; the app's settings for this game
       levels: session.levels || undefined,   // the level list this game plays through (fixed for the game)
+      startLevel: session.startLevel || 1,   // carrying on from the next level (spec §14)
       restore: session.saved ? { state: session.saved.state, seconds: session.saved.seconds } : undefined,
       onScore: () => {},
       onEnd: (result) => finish(result),
@@ -420,7 +462,7 @@ const Play = (() => {
     if (!r || (r.score <= 0 && r.seconds < 3)) { endSession(keepalive); return; }
     const id = S.session.id;
     S.session = null;
-    api("api/scores", { method: "POST", body: { sessionId: id, score: r.score, level: r.level, seconds: r.seconds }, keepalive })
+    api("api/scores", { method: "POST", body: { sessionId: id, score: r.score, level: r.level, seconds: r.seconds, cleared: Math.max(0, (r.level || 1) - 1) }, keepalive })
       .catch(() => { /* the game is over either way */ });
   }
   function endSession(keepalive) {
@@ -445,18 +487,27 @@ const Play = (() => {
     let saved = null, error = null;
     if (session) {
       try {
-        const body = { sessionId: session.id, score: result.score || 0, level: result.level || 1, seconds };
+        const won = !!(result.stats && result.stats.won);
+        // levels cleared in this game (spec §14): every level before the one it ended on, and that one too if won
+        const body = { sessionId: session.id, score: result.score || 0, level: result.level || 1, seconds,
+          cleared: won ? (result.level || 1) : Math.max(0, (result.level || 1) - 1) };
         if (S.match) body.won = !!(result.stats && result.stats.won);      // a race: who solved it counts for puzzles
         saved = await api("api/scores", { method: "POST", body });
         if (saved.playTime) state.me.playTime = saved.playTime;
         if (saved.best !== null && saved.best !== undefined && S.server.bestByMode) S.server.bestByMode[S.mode] = saved.best;
+        if (saved.progress && S.server.progress) {
+          S.server.progress[S.mode] = { cleared: saved.progress.cleared, total: saved.progress.total, next: saved.progress.next };
+          delete S.levelChoice[S.mode];          // the next game starts at the new next level
+          const g = state.games.find((x) => x.id === S.gameId);
+          if (g && g.progress) g.progress[S.mode] = S.server.progress[S.mode];
+        }
       } catch (e) { error = e.message; }
     }
     try { await refreshMe(); } catch (e) { /* keep the old picture */ }
     if (state.tab !== "play" || S.phase !== "over") return;
     syncTime();
     if (S.match) { raceFinished({ score: result.score || 0, level: result.level || 1, seconds, stats: result.stats || {} }, saved, error); return; }
-    showOver({ score: result.score || 0, level: result.level || 1, seconds, stats: result.stats || {} }, saved, error);
+    showOver({ score: result.score || 0, level: result.level || 1, seconds, stats: result.stats || {}, startLevel: session ? session.startLevel || 1 : 1 }, saved, error);
   }
 
   // ---------- playing together: a race (spec §13.3) ----------
@@ -1229,6 +1280,13 @@ const Play = (() => {
   window.addEventListener("orientationchange", () => setTimeout(() => fitStage(true), 150));
   if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
 
-  return { render, leave, pause, resume, isRunning, resize, themeChanged, _state: S };
+  // the star in the game's header after it was marked or unmarked (app.js toggleFavourite)
+  function favouriteChanged() {
+    if (!S.el || !S.el.favSlot || !S.server) return;
+    const g = state.games.find((x) => x.id === S.gameId);
+    if (g) S.server.favourite = g.favourite;
+    mount(clear(S.el.favSlot), favButton(S.server));
+  }
+  return { render, leave, pause, resume, isRunning, resize, themeChanged, favouriteChanged, _state: S };
 })();
 window.Play = Play;

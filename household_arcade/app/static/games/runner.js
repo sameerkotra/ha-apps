@@ -14,7 +14,7 @@
 
     function snap() { prevDist = s.dist; prevY = s.y; }
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; snap(); },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; snap(); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; snap(); },
       step: function () {

@@ -12,6 +12,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var Words = typeof module === "object" && module.exports ? require("./typerain-words.js") : self.TypeRainWords;
 
   var GROUND = 196, TOP_Y = 46, LEFT = 8, RIGHT = 232, CHAR_W = 8, PAD = 6;
@@ -91,7 +94,7 @@
       stages: mode === "stages" ? usableLevels(o.levels) : null,
       stats: { typed: 0, letters: 0, slips: 0, landed: 0, bestRun: 0, stages: 0, cause: null },
     };
-    if (s.stages) startStage(s);
+    if (s.stages) { s.level = startAt(o.startLevel, s.stages.length); startStage(s); }
     return s;
   }
   function startStage(s) {

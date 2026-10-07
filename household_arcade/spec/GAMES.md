@@ -768,6 +768,66 @@ from the game files; the logic tests still cover them.
 - **Agreement**: `tests/js/wave8-fuzz.js` plays random Ludo, Snakes and Ladders and Chess games with the JavaScript
   rules for `tests/test_wave8.py` to replay through the Python rules (legal moves before each move, the state after).
 
+## Wave 9 — Arrow Release
+
+A calm puzzle in the style of the "tap the arrows away" games: the board is full of arrows, and the aim is to release
+them all without crashing one into another.
+
+- **Files**: `arrows-logic.js` (`ArrowsLogic`: boards from the seed, the rules, the score) and `arrows.js` (drawing,
+  input); registers `arrows`. Server entry `arrows` in `games.py`: name **Arrow Release**, icon 🏹, tags `puzzle`,
+  `gentle`.
+- **The board**: a grid with arrows on it. Each arrow covers one or more cells in a line and points one way along
+  it (*Twisty*: arrows may bend — a path of cells with the head at one end, like a short snake). Some cells may be
+  empty.
+- **Releasing**: tap (or select and press) an arrow. If every cell from its head to the edge of the board, in the
+  direction the head points, is empty, the arrow slides out head first — the body follows the head — and leaves
+  the board (+1 released). If something is in the way, the arrow slides up to it, bumps and goes back to where it
+  was: a **mistake**, and one heart lost.
+- **Hearts**: 3. The game ends when the last heart is lost (not cleared) or when every arrow is gone (cleared).
+  *Little* has no hearts: a bump only wiggles the arrow.
+- **Always solvable, and order never traps you**: releasing an arrow only ever frees cells, so any arrow that can
+  leave now can always leave later — a board is solvable exactly when releasing free arrows one after another
+  clears it. The board maker fills the grid from the seed (integer random numbers only, as every game), checks
+  this, and where it gets stuck (arrows blocking each other in a ring) turns one arrow in the ring around and
+  checks again; after 50 tries it starts over from the next number of the seed. So the challenge is seeing which
+  arrows are free, not finding a lucky order.
+- **Modes** (`modes`, default `classic`):
+
+  | id | label | board | arrows |
+  |---|---|---|---|
+  | `little` | Little 5 × 5 (gentle) | 5 × 5 | short (1–2 cells), about 10, no hearts |
+  | `classic` | 8 × 8 | 8 × 8 | 1–4 cells, about 22, board ~85 % full |
+  | `big` | 12 × 12 | 12 × 12 | 1–5 cells, about 45, board ~90 % full |
+  | `twisty` | Twisty 10 × 10 | 10 × 10 | bent arrows of 2–6 cells, about 30 |
+  | `levels` | Levels | 5 × 5 growing to 12 × 12 | numbered boards, the same for everyone: board *n* is made from the fixed seed `arrows-level-<n>`, harder as *n* grows (size, arrows, longer and bent arrows, fuller board); 200 boards. Each cleared board leads to the next; hearts carry over, +1 heart per cleared board (at most 3); `level` = the board. Carries on from the next uncleared board next time (SPEC §14) |
+
+- **Hints** (start-screen option *Hints*, `offInRaces`, default *Off*; races always play without): 💡 Hint (`alt`, the C key, a
+  controller's X) flashes one arrow that is free now; 200 points each.
+- **Score** (only when cleared; `unfinished_zero`): 10,000 − 10 × seconds − 300 × mistakes − 200 × hints, at
+  least 10. *Levels*: each cleared board's score added, each board its own clock; the run ends when the hearts
+  run out (cleared boards keep their points) or the player stops (Pause → End). Honest-score limits: 10,000 a board
+  (`per_second` and `base` as Lights Out, with the level reached).
+- **Race** (§13.3): the same board from the same seed; `{"rule": "fastest", "tiebreak": "score"}` — cleared first
+  wins, then fewer mistakes. Hints are off in a race.
+- **Controls** (`touch`, with a cursor like Lights Out): tap an arrow; or move the highlight between arrows with the
+  arrow keys, WASD or the d-pad and release with Space, Enter or a controller's A. Pause is the
+  shell's.
+- **Looks**: every look. Arrows drawn as a line with a clear head; in the coarse looks (Retro LCD, Pixel) one arrow
+  per colour band with a big chevron head; *High contrast* shows the direction by the head's shape only, never by
+  colour. The released arrow flies off with a short trail; a bump shakes it and flashes the blocker.
+- **Sounds**: `release`, `bump`, `heart`, `hint`, `clear`, `win`, `lose`.
+- **Saving** (`state_version` 1): the board as made, which arrows are gone, hearts, mistakes, hints, the seconds,
+  the board number in *Levels*.
+- **Result**: `won, cause, mode, released, mistakes, hints, boards, summary`.
+- **Tests** (`tests/js/arrows-logic.test.js`): every mode's boards for many seeds are solvable by releasing free
+  arrows; the same seed gives the same board on every run, with `Math.random` and the float functions made to
+  throw (as wave 6); a free arrow leaves, a blocked one bumps and costs a heart, *Little* never loses one; a twisty
+  arrow leaves when its head's way is clear whatever its body is; the score formula and its floor; Levels' hearts;
+  saving and continuing; board *n* of *Levels* is the same on every run and starting at level *n* plays it
+  (SPEC §14). Python: the `games.py` entry, its modes and limits, and that a race turns hints off.
+- When built: the root README's game count (42 → 43) and its Arcade row, the DOCS game list and controls guide, and
+  `index.html`'s two script tags.
+
 ## Start-screen options that stay off in races
 
 An option may set `offInRaces: true` (the registry keeps it). The shell (`optionValues()` in play.js) then uses
@@ -776,6 +836,70 @@ same game. Word Guess's **Clue at the start** (`clue`: `none` / `letter`) is the
 shown in its place before the first guess, its place drawn from the seed after the answer (so the same seed gives
 the same word with or without it), the key coloured as found, Strict mode keeping it in place, and
 `CLUE_COST` (500) taken off the score. A saved game keeps `clue`; older saves have none.
+
+## Wave 10 — five more calm puzzles
+
+The same frame as Arrow Release: boards made from the seed with integer random numbers only and checked before they
+are shown; modes by size, a gentle one, and **Levels** — 200 numbered boards, board *n* made from the fixed seed
+`<game>-level-<n>` (the same for everyone), harder as *n* grows, each cleared board leading to the next and the next
+game starting at the first uncleared one (SPEC §14). One board's score: 10,000 − the game's costs, at least 10, only
+when it is solved; in *Levels* the boards' scores add up, and the run ends when the player ends it (Pause → End
+game, score kept) or after board 200. Every game: 💡 Hint (`alt`, C, a controller's X) with the start-screen option
+*Hints* (`offInRaces`, default Off), saving (`state_version` 1), all six looks, a race (`{"rule": "fastest",
+"tiebreak": "score"}`), `touch` controls with a keyboard / controller cursor (arrows move, Space / A acts).
+Honest-score limits: `max_score` 2,000,000 (200 boards), `per_second` 10,000, `base` 10,000.
+
+- **Car Park** (`parking`, 🚗). A 6 × 6 car park with one exit on the right of the third row. Cars 2 long and
+  lorries 3 long, each lying across or along; a car only moves forwards and backwards along its length. Get the red
+  car out through the exit. Drag a car (or select it with the cursor and Space, then the arrows) any number of free
+  squares: one **move**. The red car leaves when it reaches the exit. Boards: cars placed from the seed, every
+  position the cars can reach worked out (at most 30,000), and the position chosen whose fewest moves to free the
+  red car is closest to the board's target — so the **fewest moves** is known exactly and shown. Modes: `little`
+  Little (gentle, 2–5 moves), `classic` Classic (8–14), `hard` Hard (15–25), `levels` Levels (2 rising to 30).
+  Hint: the next move of a fewest-moves answer from where the cars are now. Score: 10,000 − 5 × seconds − 50 × (moves
+  − fewest) − 200 × hints. Undo (`undo`) takes a move back (it still counts).
+- **Colour Sort** (`watersort`, 🧪). Tubes of coloured water, four layers each. Tap a tube, then another: the top
+  colour pours across — every layer of it that fits — if the other tube is empty or has the same colour on top and
+  room. Sort every colour into a tube of its own. Boards: the layers shuffled from the seed into the tubes, two
+  empty tubes, and a depth-first search (a budget of 200,000 positions; a board it can't prove solvable is made
+  again) checks there is an answer. Modes: `little` 3 colours (gentle), `classic` 7 colours, `big` 10 colours,
+  `levels` 3 rising to 12. Undo; Restart (`erase`) starts the board again. Hint: a pour that still leads to an
+  answer (or "Stuck — undo or restart"). Score: 10,000 − 5 × seconds − 10 × pours − 200 × hints.
+- **Bolt Sort** (`bolts`, 🔩). Bolts holding nuts, four to a bolt. Move one nut at a time: the top nut onto an empty
+  bolt or onto a nut of its colour with room. Fill each bolt with one colour. In *Hidden* and on higher levels the
+  nuts under the top start as "?" and show their colour when they come to the top, so planning is part guesswork.
+  Boards: shuffled from the seed, two empty bolts, checked solvable with every colour known. Modes: `little` 3
+  colours (gentle), `classic` 6 colours, `hidden` 6 colours hidden, `levels` 3 rising to 10 (hidden from level
+  40). Undo, Restart, Hint as Colour Sort. Score: 10,000 − 5 × seconds − 10 × moves − 200 × hints.
+- **Dot Connect** (`connect`, 🔵). Pairs of coloured dots on a grid. Draw a line from each dot to its partner
+  through the squares next to each other; lines can't cross, and drawing over a line cuts it. Join every pair and
+  fill every square. Drag from a dot (or from a line's end); with the keyboard, Space on a dot or line end picks it,
+  the arrows draw, Space again lets go. Boards: a path through every square made from the seed (a zig-zag bent at
+  random many times), cut into pieces 3 squares or longer; the ends are the dots, so every board can be filled.
+  Modes: `little` 5 × 5 (gentle: joining every pair is enough), `classic` 7 × 7, `big` 9 × 9, `levels` 5 × 5
+  growing to 12 × 12. Hint: draws one pair's line from the answer. Score: 10,000 − 10 × seconds − 200 × hints.
+- **Untangle** (`untangle`, 🕸️). Points joined by lines, tangled up. Drag the points until no two lines cross.
+  With the keyboard, Space picks the next point and the arrows move it. Boards: points on a grid from the seed,
+  lines added only where they cross no other (so an untangled drawing exists), every point with two or more lines;
+  then the points are set on a circle in a shuffled order (shuffled again if nothing crosses). Crossings are
+  counted with whole-number arithmetic; lines that share a point don't cross. Modes: `little` 6 points (gentle),
+  `classic` 10, `big` 16, `levels` 6 rising to 30. Hint: puts one point where it was made. Score: 10,000 − 10 ×
+  seconds − 20 × moves − 200 × hints.
+- **Files**: `<game>-logic.js` (rules, boards, solver, score; pure) and `<game>.js` (drawing, input) for each;
+  `games.py` entries with tags (puzzle, gentle, levels); `continue_levels` with `level_total` 200 for `levels`.
+- **Tests** (`tests/js/wave10.test.js`): for every game and mode, many seeds give solvable boards (each game's own
+  solver, and for Car Park the stated fewest moves), the same seed the same board with `Math.random` and the float
+  functions made to throw; the moves' rules (a car blocked, a pour that doesn't fit, a nut onto another colour, a
+  line cut by another, crossings counted); a solved board scores by the formula; board *n* of *Levels* is the same
+  on every run and starting at level *n* plays it; saving and continuing.
+
+## Starting at a level (SPEC §14)
+
+`create(canvas, opts)` gets `opts.startLevel` (1 by default) in the modes that carry on (`continue_levels`). A
+level-list game starts at that entry of its list (`levels[startLevel − 1]`); Lights Out's *Climb* and Arrow
+Release's *Levels* start at that board. Score 0, and the lives, hearts and other run-long counters as at level 1.
+`level()` and the result's `level` stay the real level number, so the shell and the server can tell what was
+cleared.
 
 ## Adding a game later
 

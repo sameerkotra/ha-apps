@@ -10,6 +10,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, TOP = 38, FLOOR = 290, STEP_X = 20, N = 13, START_Y = 76, FOOT = 7, HALF = 6;
   var THRUST = 0.06, TURN = 3, MAX_TILT = 90, SAFE_VY = 0.9, SAFE_VX = 0.6, SAFE_TILT = 10;
   var LAND_T = 120, CRASH_T = 90, MAX_LEVEL = 100, PAD_POINTS = 100;
@@ -112,6 +115,7 @@
       list: mode === "levels" ? usableLevels(o.levels) : null,
       stats: { landings: 0, crashes: 0, fuelUsed: 0, best: 0, levels: 0, cause: null },
     };
+    if (s.list) s.level = startAt(o.startLevel, s.list.length);
     startLevel(s, true);
     return s;
   }

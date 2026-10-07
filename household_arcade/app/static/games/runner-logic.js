@@ -10,6 +10,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, TOP = 38, GY = 250, PX = 48, SEG = 60, LEAD = 6, VMAX = 8, LEVEL_PX = 3000, MAX_LEVEL = 100;
   var JUMP_V = 7.4, G = 0.55, G_HOLD = 0.3, HOLD_MAX = 12, G_FAST = 1.3, FALL_OUT = 40;
   var STAND_H = 26, DUCK_H = 14, HALF_W = 6, SAFE = 90, DEAD_T = 70, CLEAR_T = 90;
@@ -91,6 +94,7 @@
       courses: mode === "courses" ? usableLevels(o.levels) : null,
       stats: { distance: 0, coins: 0, jumps: 0, hits: 0, courses: 0, cause: null },
     };
+    if (s.courses) s.level = startAt(o.startLevel, s.courses.length);
     fill(s);
     return s;
   }

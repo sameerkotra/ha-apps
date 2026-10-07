@@ -6,6 +6,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, H = 300;
   var TOP = 36, GROUND = 278;
   var X = 72, R = 8;                              // the flyer's x and size (for hits)
@@ -77,7 +80,7 @@
       courses: null, spawnLevel: 1, spawned: 0,
       stats: { gates: 0, flaps: 0, courses: 0, cause: null },
     };
-    if (s.mode === "course") s.courses = usableLevels(o.levels);
+    if (s.mode === "course") { s.courses = usableLevels(o.levels); s.level = startAt(o.startLevel, s.courses.length); }
     for (var x = W + 40; x < W + 40 + SPACING * 3 && addGate(s, x); x += spacing(s)) { /* the first gates */ }
     return s;
   }

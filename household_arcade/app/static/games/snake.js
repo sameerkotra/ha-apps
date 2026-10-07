@@ -31,7 +31,7 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); swipe = null; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); swipe = null; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); swipe = null; },
       step: function () { return Logic.step(s); },

@@ -35,7 +35,7 @@ def public(row) -> dict:
     return {"game": row["game"], "mode": row["mode"], "modeLabel": games.mode_label(row["game"], row["mode"]),
             "practice": bool(row["practice"]), "score": row["score"], "level": row["level"],
             "seconds": row["seconds"], "startedAt": row["started_at"], "savedAt": row["saved_at"],
-            "canResume": can_resume(row)}
+            "canResume": can_resume(row), "startLevel": row["start_level"] or 1}
 
 
 def mine(conn, user_id: str) -> dict:
@@ -60,7 +60,7 @@ def finalize(conn, user_id: str, row) -> dict:
         else:
             saved = scores.insert(conn, user_id, {"game": row["game"], "mode": row["mode"],
                                                  "started_at": row["started_at"], "id": row["session_id"]},
-                                  row["score"], row["level"], row["seconds"])
+                                  row["score"], row["level"], row["seconds"], start_level=row["start_level"] or 1)
             out.update(scoreSaved=True, personalBest=saved["personalBest"], householdRecord=saved["householdRecord"])
     conn.execute("DELETE FROM saved_games WHERE user_id = ? AND game = ?", (user_id, row["game"]))
     return out
@@ -97,14 +97,16 @@ def store(conn, user_id: str, session, body: dict, levels_json: str | None, wall
     started = session["first_started_at"] or session["started_at"]
     conn.execute(
         "INSERT INTO saved_games (user_id, game, mode, practice, state, state_version, levels, score, level, seconds, "
-        "level_count, started_at, saved_at, session_id, app_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "level_count, started_at, saved_at, session_id, app_version, start_level) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(user_id, game) DO UPDATE SET mode = excluded.mode, practice = excluded.practice, "
         "state = excluded.state, state_version = excluded.state_version, levels = excluded.levels, "
         "score = excluded.score, level = excluded.level, seconds = excluded.seconds, level_count = excluded.level_count, "
         "started_at = excluded.started_at, saved_at = excluded.saved_at, session_id = excluded.session_id, "
-        "app_version = excluded.app_version",
+        "app_version = excluded.app_version, start_level = excluded.start_level",
         (user_id, game, session["mode"], session["practice"], blob, version, levels_json, int(score), int(level),
-         int(round(seconds)), session["level_count"], started, config.now_iso(), session["id"], config.APP_VERSION))
+         int(round(seconds)), session["level_count"], started, config.now_iso(), session["id"], config.APP_VERSION,
+         session["start_level"] or 1))
     return {"saved": public(get(conn, user_id, game)), "replaced": replaced}
 
 

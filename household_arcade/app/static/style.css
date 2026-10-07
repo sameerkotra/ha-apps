@@ -679,3 +679,28 @@ body[data-route="play"] main { max-width: none; padding-bottom: 12px; }
 .btn-pad.grid { grid-auto-columns: minmax(0, 60px); max-width: 100%; }
 .play-area[data-layout="side"] .btn-pad.grid { max-width: none; }
 .btn-pad.grid .pad-btn.pad-text { font-size: min(1rem, 4.4vw); line-height: 1.15; padding: 0 2px; overflow-wrap: anywhere; }
+
+/* Favourite games (spec §9): the star on each card, and the two sections of the Games page */
+.game-cell { position: relative; display: flex; min-width: 0; }
+.game-cell > .game-card { flex: 1; min-width: 0; }
+.fav-btn { position: absolute; top: 6px; right: 6px; width: 34px; height: 34px; border-radius: 50%; border: 0;
+  background: transparent; color: var(--text-dim); font-size: 1.25rem; line-height: 1; cursor: pointer; }
+.fav-btn:hover { background: var(--panel-hover); color: var(--gold); }
+.fav-btn.on { color: var(--gold); }
+.fav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.game-grid.view-list .fav-btn { top: 50%; transform: translateY(-50%); right: 34px; }
+.game-grid.view-list .game-card { padding-right: 76px; }
+.game-grid.view-large .game-card .gc-top { padding-right: 34px; }
+.game-grid.view-small .fav-btn { top: 2px; right: 2px; width: 30px; height: 30px; font-size: 1.1rem; }
+.games-section { margin: 18px 0 8px; font-size: 1rem; color: var(--text-dim); }
+.play-head #favSlot .fav-btn { position: static; }
+
+/* The Games page search (spec §9) */
+.game-search { position: relative; margin: 4px 0 6px; max-width: 520px; }
+.game-search .search-icon { position: absolute; left: 12px; top: 11px; font-size: 0.95rem; opacity: 0.6; pointer-events: none; }
+.game-search .search-input { width: 100%; box-sizing: border-box; min-height: 44px; padding: 8px 12px 8px 38px; font-size: 1rem;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); }
+.game-search .search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.game-search .search-count { min-height: 1.4em; margin-top: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.game-card .gc-via { font-size: 0.8rem; color: var(--accent); }
+.game-cell[hidden], .game-grid[hidden], .games-section[hidden], .gc-via[hidden] { display: none; }

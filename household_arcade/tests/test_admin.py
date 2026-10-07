@@ -29,7 +29,7 @@ class TestAppSettings(ApiBase):
         self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
         self.assertEqual(body["meta"]["ai_api_key"]["kind"], "secret")
         self.assertEqual([g["id"] for g in body["groups"]], ["games", "looks", "children", "ha", "assistant", "ai"])
-        self.assertEqual([g["id"] for g in body["games"]], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"])   # only games that exist
+        self.assertEqual([g["id"] for g in body["games"]], ["snake", "brick", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess", "arrows", "parking", "watersort", "bolts", "connect", "untangle"])   # only games that exist
         self.assertEqual([a["id"] for a in body["admins"]], ["u_asha"])
 
     def test_validation_saves_nothing(self):
@@ -54,7 +54,7 @@ class TestAppSettings(ApiBase):
     def test_game_switch_applies_at_once(self):
         self.play(100, game="brick", mode="classic")
         self.settings({"disabled_games": ["brick"]})
-        self.assertEqual([g["id"] for g in self.get("/api/games").json()["games"]], ["snake", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"])
+        self.assertEqual([g["id"] for g in self.get("/api/games").json()["games"]], ["snake", "blocks", "duel", "racer", "flap", "mines", "merge", "colours", "cards", "mole", "numbers", "tanks", "invaders", "rocks", "hop", "snakeduel", "sudoku", "wordguess", "wordsearch", "bubbles", "gems", "stack", "runner", "lander", "defense", "slide", "lights", "nonogram", "tiles", "codebreak", "typerain", "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess", "arrows", "parking", "watersort", "bolts", "connect", "untangle"])
         r = self.start("brick", "classic")
         self.assertEqual(r.status_code, 409)
         self.settings({"disabled_games": []})

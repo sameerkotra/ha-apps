@@ -15,7 +15,7 @@
     function snap() { prevY = s.y; prevX = s.gates.map(function (gt) { return gt.x; }); prevGround = groundOff; }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; groundOff = 0; snap(); },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; groundOff = 0; snap(); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; snap(); },
       step: function () {

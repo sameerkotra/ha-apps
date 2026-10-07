@@ -13,6 +13,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var UPS = 60, TOP = 10000, MIN_SCORE = 10, HINT_COST = 5, CLEAR_T = 75, STATE_VERSION = 1;
   var MODES = {
     little: { sizes: [3] },
@@ -117,6 +120,7 @@
       updates: 0, won: false, over: false, score: 0, last: -1, lastAt: -100, noHintAt: -1000,
       stats: { boards: 0, fewestTotal: 0, cause: null },
     };
+    if (mode === "climb") s.level = startAt(o.startLevel, s.sizes.length);
     startBoard(s);
     return s;
   }

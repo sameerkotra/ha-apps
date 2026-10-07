@@ -15,6 +15,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var MODES = { add: 1, times: 1, mixed: 1, challenge: 1 };
   var DIRS = ["up", "left", "right", "down"];
   var CLOCK = 3600, RIGHT_BONUS = 60, WRONG_COST = 180;
@@ -155,7 +158,7 @@
       stats: { right: 0, wrong: 0, bestStreak: 0, challenges: 0, cause: null },
       challenges: null,   // the list (kept out of save(): restore() is given it again); last, so restore keeps the key order
     };
-    if (s.mode === "challenge") { s.challenges = usableLevels(o.levels); s.clock = startClock(s); }
+    if (s.mode === "challenge") { s.challenges = usableLevels(o.levels); s.level = startAt(o.startLevel, s.challenges.length); s.clock = startClock(s); }
     s.q = makeQuestion(s); s.n = 1;
     return s;
   }

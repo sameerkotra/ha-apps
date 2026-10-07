@@ -16,6 +16,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, H = 300;
   var MODES = {
     classic: { cols: 3, rows: 3, lives: 3, timer: 0, maxUp: 3 },
@@ -151,7 +154,8 @@
     };
     if (mode === "gardens") {
       s.gardens = usableLevels(o.levels);
-      plant(s, 1);
+      s.level = startAt(o.startLevel, s.gardens.length);
+      plant(s, s.level);
       s.since = sGap(s) - 40;
     } else for (var i = 0; i < m.cols * m.rows; i++) s.holes.push({ k: null, t: 0, up: 0, hit: 0, rest: 0 });
     return s;

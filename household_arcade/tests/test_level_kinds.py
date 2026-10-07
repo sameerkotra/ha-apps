@@ -22,7 +22,9 @@ class TestLevelKinds(unittest.TestCase):
         # Breaker) make their puzzles from the seed, so they have no level list; wave 7's board games have no levels
         # at all (the computer's level is the mode), nor have wave 8's (Ludo, Snakes and Ladders, Carrom, Chess)
         generated = {"sudoku", "wordguess", "wordsearch", "slide", "lights", "nonogram", "tiles", "codebreak",
-                     "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"}
+                     "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess",
+                     # waves 9 and 10 make every board from the seed (their Levels are numbered boards, SPEC §14)
+                     "arrows", "parking", "watersort", "bolts", "connect", "untangle"}
         self.assertEqual(set(levels.SETS), set(games.GAME_IDS) - generated)
         for gid in generated:
             self.assertEqual(games.GAMES[gid]["level_modes"], [])

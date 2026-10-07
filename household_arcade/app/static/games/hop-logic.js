@@ -15,6 +15,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, H = 300;
   var COLS = 13, CS = 18, OX = 3, BOTTOM = 294;   // the board: 13 × 18 px columns from x = 3; rows up from y = 294
   var HOP_T = 8;                                  // updates a hop takes (no other hop meanwhile: ≤ 7.5 hops a second)
@@ -169,7 +172,7 @@
       phase: "play", pause: 0, levelT: 0, cause: null,
       stats: { hops: 0, homes: 0, levels: 0, deaths: 0, cause: null },
     };
-    if (s.mode === "levels") s.list = usableLevels(o.levels);
+    if (s.mode === "levels") { s.list = usableLevels(o.levels); s.level = startAt(o.startLevel, s.list.length); }
     buildLevel(s);
     return s;
   }

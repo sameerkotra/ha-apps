@@ -427,7 +427,9 @@ const Admin = (() => {
               PeoplePage.accessSwitch(u.isChild, (on) => patch(u, { isChild: on }), { label: `${u.name} is a child`, disabled: u.isAdmin })),
           ],
           blocks: [u.isAdmin ? h("div", { class: "hint" }, "Admins can't be marked as children; limits never apply to them.") : null,
-            u.isChild ? childBlock(u, data.games, again) : null],
+            u.isChild ? childBlock(u, data.games, again) : null,
+            h("div", { class: "actions" }, h("button", { class: "btn-ghost btn-small", type: "button", dataset: { progress: "1" },
+              onclick: () => progressDialog(u) }, "Level progress"))],
         };
       },
       notify: {
@@ -499,6 +501,30 @@ const Admin = (() => {
         h("label", { class: "field" }, "Leaderboard", lb)),
       h("div", { class: "hint" }, "Empty minutes = no limit. Quiet hours like 21:00 – 07:00 run past midnight; the school-night times apply to the night before a school day."),
       err, h("div", { class: "actions" }, save));
+  }
+
+  // Level progress (spec §14): what this person has cleared, with Start over.
+  async function progressDialog(u) {
+    const body = h("div", null, spinner());
+    openModal(`Level progress — ${u.name}`, body);
+    const load = async () => {
+      let d;
+      try { d = await api(`api/admin/users/${encodeURIComponent(u.id)}/progress`); }
+      catch (e) { mount(body, errorCard(e)); return; }
+      const rows = d.progress || [];
+      mount(body, rows.length ? h("div", { class: "table-wrap" }, h("table", { class: "data", id: "adminProgressTable" },
+        h("thead", null, h("tr", null, h("th", null, "Game"), h("th", null, "Mode"), h("th", { class: "num" }, "Cleared"), h("th", null, h("span", { class: "sr-only" }, "Start over")))),
+        h("tbody", null, rows.map((p) => h("tr", null, h("td", null, `${p.icon} ${p.name}`), h("td", null, p.modeLabel),
+          h("td", { class: "num" }, p.total ? `${p.cleared} of ${p.total}` : String(p.cleared)),
+          h("td", null, h("button", { class: "btn-ghost btn-small", type: "button", onclick: async (ev) => {
+            ev.target.disabled = true;
+            try { await api(`api/admin/users/${encodeURIComponent(u.id)}/progress/${encodeURIComponent(p.game)}/${encodeURIComponent(p.mode)}`, { method: "DELETE" });
+              toast(`${u.name}: ${p.name} back to level 1`); load(); }
+            catch (e) { fail(e); ev.target.disabled = false; }
+          } }, "Start over"))))))) :
+        h("div", { class: "empty" }, "No levels cleared yet."));
+    };
+    load();
   }
 
   async function historyDialog(u) {

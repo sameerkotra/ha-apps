@@ -6,6 +6,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
   var OPP = { up: "down", down: "up", left: "right", right: "left" };
   var SPEEDS = {
@@ -221,7 +224,7 @@
       over: false, won: false, cause: null, updates: 0, moves: 0, pending: [],
       rng: (Number(o.seed) >>> 0) || 1,
     };
-    if (s.maze) loadMaze(s, 1); else placeFood(s);
+    if (s.maze) loadMaze(s, startAt(o.startLevel, s.mazes.length)); else placeFood(s);
     return s;
   }
 

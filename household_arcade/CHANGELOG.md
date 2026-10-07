@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.10.0
+
+- **Six new puzzles**: **Arrow Release** (tap the arrows away without bumping one into another), **Car Park** (slide
+  the cars to get the red one out), **Colour Sort** (pour the colours into tubes of their own), **Bolt Sort** (move
+  the nuts so each bolt holds one colour — with a *Hidden* mode), **Dot Connect** (join the pairs and fill every
+  square) and **Untangle** (drag the points until no lines cross). Each has a gentle mode, bigger ones, and
+  **Levels** — 200 numbered boards that get harder. Every board is checked solvable before it's shown. An optional
+  **Hints** setting on the start screen (off by default, and always off in races) costs 200 points a hint.
+- **Carry on from your next level**: games whose levels are puzzles or goals (the new puzzles' *Levels*, Snake's
+  *Maze*, Mines' *Boards*, Merge's *Goals*, Lights Out's *Climb* and more) now remember the levels you've cleared
+  and start at the next one — on any phone. A **Level** drop-down on the start screen lets you replay any cleared
+  level, **My scores → Level progress** has **Start over**, and an admin can reset a person's progress on
+  **Admin → Users**. Leaderboards and personal bests still count only games started from level 1.
+- **Favourite games**: tap the ☆ on a game (or in a game's header) to keep it in **★ Favourites** at the top of
+  the Games page. Each person has their own, on every device.
+- **Search the games**: a search box on the Games page finds games as you type — by name (`tic` finds
+  Tic-tac-toe), by kind (*puzzle*, *word*, *board*, *dice*, *levels*, *two players*, *turn by turn*; *kids* or
+  *easy* for the gentle ones) or by mode (`7 x 7`). Press `/` to jump to it, Esc to clear it, Enter to open the only
+  game left.
+
 ## 1.9.1
 
 - **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.

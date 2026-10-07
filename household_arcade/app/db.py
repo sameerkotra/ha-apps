@@ -337,6 +337,23 @@ _M9_ASSISTANT = """
 ALTER TABLE users ADD COLUMN assistant_ok INTEGER NOT NULL DEFAULT 1
 """
 
+# Carrying on from the next level (SPEC §14) and favourite games (SPEC §9): each person's highest level cleared per
+# game and mode, the level a game started at (leaderboards count only games from level 1), and their favourites.
+_M10_PROGRESS = """
+CREATE TABLE IF NOT EXISTS level_progress (
+    user_id TEXT NOT NULL REFERENCES users(id),
+    game TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    cleared INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, game, mode)
+);
+ALTER TABLE play_sessions ADD COLUMN start_level INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE scores ADD COLUMN start_level INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE saved_games ADD COLUMN start_level INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE users ADD COLUMN favourites TEXT
+"""
+
 # (number, description, SQL). Append only.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "people, play sessions, scores, app settings", _M1_CORE),
@@ -348,6 +365,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (7, "daily challenge, per-person game choices", _M7_DAILY),
     (8, "turn-by-turn matches: moves, state, notifications", _M8_TURNS),
     (9, "the Household Assistant: each person's switch", _M9_ASSISTANT),
+    (10, "level progress, start levels, favourite games", _M10_PROGRESS),
 ]
 LATEST = MIGRATIONS[-1][0]
 

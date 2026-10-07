@@ -8,6 +8,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var UPS = 60;
   var SYMBOLS = 15;                 // circle, ring, square, diamond, triangle, star, plus, cross, heart,
                                     // hexagon, house, hourglass, two dots, bars, arrow
@@ -91,7 +94,7 @@
       score: 0, level: 1, over: false, won: false, updates: 0,
       stats: { pairs: 0, misses: 0, boards: 0, bestStreak: 0, turns: 0, cause: null },
     };
-    if (s.mode === "challenge") s.boards = usableLevels(o.levels);
+    if (s.mode === "challenge") { s.boards = usableLevels(o.levels); s.level = startAt(o.startLevel, s.boards.length); }
     deal(s);
     return s;
   }

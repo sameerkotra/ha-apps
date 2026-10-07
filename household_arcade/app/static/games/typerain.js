@@ -61,7 +61,7 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; if (pressedT > 0) pressedT--; return evs; },

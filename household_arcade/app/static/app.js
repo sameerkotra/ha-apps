@@ -107,7 +107,9 @@ async function refreshMe() {
   return state.me;
 }
 async function refreshGames() {
-  state.games = (await api("api/games")).games;
+  const r = await api("api/games");
+  state.games = r.games;
+  state.favourites = r.favourites || [];
   return state.games;
 }
 
@@ -135,11 +137,94 @@ async function renderHome() {
     parts.push(h("div", { class: "card empty" }, me.playTime.isChild ? "No games are switched on for you yet." : "Every game is switched off. An admin can turn them on under Admin → App settings."));
   } else {
     const view = gamesView();
-    parts.push(h("div", { class: "game-grid view-" + view, id: "gameGrid", dataset: { view } }, state.games.map((g) => gameTile(g, view))));
+    if (state.games.length > 1) parts.push(searchBox());
+    // Favourites first (in the order marked), then every other game (spec §9)
+    const favs = (state.favourites || []).map((id) => state.games.find((g) => g.id === id)).filter(Boolean);
+    const rest = state.games.filter((g) => !g.favourite);
+    if (favs.length) {
+      parts.push(h("h3", { class: "games-section", id: "favHead" }, "★ Favourites"),
+        h("div", { class: "game-grid view-" + view, id: "favGrid", dataset: { view } }, favs.map((g) => gameTile(g, view))),
+        rest.length ? h("h3", { class: "games-section", id: "allHead" }, "All games") : null);
+    }
+    if (rest.length) parts.push(h("div", { class: "game-grid view-" + view, id: "gameGrid", dataset: { view } }, rest.map((g, i) => gameTile(g, view, !favs.length && i === 0))));
   }
   mount(root, parts);
+  applySearch();
   if (window.Together && (state.arg === "join" || state.arg === "decline" || state.arg === "turn")) Together.afterHome(state.arg, state.arg2);   // a phone notification's button
 }
+
+// The Games page search (spec §9): filters the games in the browser as you type, in every view. The cards above
+// the list are never hidden. What was typed is kept for this visit only (sessionStorage), never sent anywhere.
+const SEARCH_KEY = "arcade.gamesSearch";
+function searchText() { try { return sessionStorage.getItem(SEARCH_KEY) || ""; } catch (e) { return ""; } }
+function keepSearch(v) { try { if (v) sessionStorage.setItem(SEARCH_KEY, v); else sessionStorage.removeItem(SEARCH_KEY); } catch (e) { /* storage blocked */ } }
+function searchBox() {
+  const input = h("input", { type: "search", id: "gameSearch", class: "search-input", placeholder: "Search games", autocomplete: "off",
+    spellcheck: "false", "aria-describedby": "searchCount", value: searchText() });
+  input.addEventListener("input", () => { keepSearch(input.value); applySearch(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault(); e.stopPropagation();
+      if (input.value) { input.value = ""; keepSearch(""); applySearch(); } else input.blur();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const shown = visibleGames();
+      if (shown.length === 1) showTab("play", { arg: shown[0] });
+    }
+  });
+  return h("div", { class: "game-search", role: "search" },
+    h("label", { class: "sr-only", for: "gameSearch" }, "Search games"),
+    h("span", { class: "search-icon", "aria-hidden": "true" }, "🔍"), input,
+    h("div", { class: "hint search-count", id: "searchCount", "aria-live": "polite" }));
+}
+function visibleGames() {
+  const seen = [];
+  for (const c of document.querySelectorAll("#tab-home .game-cell")) if (!c.hidden && seen.indexOf(c.dataset.game) < 0) seen.push(c.dataset.game);
+  return seen;
+}
+function applySearch() {
+  const input = document.getElementById("gameSearch");
+  const count = document.getElementById("searchCount");
+  const q = input ? input.value : "";
+  const typed = !!(window.GameSearch && GameSearch.words(q).length);
+  const results = {};
+  for (const g of state.games) results[g.id] = typed ? GameSearch.match(g, q) : { ok: true, via: null };
+  for (const cell of document.querySelectorAll("#tab-home .game-cell")) {
+    const r = results[cell.dataset.game] || { ok: true, via: null };
+    cell.hidden = !r.ok;
+    const card = cell.querySelector(".game-card");
+    let via = cell.querySelector(".gc-via");
+    if (card && cell.closest(".view-large")) {
+      if (r.via && !via) { via = h("span", { class: "gc-via" }); const name = card.querySelector(".gc-name"); if (name) name.after(via); }
+      if (via) { via.textContent = r.via || ""; via.hidden = !r.via; }
+    }
+  }
+  for (const id of ["favGrid", "gameGrid"]) {
+    const g = document.getElementById(id);
+    if (g) g.hidden = ![...g.querySelectorAll(".game-cell")].some((c) => !c.hidden);
+  }
+  const favHead = document.getElementById("favHead");
+  if (favHead) favHead.hidden = document.getElementById("favGrid").hidden;
+  // "All games" is only worth a heading while favourites show above it
+  const fav = document.getElementById("favGrid"), allHead = document.getElementById("allHead"), grid = document.getElementById("gameGrid");
+  if (allHead) allHead.hidden = !(fav && !fav.hidden && grid && !grid.hidden);
+  if (count) {
+    const n = Object.values(results).filter((r) => r.ok).length;
+    if (!typed) mount(count);
+    else if (n) mount(count, h("span", null, `${n} of ${state.games.length} games`));
+    else mount(count, h("span", null, `No game matches “${q.trim()}”`), h("button", { class: "btn-ghost btn-small", type: "button", id: "searchClear",
+      onclick: () => { input.value = ""; keepSearch(""); applySearch(); input.focus(); } }, "Clear"));
+  }
+}
+// "/" puts the cursor in the search box when no other field has it
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey || state.tab !== "home") return;
+  const a = document.activeElement;
+  if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return;
+  if (document.querySelector("dialog[open], .modal-backdrop")) return;
+  const input = document.getElementById("gameSearch");
+  if (input) { e.preventDefault(); input.focus(); }
+});
 
 // Today's challenges: three games with the same puzzle for everyone, one ranked try each (Practice any time).
 function dailyCard(d) {
@@ -173,7 +258,34 @@ function viewPicker() {
       dataset: { view: k }, onclick: () => { try { localStorage.setItem("arcade.gamesView", k); } catch (e) { /* ignore */ } renderHome(); },
     }, glyph)));
 }
-function gameTile(g, view) {
+// The star on a game card: mark or unmark a favourite (spec §9) without opening the game.
+function favButton(g, tip) {
+  const on = !!g.favourite;
+  return h("button", { type: "button", class: "fav-btn" + (on ? " on" : ""), dataset: { fav: g.id },
+    title: on ? `Remove ${g.name} from favourites` : (tip ? "Mark favourites to keep them at the top" : `Add ${g.name} to favourites`),
+    "aria-label": on ? `Remove ${g.name} from favourites` : `Add ${g.name} to favourites`, "aria-pressed": on ? "true" : "false",
+    onclick: (ev) => { ev.stopPropagation(); toggleFavourite(g); } }, on ? "★" : "☆");
+}
+async function toggleFavourite(g) {
+  try {
+    const r = await api(`api/favourites/${encodeURIComponent(g.id)}`, { method: "PUT", body: { on: !g.favourite } });
+    g.favourite = !g.favourite;
+    state.favourites = r.favourites;
+    for (const x of state.games) x.favourite = r.favourites.indexOf(x.id) >= 0;
+    if (state.tab === "home") renderHome(); else if (window.Play && Play.favouriteChanged) Play.favouriteChanged();
+  } catch (e) { fail(e); }
+}
+// "Next: level 9 of 30" for the game's default mode when it carries on from the next level (spec §14)
+function progressText(g, mode) {
+  const p = g.progress && g.progress[mode || g.defaultMode];
+  if (!p || !p.total) return null;
+  if (p.cleared >= p.total) return `All ${p.total} levels cleared ✓`;
+  return p.cleared ? `Next: level ${p.next} of ${p.total}` : null;
+}
+function gameTile(g, view, tip) {
+  return h("div", { class: "game-cell", dataset: { game: g.id } }, gameCard(g, view), favButton(g, tip));
+}
+function gameCard(g, view) {
   const def = registryGame(g.id), ok = !!def;
   const open = () => { if (ok) showTab("play", { arg: g.id }); else toast(`${g.name} couldn't be loaded in this browser.`, true); };
   const best = g.best !== null && g.best !== undefined ? ["Best ", h("b", null, fmtNum(g.best))] : "Not played yet";
@@ -191,6 +303,11 @@ function gameTile(g, view) {
   facts.push(`${g.modes.length} mode${g.modes.length === 1 ? "" : "s"}: ${g.modes.map((m) => m.label).join(", ")}`);
   if (g.levels) facts.push(`${g.levels} level${g.levels === 1 ? "" : "s"}${g.levelModes.length ? ` (${g.levelModes.join(", ")})` : ""}`);
   if (g.plays) facts.push(`Played ${fmtNum(g.plays)} time${g.plays === 1 ? "" : "s"}` + (g.lastPlayed ? `, last ${shortDate(g.lastPlayed)}` : ""));
+  const prog = Object.keys(g.progress || {}).map((m) => {
+    const t = progressText(g, m);
+    return t ? (Object.keys(g.progress).length > 1 || m !== g.defaultMode ? `${(g.modes.find((x) => x.id === m) || {}).label || m}: ${t}` : t) : null;
+  }).filter(Boolean);
+  for (const t of prog) facts.push(t);
   return h("button", attrs, h("span", { class: "gc-top" }, icon, savedChip), name,
     h("span", { class: "gc-best" }, best),
     h("span", { class: "gc-facts" }, facts.map((f) => h("span", null, f))),
@@ -217,7 +334,8 @@ async function renderScores() {
   const root = $("#tab-scores");
   mount(root, pageHead("My scores"), spinner());
   let data;
-  try { [data] = await Promise.all([api("api/scores/mine"), state.games.length ? null : refreshGames()]); }
+  let prog = { progress: [] };
+  try { [data, prog] = await Promise.all([api("api/scores/mine"), api("api/progress"), state.games.length ? null : refreshGames()]); }
   catch (e) { mount(root, pageHead("My scores"), errorCard(e, renderScores)); return; }
   const tiles = h("div", { class: "card-grid" },
     h("div", { class: "stat-card" }, h("div", { class: "value" }, fmtNum(data.totals.games)), h("div", { class: "label" }, "Games saved")),
@@ -231,7 +349,7 @@ async function renderScores() {
   const recent = data.recent.length
     ? h("div", { class: "table-wrap" }, h("table", { class: "data", id: "recentTable" },
         h("thead", null, h("tr", null, h("th", null, "When"), h("th", null, "Game"), h("th", { class: "num" }, "Score"), h("th", { class: "num" }, "Level"), h("th", { class: "num" }, "Time"), h("th", null, h("span", { class: "sr-only" }, "Delete")))),
-        h("tbody", null, data.recent.map((r) => h("tr", null, h("td", null, fmtStamp(r.at)), h("td", null, `${gameName(r.game)} · ${r.modeLabel}`),
+        h("tbody", null, data.recent.map((r) => h("tr", null, h("td", null, fmtStamp(r.at)), h("td", null, `${gameName(r.game)} · ${r.modeLabel}${r.startLevel > 1 ? ` · from level ${r.startLevel}` : ""}`),
           h("td", { class: "num" }, fmtNum(r.score)), h("td", { class: "num" }, r.level), h("td", { class: "num" }, fmtDuration(r.seconds)),
           h("td", null, h("button", { class: "icon-btn danger", type: "button", title: "Delete this score", "aria-label": "Delete this score", onclick: async () => {
             if (!(await confirmDialog("Delete score", `Delete your ${gameName(r.game)} score of ${fmtNum(r.score)}? This can't be undone.`))) return;
@@ -241,7 +359,25 @@ async function renderScores() {
   mount(root, pageHead("My scores"), tiles,
     h("div", { class: "card" }, h("h3", null, "Personal bests"), bests),
     h("div", { class: "card" }, h("h3", null, "Last 20 games"), recent),
+    progressCard(prog.progress || []),
     window.Together ? Together.againstCard() : null);
+}
+
+// Level progress (spec §14): the games that carry on from the next level, with Start over.
+function progressCard(rows) {
+  if (!rows.length) return null;
+  return h("div", { class: "card", id: "progressCard" }, h("h3", null, "Level progress"),
+    h("div", { class: "hint" }, "These games start at your next level. Bests and the leaderboard count only games played from level 1."),
+    h("div", { class: "table-wrap" }, h("table", { class: "data", id: "progressTable" },
+      h("thead", null, h("tr", null, h("th", null, "Game"), h("th", null, "Mode"), h("th", { class: "num" }, "Cleared"), h("th", null, "Next"), h("th", null, h("span", { class: "sr-only" }, "Start over")))),
+      h("tbody", null, rows.map((p) => h("tr", null, h("td", null, `${p.icon} ${p.name}`), h("td", null, p.modeLabel),
+        h("td", { class: "num" }, p.total ? `${p.cleared} of ${p.total}` : String(p.cleared)),
+        h("td", null, p.total && p.cleared >= p.total ? "All cleared ✓" : `Level ${p.next}`),
+        h("td", null, h("button", { class: "btn-ghost btn-small", type: "button", onclick: async () => {
+          if (!(await confirmDialog("Start over", `Start ${p.name} · ${p.modeLabel} from level 1 again? Your scores are kept.`, "Start over"))) return;
+          try { await api(`api/progress/${encodeURIComponent(p.game)}/${encodeURIComponent(p.mode)}`, { method: "DELETE" }); toast("Back to level 1"); await refreshGames(); renderScores(); }
+          catch (e) { fail(e); }
+        } }, "Start over"))))))));
 }
 
 // =====================================================================

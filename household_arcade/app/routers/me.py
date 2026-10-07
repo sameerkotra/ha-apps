@@ -60,6 +60,8 @@ def me(current: dict = Depends(get_current_user)):
         row = conn.execute("SELECT * FROM users WHERE id = ?", (current["id"],)).fetchone()
         status = limits.status(conn, current)
         low = low_time_children(conn) if current["is_admin"] else []
+        from .play import favourites_of
+        favs = favourites_of(conn, current["id"])
     lb = s["leaderboard"]
     lb_names = "full"
     if current["is_child"] and status["limits"]:
@@ -87,6 +89,7 @@ def me(current: dict = Depends(get_current_user)):
         "dailyChallenges": bool(s["show_daily_challenges"]),
         "assistant": bool(s["assistant_answers"]),     # the Household Assistant may ask (Settings shows the switch)
         "lowTimeChildren": low,
+        "favourites": favs,                            # favourite games, in the order marked (SPEC §9)
     }
 
 

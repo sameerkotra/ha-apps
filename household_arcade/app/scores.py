@@ -25,8 +25,9 @@ def first_name(name: str) -> str:
 
 
 def best(conn, game: str, mode: str, user_id: str | None = None) -> int | None:
+    """Bests and records count only games started at level 1 (SPEC §14)."""
     sql = ("SELECT MAX(s.score) AS m FROM scores s JOIN users u ON u.id = s.user_id "
-           "WHERE s.game = ? AND s.mode = ? AND u.disabled = 0")
+           "WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1")
     args: list = [game, mode]
     if user_id:
         sql += " AND s.user_id = ?"
@@ -35,15 +36,18 @@ def best(conn, game: str, mode: str, user_id: str | None = None) -> int | None:
     return row["m"]
 
 
-def insert(conn, user_id: str, session: dict, score: int, level: int, seconds: int) -> dict:
-    """Store a validated result. Returns {id, personalBest, householdRecord, previousRecord}."""
+def insert(conn, user_id: str, session: dict, score: int, level: int, seconds: int, start_level: int = 1) -> dict:
+    """Store a validated result. Returns {id, personalBest, householdRecord, previousRecord}. A game started past
+    level 1 (SPEC §14) is stored but is never a best or a record."""
     prev_mine = best(conn, session["game"], session["mode"], user_id)
     prev_house = best(conn, session["game"], session["mode"])
     cur = conn.execute(
-        "INSERT INTO scores (user_id, game, mode, score, level, seconds, started_at, ended_at, app_version, session_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO scores (user_id, game, mode, score, level, seconds, started_at, ended_at, app_version, session_id, "
+        "start_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (user_id, session["game"], session["mode"], score, level, seconds, session["started_at"],
-         config.now_iso(), config.APP_VERSION, session["id"]))
+         config.now_iso(), config.APP_VERSION, session["id"], start_level))
+    if start_level != 1:
+        return {"id": cur.lastrowid, "personalBest": False, "householdRecord": False, "previousRecord": prev_house}
     return {
         "id": cur.lastrowid,
         "personalBest": score > 0 and (prev_mine is None or score > prev_mine),
@@ -66,7 +70,7 @@ def _week_start_utc() -> str:
 
 def leaderboard(conn, game: str, mode: str, period: str, viewer: dict, names: str = "full") -> list[dict]:
     sql = ("SELECT s.id, s.user_id, s.score, s.level, s.seconds, s.ended_at, u.name FROM scores s "
-           "JOIN users u ON u.id = s.user_id WHERE s.game = ? AND s.mode = ? AND u.disabled = 0")
+           "JOIN users u ON u.id = s.user_id WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1")
     args: list = [game, mode]
     if period == "month":
         sql += " AND s.ended_at >= ?"
@@ -90,14 +94,17 @@ def leaderboard(conn, game: str, mode: str, period: str, viewer: dict, names: st
 
 def _row(r) -> dict:
     return {"id": r["id"], "game": r["game"], "mode": r["mode"], "modeLabel": games.mode_label(r["game"], r["mode"]),
-            "score": r["score"], "level": r["level"], "seconds": r["seconds"], "at": r["ended_at"]}
+            "score": r["score"], "level": r["level"], "seconds": r["seconds"], "at": r["ended_at"],
+            "startLevel": r["start_level"]}
 
 
 def mine(conn, user_id: str) -> dict:
     bests = []
     for r in conn.execute(
-            "SELECT game, mode, MAX(score) AS score, COUNT(*) AS games FROM scores WHERE user_id = ? "
-            "AND mode NOT LIKE 'daily-%' GROUP BY game, mode ORDER BY game, mode", (user_id,)):
+            "SELECT game, mode, MAX(CASE WHEN start_level = 1 THEN score END) AS score, COUNT(*) AS games FROM scores "
+            "WHERE user_id = ? AND mode NOT LIKE 'daily-%' GROUP BY game, mode ORDER BY game, mode", (user_id,)):
+        if r["score"] is None:
+            continue
         if not games.exists(r["game"]):
             continue
         bests.append({"game": r["game"], "mode": r["mode"], "modeLabel": games.mode_label(r["game"], r["mode"]),
@@ -113,7 +120,8 @@ def mine(conn, user_id: str) -> dict:
 def bests_for(conn, user_id: str) -> dict:
     """{game: best score in any mode} — for Home."""
     return {r["game"]: r["m"] for r in conn.execute(
-        "SELECT game, MAX(score) AS m FROM scores WHERE user_id = ? AND mode NOT LIKE 'daily-%' GROUP BY game", (user_id,))}
+        "SELECT game, MAX(score) AS m FROM scores WHERE user_id = ? AND mode NOT LIKE 'daily-%' AND start_level = 1 "
+        "GROUP BY game", (user_id,))}
 
 
 def records(conn) -> dict:
@@ -124,7 +132,8 @@ def records(conn) -> dict:
         for mode in games.mode_ids(game):
             r = conn.execute(
                 "SELECT s.score, s.ended_at, u.name FROM scores s JOIN users u ON u.id = s.user_id "
-                "WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 ORDER BY s.score DESC, s.ended_at ASC LIMIT 1",
+                "WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1 "
+                "ORDER BY s.score DESC, s.ended_at ASC LIMIT 1",
                 (game, mode)).fetchone()
             if r:
                 per_mode[mode] = {"score": r["score"], "name": r["name"], "at": r["ended_at"]}

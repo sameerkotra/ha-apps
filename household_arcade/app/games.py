@@ -795,9 +795,188 @@ GAMES: dict[str, dict] = {
         "per_second": 1_000,
         "base": 1_000,
     },
+    # Waves 9 and 10 (spec/GAMES.md): calm puzzles made from the seed, each with a Levels mode of 200 numbered boards
+    # that carries on from the next one (SPEC §14).
+    "arrows": {
+        "name": "Arrow Release",
+        "icon": "🏹",
+        "modes": [
+            {"id": "little", "label": "Little 5 × 5 (gentle)"},
+            {"id": "classic", "label": "8 × 8"},
+            {"id": "big", "label": "12 × 12"},
+            {"id": "twisty", "label": "Twisty 10 × 10"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − 10 × seconds − 300 × mistakes − 200 × hints a board (at least 10), only for cleared boards; Levels adds the boards up
+        "max_score": 2_000_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "parking": {
+        "name": "Car Park",
+        "icon": "🚗",
+        "modes": [
+            {"id": "little", "label": "Little (gentle)"},
+            {"id": "classic", "label": "Classic"},
+            {"id": "hard", "label": "Hard"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − 5 × seconds − 50 × moves over the fewest − 200 × hints a board (at least 10), only when the red car is out
+        "max_score": 2_000_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "watersort": {
+        "name": "Colour Sort",
+        "icon": "🧪",
+        "modes": [
+            {"id": "little", "label": "3 colours (gentle)"},
+            {"id": "classic", "label": "7 colours"},
+            {"id": "big", "label": "10 colours"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − 5 × seconds − 10 × pours − 200 × hints a board (at least 10), only when sorted
+        "max_score": 2_000_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "bolts": {
+        "name": "Bolt Sort",
+        "icon": "🔩",
+        "modes": [
+            {"id": "little", "label": "3 colours (gentle)"},
+            {"id": "classic", "label": "6 colours"},
+            {"id": "hidden", "label": "6 colours, hidden"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − 5 × seconds − 10 × moves − 200 × hints a board (at least 10), only when sorted
+        "max_score": 2_000_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "connect": {
+        "name": "Dot Connect",
+        "icon": "🔵",
+        "modes": [
+            {"id": "little", "label": "Little 5 × 5 (gentle)"},
+            {"id": "classic", "label": "7 × 7"},
+            {"id": "big", "label": "9 × 9"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − 10 × seconds − 200 × hints a board (at least 10), only when every pair is joined (and every square filled)
+        "max_score": 2_000_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
+    "untangle": {
+        "name": "Untangle",
+        "icon": "🕸️",
+        "modes": [
+            {"id": "little", "label": "6 points (gentle)"},
+            {"id": "classic", "label": "10 points"},
+            {"id": "big", "label": "16 points"},
+            {"id": "levels", "label": "Levels"},
+        ],
+        "level_modes": [],
+        "default_mode": "classic",
+        "state_version": 1,
+        "unfinished_zero": True,
+        "race": {"rule": "fastest", "tiebreak": "score"},
+        # score = 10,000 − 10 × seconds − 20 × moves − 200 × hints a board (at least 10), only when nothing crosses
+        "max_score": 2_000_000,
+        "per_second": 10_000,
+        "base": 10_000,
+    },
 }
 
+# Carrying on from the next level (SPEC §14): the modes whose levels are puzzles or goals, so the next game starts at
+# the first level the person hasn't cleared. {game: {mode: how many levels}} — None: the mode's level list (levels.py)
+# decides; a number: the game's own fixed set of boards. Score chases (Brick Breaker, the wave shooters) and opponents
+# (Paddle Duel, Snake Duel, Tank Battle) always start at level 1.
+CONTINUE_LEVELS: dict[str, dict[str, int | None]] = {
+    "snake": {"maze": None}, "flap": {"course": None}, "mines": {"boards": None}, "merge": {"goals": None},
+    "colours": {"challenge": None}, "cards": {"challenge": None}, "mole": {"gardens": None},
+    "numbers": {"challenge": None}, "racer": {"stages": None}, "hop": {"levels": None}, "bubbles": {"puzzle": None},
+    "gems": {"moves": None}, "stack": {"towers": None}, "runner": {"courses": None}, "lander": {"levels": None},
+    "typerain": {"stages": None}, "lights": {"climb": 5},
+    "arrows": {"levels": 200}, "parking": {"levels": 200}, "watersort": {"levels": 200}, "bolts": {"levels": 200},
+    "connect": {"levels": 200}, "untangle": {"levels": 200},
+}
+for _g, _modes in CONTINUE_LEVELS.items():
+    GAMES[_g]["continue_levels"] = dict(_modes)
+
+# Tags for the Games page search (SPEC §9), from a fixed set. The kind of game is listed here; `levels` (a level list
+# or numbered boards), `turn by turn` (modes from several phones) and `gentle` (a mode marked gentle, or one for
+# little ones) are added from the game's own entry so they can't drift.
+TAG_SET = ("arcade", "puzzle", "word", "board", "cards", "dice", "two players", "turn by turn", "levels", "gentle")
+_KIND_TAGS: dict[str, tuple[str, ...]] = {
+    "snake": ("arcade",), "brick": ("arcade",), "blocks": ("arcade", "puzzle"), "duel": ("arcade",),
+    "racer": ("arcade",), "flap": ("arcade",), "mines": ("puzzle",), "merge": ("puzzle",), "colours": ("puzzle",),
+    "cards": ("puzzle", "cards"), "mole": ("arcade",), "numbers": ("arcade", "puzzle"), "tanks": ("arcade",),
+    "invaders": ("arcade",), "rocks": ("arcade",), "hop": ("arcade",), "snakeduel": ("arcade", "two players"),
+    "sudoku": ("puzzle",), "wordguess": ("word", "puzzle"), "wordsearch": ("word", "puzzle"), "bubbles": ("arcade", "puzzle"),
+    "gems": ("puzzle",), "stack": ("arcade",), "runner": ("arcade",), "lander": ("arcade",), "defense": ("arcade",),
+    "slide": ("puzzle",), "lights": ("puzzle",), "nonogram": ("puzzle",), "tiles": ("puzzle",), "codebreak": ("puzzle",),
+    "typerain": ("arcade", "word"),
+    "fourrow": ("board", "two players"), "tictactoe": ("board", "two players"), "checkers": ("board", "two players"),
+    "reversi": ("board", "two players"), "dots": ("board", "two players"), "seabattle": ("board", "two players"),
+    "ludo": ("board", "dice", "two players"), "snakes": ("board", "dice", "two players", "gentle"),
+    "carrom": ("board", "two players"), "chess": ("board", "two players"),
+    "arrows": ("puzzle",), "parking": ("puzzle",), "watersort": ("puzzle",), "bolts": ("puzzle",),
+    "connect": ("puzzle",), "untangle": ("puzzle",),
+}
+
+
+def _tags(gid: str) -> list[str]:
+    g = GAMES[gid]
+    tags = set(_KIND_TAGS.get(gid, ()))
+    if g.get("level_modes") or g.get("continue_levels"):
+        tags.add("levels")
+    if g.get("turns", {}).get("modes"):
+        tags.add("turn by turn")
+    if any("gentle" in m["label"].lower() or "little ones" in m["label"].lower() for m in g["modes"]):
+        tags.add("gentle")
+    return [t for t in TAG_SET if t in tags]
+
+
+for _g in GAMES:
+    GAMES[_g]["tags"] = _tags(_g)
+
 GAME_IDS = tuple(GAMES)
+
+
+def continue_modes(game: str) -> dict:
+    """{mode: fixed level count or None} for the modes of `game` that carry on from the next level."""
+    return dict(GAMES.get(game, {}).get("continue_levels") or {})
+
+
+def continues(game: str, mode) -> bool:
+    return isinstance(mode, str) and mode in continue_modes(game)
 
 
 def exists(game: str) -> bool:
@@ -843,6 +1022,9 @@ def uses_levels(game: str, mode: str) -> bool:
 def max_level(game: str, mode: str, level_count: int | None) -> int:
     """The highest level a result can claim: the game's level count when it ends there (Snake's mazes),
     a few rounds of it when the levels repeat (Brick Breaker), else MAX_LEVEL."""
+    fixed = GAMES.get(game, {}).get("continue_levels", {}).get(mode)
+    if fixed:                                  # a fixed set of numbered boards (SPEC §14)
+        return max(MAX_LEVEL, int(fixed))
     if not level_count or not uses_levels(game, mode):
         return MAX_LEVEL
     if GAMES[game].get("levels_end"):          # the game ends after the list's last level

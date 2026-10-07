@@ -208,3 +208,26 @@ def admin_test_notify(user_id: str, admin: dict = Depends(require_admin)):
     results = people_admin.test_results(sent)
     people_admin.require_one_sent(results, services[0], ha_notify.ha_client.has_token)
     return {"results": results}
+
+
+# ---------------------------------------------------------------------------
+# Level progress (SPEC §14): what a person has cleared, and Start over for them
+# ---------------------------------------------------------------------------
+
+@router.get("/users/{user_id}/progress")
+def user_progress(user_id: str, admin: dict = Depends(require_admin)):
+    from .. import progress
+    with db.get_conn() as conn:
+        _load_user(conn, user_id)
+        return {"progress": progress.mine(conn, user_id)}
+
+
+@router.delete("/users/{user_id}/progress/{game}/{mode}")
+def reset_user_progress(user_id: str, game: str, mode: str, admin: dict = Depends(require_admin)):
+    from .. import progress
+    if not games.continues(game, mode):
+        raise HTTPException(404, "That game and mode don't carry on from the next level.")
+    with db.get_conn() as conn:
+        _load_user(conn, user_id)
+        progress.reset(conn, user_id, game, mode)
+    return {"status": "ok"}

@@ -7,6 +7,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, H = 300;
   var ROAD_L = 30, ROAD_R = 210;
   var CAR_Y = 250;                 // the middle of your car on screen
@@ -88,6 +91,7 @@
     };
     if (mode === "stages") {
       s.stages = usableLevels(o.levels);
+      s.level = startAt(o.startLevel, s.stages.length);
       s.lanes = stage(s).lanes; s.lane = Math.floor(s.lanes / 2); s.safeLane = s.lane;
       s.banner = STAGE_BANNER;
     }

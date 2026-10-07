@@ -23,7 +23,7 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints }); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data); pending = []; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },

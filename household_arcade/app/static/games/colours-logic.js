@@ -10,6 +10,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var PADS = ["up", "left", "right", "down"];
   var PAD_CI = [1, 4, 5, 3];                     // red, green, blue, yellow
   var MIN_LIGHT = 10, MIN_GAP = 10;              // never quicker than 3 lights a second
@@ -87,7 +90,7 @@
       wrongPad: -1, expected: -1, challenges: null, cleared: false,
       stats: { rounds: 0, longest: 0, presses: 0, challenges: 0, cause: null },
     };
-    if (s.mode === "challenge") { s.challenges = usableLevels(o.levels); fresh(s, challenge(s).start); }
+    if (s.mode === "challenge") { s.challenges = usableLevels(o.levels); s.level = startAt(o.startLevel, s.challenges.length); fresh(s, challenge(s).start); }
     else fresh(s, 1);
     return s;
   }

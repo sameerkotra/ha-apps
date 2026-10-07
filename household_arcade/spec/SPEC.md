@@ -373,6 +373,46 @@ sent by `backup_core.send_file`.
   controls text) — picked with ☰ ▦ ◼ and remembered on the device
   (`localStorage`, `arcade.gamesView`; large by default). `/api/games` gives
   `plays`, `lastPlayed`, `levels` and `levelModes` for it.
+- **Favourite games** (built with §14). Each game card has a star (☆ / ★) in every view, and the game page has one
+  in its header; tapping it marks or unmarks the game as a favourite without opening it. The Games page then shows
+  **★ Favourites** first — the marked games in the order they were marked, in the chosen view — and **All games**
+  under it with the rest (a game is never in both). With no favourites the page looks as before, and the first
+  card's star has the tip "Mark favourites to keep them at the top". Favourites are each person's own and kept on
+  the server (`users.favourites`, a JSON list of game ids; migration 10), so they follow the person to any phone;
+  a game an admin switches off, or a child isn't allowed, simply isn't shown. API: `PUT /api/favourites/{game}`
+  `{on}` → the list; `/api/games` marks each game `favourite` and lists them first; `/api/me` has `favourites`.
+  The search (below) filters both sections. Tests: marking and unmarking, the order, a switched-off game kept in
+  the list but not shown, another person's list untouched, unknown games refused.
+- **Search on the Games page**. A search box at the top of the game list — under the page heading and
+  the cards above the list, the views (☰ ▦ ◼) staying in the heading — labelled *Search games*. It filters as you type, in the
+  browser only (no request), in all three views; the cards above the list (invites, *Waiting for you*, today's
+  challenges, nearly out of play time) are never hidden by it.
+  - **What it matches**: each word typed must match the start of a word in the game's name, its **tags**, or one
+    of its mode labels — case, accents and punctuation ignored, so `tic` finds Tic-tac-toe, `sea` Sea Battle,
+    `7 x 7` Lights Out, `puzzle chess` nothing (every word must match one game). Words in any order.
+  - **Tags** (new `"tags"` list per game in `games.py`, sent by `/api/games`), from a fixed set: `arcade`,
+    `puzzle`, `word`, `board`, `cards`, `dice`, `two players` (two on one screen or two phones), `turn by turn`
+    (wave 7–8 games from several phones), `levels` (has a level list), `gentle` (has a gentle mode for small
+    children). The kind tags are listed per game; `levels`, `turn by turn` and `gentle` are worked out from the
+    game's entry (a level list, turn-by-turn modes, a mode labelled *gentle* or *Little ones*). A plural also
+    matches (`puzzles`). A few everyday words lead to the tags: `kids`, `children`, `easy` → `gentle`; `2`, `two`,
+    `multiplayer`, `together` → `two players`; `strategy` → `board`. A test keeps every game's tags in the set,
+    and every game has at least one.
+  - **What it shows**: the matching games in their usual order (a section — ★ Favourites or All games — with none
+    left is hidden), and a line under the box — *12 of 48 games* while
+    something is typed, *No game matches "xyz"* with **Clear** when nothing does. A game that matched on a tag or
+    a mode, not its name, shows that word under its name in the large view ("Mode: 7 × 7").
+  - **Keys**: `/` puts the cursor in the box (when no other field has it); Esc clears it (a second Esc leaves
+    the box); Enter with exactly one game left opens it. The ✕ in the box clears it.
+  - **Kept for the visit**: what was typed stays when you come back from a game, and is gone when the app is
+    opened again (`sessionStorage`, `arcade.gamesSearch`). Never sent anywhere or saved on the server.
+  - A child sees only their allowed games, as now, so search finds only those. With one game or none the box
+    isn't shown.
+  - Accessibility: `type="search"` with a visible label for screen readers, the count line `aria-live="polite"`.
+  - Files: `static/search.js` (`GameSearch`: pure matching, no DOM) and the Games page in `app.js`.
+  - Tests: the match function (`tests/js/search.test.js`: word starts, every word, accents, tags, the everyday
+    words, mode labels, no match); `/api/games` returns `tags`; every game's tags come from the set (`tests/test_search.py`);
+    the Games page filtering in all three views was checked in a browser by hand.
 - The game page (`play.js`) owns the start screen, overlays, controls and the
   session. The start screen is a card (Mode and Look drop-downs, Practice,
   Play) over a still preview of the game in that mode and look (an instance
@@ -1135,12 +1175,69 @@ round view); every mode in all six looks. `tests/js/backnav.test.js` and the rep
   (*all built with wave 8, above*).
 - Packaging: `wsproto` in requirements; no outside service is contacted.
 
+## 14. Carrying on from the next level
+
+Built. A game with levels used to start at level 1 each time; for games where a level is a puzzle or a goal to beat
+(Arrow Release, Mines' boards, Merge's goals, …) that meant solving the same first levels again and again. Instead,
+each person's progress is remembered per game and mode, and the next game starts at the first level they haven't
+cleared — on any phone or computer, since it is kept on the server.
+
+- **Which games** (`games.py`, new `"continue_levels": True` on the game; the modes are its level modes):
+
+  | Carries on | Game · mode |
+  |---|---|
+  | Yes — a level is a puzzle or a goal | Arrow Release · *Levels* (wave 9), Lights Out · *Climb*, Mines · *Boards*, Merge · *Goals*, Bubble Pop · *Puzzles*, Gem Swap · *Levels*, Tower Stack · *Towers*, Lander · *Levels*, Road Hop · *Levels*, Snake · *Maze*, Flap · *Course*, Runner · *Courses*, Lane Racer · *Stages*, Colour Memory · *Challenge*, Memory Cards · *Challenge*, Number Dash · *Challenge*, Tap the Mole · *Gardens*, Type Rain · *Stages*, and *Levels* of Car Park, Colour Sort, Bolt Sort, Dot Connect and Untangle (wave 10) |
+  | No — a run is a score chase, or the levels are opponents | Falling Blocks (its challenges are a score chase), Brick Breaker, Paddle Duel, Tank Battle, Sky Defenders, Rocks, City Defense, Snake Duel |
+  | No levels | Sudoku, Word Guess, Word Search, Slide Puzzle, Picture Logic, Tile Match, Code Breaker, Lights Out's other modes, the board and dice games (waves 7–8) |
+
+  Moving a game between the first two rows is one flag; the table above is the starting choice.
+- **What counts as cleared**: finishing a level (the game moved on to the next, or won the last). A run that ends
+  on level 9 has cleared 1–8, so the next one starts at 9. Progress only ever goes up; it is the highest level
+  cleared in any run of that game and mode, Practice included (Practice saves no score, but the level was still
+  solved). Races, daily challenges and the two-phone modes never change it and always start at level 1.
+- **Saved as you go**: the heartbeat (`POST /api/sessions/{id}/beat`) already sends the current level; when it goes
+  up, the level before it is cleared and saved at once, so closing the app mid-game keeps what was solved. The
+  final score adds `cleared` (the last level finished; the server accepts at most the level reached, and the level
+  reached + 1 when the game was won).
+- **The start screen**: with progress, a **Level** drop-down sits beside Mode — *Level 9 (next)* chosen, then every
+  cleared level back to *Level 1 (from the start)*, so any solved level can be played again. The card says
+  "Levels 1–8 cleared · 30 in all". When all are cleared it says "All 30 levels cleared ✓" and starts at level 1.
+  A saved game still comes first (*Continue* as today); starting a new game asks only when it would replace the save.
+- **The Games page**: the large view shows "Next: level 9 of 30" (or "All cleared ✓") under the game, for its
+  default mode; the list and small views show nothing more.
+- **Scores**: a run keeps its start level (`play_sessions.start_level`, `scores.start_level`). The leaderboard and
+  personal bests of a level mode count only runs **from level 1**, so they stay fair; a run started later shows
+  on My scores as "from level 9" and counts for games played and play time. The game-over card of such a run leads
+  with the levels: "Cleared levels 9–11 · next time: level 12".
+- **Starting at a level** (the game contract, spec/GAMES.md): `create(canvas, opts)` gets `opts.startLevel` (1 by
+  default). A level-list game starts at that entry of its list; Lights Out's and Arrow Release's numbered boards
+  start at that board. Score, lives and hearts start as for level 1. The server checks `startLevel` when the session
+  starts: ≤ cleared + 1, ≤ the list's length, a mode that carries on — otherwise 400.
+- **When the level list changes** (an admin builds AI levels, §11): progress is kept as a number; a shorter list
+  caps it ("All 20 levels cleared"), a longer one carries on from the same number.
+- **Starting over**: My scores → **Level progress** lists each game and mode with its next level and a **Start
+  over** button (back to level 1, after a confirm). An admin can do the same for a person under Admin → Users. A
+  database restore brings back the progress in the backup.
+- **Children**: nothing changes — limits, quiet hours and allowed games apply as to any game.
+- **Data** (next migration): `level_progress (user_id, game, mode, cleared INTEGER NOT NULL, updated_at, PRIMARY KEY
+  (user_id, game, mode))`; `start_level INTEGER NOT NULL DEFAULT 1` on `play_sessions`, `scores` and `saved_games` (a saved game carries on
+  from where its run started). The same migration adds `users.favourites` (§9). A person's
+  rows go when the person is deleted, like their scores.
+- **API**: `/api/games` adds `progress: {<mode>: {cleared, total, next}}` for the person; `POST /api/sessions`
+  takes `startLevel`; `GET /api/progress` (My scores' list); `DELETE /api/progress/{game}/{mode}` (yours) and
+  `DELETE /api/admin/users/{id}/progress/{game}/{mode}` (an admin's).
+- **Tests**: a cleared level saved from a heartbeat and from the final score; never going down; Practice counts,
+  races, daily challenges and two-phone modes don't; `startLevel` refused past cleared + 1, past the list, or in a
+  mode that doesn't carry on; the leaderboard and bests ignore runs not from level 1; Start over (yours and an
+  admin's); a shorter level list caps the next level; and per game (`tests/js`): starting at level n plays level n
+  with level-1 score, lives and hearts.
+
 ## Planned games
 
 Every game is a module in `static/games/` behind the same start screen, pause,
 scores and limits; adding one means adding its files, one registry entry, one
 entry in `games.py`, its level list (`level_kinds/<game>.py`, §11.9) and a line
-in this file. Waves 1–8 are done: every planned game is built (Solitaire was in wave 4 and has been
+in this file. Waves 1–8 are done: every game planned until then is built; waves 9 (**Arrow Release**) and 10 (five more puzzles) are built with §14 (Solitaire was in wave 4 and has been
 removed). Every one of them can be played together from two phones: a race (§13.3) for waves 1–6 (except the
 two-player games), turn by turn (§13.5) for wave 7, Chess, Ludo and Snakes and Ladders, and a live match
 (§13.4) for Snake Duel, Paddle Duel, Tank Battle and Carrom (taking turns). The waves, in the order built:
@@ -1182,6 +1279,19 @@ two-player games), turn by turn (§13.5) for wave 7, Chess, Ludo and Snakes and 
    engine with node budgets, ≤ 1–2 s, in a Web Worker), two on one screen and turn by turn from two phones with the
    server checking every move. No levels, no race; saving (not the two-phone modes); all six looks; keyboard, touch
    and controller. Rules: spec/GAMES.md.
+
+9. **Arrow Release** — built with §14. A board full of arrows; tap an arrow and it flies off the board in the
+   direction it points, if nothing is in its way; clear the board. Boards from the seed (no level list, like wave 6),
+   always solvable; modes *Little 5 × 5 (gentle)*, *8 × 8*, *12 × 12*, *Twisty 10 × 10* (bent arrows) and *Levels*
+   (numbered boards, carrying on from the next one, §14);
+   hearts for mistakes; hints; saving; all six looks; keyboard, touch and controller; a race (§13.3). Not in the
+   daily challenge pool. Rules, modes and scoring: spec/GAMES.md "Wave 9 — Arrow Release".
+
+10. **Car Park**, **Colour Sort**, **Bolt Sort**, **Dot Connect**, **Untangle** — built with §14: calm puzzles
+   in the same style as Arrow Release. Each makes its boards from the seed and checks them (always solvable), has
+   a gentle mode, a few sizes and a **Levels** mode of 200 numbered boards that carries on from the next one
+   (§14), hints, saving, all six looks, keyboard, touch and controller, and a race (§13.3). Not in the daily
+   challenge pool. Rules, modes and scoring: spec/GAMES.md "Wave 10".
 
 ### Daily challenge (built with wave 4)
 

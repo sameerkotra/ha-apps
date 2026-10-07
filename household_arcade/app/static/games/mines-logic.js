@@ -10,6 +10,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var UPS = 60;
   // Board sizes; cell sizes chosen so the board fits 240 × ~256 below the HUD as large as it can.
   var MODES = {
@@ -127,7 +130,7 @@
       touch: null, pause: 0, hit: -1, boards: null, hole: null, lay: null, boardName: "",
       stats: { boards: 0, squares: 0, flags: 0, cause: null },
     };
-    if (m.list) s.boards = usableLevels(o.levels);
+    if (m.list) { s.boards = usableLevels(o.levels); s.level = startAt(o.startLevel, s.boards.length); }
     newBoard(s);
     return s;
   }

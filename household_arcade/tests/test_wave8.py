@@ -40,7 +40,7 @@ def play(mod, st, seat, move, dice=None):
 class TestGameTable(ApiBase):
     def test_entries(self):
         listed = {g["id"]: g for g in self.get("/api/games").json()["games"]}
-        self.assertEqual(list(games.GAMES)[-4:], list(NEW))
+        self.assertEqual(list(games.GAMES)[38:42], list(NEW))   # the wave 9–10 puzzles come after
         for gid, name in NEW.items():
             with self.subTest(game=gid):
                 g = games.GAMES[gid]

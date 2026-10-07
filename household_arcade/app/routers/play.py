@@ -17,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 
 import json
 
-from .. import config, daily, db, games, ha_sensors, level_builder, levels, limits, notify, saves, scores, settings, together
+from .. import config, daily, db, games, ha_sensors, level_builder, levels, limits, notify, progress, saves, scores, settings, together
 from ..auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["play"])
@@ -37,7 +37,10 @@ def list_games(current: dict = Depends(get_current_user)):
         mine = scores.bests_for(conn, current["id"])
         child_limits = limits.load_limits(conn, current["id"]) if current["is_child"] else None
         bests_by_mode = {(r["game"], r["mode"]): r["m"] for r in conn.execute(
-            "SELECT game, mode, MAX(score) AS m FROM scores WHERE user_id = ? GROUP BY game, mode", (current["id"],))}
+            "SELECT game, mode, MAX(score) AS m FROM scores WHERE user_id = ? AND start_level = 1 GROUP BY game, mode",
+            (current["id"],))}
+        favs = favourites_of(conn, current["id"])
+        prog = {gid: progress.for_game(conn, current["id"], gid) for gid in games.CONTINUE_LEVELS}
         saved = saves.mine(conn, current["id"])
         played = {r["game"]: (r["n"], r["last"]) for r in conn.execute(
             "SELECT game, COUNT(*) AS n, MAX(ended_at) AS last FROM scores WHERE user_id = ? GROUP BY game", (current["id"],))}
@@ -50,7 +53,7 @@ def list_games(current: dict = Depends(get_current_user)):
         g = games.GAMES[gid]
         modes = settings.modes_for(gid)
         default = g["default_mode"] if any(m["id"] == g["default_mode"] for m in modes) else modes[0]["id"]
-        out.append({"id": gid, "name": g["name"], "icon": g["icon"], "modes": modes, "defaultMode": default,
+        out.append({"id": gid, "name": g["name"], "icon": g["icon"], "tags": g["tags"], "modes": modes, "defaultMode": default,
                     "best": mine.get(gid),
                     "bestByMode": {m["id"]: bests_by_mode.get((gid, m["id"])) for m in modes},
                     "canSave": bool(g.get("state_version")), "saved": saved.get(gid), "race": together.race_ok(gid), "daily": todays.get(gid),
@@ -58,8 +61,69 @@ def list_games(current: dict = Depends(get_current_user)):
                     "turnModes": [m["id"] for m in modes if games.is_turns(gid, m["id"])],
                     "plays": played.get(gid, (0, None))[0], "lastPlayed": played.get(gid, (0, None))[1],
                     "levels": level_counts.get(gid, 0),
-                    "levelModes": [m["label"] for m in modes if m["id"] in g.get("level_modes", [])]})
-    return {"games": out}
+                    "levelModes": [m["label"] for m in modes if m["id"] in g.get("level_modes", [])],
+                    # carrying on from the next level (SPEC §14): {mode: {cleared, total, next}}
+                    "progress": {m: v for m, v in prog.get(gid, {}).items() if any(x["id"] == m for x in modes)},
+                    "favourite": gid in favs})
+    return {"games": out, "favourites": [g for g in favs if any(x["id"] == g for x in out)]}
+
+
+# ---------------------------------------------------------------------------
+# Favourite games (SPEC §9) and level progress (SPEC §14)
+# ---------------------------------------------------------------------------
+
+MAX_FAVOURITES = 100
+
+
+def favourites_of(conn, user_id: str) -> list[str]:
+    """The person's favourite games, in the order they were marked (unknown ids dropped)."""
+    row = conn.execute("SELECT favourites FROM users WHERE id = ?", (user_id,)).fetchone()
+    try:
+        data = json.loads(row["favourites"]) if row and row["favourites"] else []
+    except (ValueError, TypeError):
+        data = []
+    if not isinstance(data, list):
+        return []
+    out = []
+    for g in data:
+        if isinstance(g, str) and games.exists(g) and g not in out:
+            out.append(g)
+    return out
+
+
+@router.put("/favourites/{game}")
+def set_favourite(game: str, body: dict = Body(...), current: dict = Depends(get_current_user)):
+    """Mark or unmark a favourite: {on: true | false}. Returns the list."""
+    if not games.exists(game):
+        raise HTTPException(404, "Unknown game.")
+    on = body.get("on") if isinstance(body, dict) else None
+    if not isinstance(on, bool):
+        raise HTTPException(422, "Send {on: true} or {on: false}.")
+    with db.get_conn() as conn:
+        favs = favourites_of(conn, current["id"])
+        if on and game not in favs:
+            favs.append(game)
+        if not on and game in favs:
+            favs.remove(game)
+        favs = favs[-MAX_FAVOURITES:]
+        conn.execute("UPDATE users SET favourites = ? WHERE id = ?", (json.dumps(favs), current["id"]))
+    return {"favourites": favs}
+
+
+@router.get("/progress")
+def my_progress(current: dict = Depends(get_current_user)):
+    with db.get_conn() as conn:
+        return {"progress": progress.mine(conn, current["id"])}
+
+
+@router.delete("/progress/{game}/{mode}")
+def reset_progress(game: str, mode: str, current: dict = Depends(get_current_user)):
+    """Start over: the next game of this mode starts at level 1."""
+    if not games.continues(game, mode):
+        raise HTTPException(404, "That game and mode don't carry on from the next level.")
+    with db.get_conn() as conn:
+        progress.reset(conn, current["id"], game, mode)
+    return {"status": "ok"}
 
 
 def _session(conn, session_id: str, current: dict):
@@ -143,6 +207,14 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         raise HTTPException(422, "That mode is played on two phones: start it with Play with someone.")
     if not isinstance(practice, bool):
         raise HTTPException(422, "practice must be true or false.")
+    start_level = body.get("startLevel", 1)
+    if isinstance(start_level, bool) or not isinstance(start_level, int) or start_level < 1:
+        raise HTTPException(422, "startLevel must be a whole number from 1.")
+    if saved:
+        start_level = saved["start_level"] or 1          # a continued game keeps where it started
+    elif start_level > 1:
+        if match or daily_row or not games.continues(game, mode):
+            raise HTTPException(422, "This game always starts at level 1.")
     now = config.now_iso()
     with db.get_conn() as conn:
         if current["is_child"]:
@@ -154,6 +226,11 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         # one game at a time: anything still open ends at its last heartbeat
         conn.execute("UPDATE play_sessions SET ended_at = last_beat_at WHERE user_id = ? AND ended_at IS NULL",
                      (current["id"],))
+        if start_level > 1 and not saved:
+            done = progress.cleared(conn, current["id"], game, mode)
+            count = progress.total(conn, game, mode)
+            if start_level > min(done + 1, count or done + 1):
+                raise HTTPException(400, f"Level {start_level} isn't open yet: you've cleared {done}.")
         sid = db.new_id()
         set_id = levels.mode_info(game, mode)["set"]
         if saved:
@@ -163,14 +240,15 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         else:
             level_list = levels.playable(conn, set_id) if set_id else None
         conn.execute("INSERT INTO play_sessions (id, user_id, game, mode, practice, started_at, last_beat_at, "
-                     "level_count, base_seconds, resumed, first_started_at, match_id, daily) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "level_count, base_seconds, resumed, first_started_at, match_id, daily, start_level) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (sid, current["id"], game, mode, 1 if practice else 0, now, now,
                       len(level_list) if level_list is not None else None,
                       saved["seconds"] if saved else 0, 1 if saved else 0, saved["started_at"] if saved else now,
-                      match_id if match else None, daily_row["date"] if daily_row else None))
+                      match_id if match else None, daily_row["date"] if daily_row else None, start_level))
         if match:
             together.attach_session(conn, match_id, current["id"], sid)
+        game_progress = progress.for_game(conn, current["id"], game).get(mode)
         best = None if daily_row else scores.best(conn, game, mode, current["id"])
         record = None if daily_row else scores.best(conn, game, mode)
         status = _status_json(conn, current)
@@ -180,6 +258,8 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
             "seed": match["match"]["seed"] if match else daily_row["seed"] if daily_row
             else int(config.utcnow().timestamp() * 1000) % 2_147_483_647,
             "matchId": match_id if match else None,
+            # where this game starts (SPEC §14) and the person's progress in the mode
+            "startLevel": start_level, "progress": game_progress,
             # playing together: which seat this phone has (1 or 2)
             "seat": match["seat"] if match else None,
             "daily": daily_row["date"] if daily_row else None,
@@ -208,14 +288,17 @@ def _maybe_warn(background: BackgroundTasks, current: dict, status: dict) -> Non
 @router.post("/sessions/{session_id}/beat")
 def beat(session_id: str, background: BackgroundTasks, body: dict = Body(default={}),
          current: dict = Depends(get_current_user)):
+    level = body.get("level") if isinstance(body, dict) else None
     with db.get_conn() as conn:
         row = _session(conn, session_id, current)
         _update(conn, row, body.get("activeSeconds") if isinstance(body, dict) else None, end=False)
+        if not row["ended_at"] and progress.counts(row) and isinstance(level, int) and not isinstance(level, bool) \
+                and 1 < level <= games.max_level(row["game"], row["mode"], row["level_count"]):
+            progress.record(conn, current["id"], row["game"], row["mode"], level - 1)     # the level before was cleared
         status = _status_json(conn, current)
     _maybe_warn(background, current, status)
     background.add_task(ha_sensors.changed_blocking)
     # nearly at the end of the level list? build the next levels now, before anyone needs them
-    level = body.get("level") if isinstance(body, dict) else None
     _auto_levels(row, level)
     return {"playTime": status, "ended": bool(row["ended_at"])}
 
@@ -287,13 +370,21 @@ def post_score(background: BackgroundTasks, body: dict = Body(...), current: dic
             daily_day = row["daily"]
             saved = scores.insert(conn, current["id"], dict(row, started_at=row["first_started_at"] or row["started_at"],
                                                            mode=daily.mode_key(daily_day) if daily_day else row["mode"]),
-                                  int(score), int(level), int(round(seconds)))
-            result.update(saved=True, personalBest=saved["personalBest"] and not daily_day,
-                          householdRecord=saved["householdRecord"] and not daily_day,    # a daily isn't a record
-                          scoreId=saved["id"], best=None if daily_day else max(int(score), result["best"] or 0))
+                                  int(score), int(level), int(round(seconds)), start_level=row["start_level"] or 1)
+            from_one = (row["start_level"] or 1) == 1
+            result.update(saved=True, personalBest=saved["personalBest"] and not daily_day and from_one,
+                          householdRecord=saved["householdRecord"] and not daily_day and from_one,    # a daily isn't a record
+                          scoreId=saved["id"], startLevel=row["start_level"] or 1,
+                          best=None if daily_day else max(int(score) if from_one else 0, result["best"] or 0))
         saves.consumed_by(conn, current["id"], row)
         if row["match_id"]:             # a race: the same score is the player's result in the match
             together.record_result(conn, row, score, level, seconds, body.get("won"))
+        if progress.counts(row):        # levels cleared in this game (SPEC §14), Practice included
+            done = body.get("cleared")
+            done = done if isinstance(done, int) and not isinstance(done, bool) else 0
+            done = max(min(done, int(level)), int(level) - 1)
+            result["progress"] = {"cleared": progress.record(conn, current["id"], row["game"], row["mode"], done)}
+            result["progress"].update(progress.for_game(conn, current["id"], row["game"]).get(row["mode"], {}))
         status = _status_json(conn, current)
     result["playTime"] = status
     result["levelsComing"] = _auto_levels(row, int(level))

@@ -12,6 +12,9 @@
 (function () {
   "use strict";
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   var W = 240, COLS = 8, D = 24, R = 12, RH = 21, X0 = 18, X1 = 222, TOP = 42, LOSE_Y = 244, MAX_ROWS = 12;
   var LX = 120, LY = 268, SPEED = 7, SUB = 2, TURN = 1.6, MAX_AIM = 78, STICK = 20, RELOAD = 10, CLEAR_T = 90, MAX_LEVEL = 100;
   var POP_POINTS = 10, DROP_POINTS = 20, CLEAR_POINTS = 500;
@@ -138,6 +141,7 @@
       list: mode === "puzzle" ? usableLevels(o.levels) : null,
       stats: { shots: 0, popped: 0, dropped: 0, boards: 0, bestPop: 0, cause: null },
     };
+    if (s.list) s.level = startAt(o.startLevel, s.list.length);
     startBoard(s);
     return s;
   }
