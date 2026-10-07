@@ -941,6 +941,20 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
   the remembered last chat.
 - Outside Home Assistant's frame the page's own path is read the same way.
 
+### 15.15 Answering the Household Assistant (`tools.py`; HOUSEHOLD_ASSISTANT_SPEC.md §4.2)
+
+- **One tool, `chat.unread`** (no arguments, `scope: person`, open to children): the chats of `requested_by` with
+  unread messages, as their chat list counts them (`chats.list_conversations`; a personal room never counts), most
+  mentions first — `{chat, kind, unread, mentions, muted}` per chat, and a link to each of the first five
+  (`/chat/<id>`, the deep link of §15.14). **Never** message text, previews, authors or members: a chat's text is
+  the most private thing on the bus, and the person can search in Chat.
+- Answered over the app bus (`assist.tools.list`, `assist.tool.call`, the shared `assist_tools.py`; APP_MESSAGES_SPEC
+  §6.6) only while **Answer the Household Assistant** (App settings, default on) is on and the person's own **Let the
+  Household Assistant answer for me** (Settings → You, `users.assistant_ok`, default on) is; otherwise `nack
+  not_allowed` with `off` / `person_off`. A disabled or unknown person is `no_access`.
+- The link's page is `config.INGRESS_URL` only when it is the sidebar page (`/<hash or local>_household_chat`);
+  otherwise the link has no page and the assistant says to open Chat from the sidebar.
+
 ## 16. More features
 
 ### 16.1 Remind me about this

@@ -25,7 +25,7 @@ def app_public(conn) -> dict:
             "whoCanCreateGroups": s["who_can_create_groups"], "blockedExtensions": s["blocked_extensions"],
             "whoCanAnnounce": s["who_can_announce"], "childrenCanMessageEachOther": s["children_can_message_each_other"],
             "exportMaxMb": s["export_max_mb"], "callsEnabled": s["calls_enabled"],
-            "callRingSeconds": s["calls_ring_seconds"]}
+            "callRingSeconds": s["calls_ring_seconds"], "assistant": s["assistant_answers"]}
 
 
 @router.get("/me")
@@ -39,7 +39,8 @@ def me(user: dict = Depends(get_current_user)):
                 "displayNameOnly": user["display_name_only"], "disabled": bool(u["disabled"]), "isChild": bool(u["is_child"]),
                 "personalRoomId": personal, "avatar": u["avatar_version"] if u["avatar_file"] else None,
                 "settings": {"notifyLevel": u["notify_level"], "notifyPreview": u["notify_preview"],
-                             "quietStart": u["quiet_start"], "quietEnd": u["quiet_end"], "hideOnline": bool(u["hide_online"])},
+                             "quietStart": u["quiet_start"], "quietEnd": u["quiet_end"], "hideOnline": bool(u["hide_online"]),
+                             "assistantOk": bool(u["assistant_ok"])},
                 "notifyLinked": bool(ha_notify.services_for({"id": u["id"]}, conn)),    # phones + extras
                 "app": app_public(conn), "version": config.APP_VERSION, "files": files.public_status(),
                 "noAdmin": not config.ADMIN_NAMES,        # first run: nobody can open Admin yet (SPEC §4.2)
@@ -69,6 +70,7 @@ class SettingsIn(Strict):
     quietStart: str | None = Field(default=None, max_length=5)
     quietEnd: str | None = Field(default=None, max_length=5)
     hideOnline: bool | None = None
+    assistantOk: bool | None = None
 
 
 @router.put("/me/settings")
@@ -86,6 +88,8 @@ def put_settings(body: SettingsIn, user: dict = Depends(require_user)):
             conn.execute("UPDATE users SET quiet_start = ?, quiet_end = ? WHERE id = ?", (qs, qe, user["id"]))
         if body.hideOnline is not None:
             conn.execute("UPDATE users SET hide_online = ? WHERE id = ?", (1 if body.hideOnline else 0, user["id"]))
+        if body.assistantOk is not None:
+            conn.execute("UPDATE users SET assistant_ok = ? WHERE id = ?", (1 if body.assistantOk else 0, user["id"]))
     hub.publish_all("presence", {"refresh": True})
     return me(user)
 

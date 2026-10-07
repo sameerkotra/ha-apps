@@ -213,7 +213,8 @@
           "people_admin.py",
           "web_security.py",
           "backup_core.py",
-          "app_bus.py"
+          "app_bus.py",
+          "assist_tools.py"
         ],
         "static": [
           "whoami.js",
@@ -240,7 +241,8 @@
           "test_backup_core.py",
           "fake_ha.py",
           "fake_ha_bus.py",
-          "test_app_bus.py"
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },

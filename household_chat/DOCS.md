@@ -188,6 +188,13 @@ If the household also uses the **Household Docs** app, its **⋯ → Send to cha
 - It's posted **as the person who sent it**, only where they could post themselves (they must be in the chat; a direct chat with someone who no longer has access is read-only), and it counts toward their 30 messages a minute.
 - Cards notify like messages ("Nisha shared a checklist “Trip 2026”"), show in search by title, and can be replied to, reacted to, pinned, starred, reminded and deleted. They can't be edited or forwarded — send it again from Docs instead. A chat download lists them by title, without a link.
 
+### The Household Assistant
+
+If the household also uses the **Household Assistant** app, you can ask it "Do I have unread messages?". Chat tells it only **which of your chats have unread messages and how many** (and how many mention you), with a link to each — never what anyone wrote, who wrote it or who is in a chat. It answers only for you, from your own chats.
+
+- An admin can turn this off for everyone: **Admin → App settings → Household Assistant → Answer the Household Assistant**.
+- You can turn it off for yourself: **Settings → You → Let the Household Assistant answer for me**.
+
 ## Notifications
 
 - **Settings → Notifications**:
@@ -239,6 +246,7 @@ The settings are in cards (Files, Chats and messages, Old messages, Notification
 | Ring for (seconds) | 30 | 15–60; shown while Voice calls is on. |
 | Address lookup (STUN) server | empty | For calls away from home, e.g. `stun:stun.cloudflare.com:3478`. Empty = home network only. |
 | Call relay (TURN) | None | None, Cloudflare Realtime TURN (key id + API token) or your own TURN server (address + shared secret). |
+| Answer the Household Assistant | On | Lets the Household Assistant app tell a person their unread counts (see *The Household Assistant*). |
 
 ## The chat files folder
 
@@ -279,7 +287,7 @@ Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your 
 
 So it's fine for household chat and documents, but not for secrets such as passwords or card numbers.
 
-**Keeping app messages out of Home Assistant's history.** Home Assistant's recorder stores events, including the household apps' messages to each other. They hold no message text or document contents, but if you'd rather not keep them, add this to Home Assistant's `configuration.yaml` and restart Home Assistant:
+**Keeping app messages out of Home Assistant's history.** Home Assistant's recorder stores events, including the household apps' messages to each other. They hold no message text or document contents (the Household Assistant's answers from Chat are chat names and unread counts), but if you'd rather not keep them, add this to Home Assistant's `configuration.yaml` and restart Home Assistant:
 
 ```yaml
 recorder:

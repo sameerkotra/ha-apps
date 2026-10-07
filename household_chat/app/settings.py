@@ -68,6 +68,8 @@ GROUPS = [
     Group("calls", "Voice calls", "One-to-one calls in direct chats. The sound goes straight between the two "
           "phones. At home nothing needs setting up; for calls away from home add an address lookup (STUN) and, "
           "for networks that block direct connections (common on mobile data), a call relay."),
+    Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
+          "apps know. Chat tells it only which chats have unread messages and how many — never what anyone wrote."),
 ]
 
 SETTINGS = [
@@ -126,6 +128,9 @@ SETTINGS = [
     Setting("calls_turn_secret", "", "TURN shared secret", group="calls", secret=True, max_length=200,
             validators=[_one_line], show_if="calls_enabled", page={"clearFlag": "clear_calls_turn_secret"},
             help="coturn's static-auth-secret: the app makes a short-lived password for each call from it."),
+    Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
+            help="Lets the Household Assistant tell a person their unread counts, as they'd see them here. Each "
+                 "person can still turn it off for themselves in Settings."),
     Setting("export_max_mb", 500, "Largest chat download, files included (MB)", group="files", min=10, max=10000),
 ]
 
