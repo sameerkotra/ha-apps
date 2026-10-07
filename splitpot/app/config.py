@@ -5,16 +5,12 @@ import os
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
 
-# The app's panel in Home Assistant, which a notification opens when tapped (the container's host name is the
-# app's slug with - for _, e.g. local-splitpot → /hassio/ingress/local_splitpot). None outside Home Assistant.
-_host = os.environ.get("HOSTNAME", "")
-INGRESS_PANEL = ("/hassio/ingress/" + _host.replace("-", "_")) if _host and _host.replace("-", "").isalnum() \
-    and _host.endswith("splitpot") else None
 
 # The household apps bus (app_messages.py) and the Household Assistant's links (tools.py).
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 APP_TITLE = "Splitpot"
-APP_VERSION = "2.4.0"           # config.yaml's version: the app bus says it in its hello
-# The app's sidebar page ("/<full slug>", open to everyone), set at start-up from the Supervisor or the host name.
+APP_VERSION = "2.4.2"           # config.yaml's version: the app bus says it in its hello
+# The app's sidebar page ("/<full slug>", open to everyone): what a phone notification and the Household Assistant's
+# links open. Set at start-up from the Supervisor or the host name; None when the app isn't in the sidebar.
 SIDEBAR_PAGE = None

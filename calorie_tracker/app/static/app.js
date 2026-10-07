@@ -250,6 +250,18 @@ $("#sidebarUser").addEventListener("click", openWhoami);
 $("#whoamiBtn").addEventListener("click", openWhoami);
 
 // ---------- current user (from Home Assistant, read-only) ----------
+// Goals → "Let the Household Assistant answer for me": always the signed-in person, never "acting as"
+function showAssistant(me) {
+  $("#assistantCard").hidden = !me.assistant;
+  $("#assistantOk").checked = me.assistantOk !== false;
+}
+$("#assistantOk").addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  try {
+    await api("/api/me/assistant", { method: "PUT", body: JSON.stringify({ assistantOk: on }) });
+  } catch (err) { e.target.checked = !on; alert("Could not save: " + err.message); }
+});
+
 async function loadMe() {
   try {
     const me = await api("/api/me");
@@ -257,6 +269,8 @@ async function loadMe() {
     state.actingUserId = me.id; // default: the user coming from HA
     state.isAdmin = me.is_admin;
     $("#sidebarUser").textContent = `Logged in as ${me.name}`;
+    state.page = me.page || null;      // the sidebar page (deeplink.js)
+    showAssistant(me);
 
     // Non-admins can only see/log their own data — no switcher and no
     // Admin page (App settings, Users, Storage are all admin-only
@@ -1583,10 +1597,25 @@ BackNav.init({
   closeLayer: () => closeDetailsModal(),
 });
 
+// A link from Home Assistant (the Household Assistant) opens "/<page>/foodlog[/<date>]", "/<page>/dashboard", …
+const LINK_TABS = ["foodlog", "dashboard", "savedfoods", "weight", "goals"];
+function linkRoute(route) {
+  const m = /^\/([a-z]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/.exec(route);
+  if (!m || !LINK_TABS.includes(m[1]) || (m[2] && m[1] !== "foodlog")) return null;
+  return { tab: m[1], date: m[2] || null };
+}
+function openLink(r) {
+  showTab(r.tab);
+  if (r.date && r.date <= todayStr()) setDate(r.date);
+}
+
 (async function init() {
   await loadToday();
   await loadMe();
   routeFromHash();   // deep links: #/admin/settings, #/storage, …
+  HouseholdDeepLink.start(state.page, linkRoute, openLink);
+  const hashLink = linkRoute(location.hash.replace(/^#/, ""));   // "#/foodlog/<date>": the server's redirect of a link
+  if (hashLink) { clearRouteHash(); openLink(hashLink); }
   await loadUsers();
   await refreshAll();
   refreshAiStatus();

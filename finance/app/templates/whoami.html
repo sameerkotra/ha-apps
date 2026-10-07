@@ -38,6 +38,16 @@
     case don&rsquo;t matter.
     {% endif %}
 </p>
+{% if assistant %}
+<div class="card" id="assistantCard">
+    <form method="post" action="whoami/assistant">
+        <input type="hidden" name="assistant_ok" value="{{ '0' if assistant.ok else '1' }}">
+        <p><strong>Let the Household Assistant answer for me:</strong> {{ "On" if assistant.ok else "Off" }}
+            <button type="submit" class="btn-secondary">{{ "Turn off" if assistant.ok else "Turn on" }}</button></p>
+        <p class="hint">When on, the Household Assistant can tell you about your spending, recurring charges and bills here.</p>
+    </form>
+</div>
+{% endif %}
 {% for r in w.extras if r.hint %}
 <p class="hint">{{ r.hint }}</p>
 {% endfor %}

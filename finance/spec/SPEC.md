@@ -761,8 +761,15 @@ re-run of the AI.
   - `finance.recurring`: `recurring.scan_recurring`'s recurring series as `{merchant, amount, frequency, next, last,
     category, account}`; `finance.bills` (`days?` 1–60, default 14): those whose next date falls in the window.
 - **Off by default** (App settings → Household Assistant → `assistant_answers`, `nack not_allowed off`): money is
-  private. No per-person switch (no per-person settings). Links: the sidebar page from `assist_tools.sidebar_page`
-  (server-rendered pages have no sub-path routes).
+  private. Each person's own *Let the Household Assistant answer for me* (`known_users.assistant_ok`, migration 0025,
+  on by default): a card on Who am I while the admin's switch is on; POST `whoami/assistant` (`assistant_ok` 1/0,
+  always the signed-in person's own, never the "view as" person's; 303 back); off → `nack not_allowed person_off`.
+  Links: the sidebar page from `assist_tools.sidebar_page`,
+  with `/month/<YYYY-MM>` (summary, spending) or `/recurring` (recurring, bills).
+- **Sub-path links**: `/<page>/month/<YYYY-MM>`, `/<page>/dashboard`, `/<page>/recurring`. Every page carries the
+  sidebar page in `<body data-page>` (set by the `_features` middleware); `static/base.js` hands it to the shared
+  `common/static/deeplink.js`, which reads the rest of the path and goes to `dashboard?period=<month>`, `dashboard` or
+  `recurring`. A request for `/month/<YYYY-MM>` reaching the app itself is redirected to `../dashboard?period=…`.
 
 ## 24. Packaging for other installs
 
@@ -792,7 +799,7 @@ finance/                    the app (slug "finance")
                 upload, admin_storage, ai_usage_page, settings_page, utilities, tolls, ...)
     templates/  static/  (style.css, ui.js, base.js, nav-boot.js, query.js, htmx.min.js, pages/*.js;
                 static/common/: theme-boot.js, themes.css, ui.js — shared copies)
-  migrations/   0001-0024, applied at startup (and after a database import)
+  migrations/   0001-0025, applied at startup (and after a database import)
   tests/        pytest suite (python3 -m pytest); tests/common_tests/: shared helpers and tests (copies)
 ```
 `app/common/`, `app/static/common/` and `tests/common_tests/` are written by

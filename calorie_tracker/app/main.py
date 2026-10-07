@@ -7,7 +7,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 
 from . import app_messages, db, ha_sync
-from .common import auth_core, web_security
+from .common import auth_core, deeplinks, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, ai, goals, logs, me, saved_foods, users, weight
 
@@ -53,6 +53,9 @@ app.include_router(saved_foods.router)
 app.include_router(logs.router)
 app.include_router(ai.router)
 app.include_router(admin.router)
+# "/<page>/foodlog", "/<page>/dashboard" … asked of the app itself: a redirect to the page (deeplink.js reads the path)
+deeplinks.add(app, {"foodlog": 0, "dashboard": 0, "savedfoods": 0, "weight": 0, "goals": 0})
+app.add_api_route("/foodlog/{a}", lambda a: deeplinks.redirect(["foodlog", a]), methods=["GET"], include_in_schema=False)
 
 # Only Home Assistant's own Supervisor ingress proxy should ever be able to
 # reach this container directly (it has no `ports:` mapping in config.yaml,

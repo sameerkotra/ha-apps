@@ -8,7 +8,7 @@ app/common/assist_tools.py).
 
 Only the groups the person is a member of, matched to their Home Assistant login (`users.ha_user_id`), never by
 name. Money is private, so the admin's *Answer the Household Assistant* is **off** until turned on; each person can
-also turn it off for themselves (My settings). Splitpot's page doesn't open sub-paths, so links open the app.
+also turn it off for themselves (My settings). Links open each group on the app's sidebar page (`/group/<id>`).
 """
 import re
 from datetime import datetime, timedelta, timezone
@@ -40,7 +40,7 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "splitpot", actor=_actor, enabled=lambda conn: bool(_main().get_setting("assistant_answers")),
+    "splitpot", targets=[r"/group/[A-Za-z0-9_-]{1,64}"], actor=_actor, enabled=lambda conn: bool(_main().get_setting("assistant_answers")),
     person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel)
 
 _GROUP = Arg("string", "a group's name; leave out for all the person's groups", max_length=60)
@@ -56,6 +56,12 @@ def _groups(ctx) -> list:
         if not rows:
             raise bus.Nack("not_found", "group")
     return rows
+
+
+def _links(ctx, groups) -> list:
+    """Each group on the app's page, or the app itself when there is none."""
+    return [ctx.link(f"{g['name']} in Splitpot", f"/group/{g['id']}") for g in groups[:assist_tools.MAX_LINKS]] \
+        or [ctx.link("Splitpot")]
 
 
 def _names(conn) -> dict:
@@ -99,7 +105,7 @@ def balances(ctx):
         stand = f"{ctx.user['name']} is owed {m.money(overall)} overall"
     else:
         stand = f"{ctx.user['name']} owes {m.money(-overall)} overall"
-    return ctx.result(f"{stand}. " + ". ".join(lines) + ".", items=items, links=[link])
+    return ctx.result(f"{stand}. " + ". ".join(lines) + ".", items=items, links=_links(ctx, groups))
 
 
 @tools.tool("splitpot.recent",
@@ -140,4 +146,5 @@ def recent(ctx):
     text = (f"{len(entries)} recent entries (spent {m.money(spent)}): "
             + "; ".join(f"{x['date']} {x['what']} {m.money(x['amount'])} paid by {x['paid_by']} ({x['group']})"
                         for x in entries[:6]) + ("…" if len(entries) > 6 else "") + ".")
-    return ctx.result(text, items=entries, links=[link], more=more)
+    shown = {x["group"] for x in entries}
+    return ctx.result(text, items=entries, links=_links(ctx, [g for g in groups if g["name"] in shown]), more=more)

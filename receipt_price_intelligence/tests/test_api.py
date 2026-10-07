@@ -28,6 +28,9 @@ class ApiTests(unittest.TestCase):
         auth.ADMIN_USERS[:] = auth.load_admin_users()
         auth._ADMIN_FOLDED.clear()
         auth._ADMIN_FOLDED.update(n.casefold() for n in auth.ADMIN_USERS)
+        from app.db import dispose_engine, init_models
+        dispose_engine()
+        init_models()                                    # /me reads the person's own assistant switch
         cls.app = main.app
         cls.TestClient = TestClient
 

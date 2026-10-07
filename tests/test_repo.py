@@ -11,22 +11,26 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"calorie_tracker": "2.2.0", "family_tree": "2.3.0", "household_chat": "2.6.0", "household_todo": "2.4.0",
-            "household_vault": "2.1.3", "splitpot": "2.4.0"}
+VERSIONS = {"calorie_tracker": "2.2.2", "family_tree": "2.3.2", "household_chat": "2.6.1", "household_todo": "2.4.2",
+            "household_vault": "2.1.3", "splitpot": "2.4.2"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.2.0"
+FINANCE_VERSION = "1.2.2"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
 ARCADE_VERSION = "1.9.0"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.2.0"
+RECEIPTS_VERSION = "1.2.2"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.2.0"
-NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION))
+DOCS_VERSION = "1.2.1"
+# Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
+ASSISTANT = "household_assistant"
+ASSISTANT_VERSION = "1.0.0"
+NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
+         (ASSISTANT, ASSISTANT_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",
@@ -79,7 +83,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Unofficial apps", text[:600])
         self.assertIn("Claude", text[:600])
         self.assertIn(REPO_URL, text)
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):
             self.assertIn(f"]({slug})", text, slug)
         self.assertIn("](LICENSE)", text)
         self.assertIn("](SECURITY.md)", text)
@@ -114,7 +118,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_user_facing_text_says_app_not_add_on(self):
         """Home Assistant 2026.2 renamed add-ons to apps; what people read says "app"."""
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):
             for name in ("README.md", "DOCS.md", "CHANGELOG.md", os.path.join("translations", "en.yaml")):
                 with self.subTest(f"{slug}/{name}"):
                     text = read(slug, name).replace("ha-apps", "")

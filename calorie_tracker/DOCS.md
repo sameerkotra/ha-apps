@@ -168,8 +168,9 @@ Home Assistant; turning it on publishes everyone's again at once.
 If the household also uses the **Household Assistant** app, you can ask it "How many calories do I
 have left today?". Calorie Tracker tells it **only your own day** — calories, protein, carbs and fat
 against your goals, and what you logged at each meal — never anyone else's, and never your weight.
-Its answer links back to Calorie Tracker. An admin can turn this off for everyone with **Answer the
-Household Assistant** in App settings.
+Its answer links back to that day in Calorie Tracker. An admin can turn this off for everyone with **Answer
+the Household Assistant** in App settings, and you can turn it off for yourself on **Goals → Let the
+Household Assistant answer for me**.
 
 The answers travel through Home Assistant's event bus, which Home Assistant's recorder keeps in its
 history unless told not to. Add this to Home Assistant's `configuration.yaml` and restart Home

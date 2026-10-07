@@ -954,6 +954,11 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
   not_allowed` with `off` / `person_off`. A disabled or unknown person is `no_access`.
 - The link's page is `config.INGRESS_URL` only when it is the sidebar page (`/<hash or local>_household_chat`);
   otherwise the link has no page and the assistant says to open Chat from the sidebar.
+- **Ask the assistant** (the composer's ➕ menu): opens the Household Assistant's page with what is typed as its
+  question (`?q=`, at most 1000 characters; nothing is sent from Chat), through `ConnectedApps.openAppPage`. Shown
+  only when `/api/me`'s `assistantPage` is set: the assistant said hello on the bus in the last 24 hours, this app
+  knows its own sidebar page (`/<id>_household_chat`; apps from one repository share the id, so the assistant's is
+  `/<id>_household_assistant`), and the person isn't a child or turned off (`app_messages.assistant_page`).
 
 ## 16. More features
 

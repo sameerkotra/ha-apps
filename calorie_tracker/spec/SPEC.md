@@ -38,7 +38,7 @@ calorie_tracker/
 - `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync; `tests/common_tests/test_shared_copies.py` fails if a copy was changed.
 
 ## 3. Manifest & options
-`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.2.0"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
+`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.2.2"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
 
 | Option | Schema | Default | Effect |
 |---|---|---|---|
@@ -159,9 +159,13 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
   day — totals against their goals (the goals row, or the defaults) and each entry's meal, food, servings, kcal and
   macros. Never another person's day (`requested_by` only; the admin switcher's "acting as" never applies) and
   never weight. `requested_by` must have opened the app (a `users` row), else `nack not_allowed no_access`.
-- Only while App settings → **Answer the Household Assistant** (`assistant_answers`, default on); otherwise `nack
-  not_allowed off`. No per-person switch: the app has no per-person settings. The link is the sidebar page only
-  (the page has no sub-path routes).
+- Only while App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and the person's own
+  **Let the Household Assistant answer for me** (Goals; `users.assistant_ok`, default on; `GET /api/me` `assistantOk`,
+  `PUT /api/me/assistant` — always the signed-in person, never "acting as"); otherwise `nack not_allowed off` /
+  `person_off`. The link opens `/foodlog/<date>`.
+- **Sub-path links**: `/<page>/foodlog[/<date>]`, `/dashboard`, `/savedfoods`, `/weight`, `/goals` open that tab (and
+  day) — `common/static/deeplink.js`, given the page by `/api/me`'s `page`; a request reaching the app itself is
+  redirected to `#/…` (the shared `deeplinks.py`), which the page opens the same way.
 
 **Time zone**
 - At startup, `load_timezone()` (`ha_time.load(config.ZONE)`, `app/common/ha_time.py`) calls `GET http://supervisor/core/api/config` through the shared `ha_client`, reads `time_zone`, and sets `config.ZONE` (an `ha_time.Zone`; `config.set_timezone()` / `timezone_name()` / `now()` / `today()` are backed by it).

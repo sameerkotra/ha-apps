@@ -53,7 +53,8 @@ class TodayTests(ApiBase):
         self.assertIn("protein 37/150 g", res["text"])
         self.assertIn("breakfast: Porridge (350 kcal); lunch: Dal and rice (650 kcal)", res["text"])
         self.assertEqual([i["food"] for i in res["items"]], ["Porridge", "Dal and rice"])
-        self.assertEqual(res["links"], [{"label": "Calorie Tracker", "panel": "/a1b2c3d4_calorie_tracker"}])
+        self.assertEqual(res["links"], [{"label": "Food Log in Calorie Tracker", "panel": "/a1b2c3d4_calorie_tracker",
+                                         "target": "/foodlog/2026-09-21"}])
         blob = json.dumps(res)
         self.assertNotIn("Secret cake", blob)                      # Bob's day
         self.assertNotIn("70.5", blob)                             # weight
@@ -72,6 +73,26 @@ class TodayTests(ApiBase):
         self.assertNack(call("u_alice"), "not_allowed", "off")
         self.c.put("/api/admin/settings", json={"assistant_answers": True}, headers=ADMIN)
         self.assertNack(call("u_nobody"), "not_allowed", "no_access")
+
+    def test_persons_own_switch(self):
+        me = self.c.get("/api/me", headers=ALICE).json()
+        self.assertEqual((me["assistant"], me["assistantOk"]), (True, True))
+        r = self.c.put("/api/me/assistant", json={"assistantOk": False}, headers=ALICE)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(r.json()["assistantOk"])
+        self.assertNack(call("u_alice"), "not_allowed", "person_off")
+        self.assertIn("text", call("u_bob"))
+        self.assertEqual(self.c.put("/api/me/assistant", json={"assistantOk": "no"}, headers=ALICE).status_code, 422)
+        # an admin "acting as" someone changes only their own switch
+        self.c.put("/api/me/assistant?as_user=u_bob", json={"assistantOk": False}, headers=ADMIN)
+        self.assertIn("text", call("u_bob"))
+
+    def test_sub_paths_redirect_to_the_page(self):
+        for path, where in (("/foodlog", "../#/foodlog"), ("/foodlog/2026-09-20", "../../#/foodlog/2026-09-20"),
+                            ("/dashboard", "../#/dashboard")):
+            r = self.c.get(path, headers=ALICE, follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers["location"]), (307, where), path)
+        self.assertEqual(self.c.get("/api/me", headers=ALICE).json()["page"], "/a1b2c3d4_calorie_tracker")
 
     def test_catalogue(self):
         tools.tools.check()

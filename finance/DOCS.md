@@ -122,7 +122,8 @@ If the household also uses the **Household Assistant** app, an admin can let it 
 (**Admin → App settings → Household Assistant → Answer the Household Assistant**; **off** until
 turned on, because money is private). Then each person can ask about **their own** money — and
 about the data an admin shared with them on **Users**, by that person's name — never anyone
-else's. An admin's "act as" doesn't apply to the assistant.
+else's. An admin's "act as" doesn't apply to the assistant. Anyone can turn off **Let the Household Assistant
+answer for me** on **Who am I**; the assistant then won't answer their questions from Finance.
 
 - "How did we do this month?" — a month's income, spending, net and top categories, counted
   exactly as the Overview counts them (transfers and excluded rows left out);

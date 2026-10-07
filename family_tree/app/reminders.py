@@ -241,7 +241,10 @@ def run_digest_pass_blocking(now: datetime | None = None, sender=None) -> int:
         sender = ha_notify.send_notify
     sent = 0
     for user_id, services, message in due_digests(now):
-        results = [bool(sender(s, TITLE, message)) for s in services]     # every service, even after a success
+        page = config.INGRESS_PANEL and config.INGRESS_PANEL + "/upcoming"          # tapping opens Upcoming (deeplink.js)
+        data = {"url": page, "clickAction": page} if page else None
+        results = [bool(sender(s, TITLE, message, data=data) if data else sender(s, TITLE, message))
+                   for s in services]                                               # every service, even after a success
         if any(results):
             with db.get_conn() as conn:
                 conn.execute("INSERT OR IGNORE INTO reminder_log (user_id, sent_on) VALUES (?, ?)",

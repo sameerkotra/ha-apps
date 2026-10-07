@@ -45,6 +45,8 @@ class User(Base):
     timezone = Column(String(50), nullable=False, default="UTC")
     currency_code = Column(String(3))
     role = Column(String(50), nullable=False, default="USER")
+    # "Let the Household Assistant answer for me" (app/tools.py; How the app sees you)
+    assistant_ok = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(DateTime, server_default=func.current_timestamp())
     updated_at = Column(DateTime, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
@@ -814,6 +816,7 @@ _ADDED_COLUMNS = {
     "receipt_draft_items": [("original_description", "TEXT")],
     "web_deals": [("kind", "TEXT NOT NULL DEFAULT 'DEAL'"), ("method", "TEXT")],
     "app_settings": [("updated_by", "VARCHAR(255)")],
+    "users": [("assistant_ok", "INTEGER NOT NULL DEFAULT 1")],
 }
 _ADDED_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_drafts_home ON receipt_drafts(home_id, status)",

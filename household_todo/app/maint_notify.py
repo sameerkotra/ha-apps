@@ -131,7 +131,8 @@ def run_pass_blocking(now: datetime | None = None, sender=None) -> int:
                 continue
             lines = [t for _, t in sorted(slot["lines"], key=lambda x: x[0])]
             text = "\n".join(lines[:MAX_LINES]) + (f"\n+{len(lines) - MAX_LINES} more" if len(lines) > MAX_LINES else "")
-            data = {"url": config.INGRESS_PANEL, "clickAction": config.INGRESS_PANEL} if config.INGRESS_PANEL else None
+            page = config.SIDEBAR_PAGE and config.SIDEBAR_PAGE + "/maintenance"    # the Maintenance tab (deeplink.js)
+            data = {"url": page, "clickAction": page} if page else None
             ok = False
             for s in services:
                 ok = bool(sender(s, TITLE, text, data=data) if data else sender(s, TITLE, text)) or ok

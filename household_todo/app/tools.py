@@ -9,7 +9,7 @@
 
 Never task notes or links: titles, dates, lists and who. "Acting as" someone else never applies. Answered only while
 the admin's *Answer the Household Assistant* is on and the person hasn't turned off *Let the Household Assistant
-answer for me* (Settings). Todo's page doesn't open sub-paths, so links open the app.
+answer for me* (Settings). Links open the Dashboard, Lists (or the list), or Schedule on the app's sidebar page.
 """
 import re
 from datetime import date, timedelta
@@ -46,7 +46,7 @@ def _enabled(conn) -> bool:
 
 
 tools = assist_tools.Catalogue(
-    "todo", actor=_actor, enabled=_enabled, person_enabled=lambda conn, user: user["assistant_ok"],
+    "todo", targets=[r"/dashboard", r"/schedule", r"/lists", r"/lists/[A-Za-z0-9_-]{1,64}"], actor=_actor, enabled=_enabled, person_enabled=lambda conn, user: user["assistant_ok"],
     panel=_panel, busy=_busy)
 
 _LIST = Arg("string", "a list's name", max_length=60)
@@ -104,7 +104,8 @@ def tasks(ctx):
     elif when == "overdue":
         rows = [t for t in rows if t["overdue"]]
     rows = taskview.sort_for_dashboard(rows) if when != "all" else taskview.sort_tasks(rows, "due")
-    link = ctx.link("Household Todo")
+    link = (ctx.link(f"{lst['name']} in Household Todo", f"/lists/{lst['id']}") if "list" in ctx.args
+            else ctx.link("Dashboard in Household Todo", "/dashboard"))
     label = {"today": "for today", "week": "this week", "overdue": "overdue", "all": "open"}[when]
     if not rows:
         return ctx.result(f"No tasks {label}" + (f" on {ctx.args['list']}" if "list" in ctx.args else "") + ".",
@@ -127,7 +128,7 @@ def lists(ctx):
         (ctx.user["id"],)).fetchall()
     items = [{"list": r["name"], "kind": r["kind"], "open": r["open_count"]} for r in rows]
     text = f"{len(rows)} lists: " + ", ".join(f"{r['name']} ({r['open_count']} open)" for r in rows) + "."
-    return ctx.result(text, items=items, links=[ctx.link("Household Todo")])
+    return ctx.result(text, items=items, links=[ctx.link("Lists in Household Todo", "/lists")])
 
 
 @tools.tool("todo.schedule",
@@ -148,7 +149,7 @@ def schedule(ctx):
             out.append({"date": d.isoformat(), "what": it["name"], "time": it["start_time"],
                         "for": names.get(it["assigned_to"]) if it["assigned_to"] else None})
     out.sort(key=lambda e: (e["date"], e["time"] is not None, e["time"] or "", e["what"].lower()))
-    link = ctx.link("Schedule in Household Todo")
+    link = ctx.link("Schedule in Household Todo", "/schedule")
     if not out:
         return ctx.result(f"Nothing on the schedule in the next {days} days.", links=[link])
     text = (f"Coming up in the next {days} days: "
@@ -174,4 +175,4 @@ def add(ctx):
     due = f", due {_when(ctx.args['due'], config.now().date())}" if ctx.args.get("due") else ""
     return ctx.result(f"Added “{ctx.args['text']}” to {lst['name']}{due}.",
                       items=[{"title": ctx.args["text"], "list": lst["name"], "due": ctx.args.get("due")}],
-                      links=[ctx.link("Household Todo")])
+                      links=[ctx.link(f"{lst['name']} in Household Todo", f"/lists/{lst['id']}")])

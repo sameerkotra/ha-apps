@@ -199,7 +199,7 @@ def test_migration_is_safe_to_run_again():
         c.executescript(open(p).read())
     c.execute("INSERT INTO ai_usage_log (purpose, earlier) VALUES ('x', 1)")
     c.execute("DELETE FROM schema_version WHERE version = 24")
-    c.executescript(open(MIGRATIONS[-1]).read())
+    c.executescript(open(next(p for p in MIGRATIONS if os.path.basename(p).startswith("0024_"))).read())
     assert c.execute("SELECT COUNT(*) FROM ai_usage_log").fetchone()[0] == 1
 
 

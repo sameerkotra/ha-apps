@@ -21,7 +21,7 @@ from ..history import Batch
 router = APIRouter(prefix="/api", tags=["admin"])
 logger = logging.getLogger("admin")
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.2"
 _MEDIA_NAME = re.compile(r"^media/([0-9a-f]{2})/([0-9a-f]{32})/(original|thumb1024\.jpg|thumb256\.jpg)$")
 MAX_DB_BYTES = 2 * 1024 ** 3
 MAX_MEDIA_FILE_BYTES = 200 * 1024 ** 2

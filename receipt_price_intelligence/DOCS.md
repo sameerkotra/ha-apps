@@ -68,6 +68,9 @@ everything back. API keys and the mail password are write-only: the page shows w
 is, and **Remove** clears one. Each value is checked before anything is saved (a number out of range is flagged at
 the field), and a bad one is named in the message.
 
+While **Answer the Household Assistant** is on, each person can turn off **Let the Household Assistant answer for
+me** on the **Who am I** page; the assistant then won't answer their questions from this app.
+
 The Notify page lets each person choose their own notifications; App settings are the defaults until they save
 there.
 

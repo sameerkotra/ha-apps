@@ -33,6 +33,7 @@ def whoami(request: Request, acting: dict = Depends(get_acting_user)):
         notifyEntries=_notify_people(),
         maintenance={"enabled": bool(settings.get("maintenance_enabled"))},
         driveTimes={"enabled": settings.drive_times_enabled()},
+        page=config.SIDEBAR_PAGE,      # the sidebar page: links open a tab or a list there (deeplink.js)
     )
 
 

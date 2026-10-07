@@ -63,7 +63,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.4.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.4.2"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -651,7 +651,7 @@ House upkeep. Off until an admin turns it on (`maintenance_enabled`); while off 
 `maint_catalog.BUILTIN` (~45) + `maint_suggestions` (admin CRUD). Shown if `needs` is in `maintenance_profile` (or has none), not hidden (`maint_hidden`, household-wide), and no item has its key or its name (case-insensitive). Seasonal ones (`seasons`) default to calendar mode due on the first day of each season: one season → `years:1`, two six months apart → `months:6:1`, else `months:3:1`, anchored at the next start. Seasons are meteorological (N: Mar/Jun/Sep/Dec; S: +6 months, from HA's `latitude` < 0). In-season (now or starting within 31 days) first.
 
 ### 14.3 Notifications (`maint_notify.py`, the reminders loop)
-Recipients per item = custom list or `maintenance_recipients` (+ assignee), filtered to enabled users with `maintenance_notify` ≠ 0 — independent of the digest switch. In the 60 minutes after each person's `digest_time` (08:00 default) one grouped message: overdue (first time, then every `overdue_every` days; 0 = never), due today, due soon (≤ lead_days) — each once per due date; unassigned jobs in the list due today (household recipients); the season's fitting suggestions once per season in its first 14 days. Logged per line in `maint_notify_log` only when a send succeeded. Notify `data` url/clickAction = the app's ingress panel when `HOSTNAME` gives it. The weekly summary appends a "Maintenance:" section (overdue or due within 7 days). The daily digest doesn't repeat them.
+Recipients per item = custom list or `maintenance_recipients` (+ assignee), filtered to enabled users with `maintenance_notify` ≠ 0 — independent of the digest switch. In the 60 minutes after each person's `digest_time` (08:00 default) one grouped message: overdue (first time, then every `overdue_every` days; 0 = never), due today, due soon (≤ lead_days) — each once per due date; unassigned jobs in the list due today (household recipients); the season's fitting suggestions once per season in its first 14 days. Logged per line in `maint_notify_log` only when a send succeeded. Notify `data` url/clickAction = the app's sidebar page with `/maintenance` after it (`config.SIDEBAR_PAGE`, from the Supervisor's `addons/self/info` or `HOSTNAME`; none when the app isn't in the sidebar) — open to everyone, unlike the admin's `/hassio/ingress/<slug>` page earlier versions used. The weekly summary appends a "Maintenance:" section (overdue or due within 7 days). The daily digest doesn't repeat them.
 
 ### 14.4 Calendar
 `GET /api/calendar` returns `maintenance` (param `maintenance=0` omits it): per item the real due date (overdue shows on today, status overdue/due/upcoming) and projected later ones (`projected: true`) in range, filtered by `assignee` like schedule items.
@@ -704,8 +704,13 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   (the shared `assist_tools.py`, APP_MESSAGES_SPEC §6.6) to the kinds Todo answers. `requested_by` is the actor
   (an enabled `users` row; "acting as" never applies), answered inside the bus's transaction; `nack busy` during a
   restore. The sidebar page for links (`config.SIDEBAR_PAGE`) comes from `assist_tools.sidebar_page` at start-up —
-  not `INGRESS_PANEL`, the admin's page the notifications use. Todo's page has no sub-path routes, so links carry
-  no `target`.
+  the same page the notifications open. Links carry a `target`: `/dashboard` (todo.tasks), `/lists/<id>` (a named
+  list, todo.items.add), `/lists`, `/schedule`.
+- **Sub-path links** (all links into the app): `/<page>/dashboard|calendar|schedule|lists|maintenance` and
+  `/<page>/lists/<id>`. The page (`common/static/deeplink.js`, given the page by `/api/whoami`'s `page`) takes the
+  route from Home Assistant's `home-assistant/properties` message or the top page's address and opens that tab or
+  list (`#/lists/<id>`); a request for one of those paths reaching the app itself is redirected to `#/…` (the shared
+  `deeplinks.py`).
 - **Tools** (everything as the person sees it: shared lists and their own personal lists, `taskview.VISIBLE_SQL`):
   - `todo.tasks` (`when` today|week|overdue|all, `list?` by name, any case): open tasks; *today* = overdue + due
     today, *week* = overdue + due within 7 days, *overdue* = overdue (completion-required and past, §8l), sorted as

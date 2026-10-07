@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import Field
 
-from .. import chats, config, db, files, presence, settings
+from .. import app_messages, chats, config, db, files, presence, settings
 from ..common import ha_notify, whoami as whoami_core
 from ..auth import get_current_user, require_user
 from ..live import hub
@@ -45,7 +45,8 @@ def me(user: dict = Depends(get_current_user)):
                 "app": app_public(conn), "version": config.APP_VERSION, "files": files.public_status(),
                 "noAdmin": not config.ADMIN_NAMES,        # first run: nobody can open Admin yet (SPEC §4.2)
                 "timeZone": getattr(config.tz(), "key", "UTC"),
-                "page": config.INGRESS_URL}          # the app's page in Home Assistant (deep links, §15.14)
+                "page": config.INGRESS_URL,          # the app's page in Home Assistant (deep links, §15.14)
+                "assistantPage": None if u["is_child"] or u["disabled"] else app_messages.assistant_page()}
 
 
 @router.get("/whoami")

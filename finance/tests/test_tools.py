@@ -1,6 +1,6 @@
 """What Finance Dashboard answers the Household Assistant (app/tools.py; HOUSEHOLD_ASSISTANT_SPEC §4.2, §7.2).
 
-- off until an admin turns it on; the asking person must be known to the app;
+- off until an admin turns it on; the asking person must be known to the app and not have turned off their own switch;
 - the person's own data, or a shared owner's by name — never anyone else's, and an admin can't ask "as" someone;
 - finance.summary / finance.spending count as the Overview does (clean rows; no transfers or excluded rows);
 - never a transaction's note; finance.recurring and finance.bills from the recurring-charge scan;
@@ -113,3 +113,38 @@ def test_catalogue_and_reports_never_see_the_bus(env):
     assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.spending", "finance.recurring",
                                                        "finance.bills"]
     assert {"bus_outbox", "bus_seen", "bus_apps"} <= query_engine.HIDDEN_TABLES
+
+
+def test_links_open_the_right_page(env):
+    from app import tools
+    month = seed(env)
+    turn_on(env)
+    tools.PANEL["value"] = "/local_finance"
+    try:
+        res = call("finance.summary", month=month)
+        assert res["links"][0]["target"] == f"/month/{month}"
+        assert res["links"][0]["panel"] == "/local_finance"
+        assert call("finance.recurring")["links"][0]["target"] == "/recurring"
+        page = env.get("dashboard")
+        assert 'data-page="/local_finance"' in page.text
+        assert "static/common/deeplink.js" in page.text
+    finally:
+        tools.PANEL["value"] = None
+    r = env.get(f"month/{month}", follow_redirects=False)
+    assert (r.status_code, r.headers["location"]) == (307, f"../dashboard?period={month}")
+    assert env.get("month/2026-13", follow_redirects=False).status_code == 404
+
+
+def test_persons_own_switch(env):
+    seed(env)
+    turn_on(env)
+    page = env.get("whoami").text
+    assert "Let the Household Assistant answer for me" in page and "Turn off" in page
+    r = env.post("whoami/assistant", data={"assistant_ok": "0"})
+    assert r.status_code == 303 and r.headers["location"] == "../whoami"
+    nack(call("finance.summary"), "not_allowed", "person_off")
+    assert "Turn on" in env.get("whoami").text
+    env.post("whoami/assistant", data={"assistant_ok": "1"})
+    assert "text" in call("finance.summary")
+    turn_on(env, False)                                    # the admin's switch off: the card isn't shown
+    assert "Let the Household Assistant answer for me" not in env.get("whoami").text

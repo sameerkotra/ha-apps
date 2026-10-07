@@ -33,6 +33,20 @@ def call(tool, uid="u_alice", confirm=None, **args):
             return n
 
 
+class DeepLinkTests(ApiBase):
+    def test_sub_paths_redirect_to_the_page(self):
+        for path, where in (("/dashboard", "../#/dashboard"), ("/lists/abc", "../../#/lists/abc"),
+                            ("/schedule", "../#/schedule")):
+            r = self.c.get(path, headers=ALICE, follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers["location"]), (307, where), path)
+        self.assertEqual(self.c.get("/lists/a%20b", headers=ALICE, follow_redirects=False).status_code, 404)
+        config.SIDEBAR_PAGE = "/local_household_todo"
+        try:
+            self.assertEqual(self.get("/api/whoami").json()["page"], "/local_household_todo")
+        finally:
+            config.SIDEBAR_PAGE = None
+
+
 class ToolTests(ApiBase):
     def setUp(self):
         super().setUp()
@@ -62,7 +76,8 @@ class ToolTests(ApiBase):
         self.assertEqual(self.titles(call("todo.tasks", when="week")), ["Pay water bill", "Bins", "Call plumber"])
         self.assertEqual(self.titles(call("todo.tasks", when="overdue")), ["Pay water bill"])
         self.assertEqual(len(call("todo.tasks", when="all")["items"]), 4)
-        self.assertEqual(res["links"], [{"label": "Household Todo", "panel": "/a1b2c3d4_household_todo"}])
+        self.assertEqual(res["links"], [{"label": "Dashboard in Household Todo", "panel": "/a1b2c3d4_household_todo",
+                                         "target": "/dashboard"}])
         blob = json.dumps(call("todo.tasks", when="all"))
         self.assertNotIn("account 1234", blob)                  # never notes
         self.assertNotIn("Bob's secret", blob)                  # never someone else's personal list
@@ -70,7 +85,9 @@ class ToolTests(ApiBase):
 
     def test_a_list_by_name(self):
         shared = next(l["name"] for l in self.lists() if l["kind"] == "shared")
-        self.assertEqual(len(call("todo.tasks", when="all", list=shared.upper())["items"]), 4)
+        res = call("todo.tasks", when="all", list=shared.upper())
+        self.assertEqual(len(res["items"]), 4)
+        self.assertEqual(res["links"][0]["target"], f"/lists/{self.shared_id()}")
         bobs = next(l["name"] for l in self.lists(BOB) if l["kind"] == "personal")
         mine = next(l["name"] for l in self.lists() if l["kind"] == "personal")
         if bobs != mine:                                        # a name only Bob's list has looks like none

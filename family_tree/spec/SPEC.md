@@ -802,8 +802,11 @@ ALTER TABLE people ADD COLUMN never_export INTEGER NOT NULL DEFAULT 0;
   **Let the Household Assistant answer for me** (`users.assistant_ok`, default on; `PUT /api/me/assistant`);
   otherwise `nack not_allowed` (`off` / `person_off`); a disabled or unknown user is `no_access`.
 - **Link**: the app's sidebar page only (`config.INGRESS_PANEL`: from `HOSTNAME`, refined at start-up from the
-  Supervisor's `GET /addons/self/info`, accepted only as `/<8 hex or local>_family_tree` with `ingress_panel` on).
-  The page doesn't open sub-paths, so there is no `target`.
+  Supervisor's `GET /addons/self/info`, accepted only as `/<8 hex or local>_family_tree` with `ingress_panel` on),
+  target `/upcoming`.
+- **Sub-path links**: `/<page>/upcoming` and `/<page>/person/<id>` open that view (`common/static/deeplink.js`, given
+  the page by `/api/me`'s `page`; a request reaching the app itself is redirected to `#/…` by the shared
+  `deeplinks.py`). The reminder digest's notification opens `/<page>/upcoming`.
 
 ## 14. Possible future work
 - **GEDCOM import and export** (5.5.1 `.ged` in UTF-8/UTF-16/ANSEL, 7.0 `.ged`/`.gdz` with media) through the same Export options, with a preview step, *empty* / *append* / *merge* (matched with the duplicate scorer, §13.4) import modes as one undoable batch, and mappings for the modules: photo regions as `OBJE`/`CROP`, script names as `NAME`/`TRAN` (7.0) or an extra `NAME` with `_LANG` (5.5.1), custom fields as `FACT`/`TYPE`, sources as `SOUR`/`PAGE`/`QUAY`, tithis as a `_TITHI` extension tag, ceremonies as `EVEN`/`TYPE`, and year-less dates as date phrases. The `gedcom_id` / `gedcom_extra` columns are reserved for it.

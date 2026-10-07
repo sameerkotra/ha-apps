@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, ConfigDict, StrictBool
 
-from .. import config
+from .. import config, db, settings
 from ..auth import display_name_listed, get_current_user, no_admins
 from ..common import whoami as whoami_core
 
@@ -15,7 +16,29 @@ async def me(user: dict = Depends(get_current_user)):
     naming `username` — the login name to add, or the user id if HA didn't
     send one)."""
     return {"id": user["id"], "name": user["name"], "is_admin": user["is_admin"],
-            "username": user["username"] or user["id"], "noAdmin": no_admins()}
+            "username": user["username"] or user["id"], "noAdmin": no_admins(),
+            "page": config.INGRESS_PANEL,       # the sidebar page: links open a tab or a day there (deeplink.js)
+            **_assistant(user["id"])}
+
+
+def _assistant(uid: str) -> dict:
+    """Whether the admin lets the Household Assistant ask, and this person's own switch (tools.py)."""
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT assistant_ok FROM users WHERE id = ?", (uid,)).fetchone()
+    return {"assistant": bool(settings.get("assistant_answers")), "assistantOk": bool(row["assistant_ok"]) if row else True}
+
+
+class AssistantIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    assistantOk: StrictBool
+
+
+@router.put("/assistant")
+async def set_assistant(body: AssistantIn, user: dict = Depends(get_current_user)):
+    """The person's own "Let the Household Assistant answer for me" — always the signed-in person, never "acting as"."""
+    with db.get_conn() as conn:
+        conn.execute("UPDATE users SET assistant_ok = ? WHERE id = ?", (1 if body.assistantOk else 0, user["id"]))
+    return _assistant(user["id"])
 
 
 @whoami_router.get("/today")

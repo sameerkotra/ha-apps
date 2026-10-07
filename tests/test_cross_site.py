@@ -37,8 +37,8 @@ with TestClient(app, client=("172.30.32.2", 50000)) as c:          # runs the ap
 print("RESULT " + json.dumps(out))
 """
 
-APPS = ["calorie_tracker", "family_tree", "household_arcade", "household_chat", "household_docs",
-        "household_todo", "household_vault", "receipt_price_intelligence", "splitpot"]
+APPS = ["calorie_tracker", "family_tree", "household_arcade", "household_assistant", "household_chat",
+        "household_docs", "household_todo", "household_vault", "receipt_price_intelligence", "splitpot"]
 
 
 class CrossSiteTests(unittest.TestCase):

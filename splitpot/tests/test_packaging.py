@@ -13,7 +13,7 @@ from pathlib import Path
 from common_tests import packaging_core as pk
 
 ADDON_DIR = Path(__file__).resolve().parent.parent
-VERSION = "2.4.0"
+VERSION = "2.4.2"
 REPO_URL = pk.REPO_URL
 
 # Personal details that must never appear (the repository URL is the one
@@ -62,7 +62,7 @@ class ConfigYaml(unittest.TestCase):
 class Files(unittest.TestCase):
     def test_every_asset_version_matches(self):
         # theme-boot.js, themes.css, settings.css, style.css, ui.js, settings.js, people.js, backnav.js, whoami.js, app.js
-        pk.check_cache_busting(ADDON_DIR, VERSION, count=10)
+        pk.check_cache_busting(ADDON_DIR, VERSION, count=11)
 
     def test_docs_and_layout(self):
         pk.check_files(ADDON_DIR, names=("README.md", "DOCS.md", "Dockerfile", ".dockerignore"), min_size=100)

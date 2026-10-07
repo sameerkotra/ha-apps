@@ -39,6 +39,7 @@ def me(user: dict = Depends(require_user)):
                 "mapEnabled": features.on("map"), "features": features.states(), "noAdmin": not config.ADMIN_NAMES,
                 "nameDisplay": user["name_display"], "nameOrderApp": settings.get("name_order"),
                 "assistant": settings.get("assistant_answers"), "assistantOk": user["assistant_ok"],
+                "page": config.INGRESS_PANEL,      # the sidebar page: links open Upcoming or a person there
                 "kidPinSet": bool(conn.execute("SELECT kid_pin_hash FROM users WHERE id = ?", (user["id"],)).fetchone()[0]),
                 "media": {"online": media.is_online(), "reason": media.status()["reason"]}}
 

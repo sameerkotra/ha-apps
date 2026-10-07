@@ -67,7 +67,7 @@ class Base(unittest.TestCase):
         url = self.ha_url
         patches = [mock.patch.object(config, "SUPERVISOR_TOKEN", "test-token"),
                    mock.patch.object(config, "SUPERVISOR_CORE_API", url),
-                   mock.patch.object(config, "INGRESS_PANEL", "/hassio/ingress/local_splitpot")]
+                   mock.patch.object(config, "SIDEBAR_PAGE", "/local_splitpot")]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -117,7 +117,7 @@ class Charges(Base):
         ravi = sent["mobile_app_ravi_phone"][0]
         self.assertEqual(ravi["title"], "Splitpot")
         self.assertEqual(ravi["message"], "Asha added 'Groceries' ($90.00) to Flat, paid by Asha. Your share: $30.00.")
-        link = "/hassio/ingress/local_splitpot#/group/" + self.gid
+        link = "/local_splitpot/group/" + self.gid
         self.assertEqual(ravi["data"], {"url": link, "clickAction": link})
         self.assertIn("Your share: $30.00", sent["kitchen_speaker"][0]["message"])
 
@@ -357,3 +357,14 @@ class SettingsAndSchema(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SidebarLinks(unittest.TestCase):
+    """A notification's "/<page>/group/<id>" asked of the app itself: a redirect to the page's "#/group/<id>"."""
+
+    def test_group_route_redirects_to_the_page(self):
+        with ingress_client(main.app) as c:
+            r = c.get("/group/abc-123", headers=ASHA, follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers["location"]), (307, "../../#/group/abc-123"))
+            self.assertEqual(c.get("/group/a%20b", headers=ASHA, follow_redirects=False).status_code, 404)
+            self.assertEqual(c.get("/api/config", headers=ASHA).json()["page"], config.SIDEBAR_PAGE)

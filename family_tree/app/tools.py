@@ -5,7 +5,7 @@ One tool, `tree.birthdays`: the birthdays and anniversaries coming up, as the Up
 asking person (close family when they've said "This is me", else everyone; relationships in their own language).
 Names, dates, ages and relationships only — no photos, contact details or notes. Answered only while the admin's
 *Answer the Household Assistant* is on and the person hasn't turned off *Let the Household Assistant answer for me*
-(Settings). Family Tree's page doesn't open sub-paths, so its links open the app itself.
+(Settings). Its link opens Upcoming on the app's sidebar page.
 """
 import re
 from datetime import date
@@ -37,7 +37,7 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "tree", actor=_actor, enabled=lambda conn: bool(settings.get("assistant_answers")),
+    "tree", targets=[r"/upcoming"], actor=_actor, enabled=lambda conn: bool(settings.get("assistant_answers")),
     person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel, busy=_busy)
 
 
@@ -64,7 +64,7 @@ def birthdays(ctx):
     g = graph_mod.get(ctx.conn)
     me = ctx.user["me_person_id"] if ctx.user["me_person_id"] in g.people else None
     rows = upcoming.entries(g, config.today(), days, me, scope, remembrance=False, lang=lang)
-    link = ctx.link("Upcoming in Family Tree")
+    link = ctx.link("Upcoming in Family Tree", "/upcoming")
     whose = "the whole tree" if scope == "all" or not me else "close family"
     if not rows:
         return ctx.result(f"No birthdays or anniversaries in the next {days} days ({whose}).", links=[link])

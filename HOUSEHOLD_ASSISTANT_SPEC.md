@@ -1,6 +1,7 @@
 # Household Assistant — spec
 
-Status: **draft (2026-10-06); the apps' side is built (2026-10-07), the assistant app itself is not.** Every app in
+Status: **draft (2026-10-06); the apps' side and the assistant app (phase 1, `household_assistant` 1.0.0) are built
+(2026-10-07); its own `spec/SPEC.md` says how.** Every app in
 §4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
 the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
@@ -312,6 +313,11 @@ CREATE TABLE assist_tools (app TEXT NOT NULL, name TEXT NOT NULL, app_version TE
 
 Questions older than *Keep questions for* (30 days, 1–365) are deleted by housekeeping, with their calls.
 
+As built: a proposed action is a `calls` row with state `proposed` and its words in `say` until it is tapped;
+`calls.bus_id` is the message's id; `assist_apps` keeps each app's own switch (`app_on`, from its list's `on`), the
+admin's switch here (`enabled`) and a problem with its list; `usage_days` keeps the Usage counts (never per
+person), so clearing questions doesn't change them.
+
 ### 8.2 Settings (Admin → App settings, the shared `settings_core` registry)
 
 - **AI**: provider, address, model, access key (secret: scrubbed from backups, kept on restore, as Docs 1.0.1 does),
@@ -400,20 +406,23 @@ only to the app's own sidebar page and its own route patterns, and `sidebar_page
 
 | App (version) | Tools | Default | Per-person switch | Links |
 |---|---|---|---|---|
-| Chat 2.6.0 | `chat.unread` | on | Settings → You | `/chat/<id>` |
+| Chat 2.6.1 | `chat.unread`; ➕ → *Ask the assistant* | on | Settings → You | `/chat/<id>` |
 | Arcade 1.9.0 | `arcade.scores` (household; not for children), `arcade.mine` (new: a person's own bests) | on | Settings | `/leaderboard`, `/scores` |
 | Family Tree 2.3.0 | `tree.birthdays` (+ `everyone?`: the whole tree instead of close family) | on | Settings | the page |
-| Calorie Tracker 2.2.0 | `calorie.today` | on | — (no per-person settings) | the page |
+| Calorie Tracker 2.2.2 | `calorie.today` | on | Goals | `/foodlog/<date>` |
 | Splitpot 2.4.0 | `splitpot.balances`, `splitpot.recent` (the group page's first 20) — only the person's own groups, by their Home Assistant login | **off** | My settings | the page |
 | Todo 2.4.0 | `todo.tasks`, `todo.lists`, `todo.schedule`, `todo.items.add` (acts; `list` by name) | on | Settings | the page |
 | Docs 1.2.0 | `docs.search`, `docs.read`, `docs.checklist`, `docs.note.create` (acts) | on | Settings → You | `/doc/<id>`, `/folder/<id>`, `/file/<id>` |
-| Receipt Price Intelligence 1.2.0 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | — | the page |
-| Finance Dashboard 1.2.0 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | — | the page |
+| Receipt Price Intelligence 1.2.2 | `receipt.shopping_list`, `receipt.price`, `receipt.spending`, `receipt.shopping_list.add` (acts) (+ `home?` when there are several) | **off** | Who am I | `/list`, `/insights` |
+| Finance Dashboard 1.2.2 | `finance.summary`, `finance.spending`, `finance.recurring`, `finance.bills` (+ `person?`: an owner shared with the asker) | **off** | Who am I | `/month/<YYYY-MM>`, `/recurring` |
 
 Differences from the draft above:
 
-- **Links**: only Chat, Arcade and Docs open a route after their sidebar page today; the others' links open the app
-  (no `target`), as §2.1 allows. Giving Todo, Splitpot and the rest sub-path routes is later work.
+- **Links**: every app's links open a page inside it. The six apps without their own handling share
+  `common/static/deeplink.js` (the page reads the sub-path Home Assistant hands it) and `common/python/deeplinks.py`
+  (a sub-path request reaching the app is redirected to the page's `#/route`): Todo `/dashboard`, `/lists/<id>`,
+  `/schedule`; Splitpot `/group/<id>`; Family Tree `/upcoming`; Calorie `/foodlog/<date>`; Receipt `/list`,
+  `/insights`; Finance `/month/<YYYY-MM>`, `/recurring`.
 - **Receipt Price Intelligence** keeps the bus's tables in their own `app_bus.db` (the §12 decision): a bus answer
   holds a write lock for its length, which would block the tools' own SQLAlchemy writes to the app's file.
 - **Finance** keeps the bus's tables in its own database and hides them from Query and Reports.
@@ -421,3 +430,17 @@ Differences from the draft above:
   it is a must once the assistant is used.
 - **Not yet**: the assistant app (§10 phase 1); Chat's *Ask the assistant* entry (§10 phase 5).
 
+
+## 14. Work list (2026-10-07)
+
+Each item is ticked in the commit that finishes it.
+
+- [x] **Notification links (Todo, Splitpot)**: phone notifications open the sidebar page, not the admin's
+  `/hassio/ingress/<slug>` page (as Arcade 1.8.0 did).
+- [x] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
+- [x] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
+  Finance, and their tools' link targets.
+- [x] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
+- [x] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
+  the admin pages, tests.
+- [x] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).

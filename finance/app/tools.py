@@ -10,8 +10,8 @@ Whose data: the asking person's own, or — with `person` — one whose data an 
 user_access grants the pages use; an admin's "view as anyone" never applies to the assistant). Only clean rows,
 with transfers and excluded rows left out, as the Overview counts them. **Never** a transaction's note (text a person
 typed): only the bank's description (the merchant), date, amount, category and account. Money is private, so the
-admin's *Answer the Household Assistant* is **off** until turned on. Finance has no per-person settings, so there is
-no per-person switch. Its pages don't open sub-paths, so links open the app.
+admin's *Answer the Household Assistant* is **off** until turned on, and each person can turn off *Let the Household
+Assistant answer for me* (Who am I). Links open the month's dashboard or Recurring on the app's sidebar page.
 """
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ INCOME = "(t.amount > 0 AND a.type IN ('checking', 'savings'))"
 
 
 def _actor(conn, uid: str):
-    r = conn.execute("SELECT id, name FROM known_users WHERE id = ?", (uid,)).fetchone()
-    return {"id": r["id"], "name": r["name"]} if r else None
+    r = conn.execute("SELECT id, name, assistant_ok FROM known_users WHERE id = ?", (uid,)).fetchone()
+    return {"id": r["id"], "name": r["name"], "assistant_ok": bool(r["assistant_ok"])} if r else None
 
 
 def _panel():
@@ -44,7 +44,9 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "finance", actor=_actor, enabled=lambda conn: settings.get_bool("assistant_answers"), panel=_panel)
+    "finance", targets=[r"/month/\d{4}-(0[1-9]|1[0-2])", r"/recurring"], actor=_actor,
+    enabled=lambda conn: settings.get_bool("assistant_answers"), person_enabled=lambda conn, user: user["assistant_ok"],
+    panel=_panel)
 
 _PERSON = Arg("string", "whose data, when an admin shared someone's with the asker (default their own)", max_length=100)
 _MONTH = Arg("month", "the month (default this month)")
@@ -82,8 +84,9 @@ def _whose(owner_name: str, ctx) -> str:
     return "" if owner_name == ctx.user["name"] else f" ({owner_name}'s)"
 
 
-def _link(ctx):
-    return ctx.link("Finance Dashboard")
+def _link(ctx, target: str):
+    label = "Recurring charges" if target == "/recurring" else f"{_label(target[7:])}"
+    return ctx.link(f"{label} in Finance Dashboard", target)
 
 
 def _by_category(ctx, uid: str, start: str, end: str, condition: str, amount: str) -> dict[str, float]:
@@ -107,11 +110,11 @@ def summary(ctx):
     total = round(sum(spend.values()), 2)
     top = sorted(spend.items(), key=lambda kv: -kv[1])[:5]
     if not spend and not income:
-        return ctx.result(f"No transactions in {_label(m)}{_whose(owner, ctx)} yet.", links=[_link(ctx)])
+        return ctx.result(f"No transactions in {_label(m)}{_whose(owner, ctx)} yet.", links=[_link(ctx, f"/month/{m}")])
     text = (f"{_label(m)}{_whose(owner, ctx)}: income {_money(income)}, spending {_money(total)}, net "
             f"{_money(income - total)}. Top categories: " + ", ".join(f"{c} {_money(v)}" for c, v in top) + ".")
     items = [{"category": c, "spend": v} for c, v in top]
-    return ctx.result(text, items=items, links=[_link(ctx)])
+    return ctx.result(text, items=items, links=[_link(ctx, f"/month/{m}")])
 
 
 @tools.tool("finance.spending",
@@ -128,18 +131,18 @@ def spending(ctx):
     if "category" not in ctx.args:
         rows = sorted(spend.items(), key=lambda kv: -kv[1])
         if not rows:
-            return ctx.result(f"No spending in {_label(m)}{_whose(owner, ctx)}.", links=[_link(ctx)])
+            return ctx.result(f"No spending in {_label(m)}{_whose(owner, ctx)}.", links=[_link(ctx, f"/month/{m}")])
         total = sum(spend.values())
         text = (f"{_label(m)}{_whose(owner, ctx)}: {_money(total)} spent. "
                 + "; ".join(f"{c} {_money(v)}" for c, v in rows[:10]) + ("…" if len(rows) > 10 else "") + ".")
         items = [{"category": c, "spend": v, "share": round(v / total * 100, 1) if total else 0.0} for c, v in rows]
-        return ctx.result(text, items=items, links=[_link(ctx)])
+        return ctx.result(text, items=items, links=[_link(ctx, f"/month/{m}")])
     want = ctx.args["category"].casefold()
     match = next((c for c in spend if c.casefold() == want), None) \
         or next((c for c in spend if want in c.casefold()), None)
     if match is None:
         return ctx.result(f"No spending on “{ctx.args['category']}” in {_label(m)}{_whose(owner, ctx)}. Categories "
-                          "with spending: " + (", ".join(sorted(spend)) or "none") + ".", links=[_link(ctx)])
+                          "with spending: " + (", ".join(sorted(spend)) or "none") + ".", links=[_link(ctx, f"/month/{m}")])
     rows = ctx.conn.execute(
         f"SELECT t.date, t.description, {SPEND_AMOUNT} AS amount, a.name AS account FROM transactions t "
         f"JOIN accounts a ON a.id = t.account_id WHERE {WHERE} AND {SPEND} "
@@ -149,7 +152,7 @@ def spending(ctx):
               "account": r["account"]} for r in rows]
     text = (f"{match} in {_label(m)}{_whose(owner, ctx)}: {_money(spend[match])}. Largest: "
             + "; ".join(f"{i['merchant']} {_money(i['amount'])} ({i['date']})" for i in items[:5]) + ".")
-    return ctx.result(text, items=items, links=[_link(ctx)])
+    return ctx.result(text, items=items, links=[_link(ctx, f"/month/{m}")])
 
 
 def _series(ctx, uid: str) -> list[dict]:
@@ -168,12 +171,12 @@ def recurring_charges(ctx):
     uid, owner = _owner(ctx)
     rows = sorted(_series(ctx, uid), key=lambda s: (s["next"] or "9999", -s["amount"]))
     if not rows:
-        return ctx.result(f"No recurring charges found{_whose(owner, ctx)}.", links=[_link(ctx)])
+        return ctx.result(f"No recurring charges found{_whose(owner, ctx)}.", links=[_link(ctx, "/recurring")])
     monthly = sum(s["amount"] for s in rows if s["frequency"] == "Monthly")
     text = (f"{len(rows)} recurring charges{_whose(owner, ctx)}, {_money(monthly)} a month in monthly ones: "
             + "; ".join(f"{s['merchant']} {_money(s['amount'])} {(s['frequency'] or '').lower()}" for s in rows[:8])
             + ("…" if len(rows) > 8 else "") + ".")
-    return ctx.result(text, items=rows, links=[_link(ctx)])
+    return ctx.result(text, items=rows, links=[_link(ctx, "/recurring")])
 
 
 @tools.tool("finance.bills",
@@ -189,8 +192,8 @@ def bills(ctx):
                   key=lambda s: s["next"])
     if not rows:
         return ctx.result(f"No recurring charges expected in the next {days} days{_whose(owner, ctx)}.",
-                          links=[_link(ctx)])
+                          links=[_link(ctx, "/recurring")])
     total = sum(s["amount"] for s in rows)
     text = (f"{len(rows)} expected in the next {days} days{_whose(owner, ctx)}, about {_money(total)}: "
             + "; ".join(f"{s['next']} {s['merchant']} {_money(s['amount'])}" for s in rows[:10]) + ".")
-    return ctx.result(text, items=rows, links=[_link(ctx)])
+    return ctx.result(text, items=rows, links=[_link(ctx, "/recurring")])

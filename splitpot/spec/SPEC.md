@@ -28,7 +28,7 @@ splitpot/
 ├── translations/en.yaml   # option names/descriptions
 ├── app/__init__.py
 ├── app/main.py            # entire backend
-├── app/config.py          # what the shared HA modules read at call time: SUPERVISOR_TOKEN, SUPERVISOR_CORE_API, INGRESS_PANEL
+├── app/config.py          # what the shared HA modules read at call time: SUPERVISOR_TOKEN, SUPERVISOR_CORE_API, SIDEBAR_PAGE
 ├── app/db.py              # get_conn() for the shared modules (→ main.get_conn, looked up at call time)
 ├── app/common/            # shared Python (copies): whoami, ha_client, ha_time, housekeeping, auth_core, db_core,
 │                          #   settings_core, web_security, backup_core, sensor_publisher, csv_export,
@@ -239,13 +239,13 @@ All HA calls go to `http://supervisor/core/api/…` with `Authorization: Bearer 
 
 ### 7.1 Phone notifications
 
-Shared code as in the other apps: `common/ha_notify.py` (sending: notify action, or `notify.send_message` for a notify entity; never raises), `common/ha_people.py` (each Person's Companion-app phones, read with one `POST /api/template`, cached; refreshed at startup and every 5 minutes by `ha_people.loop`), `common/people_admin.py` (Admin → Users routes' shared parts), `common/static/people.js` (the page). They read `app/config.py` (`SUPERVISOR_TOKEN`, `SUPERVISOR_CORE_API`, `INGRESS_PANEL`) at call time; `app/db.py` gives them `get_conn`.
+Shared code as in the other apps: `common/ha_notify.py` (sending: notify action, or `notify.send_message` for a notify entity; never raises), `common/ha_people.py` (each Person's Companion-app phones, read with one `POST /api/template`, cached; refreshed at startup and every 5 minutes by `ha_people.loop`), `common/people_admin.py` (Admin → Users routes' shared parts), `common/static/people.js` (the page). They read `app/config.py` (`SUPERVISOR_TOKEN`, `SUPERVISOR_CORE_API`, `SIDEBAR_PAGE`) at call time; `app/db.py` gives them `get_conn`.
 
 - **Who is reached** (`person_services(conn, user_row)`): `ha_people.phones_for(users.ha_user_id)` (the phones HA links to the person) + the person's `user_notify` services, deduplicated. Splitpot's `users.id` is its own uuid, so the two lookups use different keys and the app combines them itself instead of `ha_notify.services_for` (which assumes users.id = HA user id). A member without a linked HA login and without an extra service is simply not told.
 - **New charge** (`POST /groups/{id}/expenses`; when `notify_charges` is on and there is a token): a FastAPI background task (`notify_new_charge(expense_id, X-Remote-User-Id, actor)`) runs after the response, re-reads the entry, and notifies everyone involved — the payer and everyone in `expense_splits` — **except the person who added it** (`linked_user_id` of the request's HA user id; an admin who isn't a Splitpot person excludes nobody). Each recipient is skipped when `disabled`, `receive_notifications = 0`, or no service reaches them. Text (`charge_notices`): `"<actor> added '<desc>' (<money>) to <group>, paid by <payer|you>. Your share: <money>."` (the payer without a share: `"… paid by you. You're not in the split."`). Amounts in the currency setting at send time.
 - **Settle-up payment** (`notify_payment`; needs `notify_charges` and `notify_payments`): the payee and the payer, except whoever recorded it: `"<payer> paid you <money> in <group> (a settle-up payment)."` when the payer recorded it, `"<payee> recorded your payment of <money> to them in <group>."` when the payee did, otherwise `"<actor> recorded <payer> paying you …"` / `"<actor> recorded you paying <payee> …"`.
 - **Not notified** (decided): edits, deletes, group and member changes — the activity log shows them, and an edit storm would be noise.
-- Title `"Splitpot"`; `data = {url, clickAction}` = `INGRESS_PANEL + "#/group/<id>"` (`/hassio/ingress/<slug with _>`, from the container's `HOSTNAME`, as in Arcade/Todo; no data outside Home Assistant). The page opens `#/group/<id>` on load or hashchange when that group exists.
+- Title `"Splitpot"`; `data = {url, clickAction}` = `SIDEBAR_PAGE + "/group/<id>"` — the sidebar page everyone can open (`/<8 hex or local>_splitpot`, from the Supervisor's `addons/self/info` or `HOSTNAME`; no link without one), with the group as a sub-path, since a `#…` fragment is lost on the way in. The page (the shared `common/static/deeplink.js`, given the page by `GET /api/config`) takes `/group/<id>` from Home Assistant's `home-assistant/properties` message or the top page's address, opens that group when it exists, and puts the address back to the bare page; a request for `/group/<id>` reaching the app itself is redirected to `#/group/<id>` (the shared `deeplinks.py`). `#/group/<id>` also still opens on load or hashchange.
 - **Quiet and safe**: no token → nothing is tried (no warning per charge); HA unreachable → `ha_notify` logs a warning, the request already succeeded; any other error in the task is logged (`logger.exception`), never raised. No DB connection is open while Home Assistant is called (`send_notices` closes it per person before sending).
 - At startup (with a token) `ha_people.refresh_blocking` and `ha_notify.check_targets_blocking` (warns about assigned services HA doesn't have) run once in a thread.
 
@@ -253,7 +253,7 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
 
 - `app_messages.start()` in the lifespan learns the sidebar page into `config.SIDEBAR_PAGE` (the shared
   `assist_tools.sidebar_page`: the Supervisor's `addons/self/info`, else `HOSTNAME`; `/<8 hex or local>_splitpot`
-  only — not the admin's `/hassio/ingress/…` page the notifications use) and starts the shared `app_bus.py` (its own
+  only — also what the notifications open) and starts the shared `app_bus.py` (its own
   WebSocket; the outbox thread only with a token). The bus's tables (`bus_outbox`, `bus_seen`, `bus_apps`) are made
   by `app_bus` itself.
 - It answers the **Household Assistant** (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`,
@@ -268,7 +268,7 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
     settle-up), paid_by, amount, your_share}`.
 - **Off by default** (App settings → **Answer the Household Assistant**, `assistant_answers`: money is private); a
   person can also turn it off on My settings (`users.assistant_ok`, default on; `PUT /me/prefs {assistantOk}`).
-  Otherwise `nack not_allowed` (`off` / `person_off`). Links are the sidebar page only (no sub-path routes).
+  Otherwise `nack not_allowed` (`off` / `person_off`). Links open each group in the answer on the sidebar page (`/group/<id>`, as the notifications do).
 
 ## 8. Background jobs
 

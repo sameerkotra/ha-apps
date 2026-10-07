@@ -29,7 +29,7 @@
     <meta name="htmx-config" content='{"historyCacheSize": 0, "timeout": 30000}'>
     <script src="static/htmx.min.js"></script>
 </head>
-<body>
+<body data-page="{{ request.state.sidebar_page or '' }}">
     {% set qs = "?" + acting_qs if acting_qs else "" %}
     {% if request.state.is_real_admin %}
     {# Admin user switch: outside the sidenav (hidden on phones) and keyed on the
@@ -207,6 +207,7 @@
         </div>
     </div>
     {# The page's behaviour (no inline scripts: see the Content-Security-Policy in main.py). #}
+    <script src="static/common/deeplink.js?v={{ app_version }}"></script>
     <script src="static/base.js?v={{ app_version }}"></script>
     <script src="static/common/ui.js?v={{ app_version }}" defer></script>
     <script src="static/ui.js?v={{ app_version }}" defer></script>

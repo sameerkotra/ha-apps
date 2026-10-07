@@ -1,14 +1,15 @@
 import asyncio
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import HTTPException, FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import app_messages, features, jobs, purge, security, settings
+from . import app_messages, features, tools, jobs, purge, security, settings
 from .common import sandbox_run, web_security
 from .version import APP_VERSION
 from .db import DB_PATH, normalize_legacy_transaction_dates, run_migrations
@@ -47,6 +48,7 @@ async def _features(request, call_next):
     """Which optional parts are on (App settings → Features), for every page's nav."""
     if not request.url.path.startswith(("/static", request.scope.get("root_path", "") + "/static")):
         request.state.features = features.current()
+        request.state.sidebar_page = tools.PANEL["value"]      # links open a page there (base.js, deeplink.js)
     return await call_next(request)
 
 
@@ -77,3 +79,12 @@ for module in (accounts, transactions, csv_import, review, categories, transfers
 @app.get("/")
 def root():
     return RedirectResponse(url="accounts")  # no leading slash — see SPEC.md section 1
+
+
+# "/<page>/month/<YYYY-MM>" asked of the app itself (a link from Home Assistant): that month's dashboard. /dashboard
+# and /recurring are pages already.
+@app.get("/month/{month}", include_in_schema=False)
+def month_link(month: str):
+    if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise HTTPException(404, "Not found.")
+    return RedirectResponse(url=f"../dashboard?period={month}", status_code=307, headers={"Cache-Control": "no-store"})

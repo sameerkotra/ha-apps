@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.2.0"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.2.0">
-<link rel="stylesheet" href="common/settings.css?v=2.2.0">
-<link rel="stylesheet" href="style.css?v=2.2.0">
+<script src="common/theme-boot.js?v=2.2.2"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.2.2">
+<link rel="stylesheet" href="common/settings.css?v=2.2.2">
+<link rel="stylesheet" href="style.css?v=2.2.2">
 </head>
 <body>
 <div id="app">
@@ -218,6 +218,13 @@
         </div>
         <button id="saveGoalsBtn" class="btn-primary">Save Goals</button>
       </div>
+      <!-- shown while an admin lets the Household Assistant ask (App settings) -->
+      <div class="card" id="assistantCard" hidden>
+        <h3>Household Assistant</h3>
+        <label class="check-row"><input type="checkbox" id="assistantOk"> Let the Household Assistant answer for me</label>
+        <p class="hint">When you ask the Household Assistant app, it can tell you your own day: calories and macros against
+          your goals, and what you logged. Never anyone else's, and never your weight.</p>
+      </div>
     </section>
 
     <!-- ADMIN (admins only; the server enforces it too). Tabs: App settings | Users | Storage.
@@ -314,11 +321,12 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.2.0"></script>
-<script src="common/settings.js?v=2.2.0"></script>
-<script src="common/people.js?v=2.2.0"></script>
-<script src="common/backnav.js?v=2.2.0"></script>
-<script src="common/whoami.js?v=2.2.0"></script>
-<script src="app.js?v=2.2.0"></script>
+<script src="common/ui.js?v=2.2.2"></script>
+<script src="common/settings.js?v=2.2.2"></script>
+<script src="common/people.js?v=2.2.2"></script>
+<script src="common/backnav.js?v=2.2.2"></script>
+<script src="common/whoami.js?v=2.2.2"></script>
+<script src="common/deeplink.js?v=2.2.2"></script>
+<script src="app.js?v=2.2.2"></script>
 </body>
 </html>

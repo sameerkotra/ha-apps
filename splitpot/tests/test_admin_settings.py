@@ -156,11 +156,11 @@ class SettingsApi(Base):
 
 class CurrencyUsedImmediately(Base):
     def test_config_activity_log_and_sensors_use_new_currency(self):
-        self.assertEqual(self.c.get("/api/config", headers=ALICE).json(), {"currency": "USD"})
+        self.assertEqual(self.c.get("/api/config", headers=ALICE).json(), {"currency": "USD", "page": None})
         self.expense(amount=30)
         r = self.c.put("/api/admin/settings", headers=ADMIN, json={"currency": "EUR"})
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(self.c.get("/api/config", headers=ALICE).json(), {"currency": "EUR"})
+        self.assertEqual(self.c.get("/api/config", headers=ALICE).json(), {"currency": "EUR", "page": None})
         self.expense(amount=12)
         msgs = [e["message"] for e in self.c.get("/api/events", headers=ALICE).json() if e["type"] == "expense_added"]
         self.assertIn("(€12.00)", msgs[0])

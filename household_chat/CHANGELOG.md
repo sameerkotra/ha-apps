@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.1
+
+- **Ask the assistant**: while the Household Assistant app is running, the composer's **➕** menu has **Ask the assistant**, which opens it with what you typed as the question. Nothing is sent from Chat.
+
 ## 2.6.0
 
 - **Answers the Household Assistant**: the new Household Assistant app can ask Chat which of a person's chats have unread messages and how many — names and counts only, never what anyone wrote — with a link that opens each chat. On by default; an admin can turn it off in **Admin → App settings → Household Assistant**, and each person in **Settings → You → Let the Household Assistant answer for me**.
