@@ -421,3 +421,17 @@ Differences from the draft above:
   it is a must once the assistant is used.
 - **Not yet**: the assistant app (§10 phase 1); Chat's *Ask the assistant* entry (§10 phase 5).
 
+
+## 14. Work list (2026-10-07)
+
+Each item is ticked in the commit that finishes it.
+
+- [ ] **Notification links (Todo, Splitpot)**: phone notifications open the sidebar page, not the admin's
+  `/hassio/ingress/<slug>` page (as Arcade 1.8.0 did).
+- [ ] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
+- [ ] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
+  Finance, and their tools' link targets.
+- [ ] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
+- [ ] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
+  the admin pages, tests.
+- [ ] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).
