@@ -20,7 +20,7 @@ class TestSaving(ApiBase):
         with db.get_conn() as conn:
             row = conn.execute("SELECT * FROM scores").fetchone()
         self.assertEqual((row["score"], row["level"], row["seconds"], row["app_version"], row["mode"]),
-                         (150, 2, 60, "1.11.0", "walls-normal"))
+                         (150, 2, 60, "1.12.0", "walls-normal"))
         # a lower score: neither flag
         body = self.play(100).json()
         self.assertTrue(body["saved"])

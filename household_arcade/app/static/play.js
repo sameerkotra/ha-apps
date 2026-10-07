@@ -1063,13 +1063,13 @@ const Play = (() => {
       e.preventDefault();
       try { c.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       S.el.stage.focus({ preventScroll: true });
-      if (S.def.controls !== "dpad") { const [x, y] = canvasPoint(e); safe(() => S.inst.pointer("down", x, y)); }
+      if (S.def.controls !== "dpad") { const [x, y] = canvasPoint(e); safe(() => S.inst.pointer("down", x, y, e.pointerId)); }
       else swipe = { x: e.clientX, y: e.clientY };
     });
     c.addEventListener("pointermove", (e) => {
       if (S.phase !== "running") return;
       if (S.def.controls === "paddle" || ((S.def.controls === "buttons" || S.def.controls === "touch") && (e.buttons || e.pointerType !== "mouse"))) {
-        const [x, y] = canvasPoint(e); safe(() => S.inst.pointer("move", x, y)); return;
+        const [x, y] = canvasPoint(e); safe(() => S.inst.pointer("move", x, y, e.pointerId)); return;
       }
       if (S.def.controls !== "dpad") return;
       if (!swipe) return;
@@ -1085,8 +1085,16 @@ const Play = (() => {
         input(S.def.tap, true); input(S.def.tap, false);
       }
       swipe = null;
-      if (S.phase === "running" && S.def.controls !== "dpad") { const [x, y] = canvasPoint(e); safe(() => S.inst.pointer("up", x, y)); }
+      if (S.phase === "running" && S.def.controls !== "dpad") { const [x, y] = canvasPoint(e); safe(() => S.inst.pointer("up", x, y, e.pointerId)); }
     };
+    // a mouse wheel zooms games that zoom (Arrow Release); the page scrolls otherwise
+    c.addEventListener("wheel", (e) => {
+      if (S.phase !== "running" || !S.inst || !S.inst.wheel) return;
+      const [x, y] = canvasPoint(e);
+      let used = false;
+      safe(() => { used = S.inst.wheel(x, y, e.deltaY); });
+      if (used) e.preventDefault();
+    }, { passive: false });
     c.addEventListener("pointerup", up);
     c.addEventListener("pointercancel", up);
     c.addEventListener("contextmenu", (e) => e.preventDefault());

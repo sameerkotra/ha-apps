@@ -737,7 +737,7 @@
   }
 
   // ---------- what every game shares ----------
-  // impl: { init(seed), step() → events, input(action, isDown), pointer(kind, lx, ly, cssX, cssY),
+  // impl: { init(seed), step() → events, input(action, isDown), pointer(kind, lx, ly, cssX, cssY, pointerId), wheel?(lx, ly, dy),
   //         draw(g, info), score(), level(), isOver(), result() → { score, level, stats },
   //         sounds: { eventType: soundName } }
   // Turn by turn (opts.turns = { seat, picture, send(move) }, SPEC §13.5): impl.turnSync(picture) takes the match as
@@ -862,6 +862,8 @@
       get renderer() { return renderer; },
       /** The game's rules state, read-only (for tests and debugging). */
       get logic() { return impl.logic ? impl.logic() : null; },
+      /** How a game that zooms is looking at its board ({ z, camX, camY }), or null (for tests). */
+      get view() { return impl.view ? impl.view() : null; },
       setLook: function (id) {
         if (state === "destroyed") return;
         lookId = LOOKS[id] ? id : "modern";
@@ -881,10 +883,18 @@
         if (state !== "running") return;
         impl.input(action, isDown !== false);
       },
-      pointer: function (kind, x, y) {
+      pointer: function (kind, x, y, id) {
         if (state !== "running" || !impl.pointer) return;
         var p = renderer.toLogical(x, y);
-        impl.pointer(kind, p.x, p.y, x, y);
+        impl.pointer(kind, p.x, p.y, x, y, id == null ? 0 : id);
+      },
+      /** A mouse wheel over the game (games that zoom); true when the game used it. */
+      wheel: function (x, y, dy) {
+        if (state !== "running" || !impl.wheel) return false;
+        var p = renderer.toLogical(x, y);
+        impl.wheel(p.x, p.y, dy);
+        if (state !== "running") draw();
+        return true;
       },
       resize: function () {
         if (state === "destroyed") return;

@@ -6,9 +6,10 @@
    hearts). Clear the board.
    Releasing only ever frees cells, so a board is solvable exactly when releasing free arrows one after another
    clears it; the board maker checks that and, while it gets stuck, turns a stuck arrow round (or, after many tries,
-   takes it away). Modes: Little 5 × 5 (gentle), 8 × 8, 12 × 12, Twisty 10 × 10 and Levels — 200 numbered boards,
-   board n made from the seed "arrows-level-n" (the same for everyone), harder as n grows, carrying on from the next
-   uncleared board (SPEC §14).
+   takes it away), then fills the gaps left with more arrows, each kept only if the board can still be cleared. Every
+   arrow but Little's is at least 2 long, so each has a tail that blocks the others. Modes: Little 5 × 5 (gentle),
+   14 × 14, 20 × 20, Twisty 16 × 16, Levels — 200 numbered boards, 6 × 6 growing to 24 × 24, board n made from the seed
+   "arrows-level-n" (the same for everyone), carrying on from the next uncleared board (SPEC §14) — and Picture boards.
    One board's score: 10,000 − 10 × seconds − 300 × mistakes − 200 × hints, at least 10, only when it is cleared; in
    Levels the boards' scores add up. Only + − × ÷ and Math.floor/abs/min/max/imul are used. One step() = 1/60 s. */
 (function () {
@@ -18,13 +19,13 @@
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
   var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 10, MISTAKE_COST = 300, HINT_COST = 200;
-  var HEARTS = 3, LEVEL_COUNT = 200, CLEAR_T = 70, FLY_T = 24, BUMP_T = 18, STATE_VERSION = 1;
+  var MAX_N = 24, HEARTS = 3, LEVEL_COUNT = 200, CLEAR_T = 70, FLY_T = 24, BUMP_T = 18, STATE_VERSION = 1;
   var DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];          // up, right, down, left
   var MODES = {
-    little: { n: 5, min: 1, max: 2, fill: 60, twisty: false, hearts: 0 },
-    classic: { n: 8, min: 1, max: 4, fill: 85, twisty: false, hearts: HEARTS },
-    big: { n: 12, min: 1, max: 5, fill: 90, twisty: false, hearts: HEARTS },
-    twisty: { n: 10, min: 2, max: 6, fill: 85, twisty: true, hearts: HEARTS },
+    little: { n: 5, min: 2, max: 3, fill: 70, twisty: false, hearts: 0 },
+    classic: { n: 14, min: 2, max: 6, fill: 90, twisty: false, hearts: HEARTS },
+    big: { n: 20, min: 2, max: 8, fill: 92, twisty: false, hearts: HEARTS },
+    twisty: { n: 16, min: 2, max: 10, fill: 90, twisty: true, hearts: HEARTS },
     levels: { levels: true, hearts: HEARTS },
     book: { book: true, hearts: HEARTS },
   };
@@ -44,13 +45,13 @@
   function levelProblem(l) {
     if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.shape)) return "not a board";
     var h = l.shape.length, w = h ? String(l.shape[0]).length : 0, sq = 0;
-    if (h < 5 || h > 12 || w < 5 || w > 12) return "shape size";
+    if (h < 5 || h > 20 || w < 5 || w > 20) return "shape size";
     for (var r = 0; r < h; r++) {
       if (typeof l.shape[r] !== "string" || l.shape[r].length !== w || /[^#.]/.test(l.shape[r])) return "shape rows";
       for (var c = 0; c < w; c++) if (l.shape[r][c] === "#") sq++;
     }
     if (sq < 12) return "too small";
-    if (!(l.longest >= 1 && l.longest <= 6 && l.longest === Math.floor(l.longest))) return "longest";
+    if (!(l.longest >= 2 && l.longest <= 10 && l.longest === Math.floor(l.longest))) return "longest";
     if (!(l.fill >= 60 && l.fill <= 100 && l.fill === Math.floor(l.fill))) return "fill";
     if (typeof l.twisty !== "boolean") return "twisty";
     return null;
@@ -66,7 +67,7 @@
     var mask = [];
     for (var i = 0; i < n * n; i++) mask.push(false);
     for (var r = 0; r < h; r++) for (var c = 0; c < w; c++) if (l.shape[r][c] === "#") mask[(r + oy) * n + c + ox] = true;
-    return { n: n, min: 1, max: l.longest, fill: l.fill, twisty: l.twisty, mask: mask };
+    return { n: n, min: 2, max: l.longest, fill: l.fill, twisty: l.twisty, mask: mask };
   }
   function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
 
@@ -84,11 +85,11 @@
     return (h >>> 0) || 1;
   }
 
-  /** The board of level n of Levels: 5 × 5 growing to 12 × 12, fuller, longer and (from 40) bent arrows. */
+  /** The board of level n of Levels: 6 × 6 growing to 24 × 24, fuller, longer and (from 30, every other board) bent. */
   function levelSpec(n) {
-    var size = Math.min(12, 5 + Math.floor((n - 1) / 12));
-    return { n: size, min: n >= 40 ? 2 : 1, max: Math.min(6, 2 + Math.floor(n / 25)),
-      fill: Math.min(95, 70 + Math.floor(n / 4)), twisty: n >= 40 && n % 2 === 0 };
+    var size = Math.min(MAX_N, 6 + Math.floor((n - 1) / 10));
+    return { n: size, min: 2, max: Math.min(10, 3 + Math.floor(n / 20)),
+      fill: Math.min(94, 75 + Math.floor(n / 8)), twisty: n >= 30 && n % 2 === 0 };
   }
 
   // ---------- the board ----------
@@ -139,21 +140,19 @@
   function solvable(b) { return stuckArrows(b).length === 0; }
 
   function makeBoard(s, spec) {
-    var n = spec.n, N = n * n, grid = [], arrows = [], i, k;
+    var n = spec.n, N = n * n, grid = [], arrows = [], i, k, d;
     for (i = 0; i < N; i++) grid.push(-1);
     var order = [], mask = spec.mask, open = 0;
     for (i = 0; i < N; i++) if (!mask || mask[i]) { order.push(i); open++; }
     for (i = order.length - 1; i > 0; i--) { k = pick(s, i + 1); var t = order[i]; order[i] = order[k]; order[k] = t; }
     function ok(c) { return grid[c] < 0 && (!mask || mask[c]); }
-    var filled = 0, goal = Math.floor(open * spec.fill / 100);
-    for (var oi = 0; oi < order.length && filled < goal; oi++) {
-      var start = order[oi];
-      if (grid[start] >= 0) continue;
+    /** A line (or, twisty, a bent path) of free cells from `start`, tail first. */
+    function grow(start) {
       var len = spec.min + pick(s, spec.max - spec.min + 1), cells = [start];
       if (spec.twisty) {
         while (cells.length < len) {
           var last = cells[cells.length - 1], lx = last % n, ly = Math.floor(last / n), opts = [];
-          for (var d = 0; d < 4; d++) {
+          for (d = 0; d < 4; d++) {
             var nx = lx + DX[d], ny = ly + DY[d];
             if (nx >= 0 && ny >= 0 && nx < n && ny < n && ok(ny * n + nx) && cells.indexOf(ny * n + nx) < 0) opts.push(ny * n + nx);
           }
@@ -168,13 +167,28 @@
           cells.push(cy * n + cx);
         }
       }
-      if (cells.length < Math.max(1, spec.min)) continue;
+      return cells.length < Math.max(1, spec.min) ? null : cells;
+    }
+    function place(cells, dir) {
+      var id = arrows.length;
+      arrows.push({ cells: cells, dir: dir, gone: false });
+      for (var q = 0; q < cells.length; q++) grid[cells[q]] = id;
+      return id;
+    }
+    function unplace(id) {
+      var a = arrows[id];
+      for (var q = 0; q < a.cells.length; q++) grid[a.cells[q]] = -1;
+      arrows.pop();
+    }
+    var filled = 0, goal = Math.floor(open * spec.fill / 100);
+    for (var oi = 0; oi < order.length && filled < goal; oi++) {
+      if (grid[order[oi]] >= 0) continue;
+      var cells = grow(order[oi]);
+      if (!cells) continue;
       var dirOut;
       if (cells.length === 1) dirOut = pick(s, 4);
       else { cells.reverse(); dirOut = arrowDir(cells, n); }        // the head is the end the line grew to
-      var id = arrows.length;
-      arrows.push({ cells: cells, dir: dirOut, gone: false });
-      for (i = 0; i < cells.length; i++) grid[cells[i]] = id;
+      place(cells, dirOut);
       filled += cells.length;
     }
     var b = { n: n, grid: grid, arrows: arrows };
@@ -193,9 +207,25 @@
     var keep = b.arrows.filter(function (x) { return !x.gone; });
     for (i = 0; i < N; i++) b.grid[i] = -1;
     for (a = 0; a < keep.length; a++) for (i = 0; i < keep[a].cells.length; i++) b.grid[keep[a].cells[i]] = a;
-    b.arrows = keep;
+    b.arrows = arrows = keep; grid = b.grid;
+    // fill the gaps that are left: a new arrow stays only if the board can still be cleared (either way round)
+    filled = 0;
+    for (i = 0; i < N; i++) if (grid[i] >= 0) filled++;
+    for (oi = 0; oi < order.length && filled < goal; oi++) {
+      if (grid[order[oi]] >= 0) continue;
+      var more = grow(order[oi]);
+      if (!more) continue;
+      var tryDirs = more.length === 1 ? [pick(s, 4)] : [null, "flip"], placed = false;
+      for (k = 0; k < tryDirs.length && !placed; k++) {
+        if (more.length > 1) { if (k === 0) more.reverse(); else more.reverse(); }
+        var id = place(more, more.length === 1 ? tryDirs[k] : arrowDir(more, n));
+        if (solvable(b)) placed = true; else unplace(id);
+      }
+      if (placed) filled += more.length;
+    }
     return b;
   }
+
 
   // ---------- the game ----------
   function boardSpec(s) { return s.book ? bookSpec(s.list[s.level - 1]) : s.levels ? levelSpec(s.level) : MODES[s.mode]; }
@@ -205,7 +235,7 @@
     s.board = makeBoard(s, boardSpec(s));
     s.boardUpdates = 0; s.boardMistakes = 0; s.boardHints = 0;
     s.phase = "play"; s.t = 0; s.hint = -1; s.flying = []; s.bump = null;
-    s.cursor = Math.floor(s.board.n * s.board.n / 2);
+    s.cursor = Math.floor(s.board.n / 2) * s.board.n + Math.floor(s.board.n / 2);
   }
 
   function create(o) {
@@ -314,7 +344,7 @@
   function save(s) { var out = JSON.parse(JSON.stringify(s)); out.flying = []; out.bump = null; out.list = null; return out; }
   function restore(data, levels) {
     var b = data && data.board;
-    var ok = data && typeof data === "object" && MODES[data.mode] && b && typeof b.n === "number" && b.n >= 3 && b.n <= 12 &&
+    var ok = data && typeof data === "object" && MODES[data.mode] && b && typeof b.n === "number" && b.n >= 3 && b.n <= MAX_N &&
       Array.isArray(b.grid) && b.grid.length === b.n * b.n && Array.isArray(b.arrows) &&
       b.arrows.every(function (a) { return a && Array.isArray(a.cells) && a.cells.length >= 1 && a.dir >= 0 && a.dir <= 3; }) &&
       typeof data.level === "number" && data.level >= 1 && typeof data.runScore === "number" &&
@@ -345,7 +375,7 @@
 
   var ArrowsLogic = {
     UPS: UPS, TOP: TOP, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MISTAKE_COST: MISTAKE_COST, HINT_COST: HINT_COST,
-    HEARTS: HEARTS, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem, bookSpec: bookSpec, total: total, CLEAR_T: CLEAR_T, FLY_T: FLY_T, STATE_VERSION: STATE_VERSION, MODES: MODES, DX: DX, DY: DY,
+    MAX_N: MAX_N, HEARTS: HEARTS, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem, bookSpec: bookSpec, total: total, CLEAR_T: CLEAR_T, FLY_T: FLY_T, STATE_VERSION: STATE_VERSION, MODES: MODES, DX: DX, DY: DY,
     create: create, step: step, press: press, tapCell: tapCell, hint: hint, isFree: isFree, blocker: blocker, solvable: solvable,
     stuckArrows: stuckArrows, makeBoard: makeBoard, levelSpec: levelSpec, hashSeed: hashSeed, left: left, score: score,
     boardScore: boardScore, save: save, restore: restore, result: result, seconds: seconds, clock: clock, rand: rand,

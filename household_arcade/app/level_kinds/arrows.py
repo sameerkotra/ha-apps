@@ -14,13 +14,11 @@ def _check(c):
     if "#" not in shape[0] or "#" not in shape[-1] or not any(r[0] == "#" for r in shape) \
             or not any(r[-1] == "#" for r in shape):
         raise LevelError("the shape must touch all four sides of its box (no empty first or last row or column)")
-    if c["twisty"] and c["longest"] < 2:
-        raise LevelError("twisty arrows need longest 2 or more")
 
 
 def _difficulty(c):
     sq = sum(row.count("#") for row in c["shape"])
-    return min(100, sq / 144 * 45 + (c["longest"] - 1) * 6 + (c["fill"] - 60) * 0.4 + (12 if c["twisty"] else 0))
+    return min(100, sq / 400 * 45 + (c["longest"] - 2) * 5 + (c["fill"] - 60) * 0.4 + (12 if c["twisty"] else 0))
 
 
 KIND = {
@@ -29,8 +27,8 @@ KIND = {
     "noun": "board",
     "modes": ["book"],
     "fields": {
-        "shape": Grid("#.", (5, 12), (5, 12)),
-        "longest": Int(1, 6),
+        "shape": Grid("#.", (5, 20), (5, 20)),
+        "longest": Int(2, 10),
         "fill": Int(60, 100),
         "twisty": Bool(),
     },
@@ -41,14 +39,14 @@ covers a short straight line of squares (or, when twisty, a bent path) and point
 flying off the board the way it points, if nothing is in its way; if something is, it bumps and the player loses a
 heart. The goal is to clear every arrow. The game places the arrows itself and makes sure every board can be cleared;
 you draw the picture the arrows fill.
-"shape" draws it: a list of 5-12 rows, all the same length (5-12 characters), "#" a square arrows may cover and "."
+"shape" draws it: a list of 5-20 rows, all the same length (5-20 characters), "#" a square arrows may cover and "."
 an empty square (arrows fly over empty squares). Draw a picture or outline: a heart, a fish, a rocket, a tree, a cat's
 face, a letter. At least 12 "#"; the first and last row and the first and last column each contain at least one "#".
-"longest" is the longest arrow in squares (1-6), "fill" how much of the shape is covered by arrows in % (60-100),
-"twisty": true for bent arrows (needs longest 2 or more). Bigger shapes, longer arrows, fuller and twisty are
+"longest" is the longest arrow in squares (2-10; every arrow is at least 2), "fill" how much of the shape is covered
+by arrows in % (60-100), "twisty": true for bent arrows. Bigger shapes, longer arrows, fuller and twisty are
 harder.""",
-    "target": lambda n: f"Board {n} should be about {min(12, 6 + n // 4)} squares across, longest "
-    f"{min(6, 2 + n // 6)}, fill {min(95, 70 + n)}, twisty {'true' if n >= 10 and n % 2 == 0 else 'false'}.",
+    "target": lambda n: f"Board {n} should be about {min(20, 8 + n // 3)} squares across, longest "
+    f"{min(10, 3 + n // 5)}, fill {min(95, 70 + n)}, twisty {'true' if n >= 10 and n % 2 == 0 else 'false'}.",
     "example": {"name": "Sail boat", "shape": [
         "...#....", "..##....", ".###....", "####....", "...#....", "########", ".######.", "..####.."],
         "longest": 3, "fill": 80, "twisty": False},

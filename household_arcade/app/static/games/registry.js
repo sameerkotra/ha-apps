@@ -19,7 +19,9 @@
     // puzzle games' buttons (Sudoku's number pad and tools)
     "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "notes", "fill", "hint", "undo", "erase", "auto",
     // Tile Match
-    "shuffle"];
+    "shuffle",
+    // Arrow Release: zoom the board in and out
+    "zoomin", "zoomout"];
 
   function fail(msg) { throw new Error("ArcadeGames.register: " + msg); }
 

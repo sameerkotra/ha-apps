@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.12.0
+
+- **Arrow Release: more, smaller arrows, and zoom**. The boards are bigger — *14 × 14*, *20 × 20*, *Twisty 16 × 16*,
+  and *Levels* growing to 24 × 24 — and packed fuller, with thin arrows that all have a tail (which blocks the others
+  as much as the head does). **Pinch** to look up close, or use the mouse wheel or the new **－** / **＋** buttons;
+  drag to move around while zoomed in, with a little map in the corner. A pinch or a drag never releases an arrow.
+  Numbered *Levels* boards are new, so your level stays but the boards look different.
+
 ## 1.11.0
 
 - **AI-made levels for the puzzles**: nine puzzles that made every board themselves now also have a list of named

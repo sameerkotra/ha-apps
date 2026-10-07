@@ -278,3 +278,66 @@ test("registry: the six games, their modes, touch controls and hints off in race
     }
   }
 });
+
+test("Arrow Release: every arrow has a tail on the big boards, and the board can be zoomed and moved", () => {
+  const A = L.arrows;
+  for (const mode of ["classic", "big", "twisty", "levels"]) {
+    for (let seed = 1; seed <= 4; seed++) {
+      const s = A.create({ mode, seed, startLevel: 150 });
+      for (const a of s.board.arrows) assert.ok(a.cells.length >= 2, `${mode}: a tail on every arrow`);
+      assert.ok(A.solvable(s.board));
+    }
+  }
+  assert.equal(A.create({ mode: "classic", seed: 3 }).board.n, 14);
+  assert.equal(A.create({ mode: "big", seed: 3 }).board.n, 20);
+  assert.equal(A.create({ mode: "levels", startLevel: 200 }).board.n, A.MAX_N);
+  const full = A.create({ mode: "big", seed: 9 }).board, used = full.arrows.reduce((n, a) => n + a.cells.length, 0);
+  assert.ok(used >= 0.8 * 400, `the 20 × 20 board is well filled (${used} of 400)`);
+
+  const sb = makeSandbox();
+  const inst = sb.win.ArcadeGames.get("arrows").create(sb.canvas(390, 487), { mode: "big", seed: 4, look: "modern" });
+  inst.start(); sb.frames(2);
+  const K = 390 / 240, at = (x, y) => [x * K, y * K];
+  const s = inst.logic, BX = 10, BY = 42, BS = 220;
+  const screen = (cell) => {               // a cell's centre on the screen with the current view
+    const v = inst.view, n = s.board.n, w = BS / n;
+    return [BX + ((cell % n) * w + w / 2 - v.camX) * v.z, BY + (Math.floor(cell / n) * w + w / 2 - v.camY) * v.z];
+  };
+  const tap = (cell) => { const [x, y] = at(...screen(cell)); inst.pointer("down", x, y, 1); inst.pointer("up", x, y, 1); sb.frames(1); };
+  const freeOne = () => s.board.arrows.findIndex((a, i) => A.isFree(s.board, i));
+  assert.deepEqual([inst.view.z, inst.view.camX, inst.view.camY], [1, 0, 0]);
+  let before = A.left(s);
+  tap(s.board.arrows[freeOne()].cells[0]);
+  assert.equal(A.left(s), before - 1, "a tap releases the arrow under it");
+  // pinch: two fingers moving apart zoom in about the middle; nothing is released
+  before = A.left(s);
+  inst.pointer("down", ...at(100, 150), 1); inst.pointer("down", ...at(140, 150), 2);
+  inst.pointer("move", ...at(180, 150), 2);
+  inst.pointer("up", ...at(180, 150), 2); inst.pointer("up", ...at(100, 150), 1);
+  assert.ok(Math.abs(inst.view.z - 2) < 1e-9, `pinched to ${inst.view.z}`);
+  assert.equal(A.left(s), before, "a pinch releases nothing");
+  // one finger drags the view; nothing is released
+  const cam = inst.view.camX;
+  inst.pointer("down", ...at(150, 150), 3); inst.pointer("move", ...at(120, 150), 3); inst.pointer("up", ...at(120, 150), 3);
+  assert.ok(inst.view.camX > cam, "dragged to the right part of the board");
+  assert.equal(A.left(s), before);
+  // zoomed in, a tap still releases the arrow under the finger
+  let free = -1;
+  for (let i = 0; i < s.board.arrows.length && free < 0; i++) {
+    if (!A.isFree(s.board, i)) continue;
+    const [x, y] = screen(s.board.arrows[i].cells[0]);
+    if (x > BX + 2 && x < BX + BS - 2 && y > BY + 2 && y < BY + BS - 2) free = i;
+  }
+  if (free >= 0) { tap(s.board.arrows[free].cells[0]); assert.ok(s.board.arrows[free].gone, "the arrow under the finger left"); }
+  // the buttons and the wheel zoom too, within limits
+  for (let i = 0; i < 20; i++) inst.input("zoomin", true);
+  assert.equal(inst.view.z, inst.view.maxZoom);
+  for (let i = 0; i < 20; i++) inst.input("zoomout", true);
+  assert.equal(inst.view.z, 1);
+  inst.wheel(...at(120, 150), -100);
+  assert.ok(inst.view.z > 1, "the wheel zooms in");
+  inst.wheel(...at(5, 5), -100);                 // outside the board: nothing
+  sb.frames(5);
+  assert.ok(!sb.counts.nonFinite);
+  inst.destroy();
+});

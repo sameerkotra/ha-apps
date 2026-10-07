@@ -785,6 +785,14 @@ them all without crashing one into another.
   was: a **mistake**, and one heart lost.
 - **Hearts**: 3. The game ends when the last heart is lost (not cleared) or when every arrow is gone (cleared).
   *Little* has no hearts: a bump only wiggles the arrow.
+- **Small arrows, every one with a tail**: every arrow is at least 2 cells — its tail blocks the others as much as
+  its head — and the boards are big (up to 24 × 24) so that a lot of arrows fit. After making a board solvable the
+  maker fills the gaps left with more arrows, keeping each only if the board can still be cleared.
+- **Zoom** (the view only, never saved): pinch with two fingers, the mouse wheel, or the − / ＋ buttons (`zoomout`,
+  `zoomin`) zoom up to cells of about 26 px; one finger (or the mouse) drags the view while zoomed in, with a little
+  map in the corner showing where it is. A tap is a press and release that didn't move; a pinch never releases an
+  arrow. The shell passes each pointer's id (`pointer(kind, x, y, id)`) and the wheel (`wheel(x, y, dy)`) to games
+  that use them; a new board shows the whole board again.
 - **Always solvable, and order never traps you**: releasing an arrow only ever frees cells, so any arrow that can
   leave now can always leave later — a board is solvable exactly when releasing free arrows one after another
   clears it. The board maker fills the grid from the seed (integer random numbers only, as every game), checks
@@ -795,11 +803,11 @@ them all without crashing one into another.
 
   | id | label | board | arrows |
   |---|---|---|---|
-  | `little` | Little 5 × 5 (gentle) | 5 × 5 | short (1–2 cells), about 10, no hearts |
-  | `classic` | 8 × 8 | 8 × 8 | 1–4 cells, about 22, board ~85 % full |
-  | `big` | 12 × 12 | 12 × 12 | 1–5 cells, about 45, board ~90 % full |
-  | `twisty` | Twisty 10 × 10 | 10 × 10 | bent arrows of 2–6 cells, about 30 |
-  | `levels` | Levels | 5 × 5 growing to 12 × 12 | numbered boards, the same for everyone: board *n* is made from the fixed seed `arrows-level-<n>`, harder as *n* grows (size, arrows, longer and bent arrows, fuller board); 200 boards. Each cleared board leads to the next; hearts carry over, +1 heart per cleared board (at most 3); `level` = the board. Carries on from the next uncleared board next time (SPEC §14) |
+  | `little` | Little 5 × 5 (gentle) | 5 × 5 | short (2–3 cells), about 8, no hearts |
+  | `classic` | 14 × 14 | 14 × 14 | 2–6 cells, about 60, board ~90 % full |
+  | `big` | 20 × 20 | 20 × 20 | 2–8 cells, about 120, board ~90 % full |
+  | `twisty` | Twisty 16 × 16 | 16 × 16 | bent arrows of 2–10 cells, about 50 |
+  | `levels` | Levels | 6 × 6 growing to 24 × 24 (2–10 cells; bent on every other board from 30) | numbered boards, the same for everyone: board *n* is made from the fixed seed `arrows-level-<n>`, harder as *n* grows (size, arrows, longer and bent arrows, fuller board); 200 boards. Each cleared board leads to the next; hearts carry over, +1 heart per cleared board (at most 3); `level` = the board. Carries on from the next uncleared board next time (SPEC §14) |
 
 - **Hints** (start-screen option *Hints*, `offInRaces`, default *Off*; races always play without): 💡 Hint (`alt`, the C key, a
   controller's X) flashes one arrow that is free now; 200 points each.

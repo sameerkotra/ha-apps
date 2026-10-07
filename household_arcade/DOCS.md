@@ -555,8 +555,10 @@ the list grows (see *AI levels*).
 
 - **Arrow Release** — tap an arrow and it flies off the way it points, if nothing is in its way; if something is, it
   bumps and you lose a heart (three; *Little 5 × 5* has none, and *Levels* gives one back for each cleared board).
-  Releasing arrows only ever makes room, so look for the ones with a clear way out. Modes: *Little 5 × 5*,
-  *8 × 8*, *12 × 12*, *Twisty 10 × 10* (bent arrows) and *Levels*. Costs: 10 a second, 300 a bump.
+  Every arrow has a tail, and the tail blocks the others too. Releasing arrows only ever makes room, so look for the
+  ones with a clear way out. The boards are big and the arrows small: **pinch** to zoom in (or turn the mouse wheel,
+  or press **－** / **＋**), and drag to look around. Modes: *Little 5 × 5*, *14 × 14*, *20 × 20*, *Twisty 16 × 16*
+  (bent arrows), *Levels* (6 × 6 growing to 24 × 24) and *Picture boards*. Costs: 10 a second, 300 a bump.
 - **Car Park** — get the red car out through the gap on the right. Cars and lorries only move along their length:
   drag one, or ring it, press Space and slide it with the arrows. One slide, however far, is one move; the fewest
   moves is shown, and **Undo** takes a slide back. Modes: *Little*, *Classic*, *Hard*, *Levels*. Costs: 5 a second,

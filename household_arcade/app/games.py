@@ -808,9 +808,9 @@ GAMES: dict[str, dict] = {
         "icon": "🏹",
         "modes": [
             {"id": "little", "label": "Little 5 × 5 (gentle)"},
-            {"id": "classic", "label": "8 × 8"},
-            {"id": "big", "label": "12 × 12"},
-            {"id": "twisty", "label": "Twisty 10 × 10"},
+            {"id": "classic", "label": "14 × 14"},
+            {"id": "big", "label": "20 × 20"},
+            {"id": "twisty", "label": "Twisty 16 × 16"},
             {"id": "levels", "label": "Levels"},
             {"id": "book", "label": "Picture boards"},
         ],
