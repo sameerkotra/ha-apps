@@ -15,6 +15,17 @@
   by turn from two phones (the board games, Chess, Ludo, Snakes and Ladders). A live match from before shows as
   ended without a result.
 
+## 1.7.2
+
+- **Live duels (two phones) are playable on a slow link**: Snake Duel, Paddle Duel and Tank Battle on two phones used
+  to stop and start — "so slow it isn't playable" — whenever the connection was slower than a home Wi-Fi hop (Home
+  Assistant Cloud, the companion app away from home, a busy network): the input delay the server chose had no room
+  for jitter and was capped too low, so the phones spent most frames waiting for each other. Now the starting delay
+  has headroom, and each phone raises its own delay while it finds itself waiting (and lowers it again after ten
+  clean seconds), so a slow link costs a little input lag instead of a stuttering game. The app also sends each
+  phone's word the moment it arrives instead of looking every 10 ms, and a phone speaks once a frame. The HTTP
+  fallback (no WebSocket) sends its next request the moment the last is answered.
+
 ## 1.7.1
 
 - **Sudoku: choose how number lines shade**: **Rows, columns and boxes** (as before), **Rows and columns only**, or **None**, in the **Number lines** choice on Sudoku's start screen. If you had number lines off, you get None. It only changes what you see, never the score.
