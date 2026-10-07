@@ -14,3 +14,7 @@
 *.ttf  binary
 *.db   binary
 *.pdf  binary
+
+# Vendored third-party files are kept byte for byte as released (their SHA-256 is checked):
+# Leaflet's leaflet.css has CRLF line endings.
+family_tree/app/static/vendor/** -text

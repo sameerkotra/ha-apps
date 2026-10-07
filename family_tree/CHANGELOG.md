@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.1
+
+- The places map's Leaflet stylesheet is again exactly the released file (it had been stored with different line endings, so its checksum didn't match).
+
 ## 2.3.0
 
 - **Answers the Household Assistant**: the new Household Assistant app can ask Family Tree "Whose birthday is coming up?" and gets what Upcoming would show that person — names, dates, ages and relationships, never photos, contacts or notes — with a link back to Family Tree. On by default; an admin can turn it off in **App settings → Household Assistant**, and each person in **Settings → Household Assistant**.
