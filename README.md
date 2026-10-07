@@ -4,7 +4,7 @@
 > aren't affiliated with or endorsed by Home Assistant or Nabu Casa. They were built with Claude,
 > Anthropic's AI model, and are provided as-is: try them out first, and keep your own backups.
 
-Ten apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
+Eleven apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
 sidebar, uses everyone's Home Assistant login (no extra accounts or passwords), and keeps its data on
 your own Home Assistant.
 
@@ -20,9 +20,11 @@ your own Home Assistant.
 | [Household Docs](household_docs) | 🤖 Optional | Notes (plain or Markdown), checklists and sheets in folders, shared with chosen people or everyone, with tags, links between documents, pins, quick notes, PDF, strong search, history and trash; templates, filing and clean-up rules, a Kids' space, and cards in Household Chat and checklists to Household Todo. Documents are plain files in Home Assistant's `/share` folder, readable and changeable by anyone with access to `/share` (Samba, the File editor, other apps, backups that include Share) — keep passwords in Household Vault. |
 | [Household Vault](household_vault) | — | **Experimental.** A password manager with personal, household and shared vaults, each a standard KeePass file. It hasn't had an independent security review — keep your own KeePass copy of your passwords. |
 | [Household Arcade](household_arcade) | 🤖 Optional | **Under development.** Classic games for the whole household, played from the sidebar or the phone: 42 games, from Snake and Falling Blocks to Gem Swap, Sudoku, Checkers, Ludo, Carrom and Chess. Race someone on the same game, play live on two phones (Snake Duel, Paddle Duel, Tank Battle, Carrom), or take turns over days (board games, Ludo, Chess) with your-move notifications. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
+| [Household Assistant](household_assistant) | 🤖 **Needed** | Ask in plain words about what the other apps know — today's tasks, this month's spending, the shopping list, a note — and get a short answer with links back to each app. Each app answers only what the person could see in it, once its admin allows it; changes are only proposed and need a tap. |
 
 **AI** — 🤖 **Needed**: the app's main job uses an AI model, so it needs one set up before it is useful (Finance
-Dashboard reads statements with it; Receipt Price Intelligence reads receipt photos with a vision model).
+Dashboard reads statements with it; Receipt Price Intelligence reads receipt photos with a vision model; the
+Household Assistant plans and writes its answers with it).
 🤖 Optional: the app works fully without one, and an AI model adds extras (Calorie Tracker's estimates, Household
 Arcade's extra levels, Household Docs' text read from scans, summaries and checklists made from text). — : no AI. Every app that uses AI lets you choose the model: your own Ollama on your
 network, an OpenAI-compatible service, or Anthropic Claude (Receipt Price Intelligence: Ollama or an

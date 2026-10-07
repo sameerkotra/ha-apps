@@ -574,6 +574,59 @@
           "test_assist_tools.py"
         ]
       }
+    },
+    "household_assistant": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "whoami.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "auth_core.py",
+          "db_core.py",
+          "settings_core.py",
+          "web_security.py",
+          "backup_core.py",
+          "ai_client.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
+        ],
+        "static": [
+          "backnav.js",
+          "whoami.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js",
+          "settings.js",
+          "settings.css",
+          "connected-apps.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "test_shared_copies.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_whoami_shared.py",
+          "test_auth_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_web_security.py",
+          "test_backup_core.py",
+          "test_ai_client.py",
+          "fake_ha_bus.py",
+          "test_app_bus.py",
+          "test_assist_tools.py",
+          "fake_ha.py"
+        ]
+      }
     }
   }
 }

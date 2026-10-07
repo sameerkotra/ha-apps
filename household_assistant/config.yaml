@@ -1,0 +1,46 @@
+name: "Household Assistant"
+version: "1.0.0"
+slug: household_assistant
+description: >-
+  Ask in plain words about what the household apps know — today's tasks,
+  this month's spending, the shopping list, a note — and get a short answer
+  with links back to each app. Uses the AI model you choose: your own Ollama,
+  an OpenAI-compatible service or Anthropic Claude.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: true
+
+# Ingress-only: no ports are published to the host or LAN. The only way to
+# reach this app is through the Supervisor's authenticated ingress proxy.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:chat-question
+panel_title: Assistant
+# false = visible to every Home Assistant user, not just admins.
+panel_admin: false
+
+# Lets the app call the Home Assistant Core REST API (via
+# http://supervisor/core/api/, using the auto-injected SUPERVISOR_TOKEN) to
+# read HA's time zone and exchange the household apps' messages: it asks the
+# other apps their questions over Home Assistant's event bus. No other
+# Supervisor API access is requested.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+
+# admin_users (who is an admin) is the only option. Everything else — the AI
+# provider, address, model and access key, the connected apps and the limits —
+# is set in the app under Admin → App settings.
+options:
+  admin_users: []
+
+schema:
+  admin_users:
+    - "str"

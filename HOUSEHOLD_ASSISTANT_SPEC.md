@@ -1,6 +1,7 @@
 # Household Assistant — spec
 
-Status: **draft (2026-10-06); the apps' side is built (2026-10-07), the assistant app itself is not.** Every app in
+Status: **draft (2026-10-06); the apps' side and the assistant app (phase 1, `household_assistant` 1.0.0) are built
+(2026-10-07); its own `spec/SPEC.md` says how.** Every app in
 §4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
 the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
@@ -312,6 +313,11 @@ CREATE TABLE assist_tools (app TEXT NOT NULL, name TEXT NOT NULL, app_version TE
 
 Questions older than *Keep questions for* (30 days, 1–365) are deleted by housekeeping, with their calls.
 
+As built: a proposed action is a `calls` row with state `proposed` and its words in `say` until it is tapped;
+`calls.bus_id` is the message's id; `assist_apps` keeps each app's own switch (`app_on`, from its list's `on`), the
+admin's switch here (`enabled`) and a problem with its list; `usage_days` keeps the Usage counts (never per
+person), so clearing questions doesn't change them.
+
 ### 8.2 Settings (Admin → App settings, the shared `settings_core` registry)
 
 - **AI**: provider, address, model, access key (secret: scrubbed from backups, kept on restore, as Docs 1.0.1 does),
@@ -435,6 +441,6 @@ Each item is ticked in the commit that finishes it.
 - [x] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
   Finance, and their tools' link targets.
 - [x] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
-- [ ] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
+- [x] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,
   the admin pages, tests.
 - [ ] **Chat's "Ask the assistant"** entry in the ➕ menu (§10 phase 5).

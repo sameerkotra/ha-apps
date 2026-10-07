@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Household Assistant</title>
+<script src="common/theme-boot.js?v=1.0.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.0.0">
+<link rel="stylesheet" href="common/settings.css?v=1.0.0">
+<link rel="stylesheet" href="style.css?v=1.0.0">
+</head>
+<body>
+<header class="topbar">
+  <button type="button" id="homeBtn" class="brand" title="Ask"><span aria-hidden="true">💬</span> Assistant</button>
+  <div class="topbar-right">
+    <button type="button" id="adminBtn" class="btn-ghost" hidden>🛡️ Admin</button>
+    <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
+    <button type="button" id="userBtn" class="btn-ghost" title="How the app sees you">—</button>
+  </div>
+</header>
+<div id="noAdminBanner" class="banner" hidden></div>
+<div id="recorderBanner" class="banner warn" hidden></div>
+
+<main id="askView" class="column">
+  <div id="privacyNote" class="note" hidden></div>
+  <div id="cantAsk" class="note warn" hidden></div>
+  <div id="conversation" class="conversation" aria-live="polite"></div>
+  <div id="suggestions" class="suggestions"></div>
+  <form id="askForm" class="ask-box" autocomplete="off">
+    <textarea id="askInput" rows="1" maxlength="1000" placeholder="Ask about the household…" aria-label="Your question"></textarea>
+    <button type="button" id="micBtn" class="btn-ghost" title="Speak" aria-label="Speak" hidden>🎤</button>
+    <button type="submit" id="askBtn" class="btn-primary">Ask</button>
+  </form>
+  <div class="ask-foot">
+    <button type="button" id="whatBtn" class="link-btn">What can I ask?</button>
+    <button type="button" id="clearBtn" class="link-btn">Clear my questions</button>
+  </div>
+</main>
+
+<main id="adminView" class="column wide" hidden>
+  <nav class="tabs" id="adminTabs">
+    <button type="button" class="tab active" data-tab="apps">Apps</button>
+    <button type="button" class="tab" data-tab="settings">App settings</button>
+    <button type="button" class="tab" data-tab="people">People</button>
+    <button type="button" class="tab" data-tab="usage">Usage</button>
+    <button type="button" class="tab" data-tab="storage">Storage</button>
+  </nav>
+  <section id="tab-apps" class="tab-body"></section>
+  <section id="tab-settings" class="tab-body" hidden></section>
+  <section id="tab-people" class="tab-body" hidden></section>
+  <section id="tab-usage" class="tab-body" hidden></section>
+  <section id="tab-storage" class="tab-body" hidden>
+    <div class="card">
+      <h3>Backups</h3>
+      <p class="hint">A copy of the whole database: everyone's questions and answers, the apps' tool lists and the App
+        settings. The AI access key is left out; a restore keeps this install's key.</p>
+      <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
+      <p><label class="btn-secondary">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
+    </div>
+  </section>
+</main>
+
+<div id="toastRoot" class="toast-root"></div>
+<div id="modalRoot"></div>
+<script src="common/ui.js?v=1.0.0"></script>
+<script src="common/settings.js?v=1.0.0"></script>
+<script src="common/backnav.js?v=1.0.0"></script>
+<script src="common/whoami.js?v=1.0.0"></script>
+<script src="common/connected-apps.js?v=1.0.0"></script>
+<script src="app.js?v=1.0.0"></script>
+</body>
+</html>

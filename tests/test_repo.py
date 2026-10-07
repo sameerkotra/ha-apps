@@ -26,7 +26,11 @@ RECEIPTS_VERSION = "1.2.2"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
 DOCS_VERSION = "1.2.1"
-NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION))
+# Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
+ASSISTANT = "household_assistant"
+ASSISTANT_VERSION = "1.0.0"
+NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
+         (ASSISTANT, ASSISTANT_VERSION))
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",
@@ -79,7 +83,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertIn("Unofficial apps", text[:600])
         self.assertIn("Claude", text[:600])
         self.assertIn(REPO_URL, text)
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):
             self.assertIn(f"]({slug})", text, slug)
         self.assertIn("](LICENSE)", text)
         self.assertIn("](SECURITY.md)", text)
@@ -114,7 +118,7 @@ class RepositoryTests(unittest.TestCase):
 
     def test_user_facing_text_says_app_not_add_on(self):
         """Home Assistant 2026.2 renamed add-ons to apps; what people read says "app"."""
-        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS):
+        for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT):
             for name in ("README.md", "DOCS.md", "CHANGELOG.md", os.path.join("translations", "en.yaml")):
                 with self.subTest(f"{slug}/{name}"):
                     text = read(slug, name).replace("ha-apps", "")
