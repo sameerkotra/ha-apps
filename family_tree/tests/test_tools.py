@@ -51,7 +51,8 @@ class BirthdayTests(ApiTestCase):
         self.assertIn("tomorrow: Raj Smith turns 68", res["text"])
         self.assertEqual([(i["date"], i["what"], i["years"]) for i in res["items"]],
                          [("2026-09-26", "birthday", 68), ("2026-10-01", "birthday", 66), ("2026-10-02", "birthday", 56)])
-        self.assertEqual(res["links"], [{"label": "Upcoming in Family Tree", "panel": "/local_family_tree"}])
+        self.assertEqual(res["links"], [{"label": "Upcoming in Family Tree", "panel": "/local_family_tree",
+                                         "target": "/upcoming"}])
         self.assertEqual(len(call(ALICE["id"], days=90)["items"]), 4)
         self.assertNack(call(ALICE["id"], days=91), "invalid", "days")
 
@@ -93,6 +94,12 @@ class BirthdayTests(ApiTestCase):
                          "/a1b2c3d4_family_tree")
         self.assertIsNone(app_messages.learn_panel({"slug": "a1b2c3d4_family_tree", "ingress_panel": False}))
         self.assertIsNone(app_messages.learn_panel({"slug": "evil/../x"}))
+
+    def test_sub_paths_redirect_to_the_page(self):
+        for path, where in (("/upcoming", "../#/upcoming"), ("/person/p_1", "../../#/person/p_1")):
+            r = self.client.get(path, headers=self.client.headers, follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers["location"]), (307, where), path)
+        self.assertEqual(self.ok(self.get("/api/me"))["page"], "/local_family_tree")
 
     def assertNack(self, res, reason, detail):
         self.assertIsInstance(res, app_bus.Nack, res)

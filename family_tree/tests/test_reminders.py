@@ -453,6 +453,15 @@ class Digest(ReminderCase):
         self.assertEqual(n, 1)
         self.assertEqual(s.sent, [("mobile_app_alice", "Family Tree", "🎂 Ann Smith turns 66 today")])
 
+    def test_tapping_opens_upcoming(self):
+        a = self.person("Ann", "Smith", born={"d": 25, "m": 9, "y": 1960})
+        self.remind(a)
+        self.ready()
+        seen = []
+        with mock.patch.object(config, "INGRESS_PANEL", "/local_family_tree"):
+            reminders.run_digest_pass_blocking(now=self.NOW, sender=lambda s, t, m, data=None: seen.append(data) or True)
+        self.assertEqual(seen, [{"url": "/local_family_tree/upcoming", "clickAction": "/local_family_tree/upcoming"}])
+
     def test_birthday_wording(self):
         me = self.person("Alice", "Smith", gender="female", born={"d": 1, "m": 1, "y": 1990})
         mum = self.person("Mary", "Smith", gender="female", born={"d": 25, "m": 9, "y": 1960})

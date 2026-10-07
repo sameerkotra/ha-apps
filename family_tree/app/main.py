@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import app_messages, db, features, geocode, ha_client, housekeeping, inbox, kidmode, media, reminders, settings
-from .common import auth_core, ha_people, web_security
+from .common import auth_core, deeplinks, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import (admin, events, export, families, history, kin as kin_router, me, media as media_router, people,
                       map as map_router, related as related_router, custom as custom_router,
@@ -55,6 +55,8 @@ app = FastAPI(title="Family Tree", lifespan=lifespan)
 for r in (me, related_router, people, families, events, stories, tree, history, media_router, export, reminders_router, kin_router,
           map_router, custom_router, sources_router, contacts_router, dup_router, tithi_router, quiz_router, admin, tree_import):
     app.include_router(r.router)
+# "/<page>/upcoming" and "/<page>/person/<id>" asked of the app itself: a redirect to the page's "#/…" (deeplink.js)
+deeplinks.add(app, {"upcoming": 0, "person": 1})
 
 
 @app.exception_handler(features.FeatureOff)

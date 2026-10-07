@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.2
+
+- **Links open the right page**: tapping a reminder notification opens Upcoming, and so does the Household Assistant's answer. A link to `…/person/<id>` opens that person.
+
 ## 2.3.1
 
 - The places map's Leaflet stylesheet is again exactly the released file (it had been stored with different line endings, so its checksum didn't match).

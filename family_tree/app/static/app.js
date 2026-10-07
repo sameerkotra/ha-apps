@@ -4153,6 +4153,10 @@ async function init() {
   document.querySelectorAll(".admin-only").forEach((el) => { el.hidden = !state.me.isAdmin; });
   try { await loadMe(); } catch (e) { fail(e); return; }
   window.addEventListener("hashchange", route);
+  // A link from Home Assistant (a reminder, the Household Assistant) opens "/<page>/upcoming" or "/<page>/person/<id>"
+  // (common/static/deeplink.js): the hash route is set before the first render, and for any link tapped later
+  HouseholdDeepLink.start(state.user.page, (r) => (/^\/(upcoming|person\/[A-Za-z0-9_-]{1,64})$/.test(r) ? "#" + r : null),
+    (hash) => { if (location.hash !== hash) history.replaceState(history.state, "", hash); route(); });
   let resizeT, wasNarrow = window.innerWidth < 600;
   window.addEventListener("resize", () => {
     clearTimeout(resizeT);

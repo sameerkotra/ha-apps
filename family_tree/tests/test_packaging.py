@@ -12,7 +12,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 ROOT = _env.ROOT
-VERSION = "2.3.1"
+VERSION = "2.3.2"
 REPO_URL = pk.REPO_URL
 # Stored rot13-encoded so this file doesn't spell the words out itself.
 NEEDLES = re.compile(codecs.decode(r"fnzrre|xbgen|zvyirg|tznvy|192\.168\.1\.104|nzrevpn/qraire|qraire|pbybenqb|r-470|kpry|cnexre|nheben", "rot13"), re.I)
