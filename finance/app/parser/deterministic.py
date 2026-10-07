@@ -128,12 +128,26 @@ def extract_amounts(text: str) -> Counter:
 def _find_labeled_amount(text: str, label_patterns: list[str]) -> float | None:
     """First amount found after any of the given label phrasings — sign
     preserved this time (unlike extract_amounts), since a balance's sign
-    is meaningful (a credit balance can legitimately be negative)."""
+    is meaningful (a credit balance can legitimately be negative). A credit
+    balance is printed several ways, and every one of them is negative:
+    "-$14.01", "$-14.01", "−$14.01", "($14.01)" and "$14.01 CR". A "+" or a
+    colon between the label and the figure is just punctuation."""
     for label in label_patterns:
-        m = re.search(rf"{label}\s*[:\-]?\s*\$?\s*(-?(?:\d[\d,]*)?\.\d{{2}})", text, re.IGNORECASE)
+        m = _labeled_amount_re(label).search(text)
         if m:
-            return round(float(m.group(1).replace(",", "")), 2)
+            value = round(float(m.group("num").replace(",", "")), 2)
+            negative = bool(m.group("minus") or m.group("minus2") or (m.group("open") and m.group("close"))
+                            or m.group("cr"))
+            return -value if negative else value
     return None
+
+
+def _labeled_amount_re(label: str) -> re.Pattern:
+    return re.compile(
+        rf"{label}\s*:?\s*(?:\+\s*)?(?P<minus>[-\u2212]\s*)?(?P<open>\(\s*)?\$?\s*(?P<minus2>[-\u2212])?\s*"
+        rf"(?P<num>(?:\d[\d,]*)?\.\d{{2}})(?P<close>\s*\))?(?P<cr>\s*CR\b)?",
+        re.IGNORECASE,
+    )
 
 
 def extract_balances(text: str) -> tuple[float | None, float | None]:

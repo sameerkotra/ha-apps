@@ -90,3 +90,65 @@ def test_card_signs_left_alone_when_they_reconcile_or_checking(env, capture_visi
     pl.process_statement(sid2, "tester", acct2, "http://x", "m")
     with env.db() as c:
         assert c.execute("SELECT amount FROM transactions WHERE statement_id=?", (sid2,)).fetchone()[0] == 50.0
+
+
+def test_card_signs_flipped_when_the_payments_prove_them_backwards(env, capture_vision):
+    """No printed balances to go by: every "PAYMENT - THANK YOU" line came out positive and the purchases
+    negative, so the model signed the card like a bank account (a real statement: money in and out swapped)."""
+    calls, setter = capture_vision
+    from app.parser import pipeline as pl
+    acct, sid = _statement(env, ["2026-09-05 MOBILE PAYMENT - THANK YOU 17.58", "2026-09-05 AMAZON MARKETPLACE 17.58",
+                                 "2026-09-13 SUBWAY AURORA CO 10.25", "2026-09-14 MOBILE PAYMENT - THANK YOU 10.25",
+                                 "2026-09-25 AMAZON MARKETPLACE 14.01"], type_="credit_card")
+    setter([("2026-09-05", 17.58, "MOBILE PAYMENT - THANK YOU"), ("2026-09-05", -17.58, "AMAZON MARKETPLACE"),
+            ("2026-09-13", -10.25, "SUBWAY AURORA CO"), ("2026-09-14", 10.25, "MOBILE PAYMENT - THANK YOU"),
+            ("2026-09-25", 14.01, "AMAZON MARKETPLACE REFUND")])
+    pl.process_statement(sid, "tester", acct, "http://x", "m")
+    with env.db() as c:
+        rows = c.execute("SELECT description, amount FROM transactions WHERE statement_id=? ORDER BY id", (sid,)).fetchall()
+        st = c.execute("SELECT duplicate_transactions FROM statements WHERE id=?", (sid,)).fetchone()
+    assert [r["amount"] for r in rows] == [-17.58, 17.58, 10.25, -10.25, -14.01]
+    assert "Signs flipped" in (st["duplicate_transactions"] or "")
+    from app.routes.upload import statement_flows
+    with env.db() as c:
+        flow = statement_flows(c, "tester", sid)[sid]
+    assert (round(flow["money_in"], 2), round(flow["money_out"], 2)) == (41.84, 27.83)   # payments + refund in, charges out
+
+
+def test_card_signs_from_a_credit_balance(env, capture_vision):
+    """A card that ends in credit prints its new balance as "-$14.01" or "$14.01 CR" — negative, so a
+    backwards reading is caught by the balances (it used to read as +14.01 and look reconciled)."""
+    calls, setter = capture_vision
+    from app.parser import pipeline as pl
+    for new_balance in ("New Balance -$14.01", "New Balance $14.01 CR", "New Balance ($14.01)"):
+        acct, sid = _statement(env, ["Previous Balance $0.00", new_balance, "2026-09-05 SHOP 20.00",
+                                     "2026-09-06 PAYMENT 20.00", "2026-09-25 SHOP REFUND 14.01"], type_="credit_card")
+        setter([("2026-09-05", -20.0, "SHOP"), ("2026-09-06", 20.0, "PAYMENT"), ("2026-09-25", 14.01, "SHOP REFUND")])
+        pl.process_statement(sid, "tester", acct, "http://x", "m")
+        with env.db() as c:
+            amounts = [r[0] for r in c.execute("SELECT amount FROM transactions WHERE statement_id=? ORDER BY id", (sid,))]
+            st = c.execute("SELECT balance_mismatch FROM statements WHERE id=?", (sid,)).fetchone()
+        assert amounts == [20.0, -20.0, -14.01], new_balance
+        assert st["balance_mismatch"] is None, new_balance
+
+
+def test_card_payments_already_negative_are_left_alone(env, capture_vision):
+    calls, setter = capture_vision
+    from app.parser import pipeline as pl
+    acct, sid = _statement(env, ["2026-09-05 AUTOPAY PAYMENT 30.00", "2026-09-06 SHOP 30.00", "2026-09-07 CAFE 4.50"],
+                           type_="credit_card")
+    setter([("2026-09-05", -30.0, "AUTOPAY PAYMENT"), ("2026-09-06", 30.0, "SHOP"), ("2026-09-07", 4.5, "CAFE")])
+    pl.process_statement(sid, "tester", acct, "http://x", "m")
+    with env.db() as c:
+        amounts = [r[0] for r in c.execute("SELECT amount FROM transactions WHERE statement_id=? ORDER BY id", (sid,))]
+    assert amounts == [-30.0, 30.0, 4.5]
+
+
+def test_balance_labels_keep_a_credit_balance_negative():
+    from app.parser.deterministic import extract_balances
+    assert extract_balances("Previous Balance $0.00\nNew Balance -$14.01") == (0.0, -14.01)
+    assert extract_balances("Previous Balance: $0.00  New Balance $14.01 CR") == (0.0, -14.01)
+    assert extract_balances("Previous Balance +$10.00\nNew Balance ($14.01)") == (10.0, -14.01)
+    assert extract_balances("Previous Balance $-3.00\nNew Balance $1,234.56") == (-3.0, 1234.56)
+    assert extract_balances("Previous Balance $100.00\nNew Balance $150.00") == (100.0, 150.0)
+    assert extract_balances("no balances here") == (None, None)

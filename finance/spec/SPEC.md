@@ -170,7 +170,12 @@ the acting user's id, and every write by id first checks ownership.
 - **Card signs backwards.** If a card's extracted transactions add up to exactly
   the negative of the printed balance movement, the model signed every line the
   wrong way round: all signs are flipped, the statement reconciles, and a
-  "Signs flipped" note is kept with the statement's other notes.
+  "Signs flipped" note is kept with the statement's other notes. When the
+  balances can't decide (not found, or matching neither way), the payments do:
+  every line worded like a card payment ("payment", "autopay", "thank you")
+  positive and most other lines negative also flips every sign, with the same
+  note. A printed balance keeps its sign: "-$14.01", "$-14.01", "($14.01)" and
+  "$14.01 CR" are all a credit of 14.01.
 - Sign convention: section 8.
 
 ## 6. PDF storage and duplicate detection

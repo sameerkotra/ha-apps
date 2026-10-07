@@ -16,7 +16,7 @@ VERSIONS = {"calorie_tracker": "2.2.3", "family_tree": "2.3.2", "household_chat"
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.2.3"
+FINANCE_VERSION = "1.2.4"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
 ARCADE_VERSION = "1.12.0"

@@ -241,20 +241,40 @@ def _check_reconciliation(
     return None
 
 
+# A card payment's own wording ("MOBILE PAYMENT - THANK YOU", "AUTOPAY PAYMENT", "ONLINE PAYMENT"): on a card it
+# is always a negative line (it reduces what is owed), whatever else the statement says.
+_CARD_PAYMENT_WORDS = re.compile(r"\b(?:payment|autopay|auto\s*pay|thank\s*you)\b", re.IGNORECASE)
+
+
 def _fix_card_signs(previous_balance, new_balance, for_reconciliation, to_insert):
     """A card's purchases are stored positive (app/matching.py). If the model signed every line the
-    other way round, the printed balances prove it: the extracted total is exactly the negative of
-    the balance movement. Then every sign is flipped. Returns (for_reconciliation, to_insert, note)."""
-    if previous_balance is None or new_balance is None or not for_reconciliation:
+    other way round, every sign is flipped. Returns (for_reconciliation, to_insert, note).
+
+    1. The printed balances decide when they can: the extracted total exactly the negative of the
+       balance movement means backwards; exactly the movement means right as it is.
+    2. Otherwise (no balances found, or they match neither way) the payments decide: when every line
+       worded like a card payment is positive and most other lines are negative, the model signed the
+       statement like a bank account."""
+    if not for_reconciliation:
         return for_reconciliation, to_insert, None
     total = round(sum(t.amount for t in for_reconciliation), 2)
-    printed = round(new_balance - previous_balance, 2)
-    if total == 0 or abs(total - printed) <= RECONCILIATION_TOLERANCE or abs(-total - printed) > RECONCILIATION_TOLERANCE:
-        return for_reconciliation, to_insert, None
     flip = lambda rows: [dataclasses.replace(t, amount=-t.amount) for t in rows]
-    return flip(for_reconciliation), flip(to_insert), (
-        f"Signs flipped: the model signed purchases and payments the opposite way round (extracted total "
-        f"{total:+.2f}, printed balance moved {printed:+.2f}); purchases are stored as money out on a card.")
+    if previous_balance is not None and new_balance is not None and total != 0:
+        printed = round(new_balance - previous_balance, 2)
+        if abs(total - printed) <= RECONCILIATION_TOLERANCE:
+            return for_reconciliation, to_insert, None
+        if abs(-total - printed) <= RECONCILIATION_TOLERANCE:
+            return flip(for_reconciliation), flip(to_insert), (
+                f"Signs flipped: the model signed purchases and payments the opposite way round (extracted total "
+                f"{total:+.2f}, printed balance moved {printed:+.2f}); purchases are stored as money out on a card.")
+    payments = [t for t in for_reconciliation if _CARD_PAYMENT_WORDS.search(t.description or "")]
+    others = [t for t in for_reconciliation if not _CARD_PAYMENT_WORDS.search(t.description or "")]
+    if payments and others and all(t.amount > 0 for t in payments) \
+            and sum(1 for t in others if t.amount < 0) * 2 > len(others):
+        return flip(for_reconciliation), flip(to_insert), (
+            f"Signs flipped: the model signed purchases and payments the opposite way round ({len(payments)} "
+            f"card payment(s) came out as charges); purchases are stored as money out on a card.")
+    return for_reconciliation, to_insert, None
 
 
 def process_statement(statement_id: int, user_id: str, account_id: int, ollama_url: str, ollama_model: str) -> None:

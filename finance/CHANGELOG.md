@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.4
+
+- **Credit-card money in and out the right way round**: when the model read a card statement like a bank account
+  (payments as charges and purchases as payments), the app only noticed if it could read the statement's previous
+  and new balance — and a card that ended in credit ("-$14.01", "$14.01 CR", "($14.01)") was read as owing $14.01,
+  so the backwards reading looked right. Credit balances are now read as credits, and when the balances can't
+  decide, a card's payment lines ("PAYMENT - THANK YOU", "AUTOPAY") coming out as charges is enough to put every
+  sign right (noted on the statement as *Signs flipped*). A statement already imported the wrong way round can be
+  fixed with **Re-extract** while it waits for confirmation; once confirmed, delete it and upload it again.
+
 ## 1.2.3
 
 - **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.
