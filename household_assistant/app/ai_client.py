@@ -77,13 +77,17 @@ _last_error: str | None = None
 _last_request: dict | None = None
 
 
+_no_tools: set[tuple[str, str, str]] = set()     # (provider, address, model) that refused native tool calls
+
+
 def forget_state() -> None:
     """Called when the AI settings change (or a restore swaps them): the old
-    "warm" timestamp, last error and last request were about another setup."""
+    "warm" timestamp, last error, last request and which models refused tools were about another setup."""
     global _last_ok, _last_error, _last_request
     _last_ok = None
     _last_error = None
     _last_request = None
+    _no_tools.clear()
 
 
 def is_warm() -> bool:
@@ -174,6 +178,36 @@ def generate(prompt: str, *, system: str | None = None, want_json: bool = False,
         reply = _CALLS[cfg.provider](cfg, prompt, system, want_json, temperature, timeout)
     except AIError as e:
         _record(purpose, cfg, None, time.monotonic() - started, error=str(e))
+        raise
+    _record(purpose, cfg, reply, reply.seconds if reply.seconds is not None else time.monotonic() - started)
+    return reply
+
+
+def tools_supported(cfg: Config | None = None) -> bool:
+    """False once this provider and model refused native tool calls (until the app restarts or they change)."""
+    cfg = cfg or current()
+    return (cfg.provider, cfg.url, cfg.model) not in _no_tools
+
+
+def generate_tools(prompt: str, tools: list[dict], *, system: str | None = None, temperature: float | None = None,
+                   timeout: float | None = QUERY_TIMEOUT, purpose: str = "AI request",
+                   cfg: Config | None = None) -> Reply | None:
+    """Offer `tools` natively (OpenAI tools, Claude tool_use, Ollama chat tools): Reply.calls and Reply.text.
+    None when this model doesn't take tools (remembered): the caller asks for JSON instead. Raises AIError."""
+    cfg = cfg or current()
+    check_configured(cfg)
+    if not tools_supported(cfg):
+        return None
+    started = time.monotonic()
+    try:
+        reply = CLIENT.tool_call(cfg, prompt, tools, system=system, temperature=temperature, timeout=timeout,
+                                 max_tokens=cfg.max_tokens if cfg.provider == "anthropic" else None)
+    except AIError as e:
+        _record(purpose, cfg, None, time.monotonic() - started, error=str(e))
+        if e.kind == "bad_request":
+            logger.info("%s %s doesn't take native tool calls; asking for JSON instead", cfg.label, cfg.model)
+            _no_tools.add((cfg.provider, cfg.url, cfg.model))
+            return None
         raise
     _record(purpose, cfg, reply, reply.seconds if reply.seconds is not None else time.monotonic() - started)
     return reply

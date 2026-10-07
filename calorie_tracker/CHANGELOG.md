@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.3
+
+- **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.
+
 ## 2.2.2
 
 - **Your own Household Assistant switch**: **Goals → Let the Household Assistant answer for me** (on) — turn it off and the Household Assistant gets nothing about your day, whatever the admin's setting.

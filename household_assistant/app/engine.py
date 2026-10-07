@@ -205,6 +205,17 @@ class _Run:
                          (state, *cols.values(), self.qid))
         touch(self.qid)
 
+    def tools(self, prompt: str, specs: list[dict], *, system: str):
+        """A planning step with native tool calls; None when the model doesn't take them."""
+        self.check()
+        reply = ai_client.generate_tools(prompt, specs, system=system, temperature=0.2, timeout=self.left(),
+                                         purpose="Plan")
+        if reply is not None:
+            self.input_tokens += reply.input_tokens or 0
+            self.output_tokens += reply.output_tokens or 0
+            self.check()
+        return reply
+
     def model(self, prompt: str, *, system: str, want_json: bool, purpose: str) -> str:
         self.check()
         reply = ai_client.generate(prompt, system=system, want_json=want_json, temperature=0.2,
@@ -285,9 +296,7 @@ def _answer_question(r: _Run) -> str:
     proposals: list[dict] = []
     for round_no in range(1, MAX_ROUNDS + 1):
         r.state("planning")
-        text = r.model(plan_prompt(tools, turns, q, done, proposals), system=system, want_json=True,
-                       purpose="Plan")
-        plan = parse_plan(text)
+        plan, text = _plan(r, tools, turns, q, done, proposals, system)
         if plan is None:
             if not done and text.strip() and not text.strip().startswith("{"):
                 return text.strip()                       # a small model that answered in words
@@ -304,7 +313,7 @@ def _answer_question(r: _Run) -> str:
             r.state("calling")
             done += _run_calls(r, tools, calls, round_no)
             continue
-        if plan["answer"] and not done:
+        if plan["answer"] and (not done or plan["final"]):
             return plan["answer"]
         if len(proposals) > before and round_no < MAX_ROUNDS:
             continue                                      # a change proposed: let the model say it in words
@@ -320,13 +329,79 @@ def _answer_question(r: _Run) -> str:
 
 # --------------------------------------------------------------------------------------------- the plan
 
+def _plan(r: _Run, tools: dict, turns, question: str, done: list[dict], proposals: list[dict],
+          system: str) -> tuple[dict | None, str]:
+    """One planning step: the model's native tool calling where it has it (App settings → Tool calls), else the
+    JSON plan. (plan, the model's text); plan None when it can't be read."""
+    if settings.get("ai_tool_calls") == "auto":
+        reply = r.tools(native_prompt(turns, question, done, proposals), tool_specs(tools), system=system)
+        if reply is not None:
+            return native_plan(tools, reply.calls, reply.text, done), reply.text or ""
+    text = r.model(plan_prompt(tools, turns, question, done, proposals), system=system, want_json=True,
+                   purpose="Plan")
+    return parse_plan(text), text
+
+
+def tool_name(name: str) -> str:
+    """A catalogue name as a provider takes it: "todo.tasks" → "todo__tasks" (no dots allowed there)."""
+    return name.replace(".", "__")
+
+
+_ARG_SCHEMA = {"string": {"type": "string"}, "number": {"type": "number"}, "boolean": {"type": "boolean"},
+               "date": {"type": "string", "format": "date"}, "month": {"type": "string", "pattern": r"^\d{4}-\d{2}$"}}
+
+
+def tool_specs(tools: dict) -> list[dict]:
+    """The person's catalogue as native tools: name, what it does (and its app), flat arguments as JSON Schema."""
+    out = []
+    for name, t in tools.items():
+        s = t["spec"]
+        props, required = {}, []
+        for k, a in s.get("args", {}).items():
+            p = {"type": "string", "enum": [str(v) for v in a["values"]]} if a["type"] == "enum" else dict(_ARG_SCHEMA[a["type"]])
+            what = a.get("what") or ""
+            if a["type"] in ("date", "month"):
+                what = (what + " " if what else "") + ("(YYYY-MM-DD)" if a["type"] == "date" else "(YYYY-MM)")
+            if what:
+                p["description"] = what
+            if a["type"] == "number":
+                if a.get("min") is not None:
+                    p["minimum"] = a["min"]
+                if a.get("max") is not None:
+                    p["maximum"] = a["max"]
+            props[k] = p
+            if a.get("required"):
+                required.append(k)
+        what = f"[{t['appName']}] {s['what']}"
+        if s.get("acts"):
+            what += " CHANGES DATA: calling it only proposes the change; the person taps to confirm."
+        if s.get("returns"):
+            what += f" Returns: {s['returns']}."
+        out.append({"name": tool_name(name), "description": what[:1000],
+                    "parameters": {"type": "object", "properties": props, **({"required": required} if required else {})}})
+    return out
+
+
+def native_plan(tools: dict, calls: list[dict], text: str | None, done: list[dict]) -> dict | None:
+    """A native reply as a plan: its tool calls, else its words — the answer (final once there are results, since
+    the prompt carried the answer rules), or a question back. None when it said nothing usable."""
+    names = {tool_name(n): n for n in tools}
+    planned = [{"tool": names[c["name"]], "args": c.get("args") or {}} for c in calls if c.get("name") in names]
+    text = (text or "").strip()
+    if planned:
+        return {"call": planned, "act": [], "answer": None, "ask": None, "final": False}
+    if text:
+        return {"call": [], "act": [], "answer": text[:MAX_ANSWER], "ask": None, "final": bool(done)}
+    return None
+
+
 def parse_plan(text: str) -> dict | None:
     """{call: [...], act: [...], answer, ask} from the model's JSON, or None when it can't be read."""
     try:
         data = ai_client.extract_json(text)
     except (ValueError, TypeError):
         return None
-    out = {"call": [], "act": [], "answer": None, "ask": None}
+    out = {"call": [], "act": [], "answer": None, "ask": None, "final": False}
     calls = data.get("call") if data.get("call") is not None else data.get("calls")
     if isinstance(calls, dict):
         calls = [calls]
@@ -596,6 +671,22 @@ ANSWER_RULES = (
     "short: a sentence or a few lines, Markdown lists and **bold** only. Name the app each fact came from in words "
     "(\"in Household Todo\"). Don't include links or web addresses: the page shows them. If a change was proposed, "
     "say the person can tap the button to do it.")
+
+
+NATIVE_FORMAT = (
+    "Call the tools you need now (at most 4). Tools marked CHANGES DATA only propose a change; the person taps to "
+    "confirm it. When a needed detail is missing, reply with a short question back instead. When no tool applies, "
+    "reply in words. Dates are YYYY-MM-DD, months YYYY-MM.")
+NATIVE_WITH_RESULTS = (
+    "If the results so far answer the question, reply in words with the answer (no tool call). ")
+
+
+def native_prompt(turns, question: str, done: list[dict], proposals: list[dict]) -> str:
+    """The planning prompt when the tools go natively: no tool list, no JSON format; with results, the answer rules,
+    so words in reply are the answer itself (no separate answer step)."""
+    rules = (NATIVE_WITH_RESULTS + ANSWER_RULES + "\n") if done or proposals else ""
+    return (_turns_block(turns) + results_block(done) + _proposals_block(proposals) + rules + NATIVE_FORMAT
+            + f"\n\nQuestion: {question}")
 
 
 def answer_prompt(question: str, turns, done: list[dict], proposals: list[dict]) -> str:

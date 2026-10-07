@@ -18,7 +18,7 @@ from ..common import whoami as whoami_core
 router = APIRouter(prefix="/api")
 PING_SECONDS = 20                     # a comment line on a quiet stream, so proxies keep it open
 
-_AI_KEYS = {"ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens"}
+_AI_KEYS = {"ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens", "ai_tool_calls"}
 DEFAULT_SUGGESTIONS = ["What's on my list today?", "Spending this month", "What's on the shopping list?",
                        "Find a document"]
 

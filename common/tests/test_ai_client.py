@@ -91,6 +91,59 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(core.shrink_to_largest_smaller(4096)("limit 1024 or 2048", 3000), 2048)
         self.assertEqual(core.shrink_to_largest_smaller(4096)("too many", 9000), 4096)
 
+    TOOLS = [{"name": "todo__tasks", "description": "Open tasks.",
+              "parameters": {"type": "object", "properties": {"when": {"type": "string", "enum": ["today", "week"]}},
+                             "required": ["when"]}}]
+
+    def test_tool_call_ollama(self):
+        post = FakePost((200, {"message": {"content": "", "tool_calls": [
+            {"function": {"name": "todo__tasks", "arguments": {"when": "today"}}},
+            {"function": {"name": "", "arguments": {}}}, "junk"]}, "prompt_eval_count": 7, "eval_count": 2}))
+        c, _ = client(post)
+        r = c.tool_call(Cfg("ollama"), "What's on today?", self.TOOLS, system="sys", temperature=0.2, timeout=9)
+        call = post.calls[0]
+        self.assertEqual(call["url"], "http://ai.local/api/chat")
+        self.assertEqual(call["body"]["messages"], [{"role": "system", "content": "sys"},
+                                                    {"role": "user", "content": "What's on today?"}])
+        self.assertEqual(call["body"]["tools"][0], {"type": "function", "function": self.TOOLS[0]})
+        self.assertEqual((call["body"]["stream"], call["body"]["options"]), (False, {"temperature": 0.2}))
+        self.assertEqual((r.calls, r.text, r.input_tokens), ([{"name": "todo__tasks", "args": {"when": "today"}}], "", 7))
+
+    def test_tool_call_openai(self):
+        post = FakePost((400, {"error": {"message": "Unsupported parameter: 'max_tokens'; use 'max_completion_tokens'"}}),
+                        (200, {"choices": [{"message": {"content": None, "tool_calls": [
+                            {"type": "function", "function": {"name": "todo__tasks", "arguments": "{\"when\": \"week\"}"}},
+                            {"type": "function", "function": {"name": "todo__tasks", "arguments": "not json"}}]}}],
+                               "usage": {"prompt_tokens": 5, "completion_tokens": 1}}))
+        c, _ = client(post)
+        r = c.tool_call(Cfg("openai"), "q", self.TOOLS, max_tokens=300)
+        first, second = post.calls
+        self.assertEqual(first["url"], "http://ai.local/chat/completions")
+        self.assertEqual(first["body"]["tools"], [{"type": "function", "function": self.TOOLS[0]}])
+        self.assertEqual((first["body"]["max_tokens"], second["body"]["max_completion_tokens"]), (300, 300))
+        self.assertEqual(r.calls, [{"name": "todo__tasks", "args": {"when": "week"}}, {"name": "todo__tasks", "args": {}}])
+        self.assertEqual(r.text, "")
+
+    def test_tool_call_anthropic(self):
+        post = FakePost((200, {"content": [{"type": "text", "text": "Let me look."},
+                                           {"type": "tool_use", "id": "t1", "name": "todo__tasks", "input": {"when": "today"}}],
+                               "usage": {"input_tokens": 9, "output_tokens": 3}, "stop_reason": "tool_use"}))
+        c, _ = client(post)
+        r = c.tool_call(Cfg("anthropic"), "q", self.TOOLS, system="sys", max_tokens=1000)
+        body = post.calls[0]["body"]
+        self.assertEqual(post.calls[0]["url"], "http://ai.local/v1/messages")
+        self.assertEqual(body["tools"], [{"name": "todo__tasks", "description": "Open tasks.",
+                                          "input_schema": self.TOOLS[0]["parameters"]}])
+        self.assertEqual((body["system"], body["max_tokens"]), ("sys", 1000))
+        self.assertEqual((r.text, r.calls), ("Let me look.", [{"name": "todo__tasks", "args": {"when": "today"}}]))
+
+    def test_tool_call_without_tool_support(self):
+        post = FakePost((400, {"error": "registry.ollama.ai/library/gemma:2b does not support tools"}))
+        c, _ = client(post)
+        with self.assertRaises(core.AIError) as e:
+            c.tool_call(Cfg("ollama"), "q", self.TOOLS)
+        self.assertEqual(e.exception.kind, "bad_request")
+
     def test_list_models(self):
         post = FakePost((200, {"models": [{"name": "a"}, {"model": "b"}, "x"]}))
         c, _ = client(post, model_name=lambda m: m.get("name") or m.get("model") or "")

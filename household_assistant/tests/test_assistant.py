@@ -22,7 +22,7 @@ from app import ai_client, catalogue, config, db, engine, settings
 from app.common import app_bus as bus
 from app.main import app
 from common_tests.ingress import identity_headers, ingress_client
-from fakes import Model, Router, make_household, set_up_ai, wait_done
+from fakes import Model, NativeModel, Router, make_household, set_up_ai, wait_done
 
 ADMIN = identity_headers("u_admin", "adminy", "Adminy")
 ALICE = identity_headers("u_alice", "alice", "Alice")
@@ -258,6 +258,67 @@ class AssistantTests(Household):
         self.assertEqual((q["state"], q["answer"]), ("done", "Hi."))
         self.assertEqual(seen[1], "Waking up the model…")
         self.assertEqual(engine._progress(seen[0], "planning", []), "Thinking…")
+
+    # ---------------------------------------------------------------------------------------- native tool calls
+    def test_native_tool_calls(self):
+        set_up_ai("auto")
+        native = NativeModel(([("todo__tasks", {"when": "today"}), ("nope__x", {})], ""),
+                             ([], "Two tasks today in **Household Todo**: Bins and Call plumber."))
+        with mock.patch.object(ai_client, "generate_tools", native):
+            q = self.ask(model=Model())                     # the JSON model is never asked
+        self.assertEqual((q["state"], q["answer"]), ("done", "Two tasks today in **Household Todo**: Bins and Call plumber."))
+        self.assertEqual([(c["tool"], c["args"]) for c in q["shared"]], [("todo.tasks", {"when": "today"})])
+        self.assertEqual(len(native.prompts), 2)            # plan, then the answer in words: no separate answer step
+        self.assertEqual(set(native.prompts[0][1].split(",")), {"todo__items__add", "todo__tasks", "finance__summary"})
+        self.assertNotIn("JSON", native.prompts[0][0])
+        self.assertIn("<data>", native.prompts[1][0])
+        self.assertIn("Name the app each fact came from", native.prompts[1][0])   # the answer rules come along
+        spec = {s["name"]: s for s in native.specs}
+        self.assertEqual(spec["todo__tasks"]["parameters"],
+                         {"type": "object", "required": ["when"],
+                          "properties": {"when": {"type": "string", "enum": ["today", "week"], "description": "which tasks"}}})
+        self.assertIn("CHANGES DATA", spec["todo__items__add"]["description"])
+        self.assertEqual(spec["finance__summary"]["parameters"]["properties"]["month"]["pattern"], r"^\d{4}-\d{2}$")
+
+    def test_native_proposal_and_ask_back(self):
+        set_up_ai("auto")
+        native = NativeModel(([("todo__items__add", {"list": "Shopping", "text": "Milk"})], ""),
+                             ([], "I can add milk to Shopping — tap to confirm."))
+        with mock.patch.object(ai_client, "generate_tools", native):
+            q = self.ask("Add milk")
+        self.assertEqual(q["answer"], "I can add milk to Shopping — tap to confirm.")
+        self.assertEqual([(a["tool"], a["state"]) for a in q["actions"]], [("todo.items.add", "proposed")])
+        self.assertEqual(q["shared"], [])                   # proposed, never called by the model
+        with mock.patch.object(ai_client, "generate_tools", NativeModel(([], "Which month?"))):
+            self.assertEqual(self.ask("Spending?")["answer"], "Which month?")
+
+    def test_a_model_without_native_tools_gets_the_json_plan(self):
+        set_up_ai("auto")
+        with mock.patch.object(ai_client, "generate_tools", return_value=None):
+            q = self.ask(model=Model(plan_call("todo.tasks", when="today"), '{"answer": "x"}', "From JSON."))
+        self.assertEqual(q["answer"], "From JSON.")
+        native = NativeModel()
+        with mock.patch.object(ai_client, "generate_tools", native):
+            set_up_ai("json")                               # the admin chose the JSON plan
+            self.assertEqual(self.ask(model=Model('{"answer": "Plain."}'))["answer"], "Plain.")
+        self.assertEqual(native.prompts, [])
+        with self.assertRaises(settings.SettingsError):
+            settings.update({"ai_tool_calls": "sometimes"}, None)
+
+    def test_generate_tools_remembers_a_refusal(self):
+        set_up_ai("auto")
+        sent = []
+
+        def post(url, headers, body, timeout, method="POST"):
+            sent.append(url)
+            return 400, '{"error": "registry.ollama.ai/library/tiny does not support tools"}', {}
+        with mock.patch.object(ai_client, "_post", post):
+            self.assertIsNone(ai_client.generate_tools("q", [{"name": "a__b", "description": "x"}]))
+            self.assertIsNone(ai_client.generate_tools("q", [{"name": "a__b", "description": "x"}]))
+        self.assertEqual(sent, ["http://192.0.2.1:11434/api/chat"])          # asked once, then remembered
+        self.assertFalse(ai_client.tools_supported())
+        self.c.put("/api/admin/settings", json={"ai_model": "bigger"}, headers=ADMIN)
+        self.assertTrue(ai_client.tools_supported())        # another model: asked again
 
     def test_live_events(self):
         def slow_plan(prompt, purpose):

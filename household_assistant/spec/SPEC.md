@@ -57,7 +57,14 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 - Warm-up: with Ollama, when the model hasn't answered for 4 minutes, `warmup_sync()` sends "hi" first (up to 120 s; progress "Waking up the model…"); the question's clock starts after it.
 - The loop (at most 3 rounds, *Longest a question may take* in all — `question_timeout`, 300 s, 60–900; `Stopped` / `TooLong` checked between steps; a `TooLong` or `AIError` after some apps answered ends the question
   `done` with the apps' own `text`s, one line each, under a line saying the model didn't finish):
-  1. **Plan**: `generate(want_json=True)` with the system prompt (§3.1, the person's name, today's date and time
+  1. **Plan**, with *Tool calls* "auto" (the default) and a model that takes them: `generate_tools()` — the
+     shared `Client.tool_call` (Ollama `/api/chat` tools, OpenAI `tools`, Claude `tools`) — with the person's
+     catalogue as native tools (`tool_specs`: `todo.tasks` → `todo__tasks`, flat arguments as JSON Schema, the
+     app's name and CHANGES DATA in the description) and `native_prompt` (no tool list or format; with results,
+     the answer rules, so words in reply are the final answer and there is no separate answer step). A 400
+     (no tool support) is remembered for that provider, address and model until the AI settings change, and that
+     round and later ones use the JSON plan. Otherwise (*Tool calls* "json"):
+     `generate(want_json=True)` with the system prompt (§3.1, the person's name, today's date and time
      zone), the tools as one line each (name, app, CHANGES DATA for `acts`, what, arguments with type, values,
      range, required, returns), the last 6 done questions and answers, the results so far in a `<data>` block,
      the proposed changes, the reply format and the question. `parse_plan` takes the first JSON object:

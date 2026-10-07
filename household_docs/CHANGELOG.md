@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- **Shared AI code**: the AI connection can offer tools to a model in its own way (used by the Household Assistant); nothing changes in this app.
+
 ## 1.2.1
 
 - **Sheets keep their formula results in .xlsx**: a saved .xlsx held each formula but not its result, so Excel and other apps (and Docs' own Home Assistant sensor for a cell) saw an empty value until the sheet was recalculated. The results are written again.

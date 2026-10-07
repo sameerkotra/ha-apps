@@ -366,7 +366,7 @@ without Home Assistant's identity headers.
 5. **Chat, Arcade, Family Tree** small catalogues; a *Ask the assistant* entry in Chat's ➕ menu that opens the
    assistant with the question typed (a `panel` link with `?q=`), nothing more.
 6. **Later**: native tool calling in the shared `ai_client` (OpenAI `tools`, Anthropic `tool_use`, Ollama chat
-   tools) replacing the JSON plan where the model supports it; SSE instead of polling (done in 1.1.0); a companion
+   tools) replacing the JSON plan where the model supports it (done in 1.1.0); SSE instead of polling (done in 1.1.0); a companion
    Home Assistant integration that makes the assistant an Assist conversation agent (§2.2); speech on the page
    (done in 1.1.0).
 
@@ -378,7 +378,8 @@ without Home Assistant's identity headers.
 - **A catalogue in code, not a schema language**: flat arguments and plain-words descriptions are what small local
   models follow; apps don't ship JSON Schema. Nesting can come as a `kv: 2` later.
 - **JSON plan first, native tool calls later**: works with every provider and model the apps support today; the
-  loop is the same, only the transport of "which tool" changes.
+  loop is the same, only the transport of "which tool" changes. Native tool calls came in 1.1.0 (App settings →
+  *Tool calls*, "auto" by default, the JSON plan for models without them).
 - **No message search in Chat, nothing from Vault, Finance memos never**: the most private text stays where it is.
 - **Actions only on a tap**: the model proposes, the person confirms, the app checks. No autonomous changes.
 - **The page is the card**: an iframe card and Assist both need things apps can't do alone today (§2.2).

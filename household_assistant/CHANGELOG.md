@@ -7,6 +7,10 @@
 - **Answers appear as they happen**: the page follows a question live instead of asking every second, so each step
   ("Asking Household Todo…") and the answer show up at once; where a proxy doesn't allow that, it still asks every
   second.
+- **The model picks tools its own way**: models with tool calling (Claude, GPT, Qwen 2.5, Llama 3.1 and newer)
+  choose the apps' tools natively, which they do more reliably than writing a JSON plan, and usually answer in the
+  same step — one model call fewer per question, which matters most on a CPU. Other models are noticed on their
+  first question and get the JSON plan as before. App settings → AI → **Tool calls** can force the JSON plan.
 
 ## 1.0.2
 

@@ -20,17 +20,25 @@ limit), reading App settings, its prompts, its usage notes and its wording. It b
     reply = CLIENT.ollama(cfg, prompt, want_json=True, max_tokens=..., timeout=...)
     reply = CLIENT.openai(cfg, prompt, images=[b64png, …], system=..., temperature=..., timeout=...)
     reply = CLIENT.anthropic(cfg, prompt, limit=4000, timeout=...)
+    reply = CLIENT.tool_call(cfg, prompt, tools, system=..., max_tokens=..., timeout=...)   # reply.calls
     names = CLIENT.list_models(cfg, timeout=10)
 
 `cfg` is any object with provider, url, model, api_key and label. A Reply has text, raw (the
-response body), payload (the parsed answer), input_tokens, output_tokens and seconds (Ollama's own
-timing, else None). Every failure is an AIError(message, kind, raw) with kind one of unreachable |
+response body), payload (the parsed answer), input_tokens, output_tokens, seconds (Ollama's own
+timing, else None) and calls (the tools a model called through `tool_call`: [{"name", "args"}]).
+Every failure is an AIError(message, kind, raw) with kind one of unreachable |
 timeout | auth | rate_limit | not_found | bad_request | bad_response.
 
 Requests that the provider answers 429/500/502/503/504/529 are retried up to MAX_RETRIES times,
 waiting Retry-After (1–60 s) or 5, 15, 45 s. A 400 from an OpenAI-compatible server about an
 option it doesn't know is retried once without it (`openai_fallback`); a 400 from Claude about
 max_tokens is retried once with a smaller limit (`anthropic_shrink`).
+
+Native tool calling (`tool_call`): `tools` is [{"name", "description", "parameters": a JSON Schema
+object}], names matching ^[A-Za-z0-9_-]{1,64}$ (what every provider accepts). Ollama gets them on
+POST /api/chat, an OpenAI-compatible server as `tools` of type function, Claude as `tools` with an
+input_schema; the model may call several, or answer in words. A model or server without tool
+support answers 400, an AIError of kind bad_request: the caller falls back to asking for JSON.
 """
 from __future__ import annotations
 
@@ -70,6 +78,7 @@ class Reply:
     input_tokens: int | None = None
     output_tokens: int | None = None
     seconds: float | None = None   # as reported by the provider, else None
+    calls: list = field(default_factory=list)   # tool_call only: [{"name": str, "args": dict}]
 
 
 # ---- HTTP -----------------------------------------------------------------------------------------
@@ -116,6 +125,24 @@ def auth_headers(cfg) -> dict:
     return {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
 
 
+def _function_calls(tool_calls) -> list[dict]:
+    """OpenAI's and Ollama's tool_calls → [{"name", "args"}]; arguments come as a JSON string (OpenAI) or an
+    object (Ollama). Anything unreadable becomes no arguments: the caller checks them anyway."""
+    out = []
+    for c in tool_calls if isinstance(tool_calls, list) else []:
+        fn = c.get("function") if isinstance(c, dict) else None
+        if not isinstance(fn, dict) or not isinstance(fn.get("name"), str) or not fn["name"]:
+            continue
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args.strip() else {}
+            except ValueError:
+                args = {}
+        out.append({"name": fn["name"], "args": args if isinstance(args, dict) else {}})
+    return out
+
+
 # ---- retrying a 400 without what the server didn't accept --------------------------------------------
 
 def fallback_json_and_max_tokens(body: dict, text: str) -> bool:
@@ -137,6 +164,20 @@ def fallback_json_and_temperature(body: dict, text: str) -> bool:
     body.pop("response_format", None)
     body.pop("temperature", None)
     return True
+
+
+def fallback_temperature_and_max_tokens(body: dict, text: str) -> bool:
+    """A model that only allows its default temperature, or wants max_completion_tokens (or no limit):
+    retry without what it named."""
+    changed = False
+    if "temperature" in text and body.pop("temperature", None) is not None:
+        changed = True
+    if "max_tokens" in text and "max_tokens" in body:
+        limit = body.pop("max_tokens")
+        if "max_completion_tokens" in text:
+            body["max_completion_tokens"] = limit
+        changed = True
+    return changed
 
 
 def shrink_to_named_maximum(fallback: int = 8192):
@@ -341,6 +382,75 @@ class Client:
         if data.get("stop_reason") == "max_tokens":
             self.log.warning("Claude stopped at the output limit (%s tokens)", body["max_tokens"])
         return Reply(text=answer, raw=self._raw(text), payload=data, input_tokens=input_tokens, output_tokens=usage.get("output_tokens"))
+
+    # ---- native tool calling ----
+    def tool_call(self, cfg, prompt: str, tools: list[dict], *, system: str | None = None,
+                  max_tokens: int | None = None, temperature: float | None = None,
+                  timeout: float | None = None) -> Reply:
+        """Offer `tools` to the model: Reply.calls holds the ones it called, Reply.text any words."""
+        if cfg.provider == "anthropic":
+            return self._anthropic_tools(cfg, prompt, tools, system, max_tokens or 4096, temperature, timeout)
+        functions = [{"type": "function", "function": {"name": t["name"], "description": t.get("description", ""),
+                                                       "parameters": t.get("parameters") or {"type": "object", "properties": {}}}}
+                     for t in tools]
+        messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+        if cfg.provider == "ollama":
+            body = {"model": cfg.model, "messages": messages, "tools": functions, "stream": False}
+            options = {}
+            if max_tokens:
+                options["num_predict"] = max_tokens
+            if temperature is not None:
+                options["temperature"] = temperature
+            if options:
+                body["options"] = options
+            status, text = self.request(cfg, "/api/chat", {}, body, timeout)
+            self.check(cfg, status, text)
+            data = self.parse(cfg, text)
+            message = data.get("message") if isinstance(data.get("message"), dict) else {}
+            total = data.get("total_duration")
+            return Reply(text=message.get("content") or "", raw=self._raw(text), payload=data,
+                         input_tokens=data.get("prompt_eval_count"), output_tokens=data.get("eval_count"),
+                         seconds=round(total / 1e9, 2) if isinstance(total, (int, float)) and total else None,
+                         calls=_function_calls(message.get("tool_calls")))
+        body = {"model": cfg.model, "messages": messages, "tools": functions}
+        if max_tokens:
+            body["max_tokens"] = max_tokens
+        if temperature is not None:
+            body["temperature"] = temperature
+        headers = self.auth_headers(cfg)
+        status, text = self.request(cfg, "/chat/completions", headers, body, timeout)
+        if status == 400 and fallback_temperature_and_max_tokens(body, text):
+            status, text = self.request(cfg, "/chat/completions", headers, body, timeout)
+        self.check(cfg, status, text)
+        data = self.parse(cfg, text)
+        try:
+            message = data["choices"][0]["message"]
+        except (KeyError, IndexError, TypeError):
+            raise self._error(cfg, self.wording.no_answer, "bad_response", text) from None
+        answer = message.get("content") or ""
+        if isinstance(answer, list):
+            answer = "".join(p.get("text", "") for p in answer if isinstance(p, dict))
+        usage = data.get("usage") or {}
+        return Reply(text=answer, raw=self._raw(text), payload=data, input_tokens=usage.get("prompt_tokens"),
+                     output_tokens=usage.get("completion_tokens"), calls=_function_calls(message.get("tool_calls")))
+
+    def _anthropic_tools(self, cfg, prompt, tools, system, limit, temperature, timeout) -> Reply:
+        body = {"model": cfg.model, "max_tokens": limit, "messages": [{"role": "user", "content": prompt}],
+                "tools": [{"name": t["name"], "description": t.get("description", ""),
+                           "input_schema": t.get("parameters") or {"type": "object", "properties": {}}} for t in tools]}
+        if system:
+            body["system"] = system
+        if temperature is not None:
+            body["temperature"] = temperature
+        status, text = self.request(cfg, "/v1/messages", self.auth_headers(cfg), body, timeout)
+        self.check(cfg, status, text)
+        data = self.parse(cfg, text)
+        blocks = [b for b in data.get("content", []) if isinstance(b, dict)]
+        usage = data.get("usage") or {}
+        return Reply(text="".join(b.get("text", "") for b in blocks if b.get("type") == "text"), raw=self._raw(text),
+                     payload=data, input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+                     calls=[{"name": b.get("name", ""), "args": b.get("input") if isinstance(b.get("input"), dict) else {}}
+                            for b in blocks if b.get("type") == "tool_use" and b.get("name")])
 
     def list_models(self, cfg, timeout: float = 10) -> list[str]:
         """The models the provider offers (Test connection). Generates nothing. Raises AIError."""

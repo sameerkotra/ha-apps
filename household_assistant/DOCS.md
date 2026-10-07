@@ -28,6 +28,11 @@ Source and issues: https://github.com/sameerkotra/ha-apps
   and an access key where the service needs one.
 - **Anthropic** Claude: the model (e.g. `claude-sonnet-4-5`) and an access key.
 
+**Tool calls**: the assistant lets the model pick the apps' tools with its own tool calling where the model has it
+(Claude, GPT, Qwen 2.5, Llama 3.1 and newer), and asks other models for a short JSON plan instead — it notices which
+on the first question. With tool calling, the answer usually comes in the same step as the last plan, one model call
+fewer per question. If a model picks tools badly, set **Tool calls** to *Always ask the model for a JSON plan*.
+
 The access key is stored in the app's database, never shown again, never logged, and left out of backups.
 With a provider outside your network, the page says so above the ask box: the question, the last few questions
 and answers, and what the apps returned are sent to it.
