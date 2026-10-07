@@ -10,14 +10,15 @@
   "use strict";
   var Kit = root.ArcadeKit, Logic = root.TilesLogic;
 
-  var MODES = [{ id: "little", label: "Little (gentle)" }, { id: "classic", label: "Classic" }, { id: "big", label: "Big heap" }];
-  var LABELS = { little: "LITTLE", classic: "CLASSIC", big: "BIG HEAP" };
+  var MODES = [{ id: "little", label: "Little (gentle)" }, { id: "classic", label: "Classic" }, { id: "big", label: "Big heap" },
+    { id: "layouts", label: "Layouts" }];
+  var LABELS = { little: "LITTLE", classic: "CLASSIC", big: "BIG HEAP", layouts: "LAYOUT" };
   var AX = 6, AY = 40, AW = 228, AH = 220, MSG_Y = 272;
   var SUIT_CI = [1, 5, 4], SHAPE_CI = [1, 5, 4, 2, 6];
 
   /** Tile size and where the heap goes: { hu, hv, shift, ox, oy, tw, th } */
-  function geom(mode) {
-    var sz = Logic.size(mode), shift = mode === "little" ? 4 : 3;
+  function geom(st) {
+    var sz = Logic.size(st), shift = st.mode === "little" ? 4 : 3;
     var hu = Math.min(20, (AW - sz.layers * shift) / sz.w), hv = hu * 1.3;
     if (sz.h * hv + sz.layers * shift > AH) { hv = (AH - sz.layers * shift) / sz.h; hu = hv / 1.3; }
     var wPx = sz.w * hu, hPx = sz.h * hv;
@@ -39,16 +40,16 @@
       }
       return -1;
     }
-    function setup() { G = geom(s.mode); P = Logic.places(s.mode); pending = []; }
+    function setup() { G = geom(s); P = Logic.places(s); pending = []; }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed }); setup(); },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); setup(); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data); setup(); },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.scoreOf(s); },
-      level: function () { return 1; },
+      level: function () { return s.level || 1; },
       isOver: function () { return s.over; },
       result: function () { return Logic.result(s); },
       status: function () { return Logic.status(s); },
@@ -94,7 +95,7 @@
 
     function draw(g, info) {
       var lcd = g.kind === "lcd", i, tw = G.tw, th = G.th, sh = G.shift;
-      g.hud(LABELS[s.mode] || "", Logic.clock(Logic.effective(s)));
+      g.hud(s.mode === "layouts" ? "LAYOUT " + s.level : LABELS[s.mode] || "", Logic.clock(Logic.effective(s)));
       g.text(Logic.left(s) + " LEFT", 120, 24, { size: 9, align: "center", a: 0.85 });
       var hintSet = s.hint ? [s.hint[0], s.hint[1]] : [];
       var playing = info.state === "running" || info.state === "paused";
@@ -157,7 +158,7 @@
     buttons: [{ action: "hint", label: "💡 Hint", aria: "Hint: show a pair" }, { action: "shuffle", label: "🔀 Shuffle", aria: "Shuffle the tiles left" },
       { action: "undo", label: "↶ Undo", aria: "Undo" }],
     typed: true,
-    help: "Clear the heap two tiles at a time. Tap two free tiles with the same symbol (the same number and suit shape) to take them away. A tile is free when nothing lies on it and its left or right side is open; tiles that aren't free are a little dimmer. Hint shows a pair (+15 s), Shuffle deals the tiles left again (+30 s), Undo puts the last pair back. Every deal can be cleared. Keyboard: arrows and Space, H hint, S shuffle, U undo. Little is the gentle one.",
+    help: "Clear the heap two tiles at a time. Tap two free tiles with the same symbol (the same number and suit shape) to take them away. A tile is free when nothing lies on it and its left or right side is open; tiles that aren't free are a little dimmer. Hint shows a pair (+15 s), Shuffle deals the tiles left again (+30 s), Undo puts the last pair back. Every deal can be cleared. Keyboard: arrows and Space, H hint, S shuffle, U undo. Little is the gentle one. Layouts are heaps of different shapes, one a game, carrying on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

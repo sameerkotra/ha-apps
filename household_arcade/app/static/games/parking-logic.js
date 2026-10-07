@@ -15,13 +15,65 @@
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
   var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 5, MOVE_COST = 50, HINT_COST = 200;
-  var N = 6, EXIT_ROW = 2, LEVELS = 200, CLEAR_T = 80, MAX_STATES = 12000, TRIES = 24, STATE_VERSION = 1;
+  var N = 6, EXIT_ROW = 2, LEVEL_COUNT = 200, CLEAR_T = 80, MAX_STATES = 12000, TRIES = 24, STATE_VERSION = 1;
   var MODES = {
     little: { lo: 2, hi: 5, cars: [3, 5] },
     classic: { lo: 8, hi: 14, cars: [7, 10] },
     hard: { lo: 15, hi: 25, cars: [9, 13] },
     levels: { levels: true },
+    book: { book: true },
   };
+  var LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+  // The puzzle book (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A car park is six
+  // rows of six letters: "A" the red car (across the exit row), each other letter one vehicle, "." empty. The server
+  // (level_kinds/parking.py) checks the same drawing and that the red car can get out.
+  var LEVELS = [
+    {"name": "Quick exit", "grid": ["......", "..BCCD", "AAB..D", "......", "......", "......"]},
+    {"name": "Morning rush", "grid": ["......", "..BCCD", "AABE.D", "FF.E..", "...EGG", "...HH."]},
+    {"name": "Lorry in the way", "grid": ["....B.", "...CBD", ".AACBD", "..EEE.", "......", "...FF."]},
+    {"name": "Market day", "grid": ["BBCCDE", "...FDE", "GAAF.E", "GH....", ".H.III", ".H..JJ"]},
+    {"name": "Full house", "grid": ["...BCC", ".D.BE.", "FDAAE.", "FGGGHH", "IIJKKL", "..J..L"]},
+    {"name": "Rush hour", "grid": ["...BCC", "DE.BF.", "DEAAF.", ".GHHF.", ".GIJJJ", "KKI.LL"]},
+  ];
+
+  /** The vehicles and their places from a drawing ({ vs, pos }), or null when it isn't a proper car park. */
+  function fromGrid(grid) {
+    if (!Array.isArray(grid) || grid.length !== N) return null;
+    var cells = {}, r, c;
+    for (r = 0; r < N; r++) {
+      if (typeof grid[r] !== "string" || grid[r].length !== N) return null;
+      for (c = 0; c < N; c++) {
+        var ch = grid[r][c];
+        if (ch === ".") continue;
+        if (LETTERS.indexOf(ch) < 0) return null;
+        (cells[ch] = cells[ch] || []).push([r, c]);
+      }
+    }
+    if (!cells.A) return null;
+    var names = Object.keys(cells).sort(function (a, b) { return a === "A" ? -1 : b === "A" ? 1 : a < b ? -1 : 1; });
+    var vs = [], pos = [];
+    for (var i = 0; i < names.length; i++) {
+      var sq = cells[names[i]], len = sq.length;
+      if (len !== 2 && len !== 3) return null;
+      var across = sq.every(function (q) { return q[0] === sq[0][0]; }), along = sq.every(function (q) { return q[1] === sq[0][1]; });
+      if (across && sq[len - 1][1] - sq[0][1] === len - 1) { vs.push({ h: true, len: len, lane: sq[0][0] }); pos.push(sq[0][1]); }
+      else if (along && sq[len - 1][0] - sq[0][0] === len - 1) { vs.push({ h: false, len: len, lane: sq[0][1] }); pos.push(sq[0][0]); }
+      else return null;
+    }
+    if (!(vs[0].h && vs[0].len === 2 && vs[0].lane === EXIT_ROW) || solved(pos)) return null;
+    return { vs: vs, pos: pos };
+  }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string") return "not a car park";
+    return fromGrid(l.grid) ? null : "drawing";
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
 
   function rand(s) {
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -146,7 +198,31 @@
       if (score === 0) break;
     }
     if (!best) best = { vs: [{ h: true, len: 2, lane: EXIT_ROW }, { h: false, len: 2, lane: 4 }], pos: [0, 1], fewest: 2, score: 0 };
+    var exact = fewestFrom(best.vs, best.pos);          // the search above may have stopped short of the true fewest
+    if (exact > 0) best.fewest = exact;
     return { vs: best.vs, pos: best.pos, fewest: best.fewest };
+  }
+
+  /** The fewest moves from `pos` to get the red car out, searching out from `pos` (−1: not found). */
+  function fewestFrom(vs, pos) {
+    if (solved(pos)) return 0;
+    var dist = new Map([[key(pos), 0]]), queue = [pos.slice()], g = new Int8Array(N * N);
+    for (var q = 0; q < queue.length && q < MAX_STATES * 16; q++) {
+      var cur = queue[q], d = dist.get(key(cur));
+      fillGrid(vs, cur, g);
+      for (var i = 0; i < vs.length; i++) {
+        var r = rangeIn(vs, cur, i, g);
+        for (var p = r[0]; p <= r[1]; p++) {
+          if (p === cur[i]) continue;
+          var next = cur.slice(); next[i] = p;
+          var k = key(next);
+          if (dist.has(k)) continue;
+          if (solved(next)) return d + 1;
+          dist.set(k, d + 1); queue.push(next);
+        }
+      }
+    }
+    return -1;
   }
 
   /** The next move of a fewest-moves answer from `pos`: { v, to } or null. */
@@ -178,8 +254,14 @@
 
   // ---------- the game ----------
   function startBoard(s) {
-    if (s.levels) s.rng = hashSeed("parking-level-" + s.level);
-    var b = makeBoard(s, s.levels ? levelSpec(s.level) : MODES[s.mode]);
+    var b;
+    if (s.book) {
+      b = fromGrid(s.list[s.level - 1].grid);
+      b.fewest = Math.max(1, fewestFrom(b.vs, b.pos));
+    } else {
+      if (s.levels) s.rng = hashSeed("parking-level-" + s.level);
+      b = makeBoard(s, s.levels ? levelSpec(s.level) : MODES[s.mode]);
+    }
     s.vs = b.vs; s.pos = b.pos; s.fewest = b.fewest; s.start = b.pos.slice();
     s.boardUpdates = 0; s.boardMoves = 0; s.boardHints = 0; s.last = -1; s.undo = [];
     s.sel = -1; s.hint = null; s.phase = "play"; s.t = 0; s.cursor = EXIT_ROW * N + b.pos[0];
@@ -189,12 +271,13 @@
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
     var s = {
-      mode: mode, levels: !!MODES[mode].levels, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
+      mode: mode, levels: !!(MODES[mode].levels || MODES[mode].book), book: !!MODES[mode].book,
+      list: MODES[mode].book ? usableLevels(o.levels) : null, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
       runScore: 0, moves: 0, hints: 0, boards: 0, updates: 0, vs: null, pos: null, fewest: 0, start: null,
       boardUpdates: 0, boardMoves: 0, boardHints: 0, last: -1, undo: [], sel: -1, hint: null, phase: "play", t: 0,
       cursor: 0, won: false, over: false, cause: null, lastBoardScore: 0, noHintAt: -1000, fewestTotal: 0,
     };
-    if (s.levels) s.level = startAt(o.startLevel, LEVELS);
+    if (s.levels) s.level = startAt(o.startLevel, total(s));
     startBoard(s);
     return s;
   }
@@ -221,7 +304,7 @@
       s.lastBoardScore = boardScore(s);
       s.runScore += s.lastBoardScore; s.boards++; s.fewestTotal += s.fewest;
       evs.push({ type: "clear", level: s.level, moves: s.boardMoves, fewest: s.fewest });
-      if (!s.levels || s.level >= LEVELS) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
+      if (!s.levels || s.level >= total(s)) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
       else { s.phase = "clear"; s.t = CLEAR_T; }
     }
     return evs;
@@ -281,14 +364,16 @@
     return [{ type: "cursor" }];
   }
 
-  function save(s) { return JSON.parse(JSON.stringify(s)); }
-  function restore(data) {
+  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.list = null; return out; }
+  function restore(data, levels) {
     var ok = data && typeof data === "object" && MODES[data.mode] && Array.isArray(data.vs) && Array.isArray(data.pos) &&
       data.vs.length === data.pos.length && data.vs.length >= 1 && typeof data.level === "number" && data.level >= 1 &&
-      data.level <= LEVELS && typeof data.runScore === "number" && typeof data.updates === "number" && typeof data.rng === "number" &&
+      typeof data.runScore === "number" && typeof data.updates === "number" && typeof data.rng === "number" &&
       data.vs.every(function (v, i) { return v && (v.len === 2 || v.len === 3) && v.lane >= 0 && v.lane < N && data.pos[i] >= 0 && data.pos[i] + v.len <= N; });
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    s.book = data.mode === "book"; s.list = s.book ? usableLevels(levels) : null;
+    if (s.level > total(s)) throw new Error("That saved game can't be continued.");
     var g = new Int8Array(N * N).fill(-1);
     for (var i = 0; i < s.vs.length; i++) {
       var c = cellsOf(s.vs[i], s.pos[i]);
@@ -314,7 +399,8 @@
   }
 
   var ParkingLogic = {
-    UPS: UPS, TOP: TOP, N: N, EXIT_ROW: EXIT_ROW, LEVELS: LEVELS, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST,
+    UPS: UPS, TOP: TOP, N: N, EXIT_ROW: EXIT_ROW, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem,
+    fromGrid: fromGrid, fewestFrom: fewestFrom, total: total, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST,
     HINT_COST: HINT_COST, CLEAR_T: CLEAR_T, STATE_VERSION: STATE_VERSION, MODES: MODES, create: create, step: step, press: press,
     slide: slide, undo: undo, hint: hint, range: range, cellsOf: cellsOf, occupancy: occupancy, explore: explore,
     distances: distances, nextMove: nextMove, solved: solved, makeBoard: makeBoard, levelSpec: levelSpec, hashSeed: hashSeed,

@@ -9,7 +9,7 @@
   var Kit = root.ArcadeKit, Logic = root.UntangleLogic;
 
   var MODES = [{ id: "little", label: "6 points (gentle)" }, { id: "classic", label: "10 points" }, { id: "big", label: "16 points" },
-    { id: "levels", label: "Levels" }];
+    { id: "levels", label: "Levels" }, { id: "book", label: "Puzzle book" }];
   var LABELS = { little: "6 POINTS", classic: "10 POINTS", big: "16 POINTS" }, MSG_Y = 276;
 
   function create(canvas, opts) {
@@ -18,9 +18,9 @@
     function queue(evs) { for (var i = 0; i < evs.length; i++) pending.push(evs[i]); }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; drag = -1; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; drag = -1; },
       save: function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; drag = -1; },
+      restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; drag = -1; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
@@ -74,7 +74,7 @@
     buttons: [{ action: "alt", label: "💡 Hint", aria: "Hint: move one point to a good place", wide: true }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],
-    help: "Drag the points until no two lines cross. Lines that cross another are dashed; the number of crossings is under the board. Moving a point counts as a move (moving it again straight after doesn't); fewer moves and less time score more. Keyboard: Space picks the next point, the arrows move it. With the Hints option on, Hint moves one point to a good place. 6 points is the gentle one; Levels carry on from your next level.",
+    help: "Drag the points until no two lines cross. Lines that cross another are dashed; the number of crossings is under the board. Moving a point counts as a move (moving it again straight after doesn't); fewer moves and less time score more. Keyboard: Space picks the next point, the arrows move it. With the Hints option on, Hint moves one point to a good place. 6 points is the gentle one; Levels carry on from your next level. The Puzzle book is a list of named puzzles that also carries on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

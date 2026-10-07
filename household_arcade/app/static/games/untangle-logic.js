@@ -13,9 +13,47 @@
 
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
-  var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 10, MOVE_COST = 20, HINT_COST = 200, LEVELS = 200, CLEAR_T = 80;
+  var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 10, MOVE_COST = 20, HINT_COST = 200, LEVEL_COUNT = 200, CLEAR_T = 80;
   var STATE_VERSION = 1, X0 = 16, Y0 = 46, SIZE = 208, CX = 120, CY = 150, RADIUS = 96, STEP_KEY = 6;
-  var MODES = { little: { k: 6 }, classic: { k: 10 }, big: { k: 16 }, levels: { levels: true } };
+  var MODES = { little: { k: 6 }, classic: { k: 10 }, big: { k: 16 }, levels: { levels: true }, book: { book: true } };
+  var SPAN = 8, GRID_STEP = SIZE / SPAN;            // a puzzle-book point at (x, y), 0-8, sits at X0 + 26x, Y0 + 26y
+
+  // The puzzle book (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A puzzle is its
+  // untangled drawing: points on a 9 × 9 grid and the lines between them, no two crossing. The server
+  // (level_kinds/untangle.py) checks the same.
+  var LEVELS = [
+    {"name": "Little house", "points": [[2, 4], [6, 4], [6, 8], [2, 8], [4, 1], [4, 6]], "edges": [[0, 1], [1, 2], [2, 3], [3, 0], [0, 4], [1, 4], [5, 0], [5, 1], [5, 2], [5, 3]]},
+    {"name": "Fishing net", "points": [[1, 8], [8, 0], [0, 8], [3, 5], [1, 6], [7, 0], [6, 3], [6, 6]], "edges": [[1, 5], [0, 2], [0, 4], [2, 4], [3, 4], [6, 7], [3, 7], [5, 6], [3, 6], [0, 3], [1, 6], [0, 7]]},
+    {"name": "Spider web", "points": [[7, 3], [0, 0], [5, 4], [8, 3], [0, 5], [3, 4], [2, 1], [0, 4], [8, 7], [4, 8]], "edges": [[4, 7], [0, 3], [2, 5], [0, 2], [1, 6], [5, 7], [2, 3], [5, 6], [4, 5], [6, 7], [1, 7], [8, 9], [3, 8], [2, 9], [0, 5], [5, 9]]},
+    {"name": "Climbing frame", "points": [[3, 3], [8, 3], [7, 6], [1, 7], [5, 2], [6, 6], [8, 2], [0, 8], [0, 1], [8, 7], [3, 6], [3, 2]], "edges": [[0, 11], [2, 9], [2, 5], [1, 6], [3, 7], [4, 11], [5, 9], [0, 4], [3, 10], [4, 6], [8, 11], [0, 10], [5, 10], [1, 2], [1, 4], [1, 5], [0, 8], [7, 10], [1, 9], [4, 5]]},
+    {"name": "Star map", "points": [[7, 4], [4, 1], [5, 7], [2, 7], [6, 7], [8, 5], [3, 3], [6, 2], [8, 6], [6, 8], [0, 4], [3, 1], [5, 8], [8, 1], [3, 4]], "edges": [[6, 14], [4, 9], [0, 5], [2, 12], [1, 11], [4, 12], [2, 4], [9, 12], [5, 8], [1, 7], [7, 13], [4, 8], [6, 11], [0, 7], [1, 6], [0, 8], [8, 9], [10, 14], [6, 10], [2, 3], [0, 4], [1, 14], [0, 13], [3, 14], [3, 12], [2, 14], [0, 2]]},
+  ];
+
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.points) || !Array.isArray(l.edges)) return "not a puzzle";
+    var k = l.points.length, deg = [], seen = {}, i;
+    if (k < 6 || k > 30 || l.edges.length < 6 || l.edges.length > 80) return "size";
+    for (i = 0; i < k; i++) {
+      var p = l.points[i];
+      if (!Array.isArray(p) || p.length !== 2 || !(p[0] >= 0 && p[0] <= SPAN && p[1] >= 0 && p[1] <= SPAN) ||
+          p[0] !== Math.floor(p[0]) || p[1] !== Math.floor(p[1]) || seen[p[0] + "," + p[1]]) return "point";
+      seen[p[0] + "," + p[1]] = 1; deg.push(0);
+    }
+    for (i = 0; i < l.edges.length; i++) {
+      var e = l.edges[i];
+      if (!Array.isArray(e) || e.length !== 2 || !(e[0] >= 0 && e[0] < k && e[1] >= 0 && e[1] < k) || e[0] === e[1]) return "line";
+      deg[e[0]]++; deg[e[1]]++;
+    }
+    for (i = 0; i < k; i++) if (deg[i] < 2) return "lines per point";
+    if (crossings(l.points, l.edges).count) return "crossing";
+    return null;
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
 
   function rand(s) {
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -101,8 +139,11 @@
       var c = cand[i];
       if ((deg[c.a] < 2 || deg[c.b] < 2) && !edges.some(function (e) { return (e[0] === c.a && e[1] === c.b); })) tryAdd(c);
     }
-    // the start: on a circle, in a shuffled order, until something crosses
-    var pts = null;
+    return { home: home, pts: scramble(s, k, edges), edges: edges };
+  }
+  /** The start: the points on a circle, in a shuffled order, until something crosses. */
+  function scramble(s, k, edges) {
+    var pts = null, i, j;
     for (var tries = 0; tries < 30; tries++) {
       var order = [];
       for (i = 0; i < k; i++) order.push(i);
@@ -111,7 +152,12 @@
       for (i = 0; i < k; i++) pts[order[i]] = circlePoint(i, k);
       if (crossings(pts, edges).count > 0) break;
     }
-    return { home: home, pts: pts, edges: edges };
+    return pts;
+  }
+  function bookBoard(s, l) {
+    var home = l.points.map(function (p) { return [X0 + p[0] * GRID_STEP, Y0 + p[1] * GRID_STEP]; });
+    var edges = l.edges.map(function (e) { return [Math.min(e[0], e[1]), Math.max(e[0], e[1])]; });
+    return { home: home, pts: scramble(s, home.length, edges), edges: edges };
   }
   /** Point i of k on the start circle, whole numbers (a table of the circle, no trigonometry). */
   function circlePoint(i, k) {
@@ -125,9 +171,17 @@
 
   // ---------- the game ----------
   function startBoard(s) {
-    if (s.levels) s.rng = hashSeed("untangle-level-" + s.level);
-    s.k = s.levels ? levelPoints(s.level) : MODES[s.mode].k;
-    var b = makeBoard(s, s.k);
+    var b;
+    if (s.book) {
+      var l = s.list[s.level - 1];
+      s.rng = hashSeed("untangle-book-" + JSON.stringify(l.points) + JSON.stringify(l.edges));
+      s.k = l.points.length;
+      b = bookBoard(s, l);
+    } else {
+      if (s.levels) s.rng = hashSeed("untangle-level-" + s.level);
+      s.k = s.levels ? levelPoints(s.level) : MODES[s.mode].k;
+      b = makeBoard(s, s.k);
+    }
     s.home = b.home; s.pts = b.pts; s.edges = b.edges;
     s.boardUpdates = 0; s.boardMoves = 0; s.boardHints = 0; s.sel = -1; s.last = -1; s.phase = "play"; s.t = 0;
     s.crossCount = crossings(s.pts, s.edges).count;
@@ -136,12 +190,13 @@
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
     var s = {
-      mode: mode, levels: !!MODES[mode].levels, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
+      mode: mode, levels: !!(MODES[mode].levels || MODES[mode].book), book: !!MODES[mode].book,
+      list: MODES[mode].book ? usableLevels(o.levels) : null, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
       runScore: 0, moves: 0, hints: 0, boards: 0, updates: 0, k: 6, home: null, pts: null, edges: null, boardUpdates: 0,
       boardMoves: 0, boardHints: 0, sel: -1, last: -1, phase: "play", t: 0, crossCount: 0, won: false, over: false,
       cause: null, lastBoardScore: 0, noHintAt: -1000, hinted: -1,
     };
-    if (s.levels) s.level = startAt(o.startLevel, LEVELS);
+    if (s.levels) s.level = startAt(o.startLevel, total(s));
     startBoard(s);
     return s;
   }
@@ -177,7 +232,7 @@
       s.lastBoardScore = boardScore(s);
       s.runScore += s.lastBoardScore; s.boards++;
       evs.push({ type: "clear", level: s.level, moves: s.boardMoves });
-      if (!s.levels || s.level >= LEVELS) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
+      if (!s.levels || s.level >= total(s)) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
       else { s.phase = "clear"; s.t = CLEAR_T; }
     } else evs.push({ type: "drop", crossings: s.crossCount });
     return evs;
@@ -226,16 +281,18 @@
     return s.crossCount === 0 ? evs.concat(release(s)) : evs;
   }
 
-  function save(s) { return JSON.parse(JSON.stringify(s)); }
-  function restore(data) {
+  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.list = null; return out; }
+  function restore(data, levels) {
     var ok = data && typeof data === "object" && MODES[data.mode] && Array.isArray(data.pts) && Array.isArray(data.home) &&
       Array.isArray(data.edges) && data.pts.length === data.home.length && data.pts.length >= 3 &&
       data.pts.every(function (p) { return Array.isArray(p) && p.length === 2 && typeof p[0] === "number" && typeof p[1] === "number"; }) &&
       data.edges.every(function (e) { return Array.isArray(e) && e[0] >= 0 && e[1] >= 0 && e[0] < data.pts.length && e[1] < data.pts.length; }) &&
-      typeof data.level === "number" && data.level >= 1 && data.level <= LEVELS && typeof data.runScore === "number" &&
+      typeof data.level === "number" && data.level >= 1 && typeof data.runScore === "number" &&
       typeof data.updates === "number" && typeof data.rng === "number";
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    s.book = data.mode === "book"; s.list = s.book ? usableLevels(levels) : null;
+    if (s.level > total(s)) throw new Error("That saved game can't be continued.");
     s.crossCount = crossings(s.pts, s.edges).count;
     if (!(s.sel >= -1 && s.sel < s.pts.length)) s.sel = -1;
     return s;
@@ -256,7 +313,8 @@
   }
 
   var UntangleLogic = {
-    UPS: UPS, TOP: TOP, LEVELS: LEVELS, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST, HINT_COST: HINT_COST,
+    UPS: UPS, TOP: TOP, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem,
+    total: total, bookBoard: bookBoard, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST, HINT_COST: HINT_COST,
     CLEAR_T: CLEAR_T, STATE_VERSION: STATE_VERSION, MODES: MODES, X0: X0, Y0: Y0, SIZE: SIZE, create: create, step: step,
     press: press, movePoint: movePoint, release: release, hint: hint, pointAt: pointAt, crossings: crossings,
     segmentsCross: segmentsCross, edgesCross: edgesCross, makeBoard: makeBoard, levelPoints: levelPoints, hashSeed: hashSeed,

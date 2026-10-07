@@ -25,6 +25,33 @@
     puzzler: { name: "Puzzler", n: 13, words: 12, lens: [6, 11], dirs: [0, 1, 2, 3, 4, 5, 6, 7], rate: 3 },
   };
   var MODE_IDS = ["little", "kids", "family", "puzzler"];
+  // Themes (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A theme is a name, an age group
+  // (whose grid, word count and lengths it uses) and its words; one theme a game, the next game starting at the next
+  // one (SPEC §14). The server (level_kinds/wordsearch.py) checks the same and that there are enough words.
+  var LEVELS = [
+    {"name": "At the farm", "group": "little", "words": ["cow", "pig", "hen", "goat", "duck", "lamb", "barn", "egg", "hay", "sheep", "horse", "mud", "dog"]},
+    {"name": "Under the sea", "group": "kids", "words": ["fish", "crab", "shark", "whale", "coral", "squid", "shell", "wave", "reef", "seal", "eel", "kelp", "turtle", "diver", "oyster", "pearl"]},
+    {"name": "Space trip", "group": "kids", "words": ["moon", "star", "comet", "orbit", "rocket", "planet", "alien", "mars", "earth", "venus", "space", "solar", "galaxy", "crater"]},
+    {"name": "In the kitchen", "group": "family", "words": ["kettle", "spoon", "fridge", "oven", "teapot", "saucepan", "grater", "ladle", "plates", "toaster", "whisk", "napkin", "spatula", "freezer", "blender", "cupboard", "cutlery", "colander"]},
+    {"name": "Music room", "group": "puzzler", "words": ["guitar", "violin", "trumpet", "piano", "drummer", "cymbals", "melody", "rhythm", "harmony", "concert", "orchestra", "trombone", "clarinet", "keyboard", "saxophone", "conductor", "xylophone", "tambourine", "harmonica", "recorder", "singer", "choir"]},
+  ];
+
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !MODES[l.group] || !Array.isArray(l.words)) return "not a theme";
+    var m = MODES[l.group], ok = 0;
+    for (var i = 0; i < l.words.length; i++) {
+      var w = l.words[i];
+      if (typeof w !== "string" || !/^[a-z]{3,11}$/.test(w)) return "word";
+      if (w.length >= m.lens[0] && w.length <= m.lens[1] && w !== reversed(w)) ok++;
+    }
+    return ok >= m.words + 4 ? null : "too few words";
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
   var FILL = "EEEEEEEAAAAAAIIIIIOOOOOUUTTTTNNNNSSSSRRRRLLLDDCCMMHHPPBBGGFFWWYYKVJXQZ";
 
   function rand(seed) {
@@ -70,10 +97,10 @@
   }
 
   /** {theme, n, letters (string, lower case), words: [{w, r, c, d}]} */
-  function generate(mode, seed) {
+  function generate(mode, seed, only) {
     var m = MODES[mode], r = rand(seed), n = m.n;
     for (var attempt = 0; attempt < 60; attempt++) {
-      var theme = Words.THEMES[Math.floor(r() * Words.THEMES.length)];
+      var theme = only || Words.THEMES[Math.floor(r() * Words.THEMES.length)];
       var chosen = pickWords(mode, r, theme);
       if (chosen.length < m.words) continue;
       var cells = new Array(n * n).fill(""), placed = [], ok = true;
@@ -103,18 +130,25 @@
 
   function create(o) {
     o = o || {};
-    var mode = MODES[o.mode] ? o.mode : "kids", g = generate(mode, o.seed == null ? 1 : o.seed);
+    var mode = MODES[o.mode] || o.mode === "themes" ? o.mode : "kids", group = mode, level = 1, g = null;
+    var seed = o.seed == null ? 1 : o.seed;
+    if (mode === "themes") {
+      var list = usableLevels(o.levels), l;
+      level = startAt(o.startLevel, list.length); l = list[level - 1]; group = l.group;
+      try { g = generate(group, seed, { id: "book", name: l.name, words: l.words }); } catch (e) { g = null; }
+    }
+    if (!g) g = generate(group, seed);
     return {
-      v: STATE_VERSION, mode: mode, theme: g.theme, themeName: g.themeName, n: g.n, letters: g.letters,
+      v: STATE_VERSION, mode: mode, group: group, level: level, theme: g.theme, themeName: g.themeName, n: g.n, letters: g.letters,
       words: g.words.map(function (p) { return { w: p.w, r: p.r, c: p.c, d: p.d, found: false }; }),
       foundCount: 0, hints: 0, hint: null, hintT: 0, anchor: -1, drag: null, cursor: -1,
-      message: "", messageT: 0, updates: 0, won: false, over: false, score: 0, level: 1, stats: { misses: 0, cause: "" },
+      message: "", messageT: 0, updates: 0, won: false, over: false, score: 0, stats: { misses: 0, cause: "" },
     };
   }
 
   function seconds(s) { return Math.floor(s.updates / UPS); }
   function clock(sec) { return Math.floor(sec / 60) + ":" + ("0" + (sec % 60)).slice(-2); }
-  function bonusOf(s) { return Math.max(0, BONUS - MODES[s.mode].rate * seconds(s)); }
+  function bonusOf(s) { return Math.max(0, BONUS - MODES[s.group || s.mode].rate * seconds(s)); }
   function scoreOf(s) { return Math.max(0, WORD_POINTS * s.foundCount - HINT_PENALTY * s.hints + (s.won ? bonusOf(s) : 0)); }
   function say(s, t) { s.message = t; s.messageT = MESSAGE_UPDATES; }
   function cellsOf(s, w) { var out = []; for (var k = 0; k < w.w.length; k++) out.push((w.r + DIRS[w.d][0] * k) * s.n + w.c + DIRS[w.d][1] * k); return out; }
@@ -214,7 +248,7 @@
   }
 
   function status(s) {
-    return { score: scoreOf(s), level: 1, over: s.over, done: s.won, seconds: seconds(s), found: s.foundCount, total: s.words.length };
+    return { score: scoreOf(s), level: s.level || 1, over: s.over, done: s.won, seconds: seconds(s), found: s.foundCount, total: s.words.length };
   }
   function summary(s) {
     var out = ["Found " + s.foundCount + " of " + s.words.length + " words", "Time " + clock(seconds(s))];
@@ -224,7 +258,7 @@
   }
   function result(s) {
     return {
-      score: scoreOf(s), level: 1,
+      score: scoreOf(s), level: s.level || 1,
       stats: { won: s.won, cause: s.stats.cause, mode: s.mode, theme: s.themeName, found: s.foundCount, total: s.words.length, hints: s.hints, seconds: seconds(s), summary: summary(s) },
     };
   }
@@ -235,7 +269,7 @@
     return c;
   }
   function restore(data) {
-    var m = data && MODES[data.mode];
+    var m = data && (data.mode === "themes" ? MODES[data.group] : MODES[data.mode]);
     var ok = m && typeof data.letters === "string" && data.n === m.n && data.letters.length === m.n * m.n && /^[a-z]+$/.test(data.letters) &&
       Array.isArray(data.words) && data.words.length === m.words && typeof data.updates === "number" && data.updates >= 0 && isFinite(data.updates) &&
       typeof data.hints === "number" && data.hints >= 0 && data.hints % 1 === 0 && typeof data.themeName === "string" && typeof data.theme === "string";
@@ -248,6 +282,8 @@
     });
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    if (!s.group) s.group = s.mode;
+    if (!(s.level >= 1)) s.level = 1;
     s.words = s.words.map(function (w) { return { w: w.w, r: w.r, c: w.c, d: w.d, found: !!w.found }; });
     s.foundCount = s.words.filter(function (w) { return w.found; }).length;
     if (s.foundCount === s.words.length) throw new Error("That saved game can't be continued.");
@@ -258,7 +294,7 @@
   }
 
   var WordSearchLogic = {
-    UPS: UPS, MODES: MODES, MODE_IDS: MODE_IDS, DIRS: DIRS, STATE_VERSION: STATE_VERSION, WORD_POINTS: WORD_POINTS, HINT_PENALTY: HINT_PENALTY, BONUS: BONUS,
+    UPS: UPS, MODES: MODES, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem, MODE_IDS: MODE_IDS, DIRS: DIRS, STATE_VERSION: STATE_VERSION, WORD_POINTS: WORD_POINTS, HINT_PENALTY: HINT_PENALTY, BONUS: BONUS,
     rand: rand, generate: generate, occurrences: occurrences, create: create, step: step, line: line, snap: snap, submit: submit, tap: tap,
     dragStart: dragStart, dragMove: dragMove, dragEnd: dragEnd, hint: hint, press: press, seconds: seconds, clock: clock, scoreOf: scoreOf,
     bonusOf: bonusOf, cellsOf: cellsOf, foundCells: foundCells, status: status, result: result, save: save, restore: restore,

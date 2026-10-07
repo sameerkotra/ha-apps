@@ -9,7 +9,7 @@
   var Kit = root.ArcadeKit, Logic = root.WaterSortLogic;
 
   var MODES = [{ id: "little", label: "3 colours (gentle)" }, { id: "classic", label: "7 colours" }, { id: "big", label: "10 colours" },
-    { id: "levels", label: "Levels" }];
+    { id: "levels", label: "Levels" }, { id: "book", label: "Puzzle book" }];
   var LABELS = { little: "3 COLOURS", classic: "7 COLOURS", big: "10 COLOURS" };
   var HUES = [1, 5, 4, 3, 6, 7, 2], AX = 8, AY = 44, AW = 224, AH = 214, MSG_Y = 276;
 
@@ -40,9 +40,9 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; },
       save: function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; },
+      restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
@@ -113,7 +113,7 @@
       { action: "erase", label: "⟲ Restart", aria: "Start this board again" }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],
-    help: "Sort the colours: each tube one colour, full. Tap a tube, then another to pour: the top colour pours across (every layer of it that fits) if the other tube is empty or has the same colour on top. Every layer shows its number too. Fewer pours score more. Undo takes a pour back, Restart starts the board again. Keyboard: arrows move between tubes, Space picks and pours. With the Hints option on, Hint shows a good pour. 3 colours is the gentle one; Levels carry on from your next level.",
+    help: "Sort the colours: each tube one colour, full. Tap a tube, then another to pour: the top colour pours across (every layer of it that fits) if the other tube is empty or has the same colour on top. Every layer shows its number too. Fewer pours score more. Undo takes a pour back, Restart starts the board again. Keyboard: arrows move between tubes, Space picks and pours. With the Hints option on, Hint shows a good pour. 3 colours is the gentle one; Levels carry on from your next level. The Puzzle book is a list of named puzzles that also carries on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

@@ -20,9 +20,9 @@ class TestGameTable(ApiBase):
             self.assertIsNone(g[gid]["daily"], gid)
         self.assertEqual([m["id"] for m in g["sudoku"]["modes"]], ["easy", "medium", "hard", "expert"])
         self.assertEqual([m["id"] for m in g["wordguess"]["modes"]], ["classic", "easy", "strict"])
-        self.assertEqual([m["id"] for m in g["wordsearch"]["modes"]], ["little", "kids", "family", "puzzler"])
-        for gid in NEW:                              # no level lists: the puzzles are made from the seed
-            self.assertEqual(games.GAMES[gid]["level_modes"], [])
+        self.assertEqual([m["id"] for m in g["wordsearch"]["modes"]], ["little", "kids", "family", "puzzler", "themes"])
+        for gid in NEW:                              # puzzles made from the seed (Word Search's Themes are a list, SPEC §11.9)
+            self.assertEqual(games.GAMES[gid]["level_modes"], ["themes"] if gid == "wordsearch" else [])
             self.assertEqual(games.GAMES[gid]["race"]["rule"], "score")
 
     def test_honest_score_limits(self):

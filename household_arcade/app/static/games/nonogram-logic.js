@@ -23,7 +23,41 @@
     ten: { n: 10, smooth: 1, density: 0.55 },
     fifteen: { n: 15, smooth: 2, density: 0.5, maxRun: 9 },     // single-digit numbers: they fit the narrow columns
   };
-  var LABELS = { five: "5 × 5", eight: "8 × 8", ten: "10 × 10", fifteen: "15 × 15" };
+  var LABELS = { five: "5 × 5", eight: "8 × 8", ten: "10 × 10", fifteen: "15 × 15", pictures: "Picture book" };
+
+  // The picture book (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A picture is drawn
+  // with "#" on a square grid of 5-15; one picture a game, the next game starting at the next one (SPEC §14). The
+  // server (level_kinds/nonogram.py) checks the same and how much the numbers decide.
+  var LEVELS = [
+    {"name": "Heart", "picture": [".#.#.", "#####", "#####", ".###.", "..#.."]},
+    {"name": "House", "picture": ["...##...", "..####..", ".######.", "########", ".######.", ".##..##.", ".##..##.", ".######."]},
+    {"name": "Cat", "picture": ["#.....#.", "##...##.", "#######.", "#.###.#.", "#######.", ".#####..", "..###...", ".#####.#"]},
+    {"name": "Tree", "picture": ["....##....", "...####...", "..######..", ".########.", "..######..", ".########.", "##########", "....##....", "....##....", "...####..."]},
+    {"name": "Rocket", "picture": ["....##....", "...####...", "...####...", "...#..#...", "...####...", "...####...", "..######..", ".##.##.##.", ".#..##..#.", "....##...."]},
+  ];
+
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.picture)) return "not a picture";
+    var n = l.picture.length, filled = 0;
+    if (n < 5 || n > 15) return "size";
+    for (var r = 0; r < n; r++) {
+      if (typeof l.picture[r] !== "string" || l.picture[r].length !== n || /[^#.]/.test(l.picture[r])) return "rows";
+      for (var c = 0; c < n; c++) if (l.picture[r][c] === "#") filled++;
+    }
+    if (filled * 4 < n * n || filled * 5 > n * n * 4) return "fill";
+    return null;
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  function hashSeed(text) {
+    var h = 2166136261 | 0;
+    for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) || 1;
+  }
 
   function rand(s) { // mulberry32
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -171,7 +205,12 @@
       for (i = 0; i < n * n; i++) fb.push((Math.floor(i / n) + i % n) % 3 ? 1 : 0);
       best = { sol: fb, clues: cluesOf(fb, n), unknown: n * n };
     }
-    var given = [];
+    return { sol: best.sol, given: givens(best.sol, best.clues, n, st), rows: best.clues.rows, cols: best.clues.cols, n: n };
+  }
+  /** The squares to give at the start so that the line solver finishes (none for most puzzles). */
+  function givens(sol, clues, n, st) {
+    var given = [], i;
+    var best = { sol: sol, clues: clues };
     for (var guard = 0; guard < n * n; guard++) {
       var start = [];
       for (i = 0; i < n * n; i++) start.push(UNKNOWN);
@@ -183,16 +222,24 @@
       if (!open.length) for (i = 0; i < n * n; i++) if (start[i] === UNKNOWN) open.push(i);
       given.push(open[Math.floor(rand(st) * open.length)]);
     }
-    return { sol: best.sol, given: given, rows: best.clues.rows, cols: best.clues.cols, n: n };
+    return given;
+  }
+  /** A puzzle from a picture of the book: { sol, given, rows, cols, n, name }. */
+  function fromPicture(l) {
+    var n = l.picture.length, sol = [], r, c;
+    for (r = 0; r < n; r++) for (c = 0; c < n; c++) sol.push(l.picture[r][c] === "#" ? 1 : 0);
+    var cl = cluesOf(sol, n), st = { rng: hashSeed("nonogram-book-" + l.picture.join("/")) };
+    return { sol: sol, given: givens(sol, cl, n, st), rows: cl.rows, cols: cl.cols, n: n, name: l.name };
   }
 
   // ---------- the game ----------
   function create(o) {
     o = o || {};
-    var mode = MODES[o.mode] ? o.mode : "ten";
-    var gen = generate(mode, o.seed);
+    var mode = MODES[o.mode] || o.mode === "pictures" ? o.mode : "ten";
+    var list = mode === "pictures" ? usableLevels(o.levels) : null, level = list ? startAt(o.startLevel, list.length) : 1;
+    var gen = list ? fromPicture(list[level - 1]) : generate(mode, o.seed);
     var s = {
-      mode: mode, n: gen.n, sol: gen.sol.join(""), rows: gen.rows, cols: gen.cols, cells: [], fixed: [], wrongAt: [],
+      mode: mode, level: level, name: gen.name || "", n: gen.n, sol: gen.sol.join(""), rows: gen.rows, cols: gen.cols, cells: [], fixed: [], wrongAt: [],
       sel: Math.floor(gen.n / 2) * gen.n + Math.floor(gen.n / 2), crossMode: false, mistakesNow: o.mistakes !== "end",
       hintsAllowed: HINTS, hintsUsed: 0, mistakes: 0, hint: -1, history: [], stroke: 0, checking: false,
       message: "", messageT: 0, updates: 0, won: false, over: false, score: 0, givens: gen.given.length,
@@ -359,10 +406,11 @@
     return [];
   }
 
-  function status(s) { return { score: scoreOf(s), level: 1, over: s.over, done: s.won, seconds: effective(s) }; }
+  function status(s) { return { score: scoreOf(s), level: s.level || 1, over: s.over, done: s.won, seconds: effective(s) }; }
   function save(s) { var d = JSON.parse(JSON.stringify(s)); d.drag = null; return d; }
   function restore(data) {
-    var ok = data && typeof data === "object" && MODES[data.mode] && data.n === MODES[data.mode].n && typeof data.sol === "string" &&
+    var ok = data && typeof data === "object" && (data.mode === "pictures" ? data.n >= 5 && data.n <= 15 : MODES[data.mode] && data.n === MODES[data.mode].n) &&
+      typeof data.sol === "string" &&
       data.sol.length === data.n * data.n && /^[01]+$/.test(data.sol) && Array.isArray(data.cells) && data.cells.length === data.n * data.n &&
       data.cells.every(function (v) { return v === 0 || v === 1 || v === 2; }) && Array.isArray(data.fixed) && data.fixed.length === data.n * data.n &&
       Array.isArray(data.history) && typeof data.updates === "number" && typeof data.hintsUsed === "number" && typeof data.mistakes === "number" &&
@@ -387,15 +435,16 @@
   }
   function result(s) {
     return {
-      score: scoreOf(s), level: 1,
-      stats: { won: s.won, cause: s.stats.cause, mode: s.mode, size: s.n, hints: s.hintsUsed, mistakes: s.mistakes, givens: s.givens,
+      score: scoreOf(s), level: s.level || 1,
+      stats: { won: s.won, name: s.mode === "pictures" ? s.name : undefined, cause: s.stats.cause, mode: s.mode, size: s.n, hints: s.hintsUsed, mistakes: s.mistakes, givens: s.givens,
         effective: effective(s), filled: s.stats.filled, crossed: s.stats.crossed, summary: s.won ? summary(s) : undefined },
     };
   }
 
   var NonogramLogic = {
     UPS: UPS, TOP: TOP, MIN_SCORE: MIN_SCORE, HINT_PENALTY: HINT_PENALTY, MISTAKE_PENALTY: MISTAKE_PENALTY, HINTS: HINTS,
-    STATE_VERSION: STATE_VERSION, UNKNOWN: UNKNOWN, FILL: FILL, CROSS: CROSS, MODES: MODES, LABELS: LABELS,
+    STATE_VERSION: STATE_VERSION, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem, fromPicture: fromPicture,
+    UNKNOWN: UNKNOWN, FILL: FILL, CROSS: CROSS, MODES: MODES, LABELS: LABELS,
     runs: runs, solveLine: solveLine, solveGrid: solveGrid, cluesOf: cluesOf, generate: generate, lineCells: lineCells,
     create: create, step: step, press: press, tap: tap, drag: drag, endDrag: endDrag, setCell: setCell, undo: undo, hint: hint,
     lineDone: lineDone, wrongCells: wrongCells, counts: counts, hintsLeft: hintsLeft, seconds: seconds, effective: effective,

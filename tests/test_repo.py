@@ -19,7 +19,7 @@ FINANCE = "finance"
 FINANCE_VERSION = "1.2.3"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.10.0"
+ARCADE_VERSION = "1.11.0"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
 RECEIPTS_VERSION = "1.2.2"

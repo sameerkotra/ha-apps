@@ -9,7 +9,7 @@
   var Kit = root.ArcadeKit, Logic = root.ArrowsLogic;
 
   var MODES = [{ id: "little", label: "Little 5 × 5 (gentle)" }, { id: "classic", label: "8 × 8" }, { id: "big", label: "12 × 12" },
-    { id: "twisty", label: "Twisty 10 × 10" }, { id: "levels", label: "Levels" }];
+    { id: "twisty", label: "Twisty 10 × 10" }, { id: "levels", label: "Levels" }, { id: "book", label: "Picture boards" }];
   var LABELS = { little: "LITTLE", classic: "8 × 8", big: "12 × 12", twisty: "TWISTY" };
   var BX = 10, BY = 42, BS = 220, MSG_Y = 276, INKS = [1, 5, 4, 6, 2, 7];
 
@@ -23,9 +23,9 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; },
       save: function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; },
+      restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
@@ -69,6 +69,7 @@
       g.hud(s.levels ? "LEVEL " + s.level : LABELS[s.mode], Logic.clock(Logic.seconds(s)));
       g.board(BX, BY, BS, BS);
       if (cs >= 14 && !lcd) for (i = 0; i < n * n; i++) {
+        if (b.mask && !b.mask[i]) continue;              // a picture board: dots only on the picture
         var c = centre(n, cs, i);
         g.circle(c[0], c[1], 1, 8, { solid: true, a: 0.7 });
       }
@@ -93,7 +94,7 @@
       for (i = 0; i < s.maxHearts; i++) hearts += i < s.hearts ? "♥" : "·";
       g.text((s.maxHearts ? hearts + "   " : "") + "ARROWS " + Logic.left(s), 120, MSG_Y, { size: 12, align: "center" });
       var tip = s.hint >= 0 ? "Tap the ringed arrow" : s.updates - s.noHintAt < 180 ? "Hints are off (start screen)" :
-        s.released === 0 ? "Tap an arrow with a clear way out" : s.levels ? "Score so far " + s.runScore : "A bump costs " + (s.maxHearts ? "a heart" : "nothing");
+        Logic.left(s) === b.arrows.length ? (s.book ? "“" + s.list[s.level - 1].name + "”" : "Tap an arrow with a clear way out") : s.levels ? "Score so far " + s.runScore : "A bump costs " + (s.maxHearts ? "a heart" : "nothing");
       g.text(tip, 120, MSG_Y + 16, { size: 9, align: "center", a: 0.8 });
       if (s.phase === "clear" || s.won || (s.over && s.cause === "hearts")) {
         var dim = g.kind === "pixel" || g.kind === "neon";
@@ -116,7 +117,7 @@
     buttons: [{ action: "alt", label: "💡 Hint", aria: "Hint: show an arrow that can leave", wide: true }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],
-    help: "Clear the board. Tap an arrow and it flies off the way it points — if nothing is in its way. If something is, it bumps and you lose a heart (three hearts; Little has none). Releasing arrows only ever makes room, so look for the ones with a clear way out. Keyboard: arrows move the ring, Space releases. With the Hints option on, Hint (or C) rings an arrow that can leave. Levels: numbered boards that get harder; the next game starts at your next level.",
+    help: "Clear the board. Tap an arrow and it flies off the way it points — if nothing is in its way. If something is, it bumps and you lose a heart (three hearts; Little has none). Releasing arrows only ever makes room, so look for the ones with a clear way out. Keyboard: arrows move the ring, Space releases. With the Hints option on, Hint (or C) rings an arrow that can leave. Levels: numbered boards that get harder; Picture boards: arrows filling a picture (an AI model can add more). Both carry on from your next level.",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

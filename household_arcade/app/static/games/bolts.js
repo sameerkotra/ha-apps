@@ -9,7 +9,7 @@
   var Kit = root.ArcadeKit, Logic = root.BoltsLogic;
 
   var MODES = [{ id: "little", label: "3 colours (gentle)" }, { id: "classic", label: "6 colours" }, { id: "hidden", label: "6 colours, hidden" },
-    { id: "levels", label: "Levels" }];
+    { id: "levels", label: "Levels" }, { id: "book", label: "Puzzle book" }];
   var LABELS = { little: "3 COLOURS", classic: "6 COLOURS", hidden: "HIDDEN" };
   var HUES = [1, 5, 4, 3, 6, 7, 2], AX = 8, AY = 44, AW = 224, MSG_Y = 276;
 
@@ -39,9 +39,9 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; },
       save: function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; },
+      restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
@@ -115,7 +115,7 @@
       { action: "erase", label: "⟲ Restart", aria: "Start this board again" }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],
-    help: "Fill each bolt with nuts of one colour. Tap a bolt, then another: its top nut moves across if that bolt is empty or has the same colour on top and room. One nut at a time. In Hidden (and later Levels) the nuts under the top show “?” until they reach the top. Every nut shows its number too. Fewer moves score more. Undo takes a move back, Restart starts the board again. Keyboard: arrows move between bolts, Space picks and moves. With the Hints option on, Hint shows a good move. 3 colours is the gentle one; Levels carry on from your next level.",
+    help: "Fill each bolt with nuts of one colour. Tap a bolt, then another: its top nut moves across if that bolt is empty or has the same colour on top and room. One nut at a time. In Hidden (and later Levels) the nuts under the top show “?” until they reach the top. Every nut shows its number too. Fewer moves score more. Undo takes a move back, Restart starts the board again. Keyboard: arrows move between bolts, Space picks and moves. With the Hints option on, Hint shows a good move. 3 colours is the gentle one; Levels carry on from your next level. The Puzzle book is a list of named puzzles that also carries on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

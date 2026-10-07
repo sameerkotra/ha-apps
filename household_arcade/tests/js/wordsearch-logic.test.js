@@ -190,7 +190,7 @@ test("registry contract", () => {
   const sb = makeSandbox({ extra: ["wordsearch-words.js", "wordsearch-logic.js", "wordsearch.js"] });
   const def = sb.win.ArcadeGames.get("wordsearch");
   assert.equal(def.controls, "touch");
-  assert.deepEqual(Array.from(def.modes, (m) => m.id), ["little", "kids", "family", "puzzler"]);
+  assert.deepEqual(Array.from(def.modes, (m) => m.id), ["little", "kids", "family", "puzzler", "themes"]);
   assert.deepEqual(Array.from(def.buttons, (b) => b.action), ["hint"]);
 });
 

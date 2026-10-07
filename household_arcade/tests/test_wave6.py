@@ -20,8 +20,8 @@ GAMES_DIR = os.path.join(HERE, "app", "static", "games")
 NEW = {
     "slide": ("Slide Puzzle", ["three", "four", "five", "picture", "picture4"], "four"),
     "lights": ("Lights Out", ["little", "classic", "big", "climb"], "classic"),
-    "nonogram": ("Picture Logic", ["five", "eight", "ten", "fifteen"], "ten"),
-    "tiles": ("Tile Match", ["little", "classic", "big"], "classic"),
+    "nonogram": ("Picture Logic", ["five", "eight", "ten", "fifteen", "pictures"], "ten"),
+    "tiles": ("Tile Match", ["little", "classic", "big", "layouts"], "classic"),
     "codebreak": ("Code Breaker", ["little", "classic", "norepeat", "master"], "classic"),
     "typerain": ("Type Rain", ["letters", "easy", "classic", "stages"], "classic"),
 }
@@ -68,9 +68,10 @@ class TestGameTable(ApiBase):
                 self.assertTrue(any("gentle" in m["label"].lower() or "little" in m["label"].lower() for m in g["modes"]),
                                 "something gentle for small children")
                 if gid in PUZZLES:
-                    self.assertEqual(g["level_modes"], [])
+                    books = {"nonogram": ["pictures"], "tiles": ["layouts"]}     # their lists (SPEC §11.9)
+                    self.assertEqual(g["level_modes"], books.get(gid, []))
                     self.assertTrue(g["unfinished_zero"])
-                    self.assertNotIn(gid, level_kinds.KINDS)
+                    self.assertEqual(gid in level_kinds.KINDS, gid in books)
                 else:
                     self.assertEqual(g["level_modes"], ["stages"])
                     self.assertTrue(g["levels_end"])

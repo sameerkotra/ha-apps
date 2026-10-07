@@ -18,13 +18,12 @@ GAMES_DIR = os.path.join(HERE, "app", "static", "games")
 
 class TestLevelKinds(unittest.TestCase):
     def test_every_game_has_a_level_list(self):
-        # Sudoku, Word Guess and Word Search (and wave 6's Slide Puzzle, Lights Out, Picture Logic, Tile Match and Code
-        # Breaker) make their puzzles from the seed, so they have no level list; wave 7's board games have no levels
-        # at all (the computer's level is the mode), nor have wave 8's (Ludo, Snakes and Ladders, Carrom, Chess)
-        generated = {"sudoku", "wordguess", "wordsearch", "slide", "lights", "nonogram", "tiles", "codebreak",
-                     "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess",
-                     # waves 9 and 10 make every board from the seed (their Levels are numbered boards, SPEC §14)
-                     "arrows", "parking", "watersort", "bolts", "connect", "untangle"}
+        # Sudoku and Word Guess (and wave 6's Slide Puzzle, Lights Out and Code Breaker) make their puzzles from the seed,
+        # so they have no level list; wave 7's board games have no levels at all (the computer's level is the mode), nor
+        # have wave 8's (Ludo, Snakes and Ladders, Carrom, Chess). Word Search, Picture Logic, Tile Match and waves 9-10
+        # have a list beside their seeded modes (Themes, Picture book, Layouts, Picture boards, Puzzle book).
+        generated = {"sudoku", "wordguess", "slide", "lights", "codebreak",
+                     "fourrow", "tictactoe", "checkers", "reversi", "dots", "seabattle", "ludo", "snakes", "carrom", "chess"}
         self.assertEqual(set(levels.SETS), set(games.GAME_IDS) - generated)
         for gid in generated:
             self.assertEqual(games.GAMES[gid]["level_modes"], [])

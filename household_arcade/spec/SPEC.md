@@ -643,9 +643,23 @@ again (`usableLevels`).
 | Lander | Levels | `levels` | 13 ground heights, pads ×1–×5 (flat), start, drift, gravity, wind, fuel (enough for a full stop) |
 | City Defense | Waves | `waves` | missiles, speed, splitting missiles, fliers, ammo a base (enough for what comes) |
 | Type Rain | Stages | `stages` | words (5–40), speed, gap between words (≥ 40 updates), shortest and longest word (1 and 1: single letters; else 3–10), slow enough to type the longest |
+| Word Search | Themes | `themes` | a theme name, an age group (little, kids, family, puzzler: the grid, words hidden and their lengths), 9–40 words a–z (at least 4 more of the group's lengths than the grid hides; no repeats, nothing unsuitable) |
+| Picture Logic | Picture book | `pictures` | a square picture of 5–15 (`#`), 25–80 % filled; runs ≤ 9 above 10 × 10; a line solver must decide all but a fifth of it (the game gives the rest at the start) |
+| Tile Match | Layouts | `layouts` | 1–5 layers of `#` rows, each shifted by half tiles; 16–144 tiles, even; nothing floating; at most 26 × 20 half tiles; clearable two free tiles at a time |
+| Arrow Release | Picture boards | `book` | a shape of `#` (5–12 a side, ≥ 12 squares) the board maker fills with arrows, the longest arrow, how full, bent arrows or not |
+| Car Park | Puzzle book | `book` | 6 rows of 6 letters (`A` the red car across the exit row; each other letter one car or lorry, 2–3 in a line); a search from the start finds the fewest moves, 2–50 |
+| Colour Sort | Puzzle book | `book` | 3–15 tubes as strings of colour letters, bottom up; 2–12 colours, each exactly 4 times; 1–3 spare tubes; a search must sort it |
+| Bolt Sort | Puzzle book | `book` | the same with bolts (2–10 colours), one nut a move, and whether the nuts under the top are hidden |
+| Dot Connect | Puzzle book | `book` | the answer: a square of 5–12 letters, each letter one line of ≥ 3 squares that never touches itself; its ends are the dots |
+| Untangle | Puzzle book | `book` | 6–30 points on a 9 × 9 grid and the lines between them, drawn untangled (no crossing, no line through a point, every point ≥ 2 lines, all joined) |
 
 In every list mode, finishing a level starts the next one and finishing the
-last ends the game won (`levels_end`). Points never grow with the level
+last ends the game won (`levels_end`). Word Search, Picture Logic and Tile Match play one entry a game (the level is
+its number); the six puzzles of waves 9–10 play their list as a run, like their numbered *Levels*. Every list mode
+carries on from the next level (§14; `continue_levels` with no fixed count — the list's length decides). The puzzles'
+checks solve what they can: Car Park, Colour Sort and Bolt Sort search for an answer, Picture Logic runs a line
+solver, Tile Match clears the heap two at a time, Dot Connect and Untangle are drawn as their answer; Arrow Release's
+board maker always makes a board that can be cleared. Points never grow with the level
 number beyond a cap, so long lists keep the per-second limits true; the
 highest scores a 500-level list could reach are within each game's most.
 
@@ -1186,9 +1200,9 @@ cleared — on any phone or computer, since it is kept on the server.
 
   | Carries on | Game · mode |
   |---|---|
-  | Yes — a level is a puzzle or a goal | Arrow Release · *Levels* (wave 9), Lights Out · *Climb*, Mines · *Boards*, Merge · *Goals*, Bubble Pop · *Puzzles*, Gem Swap · *Levels*, Tower Stack · *Towers*, Lander · *Levels*, Road Hop · *Levels*, Snake · *Maze*, Flap · *Course*, Runner · *Courses*, Lane Racer · *Stages*, Colour Memory · *Challenge*, Memory Cards · *Challenge*, Number Dash · *Challenge*, Tap the Mole · *Gardens*, Type Rain · *Stages*, and *Levels* of Car Park, Colour Sort, Bolt Sort, Dot Connect and Untangle (wave 10) |
+  | Yes — a level is a puzzle or a goal | Arrow Release · *Levels* (wave 9), Lights Out · *Climb*, Mines · *Boards*, Merge · *Goals*, Bubble Pop · *Puzzles*, Gem Swap · *Levels*, Tower Stack · *Towers*, Lander · *Levels*, Road Hop · *Levels*, Snake · *Maze*, Flap · *Course*, Runner · *Courses*, Lane Racer · *Stages*, Colour Memory · *Challenge*, Memory Cards · *Challenge*, Number Dash · *Challenge*, Tap the Mole · *Gardens*, Type Rain · *Stages*, and *Levels* of Car Park, Colour Sort, Bolt Sort, Dot Connect and Untangle (wave 10); every list an AI model can add to for the puzzles (§11.9): Arrow Release · *Picture boards*, the *Puzzle book* of the five wave 10 games, Picture Logic · *Picture book*, Word Search · *Themes*, Tile Match · *Layouts* |
   | No — a run is a score chase, or the levels are opponents | Falling Blocks (its challenges are a score chase), Brick Breaker, Paddle Duel, Tank Battle, Sky Defenders, Rocks, City Defense, Snake Duel |
-  | No levels | Sudoku, Word Guess, Word Search, Slide Puzzle, Picture Logic, Tile Match, Code Breaker, Lights Out's other modes, the board and dice games (waves 7–8) |
+  | No levels | Sudoku, Word Guess, Slide Puzzle, Code Breaker, the seeded modes of Word Search, Picture Logic and Tile Match, Lights Out's other modes, the board and dice games (waves 7–8) |
 
   Moving a game between the first two rows is one flag; the table above is the starting choice.
 - **What counts as cleared**: finishing a level (the game moved on to the next, or won the last). A run that ends

@@ -10,7 +10,7 @@
   var Kit = root.ArcadeKit, Logic = root.NonogramLogic;
 
   var MODES = [{ id: "five", label: "5 × 5 (gentle)" }, { id: "eight", label: "8 × 8" }, { id: "ten", label: "10 × 10" },
-    { id: "fifteen", label: "15 × 15" }];
+    { id: "fifteen", label: "15 × 15" }, { id: "pictures", label: "Picture book" }];
   var AX = 4, AY = 38, AW = 232, AH = 226, MSG_Y = 270;
   var FILL = Logic.FILL, CROSS = Logic.CROSS;
 
@@ -47,13 +47,13 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, mistakes: o.mistakes }); pending = []; lay = layout(s, "modern"); },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, mistakes: o.mistakes, levels: opts.levels, startLevel: opts.startLevel }); pending = []; lay = layout(s, "modern"); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data); pending = []; lay = layout(s, "modern"); },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.scoreOf(s); },
-      level: function () { return 1; },
+      level: function () { return s.level || 1; },
       isOver: function () { return s.over; },
       result: function () { return Logic.result(s); },
       status: function () { return Logic.status(s); },
@@ -79,7 +79,7 @@
       lay = layout(s, g.kind);
       var cs = lay.cs, gx = lay.gx, gy = lay.gy, W = cs * n;
       var hl = Logic.hintsLeft(s);
-      g.hud((Logic.LABELS[s.mode] || "").toUpperCase(), Logic.clock(Logic.effective(s)));
+      g.hud(s.mode === "pictures" ? "PICTURE " + s.level : (Logic.LABELS[s.mode] || "").toUpperCase(), Logic.clock(Logic.effective(s)));
       g.text("HINTS " + hl, 120, 24, { size: 9, align: "center", a: 0.85 });
 
       // the cursor's row and column, softly
@@ -164,7 +164,7 @@
         var dim = g.kind === "pixel" || g.kind === "neon";
         g.rect(40, 118, 160, 44, lcd ? 0 : dim ? 8 : 9, { r: 6, solid: true, stroke: !lcd, a: 0.95 });
         g.text("SOLVED!", 120, 137, { size: 16, align: "center", ci: lcd ? 9 : 0 });
-        g.text(Logic.clock(Logic.effective(s)), 120, 154, { size: 10, align: "center", ci: lcd ? 9 : 0 });
+        g.text((s.mode === "pictures" && s.name ? s.name + " · " : "") + Logic.clock(Logic.effective(s)), 120, 154, { size: 10, align: "center", ci: lcd ? 9 : 0 });
       }
     }
 
@@ -192,7 +192,7 @@
     options: [{ id: "mistakes", label: "Mistakes", default: "now",
       choices: [{ id: "now", label: "Shown at once (+10 s each)" }, { id: "end", label: "Shown when the grid is full" }] }],
     typed: true,
-    help: "Fill squares to find the hidden picture. The numbers beside each row and above each column are its runs of filled squares, in order (3 1: three filled, a gap, then one). Tap to fill, tap again to empty, drag to fill a line; ■ / ✕ switches the tap to crosses — your notes for squares that stay empty. Numbers dim when their line is right. Hint puts one square right (+30 s, 3 a puzzle). Keyboard: arrows, Space fills, X crosses, M switches, H hint, U undo. 5 × 5 is the gentle one.",
+    help: "Fill squares to find the hidden picture. The numbers beside each row and above each column are its runs of filled squares, in order (3 1: three filled, a gap, then one). Tap to fill, tap again to empty, drag to fill a line; ■ / ✕ switches the tap to crosses — your notes for squares that stay empty. Numbers dim when their line is right. Hint puts one square right (+30 s, 3 a puzzle). Keyboard: arrows, Space fills, X crosses, M switches, H hint, U undo. 5 × 5 is the gentle one. The Picture book has drawn pictures, one a game, carrying on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

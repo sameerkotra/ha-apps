@@ -38,6 +38,41 @@
   // kinds: Little 5 shapes; the others suits × numbers (suit = floor(kind / 9), number = kind % 9 + 1)
   var KINDS = { little: 5, classic: 18, big: 26 };
 
+  // Layouts (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A layout is layers of rows
+  // as above, bottom first; one layout a game, the next game starting at the next one (SPEC §14). The server
+  // (level_kinds/tiles.py) checks the same and that the heap can be cleared two tiles at a time.
+  var LEVELS = [
+    {"name": "Tea tray", "layers": [{"dx": 0, "dy": 0, "rows": ["######", "######", "######"]}, {"dx": 2, "dy": 2, "rows": ["####"]}]},
+    {"name": "Turtle", "layers": [{"dx": 0, "dy": 0, "rows": ["..##..", ".####.", "######", "######", ".####.", "#....#"]}, {"dx": 3, "dy": 3, "rows": ["##", "##"]}]},
+    {"name": "Castle", "layers": [{"dx": 0, "dy": 0, "rows": ["#.#.#.#.", "########", "########", "########", "########", "###..###"]}, {"dx": 2, "dy": 2, "rows": ["######", "######", "######"]}, {"dx": 4, "dy": 4, "rows": ["####"]}]},
+    {"name": "Butterfly", "layers": [{"dx": 0, "dy": 0, "rows": ["###..###", "########", "########", ".######.", "###..###", "##....##"]}, {"dx": 1, "dy": 2, "rows": ["##.##.#", "#######"]}, {"dx": 6, "dy": 4, "rows": ["##"]}]},
+    {"name": "Fortress", "layers": [{"dx": 0, "dy": 0, "rows": ["##########", "##########", "##########", "##########", "##########", "##########"]}, {"dx": 2, "dy": 2, "rows": ["########", "########", "########", "########"]}, {"dx": 4, "dy": 4, "rows": ["######", "######"]}, {"dx": 6, "dy": 5, "rows": ["####"]}]},
+  ];
+
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.layers)) return "not a layout";
+    if (l.layers.length < 1 || l.layers.length > 5) return "layers";
+    for (var z = 0; z < l.layers.length; z++) {
+      var ly = l.layers[z];
+      if (!ly || !(ly.dx >= 0 && ly.dx <= 12) || !(ly.dy >= 0 && ly.dy <= 12) || !Array.isArray(ly.rows) || !ly.rows.length) return "layer";
+      for (var r = 0; r < ly.rows.length; r++) if (typeof ly.rows[r] !== "string" || ly.rows[r].length !== ly.rows[0].length || /[^#.]/.test(ly.rows[r])) return "rows";
+    }
+    var n = places(l).length;
+    if (n < 16 || n > 144 || n % 2) return "tiles";
+    var alive = [];
+    for (var i = 0; i < n; i++) alive.push(true);
+    return dealInOrder(places(l), alive, new Array(n / 2).fill(0)) ? null : "can't be cleared";
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  /** A layout key ("classic"), or anything with `layers` (a layout, or a game of the Layouts mode). */
+  function layersOf(x) { return typeof x === "string" ? LAYOUTS[x] : x && x.layers ? x.layers : LAYOUTS[x && x.mode]; }
+  function kindsFor(n) { return Math.max(5, Math.min(26, Math.ceil(n / 4))); }
+
   function rand(s) { // mulberry32
     s.rng = (s.rng + 0x6D2B79F5) | 0;
     var t = Math.imul(s.rng ^ (s.rng >>> 15), 1 | s.rng);
@@ -47,7 +82,7 @@
 
   /** The heap's places for a layout: [{ x, y, z }] in drawing order (lower layers first, then top to bottom, left to right). */
   function places(mode) {
-    var out = [], L = LAYOUTS[mode];
+    var out = [], L = layersOf(mode);
     for (var z = 0; z < L.length; z++) {
       var ly = L[z];
       for (var r = 0; r < ly.rows.length; r++) {
@@ -59,7 +94,7 @@
   function size(mode) {
     var p = places(mode), w = 0, h = 0;
     p.forEach(function (q) { w = Math.max(w, q.x + 2); h = Math.max(h, q.y + 2); });
-    return { w: w, h: h, layers: LAYOUTS[mode].length };
+    return { w: w, h: h, layers: layersOf(mode).length };
   }
 
   /** Is place i free, among the places still there (`alive[j]` true)? */
@@ -117,6 +152,19 @@
     for (tries = 0; tries < 120 && !d; tries++) d = dealBackwards(pl, alive, shuffled(pairs, s), s, false);
     return d;
   }
+  /** The last resort (the server checked it works): take the first two free places each time, no randomness. */
+  function dealInOrder(pl, alive0, pairs) {
+    var alive = alive0.slice(), kinds = [], order = [], i;
+    for (i = 0; i < pl.length; i++) kinds.push(-1);
+    for (var p = 0; p < pairs.length; p++) {
+      var free = freeList(pl, alive);
+      if (free.length < 2) return null;
+      kinds[free[0]] = pairs[p]; kinds[free[1]] = pairs[p];
+      alive[free[0]] = false; alive[free[1]] = false;
+      order.push([free[0], free[1]]);
+    }
+    return { kinds: kinds, order: order };
+  }
   function shuffled(list, st) {
     var a = list.slice();
     for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(rand(st) * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
@@ -125,25 +173,30 @@
 
   function create(o) {
     o = o || {};
-    var mode = LAYOUTS[o.mode] ? o.mode : "classic";
-    var pl = places(mode), N = pl.length, s = {
-      mode: mode, rng: (o.seed >>> 0) || 1, kinds: [], alive: [], sel: -1, cursor: 0, hint: null, hintT: 0, history: [],
+    var mode = LAYOUTS[o.mode] || o.mode === "layouts" ? o.mode : "classic", layout = null, level = 1;
+    if (mode === "layouts") { var list = usableLevels(o.levels); level = startAt(o.startLevel, list.length); layout = list[level - 1]; }
+    var pl = places(layout || mode), N = pl.length, s = {
+      mode: mode, level: level, name: layout ? layout.name : "", layers: layout ? layout.layers : null, nk: layout ? kindsFor(N) : KINDS[mode],
+      rng: (o.seed >>> 0) || 1, kinds: [], alive: [], sel: -1, cursor: 0, hint: null, hintT: 0, history: [],
       hintsUsed: 0, shuffles: 0, pairs: 0, updates: 0, won: false, over: false, score: 0, message: "", messageT: 0,
       stuck: false, stats: { misses: 0, undone: 0, cause: null },
     };
-    var pairs = [], nk = KINDS[mode], k;
+    var pairs = [], nk = s.nk, k;
     for (k = 0; k < N / 2; k++) pairs.push(k % nk);
     var alive = [];
     for (k = 0; k < N; k++) alive.push(true);
-    s.kinds = deal(pl, alive, pairs, s).kinds;
+    s.kinds = (deal(pl, alive, pairs, s) || dealInOrder(pl, alive, pairs)).kinds;
     s.alive = alive;
-    s.cursor = topAt(s, pl, Math.floor(size(mode).w / 2), Math.floor(size(mode).h / 2));
+    s.cursor = topAt(s, pl, Math.floor(size(s).w / 2), Math.floor(size(s).h / 2));
     s.stuck = !anyPair(s);
     return s;
   }
 
   var PLACES = {};
-  function pl(s) { return PLACES[s.mode] || (PLACES[s.mode] = places(s.mode)); }
+  function pl(s) {
+    var key = s.layers ? "layouts:" + JSON.stringify(s.layers) : s.mode;
+    return PLACES[key] || (PLACES[key] = places(s));
+  }
   function free(s, i) { return s.alive[i] && isFree(pl(s), s.alive, i); }
   /** The free pairs (as [i, j]) right now. */
   function pairsFree(s) {
@@ -279,24 +332,26 @@
     return [];
   }
 
-  function status(s) { return { score: scoreOf(s), level: 1, over: s.over, done: s.won, seconds: effective(s) }; }
+  function status(s) { return { score: scoreOf(s), level: s.level || 1, over: s.over, done: s.won, seconds: effective(s) }; }
   function save(s) { return JSON.parse(JSON.stringify(s)); }
   function restore(data) {
-    var ok = data && typeof data === "object" && LAYOUTS[data.mode] && Array.isArray(data.kinds) && Array.isArray(data.alive) &&
-      data.kinds.length === places(data.mode).length && data.alive.length === data.kinds.length && Array.isArray(data.history) &&
+    var ok = data && typeof data === "object" && (data.mode === "layouts" ? levelProblem({ name: "", layers: data.layers }) === null : !!LAYOUTS[data.mode]) &&
+      Array.isArray(data.kinds) && Array.isArray(data.alive) && data.kinds.length === places(data).length && data.alive.length === data.kinds.length && Array.isArray(data.history) &&
       typeof data.updates === "number" && typeof data.rng === "number" && typeof data.hintsUsed === "number" &&
       typeof data.shuffles === "number" && data.stats && typeof data.stats === "object";
     if (ok) {
       var counts = {};
       for (var i = 0; i < data.kinds.length; i++) {
         var k = data.kinds[i];
-        if (k !== Math.floor(k) || k < 0 || k >= KINDS[data.mode]) { ok = false; break; }
+        if (k !== Math.floor(k) || k < 0 || k >= (data.mode === "layouts" ? data.nk : KINDS[data.mode])) { ok = false; break; }
         if (data.alive[i]) counts[k] = (counts[k] || 0) + 1;
       }
       for (var key in counts) if (counts[key] % 2) ok = false;
     }
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    if (!(s.level >= 1)) s.level = 1;
+    if (s.mode !== "layouts") { s.layers = null; s.nk = KINDS[s.mode]; }
     if (!(s.sel >= 0 && s.alive[s.sel])) s.sel = -1;
     if (!(s.cursor >= 0 && s.cursor < s.alive.length)) s.cursor = 0;
     s.stuck = !anyPair(s);
@@ -313,15 +368,16 @@
   }
   function result(s) {
     return {
-      score: scoreOf(s), level: 1,
-      stats: { won: s.won, cause: s.stats.cause, mode: s.mode, pairs: s.pairs, left: left(s), hints: s.hintsUsed, shuffles: s.shuffles,
+      score: scoreOf(s), level: s.level || 1,
+      stats: { won: s.won, name: s.mode === "layouts" ? s.name : undefined, cause: s.stats.cause, mode: s.mode, pairs: s.pairs, left: left(s), hints: s.hintsUsed, shuffles: s.shuffles,
         undone: s.stats.undone, effective: effective(s), summary: s.won ? summary(s) : undefined },
     };
   }
 
   var TilesLogic = {
     UPS: UPS, TOP: TOP, MIN_SCORE: MIN_SCORE, HINT_PENALTY: HINT_PENALTY, SHUFFLE_PENALTY: SHUFFLE_PENALTY, HINT_T: HINT_T,
-    STATE_VERSION: STATE_VERSION, LAYOUTS: LAYOUTS, KINDS: KINDS,
+    STATE_VERSION: STATE_VERSION, LAYOUTS: LAYOUTS, KINDS: KINDS, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem,
+    dealInOrder: dealInOrder, kindsFor: kindsFor,
     places: places, size: size, isFree: isFree, freeList: freeList, dealBackwards: dealBackwards, deal: deal, stacked: stacked,
     create: create, step: step, press: press, pick: pick, undo: undo, hint: hint, shuffle: shuffle, moveCursor: moveCursor,
     free: free, pairsFree: pairsFree, left: left, topAt: topAt, seconds: seconds, effective: effective, scoreOf: scoreOf,

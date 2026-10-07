@@ -14,8 +14,9 @@
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
   var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 5, MOVE_COST = 10, HINT_COST = 200;
-  var CAP = 4, EMPTY = 2, LEVELS = 200, CLEAR_T = 80, MOVE_T = 14, BUDGET = 250000, HINT_BUDGET = 80000, STATE_VERSION = 1;
+  var CAP = 4, EMPTY = 2, LEVEL_COUNT = 200, CLEAR_T = 80, MOVE_T = 14, BUDGET = 250000, HINT_BUDGET = 80000, STATE_VERSION = 1;
   var MODES = { little: { k: 3, hidden: false }, classic: { k: 6, hidden: false }, hidden: { k: 6, hidden: true }, levels: { levels: true } };
+  MODES.book = { book: true };
 
   function rand(s) {
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -30,6 +31,46 @@
     return (h >>> 0) || 1;
   }
   function levelSpec(n) { return { k: Math.min(10, 3 + Math.floor((n - 1) / 15)), hidden: n >= 40 }; }
+
+  // The puzzle book (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. Each bolt is a
+  // string of colour letters from the bottom up ("" empty); every colour exactly CAP times. The server
+  // (level_kinds/bolts.py) checks the same and that it can be sorted.
+  var LEVELS = [
+    {"name": "Spare parts", "bolts": ["BBBA", "ACAC", "CACB", "", ""], "hidden": false},
+    {"name": "Workbench", "bolts": ["CBDB", "CAAC", "BDDB", "ADAC", "", ""], "hidden": false},
+    {"name": "Bike shed", "bolts": ["EBCE", "ABDB", "DCAC", "DDEA", "EBCA", "", ""], "hidden": false},
+    {"name": "Garage", "bolts": ["CBEF", "DCDA", "ADBD", "FFEF", "BBCC", "EEAA", "", ""], "hidden": false},
+    {"name": "Mystery jar", "bolts": ["DDFA", "DCAF", "BFEE", "BCAD", "BFEE", "CCBA", "", ""], "hidden": true},
+    {"name": "Robot kit", "bolts": ["FGDF", "CGGA", "EABA", "BFCG", "DABC", "DEFE", "EBDC", "", ""], "hidden": true},
+  ];
+
+  var COLOUR_LETTERS = "ABCDEFGHIJKL";
+  function bookStacks(l) { return l.bolts.map(function (t) { return t.split("").map(function (ch) { return COLOUR_LETTERS.indexOf(ch); }); }); }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.bolts)) return "not a puzzle";
+    if (l.bolts.length < 3 || l.bolts.length > 13) return "count";
+    var counts = {}, k = 0;
+    for (var i = 0; i < l.bolts.length; i++) {
+      var t = l.bolts[i];
+      if (typeof t !== "string" || t.length > CAP) return "stack";
+      for (var j = 0; j < t.length; j++) {
+        var c = COLOUR_LETTERS.indexOf(t[j]);
+        if (c < 0 || c >= 10) return "colour";
+        counts[c] = (counts[c] || 0) + 1;
+      }
+    }
+    for (var key in counts) { if (counts[key] !== CAP) return "colour count"; k++; }
+    for (i = 0; i < k; i++) if (!counts[i]) return "colours skipped";
+    if (k < 2 || l.bolts.length < k + 1) return "room";
+    if (typeof l.hidden !== "boolean") return "hidden";
+    return null;
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
 
   function top(b) { return b.length ? b[b.length - 1] : -1; }
   function canMove(bolts, a, b) {
@@ -105,10 +146,19 @@
     }
   }
   function startBoard(s) {
-    if (s.levels) s.rng = hashSeed("bolts-level-" + s.level);
-    var spec = s.levels ? levelSpec(s.level) : MODES[s.mode];
-    s.k = spec.k; s.hiddenMode = spec.hidden;
-    s.bolts = makeBoard(s, s.k);
+    var spec;
+    if (s.book) {
+      var l = s.list[s.level - 1], k = 0;
+      s.bolts = bookStacks(l);
+      s.bolts.forEach(function (t) { t.forEach(function (c) { k = Math.max(k, c + 1); }); });
+      spec = { k: k, hidden: l.hidden };
+      s.k = spec.k; s.hiddenMode = spec.hidden;
+    } else {
+      if (s.levels) s.rng = hashSeed("bolts-level-" + s.level);
+      spec = s.levels ? levelSpec(s.level) : MODES[s.mode];
+      s.k = spec.k; s.hiddenMode = spec.hidden;
+      s.bolts = makeBoard(s, s.k);
+    }
     s.hidden = s.bolts.map(function (t) { return t.map(function () { return !!spec.hidden; }); });
     reveal(s);
     s.dealt = { bolts: s.bolts.map(function (t) { return t.slice(); }), hidden: s.hidden.map(function (h) { return h.slice(); }) };
@@ -119,12 +169,13 @@
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
     var s = {
-      mode: mode, levels: !!MODES[mode].levels, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
+      mode: mode, levels: !!(MODES[mode].levels || MODES[mode].book), book: !!MODES[mode].book,
+      list: MODES[mode].book ? usableLevels(o.levels) : null, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
       runScore: 0, moves: 0, hints: 0, boards: 0, updates: 0, k: 3, hiddenMode: false, bolts: null, hidden: null, dealt: null,
       boardUpdates: 0, boardMoves: 0, boardHints: 0, undo: [], sel: -1, hint: null, phase: "play", t: 0, cursor: 0,
       moving: null, won: false, over: false, cause: null, lastBoardScore: 0, noHintAt: -1000, stuck: false,
     };
-    if (s.levels) s.level = startAt(o.startLevel, LEVELS);
+    if (s.levels) s.level = startAt(o.startLevel, total(s));
     startBoard(s);
     return s;
   }
@@ -151,7 +202,7 @@
       s.lastBoardScore = boardScore(s);
       s.runScore += s.lastBoardScore; s.boards++;
       evs.push({ type: "clear", level: s.level, moves: s.boardMoves });
-      if (!s.levels || s.level >= LEVELS) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
+      if (!s.levels || s.level >= total(s)) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
       else { s.phase = "clear"; s.t = CLEAR_T; }
     } else if (s.bolts[b].length === CAP && uniformRun(s.bolts[b]) === CAP) evs.push({ type: "full", bolt: b });
     return evs;
@@ -225,18 +276,20 @@
     return [];
   }
 
-  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.moving = null; return out; }
-  function restore(data) {
+  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.moving = null; out.list = null; return out; }
+  function restore(data, levels) {
     var ok = data && typeof data === "object" && MODES[data.mode] && Array.isArray(data.bolts) && Array.isArray(data.hidden) &&
       data.bolts.length >= 3 && data.bolts.length === data.hidden.length && data.dealt && Array.isArray(data.dealt.bolts) &&
       data.bolts.every(function (t, i) {
         return Array.isArray(t) && t.length <= CAP && Array.isArray(data.hidden[i]) && data.hidden[i].length === t.length &&
           t.every(function (c) { return c >= 0 && c < 10; });
       }) &&
-      typeof data.level === "number" && data.level >= 1 && data.level <= LEVELS && typeof data.runScore === "number" &&
+      typeof data.level === "number" && data.level >= 1 && typeof data.runScore === "number" &&
       typeof data.updates === "number" && typeof data.rng === "number";
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    s.book = data.mode === "book"; s.list = s.book ? usableLevels(levels) : null;
+    if (s.level > total(s)) throw new Error("That saved game can't be continued.");
     s.moving = null; s.sel = -1; s.hint = null;
     if (!Array.isArray(s.undo)) s.undo = [];
     if (!(s.cursor >= 0 && s.cursor < s.bolts.length)) s.cursor = 0;
@@ -258,7 +311,8 @@
   }
 
   var BoltsLogic = {
-    UPS: UPS, TOP: TOP, CAP: CAP, EMPTY: EMPTY, LEVELS: LEVELS, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST,
+    UPS: UPS, TOP: TOP, CAP: CAP, EMPTY: EMPTY, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem,
+    bookStacks: bookStacks, total: total, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST,
     HINT_COST: HINT_COST, CLEAR_T: CLEAR_T, MOVE_T: MOVE_T, STATE_VERSION: STATE_VERSION, MODES: MODES, create: create, step: step,
     press: press, tapBolt: tapBolt, move: move, undo: undo, restart: restart, hint: hint, canMove: canMove, isSorted: isSorted,
     solve: solve, makeBoard: makeBoard, levelSpec: levelSpec, hashSeed: hashSeed, score: score, boardScore: boardScore,

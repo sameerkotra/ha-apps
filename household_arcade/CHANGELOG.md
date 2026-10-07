@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.11.0
+
+- **AI-made levels for the puzzles**: nine puzzles that made every board themselves now also have a list of named
+  boards that an AI model can add to (Admin → Levels, or automatically when someone nears the end), like the other
+  games with levels: Arrow Release · **Picture boards** (arrows filling a picture), the **Puzzle book** of Car Park,
+  Colour Sort, Bolt Sort, Dot Connect and Untangle, Picture Logic · **Picture book**, Word Search · **Themes** and Tile
+  Match · **Layouts**. Each comes with built-in boards, and every board a model writes is checked before anyone can
+  play it — solved by the app where it can be (the fewest moves out of a car park, a way to sort the tubes, a heap that
+  can be cleared, a picture the numbers decide). Every list carries on from your next level.
+- Car Park's *fewest moves* is now always exact (it could be counted a few too many on busy boards).
+
 ## 1.10.0
 
 - **Six new puzzles**: **Arrow Release** (tap the arrows away without bumping one into another), **Car Park** (slide

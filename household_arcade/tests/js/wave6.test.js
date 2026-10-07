@@ -12,8 +12,8 @@ const plain = (v) => JSON.parse(JSON.stringify(v));
 const GAMES = {
   slide: ["Slide Puzzle", ["three", "four", "five", "picture", "picture4"], "four", "touch", "picture"],
   lights: ["Lights Out", ["little", "classic", "big", "climb"], "classic", "touch", "climb"],
-  nonogram: ["Picture Logic", ["five", "eight", "ten", "fifteen"], "ten", "touch", "five"],
-  tiles: ["Tile Match", ["little", "classic", "big"], "classic", "touch", "little"],
+  nonogram: ["Picture Logic", ["five", "eight", "ten", "fifteen", "pictures"], "ten", "touch", "five"],
+  tiles: ["Tile Match", ["little", "classic", "big", "layouts"], "classic", "touch", "little"],
   codebreak: ["Code Breaker", ["little", "classic", "norepeat", "master"], "classic", "touch", "master"],
   typerain: ["Type Rain", ["letters", "easy", "classic", "stages"], "classic", "touch", "stages"],
 };

@@ -280,6 +280,29 @@ const Admin = (() => {
       g.fillRect(6 * 4, 10 * 4, 16, 4);
       return canvas;
     }
+    if (listId === "untangle") {                       // the untangled drawing
+      canvas.width = 72; canvas.height = 72;
+      g.fillStyle = v("--panel-alt", "#232834"); g.fillRect(0, 0, 72, 72);
+      const at = (p) => [4 + p[0] * 8, 4 + p[1] * 8];
+      g.strokeStyle = v("--accent", "#5ec8b6"); g.lineWidth = 1.5;
+      data.edges.forEach((e) => { const a = at(data.points[e[0]]), b = at(data.points[e[1]]); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); });
+      g.fillStyle = v("--warn", "#f0b34a");
+      data.points.forEach((p) => { const a = at(p); g.fillRect(a[0] - 2, a[1] - 2, 4, 4); });
+      return h("div", { class: "level-preview-box" }, canvas, h("div", { class: "level-facts" }, `${data.points.length} points · ${data.edges.length} lines`));
+    }
+    if (listId === "tiles") {                          // the heap from above, higher layers lighter
+      const cellsOf = [];
+      data.layers.forEach((ly, z) => ly.rows.forEach((row, r) => [...row].forEach((ch, c) => { if (ch === "#") cellsOf.push([ly.dx + 2 * c, ly.dy + 2 * r, z]); })));
+      const w = Math.max(...cellsOf.map((q) => q[0])) + 2, hgt = Math.max(...cellsOf.map((q) => q[1])) + 2, u = Math.max(2, Math.floor(Math.min(96 / w, 64 / hgt)));
+      canvas.width = w * u; canvas.height = hgt * u;
+      g.fillStyle = v("--panel-alt", "#232834"); g.fillRect(0, 0, canvas.width, canvas.height);
+      const shades = [v("--accent-dim", "#3d8f81"), v("--accent", "#5ec8b6"), v("--warn", "#f0b34a"), v("--text", "#e8ebf2"), v("--danger", "#e5484d")];
+      cellsOf.forEach((q) => { g.fillStyle = shades[q[2] % shades.length]; g.fillRect(q[0] * u, q[1] * u, 2 * u - 1, 2 * u - 1); });
+      return h("div", { class: "level-preview-box" }, canvas, h("div", { class: "level-facts" }, `${cellsOf.length} tiles · ${data.layers.length} layers`));
+    }
+    if (listId === "wordsearch") {
+      return h("div", { class: "level-preview-box" }, h("div", { class: "level-facts" }, `${data.group} · ${data.words.length} words: ${data.words.join(", ")}`));
+    }
     const isGrid = (x) => Array.isArray(x) && x.length > 0 && x.every((r) => typeof r === "string");
     const gridKey = Object.keys(data).find((k) => isGrid(data[k]));
     const facts = Object.keys(data).filter((k) => k !== "name" && k !== gridKey).map((k) => {

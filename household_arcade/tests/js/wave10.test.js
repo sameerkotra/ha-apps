@@ -11,12 +11,12 @@ const { makeSandbox, loadLogic } = require("./helpers");
 const LOOKS = ["modern", "lcd", "neon", "pixel", "paper", "contrast"];
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const GAMES = {
-  arrows: ["Arrow Release", ["little", "classic", "big", "twisty", "levels"]],
-  parking: ["Car Park", ["little", "classic", "hard", "levels"]],
-  watersort: ["Colour Sort", ["little", "classic", "big", "levels"]],
-  bolts: ["Bolt Sort", ["little", "classic", "hidden", "levels"]],
-  connect: ["Dot Connect", ["little", "classic", "big", "levels"]],
-  untangle: ["Untangle", ["little", "classic", "big", "levels"]],
+  arrows: ["Arrow Release", ["little", "classic", "big", "twisty", "levels", "book"]],
+  parking: ["Car Park", ["little", "classic", "hard", "levels", "book"]],
+  watersort: ["Colour Sort", ["little", "classic", "big", "levels", "book"]],
+  bolts: ["Bolt Sort", ["little", "classic", "hidden", "levels", "book"]],
+  connect: ["Dot Connect", ["little", "classic", "big", "levels", "book"]],
+  untangle: ["Untangle", ["little", "classic", "big", "levels", "book"]],
 };
 const L = {
   arrows: loadLogic("arrows-logic.js"), parking: loadLogic("parking-logic.js"), watersort: loadLogic("watersort-logic.js"),

@@ -893,6 +893,28 @@ Honest-score limits: `max_score` 2,000,000 (200 boards), `per_second` 10,000, `b
   line cut by another, crossings counted); a solved board scores by the formula; board *n* of *Levels* is the same
   on every run and starting at level *n* plays it; saving and continuing.
 
+## Lists an AI model can add to (SPEC §11.9)
+
+Nine puzzles that make their boards from the seed also play a list of named boards, which `level_kinds/<game>.py`
+describes for the model (the same contract as the other level lists: `LEVELS` in the rules file equal to the kind's
+`builtin`, `usableLevels(levels)` checking the shape again and falling back to `LEVELS`):
+
+- **Arrow Release · Picture boards** (`book`): `bookSpec(level)` centres the shape on a square grid and passes a mask
+  to `makeBoard`, which places arrows only on `#` squares (arrows still fly over the empty ones); the seed is made
+  from the drawing, so a board is the same everywhere. Only dots on the picture are drawn.
+- **Car Park, Colour Sort, Bolt Sort, Dot Connect, Untangle · Puzzle book** (`book`): `fromGrid` / `bookStacks` /
+  `bookBoard` turn the drawing into the game's board. Car Park's fewest moves comes from `fewestFrom` (a full search
+  from the start); the seeded boards use it too, since the search outwards from the solved positions can stop short.
+  Untangle puts the points back at `X0 + 26x, Y0 + 26y` and shuffles them onto the circle from a seed made from the
+  drawing.
+- These six play their list as a run (`s.book`, with `s.levels` also set): `total(s)` is the list's length, the run
+  is won after its last board, and `save()` leaves the list out — `restore(data, levels)` takes it from the shell.
+- **Picture Logic · Picture book** (`pictures`), **Word Search · Themes** (`themes`), **Tile Match · Layouts**
+  (`layouts`): one entry a game, `s.level` its number (and the result's level), started at `opts.startLevel`.
+  Picture Logic gives squares at the start until its line solver finishes; Word Search places the theme's words with
+  its own generator for the theme's age group (`s.group`); Tile Match deals on the layout's places (`s.layers`, `s.nk`
+  kinds: a quarter of the tiles, 5–26), with a plain in-order deal as the last resort.
+
 ## Starting at a level (SPEC §14)
 
 `create(canvas, opts)` gets `opts.startLevel` (1 by default) in the modes that carry on (`continue_levels`). A

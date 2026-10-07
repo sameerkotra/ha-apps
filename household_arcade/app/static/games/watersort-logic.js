@@ -14,8 +14,9 @@
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
   var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 5, MOVE_COST = 10, HINT_COST = 200;
-  var CAP = 4, EMPTY = 2, LEVELS = 200, CLEAR_T = 80, POUR_T = 16, BUDGET = 200000, HINT_BUDGET = 60000, STATE_VERSION = 1;
+  var CAP = 4, EMPTY = 2, LEVEL_COUNT = 200, CLEAR_T = 80, POUR_T = 16, BUDGET = 200000, HINT_BUDGET = 60000, STATE_VERSION = 1;
   var MODES = { little: { k: 3 }, classic: { k: 7 }, big: { k: 10 }, levels: { levels: true } };
+  MODES.book = { book: true };
 
   function rand(s) {
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -32,6 +33,45 @@
   function levelColours(n) { return Math.min(12, 3 + Math.floor((n - 1) / 12)); }
 
   // ---------- the rules (tubes: arrays bottom → top) ----------
+  // The puzzle book (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. Each tube is a
+  // string of colour letters from the bottom up ("" empty); every colour exactly CAP times. The server
+  // (level_kinds/watersort.py) checks the same and that it can be sorted.
+  var LEVELS = [
+    {"name": "Three jars", "tubes": ["ABAA", "BCBC", "CCAB", "", ""]},
+    {"name": "Lemonade", "tubes": ["BCAC", "DADD", "CBAD", "CBBA", "", ""]},
+    {"name": "Paint pots", "tubes": ["BEED", "ABDB", "DEAC", "AABC", "ECDC", "", ""]},
+    {"name": "Rainbow", "tubes": ["CDDA", "DBBA", "DCFA", "CFEE", "BAEE", "FFBC", "", ""]},
+    {"name": "Fruit punch", "tubes": ["FFGB", "AEBE", "GCCA", "EHBH", "HDAB", "GDCF", "CAED", "HDFG", "", ""]},
+    {"name": "Potion shelf", "tubes": ["GCGA", "BIEE", "AGHH", "BHFH", "DFFD", "DABE", "BICA", "CECI", "IDFG", "", ""]},
+  ];
+
+  var COLOUR_LETTERS = "ABCDEFGHIJKL";
+  function bookStacks(l) { return l.tubes.map(function (t) { return t.split("").map(function (ch) { return COLOUR_LETTERS.indexOf(ch); }); }); }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.tubes)) return "not a puzzle";
+    if (l.tubes.length < 3 || l.tubes.length > 15) return "count";
+    var counts = {}, k = 0;
+    for (var i = 0; i < l.tubes.length; i++) {
+      var t = l.tubes[i];
+      if (typeof t !== "string" || t.length > CAP) return "stack";
+      for (var j = 0; j < t.length; j++) {
+        var c = COLOUR_LETTERS.indexOf(t[j]);
+        if (c < 0 || c >= 12) return "colour";
+        counts[c] = (counts[c] || 0) + 1;
+      }
+    }
+    for (var key in counts) { if (counts[key] !== CAP) return "colour count"; k++; }
+    for (i = 0; i < k; i++) if (!counts[i]) return "colours skipped";
+    if (k < 2 || l.tubes.length < k + 1) return "room";
+    return null;
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
+
   function top(t) { return t.length ? t[t.length - 1] : -1; }
   function topRun(t) { var c = top(t), n = 0; for (var i = t.length - 1; i >= 0 && t[i] === c; i--) n++; return n; }
   /** How many layers would pour from tube a into tube b (0: none). */
@@ -109,9 +149,15 @@
 
   // ---------- the game ----------
   function startBoard(s) {
-    if (s.levels) s.rng = hashSeed("watersort-level-" + s.level);
-    s.k = s.levels ? levelColours(s.level) : MODES[s.mode].k;
-    s.tubes = makeBoard(s, s.k);
+    if (s.book) {
+      s.tubes = bookStacks(s.list[s.level - 1]);
+      s.k = 0;
+      s.tubes.forEach(function (t) { t.forEach(function (c) { s.k = Math.max(s.k, c + 1); }); });
+    } else {
+      if (s.levels) s.rng = hashSeed("watersort-level-" + s.level);
+      s.k = s.levels ? levelColours(s.level) : MODES[s.mode].k;
+      s.tubes = makeBoard(s, s.k);
+    }
     s.dealt = s.tubes.map(function (t) { return t.slice(); });
     s.boardUpdates = 0; s.boardMoves = 0; s.boardHints = 0; s.undo = [];
     s.sel = -1; s.hint = null; s.phase = "play"; s.t = 0; s.cursor = 0; s.pour = null; s.stuck = false;
@@ -120,12 +166,13 @@
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
     var s = {
-      mode: mode, levels: !!MODES[mode].levels, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
+      mode: mode, levels: !!(MODES[mode].levels || MODES[mode].book), book: !!MODES[mode].book,
+      list: MODES[mode].book ? usableLevels(o.levels) : null, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
       runScore: 0, moves: 0, hints: 0, boards: 0, updates: 0, k: 3, tubes: null, dealt: null, boardUpdates: 0,
       boardMoves: 0, boardHints: 0, undo: [], sel: -1, hint: null, phase: "play", t: 0, cursor: 0, pour: null,
       won: false, over: false, cause: null, lastBoardScore: 0, noHintAt: -1000, stuck: false,
     };
-    if (s.levels) s.level = startAt(o.startLevel, LEVELS);
+    if (s.levels) s.level = startAt(o.startLevel, total(s));
     startBoard(s);
     return s;
   }
@@ -149,7 +196,7 @@
       s.lastBoardScore = boardScore(s);
       s.runScore += s.lastBoardScore; s.boards++;
       evs.push({ type: "clear", level: s.level, pours: s.boardMoves });
-      if (!s.levels || s.level >= LEVELS) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
+      if (!s.levels || s.level >= total(s)) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
       else { s.phase = "clear"; s.t = CLEAR_T; }
     } else {
       var t = s.tubes[b];
@@ -224,15 +271,17 @@
     return [];
   }
 
-  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.pour = null; return out; }
-  function restore(data) {
+  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.pour = null; out.list = null; return out; }
+  function restore(data, levels) {
     var ok = data && typeof data === "object" && MODES[data.mode] && Array.isArray(data.tubes) && Array.isArray(data.dealt) &&
       data.tubes.length >= 3 && data.tubes.length === data.dealt.length &&
       data.tubes.every(function (t) { return Array.isArray(t) && t.length <= CAP && t.every(function (c) { return c >= 0 && c < 12; }); }) &&
-      typeof data.level === "number" && data.level >= 1 && data.level <= LEVELS && typeof data.runScore === "number" &&
+      typeof data.level === "number" && data.level >= 1 && typeof data.runScore === "number" &&
       typeof data.updates === "number" && typeof data.rng === "number";
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    s.book = data.mode === "book"; s.list = s.book ? usableLevels(levels) : null;
+    if (s.level > total(s)) throw new Error("That saved game can't be continued.");
     s.pour = null; s.sel = -1; s.hint = null;
     if (!Array.isArray(s.undo)) s.undo = [];
     if (!(s.cursor >= 0 && s.cursor < s.tubes.length)) s.cursor = 0;
@@ -254,7 +303,8 @@
   }
 
   var WaterSortLogic = {
-    UPS: UPS, TOP: TOP, CAP: CAP, EMPTY: EMPTY, LEVELS: LEVELS, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST,
+    UPS: UPS, TOP: TOP, CAP: CAP, EMPTY: EMPTY, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem,
+    bookStacks: bookStacks, total: total, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MOVE_COST: MOVE_COST,
     HINT_COST: HINT_COST, CLEAR_T: CLEAR_T, POUR_T: POUR_T, STATE_VERSION: STATE_VERSION, MODES: MODES, create: create, step: step,
     press: press, tapTube: tapTube, pour: pour, undo: undo, restart: restart, hint: hint, pourable: pourable, isSorted: isSorted,
     solve: solve, makeBoard: makeBoard, levelColours: levelColours, hashSeed: hashSeed, score: score, boardScore: boardScore,

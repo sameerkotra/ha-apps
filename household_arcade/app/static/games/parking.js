@@ -8,7 +8,7 @@
   var Kit = root.ArcadeKit, Logic = root.ParkingLogic;
 
   var MODES = [{ id: "little", label: "Little (gentle)" }, { id: "classic", label: "Classic" }, { id: "hard", label: "Hard" },
-    { id: "levels", label: "Levels" }];
+    { id: "levels", label: "Levels" }, { id: "book", label: "Puzzle book" }];
   var LABELS = { little: "LITTLE", classic: "CLASSIC", hard: "HARD" };
   var N = Logic.N, BX = 12, BY = 44, BS = 210, CS = BS / N, MSG_Y = 276, INKS = [5, 4, 6, 2, 7, 3];
 
@@ -22,9 +22,9 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; drag = null; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; drag = null; },
       save: function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; drag = null; },
+      restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; drag = null; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
@@ -114,7 +114,7 @@
     buttons: [{ action: "hint", label: "💡 Hint", aria: "Hint: show the next move" }, { action: "undo", label: "↶ Undo", aria: "Undo the last slide" }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],
-    help: "Get the red car out through the gap on the right. Cars and lorries only move forwards and backwards along their length: drag one, or move the ring with the arrows, press Space to pick it and slide it with the arrows (Space again lets go). Sliding one vehicle as far as you like is one move; the fewest moves is shown, and extra moves cost points. Undo takes a slide back. With the Hints option on, Hint shows the next move. Little is the gentle one; Levels get harder and carry on from your next level.",
+    help: "Get the red car out through the gap on the right. Cars and lorries only move forwards and backwards along their length: drag one, or move the ring with the arrows, press Space to pick it and slide it with the arrows (Space again lets go). Sliding one vehicle as far as you like is one move; the fewest moves is shown, and extra moves cost points. Undo takes a slide back. With the Hints option on, Hint shows the next move. Little is the gentle one; Levels get harder and carry on from your next level. The Puzzle book is a list of named puzzles that also carries on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });

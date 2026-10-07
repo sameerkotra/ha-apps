@@ -18,7 +18,7 @@
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
   var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 10, MISTAKE_COST = 300, HINT_COST = 200;
-  var HEARTS = 3, LEVELS = 200, CLEAR_T = 70, FLY_T = 24, BUMP_T = 18, STATE_VERSION = 1;
+  var HEARTS = 3, LEVEL_COUNT = 200, CLEAR_T = 70, FLY_T = 24, BUMP_T = 18, STATE_VERSION = 1;
   var DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];          // up, right, down, left
   var MODES = {
     little: { n: 5, min: 1, max: 2, fill: 60, twisty: false, hearts: 0 },
@@ -26,7 +26,49 @@
     big: { n: 12, min: 1, max: 5, fill: 90, twisty: false, hearts: HEARTS },
     twisty: { n: 10, min: 2, max: 6, fill: 85, twisty: true, hearts: HEARTS },
     levels: { levels: true, hearts: HEARTS },
+    book: { book: true, hearts: HEARTS },
   };
+
+  // Picture boards (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A board is a shape
+  // ("#" squares the arrows may cover, "." empty) that the board maker fills, with the longest arrow, how full (%)
+  // and whether arrows bend. The server (level_kinds/arrows.py) has the same list and checks the same rules.
+  var LEVELS = [
+    {"name": "Little heart", "shape": [".##.##.", "#######", "#######", ".#####.", "..###..", "...#..."], "longest": 2, "fill": 75, "twisty": false},
+    {"name": "Fish", "shape": ["...####...", ".########.", "##########", ".########.", "...####...", "......##.."], "longest": 3, "fill": 80, "twisty": false},
+    {"name": "Rocket", "shape": ["...##...", "..####..", "..####..", "..####..", "..####..", ".######.", "########", "##.##.##"], "longest": 3, "fill": 85, "twisty": false},
+    {"name": "Christmas tree", "shape": ["....##....", "...####...", "..######..", "...####...", "..######..", ".########.", "##########", "....##....", "....##...."], "longest": 4, "fill": 85, "twisty": false},
+    {"name": "Snake pit", "shape": ["##########", "#........#", "#.######.#", "#.#....#.#", "#.#.##.#.#", "#.#.##.#.#", "#.#....#.#", "#.######.#", "#........#", "##########"], "longest": 4, "fill": 90, "twisty": true},
+    {"name": "Big smile", "shape": ["...######...", ".##########.", "############", "###..##..###", "############", "############", "##.######.##", "###.####.###", ".####..####.", "...######..."], "longest": 5, "fill": 90, "twisty": true},
+  ];
+
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string" || !Array.isArray(l.shape)) return "not a board";
+    var h = l.shape.length, w = h ? String(l.shape[0]).length : 0, sq = 0;
+    if (h < 5 || h > 12 || w < 5 || w > 12) return "shape size";
+    for (var r = 0; r < h; r++) {
+      if (typeof l.shape[r] !== "string" || l.shape[r].length !== w || /[^#.]/.test(l.shape[r])) return "shape rows";
+      for (var c = 0; c < w; c++) if (l.shape[r][c] === "#") sq++;
+    }
+    if (sq < 12) return "too small";
+    if (!(l.longest >= 1 && l.longest <= 6 && l.longest === Math.floor(l.longest))) return "longest";
+    if (!(l.fill >= 60 && l.fill <= 100 && l.fill === Math.floor(l.fill))) return "fill";
+    if (typeof l.twisty !== "boolean") return "twisty";
+    return null;
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  /** The board spec of a picture board: the shape centred on a square grid, the rest empty. */
+  function bookSpec(l) {
+    var h = l.shape.length, w = l.shape[0].length, n = Math.max(h, w), ox = Math.floor((n - w) / 2), oy = Math.floor((n - h) / 2);
+    var mask = [];
+    for (var i = 0; i < n * n; i++) mask.push(false);
+    for (var r = 0; r < h; r++) for (var c = 0; c < w; c++) if (l.shape[r][c] === "#") mask[(r + oy) * n + c + ox] = true;
+    return { n: n, min: 1, max: l.longest, fill: l.fill, twisty: l.twisty, mask: mask };
+  }
+  function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
 
   function rand(s) { // mulberry32 on s.rng
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -99,11 +141,12 @@
   function makeBoard(s, spec) {
     var n = spec.n, N = n * n, grid = [], arrows = [], i, k;
     for (i = 0; i < N; i++) grid.push(-1);
-    var order = [];
-    for (i = 0; i < N; i++) order.push(i);
-    for (i = N - 1; i > 0; i--) { k = pick(s, i + 1); var t = order[i]; order[i] = order[k]; order[k] = t; }
-    var filled = 0, goal = Math.floor(N * spec.fill / 100);
-    for (var oi = 0; oi < N && filled < goal; oi++) {
+    var order = [], mask = spec.mask, open = 0;
+    for (i = 0; i < N; i++) if (!mask || mask[i]) { order.push(i); open++; }
+    for (i = order.length - 1; i > 0; i--) { k = pick(s, i + 1); var t = order[i]; order[i] = order[k]; order[k] = t; }
+    function ok(c) { return grid[c] < 0 && (!mask || mask[c]); }
+    var filled = 0, goal = Math.floor(open * spec.fill / 100);
+    for (var oi = 0; oi < order.length && filled < goal; oi++) {
       var start = order[oi];
       if (grid[start] >= 0) continue;
       var len = spec.min + pick(s, spec.max - spec.min + 1), cells = [start];
@@ -112,7 +155,7 @@
           var last = cells[cells.length - 1], lx = last % n, ly = Math.floor(last / n), opts = [];
           for (var d = 0; d < 4; d++) {
             var nx = lx + DX[d], ny = ly + DY[d];
-            if (nx >= 0 && ny >= 0 && nx < n && ny < n && grid[ny * n + nx] < 0 && cells.indexOf(ny * n + nx) < 0) opts.push(ny * n + nx);
+            if (nx >= 0 && ny >= 0 && nx < n && ny < n && ok(ny * n + nx) && cells.indexOf(ny * n + nx) < 0) opts.push(ny * n + nx);
           }
           if (!opts.length) break;
           cells.push(opts[pick(s, opts.length)]);
@@ -121,7 +164,7 @@
         var dir = pick(s, 4), cx = start % n, cy = Math.floor(start / n);
         while (cells.length < len) {
           cx += DX[dir]; cy += DY[dir];
-          if (cx < 0 || cy < 0 || cx >= n || cy >= n || grid[cy * n + cx] >= 0) break;
+          if (cx < 0 || cy < 0 || cx >= n || cy >= n || !ok(cy * n + cx)) break;
           cells.push(cy * n + cx);
         }
       }
@@ -135,6 +178,7 @@
       filled += cells.length;
     }
     var b = { n: n, grid: grid, arrows: arrows };
+    if (mask) b.mask = mask.slice();
     // make it solvable: turn a stuck arrow round (a different one each time); after many tries take one away
     for (var tries = 0; tries < 400; tries++) {
       var stuck = stuckArrows(b);
@@ -154,9 +198,10 @@
   }
 
   // ---------- the game ----------
-  function boardSpec(s) { return s.levels ? levelSpec(s.level) : MODES[s.mode]; }
+  function boardSpec(s) { return s.book ? bookSpec(s.list[s.level - 1]) : s.levels ? levelSpec(s.level) : MODES[s.mode]; }
   function startBoard(s) {
-    if (s.levels) s.rng = hashSeed("arrows-level-" + s.level);
+    if (s.book) { var l = s.list[s.level - 1]; s.rng = hashSeed("arrows-book-" + l.shape.join("/") + "-" + l.longest + "-" + l.fill + "-" + l.twisty); }
+    else if (s.levels) s.rng = hashSeed("arrows-level-" + s.level);
     s.board = makeBoard(s, boardSpec(s));
     s.boardUpdates = 0; s.boardMistakes = 0; s.boardHints = 0;
     s.phase = "play"; s.t = 0; s.hint = -1; s.flying = []; s.bump = null;
@@ -167,12 +212,12 @@
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic", m = MODES[mode];
     var s = {
-      mode: mode, levels: !!m.levels, rng: (o.seed >>> 0) || 1, level: 1, hearts: m.hearts, maxHearts: m.hearts,
+      mode: mode, levels: !!(m.levels || m.book), book: !!m.book, list: m.book ? usableLevels(o.levels) : null, rng: (o.seed >>> 0) || 1, level: 1, hearts: m.hearts, maxHearts: m.hearts,
       hintsOn: o.hints === "on", runScore: 0, released: 0, mistakes: 0, hints: 0, boards: 0, updates: 0,
       board: null, boardUpdates: 0, boardMistakes: 0, boardHints: 0, phase: "play", t: 0, hint: -1, cursor: 0,
       flying: [], bump: null, won: false, over: false, cause: null, lastBoardScore: 0, noHintAt: -1000,
     };
-    if (s.levels) s.level = startAt(o.startLevel, LEVELS);
+    if (s.levels) s.level = startAt(o.startLevel, total(s));
     startBoard(s);
     return s;
   }
@@ -187,7 +232,7 @@
     s.lastBoardScore = boardScore(s);
     s.runScore += s.lastBoardScore; s.boards++;
     evs.push({ type: "clear", level: s.level, score: s.lastBoardScore });
-    if (!s.levels || s.level >= LEVELS) {
+    if (!s.levels || s.level >= total(s)) {
       s.won = true; s.over = true; s.cause = "won";
       evs.push({ type: "win", score: s.runScore });
     } else { s.phase = "clear"; s.t = CLEAR_T; }
@@ -266,16 +311,18 @@
     return [];
   }
 
-  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.flying = []; out.bump = null; return out; }
-  function restore(data) {
+  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.flying = []; out.bump = null; out.list = null; return out; }
+  function restore(data, levels) {
     var b = data && data.board;
     var ok = data && typeof data === "object" && MODES[data.mode] && b && typeof b.n === "number" && b.n >= 3 && b.n <= 12 &&
       Array.isArray(b.grid) && b.grid.length === b.n * b.n && Array.isArray(b.arrows) &&
       b.arrows.every(function (a) { return a && Array.isArray(a.cells) && a.cells.length >= 1 && a.dir >= 0 && a.dir <= 3; }) &&
-      typeof data.level === "number" && data.level >= 1 && data.level <= LEVELS && typeof data.runScore === "number" &&
+      typeof data.level === "number" && data.level >= 1 && typeof data.runScore === "number" &&
       typeof data.updates === "number" && typeof data.rng === "number";
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    s.book = data.mode === "book"; s.list = s.book ? usableLevels(levels) : null;
+    if (s.level > total(s)) throw new Error("That saved game can't be continued.");
     s.flying = []; s.bump = null;
     if (!(s.cursor >= 0 && s.cursor < s.board.grid.length)) s.cursor = 0;
     if (!(s.hint >= 0 && s.hint < s.board.arrows.length)) s.hint = -1;
@@ -298,7 +345,7 @@
 
   var ArrowsLogic = {
     UPS: UPS, TOP: TOP, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, MISTAKE_COST: MISTAKE_COST, HINT_COST: HINT_COST,
-    HEARTS: HEARTS, LEVELS: LEVELS, CLEAR_T: CLEAR_T, FLY_T: FLY_T, STATE_VERSION: STATE_VERSION, MODES: MODES, DX: DX, DY: DY,
+    HEARTS: HEARTS, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem, bookSpec: bookSpec, total: total, CLEAR_T: CLEAR_T, FLY_T: FLY_T, STATE_VERSION: STATE_VERSION, MODES: MODES, DX: DX, DY: DY,
     create: create, step: step, press: press, tapCell: tapCell, hint: hint, isFree: isFree, blocker: blocker, solvable: solvable,
     stuckArrows: stuckArrows, makeBoard: makeBoard, levelSpec: levelSpec, hashSeed: hashSeed, left: left, score: score,
     boardScore: boardScore, save: save, restore: restore, result: result, seconds: seconds, clock: clock, rand: rand,

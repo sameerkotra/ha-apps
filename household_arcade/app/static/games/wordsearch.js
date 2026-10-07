@@ -7,7 +7,7 @@
   "use strict";
   var Kit = root.ArcadeKit, Logic = root.WordSearchLogic;
 
-  var MODES = [{ id: "little", label: "Little ones (5–7)" }, { id: "kids", label: "Kids (8–11)" }, { id: "family", label: "Everyone (12 and up)" }, { id: "puzzler", label: "Puzzler (big grid)" }];
+  var MODES = [{ id: "little", label: "Little ones (5–7)" }, { id: "kids", label: "Kids (8–11)" }, { id: "family", label: "Everyone (12 and up)" }, { id: "puzzler", label: "Puzzler (big grid)" }, { id: "themes", label: "Themes" }];
   var BUTTONS = [{ action: "hint", label: "💡 Hint", aria: "Hint: show where a word starts" }];
   var GX_MID = 120, GY = 38, MAX_GRID = 208, LIST_Y = 254;
   var COLOURS = [5, 4, 2, 6, 7, 1];       // the found words take these in turn
@@ -34,7 +34,7 @@
     function cy(i) { return GY + Math.floor(i / s.n) * cell + cell / 2; }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed }); layout(); pending = []; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); layout(); pending = []; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data); layout(); pending = []; },
       step: function () {
@@ -44,7 +44,7 @@
       },
       logic: function () { return s; },
       score: function () { return Logic.scoreOf(s); },
-      level: function () { return 1; },
+      level: function () { return s.level || 1; },
       isOver: function () { return s.over; },
       result: function () { return Logic.result(s); },
       status: function () { return Logic.status(s); },

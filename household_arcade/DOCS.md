@@ -73,7 +73,7 @@ which sits over a still picture of the game:
   the list keeps growing. Every mode has its own bests and its own leaderboard.
 - **Level** (a drop-down, in modes that carry on) — where a level is a puzzle or a goal (the
   new puzzles' *Levels*, Snake's *Maze*, Mines' *Boards*, Merge's *Goals*, Lights Out's *Climb*,
-  Flap's *Course* and the other level lists), the app remembers the levels you've cleared —
+  Flap's *Course*, the puzzle books and the other level lists), the app remembers the levels you've cleared —
   Practice games included — and the next game starts at the first one you haven't:
   *Level 9 (next)*. Pick an earlier level to play it again. When you've cleared them all, the
   next game starts at level 1. The leaderboard and your personal bests count only games
@@ -305,7 +305,8 @@ Find the hidden words in the grid by dragging across them (they run in straight 
 direction except on **Little ones**, where they only run right and down). **Little ones**
 (7 × 7, 5 words), **Kids** (9 × 9), **Everyone** (11 × 11) and **Puzzler** (13 × 13, 12 words).
 **Hint** shows one word to look for and costs 25 points. Each word is worth 100, with a bonus for
-finishing quickly.
+finishing quickly. **Themes** plays a list of named themes (At the farm, Under the sea, Space trip …), one a game, each
+for one age group and its grid; the next game starts at the next theme, and with AI levels on the list grows.
 
 ### Bubble Pop
 
@@ -408,6 +409,8 @@ from the numbers alone, without guessing (now and then a square or two are given
 works as in Sudoku: shown at once (the square is put right, +10 seconds) or only when the grid has as many filled
 squares as the answer. **Hint** puts one square right (+30 seconds, 3 a puzzle); **Undo** takes back your last stroke.
 Your score is 10,000 minus your time in seconds with the extra seconds added, so the fastest finish ranks first.
+The **Picture book** has drawn pictures — a heart, a house, a cat … — one a game, with the picture's name shown once
+it's solved; the next game starts at the next picture, and with AI levels on the book grows.
 
 ### Tile Match
 
@@ -415,7 +418,8 @@ Clear the heap two tiles at a time: tap two **free** tiles with the same symbol 
 shape under it) and they go. A tile is free when nothing lies on it and its left or right side is open; tiles that
 aren't free are a little dimmer. Every deal can be cleared. **Hint** shows a pair (+15 seconds), **Shuffle** deals
 the tiles left again so they can still be cleared (+30 seconds) and **Undo** puts the last pair back. **Little** (20
-tiles with plain shapes, for little ones), **Classic** (72 tiles) and **Big heap** (104). Your score is 10,000 minus
+tiles with plain shapes, for little ones), **Classic** (72 tiles) and **Big heap** (104). **Layouts** plays heaps of
+other shapes (a turtle, a castle, a butterfly …), one a game, carrying on from the next one. Your score is 10,000 minus
 your time in seconds with the extra seconds added.
 
 ### Code Breaker
@@ -544,6 +548,10 @@ checked to be solvable before it's shown. A board scores 10,000 less its costs (
 an unfinished one scores nothing. The start screen's **Hints** option (off by default, always off in races) adds a
 💡 **Hint** button (or **C**) that costs 200 points a hint. With the keyboard, the arrows move a ring and **Space**
 acts. Every piece carries a number or shape as well as its colour.
+
+Besides *Levels*, each has a list of named boards: Arrow Release's **Picture boards** (arrows filling a picture —
+a heart, a rocket, a tree) and the **Puzzle book** of the other five. They play like *Levels*, and with AI levels on
+the list grows (see *AI levels*).
 
 - **Arrow Release** — tap an arrow and it flies off the way it points, if nothing is in its way; if something is, it
   bumps and you lose a heart (three; *Little 5 × 5* has none, and *Levels* gives one back for each cleared board).
@@ -983,9 +991,12 @@ A number out of range is flagged at the field before anything is saved.
 
 Most games have a list of levels — Brick Breaker's layouts, Snake's mazes,
 Flap's courses, Tank Battle's arenas, Number Dash's challenges, Type Rain's
-stages and so on — that starts with built-in levels (the puzzle and word games —
-Sudoku, Word Guess, Word Search, Slide Puzzle, Lights Out, Picture Logic, Tile
-Match and Code Breaker — make a fresh puzzle each game instead). With **AI levels** on, an AI model makes more, so
+stages, Picture Logic's picture book, Word Search's themes, Tile Match's layouts,
+the puzzle books of the calm puzzles and so on — that starts with built-in levels
+(Sudoku, Word Guess, Slide Puzzle, Lights Out and Code Breaker make a fresh puzzle
+each game instead, as do the other modes of the puzzles). Every level a model
+writes is checked first, and the puzzles' are solved by the app before anyone sees
+them. With **AI levels** on, an AI model makes more, so
 the games keep going:
 
 - **Provider, Address, Model, Access key** — the same settings as Finance

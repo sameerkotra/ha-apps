@@ -13,8 +13,67 @@
 
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
-  var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 10, HINT_COST = 200, LEVELS = 200, CLEAR_T = 80, STATE_VERSION = 1;
-  var MODES = { little: { n: 5, fill: false }, classic: { n: 7, fill: true }, big: { n: 9, fill: true }, levels: { levels: true } };
+  var UPS = 60, TOP = 10000, MIN_SCORE = 10, SEC_COST = 10, HINT_COST = 200, LEVEL_COUNT = 200, CLEAR_T = 80, STATE_VERSION = 1;
+  var MODES = { little: { n: 5, fill: false }, classic: { n: 7, fill: true }, big: { n: 9, fill: true }, levels: { levels: true },
+    book: { book: true } };
+  var LINE_LETTERS = "ABCDEFGHIJKLMNOP";
+
+  // The puzzle book (SPEC §11.9): the built-in list; the session's list (opts.levels) replaces it. A puzzle is its
+  // answer: a square of letters, each letter one line through squares side by side that never touches itself, its two
+  // ends the dots. The server (level_kinds/connect.py) checks the same.
+  var LEVELS = [
+    {"name": "Little maze", "grid": ["DDEEE", "DAAAE", "DAEEE", "DABBB", "DCCCB"]},
+    {"name": "Snail shell", "grid": ["DDDEEE", "DGFFFE", "DGAAFE", "DGABFE", "CGABBB", "CCCCCB"]},
+    {"name": "Fence posts", "grid": ["BBBBAAA", "BEEBAGF", "CDEAAGF", "CDEHHGF", "CDEHGGF", "CDEHHHF", "CDEEFFF"]},
+    {"name": "Hedge rows", "grid": ["CDDDDEEE", "CBBBDEDE", "CBABDDDF", "CCABBBAF", "HHAAAAAF", "GHHHHHIF", "GIIIIIIF", "GGGGGFFF"]},
+    {"name": "Wool basket", "grid": ["CCCCCEEFF", "CDDDDEJJF", "CDEEEEJIF", "BDEKJJJIF", "BEEKKIIIF", "BAAAKIHHF", "BAKKKIIHF", "BAGHHHHHG", "BBGGGGGGG"]},
+  ];
+
+  /** { n, pairs, dots, answer } from an answer drawing, or null when it isn't one. */
+  function fromGrid(grid) {
+    if (!Array.isArray(grid) || grid.length < 5 || grid.length > 12) return null;
+    var n = grid.length, cells = {}, r, c, i;
+    for (r = 0; r < n; r++) {
+      if (typeof grid[r] !== "string" || grid[r].length !== n) return null;
+      for (c = 0; c < n; c++) {
+        if (LINE_LETTERS.indexOf(grid[r][c]) < 0) return null;
+        (cells[grid[r][c]] = cells[grid[r][c]] || []).push(r * n + c);
+      }
+    }
+    var names = Object.keys(cells).sort(), dots = new Array(n * n).fill(-1), answer = [];
+    if (names.length < 2) return null;
+    for (var k = 0; k < names.length; k++) {
+      var sq = cells[names[k]], inSet = {}, ends = [], links = 0;
+      if (sq.length < 3) return null;
+      sq.forEach(function (q) { inSet[q] = true; });
+      for (i = 0; i < sq.length; i++) {
+        var nb = neighbours(n, sq[i]).filter(function (q) { return inSet[q]; });
+        if (nb.length > 2) return null;
+        if (nb.length === 1) ends.push(sq[i]);
+        links += nb.length;
+      }
+      if (ends.length !== 2 || links !== 2 * (sq.length - 1)) return null;
+      var path = [Math.min(ends[0], ends[1])], prev = -1;
+      while (path.length < sq.length) {
+        var cur = path[path.length - 1], next = neighbours(n, cur).filter(function (q) { return inSet[q] && q !== prev; });
+        if (!next.length) return null;
+        prev = cur; path.push(next[0]);
+      }
+      dots[path[0]] = k; dots[path[path.length - 1]] = k;
+      answer.push(path);
+    }
+    return { n: n, pairs: answer.length, dots: dots, answer: answer };
+  }
+  function levelProblem(l) {
+    if (!l || typeof l !== "object" || typeof l.name !== "string") return "not a puzzle";
+    return fromGrid(l.grid) ? null : "drawing";
+  }
+  function usableLevels(levels) {
+    if (!Array.isArray(levels)) return LEVELS;
+    var out = levels.filter(function (l) { return levelProblem(l) === null; });
+    return out.length ? out : LEVELS;
+  }
+  function total(s) { return s.book ? s.list.length : LEVEL_COUNT; }
 
   function rand(s) {
     s.rng = (s.rng + 0x6D2B79F5) | 0;
@@ -79,10 +138,16 @@
 
   // ---------- the game ----------
   function startBoard(s) {
-    if (s.levels) s.rng = hashSeed("connect-level-" + s.level);
-    s.n = s.levels ? levelSize(s.level) : MODES[s.mode].n;
-    s.fill = s.levels ? true : MODES[s.mode].fill;
-    var b = makeBoard(s, s.n);
+    var b;
+    if (s.book) {
+      b = fromGrid(s.list[s.level - 1].grid);
+      s.n = b.n; s.fill = true;
+    } else {
+      if (s.levels) s.rng = hashSeed("connect-level-" + s.level);
+      s.n = s.levels ? levelSize(s.level) : MODES[s.mode].n;
+      s.fill = s.levels ? true : MODES[s.mode].fill;
+      b = makeBoard(s, s.n);
+    }
     s.pairs = b.pairs; s.dots = b.dots; s.answer = b.answer;
     s.paths = [];
     for (var k = 0; k < s.pairs; k++) s.paths.push([]);
@@ -93,12 +158,13 @@
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
     var s = {
-      mode: mode, levels: !!MODES[mode].levels, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
+      mode: mode, levels: !!(MODES[mode].levels || MODES[mode].book), book: !!MODES[mode].book,
+      list: MODES[mode].book ? usableLevels(o.levels) : null, rng: (o.seed >>> 0) || 1, level: 1, hintsOn: o.hints === "on",
       runScore: 0, hints: 0, boards: 0, updates: 0, n: 5, fill: true, pairs: 0, dots: null, answer: null, paths: null,
       boardUpdates: 0, boardHints: 0, pen: -1, phase: "play", t: 0, cursor: 0, won: false, over: false, cause: null,
       lastBoardScore: 0, noHintAt: -1000, lines: 0,
     };
-    if (s.levels) s.level = startAt(o.startLevel, LEVELS);
+    if (s.levels) s.level = startAt(o.startLevel, total(s));
     startBoard(s);
     return s;
   }
@@ -137,7 +203,7 @@
     s.lastBoardScore = boardScore(s);
     s.runScore += s.lastBoardScore; s.boards++;
     evs.push({ type: "clear", level: s.level });
-    if (!s.levels || s.level >= LEVELS) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
+    if (!s.levels || s.level >= total(s)) { s.won = true; s.over = true; s.cause = "won"; evs.push({ type: "win", score: s.runScore }); }
     else { s.phase = "clear"; s.t = CLEAR_T; }
   }
 
@@ -231,16 +297,18 @@
     return [{ type: "cursor" }];
   }
 
-  function save(s) { return JSON.parse(JSON.stringify(s)); }
-  function restore(data) {
+  function save(s) { var out = JSON.parse(JSON.stringify(s)); out.list = null; return out; }
+  function restore(data, levels) {
     var ok = data && typeof data === "object" && MODES[data.mode] && typeof data.n === "number" && data.n >= 3 && data.n <= 12 &&
       Array.isArray(data.dots) && data.dots.length === data.n * data.n && Array.isArray(data.paths) &&
       data.paths.length === data.pairs && Array.isArray(data.answer) && data.answer.length === data.pairs &&
       data.paths.every(function (p) { return Array.isArray(p) && p.every(function (i) { return i >= 0 && i < data.n * data.n; }); }) &&
-      typeof data.level === "number" && data.level >= 1 && data.level <= LEVELS && typeof data.runScore === "number" &&
+      typeof data.level === "number" && data.level >= 1 && typeof data.runScore === "number" &&
       typeof data.updates === "number" && typeof data.rng === "number";
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
+    s.book = data.mode === "book"; s.list = s.book ? usableLevels(levels) : null;
+    if (s.level > total(s)) throw new Error("That saved game can't be continued.");
     s.pen = -1;
     if (!(s.cursor >= 0 && s.cursor < s.dots.length)) s.cursor = 0;
     return s;
@@ -260,7 +328,8 @@
   }
 
   var ConnectLogic = {
-    UPS: UPS, TOP: TOP, LEVELS: LEVELS, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, HINT_COST: HINT_COST, CLEAR_T: CLEAR_T,
+    UPS: UPS, TOP: TOP, LEVEL_COUNT: LEVEL_COUNT, LEVELS: LEVELS, usableLevels: usableLevels, levelProblem: levelProblem,
+    fromGrid: fromGrid, total: total, MIN_SCORE: MIN_SCORE, SEC_COST: SEC_COST, HINT_COST: HINT_COST, CLEAR_T: CLEAR_T,
     STATE_VERSION: STATE_VERSION, MODES: MODES, create: create, step: step, press: press, begin: begin, extend: extend, stop: stop,
     hint: hint, owner: owner, joined: joined, allJoined: allJoined, filled: filled, done: done, makeBoard: makeBoard,
     hamiltonian: hamiltonian, levelSize: levelSize, hashSeed: hashSeed, neighbours: neighbours, adjacent: adjacent,

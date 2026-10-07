@@ -31,7 +31,8 @@ full guide.
   page shows them as a list, small squares or large squares, with your
   ★ favourites at the top and a search box (by name, kind or mode).
 - **Levels that keep coming** — most games have a list of levels (mazes,
-  layouts, courses, arenas, challenges …); optionally an AI model (your own
+  layouts, courses, arenas, challenges, pictures, themes, puzzle books …);
+  optionally an AI model (your own
   Ollama, an OpenAI-compatible service or Anthropic Claude) makes more when
   someone gets near the end, or when an admin asks. Every level is checked by
   the app first, and **Admin → AI usage** shows the tokens (and an estimated

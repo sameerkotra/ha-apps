@@ -9,7 +9,7 @@
   var Kit = root.ArcadeKit, Logic = root.ConnectLogic;
 
   var MODES = [{ id: "little", label: "Little 5 × 5 (gentle)" }, { id: "classic", label: "7 × 7" }, { id: "big", label: "9 × 9" },
-    { id: "levels", label: "Levels" }];
+    { id: "levels", label: "Levels" }, { id: "book", label: "Puzzle book" }];
   var LABELS = { little: "LITTLE", classic: "7 × 7", big: "9 × 9" };
   var HUES = [1, 5, 4, 3, 6, 7, 2], BX = 10, BY = 42, BS = 220, MSG_Y = 276;
 
@@ -35,9 +35,9 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel }); pending = []; last = -1; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; last = -1; },
       save: function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; last = -1; },
+      restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; last = -1; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
@@ -112,7 +112,7 @@
     buttons: [{ action: "alt", label: "💡 Hint", aria: "Hint: draw one pair's line", wide: true }],
     options: [{ id: "hints", label: "Hints", default: "off", offInRaces: true,
       choices: [{ id: "off", label: "Off" }, { id: "on", label: "On (each costs 200 points)" }] }],
-    help: "Join each pair of dots with the same number by drawing a line through the squares between them. Lines can't cross — drawing over a line cuts it — and every square must be filled (Little only asks for the pairs to be joined). Drag from a dot, or from a line's end to carry it on. Keyboard: move the ring with the arrows, Space on a dot starts its line, the arrows draw, Space lets go. Faster scores more. With the Hints option on, Hint draws one pair's line. Levels carry on from your next level.",
+    help: "Join each pair of dots with the same number by drawing a line through the squares between them. Lines can't cross — drawing over a line cuts it — and every square must be filled (Little only asks for the pairs to be joined). Drag from a dot, or from a line's end to carry it on. Keyboard: move the ring with the arrows, Space on a dot starts its line, the arrows draw, Space lets go. Faster scores more. With the Hints option on, Hint draws one pair's line. Levels carry on from your next level. The Puzzle book is a list of named puzzles that also carries on from your next one (an AI model can add more).",
     stateVersion: Logic.STATE_VERSION,
     create: create,
   });
