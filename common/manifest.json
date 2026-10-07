@@ -394,7 +394,10 @@
           "sensor_publisher.py",
           "geo.py",
           "csv_export.py",
-          "sandbox_run.py"
+          "sandbox_run.py",
+          "app_bus.py",
+          "ha_ws.py",
+          "assist_tools.py"
         ],
         "static": [
           "backnav.js",
@@ -417,7 +420,11 @@
           "test_sensor_publisher.py",
           "test_geo.py",
           "test_csv_export.py",
-          "test_sandbox_run.py"
+          "test_sandbox_run.py",
+          "fake_ha_bus.py",
+          "fake_ha.py",
+          "test_app_bus.py",
+          "test_assist_tools.py"
         ]
       }
     },

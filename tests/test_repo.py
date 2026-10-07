@@ -22,7 +22,7 @@ ARCADE = "household_arcade"
 ARCADE_VERSION = "1.9.0"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.1.2"
+RECEIPTS_VERSION = "1.2.0"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
 DOCS_VERSION = "1.2.0"

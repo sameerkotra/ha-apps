@@ -176,6 +176,8 @@ _SPEC: dict[str, tuple[Any, dict]] = {
     "shopping_tracker_entity": ("", {"validators": [_tracker]}),
     "shopping_notify_service": ("", {"validators": [_notify]}),
     "shopping_nearby_meters": (250, {"min": 0, "max": 3000}),
+    # Household Assistant (app/tools.py): off until an admin turns it on — what a household spends is private
+    "assistant_answers": (False, {}),
     # Advanced
     "log_level": ("INFO", {}),
 }
@@ -193,6 +195,9 @@ GROUPS: list[tuple[str, str, str]] = [
     ("prices", "Best prices", ""),
     ("ha", "Home Assistant and notifications",
      "Defaults for everyone. Each person's choices on the Notify page take precedence once saved there."),
+    ("assistant", "Household Assistant",
+     "The Household Assistant app answers questions from what the household apps know. Prices and spending are private, "
+     "so this app doesn't answer it until you turn it on."),
     ("advanced", "Advanced", ""),
 ]
 
@@ -321,6 +326,10 @@ FIELDS: dict[str, tuple[str, str, str]] = {
     "shopping_notify_service": ("ha", "Notify service for “cheapest here”",
                                 "For example notify.mobile_app_your_phone. Empty uses the notification service above."),
     "shopping_nearby_meters": ("ha", "Distance that counts as at a store (meters)", "0 turns “cheapest here” off."),
+    "assistant_answers": ("assistant", "Answer the Household Assistant",
+                          "Lets the Household Assistant app tell the people in this household what's on the shopping list "
+                          "and where it's cheapest, an item's prices by store, and spending by store or category — and add "
+                          "to the shopping list when someone taps to confirm. Off until you turn it on."),
     "log_level": ("advanced", "Log level", "Use Debug only while troubleshooting."),
 }
 

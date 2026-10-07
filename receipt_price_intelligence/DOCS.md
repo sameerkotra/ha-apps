@@ -59,6 +59,7 @@ kept in the app's database (so they are part of its backups), apply as soon as t
 | Web search | Provider, address, API key or token, timeout, requests at once, how long results are kept, seconds between searches, field names, and how often hours, deals and online prices are looked up |
 | Best prices | Price history window, minimum saving to suggest, smallest saving worth an alert, daily check hour |
 | Home Assistant and notifications | Sensors, alerts, notification services, restock and price-drop notifications, overcharge notices, the to-do list to sync, the person or phone for "cheapest here" and its distance |
+| Household Assistant | Answer the Household Assistant (off) |
 | Advanced | Log level |
 
 Each group is a card, with a line under each setting saying what it does, its range and its default. Changes are
@@ -402,6 +403,28 @@ action:
     data:
       title: "{{ trigger.event.data.title }}"
       message: "{{ trigger.event.data.message }}"
+```
+
+### The Household Assistant
+
+If the household also uses the **Household Assistant** app, an administrator can let it ask this app (**Admin → App
+settings → Household Assistant → Answer the Household Assistant**; off until turned on, because what a household
+spends is private). Then anyone who has opened this app can ask it:
+
+- "What's on the shopping list?" — each item with the store where it was cheapest and its last price;
+- "Where is milk cheapest?" — an item's latest price at each store and how it's trending;
+- "How much did we spend at Freshmart this month?" — spending in a month (or the last 30 days) by store;
+- "Add milk to the shopping list" — added only after the person taps the exact change it proposes.
+
+With more than one home, the assistant asks which. Each answer links back to this app. The answers travel through
+Home Assistant's event bus, which Home Assistant's recorder keeps in its history unless told not to — add this to
+Home Assistant's `configuration.yaml` and restart Home Assistant:
+
+```yaml
+recorder:
+  exclude:
+    event_types:
+      - household_apps
 ```
 
 ## Importing receipts from a folder or email

@@ -8,7 +8,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERSION = "1.1.2"
+VERSION = "1.2.0"
 
 
 def read(*parts):
@@ -100,7 +100,8 @@ class PackagingTests(unittest.TestCase):
                 continue
             with self.subTest(os.path.relpath(path, ROOT)):
                 with open(path, encoding="utf-8") as f:
-                    self.assertNotRegex(f.read(), r"(?i)add-?ons?\b")
+                    text = f.read().replace("/addons/self/info", "")      # the Supervisor's API address isn't wording
+                    self.assertNotRegex(text, r"(?i)add-?ons?\b")
 
     def test_whoami_never_lists_admin_users(self):
         src = read("app", "api", "homes.py")
