@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.1
+
+- **Notifications open the app for everyone**: tapping a maintenance notification opened the admin's Settings → Apps page (`/hassio/ingress/…`) — or nothing, for anyone who isn't an admin. It now opens Todo's own sidebar page, learnt from the Supervisor at start-up; an app that isn't in the sidebar sends notifications without a link.
+
 ## 2.4.0
 
 - **Answers the Household Assistant**: the new Household Assistant app can ask Todo for a person's tasks ("What's on my list today?" — today's and overdue, this week's, overdue or all; titles, dates, lists and who, never notes), their lists, and what's coming up on the schedule, with a link back to Todo. It can also **add a task** to one of their lists, but only after the person taps the exact change it proposes; the task shows "from Assistant". On by default; an admin can turn it off in **App settings → Household Assistant**, and each person on **Settings → Household Assistant**.

@@ -460,7 +460,8 @@
           "people_admin.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "deeplinks.py"
         ],
         "static": [
           "backnav.js",
@@ -470,7 +471,8 @@
           "ui.js",
           "settings.js",
           "settings.css",
-          "people.js"
+          "people.js",
+          "deeplink.js"
         ],
         "tests": [
           "__init__.py",
@@ -490,7 +492,8 @@
           "test_people_admin.py",
           "fake_ha_bus.py",
           "test_app_bus.py",
-          "test_assist_tools.py"
+          "test_assist_tools.py",
+          "test_deeplinks.py"
         ]
       }
     },

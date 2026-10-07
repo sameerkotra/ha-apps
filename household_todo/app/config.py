@@ -52,12 +52,14 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
 SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket")
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
-# The app's sidebar page ("/<full slug>", open to everyone) for links in the Household Assistant's answers; set at
-# start-up (app_messages.start: the Supervisor's addons/self/info, else the host name).
+# The app's sidebar page ("/<full slug>", open to everyone): what a phone notification and the Household Assistant's
+# links open. Set at start-up (app_messages.start: the Supervisor's addons/self/info, else the host name); None when
+# the app isn't in the sidebar. (Before 2.5.0 notifications opened /hassio/ingress/<slug>, the admin's Settings →
+# Apps page, which isn't open to everyone.)
 SIDEBAR_PAGE = None
 
 # Said to the other household apps in `hello` (app_messages.py); equals config.yaml's version.
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 APP_TITLE = "Household Todo"
 
 # Maintenance: read from Home Assistant's GET /config at start-up (ha_client). A negative latitude
@@ -65,11 +67,6 @@ APP_TITLE = "Household Todo"
 LATITUDE = None
 CURRENCY = ""
 SHARE_ROOT = os.environ.get("SHARE_ROOT", "/share")
-# The app's panel in Home Assistant, for notifications to open (the container's host name is the app's
-# slug with - for _, e.g. local-household-todo → /hassio/ingress/local_household_todo).
-_host = os.environ.get("HOSTNAME", "")
-INGRESS_PANEL = ("/hassio/ingress/" + _host.replace("-", "_")) if _host and _host.replace("-", "").isalnum() \
-    and _host.endswith("household-todo") else None
 
 # §8m — fixed, not an app option.
 COMPLETED_RETENTION_DAYS = 60

@@ -426,7 +426,7 @@ Differences from the draft above:
 
 Each item is ticked in the commit that finishes it.
 
-- [ ] **Notification links (Todo, Splitpot)**: phone notifications open the sidebar page, not the admin's
+- [x] **Notification links (Todo, Splitpot)**: phone notifications open the sidebar page, not the admin's
   `/hassio/ingress/<slug>` page (as Arcade 1.8.0 did).
 - [ ] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
 - [ ] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and

@@ -54,7 +54,9 @@ function money(n, currency = state.currency) {
 // settings shows up on the next Dashboard/group load, without reloading.
 async function loadConfig() {
   try {
-    state.currency = (await api('/config')).currency || state.currency;
+    const cfg = await api('/config');
+    state.currency = cfg.currency || state.currency;
+    state.page = cfg.page || null;              // the sidebar page: links open a group there (deeplink.js)
   } catch (e) { /* keep the current one */ }
 }
 
@@ -1248,7 +1250,12 @@ function renderNoAdminBanner(who) {
   await loadGroups();
   const defaultGroup = state.groups.find((g) => g.isDefault);
   const adminTab = adminTabFromHash(location.hash);   // deep link to an Admin tab
-  const linkedGroup = groupFromHash(location.hash);   // a notification's link to its group
+  let linkedGroup = groupFromHash(location.hash);     // a notification's link to its group
+  // A notification opens "/<page>/group/<id>" (common/static/deeplink.js): that group now, and any tapped later
+  HouseholdDeepLink.start(state.page, (route) => groupFromHash('#' + route), (gid) => {
+    if (!linkedGroup) linkedGroup = gid;
+    else if (state.groups.some((g) => g.id === gid)) openGroup(gid);
+  });
   if (adminTab) {
     openAdmin(adminTab);
   } else if (linkedGroup && state.groups.some((g) => g.id === linkedGroup)) {

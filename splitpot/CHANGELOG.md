@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.1
+
+- **Notifications open the group for everyone**: tapping a new-charge or payment notification opened the admin's Settings → Apps page — or nothing, for anyone who isn't an admin — and lost the group. It now opens Splitpot's own sidebar page on that group (`/<page>/group/<id>`).
+
 ## 2.4.0
 
 - **Can answer the Household Assistant**: once an admin turns on **Answer the Household Assistant** (Admin → App settings; off by default, because money is private), the new Household Assistant app can ask Splitpot "Who owes me money?" or "What did we spend on the trip?" — balances and the newest 20 entries of **only the groups that person is in**, matched by their Home Assistant login — with a link back to Splitpot. Each person can turn it off for themselves on **My settings**.

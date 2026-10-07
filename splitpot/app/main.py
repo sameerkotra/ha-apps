@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator, model_validator
 
 from . import app_messages, config
-from .common import auth_core, backup_core, csv_export, db_core, ha_time, sensor_publisher, settings_core, web_security
+from .common import auth_core, backup_core, csv_export, db_core, deeplinks, ha_time, sensor_publisher, settings_core, web_security
 from .common import ha_client as ha_core, ha_notify, ha_people, people_admin
 from .common import housekeeping as jobs_core
 from .common import whoami as whoami_core
@@ -1147,10 +1147,12 @@ def linked_user_id(ha_user_id: Optional[str]) -> Optional[str]:
 
 
 def notify_link(group_id: str) -> Optional[dict]:
-    """Tapping the notification opens the app on the group (iOS reads `url`, Android `clickAction`)."""
-    if not config.INGRESS_PANEL:
+    """Tapping the notification opens the app's sidebar page on the group (iOS reads `url`, Android `clickAction`):
+    "/<full slug>/group/<id>" — a sub-path, which Home Assistant hands on to the page (a "#…" fragment would be
+    lost on the way in)."""
+    if not config.SIDEBAR_PAGE:
         return None
-    url = f"{config.INGRESS_PANEL}#/group/{group_id}"
+    url = f"{config.SIDEBAR_PAGE}/group/{group_id}"
     return {"url": url, "clickAction": url}
 
 
@@ -2083,8 +2085,9 @@ def whoami(request: Request):
 
 @router.get("/config")
 def app_config():
-    """Display settings the frontend needs before rendering any amount."""
-    return {"currency": get_setting("currency")}
+    """Display settings the frontend needs before rendering any amount, and the app's sidebar page (links from
+    notifications open a group there: common/static/deeplink.js)."""
+    return {"currency": get_setting("currency"), "page": config.SIDEBAR_PAGE}
 
 
 @router.get("/admin/settings")
@@ -2194,6 +2197,8 @@ async def admin_storage_import_db(file: UploadFile = File(...), _admin: None = D
 
 
 app.include_router(router)
+# "/<page>/group/<id>" asked of the app itself (a notification's link): a redirect to "#/group/<id>"
+deeplinks.add(app, {"group": 1})
 init_db()
 
 # Serve the frontend. Must be mounted last so it doesn't swallow /api routes.
