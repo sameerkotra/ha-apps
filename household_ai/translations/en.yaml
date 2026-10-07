@@ -1,0 +1,13 @@
+configuration:
+  admin_users:
+    name: Admins
+    description: >-
+      Home Assistant user names (login names) or user ids of the app's admins
+      — display names are not accepted. Admins choose and download models,
+      turn the model server on and off, and set the schedule, limits and
+      access keys. Empty by default: until you add someone, the page shows
+      "No admin yet". Not sure what to enter? Open the app and select your
+      name: "How the app sees you" shows the exact value. Restart the app
+      (Information tab → Restart) after changing this list.
+network:
+  11434/tcp: AI model for other computers on your network (leave empty so only apps inside Home Assistant can use it)

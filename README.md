@@ -4,7 +4,7 @@
 > aren't affiliated with or endorsed by Home Assistant or Nabu Casa. They were built with Claude,
 > Anthropic's AI model, and are provided as-is: try them out first, and keep your own backups.
 
-Eleven apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
+Twelve apps for a household that already runs Home Assistant. Each one opens from the Home Assistant
 sidebar, uses everyone's Home Assistant login (no extra accounts or passwords), and keeps its data on
 your own Home Assistant.
 
@@ -21,6 +21,7 @@ your own Home Assistant.
 | [Household Vault](household_vault) | — | **Experimental.** A password manager with personal, household and shared vaults, each a standard KeePass file. It hasn't had an independent security review — keep your own KeePass copy of your passwords. |
 | [Household Arcade](household_arcade) | 🤖 Optional | **Under development.** Classic games for the whole household, played from the sidebar or the phone: 42 games, from Snake and Falling Blocks to Gem Swap, Sudoku, Checkers, Ludo, Carrom and Chess. Race someone on the same game, play live on two phones (Snake Duel, Paddle Duel, Tank Battle, Carrom), or take turns over days (board games, Ludo, Chess) with your-move notifications. Personal bests, a household leaderboard, six looks, and optional time limits for children. |
 | [Household Assistant](household_assistant) | 🤖 **Needed** | Ask in plain words about what the other apps know — today's tasks, this month's spending, the shopping list, a note — and get a short answer with links back to each app. Each app answers only what the person could see in it, once its admin allows it; changes are only proposed and need a tap. |
+| [Household AI](household_ai) | — | **64-bit only.** An AI model on the Home Assistant machine's own CPU — no GPU, no second computer — for the apps above: download models with their size and memory in front of you, keep one loaded in the day, and share it fairly (the assistant first). The apps use it as an ordinary Ollama address. Slow on a CPU: seconds for a short answer, minutes for a receipt photo. |
 
 **AI** — 🤖 **Needed**: the app's main job uses an AI model, so it needs one set up before it is useful (Finance
 Dashboard reads statements with it; Receipt Price Intelligence reads receipt photos with a vision model; the
@@ -28,7 +29,18 @@ Household Assistant plans and writes its answers with it).
 🤖 Optional: the app works fully without one, and an AI model adds extras (Calorie Tracker's estimates, Household
 Arcade's extra levels, Household Docs' text read from scans, summaries and checklists made from text). — : no AI. Every app that uses AI lets you choose the model: your own Ollama on your
 network, an OpenAI-compatible service, or Anthropic Claude (Receipt Price Intelligence: Ollama or an
-OpenAI-compatible server). Nothing is sent to an outside service unless you choose one.
+OpenAI-compatible server). Nothing is sent to an outside service unless you choose one. With no other computer,
+[Household AI](household_ai) runs the model on the Home Assistant machine itself (it gives AI to the other apps, so it
+needs none: —).
+
+### AI on Home Assistant itself: Household AI
+
+No second computer for a model? Install **Household AI**: it runs an Ollama model on the Home Assistant machine's own
+CPU (64-bit only; 8 GB of memory is enough for the small text models), and the other apps use it as an ordinary
+Ollama address — its page shows the exact values to paste into each app's AI settings. Choose and download models
+there, keep one loaded during the day, and let the apps share it fairly. It is slow on a CPU (seconds for a short
+answer, minutes for a receipt photo), keeps everything at home, and is reachable only by apps inside Home Assistant
+unless you choose otherwise. See its [documentation](household_ai/DOCS.md).
 
 ## Installing
 

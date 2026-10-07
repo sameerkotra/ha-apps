@@ -1,0 +1,58 @@
+name: "Household AI"
+version: "1.0.1"
+slug: household_ai
+description: >-
+  An AI model on your Home Assistant machine's own CPU, for the other household
+  apps: no GPU, no second computer, nothing sent outside. Choose and download
+  models, keep one loaded in the day, and share it fairly between the apps.
+url: https://github.com/sameerkotra/ha-apps
+# Ollama ships for 64-bit machines only.
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: true
+
+# The admin page is reached through the Supervisor's authenticated ingress proxy.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:brain
+panel_title: Household AI
+# true = only Home Assistant administrators see it in the sidebar: the rest of the household uses the model
+# through the other apps.
+panel_admin: true
+
+# The gateway the other apps use (port 11434, inside Home Assistant's internal network). Declared so the Network
+# tab offers it, but NOT published (null): to use the model from other computers on your network, enter a host
+# port there yourself.
+ports:
+  11434/tcp: null
+ports_description:
+  11434/tcp: "AI model for other computers on your network (leave empty: only apps inside Home Assistant)"
+
+# The Supervisor restarts the app if the gateway stops answering (it answers while the model server is off).
+watchdog: http://[HOST]:[PORT:11434]/api/version
+
+# Models are gigabytes each: they stay out of Home Assistant's backups. The app's database (settings, key hashes,
+# usage) is backed up; after a restore the page offers to download the missing models again.
+backup_exclude:
+  - "models"
+  - "models/**"
+
+# homeassistant_api: Home Assistant's time zone (the daytime window). hassio_api (default role): only
+# GET /addons/self/info, to show whether port 11434 is published on your network. Nothing else.
+homeassistant_api: true
+hassio_api: true
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+
+# admin_users (who is an admin) is the only option. Everything else is set in the app under App settings.
+options:
+  admin_users: []
+
+schema:
+  admin_users:
+    - "str"

@@ -40,7 +40,11 @@ admin access to your Home Assistant or its host.
 ## How the apps are meant to be run
 
 - Every app is reached only through Home Assistant's own sidebar (ingress). None of them opens a
-  network port, and none should be exposed any other way.
+  network port, and none should be exposed any other way. The one exception is **Household AI**: the other
+  apps reach its model on port 11434 inside Home Assistant's internal network (not published to your network
+  unless you set a port on its Network tab). Through that port an app can only ask the model questions — never
+  download, delete or replace models — and *Require an access key* adds keys. It is also the only app with
+  `hassio_api`, used for one read of its own network settings.
 - Who someone is comes from Home Assistant's login; the admins are the names in each app's
   `admin_users` option.
 - **Household Vault is experimental** and hasn't had an independent security review. Keep your own
