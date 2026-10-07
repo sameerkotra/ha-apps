@@ -412,8 +412,11 @@ only to the app's own sidebar page and its own route patterns, and `sidebar_page
 
 Differences from the draft above:
 
-- **Links**: only Chat, Arcade and Docs open a route after their sidebar page today; the others' links open the app
-  (no `target`), as §2.1 allows. Giving Todo, Splitpot and the rest sub-path routes is later work.
+- **Links**: every app's links open a page inside it. The six apps without their own handling share
+  `common/static/deeplink.js` (the page reads the sub-path Home Assistant hands it) and `common/python/deeplinks.py`
+  (a sub-path request reaching the app is redirected to the page's `#/route`): Todo `/dashboard`, `/lists/<id>`,
+  `/schedule`; Splitpot `/group/<id>`; Family Tree `/upcoming`; Calorie `/foodlog/<date>`; Receipt `/list`,
+  `/insights`; Finance `/month/<YYYY-MM>`, `/recurring`.
 - **Receipt Price Intelligence** keeps the bus's tables in their own `app_bus.db` (the §12 decision): a bus answer
   holds a write lock for its length, which would block the tools' own SQLAlchemy writes to the app's file.
 - **Finance** keeps the bus's tables in its own database and hides them from Query and Reports.
@@ -429,7 +432,7 @@ Each item is ticked in the commit that finishes it.
 - [x] **Notification links (Todo, Splitpot)**: phone notifications open the sidebar page, not the admin's
   `/hassio/ingress/<slug>` page (as Arcade 1.8.0 did).
 - [x] **Tests failing on main**: Family Tree's Leaflet checksum; Docs' sheet sensor test and two `.xlsx` sheet tests.
-- [ ] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
+- [x] **Links that open the right page**: sub-path routes for Todo, Splitpot, Family Tree, Calorie, Receipt and
   Finance, and their tools' link targets.
 - [ ] **Per-person switch** for Calorie Tracker, Receipt Price Intelligence and Finance Dashboard.
 - [ ] **The Household Assistant app** (§10 phase 1): skeleton, AI settings, the plan → call → answer loop, the page,

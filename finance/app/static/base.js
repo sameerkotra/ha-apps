@@ -4,6 +4,16 @@
 // One external file, loaded at the end of <body>, so the Content-Security-Policy can forbid inline scripts.
 // Values from the server come as JSON in data-* attributes.
 (function () {
+    // ---- A link from Home Assistant (the Household Assistant) opens "/<page>/month/<YYYY-MM>", "/<page>/recurring" or
+    // "/<page>/dashboard" (common/static/deeplink.js reads the path; the page comes in <body data-page>) ----
+    if (window.HouseholdDeepLink) {
+        window.HouseholdDeepLink.start(document.body.getAttribute("data-page"), function (route) {
+            var m = /^\/month\/(\d{4}-(0[1-9]|1[0-2]))$/.exec(route);
+            if (m) return "dashboard?period=" + m[1];
+            return route === "/recurring" ? "recurring" : route === "/dashboard" ? "dashboard" : null;
+        }, function (href) { location.href = href; });
+    }
+
     function json(el, name, fallback) {
         var raw = el && el.getAttribute(name);
         if (raw === null || raw === undefined) return fallback;

@@ -113,3 +113,23 @@ def test_catalogue_and_reports_never_see_the_bus(env):
     assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.spending", "finance.recurring",
                                                        "finance.bills"]
     assert {"bus_outbox", "bus_seen", "bus_apps"} <= query_engine.HIDDEN_TABLES
+
+
+def test_links_open_the_right_page(env):
+    from app import tools
+    month = seed(env)
+    turn_on(env)
+    tools.PANEL["value"] = "/local_finance"
+    try:
+        res = call("finance.summary", month=month)
+        assert res["links"][0]["target"] == f"/month/{month}"
+        assert res["links"][0]["panel"] == "/local_finance"
+        assert call("finance.recurring")["links"][0]["target"] == "/recurring"
+        page = env.get("dashboard")
+        assert 'data-page="/local_finance"' in page.text
+        assert "static/common/deeplink.js" in page.text
+    finally:
+        tools.PANEL["value"] = None
+    r = env.get(f"month/{month}", follow_redirects=False)
+    assert (r.status_code, r.headers["location"]) == (307, f"../dashboard?period={month}")
+    assert env.get("month/2026-13", follow_redirects=False).status_code == 404
