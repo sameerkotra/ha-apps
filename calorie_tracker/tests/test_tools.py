@@ -74,6 +74,19 @@ class TodayTests(ApiBase):
         self.c.put("/api/admin/settings", json={"assistant_answers": True}, headers=ADMIN)
         self.assertNack(call("u_nobody"), "not_allowed", "no_access")
 
+    def test_persons_own_switch(self):
+        me = self.c.get("/api/me", headers=ALICE).json()
+        self.assertEqual((me["assistant"], me["assistantOk"]), (True, True))
+        r = self.c.put("/api/me/assistant", json={"assistantOk": False}, headers=ALICE)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertFalse(r.json()["assistantOk"])
+        self.assertNack(call("u_alice"), "not_allowed", "person_off")
+        self.assertIn("text", call("u_bob"))
+        self.assertEqual(self.c.put("/api/me/assistant", json={"assistantOk": "no"}, headers=ALICE).status_code, 422)
+        # an admin "acting as" someone changes only their own switch
+        self.c.put("/api/me/assistant?as_user=u_bob", json={"assistantOk": False}, headers=ADMIN)
+        self.assertIn("text", call("u_bob"))
+
     def test_sub_paths_redirect_to_the_page(self):
         for path, where in (("/foodlog", "../#/foodlog"), ("/foodlog/2026-09-20", "../../#/foodlog/2026-09-20"),
                             ("/dashboard", "../#/dashboard")):

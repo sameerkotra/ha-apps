@@ -4,8 +4,8 @@ app/common/assist_tools.py).
 One tool, `calorie.today`: the asking person's own day — calories and macros against their goals, and what they
 logged at each meal — exactly as their own Today page shows it. Never anyone else's day (the assistant asks as the
 person; "acting as" another person is for admins on the page only), and never weight. Answered only while the
-admin's *Answer the Household Assistant* is on. Calorie Tracker has no per-person settings, so there is no
-per-person switch. The link opens that day's Food Log on the app's sidebar page.
+admin's *Answer the Household Assistant* is on and the person hasn't turned off *Let the Household Assistant answer
+for me* (Goals). The link opens that day's Food Log on the app's sidebar page.
 """
 import re
 from datetime import date
@@ -27,8 +27,8 @@ def _busy() -> None:
 
 def _actor(conn, uid: str):
     """Anyone who has opened Calorie Tracker (it has no access switch of its own)."""
-    r = conn.execute("SELECT id, name FROM users WHERE id = ?", (uid,)).fetchone()
-    return {"id": r["id"], "name": r["name"]} if r else None
+    r = conn.execute("SELECT id, name, assistant_ok FROM users WHERE id = ?", (uid,)).fetchone()
+    return {"id": r["id"], "name": r["name"], "assistant_ok": bool(r["assistant_ok"])} if r else None
 
 
 def _panel():
@@ -36,7 +36,8 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "calorie", targets=[r"/foodlog/\d{4}-\d{2}-\d{2}"], actor=_actor, enabled=lambda conn: bool(settings.get("assistant_answers")), panel=_panel, busy=_busy)
+    "calorie", targets=[r"/foodlog/\d{4}-\d{2}-\d{2}"], actor=_actor,
+    enabled=lambda conn: bool(settings.get("assistant_answers")), person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel, busy=_busy)
 
 
 def _r(x) -> int:

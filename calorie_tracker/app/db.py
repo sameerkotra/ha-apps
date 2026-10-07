@@ -112,6 +112,7 @@ def init_db():
 MIGRATIONS = [
     ("users", "enabled", "INTEGER NOT NULL DEFAULT 1"),
     ("saved_foods", "notes", "TEXT"),
+    ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),   # "Let the Household Assistant answer for me" (tools.py)
 ]
 
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.2
+
+- **Your own Household Assistant switch**: **Goals → Let the Household Assistant answer for me** (on) — turn it off and the Household Assistant gets nothing about your day, whatever the admin's setting.
+
 ## 2.2.1
 
 - **Links open the right page**: the Household Assistant's answer opens that day's Food Log. Links ending in `/foodlog/<date>`, `/dashboard`, `/weight` or `/goals` open that page.
