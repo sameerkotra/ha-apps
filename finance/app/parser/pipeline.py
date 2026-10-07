@@ -246,35 +246,47 @@ def _check_reconciliation(
 _CARD_PAYMENT_WORDS = re.compile(r"\b(?:payment|autopay|auto\s*pay|thank\s*you)\b", re.IGNORECASE)
 
 
+def _card_payments_backwards(rows) -> bool:
+    """Every line worded like a card payment came out positive (a charge) and most other lines negative:
+    the model signed the card like a bank account. On a card a payment always reduces what is owed."""
+    payments = [t for t in rows if _CARD_PAYMENT_WORDS.search(t.description or "")]
+    others = [t for t in rows if not _CARD_PAYMENT_WORDS.search(t.description or "")]
+    return bool(payments and others and all(t.amount > 0 for t in payments)
+                and sum(1 for t in others if t.amount < 0) * 2 > len(others))
+
+
 def _fix_card_signs(previous_balance, new_balance, for_reconciliation, to_insert):
     """A card's purchases are stored positive (app/matching.py). If the model signed every line the
-    other way round, every sign is flipped. Returns (for_reconciliation, to_insert, note).
+    other way round, every sign is flipped. Returns (for_reconciliation, to_insert, note, new_balance) —
+    new_balance corrected when the statement's printed credit balance was read without its sign.
 
-    1. The printed balances decide when they can: the extracted total exactly the negative of the
-       balance movement means backwards; exactly the movement means right as it is.
-    2. Otherwise (no balances found, or they match neither way) the payments decide: when every line
-       worded like a card payment is positive and most other lines are negative, the model signed the
-       statement like a bank account."""
+    1. The payments' own wording decides first: card payments that came out as charges, with the
+       purchases negative, can only be a backwards reading. If the printed balances seemed to agree with
+       that reading, they were read the wrong way round too (a credit balance printed without a minus
+       sign the label search could see), so the movement is taken the other way round.
+    2. Otherwise the printed balances decide when they can: the extracted total exactly the negative of
+       the balance movement means backwards."""
     if not for_reconciliation:
-        return for_reconciliation, to_insert, None
+        return for_reconciliation, to_insert, None, new_balance
     total = round(sum(t.amount for t in for_reconciliation), 2)
     flip = lambda rows: [dataclasses.replace(t, amount=-t.amount) for t in rows]
-    if previous_balance is not None and new_balance is not None and total != 0:
-        printed = round(new_balance - previous_balance, 2)
-        if abs(total - printed) <= RECONCILIATION_TOLERANCE:
-            return for_reconciliation, to_insert, None
-        if abs(-total - printed) <= RECONCILIATION_TOLERANCE:
-            return flip(for_reconciliation), flip(to_insert), (
-                f"Signs flipped: the model signed purchases and payments the opposite way round (extracted total "
-                f"{total:+.2f}, printed balance moved {printed:+.2f}); purchases are stored as money out on a card.")
-    payments = [t for t in for_reconciliation if _CARD_PAYMENT_WORDS.search(t.description or "")]
-    others = [t for t in for_reconciliation if not _CARD_PAYMENT_WORDS.search(t.description or "")]
-    if payments and others and all(t.amount > 0 for t in payments) \
-            and sum(1 for t in others if t.amount < 0) * 2 > len(others):
+    have_balances = previous_balance is not None and new_balance is not None
+    printed = round(new_balance - previous_balance, 2) if have_balances else None
+    if _card_payments_backwards(for_reconciliation):
+        n = sum(1 for t in for_reconciliation if _CARD_PAYMENT_WORDS.search(t.description or ""))
+        note = (f"Signs flipped: the model signed purchases and payments the opposite way round ({n} card "
+                f"payment(s) came out as charges); purchases are stored as money out on a card.")
+        if have_balances and total != 0 and abs(total - printed) <= RECONCILIATION_TOLERANCE:
+            new_balance = round(previous_balance - printed, 2)
+            note += (f" The printed balance movement ({printed:+.2f}) was read without its sign and is taken as "
+                     f"{-printed:+.2f}.")
+        return flip(for_reconciliation), flip(to_insert), note, new_balance
+    if have_balances and total != 0 and abs(total - printed) > RECONCILIATION_TOLERANCE \
+            and abs(-total - printed) <= RECONCILIATION_TOLERANCE:
         return flip(for_reconciliation), flip(to_insert), (
-            f"Signs flipped: the model signed purchases and payments the opposite way round ({len(payments)} "
-            f"card payment(s) came out as charges); purchases are stored as money out on a card.")
-    return for_reconciliation, to_insert, None
+            f"Signs flipped: the model signed purchases and payments the opposite way round (extracted total "
+            f"{total:+.2f}, printed balance moved {printed:+.2f}); purchases are stored as money out on a card."), new_balance
+    return for_reconciliation, to_insert, None, new_balance
 
 
 def process_statement(statement_id: int, user_id: str, account_id: int, ollama_url: str, ollama_model: str) -> None:
@@ -395,13 +407,13 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
 
         _set_step(conn, statement_id, "Reconciling against statement balance")
         if account_type == "credit_card":
-            for_reconciliation, to_insert, flip_note = _fix_card_signs(
+            for_reconciliation, to_insert, flip_note, card_new_balance = _fix_card_signs(
                 det_result.previous_balance, det_result.new_balance, for_reconciliation, to_insert)
             if flip_note:
                 duplicate_notes.append(flip_note)
                 skipped = [dict(s, txn=dataclasses.replace(s["txn"], amount=-s["txn"].amount)) for s in skipped]
         reconciliation_note = _check_reconciliation(
-            det_result.previous_balance, det_result.new_balance,
+            det_result.previous_balance, card_new_balance if account_type == "credit_card" else det_result.new_balance,
             for_reconciliation,
         )
         statement_period = _infer_statement_period(for_reconciliation)

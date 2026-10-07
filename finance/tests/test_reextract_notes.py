@@ -152,3 +152,42 @@ def test_balance_labels_keep_a_credit_balance_negative():
     assert extract_balances("Previous Balance $-3.00\nNew Balance $1,234.56") == (-3.0, 1234.56)
     assert extract_balances("Previous Balance $100.00\nNew Balance $150.00") == (100.0, 150.0)
     assert extract_balances("no balances here") == (None, None)
+
+
+# The statement from the report (2026-09): 13 Amazon/Subway/Carter's charges and 9 mobile payments, a 14.01 refund.
+_REPORTED = [
+    ("2026-09-05", 17.58, "MOBILE PAYMENT - THANK YOU"), ("2026-09-05", -17.58, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"),
+    ("2026-09-09", 21.60, "MOBILE PAYMENT - THANK YOU"), ("2026-09-10", -21.60, "carters, Inc. 000000998 Atlanta GA 8773330117"),
+    ("2026-09-13", -10.25, "SUBWAY AURORA CO 303-627-9468"), ("2026-09-13", -30.80, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"),
+    ("2026-09-14", 41.05, "MOBILE PAYMENT - THANK YOU"), ("2026-09-15", -8.81, "AMAZON.COM AMZN.COM/BILL WA BOOK STORES"),
+    ("2026-09-16", 8.81, "MOBILE PAYMENT - THANK YOU"), ("2026-09-16", -32.70, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"),
+    ("2026-09-17", -35.14, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"), ("2026-09-18", 67.11, "MOBILE PAYMENT - THANK YOU"),
+    ("2026-09-18", 0.03, "MOBILE PAYMENT - THANK YOU"), ("2026-09-19", 41.26, "MOBILE PAYMENT - THANK YOU"),
+    ("2026-09-19", -18.66, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"), ("2026-09-19", -21.90, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"),
+    ("2026-09-22", -25.14, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"), ("2026-09-23", 25.14, "MOBILE PAYMENT - THANK YOU"),
+    ("2026-09-23", -11.10, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"), ("2026-09-24", 46.49, "MOBILE PAYMENT - THANK YOU"),
+    ("2026-09-24", -35.39, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"), ("2026-09-25", 14.01, "AMAZON MARKETPLACE NA PA AMZN.COM/BILL WA MERCHANDISE"),
+]
+
+
+@pytest.mark.parametrize("balances", [
+    [],                                                        # no balances found
+    ["Previous Balance $0.00", "New Balance $14.01"],          # a credit balance printed without a sign the search sees
+    ["Previous Balance $14.01", "New Balance $0.00"],          # owed 14.01 before, nothing now
+    ["Previous Balance $0.00", "New Balance $14.01-"],         # trailing minus
+])
+def test_the_reported_statement_comes_out_the_right_way_round(env, capture_vision, balances):
+    calls, setter = capture_vision
+    from app.parser import pipeline as pl
+    from app.routes.upload import statement_flows
+    acct, sid = _statement(env, balances + [f"{d} {desc} {abs(a):.2f}" for d, a, desc in _REPORTED], type_="credit_card")
+    setter(_REPORTED)
+    pl.process_statement(sid, "tester", acct, "http://x", "m")
+    with env.db() as c:
+        flow = statement_flows(c, "tester", sid)[sid]
+        st = c.execute("SELECT balance_mismatch, duplicate_transactions FROM statements WHERE id=?", (sid,)).fetchone()
+        refund = c.execute("SELECT amount FROM transactions WHERE statement_id=? AND date='2026-09-25'", (sid,)).fetchone()[0]
+    assert (round(flow["money_in"], 2), round(flow["money_out"], 2)) == (283.08, 269.07)
+    assert refund == -14.01
+    assert st["balance_mismatch"] is None
+    assert "Signs flipped" in (st["duplicate_transactions"] or "")

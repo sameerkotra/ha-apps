@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.5
+
+- **Credit-card money in and out, for real this time**: a card statement read backwards (payments as charges,
+  purchases as payments) still came out swapped when the statement's credit balance was printed in a way the app
+  read without its minus sign — the backwards reading then seemed to match the balances. The payments now decide
+  first: card payments ("PAYMENT - THANK YOU", "AUTOPAY") that came out as charges always flip every sign, and the
+  misread balance is put right too, so the statement still reconciles. A trailing minus ("$14.01-") is read as a
+  credit as well. Press **Re-extract** on the statement (or delete and upload it again if it was confirmed).
+
 ## 1.2.4
 
 - **Credit-card money in and out the right way round**: when the model read a card statement like a bank account
