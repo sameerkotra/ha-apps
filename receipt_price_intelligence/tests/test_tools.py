@@ -112,6 +112,25 @@ class ToolTests(unittest.TestCase):
         self.assertEqual([i["latest"] for i in res["items"]], [2.99, 3.49])
         self.assertIn("No purchases", self.call("receipt.price", item="saffron")["text"])
 
+    def test_links_open_the_right_page(self):
+        from app import tools
+        tools.PANEL["value"] = "/local_receipt_price_intelligence"
+        try:
+            self.assertEqual(self.call("receipt.price", item="milk")["links"],
+                             [{"label": "Insights in Receipt Price Intelligence",
+                               "panel": "/local_receipt_price_intelligence", "target": "/insights"}])
+            self.assertEqual(self.call("receipt.shopping_list")["links"][0]["target"], "/list")
+        finally:
+            tools.PANEL["value"] = None
+
+    def test_sub_paths_redirect_to_the_page(self):
+        from fastapi.testclient import TestClient
+        from app import main
+        c = TestClient(main.app, client=("172.30.32.2", 50000))
+        for path, page in (("/insights", "analysis.html"), ("/list", "list.html"), ("/receipts", "index.html")):
+            r = c.get(path, headers={"X-Remote-User-Id": "u_pat"}, follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers["location"]), (307, page), path)
+
     def test_spending(self):
         res = self.call("receipt.spending")
         self.assertIn("62.50 USD in 2 trips", res["text"])

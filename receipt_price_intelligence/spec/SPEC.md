@@ -122,7 +122,11 @@ references are in [`docs/`](../docs): the API (`API.md`), the database (`DATABAS
     then the cheapest store.
 - **Off by default** (App settings → Household Assistant → `assistant_answers`; `nack not_allowed off`). No
   per-person switch: the app has no per-person settings beyond notifications. Links: the sidebar page from
-  `assist_tools.sidebar_page` (the pages have no sub-path routes).
+  `assist_tools.sidebar_page`, with `/list` (the shopping list) or `/insights`.
+- **Sub-path links**: `/<page>/list`, `/receipts`, `/insights`, `/deals`, `/trip`, `/stores`. Home Assistant opens the
+  start page; `app.js` loads `common/static/deeplink.js` (given the page by `/api/v1/me`'s `page`), which reads the
+  rest of the path and goes to that page. A request for one of those paths reaching the app itself is redirected to
+  the page's file (`main.py`).
 
 ## 6. Tests
 

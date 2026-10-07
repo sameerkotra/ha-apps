@@ -10,7 +10,7 @@ Everyone who has opened the app sees every home here, so the asking person needs
 with more than one home, `home` names it. The bus's own transaction is on a separate small database (app_messages.py),
 so each tool reads and writes the app's data in its own SQLAlchemy session. Prices and spending are private: the
 admin's *Answer the Household Assistant* is **off** until turned on. There are no per-person settings, so there is no
-per-person switch. The app's pages don't open sub-paths, so links open the app.
+per-person switch. Links open the shopping list or Insights on the app's sidebar page.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "receipt", actor=_actor, enabled=lambda conn: bool(app_settings.values().get("assistant_answers")), panel=_panel)
+    "receipt", targets=[r"/list", r"/insights"], actor=_actor, enabled=lambda conn: bool(app_settings.values().get("assistant_answers")), panel=_panel)
 
 _HOME = Arg("string", "which home, when there is more than one", max_length=255)
 
@@ -70,8 +70,9 @@ def _money(x) -> str:
     return f"{x:,.2f} {get_settings().default_currency}" if x is not None else "?"
 
 
-def _link(ctx):
-    return ctx.link("Receipt Price Intelligence")
+def _link(ctx, target: str):
+    label = {"/list": "Shopping list", "/insights": "Insights"}[target]
+    return ctx.link(f"{label} in Receipt Price Intelligence", target)
 
 
 def _find_item(db, home_id: str, text: str):
@@ -97,7 +98,7 @@ def shopping_list(ctx):
         data = shoplist.get_list(db, home_id, online=False)
     rows = [i for i in data["items"] if not i["checked"]]
     if not rows:
-        return ctx.result(f"The shopping list for {home_name} is empty.", links=[_link(ctx)])
+        return ctx.result(f"The shopping list for {home_name} is empty.", links=[_link(ctx, "/list")])
     items = [{"item": i["text"], "qty": i["qty"], "cheapest_at": (i["cheapest"] or {}).get("store"),
               "price": (i["cheapest"] or {}).get("price")} for i in rows]
     parts = []
@@ -107,7 +108,7 @@ def shopping_list(ctx):
         parts.append(f"{where}: " + ", ".join(names[:8]) + ("…" if len(names) > 8 else "")
                      + (f" (about {_money(g['total'])})" if g["store"] else ""))
     text = f"{len(rows)} item{'s' if len(rows) != 1 else ''} on the list. " + "; ".join(parts) + "."
-    return ctx.result(text, items=items, links=[_link(ctx)])
+    return ctx.result(text, items=items, links=[_link(ctx, "/list")])
 
 
 @tools.tool("receipt.price",
@@ -123,13 +124,13 @@ def price(ctx):
         home_id, _name = _home(db, ctx)
         item = _find_item(db, home_id, ctx.args["item"])
         if item is None:
-            return ctx.result(f"No purchases of “{ctx.args['item']}” on any receipt yet.", links=[_link(ctx)])
+            return ctx.result(f"No purchases of “{ctx.args['item']}” on any receipt yet.", links=[_link(ctx, "/insights")])
         start = (date.today() - timedelta(days=365)).isoformat()
         stores = analytics.compare_stores(analytics.prepare_price_rows(load_observations(db, home_id, start,
                                                                                          item_id=item.id)))
         name = item.name
     if not stores:
-        return ctx.result(f"No comparable prices for {name} in the last year.", links=[_link(ctx)])
+        return ctx.result(f"No comparable prices for {name} in the last year.", links=[_link(ctx, "/insights")])
     stores = sorted(stores, key=lambda s: s["latest_price"])
     best = stores[0]
     items = [{"store": s["label"], "latest": s["latest_price"], "date": s["latest_date"], "lowest": s["min_price"],
@@ -138,7 +139,7 @@ def price(ctx):
     text = (f"{name}: cheapest at {best['label']} ({_money(best['latest_price'])}"
             + (f" per {best['unit']}" if best.get("unit") else "") + f", {best['latest_date']})"
             + "".join(f"; {s['label']} {_money(s['latest_price'])}" for s in stores[1:5]) + ".")
-    return ctx.result(text, items=items, links=[_link(ctx)])
+    return ctx.result(text, items=items, links=[_link(ctx, "/insights")])
 
 
 @tools.tool("receipt.spending",
@@ -168,18 +169,18 @@ def spending(ctx):
         want = ctx.args["store"].lower()
         stores = [x for x in stores if want in (x["name"] or "").lower()]
         if not stores:
-            return ctx.result(f"No receipts from “{ctx.args['store']}” in {label}.", links=[_link(ctx)])
+            return ctx.result(f"No receipts from “{ctx.args['store']}” in {label}.", links=[_link(ctx, "/insights")])
         total = sum(x["spend"] for x in stores)
         trips = sum(x["trips"] for x in stores)
         text = f"{label}: {_money(total)} at {', '.join(x['name'] for x in stores)} in {trips} trip{'s' * (trips != 1)}."
     else:
         t = s["totals"]
         if not t["trips"]:
-            return ctx.result(f"No receipts in {label}.", links=[_link(ctx)])
+            return ctx.result(f"No receipts in {label}.", links=[_link(ctx, "/insights")])
         text = (f"{label}: {_money(t['spend'])} in {t['trips']} trips. "
                 + "; ".join(f"{x['name']} {_money(x['spend'])}" for x in stores[:6]) + ".")
     items = [{"store": x["name"], "spend": x["spend"], "trips": x["trips"], "share": x["share"]} for x in stores]
-    return ctx.result(text, items=items, links=[_link(ctx)])
+    return ctx.result(text, items=items, links=[_link(ctx, "/insights")])
 
 
 @tools.tool("receipt.shopping_list.add", "Adds an item to the household's shopping list (after the person confirms it).",
@@ -200,4 +201,4 @@ def add(ctx):
     where = f" — cheapest at {best['store']} ({_money(best['price'])})" if best else ""
     return ctx.result(f"Added {row['text']} to the shopping list for {home_name}{where}.",
                       items=[{"item": row["text"], "qty": row["qty"], "cheapest_at": best["store"] if best else None}],
-                      links=[_link(ctx)])
+                      links=[_link(ctx, "/list")])

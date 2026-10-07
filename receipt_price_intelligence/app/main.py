@@ -268,6 +268,21 @@ for _name in _PAGES:
     app.add_api_route(f"/{_name}", _page_route(_name), methods=["GET"], include_in_schema=False)
 
 
+# "/<page>/insights" … asked of the app itself (a link from Home Assistant): a relative redirect to that page
+_LINK_PAGES = {"list": "list.html", "receipts": "index.html", "insights": "analysis.html", "deals": "deals.html",
+               "trip": "trip.html", "stores": "stores.html"}
+
+
+def _link_route(name: str):
+    async def link():
+        return RedirectResponse(url=_LINK_PAGES[name], status_code=307, headers={"Cache-Control": "no-store"})
+    return link
+
+
+for _name in _LINK_PAGES:
+    app.add_api_route(f"/{_name}", _link_route(_name), methods=["GET"], include_in_schema=False)
+
+
 @app.get("/draft/{draft_id}", include_in_schema=False)
 async def serve_draft_review(draft_id: str):
     """Older review URL. Redirects (relatively, so it works under an ingress prefix)."""

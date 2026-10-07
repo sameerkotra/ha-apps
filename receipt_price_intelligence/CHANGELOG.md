@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- **Links open the right page**: the Household Assistant's answers open the shopping list or Insights. Links ending in `/list`, `/receipts`, `/insights`, `/deals`, `/trip` or `/stores` open that page.
+
 ## 1.2.0
 
 - **Can answer the Household Assistant**: once an administrator turns on **Answer the Household Assistant** (App settings; off by default, because spending is private), the new Household Assistant app can ask for the shopping list with the cheapest store for each item, an item's prices by store, and spending by store for a month — and add to the shopping list, but only after the person taps the exact change it proposes. Each answer links back to this app.

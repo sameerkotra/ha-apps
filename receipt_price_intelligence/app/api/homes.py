@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app import tools
 from app.auth import ADMIN_USERS, CurrentUser, get_current_user, no_admin_yet, require_admin
 from app.common import whoami as whoami_core
 from app.db import get_db
@@ -39,6 +40,7 @@ class MeResponse(BaseModel):
     is_admin: bool
     anonymous: bool = False
     noAdmin: bool = False          # admin_users is empty: every page shows "No admin yet"
+    page: str | None = None        # the app's sidebar page: links open one of its pages there (deeplink.js)
 
 
 class HomeResponse(BaseModel):
@@ -104,6 +106,7 @@ async def me(user: CurrentUser = Depends(get_current_user)):
         username=user.username,
         is_admin=user.is_admin,
         noAdmin=no_admin_yet(),
+        page=tools.PANEL["value"],
     )
 
 

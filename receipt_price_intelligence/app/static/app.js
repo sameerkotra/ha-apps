@@ -651,6 +651,20 @@
 
   buildShell();
   me().then(fillShell).catch(() => { if (userName) userName.textContent = '—'; });
+
+  // A link from Home Assistant (the Household Assistant) opens "/<page>/list", "/<page>/insights", … : Home Assistant
+  // shows the start page, and common/static/deeplink.js reads the rest of the path and goes to that page.
+  const LINK_PAGES = { '/list': 'list.html', '/receipts': 'index.html', '/insights': 'analysis.html', '/deals': 'deals.html',
+                       '/trip': 'trip.html', '/stores': 'stores.html' };
+  me().then((m) => {
+    if (!m.page) return;
+    const s = document.createElement('script');
+    s.src = url('static/common/deeplink.js');
+    s.onload = () => window.HouseholdDeepLink.start(m.page, (route) => LINK_PAGES[route] || null, (file) => {
+      if (!location.pathname.endsWith('/' + file)) location.href = url(file);
+    });
+    document.head.append(s);
+  }).catch(() => { /* no link to follow */ });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', backNav); else setTimeout(backNav, 0);
 
   window.RPI = {
