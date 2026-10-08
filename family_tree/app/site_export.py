@@ -15,7 +15,7 @@ import unicodedata
 import zipfile
 from datetime import datetime
 
-from . import media
+from . import config, media
 from .graph import generation_rows
 from .export_view import ExportOptions, View
 
@@ -82,7 +82,7 @@ class Site:
         self.show_places = bool(site.pages.places and options.places and (
             any(ev.get("place") for p in v.people.values() for ev in p.get("events") or [])
             or any(ev.get("place") for f in v.families for ev in f["events"])))
-        self.stamp = datetime.now().strftime("%d %B %Y")
+        self.stamp = config.now().strftime("%d %B %Y")
 
     # ---------- page chrome ----------
     def page(self, title, body, depth=0, active="", wide=False, scripts=()):

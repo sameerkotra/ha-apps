@@ -71,7 +71,7 @@ SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 
 APP_TITLE = "Calorie Tracker"
-APP_VERSION = "2.2.3"           # config.yaml's version: the app bus says it in its hello
+APP_VERSION = "2.2.4"           # config.yaml's version: the app bus says it in its hello
 # The app's sidebar page ("/<full slug>") for links in the Household Assistant's answers; set at start-up
 # (app_messages.start, from the Supervisor or the container's host name).
 INGRESS_PANEL = None

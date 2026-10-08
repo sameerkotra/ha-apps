@@ -44,6 +44,7 @@ class _Conn:
         self.subs = {}              # subscription id -> event_type or None (all)
         self.authed = False
         self.closed = False
+        self.pongs = 0              # WebSocket pongs the client sent back (answers to ping())
 
     def send(self, obj):
         data = json.dumps(obj).encode()
@@ -89,6 +90,8 @@ class _Conn:
             opcode = b1 & 0x0F
             if opcode == 0x8:
                 return None
+            if opcode == 0xA:
+                self.pongs += 1
             if opcode in (0x9, 0xA):
                 continue
             message += payload
@@ -97,6 +100,12 @@ class _Conn:
                     return json.loads(message)
                 except ValueError:
                     return {}
+
+    def ping(self, payload=b"hb"):
+        """A WebSocket ping frame, as the Supervisor's proxy sends after 30 s without traffic."""
+        with self.lock:
+            if not self.closed:
+                self.sock.sendall(bytes([0x89, len(payload)]) + payload)
 
     def close(self):
         with self.lock:
@@ -139,6 +148,17 @@ class FakeHABus(FakeHA):
     def subscribers(self):
         with self._lock:
             return sum(len(c.subs) for c in self._conns if not c.closed)
+
+    def ping_connections(self):
+        """Send every open connection a WebSocket ping frame."""
+        with self._lock:
+            conns = list(self._conns)
+        for c in conns:
+            c.ping()
+
+    def pongs(self):
+        with self._lock:
+            return sum(c.pongs for c in self._conns)
 
     def drop_connections(self):
         with self._lock:

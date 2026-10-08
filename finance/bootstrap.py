@@ -10,21 +10,28 @@ in the environment. SQLite's datetime('now') timestamps stay UTC regardless.
 """
 import json
 import os
+import time
 import urllib.request
 
 OPTIONS_PATH = "/data/options.json"
 
-# Only when Home Assistant's own zone can't be read.
+# Only when neither Home Assistant nor the Supervisor says which zone.
 FALLBACK_TZ = "UTC"
+# Home Assistant's API often isn't answering yet when the app starts (after a reboot the apps start
+# before Home Assistant): ask a few times before falling back.
+TRIES, WAIT_SECONDS = 6, 5
 
 
-def _resolve_timezone() -> str:
-    """Home Assistant's configured zone (Settings -> System -> General), read
-    through Supervisor's Core API proxy — needs `homeassistant_api: true`,
-    which makes Supervisor inject SUPERVISOR_TOKEN. Any failure -> fallback."""
-    token = os.environ.get("SUPERVISOR_TOKEN", "")
-    if not token:
-        return FALLBACK_TZ
+def _known(name: str) -> bool:
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(name)
+        return True
+    except Exception:
+        return False
+
+
+def _ask_home_assistant(token: str) -> str | None:
     try:
         req = urllib.request.Request(
             "http://supervisor/core/api/config",
@@ -32,9 +39,26 @@ def _resolve_timezone() -> str:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.load(resp)
-        return (data.get("time_zone") or "").strip() or FALLBACK_TZ
+        name = (data.get("time_zone") or "").strip()
+        return name if name and _known(name) else None
     except Exception:
-        return FALLBACK_TZ
+        return None
+
+
+def _resolve_timezone() -> str:
+    """Home Assistant's configured zone (Settings -> System -> General), read
+    through Supervisor's Core API proxy — needs `homeassistant_api: true`,
+    which makes Supervisor inject SUPERVISOR_TOKEN. While Home Assistant doesn't
+    answer: the zone the Supervisor put in TZ (Home Assistant's too), then UTC."""
+    token = os.environ.get("SUPERVISOR_TOKEN", "")
+    for attempt in range(TRIES if token else 0):
+        name = _ask_home_assistant(token)
+        if name:
+            return name
+        if attempt < TRIES - 1:
+            time.sleep(WAIT_SECONDS)
+    supervisor = (os.environ.get("TZ") or "").strip().lstrip(":")
+    return supervisor if supervisor and _known(supervisor) else FALLBACK_TZ
 
 
 if os.path.exists(OPTIONS_PATH):

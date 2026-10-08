@@ -152,11 +152,13 @@ def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) 
     last_day = None
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         for msg in msgs:
-            day = msg["createdAt"][:10]
+            local = config.parse_iso(msg["createdAt"])      # stored in UTC; shown in the household's zone
+            local = local.astimezone(config.tz()) if local else None
+            day = local.date().isoformat() if local else msg["createdAt"][:10]
             if day != last_day:
                 body.append(f'<div class="day">{e(day)}</div>')
                 last_day = day
-            when = e(msg["createdAt"][11:16])
+            when = e(local.strftime("%H:%M") if local else msg["createdAt"][11:16])
             if msg["kind"] == "system":
                 body.append(f'<div class="sys">{e(msg["body"])} · {when}</div>')
                 continue

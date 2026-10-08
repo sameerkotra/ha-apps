@@ -117,8 +117,8 @@ def local_now() -> datetime:
 
 
 async def load_ha_timezone() -> None:
-    """Home Assistant's configured time zone (GET /config), read once at startup;
-    if it can't be read, the app stays on UTC."""
+    """Home Assistant's configured time zone (GET /config), read at startup and kept current
+    (ha_time.load: the Supervisor's zone while Home Assistant doesn't answer yet)."""
     await ha_time.load(_ZONE, log=logger, details=True, base_url=SUPERVISOR_CORE_API, token=SUPERVISOR_TOKEN or "")
 
 # Home Assistant user ids / login names allowed into the Admin area (App
@@ -1683,7 +1683,7 @@ def export_group_csv(group_id: str):
                      f"{e['amount']:.2f}", currency, _csv_text(e["paidByName"]), split_label.get(e["splitType"], e["splitType"])]
                     + [f"{shares[m['id']]:.2f}" if m["id"] in shares else "" for m in members])
     safe = re.sub(r'[^A-Za-z0-9 ._-]+', "-", g["name"]).strip(" .-")[:60] or "group"
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = local_now().strftime("%Y-%m-%d")
     return Response(csv_export.to_bytes(header, rows, bom=True), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{safe} - {stamp}.csv"',
                              "Cache-Control": "no-store"})

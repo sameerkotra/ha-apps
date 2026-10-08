@@ -33,6 +33,10 @@ def _token() -> str:
     return os.environ.get("HA_API_TOKEN") or os.environ.get("SUPERVISOR_TOKEN") or ""
 
 
+def base_url() -> str:
+    return (os.environ.get("HA_API_URL") or DEFAULT_URL).rstrip("/")
+
+
 def available() -> bool:
     """True when this app can talk to Home Assistant."""
     return bool(_token())
@@ -53,7 +57,7 @@ def _request(method: str, path: str, body: Any = None) -> Any:
         raise e
 
     status, raw = ha_client.request(method, path, body, timeout=TIMEOUT, on_error=unreachable,
-                                    base_url=(os.environ.get("HA_API_URL") or DEFAULT_URL).rstrip("/"), token=_token())
+                                    base_url=base_url(), token=_token())
     if status is None or not 200 <= status < 300:
         raise HAError(f"Home Assistant answered with an error ({status})")
     try:

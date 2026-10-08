@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.7
+
+- **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it fell back to UTC — so in the Americas "today" turned into tomorrow in the evening. It now asks a few times over half a minute and otherwise uses the zone the Supervisor gives every app (Home Assistant's own).
+- **Steady connection to Home Assistant's events**: the log showed "Home Assistant event connection: TimeoutError" and a reconnect every minute. Answering the Supervisor's keep-alive ping left the app waiting for a message that didn't come, so its own keep-alive stopped and the read timed out; for a few seconds each minute, messages between the household apps could be missed. It now answers and carries on.
+
 ## 1.2.6
 
 - **Credit-card money in and out — the real cause**: the model had read the card statement the right way round all

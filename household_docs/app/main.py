@@ -21,9 +21,7 @@ wiring.install()                               # steps 8–11: activity, follows
 
 
 def startup_blocking() -> None:
-    tz = ha_client.load_time_zone_blocking()
-    if tz:
-        logger.info("Using Home Assistant's time zone %s.", tz)
+    ha_client.load_time_zone_blocking()        # logs the zone in use
     st = roots.check()                         # the documents folder: set up on the very first start (§5.6)
     if not st["ok"]:
         logger.warning("Starting without the documents folder: %s", st["message"])

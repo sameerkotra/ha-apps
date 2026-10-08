@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.3
+
+- **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.
+- **Usage counts by your day**: the questions-per-day limit and *Usage* counted UTC days, so a new day started in the evening. They now follow Home Assistant's zone.
+- **Steady connection to Home Assistant's events**: the log showed "Home Assistant event connection: TimeoutError" and a reconnect every minute. Answering the Supervisor's keep-alive ping left the app waiting for a message that didn't come, so its own keep-alive stopped and the read timed out; for a few seconds each minute, messages between the household apps could be missed. It now answers and carries on.
+
 ## 1.1.2
 
 - **How long each answer took**: under every answer, "⏱ Took 42 s" — from asking to the answer (also for a question

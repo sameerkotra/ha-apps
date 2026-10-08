@@ -10,12 +10,13 @@ from sqlalchemy import text
 
 from app.api import admin, alerts, analysis, backup, budgets, deals, drafts, export, extraction, homes, images, imports, items, lookout, nearby, notifications, planner, shoplist, stores, webdebug, webinfo
 from app import app_messages, app_settings
-from app.common import sandbox_run, web_security
+from app.common import ha_time, sandbox_run, web_security
 from app.auth import ingress_gate, sync_roles
 from app.config import APP_VERSION, get_settings
 from app.db import get_db_session, init_models
 from app.services import reqcache
 from app.logging_config import get_logger, setup_logging
+from app.services import ha as ha_service
 from app.services import homes as homes_service
 from app.services import scheduler
 
@@ -27,6 +28,9 @@ async def lifespan(app: FastAPI):
     # Startup
     logger = get_logger("main")
     logger.info("Starting Receipt Price Intelligence...")
+
+    # "today" (prices, budgets, alerts) is Home Assistant's day: the process follows its zone
+    await ha_time.load(ha_time.Zone(logger), log=logger, base_url=ha_service.base_url(), token=ha_service._token())
 
     # Initialize database and models
     try:

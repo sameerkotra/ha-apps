@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.
+
 ## 1.0.1
 
 - **Answers work**: the app's image now includes Ollama's `llama-server`, the program that runs a model (before,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.4
+
+- **Home Assistant's time zone, always**: "today" (reminders, expiry dates, file names) now follows Home Assistant's zone, read at start-up, asked again until Home Assistant answers and every six hours after; until then the zone the Supervisor gives every app (Home Assistant's own), never UTC.
+
 ## 2.1.3
 
 - **Shared code**: a link or notification that opens a page inside the app no longer counts as pressing Back, so the next Back goes to the page you came from instead of closing the app.

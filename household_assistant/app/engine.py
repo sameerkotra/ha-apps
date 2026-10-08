@@ -133,14 +133,15 @@ def ask(user: dict, text: str) -> str:
                             (user["id"], _iso(now - timedelta(hours=1)))).fetchone()[0]
         if hour >= settings.get("questions_per_hour"):
             raise LimitError("That's the most questions for one hour — try again a little later.")
-        day = conn.execute("SELECT questions FROM usage_days WHERE day = ?", (now.date().isoformat(),)).fetchone()
+        today = config.today().isoformat()            # the household's day (Home Assistant's zone), not UTC's
+        day = conn.execute("SELECT questions FROM usage_days WHERE day = ?", (today,)).fetchone()
         if day and day[0] >= settings.get("questions_per_day"):
             raise LimitError("The household has asked the most questions for today — try again tomorrow.")
         qid = bus.new_ulid(now)
         conn.execute("INSERT INTO questions (id, user_id, asked_at, text, state) VALUES (?, ?, ?, ?, 'planning')",
                      (qid, user["id"], _iso(now), text))
         conn.execute("INSERT INTO usage_days (day, questions) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET "
-                     "questions = questions + 1", (now.date().isoformat(),))
+                     "questions = questions + 1", (today,))
     stop = threading.Event()
     with _lock:
         _stops[qid] = stop
@@ -273,7 +274,7 @@ def _finish(r: _Run) -> None:
         conn.execute("INSERT INTO usage_days (day, calls, input_tokens, output_tokens) VALUES (?, ?, ?, ?) "
                      "ON CONFLICT(day) DO UPDATE SET calls = calls + excluded.calls, input_tokens = input_tokens + "
                      "excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens",
-                     (config.utcnow().date().isoformat(), r.calls_made, r.input_tokens, r.output_tokens))
+                     (config.today().isoformat(), r.calls_made, r.input_tokens, r.output_tokens))
     with _lock:
         _stops.pop(r.qid, None)
     with _changed:                                 # the streams read the final state and end
@@ -820,7 +821,7 @@ def act(qid: str, cid: str, user: dict) -> dict:
     call(cid, qid, user, c["app"], c["tool"], json.loads(c["args"]), confirm=True)
     with db.get_conn() as conn:
         conn.execute("INSERT INTO usage_days (day, calls) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET "
-                     "calls = calls + 1", (config.utcnow().date().isoformat(),))
+                     "calls = calls + 1", (config.today().isoformat(),))
         q = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
         return next(a for a in view(conn, q)["actions"] if a["id"] == cid)
 
@@ -842,4 +843,4 @@ def housekeeping() -> None:
                              ("The app restarted while answering. Ask again.", qid))
         conn.execute("UPDATE calls SET state = 'timeout' WHERE state = 'sent' AND sent_at < ?",
                      (_iso(now - timedelta(minutes=2)),))
-        conn.execute("DELETE FROM usage_days WHERE day < ?", ((now - timedelta(days=400)).date().isoformat(),))
+        conn.execute("DELETE FROM usage_days WHERE day < ?", ((config.today() - timedelta(days=400)).isoformat(),))

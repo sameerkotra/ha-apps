@@ -1,9 +1,13 @@
 """Home Assistant's Core API through the Supervisor proxy. The client is the shared app/common/ha_client.py,
 re-exported here; this module adds what only Household Docs does: adding Home Assistant's people (persons with
 a login) to `users`, so they can be shared with before they first open the app. Blocking — call from a thread."""
+import logging
+
 from . import config, db, settings
 from .common import ha_people, ha_time
 from .common.ha_client import fetch_states_blocking, has_token, request, warn_no_token_once  # noqa: F401
+
+logger = logging.getLogger("ha_client")
 
 
 def sync_people(people: list | None = None) -> int:
@@ -34,5 +38,7 @@ def refresh_people_blocking() -> int:
 
 
 def load_time_zone_blocking() -> str | None:
-    """HA's time zone, and its currency (for sheets) from the same GET /config."""
-    return ha_time.load_blocking(config.ZONE, on_config=lambda cfg: config.set_currency(cfg.get("currency")))
+    """HA's time zone, and its currency (for sheets) from the same GET /config; kept current
+    (ha_time.start_blocking, which logs the zone in use)."""
+    return ha_time.start_blocking(config.ZONE, on_config=lambda cfg: config.set_currency(cfg.get("currency")),
+                                  log=logger)

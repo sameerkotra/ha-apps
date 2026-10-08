@@ -615,9 +615,14 @@ Things each app got wrong at least once — check them in any new one.
   database, so `ZoneInfo("Europe/Berlin")` raises and the app silently
   runs on UTC ("today" rolls over at UTC midnight). Alpine images need
   `RUN apk add --no-cache tzdata`. (`python:*-slim` / Debian images include
-  `tzdata`.) Read HA's zone once at startup from
+  `tzdata`.) Read HA's zone at startup from
   `GET http://supervisor/core/api/config`, and use one `today()`/`now()`
-  helper everywhere.
+  helper everywhere. Home Assistant often isn't answering yet when an app
+  starts (after a reboot the apps start first): never fall back to UTC —
+  use the `TZ` the Supervisor puts in every app's container (HA's zone),
+  keep asking until HA answers, and set the process's `TZ` (`time.tzset()`)
+  so a stray `date.today()` agrees. `common/python/ha_time.py` does all of
+  this (`ha_time.load` / `start_blocking`).
 - **Pinned dependencies, the same set in every app.** Unpinned
   requirements make every rebuild a different app; old pins collect CVEs.
   The shared pins are `common/build/requirements-base.txt` (fastapi,

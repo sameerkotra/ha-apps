@@ -1,5 +1,5 @@
 "use strict";
-// The score chases and computer opponents carry on too (SPEC §14, 1.12.1): Brick Breaker, Falling Blocks challenges,
+// The score chases and computer opponents carry on too (SPEC §14): Brick Breaker, Falling Blocks challenges,
 // Paddle Duel, Tank Battle, Sky Defenders waves, Rocks waves, City Defense waves and Snake Duel vs computer start at
 // opts.startLevel, a start past the end plays the last level, and a run from there plays on without dropping back.
 const test = require("node:test");

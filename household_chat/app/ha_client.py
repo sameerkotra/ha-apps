@@ -88,5 +88,6 @@ def learn_page_blocking(info: dict | None = None, host: str | None = None) -> st
 
 
 def load_time_zone_blocking() -> str | None:
-    """Home Assistant's time zone (GET /config), applied to config; its name, or None."""
-    return ha_time.load_blocking(config.ZONE)
+    """Home Assistant's time zone (GET /config), applied to config and kept current (ha_time.start_blocking,
+    which logs the zone in use); its name, or None."""
+    return ha_time.start_blocking(config.ZONE, log=logger)

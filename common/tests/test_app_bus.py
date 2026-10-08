@@ -834,6 +834,26 @@ class HAWebSocketTest(BusCase):
             ws.stop()
         self.assertFalse(ws.running)
 
+    def test_a_ping_from_the_proxy_keeps_the_connection(self):
+        # The Supervisor's proxy pings a quiet connection; answering it must not leave the client waiting for the
+        # next message (its own pings stopped and the read timed out: a reconnect every minute).
+        got = []
+        ws = ha_ws.HAWebSocket(self.fake.ws_url, TOKEN, name="ha-ws-test",
+                               **dict(FAST_WS, ping_every=30, read_timeout=0.5))
+        ws.subscribe("t", lambda e: got.append(e["data"]))
+        ws.start()
+        try:
+            wait_until(lambda: self.fake.subscribers() == 1)
+            self.fake.ping_connections()
+            wait_until(lambda: self.fake.pongs() == 1, what="the pong")
+            time.sleep(1.5)                                     # three read timeouts, nothing else to read
+            self.assertEqual(ws.connections, 1)
+            self.fake.fire("t", {"n": 1})
+            wait_until(lambda: got == [{"n": 1}])
+            self.assertEqual(ws.connections, 1)
+        finally:
+            ws.stop()
+
     def test_wrong_token_never_connects(self):
         ws = ha_ws.HAWebSocket(self.fake.ws_url, "wrong", name="ha-ws-test", **FAST_WS)
         ws.subscribe("type_a", lambda e: None)

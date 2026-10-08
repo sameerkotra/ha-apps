@@ -13,7 +13,7 @@ from pathlib import Path
 from common_tests import packaging_core as pk
 
 ADDON_DIR = Path(__file__).resolve().parent.parent
-VERSION = "2.4.2"
+VERSION = "2.4.3"
 REPO_URL = pk.REPO_URL
 
 # Personal details that must never appear (the repository URL is the one

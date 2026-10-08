@@ -21,6 +21,12 @@ Subscriptions survive reconnects.
 Callbacks run in the client's thread, one at a time; an exception in a
 callback is logged and doesn't drop the connection.
 
+Keeping the connection: the client pings Home Assistant every 50 s, and answers the
+Supervisor's own WebSocket pings (sent after 30 s without traffic) with a pong. Answering
+one hands control back to the loop (`recv()` returns None) instead of waiting for the next
+message — waiting there blocked the client's own pings until the read timed out, so a
+quiet connection dropped and reconnected every minute.
+
 One connection can serve several users: Household Chat's notification
 buttons (ha_events.py) and the app bus (app_bus.start(..., ws=that client))
 share one; each user removes only its own callbacks (unsubscribe/off_connect).
@@ -114,7 +120,8 @@ class MiniWS:
         r, _, _ = select.select([self.sock], [], [], timeout)
         return bool(r)
 
-    def recv(self) -> dict:
+    def recv(self) -> dict | None:
+        """The next message, or None when only a ping or pong arrived (a ping is answered first)."""
         message = b""
         while True:
             b1, b2 = self._recv_exact(2)
@@ -132,11 +139,12 @@ class MiniWS:
                 payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
             if opcode == 0x8:
                 raise WSClosed("closed by server")
-            if opcode == 0x9:
-                self._send_frame(0xA, payload)
-                continue
-            if opcode == 0xA:
-                continue
+            if opcode in (0x9, 0xA):                # a control frame: answer a ping, then hand back
+                if opcode == 0x9:
+                    self._send_frame(0xA, payload)
+                if message or self.buf:             # inside a message, or more already here: read on
+                    continue
+                return None
             message += payload
             if fin:
                 return json.loads(message.decode("utf-8"))
@@ -255,17 +263,25 @@ class HAWebSocket:
         if self._stop.is_set():
             raise WSClosed("stopping")
         ws.sock.settimeout(self.read_timeout)
-        first = ws.recv()
+        first = self._next(ws)
         if first.get("type") != "auth_required":
             raise WSClosed("unexpected greeting")
         ws.send({"type": "auth", "access_token": self.token})
-        if ws.recv().get("type") != "auth_ok":
+        if self._next(ws).get("type") != "auth_ok":
             raise WSClosed("auth refused")
         with self._lock:
             self._sub_ids, self._next_id = {}, 1
             types = list(self._subs)
         for t in types:
             self._subscribe_on(ws, t)
+
+    @staticmethod
+    def _next(ws: MiniWS) -> dict:
+        """The next message, past any pings."""
+        while True:
+            msg = ws.recv()
+            if msg is not None:
+                return msg
 
     def _dispatch(self, msg: dict) -> None:
         if msg.get("type") != "event":
@@ -312,9 +328,10 @@ class HAWebSocket:
                         raise WSClosed("no answer to ping")
                     if not ws.readable(min(self.ping_every, 5)):
                         continue
-                    msg = ws.recv()
+                    msg = ws.recv()                 # None: a ping was answered — back to the loop
                     last_heard = time.monotonic()
-                    self._dispatch(msg)
+                    if msg is not None:
+                        self._dispatch(msg)
             except Exception as e:
                 if not self._stop.is_set():
                     logger.info("Home Assistant event connection: %s — retrying in %s s", type(e).__name__, delay)

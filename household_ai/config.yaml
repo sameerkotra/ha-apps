@@ -1,5 +1,5 @@
 name: "Household AI"
-version: "1.0.1"
+version: "1.0.2"
 slug: household_ai
 description: >-
   An AI model on your Home Assistant machine's own CPU, for the other household

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.1
+
+- **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.
+- An exported website's "made on" date and the export's file name use Home Assistant's day, not the container's clock.
+- **Steady connection to Home Assistant's events**: the log showed "Home Assistant event connection: TimeoutError" and a reconnect every minute. Answering the Supervisor's keep-alive ping left the app waiting for a message that didn't come, so its own keep-alive stopped and the read timed out; for a few seconds each minute, messages between the household apps could be missed. It now answers and carries on.
+
 ## 2.4.0
 
 - **Ask the Household Assistant how two people are related**: "How is Ravi related to Sita?", "What is Lakshmi to me?" or "How am I related to Venkat?" now get the same answer as **How are they related?** — both ways, in your relationship language (for example *Menalludu (younger brother's son)*), with the chain of parents, children and marriages that links them, and a link that opens that page with the two people chosen.

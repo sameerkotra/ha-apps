@@ -19,7 +19,7 @@ import re
 
 from fastapi import HTTPException
 
-from . import app_messages, db, documents, docops, kids, links, notify, pins, settings, sharing
+from . import app_messages, config, db, documents, docops, kids, links, notify, pins, settings, sharing
 from .common import app_bus as bus
 from .common import assist_tools
 from .common.assist_tools import Arg
@@ -74,6 +74,12 @@ tools = assist_tools.Catalogue(
     "docs", targets=[rf"/doc/{ID}", rf"/folder/{ID}", rf"/file/{ID}"],
     actor=_actor, enabled=lambda conn: bool(settings.get("assistant_answers", conn)),
     person_enabled=lambda conn, user: user["assistant_ok"], panel=lambda: app_messages.panel(), busy=_busy)
+
+
+def _day(ts) -> str | None:
+    """A stored UTC time as the household's day (Home Assistant's zone)."""
+    dt = config.parse_iso(ts)
+    return dt.astimezone(config.ZONE.tz).date().isoformat() if dt else None
 
 
 def _target(node) -> str:
@@ -132,7 +138,7 @@ def search(ctx):
         return ctx.result(f"Nothing in Household Docs matches “{ctx.args['query']}”.",
                           links=[ctx.link("Household Docs")])
     items = [{"id": r["id"], "name": r["name"], "type": r["typeLabel"], "folder": r["location"],
-              "snippet": (r.get("snippet") or "")[:300] or None, "modified": (r["modified"] or "")[:10]} for r in rows]
+              "snippet": (r.get("snippet") or "")[:300] or None, "modified": _day(r["modified"])} for r in rows]
     text = (f"{len(rows)} match{'es' if len(rows) != 1 else ''} for “{ctx.args['query']}”: "
             + "; ".join(f"{r['name']} ({r['typeLabel'].lower()}, in {r['location']})" for r in rows[:5])
             + ("…" if len(rows) > 5 else "") + ".")

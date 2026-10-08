@@ -53,9 +53,7 @@ def startup_blocking() -> None:
     if calls.close_unfinished():         # calls that were on when the app stopped (SPEC §15.12)
         logger.info("Closed calls that were on when the app stopped.")
     ha_client.learn_page_blocking()      # where phone notifications open (SPEC §7)
-    tz = ha_client.load_time_zone_blocking()
-    if tz:
-        logger.info("Using Home Assistant's time zone %s.", tz)
+    ha_client.load_time_zone_blocking()  # logs the zone in use
     try:
         n = ha_client.sync_users_blocking()
         logger.info("Synced %s Home Assistant people.", n)

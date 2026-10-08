@@ -86,7 +86,7 @@ def leaderboard(ctx):
         text = (f"{name}{when} ({games.mode_label(gid, mode)}): {top['name']} leads with {_num(top['score'])}"
                 + "".join(f"; {r['rank']}. {r['name']} {_num(r['score'])}" for r in rows[1:5]) + ".")
         items = [{"rank": r["rank"], "name": r["name"], "score": r["score"], "level": r["level"],
-                  "at": (r["at"] or "")[:10]} for r in rows]
+                  "at": (d.isoformat() if (d := config.to_local_date(r["at"])) else None)} for r in rows]
         return ctx.result(text, items=items, links=[link])
     if period == "month":                              # records are all-time; this month is per game
         return ctx.result("Ask about one game for this month's leaderboard.",

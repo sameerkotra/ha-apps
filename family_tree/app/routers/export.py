@@ -113,7 +113,7 @@ def _run(jid: str, user: dict, fmt: str, options: ExportOptions):
         stats = v.stats()
         if not stats["people"]:
             raise RuntimeError("Nobody is included with these choices.")
-        stamp = datetime.now().strftime("%Y%m%d")
+        stamp = config.now().strftime("%Y%m%d")
         path = os.path.join(exports_dir(), f"export-{jid}.zip")
         progress(5, "Writing pages")
         site = Site(v, options, progress)

@@ -11,30 +11,30 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"calorie_tracker": "2.2.3", "family_tree": "2.4.0", "household_chat": "2.6.1", "household_todo": "2.4.3",
-            "household_vault": "2.1.3", "splitpot": "2.4.2"}
+VERSIONS = {"calorie_tracker": "2.2.4", "family_tree": "2.4.1", "household_chat": "2.6.2", "household_todo": "2.4.4",
+            "household_vault": "2.1.4", "splitpot": "2.4.3"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.2.6"
+FINANCE_VERSION = "1.2.7"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.12.1"
+ARCADE_VERSION = "1.12.2"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.2.2"
+RECEIPTS_VERSION = "1.2.3"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.2.3"
+DOCS_VERSION = "1.2.4"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.1.2"
+ASSISTANT_VERSION = "1.1.3"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
 # others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
 HOUSEHOLD_AI = "household_ai"
-HOUSEHOLD_AI_VERSION = "1.0.1"
+HOUSEHOLD_AI_VERSION = "1.0.2"
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",

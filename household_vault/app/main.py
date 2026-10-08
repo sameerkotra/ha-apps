@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import config, db, emergency, guest_wifi, ha_client, reminders, sessions
-from .common import auth_core, ha_people, web_security
+from .common import auth_core, ha_people, ha_time, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, emergency as emergency_router, guest as guest_router, quick as quick_router, health as health_router, items as items_router, me, sheet, vaults
 
@@ -42,6 +42,8 @@ async def housekeeping(n: int) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    # "today" (reminders, expiry dates, file names) is Home Assistant's day: the process follows its zone
+    await ha_time.load(ha_time.Zone(logger), log=logger)
     try:
         n = await run_in_threadpool(ha_client.sync_users_blocking)
         logger.info("Synced %s Home Assistant people.", n)
