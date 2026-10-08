@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.0
+
+- **Take turns**: a household schedule item can go round people in order (*Take turns* in its form) — bins week by week to Asha, Kabir, Meera … Each date shows whose turn it is (and can be handed to someone else for that one date); the calendar, "Mine", the dashboard, the daily digest and "before it starts" reminders follow whose turn it is, and the Home Assistant sensor has a `turn` attribute. Skipping a date doesn't change whose the next one is.
+- **"Remind me at 5 pm"**: the Household Assistant can set a reminder for a time — it adds the task to your list and sends one notification at that time.
+
 ## 2.5.0
 
 - **More for the Household Assistant**: tick off a task ("I took the bins out") or move one to another day ("move the plumber to Friday") — only after you tap the exact change it proposes; when several open tasks match, nothing changes and it asks which. It can also say who has what: "What's Meera doing this week?", "What's left that nobody has?".

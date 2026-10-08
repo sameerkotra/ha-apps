@@ -269,7 +269,7 @@ def _failed(r: _Run, error: str, lead: str) -> None:
 def _finish(r: _Run) -> None:
     seconds = round(time.monotonic() - r.started, 2)
     with db.get_conn() as conn:
-        conn.execute("UPDATE questions SET input_tokens = ?, output_tokens = ?, seconds = ? WHERE id = ?",
+        conn.execute("UPDATE questions SET input_tokens = ?, output_tokens = ?, seconds = COALESCE(seconds, ?) WHERE id = ?",
                      (r.input_tokens, r.output_tokens, seconds, r.qid))
         conn.execute("INSERT INTO usage_days (day, calls, input_tokens, output_tokens) VALUES (?, ?, ?, ?) "
                      "ON CONFLICT(day) DO UPDATE SET calls = calls + excluded.calls, input_tokens = input_tokens + "
@@ -305,12 +305,16 @@ def _answer_question(r: _Run) -> str:
     with db.get_conn() as conn:
         tools = catalogue.for_user(conn, r.user)
         q = conn.execute("SELECT text FROM questions WHERE id = ?", (r.qid,)).fetchone()["text"]
-        history = conn.execute("SELECT text, answer FROM questions WHERE user_id = ? AND id != ? AND state = 'done' "
+        history = conn.execute("SELECT id, text, answer FROM questions WHERE user_id = ? AND id != ? AND state = 'done' "
                                "ORDER BY asked_at DESC LIMIT ?", (r.user["id"], r.qid, HISTORY_TURNS)).fetchall()
+        asked = {h["id"]: [f"{c['tool']} {c['args']}" for c in conn.execute(
+            "SELECT tool, args FROM calls WHERE question_id = ? AND state = 'ok' ORDER BY rowid", (h["id"],))][:4]
+            for h in history}
     if not tools:
         return NO_TOOLS
     system = system_prompt(r.user)
-    turns = [(h["text"], h["answer"] or "") for h in reversed(history)]
+    # each earlier turn with the tools it used, so a follow-up ("and last month?") can reuse them
+    turns = [(h["text"], h["answer"] or "", asked[h["id"]]) for h in reversed(history)]
     done = r.done                      # results so far: {call, app, appName, tool, args, state, result, reason}
     proposals: list[dict] = []
     for round_no in range(1, MAX_ROUNDS + 1):
@@ -638,7 +642,16 @@ PLAN_FORMAT = (
 def _turns_block(turns) -> str:
     if not turns:
         return ""
-    return "Conversation so far:\n" + "\n".join(f"Q: {q}\nA: {a[:600]}" for q, a in turns) + "\n\n"
+    lines = []
+    for t in turns:
+        q, a, used = (tuple(t) + ([],))[:3]
+        lines.append(f"Q: {q}\nA: {a[:600]}" + (f"\n(tools used: {'; '.join(used)})" if used else ""))
+    return ("Conversation so far:\n" + "\n".join(lines) + "\n"
+            + FOLLOW_UP + "\n\n")
+
+
+FOLLOW_UP = ("A short follow-up (\"and last month?\", \"what about Bob?\", \"and tomorrow?\") means the previous "
+             "question with that one thing changed: use the same tool with that argument changed.")
 
 
 def _result_text(d: dict) -> str:

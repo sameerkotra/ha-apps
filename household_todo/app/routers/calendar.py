@@ -60,13 +60,16 @@ def get_calendar(
         entries = []
         if schedule == 1:
             # someone else's private item never shows up (§4)
-            items = [dict(r) for r in conn.execute(
-                f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (acting["id"],))]
+            items = schedule_logic.attach_turns(conn, [dict(r) for r in conn.execute(
+                f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (acting["id"],))])
             excs = schedule_logic.load_exceptions(conn)
             users, _ = schedule_logic.lookups(conn)
             for item in items:
-                if keep_assignee(item["assigned_to"]):   # household items count as "unassigned"
-                    entries.extend(schedule_logic.calendar_entries(item, excs.get(item["id"], []), start, end, users))
+                found = schedule_logic.calendar_entries(item, excs.get(item["id"], []), start, end, users)
+                if item.get("rotation"):            # taken in turns: each entry counts as whose turn it is
+                    entries.extend(e for e in found if keep_assignee(e["assignedTo"]))
+                elif keep_assignee(item["assigned_to"]):   # household items count as "unassigned"
+                    entries.extend(found)
             entries.sort(key=schedule_logic.entry_sort_key)
         # maintenance due dates (an overdue one shows on today) and the ones after them
         maint = []

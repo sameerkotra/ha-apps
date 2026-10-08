@@ -74,20 +74,31 @@ Each app answers only what you could see in it yourself, and only while both its
 Assistant** and your own **Let the Household Assistant answer for me** (that app's settings, on unless you turn
 it off) are on. Household Vault is never asked: passwords stay there.
 
-## The morning briefing
+## Morning and evening briefings
 
-**🌅 Morning briefing** (under the ask box) sends you a short summary of your day each morning, on your phone:
+**🌅 Briefings** (under the ask box) sends you a short summary on your phone:
 
-- 📋 today's tasks and what's on the schedule (Household Todo), 🎂 birthdays and anniversaries this week (Family
-  Tree), 💳 bills due in the next 3 days (Finance Dashboard), 🤝 who owes whom (Splitpot) — each only when that app
-  answers you, and only when it has something to say (today's tasks are always there).
-- Choose the time and every day or weekdays. It comes once a day, at that time or up to three hours later (if the
-  app was stopped at that time); never later, so a morning briefing never arrives in the afternoon.
+- **Morning**: 📋 today's tasks and what's on the schedule (Household Todo), 🎂 birthdays and anniversaries this
+  week (Family Tree), 💳 bills due in the next 3 days (Finance Dashboard), 🤝 who owes whom (Splitpot).
+- **🌙 Evening**: 📋 tomorrow's tasks and schedule, 🎂 birthdays in the next two days and 💳 bills due in the next
+  two — to get ready the night before.
+- Each only says what the apps that answer you have to say (the day's tasks are always there). Switch each one on,
+  choose its time (evening: 20:00 unless you change it) and every day or weekdays. Each comes once a day, at that
+  time or up to three hours later (if the app was stopped at that time), never later.
 - It goes to the phones Home Assistant links to you (**Settings → People → you → Track device**, the Home Assistant
   app on your phone). Tapping it opens the assistant.
+- **Read it aloud**: choose a **speaker** (any Home Assistant media player) and the briefing is also spoken there,
+  starting "Good morning, Asha." It uses Home Assistant's text-to-speech (the first `tts.` entity, e.g. Google
+  Translate or Piper — the dialog says when there is none). Leave it on *No speaker* for the phone only.
 - It needs no AI model: it is what the apps said, as they said it, so it costs nothing. It also appears in your
-  questions as "Morning briefing", with Sources and **What was shared**.
-- **Send me one now** makes and sends today's at once, to try it.
+  questions as "Morning briefing" or "Evening briefing", with Sources and **What was shared**.
+- **Send a morning one now** / **Send an evening one now** make and send one at once, to try it.
+
+## Follow-up questions
+
+The assistant sees your last few questions in this conversation, its answers, and which apps and tools it used for
+them — so "and next week?", "what about Meera?" or "only the overdue ones" carry on from the last answer, asking
+the same app again with the change.
 
 ## Asking with your voice: Assist
 

@@ -196,6 +196,12 @@ class ApiTerms(KinTree):
         self.family(self.p["WifeBro"], wbw, [])
         r = self.detail(wbw)["relationshipToMe"]                  # two marriages away, still named
         self.assertEqual((r["english"], r["kinKey"], r["label"]), ("wife's brother's wife", "W.B+.W", "Vadina"))
+        wbwf = self.person("WifeBroWDad", gender="male")
+        self.family(wbwf, None, [wbw])
+        r = self.detail(wbwf)["relationshipToMe"]                 # three marriages away: a word built from parts
+        self.assertEqual((r["english"], r["kinKey"]), ("wife's brother's wife's father", "W.B+.W.F"))
+        self.assertTrue(r["composed"])
+        self.assertTrue(r["label"].startswith("Vadina "), r["label"])
 
     def test_detail_in_telugu(self):
         self.ok(self.put("/api/me/kin-lang", {"kinLang": "te"}))

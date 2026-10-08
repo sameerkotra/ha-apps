@@ -165,12 +165,21 @@ print(json.dumps({{"f": {{c: ws[c].value for c in ("B4", "C2", "E3", "E4", "B5",
         self.assertEqual(f("d/m/yy"), {"f": "date"})
         self.assertEqual(f("mmm-yy"), {"f": "date"})
         self.assertEqual(f("@"), {"f": "text"})
-        self.assertIsNone(f("hh:mm"))
-        self.assertIsNone(f("0.00E+00"))
+        self.assertEqual(f("hh:mm"), {"f": "time"})
+        self.assertEqual(f("h:mm AM/PM"), {"f": "time"})
+        self.assertEqual(f("m/d/yyyy h:mm"), {"f": "datetime"})
+        self.assertEqual(f("0.00E+00"), {"f": "scientific", "d": 2})
+        self.assertEqual(f('_("$"* #,##0.00_);_("$"* (#,##0.00);_("$"* "-"??_);_(@_)'), {"f": "accounting", "d": 2})
         self.assertIsNone(f("# ?/?"))
         for cell in ({"f": "number", "d": 3}, {"f": "currency", "d": 0, "red": 1}, {"f": "percent", "d": 2}, {"f": "date"},
-                     {"f": "text"}, {"red": 1}):
+                     {"f": "text"}, {"red": 1}, {"f": "accounting", "d": 2}, {"f": "scientific", "d": 1},
+                     {"f": "time"}, {"f": "datetime"}):
             self.assertEqual(f(M.excel_format(cell, "USD")), cell, cell)
+
+    def test_times_show_as_times(self):
+        self.assertEqual(M.shown({"v": 0.75, "f": "time"}), "18:00")
+        self.assertEqual(M.shown({"v": 0.5 + 15 / 86400, "f": "time"}), "12:00:15")
+        self.assertEqual(M.shown({"v": M.iso_to_serial("2026-10-08") + 0.25, "f": "datetime"}), "2026-10-08 06:00")
 
     def test_csv_dialects_round_trip(self):
         cases = [
@@ -178,6 +187,7 @@ print(json.dumps({{"f": {{c: ws[c].value for c in ("B4", "C2", "E3", "E4", "B5",
             b"Item;Cost\r\nRent;1200\r\nCaf\xc3\xa9;007\r\n",
             b"\xef\xbb\xbfName\tWhen\nAsha\t2026-03-09\nKabir\t1.50\n",
             b'Quote,Text\n"a,b","say ""hi"""\nTRUE,true\n',
+            b"Start,Alarm\n2026-10-08 06:00,17:30\n,7:30\n,24:00\n",
         ]
         for data in cases:
             r = sheet_csv.read(data)
@@ -192,6 +202,10 @@ print(json.dumps({{"f": {{c: ws[c].value for c in ("B4", "C2", "E3", "E4", "B5",
         self.assertEqual(cells["A3"], {"v": "0.10"})               # wouldn't come back the same as a number
         self.assertEqual(cells["B3"], {"v": -3})
         self.assertEqual(cells["A4"], {"v": "2026-02-30"})          # not a real date
+        cells = sheet_csv.read(b"17:30,2026-10-08 06:00:15,7:30\n")["sheet"]["tabs"][0]["cells"]
+        self.assertEqual(cells["A1"], {"v": 17.5 / 24, "f": "time"})
+        self.assertEqual(cells["B1"]["f"], "datetime")
+        self.assertEqual(cells["C1"], {"v": "7:30"})                # not as the app writes a time
 
     def test_csv_limits(self):
         with self.assertRaises(sheet_csv.CsvError):
@@ -265,7 +279,7 @@ class ForeignFiles(unittest.TestCase):
             "Named ranges": names,
             "Colours, borders or fonts the app doesn't keep": fill,
             "Hidden tabs": hidden,
-            "Number formats the app doesn't have (times, scientific …)": lambda wb, ws: setattr(ws["B2"], "number_format", "hh:mm"),
+            "Number formats the app doesn't have (fractions, custom text …)": lambda wb, ws: setattr(ws["B2"], "number_format", "# ?/?"),
             "Filters (AutoFilter)": lambda wb, ws: setattr(ws.auto_filter, "ref", "A1:B2"),
         }
         for label, make in cases.items():

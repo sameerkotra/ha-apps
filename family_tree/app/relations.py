@@ -3,8 +3,10 @@
 1. Blood: lowest common ancestor by BFS (12 generations), then the name from
    the generation counts (g1 = A→ancestor, g2 = B→ancestor).
 2. Otherwise one partner hop on either side gives the in-law forms.
-3. Otherwise "related by marriage" if any chain of parent/child/partner links
-   connects them, else "not related".
+3. Otherwise the shortest chain of parent/child/partner links, named step by
+   step ("husband's brother's wife's father", kind "marriage") when it has at
+   most eight steps — so it gets a Telugu or Hindi term too — or just "related
+   by marriage" when it's longer; else "not related".
 
 Labels are relative phrases without "your": "first cousin once removed",
 "brother-in-law", "first cousin's wife". Gendered when the gender is known.
@@ -251,6 +253,11 @@ def relationship(g: Graph, a: str, b: str) -> dict:
 
     path = _any_path(g, a, b)
     if path:
+        steps = _chain_steps(g, [x["id"] for x in path])
+        if steps:                       # three or more marriages, still near enough to name step by step
+            gen = sum({"parent": -1, "child": 1}.get(st["t"], 0) for st in steps)
+            return {"label": "'s ".join(_step_word(g, st) for st in steps), "kind": "marriage",
+                    "path": _with_names(g, path), "steps": steps, "gen": gen}
         return {"label": "related by marriage", "kind": "marriage", "path": _with_names(g, path), "steps": None, "gen": None}
     return {"label": "not related", "kind": "none", "path": [], "steps": None, "gen": None}
 
@@ -318,6 +325,41 @@ def _two_marriages(g: Graph, a: str, b: str):
             if best is None or cand[0] < best[0]:
                 best = cand
     return best
+
+
+MAX_CHAIN = 8                 # steps a kin key can hold (kin.KEY_RE)
+
+
+def _chain_steps(g: Graph, ids: list) -> list | None:
+    """The canonical walk along a chain of people (parent / child / partner links): a parent then one of their other
+    children becomes a sibling step. None when it has more than MAX_CHAIN steps."""
+    steps, i = [], 0
+    while i < len(ids) - 1:
+        u, v = ids[i], ids[i + 1]
+        parents = {p: f for p, f, _r in g.parents(u)}
+        if v in parents:
+            if i + 2 < len(ids) and ids[i + 2] != u and any(c == ids[i + 2] for c, _f, _r in g.children(v)):
+                steps.append({"t": "sibling", "id": ids[i + 2], "from": u})
+                i += 2
+                continue
+            steps.append({"t": "parent", "id": v, "from": u})
+        elif any(c == v for c, _f, _r in g.children(u)):
+            steps.append({"t": "child", "id": v, "from": u})
+        else:
+            fam = next((f for p, f in g.partners(u) if p == v), None)
+            if fam is None:
+                return None
+            steps.append({"t": "spouse", "id": v, "from": u, "fam": fam})
+        i += 1
+    return steps if 0 < len(steps) <= MAX_CHAIN else None
+
+
+def _step_word(g: Graph, st: dict) -> str:
+    gender = g.people[st["id"]].gender
+    if st["t"] == "spouse":
+        return _spouse_word(g, st["id"], st["fam"])
+    return {"parent": _g(gender, "father", "mother", "parent"), "child": _g(gender, "son", "daughter", "child"),
+            "sibling": _g(gender, "brother", "sister", "sibling")}[st["t"]]
 
 
 def _any_path(g: Graph, a: str, b: str, limit: int = 40) -> list | None:

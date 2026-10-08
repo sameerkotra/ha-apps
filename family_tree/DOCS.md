@@ -123,8 +123,10 @@ happened, shown in your own clock style). It needs the full, exact date.
   on your page). Each person can be claimed by one Home Assistant user.
 - Everyone is then named by their relationship to you: parent, grandparent
   (great-×n), sibling and half-sibling, aunt/uncle, niece/nephew, cousins
-  ("second cousin once removed"), in-laws, and relatives two marriages away
-  ("wife's sister's husband"). Adopted, step and foster links say so.
+  ("second cousin once removed"), in-laws, relatives two marriages away
+  ("wife's sister's husband") and, up to eight steps, further out ("husband's
+  brother's wife's father" — beyond that just "related by marriage"). Adopted,
+  step and foster links say so.
 - **How are we related?** shows the chain of people between you.
 - **More → How are they related?** (or **🔗 Related to someone else?** on any
   page) shows what any two people are to each other, both ways, with the chain.
@@ -308,6 +310,24 @@ Another Family Tree imports it under **Admin → Import** (admins only):
 its next zip is treated as a first import). Custom fields, sources and contact
 details aren't imported.
 
+### GEDCOM: other genealogy programs
+
+- **Export → ⬇ GEDCOM file** downloads the people the Export choices include, as
+  a `.ged` file (GEDCOM 5.5.1, UTF-8) that other genealogy programs open — with
+  the same choices as the website (living people as names only unless you choose
+  otherwise, places, stories, deaths …). It has no photos.
+- **Admin → Import** also reads a `.ged` file (5.5.1 or 7.0; UTF-8, UTF-16 or an
+  older character set) or a `.gdz`: names (with maiden, married and other names
+  and nicknames), sex, births, deaths, burials, marriages, divorces and other
+  events with dates (also "about", "before", "between" and day-and-month-only
+  dates) and places, notes as the biography, and parents and children (adopted,
+  step and foster too). The steps are the same as above: a preview, matches you
+  can untick, one History entry to undo. Importing a newer copy of the same file
+  later adds only what's new. Sources, photos and addresses in the file aren't
+  imported, and a date the app can't read is kept in the event's description.
+- A file exported here and imported into another Family Tree keeps Telugu/Hindi
+  ceremonies, step children and unmarried partners (in tags other programs skip).
+
 ## Wall chart and family book
 
 **More → Wall chart**: ancestors, descendants or an hourglass from anyone, 2–10
@@ -397,7 +417,8 @@ Features.
   come from birth dates, or the order of children in a family. Parallel and
   cross cousins get their own words. **Edit the Telugu (or Hindi) words**
   changes any word for everyone (with Undo), and a relationship with no single
-  word gets one built from two. Searching People for a relationship word
+  word gets one built from its parts — also for relatives three or more
+  marriages away. Searching People for a relationship word
   ("babai") finds everyone who is that to you. Ceremony and milestone names
   are shown in the chosen language too.
 - **Names in Telugu/Hindi script**: each person gets a second spelling of
@@ -603,7 +624,8 @@ reminders, milestones, the kids-mode PIN and how typed dates are read.
   800); the Chart shows up to 2 000 cards.
 - Uploads: 1–100 MB each (App setting), one file per upload request; HEIC isn't
   accepted.
-- Only the website export exists; there's no GEDCOM import or export.
+- The GEDCOM file has no photos, sources or custom fields, and a GEDCOM import doesn't bring in sources, photos or
+  addresses.
 - Tithi dates can be worked out for dates from 1800 on; they follow the
   amanta calendar — check them against your family's panchangam.
 - Kids mode can't lock the Home Assistant app or the phone itself.

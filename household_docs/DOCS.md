@@ -102,8 +102,14 @@ shows for people who may share.
 - **Markdown notes** show **Edit / Preview / Split** (side by side on a computer): headings (`#`), **bold**
   (`**…**`), *italic* (`*…*`), `code`, code blocks, quotes (`>`), bulleted and numbered lists, tick boxes (`- [ ]`
   — tick them in the preview), links, horizontal rules (`---`) and simple tables. The small toolbar adds bold,
-  italic, a heading, a list, a tick box or a link. Nothing in a note is ever run or loaded: HTML shows as text,
-  only `http`/`https` links are made, and pictures in Markdown aren't loaded.
+  italic, a heading, a list, a numbered list, a tick box, a quote, code, a web link, a document link or a picture;
+  on a phone it sits under the text, in reach above the keyboard. Nothing in a note is ever run: HTML shows as text
+  and only `http`/`https` links are made.
+- **Pictures in notes**: paste a picture (PNG, JPEG, GIF or WebP) into a note, or tap **🖼** (on a phone that can be
+  the camera). It's saved as a file next to the note — named after the time, or the picture's own name — and the
+  note gets `![Name](doc:<id>)`, which the preview shows. Only pictures kept in Docs are shown, and only to people
+  who can open that file; pictures from anywhere else are never loaded. In a plain-text note the picture becomes a
+  `[[link]]`.
 - **⋯ → Make it a Markdown note / Make it plain text** renames the file (`.txt` ↔ `.md`); shares, tags, links and
   history stay. A note that is only tick boxes would be a checklist as a `.md`, so add a line of text first (or
   make a checklist).
@@ -163,12 +169,15 @@ CONCAT, CONCATENATE, TEXT, TODAY, DATE, YEAR, MONTH, DAY, DAYS, EOMONTH, NETWORK
 the cell and the line under the grid says what's wrong.
 
 **Working with the grid.** Drag or Shift+click to select; the line under the grid then shows the **Sum, Average,
-Count, Min and Max**. **Ctrl+C / Ctrl+V** copy and paste with Excel and Google Sheets (and within the sheet, where
+Count, Min and Max**. Each column letter has a **▾** (on a phone: the selected column's) that opens the same
+column menu as right-clicking it. **Ctrl+C / Ctrl+V** copy and paste with Excel and Google Sheets (and within the sheet, where
 formulas move along). **Ctrl+D** / **Ctrl+R** fill the first row / column of the selection down / right.
 **Ctrl+Z** undoes. Right-click a column letter, a row number or a cell — on a phone, press and hold — to insert or
 delete rows and columns (formulas that point at them follow), sort A → Z or Z → A, filter a column (only on your
 screen; it isn't saved), set a width (or drag a column's edge), freeze rows or columns, or fill. The toolbar has
-the number format (**General, Number, Currency, Percent, Date, Text** — Currency is Home Assistant's currency),
+the number format (**General, Number, Currency, Accounting** — negatives in brackets — **Percent, Scientific, Date,
+Time, Date and time, Text**; Currency is Home Assistant's currency; typing `17:30`, `5:30 pm` or `2026-10-08 17:30`
+makes a time or a date and time),
 fewer / more decimals, **B**old, alignment, **−1** for red negative numbers, **Σ** for a **totals row** under the
 data (SUM, AVERAGE, COUNT, MIN or MAX per column — tap a total to change it), **❄** freeze, **⇅** sort, **⏷**
 filter, **📈** chart, **🎨** conditional colours, undo / redo, **⬇** export and **🖨** print.
@@ -536,6 +545,11 @@ A folder's share reaches everything inside it, now and later — including files
 deeper down can add access, never take it away. Everyone shares start as **Can view** (an admin can change
 that, or turn Everyone sharing off).
 
+- **View link**: **Share… → Make a view link** gives an address (copy it into a chat) that anyone in the household
+  can open to view the item — they get **Can view**, shown as *by the link* in the share list. **New link** changes
+  the address (the old one stops working); **Turn off** ends the link and the Can view it gave (shares you added by
+  hand stay). Only the owner or a manager makes one; items in admin shared folders and Kids' space have none. The
+  app is only reached through Home Assistant, so the link is for people who sign in to it.
 - **Leave** removes something shared with you directly; **Hide** keeps it out of Shared with me / Everyone (an
   Everyone share can only be hidden).
 - **Transfer ownership** (owner only) gives an item to someone else: it moves into their folder with its shares,

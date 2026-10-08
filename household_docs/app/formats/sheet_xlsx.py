@@ -228,7 +228,7 @@ def from_worker(raw: dict) -> dict:
                     cell["q"] = 1
             fm = M.format_from_excel(numfmt)
             if fm is None:
-                features["formats"] = "Number formats the app doesn't have (times, scientific …)"
+                features["formats"] = "Number formats the app doesn't have (fractions, custom text …)"
                 fm = {}
             if was_date and not fm:
                 fm = {"f": "date"}

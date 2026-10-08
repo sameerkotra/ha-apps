@@ -4,7 +4,11 @@ app/common/assist_tools.py).
 - `receipt.shopping_list`: the home's shopping list, each item with where it was cheapest and its last price;
 - `receipt.price`: an item's latest price at each store, the cheapest, and each store's trend;
 - `receipt.spending`: spending in a month (or the last 30 days) by store, or one store's;
-- `receipt.shopping_list.add` (acts): adds an item to the list — only after the person taps the proposed change.
+- `receipt.shopping_list.add` (acts): adds an item to the list — only after the person taps the proposed change;
+- `receipt.deals`: cheaper ways to buy what the household buys regularly — another store or pack size at least 10%
+  cheaper per unit (the Best prices page's own list, online deal offers included) — and shopping-list items whose
+  price is down now;
+- `receipt.budgets`: each monthly budget with what's spent so far, what's left and the pace for the month.
 
 Everyone who has opened the app sees every home here, so the asking person needs only to be known (a `users` row);
 with more than one home, `home` names it. The bus's own transaction is on a separate small database (app_messages.py),
@@ -46,7 +50,7 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "receipt", targets=[r"/list", r"/insights"], actor=_actor, enabled=lambda conn: bool(app_settings.values().get("assistant_answers")),
+    "receipt", targets=[r"/list", r"/insights", r"/deals"], actor=_actor, enabled=lambda conn: bool(app_settings.values().get("assistant_answers")),
     person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel)
 
 _HOME = Arg("string", "which home, when there is more than one", max_length=255)
@@ -204,3 +208,72 @@ def add(ctx):
     return ctx.result(f"Added {row['text']} to the shopping list for {home_name}{where}.",
                       items=[{"item": row["text"], "qty": row["qty"], "cheapest_at": best["store"] if best else None}],
                       links=[_link(ctx, "/list")])
+
+
+@tools.tool("receipt.deals",
+            "Cheaper ways to buy what the household buys regularly: another store or pack size at least 10% cheaper "
+            "per unit than usual (receipts and online deals), and shopping-list items whose price is down now.",
+            args={"home": _HOME}, returns="items with where they're usually bought, the cheaper option and the saving",
+            scope="household", examples=("What's on sale that we usually buy?",))
+def deals(ctx):
+    from app.services import lookout, reqcache
+    with _session() as db, reqcache.scope():
+        home_id, home_name = _home(db, ctx)
+        found = lookout.savings(db, home_id)
+        try:
+            drops = lookout.price_drops(db, home_id)
+        except Exception:                                  # noqa: BLE001 — the savings still answer
+            drops = []
+    link = ctx.link("Best prices in Receipt Price Intelligence", "/deals")
+    if not found and not drops:
+        return ctx.result(f"No cheaper way to buy what {home_name} usually buys right now.", links=[link])
+    items, parts = [], []
+    for d in drops[:5]:
+        items.append({"item": d["name"], "kind": "price down", "store": d["store"], "price": d["price"],
+                      "usual": d["usual"], "saving_pct": d["percent"]})
+        parts.append(f"{d['name']} (on the list) is {d['percent']}% down at {d['store']}: {_money(d['price'])}")
+    for d in found[:10]:
+        if d["kind"] == "store":
+            where = d["better"]["store"] + (" online" if d["better"].get("source") == "online" else "")
+            items.append({"item": d["item"], "kind": "another store", "usual_store": d["now"]["store"],
+                          "usual": d["now"]["price"], "store": where, "price": d["better"]["price"],
+                          "saving_pct": d["percent"]})
+            parts.append(f"{d['item']}: {d['percent']}% cheaper at {where} ({_money(d['better']['price'])} vs "
+                         f"{_money(d['now']['price'])} at {d['now']['store']})")
+        else:
+            items.append({"item": d["item"], "kind": "another size", "usual_size": d["now"]["size"],
+                          "usual": d["now"]["price"], "size": d["better"]["size"], "price": d["better"]["price"],
+                          "saving_pct": d["percent"]})
+            parts.append(f"{d['item']}: the {d['better']['size']} size is {d['percent']}% cheaper per unit than "
+                         f"{d['now']['size']}")
+    n = len(found) + len(drops)
+    text = f"{n} way{'s' if n != 1 else ''} to save: " + "; ".join(parts[:6]) + ("…" if len(parts) > 6 else "") + "."
+    return ctx.result(text, items=items, links=[link], more=len(found) > 10)
+
+
+@tools.tool("receipt.budgets",
+            "The household's monthly shopping budgets (overall and per category): spent so far this month, what's "
+            "left, the days left and where the month is heading at this pace.",
+            args={"home": _HOME}, returns="budgets with amount, spent, left, percent used, projected and status",
+            scope="household", examples=("How's the grocery budget?",))
+def budgets_status(ctx):
+    from app.services import budgets, reqcache
+    with _session() as db, reqcache.scope():
+        home_id, home_name = _home(db, ctx)
+        rows = budgets.list_budgets(db, home_id)
+    link = _link(ctx, "/insights")
+    if not rows:
+        return ctx.result(f"{home_name} has no monthly budgets yet (Insights → Budgets).", links=[link])
+    items, parts = [], []
+    for b in rows:
+        name = b["category"] or "Everything"
+        items.append({"budget": name, "amount": b["amount"], "spent": b["spent"], "left": b["remaining"],
+                      "percent": b["percent"], "projected": b["projected"], "status": b["status"],
+                      "days_left": b["days_left"]})
+        state = {"over": "over budget", "warn": "close to the limit", "ok": "on track"}[b["status"]]
+        parts.append(f"{name}: {_money(b['spent'])} of {_money(b['amount'])} ({b['percent']:.0f}%, {state}; "
+                     + (f"{_money(b['remaining'])} left" if b["remaining"] >= 0 else f"{_money(-b['remaining'])} over")
+                     + f", heading for {_money(b['projected'])})")
+    days = rows[0]["days_left"]
+    text = f"This month ({days} day{'s' if days != 1 else ''} left): " + "; ".join(parts) + "."
+    return ctx.result(text, items=items, links=[link])

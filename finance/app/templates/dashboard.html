@@ -51,7 +51,7 @@
         </select>
     </label>
 </form>
-<script src="static/pages/dashboard.js?v={{ app_version }}" data-suffix='{{ (("&" + acting_qs) if acting_qs else "") | e | tojson }}'></script>
+<script src="static/pages/dashboard.js?v={{ app_version }}" data-suffix='{{ (("&" + acting_qs) if acting_qs else "") | tojson }}'></script>
 
 <div class="card">
     <form method="post" action="transfer-run-sweep{% if acting_qs %}?{{ acting_qs }}{% endif %}">

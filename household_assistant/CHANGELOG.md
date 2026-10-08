@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+- **🌙 Evening briefing**: next to the morning one — tomorrow's tasks and schedule, birthdays in the next two days and bills due soon, at the time you choose.
+- **Read it aloud**: choose a speaker (a Home Assistant media player) and the briefing is spoken there too, with Home Assistant's text-to-speech.
+- **Follow-up questions** know which apps and tools answered before: "and next week?", "what about Meera?" carry on from the last answer.
+- **More to ask** (with each app's update): "Remind me at 5 pm to call the plumber" (Todo), "Where's milk cheapest?" and "How are my budgets?" (Receipt Price Intelligence).
+
 ## 1.2.0
 
 - **🌅 Morning briefing**: each morning, at the time you choose (every day or weekdays), a short summary of your day on your phone — today's tasks and schedule, birthdays this week, bills due in the next 3 days, who owes whom — from the apps that answer you. It needs no AI model, appears in your questions too, and **Send me one now** tries it.

@@ -1449,6 +1449,8 @@ function scheduleRow(it, again) {
   const range = timeRange(it);
   const chips = [
     it.assigneeName ? h("span", { class: "chip" }, "👤 ", it.assigneeName) : null,
+    it.rotation && it.rotation.length ? h("span", { class: "chip", title: "Taken in turns, in this order" }, "🔁 ", it.rotationNames.join(" → ")) : null,
+    it.nextTurnName ? h("span", { class: "chip on", title: "Whose turn the next date is" }, "Next: ", it.nextTurnName) : null,
     range ? h("span", { class: "chip" }, "🕘 ", range) : null,
     it.place ? h("a", { class: "chip btnlike", href: mapsUrl(it.place.address), target: "_blank", rel: "noopener noreferrer", title: `Open ${it.place.address} in maps` }, "📍 ", it.place.name) : null,
     it.place && range ? driveChip({ place: it.place, dueTime: it.startTime }) : null,
@@ -1488,11 +1490,30 @@ function scheduleRow(it, again) {
         return h("div", { class: "pickup" + (struck ? " struck" : "") },
           h("span", { class: "pdate" }, fmtDate(e.date)), h("span", { class: "hint" }, relLabel(e.date)),
           statusChip(e), e.reason ? h("span", { class: "hint" }, `“${e.reason}”`) : null,
+          e.turnName && !struck ? turnPicker(it, e, again) : null,
           pickupActions(it.id, e, again));
       }) : h("div", { class: "hint" }, "No upcoming dates."),
       h("div", { class: "pickup" }, addBtn, holder)));
   }
   return row;
+}
+
+// Taking turns (§5.4b): whose turn a date is, and handing it to someone else
+function turnPicker(it, e, again) {
+  const day = e.movedFrom || e.date;
+  const people = state.users.filter((u) => !u.disabled || u.id === e.turn);
+  const sel = h("select", { class: "turn-select" + (e.handedOver ? " handed" : ""), "aria-label": `Whose turn ${fmtDate(e.date)} is`,
+    title: e.handedOver ? "Handed over — choose the usual person to undo" : "Whose turn — choose someone else to hand it over" },
+    people.map((u) => h("option", { value: u.id }, `${u.name}'s turn`)));
+  sel.value = e.turn;
+  sel.addEventListener("change", async () => {
+    try {
+      await api(`/api/schedule/${it.id}/turns/${day}`, { method: "PUT", body: { user_id: sel.value } });
+      toast(`${userName(sel.value) || "They"} ha${sel.value === actingUserId() ? "ve" : "s"} ${fmtDate(e.date)}`);
+      again();
+    } catch (err) { fail(err); sel.value = e.turn; }
+  });
+  return sel;
 }
 
 function scheduleDeleteQuestion(it) {
@@ -1562,6 +1583,19 @@ function openScheduleForm(item, onSaved) {
   const people = state.users.filter((u) => !u.disabled || (editing && u.id === item.assignedTo));
   const forSel = h("select", { value: editing && item.assignedTo ? item.assignedTo : "", "aria-label": "For" },
     h("option", { value: "" }, "Household"), people.map((u) => h("option", { value: u.id }, u.name + (u.disabled ? " (disabled)" : ""))));
+  // taking turns (§5.4b): household items only; the order people are picked in is the order of the turns
+  const turns = editing && item.rotation ? [...item.rotation] : [];
+  const turnsBox = h("div", { class: "turns-pick", role: "group", "aria-label": "Take turns" });
+  function drawTurns() {
+    mount(turnsBox, people.filter((u) => !u.disabled || turns.includes(u.id)).map((u) => {
+      const at = turns.indexOf(u.id);
+      return h("button", { type: "button", class: at >= 0 ? "on" : "", "aria-pressed": at >= 0 ? "true" : "false",
+        onclick: () => { if (at >= 0) turns.splice(at, 1); else turns.push(u.id); drawTurns(); refresh(); } },
+        at >= 0 ? `${at + 1}. ${u.name}` : u.name);
+    }));
+  }
+  const turnsRow = h("div", { class: "field wide" }, "Take turns (optional) — pick people in order", turnsBox,
+    h("div", { class: "hint" }, "Each date goes to the next person, counted from the first occurrence. Skipping a date doesn't change whose the next one is; you can hand a single date to someone else under Next dates."));
   const startIn = h("input", { type: "time", value: editing && item.startTime ? item.startTime : "", "aria-label": "Start time" });
   const endIn = h("input", { type: "time", value: editing && item.endTime ? item.endTime : "", "aria-label": "End time" });
   const place = placePicker(editing ? item : null);
@@ -1624,11 +1658,13 @@ function openScheduleForm(item, onSaved) {
     warn.textContent = !timed && Number(lead.value) >= gap ? "This sensor will always be on — the lead time is at least as long as the gap between occurrences." : "";
     // only the person an item is for can make it private (the server enforces this too)
     const forMe = !!forSel.value && forSel.value === actingUserId();
+    turnsRow.hidden = !!forSel.value;
     privateRow.hidden = !forMe;
     if (!forMe) privateCb.checked = false;
     // who is reminded before it starts, and why not
     const timedNow = !!(startIn.value && endIn.value);
-    if (!forSel.value) reminderHint.textContent = "🔕 Household items don't send reminders — choose a person under For to remind them.";
+    if (!forSel.value && turns.length >= 2) reminderHint.textContent = "🔔 Whoever's turn it is gets it in their digest and their own reminders before it starts.";
+    else if (!forSel.value) reminderHint.textContent = "🔕 Household items don't send reminders — choose a person under For to remind them, or have people take turns.";
     else if (!timedNow) reminderHint.textContent = forMe ? "🔔 All-day: it's in your daily digest (if that's on). Reminders before it starts need a start time." : "";
     else if (forMe && myOffsets !== null) {
       reminderHint.textContent = myOffsets.length
@@ -1647,6 +1683,7 @@ function openScheduleForm(item, onSaved) {
   publishCb.addEventListener("change", refresh);
   iconSel.addEventListener("input", () => { iconCustom.hidden = iconSel.value !== "custom"; });
   iconCustom.hidden = iconSel.value !== "custom";
+  drawTurns();
   snapAnchor();
   refresh();
 
@@ -1665,6 +1702,7 @@ function openScheduleForm(item, onSaved) {
       h("div", { class: "field wide" }, "Place", place.control, place.mapsLink),
       leadField),
     place.newBox,
+    turnsRow,
     reminderHint,
     h("div", { class: "form-row" }, privateRow, h("label", { class: "mini-toggle" }, publishCb, "Publish to Home Assistant")),
     privacyWarn,
@@ -1693,7 +1731,9 @@ function openScheduleForm(item, onSaved) {
       url: urlIn.value.trim() || null,
       assigned_to: forSel.value || null, start_time: startIn.value || null, end_time: endIn.value || null,
       visibility: forSel.value && privateCb.checked ? "private" : "household", expose_sensor: publishCb.checked,
+      rotation: !forSel.value && turns.length ? [...turns] : null,
     };
+    if (body.rotation && body.rotation.length < 2) { err.textContent = "Taking turns needs at least two people."; return; }
     if (editing && (rule !== originalRule || anchor.value !== originalAnchor) && !confirm("Changing the repeat rule or first occurrence clears this item's skips and moves. Continue?")) return;
     save.disabled = true;
     try {

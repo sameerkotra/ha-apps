@@ -111,7 +111,9 @@ Each app folder has `spec/SPEC.md` (how it works), its own tests
 `DOCS.md` (the user guide). `HA_ADDON_PATTERNS.md` and `WHOAMI_PAGE_SPEC.md` describe the
 conventions they share; `APP_MESSAGES_SPEC.md` is how the apps talk to each other, and
 `HOUSEHOLD_ASSISTANT_SPEC.md` is a draft of an assistant that answers questions from what they know. The tests in `tests/` check the repository as a whole:
-`python3 -m unittest discover -s tests` from the repository root.
+`python3 -m unittest discover -s tests` from the repository root. **`python3 tools/run_tests.py`** runs every
+app's suite and these checks in one go and lists which passed (name apps to run only those; `--jobs 4` runs four
+at a time); GitHub runs the same on every push (`.github/workflows/tests.yml`).
 
 **Shared code.** Code the apps have in common (the ingress and admin checks, "How the app sees you",
 database and backup helpers, App settings and People pages, themes, security headers, Home Assistant

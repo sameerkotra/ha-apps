@@ -462,6 +462,11 @@ main.sheet-page { max-width: none; }
 .sheet-table thead th.frozen { z-index: 4; }
 .sheet-table th.rh { position: sticky; left: 0; z-index: 2; background: var(--panel-alt); color: var(--text-dim); font-weight: 600; font-size: .74rem;
   text-align: center; user-select: none; cursor: pointer; }
+.col-menu { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: inherit;
+  font-size: .8rem; line-height: 1; padding: 2px 3px; border-radius: 4px; cursor: pointer; opacity: 0; }
+.sheet-table th.ch:hover .col-menu, .sheet-table th.ch.on .col-menu, .col-menu:focus-visible { opacity: .85; }
+.col-menu:hover { background: var(--accent-soft); color: var(--accent); opacity: 1; }
+@media (hover: none) { .sheet-table th.ch.on .col-menu { opacity: 1; } }
 .col-resize { position: absolute; right: -3px; top: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 6; }
 .sheet-table thead th { position: sticky; }
 .sheet-table td.cell { background: var(--card); color: var(--text); cursor: cell; }
@@ -650,6 +655,10 @@ a.tag-chip:hover { border-color: var(--accent-dim); }
 /* ---------- Markdown notes, links ---------- */
 .md-modes { display: inline-flex; gap: 4px; }
 .md-tools { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.md-tools-phone { position: sticky; bottom: 0; z-index: 5; flex-wrap: nowrap; overflow-x: auto; margin: 6px 0 8px; padding: 6px;
+  background: var(--panel-alt); border: 1px solid var(--border); border-radius: 10px; scrollbar-width: none; }
+.md-tools-phone .md-tool { min-width: 40px; min-height: 40px; flex: 0 0 auto; }
+.md-pic { display: block; max-width: 100%; max-height: 480px; height: auto; border-radius: 6px; margin: 6px 0; }
 .md-tool { min-width: 34px; font-weight: 700; }
 #mdItalic { font-style: italic; }
 .note-box.mode-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -898,3 +907,10 @@ body.doc-full main { max-width: none; padding: 10px 14px 12px; }
 body.doc-full .note-text { min-height: calc(100vh - 150px); min-height: calc(100dvh - 150px); }
 body.doc-full .sheet-wrap { height: calc(100vh - 215px); height: calc(100dvh - 215px); }
 .head-full[aria-pressed="true"] { color: var(--accent); }
+
+/* view links (§6.6) */
+.share-link { margin: 12px 0 4px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; display: grid; gap: 6px; }
+.share-link.on { border-style: solid; background: var(--panel-alt); }
+.share-link-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.share-link-row input { flex: 1 1 220px; min-width: 0; font-size: .85rem; }
+.share-link-row .hint { flex: 1 1 auto; }

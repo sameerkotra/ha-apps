@@ -606,6 +606,23 @@ columns `users.is_child`, `users.seen_from`, `users.child_since` (security revie
   else's items is checked again against that visible part (a hidden folder's name never decides a result); follow
   notifications' folder labels likewise (§17.4).
 
+### 6.6 View links (`view_links.py`)
+- "Anyone in the household with the link can view": one link per item, `view_links (node_id PK, token UNIQUE —
+  `secrets.token_urlsafe(16)`, created_by, created_at)`. Made, renewed (`{new: true}`: a new token, the old one
+  stops working) or turned off by the owner or a manager of an item in someone's folder (403 otherwise; 409 for
+  admin shared folders and Trash): `POST /api/nodes/{id}/link {new}`, `DELETE /api/nodes/{id}/link`. `GET
+  /api/nodes/{id}/shares` gives `link {token, createdAt, by, opened}` to people who can share.
+- `GET /api/view-links/{token}` (any signed-in person): 404 "This link doesn't work any more …" when the link or
+  its item is gone, in Trash or gone from disk, or its maker can no longer share it; someone who can open the item
+  gets it as it is; anyone else gets a Can view share marked `shares.via_link = 1` (`added_by` = the link's maker),
+  then `{id, kind, name}`. The browser route `#/view/<token>` (also the sub-path `/<panel>/view/<token>` and the
+  app's own `/view/<token>`, redirected like `/doc/<id>`) opens it and replaces the address with the item's.
+- Turning the link off deletes it and the `via_link` shares (`removed` counts them); changing such a share's role
+  by hand makes it an ordinary share (`via_link = 0`). Children's accounts: the three routes are blocked (Kids'
+  space, §17.20), and `open_link` refuses them too.
+- The link is `<Home Assistant's address>/<panel>/view/<token>` (`me.apps.panel`), else the app's own address with
+  `#/view/<token>`: only people who can sign in to Home Assistant can use it.
+
 ## 7. Saving, conflicts, versions, trash
 
 ### 7.1 Writing files (`store/fileio.py`)
@@ -683,7 +700,12 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
 - Column letters, row numbers, freeze rows/columns, column widths, insert/delete rows and columns (references adjust),
   sort a range, filter a column, fill down/right (Ctrl+D / Ctrl+R; `$` fixes a reference), copy/paste with Excel and
   Google Sheets (tab-separated text).
-- **Formats:** General, Number (decimals), Currency (HA's currency by default), Percent, Date, Text; bold; alignment;
+- **Formats:** General, Number (decimals), Currency (HA's currency by default), Accounting (currency with
+  negatives in brackets; Excel `"$"#,##0.00;("$"#,##0.00)`), Percent, Scientific (`0.00E+00`), Date, Time
+  (the fraction of a day, `hh:mm`; typed `17:30`, `17:30:15`, `5:30 pm`, `5pm`), Date and time
+  (`yyyy-mm-dd hh:mm`; typed `2026-10-08 17:30`), Text; Excel formats with hours/minutes/seconds read as Time or Date
+  and time, `E+` as Scientific, a currency with a bracketed negative section as Accounting; in a `.csv` times are
+  written `HH:MM[:SS]` / `YYYY-MM-DD HH:MM` and read back when they come back the same; bold; alignment;
   optional red for negatives.
 - **Totals row** under the data (SUM / AVERAGE / COUNT / MIN / MAX per column). Selecting a range shows Sum, Average,
   Count, Min, Max in the status bar.
@@ -1257,7 +1279,16 @@ in `.xlsx`; `sheetcalc.test.js`; packaging (`map` exactly `share`, port, version
   checkboxes** (`- [ ]`, tick them in the preview), links, horizontal rules, simple tables.
 - **Rendering builds DOM nodes** with `md.js`; no HTML is passed through (raw HTML shows as text), links only
   `http:`/`https:` and `[[doc links]]` (§17.3); images in Markdown aren't loaded.
-- Edit / Preview / Split; a small toolbar (B, I, heading, list, checkbox, link).
+- Edit / Preview / Split; a small toolbar (B, I, heading, list, numbered list, checkbox, quote, code, web link,
+  `[[ ]]` link, picture). On a phone (≤ 760 px) it sits under the text, `position: sticky; bottom: 0`, scrolling
+  sideways; its buttons don't take focus (pointerdown is prevented), so the keyboard stays open.
+- **Pictures:** pasting a PNG/JPEG/GIF/WebP (when the clipboard has no text) or 🖼 (a file input,
+  `accept` the four types — a phone may offer its camera) uploads it with `POST /api/nodes/{parentRef|mine}/upload`
+  next to the note ("Picture YYYY-MM-DD HH.MM.SS.ext" unless it has its own name) and writes `![Name](doc:<id>)` (a
+  plain note: `[[Name]]`). `md.js` turns `![alt](doc:<id>)` (id `[A-Za-z0-9_-]{1,64}`) into
+  `<img class="md-pic" src="api/nodes/<id>/preview" alt loading="lazy">` only with `opts.images` (the editor's
+  preview); the preview route checks access and serves only real raster images (§3.3); an image that fails to load
+  becomes "🖼 alt". Any other image URL stays "🖼 alt" — never fetched.
 - *(built, step 7)* `md.js` parses into plain blocks (headings, paragraphs, nested lists with tick boxes and their
   source line, quotes, fenced code, rules, pipe tables) and inline nodes (strong, em, code, links, `[[doc]]`,
   autolinks, images as "🖼 alt"), then builds DOM with `createElement` / `createTextNode` only — tested in Node

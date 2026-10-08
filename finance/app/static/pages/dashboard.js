@@ -1,8 +1,7 @@
 // Dashboard: the period and account pickers reload the page with the new filters.
 (function () {
-    // The acting user's part of the query string, exactly as the page has always added it (note: it has been
-    // HTML-escaped to "&amp;as_user=…" since this was an inline script, so an admin viewing as someone else
-    // goes back to their own view when changing these filters — kept as it was; see NOTES).
+    // The acting user's part of the query string ("&as_user=…" while an admin is viewing as someone), so changing a
+    // filter keeps that view.
     var suffix = JSON.parse(document.currentScript.getAttribute("data-suffix"));
     function updateDashboardFilters() {
         var period = document.getElementById("dashboard-period-select").value;

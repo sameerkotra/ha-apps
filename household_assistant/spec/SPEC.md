@@ -101,7 +101,7 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/tools` | user | the person's tools in words |
 | `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
 | `GET /api/history?before=&limit=` · `DELETE /api/history` | user | own questions, newest first; clear (not a running one) |
-| `GET /api/briefing` · `PUT /api/briefing {on, time, days}` · `POST /api/briefing/send` | user | the person's morning briefing (HOUSEHOLD_ASSISTANT_SPEC §16) |
+| `GET /api/briefing` · `PUT /api/briefing {on, time, days, eveningOn?, eveningTime?, speaker?}` · `POST /api/briefing/send?kind=morning\|evening` | user | the person's morning and evening briefings and speaker (HOUSEHOLD_ASSISTANT_SPEC §16) |
 | `GET/PUT /api/admin/settings` · `POST /api/admin/settings/test-ai` | admin | App settings; Test connection |
 | `GET /api/admin/tools` · `POST /api/admin/tools/refresh` · `PUT /api/admin/tools/{app}` `{enabled}` | admin | Apps |
 | `GET /api/admin/people` · `PUT /api/admin/people/{id}` `{enabled?, isChild?}` | admin | People (not oneself off) |
@@ -114,8 +114,8 @@ from the app.
 ## The page
 
 One column: the ask box at the top (Enter sends, Shift+Enter a new line, 🎤 where the browser has speech
-recognition), *What can I ask?*, *🌅 Morning briefing* (a dialog: on, time, every day / weekdays, what it includes,
-the phones it goes to, *Send me one now*) and *Clear my questions*, the suggestions, then the conversation, newest first
+recognition), *What can I ask?*, *🌅 Briefings* (a dialog: morning and evening each on and at a time, every day / weekdays,
+what each includes, the phones it goes to, a speaker to read it aloud, *Send a morning / an evening one now*) and *Clear my questions*, the suggestions, then the conversation, newest first
 (*Earlier questions* at the bottom): each question, its answer as Markdown built as DOM nodes — paragraphs, lists,
 bold; never HTML — proposed actions as buttons, **Sources** chips (opened with `ConnectedApps.openAppPage`) and
 **What was shared** (`<details>`); 🔊 on an answer reads it with `speechSynthesis`, and a question asked with 🎤 is
@@ -146,7 +146,7 @@ an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds t
 
 ## Jobs
 
-- Every minute: `catalogue.check()`, `briefing.check()` (the morning briefings that are due).
+- Every minute: `catalogue.check()`, `briefing.check()` (the morning and evening briefings that are due).
 - Every 5 minutes: the people and their phones from Home Assistant (the shared `ha_people.loop`).
 - Every hour: `engine.housekeeping()` — questions older than *Keep questions for* (their calls go with them),
   questions left running by a restart → failed, calls left `sent` over 2 minutes → timeout, usage older than

@@ -1,8 +1,9 @@
 """Export (§13.6): live preview, background jobs, downloads, presets.
 
-The website is the one export format; the print pages (wall chart, family
-book) use the same filtered projection. The whole page is the Website export
-switch, the print data the Wall chart and family book switch (Features).
+The website is the main export format; a GEDCOM file (§14) comes from the same
+choices straight away, and the print pages (wall chart, family book) use the
+same filtered projection. The whole page is the Website export switch, the
+print data the Wall chart and family book switch (Features).
 """
 import json
 import logging
@@ -14,7 +15,7 @@ import zipfile
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import Field
 
 from .. import config, db, features, media
@@ -27,7 +28,7 @@ from ..site_export import Site
 router = APIRouter(prefix="/api", tags=["export"])
 logger = logging.getLogger("export")
 
-FORMATS = ("site",)
+FORMATS = ("site", "gedcom")
 JOB_TTL = 3600
 _jobs: dict = {}
 _lock = threading.Lock()
@@ -46,7 +47,7 @@ class PresetIn(Strict):
 
 def _check_format(fmt):
     if fmt not in FORMATS:
-        raise HTTPException(422, "Only the website export is available.")
+        raise HTTPException(422, "The export formats are the website and GEDCOM.")
 
 
 def exports_dir() -> str:
@@ -139,6 +140,23 @@ def _run(jid: str, user: dict, fmt: str, options: ExportOptions):
             _jobs[jid].update(status="failed", finished=time.time(), error=str(e) if isinstance(e, RuntimeError) else "The export failed — see the app's Log tab.")
 
 
+@router.post("/export/gedcom", dependencies=[Depends(features.required("export"))])
+def export_gedcom(body: ExportIn, user: dict = Depends(require_user)):
+    """The same choices as a GEDCOM 5.5.1 file (§14), at once: text only, no photos."""
+    from .. import gedcom, tree_data
+    with db.get_conn() as conn:
+        v = build(conn, body.options, user["me_person_id"])
+        stats = v.stats()
+        if not stats["people"]:
+            raise HTTPException(422, "Nobody is included with these choices.")
+        data = tree_data.export_data(conn, v, body.options, {}, (body.options.site.title or "Our family").strip())
+        text = gedcom.write(data)
+        Batch(conn, user["id"], summary_label(body.options, stats, "gedcom"))
+    name = f"family-tree-{config.now().strftime('%Y%m%d')}.ged"
+    return Response(text.encode("utf-8"), media_type="text/plain; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
 @router.post("/export/print", dependencies=[Depends(features.required("printing"))])
 def print_data(body: ExportIn, user: dict = Depends(require_user)):
     """The filtered family for the wall chart and family book (§13.5), laid out in the browser."""
@@ -155,6 +173,8 @@ def print_data(body: ExportIn, user: dict = Depends(require_user)):
 @router.post("/export", status_code=202, dependencies=[Depends(features.required("export"))])
 def start_export(body: ExportIn, user: dict = Depends(require_user)):
     _check_format(body.format)
+    if body.format != "site":
+        raise HTTPException(422, "A GEDCOM file comes straight from POST /api/export/gedcom.")
     cleanup()
     with _lock:
         if any(j["user"] == user["id"] and j["status"] == "running" for j in _jobs.values()):

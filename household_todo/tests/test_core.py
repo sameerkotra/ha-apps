@@ -1890,7 +1890,7 @@ class LinkSchema(Base):
             fresh = {t: [(r["name"], r["type"], r["notnull"], r["dflt_value"]) for r in c.execute(f"PRAGMA table_info({t})")]
                      for t in ("tasks", "schedule_items")}
             self.assertEqual(fresh["tasks"][-2:], [("url", "TEXT", 0, None), ("source", "TEXT", 0, None)])
-            self.assertEqual(fresh["schedule_items"][-1], ("url", "TEXT", 0, None))
+            self.assertEqual(fresh["schedule_items"][-2:], [("url", "TEXT", 0, None), ("rotation", "TEXT", 0, None)])
             # make it an older database: no url columns, one row in each table
             add_user(c, "u1", "Ann")
             add_list(c, "l1", "Household")
@@ -1898,6 +1898,7 @@ class LinkSchema(Base):
             add_item(c, "s1", "Old item")
             c.execute("ALTER TABLE tasks DROP COLUMN source")         # 2.2.0 had neither (source: 2.3.0)
             c.execute("ALTER TABLE tasks DROP COLUMN url")
+            c.execute("ALTER TABLE schedule_items DROP COLUMN rotation")   # taking turns came later still
             c.execute("ALTER TABLE schedule_items DROP COLUMN url")
         db.init_db()
         with db.get_conn() as c:

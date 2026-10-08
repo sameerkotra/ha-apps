@@ -198,5 +198,16 @@ def undo(conn, batch_id: str, user_id: str) -> Batch:
             raise Conflict("Something this change touched was replaced or removed afterwards — "
                            "undo the later change first.")
     nb.touch(*people)
+    # "This is me" links the batch moved go back, while they're still where it left them
+    for m in conn.execute("SELECT * FROM batch_me WHERE batch_id = ?", (batch_id,)).fetchall():
+        if conn.execute("UPDATE users SET me_person_id = ? WHERE id = ? AND me_person_id IS ?",
+                        (m["from_person"], m["user_id"], m["to_person"])).rowcount:
+            moved_me(conn, nb.id, m["user_id"], m["to_person"], m["from_person"])
     conn.execute("UPDATE batches SET undone_by = ? WHERE id = ?", (nb.id, batch_id))
     return nb
+
+
+def moved_me(conn, batch_id: str, user_id: str, from_person: str | None, to_person: str | None) -> None:
+    """Note that `batch_id` moved a user's "This is me" link, so undoing the batch moves it back."""
+    conn.execute("INSERT OR REPLACE INTO batch_me (batch_id, user_id, from_person, to_person) VALUES (?, ?, ?, ?)",
+                 (batch_id, user_id, from_person, to_person))

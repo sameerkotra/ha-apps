@@ -105,15 +105,19 @@ CREATE TABLE IF NOT EXISTS usage_days (
     output_tokens INTEGER NOT NULL DEFAULT 0
 );
 
--- The morning briefing (app/briefing.py): per person, on or off, the time (HH:MM, Home Assistant's zone), every
--- day or weekdays, and the day it was last sent (so it goes at most once a day).
+-- The morning and evening briefings (app/briefing.py): per person, each on or off with its time (HH:MM, Home
+-- Assistant's zone) and the day it was last sent (so it goes at most once a day); every day or weekdays; a speaker.
 CREATE TABLE IF NOT EXISTS briefings (
     user_id TEXT PRIMARY KEY,
     on_ INTEGER NOT NULL DEFAULT 0,
     at TEXT NOT NULL DEFAULT '07:30',
     days TEXT NOT NULL DEFAULT 'every' CHECK (days IN ('every', 'weekdays')),
     last_sent TEXT,
-    updated_at TEXT
+    updated_at TEXT,
+    evening_on INTEGER NOT NULL DEFAULT 0,
+    evening_at TEXT NOT NULL DEFAULT '20:00',
+    evening_last_sent TEXT,
+    speaker TEXT                    -- a media_player the briefings are read aloud on, or NULL
 );
 
 -- Admin → App settings (app/settings.py). value is JSON; the ai_api_key row is blanked in downloaded backups.
@@ -125,6 +129,10 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 """
 
+# Columns added after their table was first made (older databases and restored backups get them at start-up).
+MIGRATIONS = {"briefings": [("evening_on", "INTEGER NOT NULL DEFAULT 0"), ("evening_at", "TEXT NOT NULL DEFAULT '20:00'"),
+                            ("evening_last_sent", "TEXT"), ("speaker", "TEXT")]}
+
 # Bumped by every init_db() (start-up, restore): settings.py drops its cache when it changes.
 generation = 0
 
@@ -133,6 +141,7 @@ def init_db():
     global generation
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        db_core.add_missing_columns(conn, MIGRATIONS)
         app_bus.migrate(conn)
     generation += 1
 

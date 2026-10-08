@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+
+- **Viewing as someone else**: the dashboard's filters (dates, accounts, categories) kept you on that person's view — they used to drop back to your own.
+- **Restoring a backup asks first**: Admin → Storage → Import now says it replaces all data for every user and waits for you to confirm.
+- A backup that failed the check before restoring no longer leaves its temporary copy behind.
+
 ## 1.3.0
 
 - **More for the Household Assistant**: "How much did we spend at Costco this year?" (the total at one shop or company, each month's, the latest charges) and "What's the balance on my accounts?" (each account's balance from its latest statement; a card's is what's owed).

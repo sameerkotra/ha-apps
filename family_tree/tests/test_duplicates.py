@@ -84,6 +84,9 @@ class Merge(ApiTestCase):
         self.assertEqual(([x["name"] for x in o["parents"]], [f["partner"]["name"] for f in o["families"]]), (["Subba"], ["Ravi"]))
         k = self.detail(keep)
         self.assertEqual((k["parents"], k["families"], k["nickname"]), ([], [], None))
+        # and Bob's "This is me" goes back to the person he chose
+        self.assertEqual(sql("SELECT me_person_id FROM users WHERE id = ?", (BOB["id"],))[0]["me_person_id"], other)
+        self.assertEqual(o["claimedBy"]["id"], BOB["id"])
 
     def test_refusals(self):
         a = self.person("Ravi", gender="male")

@@ -70,7 +70,7 @@ def make_household(router: Router, *, bills: bool = False) -> dict:
     vault = FakeApp(router, "household_vault", "Household Vault", "vault")
 
     @todo.tools.tool("todo.tasks", "Tasks on the person's lists for a period.",
-                     args={"when": Arg("enum", "which tasks", required=True, values=("today", "week"))},
+                     args={"when": Arg("enum", "which tasks", required=True, values=("today", "tomorrow", "week"))},
                      returns="tasks", examples=("What's on my list today?",))
     def tasks(ctx):
         todo.calls.append({"tool": "todo.tasks", "by": ctx.user["id"], "args": ctx.args})

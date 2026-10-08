@@ -9,11 +9,11 @@ Monday 21 September 2026 (test_api.NOW). All people, lists and tasks here are in
 import _env  # noqa: F401
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from test_api import ADMIN, ALICE, BOB, ApiBase
+from test_api import ADMIN, ALICE, BOB, NOW, ApiBase, link
 
-from app import config, db, tools
+from app import config, db, reminders, tools
 from app.common import app_bus
 
 
@@ -179,6 +179,45 @@ class ToolTests(ApiBase):
         self.assertNack(call("todo.items.due", confirm=True, task="Paint fence", due="soon"), "invalid", "due")
         self.assertNack(call("todo.items.due", confirm=True, task="Paint fence"), "invalid", "due")
 
+    def test_time_words(self):
+        for said, want in (("17:00", "17:00"), ("5pm", "17:00"), ("5:30 PM", "17:30"), ("12am", "00:00"),
+                           ("12 pm", "12:00"), ("9.15", "09:15"), ("25:00", None), ("13pm", None), ("soon", None)):
+            self.assertEqual(tools.parse_time(said), want, said)
+
+    def test_remind_me_at_a_time(self):
+        now = config.now()                                       # 12:00 on Monday 21 September (test_api.NOW)
+        self.assertEqual(now.strftime("%H:%M"), NOW.astimezone(now.tzinfo).strftime("%H:%M"))
+        self.assertNack(call("todo.reminder.add", text="Call the plumber", time="5pm"), "not_allowed", "confirm")
+        later = (now + timedelta(hours=5)).strftime("%H:%M")
+        res = call("todo.reminder.add", confirm=True, text="Call the plumber", time=later)
+        mine = next(l["name"] for l in self.lists() if l["kind"] == "personal")
+        self.assertEqual(res["text"], f"I'll remind you today at {later}: “Call the plumber” (on {mine}).")
+        task = next(t for t in self.get(f"/api/lists/{self.mine_id()}/tasks").json() if t["title"] == "Call the plumber")
+        self.assertEqual((task["dueDate"], task["dueTime"], task["source"]), (now.date().isoformat(), later, "Assistant"))
+        earlier = (now - timedelta(hours=2)).strftime("%H:%M")
+        res = call("todo.reminder.add", confirm=True, text="Bins out", time=earlier)            # passed: tomorrow
+        self.assertIn(f"tomorrow at {earlier}", res["text"])
+        res = call("todo.reminder.add", confirm=True, text="Old", time=earlier, date=now.date().isoformat())
+        self.assertIn("has already passed. Nothing was added.", res["text"])
+        self.assertNack(call("todo.reminder.add", confirm=True, text="x", time="soon"), "invalid", "time")
+        # at the time: one ping to her phone, once
+        link("alice", "notify.mobile_app_alice")
+        sent = []
+        fake = lambda svc, title, msg, data=None: sent.append((svc, msg)) or True     # noqa: E731
+        at = now + timedelta(hours=5)
+        self.assertEqual(reminders.run_alarm_pass_blocking(now=at - timedelta(minutes=1), sender=fake), 0)
+        self.assertEqual(reminders.run_alarm_pass_blocking(now=at, sender=fake), 1)
+        self.assertEqual(sent, [("mobile_app_alice", f"⏰ Call the plumber ({later})")])
+        self.assertEqual(reminders.run_alarm_pass_blocking(now=at + timedelta(minutes=1), sender=fake), 0)
+        # done before its time, or the app was off for over an hour: dropped, not sent
+        res = call("todo.reminder.add", confirm=True, text="Water plants", time=later, date="2026-09-23")
+        call("todo.items.done", confirm=True, task="Water plants")
+        tomorrow_ping = datetime.combine(date(2026, 9, 22), datetime.min.time(), tzinfo=now.tzinfo) + (at - now.replace(hour=0, minute=0, second=0, microsecond=0))
+        self.assertEqual(reminders.run_alarm_pass_blocking(now=tomorrow_ping + timedelta(hours=3), sender=fake), 0)
+        self.assertEqual(len(sent), 1)
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM task_alarms WHERE sent_at IS NULL").fetchone()[0], 1)
+
     def test_switches(self):
         r = self.put("/api/admin/settings", {"assistant_answers": False}, ADMIN)
         self.assertEqual(r.status_code, 200, r.text)
@@ -198,6 +237,6 @@ class ToolTests(ApiBase):
         tools.tools.check()
         self.assertEqual([t["name"] for t in tools.tools.spec()],
                          ["todo.tasks", "todo.lists", "todo.schedule", "todo.items.add", "todo.items.done",
-                          "todo.items.due"])
+                          "todo.items.due", "todo.reminder.add"])
         for kind in ("assist.tools.list", "assist.tool.call", "todo.items.add", "todo.lists.list"):
             self.assertIn(kind, app_bus.default._handlers)

@@ -26,7 +26,7 @@ MAX_TEXT = 32767
 MAX_FORMULA = 8192
 INDEX_CELLS = 20_000
 
-FORMATS = ("general", "number", "currency", "percent", "date", "text")
+FORMATS = ("general", "number", "currency", "accounting", "percent", "scientific", "date", "time", "datetime", "text")
 ALIGNS = ("left", "center", "right")
 TOTALS = ("SUM", "AVERAGE", "COUNT", "MIN", "MAX")
 CHART_TYPES = ("bar", "line", "pie")
@@ -200,13 +200,21 @@ def excel_format(cell: dict, currency: str | None) -> str:
         return ("." + "0" * n) if n else ""
     if f == "number":
         base = "#,##0" + dec(2)
-    elif f == "currency":
+    elif f in ("currency", "accounting"):
         sym = currency_symbol(currency).replace('"', "")
         base = f'"{sym}"#,##0' + dec(2) if len(sym) == 1 else f'#,##0{dec(2)} "{sym}"'
+        if f == "accounting":                          # negatives in brackets
+            return f"{base};({base})"
     elif f == "percent":
         base = "0" + dec(0) + "%"
+    elif f == "scientific":
+        base = "0" + dec(2) + "E+00"
     elif f == "date":
         return "yyyy-mm-dd"
+    elif f == "time":
+        return "hh:mm"
+    elif f == "datetime":
+        return "yyyy-mm-dd hh:mm"
     elif f == "text":
         return "@"
     else:
@@ -219,7 +227,7 @@ _DATE_TOKENS = re.compile(r"(?i)(y|d|mmm|h|s|am/pm)")
 
 def format_from_excel(code: str | None) -> dict | None:
     """An Excel number format → the cell's format keys ({} for General), or None when the app has no such
-    format (times, scientific, fractions, custom text …)."""
+    format (fractions, custom text …)."""
     code = (code or "General").strip()
     if code in ("General", ""):
         return {}
@@ -233,9 +241,12 @@ def format_from_excel(code: str | None) -> dict | None:
     lits = re.sub(r'"[^"]*"|\\.|\[\$[^\]]*\]|\[[^\]]*\]', "", first)
     if _DATE_TOKENS.search(lits) or ("m" in lits.lower() and not re.search(r"[0#]", lits)):
         if re.search(r"(?i)[hs]|am/pm", lits):
-            return None                                     # times: no such format in the app
+            return {"f": "datetime"} if re.search(r"(?i)[yd]", lits) else {"f": "time"}
         return {"f": "date"}
-    if re.search(r"[eE][+-]|\?/|/\?", lits):
+    if re.search(r"[eE][+-]", lits):
+        m = re.search(r"0(\.(0+))?[eE]", lits)
+        return {"f": "scientific", "d": len(m.group(2) or "") if m else 2}
+    if re.search(r"\?/|/\?", lits):
         return None
     m = re.search(r"[0#][0#,]*(\.([0#]+))?", lits)
     if not m:
@@ -248,7 +259,11 @@ def format_from_excel(code: str | None) -> dict | None:
         out["f"] = "percent"
         return out
     if re.search(r'"[^"]*[^\d\s,.#0"]+[^"]*"|\[\$[^\]]+\]|[$€£¥₹]', first):
-        out["f"] = "currency"
+        if len(sections) > 1 and not red and "(" in re.sub(r'"[^"]*"', "", sections[1]):
+            out.pop("red", None)
+            out["f"] = "accounting"                  # negatives in brackets
+        else:
+            out["f"] = "currency"
         return out
     out["f"] = "number"
     if "," not in m.group(0) and decimals == 0 and not red:
@@ -315,6 +330,10 @@ def shown(cell: dict) -> str:
                 pass
         if cell.get("f") == "percent":
             return num_text(round(v * 100, 10)) + "%"
+        if cell.get("f") in ("time", "datetime") and 0 <= v < 2958466:
+            secs = round((v - math.floor(v)) * 86400)
+            hm = f"{secs // 3600 % 24:02d}:{secs // 60 % 60:02d}" + (f":{secs % 60:02d}" if secs % 60 else "")
+            return hm if cell["f"] == "time" else f"{serial_to_iso(v)} {hm}"
         return num_text(v)
     return str(v)
 

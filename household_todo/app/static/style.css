@@ -603,3 +603,11 @@ input[type="color"] { width: 40px; height: 32px; padding: 2px; cursor: pointer; 
   .maint-hist-date { width: auto; }
   .nav-badge { top: 2px; right: 4px; }
 }
+
+/* taking turns (§5.4b) */
+.turns-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.turns-pick button { border: 1px solid var(--border); background: var(--surface, transparent); color: inherit; border-radius: 999px;
+  padding: 4px 12px; font: inherit; font-size: .85rem; cursor: pointer; }
+.turns-pick button.on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+.turn-select { font-size: .8rem; padding: 2px 6px; max-width: 12rem; }
+.turn-select.handed { border-color: var(--accent); }

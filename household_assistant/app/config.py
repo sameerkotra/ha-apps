@@ -39,7 +39,7 @@ SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 
 APP_TITLE = "Household Assistant"
-APP_VERSION = "1.2.0"           # config.yaml's version: the app bus says it in its hello
+APP_VERSION = "1.3.0"           # config.yaml's version: the app bus says it in its hello
 SLUG = "household_assistant"
 
 ZONE = ha_time.Zone(logger)       # app/common/ha_time.py

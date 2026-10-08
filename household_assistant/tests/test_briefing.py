@@ -24,14 +24,14 @@ class BriefingTests(Household):
     def phones(self, uid):
         return {"u_alice": [{"service": "mobile_app_alice_phone", "label": "Alice's phone"}]}.get(uid, [])
 
-    def send_now(self, who=ALICE):
+    def send_now(self, who=ALICE, kind="morning"):
         sent = []
         with mock.patch.object(briefing, "phones", self.phones), \
                 mock.patch.object(briefing.ha_notify, "send_to_services",
                                   side_effect=lambda svcs, title, msg, data=None: sent.append((svcs, title, msg, data))
                                   or {s: True for s in svcs}), \
                 mock.patch.object(ai_client, "generate", side_effect=AssertionError("no model is needed")):
-            r = self.c.post("/api/briefing/send", headers=who)
+            r = self.c.post(f"/api/briefing/send?kind={kind}", headers=who)
         return r, sent
 
     def test_settings_are_each_persons_own(self):
@@ -106,7 +106,8 @@ class BriefingTests(Household):
 
         def check(now):
             with mock.patch.object(config, "now", return_value=now), \
-                    mock.patch.object(briefing, "send", side_effect=lambda u: sent.append((u["id"], now)) or {"sent": {}}):
+                    mock.patch.object(briefing, "send", side_effect=lambda u, k="morning": sent.append((u["id"], k, now))
+                                      or {"sent": {}, "spoken": None}):
                 n = briefing.check()
                 for t in list(briefing.threading.enumerate()):
                     if t.name.startswith("briefing-"):
@@ -115,9 +116,74 @@ class BriefingTests(Household):
         self.assertEqual(check(at(2026, 10, 7, 7, 29)), 0)            # Wednesday, a minute early
         self.assertEqual(check(at(2026, 10, 7, 7, 30)), 1)            # Alice only: Bob's assistant is off
         self.assertEqual(check(at(2026, 10, 7, 7, 31)), 0)            # once a day
-        self.assertEqual([u for u, _ in sent], ["u_alice"])
+        self.assertEqual([(u, k) for u, k, _ in sent], [("u_alice", "morning")])
         self.assertEqual(check(at(2026, 10, 10, 7, 30)), 0)           # Saturday: weekdays only
         self.assertEqual(check(at(2026, 10, 12, 10, 31)), 0)          # Monday, more than 3 hours late
         self.assertEqual(check(at(2026, 10, 13, 9, 0)), 1)            # Tuesday, started late but in time
         self.c.put("/api/briefing", json={"on": False, "time": "07:30", "days": "weekdays"}, headers=ALICE)
         self.assertEqual(check(at(2026, 10, 14, 7, 30)), 0)
+
+
+class EveningAndSpeakerTests(BriefingTests):
+    def test_evening_briefing_asks_about_tomorrow(self):
+        r, sent = self.send_now(kind="evening")
+        q = r.json()["question"]
+        self.assertEqual(q["text"], "Evening briefing")
+        self.assertEqual(self.apps["todo"].calls[-1]["args"], {"when": "tomorrow"})
+        self.assertEqual(self.apps["finance"].calls[-1]["args"], {"days": 2})
+        (svcs, title, _msg, _d), = sent
+        self.assertTrue(title.startswith("🌙 Evening briefing · "))
+        self.assertEqual(self.c.post("/api/briefing/send?kind=night", headers=ALICE).status_code, 422)
+
+    def test_evening_settings_and_clock(self):
+        r = self.c.put("/api/briefing", json={"on": False, "time": "07:30", "days": "every", "eveningOn": True,
+                                              "eveningTime": "20:15"}, headers=ALICE)
+        self.assertEqual(r.status_code, 200, r.text)
+        b = r.json()
+        self.assertEqual((b["on"], b["eveningOn"], b["eveningTime"]), (False, True, "20:15"))
+        self.assertEqual([p["tool"] for p in b["eveningParts"]], ["todo.tasks", "finance.bills"])
+        self.assertEqual(self.c.put("/api/briefing", json={"on": False, "time": "07:30", "days": "every",
+                                                           "eveningTime": "8pm"}, headers=ALICE).status_code, 422)
+        # the morning settings alone keep the evening as it was
+        r = self.c.put("/api/briefing", json={"on": True, "time": "07:00", "days": "every"}, headers=ALICE)
+        self.assertEqual((r.json()["eveningOn"], r.json()["eveningTime"]), (True, "20:15"))
+        sent = []
+        with mock.patch.object(config, "now", return_value=at(2026, 10, 7, 20, 16)), \
+                mock.patch.object(briefing, "send", side_effect=lambda u, k="morning": sent.append(k)
+                                  or {"sent": {}, "spoken": None}):
+            self.assertEqual(briefing.check(), 1)
+            for t in list(briefing.threading.enumerate()):
+                if t.name.startswith("briefing-"):
+                    t.join(5)
+            self.assertEqual(briefing.check(), 0)                         # once a day
+        self.assertEqual(sent, ["evening"])
+
+    def test_read_aloud_on_a_speaker(self):
+        states = [{"entity_id": "media_player.kitchen", "attributes": {"friendly_name": "Kitchen speaker"}},
+                  {"entity_id": "tts.home_assistant_cloud", "attributes": {}},
+                  {"entity_id": "light.hall", "attributes": {}}]
+        with mock.patch.object(briefing.ha_client, "fetch_states_blocking", return_value=states):
+            b = self.c.get("/api/briefing", headers=ALICE).json()
+            self.assertEqual((b["speakers"], b["tts"]), ([{"entity": "media_player.kitchen", "name": "Kitchen speaker"}],
+                                                         "tts.home_assistant_cloud"))
+            r = self.c.put("/api/briefing", json={"on": True, "time": "07:30", "days": "every",
+                                                  "speaker": "media_player.kitchen"}, headers=ALICE)
+            self.assertEqual(r.json()["speaker"], "media_player.kitchen")
+            self.assertEqual(self.c.put("/api/briefing", json={"on": True, "time": "07:30", "days": "every",
+                                                               "speaker": "light.hall"}, headers=ALICE).status_code, 422)
+            calls = []
+            with mock.patch.object(briefing.ha_client, "request",
+                                   side_effect=lambda m, path, body=None, **kw: calls.append((path, body)) or (200, b"[]")):
+                r, _sent = self.send_now()
+        self.assertTrue(r.json()["spoken"])
+        (path, body), = calls
+        self.assertEqual(path, "/services/tts/speak")
+        self.assertEqual((body["entity_id"], body["media_player_entity_id"]), ("tts.home_assistant_cloud",
+                                                                              "media_player.kitchen"))
+        self.assertTrue(body["message"].startswith("Good morning, Alice. Morning briefing for "))
+        self.assertIn("2 tasks today: Bins, Call plumber.", body["message"])
+        self.assertNotIn("📋", body["message"])
+        r = self.c.put("/api/briefing", json={"on": True, "time": "07:30", "days": "every", "speaker": ""},
+                       headers=ALICE)
+        self.assertIsNone(r.json()["speaker"])
+        self.assertIsNone(self.send_now()[0].json()["spoken"])

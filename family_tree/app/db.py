@@ -186,6 +186,14 @@ CREATE TABLE IF NOT EXISTS batch_people (
   PRIMARY KEY (batch_id, person_id)
 );
 CREATE INDEX IF NOT EXISTS idx_bp_person ON batch_people(person_id);
+-- A "This is me" link a batch moved (a merge moves it to the kept person); undo moves it back.
+CREATE TABLE IF NOT EXISTS batch_me (
+  batch_id TEXT NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  from_person TEXT,
+  to_person TEXT,
+  PRIMARY KEY (batch_id, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 

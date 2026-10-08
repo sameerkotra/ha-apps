@@ -9,7 +9,7 @@
      DocsText.parseSearchArg(a)  → the Search page's options from its address ("?…", or just the words)
      DocsText.clashes(have, add) → the names in `add` already taken in `have` (case doesn't matter, as on Windows)
      DocsText.fmtBytes(n)        → "1.5 MB"
-     DocsText.appLinkHash(o)     → "#/doc/<id>" | "#/folder/<id>" | "#/file/<id>" | "#quick-note" | null: where an
+     DocsText.appLinkHash(o)     → "#/doc/<id>" | "#/folder/<id>" | "#/file/<id>" | "#/view/<token>" | "#quick-note" | null: where an
                                    "Open in Docs" link (APP_MESSAGES_SPEC §6.5) or a dashboard button points, from
                                    {panel, parentPath, ownPath, routePath} — Home Assistant's route.path, the top page's
                                    path (after the panel), or the app's own sub-path */
@@ -112,7 +112,7 @@
     // "/doc/<id>" (and "/folder/…", "/file/…") or "/quick-note" → the app's own route; anything else → null
     const parts = String(sub || "").split("?")[0].split("#")[0].split("/").filter(Boolean);
     if (parts.length === 1 && parts[0] === "quick-note") return "#quick-note";
-    if (parts.length === 2 && ["doc", "folder", "file"].includes(parts[0]) && LINK_ID.test(parts[1])) return `#/${parts[0]}/${parts[1]}`;
+    if (parts.length === 2 && ["doc", "folder", "file", "view"].includes(parts[0]) && LINK_ID.test(parts[1])) return `#/${parts[0]}/${parts[1]}`;
     return null;
   }
   function appLinkHash(o) {

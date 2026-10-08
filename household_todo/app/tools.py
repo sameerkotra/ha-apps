@@ -9,7 +9,9 @@
 - `todo.items.add` (acts): adds a task to one of their lists — only after the person taps the proposed change in
   the assistant (`confirm`), and checked as if they did it here;
 - `todo.items.done` (acts): ticks off one of their open tasks, found by its title (and list);
-- `todo.items.due` (acts): moves one of their open tasks to another day.
+- `todo.items.due` (acts): moves one of their open tasks to another day;
+- `todo.reminder.add` (acts): "remind me at 5 pm to call the plumber" — a task on their own list (or one named) due
+  then, and a ping to their phones at that time (`task_alarms`, reminders.run_alarm_pass_blocking).
 
 `todo.tasks` also takes `person`: only the tasks assigned to someone ("Meera", "me", or "nobody").
 
@@ -88,15 +90,16 @@ def _when(d: str | None, today: date) -> str:
 
 def _occurrences(ctx, start: date, end: date) -> list[dict]:
     """What's on the schedule from `start` to `end` (both included) that the person may see, in date order."""
-    items = [dict(r) for r in ctx.conn.execute(
-        f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (ctx.user["id"],))]
+    items = schedule_logic.attach_turns(ctx.conn, [dict(r) for r in ctx.conn.execute(
+        f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (ctx.user["id"],))])
     excs = schedule_logic.load_exceptions(ctx.conn)
     names = taskview.users_by_id(ctx.conn)
     out = []
     for it in items:
-        for d in schedule_logic.effective_dates_between(it, excs.get(it["id"], []), start, end):
+        for d, turn in schedule_logic.effective_turns_between(it, excs.get(it["id"], []), start, end):
+            who = it["assigned_to"] or turn                 # taken in turns: whose turn it is (§5.4b)
             out.append({"date": d.isoformat(), "what": it["name"], "time": it["start_time"],
-                        "for": names.get(it["assigned_to"]) if it["assigned_to"] else None})
+                        "for": names.get(who) if who else None})
     out.sort(key=lambda e: (e["date"], e["time"] is not None, e["time"] or "", e["what"].lower()))
     return out
 
@@ -305,3 +308,63 @@ def due(ctx):
     return ctx.result(f"“{t['title']}” on {t['listName']} is now due {when}.",
                       items=[{"title": t["title"], "list": t["listName"], "due": ctx.args["due"]}],
                       links=[ctx.link(f"{t['listName']} in Household Todo", f"/lists/{t['listId']}")])
+
+
+_TIME_RE = re.compile(r"^\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*$", re.I)
+
+
+def parse_time(text: str) -> str | None:
+    """"17:00", "5pm", "5:30 pm", "9.15" → "HH:MM" (24-hour), or None."""
+    m = _TIME_RE.match(text or "")
+    if not m:
+        return None
+    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), (m.group(3) or "").lower().replace(".", "")
+    if ap:
+        if not 1 <= h <= 12:
+            return None
+        h = (h % 12) + (12 if ap == "pm" else 0)
+    if h > 23 or mi > 59:
+        return None
+    return f"{h:02d}:{mi:02d}"
+
+
+@tools.tool("todo.reminder.add",
+            "Reminds the person at a time (after they confirm it): adds the task to their own list (or the list named) "
+            "due then, and their phone gets a notification at that time. Without `date`: today, or tomorrow when the "
+            "time has passed.",
+            args={"text": Arg("string", "what to be reminded of", required=True, max_length=200),
+                  "time": Arg("string", "the time, 24-hour HH:MM (e.g. 17:00)", required=True, max_length=10),
+                  "date": Arg("date", "the day (default today, or tomorrow when the time has passed)"),
+                  "list": _LIST},
+            acts=True, returns="the reminder: task, list, day and time", children=True)
+def reminder_add(ctx):
+    hhmm = parse_time(ctx.args["time"])
+    if hhmm is None:
+        raise bus.Nack("invalid", "time")
+    now = config.now()
+    day = date.fromisoformat(ctx.args["date"]) if ctx.args.get("date") else now.date()
+    if not ctx.args.get("date") and hhmm <= now.strftime("%H:%M"):
+        day += timedelta(days=1)                          # "at 7" said at 8 pm means tomorrow
+    if (day.isoformat(), hhmm) <= (now.date().isoformat(), now.strftime("%H:%M")):
+        return ctx.result(f"{day.isoformat()} {hhmm} has already passed. Nothing was added.")
+    if "list" in ctx.args:
+        lst = dict(_find_list(ctx.conn, ctx.user["id"], ctx.args["list"]))
+    else:
+        lst = dict(ctx.conn.execute("SELECT * FROM lists WHERE id = ?",
+                                    (taskview.default_list_id(ctx.conn, ctx.user["id"]),)).fetchone())
+    text = " ".join(ctx.args["text"].split())
+    if not text:
+        raise bus.Nack("invalid", "text")
+    tid = db.new_id()
+    stamp = config.now_iso()
+    ctx.conn.execute(
+        "INSERT INTO tasks (id, list_id, title, due_date, due_time, completed, created_by, created_at, position, "
+        "source, assigned_to) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, 'Assistant', ?)",
+        (tid, lst["id"], text, day.isoformat(), hhmm, ctx.user["id"], stamp,
+         taskview.next_task_position(ctx.conn, lst["id"]), ctx.user["id"]))
+    ctx.conn.execute("INSERT INTO task_alarms (id, task_id, user_id, at, created_at) VALUES (?, ?, ?, ?, ?)",
+                     (db.new_id(), tid, ctx.user["id"], f"{day.isoformat()}T{hhmm}", stamp))
+    when = _when(day.isoformat(), now.date())
+    return ctx.result(f"I'll remind you {when} at {hhmm}: “{text}” (on {lst['name']}).",
+                      items=[{"title": text, "list": lst["name"], "due": day.isoformat(), "time": hhmm}],
+                      links=[ctx.link(f"{lst['name']} in Household Todo", f"/lists/{lst['id']}")])

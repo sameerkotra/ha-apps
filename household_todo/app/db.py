@@ -173,6 +173,19 @@ CREATE TABLE IF NOT EXISTS task_reminder_log (
 );
 CREATE INDEX IF NOT EXISTS idx_task_reminder_log_task ON task_reminder_log(task_id);
 
+-- "Remind me at 5 pm" (the Household Assistant's todo.reminder.add): one ping to one person at a set time, for
+-- a task — on top of (and without needing) their "N before" offsets. `at` is "YYYY-MM-DDTHH:MM" in Home
+-- Assistant's zone; sent_at is set once it went out (or was dropped as too late).
+CREATE TABLE IF NOT EXISTS task_alarms (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    sent_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_alarms_due ON task_alarms(sent_at, at);
+
 CREATE TABLE IF NOT EXISTS schedule_items (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -192,7 +205,19 @@ CREATE TABLE IF NOT EXISTS schedule_items (
     place_id TEXT REFERENCES places(id) ON DELETE SET NULL,
     visibility TEXT NOT NULL DEFAULT 'household' CHECK (visibility IN ('household', 'private')),
     expose_sensor INTEGER NOT NULL DEFAULT 1,           -- per-item switch for the HA binary_sensor
-    url TEXT                                            -- optional http(s) link (also in _migrate())
+    url TEXT,                                           -- optional http(s) link (also in _migrate())
+    rotation TEXT                                       -- taking turns (SPEC §5.4b): JSON list of user ids, in order;
+                                                        -- NULL = no turns (also in _migrate())
+);
+
+-- One turn handed to someone else (SPEC §5.4b): the occurrence on `date` (its rule date) is `user_id`'s.
+CREATE TABLE IF NOT EXISTS schedule_turns (
+    item_id TEXT NOT NULL REFERENCES schedule_items(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    created_by TEXT REFERENCES users(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (item_id, date)
 );
 
 CREATE TABLE IF NOT EXISTS schedule_exceptions (
@@ -459,6 +484,7 @@ MIGRATIONS = [
     ("schedule_items", "visibility", "TEXT NOT NULL DEFAULT 'household' CHECK (visibility IN ('household', 'private'))"),
     ("schedule_items", "expose_sensor", "INTEGER NOT NULL DEFAULT 1"),
     ("schedule_items", "url", "TEXT"),                                   # optional link
+    ("schedule_items", "rotation", "TEXT"),                              # taking turns (SPEC §5.4b)
     ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),             # "Let the Household Assistant answer for me"
 ]
 

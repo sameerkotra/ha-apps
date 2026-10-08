@@ -67,6 +67,14 @@ def _cell_of(text: str) -> dict | None:
         s = M.iso_to_serial(text)
         if s is not None and M.serial_to_iso(s) == text:
             return {"v": s, "f": "date"}
+    m = re.match(r"^(?:(\d{4}-\d{2}-\d{2}) )?(\d{2}):(\d{2})(?::(\d{2}))?$", text)
+    if m:                                       # 17:30, 2026-10-08 17:30 (as the app writes them)
+        day = M.iso_to_serial(m.group(1)) if m.group(1) else 0
+        h, mi, se = int(m.group(2)), int(m.group(3)), int(m.group(4) or 0)
+        if day is not None and h < 24 and mi < 60 and se < 60:
+            cell = {"v": day + (h * 3600 + mi * 60 + se) / 86400, "f": "datetime" if m.group(1) else "time"}
+            if M.shown(cell) == text:
+                return cell
     if text in ("TRUE", "FALSE"):
         return {"v": text == "TRUE"}
     return {"v": text}
@@ -118,8 +126,8 @@ def text_of(cell: dict | None) -> str:
     if isinstance(v, (int, float)):
         if cell.get("t") is not None:
             return cell["t"]
-        if cell.get("f") == "date" and 0 <= v < 2958466:
-            return M.serial_to_iso(v)
+        if cell.get("f") in ("date", "time", "datetime") and 0 <= v < 2958466:
+            return M.shown(cell)
         return M.num_text(v)
     return str(v)
 
@@ -167,7 +175,7 @@ def export_tab(tab: dict, mode: str) -> list[list]:
                 row.append(("formula", cell["v"]))
                 continue
             v = cell.get("c") if M.is_formula(cell) else cell.get("v")
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and cell.get("f") not in ("date", "percent"):
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and cell.get("f") not in ("date", "percent", "time", "datetime"):
                 row.append(("num", v))
             else:
                 row.append(("text", M.shown(cell)))

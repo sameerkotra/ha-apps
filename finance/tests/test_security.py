@@ -168,9 +168,16 @@ def test_database_backup_download_and_restore(env):
     with env.db() as c:
         descs = [x[0] for x in c.execute("SELECT description FROM transactions")]
     assert descs == ["Backed up"]
+    import glob
+    import os
+    from app.db import DB_PATH
+    before = set(glob.glob(os.path.join(os.path.dirname(DB_PATH), "*")))
     bad = env.post("admin-storage-import-db", data={"confirm": "yes"},
                    files={"db_file": ("x.db", b"not a database", "application/octet-stream")})
     assert "import_error" in bad.headers["location"]
+    assert set(glob.glob(os.path.join(os.path.dirname(DB_PATH), "*"))) <= before      # no temp file left behind
+    page = env.get("admin-storage").text
+    assert 'data-confirm="Replace ALL data for every user' in page
 
 
 def test_thirty_day_purge_covers_utility_bills_and_keeps_shared_pdfs(env):
@@ -216,3 +223,12 @@ def test_templates_keep_to_the_csp():
         assert "javascript:" not in html and "hx-on" not in html, name
         for trigger in re.findall(r'hx-trigger="([^"]*)"', html):
             assert "[" not in trigger, (name, trigger)
+
+
+def test_dashboard_filters_keep_viewing_as(env):
+    """The period and account pickers add the viewed person as a real "&as_user=…" (it used to be "&amp;as_user=…",
+    so changing a filter dropped an admin back to their own data)."""
+    env.insert("known_users", id="other", name="Robin")
+    page = env.get("dashboard?as_user=other").text
+    assert "data-suffix='\"\\u0026as_user=other\"'" in page, page[page.find("data-suffix"):][:80]
+    assert "&amp;as_user" not in page[page.find("data-suffix"):][:80]

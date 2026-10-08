@@ -2920,7 +2920,7 @@ async function viewAdminImport() {
   const box = h("div");
   const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const result = h("div", { class: "hint", role: "status", "aria-live": "polite" });
-  const file = h("input", { type: "file", accept: ".zip,.json,application/zip,application/json" });
+  const file = h("input", { type: "file", accept: ".zip,.json,.ged,.gdz,application/zip,application/json" });
   const readBtn = h("button", { type: "button", class: "btn-primary" }, "Read file");
   const sourcesBox = h("div");
   let current = null;            // the last preview (with its token)
@@ -3017,7 +3017,9 @@ async function viewAdminImport() {
       h("p", { class: "hint" }, "Bring in people from another Family Tree — a relative's install, for example. They export the branch to share "
         + "(Export → Website, with “Tree data for importing” ticked) and send you the zip. Importing only adds: nothing already here is changed. "
         + "Import a newer zip from the same tree later and only what's new comes in; anything they removed is listed for you to remove or keep."),
-      field("Website export (.zip) or family-tree.json", file, "wide"),
+      h("p", { class: "hint" }, "A GEDCOM file (.ged) from another genealogy program works too: names, dates, places, notes, parents and "
+        + "children, marriages and divorces come in (not its sources or photos). Importing a newer copy of the same file later adds only what's new."),
+      field("Website export (.zip), family-tree.json or GEDCOM (.ged)", file, "wide"),
       h("div", { class: "actions" }, readBtn), result));
   }
   readBtn.addEventListener("click", async () => {
@@ -3665,6 +3667,26 @@ async function viewExport() {
   const warnEl = h("div", { class: "warnings" });
   const jobEl = h("div", { class: "export-job" });
   const exportBtn = h("button", { type: "button", class: "btn-primary" }, "Export website");
+  // GEDCOM (§14): the same choices as a .ged file other genealogy programs open — straight away, without photos
+  const gedBtn = h("button", { type: "button", class: "btn-secondary", title: "For other genealogy programs (GEDCOM 5.5.1, no photos)", onclick: async () => {
+    if (!pv || !pv.people) return;
+    if (o.living === "full" && pv.living) {
+      const ok = await confirmDialog("Include living people in full?",
+        `The GEDCOM file will include birth dates and places of ${plural(pv.living, "living person")}. Anyone who gets the file can read it.`, "Export anyway", true);
+      if (!ok) return;
+    }
+    gedBtn.disabled = true;
+    try {
+      const res = await api("api/export/gedcom", { method: "POST", body: { format: "gedcom", options: o }, raw: true });
+      const name = (/filename="([^"]+)"/.exec(res.headers.get("content-disposition") || "") || [])[1] || "family-tree.ged";
+      const url = URL.createObjectURL(await res.blob());
+      const a = h("a", { href: url, download: name });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      toast(`Downloaded ${name}`);
+    } catch (e) { fail(e); }
+    gedBtn.disabled = false;
+  } }, "⬇ GEDCOM file");
   let pvSeq = 0;
   const runPreview = async () => {
     const seq = ++pvSeq;
@@ -3683,6 +3705,7 @@ async function viewExport() {
       statsEl.textContent = bits.join(" · ");
       mount(warnEl, ...r.warnings.map((w) => h("div", null, "⚠ " + w)));
       exportBtn.disabled = !r.people || !!state.exportJob;
+      gedBtn.disabled = !r.people;
       if (chart) chart.restyle();
     } catch (e) {
       if (seq !== pvSeq) return;
@@ -4063,7 +4086,7 @@ async function viewExport() {
   drawPresets();
   const bar = h("div", { class: "export-bar" },
     h("div", { class: "grow" }, statsEl, warnEl, jobEl),
-    exportBtn);
+    h("div", { class: "export-buttons" }, gedBtn, exportBtn));
   const page = h("div", { class: "export-page" },
     h("div", { class: "page-head" }, h("h2", null, "Export"),
       h("div", { class: "toolbar" }, presetSel, saveBtn, delBtn, resetBtn)),

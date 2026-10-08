@@ -123,6 +123,15 @@ last) weekday of the month; every N days.
   person. Give it a **Start** and **End** time (both or neither) and a
   **Place** and it becomes an appointment, e.g. "Yoga, every Tue, Thu & Fri,
   18:00–19:00 @ Studio". Items for you are in your reminders (see below).
+- **Take turns.** A household item can go round people: under **Take turns**
+  pick two or more people in order (1. Asha, 2. Kabir, 3. Meera). The dates go
+  to them in that order, counted from the first occurrence — so skipping a week
+  doesn't change whose the next one is, and a moved date stays the turn of
+  whoever had its original day. **Next dates ▾** shows whose turn each date is;
+  choose someone else there to hand them that one date (choose the usual person
+  to undo). Whoever's turn it is gets it in their daily digest and their own
+  "before it starts" reminders; the calendar, **Mine**, the dashboard and the
+  Assistant follow the turns, and the item's sensor has a `turn` attribute.
 - **Private.** On an item that's for you, **Only visible to me** hides it from
   everyone else — Schedule tab, calendar, dashboard and notifications. Only
   you can change or delete it (an admin only while acting as you). Household
@@ -146,7 +155,7 @@ when the item is created).
 - A **timed** item's sensor is on **only from its start to its end time**
   (within about a minute).
 - Attributes: `next_date`, `days_until`, `occurs_today`, `lead_days`, `rule`,
-  `skipped_dates`, `extra_dates`, `assigned_to`, `start_time`, `end_time`,
+  `skipped_dates`, `extra_dates`, `assigned_to`, `turn` (whose turn the next date is, on an item taken in turns), `start_time`, `end_time`,
   `next_start`, `next_end`.
 - A **private** item starts with *Publish* off, because anyone who can use
   Home Assistant can read sensors; the form warns you if you turn it on.
@@ -301,6 +310,13 @@ one to another day** ("Move the plumber to Friday"), but only after you tap the
 exact change it proposes; an added task shows "from Assistant". When several
 open tasks match the words, nothing changes and it asks which one. Its answers
 link back to Todo.
+
+**"Remind me at 5 pm to call the plumber"** (also "at 17:30", "tomorrow at 9")
+adds the task to your own list, for that day and time and assigned to you, and
+sends one notification to your phones at that time — on top of your usual
+reminders. A time that has passed today means tomorrow when you don't say the
+day. If the app was stopped then, it's sent when it starts again, up to an hour
+late; later than that it's dropped.
 
 An admin can turn this off for everyone (**App settings → Household Assistant**),
 and you can turn it off for yourself on **Settings → Household Assistant**.

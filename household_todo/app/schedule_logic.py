@@ -7,8 +7,18 @@ share one implementation and it can be tested directly.
 An item may belong to one person (`assigned_to`), be private
 to them (`visibility='private'`), and have a start/end time. A timed item's
 sensor is on only inside that window on each effective date (SPEC §7.2).
+
+A household item can also be taken in turns (`rotation`, SPEC §5.4b): the
+rule's occurrences go to the people in order, counted from the anchor date
+(the first occurrence is the first person's), so skipping a week doesn't
+change whose week the next one is. A moved occurrence stays the turn of
+whoever had its original date; an extra date is the turn of whoever has the
+next rule occurrence. One turn can be handed to someone else
+(`schedule_turns`, attached to the item as `turns` by attach_turns()).
 """
+import json
 import re
+from functools import lru_cache
 import unicodedata
 from datetime import date, datetime, time, timedelta
 
@@ -93,6 +103,62 @@ def load_exceptions(conn, item_id: str | None = None) -> dict[str, list[dict]]:
     for r in rows:
         out.setdefault(r["item_id"], []).append(dict(r))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Taking turns (SPEC §5.4b)
+# ---------------------------------------------------------------------------
+
+MAX_ROTATION = 12
+
+
+def rotation_of(item: dict) -> list[str]:
+    """The people taking turns, in order ([] when the item isn't taken in turns)."""
+    try:
+        r = json.loads(item.get("rotation") or "null")
+    except (TypeError, ValueError):
+        return []
+    return [u for u in r if isinstance(u, str)] if isinstance(r, list) else []
+
+
+def attach_turns(conn, items: list[dict]) -> list[dict]:
+    """Give each rotating item its handed-over turns: item["turns"] = {iso date: user id}."""
+    ids = [i["id"] for i in items if i.get("rotation")]
+    if ids:
+        by: dict[str, dict] = {}
+        q = f"SELECT item_id, date, user_id FROM schedule_turns WHERE item_id IN ({','.join('?' * len(ids))})"
+        for r in conn.execute(q, ids):
+            by.setdefault(r["item_id"], {})[r["date"]] = r["user_id"]
+        for i in items:
+            if i.get("rotation"):
+                i["turns"] = by.get(i["id"], {})
+    return items
+
+
+@lru_cache(maxsize=4096)
+def _occurrences_before(rule: str, anchor: str, day: date) -> int:
+    a = recurrence.parse_date(anchor)
+    if a is None or day <= a:
+        return 0
+    return len(recurrence.rule_occurrences_between(rule, a, a, day - timedelta(days=1)))
+
+
+def turn_on(item: dict, day) -> str | None:
+    """Whose turn the occurrence whose rule date is `day` is (None when the item isn't taken in turns)."""
+    rot = rotation_of(item)
+    d = recurrence.parse_date(day)
+    if not rot or d is None:
+        return None
+    handed = (item.get("turns") or {}).get(d.isoformat())
+    if handed:
+        return handed
+    return rot[_occurrences_before(item["rule"], item["anchor_date"], d) % len(rot)]
+
+
+def effective_turns_between(item: dict, excs: list[dict], start: date, end: date) -> list[tuple[date, str | None]]:
+    """(effective date, whose turn) in [start, end] — a moved occurrence keeps its original date's turn."""
+    moved_from = {e["to_date"]: e["date"] for e in excs if e["kind"] == "move"}
+    return [(d, turn_on(item, moved_from.get(d.isoformat(), d))) for d in effective_dates_between(item, excs, start, end)]
 
 
 def date_sets(excs: list[dict]) -> tuple[set[date], set[date]]:
@@ -204,12 +270,21 @@ def sensor_payload(item: dict, excs: list[dict], today: date, now: datetime | No
         "skipped_dates": [d.isoformat() for d in skipped[:10]],
         "extra_dates": [d.isoformat() for d in extra[:10]],
         "assigned_to": (users_by_id or {}).get(item.get("assigned_to")),
+        "turn": (users_by_id or {}).get(_next_turn(item, excs, st["nextDate"])),
         "start_time": item.get("start_time"),
         "end_time": item.get("end_time"),
         "next_start": st["nextStart"],
         "next_end": st["nextEnd"],
     }
     return entity_id(item["entity_slug"]), ("on" if st["sensorOn"] else "off"), attrs
+
+
+def _next_turn(item: dict, excs: list[dict], next_date: str | None) -> str | None:
+    """Whose turn the next effective date is (a moved one: its original date's)."""
+    if not rotation_of(item) or not next_date:
+        return None
+    moved_from = {e["to_date"]: e["date"] for e in excs if e["kind"] == "move"}
+    return turn_on(item, moved_from.get(next_date, next_date))
 
 
 def upcoming(item: dict, excs: list[dict], today: date, users_by_id: dict, count: int = 6) -> list[dict]:
@@ -244,7 +319,13 @@ def upcoming(item: dict, excs: list[dict], today: date, users_by_id: dict, count
             out.append({"date": iso, "status": "moved_here", "exceptionId": e["id"], "reason": e["reason"],
                         "by": by(e), "movedFrom": e["date"]})
     out.sort(key=lambda x: x["date"])
-    return out[:count]
+    out = out[:count]
+    if rotation_of(item):
+        for x in out:
+            uid = turn_on(item, x.get("movedFrom") or x["date"])
+            x["turn"], x["turnName"] = uid, users_by_id.get(uid)
+            x["handedOver"] = bool((item.get("turns") or {}).get(x.get("movedFrom") or x["date"]))
+    return out
 
 
 def place_json(place: dict | None) -> dict | None:
@@ -258,6 +339,8 @@ def serialize_item(item: dict, excs: list[dict], today: date, users_by_id: dict,
                    places_by_id: dict | None = None, now: datetime | None = None) -> dict:
     st = item_state(item, excs, today, now)
     place = (places_by_id or {}).get(item.get("place_id"))
+    ups = upcoming(item, excs, today, users_by_id)
+    rot = rotation_of(item)
     return {
         "id": item["id"],
         "name": item["name"],
@@ -283,7 +366,11 @@ def serialize_item(item: dict, excs: list[dict], today: date, users_by_id: dict,
         "exposeSensor": bool(item.get("expose_sensor", 1)),
         "published": published(item),
         **st,
-        "upcoming": upcoming(item, excs, today, users_by_id),
+        "upcoming": ups,
+        "rotation": rot,
+        "rotationNames": [users_by_id.get(u) for u in rot],
+        "nextTurn": _next_turn(item, excs, st["nextDate"]),
+        "nextTurnName": users_by_id.get(_next_turn(item, excs, st["nextDate"])),
     }
 
 
@@ -315,6 +402,10 @@ def calendar_entries(item: dict, excs: list[dict], start: date, end: date, users
     for iso, e in targets.items():
         if start.isoformat() <= iso <= end.isoformat():
             out.append({**base, "date": iso, "status": "moved_here", "exceptionId": e["id"], "movedFrom": e["date"]})
+    if rotation_of(item):
+        for e in out:
+            uid = turn_on(item, e.get("movedFrom") or e["date"])
+            e.update(assignedTo=uid, assigneeName=(users_by_id or {}).get(uid), turn=True)
     out.sort(key=entry_sort_key)
     return out
 

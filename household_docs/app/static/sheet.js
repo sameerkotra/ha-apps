@@ -19,7 +19,14 @@
   const DEFAULT_W = 110;
   const MAXR = 5000, MAXC = 100, MAXTABS = 10, MAXCELLS = 200000;
   const MIN_ROWS = 1000, MIN_COLS = 26;        // the empty grid shown (rows are drawn only as they scroll in)
-  const FORMATS = [["general", "General"], ["number", "Number"], ["currency", "Currency"], ["percent", "Percent"], ["date", "Date"], ["text", "Text"]];
+  const FORMATS = [["general", "General"], ["number", "Number"], ["currency", "Currency"], ["accounting", "Accounting"], ["percent", "Percent"],
+    ["scientific", "Scientific"], ["date", "Date"], ["time", "Time"], ["datetime", "Date and time"], ["text", "Text"]];
+  const NO_DECIMALS = new Set(["date", "time", "datetime", "text"]);
+  function hhmm(serial) {
+    const secs = Math.round((serial - Math.floor(serial)) * 86400) % 86400;
+    const two = (n) => String(n).padStart(2, "0");
+    return `${two(Math.floor(secs / 3600))}:${two(Math.floor(secs / 60) % 60)}` + (secs % 60 ? ":" + two(secs % 60) : "");
+  }
   const TOTALS = ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"];
   const COLOURS = [["red", "Red"], ["amber", "Amber"], ["green", "Green"], ["blue", "Blue"], ["purple", "Purple"], ["grey", "Grey"]];
   const RULES = [["gt", "Greater than"], ["lt", "Less than"], ["between", "Between"], ["contains", "Text contains"], ["before", "Date before"], ["after", "Date after"], ["top", "Top N"], ["bottom", "Bottom N"], ["dup", "Duplicates"]];
@@ -90,7 +97,11 @@
     if (typeof cell.v === "boolean") return cell.v ? "TRUE" : "FALSE";
     if (typeof cell.v === "number") {
       const dec = (t) => (numStyle === "de" ? t.replace(".", ",") : t);
-      if (cell.f === "date") { const p = S.serialParts(cell.v); return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`; }
+      if (cell.f === "date" || cell.f === "datetime") {
+        const p = S.serialParts(cell.v), day = `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+        return cell.f === "date" ? day : `${day} ${hhmm(cell.v)}`;
+      }
+      if (cell.f === "time") return hhmm(cell.v);
       if (cell.f === "percent") return dec(S.numText(Math.round(cell.v * 100 * 1e10) / 1e10)) + "%";
       return dec(S.numText(cell.v));
     }
@@ -651,6 +662,7 @@
       const headRow = h("tr", null, h("th", { class: "corner", title: "Select everything", onclick: () => { st.sel = { c1: 0, r1: 0, c2: cols - 1, r2: rows - 1 }; draw(); } }),
         Array.from({ length: cols }, (_, c) => {
           const th = h("th", { class: "ch" + (c >= sel.c1 && c <= sel.c2 ? " on" : "") + (c < fc ? " frozen" : "") + (st.filters[t.name] && st.filters[t.name].col === c ? " filtered" : ""), dataset: { c: String(c) } }, S.colName(c),
+            h("button", { type: "button", class: "col-menu", tabindex: "-1", dataset: { c: String(c) }, title: `Column ${S.colName(c)}: sort, filter, total …`, "aria-label": `Column ${S.colName(c)} menu` }, "▾"),
             canEdit ? h("span", { class: "col-resize", dataset: { c: String(c) }, "aria-hidden": "true" }) : null);
           if (c < fc) th.style.left = lefts[c] + "px";
           return th;
@@ -740,7 +752,7 @@
       return fn === "MIN" ? Math.min(...xs) : Math.max(...xs);
     }
     function columnFormat(t, col) {
-      for (const [ref, cell] of Object.entries(t.cells)) { const p = S.parseRef(ref); if (p && p.c === col && cell.f && cell.f !== "text" && cell.f !== "date") return cell; }
+      for (const [ref, cell] of Object.entries(t.cells)) { const p = S.parseRef(ref); if (p && p.c === col && cell.f && cell.f !== "text" && cell.f !== "date" && cell.f !== "datetime") return cell; }
       return null;
     }
     function totalsRow(t, cols, lefts, fc) {
@@ -916,6 +928,7 @@
       if (e.target === cellInput || e.button === 2) return;
       const rs = e.target.closest(".col-resize");
       if (rs) { startResize(e, +rs.dataset.c); return; }
+      if (e.target.closest(".col-menu")) return;                  // its click opens the column's menu
       const ch = e.target.closest("th.ch"), rh = e.target.closest("th.rh");
       if (ch || rh) {
         commitEdit();
@@ -946,6 +959,15 @@
     const endPress = () => { dragging = false; if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } };
     grid.addEventListener("pointerup", endPress);
     grid.addEventListener("pointercancel", endPress);
+    grid.addEventListener("click", (e) => {                       // a column header's ▾: sort, filter, total …
+      const b = e.target.closest(".col-menu");
+      if (!b) return;
+      e.preventDefault();
+      commitEdit();
+      const c = +b.dataset.c, r = rangeOf(st.sel);
+      if (!(c >= r.c1 && c <= r.c2 && r.r1 === 0)) { st.sel = { c1: c, r1: 0, c2: c, r2: Math.max(usedOf(cur()).rows - 1, 0) }; paintSel(); }
+      headerMenu(b.closest("th.ch") || b, "col");
+    });
     grid.addEventListener("dblclick", (e) => { const at = cellAt(e.target); if (at && canEdit) startEdit(null, cellInput); });
     grid.addEventListener("contextmenu", (e) => {
       const ch = e.target.closest("th.ch"), rh = e.target.closest("th.rh[data-r]");
@@ -1253,9 +1275,9 @@
     }
     function setFormat(f) {
       if (roBlocked() || cur().kind !== "grid") return;
-      if (csv && f.f && f.f !== "date") { csvBlocked(); fmtSel.value = (activeCell() && activeCell().f) || "general"; return; }
+      if (csv && f.f && !["date", "time", "datetime"].includes(f.f)) { csvBlocked(); fmtSel.value = (activeCell() && activeCell().f) || "general"; return; }
       setCells(selCells((cell) => {
-        if (f.f) { cell.f = f.f; if (f.f === "date" || f.f === "text") delete cell.d; } else delete cell.f;
+        if (f.f) { cell.f = f.f; if (NO_DECIMALS.has(f.f)) delete cell.d; } else delete cell.f;
         if (f.f === "text" && typeof cell.v === "number") { /* keeps the number; shown as typed */ }
         return cell;
       }));
@@ -1264,7 +1286,7 @@
       if (roBlocked() || csvBlocked()) return;
       setCells(selCells((cell) => {
         const def = cell.f === "percent" ? 0 : 2;
-        if (!cell.f || cell.f === "general" || cell.f === "text" || cell.f === "date") cell.f = "number";
+        if (!cell.f || cell.f === "general" || NO_DECIMALS.has(cell.f)) cell.f = "number";
         cell.d = Math.max(0, Math.min(10, (cell.d ?? def) + step));
         return cell;
       }));

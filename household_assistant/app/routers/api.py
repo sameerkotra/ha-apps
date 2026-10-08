@@ -167,16 +167,19 @@ def clear_history(user: dict = Depends(get_current_user)):
     return {"deleted": n}
 
 
-# --------------------------------------------------------------------------------------------- the morning briefing
+# --------------------------------------------------------------------------------------------- the briefings
 
 def _briefing_view(conn, user: dict) -> dict:
+    sp = briefing.speakers()
     return {**briefing.get(conn, user["id"]), "phones": briefing.phones(user["id"]),
-            "parts": briefing.parts_for(conn, user), "why": briefing.may_have(user)}
+            "parts": briefing.parts_for(conn, user), "eveningParts": briefing.parts_for(conn, user, "evening"),
+            "speakers": sp["speakers"], "tts": sp["tts"], "why": briefing.may_have(user)}
 
 
 @router.get("/briefing")
 def get_briefing(user: dict = Depends(get_current_user)):
-    """The person's morning briefing: on or off, time, days, their phones, what it would include."""
+    """The person's briefings: morning and evening on or off with their times, days, the speaker, their phones,
+    the speakers Home Assistant has, and what each briefing would include."""
     with db.get_conn() as conn:
         return _briefing_view(conn, user)
 
@@ -186,31 +189,37 @@ class BriefingIn(BaseModel):
     on: StrictBool
     time: str = Field(max_length=5)
     days: str = Field(max_length=10)
+    eveningOn: StrictBool | None = None
+    eveningTime: str | None = Field(None, max_length=5)
+    speaker: str | None = Field(None, max_length=120)        # "" = none
 
 
 @router.put("/briefing")
 def put_briefing(body: BriefingIn, user: dict = Depends(get_current_user)):
-    if body.on and briefing.may_have(user):
+    if (body.on or body.eveningOn) and briefing.may_have(user):
         raise HTTPException(403, briefing.may_have(user))
     with db.get_conn() as conn:
         try:
-            briefing.save(conn, user["id"], body.on, body.time, body.days)
+            briefing.save(conn, user["id"], body.on, body.time, body.days, evening_on=body.eveningOn,
+                          evening_time=body.eveningTime,
+                          speaker=False if "speaker" not in body.model_fields_set else (body.speaker or None))
         except ValueError as e:
             raise HTTPException(422, str(e))
         return _briefing_view(conn, user)
 
 
 @router.post("/briefing/send")
-async def send_briefing(user: dict = Depends(get_current_user)):
-    """"Send me one now": today's briefing made and sent at once (it doesn't count as the day's own)."""
+async def send_briefing(kind: str = Query("morning", pattern="^(morning|evening)$"),
+                        user: dict = Depends(get_current_user)):
+    """"Send me one now": the briefing made and sent at once (it doesn't count as the day's own)."""
     why = briefing.may_have(user)
     if why:
         raise HTTPException(403, why)
-    out = await run_in_threadpool(briefing.send, user)
+    out = await run_in_threadpool(briefing.send, user, kind)
     with db.get_conn() as conn:
         q = conn.execute("SELECT * FROM questions WHERE id = ?", (out["question"],)).fetchone()
         view = engine.view(conn, q)
-    return {"question": view, "phones": out["phones"], "sent": out["sent"]}
+    return {"question": view, "phones": out["phones"], "sent": out["sent"], "spoken": out["spoken"]}
 
 
 # --------------------------------------------------------------------------------------------- admin

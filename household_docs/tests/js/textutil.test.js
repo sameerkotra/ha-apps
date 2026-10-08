@@ -71,6 +71,8 @@ test("Open in Docs: where a link points (APP_MESSAGES_SPEC §6.5)", () => {
   assert.strictEqual(T.appLinkHash({ panel, parentPath: panel + "/doc/abc_1-2" }), "#/doc/abc_1-2");
   assert.strictEqual(T.appLinkHash({ panel, parentPath: panel + "/folder/f1" }), "#/folder/f1");
   assert.strictEqual(T.appLinkHash({ panel, parentPath: panel + "/file/x" }), "#/file/x");
+  assert.strictEqual(T.appLinkHash({ panel, parentPath: panel + "/view/AbC_12-x" }), "#/view/AbC_12-x");
+  assert.strictEqual(T.appLinkHash({ panel, parentPath: panel + "/view/a/b" }), null);
   assert.strictEqual(T.appLinkHash({ panel, parentPath: panel + "/quick-note" }), "#quick-note");
   assert.strictEqual(T.appLinkHash({ panel, parentPath: panel }), null);
   assert.strictEqual(T.appLinkHash({ panel, parentPath: "/other_app/doc/abc" }), null);       // not our page

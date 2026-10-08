@@ -7,8 +7,8 @@ const assert = require("node:assert");
 const Md = require("../../app/static/md.js");
 
 const ALLOWED = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p", "ul", "ol", "li", "blockquote", "pre", "code", "hr",
-  "table", "thead", "tbody", "tr", "th", "td", "strong", "em", "a", "input", "span", "br", "div"]);
-const ALLOWED_ATTRS = new Set(["href", "target", "rel", "type", "start", "aria-label"]);
+  "table", "thead", "tbody", "tr", "th", "td", "strong", "em", "a", "input", "span", "br", "div", "img"]);
+const ALLOWED_ATTRS = new Set(["href", "target", "rel", "type", "start", "aria-label", "src", "alt", "loading"]);
 
 // A fake document that records everything and refuses anything that could parse HTML.
 function fakeDoc(log) {
@@ -120,17 +120,28 @@ test("fuzz: never anything but the allowed elements, safe links, text as text", 
     for (let j = 0; j < len; j++) src += pieces[rnd(pieces.length)];
     const log = { tags: [], attrs: [] };
     let frag;
-    assert.doesNotThrow(() => { frag = Md.render(Md.parse(src), fakeDoc(log), { docLink: () => ({ href: "#/doc/x1" }), onTick: () => {} }); }, src);
+    assert.doesNotThrow(() => { frag = Md.render(Md.parse(src), fakeDoc(log), { docLink: () => ({ href: "#/doc/x1" }), onTick: () => {}, images: k % 2 === 0 }); }, src);
     for (const t of log.tags) assert.ok(ALLOWED.has(t), `element ${t} from ${JSON.stringify(src)}`);
     for (const [tag, k2, v] of log.attrs) {
       assert.ok(ALLOWED_ATTRS.has(k2), `attribute ${k2} from ${JSON.stringify(src)}`);
       assert.ok(!/^on/i.test(k2));
       if (k2 === "href") assert.ok(/^https?:\/\//.test(v) || /^#\/(doc|folder)\/[A-Za-z0-9:_-]+$/.test(v), `href ${v} from ${JSON.stringify(src)}`);
       if (k2 === "type") assert.strictEqual(v, "checkbox");
+      if (k2 === "src") assert.ok(/^api\/nodes\/[A-Za-z0-9_-]+\/preview$/.test(v), `src ${v} from ${JSON.stringify(src)}`);
       void tag;
     }
     for (const a of find(frag, "a")) assert.ok(!/^\s*(javascript|data|vbscript):/i.test(a.attrs.href));
   }
+});
+
+test("pictures: only ones kept in the app, only when asked for", () => {
+  const src = "![Receipt](doc:abc123) ![x](https://tracker.example/p.png) ![y](doc:../x)";
+  const on = renderText(src, { images: true });
+  const imgs = find(on.frag, "img");
+  assert.strictEqual(imgs.length, 1);
+  assert.deepStrictEqual([imgs[0].attrs.src, imgs[0].attrs.alt], ["api/nodes/abc123/preview", "Receipt"]);
+  assert.ok(on.text.includes("🖼 x") && on.text.includes("🖼 y"));
+  assert.strictEqual(find(renderText(src).frag, "img").length, 0);          // not without opts.images
 });
 
 test("deep nesting and long input stay bounded", () => {

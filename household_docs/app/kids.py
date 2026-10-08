@@ -23,6 +23,8 @@ MESSAGE = "This isn't available in Kids' space."
 BLOCKED = {
     ("GET", "/api/nodes/{node_id}/shares"), ("POST", "/api/nodes/{node_id}/shares"),
     ("DELETE", "/api/nodes/{node_id}/shares/{target}"),
+    ("POST", "/api/nodes/{node_id}/link"), ("DELETE", "/api/nodes/{node_id}/link"),     # view links (§6.6)
+    ("GET", "/api/view-links/{token}"),
     ("POST", "/api/nodes/{node_id}/transfer"),
     ("GET", "/api/docs/{node_id}/export"), ("POST", "/api/docs/{node_id}/edit-copy"), ("POST", "/api/import"),
     ("POST", "/api/nodes/{node_id}/chat/chats"), ("POST", "/api/nodes/{node_id}/chat/card"),

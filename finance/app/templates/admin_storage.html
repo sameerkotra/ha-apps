@@ -47,9 +47,9 @@
     instead of whatever it already had open.
 </p>
 <div class="card">
-    {# No data-confirm here, as before: the old inline submit handler (return confirm(...)) never showed its dialog (inside an
-       inline handler `confirm` named the hidden field below), so the required checkbox is the confirmation. #}
-    <form method="post" action="admin-storage-import-db" enctype="multipart/form-data">
+    {# Asked before sending (base.js's data-confirm), besides the required checkbox. #}
+    <form method="post" action="admin-storage-import-db" enctype="multipart/form-data"
+          data-confirm="Replace ALL data for every user with this backup? This can't be undone.">
         <input type="hidden" name="confirm" value="yes">
         <div style="display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start;">
             <input type="file" name="db_file" accept=".db" required>

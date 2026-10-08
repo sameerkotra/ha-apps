@@ -69,8 +69,8 @@ def _post(entity: str, state: str, attrs: dict, force: bool = True):
 
 def _published_items(conn, where: str = "") -> list[dict]:
     """Items whose own switch is on (the global one is checked by _enabled)."""
-    return [dict(r) for r in conn.execute(
-        f"SELECT * FROM schedule_items WHERE expose_sensor = 1 {where} ORDER BY created_at")]
+    return schedule_logic.attach_turns(conn, [dict(r) for r in conn.execute(
+        f"SELECT * FROM schedule_items WHERE expose_sensor = 1 {where} ORDER BY created_at")])
 
 
 def push_item_blocking(item_id: str) -> bool:
@@ -82,7 +82,7 @@ def push_item_blocking(item_id: str) -> bool:
         row = conn.execute("SELECT * FROM schedule_items WHERE id = ?", (item_id,)).fetchone()
         if not row or not row["expose_sensor"]:
             return False
-        item = dict(row)
+        item = schedule_logic.attach_turns(conn, [dict(row)])[0]
         excs = schedule_logic.load_exceptions(conn, item_id).get(item_id, [])
         users, _ = schedule_logic.lookups(conn)
     now = config.now()

@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 
-from .. import features, config, db, duplicates, graph as graph_mod
+from .. import features, config, db, duplicates, graph as graph_mod, history
 from ..auth import require_user
 from ..models import Strict, reject_new_loops, require_person
 from ..history import Batch
@@ -168,6 +168,7 @@ def merge(keep: str, body: MergeIn, user: dict = Depends(require_user)):
         if ou:
             conn.execute("UPDATE users SET me_person_id = NULL WHERE id = ?", (ou["id"],))
             conn.execute("UPDATE users SET me_person_id = ? WHERE id = ?", (keep, ou["id"]))
+            history.moved_me(conn, b.id, ou["id"], other, keep)          # Undo moves it back
         # the other person goes, pointing at the kept one
         b.update("people", other, {"deleted_at": b.now, "merged_into": keep}, op="delete")
         # their history now also shows on the kept person's History tab

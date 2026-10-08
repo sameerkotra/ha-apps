@@ -256,6 +256,7 @@ def admin_storage_import_db(
                 missing_msg="Doesn't look like a Finance Dashboard database (missing tables: {missing}).",
                 invalid_msg="That file isn't a valid SQLite database.")
         except ValueError as e:
+            os.remove(tmp_path)                    # a rejected upload leaves nothing behind in /data
             return RedirectResponse(url="admin-storage?import_error=" + quote(str(e)), status_code=303)
 
         saved_secrets = _saved_secrets()

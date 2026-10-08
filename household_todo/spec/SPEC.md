@@ -63,7 +63,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.5.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.6.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -330,7 +330,13 @@ D is an occurrence iff `D >= anchor_date` and D matches the rule. Weekdays are I
 - **Replacing.** A new skip or move **replaces** any existing one for the same original date. Re-posting an identical exception is idempotent and skips validation.
 - **Rule changes.** Changing the rule or anchor (only when the value actually changes) deletes the item's skips and moves; adds are kept.
 - **`upcoming`.** The next 6 displayed dates: rule occurrences (normal / skipped / moved_away) merged with added and moved_here dates. Each has `exceptionId`, `reason`, `by` (a name) and `movedTo` / `movedFrom`. Calendar entries use the same statuses for a date range.
-- **Item JSON.** `id`, `name`, `notes`, `url`, `rule`, `ruleLabel`, `anchorDate`, `leadDays`, `icon`, `entitySlug`, `entityId`, `minGapDays`, `createdBy` (a name), `createdAt`, `assignedTo`, `assigneeName`, `startTime`, `endTime`, `placeId`, `place{id,name,address,driveMinutes}|null`, `visibility`, `exposeSensor`, `published` (global option AND `exposeSensor`), plus the state fields and `upcoming`.
+- **Item JSON.** `id`, `name`, `notes`, `url`, `rule`, `ruleLabel`, `anchorDate`, `leadDays`, `icon`, `entitySlug`, `entityId`, `minGapDays`, `createdBy` (a name), `createdAt`, `assignedTo`, `assigneeName`, `startTime`, `endTime`, `placeId`, `place{id,name,address,driveMinutes}|null`, `visibility`, `exposeSensor`, `published` (global option AND `exposeSensor`), plus the state fields and `upcoming`; and `rotation` (ids), `rotationNames`, `nextTurn`, `nextTurnName`.
+
+### 5.4b Taking turns
+- `schedule_items.rotation`: JSON list of 2–12 different user ids, in order (`null` = none); only on household items (`assigned_to` must be null: 422). A disabled person can't be added (one already in it stays).
+- **Whose turn:** the occurrence whose rule date is D goes to `rotation[n % len]`, n = the rule occurrences from the anchor before D (`schedule_logic.turn_on`) — so skips don't shift the order; a moved occurrence keeps its original date's turn; an added date is whoever has the next rule occurrence.
+- **Handing one over:** `schedule_turns (item_id, date, user_id, created_by, created_at, PK(item_id, date))`; `PUT /api/schedule/{id}/turns/{date} {user_id}` (`null` undoes; the date must be a rule occurrence, today or later; the person must exist and not be disabled; the new person gets the assignment ping "your turn"). Turning the rotation off deletes them. `attach_turns(conn, items)` puts them on items as `turns`.
+- **Followed by:** `upcoming` entries (`turn`, `turnName`, `handedOver`), calendar entries (`assignedTo`/`assigneeName` = whose turn, `turn: true`; the assignee filter uses it), `GET /schedule?assignee=me` (anyone in the rotation), the dashboard ("Coming up" when it's your turn today or tomorrow; `turn`, `turnName`), the sensor attribute `turn`, the digest (`collect_schedule_occurrences`: "<name> (your turn)") and the "before it starts" reminders, and the Assistant's `todo.schedule` ("for" whose turn).
 
 ## 6. API
 
@@ -731,6 +737,11 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   - `todo.items.add` (`acts`; `list`, `text` 1–200, `due?`): only with `confirm: true` (the person's tap), to a list
     they can see (`not_found list` otherwise, someone else's personal list included); `source` "Assistant", no
     notification.
+  - `todo.reminder.add` (`acts`; `text`, `time` — `17:00`, `5pm`, `5:30 PM`, `9.15` — `date?`, `list?`):
+    a task on the person's default personal list (or the named one), due that day and time, assigned to them, plus
+    a `task_alarms` row (`at` YYYY-MM-DDTHH:MM in Home Assistant's zone). No date and a time already past today:
+    tomorrow; a past date and time: refused. The reminder loop's alarm pass sends "⏰ <title> (HH:MM)" to their
+    notify services once, marks `sent_at`, and drops alarms for done tasks or more than an hour late.
 - **Switches**: App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and each person's
   **Let the Household Assistant answer for me** (`users.assistant_ok`, default on; `GET/PUT /api/prefs`
   `assistantOk`, Settings → Household Assistant). Otherwise `nack not_allowed` (`off` / `person_off`); an unknown

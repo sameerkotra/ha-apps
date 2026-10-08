@@ -154,9 +154,10 @@ class BloodAndInLaw(SharedTree):
         self.assertEqual(self.L("Nephew", "Hubby"), "uncle by marriage")
         self.assertEqual(self.L("Hubby", "SisInLaw"), "wife's brother's wife")
         self.assertEqual(self.L("SisInLaw", "Hubby"), "husband's sister's husband")
-        r = self.rel(self.p["Me"], self.p["WendyDad"])              # further out: related by marriage
-        self.assertEqual(r["label"], "related by marriage")
+        r = self.rel(self.p["Me"], self.p["WendyDad"])              # three marriages out: named step by step
+        self.assertEqual(r["label"], "husband's brother's wife's father")
         self.assertEqual(r["kind"], "marriage")
+        self.assertEqual([s["t"] for s in r["steps"]], ["spouse", "sibling", "spouse", "parent"])
         ids = [s["id"] for s in r["path"]]
         self.assertEqual(ids[0], self.p["Me"])
         self.assertEqual(ids[-1], self.p["WendyDad"])

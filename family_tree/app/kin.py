@@ -456,7 +456,7 @@ def describe(g, viewer: str, rel: dict, lang: str, conn=None) -> dict:
     out = dict(rel)
     out["english"] = rel.get("label")
     out.update(term=None, kinKey=None, termKey=None, meaning=None, ageUnknown=False, note=None)
-    if lang not in SEED or rel.get("kind") in ("self", "none", "marriage"):
+    if lang not in SEED or rel.get("kind") in ("self", "none") or not rel.get("steps"):
         return out
     k = build(g, viewer, rel.get("steps"))
     if not k:

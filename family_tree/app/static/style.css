@@ -692,3 +692,5 @@ html.kids-locked .quiz-choices { grid-template-columns: repeat(auto-fit, minmax(
 .import-del .grow, .import-source .grow { flex: 1; min-width: 0; }
 .import-dels { margin-top: 12px; }
 .import-source { align-items: center; }
+
+.export-buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

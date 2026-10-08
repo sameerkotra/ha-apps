@@ -490,7 +490,8 @@ class RouteTests(ExportCase):
     def test_bad_options_rejected(self):
         self.ok(self.post("/api/export/preview", {"format": "site", "options": {"living": "everyone"}}), 422)
         self.ok(self.post("/api/export/preview", {"format": "site", "options": {"nope": 1}}), 422)
-        self.ok(self.post("/api/export/preview", {"format": "gedcom", "options": {}}), 422)
+        self.ok(self.post("/api/export/preview", {"format": "pdf", "options": {}}), 422)
+        self.ok(self.post("/api/export", {"format": "gedcom", "options": {}}), 422)       # GEDCOM: POST /api/export/gedcom
 
     def test_job_download_and_history(self):
         job = self.run_export()

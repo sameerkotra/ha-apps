@@ -233,12 +233,15 @@ def _drive_note(due_date: str | None, due_time: str | None, drive_minutes: int |
 
 def collect_schedule_occurrences(conn, user_id: str, start: date, end: date) -> list[dict]:
     """Effective dates in [start, end] of the schedule items assigned to the
-    user — household or private; they're the only one who gets them. Shaped
+    user — household or private; they're the only one who gets them — and of
+    items taken in turns, on the user's turns (§5.4b). Shaped
     like a task for the line formatter: {title, dueDate, dueTime, endTime,
     place, url, schedule: True}."""
-    items = [dict(r) for r in conn.execute("SELECT * FROM schedule_items WHERE assigned_to = ?", (user_id,))]
+    items = [dict(r) for r in conn.execute(
+        "SELECT * FROM schedule_items WHERE assigned_to = ? OR rotation IS NOT NULL", (user_id,))]
     if not items:
         return []
+    schedule_logic.attach_turns(conn, items)
     excs = schedule_logic.load_exceptions(conn)
     _, places = schedule_logic.lookups(conn)
     out = []
@@ -248,8 +251,11 @@ def collect_schedule_occurrences(conn, user_id: str, start: date, end: date) -> 
         if place:
             place = dict(place, phone=raw.get("phone"))
         timed = schedule_logic.is_timed(item)
-        for d in schedule_logic.effective_dates_between(item, excs.get(item["id"], []), start, end):
-            out.append({"schedule": True, "title": item["name"], "dueDate": d.isoformat(),
+        for d, turn in schedule_logic.effective_turns_between(item, excs.get(item["id"], []), start, end):
+            if item["assigned_to"] != user_id and turn != user_id:
+                continue                      # taken in turns (§5.4b): only the one whose turn it is
+            out.append({"schedule": True, "title": item["name"] + (" (your turn)" if turn == user_id else ""),
+                        "dueDate": d.isoformat(),
                         "dueTime": item["start_time"] if timed else None,
                         "endTime": item["end_time"] if timed else None, "place": place,
                         "url": item["url"], "position": 0})
@@ -584,12 +590,15 @@ def run_schedule_reminder_pass_blocking(now: datetime | None = None, sender=None
             if not services:
                 continue
             items = [dict(r) for r in conn.execute(
-                "SELECT * FROM schedule_items WHERE assigned_to = ? AND start_time IS NOT NULL AND end_time IS NOT NULL",
-                (user_id,))]
+                "SELECT * FROM schedule_items WHERE (assigned_to = ? OR rotation IS NOT NULL) "
+                "AND start_time IS NOT NULL AND end_time IS NOT NULL", (user_id,))]
+            schedule_logic.attach_turns(conn, items)
             for item in items:
                 place = places.get(item["place_id"])
                 # the widest legal offset is 7 days, so nothing further out can be due yet
-                for d in schedule_logic.effective_dates_between(item, excs.get(item["id"], []), today, today + timedelta(days=8)):
+                for d, turn in schedule_logic.effective_turns_between(item, excs.get(item["id"], []), today, today + timedelta(days=8)):
+                    if item["assigned_to"] != user_id and turn != user_id:
+                        continue              # taken in turns: only the one whose turn it is
                     start_dt = datetime.combine(d, datetime.strptime(item["start_time"], "%H:%M").time(), tzinfo=now.tzinfo)
                     if start_dt <= now:
                         continue   # already started
@@ -666,6 +675,41 @@ def send_assignment_ping_blocking(assignee_id: str, actor_name: str, title: str,
 # Loop
 # ---------------------------------------------------------------------------
 
+ALARM_LATE = timedelta(hours=1)          # an alarm missed by more than this (the app was off) is dropped
+
+
+def run_alarm_pass_blocking(now: datetime | None = None, sender=None) -> int:
+    """"Remind me at 5 pm" alarms (`task_alarms`): sent once `now` reaches their time, to the person's phones, while
+    the task is still open; up to an hour late (a restart catches up), then dropped. Needs no reminder settings."""
+    now = now or config.now()
+    if not ha_client.has_token():
+        return 0
+    sender = sender or ha_notify.send_notify
+    stamp = now.strftime("%Y-%m-%dT%H:%M")
+    sent = 0
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT a.id, a.user_id, a.at, t.title, t.completed, t.url, u.username, u.disabled FROM task_alarms a "
+            "JOIN tasks t ON t.id = a.task_id JOIN users u ON u.id = a.user_id "
+            "WHERE a.sent_at IS NULL AND a.at <= ? ORDER BY a.at", (stamp,)).fetchall()
+        for r in rows:
+            try:
+                at = datetime.strptime(r["at"], "%Y-%m-%dT%H:%M").replace(tzinfo=now.tzinfo)
+            except ValueError:
+                at = None
+            if at is None or r["completed"] or r["disabled"] or now - at > ALARM_LATE:
+                conn.execute("UPDATE task_alarms SET sent_at = ? WHERE id = ?", (config.now_iso(), r["id"]))
+                conn.commit()
+                continue
+            services = ha_notify.services_for({"id": r["user_id"], "username": r["username"]}, conn)
+            if services and _send_one(sender, services, f"⏰ {r['title']} ({r['at'][11:]})", r["url"]):
+                conn.execute("UPDATE task_alarms SET sent_at = ? WHERE id = ?", (config.now_iso(), r["id"]))
+                conn.commit()
+                sent += 1
+            # nothing to send to, or every phone refused: tried again next tick, up to an hour late
+    return sent
+
+
 def _maintenance_pass() -> int:
     from . import maint_notify
     return maint_notify.run_pass_blocking()
@@ -678,6 +722,7 @@ async def loop() -> None:
         (run_digest_pass_blocking, "digest"),
         (run_weekly_pass_blocking, "weekly summary"),
         (run_task_reminder_pass_blocking, "task reminder"),
+        (run_alarm_pass_blocking, "alarm"),
         (run_schedule_reminder_pass_blocking, "schedule reminder"),
         (_maintenance_pass, "maintenance"),
     )

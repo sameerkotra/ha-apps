@@ -72,6 +72,7 @@ app = FastAPI(title="Household Docs", lifespan=lifespan, docs_url=None, redoc_ur
 for r in (me, nodes, sheets, docs, shares, files, search, share_folders, organise, activity, bring, ai, admin, connect,
           tidy):
     app.include_router(r.router)
+app.include_router(shares.links_router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -209,7 +210,7 @@ def quick_note_page():
                         headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 def deep_link(place: str, node_id: str):
     """"Open in Docs" (APP_MESSAGES_SPEC §6.5): when Home Assistant hands the app a sub-path like /doc/<id>, send the
-    page to the app's own route for it (#/doc/<id>, #/folder/<id>, #/file/<id>). A relative redirect, so it stays
+    page to the app's own route for it (#/doc/<id>, #/folder/<id>, #/file/<id>, a view link's #/view/<token>). A relative redirect, so it stays
     inside Ingress. Nothing is looked up here: the page shows the item, or its own 🔒 No access page."""
     from fastapi import HTTPException
     from fastapi.responses import RedirectResponse
@@ -219,7 +220,7 @@ def deep_link(place: str, node_id: str):
                             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
-for _place in ("doc", "folder", "file"):
+for _place in ("doc", "folder", "file", "view"):
     app.add_api_route(f"/{_place}/{{node_id}}", (lambda p: lambda node_id: deep_link(p, node_id))(_place),
                       methods=["GET"], include_in_schema=False)
 

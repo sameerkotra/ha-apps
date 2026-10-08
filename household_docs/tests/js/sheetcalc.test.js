@@ -424,6 +424,26 @@ test("formats: number, currency, percent, date, red negatives, errors", () => {
   assert.strictEqual(S.format("x", { f: "number" }, o).text, "x");
 });
 
+test("formats: accounting, scientific, time, date and time; typed times", () => {
+  const o = { currency: "USD", locale: "en-US" };
+  assert.strictEqual(S.format(-1234.5, { f: "accounting" }, o).text, "($1,234.50)");
+  assert.strictEqual(S.format(1234.5, { f: "accounting" }, o).text, "$1,234.50");
+  assert.strictEqual(S.format(-1234.5, { f: "accounting" }, o).negative, false);
+  assert.strictEqual(S.format(123456, { f: "scientific" }, o).text, "1.23E+05");
+  assert.strictEqual(S.format(0.00042, { f: "scientific", d: 1 }, o).text, "4.2E-04");
+  assert.strictEqual(S.format(0.00042, { f: "scientific", d: 1 }, { numStyle: "de" }).text, "4,2E-04");
+  assert.strictEqual(S.format(17.5 / 24, { f: "time" }, o).text, "5:30 PM");
+  assert.strictEqual(S.format(17.5 / 24, { f: "time" }, { locale: "en-GB" }).text, "17:30");
+  assert.strictEqual(S.format(S.dateSerial(2026, 10, 8) + 0.25, { f: "datetime" }, { locale: "en-GB" }).text, "8 Oct 2026 06:00");
+  assert.deepStrictEqual(S.parseInput("17:30"), { v: 17.5 / 24, f: "time" });
+  assert.deepStrictEqual(S.parseInput("5:30 pm"), { v: 17.5 / 24, f: "time" });
+  assert.deepStrictEqual(S.parseInput("12am"), { v: 0, f: "time" });
+  assert.deepStrictEqual(S.parseInput("2026-10-08 06:00"), { v: S.dateSerial(2026, 10, 8) + 0.25, f: "datetime" });
+  assert.deepStrictEqual(S.parseInput("25:00"), { v: "25:00" });
+  assert.deepStrictEqual(S.parseInput("13pm"), { v: "13pm" });
+  assert.strictEqual(S.timeOfDay("9"), null);
+});
+
 test("addresses", () => {
   assert.strictEqual(S.colName(0), "A");
   assert.strictEqual(S.colName(25), "Z");

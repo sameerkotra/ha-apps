@@ -150,7 +150,7 @@ class AssistantTests(Household):
         while time.monotonic() < end:                    # the tokens are written just after the answer
             with db.get_conn() as conn:
                 q2 = conn.execute("SELECT * FROM questions WHERE id = ?", (q["id"],)).fetchone()
-            if q2["seconds"] is not None:
+            if q2["input_tokens"] is not None:      # the time is written with the answer, the tokens after it
                 break
             time.sleep(0.02)
         self.assertEqual((q2["rounds"], q2["input_tokens"], q2["output_tokens"]), (1, 300, 60))
@@ -279,7 +279,7 @@ class AssistantTests(Household):
         spec = {s["name"]: s for s in native.specs}
         self.assertEqual(spec["todo__tasks"]["parameters"],
                          {"type": "object", "required": ["when"],
-                          "properties": {"when": {"type": "string", "enum": ["today", "week"], "description": "which tasks"}}})
+                          "properties": {"when": {"type": "string", "enum": ["today", "tomorrow", "week"], "description": "which tasks"}}})
         self.assertIn("CHANGES DATA", spec["todo__items__add"]["description"])
         self.assertEqual(spec["finance__summary"]["parameters"]["properties"]["month"]["pattern"], r"^\d{4}-\d{2}$")
 
@@ -514,6 +514,15 @@ class AssistantTests(Household):
         model = Model('{"answer": "Second."}')
         self.ask("Second question", model=model)
         self.assertIn("Q: First question\nA: First answer.", model.prompts[0][2])
+
+    def test_follow_ups_see_the_tools_used_before(self):
+        self.ask("How did we do this month?", model=Model(plan_call("finance.summary", month="2026-09"),
+                                                          '{"answer": "Spent 1,234.50."}', "Spent 1,234.50."))
+        model = Model('{"answer": "x"}')
+        self.ask("and last month?", model=model)
+        prompt = model.prompts[0][2]
+        self.assertIn('A: Spent 1,234.50.\n(tools used: finance.summary {"month": "2026-09"})', prompt)
+        self.assertIn("A short follow-up", prompt)
 
     def test_housekeeping(self):
         q = self.ask()

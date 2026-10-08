@@ -11,24 +11,24 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"calorie_tracker": "2.3.0", "family_tree": "2.5.0", "household_chat": "2.6.2", "household_todo": "2.5.0",
+VERSIONS = {"calorie_tracker": "2.3.0", "family_tree": "2.6.0", "household_chat": "2.6.2", "household_todo": "2.6.0",
             "household_vault": "2.1.4", "splitpot": "2.5.0"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.3.0"
+FINANCE_VERSION = "1.3.1"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
 ARCADE_VERSION = "1.12.2"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.2.3"
+RECEIPTS_VERSION = "1.3.0"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.4.0"
+DOCS_VERSION = "1.5.0"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.2.0"
+ASSISTANT_VERSION = "1.3.0"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the

@@ -567,6 +567,6 @@ def included_ids(v: View) -> dict:
 
 
 def summary_label(options: ExportOptions, stats: dict, fmt: str) -> str:
-    what = {"site": "the website"}.get(fmt, fmt)
+    what = {"site": "the website", "gedcom": "a GEDCOM file"}.get(fmt, fmt)
     return (f"Exported {what}: {stats['people']} people (living: {options.living}, "
             f"photos: {options.photos})")

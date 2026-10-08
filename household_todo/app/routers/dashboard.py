@@ -21,9 +21,10 @@ def get_dashboard(acting: dict = Depends(get_acting_user)):
             (acting["id"],),
         ).fetchall()
         tasks = taskview.serialize_tasks(conn, rows, today)
-        items = [dict(r) for r in conn.execute(
-            f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (acting["id"],))]
+        items = schedule_logic.attach_turns(conn, [dict(r) for r in conn.execute(
+            f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (acting["id"],))])
         excs = schedule_logic.load_exceptions(conn)
+        users, _ = schedule_logic.lookups(conn)
 
     # overdue counts completion-required tasks only; an optional past task is nowhere here (§8l)
     overdue = taskview.sort_for_dashboard([t for t in tasks if t["overdue"]])
@@ -35,13 +36,15 @@ def get_dashboard(acting: dict = Depends(get_acting_user)):
     coming_up = []
     for item in items:
         st = schedule_logic.item_state(item, excs.get(item["id"], []), today, now)
-        mine_soon = item["assigned_to"] == acting["id"] and st["daysUntil"] is not None and st["daysUntil"] <= 1
+        turn = schedule_logic._next_turn(item, excs.get(item["id"], []), st["nextDate"])
+        mine_soon = acting["id"] in (item["assigned_to"], turn) and st["daysUntil"] is not None and st["daysUntil"] <= 1
         if st["sensorOn"] or mine_soon:
             coming_up.append({
                 "itemId": item["id"], "name": item["name"], "icon": item["icon"] or schedule_logic.DEFAULT_ICON,
                 "nextDate": st["nextDate"], "daysUntil": st["daysUntil"], "occursToday": st["occursToday"],
                 "startTime": item["start_time"], "endTime": item["end_time"], "sensorOn": st["sensorOn"],
                 "private": item["visibility"] == "private",
+                "turn": turn, "turnName": users.get(turn) if turn else None,
             })
     coming_up.sort(key=lambda c: (c["nextDate"], c["startTime"] is not None, c["startTime"] or "", c["name"].lower()))
 

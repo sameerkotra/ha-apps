@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS shares (
   PRIMARY KEY (node_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id);
+CREATE TABLE IF NOT EXISTS view_links (      -- "Anyone with the link can view" (§6.6): one link per item
+  node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL, created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS root_access (     -- admin shared folders (step 3)
   root_id TEXT NOT NULL REFERENCES roots(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('ro','rw')),
@@ -274,6 +279,8 @@ MIGRATIONS: list = [
     ("user_state", "seen_at", "TEXT"),
     ("user_state", "seen_sha", "TEXT"),
     ("users", "seen_from", "TEXT"),
+    # a Can view share someone got by opening the item's view link (§6.6): goes when the link is turned off
+    ("shares", "via_link", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

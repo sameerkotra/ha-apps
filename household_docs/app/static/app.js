@@ -580,6 +580,22 @@ Docs.route("file", async (page, args, current) => {
   if (Docs.filePanel) Docs.filePanel(it);
 });
 
+// A view link (§6.6): Can view for whoever opens it, then the item itself
+Docs.route("view", async (page, args, current) => {
+  mount(page, spinner());
+  let it;
+  try { it = await api(`api/view-links/${encodeURIComponent(args[0] || "")}`); }
+  catch (e) {
+    if (e.status !== 404) throw e;
+    mount(page, pageHead("Link"), h("div", { class: "card banner-card", id: "viewLinkGone" }, e.message), h("p", null, h("a", { href: "#/" }, "Home")));
+    return;
+  }
+  if (!current()) return;
+  const place = it.kind === "folder" ? "folder" : it.kind === "file" ? "file" : "doc";
+  history.replaceState(history.state, "", `#/${place}/${encodeURIComponent(it.id)}`);
+  await render();
+});
+
 Docs.route("trash", async (page, _a, current) => {
   mount(page, pageHead("Trash"), spinner());
   const data = await api("api/space/trash");

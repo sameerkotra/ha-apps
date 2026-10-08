@@ -163,6 +163,43 @@ class ToolTests(unittest.TestCase):
         res = self.call("receipt.shopping_list")
         self.assertEqual(res["items"], [{"item": "2% Milk", "qty": 2.0, "cheapest_at": "Valuco #1", "price": 2.99}])
 
+    def test_deals(self):
+        from app.db import get_db_session
+        from app.db.models import PriceObservation, Receipt, ReceiptItem
+        when = (date.today() - timedelta(days=20)).isoformat()              # Freshmart is where milk is usually bought
+        with get_db_session()() as db:
+            db.add(Receipt(id="rc1b", user_id="u_pat", home_id="h1", store_location_id="lc1", purchase_date=when,
+                           grand_total=3.49, currency_code="USD"))
+            db.flush()
+            db.add(ReceiptItem(id="ric1b", receipt_id="rc1b", common_item_id="i_milk", receipt_description="MILK 2%",
+                               quantity=1, unit_price=3.49, line_total=3.49))
+            db.flush()
+            db.add(PriceObservation(user_id="u_pat", home_id="h1", common_item_id="i_milk", receipt_item_id="ric1b",
+                                    store_chain_id="c1", store_location_id="lc1", purchase_date=when, quantity=1,
+                                    unit_price=3.49, unit_price_unit="each", line_total=3.49, currency_code="USD"))
+            db.commit()
+        res = self.call("receipt.deals")
+        self.assertIn("2% Milk: 14% cheaper at Valuco (2.99 USD vs 3.49 USD at Freshmart)", res["text"])
+        self.assertEqual(res["items"][0]["kind"], "another store")
+        self.assertEqual(res["links"][0]["target"], "/deals")
+        with get_db_session()() as db:
+            db.query(PriceObservation).filter(PriceObservation.store_chain_id == "c2").delete()
+            db.commit()
+        self.assertIn("No cheaper way", self.call("receipt.deals")["text"])
+
+    def test_budgets(self):
+        self.assertIn("no monthly budgets yet", self.call("receipt.budgets")["text"])
+        from app.db import get_db_session
+        from app.services import budgets
+        with get_db_session()() as db:
+            budgets.save_budget(db, "h1", None, 1000)
+            budgets.save_budget(db, "h1", "Dairy", 1)
+        res = self.call("receipt.budgets")
+        self.assertTrue(res["text"].startswith("This month ("), res["text"])
+        self.assertEqual([i["budget"] for i in res["items"]], ["Everything", "Dairy"])
+        self.assertIn("Everything:", res["text"])
+        self.assertEqual(res["items"][0]["amount"], 1000.0)
+
     def test_several_homes(self):
         from app.db import get_db_session
         from app.db.models import Home

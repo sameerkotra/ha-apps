@@ -3,6 +3,8 @@ to Home Assistant as a binary_sensor (SPEC §5.4, §7.2). Household items
 belong to everyone; an item can also belong to one person
 (`assigned_to`), have a start/end time and a place, and be private to that
 person (SPEC §4, §13)."""
+import json
+
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Response
 
 from .. import config, db, ha_sensors, recurrence, reminders, schedule_logic
@@ -35,6 +37,7 @@ def _load_for_edit(conn, item_id: str, acting: dict) -> dict:
 
 
 def _item_json(conn, item: dict) -> dict:
+    schedule_logic.attach_turns(conn, [item])
     excs = schedule_logic.load_exceptions(conn, item["id"]).get(item["id"], [])
     users, places = schedule_logic.lookups(conn)
     now = config.now()
@@ -110,6 +113,24 @@ def _person_fields(conn, body: dict, existing: dict | None, acting: dict) -> dic
     if "url" in body:
         updates["url"] = validated_url(body["url"])
 
+    if "rotation" in body:                  # taking turns (§5.4b): 2–12 people, in order; null or [] = none
+        rot = body["rotation"]
+        if rot in (None, []):
+            updates["rotation"] = None
+        else:
+            if not isinstance(rot, list) or not all(isinstance(u, str) for u in rot) or len(set(rot)) != len(rot):
+                raise HTTPException(422, "rotation must be a list of different people.")
+            if not 2 <= len(rot) <= schedule_logic.MAX_ROTATION:
+                raise HTTPException(422, f"Taking turns needs 2 to {schedule_logic.MAX_ROTATION} people.")
+            before = set(schedule_logic.rotation_of(old))
+            for uid in rot:
+                u = conn.execute("SELECT disabled FROM users WHERE id = ?", (uid,)).fetchone()
+                if not u:
+                    raise HTTPException(422, "That person isn't known to this app.")
+                if u["disabled"] and uid not in before:
+                    raise HTTPException(400, "A disabled person can't be given turns.")
+            updates["rotation"] = json.dumps(rot)
+
     if "expose_sensor" in body:
         if not isinstance(body["expose_sensor"], bool):
             raise HTTPException(422, "expose_sensor must be true or false.")
@@ -123,6 +144,8 @@ def _person_fields(conn, body: dict, existing: dict | None, acting: dict) -> dic
         raise HTTPException(422, "Give both a start and an end time, or neither.")
     if start is not None and end <= start:
         raise HTTPException(422, "The end time must be later than the start time (on the same day).")
+    if eff("rotation") and eff("assigned_to") is not None:
+        raise HTTPException(422, "An item taken in turns belongs to the household — leave “belongs to” empty.")
     if eff("visibility", "household") == "private":
         if eff("assigned_to") is None:
             raise HTTPException(422, "A private item must belong to someone — pick a person, or make it a household item.")
@@ -163,8 +186,8 @@ def list_schedule(assignee: str | None = Query(default=None), acting: dict = Dep
     """Visible items only; `assignee` = me | unassigned | anyone (default) | <user id>."""
     now = config.now()
     with db.get_conn() as conn:
-        items = [dict(r) for r in conn.execute(
-            f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (acting["id"],))]
+        items = schedule_logic.attach_turns(conn, [dict(r) for r in conn.execute(
+            f"SELECT * FROM schedule_items WHERE {schedule_logic.VISIBLE_SQL}", (acting["id"],))])
         excs = schedule_logic.load_exceptions(conn)
         users, places = schedule_logic.lookups(conn)
 
@@ -172,7 +195,7 @@ def list_schedule(assignee: str | None = Query(default=None), acting: dict = Dep
         if assignee in (None, "", "anyone"):
             return True
         if assignee == "me":
-            return i["assigned_to"] == acting["id"]
+            return i["assigned_to"] == acting["id"] or acting["id"] in schedule_logic.rotation_of(i)
         if assignee == "unassigned":
             return i["assigned_to"] is None
         return i["assigned_to"] == assignee
@@ -201,11 +224,11 @@ def create_item(background: BackgroundTasks, body: dict = Body(...), acting: dic
         item_id = db.new_id()
         conn.execute(
             "INSERT INTO schedule_items (id, name, notes, rule, anchor_date, lead_days, icon, entity_slug, created_by, created_at, "
-            "assigned_to, start_time, end_time, place_id, visibility, expose_sensor, url) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "assigned_to, start_time, end_time, place_id, visibility, expose_sensor, url, rotation) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (item_id, name, notes, rule, anchor, lead, icon, schedule_logic.make_slug(conn, name), acting["id"], config.now_iso(),
              extra.get("assigned_to"), extra.get("start_time"), extra.get("end_time"), extra.get("place_id"), visibility, expose,
-             extra.get("url")),
+             extra.get("url"), extra.get("rotation")),
         )
         # read back directly: the creator may have made it someone else's private item
         item = dict(conn.execute("SELECT * FROM schedule_items WHERE id = ?", (item_id,)).fetchone())
@@ -241,6 +264,8 @@ def update_item(item_id: str, background: BackgroundTasks, body: dict = Body(...
                 conn.execute("DELETE FROM schedule_exceptions WHERE item_id = ? AND kind IN ('skip', 'move')", (item_id,))
         if updates:
             conn.execute(f"UPDATE schedule_items SET {', '.join(k + ' = ?' for k in updates)} WHERE id = ?", [*updates.values(), item_id])
+        if "rotation" in updates and updates["rotation"] is None:
+            conn.execute("DELETE FROM schedule_turns WHERE item_id = ?", (item_id,))
         # read back directly: the caller may just have made it someone else's private item
         after = dict(conn.execute("SELECT * FROM schedule_items WHERE id = ?", (item_id,)).fetchone())
         result = _item_json(conn, after)
@@ -310,4 +335,42 @@ def undo_exception(item_id: str, exception_id: str, background: BackgroundTasks,
             raise HTTPException(404, "Exception not found.")
         result = _item_json(conn, item)
     _sync_sensor(background, item, item)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# taking turns (§5.4b): hand one turn to someone else
+# ---------------------------------------------------------------------------
+
+@router.put("/schedule/{item_id}/turns/{day}")
+def hand_over_turn(item_id: str, day: str, background: BackgroundTasks, body: dict = Body(...),
+                   acting: dict = Depends(get_acting_user)):
+    """{"user_id": "<id>"} gives the occurrence on `day` (its rule date) to that person; {"user_id": null} undoes it."""
+    with db.get_conn() as conn:
+        item = _load_for_edit(conn, item_id, acting)
+        if not schedule_logic.rotation_of(item):
+            raise HTTPException(422, "This item isn't taken in turns.")
+        d = recurrence.parse_date(day)
+        if d is None or not recurrence.occurs_on(item["rule"], item["anchor_date"], d):
+            raise HTTPException(422, "That date isn't one of this item's days.")
+        if d < config.today():
+            raise HTTPException(422, "That day has already been.")
+        uid = body.get("user_id")
+        if uid is None:
+            conn.execute("DELETE FROM schedule_turns WHERE item_id = ? AND date = ?", (item_id, d.isoformat()))
+        else:
+            u = conn.execute("SELECT disabled FROM users WHERE id = ?", (uid,)).fetchone() if isinstance(uid, str) else None
+            if not u:
+                raise HTTPException(422, "That person isn't known to this app.")
+            if u["disabled"]:
+                raise HTTPException(400, "That person is disabled.")
+            conn.execute("INSERT INTO schedule_turns (item_id, date, user_id, created_by, created_at) VALUES (?, ?, ?, ?, ?) "
+                         "ON CONFLICT(item_id, date) DO UPDATE SET user_id = excluded.user_id, created_by = excluded.created_by, "
+                         "created_at = excluded.created_at", (item_id, d.isoformat(), uid, acting["id"], config.now_iso()))
+        result = _item_json(conn, dict(conn.execute("SELECT * FROM schedule_items WHERE id = ?", (item_id,)).fetchone()))
+    if item["expose_sensor"]:
+        background.add_task(ha_sensors.push_item_blocking, item_id)
+    if uid and uid != acting["id"]:
+        background.add_task(reminders.send_assignment_ping_blocking, uid, acting["name"], item["name"], d.isoformat(),
+                            detail="your turn", url=item.get("url"), place_id=item.get("place_id"))
     return result

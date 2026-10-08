@@ -154,7 +154,7 @@ class PageInBrowser(Household):
             p.click("#briefingBtn")
             p.wait_for_selector(".briefing")
             self.assertTrue(p.is_checked("#brOn"))
-            p.click(".briefing .btn-secondary")
+            p.click(".briefing .btn-secondary >> nth=0")
             self.until(p, "!document.querySelector('.briefing')")
             p.wait_for_selector(".turn .question")
             self.assertEqual(p.inner_text(".turn .question"), "Morning briefing")

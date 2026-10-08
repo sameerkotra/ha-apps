@@ -257,7 +257,8 @@ def shares_json(conn, node, viewer: dict) -> dict:
     for s in conn.execute("SELECT s.*, u.name FROM shares s LEFT JOIN users u ON u.id = s.user_id WHERE s.node_id = ? "
                           "ORDER BY s.user_id = '*' DESC, u.name COLLATE NOCASE", (node["id"],)):
         own.append({"userId": s["user_id"], "name": "Everyone" if s["user_id"] == EVERYONE else (s["name"] or "Someone"),
-                    "role": s["role"], "viewersTick": bool(s["viewers_tick"]), "addedAt": s["added_at"]})
+                    "role": s["role"], "viewersTick": bool(s["viewers_tick"]), "addedAt": s["added_at"],
+                    "viaLink": bool(s["via_link"])})
     inherited = []
     for a in visible_ancestors(conn, viewer, node):     # folders the viewer can't open aren't named (nor their shares)
         for s in conn.execute("SELECT s.*, u.name FROM shares s LEFT JOIN users u ON u.id = s.user_id WHERE s.node_id = ?",
@@ -306,7 +307,7 @@ def set_share(conn, actor: dict, actor_role: str, node, target: str, role: str, 
         from . import activity
         activity.record(conn, "shared", actor["id"], node, target_user=target)
         return True
-    conn.execute("UPDATE shares SET role = ?, viewers_tick = ? WHERE node_id = ? AND user_id = ?",
+    conn.execute("UPDATE shares SET role = ?, viewers_tick = ?, via_link = 0 WHERE node_id = ? AND user_id = ?",
                  (role, tick, node["id"], target))
     db.audit(conn, "share_changed", actor["id"], node["id"], node["root_id"])
     return False

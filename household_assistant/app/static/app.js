@@ -308,9 +308,11 @@
     UI.openModal("What can I ask?", body);
   });
 
-  // ---------- the morning briefing (per person: on/off, time, days; sent to their phones) ----------
+  // ---------- the briefings (per person: morning and evening on/off and time, days, a speaker; sent to their phones) ----------
   const PART_WORDS = { "todo.tasks": "today's tasks and schedule", "tree.birthdays": "birthdays this week",
     "finance.bills": "bills due in the next 3 days", "splitpot.balances": "money owed in Splitpot" };
+  const EVENING_WORDS = { "todo.tasks": "tomorrow's tasks and schedule", "tree.birthdays": "birthdays today and tomorrow",
+    "finance.bills": "bills due by tomorrow" };
 
   async function openBriefing() {
     let b;
@@ -320,40 +322,61 @@
     const time = h("input", { type: "time", id: "brTime", value: b.time, step: "60" });
     const days = h("select", { id: "brDays" }, h("option", { value: "every" }, "Every day"), h("option", { value: "weekdays" }, "Weekdays"));
     days.value = b.days;
-    const parts = b.parts.length
-      ? h("ul", null, b.parts.map((p) => h("li", null, PART_WORDS[p.tool] || p.tool, h("span", { class: "dim" }, ` · ${p.appName}`))))
+    const evOn = h("input", { type: "checkbox", id: "brEvOn" });
+    evOn.checked = b.eveningOn;
+    const evTime = h("input", { type: "time", id: "brEvTime", value: b.eveningTime, step: "60" });
+    const list = (parts, words) => parts.length
+      ? h("ul", null, parts.map((p) => h("li", null, words[p.tool] || p.tool, h("span", { class: "dim" }, ` · ${p.appName}`))))
       : h("p", { class: "dim" }, "No household app you use answers these yet (Todo, Family Tree, Finance, Splitpot).");
     const phones = b.phones.length
       ? h("p", null, "Sent to: " + b.phones.map((p) => p.label).join(", "))
       : h("p", { class: "note warn" }, "No phone is linked to you in Home Assistant yet: Settings → People → you → Track device (the Home Assistant app on your phone).");
+    const speaker = h("select", { id: "brSpeaker" }, h("option", { value: "" }, "No speaker"),
+      b.speakers.map((p) => h("option", { value: p.entity }, p.name)));
+    if (b.speaker && !b.speakers.some((p) => p.entity === b.speaker)) speaker.appendChild(h("option", { value: b.speaker }, b.speaker));
+    speaker.value = b.speaker || "";
     const save = h("button", { type: "button", class: "btn-primary" }, "Save");
-    const now = h("button", { type: "button", class: "btn-secondary" }, "Send me one now");
+    const nowBtn = (kind, label) => h("button", { type: "button", class: "btn-secondary", dataset: { kind } }, label);
+    const now = nowBtn("morning", "Send a morning one now"), nowEv = nowBtn("evening", "Send an evening one now");
     const body = h("div", { class: "briefing" },
-      h("p", { class: "hint" }, "Each morning the assistant asks the household apps about your day and sends a short summary to your phone. It needs no AI model, and appears in your questions too."),
+      h("p", { class: "hint" }, "The assistant asks the household apps about your day and sends a short summary to your phone. It needs no AI model, and appears in your questions too."),
       b.why ? h("p", { class: "note warn" }, b.why) : null,
-      h("label", { class: "check" }, on, " Send me a morning briefing"),
+      h("label", { class: "check" }, on, " 🌅 A morning briefing"),
       h("div", { class: "row" }, h("label", { for: "brTime" }, "At "), time, " ", days),
-      h("h4", null, "What it includes"), parts, phones,
-      h("div", { class: "actions" }, now, save));
-    const m = UI.openModal("🌅 Morning briefing", body);
+      list(b.parts, PART_WORDS),
+      h("label", { class: "check" }, evOn, " 🌙 An evening briefing, for tomorrow"),
+      h("div", { class: "row" }, h("label", { for: "brEvTime" }, "At "), evTime, h("span", { class: "dim" }, " (the same days)")),
+      list(b.eveningParts, EVENING_WORDS),
+      h("h4", null, "Where it goes"), phones,
+      h("div", { class: "row" }, h("label", { for: "brSpeaker" }, "Also read it aloud on "), speaker),
+      b.tts ? null : h("p", { class: "dim" }, "Reading aloud needs a text-to-speech engine in Home Assistant (Settings → Voice assistants)."),
+      h("div", { class: "actions" }, now, nowEv, save));
+    const m = UI.openModal("🌅 Briefings", body);
     save.addEventListener("click", async () => {
       try {
-        await api("api/briefing", { method: "PUT", body: { on: on.checked, time: time.value, days: days.value } });
-        toast(on.checked ? `Your briefing will come at ${time.value}.` : "Morning briefing off.");
+        await api("api/briefing", { method: "PUT", body: { on: on.checked, time: time.value, days: days.value,
+          eveningOn: evOn.checked, eveningTime: evTime.value, speaker: speaker.value } });
+        const said = [on.checked ? `morning at ${time.value}` : null, evOn.checked ? `evening at ${evTime.value}` : null].filter(Boolean);
+        toast(said.length ? `Briefings: ${said.join(", ")}.` : "Briefings off.");
         m.close();
       } catch (e) { toast(e.message, true); }
     });
-    now.addEventListener("click", async () => {
-      now.disabled = true;
-      now.textContent = "Asking the apps…";
-      try {
-        const r = await api("api/briefing/send", { method: "POST" });
-        const ok = Object.values(r.sent).filter(Boolean).length;
-        toast(r.phones.length ? `Sent to ${ok} of ${r.phones.length} phone${r.phones.length === 1 ? "" : "s"}.` : "Made — it's in your questions (no phone to send it to).", r.phones.length > 0 && ok === 0);
-        m.close();
-        await loadHistory(false);
-      } catch (e) { toast(e.message, true); now.disabled = false; now.textContent = "Send me one now"; }
-    });
+    for (const btn of [now, nowEv]) {
+      btn.addEventListener("click", async () => {
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Asking the apps…";
+        try {
+          const r = await api(`api/briefing/send?kind=${btn.dataset.kind}`, { method: "POST" });
+          const ok = Object.values(r.sent).filter(Boolean).length;
+          const aloud = r.spoken === null ? "" : r.spoken ? " Read aloud too." : " Reading it aloud failed.";
+          toast((r.phones.length ? `Sent to ${ok} of ${r.phones.length} phone${r.phones.length === 1 ? "" : "s"}.` : "Made — it's in your questions (no phone to send it to).") + aloud,
+            (r.phones.length > 0 && ok === 0) || r.spoken === false);
+          m.close();
+          await loadHistory(false);
+        } catch (e) { toast(e.message, true); btn.disabled = false; btn.textContent = label; }
+      });
+    }
   }
   $("#briefingBtn").addEventListener("click", openBriefing);
 

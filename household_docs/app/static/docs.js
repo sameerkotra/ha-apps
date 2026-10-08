@@ -185,7 +185,8 @@
           onchange: (e) => send(s.userId, s.role, e.target.checked) }), "Viewers may tick items") : null;
         const leaveMine = s.userId === D.state.me.id;
         return h("div", { class: "share-row", dataset: { user: s.userId } },
-          h("span", { class: "share-who" }, s.userId === "*" ? "👪 Everyone" : s.name, leaveMine ? h("span", { class: "badge-you" }, "you") : null),
+          h("span", { class: "share-who" }, s.userId === "*" ? "👪 Everyone" : s.name, leaveMine ? h("span", { class: "badge-you" }, "you") : null,
+            s.viaLink ? h("span", { class: "hint", title: "Opened the view link; goes if the link is turned off" }, " 🔗 by the link") : null),
           sel, tick,
           data.canShare || leaveMine ? h("button", { class: "icon-btn danger", type: "button", title: leaveMine ? "Leave" : "Remove", "aria-label": `Remove ${s.name}`, onclick: async () => {
             try { draw(await api(`api/nodes/${it.id}/shares/${encodeURIComponent(s.userId)}`, { method: "DELETE" })); if (leaveMine) { m.close(); D.render(); } }
@@ -207,11 +208,44 @@
           h("span", { class: "chip" }, D.roleLabel(s.role)), h("span", { class: "hint" }, "from ", s.from)))) : null;
       mount(body,
         h("div", { class: "share-row owner" }, h("span", { class: "share-who" }, data.owner.name || "—"), h("span", { class: "chip on" }, "Owner")),
-        rows, inherited, add, err,
+        rows, inherited, add, data.canShare ? linkBox(data, err) : null, err,
         h("p", { class: "hint" }, it.kind === "folder" ? "Everything inside this folder is shared too, including files added to it later. " : "",
           "Managers may share it further and remove people. People get a notification on their phone when something is shared with them."));
     }
+    // "Anyone with the link can view" (§6.6)
+    function linkBox(data, err) {
+      const call = async (method, body) => {
+        try {
+          const d = await api(`api/nodes/${it.id}/link`, { method, body });
+          if (method === "DELETE") { toast(d.removed ? `Link turned off — ${d.removed} ${d.removed === 1 ? "person" : "people"} who opened it can't any more` : "Link turned off"); draw(); }
+          else draw();
+        } catch (e) { err.textContent = e.message; }
+      };
+      if (!data.link) {
+        return h("div", { class: "share-link", id: "shareLink" },
+          h("button", { class: "btn-ghost", type: "button", id: "linkMake", onclick: () => call("POST", { new: false }) }, "🔗 Make a view link"),
+          h("div", { class: "hint" }, "Anyone in the household who opens the link can view it — handy to send in a chat. You can turn it off any time."));
+      }
+      const url = viewLinkUrl(data.link.token);
+      const field = h("input", { type: "text", readonly: true, value: url, id: "linkUrl", "aria-label": "View link", onfocus: (e) => e.target.select() });
+      const copy = h("button", { class: "btn-primary btn-small", type: "button", id: "linkCopy", onclick: async () => {
+        try { await navigator.clipboard.writeText(url); toast("Link copied"); } catch (e) { field.focus(); field.select(); toast("Select the link and copy it.", true); }
+      } }, "Copy");
+      return h("div", { class: "share-link on", id: "shareLink" },
+        h("div", { class: "share-link-head" }, h("strong", null, "🔗 Anyone with the link can view")),
+        h("div", { class: "share-link-row" }, field, copy),
+        h("div", { class: "share-link-row" },
+          h("span", { class: "hint" }, data.link.opened ? `Opened by ${data.link.opened} ${data.link.opened === 1 ? "person" : "people"} so far.` : "Nobody has opened it yet."),
+          h("button", { class: "btn-ghost btn-small", type: "button", id: "linkNew", title: "The old link stops working", onclick: () => call("POST", { new: true }) }, "New link"),
+          h("button", { class: "btn-ghost btn-small danger", type: "button", id: "linkOff", onclick: () => call("DELETE") }, "Turn off")));
+    }
     draw();
+  }
+  function viewLinkUrl(token) {
+    const panel = D.state.me && D.state.me.apps && D.state.me.apps.panel;
+    let origin = location.origin;
+    try { if (window.parent !== window) origin = window.parent.location.origin; } catch (e) { /* not reachable */ }
+    return panel ? `${origin}${panel}/view/${token}` : `${location.origin}${location.pathname}#/view/${token}`;
   }
   D.shareDialog = shareDialog;
   Object.assign(D, { renameDialog, moveDialog, historyDialog, transferDialog });
@@ -523,7 +557,11 @@
       mount(preview, DocsMd.render(DocsMd.parse(ta.value), document, {
         docLink: (t) => { const info = linkInfo.links[t]; return info ? Object.assign({ href: docHref(info), title: info.name }, info) : { state: "pending" }; },
         onTick: doc.canEdit ? (line) => { ta.value = DocsMd.toggleTask(ta.value, line); changed(); drawPreview(); } : null,
+        images: true,
       }));
+      for (const im of preview.querySelectorAll("img.md-pic")) {          // a picture this person can't see, or gone
+        im.addEventListener("error", () => im.replaceWith(h("span", { class: "md-img", title: "This picture can't be shown — it was deleted or isn't shared with you." }, "🖼 " + (im.alt || "picture"))), { once: true });
+      }
       if (!ta.value.trim()) preview.appendChild(h("p", { class: "hint" }, "Nothing here yet."));
     }
     const box = h("div", { class: "editor-card note-box mode-" + mode, id: "noteBox" }, ta, isMd ? preview : null);
@@ -557,12 +595,56 @@
       ta.focus();
       changed();
     }
-    const tbtn = (id, label, title, fn) => h("button", { class: "icon-btn md-tool", type: "button", id, title, "aria-label": title, onclick: fn }, label);
+    // pointerdown kept from the button: the text keeps its focus and selection (and a phone its keyboard)
+    const tbtn = (id, label, title, fn) => h("button", { class: "icon-btn md-tool", type: "button", id, title, "aria-label": title, onclick: fn,
+      onpointerdown: (e) => e.preventDefault() }, label);
     const mdTools = h("div", { class: "md-tools", id: "mdTools", hidden: !isMd || mode === "preview" || !doc.canEdit, role: "toolbar", "aria-label": "Formatting" },
       tbtn("mdBold", "B", "Bold", () => wrapSel("**", "**", "bold")), tbtn("mdItalic", "I", "Italic", () => wrapSel("*", "*", "italic")),
       tbtn("mdHeading", "H", "Heading", () => prefixLines("## ", /^#{1,6}\s+/)), tbtn("mdList", "•", "Bulleted list", () => prefixLines("- ", /^[-*+]\s+(?!\[)/)),
       tbtn("mdCheck", "☐", "Tick box", () => prefixLines("- [ ] ", /^[-*+]\s+\[[ xX]\]\s+/)),
-      tbtn("mdLink", "🔗", "Web link", () => { const s = ta.value.slice(ta.selectionStart, ta.selectionEnd); wrapSel("[", "](https://)", s || "link text"); }));
+      tbtn("mdNumbered", "1.", "Numbered list", () => prefixLines("1. ", /^\d+[.)]\s+/)),
+      tbtn("mdQuote", "❝", "Quote", () => prefixLines("> ", /^>\s?/)),
+      tbtn("mdCode", "</>", "Code", () => wrapSel("`", "`", "code")),
+      tbtn("mdLink", "🔗", "Web link", () => { const s = ta.value.slice(ta.selectionStart, ta.selectionEnd); wrapSel("[", "](https://)", s || "link text"); }),
+      tbtn("mdDocLink", "[[ ]]", "Link to a document", () => insertLink(false)),
+      tbtn("mdPicture", "🖼", "Add a picture", () => picInput.click()));
+
+    // ---- pictures: pasted, or chosen (a phone's camera too) — kept as a file next to the note
+    const picInput = h("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp", hidden: true, id: "mdPictureFile",
+      onchange: () => { const f = picInput.files && picInput.files[0]; picInput.value = ""; if (f) addPicture(f); } });
+    const PIC_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+    async function addPicture(file) {
+      const ext = PIC_TYPES[file.type];
+      if (!ext) { toast("Only PNG, JPEG, GIF and WebP pictures can go in a note.", true); return; }
+      const now = new Date(), two = (n) => String(n).padStart(2, "0");
+      const stamp = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())} ${two(now.getHours())}.${two(now.getMinutes())}.${two(now.getSeconds())}`;
+      const name = (file.name && !/^image\.\w+$/i.test(file.name) ? file.name : `Picture ${stamp}.${ext}`).replace(/[\[\]()\n]/g, " ");
+      const at = ta.selectionStart, end = ta.selectionEnd;
+      setStatus("Adding the picture…");
+      let node;
+      try {
+        node = await api(`api/nodes/${encodeURIComponent(doc.parentRef || "mine")}/upload?name=${encodeURIComponent(name)}`,
+          { method: "POST", rawBody: file, headers: { "Content-Type": "application/octet-stream" } });
+      } catch (e) { setStatus(st.dirty ? "Unsaved changes…" : "Saved"); toast(`The picture couldn't be added: ${e.message}`, true); return; }
+      const label = (node.name || name).replace(/\.\w+$/, "").replace(/[\[\]]/g, " ");
+      let text;
+      if (isMd) text = `![${label}](doc:${node.id})`;
+      else { const t = (node.name || name).replace(/[\[\]|\n]/g, " ").trim(); hints[t] = node.id; linkInfo.links[t] = { state: "ok", id: node.id, name: node.name, kind: "file" }; text = `[[${t}]]`; }
+      const lead = at > 0 && ta.value[at - 1] !== "\n" && isMd ? "\n" : "";
+      ta.setRangeText(lead + text + (isMd ? "\n" : ""), at, end, "end");
+      ta.focus();
+      changed();
+      toast(`Picture saved next to the note as ${node.name || name}`);
+    }
+    if (doc.canEdit) ta.addEventListener("paste", (e) => {
+      const items = e.clipboardData ? Array.from(e.clipboardData.items || []) : [];
+      const pic = items.find((it) => it.kind === "file" && PIC_TYPES[it.type]);
+      if (!pic || (e.clipboardData.getData("text/plain") || "").trim()) return;     // text wins when both are there
+      const f = pic.getAsFile();
+      if (!f) return;
+      e.preventDefault();
+      addPicture(f);
+    });
 
     // ---- links to other documents and Linked from
     const linksBox = h("div", { class: "links-box", id: "linksBox" });
@@ -606,7 +688,10 @@
       !doc.canEdit ? h("span", { class: "chip" }, doc.readOnlyMode ? "Read only while documents are moved" : "Read only") : null);
     applyLook();
     const secret = secretHint();
-    mount(page, head.el, tools, mdTools, find.el, box, linksBox, secret.el);
+    // on a phone the formatting buttons sit under the text, kept in view above the keyboard
+    const phone = isMd && narrow();
+    mdTools.classList.toggle("md-tools-phone", phone);
+    mount(page, head.el, tools, phone ? null : mdTools, find.el, box, phone ? mdTools : null, picInput, linksBox, secret.el);
     refit = keepFitted(ta);
     secret.check(ta.value);
     setStatus(doc.canEdit ? "Saved" : "");

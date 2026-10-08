@@ -120,6 +120,10 @@ references are in [`docs/`](../docs): the API (`API.md`), the database (`DATABAS
   - `receipt.spending` (`month?`, `store?`): `analytics.summarize_spend` of the month (or the last 30 days), by store.
   - `receipt.shopping_list.add` (`acts`; `item`, `qty?`): only with `confirm: true`; `shoplist.add` (as the person),
     then the cheapest store.
+  - `receipt.deals`: `lookout.savings` (cheaper at another store or in another pack size) and
+    `lookout.price_drops`, as items with `kind` store / size / price down; link to `/deals`.
+  - `receipt.budgets`: `budgets.list_budgets` for this month — each budget's spent, limit, %, left, on track
+    or heading over (with the forecast), "N days left" in the text; link.
 - **Off by default** (App settings → Household Assistant → `assistant_answers`; `nack not_allowed off`). Each
   person's own *Let the Household Assistant answer for me* (`users.assistant_ok`, on by default; the Who am I page,
   shown while the admin's switch is on; GET `/api/v1/me` `assistant`/`assistantOk`, PUT `/api/v1/me/assistant`

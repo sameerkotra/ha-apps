@@ -4,7 +4,8 @@
      DocsMd.parse(text)                  → blocks (plain objects, no DOM): headings, paragraphs, lists (with tick
                                            boxes, nested by indent), quotes, code blocks, rules, simple tables
      DocsMd.parseInline(text)            → inline nodes: text, strong, em, code, link (http/https only), doc ([[…]]),
-                                           br, img (never loaded: shown as "🖼 alt")
+                                           br, img (shown as "🖼 alt"; only a picture kept in the app itself,
+                                           ![alt](doc:<id>), is shown, and only when opts.images is on)
      DocsMd.render(blocks, doc, opts)    → a DocumentFragment built with doc.createElement / createTextNode only
      DocsMd.safeHref(url)                → the URL when it is http: or https:, else null
      DocsMd.toggleTask(text, line)       → the text with that line's [ ] ↔ [x] switched (ticking in the preview)
@@ -12,7 +13,9 @@
 
    Nothing is ever parsed as HTML: raw HTML in a note is just text (it shows as typed). Links are made only for
    http: and https: addresses and for [[document links]], which opts.docLink(text) turns into an in-app address
-   (or a "🔒 No access" / "Deleted" / "Not found" note). Images are never fetched. Tested with Node
+   (or a "🔒 No access" / "Deleted" / "Not found" note). Pictures from elsewhere are never fetched: only one
+   kept in Household Docs (![alt](doc:<id>), what pasting a picture into a note writes) is shown, from the app's
+   own image preview (api/nodes/<id>/preview). Tested with Node
    (tests/js/md.test.js), including a fuzz test that renders random input with a recording fake document. */
 (function (root) {
   const MAX_DEPTH = 6;
@@ -65,7 +68,10 @@
             const label = s.slice(open + 1, close);
             const url = s.slice(close + 2, pclose).trim().split(/\s+/)[0] || "";
             flush();
-            if (img) out.push({ t: "img", alt: label });
+            if (img) {
+              const own = /^doc:([A-Za-z0-9_-]{1,64})$/.exec(url);
+              out.push(own ? { t: "img", alt: label, id: own[1] } : { t: "img", alt: label });
+            }
             else {
               const href = safeHref(url);
               const kids = depth < MAX_DEPTH ? parseInline(label, depth + 1).filter((x) => x.t !== "link") : [{ t: "text", v: label }];
@@ -279,6 +285,13 @@
         else if (n.t === "br") parent.appendChild(el("br"));
         else if (n.t === "code") { const c = el("code"); c.textContent = n.v; parent.appendChild(c); }
         else if (n.t === "strong" || n.t === "em") { const e = el(n.t); inline(n.c, e, depth + 1); parent.appendChild(e); }
+        else if (n.t === "img" && n.id && opts.images && /^[A-Za-z0-9_-]{1,64}$/.test(n.id)) {
+          const im = el("img", "md-pic");
+          im.setAttribute("src", "api/nodes/" + n.id + "/preview");
+          im.setAttribute("alt", n.alt || "picture");
+          im.setAttribute("loading", "lazy");
+          parent.appendChild(im);
+        }
         else if (n.t === "img") { const s = el("span", "md-img"); s.textContent = "🖼 " + (n.alt || "image"); s.title = "Pictures in notes aren't loaded"; parent.appendChild(s); }
         else if (n.t === "link") {
           const href = safeHref(n.href);

@@ -271,17 +271,13 @@ Kept exactly as they behaved, so the refactor changed nothing for users; each is
    (never UTC) while Home Assistant isn't answering, keeps asking, and sets the process zone; Vault and Receipt use
    it too, Finance's `bootstrap.py` retries and falls back to the Supervisor's `TZ`; Family Tree's export stamps,
    Splitpot's CSV date, Chat's export and the Assistant's usage days use Home Assistant's zone.
-2. **Finance dashboard filters while "viewing as":** the period/account pickers add the acting user as
-   `&amp;as_user=…` (the old inline script was HTML-escaped by Jinja), so an admin viewing as someone drops back to
-   their own view when changing a filter. `static/pages/dashboard.js` reproduces it on purpose (`data-suffix`); fix:
-   `acting_qs | tojson`.
-3. **Finance database import:** a rejected upload (integrity / missing tables / not SQLite) leaves its temp `.db` in
-   `/data`.
-4. **Finance database import confirmation:** the form's `onsubmit="return confirm(…)"` never showed its dialog
-   (`confirm` resolved to the form's hidden `<input name="confirm">`), so the required checkbox is the only
-   confirmation. Kept (no `data-confirm` on that form; a template comment says why); fix: add `data-confirm`.
-5. **Receipt `admin.html`** loads `common/settings.js` and `settings.css` without `?v=` (`main._page` doesn't tag
-   them), so a phone may keep an old copy after an update.
+2. ~~**Finance dashboard filters while "viewing as"**~~ — fixed in Finance 1.3.1: `data-suffix` is
+   `acting_qs | tojson`, so changing a filter keeps the person you're viewing as.
+3. ~~**Finance database import:** a rejected upload leaves its temp `.db` in `/data`~~ — fixed in Finance 1.3.1.
+4. ~~**Finance database import confirmation**~~ — fixed in Finance 1.3.1: the form has `data-confirm`, asked before
+   sending, besides the required checkbox.
+5. ~~**Receipt `admin.html`** without `?v=` on `common/settings.js` and `settings.css`~~ — already fixed: the page
+   tags them (checked 2026-10-08).
 
 ## 11. Security fixes 2026-10
 

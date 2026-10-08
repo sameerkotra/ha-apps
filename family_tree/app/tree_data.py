@@ -152,7 +152,8 @@ def export_data(conn, v, options, files: dict, title: str) -> dict:
 # reading a file
 # =====================================================================================================
 def read_package(path: str) -> tuple[dict, str | None]:
-    """→ (data, zip path or None). A website zip (with family-tree.json inside) or the JSON on its own."""
+    """→ (data, zip path or None). A website zip (with family-tree.json inside), the JSON on its own, or a GEDCOM
+    file (.ged, or a .gdz zip with one inside — §14)."""
     size = os.path.getsize(path)
     with open(path, "rb") as f:
         head = f.read(4)
@@ -162,6 +163,12 @@ def read_package(path: str) -> tuple[dict, str | None]:
         try:
             with zipfile.ZipFile(path) as z:
                 info = next((i for i in z.infolist() if i.filename.rsplit("/", 1)[-1] == DATA_NAME), None)
+                ged = next((i for i in z.infolist() if i.filename.lower().endswith(".ged")), None)
+                if info is None and ged is not None:          # a GEDCOM zip (.gdz): the .ged inside (§14)
+                    from . import gedcom
+                    if ged.file_size > gedcom.MAX_BYTES:
+                        raise ImportError_("That GEDCOM file is too large to import.")
+                    return validate(gedcom.to_tree_data(z.read(ged), ged.filename)), None
                 if info is None:
                     raise ImportError_("This zip has no family-tree.json. Export the website again from Family Tree "
                                        "2.1 or later (Export → Website) and import that zip.")
@@ -177,6 +184,9 @@ def read_package(path: str) -> tuple[dict, str | None]:
         with open(path, "rb") as f:
             raw = f.read()
         zpath = None
+        from . import gedcom
+        if gedcom.looks_like(raw[:200]):                   # a GEDCOM file (§14)
+            return validate(gedcom.to_tree_data(raw)), None
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):

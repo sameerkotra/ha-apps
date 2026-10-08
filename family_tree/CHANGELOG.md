@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.0
+
+- **GEDCOM**: Export → **⬇ GEDCOM file** gives the same people, with the same choices as the website (living people, places, stories …), as a `.ged` file other genealogy programs open (GEDCOM 5.5.1, no photos). Admin → Import now also takes a `.ged` (or `.gdz`) from another program: names (with maiden and other names), sex, births, deaths, marriages and other events with dates and places, notes, parents and children (adopted, step, foster) come in after the usual preview, as one step History can undo; importing a newer copy of the same file later only adds what's new.
+- **Relationship words further out**: someone three or more marriages away ("husband's brother's wife's father") is now named step by step in English, and gets a Telugu or Hindi word built from its parts, instead of just "related by marriage".
+- **Undo puts "This is me" back**: undoing a merge that had moved someone's "This is me" to the kept person now moves it back too.
+
 ## 2.5.0
 
 - **Ask the Household Assistant about one person**: "How old is Lakshmi?", "Who are Ravi's children?", "When did Sita get married?" — born (when, where, age), died, parents, partners with the wedding date and years married, children, brothers and sisters, and what they are to you. Names needn't be exact, as for "How are they related?".

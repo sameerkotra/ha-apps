@@ -1167,7 +1167,8 @@
   }
 
   // ===================================================================== formats (what a cell shows)
-  // fmt: {f: "general"|"number"|"currency"|"percent"|"date"|"text", d: decimals, red: bool}; opts: {currency, locale}
+  // fmt: {f: "general"|"number"|"currency"|"accounting"|"percent"|"scientific"|"date"|"time"|"datetime"|"text",
+  //       d: decimals, red: bool}; opts: {currency, locale}
   const nfCache = new Map();
   function nf(locale, o) {
     const k = locale + JSON.stringify(o);
@@ -1179,6 +1180,15 @@
     const p = serialParts(serial);
     try { return new Date(Date.UTC(p.y, p.m - 1, p.d)).toLocaleDateString(locale || undefined, { timeZone: "UTC", year: "numeric", month: "short", day: "numeric" }); }
     catch (e) { return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`; }
+  }
+  function fmtTime(serial, locale) {     // the time of day part of a serial (a fraction of a day)
+    const secs = Math.round((serial - Math.floor(serial)) * 86400) % 86400;
+    const o = { timeZone: "UTC", hour: "numeric", minute: "2-digit" };
+    if (secs % 60) o.second = "2-digit";
+    try {
+      if (!new Intl.DateTimeFormat(locale || undefined, { hour: "numeric" }).resolvedOptions().hour12) o.hour = "2-digit";   // 24-hour clocks: 06:00
+      return new Date(secs * 1000).toLocaleTimeString(locale || undefined, o); }
+    catch (e) { return `${String(Math.floor(secs / 3600)).padStart(2, "0")}:${String(Math.floor(secs / 60) % 60).padStart(2, "0")}`; }
   }
   // number styles (a personal setting, SPEC §4): how numbers look and how typed numbers are read
   const NUM_LOCALES = { en: "en-US", de: "de-DE", in: "en-IN" };
@@ -1197,8 +1207,20 @@
     switch (f) {
       case "number": text = nf(nl, { minimumFractionDigits: d ?? 2, maximumFractionDigits: d ?? 2, useGrouping: true }).format(v); break;
       case "currency": text = nf(nl, { style: "currency", currency: opts.currency || "EUR", minimumFractionDigits: d ?? 2, maximumFractionDigits: d ?? 2 }).format(v); break;
+      case "accounting": {        // negatives in brackets, like a ledger
+        const t = nf(nl, { style: "currency", currency: opts.currency || "EUR", minimumFractionDigits: d ?? 2, maximumFractionDigits: d ?? 2 }).format(Math.abs(v));
+        text = neg ? `(${t})` : t;
+        break;
+      }
       case "percent": text = nf(nl, { style: "percent", minimumFractionDigits: d ?? 0, maximumFractionDigits: d ?? 0 }).format(v); break;
+      case "scientific": {
+        const [m, e] = v.toExponential(d ?? 2).split("e");
+        text = `${opts.numStyle === "de" ? m.replace(".", ",") : m}E${e[0] === "-" ? "-" : "+"}${e.replace(/^[+-]/, "").padStart(2, "0")}`;
+        break;
+      }
       case "date": text = v >= 0 && v < 2958466 ? fmtDate(v, opts.locale) : numText(v); break;
+      case "time": text = v >= 0 && v < 2958466 ? fmtTime(v, opts.locale) : numText(v); break;
+      case "datetime": text = v >= 0 && v < 2958466 ? `${fmtDate(v, opts.locale)} ${fmtTime(v, opts.locale)}` : numText(v); break;
       default: text = numText(v); if (opts.numStyle === "de") text = text.replace(".", ",");
     }
     return { text, negative: neg && !!fmt.red };
@@ -1273,6 +1295,16 @@
     }
     return null;
   }
+  /** "17:30", "17:30:15", "5:30 pm", "5pm" → a fraction of a day; otherwise null. */
+  function timeOfDay(t) {
+    const m = /^(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?\s*([ap]\.?m\.?)?$/i.exec(String(t).trim());
+    if (!m || (!m[2] && !m[4])) return null;
+    let h = +m[1];
+    const mi = +(m[2] || 0), se = +(m[3] || 0);
+    if (m[4]) { if (h < 1 || h > 12) return null; h = (h % 12) + (/^p/i.test(m[4]) ? 12 : 0); }
+    if (h > 23 || mi > 59 || se > 59) return null;
+    return (h * 3600 + mi * 60 + se) / 86400;
+  }
   function parseInput(text, style) {
     if (text === null || text === undefined) return { v: null };
     const s = String(text);
@@ -1288,6 +1320,13 @@
     }
     m = /^([+-]?)(\d[\d,]*\.?\d*|\.\d+)\s*%$/.exec(t);
     if (m && style !== "de") { const n = textToNumber(m[1] + m[2]); if (n !== null) { const dec = (m[2].split(".")[1] || "").length; return { v: n / 100, f: "percent", d: dec }; } }
+    const tm = timeOfDay(t);
+    if (tm !== null) return { v: tm, f: "time" };
+    m = /^(\d{4})-(\d{1,2})-(\d{1,2})[ T](.+)$/.exec(t);
+    if (m) {
+      const day = dateSerial(+m[1], +m[2], +m[3]), at = timeOfDay(m[4]);
+      if (!isErr(day) && at !== null && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return { v: day + at, f: "datetime" };
+    }
     m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t) || null;
     if (m) { const v = dateSerial(+m[1], +m[2], +m[3]); if (!isErr(v) && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return { v, f: "date" }; }
     m = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/.exec(t);
@@ -1300,7 +1339,7 @@
   const api = {
     workbook, parse, tokenize, shiftFormula, adjustFormula, renameTab, functionsIn, format, formatCode, parseInput,
     colName, colIndex, addr, parseRef, parseRange, tabPrefix, dateSerial, serialParts, todaySerial, toText, numText,
-    compare, ERR, WHY, isErr, CalcError, CalcSyntax, FUNCTIONS, MAXR, MAXC, styledNumber, NUM_LOCALES,
+    compare, ERR, WHY, isErr, timeOfDay, CalcError, CalcSyntax, FUNCTIONS, MAXR, MAXC, styledNumber, NUM_LOCALES,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.SheetCalc = api;

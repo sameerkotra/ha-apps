@@ -417,6 +417,9 @@ spends is private). Then anyone who has opened this app can ask it:
 - "What's on the shopping list?" — each item with the store where it was cheapest and its last price;
 - "Where is milk cheapest?" — an item's latest price at each store and how it's trending;
 - "How much did we spend at Freshmart this month?" — spending in a month (or the last 30 days) by store;
+- "Where are the best prices?" — what the Best prices page shows: items cheaper at another store or in another
+  pack size, and recent price drops;
+- "How are my budgets?" — this month's budgets: spent of each, the percentage, what's left and where it's heading;
 - "Add milk to the shopping list" — added only after the person taps the exact change it proposes.
 
 With more than one home, the assistant asks which. Each answer links back to this app. The answers travel through

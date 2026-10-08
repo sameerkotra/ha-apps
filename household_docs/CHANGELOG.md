@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.0
+
+- **Pictures in notes**: paste a picture into a Markdown note (or use 🖼 on its toolbar — on a phone that can be the camera) and it's saved next to the note and shown in the preview. Only pictures kept in Docs are ever shown; links to pictures elsewhere still aren't loaded.
+- **Formatting on phones**: the Markdown toolbar sits under the text, in reach above the keyboard, with numbered lists, quotes, code, document links and pictures added, and tapping it no longer closes the keyboard.
+- **View links**: Share → **Make a view link** gives an address anyone in the household can open to view it (a new address or **Turn off** whenever you like; turning it off removes the access it gave).
+- **Sheets**: more number formats — Accounting (negatives in brackets), Scientific, Time and Date and time; typing "17:30" or "5:30 pm" makes a time. A ▾ on each column header opens its menu (sort, filter, total …) without right-clicking.
+
 ## 1.4.0
 
 - **Full screen**: ⛶ next to Share in every note, checklist and sheet gives the document the whole screen — the sidebar, search bar and bottom bar step aside (and the browser goes full screen where it's allowed). ⛶ again or **Esc** brings them back.

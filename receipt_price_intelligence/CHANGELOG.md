@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- **More for the Household Assistant**: "Where are the best prices?" (savings by store and pack size, and recent price drops) and "How are my budgets this month?" (each budget, how much is left and where it's heading).
+
 ## 1.2.3
 
 - **Home Assistant's time zone, always**: "today" (prices, budgets, alerts, file names) now follows Home Assistant's zone, read at start-up, asked again until Home Assistant answers and every six hours after; until then the zone the Supervisor gives every app (Home Assistant's own), never UTC.

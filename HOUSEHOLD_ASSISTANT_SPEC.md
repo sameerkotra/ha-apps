@@ -82,8 +82,9 @@ question ──► plan (model, JSON) ──► tool calls over the bus (≤ 4) 
    Only tools of apps the admin turned on (§8.2), and only those the asking person may use (§7), are shown to
    the model.
 2. **Plan.** One model call in JSON mode (`want_json`, which all three providers support in `ai_client`), with the
-   system prompt (§3.1), the catalogue as a compact list (name, what, args), the conversation's last 6 turns, the
-   question, and any results so far. The model answers one of:
+   system prompt (§3.1), the catalogue as a compact list (name, what, args), the conversation's last 6 turns (each
+   with the tools and arguments that answered it, up to 4 — 1.3.0 — so a follow-up like "and next week?" asks the
+   same tool again with the change), the question, and any results so far. The model answers one of:
    `{"call": [{"tool": "todo.tasks", "args": {"when": "today"}}, …]}` (up to 4 tools in one round, run in
    parallel), `{"answer": "…"}` (enough is known, or nothing applies), or `{"ask": "Which month?"}` (a question
    back, shown as the answer). Native tool calling (OpenAI `tools`, Anthropic `tool_use`, Ollama `/api/chat` tools)
@@ -153,6 +154,7 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 | | `todo.tasks` `person?` (2.5.0) | a name, `me` or `nobody` | only the tasks assigned to that person |
 | | `todo.items.done` *(acts, 2.5.0)* | `task`, `list?` | ticks off the one open task those words mean (several or none: nothing changes, the answer lists them); link to the list |
 | | `todo.items.due` *(acts, 2.5.0)* | `task`, `due`, `list?` | moves that task to another day; link |
+| | `todo.reminder.add` *(acts, 2.6.0)* | `text`, `time` (17:00, 5pm, 5:30 PM), `date?`, `list?` | a task on the person's own list for that day and time, assigned to them, plus one notification at that time (`task_alarms`, sent by the reminder loop, dropped when more than an hour late); no date and a time already past today: tomorrow; link |
 | Household Docs | `docs.search` | `query`, `kind?` | up to 10 matches: name, kind, folder, a snippet (the search page's own snippet); links |
 | | `docs.read` | `id`, `offset?` | up to 4 KB of a note's or checklist's text, or a sheet's cells as `A1: value` rows; `more`; link to the document |
 | | `docs.checklist` | `id` | items with ticked / open; link |
@@ -169,6 +171,8 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 | | `receipt.price` | `item` | last prices by store, the cheapest, the trend over 90 days; link to the item |
 | | `receipt.spending` | `month?`, `store?` | spend by store or by category; link |
 | | `receipt.shopping_list.add` *(acts)* | `item`, `qty?` | the added item with its cheapest store; link |
+| | `receipt.deals` (1.3.0) | — | the Best prices page: items cheaper at another store or pack size (savings) and recent price drops; link to `/deals` |
+| | `receipt.budgets` (1.3.0) | — | this month's budgets: spent of each, %, left, on track or heading over (with the forecast); link |
 | Splitpot | `splitpot.balances` | `group?` | who owes whom, for the person's groups; link |
 | | `splitpot.recent` | `group?`, `days?` | the newest 20 expenses (what, who paid, amount), as the group page's own first page, with `more`; link |
 | | `splitpot.expense.add` *(acts, 2.5.0)* | `description`, `amount`, `group?`, `paid_by?`, `split_with?`, `date?` | an expense split equally (the payer and sharers by first or full name, `me`; the group can be left out when the person has one, or a default), checked by `build_splits` / `resolve_expense_date`, logged and notified after the commit (`msg.after_commit`); a name that isn't a member: nothing added; link to the group |
@@ -485,7 +489,7 @@ loaded. The assistant needs nothing special for it — it is an ordinary Ollama 
   for this short, flat schema; the catalogue shown to the model is cut to the tools of the apps the person may use
   (§3 step 1), which keeps the prompt within a small context window (Household AI's default 8192).
 
-## 16. The morning briefing (assistant 1.2.0)
+## 16. Morning and evening briefings (assistant 1.2.0; evening and speaker 1.3.0)
 
 Once a day, at the time a person chose, the assistant asks the apps about that person's day — exactly as if they
 had asked — and sends a summary to their phone. `household_assistant/app/briefing.py`.
@@ -508,4 +512,14 @@ had asked — and sends a summary to their phone. `household_assistant/app/brief
   chosen time until 3 hours after it (a restart late in the morning still sends; one in the afternoon doesn't) — for
   people the assistant is on for (children only while *Children may ask*). `last_sent` is written before sending, so
   a slow or failing app never sends it twice.
+- **Evening (1.3.0)**: `briefings.evening_on`, `evening_at` (default 20:00), `evening_last_sent`, same days; asks
+  `todo.tasks {when: tomorrow}` (always kept), `tree.birthdays {days: 2}`, `finance.bills {days: 2}`; titled
+  "🌙 Evening briefing · <tomorrow>", stored as the question "Evening briefing". `PUT /api/briefing` takes
+  `eveningOn`, `eveningTime`; `POST /api/briefing/send?kind=morning|evening`. Both kinds are checked by the same job,
+  each with its own `last_sent`.
+- **Speaker (1.3.0)**: `briefings.speaker`, a `media_player.*` entity (validated; `null` clears; left out: kept).
+  `GET /api/briefing` lists the media players and the first `tts.*` entity from Home Assistant's states. When set,
+  the briefing is also spoken there with `POST /services/tts/speak {entity_id: <tts>, media_player_entity_id,
+  message}` — the same lines without emoji, starting "Good morning/evening, <first name>." A failed speak doesn't
+  stop the phone message.
 
