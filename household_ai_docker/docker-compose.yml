@@ -1,0 +1,28 @@
+# Household AI on its own machine. Start:   docker compose up -d --build
+# Settings page:  http://<this machine>:8080        (no login — keep it to your own network)
+# Household apps: Ollama provider, address http://<this machine>:11434
+services:
+  household-ai:
+    build:
+      context: .
+      args:
+        OLLAMA_LIBS: all          # "cpu" for a smaller image on a machine without an NVIDIA graphics card
+    image: household-ai:local
+    container_name: household-ai
+    restart: unless-stopped
+    ports:
+      - "8080:8080"               # the settings page
+      - "11434:11434"             # the gateway the household apps use
+    environment:
+      TZ: "Europe/London"         # your time zone: the daytime window (When models stay loaded) follows it
+      PUBLIC_GATEWAY_PORT: "11434"  # change with the left-hand side of the 11434 line above
+    volumes:
+      - ./data:/data              # settings, keys, usage and the models (gigabytes each)
+    # An NVIDIA graphics card (needs the NVIDIA Container Toolkit on this machine): remove the # on the next 7 lines.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]

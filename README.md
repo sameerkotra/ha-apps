@@ -42,6 +42,10 @@ there, keep one loaded during the day, and let the apps share it fairly. It is s
 answer, minutes for a receipt photo), keeps everything at home, and is reachable only by apps inside Home Assistant
 unless you choose otherwise. See its [documentation](household_ai/DOCS.md).
 
+Have another computer, perhaps with a graphics card? [`household_ai_docker`](household_ai_docker/README.md) runs the
+same model server and settings page there with Docker (`docker compose up -d --build`); the apps point at it the same
+way.
+
 ## Installing
 
 [![Add this repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fsameerkotra%2Fha-apps)

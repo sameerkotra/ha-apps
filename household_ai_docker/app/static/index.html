@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Household AI</title>
+<script src="common/theme-boot.js?v=1.0.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.0.1">
+<link rel="stylesheet" href="common/settings.css?v=1.0.1">
+<link rel="stylesheet" href="style.css?v=1.0.1">
+</head>
+<body>
+<header class="topbar">
+  <span class="brand"><span aria-hidden="true">🧠</span> Household AI</span>
+  <div class="topbar-right">
+    <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
+    <span id="version" class="hint"></span>
+  </div>
+</header>
+
+<main class="column">
+  <div id="notAdmin" class="note warn" hidden></div>
+  <nav class="tabs" id="tabs" hidden>
+    <button type="button" class="tab active" data-tab="status">Status</button>
+    <button type="button" class="tab" data-tab="models">Models</button>
+    <button type="button" class="tab" data-tab="use">Use it in other apps</button>
+    <button type="button" class="tab" data-tab="keys">Access keys</button>
+    <button type="button" class="tab" data-tab="settings">App settings</button>
+    <button type="button" class="tab" data-tab="usage">Usage</button>
+    <button type="button" class="tab" data-tab="storage">Storage</button>
+  </nav>
+  <section id="tab-status" class="tab-body"></section>
+  <section id="tab-models" class="tab-body" hidden></section>
+  <section id="tab-use" class="tab-body" hidden></section>
+  <section id="tab-keys" class="tab-body" hidden></section>
+  <section id="tab-settings" class="tab-body" hidden></section>
+  <section id="tab-usage" class="tab-body" hidden></section>
+  <section id="tab-storage" class="tab-body" hidden>
+    <div class="card">
+      <h3>Backups</h3>
+      <p class="hint">A copy of the app's database: the App settings, the access keys (as hashes — a backup holds no
+        usable key) and the usage counts. The models are not in it (they are in the Docker volume's
+        <code>models</code> folder): after restoring on a new machine, download them again on the Models tab.</p>
+      <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
+      <p><label class="btn-secondary">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
+    </div>
+  </section>
+</main>
+
+<div id="toastRoot" class="toast-root"></div>
+<div id="modalRoot"></div>
+<script src="common/ui.js?v=1.0.1"></script>
+<script src="common/settings.js?v=1.0.1"></script>
+<script src="common/backnav.js?v=1.0.1"></script>
+<script src="app.js?v=1.0.1"></script>
+</body>
+</html>
