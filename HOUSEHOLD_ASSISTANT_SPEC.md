@@ -169,6 +169,7 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 | Household Arcade | `arcade.scores` | `game?` | the household leaderboard; link |
 | Household Vault | — | — | **never** (§7) |
 | Family Tree | `tree.birthdays` | `days?` (1–90) | coming birthdays and anniversaries; link |
+| | `tree.relation` | `person`, `to?` (the asker) | how the two are related, both ways, in the person's relationship language, with the linking chain; names may be misspelt or partial — several people of one name come back as choices; link to *How are they related?* |
 
 Chat deliberately offers no message search: a chat's text is the most private thing on the bus, and the person
 can search in Chat. Finance never returns memo or description text typed by a person, only merchant, date, amount

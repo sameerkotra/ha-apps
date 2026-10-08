@@ -55,8 +55,9 @@ app = FastAPI(title="Family Tree", lifespan=lifespan)
 for r in (me, related_router, people, families, events, stories, tree, history, media_router, export, reminders_router, kin_router,
           map_router, custom_router, sources_router, contacts_router, dup_router, tithi_router, quiz_router, admin, tree_import):
     app.include_router(r.router)
-# "/<page>/upcoming" and "/<page>/person/<id>" asked of the app itself: a redirect to the page's "#/…" (deeplink.js)
-deeplinks.add(app, {"upcoming": 0, "person": 1})
+# "/<page>/upcoming", "/<page>/person/<id>" and "/<page>/relate/<id>/<id>" asked of the app itself: a redirect to the
+# page's "#/…" (deeplink.js)
+deeplinks.add(app, {"upcoming": 0, "person": 1, "relate": 2})
 
 
 @app.exception_handler(features.FeatureOff)

@@ -794,10 +794,22 @@ ALTER TABLE people ADD COLUMN never_export INTEGER NOT NULL DEFAULT 0;
   and outbox thread; off without a Supervisor token, e.g. in the tests). Its tables (`bus_outbox`, `bus_seen`,
   `bus_apps`) are made by `app_bus` itself. For now Family Tree only answers the **Household Assistant**
   (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`, APP_MESSAGES_SPEC §6.6).
-- **One tool, `tree.birthdays`** (`days?` 1–90, default 30; `everyone?`): `upcoming.entries` for the asking person —
+- **`tree.birthdays`** (`days?` 1–90, default 30; `everyone?`): `upcoming.entries` for the asking person —
   close family (3 steps from their "This is me") unless `everyone` or no "This is me", relationship names in their
   own language, no remembrance days — as `{date, in_days, what, title, years, relationship}`. Names, dates, ages
   and relationships only: no photos, contacts, notes or ids.
+- **`tree.relation`** (2.4.0; `person`, `to?` — the asker when left out): what "How are they related?" shows, as
+  text both ways ("Kiran is Sita's Menalludu (younger brother's son). Sita is Kiran's Atta (…)"), the chain when it
+  has more than one link, and one item `{person, to, relationship, english, meaning, back, back_english, link}`.
+  Its link opens `/relate/<to>/<person>` (also a deep link the app answers). People are found by `find_people.py`:
+  "me" / "myself"; a phrase `related.parse` understands ("my husband", "Ravi's son", "father of Sita") with exactly
+  one match; else every name (given, surname, birth surname, nickname, other names, script names while that
+  feature is on) is scored word by word — exact 1, the same once transliteration spellings are folded (ksh/x,
+  sh/s, th/t, ee/i, doubled letters, a breathy h …) 0.95, an initial 0.9, only the vowels differ 0.88, the start
+  of a longer name 0.85, else 0.9 × letter likeness; the mean over the asked words, halved when a word fits
+  nothing. From 0.75 a person can be meant; everyone within 0.05 of the best (only exact ones when the best is
+  exact) is offered as choices with birth year, parents and what they are to the asker; under 0.75 the nearest
+  three names. A name taken loosely is said in the answer ("“Kiren” taken as Kiran Pallem").
 - **Switches**: App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and Settings →
   **Let the Household Assistant answer for me** (`users.assistant_ok`, default on; `PUT /api/me/assistant`);
   otherwise `nack not_allowed` (`off` / `person_off`); a disabled or unknown user is `no_access`.

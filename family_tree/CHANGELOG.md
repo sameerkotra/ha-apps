@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.0
+
+- **Ask the Household Assistant how two people are related**: "How is Ravi related to Sita?", "What is Lakshmi to me?" or "How am I related to Venkat?" now get the same answer as **How are they related?** — both ways, in your relationship language (for example *Menalludu (younger brother's son)*), with the chain of parents, children and marriages that links them, and a link that opens that page with the two people chosen.
+- **Names don't have to be exact**: misspellings and spelling variants (Laxmi / Lakshmi, Seeta / Sita, Kiren / Kiran), part of a name ("Venkat" for Venkateswara), an initial ("Ravi P"), nicknames and other names all find the right person; "me", "my husband" or "Ravi's son" work too. When the name was taken loosely the answer says who it took; when two people share a name it lists them (with birth year and parents) so the assistant can ask which one.
+
 ## 2.3.2
 
 - **Links open the right page**: tapping a reminder notification opens Upcoming, and so does the Household Assistant's answer. A link to `…/person/<id>` opens that person.

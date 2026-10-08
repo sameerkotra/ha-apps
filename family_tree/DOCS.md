@@ -177,7 +177,11 @@ reminders; tap it to switch.
 ### Asking the Household Assistant
 
 If the household also uses the **Household Assistant** app, you can ask it
-"Whose birthday is coming up?". Family Tree tells it what **Upcoming** would
+"Whose birthday is coming up?" or "How is Ravi related to Sita?" (or "What
+is Lakshmi to me?" once you've said "This is me"). Names needn't be exact —
+a misspelling, part of a name, an initial or a nickname is enough, and "my
+mother" or "Ravi's wife" work too; if two people share the name it asks
+which one. For birthdays, Family Tree tells it what **Upcoming** would
 show you — names, dates, ages and how each person is related to you (close
 family once you've said "This is me", or everyone if you ask) — and nothing
 else: no photos, contact details or notes. Its answer links back to Family
@@ -471,7 +475,7 @@ the field before anything is saved. Saved changes apply straight away.
 | Map tiles address | OpenStreetMap's tile server | Places map: where map pictures come from (`https://…/{z}/{x}/{y}.png`). Shown while the map is on. |
 | Place search address | `https://nominatim.openstreetmap.org` | Places map: the Nominatim server place names are looked up on. Shown while the map is on. |
 | Features | see above | The switches for every optional part of the app. |
-| Answer the Household Assistant | on | Lets the Household Assistant app tell people the birthdays and anniversaries coming up (see *Asking the Household Assistant*). |
+| Answer the Household Assistant | on | Lets the Household Assistant app tell people the birthdays and anniversaries coming up and how two people are related (see *Asking the Household Assistant*). |
 
 The app's **Configuration** tab has only one option:
 
