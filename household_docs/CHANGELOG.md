@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- **Full screen**: ⛶ next to Share in every note, checklist and sheet gives the document the whole screen — the sidebar, search bar and bottom bar step aside (and the browser goes full screen where it's allowed). ⛶ again or **Esc** brings them back.
+- **Sheets**: a sheet now shows 1 000 rows and columns A–Z from the start, and grows as you move past them (up to 5 000 rows and 100 columns). Before, an empty sheet stopped at row 60 and column P.
+- **Sheets**: the word "null" no longer shows under the last row.
+
 ## 1.3.0
 
 - **Checklists from the Household Assistant**: "Tick passports on the packing list" or "Add snacks to it" — only after you tap the exact change, and only where you could do it here (a viewer ticks only when the checklist lets viewers tick).

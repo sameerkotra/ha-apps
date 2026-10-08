@@ -257,6 +257,37 @@
   }
   D.noAccessPage = noAccessPage;
 
+  // Full screen (SPEC §13): the editor gets the whole window — the sidebar, the search bar and the bottom bar step
+  // aside, and the browser's own full screen is asked for where it is allowed (inside Home Assistant's app it may not
+  // be; the page still fills its frame). ⛶ again, Esc or leaving the document ends it.
+  function setFull(on) {
+    document.body.classList.toggle("doc-full", !!on);
+    for (const b of document.querySelectorAll("#docFull")) {
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.title = on ? "Leave full screen (Esc)" : "Full screen";
+    }
+    try {
+      if (on && document.fullscreenEnabled && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+      else if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    } catch (e) { /* not allowed here: the page still fills its frame */ }
+    window.dispatchEvent(new Event("resize"));        // the editors refit their height
+    requestAnimationFrame(() => document.querySelectorAll(".note-text").forEach((el) => D.fitToScreen(el)));
+  }
+  D.setFull = setFull;
+  D.isFull = () => document.body.classList.contains("doc-full");
+  function fullButton() {
+    const on = D.isFull();
+    return h("button", { class: "icon-btn head-full", type: "button", id: "docFull", "aria-label": "Full screen",
+      title: on ? "Leave full screen (Esc)" : "Full screen", "aria-pressed": on ? "true" : "false",
+      onclick: () => setFull(!D.isFull()) }, "⛶");
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !D.isFull() || e.defaultPrevented) return;
+    if (document.querySelector("#modalRoot > *, .menu-pop, [role='menu']")) return;      // Esc closes those first
+    setFull(false);
+  });
+  document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement && D.isFull()) setFull(false); });
+
   function editorHead(doc, ctx) {
     const status = h("span", { class: "save-state", id: "saveState", role: "status", "aria-live": "polite" });
     const editing = h("span", { class: "chip warn editing-chip", id: "editingChip", hidden: !doc.editing }, doc.editing ? `${doc.editing} is editing` : "");
@@ -268,7 +299,7 @@
     const title = doc.canEdit
       ? h("button", { class: "doc-title editable", type: "button", id: "docTitle", title: `${name} — Rename`, onclick: () => renameDialog(doc, () => D.render()) }, name)
       : h("h2", { class: "doc-title", id: "docTitle", title: name }, name);
-    const actions = [];
+    const actions = [fullButton()];
     if (doc.canShare) actions.push(h("button", { class: "btn-secondary btn-small head-share", type: "button", id: "docShare", title: "Share with people", onclick: () => shareDialog(doc) }, "Share"));
     actions.push(h("button", { class: "icon-btn head-more", type: "button", "aria-label": "More actions", title: "More actions", "aria-haspopup": "menu", id: "docMore", onclick: (e) => D.itemMenu(e.currentTarget, doc, { inEditor: true }) }, "⋯"));
     const role = doc.role !== "owner" ? h("span", { class: "chip role-" + doc.role }, D.roleLabel(doc.role, doc.rootKind)) : null;

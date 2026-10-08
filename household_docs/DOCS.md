@@ -82,7 +82,9 @@ scanned, marked "added outside the app".
 
 A note is a plain-text file (`.txt`) or a **Markdown** note (`.md`). Type and it saves itself a second after you
 stop (and when you leave); the header says **Saved**, **Saving…** or **Offline — will retry**. **Wrap lines** and
-**Monospace** change how it looks on this device. The title is the file name: tap it to rename.
+**Monospace** change how it looks on this device. The title is the file name: tap it to rename. **⛶** (next to
+Share, in every note, checklist and sheet) gives the document the whole screen; ⛶ again or **Esc** brings the rest
+back.
 
 The top of every open document (note, checklist or sheet) is one line — **←**, the name (a long one ends in "…";
 point at it to see it all), **Share** and **⋯** for everything else (Rename, Move, History, Download, Delete…) —
@@ -139,6 +141,9 @@ task list again.
 A sheet is a spreadsheet with formulas, saved as an Excel file (`.xlsx`) — or as a `.csv` if you prefer (Settings →
 **New sheets as**). It opens in Excel, LibreOffice, Numbers or Google Sheets too, with the numbers already worked
 out. ➕ **New → Sheet** makes one; ➕ **New → Import a sheet** turns a `.csv` or `.xlsx` into a new sheet.
+
+A new sheet shows 1 000 rows and columns A–Z; it grows as you go past them (up to 5 000 rows and 100 columns
+per tab).
 
 **Typing.** Click a cell and type (on a phone: tap the cell, then the bar at the top). **Enter** goes down,
 **Tab** goes right, **Esc** cancels. `12%` becomes a percent, `2026-03-09` or `9/3/2026` a date, `'007` stays

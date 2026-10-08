@@ -328,6 +328,7 @@ async function render() {
   if (!["folder", "doc"].includes(Docs.state.route)) Docs.state.currentSpace = null;
   if (Docs.state.route !== "folder" && Docs.state.route !== "mine") Docs.state.currentFolder = null;
   document.body.dataset.route = Docs.state.route || "home";
+  if (Docs.state.route !== "doc" && Docs.isFull && Docs.isFull()) Docs.setFull(false);    // full screen is for a document
   closeMenu();
   const seq = ++renderSeq;
   const page = $("#page");

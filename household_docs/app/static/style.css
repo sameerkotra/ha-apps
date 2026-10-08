@@ -890,3 +890,11 @@ span.doc-link { color: var(--text-dim); border-bottom-color: var(--border); }
 .page-tabs .tab-btn { display: inline-block; padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: .92rem; }
 .page-tabs .tab-btn:hover { background: var(--panel-alt); color: var(--text); }
 .page-tabs .tab-btn.active { background: var(--panel-alt); color: var(--accent); }
+
+/* Full screen (⛶ in a document's header): only the document */
+body.doc-full .sidebar, body.doc-full .top-stack, body.doc-full .bottombar, body.doc-full .secret-hint,
+body.doc-full .footnote { display: none !important; }
+body.doc-full main { max-width: none; padding: 10px 14px 12px; }
+body.doc-full .note-text { min-height: calc(100vh - 150px); min-height: calc(100dvh - 150px); }
+body.doc-full .sheet-wrap { height: calc(100vh - 215px); height: calc(100dvh - 215px); }
+.head-full[aria-pressed="true"] { color: var(--accent); }

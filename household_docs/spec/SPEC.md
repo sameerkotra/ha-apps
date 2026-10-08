@@ -753,8 +753,10 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
   it, and chart tabs showing it). **Sorting** moves whole rows of the range; formulas in moved rows keep pointing at
   their own row, while references to other tabs stay where they were (*decision*: Excel would move those too,
   which silently breaks cross-tab lookups). Widths, totals, colour rules and charts follow inserted/deleted columns.
-- **The grid** (`static/sheet.js`) draws only the rows on screen (a fixed row height, spacer rows above and below),
-  every column up to the used ones + a few (≤ 100); frozen rows and columns and the header row / row numbers are
+- **The grid** (`static/sheet.js`) draws only the rows on screen (a fixed row height, spacer rows above and below);
+  it is at least 1 000 rows and A–Z, and 100 rows / 5 columns past the last used cell or the active cell (a
+  selection's far end only included, so "select all" doesn't grow it; moving near the edge redraws it bigger),
+  within 5 000 × 100; frozen rows and columns and the header row / row numbers are
   `position: sticky` cells. Selecting doesn't rebuild the grid (the cell under the pointer must stay in place).
   Typing starts editing in the cell (desktop) or through the cell editor bar at the top (phones: tap a cell, tap the
   bar); clicking cells while typing a formula puts their address in, and so do the **arrow keys** right after `=`, an
@@ -1108,6 +1110,12 @@ which keeps names and filters near the 300 ms target and FTS under 500 ms.
   phones get a bottom bar: Docs · Search · ➕ · Shared · More.
 - **Folder view:** breadcrumb, list or grid, sort, multi-select → Move, Copy, Share, Download, Tag, Delete; drag and
   drop on a computer (also files from the computer → upload). Files added outside the app show "added outside the app".
+- **Full screen** (every editor): **⛶** in the header (before Share) puts `doc-full` on the body — the sidebar, the
+  top bar, the bottom bar and the secret hint step aside, the page loses its width limit, a note's text box reaches
+  the bottom (`100dvh − 150px`, refitted on phones) and a sheet's grid grows (`100dvh − 215px`) — and asks the
+  browser's own full screen where it's allowed (it may not be inside Home Assistant's app; the page still fills its
+  frame). ⛶ again, Esc (not while a dialog or menu is open, or a cell is being edited), leaving full screen in the
+  browser, or leaving the document ends it.
 - **Editors:** §1 and §8; header with name, save state ("Saved" / "Saving…" / "Offline — will retry"), Share, ⋯
   (History, Export, Copy, Move, Show where it's stored — the path under `/share`, Delete).
   *(R2)* The header is **one line** for every kind (note, Markdown note, checklist, sheet), at every width: **←** · the

@@ -18,6 +18,7 @@
   const RHEAD = 46;             // row-number column width
   const DEFAULT_W = 110;
   const MAXR = 5000, MAXC = 100, MAXTABS = 10, MAXCELLS = 200000;
+  const MIN_ROWS = 1000, MIN_COLS = 26;        // the empty grid shown (rows are drawn only as they scroll in)
   const FORMATS = [["general", "General"], ["number", "Number"], ["currency", "Currency"], ["percent", "Percent"], ["date", "Date"], ["text", "Text"]];
   const TOTALS = ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"];
   const COLOURS = [["red", "Red"], ["amber", "Amber"], ["green", "Green"], ["blue", "Blue"], ["purple", "Purple"], ["grey", "Grey"]];
@@ -606,8 +607,11 @@
     function dims() {
       const t = cur();
       const used = usedOf(t);
-      const rows = Math.min(MAXR, Math.max(used.rows + 30, 60));
-      const cols = Math.min(MAXC, Math.max(used.cols + 4, fine() ? 16 : 8));
+      // like a spreadsheet: at least 1 000 rows and A–Z, more past the last cell used or the selection
+      const sel = st.sel || { r1: 0, r2: 0, c1: 0, c2: 0 };
+      // (room around the active cell; a selection's far end is only included, so "select all" doesn't grow it)
+      const rows = Math.min(MAXR, Math.max(used.rows + 100, sel.r1 + 100, (sel.r2 ?? 0) + 1, MIN_ROWS));
+      const cols = Math.min(MAXC, Math.max(used.cols + 5, sel.c1 + 5, (sel.c2 ?? 0) + 1, MIN_COLS));
       return { rows, cols, used };
     }
     function widthOf(t, c) { return (t.cols && t.cols[S.colName(c)]) || DEFAULT_W; }
@@ -670,7 +674,7 @@
       if (topPad > 0) pads[0].style.height = topPad + "px";
       if (bottomPad > 0) pads[pads.length - 1].style.height = bottomPad + "px";
       const foot = t.totals && Object.keys(t.totals).length ? totalsRow(t, cols, lefts, fc) : null;
-      table.replaceChildren(colgroup, h("thead", null, headRow), tbody, foot);
+      table.replaceChildren(...[colgroup, h("thead", null, headRow), tbody, foot].filter(Boolean));   // no totals: nothing (not "null")
       table.style.width = lefts[cols] + "px";
       lastDraw = { cols, rows, fr, fc, lefts, vis, total };
       placeInput();
@@ -973,7 +977,8 @@
         let r = Math.max(0, Math.min(MAXR - 1, st.sel.r1 + dr));
         st.sel = { c1: c, r1: r, c2: c, r2: r };
       }
-      void rows; void cols;
+      const r = Math.max(st.sel.r1, st.sel.r2 ?? st.sel.r1), c = Math.max(st.sel.c1, st.sel.c2 ?? st.sel.c1);
+      if (r >= rows - 50 || c >= cols - 3) { draw(); scrollToSel(); draw(); return; }    // near the edge: a bigger grid
       scrollToSel();
       paintSel();
     }
