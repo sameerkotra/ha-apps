@@ -25,7 +25,7 @@
     function snap() { prev = { x: s.ship.x, y: s.ship.y, a: s.ship.a }; }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; snap(); },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; snap(); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; snap(); },
       step: function () {

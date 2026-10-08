@@ -934,14 +934,18 @@ GAMES: dict[str, dict] = {
 
 # Carrying on from the next level (SPEC §14): the modes whose levels are puzzles or goals, so the next game starts at
 # the first level the person hasn't cleared. {game: {mode: how many levels}} — None: the mode's level list (levels.py)
-# decides; a number: the game's own fixed set of boards. Score chases (Brick Breaker, the wave shooters) and opponents
-# (Paddle Duel, Snake Duel, Tank Battle) always start at level 1.
+# decides; a number: the game's own fixed set of boards. Every game with levels carries on; only two-player modes
+# (Snake Duel's two players, Tank Battle's together/against) always start at level 1.
 CONTINUE_LEVELS: dict[str, dict[str, int | None]] = {
     "snake": {"maze": None}, "flap": {"course": None}, "mines": {"boards": None}, "merge": {"goals": None},
     "colours": {"challenge": None}, "cards": {"challenge": None}, "mole": {"gardens": None},
     "numbers": {"challenge": None}, "racer": {"stages": None}, "hop": {"levels": None}, "bubbles": {"puzzle": None},
     "gems": {"moves": None}, "stack": {"towers": None}, "runner": {"courses": None}, "lander": {"levels": None},
     "typerain": {"stages": None}, "lights": {"climb": 5},
+    # the score chases and opponents carry on too (asked for): a run started later doesn't count for bests
+    "brick": {"powerups": None, "classic": None}, "blocks": {"challenge": None},
+    "duel": {"easy": None, "normal": None, "hard": None}, "tanks": {"classic": None, "easy": None},
+    "invaders": {"waves": None}, "rocks": {"waves": None}, "defense": {"waves": None}, "snakeduel": {"cpu": None},
     "arrows": {"levels": 200}, "parking": {"levels": 200}, "watersort": {"levels": 200}, "bolts": {"levels": 200},
     "connect": {"levels": 200}, "untangle": {"levels": 200},
     # the lists of named boards (SPEC §11.9), which an AI model can add to

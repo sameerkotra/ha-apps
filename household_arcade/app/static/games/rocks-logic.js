@@ -78,6 +78,9 @@
   }
   function dist(ax, ay, bx, by) { var d = delta(ax, ay, bx, by); return Math.sqrt(d[0] * d[0] + d[1] * d[1]); }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
@@ -89,6 +92,7 @@
       waves: mode === "waves" ? usableLevels(o.levels) : null,
       stats: { rocks: 0, shots: 0, saucers: 0, livesLost: 0, waves: 0, cause: null },
     };
+    if (s.waves) { s.wave = startAt(o.startLevel, s.waves.length); s.level = Math.min(MAX_LEVEL, s.wave); }
     newShip(s);
     s.ship.safe = 0;
     startWave(s);

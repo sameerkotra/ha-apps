@@ -19,7 +19,7 @@
 
     var impl = {
       init: function (seed) {
-        s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels });
+        s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel });
         prev = snapshot(); trails = []; parts = []; shake = 0;
       },
       save: function () { return Logic.save(s); },

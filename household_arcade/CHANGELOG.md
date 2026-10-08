@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.12.1
+
+- **Every game with levels now carries on from the next level**. Brick Breaker, Falling Blocks · *Challenge*, Paddle
+  Duel, Tank Battle, Sky Defenders · *Waves*, Rocks · *Waves*, City Defense · *Waves* and Snake Duel · *vs computer*
+  used to start at level 1 every time and weren't shown under **My scores → Level progress**; now they remember the
+  levels you've cleared and start at the next one (pick an earlier level from the **Level** drop-down to replay).
+  Only two-player modes still start at level 1. Checked in a browser for all 44 game modes that carry on.
+
 ## 1.12.0
 
 - **Arrow Release: more, smaller arrows, and zoom**. The boards are bigger — *14 × 14*, *20 × 20*, *Twisty 16 × 16*,

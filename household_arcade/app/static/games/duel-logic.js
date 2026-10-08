@@ -76,6 +76,9 @@
   function missChance(s) { return clamp(opponent(s).miss + MODES[s.mode].miss, 0.05, 0.45); }
   function startSpeed(s) { return opponent(s).ball; }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     if (o.mode === "phones") return createPhones(o);
@@ -90,6 +93,7 @@
       stats: { returns: 0, pointsWon: 0, pointsLost: 0, matches: 0, longestRally: 0 },
       opponents: usableLevels(o.levels),
     };
+    s.level = startAt(o.startLevel, s.opponents.length);
     return s;
   }
 

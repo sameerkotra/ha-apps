@@ -73,7 +73,9 @@ which sits over a still picture of the game:
   the list keeps growing. Every mode has its own bests and its own leaderboard.
 - **Level** (a drop-down, in modes that carry on) — where a level is a puzzle or a goal (the
   new puzzles' *Levels*, Snake's *Maze*, Mines' *Boards*, Merge's *Goals*, Lights Out's *Climb*,
-  Flap's *Course*, the puzzle books and the other level lists), the app remembers the levels you've cleared —
+  Flap's *Course*, the puzzle books and the other level lists) — and since 1.12.1 the score chases and computer
+  opponents too (Brick Breaker, Falling Blocks challenges, Paddle Duel, Tank Battle, Sky Defenders, Rocks, City
+  Defense waves, Snake Duel vs computer) — the app remembers the levels you've cleared —
   Practice games included — and the next game starts at the first one you haven't:
   *Level 9 (next)*. Pick an earlier level to play it again. When you've cleared them all, the
   next game starts at level 1. The leaderboard and your personal bests count only games

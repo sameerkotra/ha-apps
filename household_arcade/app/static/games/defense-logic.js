@@ -69,6 +69,9 @@
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
@@ -80,6 +83,7 @@
       waves: mode === "waves" ? usableLevels(o.levels) : null,
       stats: { missiles: 0, fliers: 0, shots: 0, citiesLost: 0, waves: 0, cause: null },
     };
+    if (s.waves) { s.wave = startAt(o.startLevel, s.waves.length); s.level = Math.min(MAX_LEVEL, s.wave); }
     startWave(s);
     return s;
   }

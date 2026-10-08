@@ -95,6 +95,9 @@
   }
   function waveCount(s) { return s.waves ? s.waves.length : MAX_WAVES; }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     var s = {
@@ -108,7 +111,7 @@
       phase: "start", pause: START_PAUSE, waveT: 0, pops: [],
       stats: { critters: 0, ships: 0, shots: 0, waves: 0, cause: null },
     };
-    if (s.mode === "waves") s.waves = usableLevels(o.levels);
+    if (s.mode === "waves") { s.waves = usableLevels(o.levels); s.level = startAt(o.startLevel, s.waves.length); }
     startWave(s);
     return s;
   }

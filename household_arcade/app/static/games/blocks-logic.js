@@ -103,6 +103,9 @@
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
@@ -120,7 +123,7 @@
     fillNext(s);
     if (mode === "challenge") {
       s.challenges = usableLevels(o.levels);
-      startChallenge(s, 1, []);
+      startChallenge(s, startAt(o.startLevel, s.challenges.length), []);
     } else spawn(s, []);
     return s;
   }

@@ -254,6 +254,9 @@
     startRound(s, READY_FIRST);
   }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     var s = {
@@ -267,7 +270,7 @@
     };
     // Against the computer the arenas come in order; two players (one screen or two phones) play one match on an
     // arena picked by the seed.
-    var first = s.mode !== "cpu" ? 1 + Math.floor(rand(s) * s.arenas.length) : 1;
+    var first = s.mode !== "cpu" ? 1 + Math.floor(rand(s) * s.arenas.length) : startAt(o.startLevel, s.arenas.length);
     loadArena(s, first);
     return s;
   }

@@ -189,6 +189,9 @@
     s.p2 = { x: at.x, y: at.y, dir: s.two === "against" ? 2 : 0, acc: 0, dead: 0, shield: SHIELD };
   }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(o) {
     o = o || {};
     var mode = MODES[o.mode] ? o.mode : "classic";
@@ -211,6 +214,7 @@
         s.wins = [0, 0]; s.matchWinner = null; s.draws = 0; s.flag2Down = false; s.roundWinner = null;
       }
     }
+    if (!s.two) s.level = startAt(o.startLevel, s.arenas.length);
     loadArena(s);
     return s;
   }

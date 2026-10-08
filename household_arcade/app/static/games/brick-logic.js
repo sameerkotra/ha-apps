@@ -68,13 +68,17 @@
     return out.length ? out : LAYOUTS;
   }
 
+  // SPEC §14: a game that carries on from the next level starts at opts.startLevel (1 to the list's length).
+  function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
+
   function create(opts) {
     var o = opts || {};
+    var layouts = usableLevels(o.levels);
     var s = {
-      layouts: usableLevels(o.levels),
+      layouts: layouts,
       mode: o.mode === "classic" ? "classic" : "powerups",
       powerups: o.mode !== "classic",
-      level: Math.max(1, o.level | 0 || 1), score: 0, lives: START_LIVES,
+      level: o.startLevel ? startAt(o.startLevel, layouts.length) : Math.max(1, o.level | 0 || 1), score: 0, lives: START_LIVES,
       bricks: [], bricksLeft: 0, layout: null, version: 0,
       balls: [], serving: true,
       paddle: { x: W / 2, w: PADDLE_W, vx: 0 },

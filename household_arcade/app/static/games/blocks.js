@@ -23,7 +23,7 @@
     function queue(evs) { for (var i = 0; i < evs.length; i++) pending.push(evs[i]); }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels }); pending = []; touch = null; },
+      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; touch = null; },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; touch = null; },
       step: function () {
