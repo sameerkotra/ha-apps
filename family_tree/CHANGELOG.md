@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.0
+
+- **Ask the Household Assistant about one person**: "How old is Lakshmi?", "Who are Ravi's children?", "When did Sita get married?" — born (when, where, age), died, parents, partners with the wedding date and years married, children, brothers and sisters, and what they are to you. Names needn't be exact, as for "How are they related?".
+
 ## 2.4.1
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- **More for the Household Assistant**: "How much did we spend at Costco this year?" (the total at one shop or company, each month's, the latest charges) and "What's the balance on my accounts?" (each account's balance from its latest statement; a card's is what's owed).
+
 ## 1.2.7
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it fell back to UTC — so in the Americas "today" turned into tomorrow in the evening. It now asks a few times over half a minute and otherwise uses the zone the Supervisor gives every app (Home Assistant's own).

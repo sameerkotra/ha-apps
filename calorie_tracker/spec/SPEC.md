@@ -38,7 +38,7 @@ calorie_tracker/
 - `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync; `tests/common_tests/test_shared_copies.py` fails if a copy was changed.
 
 ## 3. Manifest & options
-`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.2.4"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
+`config.yaml` sets: `name: "Calorie Tracker"`, `version: "2.3.0"`, `slug: calorie_tracker`, a one-to-two-sentence `description`, `url: https://github.com/sameerkotra/ha-apps`, `arch: [amd64, aarch64]`, `startup: application`, `boot: auto`, `init: true`, `ingress: true`, `ingress_port: 8099`, `panel_icon: mdi:food-apple`, `panel_title: Calorie Tracker`, and `panel_admin: false`, so every HA user sees the panel. The only API permission is `homeassistant_api: true`. `hassio_api`, `auth_api`, `docker_api` and `full_access` are all false, and `apparmor: true`. There is no `ports:` key and no host networking.
 
 | Option | Schema | Default | Effect |
 |---|---|---|---|
@@ -159,6 +159,13 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
   day — totals against their goals (the goals row, or the defaults) and each entry's meal, food, servings, kcal and
   macros. Never another person's day (`requested_by` only; the admin switcher's "acting as" never applies) and
   never weight. `requested_by` must have opened the app (a `users` row), else `nack not_allowed no_access`.
+- `calorie.week` (`date?`, the last day; not in the future): the person's own 7 days to then — each day's calories
+  against the goal (`logged` false for an empty day), the average over the days logged and how many went over.
+- `calorie.food.log` *(acts)* (`food`, `meal?` breakfast|lunch|dinner|snack — default by the hour, `servings?`
+  0.1–20, `calories?`, `protein?`, `carbs?`, `fat?`, `date?` not in the future): a `food_logs` row on the person's own
+  day. With `calories`, those values (the model's estimate, on the button the person taps); without, the saved food of
+  that name (any case), else the last log of it, per serving × servings; neither → nothing logged and the answer
+  says so. Today's sensor is pushed after the commit (`msg.after_commit`).
 - Only while App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and the person's own
   **Let the Household Assistant answer for me** (Goals; `users.assistant_ok`, default on; `GET /api/me` `assistantOk`,
   `PUT /api/me/assistant` — always the signed-in person, never "acting as"); otherwise `nack not_allowed off` /

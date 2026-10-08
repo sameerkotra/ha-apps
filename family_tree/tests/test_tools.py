@@ -86,7 +86,7 @@ class BirthdayTests(ApiTestCase):
 
     def test_catalogue(self):
         tools.tools.check()
-        self.assertEqual([t["name"] for t in tools.tools.spec()], ["tree.birthdays", "tree.relation"])
+        self.assertEqual([t["name"] for t in tools.tools.spec()], ["tree.birthdays", "tree.relation", "tree.person"])
         self.assertIn("assist.tool.call", app_bus.default._handlers)
 
     def test_panel_from_the_supervisor(self):

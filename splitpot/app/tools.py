@@ -4,7 +4,9 @@ app/common/assist_tools.py).
 - `splitpot.balances`: who owes whom in the groups the asking person is in (the group page's settle-up), and
   where they stand overall;
 - `splitpot.recent`: the newest expenses and payments in those groups (what, who paid, how much, their share),
-  like the group page's first page of 20.
+  like the group page's first page of 20;
+- `splitpot.expense.add` (acts): adds an expense to one of their groups, split equally — only after the person taps
+  the proposed change in the assistant, checked as the Add expense form checks it, logged and notified the same.
 
 Only the groups the person is a member of, matched to their Home Assistant login (`users.ha_user_id`), never by
 name. Money is private, so the admin's *Answer the Household Assistant* is **off** until turned on; each person can
@@ -148,3 +150,88 @@ def recent(ctx):
                         for x in entries[:6]) + ("…" if len(entries) > 6 else "") + ".")
     shown = {x["group"] for x in entries}
     return ctx.result(text, items=entries, links=_links(ctx, [g for g in groups if g["name"] in shown]), more=more)
+
+
+def _member(ctx, members: list, text: str):
+    """The group member (id, name) a name means: "me", a full name or a first name (any case); None if nobody."""
+    want = " ".join(text.split()).casefold()
+    if want in ("me", "i", "myself", "you"):
+        return next(((u, n) for u, n in members if u == ctx.user["id"]), None)
+    exact = [(u, n) for u, n in members if n.casefold() == want]
+    first = [(u, n) for u, n in members if n.casefold().split()[:1] == [want]]
+    hits = exact or first
+    return hits[0] if len(hits) == 1 else None
+
+
+@tools.tool("splitpot.expense.add",
+            "Adds an expense to one of the person's Splitpot groups, split equally (after they confirm it). Leave out "
+            "`paid_by` when the person paid and `split_with` to split with everyone in the group.",
+            args={"description": Arg("string", "what it was for", required=True, max_length=200),
+                  "amount": Arg("number", "the amount paid", required=True, min=0.01, max=1_000_000),
+                  "group": _GROUP,
+                  "paid_by": Arg("string", "who paid (default the person asking)", max_length=60),
+                  "split_with": Arg("string", "who shares it, names separated by commas (default everyone in the "
+                                              "group); include \"me\" when the person asking shares it",
+                                    max_length=300),
+                  "date": Arg("date", "the day (default today)")},
+            acts=True, returns="the added expense: group, who paid, each share")
+def expense_add(ctx):
+    m = _main()
+    groups = _groups(ctx)
+    link = ctx.link("Splitpot")
+    if not groups:
+        return ctx.result(f"{ctx.user['name']} isn't in any Splitpot group. Nothing was added.", links=[link])
+    if len(groups) > 1 and "group" not in ctx.args:
+        default = ctx.conn.execute("SELECT id, name FROM groups WHERE is_default = 1 AND id IN (%s)"
+                                   % ",".join("?" * len(groups)), [g["id"] for g in groups]).fetchone()
+        if default is None:
+            return ctx.result("Which group? " + ", ".join(g["name"] for g in groups) + ". Nothing was added.",
+                              links=_links(ctx, groups))
+        groups = [default]
+    g = groups[0]
+    ids = m.group_member_ids(ctx.conn, g["id"])
+    names = _names(ctx.conn)
+    members = [(u, names.get(u, "Unknown")) for u in ids]
+    payer = _member(ctx, members, ctx.args.get("paid_by") or "me")
+    if payer is None:
+        return ctx.result(f"Nobody in {g['name']} is called “{ctx.args.get('paid_by')}”. Members: "
+                          + ", ".join(n for _, n in members) + ". Nothing was added.", links=_links(ctx, [g]))
+    participants = list(ids)
+    if ctx.args.get("split_with"):
+        participants = []
+        for part in [p for p in ctx.args["split_with"].replace(" and ", ",").split(",") if p.strip()]:
+            who = _member(ctx, members, part)
+            if who is None:
+                return ctx.result(f"Nobody in {g['name']} is called “{part.strip()}”. Members: "
+                                  + ", ".join(n for _, n in members) + ". Nothing was added.", links=_links(ctx, [g]))
+            participants.append(who[0])
+    description = " ".join(ctx.args["description"].split())
+    if not description:
+        raise bus.Nack("invalid", "description")
+    try:
+        when = m.resolve_expense_date(ctx.args.get("date"))
+        payload = m.ExpenseCreate(description=description, amount=float(ctx.args["amount"]), paidBy=payer[0],
+                                  splitType="equal", participants=participants)
+        splits, split_type = m.build_splits(ids, payload)
+    except m.HTTPException as e:
+        return ctx.result(f"{e.detail}. Nothing was added.", links=_links(ctx, [g]))
+    except ValueError:
+        raise bus.Nack("invalid", "amount") from None
+    eid = m.new_id()
+    amount = round(payload.amount, 2)
+    ctx.conn.execute("INSERT INTO expenses (id, group_id, description, amount, paid_by, split_type, date) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?)", (eid, g["id"], description, amount, payer[0], split_type, when))
+    m.write_splits(ctx.conn, eid, splits)
+    actor = ctx.user["name"]
+    message = f"{actor} added '{description}' ({m.money(amount)}) to {g['name']} with the Household Assistant"
+    if payer[1].casefold() != actor.casefold():
+        message += f", paid by {payer[1]}"
+    m.log_event(ctx.conn, "expense_added", message, group_id=g["id"], actor=actor)
+    ha_id = ctx.msg.data.get("requested_by")
+    ctx.msg.after_commit(m.push_balances_to_ha)
+    ctx.msg.after_commit(lambda: m.notify_new_charge(eid, ha_id, actor))
+    shares = [{"who": names.get(sp["userId"], "Unknown"), "share": sp["amount"]} for sp in splits]
+    text = (f"Added “{description}” ({m.money(amount)}) to {g['name']}, paid by "
+            f"{'you' if payer[0] == ctx.user['id'] else payer[1]}, split equally: "
+            + ", ".join(f"{x['who']} {m.money(x['share'])}" for x in shares) + ".")
+    return ctx.result(text, items=shares, links=_links(ctx, [g]))

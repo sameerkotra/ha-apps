@@ -63,7 +63,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.4.4"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.5.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -712,6 +712,12 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   list (`#/lists/<id>`); a request for one of those paths reaching the app itself is redirected to `#/…` (the shared
   `deeplinks.py`).
 - **Tools** (everything as the person sees it: shared lists and their own personal lists, `taskview.VISIBLE_SQL`):
+  - `todo.tasks` also takes `person` (a name, first or full, any case; `me`; `nobody`): only the tasks assigned to
+    them.
+  - `todo.items.done` *(acts)* (`task`, `list?`) and `todo.items.due` *(acts)* (`task`, `due`, `list?`): the one open
+    task whose title is those words (any case), else the one that contains them; none or several → nothing changes
+    and the answer says so (listing the matches). Done sets `completed`, `completed_at`, `completed_by` as the page's
+    tick does; due sets `due_date` (a time stays).
   - `todo.tasks` (`when` today|tomorrow|week|overdue|all, `list?` by name, any case): open tasks; *today* = overdue
     + due today, *tomorrow* = due tomorrow, *week* = overdue + due within 7 days, *overdue* = overdue
     (completion-required and past, §8l), sorted as the dashboard (`all`: by due date); `{title, due, time, list, who,

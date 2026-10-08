@@ -7,8 +7,8 @@ from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 
-from . import app_messages, catalogue, config, db, engine
-from .common import auth_core, ha_time, web_security
+from . import app_messages, briefing, catalogue, config, db, engine
+from .common import auth_core, ha_people, ha_time, web_security
 from .common import housekeeping as jobs_core
 from .routers import api
 
@@ -19,7 +19,8 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start-up: the database, Home Assistant's time zone, the bus; then every minute ask apps with a new or
-    missing tool list, and every hour the housekeeping (old questions, questions left running by a restart)."""
+    missing tool list and send the morning briefings that are due, every few minutes the people and their phones
+    from Home Assistant, and every hour the housekeeping (old questions, questions left running by a restart)."""
     db.init_db()
     await ha_time.load(config.ZONE, log=logger)
     try:
@@ -28,7 +29,9 @@ async def lifespan(app: FastAPI):
         logger.exception("starting the app bus failed")
     jobs = jobs_core.Jobs()
     jobs.every("catalogue", 60, catalogue.check, at_start=False, log=logger, error="Asking for tool lists failed")
+    jobs.every("briefings", 60, briefing.check, at_start=False, log=logger, error="Sending morning briefings failed")
     jobs.every("housekeeping", 3600, engine.housekeeping, log=logger, error="Housekeeping failed")
+    jobs.add("ha_people", ha_people.loop)
     jobs.start()
     try:
         yield

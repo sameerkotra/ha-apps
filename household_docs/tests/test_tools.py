@@ -110,6 +110,26 @@ class ToolTests(ApiBase):
                          [("Passports", True), ("Tickets", False), ("Charger", False)])
         self.assertNack(call("docs.checklist", id=self.boiler["id"]), "invalid", "not_a_checklist")
 
+    def test_tick_and_add_need_the_tap(self):
+        tid = self.trip["id"]
+        self.assertNack(call("docs.checklist.tick", id=tid, item="tickets"), "not_allowed", "confirm")
+        res = call("docs.checklist.tick", confirm=True, id=tid, item="tickets")
+        self.assertEqual(res["text"], "Ticked “Tickets” on Trip.")
+        self.assertEqual([(i["item"], i["done"]) for i in call("docs.checklist", id=tid)["items"]],
+                         [("Passports", True), ("Tickets", True), ("Charger", False)])
+        self.assertIn("was already ticked", call("docs.checklist.tick", confirm=True, id=tid, item="Passports")["text"])
+        res = call("docs.checklist.tick", confirm=True, id=tid, item="Passports", done=False)
+        self.assertEqual(res["text"], "Unticked “Passports” on Trip.")
+        self.assertIn("No item “Snacks” on Trip. Nothing was changed.",
+                      call("docs.checklist.tick", confirm=True, id=tid, item="Snacks")["text"])
+        res = call("docs.checklist.add", confirm=True, id=tid, item="  Snacks ")
+        self.assertEqual(res["text"], "Added “Snacks” to Trip.")
+        self.assertEqual(call("docs.checklist", id=tid)["items"][-1], {"item": "Snacks", "done": False, "level": 0})
+        self.assertNack(call("docs.checklist.add", confirm=True, id=self.boiler["id"], item="x"),
+                        "invalid", "not_a_checklist")
+        self.assertNack(call("docs.checklist.tick", confirm=True, h=MEERA, id=tid, item="Charger"),
+                        "not_found", "document")                                  # not shared with Meera
+
     def test_new_note_needs_the_tap(self):
         self.assertNack(call("docs.note.create", name="Plumber", text="Call Ravi"), "not_allowed", "confirm")
         res = call("docs.note.create", confirm=True, name="Plumber", text="Call Ravi on Monday")
@@ -139,5 +159,6 @@ class ToolTests(ApiBase):
     def test_catalogue_and_kinds(self):
         tools.tools.check()
         self.assertEqual([t["name"] for t in tools.tools.spec()],
-                         ["docs.search", "docs.read", "docs.checklist", "docs.note.create"])
+                         ["docs.search", "docs.read", "docs.checklist", "docs.note.create", "docs.checklist.tick",
+                          "docs.checklist.add"])
         self.assertEqual(app_messages.CAN, ["assist.tool.call", "assist.tools.list"])

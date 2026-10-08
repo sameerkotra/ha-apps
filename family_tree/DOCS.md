@@ -181,7 +181,10 @@ If the household also uses the **Household Assistant** app, you can ask it
 is Lakshmi to me?" once you've said "This is me"). Names needn't be exact —
 a misspelling, part of a name, an initial or a nickname is enough, and "my
 mother" or "Ravi's wife" work too; if two people share the name it asks
-which one. For birthdays, Family Tree tells it what **Upcoming** would
+which one. Ask about one person too — "How old is Lakshmi?", "Who are Ravi's
+children?", "When did Sita get married?": born (when, where, age), died,
+parents, partners with the wedding date and years married, children, brothers
+and sisters. For birthdays, Family Tree tells it what **Upcoming** would
 show you — names, dates, ages and how each person is related to you (close
 family once you've said "This is me", or everyone if you ask) — and nothing
 else: no photos, contact details or notes. Its answer links back to Family

@@ -308,6 +308,55 @@
     UI.openModal("What can I ask?", body);
   });
 
+  // ---------- the morning briefing (per person: on/off, time, days; sent to their phones) ----------
+  const PART_WORDS = { "todo.tasks": "today's tasks and schedule", "tree.birthdays": "birthdays this week",
+    "finance.bills": "bills due in the next 3 days", "splitpot.balances": "money owed in Splitpot" };
+
+  async function openBriefing() {
+    let b;
+    try { b = await api("api/briefing"); } catch (e) { toast(e.message, true); return; }
+    const on = h("input", { type: "checkbox", id: "brOn" });
+    on.checked = b.on;
+    const time = h("input", { type: "time", id: "brTime", value: b.time, step: "60" });
+    const days = h("select", { id: "brDays" }, h("option", { value: "every" }, "Every day"), h("option", { value: "weekdays" }, "Weekdays"));
+    days.value = b.days;
+    const parts = b.parts.length
+      ? h("ul", null, b.parts.map((p) => h("li", null, PART_WORDS[p.tool] || p.tool, h("span", { class: "dim" }, ` · ${p.appName}`))))
+      : h("p", { class: "dim" }, "No household app you use answers these yet (Todo, Family Tree, Finance, Splitpot).");
+    const phones = b.phones.length
+      ? h("p", null, "Sent to: " + b.phones.map((p) => p.label).join(", "))
+      : h("p", { class: "note warn" }, "No phone is linked to you in Home Assistant yet: Settings → People → you → Track device (the Home Assistant app on your phone).");
+    const save = h("button", { type: "button", class: "btn-primary" }, "Save");
+    const now = h("button", { type: "button", class: "btn-secondary" }, "Send me one now");
+    const body = h("div", { class: "briefing" },
+      h("p", { class: "hint" }, "Each morning the assistant asks the household apps about your day and sends a short summary to your phone. It needs no AI model, and appears in your questions too."),
+      b.why ? h("p", { class: "note warn" }, b.why) : null,
+      h("label", { class: "check" }, on, " Send me a morning briefing"),
+      h("div", { class: "row" }, h("label", { for: "brTime" }, "At "), time, " ", days),
+      h("h4", null, "What it includes"), parts, phones,
+      h("div", { class: "actions" }, now, save));
+    const m = UI.openModal("🌅 Morning briefing", body);
+    save.addEventListener("click", async () => {
+      try {
+        await api("api/briefing", { method: "PUT", body: { on: on.checked, time: time.value, days: days.value } });
+        toast(on.checked ? `Your briefing will come at ${time.value}.` : "Morning briefing off.");
+        m.close();
+      } catch (e) { toast(e.message, true); }
+    });
+    now.addEventListener("click", async () => {
+      now.disabled = true;
+      now.textContent = "Asking the apps…";
+      try {
+        const r = await api("api/briefing/send", { method: "POST" });
+        const ok = Object.values(r.sent).filter(Boolean).length;
+        toast(r.phones.length ? `Sent to ${ok} of ${r.phones.length} phone${r.phones.length === 1 ? "" : "s"}.` : "Made — it's in your questions (no phone to send it to).", r.phones.length > 0 && ok === 0);
+        m.close();
+        await loadHistory(false);
+      } catch (e) { toast(e.message, true); now.disabled = false; now.textContent = "Send me one now"; }
+    });
+  }
+  $("#briefingBtn").addEventListener("click", openBriefing);
+
   // ---------- who am I ----------
   async function openWhoami() {
     const body = h("div", null, "Loading…");
@@ -429,7 +478,7 @@
     mount(clear(box), h("div", { class: "card" },
       h("p", null, `Last 30 days: ${total.q} questions, ${total.c} tool calls, ${total.i} tokens in, ${total.o} out.`),
       r.ai && r.ai.model ? h("p", { class: "hint" }, `Model: ${r.ai.providerLabel || r.ai.provider} ${r.ai.model}.`) : null,
-      h("table", { class: "usage" }, h("thead", null, h("tr", null, ["Day (UTC)", "Questions", "Tool calls", "Tokens in", "Tokens out"].map((t) => h("th", null, t)))),
+      h("table", { class: "usage" }, h("thead", null, h("tr", null, ["Day", "Questions", "Tool calls", "Tokens in", "Tokens out"].map((t) => h("th", null, t)))),
         h("tbody", null, r.days.map((d) => h("tr", null, [d.day, d.questions, d.calls, d.input_tokens, d.output_tokens].map((v) => h("td", null, String(v)))))))));
   }
 

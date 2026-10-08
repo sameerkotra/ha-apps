@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.0
+
+- **More for the Household Assistant**: tick off a task ("I took the bins out") or move one to another day ("move the plumber to Friday") — only after you tap the exact change it proposes; when several open tasks match, nothing changes and it asks which. It can also say who has what: "What's Meera doing this week?", "What's left that nobody has?".
+
 ## 2.4.4
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

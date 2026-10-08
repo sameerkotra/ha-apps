@@ -101,6 +101,7 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/tools` | user | the person's tools in words |
 | `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
 | `GET /api/history?before=&limit=` · `DELETE /api/history` | user | own questions, newest first; clear (not a running one) |
+| `GET /api/briefing` · `PUT /api/briefing {on, time, days}` · `POST /api/briefing/send` | user | the person's morning briefing (HOUSEHOLD_ASSISTANT_SPEC §16) |
 | `GET/PUT /api/admin/settings` · `POST /api/admin/settings/test-ai` | admin | App settings; Test connection |
 | `GET /api/admin/tools` · `POST /api/admin/tools/refresh` · `PUT /api/admin/tools/{app}` `{enabled}` | admin | Apps |
 | `GET /api/admin/people` · `PUT /api/admin/people/{id}` `{enabled?, isChild?}` | admin | People (not oneself off) |
@@ -113,7 +114,8 @@ from the app.
 ## The page
 
 One column: the ask box at the top (Enter sends, Shift+Enter a new line, 🎤 where the browser has speech
-recognition), *What can I ask?* and *Clear my questions*, the suggestions, then the conversation, newest first
+recognition), *What can I ask?*, *🌅 Morning briefing* (a dialog: on, time, every day / weekdays, what it includes,
+the phones it goes to, *Send me one now*) and *Clear my questions*, the suggestions, then the conversation, newest first
 (*Earlier questions* at the bottom): each question, its answer as Markdown built as DOM nodes — paragraphs, lists,
 bold; never HTML — proposed actions as buttons, **Sources** chips (opened with `ConnectedApps.openAppPage`) and
 **What was shared** (`<details>`); 🔊 on an answer reads it with `speechSynthesis`, and a question asked with 🎤 is
@@ -144,7 +146,8 @@ an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds t
 
 ## Jobs
 
-- Every minute: `catalogue.check()`.
+- Every minute: `catalogue.check()`, `briefing.check()` (the morning briefings that are due).
+- Every 5 minutes: the people and their phones from Home Assistant (the shared `ha_people.loop`).
 - Every hour: `engine.housekeeping()` — questions older than *Keep questions for* (their calls go with them),
   questions left running by a restart → failed, calls left `sent` over 2 minutes → timeout, usage older than
   400 days.
@@ -153,4 +156,5 @@ an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds t
 
 `tests/test_assistant.py` runs the real app against a fake household (`tests/fakes.py`): fake Todo, Finance and
 Vault apps, each a real `AppBus` with a real `assist_tools.Catalogue`, on one in-process bus, and a scripted
-model. `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.
+model. `tests/test_briefing.py` the morning briefing on the same household (with Finance's `finance.bills`);
+`tests/test_page_browser.py` the page, its dialog included, in headless Chromium. `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.

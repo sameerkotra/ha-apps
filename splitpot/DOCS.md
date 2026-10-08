@@ -211,7 +211,12 @@ If the household also uses the **Household Assistant** app, you can ask it
 - **balances** — who owes whom after the simplest settle-up, and where you stand
   overall;
 - **recent expenses** — the newest 20 entries: what, who paid, how much and your
-  share (optionally one group, or the last few days).
+  share (optionally one group, or the last few days);
+- **add an expense** — "I paid 40 for groceries, split with Meera" — split
+  equally between the people named (everyone in the group when nobody is
+  named), only after you tap the exact change it proposes. It is checked like
+  the Add expense form, shows in the group's activity as added with the
+  Household Assistant, and notifies people as an added charge does.
 
 Money is private, so this is **off until an admin turns it on** (**Admin → App
 settings → Household Assistant → Answer the Household Assistant**). You can also

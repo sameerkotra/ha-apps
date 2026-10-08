@@ -96,13 +96,24 @@ CREATE TABLE IF NOT EXISTS assist_tools (
     PRIMARY KEY (app, name)
 );
 
--- Admin → Usage: counts per day (UTC), kept when people clear their questions.
+-- Admin → Usage: counts per day (Home Assistant's zone), kept when people clear their questions.
 CREATE TABLE IF NOT EXISTS usage_days (
     day TEXT PRIMARY KEY,
     questions INTEGER NOT NULL DEFAULT 0,
     calls INTEGER NOT NULL DEFAULT 0,
     input_tokens INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0
+);
+
+-- The morning briefing (app/briefing.py): per person, on or off, the time (HH:MM, Home Assistant's zone), every
+-- day or weekdays, and the day it was last sent (so it goes at most once a day).
+CREATE TABLE IF NOT EXISTS briefings (
+    user_id TEXT PRIMARY KEY,
+    on_ INTEGER NOT NULL DEFAULT 0,
+    at TEXT NOT NULL DEFAULT '07:30',
+    days TEXT NOT NULL DEFAULT 'every' CHECK (days IN ('every', 'weekdays')),
+    last_sent TEXT,
+    updated_at TEXT
 );
 
 -- Admin → App settings (app/settings.py). value is JSON; the ai_api_key row is blanked in downloaded backups.

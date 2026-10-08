@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from .. import ai_client, app_messages, auth, catalogue, config, db, engine, settings
+from .. import ai_client, app_messages, auth, briefing, catalogue, config, db, engine, settings
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -165,6 +165,52 @@ def clear_history(user: dict = Depends(get_current_user)):
         n = conn.execute(f"DELETE FROM questions WHERE user_id = ? AND state NOT IN "
                          f"({','.join('?' * len(engine.RUNNING))})", (user["id"], *engine.RUNNING)).rowcount
     return {"deleted": n}
+
+
+# --------------------------------------------------------------------------------------------- the morning briefing
+
+def _briefing_view(conn, user: dict) -> dict:
+    return {**briefing.get(conn, user["id"]), "phones": briefing.phones(user["id"]),
+            "parts": briefing.parts_for(conn, user), "why": briefing.may_have(user)}
+
+
+@router.get("/briefing")
+def get_briefing(user: dict = Depends(get_current_user)):
+    """The person's morning briefing: on or off, time, days, their phones, what it would include."""
+    with db.get_conn() as conn:
+        return _briefing_view(conn, user)
+
+
+class BriefingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    on: StrictBool
+    time: str = Field(max_length=5)
+    days: str = Field(max_length=10)
+
+
+@router.put("/briefing")
+def put_briefing(body: BriefingIn, user: dict = Depends(get_current_user)):
+    if body.on and briefing.may_have(user):
+        raise HTTPException(403, briefing.may_have(user))
+    with db.get_conn() as conn:
+        try:
+            briefing.save(conn, user["id"], body.on, body.time, body.days)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return _briefing_view(conn, user)
+
+
+@router.post("/briefing/send")
+async def send_briefing(user: dict = Depends(get_current_user)):
+    """"Send me one now": today's briefing made and sent at once (it doesn't count as the day's own)."""
+    why = briefing.may_have(user)
+    if why:
+        raise HTTPException(403, why)
+    out = await run_in_threadpool(briefing.send, user)
+    with db.get_conn() as conn:
+        q = conn.execute("SELECT * FROM questions WHERE id = ?", (out["question"],)).fetchone()
+        view = engine.view(conn, q)
+    return {"question": view, "phones": out["phones"], "sent": out["sent"]}
 
 
 # --------------------------------------------------------------------------------------------- admin

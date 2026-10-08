@@ -130,5 +130,35 @@ class PageInBrowser(Household):
         self.assertEqual([a.split("/", 2)[2] if a.count("/") > 1 else "" for a in asked], ["", "events", "", "events"])
 
 
+    def test_morning_briefing_dialog(self):
+        from app import briefing
+        p = self.open_page()
+        phones = [{"service": "mobile_app_alice_phone", "label": "Alice's phone"}]
+        sent = []
+        with mock.patch.object(briefing, "phones", lambda uid: phones), \
+                mock.patch.object(briefing.ha_notify, "send_to_services",
+                                  side_effect=lambda s, t, m, d=None: sent.append(m) or {x: True for x in s}):
+            p.click("#briefingBtn")
+            p.wait_for_selector(".briefing")
+            self.assertIn("Sent to: Alice's phone", p.inner_text(".briefing"))
+            self.assertIn("today's tasks and schedule", p.inner_text(".briefing"))
+            p.check("#brOn")
+            p.fill("#brTime", "06:45")
+            p.select_option("#brDays", "weekdays")
+            if os.environ.get("SHOT"):
+                p.screenshot(path=os.environ["SHOT"])
+            p.click(".briefing .btn-primary")
+            self.until(p, "!document.querySelector('.briefing')")
+            b = self.c.get("/api/briefing", headers=ALICE).json()
+            self.assertEqual((b["on"], b["time"], b["days"]), (True, "06:45", "weekdays"))
+            p.click("#briefingBtn")
+            p.wait_for_selector(".briefing")
+            self.assertTrue(p.is_checked("#brOn"))
+            p.click(".briefing .btn-secondary")
+            self.until(p, "!document.querySelector('.briefing')")
+            p.wait_for_selector(".turn .question")
+            self.assertEqual(p.inner_text(".turn .question"), "Morning briefing")
+        self.assertEqual(sent, ["📋 2 tasks today: Bins, Call plumber."])
+
 if __name__ == "__main__":
     unittest.main()

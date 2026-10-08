@@ -168,7 +168,10 @@ Home Assistant; turning it on publishes everyone's again at once.
 If the household also uses the **Household Assistant** app, you can ask it "How many calories do I
 have left today?". Calorie Tracker tells it **only your own day** — calories, protein, carbs and fat
 against your goals, and what you logged at each meal — never anyone else's, and never your weight.
-Its answer links back to that day in Calorie Tracker. An admin can turn this off for everyone with **Answer
+It can also give **your last 7 days** ("How did I do this week?") and **log a food** for you ("I had a
+banana") — only after you tap the exact entry it proposes, with the calories on the button: the assistant's
+estimate, or for a food you saved or logged before, its own calories times the servings. Its answers link back to
+that day in Calorie Tracker. An admin can turn this off for everyone with **Answer
 the Household Assistant** in App settings, and you can turn it off for yourself on **Goals → Let the
 Household Assistant answer for me**.
 

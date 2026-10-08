@@ -60,9 +60,12 @@ The app can't check this for you; until you tick it in **App settings → Privac
 - Answers appear under the box, the newest first (**Earlier questions** at the bottom). Each is short, with **Sources**: one link per app it used, straight to the right page in that app.
 - **What was shared** (under the answer) lists each question the assistant asked an app and exactly what the
   app returned.
-- **Changes need a tap.** When you ask for a change ("add milk to the shopping list"), the answer shows a button
-  with the exact change. Nothing is sent until you tap it, and the app checks it as if you made the change
-  yourself. After the tap the button shows what happened, with a link.
+- **Changes need a tap.** When you ask for a change, the answer shows a button with the exact change. Nothing is
+  sent until you tap it, and the app checks it as if you made the change yourself. After the tap the button shows
+  what happened, with a link. What it can change, where those apps answer: add a task, tick one off or move it to
+  another day (Todo); add an expense split equally (Splitpot); log a food, with the calories on the button
+  (Calorie Tracker); make a note, tick or untick a checklist item, add an item (Docs); add to the shopping list
+  (Receipt Price Intelligence).
 - **What can I ask?** lists what each app can answer for you.
 - Your questions are yours alone: nobody else, admins included, can see them. They are kept 30 days (App
   settings → Limits); **Clear my questions** deletes them now.
@@ -70,6 +73,21 @@ The app can't check this for you; until you tick it in **App settings → Privac
 Each app answers only what you could see in it yourself, and only while both its admin's **Answer the Household
 Assistant** and your own **Let the Household Assistant answer for me** (that app's settings, on unless you turn
 it off) are on. Household Vault is never asked: passwords stay there.
+
+## The morning briefing
+
+**🌅 Morning briefing** (under the ask box) sends you a short summary of your day each morning, on your phone:
+
+- 📋 today's tasks and what's on the schedule (Household Todo), 🎂 birthdays and anniversaries this week (Family
+  Tree), 💳 bills due in the next 3 days (Finance Dashboard), 🤝 who owes whom (Splitpot) — each only when that app
+  answers you, and only when it has something to say (today's tasks are always there).
+- Choose the time and every day or weekdays. It comes once a day, at that time or up to three hours later (if the
+  app was stopped at that time); never later, so a morning briefing never arrives in the afternoon.
+- It goes to the phones Home Assistant links to you (**Settings → People → you → Track device**, the Home Assistant
+  app on your phone). Tapping it opens the assistant.
+- It needs no AI model: it is what the apps said, as they said it, so it costs nothing. It also appears in your
+  questions as "Morning briefing", with Sources and **What was shared**.
+- **Send me one now** makes and sends today's at once, to try it.
 
 ## Asking with your voice: Assist
 

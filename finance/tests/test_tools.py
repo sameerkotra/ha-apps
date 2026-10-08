@@ -107,11 +107,61 @@ def test_recurring_and_bills(env):
     nack(call("finance.bills", days=61), "invalid", "days")
 
 
+def _months_ago(n):
+    d = date.today().replace(day=1)
+    for _ in range(n):
+        d = (d - timedelta(days=1)).replace(day=1)
+    return d.strftime("%Y-%m")
+
+
+def test_spending_at_one_shop(env):
+    month = seed(env)
+    turn_on(env)
+    card = env.account("Amex", "credit_card")
+    env.txn(card, f"{_months_ago(2)}-10", 80.0, "FRESH MART #12", category="Groceries")
+    env.txn(card, f"{_months_ago(14)}-10", 999.0, "FRESHMART OLD", category="Groceries")      # too long ago
+    res = call("finance.merchant", merchant="Fresh Mart")
+    assert res["text"].startswith("200.50 at “Fresh Mart” since ")
+    assert "in 2 charges" in res["text"]
+    charges = [i for i in res["items"] if "merchant" in i]
+    assert [(i["merchant"], i["amount"]) for i in charges] == [("FRESHMART 0042", 120.5), ("FRESH MART #12", 80.0)]
+    assert [i for i in res["items"] if "month" in i] == [{"month": _months_ago(2), "total": 80.0},
+                                                         {"month": month, "total": 120.5}]
+    assert "birthday cake" not in str(res)
+    assert res["links"][0]["target"] == f"/month/{month}"
+    assert call("finance.merchant", merchant="freshmart", months=1)["text"].startswith("120.50 at")
+    assert "Nothing spent at “Nowhere”" in call("finance.merchant", merchant="Nowhere")["text"]
+    assert "ROBIN" not in str(call("finance.merchant", merchant="robin"))                   # someone else's
+    nack(call("finance.merchant", merchant="x"), "invalid", "merchant")
+    nack(call("finance.merchant", merchant="deli", months=25), "invalid", "months")
+
+
+def test_balances_from_the_latest_statements(env):
+    seed(env)
+    turn_on(env)
+    with env.db() as c:
+        ids = {r["name"]: r["id"] for r in c.execute("SELECT id, name FROM accounts WHERE user_id = 'tester'")}
+        c.execute("UPDATE accounts SET account_number_last4 = '4242' WHERE id = ?", (ids["Visa"],))
+    for acct, period, bal in (("Checking", "2026-08", 1200.0), ("Checking", "2026-09", 1500.25), ("Visa", "2026-09", 310.0)):
+        env.insert("statements", user_id="tester", account_id=ids[acct], statement_period=period, status="complete",
+                   new_balance=bal)
+    env.insert("statements", user_id="tester", account_id=ids["Visa"], statement_period="2026-10", status="error",
+               new_balance=5.0)
+    res = call("finance.balances")
+    assert res["text"] == ("Balances from the latest statements: Checking: 1,500.25 (2026-09 statement); "
+                           "Visa ••4242: 310.00 owed (2026-09 statement).")
+    assert [(i["account"], i["balance"]) for i in res["items"]] == [("Checking", 1500.25), ("Visa ••4242", 310.0)]
+    env.insert("statements", user_id="tester", account_id=ids["Visa"], statement_period="2026-10", status="complete",
+               new_balance=-14.01)
+    assert "Visa ••4242: 14.01 in credit (2026-10 statement)" in call("finance.balances")["text"]
+    assert "Robin" not in str(call("finance.balances"))
+
+
 def test_catalogue_and_reports_never_see_the_bus(env):
     from app import query_engine, tools
     tools.tools.check()
     assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.spending", "finance.recurring",
-                                                       "finance.bills"]
+                                                       "finance.bills", "finance.merchant", "finance.balances"]
     assert {"bus_outbox", "bus_seen", "bus_apps"} <= query_engine.HIDDEN_TABLES
 
 

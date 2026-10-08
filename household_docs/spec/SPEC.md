@@ -1776,6 +1776,10 @@ with reminders on documents (Household Vault already does expiry reminders for w
   `/doc/<id>`, `/folder/<id>` or `/file/<id>`.
 - **Tools** (all through `sharing.require` / the search's own access check: what the person could open here; in
   Trash, or not theirs to see → `nack not_found document`, the app's 404):
+  - `docs.checklist.tick` *(acts)* (`id`, `item`, `done?` default true) and `docs.checklist.add` *(acts)* (`id`,
+    `item`): through `documents.checklist_ops` as the person — so a viewer may tick only where viewers may tick, and
+    only an editor adds. The item is the one whose words match (any case), else the one that contains them; none or
+    several → nothing changes; already in that state → said so. Names shown without the file's extension.
   - `docs.search` (`query`, `kind?` note|markdown|checklist|sheet|folder|pdf|image|spreadsheet|document): the Search
     page's `engine.run` + `describe`, first 10 results as `{id, name, type, folder, snippet, modified}`. Since 1.2.3
     the query is read as a model writes it: type words (sheet, spreadsheet, note, checklist, list, folder, pdf, doc,

@@ -140,6 +140,45 @@ class ToolTests(ApiBase):
         self.assertNack(call("todo.items.add", confirm=True, list="Nope", text="Eggs"), "not_found", "list")
         self.assertNack(call("todo.items.add", confirm=True, list=shared, text=""), "invalid", "text")
 
+    def test_tasks_for_a_person(self):
+        bins = next(t for t in self.get(f"/api/lists/{self.shared_id()}/tasks").json() if t["title"] == "Bins")
+        r = self.patch(f"/api/tasks/{bins['id']}", {"assigned_to": "u_bob"})
+        self.assertEqual(r.status_code, 200, r.text)
+        res = call("todo.tasks", when="all", person="bob")
+        self.assertEqual(self.titles(res), ["Bins"])
+        self.assertIn("open for bob", res["text"])
+        self.assertEqual(self.titles(call("todo.tasks", when="all", person="Bob", uid="u_bob")), ["Bins"])
+        self.assertEqual(self.titles(call("todo.tasks", when="all", person="me", uid="u_bob")), ["Bins"])
+        self.assertEqual(len(call("todo.tasks", when="all", person="nobody")["items"]), 3)
+        self.assertEqual(call("todo.tasks", when="all", person="Zed")["items"], [])
+
+    def test_tick_off_needs_the_tap_and_one_task(self):
+        self.assertNack(call("todo.items.done", task="Bins"), "not_allowed", "confirm")
+        res = call("todo.items.done", confirm=True, task="bins")
+        shared = next(l["name"] for l in self.lists() if l["kind"] == "shared")
+        self.assertEqual(res["text"], f"Ticked off “Bins” on {shared}.")
+        self.assertEqual(res["links"][0]["target"], f"/lists/{self.shared_id()}")
+        done = self.get(f"/api/lists/{self.shared_id()}/tasks", params={"show": "completed"}).json()
+        self.assertEqual([(t["title"], t["completedBy"]) for t in done], [("Bins", "u_alice")])
+        self.assertIn("No open task called “Bins”", call("todo.items.done", confirm=True, task="Bins")["text"])
+        self.add("Call mum")
+        res = call("todo.items.done", confirm=True, task="call")         # two tasks have "call" in them
+        self.assertIn("2 open tasks match “call”", res["text"])
+        self.assertIn("Nothing was changed", res["text"])
+        self.assertEqual(len(call("todo.tasks", when="all")["items"]), 4)
+        self.assertIn("No open task", call("todo.items.done", confirm=True, task="Bob's secret")["text"])  # not hers
+        self.assertNack(call("todo.items.done", confirm=True, task="Bins", list="Nope"), "not_found", "list")
+
+    def test_move_a_task_to_another_day(self):
+        self.assertNack(call("todo.items.due", task="Paint fence", due="2026-09-26"), "not_allowed", "confirm")
+        res = call("todo.items.due", confirm=True, task="Paint fence", due="2026-09-26")
+        self.assertIn("“Paint fence” on", res["text"])
+        self.assertIn("is now due Sat 26 Sep", res["text"])
+        task = next(t for t in self.get(f"/api/lists/{self.shared_id()}/tasks").json() if t["title"] == "Paint fence")
+        self.assertEqual(task["dueDate"], "2026-09-26")
+        self.assertNack(call("todo.items.due", confirm=True, task="Paint fence", due="soon"), "invalid", "due")
+        self.assertNack(call("todo.items.due", confirm=True, task="Paint fence"), "invalid", "due")
+
     def test_switches(self):
         r = self.put("/api/admin/settings", {"assistant_answers": False}, ADMIN)
         self.assertEqual(r.status_code, 200, r.text)
@@ -158,6 +197,7 @@ class ToolTests(ApiBase):
     def test_catalogue(self):
         tools.tools.check()
         self.assertEqual([t["name"] for t in tools.tools.spec()],
-                         ["todo.tasks", "todo.lists", "todo.schedule", "todo.items.add"])
+                         ["todo.tasks", "todo.lists", "todo.schedule", "todo.items.add", "todo.items.done",
+                          "todo.items.due"])
         for kind in ("assist.tools.list", "assist.tool.call", "todo.items.add", "todo.lists.list"):
             self.assertIn(kind, app_bus.default._handlers)

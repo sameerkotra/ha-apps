@@ -1,7 +1,7 @@
 """tree.relation (app/tools.py) and finding a person from a loosely spelt name (app/find_people.py): both ways, in
 the asker's language, with the chain; misspellings, nicknames, initials and "my mother"; two people of one name
 give the choices; nobody near gives the nearest names. All people here are invented."""
-from base import ALICE, BOB, ApiTestCase, all_features_on, set_app_settings
+from base import ALICE, BOB, ApiTestCase, all_features_on, set_app_settings, sql
 import _env  # noqa: F401
 
 from datetime import datetime, timedelta, timezone
@@ -10,12 +10,12 @@ from app import config, db, find_people, graph as graph_mod, tools
 from app.common import app_bus
 
 
-def call(uid, **args):
+def call(uid, tool="tree.relation", **args):
     now = datetime.now(timezone.utc)
     env = {"id": app_bus.new_ulid(now), "v": 1, "from": "household_assistant", "to": "family_tree",
            "kind": "assist.tool.call", "kv": 1, "reply_to": None, "ref": None, "sent": now.isoformat(),
            "expires": (now + timedelta(seconds=20)).isoformat(),
-           "data": {"tool": "tree.relation", "args": args, "requested_by": uid, "question": "q1"}}
+           "data": {"tool": tool, "args": args, "requested_by": uid, "question": "q1"}}
     with db.get_conn() as conn:
         try:
             return tools.tools.on_call(app_bus.Message(env), conn)
@@ -133,9 +133,32 @@ class RelationTests(ApiTestCase):
         self.assertNotIn("nephew", res["items"][0]["relationship"])
         self.assertEqual(res["items"][0]["english"], "nephew")
 
+    def test_a_persons_facts(self):
+        from datetime import date
+        from unittest import mock
+        fid = sql("SELECT id FROM families WHERE partner1_id = ? OR partner2_id = ?", (self.venky, self.venky))[0]["id"]
+        self.ok(self.patch(f"/api/families/{fid}", {"marriage": {"date": {"d": 12, "m": 5, "y": 1994}, "place": "Guntur"}}))
+        with mock.patch.object(config, "today", return_value=date(2026, 10, 7)):
+            res = call(ALICE["id"], tool="tree.person", person="seeta")
+        self.assertEqual(res["text"], "“seeta” taken as Sita Pallem. Sita Pallem: born 1 January 1968, 58 years old; "
+                                      "child of Ramesh Pallem and Lakshmi Pallem; partner Venkateswara Varma, married 12 May "
+                                      "1994 in Guntur (32 years); brother Ravi Kumar Pallem.")
+        self.assertEqual(res["links"][0]["target"], f"/person/{self.sita}")
+        self.assertEqual(res["items"][0]["age"], 58)
+        self.set_me(self.sita, user=ALICE)
+        res = call(ALICE["id"], tool="tree.person", person="Ravi")
+        self.assertIn("1 child: Kiran Pallem (b. 1998)", res["text"])
+        self.assertIn("your brother", res["text"])
+        self.assertIn("that's you", call(ALICE["id"], tool="tree.person", person="me")["text"])
+        self.ok(self.patch(f"/api/people/{self.ramesh}", {"deceased": True}))
+        res = call(ALICE["id"], tool="tree.person", person="Ramesh")
+        self.assertIn("died", res["text"])
+        self.assertNotIn("years old", res["text"])
+        self.assertTrue(call(ALICE["id"], tool="tree.person", person="Bartholomew")["text"].startswith("Nobody"))
+
     def test_in_the_catalogue(self):
         names = [t["name"] for t in tools.tools.spec()]
-        self.assertEqual(names, ["tree.birthdays", "tree.relation"])
+        self.assertEqual(names, ["tree.birthdays", "tree.relation", "tree.person"])
 
     def test_deep_link(self):
         r = self.client.get(f"/relate/{self.sita}/{self.kiran}", follow_redirects=False)

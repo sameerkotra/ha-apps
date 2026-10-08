@@ -7,7 +7,11 @@
 - `todo.lists`: the lists they can see, with open counts;
 - `todo.schedule`: what's coming up on the schedule in the next days (trash day, …), private items only their own;
 - `todo.items.add` (acts): adds a task to one of their lists — only after the person taps the proposed change in
-  the assistant (`confirm`), and checked as if they did it here.
+  the assistant (`confirm`), and checked as if they did it here;
+- `todo.items.done` (acts): ticks off one of their open tasks, found by its title (and list);
+- `todo.items.due` (acts): moves one of their open tasks to another day.
+
+`todo.tasks` also takes `person`: only the tasks assigned to someone ("Meera", "me", or "nobody").
 
 Never task notes or links: titles, dates, lists and who. "Acting as" someone else never applies. Answered only while
 the admin's *Answer the Household Assistant* is on and the person hasn't turned off *Let the Household Assistant
@@ -97,6 +101,27 @@ def _occurrences(ctx, start: date, end: date) -> list[dict]:
     return out
 
 
+def _whose(ctx) -> str:
+    want = ctx.args["person"].strip().casefold()
+    if want in ("me", "mine", "myself", ctx.user["name"].casefold()):
+        return "assigned to you"
+    return "assigned to nobody" if want in ("nobody", "no one", "noone", "unassigned") else f"for {ctx.args['person'].strip()}"
+
+
+def _for_person(ctx, rows: list[dict]) -> list[dict]:
+    """The tasks assigned to the person named in `person` (first name, full name, "me" or "nobody")."""
+    want = ctx.args["person"].strip().casefold()
+    if want in ("nobody", "no one", "noone", "unassigned"):
+        return [t for t in rows if not t["assigneeName"]]
+    if want in ("me", "mine", "myself"):
+        want = ctx.user["name"].casefold()
+
+    def fits(name):
+        n = (name or "").casefold()
+        return bool(n) and (n == want or n.split()[0] == want or n.startswith(want + " "))
+    return [t for t in rows if fits(t["assigneeName"])]
+
+
 def _task_item(t: dict) -> dict:
     return {"title": t["title"], "due": t["dueDate"], "time": t["dueTime"], "list": t["listName"],
             "who": t["assigneeName"], "overdue": t["overdue"]}
@@ -118,7 +143,9 @@ def _schedule_words(out: list[dict], today: date) -> str:
             "(overdue included), `overdue` only overdue ones, `all` every open task.",
             args={"when": Arg("enum", "which tasks", values=("today", "tomorrow", "week", "overdue", "all"),
                               required=True),
-                  "list": _LIST},
+                  "list": _LIST,
+                  "person": Arg("string", "only tasks assigned to this person (a name, \"me\" or \"nobody\")",
+                                max_length=60)},
             returns="tasks with title, due date, list and who it's assigned to; schedule entries with list Schedule",
             examples=("What's on my list today?",), children=True)
 def tasks(ctx):
@@ -132,6 +159,8 @@ def tasks(ctx):
         sql += " AND t.list_id = ?"
         args.append(lst["id"])
     every = taskview.serialize_tasks(ctx.conn, ctx.conn.execute(sql, args).fetchall(), today)
+    if "person" in ctx.args:
+        every = _for_person(ctx, every)
     rows = every
     when = ctx.args["when"]
     last = {"today": t_iso, "tomorrow": tomorrow_iso, "week": week_iso}.get(when)
@@ -148,6 +177,8 @@ def tasks(ctx):
             else ctx.link("Dashboard in Household Todo", "/dashboard"))
     label = {"today": "for today", "tomorrow": "for tomorrow", "week": "this week", "overdue": "overdue",
              "all": "open"}[when]
+    if "person" in ctx.args:
+        label += f" {_whose(ctx)}"
     if rows:
         items = [_task_item(t) for t in rows[:MAX_TASKS]]
         text = (f"{len(rows)} task{'s' if len(rows) != 1 else ''} {label}: " + _task_words(rows[:10], today)
@@ -216,3 +247,61 @@ def add(ctx):
     return ctx.result(f"Added “{ctx.args['text']}” to {lst['name']}{due}.",
                       items=[{"title": ctx.args["text"], "list": lst["name"], "due": ctx.args.get("due")}],
                       links=[ctx.link(f"{lst['name']} in Household Todo", f"/lists/{lst['id']}")])
+
+
+def _open_tasks(ctx) -> list[dict]:
+    sql = taskview.TASK_SELECT + f" WHERE {taskview.VISIBLE_SQL} AND t.completed = 0"
+    args = [ctx.user["id"]]
+    if "list" in ctx.args:
+        lst = _find_list(ctx.conn, ctx.user["id"], ctx.args["list"])
+        sql += " AND t.list_id = ?"
+        args.append(lst["id"])
+    return taskview.serialize_tasks(ctx.conn, ctx.conn.execute(sql, args).fetchall(), config.now().date())
+
+
+def _find_task(ctx):
+    """(the one open task the words in `task` mean, None) or (None, a result saying why nothing was changed)."""
+    want = " ".join(ctx.args["task"].split()).casefold()
+    rows = _open_tasks(ctx)
+    exact = [t for t in rows if " ".join(t["title"].split()).casefold() == want]
+    found = exact or [t for t in rows if want in t["title"].casefold()]
+    link = ctx.link("Dashboard in Household Todo", "/dashboard")
+    if len(found) == 1:
+        return found[0], None
+    where = f" on {ctx.args['list']}" if "list" in ctx.args else ""
+    if not found:
+        return None, ctx.result(f"No open task called “{ctx.args['task']}”{where}. Nothing was changed.", links=[link])
+    names = "; ".join(f"{t['title']} ({t['listName']})" for t in found[:6])
+    return None, ctx.result(f"{len(found)} open tasks match “{ctx.args['task']}”{where}: {names}. Nothing was "
+                            "changed — say which one (the list's name helps).",
+                            items=[_task_item(t) for t in found[:10]], links=[link])
+
+
+_TASK = Arg("string", "the task's title, as todo.tasks lists it", required=True, max_length=200)
+
+
+@tools.tool("todo.items.done", "Ticks off one of the person's open tasks (after they confirm it).",
+            args={"task": _TASK, "list": _LIST}, acts=True, returns="the task that was ticked off", children=True)
+def done(ctx):
+    t, why = _find_task(ctx)
+    if t is None:
+        return why
+    ctx.conn.execute("UPDATE tasks SET completed = 1, completed_at = ?, completed_by = ? WHERE id = ? AND completed = 0",
+                     (config.now_iso(), ctx.user["id"], t["id"]))
+    return ctx.result(f"Ticked off “{t['title']}” on {t['listName']}.",
+                      items=[{"title": t["title"], "list": t["listName"], "done": True}],
+                      links=[ctx.link(f"{t['listName']} in Household Todo", f"/lists/{t['listId']}")])
+
+
+@tools.tool("todo.items.due", "Moves one of the person's open tasks to another day (after they confirm it).",
+            args={"task": _TASK, "due": Arg("date", "the new day", required=True), "list": _LIST},
+            acts=True, returns="the task with its new day", children=True)
+def due(ctx):
+    t, why = _find_task(ctx)
+    if t is None:
+        return why
+    ctx.conn.execute("UPDATE tasks SET due_date = ? WHERE id = ? AND completed = 0", (ctx.args["due"], t["id"]))
+    when = _when(ctx.args["due"], config.now().date())
+    return ctx.result(f"“{t['title']}” on {t['listName']} is now due {when}.",
+                      items=[{"title": t["title"], "list": t["listName"], "due": ctx.args["due"]}],
+                      links=[ctx.link(f"{t['listName']} in Household Todo", f"/lists/{t['listId']}")])

@@ -261,6 +261,12 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
   person by `users.ha_user_id` only, never by name; unlinked or disabled → `nack not_allowed no_access`. Only the
   groups that person is a member of (`group_members`), or the one named in `group` (any case; else `nack not_found
   group`).
+  - `splitpot.expense.add` *(acts)* (`description`, `amount`, `group?`, `paid_by?`, `split_with?`, `date?`): an equal
+    split among the members named in `split_with` (commas or "and"; first or full name, any case, `me`), everyone when
+    left out; paid by `paid_by` or the person. Without `group`: their only group, else the default one, else the
+    answer asks which. Checked by `resolve_expense_date` and `build_splits` (their message as the answer, nothing
+    added); written with `write_splits` and `log_event` ("… with the Household Assistant"); after the commit
+    (`msg.after_commit`) `push_balances_to_ha` and `notify_new_charge`, as the Add expense form does.
   - `splitpot.balances` (`group?`): per group the settle-up transfers (`settle_up(group_net(…))`, as the group
     page) as `{group, from, to, amount}`, and the person's overall net in the text.
   - `splitpot.recent` (`group?`, `days?` 1–90): each group's newest 20 entries (`ledger_page`), merged newest

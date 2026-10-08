@@ -150,25 +150,36 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 | | `todo.lists` | — | the person's lists with open counts; links |
 | | `todo.items.add` *(acts)* | `list`, `text`, `due?` | the added task; link |
 | | `todo.schedule` | `days?` (1–14) | upcoming scheduled things (trash day, maintenance due); link to Schedule |
+| | `todo.tasks` `person?` (2.5.0) | a name, `me` or `nobody` | only the tasks assigned to that person |
+| | `todo.items.done` *(acts, 2.5.0)* | `task`, `list?` | ticks off the one open task those words mean (several or none: nothing changes, the answer lists them); link to the list |
+| | `todo.items.due` *(acts, 2.5.0)* | `task`, `due`, `list?` | moves that task to another day; link |
 | Household Docs | `docs.search` | `query`, `kind?` | up to 10 matches: name, kind, folder, a snippet (the search page's own snippet); links |
 | | `docs.read` | `id`, `offset?` | up to 4 KB of a note's or checklist's text, or a sheet's cells as `A1: value` rows; `more`; link to the document |
 | | `docs.checklist` | `id` | items with ticked / open; link |
 | | `docs.note.create` *(acts)* | `name`, `text` | a new note in My docs → Inbox; link |
+| | `docs.checklist.tick` *(acts, 1.3.0)* | `id`, `item`, `done?` | ticks or unticks the item those words mean (`documents.checklist_ops`, so a viewer only where ticking is open to viewers); link |
+| | `docs.checklist.add` *(acts, 1.3.0)* | `id`, `item` | the item added at the end (editors only); link |
 | Finance Dashboard | `finance.summary` | `month?` | income, spending, net, top 5 categories with amounts; link to the dashboard for that month |
 | | `finance.spending` | `month?`, `category?` | spending by category or the category's largest 10 transactions (merchant, date, amount — no memo text); link to the report |
 | | `finance.recurring` | — | recurring charges with next expected date and amount; link |
 | | `finance.bills` | `days?` (1–60) | bills due in the next N days; link |
+| | `finance.merchant` (1.3.0) | `merchant`, `months?` (1–24, default 12), `person?` | spending at one shop or company (the bank's description, any case, spaces and punctuation ignored): total, per month, the 10 latest charges; link to the latest month |
+| | `finance.balances` (1.3.0) | `person?` | each active account's balance from its latest complete statement (`new_balance`; a card's is what's owed, negative = in credit) and that statement's month; link |
 | Receipt Price Intelligence | `receipt.shopping_list` | — | the list with each item's cheapest store and last price; link |
 | | `receipt.price` | `item` | last prices by store, the cheapest, the trend over 90 days; link to the item |
 | | `receipt.spending` | `month?`, `store?` | spend by store or by category; link |
 | | `receipt.shopping_list.add` *(acts)* | `item`, `qty?` | the added item with its cheapest store; link |
 | Splitpot | `splitpot.balances` | `group?` | who owes whom, for the person's groups; link |
 | | `splitpot.recent` | `group?`, `days?` | the newest 20 expenses (what, who paid, amount), as the group page's own first page, with `more`; link |
+| | `splitpot.expense.add` *(acts, 2.5.0)* | `description`, `amount`, `group?`, `paid_by?`, `split_with?`, `date?` | an expense split equally (the payer and sharers by first or full name, `me`; the group can be left out when the person has one, or a default), checked by `build_splits` / `resolve_expense_date`, logged and notified after the commit (`msg.after_commit`); a name that isn't a member: nothing added; link to the group |
 | Calorie Tracker | `calorie.today` | `date?` | the person's own day: calories, macros, against goals; link |
+| | `calorie.week` (2.3.0) | `date?` (the last day) | the person's own 7 days: each day's calories against the goal, the average; link |
+| | `calorie.food.log` *(acts, 2.3.0)* | `food`, `meal?`, `servings?`, `calories?`, `protein?`, `carbs?`, `fat?`, `date?` | logs the food on the person's own day: the model's estimate (shown on the button) or, without one, a saved food's or the last log's per-serving values × servings; unknown and no estimate: nothing logged; link |
 | Household Chat | `chat.unread` | — | chats with unread counts (names and counts only — never message text); links |
 | Household Arcade | `arcade.scores` | `game?` | the household leaderboard; link |
 | Household Vault | — | — | **never** (§7) |
 | Family Tree | `tree.birthdays` | `days?` (1–90) | coming birthdays and anniversaries; link |
+| | `tree.person` (2.5.0) | `person` | one person's dates and places (age if living), parents, partners with the wedding date and years married, children, brothers and sisters, what they are to the asker; names found as for `tree.relation`; link to their page |
 | | `tree.relation` | `person`, `to?` (the asker) | how the two are related, both ways, in the person's relationship language, with the linking chain; names may be misspelt or partial — several people of one name come back as choices; link to *How are they related?* |
 
 Chat deliberately offers no message search: a chat's text is the most private thing on the bus, and the person
@@ -473,3 +484,28 @@ loaded. The assistant needs nothing special for it — it is an ordinary Ollama 
 - **Small models**: the JSON plan (§3 step 2) uses Ollama's `format: "json"`, which 1.5B–3B models follow reliably
   for this short, flat schema; the catalogue shown to the model is cut to the tools of the apps the person may use
   (§3 step 1), which keeps the prompt within a small context window (Household AI's default 8192).
+
+## 16. The morning briefing (assistant 1.2.0)
+
+Once a day, at the time a person chose, the assistant asks the apps about that person's day — exactly as if they
+had asked — and sends a summary to their phone. `household_assistant/app/briefing.py`.
+
+- **Settings, per person** (the page's **🌅 Morning briefing**; `briefings`: `on_`, `at` HH:MM in Home Assistant's
+  zone, `days` every / weekdays, `last_sent`): `GET /api/briefing` (with the person's phones and what it would
+  include), `PUT /api/briefing {on, time, days}` (422 for a bad time or days; 403 to turn it on for someone the
+  assistant is off for), `POST /api/briefing/send` (make and send today's now; doesn't count as the day's own).
+- **What it asks**, each only when the person may use that tool (`catalogue.for_user`, so the admin's and the apps'
+  switches and the children rule hold): `todo.tasks {when: today}` (always kept), `tree.birthdays {days: 7}`,
+  `finance.bills {days: 3}`, `splitpot.balances` — the last three left out when they return no items. All at once,
+  20 s each, with `engine.call`.
+- **No model**: the apps' own summary lines (each cut to 300 characters) under the day's date. Stored as a finished
+  question "Morning briefing" with its calls, so it shows in the conversation with Sources and *What was shared*;
+  usage counts the calls.
+- **Sent** with the shared `ha_notify` to the person's Companion-app phones from Home Assistant (`ha_people`,
+  refreshed every 5 minutes), title "🌅 Morning briefing · <day>", the lines as the message (≤ 1200 characters),
+  `url`/`clickAction` the assistant's sidebar page. No phone: made, not sent.
+- **When**: a job every minute (`briefing.check`) sends what is due — on, the right weekday, not yet today, from the
+  chosen time until 3 hours after it (a restart late in the morning still sends; one in the afternoon doesn't) — for
+  people the assistant is on for (children only while *Children may ask*). `last_sent` is written before sending, so
+  a slow or failing app never sends it twice.
+

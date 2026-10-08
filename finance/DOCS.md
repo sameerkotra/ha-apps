@@ -130,7 +130,11 @@ answer for me** on **Who am I**; the assistant then won't answer their questions
 - "How much did we spend on groceries in September?" — spending by category, or one category's
   10 largest charges: the bank's description, date, amount and account — **never your notes**;
 - "What subscriptions do we pay for?" and "What bills are coming up?" — the recurring charges,
-  with their next expected date.
+  with their next expected date;
+- "How much did we spend at Costco this year?" — the total at one shop or company over the last
+  months (12 unless you say), each month's, and the latest charges;
+- "What's the balance on my accounts?" — each account's balance as its latest statement printed it
+  (for a card, what was owed), with that statement's month.
 
 The answers travel through Home Assistant's event bus, which Home Assistant's recorder keeps in
 its history unless told not to. **If you turn this on**, add this to Home Assistant's

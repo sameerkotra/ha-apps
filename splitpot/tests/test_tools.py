@@ -34,6 +34,23 @@ def call(tool, uid, **args):
             return n
 
 
+def call_confirmed(tool, uid, **args):
+    now = datetime.now(timezone.utc)
+    env = {"id": app_bus.new_ulid(now), "v": 1, "from": "household_assistant", "to": "splitpot",
+           "kind": "assist.tool.call", "kv": 1, "reply_to": None, "ref": None, "sent": now.isoformat(),
+           "expires": (now + timedelta(seconds=20)).isoformat(),
+           "data": {"tool": tool, "args": args, "requested_by": uid, "question": "q1", "confirm": True,
+                    "confirmed_at": now.isoformat()}}
+    with main.get_conn() as conn:
+        try:
+            out = tools.tools.on_call(app_bus.Message(env), conn)
+            conn.commit()
+            return out
+        except app_bus.Nack as n:
+            conn.rollback()
+            return n
+
+
 class ToolTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -144,7 +161,61 @@ class ToolTests(unittest.TestCase):
         self.assertIn("text", call("splitpot.recent", "ha_asha"))
         self.assertEqual(self.c.put("/api/me/prefs", json={"assistantOk": "no"}, headers=RAVI).status_code, 422)
 
+    def act(self, uid, **args):
+        return call_confirmed("splitpot.expense.add", uid, **args)
+
+    def expenses(self, gid):
+        with main.get_conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT description, amount, paid_by, split_type FROM expenses "
+                                                  "WHERE group_id = ? ORDER BY rowid", (gid,))]
+
+    def test_add_an_expense_needs_the_tap(self):
+        self.assertNack(call("splitpot.expense.add", "ha_asha", description="Pizza", amount=30), "not_allowed", "confirm")
+        res = self.act("ha_asha", description="Pizza", amount=30)
+        self.assertRegex(res["text"], r"^Added “Pizza” \(\D*30\.00\) to Flat, paid by you, split equally: "
+                                      r"Asha \D*10\.00, Ravi \D*10\.00, Mia \D*10\.00\.$")
+        self.assertIn("“Pizza”", res["text"])
+        self.assertIn("paid by you", res["text"])
+        self.assertEqual(self.expenses(self.flat)[-1], {"description": "Pizza", "amount": 30.0, "paid_by": "asha",
+                                                       "split_type": "equal"})
+        with main.get_conn() as conn:
+            shares = dict(conn.execute("SELECT user_id, amount FROM expense_splits WHERE expense_id = (SELECT id FROM expenses "
+                                       "WHERE description = 'Pizza')").fetchall())
+            log = conn.execute("SELECT message, actor FROM events WHERE type = 'expense_added' ORDER BY created_at DESC "
+                               "LIMIT 1").fetchone()
+        self.assertEqual(shares, {"asha": 10.0, "ravi": 10.0, "mia": 10.0})
+        self.assertIn("with the Household Assistant", log["message"])
+        self.assertEqual(res["links"][0]["target"], f"/group/{self.flat}")
+
+    def test_who_paid_and_who_shares(self):
+        res = self.act("ha_asha", description="Taxi", amount=25, paid_by="ravi", split_with="me and Ravi")
+        self.assertIn("paid by Ravi", res["text"])
+        with main.get_conn() as conn:
+            shares = dict(conn.execute("SELECT user_id, amount FROM expense_splits WHERE expense_id = (SELECT id FROM expenses "
+                                       "WHERE description = 'Taxi')").fetchall())
+        self.assertEqual(shares, {"asha": 12.5, "ravi": 12.5})
+        before = len(self.expenses(self.flat))
+        res = self.act("ha_asha", description="Cake", amount=10, split_with="Zed")
+        self.assertIn("Nobody in Flat is called “Zed”", res["text"])
+        self.assertIn("Nothing was added", res["text"])
+        self.assertEqual(len(self.expenses(self.flat)), before)
+        res = self.act("ha_asha", description="Cake", amount=10, date="2099-01-01")
+        self.assertIn("can't be in the future", res["text"])
+        self.assertNack(self.act("ha_asha", description="Cake", amount=0), "invalid", "amount")
+        self.assertNack(self.act("ha_asha", description="Cake", amount=10, group="Trip"), "not_found", "group")
+
+    def test_which_group(self):
+        res = self.act("ha_ravi", description="Fuel", amount=40, group="trip")
+        self.assertIn("to Trip", res["text"])
+        with main.get_conn() as conn:
+            conn.execute("UPDATE groups SET is_default = 0")
+            conn.commit()
+        res = self.act("ha_ravi", description="Snacks", amount=8)
+        self.assertTrue(res["text"].startswith("Which group?"), res["text"])
+        self.assertNotIn("Snacks", [e["description"] for e in self.expenses(self.flat) + self.expenses(self.trip)])
+
     def test_catalogue(self):
         tools.tools.check()
-        self.assertEqual([t["name"] for t in tools.tools.spec()], ["splitpot.balances", "splitpot.recent"])
+        self.assertEqual([t["name"] for t in tools.tools.spec()],
+                         ["splitpot.balances", "splitpot.recent", "splitpot.expense.add"])
         self.assertIn("assist.tool.call", app_bus.default._handlers)

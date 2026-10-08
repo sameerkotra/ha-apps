@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+- **🌅 Morning briefing**: each morning, at the time you choose (every day or weekdays), a short summary of your day on your phone — today's tasks and schedule, birthdays this week, bills due in the next 3 days, who owes whom — from the apps that answer you. It needs no AI model, appears in your questions too, and **Send me one now** tries it.
+- **More the assistant can do** (with each app's update): tick off a task or move it to another day, add a Splitpot expense, log a food, tick or add a checklist item — all only after you tap; and answer more: who has which tasks, spending at one shop, account balances, someone in the family tree, your last 7 days of food.
+- Admin → Usage counts each day by Home Assistant's day (the header said UTC).
+
 ## 1.1.3
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

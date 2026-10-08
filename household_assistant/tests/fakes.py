@@ -63,7 +63,8 @@ class FakeApp:
         os.remove(self.path)
 
 
-def make_household(router: Router) -> dict:
+def make_household(router: Router, *, bills: bool = False) -> dict:
+    """`bills`: Finance also offers finance.bills (the morning briefing's tests)."""
     todo = FakeApp(router, "household_todo", "Household Todo", "todo")
     fin = FakeApp(router, "finance", "Finance Dashboard", "finance")
     vault = FakeApp(router, "household_vault", "Household Vault", "vault")
@@ -94,6 +95,20 @@ def make_household(router: Router) -> dict:
         return ctx.result("September 2026: income 3,000.00, spending 1,234.50.",
                           links=[ctx.link("September 2026 in Finance Dashboard", "/month/2026-09"),
                                  {"label": "Elsewhere", "panel": "/a1b2c3d4_household_chat", "target": "/x"}])
+
+    fin.bills = []                                          # (date, merchant, amount) the next days
+
+    def bills_tool(ctx):
+        fin.calls.append({"tool": "finance.bills", "by": ctx.user["id"], "args": ctx.args})
+        if not fin.bills:
+            return ctx.result(f"No bills expected in the next {int(ctx.args.get('days', 14))} days.")
+        return ctx.result("Coming up: " + "; ".join(f"{d} {m} {a:.2f}" for d, m, a in fin.bills) + ".",
+                          items=[{"date": d, "merchant": m, "amount": a} for d, m, a in fin.bills],
+                          links=[ctx.link("Recurring charges in Finance Dashboard", "/month/2026-09")])
+
+    if bills:
+        fin.tools.tool("finance.bills", "Recurring charges expected in the next days.",
+                       args={"days": Arg("number", "how many days ahead", min=1, max=60)}, returns="charges")(bills_tool)
 
     @vault.tools.tool("vault.list", "Every password.", returns="passwords")
     def secrets(ctx):

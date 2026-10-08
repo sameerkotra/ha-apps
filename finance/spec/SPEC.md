@@ -761,6 +761,11 @@ re-run of the AI.
   APP_MESSAGES_SPEC §6.6). `requested_by` must be in `known_users` (has opened the app), else `nack not_allowed
   no_access`. Whose data: theirs, or with `person` (a name or id) an owner `user_access` lets them see; anyone else
   is `nack not_found person`. The admin's "act as" never applies.
+  - `finance.merchant` (`merchant`, `months?` 1–24, default 12): spend rows (the Overview's rules) whose bank
+    description contains the words, compared without case, spaces or punctuation; the total, each month's, and the 10
+    latest as `{date, merchant, amount, account}` (never `note`). Fewer than 2 letters → `nack invalid merchant`.
+  - `finance.balances`: each active account (not deleted or archived) with its latest complete statement's
+    `new_balance` and `statement_period`; a card's balance is what's owed (negative: in credit).
   - `finance.summary` (`month?`): income, spending, net and the top 5 categories, with the Overview's rules (clean
     rows; no transfers or excluded rows; income only on checking/savings; a card purchase is spend).
   - `finance.spending` (`month?`, `category?`): spend by category, or a category's 10 largest charges as

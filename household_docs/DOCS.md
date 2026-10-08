@@ -438,6 +438,7 @@ what you could open here yourself (your own documents and what's shared with you
 | **Read** a note, checklist or sheet | up to 4,000 characters of its text at a time (a sheet's cells as "Tab A1: value" lines) |
 | **Show a checklist** | its items, ticked or open |
 | **Make a note** in My docs → Inbox | only after you tap the exact note it proposes |
+| **Tick or untick a checklist item**, **add an item** | only after you tap the exact change, and only where you could do it here (a viewer ticks only when the checklist lets viewers tick) |
 
 Each answer links back to the document in Docs. Reading through the assistant doesn't count as opening the document
 (no "seen" mark, no activity). An admin can turn this off for everyone (**App settings → Household Assistant**),

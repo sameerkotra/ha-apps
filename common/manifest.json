@@ -598,6 +598,8 @@
           "whoami.py",
           "ha_client.py",
           "ha_time.py",
+          "ha_people.py",
+          "ha_notify.py",
           "housekeeping.py",
           "auth_core.py",
           "db_core.py",

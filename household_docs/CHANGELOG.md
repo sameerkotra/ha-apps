@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- **Checklists from the Household Assistant**: "Tick passports on the packing list" or "Add snacks to it" — only after you tap the exact change, and only where you could do it here (a viewer ticks only when the checklist lets viewers tick).
+
 ## 1.2.4
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

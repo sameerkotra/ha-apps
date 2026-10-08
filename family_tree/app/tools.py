@@ -5,6 +5,8 @@ Two tools:
 
 - `tree.birthdays`: the birthdays and anniversaries coming up, as the Upcoming view lists them for the asking person
   (close family when they've said "This is me", else everyone; relationships in their own language).
+- `tree.person`: one person's facts as their page shows them — born (when, where, age), died, parents, partners
+  with the wedding date and years married, children, brothers and sisters, and what they are to the asker;
 - `tree.relation`: how two people are related, as "How are they related?" shows it — both ways, in the person's
   own language, with the chain that links them. Names may be misspelt or partial (find_people.py); "me", "my
   mother" or "Ravi's wife" work too. Several people with the name → the choices, so the assistant can ask which.
@@ -43,7 +45,7 @@ def _panel():
 
 
 tools = assist_tools.Catalogue(
-    "tree", targets=[r"/upcoming", r"/relate/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}"], actor=_actor, enabled=lambda conn: bool(settings.get("assistant_answers")),
+    "tree", targets=[r"/upcoming", r"/relate/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}", r"/person/[A-Za-z0-9_-]{1,64}"], actor=_actor, enabled=lambda conn: bool(settings.get("assistant_answers")),
     person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel, busy=_busy)
 
 
@@ -106,6 +108,34 @@ def _who(g, pid: str, me: str | None, lang: str) -> str:
     return p.name + (f" ({', '.join(bits)})" if bits else "")
 
 
+class _Answer(Exception):
+    """A name that didn't lead to one person: the answer to give instead."""
+
+    def __init__(self, result):
+        super().__init__("answer")
+        self.result = result
+
+
+def _pick(ctx, g, spoken: str, me: str | None, lang: str, label: str) -> tuple[str, str | None]:
+    """(the person a name means, a note when it was taken loosely) — or _Answer with why not."""
+    r = find_people.find(ctx.conn, g, spoken, me, lang)
+    if "id" in r:
+        return r["id"], _said(spoken, g, r["id"], r["how"])
+    link = ctx.link(label)
+    if r.get("me"):
+        raise _Answer(ctx.result("I don't know who you are in the family tree: say the name, or choose yourself "
+                                 "with “This is me” on your person in Family Tree.", links=[link]))
+    if "choices" in r:
+        choices = [_who(g, pid, me, lang) for pid in r["choices"]]
+        raise _Answer(ctx.result(f"More than one person could be “{spoken}”: " + "; ".join(choices)
+                                 + ". Ask which one is meant (a surname or a parent's name will do).",
+                                 items=[{"could_be": c} for c in choices], links=[link]))
+    near = [g.people[pid].name for pid in r["none"]]
+    raise _Answer(ctx.result(f"Nobody in the family tree is called “{spoken}”."
+                             + (f" The nearest names: {', '.join(near)}." if near else ""),
+                             items=[{"nearest": n} for n in near], links=[link]))
+
+
 def _said(spoken: str, g, pid: str, how: str) -> str | None:
     """A note when the name was taken loosely, so the answer can say who was meant."""
     if how == "close":
@@ -137,29 +167,14 @@ def relation(ctx):
     g = graph_mod.get(ctx.conn)
     me = ctx.user["me_person_id"] if ctx.user["me_person_id"] in g.people else None
     found, notes = [], []
-    for spoken in (ctx.args["person"], ctx.args.get("to") or "me"):
-        r = find_people.find(ctx.conn, g, spoken, me, lang)
-        if "id" in r:
-            found.append(r["id"])
-            note = _said(spoken, g, r["id"], r["how"])
+    try:
+        for spoken in (ctx.args["person"], ctx.args.get("to") or "me"):
+            pid, note = _pick(ctx, g, spoken, me, lang, "How are they related? in Family Tree")
+            found.append(pid)
             if note:
                 notes.append(note)
-            continue
-        if r.get("me"):
-            return ctx.result("I don't know who you are in the family tree: say both names, or choose yourself "
-                              "with “This is me” on your person in Family Tree.",
-                              links=[ctx.link("How are they related? in Family Tree")])
-        if "choices" in r:
-            choices = [_who(g, pid, me, lang) for pid in r["choices"]]
-            return ctx.result(f"More than one person could be “{spoken}”: " + "; ".join(choices)
-                              + ". Ask which one is meant (a surname or a parent's name will do).",
-                              items=[{"could_be": c} for c in choices],
-                              links=[ctx.link("How are they related? in Family Tree")])
-        near = [g.people[pid].name for pid in r["none"]]
-        return ctx.result(f"Nobody in the family tree is called “{spoken}”."
-                          + (f" The nearest names: {', '.join(near)}." if near else ""),
-                          items=[{"nearest": n} for n in near],
-                          links=[ctx.link("How are they related? in Family Tree")])
+    except _Answer as a:
+        return a.result
     b, a = found                                        # what `person` (b) is to `to` (a)
     link = ctx.link("How are they related? in Family Tree", f"/relate/{a}/{b}")
     name = lambda pid: "you" if pid == me else g.people[pid].name
@@ -185,3 +200,94 @@ def relation(ctx):
             "english": ab.get("english"), "meaning": ab.get("meaning"), "back": ba.get("label"),
             "back_english": ba.get("english"), "link": chain or None}
     return ctx.result(text, items=[item], links=[link])
+
+
+def _when_where(ev) -> str:
+    if not ev:
+        return ""
+    out = dates.display(ev) or ""
+    if ev.get("place"):
+        out += f" in {ev['place']}" if out else f"in {ev['place']}"
+    return out
+
+
+def _names(g, pids) -> list[str]:
+    return [g.people[x].name for x in pids if x in g.people]
+
+
+@tools.tool("tree.person",
+            "One person in the family tree: when and where they were born and their age, when they died, their "
+            "parents, partners (with the wedding date and years married), children, brothers and sisters, and what "
+            "they are to the asker. Names can be misspelt, partial or nicknames.",
+            args={"person": Arg("string", "the person, as the asker said it (or \"me\")", required=True,
+                                max_length=80)},
+            returns="the person's dates, places and close family",
+            examples=("How old is Lakshmi?", "Who are Ravi's children?", "When did Sita get married?"),
+            children=True)
+def person(ctx):
+    lang = kin.user_lang(ctx.user)
+    g = graph_mod.get(ctx.conn)
+    me = ctx.user["me_person_id"] if ctx.user["me_person_id"] in g.people else None
+    try:
+        pid, note = _pick(ctx, g, ctx.args["person"], me, lang, "Family Tree")
+    except _Answer as a:
+        return a.result
+    p = g.people[pid]
+    today = config.today()
+    alive = graph_mod.living(p)
+    facts, item = [], {"name": p.name, "nickname": p.nickname, "living": alive}
+    if p.birth:
+        age = dates.age_on(p.birth, today) if alive else None
+        facts.append("born " + _when_where(p.birth) + (f", {age} years old" if age is not None else ""))
+        item.update(born=dates.display(p.birth), born_in=p.birth.get("place"), age=age)
+    if not alive:
+        died = _when_where(p.death) if p.death else ""
+        at = dates.age_between(p.birth, p.death) if p.death else None
+        facts.append("died" + (f" {died}" if died else "") + (f", aged {at}" if at is not None else ""))
+        item.update(died=dates.display(p.death) if p.death else "yes", died_aged=at)
+    parents = _names(g, [x for x, _f, rel in g.parents(pid) if rel == "birth"]) or \
+        _names(g, [x for x, _f, _r in g.parents(pid)])
+    if parents:
+        facts.append("child of " + " and ".join(parents))
+    partners = []
+    for other, fid in g.partners(pid):
+        if not other:
+            continue
+        f = g.families[fid]
+        bit = g.people[other].name
+        if f.marriage:
+            bit += f", married {_when_where(f.marriage)}"
+            if alive and not f.ended and f.marriage.get("date_y") and graph_mod.living(g.people[other]):
+                years = dates.age_on(f.marriage, today)
+                if years is not None:
+                    bit += f" ({years} years)"
+        if f.ended:
+            bit += f" ({f.ended})"
+        partners.append(bit)
+    if partners:
+        facts.append(("partner " if len(partners) == 1 else "partners ") + "; ".join(partners))
+    kids = list(dict.fromkeys(c for c, _f, _r in g.children(pid)))
+    if kids:
+        facts.append(f"{len(kids)} child{'ren' if len(kids) != 1 else ''}: " + ", ".join(
+            g.people[c].name + (f" (b. {g.people[c].birth['date_y']})" if g.people[c].birth and
+                                g.people[c].birth.get("date_y") else "") for c in kids))
+    sibs = [s for s, _full in g.siblings(pid)]
+    if sibs:
+        if len(sibs) == 1:
+            word = {"male": "brother", "female": "sister"}.get(g.people[sibs[0]].gender, "sibling")
+            facts.append(f"{word} {g.people[sibs[0]].name}")
+        else:
+            facts.append("brothers and sisters: " + ", ".join(_names(g, sibs)))
+    if me and me != pid:
+        label = kin.label_for(g, me, pid, lang)
+        if label and label != "not related":
+            facts.append(f"your {label}")
+            item["to_you"] = label
+    elif me == pid:
+        facts.append("that's you")
+    item.update(parents=", ".join(parents) or None, partners="; ".join(partners) or None,
+                children=", ".join(_names(g, kids)) or None, siblings=", ".join(_names(g, sibs)) or None)
+    lead = f"{note}. " if note else ""
+    text = lead + p.name + (f" (“{p.nickname}”)" if p.nickname else "") + ": " + ("; ".join(facts) or
+                                                                                "nothing more is recorded yet") + "."
+    return ctx.result(text, items=[item], links=[ctx.link(f"{p.name} in Family Tree", f"/person/{pid}")])

@@ -292,11 +292,15 @@ see it here:
   they're assigned to — never notes or links;
 - **your lists** with how many tasks are open;
 - **the schedule** for the next days (trash day and the like; private items only
-  your own).
+  your own);
+- **who has what** — "What's Meera doing this week?", "What's left that nobody
+  has?" (`me` and `nobody` work too).
 
-It can also **add a task** to one of your lists, but only after you tap the
-exact change it proposes ("Add *milk* to *Shopping*"); the task then shows
-"from Assistant". Its answers link back to Todo.
+It can also **add a task**, **tick one off** ("I took the bins out") or **move
+one to another day** ("Move the plumber to Friday"), but only after you tap the
+exact change it proposes; an added task shows "from Assistant". When several
+open tasks match the words, nothing changes and it asks which one. Its answers
+link back to Todo.
 
 An admin can turn this off for everyone (**App settings → Household Assistant**),
 and you can turn it off for yourself on **Settings → Household Assistant**.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.0
+
+- **Add an expense with the Household Assistant**: "I paid 40 for groceries, split with Meera" — split equally between the people named (everyone in the group when nobody is), only after you tap the exact change it proposes. It's checked like the Add expense form, shows in the activity as added with the Household Assistant, and notifies people as an added charge does.
+
 ## 2.4.3
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

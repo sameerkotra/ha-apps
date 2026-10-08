@@ -35,6 +35,7 @@ def plan_call(tool, **args):
 
 class Household(unittest.TestCase):
     """The app (its start-up run once) and, for each test, a fresh database and fake household on one bus."""
+    BILLS = False                                         # Finance also offers finance.bills
     @classmethod
     def setUpClass(cls):
         cls._ctx = ingress_client(app)
@@ -54,7 +55,7 @@ class Household(unittest.TestCase):
         self.router.buses[config.SLUG] = bus.default
         bus.start(config.SLUG, config.APP_TITLE, config.APP_VERSION, can=[], db=db.get_conn, token="",
                   outbox_thread=True)
-        self.apps = make_household(self.router)
+        self.apps = make_household(self.router, bills=self.BILLS)
         for a in self.apps.values():
             a.hello()
         self.learn()

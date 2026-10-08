@@ -8,7 +8,10 @@
 - `docs.read`: up to 4 KB of a note's or checklist's text, or a sheet's cells as "Tab A1: value" lines, from `offset`
   on (`more` when there is more) — read-only: opening through the assistant doesn't count as opening it here;
 - `docs.checklist`: a checklist's items, ticked or open;
-- `docs.note.create` (acts): a new note in My docs → Inbox, only after the person taps the proposed change.
+- `docs.note.create` (acts): a new note in My docs → Inbox, only after the person taps the proposed change;
+- `docs.checklist.tick` (acts): ticks (or unticks) a checklist's item, found by its words, as ticking it here
+  would — a viewer may tick only where the checklist lets viewers tick;
+- `docs.checklist.add` (acts): adds an item to a checklist the person may edit.
 
 Everything as the asking person could see it here (`sharing.require`, the 404-shaped "doesn't exist or can't be
 seen"); Kids' space rules hold (no sheets for children, no making notes). Answered only while the admin's *Answer the
@@ -25,7 +28,7 @@ from .common import assist_tools
 from .common.assist_tools import Arg
 from .formats import checklist_md, sheet_model as M, text as text_fmt
 from .search import engine
-from .store import kinds, moving, nodes
+from .store import kinds, moving, nodes, paths
 
 READ_CHARS = 4000
 SEARCH_RESULTS = 10
@@ -229,3 +232,71 @@ def note_create(ctx):
     return ctx.result(f"Made the note “{node['name']}” in My docs → Inbox.",
                       items=[{"id": nid, "name": node["name"]}],
                       links=[ctx.link(f"{node['name']} in Household Docs", f"/doc/{nid}")])
+
+
+def _title(node) -> str:
+    """A checklist's name as the app shows it ("Trip", not "Trip.md")."""
+    stem, ext = paths.split_ext(node["name"])
+    return stem if ext and ext in (kinds.get(node["kind"]).exts or ()) else node["name"]
+
+
+def _checklist_items(ctx, node):
+    try:
+        return checklist_md.parse(_text(ctx, node))
+    except ValueError:
+        raise bus.Nack("invalid", "not_a_checklist") from None
+
+
+def _change_checklist(ctx, node, ops: list):
+    """Apply checklist operations as the person (documents.checklist_ops); a refusal becomes the bus's Nack."""
+    try:
+        moving.guard()
+        _out, conflicts = documents.checklist_ops(ctx.conn, ctx.user, node["id"], ops)
+    except HTTPException as e:
+        raise bus.Nack("not_allowed" if e.status_code in (403, 409, 423) else "invalid", "checklist") from None
+    if conflicts:
+        raise bus.Nack("invalid", "checklist")
+
+
+@tools.tool("docs.checklist.tick",
+            "Ticks an item on a checklist (by the checklist's id from docs.search and the item's words), or unticks it "
+            "with `done: false` (after the person confirms it).",
+            args={"id": Arg("string", "the checklist's id", required=True, max_length=64),
+                  "item": Arg("string", "the item's words, as docs.checklist lists them", required=True, max_length=200),
+                  "done": Arg("boolean", "false to untick (default true)")},
+            acts=True, returns="the item ticked or unticked", children=True)
+def checklist_tick(ctx):
+    node, _role = _open(ctx, ctx.args["id"])
+    if node["kind"] != "checklist":
+        raise bus.Nack("invalid", "not_a_checklist")
+    done = ctx.args.get("done", True)
+    want = " ".join(ctx.args["item"].split()).casefold()
+    items = _checklist_items(ctx, node)
+    exact = [it for it in items if " ".join(it.text.split()).casefold() == want]
+    found = exact or [it for it in items if want in it.text.casefold()]
+    link = ctx.link(f"{_title(node)} in Household Docs", _target(node))
+    if len(found) != 1:
+        say = (f"No item “{ctx.args['item']}” on {_title(node)}" if not found else
+               f"{len(found)} items on {_title(node)} match “{ctx.args['item']}”: " + "; ".join(i.text for i in found[:8]))
+        return ctx.result(say + ". Nothing was changed.", links=[link])
+    it = found[0]
+    if bool(it.done) == bool(done):
+        return ctx.result(f"“{it.text}” on {_title(node)} was already {'ticked' if done else 'open'}.", links=[link])
+    _change_checklist(ctx, node, [{"op": "tick" if done else "untick", "key": it.key}])
+    return ctx.result(f"{'Ticked' if done else 'Unticked'} “{it.text}” on {_title(node)}.",
+                      items=[{"item": it.text, "done": bool(done)}], links=[link])
+
+
+@tools.tool("docs.checklist.add", "Adds an item to the end of a checklist (by its id from docs.search) after the person "
+            "confirms it.",
+            args={"id": Arg("string", "the checklist's id", required=True, max_length=64),
+                  "item": Arg("string", "the new item", required=True, max_length=200)},
+            acts=True, returns="the added item", children=True)
+def checklist_add(ctx):
+    node, _role = _open(ctx, ctx.args["id"])
+    if node["kind"] != "checklist":
+        raise bus.Nack("invalid", "not_a_checklist")
+    text = " ".join(ctx.args["item"].split())
+    _change_checklist(ctx, node, [{"op": "add", "text": text}])
+    return ctx.result(f"Added “{text}” to {_title(node)}.", items=[{"item": text, "done": False}],
+                      links=[ctx.link(f"{_title(node)} in Household Docs", _target(node))])

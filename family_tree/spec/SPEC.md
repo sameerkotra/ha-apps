@@ -798,6 +798,11 @@ ALTER TABLE people ADD COLUMN never_export INTEGER NOT NULL DEFAULT 0;
   close family (3 steps from their "This is me") unless `everyone` or no "This is me", relationship names in their
   own language, no remembrance days — as `{date, in_days, what, title, years, relationship}`. Names, dates, ages
   and relationships only: no photos, contacts, notes or ids.
+- **`tree.person`** (`person`): one person's facts as their page has them — birth (date, place, age while living),
+  death (date, place, age), birth parents (else any), partners with the wedding date and place and years married
+  (while both live and the marriage hasn't ended), children with birth years, brothers and sisters (one: by gender),
+  and what they are to the asker (`kin.label_for`). Found as `tree.relation` finds people (choices, nearest names,
+  "taken as"). No photos, contacts, notes or custom fields. Link: `/person/<id>`.
 - **`tree.relation`** (2.4.0; `person`, `to?` — the asker when left out): what "How are they related?" shows, as
   text both ways ("Kiran is Sita's Menalludu (younger brother's son). Sita is Kiran's Atta (…)"), the chain when it
   has more than one link, and one item `{person, to, relationship, english, meaning, back, back_english, link}`.
