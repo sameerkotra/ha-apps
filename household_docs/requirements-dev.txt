@@ -1,2 +1,5 @@
 -r requirements.txt
 httpx2==2.13.1
+# tests only: the end-to-end test with Chat and Todo (httpx), picture fixtures (pillow)
+httpx==0.28.1
+pillow==12.3.0
