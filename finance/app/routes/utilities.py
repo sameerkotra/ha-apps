@@ -71,10 +71,12 @@ async def upload_utility_bill(
     provider: str = Form(...),
     provider_other: str = Form(""),
     files: list[UploadFile] = File(...),
+    skip_confirmation: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Multiple PDFs per request — upload several utility bills at once for
+    """Unless `skip_confirmation` is ticked, each bill waits for the person to check it against the PDF and
+    Confirm (as statements do). Multiple PDFs per request — upload several utility bills at once for
     the same provider. Creates one placeholder row per file (migration 0007 —
     everything but `provider` nullable); process_utility_bill fills in the
     rest, and may INSERT a second row for a dual-fuel Xcel statement's gas
@@ -111,9 +113,9 @@ async def upload_utility_bill(
                 continue
 
             cur = conn.execute(
-                "INSERT INTO utility_bills (user_id, provider, original_filename, pdf_path, file_hash, status) "
-                "VALUES (?, ?, ?, ?, ?, 'processing')",
-                (acting.id, provider, file.filename, tmp_path, hash_),
+                "INSERT INTO utility_bills (user_id, provider, original_filename, pdf_path, file_hash, status, "
+                "needs_confirmation) VALUES (?, ?, ?, ?, ?, 'processing', ?)",
+                (acting.id, provider, file.filename, tmp_path, hash_, 0 if skip_confirmation else 1),
             )
             conn.commit()
             utility_bill_id = cur.lastrowid
@@ -450,8 +452,8 @@ def utility_review(
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Confirm or correct a flagged bill against its PDF (the vision pass is
-    the only source of a bill's values, so there's nothing to choose between)."""
+    """Confirm or correct a bill against its PDF — one flagged by a check, or one waiting for the person's
+    confirmation (the vision pass is the only source of a bill's values, so there's nothing to choose between)."""
     conn = get_db()
     try:
         row = conn.execute(
@@ -484,7 +486,7 @@ def utility_review(
 @router.post("/utility-reextract")
 def utility_reextract(
     request: Request,
-    id: int = Form(...),
+    id: str = Form(""),
     notes: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
@@ -492,7 +494,12 @@ def utility_reextract(
     """Read a not-yet-confirmed bill's PDF again, optionally with notes on what was wrong
     (section 23). The whole upload is re-run from its first row, so the other bills from the
     same PDF (Xcel's gas with its electric) are read again too; the notes are kept on that row
-    and sent to the model with the PDF (empty notes clear them)."""
+    and sent to the model with the PDF (empty notes clear them). `id` comes in the form (the
+    review page) or the address (the Re-extract dialog on the upload history, which reloads)."""
+    try:
+        id = int(id or request.query_params.get("id") or "")
+    except ValueError:
+        return JSONResponse({"error": "Which bill?"}, status_code=400)
     with get_db() as conn:
         row = conn.execute(
             "SELECT id, file_hash, pdf_path, status FROM utility_bills WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
@@ -508,9 +515,11 @@ def utility_reextract(
             (acting.id, row["file_hash"])).fetchone()[0] or id
         conn.execute(
             "UPDATE utility_bills SET status = 'processing', error_message = NULL, current_step = NULL, "
-            "extraction_notes = ? WHERE id = ?", ((notes or "").strip()[:MAX_NOTES_CHARS] or None, first))
+            "corrections = NULL, extraction_notes = ? WHERE id = ?", ((notes or "").strip()[:MAX_NOTES_CHARS] or None, first))
         conn.commit()
     jobs.start_job("utility_bill", first, acting.id)
+    if request.headers.get("hx-request"):          # the Re-extract dialog on the upload history: reload the list
+        return HTMLResponse("", headers={"HX-Refresh": "true"})
     qs = _acting_qs(current, acting)
     return RedirectResponse(url="utilities?tab=upload" + (f"&{qs}" if qs else ""), status_code=303)
 

@@ -2,11 +2,18 @@
 {% block title %}Review: {{ bill.original_filename }}{% endblock %}
 {% block content %}
 <p><a href="utilities?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Upload &middot; Utility bill</a></p>
-<h1>Review: {{ bill.provider }} {{ bill.utility_type or "" }} bill</h1>
+{% set awaiting = bill.needs_confirmation and not bill.error_message %}
+<h1>{{ "Confirm" if awaiting else "Review" }}: {{ bill.provider }} {{ bill.utility_type or "" }} bill</h1>
 <p class="hint">
-    {{ bill.error_message or "Flagged for review." }}
+    {{ "Check these figures against the bill, correct anything wrong, then Confirm." if awaiting else (bill.error_message or "Flagged for review.") }}
     {% if bill.pdf_path %}<button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=utility&amp;id={{ bill.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">View the source PDF</button> to check.{% endif %}
 </p>
+{% if bill.corrections %}
+<div class="card hint" id="meter-corrections">
+    <strong>Taken from the bill's own meter table</strong> (the AI read these differently):
+    <ul>{% for c in bill.corrections.split("; ") %}<li>{{ c }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
 <p class="hint">
     There's no second extraction to pick between here — confirm the values
     below against the PDF, correcting anything the AI got wrong, and submit
@@ -94,7 +101,7 @@
     </div>
     {% endif %}
 
-    <button type="submit">Confirm & resolve</button>
+    <button type="submit">{{ "Confirm" if awaiting else "Confirm & resolve" }}</button>
 </form>
 
 {% if can_reextract %}

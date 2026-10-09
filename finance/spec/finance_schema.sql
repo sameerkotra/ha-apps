@@ -405,7 +405,7 @@ CREATE TABLE "utility_bills" (
 
     current_step             TEXT,
     llm_raw_response          TEXT
-, ai_usage TEXT, extraction_notes TEXT);
+, ai_usage TEXT, extraction_notes TEXT, needs_confirmation INTEGER NOT NULL DEFAULT 0, corrections TEXT);
 
 CREATE INDEX idx_accounts_deleted    ON accounts(deleted_at) WHERE deleted_at IS NOT NULL;
 

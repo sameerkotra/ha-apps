@@ -98,6 +98,8 @@
         var modal = document.getElementById("reextract-modal");
         if (!modal) return;
         var notes = document.getElementById("reextract-notes"), current = null;
+        var hint = document.getElementById("reextract-hint");
+        var defaults = {hint: hint ? hint.textContent : "", placeholder: notes.getAttribute("placeholder") || ""};
         function close() { modal.hidden = true; current = null; }
         document.addEventListener("click", function (e) {
             var open = e.target.closest(".reextract-open");
@@ -105,6 +107,9 @@
                 current = open;
                 document.getElementById("reextract-name").textContent = open.dataset.name || "";
                 notes.value = open.dataset.notes || "";
+                // a utility bill brings its own wording; a statement uses the dialog's own
+                if (hint) hint.textContent = open.dataset.hint || defaults.hint;
+                notes.setAttribute("placeholder", open.dataset.placeholder || defaults.placeholder);
                 modal.hidden = false;
                 notes.focus();
                 return;

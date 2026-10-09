@@ -1,5 +1,5 @@
 name: "Finance Dashboard"
-version: "1.3.1"
+version: "1.4.0"
 slug: "finance"
 description: >-
   Household finances: bank and card statements (PDF/CSV) read by the AI you

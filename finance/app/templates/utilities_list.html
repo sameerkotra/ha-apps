@@ -38,6 +38,10 @@
         PDF(s)
         <input type="file" name="files" id="utility-file-input" accept="application/pdf" multiple required>
     </label>
+    <label class="checkbox-label">
+        <input type="checkbox" name="skip_confirmation" value="1">
+        Skip the confirmation step
+    </label>
     <button type="submit" id="utility-upload-btn">Upload</button>
 </form>
 <p class="hint">
@@ -50,6 +54,11 @@
     (electric, gas or water): choose "Other provider" and type its name. The AI
     reads it the same way, and every such bill waits for you to check it
     against the PDF and Confirm (or Re-extract with notes).
+</p>
+<p class="hint">
+    Unless you skip it, each bill then waits for you to check its figures against the PDF and
+    <strong>Confirm</strong> (correcting anything first), or <strong>Re-extract</strong> it, telling the AI what was
+    wrong. The PDF is deleted once every bill from it is confirmed.
 </p>
 <div id="utility-upload-result"></div>
 <script src="static/pages/utility-upload.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>

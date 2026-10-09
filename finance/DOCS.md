@@ -70,12 +70,17 @@ or two years side by side.
   amounts printed in it. Confirm it against the PDF, or **Re-extract** telling the AI what was
   wrong. Possible duplicates are skipped and can be inserted anyway.
 - **Review**: everything waiting for you.
-- **Utility bill** and **Toll statement**: when those parts are switched on (below).
+- **Utility bill** and **Toll statement**: when those parts are switched on (below). Each utility
+  bill waits for you like a statement: **Check & confirm** opens its figures (correct anything, then
+  Confirm), **Re-extract** reads the PDF again with your notes. Tick **Skip the confirmation step**
+  when uploading to save bills straight away. On an electric bill the meter table (delivered by Xcel,
+  delivered by you, net delivered, net generated) is also read from the bill's own text, and any
+  figure the AI read differently is listed when you check it.
 
 ### Bills (optional)
 - **Utilities**: electric, gas and water bills with usage and cost per period, and Compare.
   Xcel Energy and Aurora Water are read with tuned rules; any other provider works too — its
-  bills always wait for you to check and confirm.
+  bills always wait for you to check and confirm, even when you skip the confirmation step.
 - **Tolls**: toll road statements by car and tag, trips and patterns.
 
 Both are off on a new install: switch them on under **Admin → App settings → Features**.

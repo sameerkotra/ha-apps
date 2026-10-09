@@ -9,6 +9,13 @@ statement pipeline's text pass (extract_deterministic, _consume_amount).
   any other, in one write, all sharing the file's hash and path.
 - Checks: each bill's cost must be printed in the PDF text, and for a dual-fuel
   statement the combined total too; otherwise the bill waits for review.
+- The electric meter table is also read from the PDF's own text
+  (utility_meter.py): a printed figure replaces the AI's, the rest follow the
+  meter arithmetic, and what changed is kept in `corrections`.
+- Unless "Skip confirmation" was ticked at upload (`needs_confirmation` 0),
+  every bill waits for the person to check it against the PDF and Confirm
+  (status pending_review, review_status clean, no error message); the PDF is
+  kept until then.
 """
 import logging
 import sqlite3
@@ -20,7 +27,8 @@ from ..storage import forget_pdf
 from . import documents
 from .deterministic import extract_deterministic, NoTextLayer
 from .pipeline import _consume_amount  # generic, not statement-specific — reused as-is
-from .utility_vision import extract_vision_utility, UtilityVisionResult
+from .utility_meter import meter_from_text, reconcile
+from .utility_vision import ElectricMeterDetails, extract_vision_utility, UtilityVisionResult
 from .vision import VisionExtractionError
 
 logger = logging.getLogger(__name__)
@@ -160,8 +168,10 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
     try:
         conn = get_db()
         row = conn.execute(
-            "SELECT pdf_path, provider, extraction_notes FROM utility_bills WHERE id = ?", (utility_bill_id,)
+            "SELECT pdf_path, provider, extraction_notes, needs_confirmation FROM utility_bills WHERE id = ?",
+            (utility_bill_id,)
         ).fetchone()
+        needs_confirmation = bool(row["needs_confirmation"])
         pdf_path = row["pdf_path"]
         provider = row["provider"]
         known = provider in PROVIDER_KEYWORDS
@@ -201,6 +211,24 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
         if not vision_result.bills:
             _fail(conn, utility_bill_id, "AI extraction found no recognizable bill on this PDF.")
             return
+
+        # The meter table as printed (pdftotext) wins over the AI's reading of it.
+        printed = meter_from_text(det_result.raw_text)
+        corrections: list[str | None] = []
+        for bill in vision_result.bills:
+            if bill.utility_type != "electric" or not (printed or bill.electric_meter_details):
+                corrections.append(None)
+                continue
+            if bill.electric_meter_details is None:
+                bill.electric_meter_details = ElectricMeterDetails()
+            changes = reconcile(bill.electric_meter_details, printed)
+            if bill.usage_amount is None and bill.electric_meter_details.grid_import_total_kwh is not None:
+                bill.usage_amount = bill.electric_meter_details.grid_import_total_kwh
+                bill.usage_unit = bill.usage_unit or "kWh"
+            corrections.append("; ".join(changes) or None)
+            if changes:
+                logger.info("Utility bill %s: meter corrected: %s", utility_bill_id, "; ".join(changes))
+        fixes = {id(b): c for b, c in zip(vision_result.bills, corrections)}
 
         _set_step(conn, utility_bill_id, "Validating amounts against bill text")
         working_counts = Counter(det_result.amount_counts)
@@ -250,19 +278,20 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
             saved: list[tuple[int, str | None]] = []  # (id, flag)
             for i, (bill, flag) in enumerate(zip(bills, bill_flags)):
                 review_status = "pending_review" if flag else "clean"
-                status = "pending_review" if flag else "complete"
+                status = "pending_review" if (flag or needs_confirmation) else "complete"
+                fix = fixes.get(id(bill))
 
                 if i == 0:
                     conn.execute(
                         "UPDATE utility_bills SET utility_type = ?, provider = ?, period_start_date = ?, "
                         "period_end_date = ?, usage_amount = ?, usage_unit = ?, cost = ?, due_date = ?, "
                         "account_number_last4 = ?, status = ?, raw_text_length = ?, review_status = ?, "
-                        "error_message = ?, processed_at = datetime('now') WHERE id = ?",
+                        "error_message = ?, corrections = ?, processed_at = datetime('now') WHERE id = ?",
                         (
                             bill.utility_type, provider, bill.period_start_date, bill.period_end_date,
                             bill.usage_amount, bill.usage_unit, bill.cost, bill.due_date,
                             bill.account_number_last4, status, det_result.raw_text_length, review_status,
-                            flag, utility_bill_id,
+                            flag, fix, utility_bill_id,
                         ),
                     )
                     bill_id = utility_bill_id
@@ -282,15 +311,15 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
                         "INSERT INTO utility_bills "
                         "(user_id, utility_type, provider, period_start_date, period_end_date, "
                         "usage_amount, usage_unit, cost, due_date, account_number_last4, "
-                        "status, raw_text_length, review_status, error_message, "
-                        "file_hash, pdf_path, original_filename, llm_raw_response, processed_at) "
-                        "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, file_hash, pdf_path, original_filename, "
-                        "llm_raw_response, datetime('now') FROM utility_bills WHERE id = ?",
+                        "status, raw_text_length, review_status, error_message, corrections, "
+                        "file_hash, pdf_path, original_filename, llm_raw_response, needs_confirmation, processed_at) "
+                        "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, file_hash, pdf_path, original_filename, "
+                        "llm_raw_response, needs_confirmation, datetime('now') FROM utility_bills WHERE id = ?",
                         (
                             user_id, bill.utility_type, provider, bill.period_start_date, bill.period_end_date,
                             bill.usage_amount, bill.usage_unit, bill.cost, bill.due_date,
                             bill.account_number_last4, status, det_result.raw_text_length, review_status,
-                            flag, utility_bill_id,
+                            flag, fix, utility_bill_id,
                         ),
                     )
                     bill_id = cur.lastrowid
@@ -313,7 +342,7 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
             conn.rollback()
             raise
 
-        any_pending = any(flag is not None for _, flag in saved)
+        any_pending = needs_confirmation or any(flag is not None for _, flag in saved)
         if not any_pending:
             delete_pdf_utility(conn, [bid for bid, _ in saved], pdf_path)
 
