@@ -45,7 +45,10 @@ def chromium(pw):
                                              "chromium-*/chrome-linux*/chrome")))
         if not hits:
             raise unittest.SkipTest("no browser for Playwright")
-        return pw.chromium.launch(executable_path=hits[-1], args=args)
+        try:
+            return pw.chromium.launch(executable_path=hits[-1], args=args)
+        except Exception as e:                 # there, but it won't start here
+            raise unittest.SkipTest("the browser for Playwright won't start: " + (str(e).splitlines() or [""])[0])
 
 
 @unittest.skipUnless(sync_playwright, "playwright not installed")
@@ -74,7 +77,7 @@ class CallsInBrowsers(unittest.TestCase):
         cls.pw = sync_playwright().start()
         try:
             cls.browser = chromium(cls.pw)
-        except unittest.SkipTest:
+        except BaseException:
             cls.pw.stop()
             cls.server.terminate()
             raise

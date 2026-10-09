@@ -571,8 +571,9 @@ class AppBus:
             env = json.loads(body)
             ok = self._post(env)
             attempts += 1
-            with self._tx() as conn:
-                conn.execute("UPDATE bus_outbox SET attempts = ?, next_try = ? WHERE id = ? AND state = 'pending'",
+            with self._tx() as conn:                     # the ack may already be in (another thread): still count it
+                conn.execute("UPDATE bus_outbox SET attempts = ?, "
+                             "next_try = CASE WHEN state = 'pending' THEN ? ELSE next_try END WHERE id = ?",
                              (attempts, _iso(now + timedelta(seconds=self.retry_delay(attempts))), mid))
             stats["sent" if ok else "failed"] += 1
             self._log("sent" if ok else "send-failed", env, f"attempt {attempts}")

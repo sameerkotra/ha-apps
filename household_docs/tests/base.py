@@ -85,7 +85,8 @@ class ApiBase(unittest.TestCase):
             if os.path.isdir(p) and not os.path.islink(p):
                 for dirpath, dirnames, _files in os.walk(p):
                     for d in dirnames:
-                        os.chmod(os.path.join(dirpath, d), 0o755)
+                        if not os.path.islink(os.path.join(dirpath, d)):   # a test's link out (e.g. to /tmp): leave its target
+                            os.chmod(os.path.join(dirpath, d), 0o755)
                 shutil.rmtree(p)
             else:
                 os.remove(p)

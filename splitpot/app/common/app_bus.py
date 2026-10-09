@@ -1,4 +1,4 @@
-# Shared file: edit common/python/app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=54bd2a7f56440c3a712030f49499acc6f0e9c391ad07c82c81a0f4c261c60599
+# Shared file: edit common/python/app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=780f4ea8e36ac678452283594d276c1a53faf656d093cad3f95b7b21a4848dc4
 """Messages between the household apps over Home Assistant's event bus (APP_MESSAGES_SPEC.md).
 
 Shared by the household apps (common/python/app_bus.py, copied into an app's
@@ -572,8 +572,9 @@ class AppBus:
             env = json.loads(body)
             ok = self._post(env)
             attempts += 1
-            with self._tx() as conn:
-                conn.execute("UPDATE bus_outbox SET attempts = ?, next_try = ? WHERE id = ? AND state = 'pending'",
+            with self._tx() as conn:                     # the ack may already be in (another thread): still count it
+                conn.execute("UPDATE bus_outbox SET attempts = ?, "
+                             "next_try = CASE WHEN state = 'pending' THEN ? ELSE next_try END WHERE id = ?",
                              (attempts, _iso(now + timedelta(seconds=self.retry_delay(attempts))), mid))
             stats["sent" if ok else "failed"] += 1
             self._log("sent" if ok else "send-failed", env, f"attempt {attempts}")
