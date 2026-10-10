@@ -131,7 +131,7 @@ class Handler(BaseHTTPRequestHandler):
             name = full(b.get("model", ""))
             if name not in {m["name"] for m in models()}:
                 return self.send_json({"error": "not found"}, 404)
-            caps = ["completion"] + (["vision"] if "vl" in name else [])
+            caps = ["completion"] + (["vision"] if "vl" in name or name.startswith("gemma4") else [])
             return self.send_json({"capabilities": caps, "details": {}})
         if p == "/api/pull":
             return self.pull(b)

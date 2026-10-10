@@ -111,13 +111,28 @@ async def pull(name: str, progress) -> None:
             progress(msg.get("status") or "", msg.get("completed"), msg.get("total"))
 
 
+# General models that also read images: kept loaded in the day like a text model, unlike a vision-only model (a
+# "vl" model is only loaded for a receipt or a scan).
+BOTH_FAMILIES = ("gemma3", "gemma4")
+
+
+def kind_of(name: str, caps: list | None) -> str:
+    """"text", "vision" or "both" (answers text and reads images) from Ollama's capabilities; by the name when
+    Ollama couldn't say (caps None)."""
+    base = name.rsplit("/", 1)[-1].split(":")[0].lower()
+    vision = ("vl" in base or base.startswith(BOTH_FAMILIES)) if caps is None else "vision" in caps
+    if not vision:
+        return "text"
+    return "both" if base.startswith(BOTH_FAMILIES) else "vision"
+
+
 class Models:
     """The downloaded models, cached (the gateway checks every request's model against it)."""
 
     def __init__(self):
         self.names: set[str] = set()
         self.rows: list[dict] = []
-        self.kinds: dict[str, str] = {}          # digest → "vision" | "text"
+        self.kinds: dict[str, str] = {}          # digest → "text" | "vision" | "both"
         self.loaded_at = 0.0
 
     async def refresh(self) -> list[dict]:
@@ -127,9 +142,9 @@ class Models:
             if digest not in self.kinds:
                 try:
                     caps = (await show(row["name"])).get("capabilities") or []
-                    self.kinds[digest] = "vision" if "vision" in caps else "text"
                 except (OllamaError, httpx.HTTPError):
-                    self.kinds[digest] = "vision" if "vl" in row["name"].split(":")[0] else "text"
+                    caps = None
+                self.kinds[digest] = kind_of(row["name"], caps)
             row["kind"] = self.kinds[digest]
         self.rows = sorted(rows, key=lambda r: r.get("modified_at") or "")
         self.names = {schedule.norm_model(r["name"]) for r in rows}
@@ -137,8 +152,9 @@ class Models:
         return self.rows
 
     def text_models(self) -> list[str]:
-        """Downloaded text models, oldest download first (the default kept model is the first)."""
-        return [schedule.norm_model(r["name"]) for r in self.rows if r.get("kind") == "text"]
+        """Downloaded models that answer text (text, or both text and images), oldest download first (the default
+        kept model is the first)."""
+        return [schedule.norm_model(r["name"]) for r in self.rows if r.get("kind") in ("text", "both")]
 
     def has(self, name: str) -> bool:
         return schedule.norm_model(name) in self.names

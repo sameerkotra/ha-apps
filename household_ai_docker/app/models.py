@@ -19,7 +19,8 @@ logger = logging.getLogger("models")
 GB = 1024 ** 3
 DISK_MARGIN = 2 * GB
 
-# name, kind, download size (GB), memory needed (GB), which apps it suits. Sizes checked at build time.
+# name, kind (text, vision, or both: text and images), download size (GB), memory needed (GB), which apps it suits.
+# Sizes checked at build time.
 RECOMMENDED = [
     {"name": "qwen2.5:1.5b", "kind": "text", "download": 1.0, "ram": 1.5,
      "suits": "The assistant on a Raspberry Pi; Docs, Calorie Tracker, Arcade extras"},
@@ -31,6 +32,13 @@ RECOMMENDED = [
      "suits": "Receipt Price Intelligence, Docs' text from scans — slow on a CPU"},
     {"name": "qwen2.5vl:7b", "kind": "vision", "download": 6.0, "ram": 7.0,
      "suits": "Finance Dashboard statements, Receipt (better reading) — 16 GB machines"},
+    # Gemma 4 answers text and reads images ("both"): one model for every app, kept loaded like a text model.
+    {"name": "gemma4:e2b-it-q4_K_M", "kind": "both", "download": 4.6, "ram": 6.0,
+     "suits": "Text and images in one model: the assistant, Receipt, Finance, Docs — slow on a CPU"},
+    {"name": "gemma4:e4b-it-q4_K_M", "kind": "both", "download": 6.6, "ram": 8.0,
+     "suits": "The same, better answers — 16 GB machines"},
+    {"name": "gemma4:12b", "kind": "both", "download": 8.0, "ram": 10.0,
+     "suits": "The same, the best answers — a graphics card, or a fast machine with 16 GB or more"},
 ]
 BY_NAME = {schedule.norm_model(m["name"]): m for m in RECOMMENDED}
 

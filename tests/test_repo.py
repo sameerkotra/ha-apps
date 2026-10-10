@@ -34,7 +34,7 @@ NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VER
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
 # others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
 HOUSEHOLD_AI = "household_ai"
-HOUSEHOLD_AI_VERSION = "1.0.2"
+HOUSEHOLD_AI_VERSION = "1.0.3"
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",

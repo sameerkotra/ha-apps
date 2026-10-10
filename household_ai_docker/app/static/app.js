@@ -16,6 +16,7 @@
   const toast = (msg, error) => UI.toast(msg, { error: !!error });
   const GB = 1024 ** 3;
   const gb = (n) => (n || n === 0 ? (n / GB).toFixed(1) + " GB" : "—");
+  const kindLabel = (k) => (k === "vision" ? "Vision" : k === "both" ? "Text + vision" : "Text");
   const fail = (box, e) => mount(clear(box), h("p", { class: "error" }, e.message));
 
   HouseholdTheme.bindSelect($("#theme-select"));
@@ -134,7 +135,7 @@
         const warn = ramWarn(m.ram);
         return h("tr", null,
           h("td", null, h("code", null, m.name), m.default ? h("span", { class: "badge" }, "suggested") : null),
-          h("td", null, m.kind === "vision" ? "Vision" : "Text"),
+          h("td", null, kindLabel(m.kind)),
           h("td", { class: "nowrap" }, `${m.download} GB`), h("td", { class: "nowrap" }, `~${m.ram} GB`),
           h("td", { class: "hint" }, m.suits, warn ? h("div", { class: "warn-text" }, warn) : null),
           h("td", null, m.downloaded ? h("span", { class: "dim" }, "Downloaded")
@@ -144,9 +145,9 @@
     const mine = r.downloaded.length ? h("table", { class: "grid" },
       h("thead", null, h("tr", null, ["Downloaded", "Kind", "Size", "Keep loaded", ""].map((t) => h("th", null, t)))),
       h("tbody", null, r.downloaded.map((d) => {
-        const radio = h("input", { type: "radio", name: "keep", checked: d.kept, disabled: d.kind !== "text" });
+        const radio = h("input", { type: "radio", name: "keep", checked: d.kept, disabled: d.kind === "vision" });
         radio.addEventListener("change", () => setKeep(d.name));
-        return h("tr", null, h("td", null, h("code", null, d.name)), h("td", null, d.kind === "vision" ? "Vision" : "Text"),
+        return h("tr", null, h("td", null, h("code", null, d.name)), h("td", null, kindLabel(d.kind)),
           h("td", null, gb(d.size)), h("td", null, h("label", null, radio, d.kept ? " kept in the day" : "")),
           h("td", null, button("Delete", async () => {
             if (!(await UI.confirmDialog("Delete model", `Delete ${d.name}? Apps using it get "not found" until it is downloaded again.`, { okLabel: "Delete" }))) return;
@@ -164,7 +165,7 @@
         r.missing.map((n) => button(`Download ${n} again`, () => startPull(n, progress)))) : null,
       card("Your models", mine, r.downloaded.length ? h("label", { class: "hint" }, none, " Keep no model loaded") : null,
         h("p", { class: "hint" }, `Disk: ${gb(r.disk.free)} free. Models live in /data/models (the Docker volume) and are not in this page's backups.`)),
-      card("Recommended", h("p", { class: "hint" }, "One text model for everything text and one vision model is usually enough. Memory free now: " + gb(free) + "."),
+      card("Recommended", h("p", { class: "hint" }, "One text model for everything text and one vision model is usually enough — or one Gemma 4 model (Text + vision) for both. Memory free now: " + gb(free) + "."),
         rec, h("div", { class: "row" }, other, button("Download other model…", () => startPull(other.value.trim(), progress))),
         h("p", { class: "hint" }, "Any model name from Ollama's library."), progress));
   }

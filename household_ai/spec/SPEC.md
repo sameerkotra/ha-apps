@@ -50,6 +50,12 @@ Assistant administrators). The rest of the household uses it only through the ot
   | `llama3.2:3b` | Text | ~2.5 GB | the same, an alternative |
   | `qwen2.5vl:3b` | Vision | ~4 GB | Receipt Price Intelligence, Docs' text from scans; slow on CPU |
   | `qwen2.5vl:7b` | Vision | ~7 GB | Finance Dashboard statements, Receipt (better reading); 16 GB machines |
+  | `gemma4:e2b-it-q4_K_M` | Text + vision | ~6 GB | text and images in one model: the assistant, Receipt, Finance, Docs; slow on CPU |
+  | `gemma4:e4b-it-q4_K_M` | Text + vision | ~8 GB | the same, better answers; 16 GB machines |
+  | `gemma4:12b` | Text + vision | ~10 GB | the same, the best answers; a graphics card or a fast 16 GB+ machine |
+
+  *Text + vision* (kind `both`): Ollama reports `vision` and the family answers text too (Gemma 3/4). Such a model
+  counts as a text model for *Keep loaded* (and can be the default kept model), unlike a vision-only `vl` model.
 
   A model whose RAM need is more than the machine's free RAM plus what the server already holds gets a warning
   ("This model needs about 7 GB; this machine has 3.1 GB free — Home Assistant may slow down or the app may be

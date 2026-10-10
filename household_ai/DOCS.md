@@ -47,6 +47,13 @@ The recommended list:
 | `llama3.2:3b` | Text | ~2.5 GB | the same, an alternative |
 | `qwen2.5vl:3b` | Vision | ~4 GB | Receipt Price Intelligence, Docs' text from scans (slow on a CPU) |
 | `qwen2.5vl:7b` | Vision | ~7 GB | Finance Dashboard statements, Receipt (better reading); 16 GB machines |
+| `gemma4:e2b-it-q4_K_M` | Text + vision | ~6 GB | text and images in one model: the assistant, Receipt, Finance, Docs (slow on a CPU) |
+| `gemma4:e4b-it-q4_K_M` | Text + vision | ~8 GB | the same, better answers; 16 GB machines |
+| `gemma4:12b` | Text + vision | ~10 GB | the same, the best answers; a graphics card, or a fast machine with 16 GB or more |
+
+A **Text + vision** model (Gemma 4) can be both an app's *Model* and its *Vision model*, and it can be the model kept
+loaded in the day: one model for every app, so nothing is swapped in for a receipt. How well it reads receipts and
+statements next to `qwen2.5vl:7b` is worth trying on a few of your own.
 
 *Download other model…* takes any name from Ollama's library. One text model for everything text and one vision
 model is usually enough: every switch between models loads the other one (seconds from an SSD, up to a minute

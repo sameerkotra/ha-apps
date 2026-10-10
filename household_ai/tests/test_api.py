@@ -79,6 +79,29 @@ class Api(unittest.TestCase):
         self.assertNotIn("llama3.2:3b", [d["name"] for d in self.get("api/models")["downloaded"]])
         self.assertEqual(self.c.delete("api/models/llama3.2:3b", headers=A).status_code, 400)
 
+    def test_gemma_answers_text_and_reads_images(self):
+        """A Gemma 4 model does both: listed as "Text + vision", and it can be the model kept loaded."""
+        name = "gemma4:e2b-it-q4_K_M"
+        self.assertEqual(models.BY_NAME[name]["kind"], "both")
+        pid = self.c.post("api/models/pull", json={"name": name}, headers=A).json()["id"]
+        wait_for(lambda: self.get(f"api/models/pull/{pid}")["done"])
+        try:
+            kinds = {d["name"]: d["kind"] for d in self.get("api/models")["downloaded"]}
+            self.assertEqual(kinds[name], "both")
+            self.assertIn(name, ollama.MODELS.text_models())
+        finally:
+            self.c.delete(f"api/models/{name}", headers=A)
+
+    def test_model_kinds(self):
+        k = ollama.kind_of
+        self.assertEqual(k("qwen2.5:3b", ["completion"]), "text")
+        self.assertEqual(k("qwen2.5vl:7b", ["completion", "vision"]), "vision")
+        self.assertEqual(k("gemma4:e2b", ["completion", "vision"]), "both")
+        self.assertEqual(k("gemma3:1b", ["completion"]), "text")      # the smallest Gemma 3 reads no images
+        self.assertEqual(k("qwen2.5vl:3b", None), "vision")            # Ollama couldn't say: by the name
+        self.assertEqual(k("gemma4:12b", None), "both")
+        self.assertEqual(k("llama3.2:3b", None), "text")
+
     def test_download_errors_in_plain_words(self):
         pid = self.c.post("api/models/pull", json={"name": "missing-model:1b"}, headers=A).json()["id"]
         done = wait_for(lambda: (lambda v: v if v["done"] else None)(self.get(f"api/models/pull/{pid}")))

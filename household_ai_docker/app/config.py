@@ -25,7 +25,7 @@ SUPERVISOR_API = ""
 SUPERVISOR_CORE_API = ""
 
 APP_TITLE = "Household AI"
-APP_VERSION = "1.0.1-docker"
+APP_VERSION = "1.0.3-docker"
 SLUG = "household_ai"
 STANDALONE = True
 

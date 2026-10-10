@@ -24,7 +24,9 @@ docker compose up -d --build
 1. Set your time zone in `docker-compose.yml` (`TZ`) first: the daytime window follows it.
 2. Open `http://<this machine>:8080`. The model server starts on its own.
 3. **Models** tab: download a model — `qwen2.5:3b` for text (the assistant, Docs, Arcade, Calorie) and
-   `qwen2.5vl:7b` for reading receipts and statements (Receipt, Finance). With a graphics card, bigger models fit.
+   `qwen2.5vl:7b` for reading receipts and statements (Receipt, Finance). Or one **Text + vision** model for both:
+   `gemma4:e2b-it-q4_K_M` (~6 GB of memory), `gemma4:e4b-it-q4_K_M` (~8 GB) or, with a graphics card,
+   `gemma4:12b` — put it in both *Model* and *Vision model* in each app. With a graphics card, bigger models fit.
 4. **App settings → Access**: turn on **Require an access key** (recommended — the port is on your network), then
    **Access keys** tab: make one key per household app, labelled with the app's name.
 

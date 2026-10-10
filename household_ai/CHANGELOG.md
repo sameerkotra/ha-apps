@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- **Gemma 4 in the recommended models**: `gemma4:e2b-it-q4_K_M`, `gemma4:e4b-it-q4_K_M` and `gemma4:12b`. They answer text and read images, shown as **Text + vision**: one model can be every app's *Model* and *Vision model*, and it can be the model kept loaded in the day (a vision-only model can't).
+
 ## 1.0.2
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.
