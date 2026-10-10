@@ -585,6 +585,15 @@ input[type="color"] { width: 40px; height: 32px; padding: 2px; cursor: pointer; 
 .maint-file-ico { width: 40px; text-align: center; font-size: 1.3rem; flex-shrink: 0; }
 .maint-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .maint-file .icon-btn { padding: 2px 6px; }
+/* files on tasks (SPEC §17): one row per file in the task dialog */
+.task-files { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.task-file { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px; }
+.task-file .task-file-open { display: flex; align-items: center; gap: 6px; flex: 1 1 160px; min-width: 0; color: var(--text); text-decoration: none; font-size: 0.85rem; }
+.task-file img { width: 36px; height: 36px; object-fit: cover; border-radius: 6px; flex-shrink: 0; }
+.task-file input[type=text] { flex: 1 1 160px; min-width: 0; }
+.task-file .icon-btn { padding: 2px 6px; text-decoration: none; }
+.ticket-name { font-weight: 600; word-break: break-word; margin-bottom: 4px; }
+@media (max-width: 560px) { .task-file .task-file-open, .task-file input[type=text] { flex-basis: 100%; } }
 .maint-drop { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
 .maint-drop.over { border-color: var(--accent); background: var(--accent-soft); }
 .maint-progress { flex-basis: 100%; height: 6px; background: var(--border); border-radius: 4px; overflow: hidden; }

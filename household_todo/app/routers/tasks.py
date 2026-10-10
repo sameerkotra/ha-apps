@@ -3,7 +3,7 @@ import re
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Response
 
-from .. import config, db, links, recurrence, reminders, taskview
+from .. import config, db, links, recurrence, reminders, task_files, taskview
 from ..auth import get_acting_user
 
 router = APIRouter(prefix="/api", tags=["tasks"])
@@ -289,8 +289,12 @@ def update_task(task_id: str, background: BackgroundTasks, body: dict = Body(...
                 raise HTTPException(422, "completed must be true or false.")
             if done and not task["completed"]:
                 updates.update(completed=1, completed_at=config.now_iso(), completed_by=acting["id"])
+                if task_files.on_done(conn, [task_id]):       # its files go, unless kept (SPEC §17)
+                    task_files.flush_soon(background)
             elif not done and task["completed"]:
                 updates.update(completed=0, completed_at=None, completed_by=None)
+                if task_files.on_reopen(conn, task_id):       # …and come back within 30 days
+                    task_files.flush_soon(background)
 
         if updates:
             conn.execute(
@@ -306,9 +310,11 @@ def update_task(task_id: str, background: BackgroundTasks, body: dict = Body(...
 
 
 @router.delete("/tasks/{task_id}", status_code=204)
-def delete_task(task_id: str, acting: dict = Depends(get_acting_user)):
+def delete_task(task_id: str, background: BackgroundTasks, acting: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         taskview.load_task(conn, task_id, acting["id"])
+        if task_files.on_delete(conn, [task_id]):              # its files move to _deleted (SPEC §17)
+            task_files.flush_soon(background)
         conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     return Response(status_code=204)
 

@@ -147,7 +147,7 @@ what was shared with them), with the same 404-shaped "doesn't exist or can't be 
 
 | App | Tool | Args | Returns (text + items + links) |
 |---|---|---|---|
-| Household Todo | `todo.tasks` | `when: today\|tomorrow\|week\|overdue\|all`, `list?` (2.4.3: + the schedule those days) | tasks with due date, who, list; link to Today / the list |
+| Household Todo | `todo.tasks` | `when: today\|tomorrow\|week\|overdue\|all`, `list?` (2.4.3: + the schedule those days) | tasks with due date, who, list (2.7.0: and how many files are attached, `files`; never a file); link to Today / the list |
 | | `todo.lists` | — | the person's lists with open counts; links |
 | | `todo.items.add` *(acts)* | `list`, `text`, `due?` | the added task; link |
 | | `todo.schedule` | `days?` (1–14) | upcoming scheduled things (trash day, maintenance due); link to Schedule |

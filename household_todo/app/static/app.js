@@ -276,7 +276,8 @@ function taskRow(t, opts = {}) {
     t.assigneeName ? h("span", { class: "chip" }, "👤 ", t.assigneeName) : null,
     linkChip(t.url),
     t.source ? h("span", { class: "chip source", title: `Added from Household ${t.source}` }, "from " + t.source) : null,
-    t.fileCount ? h("span", { class: "chip", title: "Files" }, "📎 ", String(t.fileCount)) : null,
+    t.fileCount ? h("button", { class: "chip btnlike", type: "button", title: `${t.fileCount} file${t.fileCount === 1 ? "" : "s"} attached`,
+      onclick: () => openTaskModal(t, { onSaved: onChange }) }, "📎 ", String(t.fileCount)) : null,
     showList ? h("span", { class: "plain" }, t.listKind === "personal" ? "in My lists · " : "in ", t.listName) : null,
   ].filter(Boolean));
 
@@ -578,7 +579,7 @@ function openTaskModal(task, { onSaved = () => {} } = {}) {
     h("div", { class: "form-row" }, h("label", { class: "field wide" }, "List", listSel)), listNote,
     form.el,
     h("div", { class: "field" }, "Checklist", checklist),
-    task.listRole === "maintenance" && maintEnabled() ? jobFilesSection(task) : null,
+    taskFilesSection(task, { onChange: () => { changed = true; } }),
     meta, err, h("div", { class: "actions" }, del, save));
   const modal = openModal("Edit task", body, { onClose: () => { if (changed) onSaved(); } });
 
@@ -2300,19 +2301,23 @@ const RENDERERS = {
   places: renderPlaces, settings: renderSettings, admin: () => renderAdmin(state.adminTab),
 };
 
-// Deep links: #/calendar, #/lists, … and #/admin/settings | #/admin/users |
+// Deep links: #/calendar, #/lists, #/ticket/<task>/<file> … and #/admin/settings | #/admin/users |
 // #/admin/storage. The short links #/users, #/storage and #/app-settings
 // also open the matching Admin tab. A non-admin who lands on an admin link sees
 // "Only admins can open this page" (the server refuses the data anyway).
 const LEGACY_ROUTES = { users: ["admin", "users"], storage: ["admin", "storage"], "app-settings": ["admin", "settings"] };
 
+const ROUTE_ARG = /^[A-Za-z0-9_-]{1,64}$/;
+
 function parseHash(hash) {
   const parts = String(hash || "").replace(/^#\/?/, "").split("/").filter(Boolean);
   let [tab, sub] = parts;
+  // #/ticket/<task>/<file> (a reminder's "Open ticket"): the Dashboard with that file's dialog over it
+  if (tab === "ticket") return ROUTE_ARG.test(parts[1] || "") && ROUTE_ARG.test(parts[2] || "") ? { tab: "dashboard", sub: null, ticket: [parts[1], parts[2]] } : null;
   if (LEGACY_ROUTES[tab]) [tab, sub] = LEGACY_ROUTES[tab];
   if (!TABS.includes(tab)) return null;
   if (tab === "admin") sub = ADMIN_TABS.some(([k]) => k === sub) ? sub : "settings";
-  else if (tab === "lists") sub = /^[A-Za-z0-9_-]{1,64}$/.test(sub || "") ? sub : null;   // #/lists/<id>: that list
+  else if (tab === "lists") sub = ROUTE_ARG.test(sub || "") ? sub : null;   // #/lists/<id>: that list
   else sub = null;
   return { tab, sub };
 }
@@ -2337,6 +2342,7 @@ function showTab(tab, opts = {}) {
 window.addEventListener("hashchange", () => {
   if (!state.me) return;
   const r = parseHash(location.hash);
+  if (r && r.ticket) { showTab(r.tab); openTicket(...r.ticket); return; }
   if (r && routeHash(r.tab, r.sub) !== routeHash(state.tab, state.adminTab)) showTab(r.tab, { sub: r.sub });
 });
 
@@ -2406,9 +2412,10 @@ async function init() {
   // page now, and any tapped later while the app is open
   HouseholdDeepLink.start(state.me.page, (route) => parseHash("#" + route), (r) => {
     if (!start) start = r;
-    else showTab(r.tab, { sub: r.sub });
+    else { showTab(r.tab, { sub: r.sub }); if (r.ticket) openTicket(...r.ticket); }
   });
   showTab(start ? start.tab : "calendar", { force: true, sub: start && start.sub });
+  if (start && start.ticket) openTicket(...start.ticket);
   initBackNav();
 }
 

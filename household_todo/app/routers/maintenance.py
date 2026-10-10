@@ -12,7 +12,8 @@ from datetime import date, timedelta
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 
-from .. import config, db, ha_sensors, maint_catalog as cat, maint_files, maintenance as mt, recurrence, settings, taskview
+from .. import (config, db, ha_sensors, maint_catalog as cat, maint_files, maintenance as mt, recurrence, settings,
+               task_files, taskview)
 from ..auth import get_acting_user, require_admin
 from ..common import csv_export
 
@@ -30,11 +31,7 @@ def _jobs(conn, lid: str | None, acting_id: str, today: date) -> list[dict]:
     if not lid:
         return []
     rows = conn.execute(taskview.TASK_SELECT + " WHERE t.list_id = ? AND t.completed = 0", (lid,)).fetchall()
-    tasks = taskview.serialize_tasks(conn, rows, today)
-    counts = {r["task_id"]: r["n"] for r in conn.execute(
-        "SELECT task_id, COUNT(*) AS n FROM maint_files WHERE task_id IS NOT NULL GROUP BY task_id")}
-    for t in tasks:
-        t["fileCount"] = counts.get(t["id"], 0)
+    tasks = taskview.serialize_tasks(conn, rows, today)          # with fileCount
     tasks.sort(key=lambda t: (t["dueDate"] is None, t["dueDate"] or "", t["position"]))
     return tasks
 
@@ -399,7 +396,8 @@ def upload(file: UploadFile = File(...), item_id: str | None = Query(default=Non
     root = maint_files.require_online()
     with db.get_conn() as conn:
         rel_dir, owner = maint_files.target_dir(conn, item_id=item_id, done_id=done_id, task_id=task_id)
-    row = maint_files.save_upload(root, rel_dir, file.filename, file.file.read, acting["id"], owner)
+    row = maint_files.save_upload(root, rel_dir, file.filename, file.file.read, acting["id"], owner,
+                                  keep=bool(task_id))          # a job's receipts and photos stay when it's done
     return mt.file_json(row)
 
 
@@ -408,12 +406,17 @@ def list_files(task_id: str = Query(), acting: dict = Depends(get_acting_user)):
     mt.require_enabled()
     with db.get_conn() as conn:
         taskview.load_task(conn, task_id, acting["id"])
-        return [mt.file_json(r) for r in conn.execute("SELECT * FROM maint_files WHERE task_id = ? ORDER BY created_at", (task_id,))]
+        return [mt.file_json(r) for r in task_files.listed(conn, task_id)]
 
 
-def _file_row(file_id: str) -> dict:
+def _file_row(file_id: str, acting_id: str) -> dict:
+    """A file, if the acting person may see it: a task's file only for those who see the task (SPEC §17), and
+    not one that's been removed with its task."""
     with db.get_conn() as conn:
         r = conn.execute("SELECT * FROM maint_files WHERE id = ?", (file_id,)).fetchone()
+        if r and r["task_id"]:
+            taskview.load_task(conn, r["task_id"], acting_id)
+            r = conn.execute(f"SELECT * FROM maint_files WHERE id = ? AND {task_files.LISTED}", (file_id,)).fetchone()
     if not r:
         raise HTTPException(404, "That file doesn't exist (any more).")
     return dict(r)
@@ -422,12 +425,12 @@ def _file_row(file_id: str) -> dict:
 @router.get("/maintenance/files/{file_id}")
 def download(file_id: str, thumb: int = Query(default=0), acting: dict = Depends(get_acting_user)):
     mt.require_enabled()
-    f = _file_row(file_id)
+    f = _file_row(file_id, acting["id"])
     root = maint_files.require_online()
     rel = f["thumb"] if thumb and f["thumb"] else f["rel_path"]
     path = maint_files._within(root, rel)
     if not os.path.isfile(path):
-        raise HTTPException(404, "The file is no longer in the maintenance files folder.")
+        raise HTTPException(404, "The file is no longer in the files folder.")
     mime = "image/jpeg" if thumb and f["thumb"] else (f["mime"] or "application/octet-stream")
     inline = mime in maint_files.INLINE
     return FileResponse(path, media_type=mime, filename=f["name"], content_disposition_type="inline" if inline else "attachment",
@@ -438,7 +441,7 @@ def download(file_id: str, thumb: int = Query(default=0), acting: dict = Depends
 @router.delete("/maintenance/files/{file_id}", status_code=204)
 def delete_file(file_id: str, acting: dict = Depends(get_acting_user)):
     mt.require_enabled()
-    f = _file_row(file_id)
+    f = _file_row(file_id, acting["id"])
     root = maint_files.require_online()
     with db.get_conn() as conn:
         conn.execute("DELETE FROM maint_files WHERE id = ?", (file_id,))

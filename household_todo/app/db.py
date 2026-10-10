@@ -369,9 +369,12 @@ CREATE TABLE IF NOT EXISTS maint_done (
 );
 CREATE INDEX IF NOT EXISTS idx_maint_done_item ON maint_done(item_id, done_on);
 
--- Files uploaded through the app into the maintenance files folder. Exactly one owner: an item (manuals,
--- warranty papers), a Mark done record (receipt, photo) or a one-off job (a task in the Maintenance list).
--- No foreign keys: a purged job's files stay in the folder; the rows go.
+-- Files uploaded through the app into the files folder. Exactly one owner: a maintenance item (manuals,
+-- warranty papers), a Mark done record (receipt, photo) or a task (tickets, SPEC §17; a one-off job is a task
+-- in the Maintenance list). No foreign keys: a purged task's kept files stay in the folder; the rows go.
+-- A task's file moves to _deleted when the task is ticked off (unless keep_after_done) and comes back when
+-- it's unticked within 30 days: removed_at/removed_rel say where it was; pending is a move still to make
+-- while the folder isn't connected ('remove' or 'restore').
 CREATE TABLE IF NOT EXISTS maint_files (
     id TEXT PRIMARY KEY,
     item_id TEXT,
@@ -383,7 +386,11 @@ CREATE TABLE IF NOT EXISTS maint_files (
     mime TEXT,
     thumb TEXT,                         -- relative path of a small preview, for photos
     uploaded_by TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    keep_after_done INTEGER NOT NULL DEFAULT 0,   -- a task's file: stays when the task is ticked off
+    pending TEXT,                       -- 'remove' / 'restore': a move to make once the folder is connected
+    removed_rel TEXT,                   -- a removed task file: where it was (rel_path is now under _deleted)
+    removed_at TEXT                     -- when it moved to _deleted (kept 30 days, then the row goes)
 );
 CREATE INDEX IF NOT EXISTS idx_maint_files_item ON maint_files(item_id);
 CREATE INDEX IF NOT EXISTS idx_maint_files_done ON maint_files(done_id);
@@ -486,6 +493,11 @@ MIGRATIONS = [
     ("schedule_items", "url", "TEXT"),                                   # optional link
     ("schedule_items", "rotation", "TEXT"),                              # taking turns (SPEC §5.4b)
     ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),             # "Let the Household Assistant answer for me"
+    # files on tasks (SPEC §17)
+    ("maint_files", "keep_after_done", "INTEGER NOT NULL DEFAULT 0"),
+    ("maint_files", "pending", "TEXT"),
+    ("maint_files", "removed_rel", "TEXT"),
+    ("maint_files", "removed_at", "TEXT"),
 ]
 
 
@@ -494,7 +506,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     index — this schema otherwise only ever uses CREATE TABLE/INDEX IF NOT
     EXISTS, which can't add a column to an already-existing table. No
     migration framework dependency; mirrors Calorie Tracker's db._migrate."""
-    db_core.add_missing_columns(conn, MIGRATIONS)
+    added = db_core.add_missing_columns(conn, MIGRATIONS)
+    if "maint_files.keep_after_done" in added:
+        # files on Maintenance jobs stayed when the job was done before files on tasks; they still do
+        conn.execute("UPDATE maint_files SET keep_after_done = 1 WHERE task_id IS NOT NULL")
 
     # Each person has their own digest time. In older databases a NULL
     # digest_time meant "the household's reminder_time"; fill it with that

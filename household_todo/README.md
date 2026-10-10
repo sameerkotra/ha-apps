@@ -14,7 +14,8 @@ Documentation tab (DOCS.md) for the full guide.
 
 - **Lists and tasks** — shared and private lists; tasks with due dates and
   times, priorities, types, places, links, checklists, assignees and
-  required/optional completion; drag-and-drop ordering, sorting and filters.
+  required/optional completion; drag-and-drop ordering, sorting and filters;
+  files on tasks (tickets), removed when the task is done.
 - **Calendar and dashboard** — month and agenda views, overdue and upcoming
   tiles, and a workload card per person.
 - **Schedule** — recurring items (weekly, every N weeks, monthly, Nth weekday…)

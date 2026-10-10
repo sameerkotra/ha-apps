@@ -7,10 +7,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
 from . import (app_messages, config, db, drive_time, geocode, ha_client, ha_sensors, housekeeping, maint_files,
-               maint_notify, reminders)
+               maint_notify, reminders, task_files)
 from .common import auth_core, deeplinks, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
-from .routers import admin, calendar, dashboard, lists, maintenance, me, places, prefs, schedule, task_types, tasks, users
+from .routers import (admin, calendar, dashboard, lists, maintenance, me, places, prefs, schedule, task_files as task_files_router,
+                      task_types, tasks, users)
 
 jobs_core.setup_logging()
 logger = logging.getLogger("main")
@@ -31,10 +32,11 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(ha_people.refresh_blocking, True)
     except Exception:
         logger.exception("reading the people from Home Assistant failed")
-    try:   # the maintenance files folder, if one is set
+    try:   # the files folder, if one is set, and tasks' files waiting for it
         await run_in_threadpool(maint_files.check)
+        await run_in_threadpool(task_files.flush)
     except Exception:
-        logger.exception("checking the maintenance files folder failed")
+        logger.exception("checking the files folder failed")
     try:   # flag assigned notify services Home Assistant doesn't have (best effort)
         await run_in_threadpool(ha_notify.check_targets_blocking)
     except Exception:
@@ -65,6 +67,7 @@ app.include_router(me.router)
 app.include_router(users.router)
 app.include_router(lists.router)
 app.include_router(tasks.router)
+app.include_router(task_files_router.router)
 app.include_router(task_types.router)
 app.include_router(places.router)
 app.include_router(schedule.router)
@@ -74,7 +77,7 @@ app.include_router(prefs.router)
 app.include_router(maintenance.router)
 app.include_router(admin.router)
 # "/<page>/lists/<id>", "/<page>/dashboard" … asked of the app itself: a redirect to the page's "#/…" (deeplink.js)
-deeplinks.add(app, {"dashboard": 0, "calendar": 0, "schedule": 0, "lists": 0, "maintenance": 0})
+deeplinks.add(app, {"dashboard": 0, "calendar": 0, "schedule": 0, "lists": 0, "maintenance": 0, "ticket": 2})
 app.add_api_route("/lists/{a}", lambda a: deeplinks.redirect(["lists", a]), methods=["GET"], include_in_schema=False)
 
 # Only Home Assistant's own Supervisor ingress proxy should ever be able to

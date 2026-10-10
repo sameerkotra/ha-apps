@@ -597,8 +597,8 @@ function filesBox({ files, owner, onChange, readOnly = false }) {
 
 // A file chooser + drop zone. With `immediate`, files upload as soon as they're chosen; otherwise they wait
 // in a list (Mark done uploads them once the record exists).
-function pendingFiles({ immediate = null } = {}) {
-  const st = (maint.data && maint.data.files) || { configured: false, online: false, maxBytes: 25 * 1048576 };
+function pendingFiles({ immediate = null, status = null } = {}) {
+  const st = status || (maint.data && maint.data.files) || { configured: false, online: false, maxBytes: 25 * 1048576 };
   let queued = [];
   const input = h("input", { type: "file", multiple: true, hidden: true });
   const names = h("div", { class: "chip-row" });
@@ -633,11 +633,11 @@ function pendingFiles({ immediate = null } = {}) {
   return { el: h("div", null, input, zone), files: () => queued.slice(), progress };
 }
 
+// owner: { item_id | done_id | task_id } for Maintenance's own files, or { url } (a task's files: api/tasks/<id>/files)
 function uploadOne(file, owner, onPct) {
   return new Promise((resolve, reject) => {
-    const q = new URLSearchParams(owner).toString();
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", withUser("api/maintenance/files?" + q));
+    xhr.open("POST", withUser(owner.url || "api/maintenance/files?" + new URLSearchParams(owner).toString()));
     xhr.upload.addEventListener("progress", (e) => { if (e.lengthComputable) onPct(e.loaded / e.total); });
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
@@ -665,18 +665,119 @@ async function uploadAll(files, owner, progress) {
   return failed;
 }
 
-// Files on a one-off job (the task modal, for tasks in the Maintenance list)
-function jobFilesSection(task) {
-  const box = h("div", { class: "field" }, "Files", spinner());
+// ---------------------------------------------------------------------------------------------------
+// Files on tasks (SPEC §17): tickets and the like on any task — the task dialog's Files section, and the
+// #/ticket/<task>/<file> page a reminder's "Open ticket" button opens
+// ---------------------------------------------------------------------------------------------------
+function taskFileUrl(taskId, id, { thumb = false, download = false } = {}) {
+  return withUser(`api/tasks/${encodeURIComponent(taskId)}/files/${encodeURIComponent(id)}` + (thumb ? "?thumb=1" : download ? "?download=1" : ""));
+}
+
+function taskFilesSection(task, { onChange = () => {} } = {}) {
+  const box = h("div", { class: "field task-files-field" });
   const load = async () => {
-    try {
-      if (!maint.data) maint.data = await api("/api/maintenance");
-      const files = await api(`/api/maintenance/files?task_id=${encodeURIComponent(task.id)}`);
-      mount(box, h("span", null, "Files"), filesBox({ files, owner: { task_id: task.id }, onChange: load }));
-    } catch (e) { mount(box, h("span", null, "Files"), h("div", { class: "hint" }, e.message)); }
+    let d;
+    try { d = await api(`/api/tasks/${encodeURIComponent(task.id)}/files`); }
+    catch (e) { mount(box, h("span", null, "Files"), h("div", { class: "hint" }, e.message)); return; }
+    const st = d.folder;
+    // nothing to show for a household that doesn't keep files, except to an admin (where to turn it on)
+    if (!st.configured && !d.files.length && !isAdmin()) { clear(box); return; }
+    const changed = () => { onChange(); load(); };
+    const rows = d.files.map((f) => taskFileRow(task, f, changed));
+    let add;
+    if (!st.configured) {
+      add = h("div", { class: "hint" }, "Attaching files is off — ",
+        h("button", { class: "link-btn", type: "button", onclick: () => { UI.dialogs().forEach((m) => m.close()); showTab("admin", { sub: "settings" }); } }, "choose a files folder in App settings"), ".");
+    } else if (!st.online) {
+      add = h("div", { class: "hint warn" }, "📎 ", st.reason || "The files folder isn't connected.");
+    } else if (d.completed) {
+      add = h("div", { class: "hint" }, "Untick the task to attach files.");
+    } else if (d.files.length >= d.maxFiles) {
+      add = h("div", { class: "hint" }, `A task can have at most ${d.maxFiles} files.`);
+    } else {
+      add = pendingFiles({ status: st, immediate: async (fs, progress) => {
+        const room = d.maxFiles - d.files.length;
+        if (fs.length > room) { toast(`Only ${room} more file${room === 1 ? "" : "s"} fit on this task`, true); fs = fs.slice(0, room); }
+        const failed = await uploadAll(fs, { url: `api/tasks/${encodeURIComponent(task.id)}/files` }, progress);
+        if (failed) toast(`${failed} file${failed === 1 ? "" : "s"} couldn't be attached`, true); else toast(fs.length === 1 ? "Attached" : `${fs.length} files attached`);
+        changed();
+      } }).el;
+      const btn = $(".maint-drop .btn-ghost", add);
+      if (btn) btn.textContent = "+ Attach";
+    }
+    mount(box, h("span", null, "Files"),
+      rows.length ? h("div", { class: "task-files" }, rows) : h("div", { class: "hint" }, "No files yet — attach a ticket, a booking confirmation or a photo."),
+      add,
+      rows.length && !d.completed ? h("div", { class: "hint" }, "When the task is ticked off its files go, except those with Keep; untick it within 30 days and they come back.") : null);
   };
   load();
   return box;
+}
+
+function taskFileRow(task, f, changed) {
+  const name = h("a", { class: "task-file-open", href: taskFileUrl(task.id, f.id), target: "_blank", rel: "noopener", title: `Open ${f.name}` },
+    f.thumb ? h("img", { src: taskFileUrl(task.id, f.id, { thumb: true }), alt: "", loading: "lazy" })
+      : h("span", { class: "maint-file-ico" }, f.mime === "application/pdf" ? "📄" : "📎"),
+    h("span", { class: "maint-file-name" }, f.name));
+  const size = h("span", { class: "hint" }, fmtSize(f.size));
+  const patch = (body) => api(`/api/tasks/${encodeURIComponent(task.id)}/files/${encodeURIComponent(f.id)}`, { method: "PATCH", body });
+  const keepBox = h("input", { type: "checkbox", checked: !!f.keepAfterDone });
+  keepBox.addEventListener("change", async () => {
+    const on = keepBox.checked;
+    if (!on && task.completed && !confirm(`This task is done: without Keep, ${f.name} goes now (to _deleted for 30 days).`)) { keepBox.checked = true; return; }
+    try { await patch({ keepAfterDone: on }); toast(on ? "Kept when the task is done" : "Goes when the task is done"); if (!on && task.completed) changed(); }
+    catch (e) { keepBox.checked = !on; fail(e); }
+  });
+  const keep = h("label", { class: "mini-toggle", title: "Keep this file when the task is ticked off" }, keepBox, "Keep after done");
+  const dl = h("a", { class: "icon-btn", href: taskFileUrl(task.id, f.id, { download: true }), download: f.name, title: "Download", "aria-label": `Download ${f.name}` }, "⤓");
+  const ren = h("button", { class: "icon-btn", type: "button", title: "Rename", "aria-label": `Rename ${f.name}` }, "✎");
+  const del = h("button", { class: "icon-btn", type: "button", title: "Remove", "aria-label": `Remove ${f.name}` }, "✕");
+  const row = h("div", { class: "task-file" }, name, size, keep, dl, ren, del);
+  ren.addEventListener("click", () => {
+    const input = h("input", { type: "text", value: f.name, maxlength: "200", "aria-label": "New name" });
+    let finished = false;
+    const done = async (save) => {
+      if (finished) return;
+      finished = true;
+      const v = input.value.trim();
+      if (save && v && v !== f.name) {
+        try { await patch({ name: v }); toast("Renamed"); changed(); return; } catch (e) { fail(e); }
+      }
+      input.replaceWith(name);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); done(true); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); }
+    });
+    input.addEventListener("blur", () => done(true), { once: true });
+    name.replaceWith(input);
+    input.focus();
+    input.select();
+  });
+  del.addEventListener("click", async () => {
+    if (!confirm(`Remove ${f.name} from this task? It moves to _deleted in the files folder for 30 days.`)) return;
+    try { await api(`/api/tasks/${encodeURIComponent(task.id)}/files/${encodeURIComponent(f.id)}`, { method: "DELETE" }); toast("Removed"); changed(); }
+    catch (e) { fail(e); }
+  });
+  return row;
+}
+
+// #/ticket/<task>/<file>: what a reminder's "Open ticket" button opens — the file with Open and Download
+async function openTicket(taskId, fileId) {
+  let d;
+  try { d = await api(`/api/tasks/${encodeURIComponent(taskId)}/files`); }
+  catch (e) { fail(e); return; }
+  const f = d.files.find((x) => x.id === fileId);
+  if (!f) { toast(`That file isn't on “${d.title}” any more.`, true); return; }
+  const st = d.folder;
+  openModal("Ticket", h("div", null,
+    h("div", { class: "ticket-name" }, f.mime === "application/pdf" ? "📄 " : "📎 ", f.name),
+    h("div", { class: "hint" }, `${fmtSize(f.size)} · on “${d.title}”${d.completed ? " (done)" : ""}`),
+    st.online ? null : h("div", { class: "hint warn", style: "margin-top:8px" }, "📎 ", st.reason || "The files folder isn't connected."),
+    h("div", { class: "actions" },
+      h("a", { class: "btn-secondary", href: taskFileUrl(taskId, f.id, { download: true }), download: f.name }, "Download"),
+      h("a", { class: "btn-primary", href: taskFileUrl(taskId, f.id), target: "_blank", rel: "noopener" }, "Open"))),
+  { focus: false });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -851,13 +952,13 @@ function customSuggestionForm(s, a, again) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// App settings: the maintenance files folder (checked before saving; never moves files)
+// App settings: the files folder (checked before saving; never moves files)
 // ---------------------------------------------------------------------------------------------------
-// The maintenance files folder on Admin → App settings (common/settings.js draws the label and help):
+// The files folder (tickets on tasks, Maintenance's files) on Admin → App settings (common/settings.js draws the label and help):
 // whether it's connected, Check, and the check's verdict. folder.check() is used again before saving.
 function maintFolderControl(page, folder) {
   const input = h("input", { type: "text", id: "set-maintenance_files_path", value: page.value("maintenance_files_path") || "",
-    placeholder: "/share/household/maintenance", "aria-label": "Maintenance files folder", spellcheck: "false" });
+    placeholder: "/share/household/maintenance", "aria-label": "Files folder", spellcheck: "false" });
   const verdict = h("div", { class: "hint" });
   const err = h("div", { class: "error-text" });
   const checkBtn = h("button", { class: "btn-ghost", type: "button" }, "Check");
@@ -869,7 +970,7 @@ function maintFolderControl(page, folder) {
         try { paintStatus(await adminApi("/api/admin/maintenance/files/check", { method: "POST", body: {} })); } catch (e) { fail(e); }
       } }, "Check again"),
       !s.online ? [" · ", h("button", { class: "link-btn", type: "button", onclick: async () => {
-        if (!confirm("Set this folder up for maintenance files (creating what the app needs)?")) return;
+        if (!confirm("Set this folder up for the app's files (creating what the app needs)?")) return;
         try { paintStatus(await adminApi("/api/admin/maintenance/files/check", { method: "POST", body: { useThisFolder: true, confirm: true } })); } catch (e) { fail(e); }
       } }, "Use this folder")] : null]));
   if (page.data.maintenanceFiles) paintStatus(page.data.maintenanceFiles);

@@ -73,6 +73,18 @@ app and changes apply straight away, without a restart.
   (Alt + ↑/↓ from the keyboard).
 - **Completed tasks** are deleted automatically 60 days after they were
   completed; anyone can delete one sooner.
+- **Files (tickets).** Attach a concert ticket, a boarding pass, a booking
+  confirmation or a photo to any task: **Edit task → Files → + Attach** (or
+  drop files there; on a phone you can take a photo). Up to 10 files per
+  task, 25 MB each; the task row shows 📎 and how many. Whoever can see the
+  task can open, download, rename and remove its files, so a task on your
+  personal list keeps its files private to you. When the task is **ticked
+  off, its files go** — unless you switched on **Keep after done** for a
+  file. Untick it within 30 days and they come back. Deleting a task removes
+  all its files (the folder keeps them in `_deleted` for 30 days). A task's
+  reminder for a task with exactly one PDF has an **Open ticket** button.
+  Files need the **Files folder** an admin sets in App settings; Maintenance
+  doesn't need to be on. Files on Maintenance jobs start with Keep on.
 - **From Household Docs.** If the household also uses the **Household Docs**
   app, a checklist there can become tasks here: **⋯ → Make a Todo list** (or
   select items → **Send to Todo**) puts them in a new list — private to you or
@@ -247,10 +259,14 @@ list and makes every admin a recipient).
 - **Home Assistant:** an optional `sensor.household_todo_maintenance_overdue`
   (how many are overdue) and an optional per-item binary sensor that is on
   while the item is due or overdue.
-- **Files folder:** an admin picks a folder inside `/share` in App settings.
-  Files (up to 25 MB each; photos get a preview) are stored there by item and
-  date; deleted files wait 30 days in `_deleted`. The folder is checked at
-  start-up and every 5 minutes, and changing it never moves files.
+- **Files folder:** an admin picks a folder inside `/share` in App settings
+  (the same folder holds the files on tasks). Files (up to 25 MB each; photos
+  get a preview) are stored there by item and date, one-off jobs' under
+  `Jobs/` and other tasks' under `Tasks/`; deleted files wait 30 days in
+  `_deleted`. The folder is checked at start-up and every 5 minutes, and
+  changing it never moves files. While it isn't connected (a NAS that's off),
+  files can't be opened or added; files of a task ticked off meanwhile are
+  moved once it's back.
 
 ## Reminders
 
@@ -297,8 +313,9 @@ If the household also uses the **Household Assistant** app, you can ask it
 see it here:
 
 - **your tasks** — today's and overdue ones, this week's, overdue only, or all
-  open tasks (one list, if you name it): titles, due dates, lists and who
-  they're assigned to — never notes or links;
+  open tasks (one list, if you name it): titles, due dates, lists, who
+  they're assigned to and how many files are attached — never notes, links or
+  the files themselves;
 - **your lists** with how many tasks are open;
 - **the schedule** for the next days (trash day and the like; private items only
   your own);
@@ -371,7 +388,7 @@ the field before anything is saved.
 | Routing server (OSRM) | `https://router.project-osrm.org` | An OSRM-compatible server. Blank = the public default. |
 | Address lookup server (Nominatim) | `https://nominatim.openstreetmap.org` | A Nominatim-compatible server. Blank = the public default. |
 | Avoid toll roads | On | Estimate on routes without toll roads when there is one. |
-| Maintenance files folder | blank | A folder inside `/share` for maintenance files. Blank = attaching files is off. |
+| Files folder | blank | A folder inside `/share` for files on tasks (tickets) and Maintenance's manuals, receipts and photos. Blank = attaching files is off. |
 | Answer the Household Assistant | On | Lets the Household Assistant app tell people their tasks, lists and schedule, and add a task when they tap to confirm (see *The Household Assistant*). |
 
 Maintenance's own settings are on **Admin → Maintenance**. The daily reminder
@@ -432,11 +449,11 @@ time isn't an App setting: each person picks their own.
   settings).
 - **Import** replaces everything with an uploaded backup — no merge, no undo.
   The file is checked first; a file that isn't a Household Todo backup is
-  refused. Older backups are upgraded on import. The current maintenance
-  files folder is kept.
-- Home Assistant's own backups of the app include the database too. Maintenance
-  **files** are not in the app's backup: include **Share** in Home
-  Assistant's backups.
+  refused. Older backups are upgraded on import. The current files folder
+  is kept.
+- Home Assistant's own backups of the app include the database too. The
+  **files** (on tasks and Maintenance's) are not in the app's backup: include
+  **Share** in Home Assistant's backups.
 
 ## Limits
 
@@ -446,7 +463,7 @@ time isn't an App setting: each person picks their own.
 - From Household Docs: list names up to 60 characters, items up to 200
   characters; a long checklist arrives in several parts.
 - Up to 5 "N before" reminders per person, 10 extra notify services per
-  person, files up to 25 MB.
+  person, files up to 25 MB, 10 files per task.
 - Completed tasks are removed after 60 days.
 - Dates and "today" follow Home Assistant's time zone.
 

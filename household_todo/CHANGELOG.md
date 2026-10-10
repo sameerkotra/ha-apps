@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.7.0
+
+- **Files on tasks (tickets)**: attach a concert ticket, a boarding pass, a booking confirmation or a photo to any task — **Edit task → Files → + Attach** (or drop them; a phone can take a photo). Up to 10 files per task, 25 MB each, kept in the files folder (`Tasks/<task>/`); the task row shows 📎 and how many. Only people who can see the task can open them, so a task on your personal list keeps its files private.
+- **Gone when it's done**: ticking a task off removes its files — unless **Keep after done** is on for a file — and unticking it within 30 days brings them back. Deleting a task (or its list) removes all its files; the folder keeps them in `_deleted` for 30 days. With the folder not connected, the files move once it's back.
+- **Open ticket**: a task's reminder (and "Remind me at") for a task with exactly one PDF has an **Open ticket** button, which opens the file in the app with **Open** and **Download**.
+- The Household Assistant mentions how many files a task has ("Flight (today, 2 files attached)"); it never reads or sends them.
+- App settings: *Maintenance files folder* is now **Files folder** (Maintenance doesn't need to be on to attach files to tasks). Files already on Maintenance jobs, and new ones, start with Keep after done on, so jobs keep their receipts and photos as before.
+
 ## 2.6.0
 
 - **Take turns**: a household schedule item can go round people in order (*Take turns* in its form) — bins week by week to Asha, Kabir, Meera … Each date shows whose turn it is (and can be handed to someone else for that one date); the calendar, "Mine", the dashboard, the daily digest and "before it starts" reminders follow whose turn it is, and the Home Assistant sensor has a `turn` attribute. Skipping a date doesn't change whose the next one is.

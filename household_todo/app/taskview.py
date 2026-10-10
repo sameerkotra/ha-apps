@@ -123,8 +123,9 @@ def serialize_tasks(conn, rows, today: date) -> list[dict]:
                 items_by_task.setdefault(it["task_id"], []).append(
                     {"id": it["id"], "text": it["text"], "done": bool(it["done"])}
                 )
+    from . import settings, task_files
+    files = task_files.counts(conn, [r["id"] for r in rows]) if rows else {}
     today_iso = today.isoformat()
-    from . import settings
     drive_on = settings.drive_times_enabled()   # the "Drive times" switch: off = no drive time shown
     out = []
     for r in rows:
@@ -169,6 +170,7 @@ def serialize_tasks(conn, rows, today: date) -> list[dict]:
             "items": items,
             "itemsDone": sum(1 for i in items if i["done"]),
             "itemsTotal": len(items),
+            "fileCount": files.get(r["id"], 0),     # files on the task (SPEC §17)
             "overdue": open_ and date_passed and required,
             "past": open_ and date_passed and not required,
         })

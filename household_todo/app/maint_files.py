@@ -1,5 +1,6 @@
-"""The maintenance files folder (SPEC §14.6): manuals, receipts and photos, in a folder an admin
-picks inside /share (App setting `maintenance_files_path`; blank = attaching files is off).
+"""The files folder (SPEC §14.6, §17): manuals, receipts and photos for Maintenance, and files on tasks
+(tickets), in a folder an admin picks inside /share (App setting `maintenance_files_path`, shown as *Files
+folder*; blank = attaching files is off).
 
 It works like Household Chat's files folder. The app writes only into a folder whose hidden
 `.household_todo_store` marker matches the id kept in the database, so an unmounted network share never
@@ -9,7 +10,8 @@ nothing is marked missing or deleted. Checked at start-up, every 5 minutes, and 
 Layout (readable without the app):
     <folder>/<Item name>/                    manuals, warranty papers
     <folder>/<Item name>/<YYYY-MM-DD>/       what was attached when marking it done
-    <folder>/Jobs/<Job title (id8)>/         one-off jobs
+    <folder>/Jobs/<Job title (id8)>/         one-off jobs (tasks in the Maintenance list)
+    <folder>/Tasks/<Task title (id8)>/       files on any other task (task_files.py)
     <folder>/_deleted/<YYYY-MM-DD>/…         removed files, emptied after 30 days
     <folder>/_thumbs/                        small previews of photos (safe to delete)
 Only files uploaded through the app are listed; anything else in the folder is left alone.
@@ -38,6 +40,7 @@ STORE_KEY = "maint_files_store_id"          # in app_settings, not an App settin
 DELETED = "_deleted"
 THUMBS = "_thumbs"
 JOBS = "Jobs"
+TASKS = "Tasks"
 MAX_BYTES = 25 * 1024 * 1024
 KEEP_DELETED_DAYS = 30
 CHECK_EVERY_S = 300
@@ -102,20 +105,20 @@ def clean_path(v) -> str:
     if v is None:
         return ""
     if not isinstance(v, str):
-        raise ValueError("The maintenance files folder must be a path like /share/household/maintenance.")
+        raise ValueError("The files folder must be a path like /share/household/maintenance.")
     v = v.strip()
     if not v:
         return ""
     if len(v) > 400 or any(ord(c) < 32 or ord(c) == 127 for c in v):
-        raise ValueError("The maintenance files folder must be a path like /share/household/maintenance.")
+        raise ValueError("The files folder must be a path like /share/household/maintenance.")
     if not v.startswith("/"):
-        raise ValueError("The maintenance files folder must be a full path starting with /share/.")
+        raise ValueError("The files folder must be a full path starting with /share/.")
     if any(part in (".", "..") for part in v.split("/")):
-        raise ValueError("The maintenance files folder can't contain . or .. parts.")
+        raise ValueError("The files folder can't contain . or .. parts.")
     v = "/" + os.path.normpath(v).lstrip("/")
     share = "/" + os.path.normpath(config.SHARE_ROOT).lstrip("/")
     if not v.startswith(share.rstrip("/") + "/"):
-        raise ValueError(f"The maintenance files folder must be inside {share} (not {share} itself), "
+        raise ValueError(f"The files folder must be inside {share} (not {share} itself), "
                          f"like {share}/household/maintenance.")
     return v
 
@@ -167,9 +170,9 @@ def ensure_layout(root: str) -> None:
     p = os.path.join(root, "README.txt")
     if not os.path.exists(p):
         with open(p, "w", encoding="utf-8") as f:
-            f.write("Household Todo keeps its maintenance files here: one folder per maintenance item (manuals,\n"
-                    "warranty papers), with a dated folder inside for what was attached when it was marked done,\n"
-                    "and Jobs/ for one-off jobs. Only files uploaded through the app are listed in it; please\n"
+            f.write("Household Todo keeps its files here: one folder per maintenance item (manuals, warranty\n"
+                    "papers), with a dated folder inside for what was attached when it was marked done, Jobs/ for\n"
+                    "one-off maintenance jobs and Tasks/ for files on other tasks (tickets). Only files uploaded through the app are listed in it; please\n"
                     "don't rename or move them. _thumbs holds small previews (safe to delete); _deleted holds\n"
                     f"removed files for 30 days. {MARKER} tells the app this folder is its own: keep it when you\n"
                     "copy the folder.\n")
@@ -193,19 +196,19 @@ def _set(online: bool, reason: str | None, path: str) -> None:
         _state.update(online=online, reason=reason, checkedAt=config.now_iso(), path=path, mono=time.monotonic())
     if before != (online, path, reason) and path:
         if online:
-            logger.info("Maintenance files folder %s is connected.", path)
+            logger.info("Files folder %s is connected.", path)
         else:
-            logger.warning("Maintenance files folder not connected: %s", reason)
+            logger.warning("Files folder not connected: %s", reason)
 
 
 def reason() -> str:
     path = configured()
     if not path:
-        return "No maintenance files folder is set. An admin can choose one in Admin → App settings."
+        return "No files folder is set. An admin can choose one in Admin → App settings."
     s = status()
     if s["path"] != path:
-        return f"The maintenance files folder {path} hasn't been checked yet."
-    return s["reason"] or f"The maintenance files folder {path} isn't connected."
+        return f"The files folder {path} hasn't been checked yet."
+    return s["reason"] or f"The files folder {path} isn't connected."
 
 
 def require_online() -> str:
@@ -238,7 +241,7 @@ def _setup(path: str, sid: str | None) -> str | None:
         return f"Couldn't write to {path}: {e.strerror}."
     if new != sid:
         _save_store_id(new)
-    logger.info("Maintenance files folder set up at %s", path)
+    logger.info("Files folder set up at %s", path)
     return None
 
 
@@ -264,23 +267,23 @@ def check(allow_setup: bool = False) -> dict:
                 return status()
             sid, marker = _store_id(), read_marker(path)
         if not os.path.isdir(path):
-            _set(False, f"The maintenance files folder {path} doesn't exist. Is the share or network storage mounted?", path)
+            _set(False, f"The files folder {path} doesn't exist. Is the share or network storage mounted?", path)
             return status()
         if marker is None:
-            _set(False, f"The maintenance files folder {path} isn't connected: its {MARKER} file is missing. Is the "
+            _set(False, f"The files folder {path} isn't connected: its {MARKER} file is missing. Is the "
                         "network storage mounted? If you moved the files, copy the whole folder including that file.", path)
             return status()
         if marker != sid:
-            _set(False, f"The maintenance files folder {path} belongs to another Household Todo (its {MARKER} file "
+            _set(False, f"The files folder {path} belongs to another Household Todo (its {MARKER} file "
                         "is from a different install).", path)
             return status()
         if not os.access(path, os.W_OK):
-            _set(False, f"The maintenance files folder {path} is read-only.", path)
+            _set(False, f"The files folder {path} is read-only.", path)
             return status()
         try:
             ensure_layout(path)
         except OSError as e:
-            _set(False, f"Couldn't write to the maintenance files folder {path}: {e.strerror}.", path)
+            _set(False, f"Couldn't write to the files folder {path}: {e.strerror}.", path)
             return status()
         _set(True, None, path)
     try:
@@ -309,7 +312,7 @@ def inspect(path: str) -> dict:
     n_db = _count_db_files()
     refused = needs_confirm = False
     if path == current:
-        verdict, msg = "current", "This is the maintenance files folder in use now."
+        verdict, msg = "current", "This is the files folder in use now."
     elif marker == "other":
         verdict, refused = "other", True
         msg = f"This folder belongs to another Household Todo (its {MARKER} file is from a different install). Pick another folder."
@@ -320,7 +323,7 @@ def inspect(path: str) -> dict:
         verdict, refused = "read_only", True
         msg = f"{path if exists else parent} is read-only."
     elif marker == "this":
-        verdict, msg = "this", "This folder already holds this install's maintenance files. Safe to switch."
+        verdict, msg = "this", "This folder already holds this install's files. Safe to switch."
     elif n_db or found:
         verdict, needs_confirm = "confirm", True
         parts = []
@@ -331,7 +334,7 @@ def inspect(path: str) -> dict:
                          f"{' (' + current + ')' if current else ''} and show as missing until it's chosen again.")
         msg = " ".join(parts)
     elif exists:
-        verdict, msg = "new", "This folder will be set up for maintenance files when you save."
+        verdict, msg = "new", "This folder will be set up for files when you save."
     else:
         verdict, msg = "new", "This folder doesn't exist yet. It will be created when you save."
     return {"path": path, "current": current, "exists": exists, "verdict": verdict, "message": msg,
@@ -374,7 +377,7 @@ def item_folder_name(conn, item: dict) -> str:
     base = clean(item["name"], 60, "Item")
     name, n = base, 1
     while conn.execute("SELECT 1 FROM maint_items WHERE folder = ? AND id != ?", (name, item["id"])).fetchone() \
-            or name in (DELETED, THUMBS, JOBS):
+            or name in (DELETED, THUMBS, JOBS, TASKS):
         n += 1
         name = f"{base} ({n})"
     return name
@@ -416,9 +419,10 @@ def _item_folder(conn, item_id: str) -> str:
     return it["folder"]
 
 
-def save_upload(root: str, rel_dir: str, filename: str, stream_read, uploaded_by: str, owner: dict) -> dict:
+def save_upload(root: str, rel_dir: str, filename: str, stream_read, uploaded_by: str, owner: dict,
+                keep: bool = False) -> dict:
     """Write an upload (reading `stream_read(n)` until b''), returning the new maint_files row. The caller
-    has checked the owner exists and holds no DB connection."""
+    has checked the owner exists and holds no DB connection. `keep`: a task's file stays when it's done."""
     name = clean(filename or "file")
     d = _within(root, rel_dir)
     os.makedirs(d, exist_ok=True)
@@ -450,11 +454,11 @@ def save_upload(root: str, rel_dir: str, filename: str, stream_read, uploaded_by
     thumb = _make_thumb(root, path, mime)
     row = {"id": db.new_id(), "item_id": owner.get("item_id"), "done_id": owner.get("done_id"),
            "task_id": owner.get("task_id"), "rel_path": rel, "name": final, "size": size, "mime": mime,
-           "thumb": thumb, "uploaded_by": uploaded_by, "created_at": config.now_iso()}
+           "thumb": thumb, "uploaded_by": uploaded_by, "created_at": config.now_iso(), "keep_after_done": int(bool(keep))}
     with db.get_conn() as conn:
         conn.execute("INSERT INTO maint_files (id, item_id, done_id, task_id, rel_path, name, size, mime, thumb, "
-                     "uploaded_by, created_at) VALUES (:id, :item_id, :done_id, :task_id, :rel_path, :name, :size, "
-                     ":mime, :thumb, :uploaded_by, :created_at)", row)
+                     "uploaded_by, created_at, keep_after_done) VALUES (:id, :item_id, :done_id, :task_id, :rel_path, "
+                     ":name, :size, :mime, :thumb, :uploaded_by, :created_at, :keep_after_done)", row)
     return row
 
 
@@ -562,15 +566,18 @@ def purge_deleted(today: date | None = None) -> int:
 
 
 async def loop() -> None:
-    """Re-check the folder every 5 minutes (a NAS may come and go)."""
+    """Re-check the folder every 5 minutes (a NAS may come and go), then make the moves of tasks' files that
+    waited for it (task_files.py)."""
+    from . import task_files
     while True:
         await asyncio.sleep(CHECK_EVERY_S)
         try:
             await run_in_threadpool(check)
+            await run_in_threadpool(task_files.flush)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Checking the maintenance files folder failed")
+            logger.exception("Checking the files folder failed")
 
 
 def reset() -> None:

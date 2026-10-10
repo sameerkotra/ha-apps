@@ -117,7 +117,20 @@ def _actions(details: dict | None) -> list[dict]:
     return out
 
 
-def _send_one(sender, services: list[str], message: str, url: str | None, details: dict | None = None) -> bool:
+def _ticket_action(conn, task_id: str) -> list[dict]:
+    """*Open ticket* for a task with exactly one PDF on it (SPEC §17): the app's page at #/ticket/<task>/<file>
+    (deeplink.js), which offers Open and Download. Nothing without the app's sidebar page."""
+    if not config.SIDEBAR_PAGE:
+        return []
+    from . import task_files
+    f = task_files.the_ticket(conn, task_id)
+    if not f:
+        return []
+    return [{"action": "URI", "title": "Open ticket", "uri": f"{config.SIDEBAR_PAGE}/ticket/{task_id}/{f['id']}"}]
+
+
+def _send_one(sender, services: list[str], message: str, url: str | None, details: dict | None = None,
+              extra_actions: list[dict] | None = None) -> bool:
     """Send a single-item notification to each of the person's services;
     True if at least one accepted it. Place details (address, phone) go on
     their own lines, with Directions / Call buttons as notify `data`
@@ -130,7 +143,7 @@ def _send_one(sender, services: list[str], message: str, url: str | None, detail
     if links.is_web_url(url):
         lines.append(url)
         data.update(url=url, clickAction=url)
-    actions = _actions(details)
+    actions = _actions(details) + list(extra_actions or [])
     if actions:
         data["actions"] = actions
     text = "\n".join(lines)
@@ -547,7 +560,7 @@ def run_task_reminder_pass_blocking(now: datetime | None = None, sender=None) ->
                         message += _drive_note(t["due_date"], t["due_time"], t["place_drive_minutes"])
                     details = place_details({"address": t["place_address"], "phone": t["place_phone"]}) \
                         if t["place_name"] else None
-                    if _send_one(sender, services, message, t["url"], details):
+                    if _send_one(sender, services, message, t["url"], details, _ticket_action(conn, t["id"])):
                         conn.execute(
                             "INSERT OR IGNORE INTO task_reminder_log "
                             "(id, task_id, user_id, minutes_before, due_date, due_time, created_at) "
@@ -689,7 +702,7 @@ def run_alarm_pass_blocking(now: datetime | None = None, sender=None) -> int:
     sent = 0
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT a.id, a.user_id, a.at, t.title, t.completed, t.url, u.username, u.disabled FROM task_alarms a "
+            "SELECT a.id, a.user_id, a.at, a.task_id, t.title, t.completed, t.url, u.username, u.disabled FROM task_alarms a "
             "JOIN tasks t ON t.id = a.task_id JOIN users u ON u.id = a.user_id "
             "WHERE a.sent_at IS NULL AND a.at <= ? ORDER BY a.at", (stamp,)).fetchall()
         for r in rows:
@@ -702,7 +715,8 @@ def run_alarm_pass_blocking(now: datetime | None = None, sender=None) -> int:
                 conn.commit()
                 continue
             services = ha_notify.services_for({"id": r["user_id"], "username": r["username"]}, conn)
-            if services and _send_one(sender, services, f"⏰ {r['title']} ({r['at'][11:]})", r["url"]):
+            if services and _send_one(sender, services, f"⏰ {r['title']} ({r['at'][11:]})", r["url"],
+                                      extra_actions=_ticket_action(conn, r["task_id"])):
                 conn.execute("UPDATE task_alarms SET sent_at = ? WHERE id = ?", (config.now_iso(), r["id"]))
                 conn.commit()
                 sent += 1

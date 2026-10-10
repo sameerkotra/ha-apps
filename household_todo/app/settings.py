@@ -59,7 +59,7 @@ GROUPS = [
     Group("sensors", "Home Assistant sensors"),
     Group("drive", "Drive time"),
     Group("reminders", "Reminders"),
-    Group("maintenance", "Maintenance"),
+    Group("maintenance", "Files"),            # also holds Maintenance's own (hidden) settings
     Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
           "apps know. Todo tells it a person's own tasks, lists and schedule, as they see them here."),
 ]
@@ -107,11 +107,12 @@ SETTINGS = [
     # sensor.household_todo_maintenance_overdue
     Setting("maintenance_sensor", False, "Overdue maintenance sensor", group="maintenance", hidden=True),
     # a folder inside /share; "" = attaching files is off
-    Setting("maintenance_files_path", "", "Maintenance files folder", group="maintenance", max_length=400,
+    Setting("maintenance_files_path", "", "Files folder", group="maintenance", max_length=400,
             placeholder="/share/household/maintenance",
-            help="Manuals, receipts and photos for Maintenance are kept in a folder inside /share (a network share "
-                 "mounted in Home Assistant works too). Saving creates the folder and what the app needs. Changing it "
-                 "later never moves files. Blank turns attaching files off."),
+            help="Files attached to tasks (tickets, booking confirmations) and Maintenance's manuals, receipts and "
+                 "photos are kept in a folder inside /share (a network share mounted in Home Assistant works too). "
+                 "Saving creates the folder and what the app needs. Changing it later never moves files. Blank turns "
+                 "attaching files off."),
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
             help="Lets the Household Assistant tell people their tasks, lists and what's coming up on the schedule, "
                  "and add a task when they tap to confirm it. Each person can turn it off on Settings."),

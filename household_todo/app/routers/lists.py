@@ -1,7 +1,7 @@
 """Lists: every shared list plus the acting user's own personal lists (SPEC §6, §8d)."""
-from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Response
 
-from .. import config, db, settings, taskview
+from .. import config, db, settings, task_files, taskview
 from ..auth import get_acting_user
 
 router = APIRouter(prefix="/api", tags=["lists"])
@@ -94,12 +94,15 @@ def rename_list(list_id: str, body: dict = Body(...), acting: dict = Depends(get
 
 
 @router.delete("/lists/{list_id}", status_code=204)
-def delete_list(list_id: str, acting: dict = Depends(get_acting_user)):
+def delete_list(list_id: str, background: BackgroundTasks, acting: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         lst = taskview.load_list(conn, list_id)
         _owner_check(lst, acting["id"])
         if lst.get("role") == "maintenance" and settings.get("maintenance_enabled"):
             raise HTTPException(409, "The Maintenance list holds the one-off maintenance jobs, so it can't be deleted "
                                      "while Maintenance is on. You can rename it.")
+        ids = [r["id"] for r in conn.execute("SELECT id FROM tasks WHERE list_id = ?", (list_id,))]
+        if task_files.on_delete(conn, ids):                           # their files move to _deleted (SPEC §17)
+            task_files.flush_soon(background)
         conn.execute("DELETE FROM lists WHERE id = ?", (list_id,))   # cascades its tasks
     return Response(status_code=204)

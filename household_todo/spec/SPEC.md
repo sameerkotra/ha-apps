@@ -42,6 +42,7 @@ household_todo/
 │   ├── geocode.py        # Nominatim (throttled, unit-strip retry), OSRM route, live home geocode (ensure_home_blocking); all behind the Drive times switch (on common geo)
 │   ├── drive_time.py     # background cache warmer + compute_for_address()
 │   ├── maint_catalog.py maintenance.py maint_files.py maint_notify.py   # Maintenance (§14)
+│   ├── task_files.py                                 # files on tasks (§17; routers/task_files.py)
 │   ├── routers/          # me users (members + Admin → Users) lists tasks task_types places schedule calendar dashboard prefs admin (settings + storage) maintenance
 │   ├── common/           # shared Python (copies): ha_notify, ha_people, whoami, ha_client, ha_time, housekeeping, auth_core,
 │   │                     #   db_core, settings_core, people_admin, web_security, backup_core, sensor_publisher, geo, csv_export,
@@ -63,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.6.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -364,14 +365,16 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 | GET / PUT | `/api/admin/settings` | admin | §3.1. GET → `{values, defaults, meta:{key:{label, help, group, kind, restartRequired:false, min?, max?, showIf?, hidden?, maxLength?, …}}, groups:[{id, label, help}], maintenanceFiles}`. PUT takes any subset; 422 on an unknown key or bad value; returns the same shape. Side effects in §3.1 (sensor add/remove and home re-geocode run as background tasks). |
 | GET / POST | `/api/lists` | acting | POST takes `{name, kind}`. A personal list is owned by the acting user. |
 | POST | `/api/lists/reorder` | acting | `{kind, ordered_ids}`. Declared before `/lists/{id}`. 400 on a duplicate id, the wrong kind, or someone else's list. |
-| PATCH / DELETE | `/api/lists/{id}` | acting (403 on someone else's personal list) | PATCH takes `{name}` only. DELETE cascades. |
+| PATCH / DELETE | `/api/lists/{id}` | acting (403 on someone else's personal list) | PATCH takes `{name}` only. DELETE cascades (its tasks' files move to `_deleted`, §17). |
 | GET | `/api/lists/{id}/tasks` | acting +priv | `show=open\|completed`. `sort` defaults to `manual` for open and `completed` for completed; `completed`+open or `manual`+completed is a 422. Filters: `assignee` (`me`, `unassigned` or an id), `priority` (…/`none`), `type` (an id or `none`), `place`, `completion`. |
 | POST | `/api/lists/{id}/tasks` | acting +priv | Task body. May queue an assignment ping. |
 | POST | `/api/tasks` | acting | Quick add. Optional `list_id` defaults to the first personal list. |
-| PATCH / DELETE | `/api/tasks/{id}` | acting +priv | Any field; `null` clears it. `completed: bool`. `list_id` moves the task to another list the acting user may add to (a shared list or their own personal one; 403 otherwise, 404 if unknown, 422 if not a string). It goes to the end of that list and keeps its checklist, dates and other fields. Moving into a personal list unassigns anyone but the owner. |
+| PATCH / DELETE | `/api/tasks/{id}` | acting +priv | Any field; `null` clears it. `completed: bool` (its files go or come back, §17; DELETE removes them). `list_id` moves the task to another list the acting user may add to (a shared list or their own personal one; 403 otherwise, 404 if unknown, 422 if not a string). It goes to the end of that list and keeps its checklist, dates and other fields. Moving into a personal list unassigns anyone but the owner. |
 | POST | `/api/lists/{id}/tasks/reorder` | acting +priv | `{ordered_ids}`. 400 if an id isn't in the list, or appears twice. |
 | POST | `/api/tasks/{id}/items` | acting (via task) | `{text}` or `{texts:[…]}`; blank entries are skipped. Returns the task JSON. |
 | PATCH / DELETE | `/api/task-items/{id}` | acting (via task) | `{text?, done?}`. Returns the task JSON. |
+| GET / POST | `/api/tasks/{id}/files` | acting +priv | Files on the task (§17): GET → `{taskId, title, completed, files, maxFiles, folder}`; POST multipart `file` → 201. 503 while the folder is offline; 422 past 10 files; 409 on a done task. |
+| GET / PATCH / DELETE | `/api/tasks/{id}/files/{file_id}` | acting +priv | GET the file (`?thumb=1`, `?download=1`); PATCH `{name?, keepAfterDone?}`; DELETE moves it to `_deleted`. |
 | GET / POST / PATCH / DELETE | `/api/task-types[/{id}]` | acting | `{name, icon?, color?}` plus `usageCount`. A duplicate name is a 409. |
 | GET | `/api/places?q=` | acting | Sorted by name; `q` is a case-insensitive substring of the name or address. Returns `{id,name,address,phone,driveMinutes,driveAvoidTolls,driveTollsAvoided,usageCount}`; the drive fields are null when there's no estimate. |
 | POST / PATCH / DELETE | `/api/places[/{id}]` | acting | A duplicate address is a 409. Changing the address resets its drive time. Anyone can delete. |
@@ -465,7 +468,7 @@ Shared (`common/python/ha_people.py`) with Family Tree, Arcade, Chat and Vault; 
 
 ## 8. Background jobs
 
-The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through the shared Jobs runner (`app/common/housekeeping.py`), in this order: `reminders`, `ha_sensors`, `housekeeping`, `drive_time`, `ha_people` (§7.4), `maint_files` (§14.5). Each one runs in the threadpool, catches and logs its own errors every tick, and is cancelled on shutdown; shutdown waits for a pass already running in a worker thread. `housekeeping.loop` is built with `housekeeping.periodic()`. Logging is set up by `housekeeping.setup_logging()`.
+The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through the shared Jobs runner (`app/common/housekeeping.py`), in this order: `reminders`, `ha_sensors`, `housekeeping`, `drive_time`, `ha_people` (§7.4), `maint_files` (§14.5; then `task_files.flush`, §17). Each one runs in the threadpool, catches and logs its own errors every tick, and is cancelled on shutdown; shutdown waits for a pass already running in a worker thread. `housekeeping.loop` is built with `housekeeping.periodic()`. Logging is set up by `housekeeping.setup_logging()`.
 
 | Loop | Tick | Work |
 |---|---|---|
@@ -629,6 +632,7 @@ Ideas that are deliberately not built:
 - Recurring tasks — recurring *chores to tick off*, which would need generation, completion and overdue rules (see §13 for why schedule items aren't that).
 - Changing a list's kind (shared ↔ personal), per-list permissions, tags.
 - Notification snooze or actionable notifications.
+- Copying a task's file to Household Docs; files on schedule items (§17).
 
 ## 13. Personal schedule items
 
@@ -663,7 +667,7 @@ Recipients per item = custom list or `maintenance_recipients` (+ assignee), filt
 `GET /api/calendar` returns `maintenance` (param `maintenance=0` omits it): per item the real due date (overdue shows on today, status overdue/due/upcoming) and projected later ones (`projected: true`) in range, filtered by `assignee` like schedule items.
 
 ### 14.5 Files (`maint_files.py`)
-`maintenance_files_path` ("" = off) must be inside `SHARE_ROOT` (/share), no `.`/`..`. `.household_todo_store` marker = `maint_files_store_id` (app_settings, not an App setting). Saving a new path runs `inspect` (refused: other install / missing parent / read-only → 409; files already attached or a non-empty folder → 409 unless `confirm`) then `check(allow_setup=True)`. `check()` at start-up and every 5 minutes; requests re-check an offline folder at most every 30 s; 503 with the reason while offline. Owners: item, done record or job (task in the list). Names cleaned for Samba, duplicates get " (2)"; ≤25 MB (413), empty → 422; JPEG/PNG/WebP/GIF get a 320 px `_thumbs` preview. Downloads: images/PDF/text inline, others attachment, `CSP: sandbox`, `nosniff`. Deletes move to `_deleted/<date>/…` (housekeeping empties dated folders older than 30 days); purged jobs' file rows are dropped, their files stay. Renames reconcile item folders when online. A DB restore keeps the current path and store id.
+`maintenance_files_path` ("" = off) must be inside `SHARE_ROOT` (/share), no `.`/`..`. `.household_todo_store` marker = `maint_files_store_id` (app_settings, not an App setting). Saving a new path runs `inspect` (refused: other install / missing parent / read-only → 409; files already attached or a non-empty folder → 409 unless `confirm`) then `check(allow_setup=True)`. `check()` at start-up and every 5 minutes; requests re-check an offline folder at most every 30 s; 503 with the reason while offline. Owners: item, done record or task (§17; a job is a task in the list). Names cleaned for Samba, duplicates get " (2)"; ≤25 MB (413), empty → 422; JPEG/PNG/WebP/GIF get a 320 px `_thumbs` preview. Downloads: images/PDF/text inline, others attachment, `CSP: sandbox`, `nosniff`. Deletes move to `_deleted/<date>/…` (housekeeping empties dated folders older than 30 days); purged tasks' file rows are dropped, their kept files stay. Renames reconcile item folders when online. A DB restore keeps the current path and store id.
 
 ### 14.6 API
 `GET /api/maintenance` (items, jobs, files status, overdueCount, currency); `POST/PATCH/DELETE /api/maintenance/items[/{id}]`; `POST …/{id}/done|undo|snooze`; `GET /api/maintenance/history[.csv]?year&category&item` (the CSV, written by `app/common/csv_export.py` with a UTF-8 BOM: Date, Item, Category, Done by, Note, Cost, Was due, Files; **formula guard**: the Item, Category, Done by, Note and Files cells starting with `=` `+` `-` `@` (or tab/CR) get a leading `'` — new; Date, Cost and Was due unchanged); `GET /api/maintenance/suggestions`; `PUT/DELETE /api/maintenance/suggestions/{key}/hidden`; `POST /api/maintenance/files?item_id|done_id|task_id`, `GET /api/maintenance/files?task_id`, `GET|DELETE /api/maintenance/files/{id}[?thumb=1]`. Admin: `GET/PUT /api/admin/maintenance` ({enabled, recipients, profile, sensor}), `POST/PATCH/DELETE /api/admin/maintenance/suggestions[/{id}]`, `POST /api/admin/settings/check-maintenance-folder`, `POST /api/admin/maintenance/files/check` ({useThisFolder, confirm}). `/api/prefs` gains `maintenanceNotify` and `maintenanceRecipient`.
@@ -712,8 +716,8 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   restore. The sidebar page for links (`config.SIDEBAR_PAGE`) comes from `assist_tools.sidebar_page` at start-up —
   the same page the notifications open. Links carry a `target`: `/dashboard` (todo.tasks), `/lists/<id>` (a named
   list, todo.items.add), `/lists`, `/schedule`.
-- **Sub-path links** (all links into the app): `/<page>/dashboard|calendar|schedule|lists|maintenance` and
-  `/<page>/lists/<id>`. The page (`common/static/deeplink.js`, given the page by `/api/whoami`'s `page`) takes the
+- **Sub-path links** (all links into the app): `/<page>/dashboard|calendar|schedule|lists|maintenance`,
+  `/<page>/lists/<id>` and `/<page>/ticket/<task>/<file>` (a reminder's *Open ticket*, §17). The page (`common/static/deeplink.js`, given the page by `/api/whoami`'s `page`) takes the
   route from Home Assistant's `home-assistant/properties` message or the top page's address and opens that tab or
   list (`#/lists/<id>`); a request for one of those paths reaching the app itself is redirected to `#/…` (the shared
   `deeplinks.py`).
@@ -747,6 +751,72 @@ Assistant's event bus (`APP_MESSAGES_SPEC.md`; the kinds and their checks are §
   `assistantOk`, Settings → Household Assistant). Otherwise `nack not_allowed` (`off` / `person_off`); an unknown
   or disabled person is `no_access`.
 - **Tests**: `tests/test_tools.py`, and `common_tests/test_assist_tools.py` on the app's own copy.
+
+## 17. Files on tasks (`task_files.py`, `routers/task_files.py`)
+
+Tickets, booking confirmations, photos — attached to any task, kept in Todo itself and removed once the task is done.
+Decided against storing them in Household Docs with a link from Todo: deleting on completion would be a message
+between two apps that can arrive late or not at all, each app has its own sharing, and Todo would need Docs installed.
+
+**Storage** — the files folder of §14.5, shown in App settings as *Files folder* (group *Files*; Maintenance doesn't
+need to be on). Rows are `maint_files` with `task_id`.
+- A task's files go next to its other files, else in `<folder>/Tasks/<task title> (<id8>)/` (a task in the
+  Maintenance list: `Jobs/<title> (<id8>)/`). `Tasks` is never a maintenance item's folder name. A file isn't moved
+  when its task is renamed or moved to another list.
+- The §14.5 rules: ≤ 25 MB (413), empty → 422, names cleaned for Samba with " (2)" for duplicates, `_thumbs` previews,
+  downloads inline for images/PDF/text (`?download=1` → attachment) with `CSP: sandbox` and `nosniff`, 503 with the
+  reason while the folder is offline. At most **10 files** per task (422); a done task takes no new files (409).
+- Columns (end of `maint_files`, in `MIGRATIONS` in the same order): `keep_after_done INTEGER NOT NULL DEFAULT 0`,
+  `pending TEXT` ('remove' / 'restore': a move waiting for the folder), `removed_rel TEXT` (where a removed file
+  was), `removed_at TEXT`. A row is *listed* when `removed_at` and `pending` are NULL, or `pending='restore'`
+  (`task_files.LISTED`). The migration sets `keep_after_done = 1` on the task files that existed before, so job
+  receipts and photos still stay when a job is done; new files on a Maintenance-list task start with Keep on,
+  others off.
+
+**Who** — whoever can see the task (`taskview.load_task`: someone else's personal list → 403) can list, open,
+attach, rename, switch Keep and remove its files. `GET|DELETE /api/maintenance/files/{id}` checks the same for a
+task's file and doesn't serve a removed one.
+
+**API** — `GET /api/tasks/{id}/files` → `{taskId, title, completed, files: [{id, name, size, mime, thumb, createdAt,
+keepAfterDone}], maxFiles, folder: {configured, online, reason, maxBytes}}`; `POST /api/tasks/{id}/files`
+(multipart `file`) → 201 the file; `GET /api/tasks/{id}/files/{file_id}[?thumb=1|?download=1]`;
+`PATCH /api/tasks/{id}/files/{file_id}` `{name?, keepAfterDone?}` (a rename keeps the extension and renames the file
+in the folder; Keep turned off on a done task removes the file now); `DELETE /api/tasks/{id}/files/{file_id}` (to
+`_deleted/<date>/…`, no undo). Task JSON gains `fileCount` (listed files).
+
+**Done, undone, deleted** (hooks in the caller's transaction, moves after it by `task_files.flush`)
+- Ticking a task off (the tasks API or the Household Assistant's `todo.items.done`) marks its files without Keep
+  `pending='remove'`; `flush` moves each to `_deleted/<date>/<its folder>/` and sets `removed_at` / `removed_rel`.
+- Unticking clears a pending removal, and marks files removed in the last **30 days** `pending='restore'`; `flush`
+  moves them back to their folder (a free name if it was taken meanwhile). A file no longer in `_deleted` loses its row.
+- Deleting a task, or a list with its tasks, marks every file (Keep or not) for removal; `flush` moves them and drops
+  the rows (no undo; for 30 days they can be fetched from `_deleted` by hand).
+- `flush` runs as a background task after the request, every 5 minutes after `maint_files.check()`, at start-up
+  and in the housekeeping pass. While the folder is offline nothing moves; the task is still done and the file is no
+  longer listed. Rows removed more than 31 days ago are dropped (`purge_deleted` empties their dated folder).
+  Housekeeping's orphan clean-up skips rows with a move pending. A done task purged after 60 days (§8m) loses its
+  kept files' rows; the files stay in the folder.
+- Each move holds the database's write lock (`BEGIN IMMEDIATE`) and re-reads the row, so an untick racing a move
+  can't leave a row pointing at the wrong place.
+
+**Reminders** — a task's "N before" reminder and a "Remind me at" alarm, for a task with exactly one listed PDF, get
+an **Open ticket** notify action: `{"action": "URI", "title": "Open ticket", "uri": "<sidebar page>/ticket/<task>/<file>"}`
+(only with `config.SIDEBAR_PAGE`). `deeplinks` answers `/ticket/<a>/<b>`; the page's `#/ticket/<task>/<file>` opens
+the Dashboard with a *Ticket* dialog (name, size, the task; **Download** and **Open**), and the hash becomes
+`#/dashboard`.
+
+**Household Assistant** — `todo.tasks` says "Flight (today, 2 files attached)" and its items carry `files: 2`; it
+never reads or sends a file.
+
+**UI** — the task row's 📎 count opens the task; the task dialog's *Files* section lists each file (open, size,
+*Keep after done*, download ⤓, rename ✎ inline, remove ✕) with **+ Attach** / drop (several at once; on a phone the
+picker offers the camera). Hidden for non-admins when no folder is set and the task has no files; an admin sees where
+to turn it on.
+
+**Not part of this** — files on schedule items (never "done"), reading text out of PDFs, previews in the calendar,
+copying to Household Docs.
+
+**Tests** — `tests/test_task_files.py`.
 
 ## Security notes (2026-10)
 

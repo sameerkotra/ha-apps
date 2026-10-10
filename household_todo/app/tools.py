@@ -22,7 +22,7 @@ answer for me* (Settings). Links open the Dashboard, Lists (or the list), or Sch
 import re
 from datetime import date, timedelta
 
-from . import config, db, schedule_logic, taskview
+from . import config, db, schedule_logic, task_files, taskview
 from .common import app_bus as bus
 from .common import assist_tools
 from .common.assist_tools import Arg
@@ -126,13 +126,21 @@ def _for_person(ctx, rows: list[dict]) -> list[dict]:
 
 
 def _task_item(t: dict) -> dict:
-    return {"title": t["title"], "due": t["dueDate"], "time": t["dueTime"], "list": t["listName"],
-            "who": t["assigneeName"], "overdue": t["overdue"]}
+    out = {"title": t["title"], "due": t["dueDate"], "time": t["dueTime"], "list": t["listName"],
+           "who": t["assigneeName"], "overdue": t["overdue"]}
+    if t.get("fileCount"):                       # files on the task (SPEC §17): said, not sent
+        out["files"] = t["fileCount"]
+    return out
+
+
+def _files_words(n: int) -> str:
+    return f", {n} file{'s' if n != 1 else ''} attached" if n else ""
 
 
 def _task_words(ts: list[dict], today: date) -> str:
     return "; ".join(f"{t['title']} ({_when(t['dueDate'], today)}"
-                     + (f", {t['assigneeName']}" if t["assigneeName"] else "") + ")" for t in ts)
+                     + (f", {t['assigneeName']}" if t["assigneeName"] else "") + _files_words(t.get("fileCount") or 0)
+                     + ")" for t in ts)
 
 
 def _schedule_words(out: list[dict], today: date) -> str:
@@ -291,6 +299,8 @@ def done(ctx):
         return why
     ctx.conn.execute("UPDATE tasks SET completed = 1, completed_at = ?, completed_by = ? WHERE id = ? AND completed = 0",
                      (config.now_iso(), ctx.user["id"], t["id"]))
+    if task_files.on_done(ctx.conn, [t["id"]]):          # its files go, unless kept (SPEC §17)
+        task_files.flush_soon()
     return ctx.result(f"Ticked off “{t['title']}” on {t['listName']}.",
                       items=[{"title": t["title"], "list": t["listName"], "done": True}],
                       links=[ctx.link(f"{t['listName']} in Household Todo", f"/lists/{t['listId']}")])

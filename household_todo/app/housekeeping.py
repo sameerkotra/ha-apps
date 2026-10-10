@@ -63,9 +63,11 @@ def prune_schedule_reminder_log(conn, today: date) -> int:
 
 
 def prune_maintenance(conn, today: date) -> None:
-    """A purged one-off job's files stay in the folder, but their rows go; notification log rows
-    older than a year can't matter any more."""
-    conn.execute("DELETE FROM maint_files WHERE task_id IS NOT NULL AND task_id NOT IN (SELECT id FROM tasks)")
+    """A purged task's kept files stay in the folder, but their rows go (not while a move waits for the folder:
+    task_files.flush makes it, then forgets the row); notification log rows older than a year can't matter any
+    more."""
+    conn.execute("DELETE FROM maint_files WHERE task_id IS NOT NULL AND pending IS NULL "
+                 "AND task_id NOT IN (SELECT id FROM tasks)")
     conn.execute("DELETE FROM maint_notify_log WHERE sent_on < ?", ((today - timedelta(days=400)).isoformat(),))
 
 
@@ -77,10 +79,11 @@ def run_pass_blocking(today: date | None = None) -> dict:
         prune_schedule_reminder_log(conn, today)
         prune_maintenance(conn, today)
     try:
-        from . import maint_files
+        from . import maint_files, task_files
+        task_files.flush()                 # moves waiting for the folder; forgets files removed 30+ days ago
         maint_files.purge_deleted(today)
     except Exception:
-        logger.exception("Emptying old deleted maintenance files failed")
+        logger.exception("Emptying old deleted files failed")
     if tasks:
         logger.info("housekeeping: removed %d completed tasks older than %d days", tasks, config.COMPLETED_RETENTION_DAYS)
     return {"tasks": tasks, "exceptions": excs}
