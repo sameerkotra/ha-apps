@@ -65,7 +65,7 @@ class PageRules(unittest.TestCase):
         with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as f:
             index = f.read()
         own = re.findall(r'<script src="([a-z]+\.js)\?v=', index)
-        self.assertEqual(own, ["textutil.js", "md.js", "app.js", "docs.js", "sheetcalc.js", "sheet.js", "files.js", "search.js", "organise.js",
+        self.assertEqual(own, ["textutil.js", "md.js", "app.js", "docs.js", "sheetcalc.js", "sheet.js", "files.js", "pdfview.js", "search.js", "organise.js",
                                "admin.js", "scanpdf.js", "activity.js", "bring.js", "ai.js", "connect.js", "tidy.js",
                                "start.js"])          # start.js last
 

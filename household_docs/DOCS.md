@@ -68,8 +68,13 @@ scanned, marked "added outside the app".
   into History), **Keep both** (the new one gets " (2)") or **Skip**.
 - Opening a file shows its **file panel**: a preview for pictures (PNG, JPEG, GIF, WebP — the app checks the file
   really is one), its size, who changed it and where it's stored, **Download**, and **Replace with a new copy…**.
-  Everything else (PDFs, documents, SVG and HTML files …) downloads and opens in your own apps — the app never
-  shows them inside itself.
+- **PDFs**: **👁 View** in the file panel (or ⋯ → **View**) shows the PDF inside the app, on the whole screen, page
+  by page — on a phone too. **−** / **+** zoom, **Fit** fits the width (or the keys `+`, `-` and `0`), the page
+  number shows where you are, and **Download** is at hand. A password-protected PDF asks for its password. The app
+  draws the pages itself: links, forms and anything else a PDF could run don't work in this view (download it for
+  those). PDFs over 50 MB download instead.
+- Everything else (documents, SVG and HTML files …) downloads and opens in your own apps — the app never shows them
+  inside itself.
 - **▦ / ☰** switches a folder between a grid (with picture thumbnails) and a list; the choice is kept on this
   device.
 - **Tick boxes** select several items; the bar above the list then offers **Move…**, **Copy to My docs**,
@@ -341,7 +346,7 @@ The text inside PDFs (up to 500 pages, PDFs up to *Largest PDF whose text is sea
 background — in a separate process that is stopped if a PDF takes too long or needs too much memory — so search
 finds it; a result says which page ("page 3: …"). A PDF's file panel says whether its text is searchable:
 *Password-protected* PDFs can't be read; *Scanned — no text* means it is pictures of pages (AI can read those).
-PDFs still download to open; the app never shows them itself.
+To look at a PDF, use **👁 View** (see *Files*).
 
 ## Importing
 

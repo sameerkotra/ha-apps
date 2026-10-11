@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0
+
+- **View PDFs in Docs**: **👁 View** in a PDF's file panel (or ⋯ → **View**) shows it inside the app, full screen, page by page — zoom (− / Fit / +), the page number, Download at hand, on phones too. A password-protected PDF asks for its password. The app draws the pages itself, so nothing in a PDF runs (its links and forms don't work in this view); PDFs over 50 MB still download.
+
 ## 1.5.0
 
 - **Pictures in notes**: paste a picture into a Markdown note (or use 🖼 on its toolbar — on a phone that can be the camera) and it's saved next to the note and shown in the preview. Only pictures kept in Docs are ever shown; links to pictures elsewhere still aren't loaded.

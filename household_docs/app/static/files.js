@@ -177,9 +177,11 @@
     const image = info.preview;                 // the server checked the first bytes: a real PNG, JPEG, GIF or WebP
     const preview = image ? h("div", { class: "preview-box" }, h("img", { class: "preview-img", id: "previewImg", alt: info.name,
       src: `api/nodes/${encodeURIComponent(info.id)}/preview`, onerror: (e) => e.target.replaceWith(h("div", { class: "empty" }, "No preview — it isn't a picture the app can show. Download it instead.")) }))
+      : D.isPdf && D.isPdf(info) ? h("div", { class: "preview-box none" }, h("span", { class: "tile-icon", "aria-hidden": "true" }, D.iconOf(info)),
+        h("button", { class: "btn-primary", type: "button", id: "viewPdf", onclick: () => D.viewPdf(info) }, "👁 View"),
+        h("p", { class: "hint" }, "Shown here, page by page. Links and forms in the PDF don't work in this view — download it for those."))
       : h("div", { class: "preview-box none" }, h("span", { class: "tile-icon", "aria-hidden": "true" }, D.iconOf(info)),
-        h("p", { class: "hint" }, info.ext === "pdf" ? "PDFs open in your own viewer after downloading."
-          : D.IMAGE_EXTS.includes(info.ext) ? "No preview — this isn't a picture the app can show (its content doesn't match its name). Download it instead." : "This kind of file downloads to open."));
+        h("p", { class: "hint" }, D.IMAGE_EXTS.includes(info.ext) ? "No preview — this isn't a picture the app can show (its content doesn't match its name). Download it instead." : "This kind of file downloads to open."));
     const where = info.rootKind === "shared" ? info.rootLabel : (info.ownerId === D.state.me.id ? "My docs" : `${info.ownerName}'s folder`);
     mount(body, preview,
       (D.filePanelExtras || []).map((fn) => fn(info, m)),

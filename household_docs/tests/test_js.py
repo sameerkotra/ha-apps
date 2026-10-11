@@ -19,7 +19,7 @@ class BrowserCode(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout[-4000:] + r.stderr[-2000:])
 
     def test_page_scripts_parse(self):
-        for name in ("textutil.js", "md.js", "app.js", "docs.js", "sheetcalc.js", "sheet.js", "files.js", "search.js", "organise.js",
+        for name in ("textutil.js", "md.js", "app.js", "docs.js", "sheetcalc.js", "sheet.js", "files.js", "pdfview.js", "search.js", "organise.js",
                      "admin.js", "scanpdf.js", "activity.js", "bring.js", "ai.js", "start.js"):
             r = subprocess.run(["node", "--check", os.path.join(HERE, "app", "static", name)],
                                capture_output=True, text=True, timeout=60)

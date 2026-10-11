@@ -59,7 +59,7 @@ promise ("everything here is encrypted") simple and its review small.
 | Packing lists, chores, tasks with due dates, reminders, recurring lists | Household Todo | Nothing. Docs checklists have no due dates, assignees or reminders on purpose. |
 | Passwords, card numbers, codes | Household Vault | Hint + "this looks like a password" (§3.3). |
 | Files shared into a chat | Household Chat (shared folders in chats) | Admin shared folders work the same way; the same `/share` folder can be shared in both apps. Both check paths with the same shared `share_paths.py`. |
-| Manuals, warranties, PDF bills | Docs (decided 2026-10-04: kept separate from Receipt Price Intelligence) | Stored as ordinary files in any folder — upload, preview, download, search by name and (from step 9) PDF text. No link to the Receipt app. |
+| Manuals, warranties, PDF bills | Docs (decided 2026-10-04: kept separate from Receipt Price Intelligence) | Stored as ordinary files in any folder — upload, preview, download, search by name and (from step 9) PDF text, view PDFs in the app (§17.24). No link to the Receipt app. |
 
 ## 2. Stack & file layout
 
@@ -143,6 +143,7 @@ household_docs/
 | `static/admin.js` | Admin tabs | `Admin.addTab({id, label, order, render})` |
 | `static/textutil.js` | DOM-free helpers: the secret hint, the line compare, search-snippet marks, the Search page's address and chips, upload name clashes (Node-tested) | more pure helpers go here (or their own file, like `sheetcalc.js`) |
 | `static/start.js` | starts the app after every script registered itself | stays the last script on the page |
+| `static/pdfview.js` + `static/vendor/pdfjs/` | §17.24: the PDF viewer, on Mozilla's PDF.js (vendored, Apache-2.0; `vendor/pdfjs/README.md` says which files and version) | `Docs.viewPdf(item)`, `Docs.isPdf(item)` |
 | `store/moving.py` *(step 6)* | §5.7: read-only mode (a write guard + paused jobs), the new location's checks, the copy check (a background job), the switch | — |
 | `tags.py`, `links.py`, `pins.py`, `docpdf.py` + `pdfwriter.py` *(step 7)* | §17.1 tags and colours, §17.3 `[[links]]` and backlinks, §17.13 pins and Quick note, §17.12 the PDF of a note or checklist | — |
 | `static/md.js` *(step 7)* | Markdown → blocks → DOM nodes (Node-tested, fuzzed) | — |
@@ -238,7 +239,9 @@ schema:
   a download, a version download, a preview, a `.zip` member, a snippet or a PDF's text opens the file once with
   `O_NOFOLLOW` and then checks where the descriptor really is (`/proc/self/fd`) — inside `/share` — so a folder on
   the way swapped for a link (over Samba) between the check and the open can't make the app read `/data`.
-  Downloads are streamed from that descriptor (never re-opened by path). Writes (`write_atomic`) open the target
+  Downloads are streamed from that descriptor (never re-opened by path). Viewing a PDF in the app (§17.24) doesn't
+  change this: the viewer fetches the same download and draws the pages on canvases; the PDF is still never served
+  inline. Writes (`write_atomic`) open the target
   folder the same way and make the final link / rename relative to its descriptor (`dst_dir_fd`); a version (§7.3) is copied from the
   descriptor the file was opened and hashed with, into the version folder through its descriptor (re-review
   2026-10); `.tmp`,
@@ -1361,7 +1364,8 @@ in `.xlsx`; `sheetcalc.test.js`; packaging (`map` exactly `share`, port, version
 - `pypdf` extracts text from PDFs anywhere you can see, in a background job, up to `pdf_index_mb` (20 MB) and 500 pages
   per file. Encrypted PDFs are skipped ("password-protected"); PDFs with no text are marked "scanned — no text" (AI can
   read them, §17.6).
-- Text goes into `fts`; snippets show the page ("page 3"). PDFs still download rather than preview inline (§3.3).
+- Text goes into `fts`; snippets show the page ("page 3"). PDFs are never served inline (§3.3); 👁 View draws them
+  in the app (§17.24).
 - *(built, step 9 — `pdftext.py`, `formats/pdf_worker.py`)* A job every minute (in a worker thread, ≤ 5 PDFs and ≤ 40 s
   a run) reads each live PDF whose content (SHA-256) hasn't been read: the file is read after the realpath check
   without following links (≤ `pdf_index_mb`; bigger ones are `too_big`) and handed to `python -I pdf_worker.py`,
@@ -1836,6 +1840,33 @@ with reminders on documents (Household Vault already does expiry reminders for w
   (`off` / `person_off`); a turned-off or unknown person is `no_access`.
 - **Privacy**: results carry document text, so DOCS.md makes the recorder exclusion a must for anyone using the
   assistant (APP_MESSAGES_SPEC §8).
+
+### 17.24 Viewing PDFs (`static/pdfview.js`)
+- **Where**: **👁 View** in a PDF's file panel and ⋯ → **View** (order 1, right after Open) for any PDF the person can
+  see, not in Trash. Full screen (a modal with `pdf-full`): a bar with the page number (`n / N`, the page across the
+  middle of the view), − / *Fit* (or the zoom in %) / +, ⬇ Download; the pages under it, scrolling. Keys `+`, `-`,
+  `0` (fit); Esc and Back close it. Fit follows the window while it's on.
+- **How**: Mozilla's **PDF.js** (`pdfjs-dist`, the legacy build for older phone web views) vendored under
+  `static/vendor/pdfjs/` — the library and its worker, the standard fonts, the CJK character maps and the JavaScript
+  image decoders (JPEG 2000, JBIG2). Loaded with `import()` the first time a PDF is viewed (`?v=` the app's
+  version). The bytes come from the ordinary download route (`GET /api/nodes/{id}/file`, the same access check,
+  read through the checked descriptor of §3.3) as data; nothing new on the server.
+- **Safe on Home Assistant's address**: the PDF is never a page or an `<object>`; PDF.js parses it in its worker and
+  draws onto canvases. `isEvalSupported: false` (no generated code — the fix for CVE-2024-4367's kind of font
+  trick), no scripting (no sandbox build shipped), no XFA, no annotation or text layers (links and forms are only
+  pictures), `useWasm: false` (the page's CSP has no `wasm-unsafe-eval`; the JavaScript decoders are used). Works
+  under the page's unchanged CSP (§3.3): the module and worker are `'self'`; fonts are loaded from bytes.
+- **Light on memory**: pages within about a screen and a half of the view are drawn (at the screen's pixel ratio, at
+  most 3, and at most ~16 million pixels a canvas); pages far away let go of their canvas. A zoom redraws the pages
+  in view.
+- **Limits and messages**: over 50 MB → "too big to view here — download it instead" (a toast, nothing fetched); a
+  password-protected PDF asks for the password (a wrong one asks again; RC4 and AES both work here, unlike search,
+  §17.5); a file PDF.js can't read → "isn't a PDF the viewer can read"; no access → the route's 404 text; a browser
+  that can't load modules or workers → "couldn't start in this browser — download it instead".
+- **Tests**: `tests/test_pdf_view.py` (headless Chromium through Playwright, the real app and its CSP; skipped
+  without it): View from the file panel draws text (standard fonts), page count and number, zoom and Fit, the last
+  page after scrolling, Esc, no console errors and no CSP violations; the ⋯ action only for PDFs; a password; a
+  broken file; someone without access; the size limit. `test_js.py` parses `pdfview.js`.
 
 ## Security notes (2026-10)
 
