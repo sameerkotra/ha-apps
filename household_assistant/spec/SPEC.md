@@ -71,7 +71,8 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
      `call` (a list or one), `act` (a list or one, at most 3), `answer`, `ask`. Text that isn't JSON, before any
      result, is taken as the answer (small models answer greetings in words).
   2. `ask` → that is the answer. `act`, or a `call` of an `acts` tool → a proposal (`calls` row, `say` from the
-     model or the tool and its arguments in words); a round that only proposed is followed by another plan, so
+     model or the tool and its arguments in words; at most 3 a question). The button is `label` — `describe()`: "<app> ·
+     <tool> (<arg>: <value>, …)", made by the app — with the model's `say` only as a note under it; a round that only proposed is followed by another plan, so
      the model can say it in words. Calls of unknown tools, repeated calls and arguments the tool doesn't have
      are dropped; at most 4 a round and 8 a question.
   3. **Call**, in parallel: one `assist.tool.call` each (`requested_by` the person, `question` the id; expires in
@@ -86,7 +87,8 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   `/<8 hex or local>_<that app's slug>`, `target` a plain path without `//` or `..`; else the app's name only;
   at most 8), `shared` (each call: app, tool, args, state, text, items, links, `problem` in words) and `actions`.
 - `POST /api/ask/{id}/act/{call id}` → the proposal is sent with `confirm: true` and `confirmed_at`, as the
-  person, if the tool is still offered to them (403 otherwise; 409 when already done; 404 for someone else's).
+  person, if they may still ask (`can_ask`) and the tool is still offered to them (403 otherwise; 409 when already
+  done — only the request that moves the row from `proposed` to `sent` sends it; 404 for someone else's).
 - `GET /api/ask/{id}/events` → Server-Sent Events: `event: question` with the same view each time it changes (the
   engine's `touch(qid)` on every state change, warm-up, call sent and answer; checked again every second anyway),
   until the question ends; `: ping` every 20 s while quiet.
@@ -131,9 +133,10 @@ an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds t
 `ha_assist`:
 
 - `assist.ask` (`{requested_by, name?, text}`, expires in 5 minutes; ref `assist:<id>`) → `app_messages.on_ask`:
-  `nack not_allowed off` while *Answer Assist* (`assist_answers`) is off, `nack invalid <field>`; else `ack {}` and,
-  after the bus commits (the bus holds the database), `auth.user_by_id` (the users row made with the name Home
-  Assistant gave) and `engine.ask` — the same checks and limits as the page; a refusal becomes a `failed` answer.
+  `nack not_allowed sender` unless it is from `ha_assist`, `nack not_allowed off` while *Answer Assist*
+  (`assist_answers`) is off, `nack invalid <field>`; else `ack {}` and, after the bus commits (the bus holds the
+  database), `auth.user_by_id` (the person's users row; made only when Home Assistant's people list links that user
+  id to a person — any other unknown id is refused, "I don't know who is asking…") and `engine.ask` — the same checks and limits as the page; a refusal becomes a `failed` answer.
 - `engine.when_done(qid, fn)` → `assist.answer` as a reply to the ask (`reply_to`, same `ref`, 5 minutes):
   `{question, state, answer? (≤ 3000), error?, sources: [app names]}`; the integration acks it, and its outbox
   re-sends it until then.

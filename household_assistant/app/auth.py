@@ -9,7 +9,7 @@ import logging
 from fastapi import Request
 
 from . import config, db
-from .common import auth_core
+from .common import auth_core, ha_people
 
 logger = logging.getLogger("auth")
 _warned_display_name_only: set[str] = set()
@@ -43,13 +43,23 @@ async def get_current_user(request: Request) -> dict:
             "enabled": bool(row["enabled"]), "is_child": bool(row["is_child"])}
 
 
+UNKNOWN_PERSON = ("I don't know who is asking: that Home Assistant user isn't one of the household's people. Open the "
+                  "Household Assistant once from the sidebar, then ask again.")
+
+
 def user_by_id(user_id: str, name: str | None = None) -> dict:
-    """The person a bus message asks for (Assist): their row, made on first use with the name Home Assistant gave."""
-    name = (name or "").strip()[:80] or None
+    """The person a bus message asks for (Assist): their row. A row is made only for someone the app already knows
+    (they opened it) or Home Assistant's people list links to this user id — never for any id a message names.
+    Raises PermissionError (UNKNOWN_PERSON) otherwise."""
     with db.get_conn() as conn:
-        conn.execute("INSERT INTO users (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET "
-                     "name = COALESCE(excluded.name, users.name)", (user_id, name or "Home Assistant User"))
         row = conn.execute("SELECT name, enabled, is_child FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            person = ha_people.person_for(user_id)
+            if person is None:
+                raise PermissionError(UNKNOWN_PERSON)
+            name = (person.get("name") or name or "").strip()[:80] or "Home Assistant User"
+            conn.execute("INSERT INTO users (id, name) VALUES (?, ?) ON CONFLICT(id) DO NOTHING", (user_id, name))
+            row = conn.execute("SELECT name, enabled, is_child FROM users WHERE id = ?", (user_id,)).fetchone()
     return {"id": user_id, "name": row["name"], "username": None, "is_admin": _is_admin(user_id, row["name"], None),
             "enabled": bool(row["enabled"]), "is_child": bool(row["is_child"])}
 

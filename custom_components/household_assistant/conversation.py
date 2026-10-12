@@ -48,7 +48,9 @@ class HouseholdAssistantAgent(conversation.ConversationEntity):
         if not user_id:
             return protocol.NO_USER
         user = await self.hass.auth.async_get_user(user_id)
-        env = protocol.ask(text, user_id, user.name if user else None)
+        if user is None or not user.is_active:          # removed or turned off in Home Assistant: never asked as them
+            return protocol.UNKNOWN_USER
+        env = protocol.ask(text, user_id, user.name)
         exchange = protocol.Exchange(env)
         changed = asyncio.Event()
 

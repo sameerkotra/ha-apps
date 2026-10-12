@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1
+
+- **The button says exactly what changes**: a proposed change's button now reads "Household Todo · todo.items.add (list: Shopping, text: Milk)" — the app, the action and its details — and the model's own words are only a note under it.
+- **A change is made once**: tapping its button twice (or in two windows) sends it once.
+- **Only someone who may ask can confirm**: when an admin turns the assistant off for a person, or for children, their earlier proposed changes can't be confirmed any more.
+- **At most three proposed changes per question.**
+- **Assist asks only for the household's people**: questions come only from the companion integration, and only for someone who has opened the assistant or is one of Home Assistant's people — no one else is added. The companion *Household Assistant* integration 1.0.1 doesn't ask for a Home Assistant user that no longer exists or is turned off.
+- **Send me one now** is limited to 5 briefings an hour, and a briefing is read aloud only on one of Home Assistant's own speakers.
+- A name of only spaces no longer stopped the spoken greeting ("Good morning, there").
+- **Shared code**: the apps take tool calls only from the assistant; AI requests never follow a redirect; no inline handlers in the pages; safer settings saves.
+
 ## 1.3.0
 
 - **🌙 Evening briefing**: next to the morning one — tomorrow's tasks and schedule, birthdays in the next two days and bills due soon, at the time you choose.

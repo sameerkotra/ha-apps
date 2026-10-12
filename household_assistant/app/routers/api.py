@@ -215,6 +215,8 @@ async def send_briefing(kind: str = Query("morning", pattern="^(morning|evening)
     why = briefing.may_have(user)
     if why:
         raise HTTPException(403, why)
+    if not briefing.sends_left(user["id"]):
+        raise HTTPException(429, "That's the most briefings for one hour — try again a little later.")
     out = await run_in_threadpool(briefing.send, user, kind)
     with db.get_conn() as conn:
         q = conn.execute("SELECT * FROM questions WHERE id = ?", (out["question"],)).fetchone()

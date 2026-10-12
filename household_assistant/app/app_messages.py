@@ -22,6 +22,7 @@ from .common import app_bus as bus
 logger = logging.getLogger("app_messages")
 
 ASK_KIND = "assist.ask"
+ASK_FROM = "ha_assist"                 # the companion integration (custom_components/household_assistant/protocol.py)
 ANSWER_KIND = "assist.answer"
 MAX_SPOKEN = 3000                      # the answer as sent back (an event is at most 8 KB)
 ANSWER_EXPIRES = timedelta(minutes=5)  # Assist has stopped listening long before
@@ -30,6 +31,8 @@ ANSWER_EXPIRES = timedelta(minutes=5)  # Assist has stopped listening long befor
 @bus.handler(ASK_KIND)
 def on_ask(msg, conn):
     d = msg.data
+    if msg.from_app != ASK_FROM:                   # only the companion integration asks for someone
+        raise bus.Nack("not_allowed", "sender")
     if not settings.get("assist_answers"):
         raise bus.Nack("not_allowed", "off")
     uid, text, name = d.get("requested_by"), d.get("text"), d.get("name")

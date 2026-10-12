@@ -41,6 +41,7 @@ DAYS = ("every", "weekdays")
 LATE = timedelta(hours=3)           # never sent later than this after the chosen time
 MAX_LINE = 300
 MAX_MESSAGE = 1200
+SENDS_PER_HOUR = 5                  # "Send me one now" (and the day's own) per person per hour
 
 # kind -> its words and what it asks: (tool, args, emoji, always: kept even when the app found nothing)
 KINDS = {
@@ -91,6 +92,8 @@ def save(conn, user_id: str, on: bool, time: str, days: str, *, evening_on: bool
     if speaker not in (False, None, "") and not SPEAKER_RE.match(speaker):
         raise ValueError("The speaker must be a media player, e.g. media_player.kitchen.")
     old = get(conn, user_id)
+    if speaker not in (False, None, "") and speaker != old["speaker"] and not is_speaker(speaker):
+        raise ValueError("Choose one of Home Assistant's speakers.")
     ev_on = old["eveningOn"] if evening_on is None else bool(evening_on)
     ev_at = evening_time or old["eveningTime"]
     spk = old["speaker"] if speaker is False else (speaker or None)
@@ -118,6 +121,11 @@ def speakers() -> dict:
                      key=lambda x: x["name"].casefold())
     tts = sorted(s["entity_id"] for s in states if str(s.get("entity_id", "")).startswith("tts."))
     return {"speakers": players, "tts": tts[0] if tts else None}
+
+
+def is_speaker(entity: str) -> bool:
+    """Whether `entity` is one of the speakers Home Assistant has now (speakers())."""
+    return any(p["entity"] == entity for p in speakers()["speakers"])
 
 
 def parts_for(conn, user: dict, kind: str = "morning") -> list[dict]:
@@ -203,7 +211,11 @@ def _sidebar_page() -> str | None:
 
 def speak(speaker: str, text: str) -> bool:
     """Read `text` aloud on `speaker` with Home Assistant's first text-to-speech engine; True when it took it."""
-    tts = speakers()["tts"]
+    sp = speakers()
+    tts = sp["tts"]
+    if not any(p["entity"] == speaker for p in sp["speakers"]):
+        logger.warning("%s isn't one of Home Assistant's speakers now: the briefing wasn't read aloud.", speaker)
+        return False
     if not tts:
         logger.warning("No text-to-speech engine in Home Assistant: the briefing wasn't read aloud.")
         return False
@@ -213,6 +225,15 @@ def speak(speaker: str, text: str) -> bool:
     if status != 200:
         logger.warning("Reading the briefing aloud on %s failed (HTTP %s): %s", speaker, status, body[:200])
     return status == 200
+
+
+def sends_left(user_id: str) -> int:
+    """How many more briefings the person may have this hour (SENDS_PER_HOUR; each one asks every app)."""
+    since = engine._iso(config.utcnow() - timedelta(hours=1))
+    with db.get_conn() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM questions WHERE user_id = ? AND asked_at > ? AND text IN (?, ?)",
+                         (user_id, since, KINDS["morning"]["question"], KINDS["evening"]["question"])).fetchone()[0]
+    return max(0, SENDS_PER_HOUR - n)
 
 
 def send(user: dict, kind: str = "morning") -> dict:
@@ -234,7 +255,8 @@ def send(user: dict, kind: str = "morning") -> dict:
     said = None
     if speaker:
         word = "Good morning" if kind == "morning" else "Good evening"
-        said = speak(speaker, f"{word}, {user['name'].split()[0]}. {k['question']} for {made['head']}. "
+        first = (str(user.get("name") or "").split() or ["there"])[0]
+        said = speak(speaker, f"{word}, {first}. {k['question']} for {made['head']}. "
                      + " ".join(made["spoken"]))
     return {"question": made["question"], "sent": sent, "phones": targets, "spoken": said}
 

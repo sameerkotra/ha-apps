@@ -119,8 +119,12 @@
   }
 
   function actionBlock(q, a) {
+    // The button says the exact change ("<app> · <tool> (<args>)", made by the app, not the model); the model's own
+    // words are only a note under it.
+    const label = a.label || a.say;
+    const note = a.say ? h("div", { class: "dim action-say" }, a.say) : null;
     if (a.state === "proposed") {
-      const btn = h("button", { type: "button", class: "btn-primary" }, a.say);
+      const btn = h("button", { type: "button", class: "btn-primary" }, label);
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         try {
@@ -129,14 +133,14 @@
           box.replaceWith(actionBlock(q, r.result));
         } catch (e) { btn.disabled = false; toast(e.message, true); }
       });
-      return h("div", { class: "action" }, btn, h("span", { class: "dim" }, ` in ${a.appName} — nothing changes until you tap.`));
+      return h("div", { class: "action" }, btn, h("span", { class: "dim" }, " — nothing changes until you tap."), note);
     }
-    if (a.state === "sent") return h("div", { class: "action dim" }, `${a.say}: sending…`);
+    if (a.state === "sent") return h("div", { class: "action dim" }, `${label}: sending…`);
     if (a.state === "ok") {
-      return h("div", { class: "action done" }, "✓ ", a.text || a.say, " ",
+      return h("div", { class: "action done" }, "✓ ", a.text || label, " ",
         (a.links || []).slice(0, 1).map((l) => linkTo({ ...l, appName: a.appName }, "Open")));
     }
-    return h("div", { class: "action failed" }, `✗ ${a.say}: ${a.problem || "it didn't work."}`);
+    return h("div", { class: "action failed" }, `✗ ${label}: ${a.problem || "it didn't work."}`);
   }
 
   // "Took 42 s" / "Took 1 min 12 s" under an answer (the question to the end of the answer).

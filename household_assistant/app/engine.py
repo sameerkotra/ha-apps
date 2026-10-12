@@ -37,6 +37,7 @@ RESULTS_BUDGET = 24 * 1024
 HISTORY_TURNS = 6
 MAX_QUESTION = 1000
 MAX_ANSWER = 4000
+MAX_PROPOSALS = 3                      # proposed changes per question (each is a button the person taps)
 RUNNING = ("planning", "calling", "answering")
 
 _PANEL_RE = re.compile(r"^/[a-z0-9]{1,16}_([a-z0-9_]{1,64})$")
@@ -326,7 +327,7 @@ def _answer_question(r: _Run) -> str:
             break
         before = len(proposals)
         for act in plan["act"]:
-            p = _propose(r, tools, act, round_no)
+            p = _propose(r, tools, act, round_no, proposals)
             if p:
                 proposals.append(p)
         if plan["ask"]:
@@ -465,7 +466,7 @@ def _valid_calls(tools, planned, done, proposals, r: _Run, round_no: int) -> lis
             continue
         args = _clean_args(t["spec"], c.get("args"))
         if t["spec"].get("acts"):                       # never called by the model: a proposal instead
-            p = _propose(r, tools, {"tool": name, "args": args, "say": c.get("say")}, round_no)
+            p = _propose(r, tools, {"tool": name, "args": args, "say": c.get("say")}, round_no, proposals)
             if p:
                 proposals.append(p)
             continue
@@ -478,13 +479,17 @@ def _valid_calls(tools, planned, done, proposals, r: _Run, round_no: int) -> lis
     return out[:max(0, room)]
 
 
-def _propose(r: _Run, tools, act: dict, round_no: int) -> dict | None:
+def _propose(r: _Run, tools, act: dict, round_no: int, proposals: list[dict] | None = None) -> dict | None:
+    """Store one proposed change (a button). At most MAX_PROPOSALS per question, however the model plans them."""
+    if proposals is not None and len(proposals) >= MAX_PROPOSALS:
+        return None
     name = act.get("tool")
     t = tools.get(name) if isinstance(name, str) else None
     if t is None or not t["spec"].get("acts"):
         return None
     args = _clean_args(t["spec"], act.get("args"))
-    say = " ".join(str(act.get("say") or "").split())[:200] or describe(t, args)
+    # the model's own words are only a note under the button; the button itself says the exact change (view())
+    say = " ".join(str(act.get("say") or "").split())[:200] or describe(t["appName"], name, args)
     cid = bus.new_ulid()
     with db.get_conn() as conn:
         dup = conn.execute("SELECT id FROM calls WHERE question_id = ? AND state = 'proposed' AND tool = ? AND args = ?",
@@ -497,10 +502,10 @@ def _propose(r: _Run, tools, act: dict, round_no: int) -> dict | None:
     return {"call": cid, "app": t["app"], "appName": t["appName"], "tool": name, "args": args, "say": say}
 
 
-def describe(tool: dict, args: dict) -> str:
-    """An action in words when the model gave none: "<what> (<arg>: <value>, …)"."""
-    parts = ", ".join(f"{k}: {v}" for k, v in args.items())
-    return f"{tool['spec']['name']} in {tool['appName']}" + (f" ({parts})" if parts else "")
+def describe(app_name: str, tool: str, args: dict) -> str:
+    """The exact change, made by the assistant and not by the model: "<app> · <tool> (<arg>: <value>, …)"."""
+    parts = ", ".join(f"{k}: {v}" for k, v in sorted((args or {}).items()))
+    return f"{app_name} · {tool}" + (f" ({parts})" if parts else "")
 
 
 # --------------------------------------------------------------------------------------------- calling
@@ -802,7 +807,8 @@ def view(conn, q) -> dict:
                 "problem": refusal_words(app_name, c["state"], c["reason"]) if c["state"] in ("nack", "timeout")
                 else None}
         if c["say"] is not None:
-            actions.append({**item, "say": c["say"]})
+            label = describe(app_name, c["tool"], args)
+            actions.append({**item, "label": label, "say": c["say"] if c["say"] != label else None})
             if c["state"] == "proposed":
                 continue
         shared.append(item)
@@ -818,7 +824,11 @@ def view(conn, q) -> dict:
 
 
 def act(qid: str, cid: str, user: dict) -> dict:
-    """The person tapped a proposed action: send it with `confirm` and return what happened."""
+    """The person tapped a proposed action: send it with `confirm` and return what happened. Sent once: of two taps
+    (or two tabs) only the one that moves the call from proposed to sent sends it."""
+    why = can_ask(user)
+    if why:
+        raise PermissionError(why)
     with db.get_conn() as conn:
         c = conn.execute("SELECT c.* FROM calls c JOIN questions q ON q.id = c.question_id WHERE c.id = ? AND "
                          "c.question_id = ? AND q.user_id = ?", (cid, qid, user["id"])).fetchone()
@@ -830,7 +840,10 @@ def act(qid: str, cid: str, user: dict) -> dict:
         t = tools.get(c["tool"])
         if t is None or not t["spec"].get("acts") or t["app"] != c["app"]:
             raise PermissionError("That app doesn't take this change from the assistant any more.")
-        conn.execute("UPDATE calls SET state = 'sent', sent_at = ? WHERE id = ? AND state = 'proposed'", (_iso(), cid))
+        n = conn.execute("UPDATE calls SET state = 'sent', sent_at = ? WHERE id = ? AND state = 'proposed'",
+                         (_iso(), cid)).rowcount
+        if n != 1:
+            raise ValueError("That was already done.")
     call(cid, qid, user, c["app"], c["tool"], json.loads(c["args"]), confirm=True)
     with db.get_conn() as conn:
         conn.execute("INSERT INTO usage_days (day, calls) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET "

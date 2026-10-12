@@ -118,3 +118,12 @@ async def test_failed_question_in_words(hass: HomeAssistant, hass_admin_user):
     await set_up(hass)
     FakeApp(hass, answer={"state": "failed", "error": "That took too long — try a narrower question."})
     assert await ask(hass, user_id=hass_admin_user.id) == "That took too long — try a narrower question."
+
+
+async def test_unknown_or_inactive_users_are_not_asked_for(hass: HomeAssistant, hass_admin_user):
+    await set_up(hass)
+    app = FakeApp(hass, answer={"state": "done", "answer": "Hi."})
+    assert await ask(hass, user_id="0123456789abcdef0123456789abcdef") == protocol.UNKNOWN_USER   # no such user
+    hass_admin_user.is_active = False
+    assert await ask(hass, user_id=hass_admin_user.id) == protocol.UNKNOWN_USER                  # turned off
+    assert app.asked == []

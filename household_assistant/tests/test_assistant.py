@@ -361,10 +361,12 @@ class AssistantTests(Household):
             q = conn.execute("SELECT user_id, text FROM questions WHERE id = ?", (answer["data"]["question"],)).fetchone()
         self.assertEqual(tuple(q), ("u_alice", "What's on my list today?"))     # one of Alice's own questions
         model = Model('{"answer": "Hello, Carol."}')
-        with mock.patch.object(ai_client, "generate", model):
+        carol = {"entityId": "person.carol", "name": "Carol", "userId": "u_carol", "phones": []}
+        with mock.patch.object(ai_client, "generate", model), \
+                mock.patch("app.auth.ha_people.person_for", lambda uid: carol if uid == "u_carol" else None):
             answer = self.replies(self.assist("Hi", uid="u_carol", name="Carol"), "assist.answer")[0]["data"]
         self.assertEqual(answer["answer"], "Hello, Carol.")
-        self.assertIn("You are answering Carol.", model.prompts[0][1])         # never opened the page: known now
+        self.assertIn("You are answering Carol.", model.prompts[0][1])   # never opened the page: one of HA's people
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT name FROM users WHERE id = 'u_carol'").fetchone()[0], "Carol")
 

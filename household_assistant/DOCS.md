@@ -87,7 +87,7 @@ it off) are on. Household Vault is never asked: passwords stay there.
   time or up to three hours later (if the app was stopped at that time), never later.
 - It goes to the phones Home Assistant links to you (**Settings → People → you → Track device**, the Home Assistant
   app on your phone). Tapping it opens the assistant.
-- **Read it aloud**: choose a **speaker** (any Home Assistant media player) and the briefing is also spoken there,
+- **Read it aloud**: choose a **speaker** (one of Home Assistant's media players) and the briefing is also spoken there,
   starting "Good morning, Asha." It uses Home Assistant's text-to-speech (the first `tts.` entity, e.g. Google
   Translate or Piper — the dialog says when there is none). Leave it on *No speaker* for the phone only.
 - It needs no AI model: it is what the apps said, as they said it, so it costs nothing. It also appears in your
@@ -114,7 +114,8 @@ a voice satellite or the Assist dialog), through a small companion **integration
 4. **Choose it in a voice assistant**: Settings → Voice assistants → a voice assistant → *Conversation agent*:
    **Household Assistant**.
 
-Each question is asked as the Home Assistant user speaking, with everything above (their own apps, switches and
+Each question is asked as the Home Assistant user speaking — someone who has opened this app, or one of Home
+Assistant's people (Settings → People); a removed or turned-off user isn't asked for — with everything above (their own apps, switches and
 limits; their question appears in their history here). A voice satellite doesn't say who is speaking: in the
 integration's **Configure**, choose the person whose questions it asks, or leave it at *Nobody* and it says so.
 The answer is spoken without its links; **Sources** and **What was shared** are on this page. Questions and

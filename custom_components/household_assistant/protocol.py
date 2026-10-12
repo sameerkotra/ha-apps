@@ -28,6 +28,8 @@ _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 NO_USER = ("I don't know who is asking. In the Household Assistant integration's options, choose the person who "
            "answers for voice satellites.")
+UNKNOWN_USER = ("I don't know who is asking: that Home Assistant user doesn't exist or is turned off. In the Household "
+                "Assistant integration's options, choose the person who answers for voice satellites.")
 NO_APP = "The Household Assistant app isn't answering. Is it installed and running?"
 TOO_LONG = "The Household Assistant is taking too long. The answer will be on its page."
 TOO_LONG_QUESTION = f"That question is too long: at most {MAX_TEXT} characters."
