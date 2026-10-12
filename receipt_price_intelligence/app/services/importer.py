@@ -17,6 +17,7 @@ import email.policy
 import imaplib
 import mimetypes
 import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -42,6 +43,8 @@ SETTLE_SECONDS = 5            # a file must have been left alone this long (it m
 KEEP_DAYS = 14
 MAX_MAILS_PER_POLL = 20
 MIN_EMAIL_IMAGE_BYTES = 20 * 1024   # smaller pictures are logos and signatures
+MAX_MAIL_BYTES = 30 * 1024 * 1024   # bigger emails are skipped (never downloaded)
+MAX_ATTACHMENTS_PER_MAIL = 10
 
 
 class ImportFailed(ValueError):
@@ -69,9 +72,14 @@ def resolve_home(db: Session) -> str | None:
     return None
 
 
-def import_bytes(db: Session, home_id: str, filename: str, content: bytes, source: str, user_id: str | None = None) -> str:
-    """Create a draft from one file. Returns the draft id. Raises ImportFailed if it cannot be used."""
+def import_bytes(db: Session, home_id: str, filename: str, content: bytes, source: str, user_id: str | None = None,
+                 content_type: str | None = None) -> str:
+    """Create a draft from one file. Returns the draft id. Raises ImportFailed if it cannot be used.
+    ``content_type`` (an email attachment's type) is used when the file name says nothing (no or an odd
+    extension, such as "Receipt" or ".jfif")."""
     guessed = mimetypes.guess_type(filename)[0] or ""
+    if content_type and not images_service.validate_mime_type(guessed) and not guessed.endswith("/pdf"):
+        guessed = content_type
     file = BytesIO(content)
     try:
         data, is_pdf = images_service.read_upload(file, guessed)
@@ -190,6 +198,9 @@ def extract_attachments(message: email.message.EmailMessage) -> list[tuple[str, 
             is_pdf = True  # some senders label PDFs as octet-stream
         if not is_pdf and not is_image:
             continue
+        if len(out) >= MAX_ATTACHMENTS_PER_MAIL:
+            logger.info("Email has more than %d attachments; the rest are skipped", MAX_ATTACHMENTS_PER_MAIL)
+            break
         payload = part.get_payload(decode=True)
         if not payload or (is_image and len(payload) < MIN_EMAIL_IMAGE_BYTES):
             continue
@@ -205,6 +216,20 @@ def extract_attachments(message: email.message.EmailMessage) -> list[tuple[str, 
 def mailbox_configured() -> bool:
     s = get_settings()
     return bool(s.imap_host.strip() and s.imap_user.strip() and s.imap_password)
+
+
+def _message_size(client: Any, number: bytes) -> int | None:
+    """The email's size (RFC822.SIZE) as the server reports it, without downloading it; None if unknown."""
+    status, data = client.fetch(number, "(RFC822.SIZE)")
+    if status != "OK" or not data:
+        return None
+    for item in data:
+        raw = item[0] if isinstance(item, tuple) else item
+        if isinstance(raw, bytes):
+            match = re.search(rb"RFC822\.SIZE\s+(\d+)", raw, re.I)
+            if match:
+                return int(match.group(1))
+    return None
 
 
 def poll_mailbox() -> list[str]:
@@ -231,6 +256,13 @@ def poll_mailbox() -> list[str]:
             if home_id is None:
                 return []
             for number in data[0].split()[:MAX_MAILS_PER_POLL]:
+                size = _message_size(client, number)
+                if size is None or size > MAX_MAIL_BYTES:
+                    logger.warning("Email %s is too big to import (%s bytes, at most %d); skipped and marked as read",
+                                   number.decode(errors="replace"), size if size is not None else "unknown",
+                                   MAX_MAIL_BYTES)
+                    client.store(number, "+FLAGS", "\\Seen")
+                    continue
                 status, parts = client.fetch(number, "(BODY.PEEK[])")
                 if status != "OK" or not parts or not isinstance(parts[0], tuple):
                     continue
@@ -238,9 +270,9 @@ def poll_mailbox() -> list[str]:
                 attachments = extract_attachments(message)
                 if not attachments:
                     logger.info("Email %r has no PDF or image attachment; skipped", message.get("Subject", ""))
-                for filename, _ctype, content in attachments:
+                for filename, ctype, content in attachments:
                     try:
-                        created.append(import_bytes(db, home_id, filename, content, "EMAIL"))
+                        created.append(import_bytes(db, home_id, filename, content, "EMAIL", content_type=ctype))
                     except Exception as e:  # noqa: BLE001
                         logger.warning("Could not import attachment %s: %s", filename, e)
                 client.store(number, "+FLAGS", "\\Seen")

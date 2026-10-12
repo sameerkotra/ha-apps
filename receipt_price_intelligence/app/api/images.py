@@ -1,6 +1,7 @@
 """Image upload API endpoints."""
 
 import asyncio
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
@@ -8,10 +9,13 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.logging_config import get_logger
 from app.services import drafts as drafts_service
 from app.services import archive
 from app.services import images as images_service
 from app.services import pdf as pdf_service
+
+logger = get_logger("images_api")
 
 router = APIRouter(prefix="/api/v1/receipt-drafts", tags=["images"])
 
@@ -20,7 +24,6 @@ def _image_json(image) -> dict:
     return {
         "id": image.id,
         "image_type": image.image_type,
-        "file_path": image.file_path,
         "mime_type": image.mime_type,
         "file_size": image.file_size,
         "width": image.width,
@@ -71,8 +74,9 @@ async def upload_draft_image(
         await asyncio.to_thread(archive.save_original, draft_id, content, file.filename, is_pdf)
     except ValueError as e:  # includes PdfError
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to store image: {str(e)}")
+    except Exception:  # noqa: BLE001 - the detail goes to the log, not to the browser
+        logger.exception("Could not store an image on draft %s", draft_id)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to store image")
 
     return {
         **_image_json(stored[0]),
@@ -116,17 +120,16 @@ async def get_draft_image(
             detail="Image not found",
         )
 
-    # Return the actual image file
-    try:
-        return FileResponse(
-            image.file_path,
-            media_type=image.mime_type or "image/jpeg",
-        )
-    except FileNotFoundError:
+    # Return the actual image file (FileResponse opens it only when sending, so check it is there first)
+    if not image.file_path or not os.path.isfile(image.file_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Image file not found on disk",
         )
+    return FileResponse(
+        image.file_path,
+        media_type=image.mime_type or "image/jpeg",
+    )
 
 
 @router.delete("/{draft_id}/images/{image_id}")

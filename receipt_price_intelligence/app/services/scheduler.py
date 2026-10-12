@@ -91,14 +91,27 @@ async def _import_loop() -> None:
                 await asyncio.to_thread(lookout.run_hourly)  # list items now cheaper than usual
         except Exception:  # noqa: BLE001 - keep the loop alive
             logger.exception("Shopping list check failed")
+        await _import_once(tick)
+
+
+async def _import_once(tick: int) -> None:
+    """One import check. Each source has its own try, and the drafts made are always queued for reading: a
+    failing mailbox must not leave the folder's new drafts waiting forever."""
+    created: list[str] = []
+    try:
+        created += await asyncio.to_thread(importer.scan_folder)
+    except Exception:  # noqa: BLE001 - keep the loop alive
+        logger.exception("Receipt import from the folder failed")
+    if tick % 5 == 0:
         try:
-            created = await asyncio.to_thread(importer.scan_folder)
-            if tick % 5 == 0:
-                created += await asyncio.to_thread(importer.poll_mailbox)
-            if created:
-                await importer.start_reading(created)
+            created += await asyncio.to_thread(importer.poll_mailbox)
         except Exception:  # noqa: BLE001 - keep the loop alive
-            logger.exception("Receipt import check failed")
+            logger.exception("Receipt import from the mailbox failed")
+    if created:
+        try:
+            await importer.start_reading(created)
+        except Exception:  # noqa: BLE001 - keep the loop alive
+            logger.exception("Could not start reading the imported receipts")
 
 
 _tasks: list["asyncio.Task[None]"] = []  # kept so the tasks are not garbage collected

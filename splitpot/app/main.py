@@ -181,6 +181,36 @@ def slugify(name: str) -> str:
 BALANCE_SENSOR_PREFIX = "sensor.splitpot_balance_"
 
 
+def sensor_slugs(conn) -> dict:
+    """{user id: the slug in that person's balance sensor id}, unique per person and stable. A person keeps
+    slugify(name) when nobody earlier (by created_at) has it; anyone else whose name gives the same slug
+    ("Asha K" / "Asha-K", or names with no Latin letters, which all become "user") gets a short suffix from
+    their users.id, so one person's sensor never overwrites another's."""
+    rows = conn.execute("SELECT id, name FROM users ORDER BY created_at, id").fetchall()
+    out: dict = {}
+    taken: set = set()
+    later = []
+    for r in rows:
+        base = slugify(r["name"])
+        if base in taken:
+            later.append((r["id"], base))
+        else:
+            taken.add(base)
+            out[r["id"]] = base
+    for uid, base in later:
+        tail = re.sub(r"[^a-z0-9]+", "", str(uid).lower()) or "x"
+        slug = f"{base}_{tail[:6]}"
+        if slug in taken:
+            slug = f"{base}_{tail}"
+        n = 2
+        while slug in taken:            # only with hand-made ids; keeps the slug unique whatever happens
+            slug = f"{base}_{tail}_{n}"
+            n += 1
+        taken.add(slug)
+        out[uid] = slug
+    return out
+
+
 def ha_connected() -> bool:
     """True when the Supervisor gave us a token for the Core API proxy."""
     return bool(SUPERVISOR_TOKEN)
@@ -250,9 +280,10 @@ def balance_sensor_states(conn) -> list:
     currency as it is set right now (so a change in App settings shows up as
     the sensors' unit on the very next push)."""
     currency = get_setting("currency")
+    slugs = sensor_slugs(conn)
     return [
         (
-            f"sensor.splitpot_balance_{slugify(n['name'])}",
+            BALANCE_SENSOR_PREFIX + slugs.get(n["userId"], slugify(n["name"])),
             round(n["amount"], 2),
             {
                 "friendly_name": f"{n['name']} Splitpot Balance",
@@ -286,7 +317,8 @@ def remove_balance_sensors() -> int:
         return 0
     with get_conn() as conn:
         names = [r["name"] for r in conn.execute("SELECT name FROM users").fetchall()]
-    candidates = {BALANCE_SENSOR_PREFIX + slugify(n) for n in names}
+        slugs = list(sensor_slugs(conn).values())
+    candidates = {BALANCE_SENSOR_PREFIX + slugify(n) for n in names} | {BALANCE_SENSOR_PREFIX + s for s in slugs}
     try:   # connection closed above: no network while holding it
         _, states = _ha_call("GET", "states", timeout=10)
         candidates |= {
@@ -785,16 +817,28 @@ def _expense_json(conn, group_id: str, e, names: dict) -> dict:
     }
 
 
+def date_sort_key(value) -> str:
+    """A stored expense date as a sortable UTC timestamp. Dates are either a full UTC timestamp (added
+    "today") or a bare YYYY-MM-DD in the household's zone (see parse_date), so comparing the raw strings
+    would put a picked day after that day's own timestamps from another UTC date."""
+    try:
+        return parse_date(str(value)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
+    except (ValueError, TypeError):
+        return str(value)
+
+
 def ledger_page(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None):
     """(entries, next cursor) — the group's expenses and payments newest first, starting after `cursor`;
     at most `limit` of them (None = all, and no next cursor)."""
+    conn.create_function("ledger_key", 1, date_sort_key, deterministic=True)
     sql = "SELECT id, description, amount, paid_by, split_type, date FROM expenses WHERE group_id = ?"
     args: list = [group_id]
     if cursor:
         date, eid = decode_cursor(cursor)
-        sql += " AND (date < ? OR (date = ? AND id < ?))"
-        args += [date, date, eid]
-    sql += " ORDER BY date DESC, id DESC"
+        key = date_sort_key(date)
+        sql += " AND (ledger_key(date) < ? OR (ledger_key(date) = ? AND id < ?))"
+        args += [key, key, eid]
+    sql += " ORDER BY ledger_key(date) DESC, id DESC"
     if limit is not None:
         sql += " LIMIT ?"
         args.append(limit + 1)                 # one more: is there a next page?
@@ -1054,10 +1098,15 @@ def build_splits(member_ids: List[str], payload: "ExpenseCreate") -> tuple[list,
     if payload.splitType == "custom":
         if any(s.amount is None for s in payload.splits):
             raise HTTPException(400, "Provide custom split amounts")
-        total = sum(s.amount for s in payload.splits)
-        if abs(total - amt) > 0.02:
-            raise HTTPException(400, f"Splits must add up to {amt:.2f}")
-        splits = [{"userId": s.userId, "amount": round(s.amount, 2)} for s in payload.splits if s.amount > 0]
+        # in whole cents, exactly: a share off by a cent would leave the group's balances not adding up to zero
+        total_cents = sum(round(s.amount * 100) for s in payload.splits)
+        amount_cents = round(round(amt, 2) * 100)
+        if total_cents != amount_cents:
+            diff = (amount_cents - total_cents) / 100
+            raise HTTPException(400, f"Splits must add up to exactly {amt:.2f} — they add up to "
+                                     f"{total_cents / 100:.2f} ({abs(diff):.2f} {'short' if diff > 0 else 'over'})")
+        splits = [{"userId": s.userId, "amount": round(s.amount * 100) / 100}
+                  for s in payload.splits if round(s.amount * 100) > 0]
         if not splits:
             raise HTTPException(400, "At least one person needs a share greater than 0")
         return splits, "custom"
@@ -1066,12 +1115,16 @@ def build_splits(member_ids: List[str], payload: "ExpenseCreate") -> tuple[list,
         raise HTTPException(400, "Pick at least one person to split with")
     if not set(participants) <= members:
         raise HTTPException(400, "Everyone in a split must be a member of this group")
-    share = round(amt / len(participants), 2)
-    splits = []
-    for idx, uid in enumerate(participants):
-        amount = round(amt - share * (len(participants) - 1), 2) if idx == len(participants) - 1 else share
-        splits.append({"userId": uid, "amount": amount})
-    return splits, "equal"
+    return equal_shares(amt, participants), "equal"
+
+
+def equal_shares(amount: float, participants: list) -> list:
+    """Split `amount` equally in whole cents: everyone gets amount // n cents and the first amount % n
+    people one cent more, so the shares add up exactly and none is negative (0.07 between 9 people is
+    seven people at 0.01 and two at 0.00). Returns [{userId, amount}] in list order."""
+    cents = round(round(amount, 2) * 100)       # the amount as stored (round(amount, 2))
+    base, extra = divmod(cents, len(participants))
+    return [{"userId": uid, "amount": (base + (1 if i < extra else 0)) / 100} for i, uid in enumerate(participants)]
 
 
 def percent_shares(amount: float, rows: list) -> list:
@@ -1903,7 +1956,7 @@ def list_events(limit: int = Query(50, ge=1, le=300)):
 
 # -- weekly / monthly transactions view --
 @router.get("/transactions")
-def list_transactions(period: Literal["week", "month"] = "week", offset: int = 0):
+def list_transactions(period: Literal["week", "month"] = "week", offset: int = Query(0, ge=-1200, le=1200)):
     with get_conn() as conn:
         start, end, label = week_range(offset) if period == "week" else month_range(offset)
 
@@ -1931,6 +1984,7 @@ def list_transactions(period: Literal["week", "month"] = "week", offset: int = 0
                         "date": r["date"],
                     }
                 )
+        expenses.sort(key=lambda e: date_sort_key(e["date"]), reverse=True)
 
         total = round(sum(e["amount"] for e in expenses), 2)
         breakdown = weekday_breakdown(expenses, start) if period == "week" else group_breakdown(expenses)

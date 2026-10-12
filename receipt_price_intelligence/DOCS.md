@@ -435,7 +435,7 @@ recorder:
 
 ## Importing receipts from a folder or email
 
-Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used). If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page has a *Check now* button.
+Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used, at most 10 per email, and emails over 30 MB are skipped). If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page has a *Check now* button.
 
 ## Trip planner
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.1
+
+- **Safer web pages**: a page fetched for prices that arrives packed (gzip) can no longer unpack to more than the 3 MB a page may have; a bigger one is skipped instead of filling the memory.
+- **Safer mailbox import**: emails over 30 MB are skipped (and marked as read) without being downloaded, and at most 10 attachments are read from one email. A photo attached without a usual file name (such as "Receipt" or a `.jfif` file) is now imported by the type the email gives it, instead of being turned away.
+- **Imported receipts are always read**: if checking the mailbox failed, receipts just picked up from the watched folder could stay at "Reading…"; each source is now checked on its own and new receipts are always queued for reading.
+- A receipt photo whose file is missing now answers "not found" instead of a server error, and upload errors no longer show internal details or where files are kept on the server.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 1.3.0
 
 - **More for the Household Assistant**: "Where are the best prices?" (savings by store and pack size, and recent price drops) and "How are my budgets this month?" (each budget, how much is left and where it's heading).

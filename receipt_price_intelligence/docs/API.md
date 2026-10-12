@@ -654,7 +654,6 @@ All pages use relative URLs so they work under a Home Assistant ingress prefix.
 {
   "id": "string",
   "image_type": "original | processed",
-  "file_path": "string",
   "mime_type": "string",
   "file_size": "number",
   "width": "number",

@@ -25,7 +25,6 @@ import re
 import threading
 import time
 import functools
-import gzip
 import http.client
 import ipaddress
 import socket
@@ -685,18 +684,34 @@ def _fetch_direct(url: str, headers: dict[str, str]) -> tuple[str, int, str, str
         raise WebSearchError(_fetch_reason(e)) from e
     finally:
         slot.release()
-    try:
-        if "gzip" in encoding:
-            data = gzip.decompress(data)
-        elif "deflate" in encoding:
-            data = zlib.decompress(data) if data[:1] == b"\x78" else zlib.decompress(data, -zlib.MAX_WBITS)
-    except (OSError, EOFError, zlib.error) as e:
-        raise WebSearchError("the page could not be unpacked") from e
+    data = _unpack(data, encoding)
     try:
         text = data.decode(charset, errors="replace")
     except LookupError:
         text = data.decode("utf-8", errors="replace")
     return text, status, kind, final_url
+
+
+def _unpack(data: bytes, encoding: str) -> bytes:
+    """The body unpacked (gzip/deflate), never more than MAX_FETCH_BYTES: a small packed page can unpack to
+    gigabytes, so the output is capped and a page that would unpack to more is refused."""
+    if "gzip" in encoding:
+        wbits = 16 + zlib.MAX_WBITS
+    elif "deflate" in encoding:
+        wbits = zlib.MAX_WBITS if data[:1] == b"\x78" else -zlib.MAX_WBITS
+    else:
+        return data
+    try:
+        unpacker = zlib.decompressobj(wbits)
+        out = unpacker.decompress(data, MAX_FETCH_BYTES)
+        if unpacker.unconsumed_tail:
+            raise WebSearchError("the page is too large once unpacked")
+        out += unpacker.flush(max(1, MAX_FETCH_BYTES - len(out)))
+        if len(out) > MAX_FETCH_BYTES:
+            raise WebSearchError("the page is too large once unpacked")
+    except zlib.error as e:
+        raise WebSearchError("the page could not be unpacked") from e
+    return out
 
 
 MAX_RAW_CHARS = 1_500_000

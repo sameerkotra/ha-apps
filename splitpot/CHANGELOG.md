@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.1
+
+- **Equal splits to the cent**: an amount split equally now gives everyone the same share, with the leftover cents going one each to the first people — 100 between 6 is 16.67, 16.67, 16.67, 16.67, 16.66, 16.66 instead of the last person getting 16.65, and a tiny amount can no longer leave someone with a negative share. The Household Assistant's "I paid 40 for groceries…" splits the same way.
+- **Custom amounts must add up exactly**: a split by amount that was a cent or two off the total was saved as typed, so the group's balances didn't quite add up. It now says how much it's short or over.
+- **One balance sensor per person**: people whose names give the same sensor name ("Asha K" and "Asha-K", or names without Latin letters) shared one sensor in Home Assistant, each overwriting the other. Each now gets their own (the later ones with a short ending); everyone else's sensor keeps its name.
+- **Ledger in the right order**: an entry with a picked date and one added "today" are now ordered by when they happened in Home Assistant's time zone, in the group and on the Transactions page.
+- The Transactions page answers a clear error for a week or month too far away instead of a server error.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 2.5.0
 
 - **Add an expense with the Household Assistant**: "I paid 40 for groceries, split with Meera" — split equally between the people named (everyone in the group when nobody is), only after you tap the exact change it proposes. It's checked like the Add expense form, shows in the activity as added with the Household Assistant, and notifies people as an added charge does.
