@@ -56,13 +56,16 @@ _MONTH = Arg("month", "the month (default this month)")
 
 
 def _owner(ctx) -> tuple[str, str]:
-    """(user id, name) whose data to answer from: the person's own, or a shared owner named in `person`."""
+    """(user id, name) whose data to answer from: the person's own, or a shared owner named in `person` --
+    only while that owner hasn't turned off "Let the Household Assistant answer for me" (an owner who has
+    looks the same as one who isn't shared)."""
     want = ctx.args.get("person")
     if not want or want.casefold() in (ctx.user["name"].casefold(), ctx.user["id"].casefold(), "me"):
         return ctx.user["id"], ctx.user["name"]
     rows = ctx.conn.execute(
         "SELECT a.owner_id AS id, COALESCE(k.name, a.owner_id) AS name FROM user_access a "
-        "LEFT JOIN known_users k ON k.id = a.owner_id WHERE a.viewer_id = ?", (ctx.user["id"],)).fetchall()
+        "LEFT JOIN known_users k ON k.id = a.owner_id WHERE a.viewer_id = ? AND COALESCE(k.assistant_ok, 1) = 1",
+        (ctx.user["id"],)).fetchall()
     for r in rows:
         if want.casefold() in (r["name"].casefold(), r["id"].casefold()):
             return r["id"], r["name"]

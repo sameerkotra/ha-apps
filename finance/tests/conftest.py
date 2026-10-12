@@ -160,3 +160,5 @@ def _no_llm_categorization(monkeypatch, request):
     def refuse(*a, **k):
         raise OSError("network disabled in tests")
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    # the shared AI client opens its own no-redirect opener (common/python/ai_client.py), not urlopen
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", refuse)

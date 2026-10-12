@@ -20,6 +20,8 @@ from .. import settings as _settings
 from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..charts import column_chart
 from ..db import get_db
+from ..amounts import parse_number
+from ..datenorm import normalize_date
 from ..version import APP_VERSION
 from ..paging import TableView
 from ..parser.utility_pipeline import check_duplicate_utility, delete_pdf_utility, _METER_COLUMNS
@@ -492,9 +494,10 @@ def utility_reextract(
     acting: User = Depends(get_acting_user),
 ):
     """Read a not-yet-confirmed bill's PDF again, optionally with notes on what was wrong
-    (section 23). The whole upload is re-run from its first row, so the other bills from the
-    same PDF (Xcel's gas with its electric) are read again too; the notes are kept on that row
-    and sent to the model with the PDF (empty notes clear them). `id` comes in the form (the
+    (section 23). The whole upload is re-run from this bill's row, so the other bills from the
+    same PDF (Xcel's gas with its electric) are read again too -- refused when one of them is
+    already confirmed, which the re-run would replace. The notes are kept on this bill and sent
+    to the model with the PDF (empty notes clear them). `id` comes in the form (the
     review page) or the address (the Re-extract dialog on the upload history, which reloads)."""
     try:
         id = int(id or request.query_params.get("id") or "")
@@ -510,14 +513,23 @@ def utility_reextract(
             return JSONResponse({"error": "Only a bill that isn't confirmed yet can be re-extracted"}, status_code=400)
         if not storage.stored_path(row["pdf_path"]):
             return JSONResponse({"error": "Source PDF no longer exists — re-upload instead"}, status_code=400)
-        first = conn.execute(
-            "SELECT MIN(id) FROM utility_bills WHERE user_id = ? AND file_hash = ? AND deleted_at IS NULL",
-            (acting.id, row["file_hash"])).fetchone()[0] or id
+        # Re-reading the PDF replaces every bill it produced (the pipeline clears the siblings), so a
+        # bill from the same PDF that was already confirmed would be wiped along with its edits.
+        confirmed = conn.execute(
+            "SELECT COUNT(*) FROM utility_bills WHERE user_id = ? AND file_hash = ? AND id != ? "
+            "AND deleted_at IS NULL AND status = 'complete'",
+            (acting.id, row["file_hash"], id)).fetchone()[0] if row["file_hash"] else 0
+        if confirmed:
+            return JSONResponse({"error": "Another bill from this PDF is already confirmed, and re-extracting "
+                                          "would replace it too. Correct this bill on its Check & confirm page "
+                                          "instead (or delete the confirmed one first)."}, status_code=400)
+        # The run starts from the bill being reviewed (its siblings are re-created from the PDF), so the
+        # notes are kept on it and reach the model.
         conn.execute(
             "UPDATE utility_bills SET status = 'processing', error_message = NULL, current_step = NULL, "
-            "corrections = NULL, extraction_notes = ? WHERE id = ?", ((notes or "").strip()[:MAX_NOTES_CHARS] or None, first))
+            "corrections = NULL, extraction_notes = ? WHERE id = ?", ((notes or "").strip()[:MAX_NOTES_CHARS] or None, id))
         conn.commit()
-    jobs.start_job("utility_bill", first, acting.id)
+    jobs.start_job("utility_bill", id, acting.id)
     if request.headers.get("hx-request"):          # the Re-extract dialog on the upload history: reload the list
         return HTMLResponse("", headers={"HX-Refresh": "true"})
     qs = _acting_qs(current, acting)
@@ -552,18 +564,26 @@ async def utility_resolve(
     signature from ballooning to 24 parameters most calls don't use. Any
     field left blank on the form is stored as NULL, same as an
     unrecognized one during original extraction."""
-    try:
-        cost_value = round(float(cost), 2)
-    except ValueError:
+    cost_value = parse_number(cost)
+    if cost_value is None:
         return JSONResponse({"error": "Cost must be a number"}, status_code=400)
+    cost_value = round(cost_value, 2)
     usage_value = None
     if usage_amount.strip():
-        try:
-            usage_value = float(usage_amount)
-        except ValueError:
+        usage_value = parse_number(usage_amount)
+        if usage_value is None:
             return JSONResponse({"error": "Usage must be a number"}, status_code=400)
     if not period_start_date.strip() or not period_end_date.strip():
         return JSONResponse({"error": "Period start/end dates are required"}, status_code=400)
+    dates = {}
+    for label, raw in (("Period start", period_start_date), ("Period end", period_end_date), ("Due date", due_date)):
+        if label == "Due date" and not raw.strip():
+            dates[label] = None
+            continue
+        dates[label] = normalize_date(raw)
+        if dates[label] is None:
+            return JSONResponse({"error": f"{label} \"{raw.strip()}\" isn't in a recognized format "
+                                          "(expected YYYY-MM-DD or MM/DD/YYYY)"}, status_code=400)
 
     form = await request.form()
     meter_values: dict[str, float | None] = {}
@@ -572,9 +592,8 @@ async def utility_resolve(
         if not raw:
             meter_values[col] = None
             continue
-        try:
-            meter_values[col] = float(raw)
-        except ValueError:
+        meter_values[col] = parse_number(raw)
+        if meter_values[col] is None:
             return JSONResponse({"error": f"{col.replace('_', ' ')} must be a number"}, status_code=400)
 
     conn = get_db()
@@ -592,8 +611,8 @@ async def utility_resolve(
             "usage_unit = ?, cost = ?, due_date = ?, account_number_last4 = ?, "
             "status = 'complete', review_status = 'clean', error_message = NULL WHERE id = ?",
             (
-                period_start_date.strip(), period_end_date.strip(), usage_value,
-                (usage_unit.strip() or None), cost_value, (due_date.strip() or None),
+                dates["Period start"], dates["Period end"], usage_value,
+                (usage_unit.strip() or None), cost_value, dates["Due date"],
                 (account_number_last4.strip() or None), id,
             ),
         )

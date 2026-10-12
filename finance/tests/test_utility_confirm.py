@@ -113,3 +113,46 @@ def test_skipping_confirmation_completes_at_once(env, fake_xcel):
     assert row["status"] == "complete" and row["needs_confirmation"] == 0 and row["pdf_path"] is None
     assert "off-peak: 0 → 76" in row["corrections"]
     assert "Skip the confirmation step" in env.get("utilities?tab=upload").text
+
+
+def _gas_sibling(env, bid):
+    """The gas bill a dual-fuel PDF produced alongside the electric one (same upload, higher id)."""
+    with env.db() as c:
+        c.execute(
+            "INSERT INTO utility_bills (user_id, utility_type, provider, period_start_date, period_end_date, cost, "
+            "status, review_status, file_hash, pdf_path, original_filename, needs_confirmation) "
+            "SELECT user_id, 'gas', provider, period_start_date, period_end_date, 31.20, 'pending_review', 'clean', "
+            "file_hash, pdf_path, original_filename, needs_confirmation FROM utility_bills WHERE id = ?", (bid,))
+        return c.execute("SELECT MAX(id) FROM utility_bills").fetchone()[0]
+
+
+def test_reextract_refused_while_a_sibling_bill_is_confirmed(env, fake_xcel):
+    """Re-extracting the pending gas bill used to re-run the upload from its first row and delete every sibling --
+    the confirmed electric bill (with its edited meter figures) included."""
+    bid, _ = _upload(env)
+    gas = _gas_sibling(env, bid)
+    with env.db() as c:
+        c.execute("UPDATE utility_bills SET status = 'complete' WHERE id = ?", (bid,))
+        c.execute("UPDATE electric_meter_details SET net_generated_total_kwh = 99 WHERE utility_bill_id = ?", (bid,))
+    calls = len(fake_xcel)
+    r = env.post("utility-reextract", data={"id": str(gas), "notes": "Gas cost is 31.20."})
+    assert r.status_code == 400 and "already confirmed" in r.json()["error"]
+    with env.db() as c:
+        assert c.execute("SELECT status FROM utility_bills WHERE id = ?", (bid,)).fetchone()[0] == "complete"
+        assert c.execute("SELECT status, extraction_notes FROM utility_bills WHERE id = ?", (gas,)).fetchone()[:] \
+            == ("pending_review", None)
+        assert c.execute("SELECT net_generated_total_kwh FROM electric_meter_details WHERE utility_bill_id = ?",
+                         (bid,)).fetchone()[0] == 99
+    assert len(fake_xcel) == calls                                          # nothing was re-read
+
+
+def test_reextract_notes_are_kept_on_the_bill_being_reviewed(env, fake_xcel):
+    bid, _ = _upload(env)
+    gas = _gas_sibling(env, bid)
+    r = env.post("utility-reextract", data={"id": str(gas), "notes": "The gas usage is in therms."})
+    assert r.status_code == 303
+    row = env.wait_status("utility_bills", gas)
+    assert row["extraction_notes"] == "The gas usage is in therms." and row["status"] == "pending_review"
+    assert fake_xcel[-1] == "The gas usage is in therms."
+    with env.db() as c:                                     # the rest of the upload was read again from the PDF
+        assert c.execute("SELECT deleted_at IS NULL FROM utility_bills WHERE id = ?", (bid,)).fetchone() is None

@@ -15,6 +15,8 @@ from ..db import get_db
 from ..version import APP_VERSION
 from ..matching import cascade_unlink_on_delete
 from ..datenorm import normalize_date
+from ..amounts import parse_number
+from ..security import safe_next
 from ..parser.pipeline import finalize_if_ready
 from .accounts import _acting_banner, _acting_qs, htmx_fragment_requested
 
@@ -57,10 +59,10 @@ def _insert_manual_transaction(
         return False, f"Date \"{date}\" isn't in a recognized format (expected YYYY-MM-DD or MM/DD/YYYY)"
     date = normalized_date
 
-    try:
-        amount_value = round(float(amount), 2)
-    except (TypeError, ValueError):
-        return False, "Amount must be a number"
+    amount_value = parse_number(amount)
+    if amount_value is None:
+        return False, "Amount must be a number (like -12.34 or $1,234.56)"
+    amount_value = round(amount_value, 2)
     if amount_value == 0:
         return False, "Amount can't be zero"
 
@@ -109,6 +111,7 @@ def create_manual_transaction(
             return JSONResponse({"error": result}, status_code=400)
 
     qs = _acting_qs(current, acting)
+    next = safe_next(next, "uploads")
     return RedirectResponse(url=f"{next}{'?' + qs if qs else ''}", status_code=303)
 
 
@@ -538,6 +541,7 @@ def set_transaction_category(
         conn.commit()
 
     qs = _acting_qs(current, acting)
+    next = safe_next(next, "transactions")
     return RedirectResponse(url=f"{next}{'?' + qs if qs else ''}", status_code=303)
 
 
@@ -670,6 +674,7 @@ def bulk_action(
 
     # `next` may already carry a querystring (the filtered view to return to).
     qs = _acting_qs(current, acting)
+    next = safe_next(next, "transactions")
     separator = "&" if "?" in next else "?"
     return RedirectResponse(url=f"{next}{separator + qs if qs else ''}", status_code=303)
 

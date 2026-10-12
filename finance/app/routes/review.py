@@ -7,6 +7,8 @@ from fastapi.templating import Jinja2Templates
 from ..auth import User, get_current_user, get_acting_user
 from ..categorize import categorize_transactions, list_all_categories
 from ..db import get_db
+from ..amounts import parse_number
+from ..datenorm import normalize_date
 from ..version import APP_VERSION
 from ..matching import auto_link_unambiguous, cascade_unlink_on_delete
 from ..parser.pipeline import RECONCILIATION_TOLERANCE, delete_pdf, finalize_if_ready
@@ -105,14 +107,18 @@ def resolve_transaction(
     value to pick between (see this module's docstring); the workflow is
     confirm-or-correct against the source PDF, not choose-between-two-
     values."""
-    try:
-        amount_value = round(float(amount), 2)
-    except ValueError:
+    amount_value = parse_number(amount)
+    if amount_value is None:
         return JSONResponse({"error": "Amount must be a number"}, status_code=400)
+    amount_value = round(amount_value, 2)
     if amount_value == 0:
         return JSONResponse({"error": "Amount can't be zero"}, status_code=400)
     if not date.strip() or not description.strip():
         return JSONResponse({"error": "Date and description are required"}, status_code=400)
+    iso_date = normalize_date(date)
+    if iso_date is None:
+        return JSONResponse({"error": f"Date \"{date.strip()}\" isn't in a recognized format "
+                                      "(expected YYYY-MM-DD or MM/DD/YYYY)"}, status_code=400)
 
     with get_db() as conn:
         row = conn.execute(
@@ -124,7 +130,7 @@ def resolve_transaction(
         conn.execute(
             "UPDATE transactions SET date = ?, amount = ?, description = ?, "
             "review_status = 'clean', flag_reason = NULL WHERE id = ?",
-            (date.strip(), amount_value, description.strip(), id),
+            (iso_date, amount_value, description.strip(), id),
         )
         conn.commit()
         finalize_if_ready(conn, row["statement_id"])
@@ -273,7 +279,11 @@ def skipped_duplicate_insert(
     with get_db() as conn:
         row = conn.execute(
             "SELECT d.*, a.type AS account_type FROM skipped_duplicates d JOIN accounts a ON a.id = d.account_id "
-            "WHERE d.id = ? AND d.user_id = ? AND d.status = 'skipped' AND a.deleted_at IS NULL",
+            "LEFT JOIN statements s ON s.id = d.statement_id LEFT JOIN csv_imports c ON c.id = d.csv_import_id "
+            "WHERE d.id = ? AND d.user_id = ? AND d.status = 'skipped' AND a.deleted_at IS NULL "
+            # the statement or CSV import it came from must still be live, as on the list (_skipped_duplicates)
+            "AND ((d.statement_id IS NOT NULL AND s.deleted_at IS NULL) "
+            "OR (d.csv_import_id IS NOT NULL AND c.deleted_at IS NULL))",
             (id, acting.id),
         ).fetchone()
         if row is not None:

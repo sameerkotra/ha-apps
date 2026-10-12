@@ -198,3 +198,17 @@ def test_persons_own_switch(env):
     assert "text" in call("finance.summary")
     turn_on(env, False)                                    # the admin's switch off: the card isn't shown
     assert "Let the Household Assistant answer for me" not in env.get("whoami").text
+
+
+def test_shared_owner_who_turned_answers_off_is_not_answered_for(env):
+    """A shared owner's "Let the Household Assistant answer for me" switch counts too, not just the asker's."""
+    seed(env)
+    turn_on(env)
+    with env.db() as c:
+        c.execute("INSERT INTO user_access (viewer_id, owner_id, granted_by) VALUES ('tester', 'other', 'tester')")
+        c.execute("UPDATE known_users SET assistant_ok = 0 WHERE id = 'other'")
+    nack(call("finance.spending", person="Robin", category="Fun"), "not_found", "person")
+    assert "text" in call("finance.summary")                              # the asker's own data still answers
+    with env.db() as c:
+        c.execute("UPDATE known_users SET assistant_ok = 1 WHERE id = 'other'")
+    assert call("finance.spending", person="Robin", category="Fun")["items"][0]["merchant"] == "ROBIN SHOP"

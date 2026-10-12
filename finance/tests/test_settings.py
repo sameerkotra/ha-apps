@@ -159,10 +159,10 @@ def test_sql_assist_uses_settings(env, monkeypatch):
         def __exit__(self, *a):
             return False
 
-    def urlopen(req, timeout=None):
+    def urlopen(opener, req, data=None, timeout=None):     # the AI client's own opener (it never follows redirects)
         urls.append((req.full_url, json.loads(req.data)["model"]))
         return Resp(json.dumps(dict(PAYLOAD, response="hi")).encode())
-    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", urlopen)
     _save(env, ai_url="http://sql-host:11434", ai_model="coder")
     with __import__("app.ai_usage", fromlist=["x"]).recording() as calls:
         assert sql_assist._generate("hi", timeout=5, purpose="Hi") == "hi"
@@ -186,7 +186,8 @@ def test_connection_test(env, monkeypatch):
         def __exit__(self, *a):
             return False
     tags = {"models": [{"name": "qwen3.5:122b"}, {"name": "llava:latest"}]}
-    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout=None: Resp(json.dumps(tags).encode()))
+    monkeypatch.setattr("urllib.request.OpenerDirector.open",
+                        lambda opener, url, data=None, timeout=None: Resp(json.dumps(tags).encode()))
     assert "offers qwen3.5:122b" in env.post("settings-test", data={"ai_url": "http://h:1", "ai_model": "qwen3.5:122b"}).text
     assert "offers llava" in env.post("settings-test", data={"ai_url": "http://h:1", "ai_model": "llava"}).text
     r = env.post("settings-test", data={"ai_url": "http://h:1", "ai_model": "missing"})

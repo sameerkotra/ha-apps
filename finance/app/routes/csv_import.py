@@ -13,6 +13,7 @@ from ..categorize import categorize_transactions
 from ..db import get_db
 from ..version import APP_VERSION
 from ..datenorm import normalize_date
+from ..amounts import parse_number
 from .. import storage
 from .. import ai_usage, settings
 from .transactions import _insert_manual_transaction
@@ -46,11 +47,8 @@ def _debit_credit_amount(debit_raw: str, credit_raw: str, account_type: str) -> 
         raw = (raw or "").strip()
         if not raw:
             return None
-        try:
-            value = abs(float(raw))
-        except ValueError:
-            return None
-        return value or None  # a literal 0.00 counts as "not filled in"
+        value = parse_number(raw)
+        return abs(value) if value else None  # a literal 0.00 counts as "not filled in"
 
     debit = _magnitude(debit_raw)
     credit = _magnitude(credit_raw)
@@ -220,10 +218,8 @@ def _import_csv_file(
         # _insert_manual_transaction's own validation to report.
         date_norm = normalize_date(date.strip()) or date.strip()
         description_norm = description.strip()
-        try:
-            amount_norm = round(float(amount), 2) if amount.strip() else None
-        except ValueError:
-            amount_norm = None
+        amount_norm = parse_number(amount)
+        amount_norm = round(amount_norm, 2) if amount_norm is not None else None
         if date_norm and description_norm and amount_norm is not None:
             dup = conn.execute(
                 "SELECT id FROM transactions WHERE user_id = ? AND account_id = ? "

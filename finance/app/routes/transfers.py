@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
 from ..db import get_db
+from ..security import safe_next
 from ..version import APP_VERSION
 from ..matching import (
     _candidates_for,
@@ -277,7 +278,7 @@ def run_transfer_sweep(
     ) if p]
     qs_parts.append(f"matched={linked}")
     qs = "&".join(qs_parts)
-    return RedirectResponse(url=f"{next}?{qs}", status_code=303)
+    return RedirectResponse(url=f"{safe_next(next, 'dashboard')}?{qs}", status_code=303)
 
 
 @router.post("/transfer-unlink")

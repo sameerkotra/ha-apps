@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.1
+
+- **Re-extracting a utility bill keeps the confirmed ones**: re-extracting the pending gas bill from a dual-fuel PDF read the whole upload again and replaced its electric bill too — even after you had confirmed it and corrected its meter figures. It's now refused while another bill from the same PDF is confirmed (correct the bill on its Check & confirm page instead), and the notes you type are kept on the bill you were reviewing.
+- **Amounts read the way you write them**: a CSV amount like *$1,234.56* or *(12.50)* (a negative) is imported instead of failing the row with a confusing message, and *nan* or *inf* in an amount, cost, usage or meter figure is refused with a clear message — a *nan* in one CSV row used to stop the whole import.
+- **Corrected dates are stored the usual way**: a date edited on Review or a utility bill's Check & confirm page (e.g. *08/03/2026*) is saved as 2026-08-03 like every other date, and one the app can't read is refused instead of saved as typed.
+- **Insert anyway** on a skipped duplicate does nothing once its statement or CSV import has been deleted.
+- **Household Assistant**: it no longer answers about someone's shared data after they turn off *Let the Household Assistant answer for me*.
+- After saving a category or a bulk change, the app only returns to one of its own pages.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; the AI connection no longer follows redirects; pages no longer use inline event handlers, and backup restores say clearly when a file is too large.
+
 ## 1.4.0
 
 - **Utility bills wait for your confirmation**, like statements: each bill shows *Awaiting confirmation* with **Check & confirm** (correct anything, then Confirm) and **Re-extract** (tell the AI what was wrong and read the PDF again). Tick **Skip the confirmation step** when uploading to save them straight away.

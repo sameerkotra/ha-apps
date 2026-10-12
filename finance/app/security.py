@@ -54,3 +54,15 @@ def install(app) -> None:
         if cross is not None:
             return cross
         return await call_next(request)
+
+
+def safe_next(value: str | None, default: str) -> str:
+    """A `next` form field to redirect back to: only a relative path inside the app
+    ("transactions?account_id=3"), never another site -- no scheme or host, no leading
+    "/" or "//", no backslash (browsers read "/\\host" as "//host"), no control characters.
+    Anything else returns `default`."""
+    v = (value or "").strip()
+    if (not v or v.startswith("/") or "\\" in v or ":" in v.split("?", 1)[0].split("#", 1)[0]
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in v)):
+        return default
+    return v

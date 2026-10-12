@@ -89,3 +89,23 @@ def test_other_users_cannot_insert(env, fake_vision):
     env.post("skipped-duplicate-insert", data={"id": str(did)},
              headers={"x-remote-user-id": "other", "x-remote-user-name": "Other"})
     assert _txns(env, "COFFEE") == 1
+
+
+def test_no_insert_into_a_deleted_statement_or_csv_import(env, fake_vision):
+    """The list hides skipped rows whose statement or CSV import was deleted; inserting one by id must refuse too
+    (it used to check only the account, attaching a transaction to a deleted parent)."""
+    acct, sid = _run_statement(env, fake_vision, [("2026-08-05", -4.5, "COFFEE"), ("2026-08-05", -4.5, "COFFEE")],
+                               ["2026-08-05 COFFEE -4.50", "2026-08-05 COFFEE -4.50"])
+    csv = "Date,Description,Amount\n2026-08-02,TWICE,-3.00\n2026-08-02,TWICE,-3.00\n"
+    env.post("transactions-import-csv", data={"default_account_id": str(acct)}, headers={"accept": "application/json"},
+             files={"files": ("t.csv", io.BytesIO(csv.encode()), "text/csv")})
+    with env.db() as c:
+        coffee = c.execute("SELECT id FROM skipped_duplicates WHERE statement_id = ?", (sid,)).fetchone()[0]
+        twice, ci = c.execute("SELECT id, csv_import_id FROM skipped_duplicates WHERE description = 'TWICE'").fetchone()
+        c.execute("UPDATE statements SET deleted_at = datetime('now') WHERE id = ?", (sid,))
+        c.execute("UPDATE csv_imports SET deleted_at = datetime('now') WHERE id = ?", (ci,))
+    env.post("skipped-duplicate-insert", data={"id": str(coffee)})
+    env.post("skipped-duplicate-insert", data={"id": str(twice)})
+    assert (_txns(env, "COFFEE"), _txns(env, "TWICE")) == (1, 1)
+    with env.db() as c:
+        assert {r[0] for r in c.execute("SELECT status FROM skipped_duplicates")} == {"skipped"}
