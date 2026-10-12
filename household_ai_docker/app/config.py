@@ -10,6 +10,7 @@ import os
 import socket
 from datetime import date, datetime, timezone
 
+from . import hosts
 from .common import ha_time
 
 logger = logging.getLogger("config")
@@ -25,7 +26,7 @@ SUPERVISOR_API = ""
 SUPERVISOR_CORE_API = ""
 
 APP_TITLE = "Household AI"
-APP_VERSION = "1.0.3-docker"
+APP_VERSION = "1.0.4-docker"
 SLUG = "household_ai"
 STANDALONE = True
 
@@ -49,6 +50,14 @@ def own_hostname() -> str:
     """The container's host name (callers.py looks for Home Assistant's app names next to it; on a Docker host it
     finds none, and callers are told apart by address or access key). HOUSEHOLD_AI_HOSTNAME overrides it."""
     return os.environ.get("HOUSEHOLD_AI_HOSTNAME") or socket.gethostname()
+
+
+# Names the settings page and the gateway answer to besides IP addresses, localhost, names without a dot and local
+# names (.local, .lan, .home.arpa, .internal): a web page elsewhere that points its own name at this machine (DNS
+# rebinding) is refused (app/hosts.py). ALLOWED_HOSTS adds names, comma- or space-separated ("nas.example.com",
+# ".example.com" for every name under it, "*" for any name).
+ALLOWED_HOSTS = frozenset(hosts.parse_list(os.environ.get("ALLOWED_HOSTS"))
+                          | hosts.parse_list(own_hostname()))
 
 
 # The container's time zone (TZ, e.g. Europe/London); UTC when it isn't set or isn't known.

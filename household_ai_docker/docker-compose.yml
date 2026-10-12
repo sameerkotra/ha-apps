@@ -16,6 +16,8 @@ services:
     environment:
       TZ: "Europe/London"         # your time zone: the daytime window (When models stay loaded) follows it
       PUBLIC_GATEWAY_PORT: "11434"  # change with the left-hand side of the 11434 line above
+      ALLOWED_HOSTS: ""           # full names you reach this machine by, e.g. "nas.example.com" (README.md);
+                                  # IP addresses, localhost, names without a dot and .local/.lan names always work
     volumes:
       - ./data:/data              # settings, keys, usage and the models (gigabytes each)
     # An NVIDIA graphics card (needs the NVIDIA Container Toolkit on this machine): remove the # on the next 7 lines.

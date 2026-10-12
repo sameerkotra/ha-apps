@@ -13,7 +13,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from . import callers, config, db, gateway, ollama, server, settings, usage
+from fastapi.responses import JSONResponse
+
+from . import callers, config, db, gateway, hosts, ollama, server, settings, usage
 from .common import web_security
 from .common import housekeeping as jobs_core
 from .routers import api
@@ -64,7 +66,17 @@ app.include_router(api.router)
 @app.middleware("http")
 async def refuse_cross_site(request: Request, call_next):
     """No login (the page is for whoever can reach it), but no write may come from another site: a web page
-    elsewhere can't change the settings through your browser."""
+    elsewhere can't change the settings through your browser. A Host header that doesn't name this machine is
+    refused (a page elsewhere that points its own name here — DNS rebinding — would otherwise look same-origin),
+    and a write's Origin must name the host it was sent to."""
+    host = request.headers.get("host")
+    if not hosts.allowed(host, config.ALLOWED_HOSTS):
+        return JSONResponse({"detail": f"Household AI doesn't answer to the name {hosts.host_only(host)}: add it to "
+                                       "ALLOWED_HOSTS (docker-compose.yml) if it is this machine's name."},
+                            status_code=403)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and \
+            not hosts.origin_matches(request.headers.get("origin"), host):
+        return JSONResponse({"detail": "Refused: this change came from another site."}, status_code=403)
     blocked = web_security.refuse_cross_site(request)
     if blocked is not None:
         return blocked

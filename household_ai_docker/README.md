@@ -167,13 +167,34 @@ they all look like one computer on the page. With a key each, the page shows eac
 | `WEB_PORT` | `8080` | The settings page's port inside the container |
 | `PUBLIC_GATEWAY_PORT` | `11434` | The host port 11434 is published on (`-p <this>:11434`), shown on the page as the address |
 | `DATA_DIR` | `/data` | Where settings and models live (mount a volume there) |
+| `ALLOWED_HOSTS` | (empty) | Extra names the page and the gateway answer to, comma-separated (see below) |
+
+### The machine's name (`ALLOWED_HOSTS`)
+
+The settings page and the gateway answer only to names that are this machine's: an IP address (e.g.
+`http://192.168.1.10:8080`), `localhost`, a name without a dot (`http://nas:8080`), a local name ending in `.local`,
+`.lan`, `.home.arpa` or `.internal` (`http://nas.local:8080`), and the container's own host name. Any other name gets
+*Household AI doesn't answer to the name …*. This stops a web page elsewhere from pointing its own name at your
+machine ("DNS rebinding") and then using the page or the gateway through your browser as if it were you.
+
+If you open the page, or point the household apps at the gateway, by a full name such as `nas.example.com`, add it
+in `docker-compose.yml` and run `docker compose up -d` again:
+
+```yaml
+    environment:
+      ALLOWED_HOSTS: "nas.example.com"     # several: "nas.example.com, ai.example.com"; ".example.com" for every name under it
+```
+
+(`-e ALLOWED_HOSTS=nas.example.com` with `docker run` / `podman run`.) `*` turns the check off — don't, unless
+something in front of this machine (a reverse proxy) checks the name itself.
 
 Everything else is on the settings page.
 
 ## Differences from the Home Assistant app
 
 - No login and no Home Assistant identity: whoever opens the page is its admin. Writes from another website are
-  still refused (a page elsewhere can't change settings through your browser).
+  still refused (a page elsewhere can't change settings through your browser), and the page and the gateway answer
+  only to this machine's names (`ALLOWED_HOSTS`).
 - The time zone comes from `TZ`, not from Home Assistant.
 - The household apps can't be recognised by their Home Assistant host names here; use one access key per app.
 - The model server is on from the first start (it's a machine of its own).

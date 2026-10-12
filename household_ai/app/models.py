@@ -66,21 +66,35 @@ class Pull:
 PULLS: dict[str, Pull] = {}
 
 
-def manifest_url(name: str) -> str:
-    """The registry's manifest address for a model name ("qwen2.5:3b" → …/v2/library/qwen2.5/manifests/3b)."""
+OLLAMA_REGISTRY = "registry.ollama.ai"
+
+
+def manifest_url(name: str) -> str | None:
+    """The registry's manifest address for a model name ("qwen2.5:3b" → …/v2/library/qwen2.5/manifests/3b); None for
+    a model from another registry ("hf.co/…", "ghcr.io/…": its first part names a host), whose size isn't asked."""
     full = schedule.norm_model(name)
     repo, _, tag = full.rpartition(":")
+    first, sep, rest = repo.partition("/")
+    if sep and ("." in first or ":" in first or first == "localhost"):
+        if first.lower() != OLLAMA_REGISTRY:
+            return None
+        repo = rest
     if "/" not in repo:
         repo = "library/" + repo
     return f"{config.REGISTRY_URL}/v2/{repo}/manifests/{tag}"
 
 
 async def download_size(name: str) -> int | None:
-    """Bytes to download: the registry's manifest (best effort), else the recommended table, else None."""
+    """Bytes to download: Ollama's registry's manifest (best effort, its own models only), else the recommended
+    table, else None."""
     missing = False
+    url = manifest_url(name)
+    if url is None:
+        rec = BY_NAME.get(schedule.norm_model(name))
+        return int(rec["download"] * GB) if rec else None
     try:
         async with httpx.AsyncClient(timeout=8) as c:
-            r = await c.get(manifest_url(name),
+            r = await c.get(url,
                             headers={"Accept": "application/vnd.docker.distribution.manifest.v2+json"})
         if r.status_code == 200:
             m = r.json()

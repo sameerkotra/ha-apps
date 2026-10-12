@@ -56,8 +56,15 @@ def rows() -> list[dict]:
              "createdBy": r[4], "lastUsedAt": r[5], "revokedAt": r[6]} for r in rs]
 
 
+# "Last used" is written at most once a minute per key (the gateway checks a key on every request).
+USE_EVERY = 60
+CLOCK = time.monotonic
+_written: dict[str, float] = {}          # key id → CLOCK() of its last "last used" write
+
+
 def check(key: str) -> dict | None:
-    """The key's row ({id, models}) if it is a live key, else None. Records its use."""
+    """The key's row ({id, models}) if it is a live key, else None. Records its use (at most once a minute).
+    Blocking (SQLite): the gateway calls it in a thread."""
     if not key or len(key) > 200:
         return None
     h = _hash(key)
@@ -66,8 +73,15 @@ def check(key: str) -> dict | None:
                          (h,)).fetchone()
         if r is None:
             return None
-        conn.execute("UPDATE model_keys SET last_used_at = ? WHERE id = ?",
-                     (config.utcnow().isoformat(timespec="seconds"), r[0]))
+        now = CLOCK()
+        last = _written.get(r[0])
+        if last is None or now - last >= USE_EVERY:
+            _written[r[0]] = now
+            if len(_written) > 4 * MAX_KEYS:
+                _written.clear()
+                _written[r[0]] = now
+            conn.execute("UPDATE model_keys SET last_used_at = ? WHERE id = ?",
+                         (config.utcnow().isoformat(timespec="seconds"), r[0]))
     return {"id": r[0], "models": json.loads(r[1]) if r[1] else None}
 
 

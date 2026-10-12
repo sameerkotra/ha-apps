@@ -6,8 +6,10 @@ small ASGI app, served on its own port next to the ingress page, passes on only 
     GET /api/version, GET /api/tags, POST /api/show, POST /api/generate, POST /api/chat, POST /api/embed,
     GET /v1/models, POST /v1/chat/completions
 
-Everything else is 404. Every request is checked before it is queued (body ≤ 32 MB; the model downloaded; the
-caller's keep_alive replaced by the schedule's; num_ctx capped at *Context length*, num_thread set to *Threads*,
+Everything else is 404. Every request is checked before it is queued (on a Docker host, a Host header that names
+this machine (app/hosts.py); a JSON body (a browser's "simple" text/plain or form POST is 415); body ≤ 32 MB, and at
+most MAX_READING bodies read at once; the model downloaded; the caller's keep_alive replaced by the schedule's; only
+the sampling options passed on (OPTIONS), num_ctx capped at *Context length*, num_thread set to *Threads*,
 num_predict / max_tokens capped at *Longest answer*), then waits its turn (app/jobqueue.py), runs alone, and
 is counted (tokens, seconds, wait). A caller that goes away while waiting leaves the queue; one that goes away
 while its answer runs has the request to Ollama closed, which stops it. A run past *Longest run* is stopped
@@ -25,7 +27,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from . import callers, config, keys, machine, ollama, schedule, settings, usage
+from . import callers, config, hosts, keys, machine, ollama, schedule, settings, usage
 from .jobqueue import Full, RequestQueue
 
 logger = logging.getLogger("gateway")
@@ -33,6 +35,14 @@ logger = logging.getLogger("gateway")
 MAX_BODY = 32 * 1024 * 1024
 MINUTE = 60                    # seconds in a minute of *Longest run* (tests shorten it)
 ANSWERING = {"/api/generate", "/api/chat", "/api/embed", "/v1/chat/completions"}
+# Bodies being read (or checked) before they are queued: each may be up to 32 MB, so at most this many at once (503).
+MAX_READING = 4
+READING = {"n": 0}
+# The options a caller may set in "options" (Ollama's sampling options); the rest (num_gpu, num_batch, use_mlock,
+# num_keep, main_gpu, numa, …) are dropped. num_ctx and num_predict are capped, num_thread is the *Threads* setting.
+OPTIONS = {"temperature", "top_p", "top_k", "min_p", "typical_p", "tfs_z", "seed", "stop", "repeat_penalty",
+           "repeat_last_n", "presence_penalty", "frequency_penalty", "penalize_newline", "mirostat", "mirostat_tau",
+           "mirostat_eta", "num_predict", "num_ctx"}
 
 QUEUE = RequestQueue(limit=lambda: settings.get("queue"))
 LAST_USED: dict[str, float] = {}          # model → time.monotonic() of its last request (the schedule's)
@@ -48,12 +58,36 @@ class Refused(Exception):
 def error(path: str, status: int, message: str, headers: dict | None = None) -> JSONResponse:
     """An error in the shape the caller's client expects (Ollama's {"error": "…"} or OpenAI's)."""
     if path.startswith("/v1/"):
-        kind = {401: "authentication_error", 404: "not_found_error", 429: "rate_limit_error",
+        kind = {401: "authentication_error", 403: "permission_error", 404: "not_found_error", 429: "rate_limit_error",
                 503: "server_busy", 504: "timeout"}.get(status, "invalid_request_error")
         body = {"error": {"message": message, "type": kind}}
     else:
         body = {"error": message}
     return JSONResponse(body, status_code=status, headers=headers)
+
+
+def is_json(request: Request) -> bool:
+    """A JSON body (application/json, or any …+json type)."""
+    kind = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    return kind == "application/json" or (kind.startswith("application/") and kind.endswith("+json"))
+
+
+def from_browser_unless_json(request: Request) -> bool:
+    """True for a POST a web page could send without asking first (CORS's "simple" requests: text/plain, a form,
+    or no type) — a browser always adds Origin to a POST. Programs (the household apps, Ollama's and OpenAI's
+    clients) send application/json; `curl -d` without a type, which sends no Origin, still works."""
+    return not is_json(request) and request.headers.get("origin") is not None
+
+
+def host_refused(request: Request) -> bool:
+    """On a Docker host (config.ALLOWED_HOSTS set): a Host header that doesn't name this machine (DNS rebinding,
+    app/hosts.py). The Home Assistant app's gateway is reached by its app host name and isn't checked."""
+    extra = getattr(config, "ALLOWED_HOSTS", None)
+    return extra is not None and not hosts.allowed(request.headers.get("host"), extra)
+
+
+HOST_MESSAGE = ("Household AI doesn't answer to the name {host}: add it to ALLOWED_HOSTS (docker-compose.yml) if it "
+                "is this machine's name.")
 
 
 def server_ready() -> bool:
@@ -80,7 +114,7 @@ async def identify(request: Request, path: str) -> tuple[str, dict | None]:
         raise Refused(429, "Too many wrong access keys — try again in a minute.", {"Retry-After": "60"})
     auth = request.headers.get("authorization", "")
     token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
-    row = keys.check(token) if token else None
+    row = await asyncio.to_thread(keys.check, token) if token else None
     if row is None:
         keys.FAILURES.fail(addr)
         raise Refused(401, "Household AI needs an access key: paste one from Household AI → Access keys into this "
@@ -131,7 +165,7 @@ def rewrite(path: str, body: dict, model: str) -> dict:
     if path.startswith("/api/"):
         body["keep_alive"] = schedule.keep_alive(model, values, config.now(), kept)
         opts = body.get("options")
-        opts = dict(opts) if isinstance(opts, dict) else {}
+        opts = {k: v for k, v in opts.items() if k in OPTIONS} if isinstance(opts, dict) else {}
         opts["num_thread"] = threads()
         ctx = opts.get("num_ctx")
         if not isinstance(ctx, int) or isinstance(ctx, bool) or ctx > values["context"] or ctx <= 0:
@@ -233,17 +267,23 @@ def note_model(model: str) -> None:
     STATS["last_model"] = model
 
 
+async def reset_timer(path: str, model: str) -> None:
+    """/v1 requests carry no keep_alive: reset the model's timer to the schedule's (SPEC.md §6.2). Called while the
+    request still holds the queue, so the empty generate can't reload this model after the next request swapped
+    it out (with one model loaded at a time)."""
+    if path != "/v1/chat/completions":
+        return
+    values = settings.all()
+    ka = schedule.keep_alive(model, values, config.now(), schedule.kept_model(values, ollama.MODELS.text_models()))
+    try:
+        await ollama.set_keep_alive(model, ka, timeout=30)
+    except Exception as e:
+        logger.debug("keep_alive after /v1: %s", e)
+
+
 async def after_answer(path: str, model: str, caller: str, address: str | None, counter: Counter,
                        ran: float, waited: float) -> None:
     LAST_USED[model] = time.monotonic()
-    if path == "/v1/chat/completions":
-        # /v1 requests carry no keep_alive: reset the model's timer to the schedule's (SPEC.md §6.2).
-        values = settings.all()
-        ka = schedule.keep_alive(model, values, config.now(), schedule.kept_model(values, ollama.MODELS.text_models()))
-        try:
-            await ollama.set_keep_alive(model, ka, timeout=30)
-        except Exception as e:
-            logger.debug("keep_alive after /v1: %s", e)
     try:
         await asyncio.to_thread(usage.record, caller, model, address, counter.input, counter.output, ran, waited)
     except Exception:
@@ -254,44 +294,61 @@ async def proxy(request: Request) -> Response:
     path = request.url.path
     method = request.method
     address = request.client.host if request.client else None
+    if host_refused(request):
+        return error(path, 403, HOST_MESSAGE.format(host=hosts.host_only(request.headers.get("host"))))
     if path == "/api/version":
         # Answered without a key (the Supervisor's watchdog asks it), even while the model server is off.
         from .server import SERVER
         v = await ollama.version() if server_ready() else None
         return JSONResponse({"version": v or SERVER.version or "0.0.0"})
+    if method == "POST" and from_browser_unless_json(request):
+        return error(path, 415, "Send the request as JSON (Content-Type: application/json).")
     try:
         caller, key = await identify(request, path)
         if not server_ready():
             raise Refused(503, not_ready_message(), {"Retry-After": "30"})
         if method == "GET" and path in ("/api/tags", "/v1/models"):
             return await list_models(path, key)
-        raw = await read_body(request)
-        try:
-            body = json.loads(raw or b"{}")
-        except ValueError:
-            raise Refused(400, "The request body isn't JSON.")
-        if not isinstance(body, dict):
-            raise Refused(400, "The request body must be a JSON object.")
-        model = await check_model(body.get("model") or body.get("name"), key)
-        if path == "/api/show":
-            body = {"model": body.get("model") or body.get("name"), "verbose": False}
-            r = await ollama.client().post("/api/show", json=body, timeout=30)
-            return Response(r.content, status_code=r.status_code, media_type="application/json")
-        body = rewrite(path, body, model)
     except Refused as e:
         return error(path, e.status, e.message, e.headers)
-    except ClientDisconnect:
-        return Response(status_code=499)
 
-    # Waiting for our turn: until granted, or the caller goes away.
-    from .server import SCHEDULE
-    if SCHEDULE is not None:
-        SCHEDULE.manual_unload = False
-    first = caller in (settings.get("answer_first") or [])
+    # Reading and checking the body, then a place in the queue: at most MAX_READING bodies in memory at once.
+    if READING["n"] >= MAX_READING:
+        return error(path, 503, "Household AI is receiving too many requests at once — try again in a few seconds.",
+                     {"Retry-After": "5"})
+    READING["n"] += 1
     try:
-        ticket = QUEUE.enter(caller, model, first)
-    except Full as e:
-        return error(path, 503, str(e), {"Retry-After": str(e.retry_after)})
+        try:
+            raw = await read_body(request)
+            try:
+                body = json.loads(raw or b"{}")
+            except ValueError:
+                raise Refused(400, "The request body isn't JSON.")
+            del raw
+            if not isinstance(body, dict):
+                raise Refused(400, "The request body must be a JSON object.")
+            model = await check_model(body.get("model") or body.get("name"), key)
+            if path == "/api/show":
+                body = {"model": body.get("model") or body.get("name"), "verbose": False}
+                r = await ollama.client().post("/api/show", json=body, timeout=30)
+                return Response(r.content, status_code=r.status_code, media_type="application/json")
+            body = rewrite(path, body, model)
+        except Refused as e:
+            return error(path, e.status, e.message, e.headers)
+        except ClientDisconnect:
+            return Response(status_code=499)
+
+        # Waiting for our turn: until granted, or the caller goes away.
+        from .server import SCHEDULE
+        if SCHEDULE is not None:
+            SCHEDULE.manual_unload = False
+        first = caller in (settings.get("answer_first") or [])
+        try:
+            ticket = QUEUE.enter(caller, model, first)
+        except Full as e:
+            return error(path, 503, str(e), {"Retry-After": str(e.retry_after)})
+    finally:
+        READING["n"] -= 1
     gone = asyncio.create_task(wait_for_disconnect(request))
     granted = asyncio.create_task(QUEUE.wait(ticket))
     done, _ = await asyncio.wait({gone, granted}, return_when=asyncio.FIRST_COMPLETED)
@@ -339,7 +396,10 @@ async def proxy(request: Request) -> Response:
         finally:
             gone_task.cancel()
             ran = time.monotonic() - started
-            QUEUE.leave(ticket)
+            try:
+                await reset_timer(path, model)
+            finally:
+                QUEUE.leave(ticket)
             await after_answer(path, model, caller, address, counter, ran, waited)
 
     # Streaming: Starlette stops the generator when the caller goes away; closing the upstream stops Ollama.
@@ -363,9 +423,12 @@ async def proxy(request: Request) -> Response:
         if finished:
             return
         finished = True
-        QUEUE.leave(ticket)
         with anyio.CancelScope(shield=True):
-            await upstream.aclose()
+            try:
+                await upstream.aclose()
+                await reset_timer(path, model)
+            finally:
+                QUEUE.leave(ticket)
             await after_answer(path, model, caller, address, counter, time.monotonic() - started, waited)
 
     async def lines():
@@ -425,6 +488,9 @@ async def list_models(path: str, key: dict | None) -> Response:
 
 
 async def not_found(request: Request) -> Response:
+    if host_refused(request):
+        return error(request.url.path, 403,
+                     HOST_MESSAGE.format(host=hosts.host_only(request.headers.get("host"))))
     return error(request.url.path, 404, "Not available through Household AI (model management is on its page).")
 
 

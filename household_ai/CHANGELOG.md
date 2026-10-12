@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4
+
+- **Web pages can't use the gateway through your browser**: a request from a browser must be sent as JSON, so a web page elsewhere can't quietly ask the model something (the household apps and Ollama's and OpenAI's clients already send JSON).
+- **Steadier under load**: at most four requests are read at once (the next is told to try again in a few seconds), so many large requests at the same moment can't use up the memory.
+- **Only the sampling options pass**: an app can set temperature, top_p, seed, stop and the like; settings that change how the model is loaded (graphics card layers, batch size, memory locking) are left out.
+- **Models stay where the schedule puts them**: after an OpenAI-style answer the model's timer is reset before the next request starts, so a model just swapped out isn't loaded again.
+- **Models from other registries**: `hf.co/…` and other registries' models download again (their size was looked up in Ollama's library, which wrongly said they don't exist).
+- **Access keys**: a key's *Last used* is saved at most once a minute, off the gateway's main path.
+- Shared code: a page can't set inline event handlers, safer settings saves and backup size messages.
+
 ## 1.0.3
 
 - **Gemma 4 in the recommended models**: `gemma4:e2b-it-q4_K_M`, `gemma4:e4b-it-q4_K_M` and `gemma4:12b`. They answer text and read images, shown as **Text + vision**: one model can be every app's *Model* and *Vision model*, and it can be the model kept loaded in the day (a vision-only model can't).
