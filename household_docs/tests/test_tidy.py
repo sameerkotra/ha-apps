@@ -3,8 +3,10 @@ patterns, renames, first match wins, dry run, Undo from Activity, read-only mode
 Archive, favourites and pins skipped, read-only mode, once a day); Kids' space (every route walked as a child,
 the content checks, parents' view access); what changed since you last looked (dots, the open document's
 changes, is:new, Mark all as seen)."""
+import io
 import os
 import time
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 from base import ASHA, DEV, KABIR, MEERA, SHARE, ApiBase, hdr, person_dir, write
@@ -438,6 +440,31 @@ class KidsTests(TidyBase):
         d = self.open(shared["id"], KID)
         self.assertEqual((d["role"], d["canShare"]), ("editor", False))
         self.assertEqual(self.ok(self.get(f"/api/nodes/{n['id']}", KID))["canShare"], False)
+
+    def test_no_sheet_downloads(self):
+        """A shared sheet can't be taken as a raw .xlsx: not the file, not a kept version, not in a .zip."""
+        f = self.create("folder", "Shared")
+        s = self.sheet("Budget", {"A1": {"v": 1}}, parent=f["id"])
+        self.ok(self.patch(f"/api/docs/{s['id']}", {"etag": self.open(s["id"])["etag"],
+                                                    "sheet": {"tabs": [grid("Sheet1", {"A1": {"v": 2}})]}}))
+        self.note("Plan", parent=f["id"], text="beach")
+        self.ok(self.share(f["id"], KID, "viewer"))
+        self.assertEqual(self.get(f"/api/nodes/{s['id']}/file", KID).status_code, 403)
+        self.assertEqual(self.get(f"/api/docs/{s['id']}/versions/1/file", KID).status_code, 403)
+        self.assertEqual(self.get(f"/api/zip?ids={s['id']}", KID).status_code, 403)
+        names = lambda r: sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+        r = self.get(f"/api/nodes/{f['id']}/zip", KID)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(names(r), ["Shared/Plan.txt"])
+        # a sheet the child added to their own My docs stays out of their .zip too
+        self.upload("mine", "list.csv", b"a,b\n1,2\n", h=KID)
+        self.note("Mine", h=KID, text="hi")
+        self.assertNotIn("My docs/list.csv", names(self.get("/api/nodes/mine/zip", KID)))
+        self.assertIn("My docs/Mine.txt", names(self.get("/api/nodes/mine/zip", KID)))
+        # grown-ups download sheets as before
+        self.assertEqual(self.get(f"/api/nodes/{s['id']}/file").status_code, 200)
+        self.assertEqual(self.get(f"/api/docs/{s['id']}/versions/1/file").status_code, 200)
+        self.assertIn("Shared/Budget.xlsx", names(self.get(f"/api/nodes/{f['id']}/zip")))
 
     def test_shared_folders_only_kids_folders(self):
         for name in ("House", "Kids"):

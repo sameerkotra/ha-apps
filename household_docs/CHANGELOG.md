@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.1
+
+- **The PDF viewer on phones**: closing it now lets go of every drawn page at once (they used to stay in memory until the next PDF), and zooming quickly no longer draws the same page twice.
+- **A PDF whose first page is broken** now says it can't be shown here, with the Download link, instead of loading for ever.
+- **Kids' space**: a child can no longer download a sheet shared with them as a file — not the sheet, not a kept version of it — and a `.zip` they download leaves sheets out.
+- A picture in a Markdown note that can't be shown (deleted, or not shared with you) turns into its name more reliably.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; AI requests never follow a redirect; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 1.6.0
 
 - **View PDFs in Docs**: **👁 View** in a PDF's file panel (or ⋯ → **View**) shows it inside the app, full screen, page by page — zoom (− / Fit / +), the page number, Download at hand, on phones too. A password-protected PDF asks for its password. The app draws the pages itself, so nothing in a PDF runs (its links and forms don't work in this view); PDFs over 50 MB still download.

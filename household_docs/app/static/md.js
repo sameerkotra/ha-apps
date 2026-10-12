@@ -287,6 +287,14 @@
         else if (n.t === "strong" || n.t === "em") { const e = el(n.t); inline(n.c, e, depth + 1); parent.appendChild(e); }
         else if (n.t === "img" && n.id && opts.images && /^[A-Za-z0-9_-]{1,64}$/.test(n.id)) {
           const im = el("img", "md-pic");
+          const alt = n.alt || "picture";
+          // a picture this person can't see, or gone: wired before the src is set, so no error is missed
+          im.addEventListener("error", () => {
+            const s = el("span", "md-img");
+            s.textContent = "🖼 " + alt;
+            s.title = "This picture can't be shown — it was deleted or isn't shared with you.";
+            if (im.parentNode) im.parentNode.replaceChild(s, im);
+          }, { once: true });
           im.setAttribute("src", "api/nodes/" + n.id + "/preview");
           im.setAttribute("alt", n.alt || "picture");
           im.setAttribute("loading", "lazy");

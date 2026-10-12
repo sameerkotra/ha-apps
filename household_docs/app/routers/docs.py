@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import Field
 
-from .. import db, docops, documents, files, links, sharing, sheets
+from .. import db, docops, documents, files, kids, links, sharing, sheets
 from ..auth import require_user
 from ..formats import text as text_fmt
 from ..store import index, kinds, nodes, paths, versions
@@ -136,9 +136,10 @@ def version_text(node_id: str, n: int, user: dict = Depends(require_user)):
 
 @router.get("/{node_id}/versions/{n}/file")
 def version_file(node_id: str, n: int, user: dict = Depends(require_user)):
-    """One kept version as a download (any kind of file; never inline)."""
+    """One kept version as a download (any kind of file; never inline). Not a sheet's for a child (§17.20)."""
     with db.get_conn() as conn:
         node, _role = sharing.require(conn, user, node_id, "viewer")
+        kids.refuse_sheet(user, node["kind"])
         root = conn.execute("SELECT * FROM roots WHERE id = ?", (node["root_id"],)).fetchone()
         try:
             path = versions.path_of(conn, root, node["id"], n)

@@ -274,7 +274,10 @@ sent by `backup_core.send_file`.
 - A date is a school day if its weekday is in `school_days` and it isn't a
   holiday; otherwise it uses weekend limits.
 - Time used today = the sum of `active_seconds` of the person's sessions that
-  started today (Home Assistant's time zone). Allowance = the day's minutes +
+  started today (Home Assistant's time zone). The browser reports each session's active (unpaused) seconds
+  with every heartbeat; the server keeps them between the wall time since the session began less at most
+  15 minutes of pauses (`limits.PAUSE_MAX_SECONDS`) and that wall time (+2 s), and they never shrink — so a page
+  can't report its time down, and a game left paused for longer than that counts again. Allowance = the day's minutes +
   today's extra time; `leftSeconds` is `null` with no limit.
 - Quiet hours: a window whose end is before its start runs past midnight. The
   set that applies is chosen by the day the window ends on: ending on a school
@@ -690,7 +693,8 @@ highest scores a 500-level list could reach are within each game's most.
   its format (`games.py` `state_version`, the game file's `STATE_VERSION`;
   another one is refused) and the result so far, checked like a score (time
   ≤ time played). The level list is kept with the save. The session ends
-  without a score. A save of the same game from another session is replaced;
+  without a score. A daily challenge's or a match's session (a race or a turn-by-turn game) can't be put aside
+  (409). A save of the same game from another session is replaced;
   the replaced one is ended with its score (`finalize`).
 - **Continuing**: `POST /api/sessions {game, resume: true}` — the save's mode
   and Practice; children's limits apply; 409 if its format is out of date.
@@ -797,8 +801,10 @@ quiet hours, heartbeats and play time work unchanged; the player's final
 score is the one they send to `POST /api/scores` (so it is checked by the
 honest-score limits and saved as a normal game, except Practice), and the
 server copies it into `match_players` (an impossible score counts as 0 and
-loses). The shell adds `won` to that request in a race so puzzle rules
-can see who solved it. Winners (`together.decide`): by the game's race rule in
+loses). The shell adds `won` to that request in a race, but for a game that scores only when solved
+(`unfinished_zero`, every `fastest` game) the server decides it (`won` = a score above 0) and ignores the phone's;
+for a `fastest` race the time is at least the time since the race (and the player's session) began, less 3 s, so a
+game can't claim to be shorter than it was. Winners (`together.decide`): by the game's race rule in
 `games.py` (`"race": {"rule": "score"}` default, higher score, tie a draw, or
 with `"tiebreak": "faster"` the shorter game; `{"rule": "fastest"}`: solved
 beats not solved, both solved the shorter game, neither the higher score;

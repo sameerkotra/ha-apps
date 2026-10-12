@@ -10,7 +10,8 @@ admin (auth.get_current_user clears `is_child` for admins).
 - **Daily play time.** Minutes for school days and for weekend days (NULL =
   no limit), plus any extra time an admin gave for today. Time counts only
   while a game runs: the browser reports the active seconds of each play
-  session, and the server caps them by the wall time since the session began.
+  session, and the server keeps them between the wall time since the session
+  began less at most PAUSE_MAX_SECONDS of pauses, and that wall time.
   A session counts on the day it started.
 - **Quiet hours.** From–to times for school nights and for weekends. A window
   whose end is before its start runs past midnight. Which set applies is
@@ -31,6 +32,8 @@ from . import config, games, settings
 
 TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 WARN_SECONDS = 5 * 60
+PAUSE_MAX_SECONDS = 15 * 60        # pauses a play session's time can leave out (SPEC §7)
+WALL_SLACK_SECONDS = 2
 LEADERBOARD_CHOICES = ("full", "first", "hidden")
 EXTRA_CHOICES = (15, 30, 60)
 MAX_DAILY_MINUTES = 24 * 60
@@ -198,3 +201,14 @@ def save_limits(conn, user_id: str, limits: dict, who: str | None) -> None:
          limits["quietSchoolTo"], limits["quietWeekendFrom"], limits["quietWeekendTo"],
          None if limits["allowedGames"] is None else json.dumps(limits["allowedGames"]),
          limits["leaderboard"], config.now_iso(), who))
+
+
+def credited_seconds(row, reported) -> float:
+    """A play session's active seconds after a heartbeat (`row` is its play_sessions row; `reported` the browser's
+    count of unpaused seconds). Never less than before, never more than the wall time since the session began, and
+    never less than that wall time less PAUSE_MAX_SECONDS: the browser's count can't talk play time down (SPEC §7)."""
+    if isinstance(reported, bool) or not isinstance(reported, (int, float)) or reported != reported:
+        reported = row["active_seconds"]
+    elapsed = max(0.0, (config.utcnow() - config.parse_ts(row["started_at"])).total_seconds())
+    floor = elapsed - PAUSE_MAX_SECONDS
+    return round(max(row["active_seconds"], min(max(float(reported), floor), elapsed + WALL_SLACK_SECONDS)), 1)

@@ -40,6 +40,9 @@ CHECKED = {
     ("POST", "/api/templates/use"), ("POST", "/api/docs/{node_id}/save-template"),
     ("POST", "/api/docs/{node_id}/versions/{n}/restore"),
     ("POST", "/api/nodes/{node_id}/copy"),          # Make a copy: not of a sheet, nor a folder holding one
+    # downloads: not a sheet (nor a kept version of one); a .zip leaves sheets out
+    ("GET", "/api/nodes/{node_id}/file"), ("GET", "/api/docs/{node_id}/versions/{n}/file"),
+    ("GET", "/api/nodes/{ref}/zip"), ("GET", "/api/zip"),
 }
 
 # allowed as for anyone (their own role on each item still decides)
@@ -48,12 +51,10 @@ ALLOWED = {
     ("GET", "/api/nodes/{node_id}"), ("POST", "/api/nodes/{node_id}/rename"), ("POST", "/api/nodes/{node_id}/move"),
     ("POST", "/api/nodes/{node_id}/leave"), ("POST", "/api/nodes/{node_id}/hide"),
     ("POST", "/api/nodes/{node_id}/favourite"), ("DELETE", "/api/nodes/{node_id}"),
-    ("POST", "/api/trash/{trash_id}/restore"), ("POST", "/api/trash/empty"), ("GET", "/api/nodes/{node_id}/file"),
+    ("POST", "/api/trash/{trash_id}/restore"), ("POST", "/api/trash/empty"),
     ("GET", "/api/docs/{node_id}/etag"), ("POST", "/api/docs/{node_id}/checklist"),
     ("GET", "/api/docs/{node_id}/versions"), ("GET", "/api/docs/{node_id}/versions/{n}"),
-    ("GET", "/api/docs/{node_id}/versions/{n}/file"),
-    ("POST", "/api/nodes/{ref}/upload"), ("GET", "/api/nodes/{node_id}/preview"), ("GET", "/api/nodes/{ref}/zip"),
-    ("GET", "/api/zip"),
+    ("POST", "/api/nodes/{ref}/upload"), ("GET", "/api/nodes/{node_id}/preview"),
     ("GET", "/api/searches"), ("POST", "/api/searches"), ("PATCH", "/api/searches/{sid}"),
     ("DELETE", "/api/searches/recent"), ("DELETE", "/api/searches/{sid}"), ("GET", "/api/searches/recent"),
     ("POST", "/api/searches/recent"),
@@ -87,7 +88,7 @@ def is_child(user: dict | None) -> bool:
 
 
 def refuse_sheet(user: dict, kind: str | None) -> None:
-    """403 for a child and a sheet (open, save, make, convert, restore, template)."""
+    """403 for a child and a sheet (open, save, make, convert, restore, template, download)."""
     if kind == "sheet" and is_child(user):
         from fastapi import HTTPException
         raise HTTPException(403, "Sheets aren't available in Kids' space.")

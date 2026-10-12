@@ -15,9 +15,11 @@ function fakeDoc(log) {
   function node(tag) {
     const n = {
       tag, children: [], attrs: {}, className: "", title: "", checked: false, disabled: false, _text: "",
-      appendChild(c) { this.children.push(c); return c; },
+      appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
       setAttribute(k, v) { log.attrs.push([tag, k, String(v)]); this.attrs[k] = String(v); },
-      addEventListener() {},
+      listeners: {},
+      addEventListener(type, fn) { this.listeners[type] = fn; },
+      replaceChild(c, old) { this.children[this.children.indexOf(old)] = c; c.parentNode = this; return old; },
       set textContent(v) { this._text = String(v); this.children = []; },
       get textContent() { return this._text + this.children.map((c) => c.textContent).join(""); },
       set innerHTML(_v) { throw new Error("innerHTML used"); },
@@ -142,6 +144,13 @@ test("pictures: only ones kept in the app, only when asked for", () => {
   assert.deepStrictEqual([imgs[0].attrs.src, imgs[0].attrs.alt], ["api/nodes/abc123/preview", "Receipt"]);
   assert.ok(on.text.includes("🖼 x") && on.text.includes("🖼 y"));
   assert.strictEqual(find(renderText(src).frag, "img").length, 0);          // not without opts.images
+  // the fallback is wired when the <img> is made (before its src): a picture that can't load becomes "🖼 Receipt"
+  const log = on.log.attrs.map(([tag, k]) => tag + ":" + k);
+  assert.ok(typeof imgs[0].listeners.error === "function");
+  assert.ok(log.indexOf("img:src") >= 0);
+  imgs[0].listeners.error();
+  assert.strictEqual(find(on.frag, "img").length, 0);
+  assert.ok(on.frag.textContent.includes("🖼 Receipt"));
 });
 
 test("deep nesting and long input stay bounded", () => {

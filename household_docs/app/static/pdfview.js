@@ -8,7 +8,7 @@
   const D = window.Docs;
   const { h, toast, openModal, spinner } = D;
   const { mount } = UI;
-  const V = "?v=1.6.0";                       // the app's version (cache busting, checked by the packaging tests)
+  const V = "?v=1.6.1";                       // the app's version (cache busting, checked by the packaging tests)
   const BASE = "vendor/pdfjs/";
   const MAX_BYTES = 50 * 1024 * 1024;         // bigger ones download instead
   const CSS_PER_PT = 96 / 72;                 // PDF points → CSS pixels at 100 %
@@ -55,7 +55,7 @@
 
     let task = null, doc = null, closed = false, near = null, seen = null;
     let zoom = 1, fitMode = true, base = null;                  // base: page 1's size at 100 % (CSS px)
-    const slots = [];                                            // {n, el, canvas, w, hgt, drawn, drawing, job}
+    const slots = [];                                            // {n, el, canvas, w, hgt, drawn, drawing, job, gen}
     const m = openModal(it.name, h("div", { class: "pdf-view" }, bar, pages), {
       modalClass: "pdf-full", backdropClass: "pdf-backdrop", focus: false,
       onClose: () => {
@@ -63,6 +63,8 @@
         document.removeEventListener("keydown", onKey);
         if (near) near.disconnect();
         if (seen) seen.disconnect();
+        window.removeEventListener("resize", onResize);
+        for (const s of slots) release(s);                       // let go of every page's canvas at once
         if (task) task.destroy().catch(() => {});
       },
     });
@@ -92,6 +94,7 @@
       s.el.style.height = `${Math.round(hgt)}px`;
     }
     function cancel(s) {
+      s.gen++;                                                   // a draw still on its way is now stale
       if (s.job) { try { s.job.cancel(); } catch (e) { /* done already */ } s.job = null; }
       s.drawing = false;
     }
@@ -102,38 +105,45 @@
     }
     async function draw(s) {
       if (closed || s.drawn || s.drawing) return;
+      const gen = ++s.gen;                    // only the latest draw of a page may finish it or reset s.drawing
+      const live = () => !closed && gen === s.gen;
       s.drawing = true;
       const z = zoom;
+      let canvas = null;
       try {
         const page = await doc.getPage(s.n);
-        if (closed || z !== zoom || !s.near) { s.drawing = false; return; }
+        if (!live() || z !== zoom || !s.near) { if (gen === s.gen) s.drawing = false; return; }
         const v1 = page.getViewport({ scale: CSS_PER_PT });
         if (!s.w) { s.w = v1.width; s.hgt = v1.height; layout(s); }
         const vp = page.getViewport({ scale: CSS_PER_PT * z });
         const dpr = Math.min(window.devicePixelRatio || 1, 3);
         // keep a canvas under ~16 million pixels (phones refuse bigger ones)
         const k = Math.min(dpr, Math.sqrt(16e6 / Math.max(1, vp.width * vp.height)));
-        const canvas = document.createElement("canvas");
+        canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.floor(vp.width * k));
         canvas.height = Math.max(1, Math.floor(vp.height * k));
         canvas.className = "pdf-canvas";
         canvas.setAttribute("aria-label", `Page ${s.n}`);
-        s.job = page.render({ canvas, canvasContext: canvas.getContext("2d"), viewport: vp,
+        const job = page.render({ canvas, canvasContext: canvas.getContext("2d"), viewport: vp,
           transform: k !== 1 ? [k, 0, 0, k, 0, 0] : null });
-        await s.job.promise;
-        s.job = null;
-        if (closed || z !== zoom) { canvas.width = 0; s.drawing = false; return; }
-        if (s.canvas) s.canvas.remove();
+        s.job = job;
+        await job.promise;
+        if (s.job === job) s.job = null;
+        if (!live() || z !== zoom) { canvas.width = 0; canvas.height = 0; if (gen === s.gen) s.drawing = false; return; }
+        if (s.canvas) { s.canvas.width = 0; s.canvas.height = 0; s.canvas.remove(); }
         s.canvas = canvas;
         s.el.replaceChildren(canvas);
         s.drawn = true;
       } catch (e) {
-        if (!(e && e.name === "RenderingCancelledException") && !closed) {
+        if (canvas && canvas !== s.canvas) { canvas.width = 0; canvas.height = 0; }
+        if (!live()) return;
+        s.job = null;
+        if (!(e && e.name === "RenderingCancelledException")) {
           s.el.replaceChildren(h("span", { class: "pdf-page-error" }, `Page ${s.n} couldn't be drawn.`));
           s.drawn = true;
         }
       }
-      s.drawing = false;
+      if (gen === s.gen) s.drawing = false;
     }
 
     function askPassword(update, wrong) {
@@ -164,10 +174,11 @@
     zoomIn.addEventListener("click", () => step(1));
     zoomOut.addEventListener("click", () => step(-1));
     fit.addEventListener("click", () => setZoom(fitZoom(), true));
-    window.addEventListener("resize", function onResize() {
+    function onResize() {
       if (closed) { window.removeEventListener("resize", onResize); return; }
       if (fitMode && base) setZoom(fitZoom(), true);
-    });
+    }
+    window.addEventListener("resize", onResize);
 
     (async () => {
       let pdfjs, data;
@@ -188,11 +199,14 @@
         return;
       }
       if (closed) return;
-      const first = (await doc.getPage(1)).getViewport({ scale: CSS_PER_PT });
+      let first;
+      try { first = (await doc.getPage(1)).getViewport({ scale: CSS_PER_PT }); }
+      catch (e) { fail("This PDF couldn't be shown here. Download it to open it in your own viewer."); return; }
+      if (closed) return;                                        // closed while page 1 was read
       base = { w: first.width, h: first.height };
       for (let n = 1; n <= doc.numPages; n++) {
         const el = h("div", { class: "pdf-page", dataset: { n: String(n) } });
-        slots.push({ n, el, canvas: null, w: n === 1 ? base.w : 0, hgt: n === 1 ? base.h : 0, drawn: false, drawing: false, job: null, near: false });
+        slots.push({ n, el, canvas: null, w: n === 1 ? base.w : 0, hgt: n === 1 ? base.h : 0, drawn: false, drawing: false, job: null, gen: 0, near: false });
       }
       mount(pages, slots.map((s) => s.el));
       for (const b of [zoomIn, zoomOut, fit]) b.disabled = false;

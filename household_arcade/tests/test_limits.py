@@ -112,6 +112,18 @@ class TestActiveTime(LimitsBase):
         r = self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 120})       # paused for 8 of the 10 minutes
         self.assertEqual(r.json()["playTime"]["leftSeconds"], 28 * 60)
 
+    def test_a_page_cant_report_its_time_down(self):
+        """Pauses leave out at most 15 minutes of a session: reporting 0 s for 40 minutes still counts 25."""
+        self.make_child(minutesSchool=60)
+        sid = self.start().json()["id"]
+        for _ in range(4):
+            self.clock.advance(minutes=10)
+            r = self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 0})
+        self.assertEqual(r.json()["playTime"]["leftSeconds"], 35 * 60)
+        self.clock.advance(minutes=5)
+        self.post(f"/api/sessions/{sid}/end", {"activeSeconds": 1})
+        self.assertEqual(self.left(), 30 * 60)
+
     def test_capped_by_wall_time_and_never_shrinks(self):
         self.make_child(minutesSchool=30)
         sid = self.start().json()["id"]

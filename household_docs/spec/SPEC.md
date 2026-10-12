@@ -1762,8 +1762,8 @@ in `.xlsx`; `sheetcalc.test.js`; packaging (`map` exactly `share`, port, version
   only Kids folders among the shared folders (*decision*: "only folders shared with them" — the household's
   Everyone shares can be anything); `/api/space/everyone` is empty for them. Routes in `kids.BLOCKED` answer 403
   ("This isn't available in Kids' space."): sharing (Share…, Transfer), sheet export / import / Save a copy to edit,
-  Send to chat, and every `/api/ai` route. Checked by content: no sheets (make, open, save, convert, restore, sheet
-  templates, Save as template), no regular expressions in search, `canShare` false everywhere. Allowed: notes,
+  Send to chat, and every `/api/ai` route. Checked by content: no sheets (make, open, save, convert, restore, download — the file or a kept
+  version, 403 — sheet templates, Save as template; a `.zip` leaves sheets out), no regular expressions in search, `canShare` false everywhere. Allowed: notes,
   checklists, uploads, scans, imports, tags, pins, Quick note, follows, Make a Todo list. A test walks the app's
   route table: every route must be blocked, content-checked or allowed in `kids.py`. The page leaves out ➕ New →
   Sheet / Import a sheet, Everyone, Share…, Transfer, Send to chat, AI and the regex options. Parents find each
@@ -1858,15 +1858,18 @@ with reminders on documents (Household Vault already does expiry reminders for w
   under the page's unchanged CSP (§3.3): the module and worker are `'self'`; fonts are loaded from bytes.
 - **Light on memory**: pages within about a screen and a half of the view are drawn (at the screen's pixel ratio, at
   most 3, and at most ~16 million pixels a canvas); pages far away let go of their canvas. A zoom redraws the pages
-  in view.
+  in view; each page's draw carries a number (`gen`), so only the latest one finishes the page (no duplicate
+  renders). Closing the viewer lets go of every page's canvas and removes its resize handler.
 - **Limits and messages**: over 50 MB → "too big to view here — download it instead" (a toast, nothing fetched); a
   password-protected PDF asks for the password (a wrong one asks again; RC4 and AES both work here, unlike search,
-  §17.5); a file PDF.js can't read → "isn't a PDF the viewer can read"; no access → the route's 404 text; a browser
+  §17.5); a file PDF.js can't read → "isn't a PDF the viewer can read"; a first page it can't read → "couldn't be
+  shown here" with the Download link; no access → the route's 404 text; a browser
   that can't load modules or workers → "couldn't start in this browser — download it instead".
 - **Tests**: `tests/test_pdf_view.py` (headless Chromium through Playwright, the real app and its CSP; skipped
   without it): View from the file panel draws text (standard fonts), page count and number, zoom and Fit, the last
   page after scrolling, Esc, no console errors and no CSP violations; the ⋯ action only for PDFs; a password; a
-  broken file; someone without access; the size limit. `test_js.py` parses `pdfview.js`.
+  broken file; a broken first page; closing and opening again (canvases let go, no resize listener left); quick
+  zooms; someone without access; the size limit. `test_js.py` parses `pdfview.js`.
 
 ## Security notes (2026-10)
 

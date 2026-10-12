@@ -57,6 +57,7 @@ CONNECTED_WITHIN = 6.0             # a phone that spoke in the last 6 s is "conn
 MATCH_MAX_SECONDS = 7 * 3600       # nobody plays a race longer than the longest game
 ACTIVE_WITHIN = 180                # "recently open" for the people list
 RECENT_N = 10
+RACE_SLACK_SECONDS = 3             # a "fastest" race's time may be this much under the time since it began
 
 TERMINAL = ("done", "declined", "expired", "cancelled")
 
@@ -586,6 +587,17 @@ def record_result(conn, session, score, level, seconds, won=None) -> None:
     if not mid:
         return
     ok = isinstance(score, (int, float)) and not isinstance(score, bool) and score == score
+    m = get(conn, mid)
+    game = m["game"] if m else session["game"]
+    if games.GAMES.get(game, {}).get("unfinished_zero"):
+        won = ok and score > 0          # these games score only when solved: the app decides, not the phone
+    rule = race_rule(game)
+    if rule and rule["rule"] == "fastest" and m and m["started_at"]:
+        # the shortest game wins: it can't be shorter than the time since the race (and this session) began
+        began = max(config.parse_ts(m["started_at"]), config.parse_ts(session["started_at"]))
+        least = (config.utcnow() - began).total_seconds() - RACE_SLACK_SECONDS
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds == seconds:
+            seconds = max(seconds, least, 0)
     conn.execute(
         "UPDATE match_players SET score = ?, level = ?, seconds = ?, won = ?, finished_at = ? "
         "WHERE match_id = ? AND user_id = ? AND finished_at IS NULL",

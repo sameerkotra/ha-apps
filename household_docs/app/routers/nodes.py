@@ -5,7 +5,7 @@ checked against the caller's role (sharing.py); anything they can't see is a 404
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import Field
 
-from .. import db, docops, files, notify, share_folders, sharing, tags
+from .. import db, docops, files, kids, notify, share_folders, sharing, tags
 from ..auth import require_user
 from ..store import fileio, index, moving, nodes, roots, trash
 from .common import Strict
@@ -401,5 +401,6 @@ def download(node_id: str, user: dict = Depends(require_user)):
         node, _role = sharing.require(conn, user, node_id, "viewer")
         if node["kind"] == "folder":
             raise HTTPException(422, "Folders download as a .zip.")
+        kids.refuse_sheet(user, node["kind"])          # a child gets no sheets, not even as a download (§17.20)
         _root, real = nodes.real_path(conn, node)
     return files.download_response(real, node["name"])

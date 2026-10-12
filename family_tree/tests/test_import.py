@@ -1,7 +1,7 @@
 """Importing part of another Family Tree (§13.6.3): the data file in the website export, the two-step
 import (preview, then apply), incremental re-imports that only add, matching on first import, deletions the
 admin removes or keeps, photos, undo, and the refusals."""
-from base import ADMIN, ALICE, ApiTestCase, image_bytes, reset_state, sql
+from base import ADMIN, ALICE, ApiTestCase, image_bytes, reset_state, set_app_settings, sql
 
 import io
 import json
@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import time
 import zipfile
+from unittest import mock
 
 import _env
 from app import config, db, graph, media, settings
@@ -236,6 +237,30 @@ class TestImport(ImportCase):
         # again: not duplicated
         prev = self.upload(self.export_zip())
         self.assertEqual(prev["counts"]["newMedia"], 0)
+
+    def test_an_oversized_photo_entry_is_skipped_without_reading_it(self):
+        """A deflate bomb in the website zip: the entry's uncompressed size is checked before it is read."""
+        self.a.load()
+        r = self.post(f"/api/people/{self.gpa}/photo", files={"file": ("g.jpg", image_bytes(size=(320, 240)), "image/jpeg")})
+        self.assertEqual(r.status_code, 201, r.text)
+        self.a.save()
+        src = zipfile.ZipFile(io.BytesIO(self.export_zip()))
+        data = json.loads(src.read("family-tree.json"))
+        photo = data["media"][0]["file"]
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+            for info in src.infolist():
+                z.writestr(info.filename, b"\0" * (2 * 1024 * 1024) if info.filename == photo else src.read(info.filename))
+        prev = self.upload(out.getvalue())
+        set_app_settings(max_upload_mb=1)
+        reads = []
+        orig = zipfile.ZipFile.read
+        with mock.patch.object(zipfile.ZipFile, "read", lambda z, name, *a: reads.append(name) or orig(z, name, *a)):
+            stats = self.apply(prev["token"])
+        self.assertNotIn(photo, reads)
+        self.assertEqual(stats["media"], 0)
+        self.assertTrue(any("larger than 1 MB" in s for s in stats["skipped"]), stats["skipped"])
+        self.assertEqual(stats["people"], 5)
 
     def test_refusals(self):
         zdata = self.export_zip()

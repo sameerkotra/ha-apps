@@ -44,6 +44,22 @@ def a_pdf(lines=150):
                         text="\n".join(f"Seat {i} — coach B" for i in range(lines))).output()
 
 
+def broken_first_page():
+    """A PDF that opens (a catalogue, one page counted) but whose page 1 isn't a page: getPage(1) fails."""
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>", b"42"]
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
 @unittest.skipUnless(sync_playwright, "playwright not installed")
 class PdfViewer(ApiBase):
     @classmethod
@@ -173,6 +189,55 @@ class PdfViewer(ApiBase):
         q.wait_for_selector("#pdfViewer .pdf-message", timeout=20000)
         self.assertNotIn("canvas", q.inner_html("#pdfPages"))
         self.assertEqual(q.evaluate("document.querySelectorAll('.pdf-page canvas').length"), 0)
+
+    def test_closing_lets_go_of_everything_and_it_opens_again(self):
+        f = self.upload("Tickets.pdf", a_pdf())
+        p = self.open_page()
+        # count the window's resize listeners, and keep hold of every canvas the viewer makes
+        p.evaluate("""() => { window.__resize = 0; window.__canvases = [];
+          const add = window.addEventListener, rem = window.removeEventListener, mk = document.createElement;
+          window.addEventListener = function (t, ...a) { if (t === 'resize') window.__resize++; return add.call(this, t, ...a); };
+          window.removeEventListener = function (t, ...a) { if (t === 'resize') window.__resize--; return rem.call(this, t, ...a); };
+          document.createElement = function (tag, ...a) { const e = mk.call(this, tag, ...a);
+            if (String(tag).toLowerCase() === 'canvas') window.__canvases.push(e); return e; }; }""")
+        before = p.evaluate("window.__resize")
+        for _ in range(2):                                                # closed, then opened again
+            p.evaluate("(it) => Docs.viewPdf(it)", f)
+            p.wait_for_selector("#pdfViewer .pdf-page canvas", timeout=20000)
+            self.until(p, "(" + self.INK + ")() > 500")
+            self.assertEqual(p.evaluate("window.__resize"), before + 1)
+            p.keyboard.press("Escape")
+            self.until(p, "!document.querySelector('#pdfViewer')")
+            self.assertEqual(p.evaluate("window.__resize"), before)       # no resize listener left behind
+            # every page's canvas let go (PDF.js's own scratch canvases aren't the viewer's)
+            self.assertEqual(p.evaluate("window.__canvases.filter((c) => c.className === 'pdf-canvas' && c.width > 0).length"), 0)
+        self.assertEqual(self.problems, [])
+
+    def test_quick_zooms_leave_one_drawing_a_page(self):
+        f = self.upload("Tickets.pdf", a_pdf())
+        p = self.open_page()
+        p.evaluate("""() => { window.__canvases = []; const mk = document.createElement;
+          document.createElement = function (tag, ...a) { const e = mk.call(this, tag, ...a);
+            if (String(tag).toLowerCase() === 'canvas') window.__canvases.push(e); return e; }; }""")
+        p.evaluate("(it) => Docs.viewPdf(it)", f)
+        p.wait_for_selector("#pdfViewer .pdf-page canvas", timeout=20000)
+        for key in "++-+-+":                                            # each one starts new draws before the last end
+            p.keyboard.press(key)
+        time.sleep(1.5)
+        self.until(p, "(" + self.INK + ")() > 500")
+        # each page shows at most one canvas, and no stale drawing kept its canvas's memory
+        self.assertEqual(p.evaluate("Math.max(...[...document.querySelectorAll('.pdf-page')].map((e) => e.querySelectorAll('canvas').length))"), 1)
+        self.assertEqual(p.evaluate("window.__canvases.filter((c) => c.className === 'pdf-canvas' && c.width > 0 && !c.isConnected).length"), 0)
+        self.assertEqual(self.problems, [])
+
+    def test_a_broken_first_page_says_so(self):
+        f = self.upload("Odd.pdf", broken_first_page())
+        p = self.open_page()
+        p.evaluate("(it) => Docs.viewPdf(it)", f)
+        p.wait_for_selector("#pdfViewer .pdf-message", timeout=20000)
+        self.assertIn("couldn't be shown here", p.inner_text("#pdfPages"))
+        self.assertTrue(p.evaluate("!!document.querySelector('#pdfPages .pdf-message a[download]')"))   # the Download link
+        self.assertEqual(p.evaluate("document.querySelectorAll('#pdfPages .spinner, #pdfPages .pdf-page').length"), 0)
 
     def test_too_big_downloads_instead(self):
         p = self.open_page()

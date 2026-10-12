@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.1
+
+- **Safer import of another tree's website zip**: each photo in the zip is now checked against the upload limit (Admin → App settings) before it's unpacked, so a file that would unpack to something huge is skipped with a note instead of filling the memory.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 2.6.0
 
 - **GEDCOM**: Export → **⬇ GEDCOM file** gives the same people, with the same choices as the website (living people, places, stories …), as a `.ged` file other genealogy programs open (GEDCOM 5.5.1, no photos). Admin → Import now also takes a `.ged` (or `.gdz`) from another program: names (with maiden and other names), sex, births, deaths, marriages and other events with dates and places, notes, parents and children (adopted, step, foster) come in after the usual preview, as one step History can undo; importing a newer copy of the same file later only adds what's new.

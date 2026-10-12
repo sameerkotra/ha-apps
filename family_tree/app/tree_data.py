@@ -23,7 +23,7 @@ import os
 import re
 import zipfile
 
-from . import config, db, dates, media, names
+from . import config, db, dates, media, names, settings
 from .models import FAMILY_EVENT_TYPES, FAMILY_KINDS, GENDERS, OTHER_NAME_TYPES, PERSON_EVENT_TYPES, RELATIONS
 
 FORMAT = "family-tree-export"
@@ -681,6 +681,11 @@ def _import_media(conn, b, src, data, zpath, pmap, fmap, user_id, stats) -> int:
             lid = _link(conn, src, "media", m["id"])
             if not (lid and _alive_local(conn, "media", lid)):
                 if m["file"] not in names_in:
+                    continue
+                # Check the uncompressed size before reading: a tiny deflate entry can expand to gigabytes.
+                limit_mb = settings.get("max_upload_mb")
+                if z.getinfo(m["file"]).file_size > limit_mb * 1024 * 1024:
+                    stats["skipped"].append(f"A photo wasn't imported: {media.too_large_message(limit_mb)}")
                     continue
                 raw = z.read(m["file"])
                 try:

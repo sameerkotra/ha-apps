@@ -559,9 +559,7 @@
         onTick: doc.canEdit ? (line) => { ta.value = DocsMd.toggleTask(ta.value, line); changed(); drawPreview(); } : null,
         images: true,
       }));
-      for (const im of preview.querySelectorAll("img.md-pic")) {          // a picture this person can't see, or gone
-        im.addEventListener("error", () => im.replaceWith(h("span", { class: "md-img", title: "This picture can't be shown — it was deleted or isn't shared with you." }, "🖼 " + (im.alt || "picture"))), { once: true });
-      }
+      // (a picture that can't be shown turns into "🖼 name": md.js wires that when it makes the <img>)
       if (!ta.value.trim()) preview.appendChild(h("p", { class: "hint" }, "Nothing here yet."));
     }
     const box = h("div", { class: "editor-card note-box mode-" + mode, id: "noteBox" }, ta, isMd ? preview : null);

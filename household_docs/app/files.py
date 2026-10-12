@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 from fastapi import HTTPException
 
-from . import config, db, docops, settings, sharing
+from . import config, db, docops, kids, settings, sharing
 from .store import fileio, kinds, marker, nodes, paths, roots, versions
 
 PREVIEW_MAX = 25 * 1024 * 1024
@@ -220,8 +220,9 @@ def safe_part(name: str) -> str:
     return t
 
 
-def _walk_folder(base_real: str, folder_real: str, prefix: str, out: list, totals: dict) -> None:
-    """Every file under folder_real (hidden entries and links left out), each realpath-checked inside the root."""
+def _walk_folder(base_real: str, folder_real: str, prefix: str, out: list, totals: dict, no_sheets: bool = False) -> None:
+    """Every file under folder_real (hidden entries and links left out), each realpath-checked inside the root;
+    with no_sheets (a child, §17.20), sheets left out too."""
     stack = [(folder_real, prefix, 0)]
     while stack:
         real, arc, depth = stack.pop()
@@ -242,6 +243,8 @@ def _walk_folder(base_real: str, folder_real: str, prefix: str, out: list, total
                         stack.append((e.path, arc + "/" + safe_part(e.name), depth + 1))
                     continue
                 if not e.is_file(follow_symlinks=False):
+                    continue
+                if no_sheets and _is_sheet_name(e.name):
                     continue
                 st = e.stat(follow_symlinks=False)
             except OSError:
@@ -270,6 +273,8 @@ def _index_entries(conn, user: dict, root, base_real: str, folder, prefix: str, 
                             (root["id"], len(folder["rel"]) + 1, folder["rel"] + "/")).fetchall()
         cut = len(folder["rel"]) + 1
     for r in sorted(rows, key=lambda x: x["rel"]):
+        if r["kind"] == "sheet" and kids.is_child(user):        # a child gets no sheets (§17.20)
+            continue
         if sharing.role_of(conn, user, r) is None:
             continue
         try:
@@ -282,6 +287,10 @@ def _index_entries(conn, user: dict, root, base_real: str, folder, prefix: str, 
             continue
         arc = prefix + "/" + "/".join(safe_part(p) for p in r["rel"][cut:].split("/"))
         _add(out, totals, real, arc, st)
+
+
+def _is_sheet_name(name: str) -> bool:
+    return paths.split_ext(name)[1].lower() in kinds.get("sheet").exts
 
 
 def _add(out, totals, real, arc, st) -> None:
@@ -310,8 +319,10 @@ def _unique_arc(name: str, taken: set) -> str:
 
 def zip_plan(conn, user: dict, refs: list[str]) -> tuple[list, str]:
     """What a .zip will hold — [(real path, name inside, size, mtime)] — and its file name. Every item is
-    checked for the person first (404 for anything they can't open)."""
+    checked for the person first (404 for anything they can't open). A child's .zip leaves sheets out, and a sheet
+    asked for by itself is refused (403, §17.20)."""
     out, totals, taken = [], {"files": 0, "bytes": 0}, set()
+    child = kids.is_child(user)
     names = []
     for ref in refs:
         if ref.startswith(docops.ROOT_REF) or not ref:
@@ -323,9 +334,10 @@ def zip_plan(conn, user: dict, refs: list[str]) -> tuple[list, str]:
             if _parent_view(conn, user, root):
                 _index_entries(conn, user, root, base, None, top, out, totals)
             else:
-                _walk_folder(base, base, top, out, totals)
+                _walk_folder(base, base, top, out, totals, no_sheets=child)
             continue
         node, _role = sharing.require(conn, user, ref, "viewer")
+        kids.refuse_sheet(user, node["kind"])
         root, real = nodes.real_path(conn, node)
         base = roots.root_real(root)
         names.append(node["name"])
@@ -336,7 +348,7 @@ def zip_plan(conn, user: dict, refs: list[str]) -> tuple[list, str]:
             if _parent_view(conn, user, root):
                 _index_entries(conn, user, root, base, node, top, out, totals)
             else:
-                _walk_folder(base, real, top, out, totals)
+                _walk_folder(base, real, top, out, totals, no_sheets=child)
         else:
             try:
                 st = os.lstat(real)

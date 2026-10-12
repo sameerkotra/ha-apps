@@ -474,6 +474,34 @@ class TestSessionsAndResults(Together):
             else:
                 games.GAMES["racer"]["race"] = old
 
+    def test_a_race_session_cant_be_put_aside(self):
+        mid = self.new_match()
+        sid = self.session(mid, KABIR).json()["id"]
+        self.clock.advance(seconds=30)
+        r = self.post(f"/api/sessions/{sid}/save", {"state": {}, "stateVersion": 1, "score": 50, "level": 1, "seconds": 20},
+                      KABIR)
+        self.assertEqual(r.status_code, 409, r.text)
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM saved_games").fetchone()[0], 0)
+
+    def test_a_fastest_race_decides_solved_and_time_itself(self):
+        # Lights Out scores only when solved: a claimed win with a score of 0 isn't a win
+        mid = self.new_match(game="lights", mode="classic")
+        self.finish(mid, KABIR, 0, seconds=30, game="lights", won=True)
+        self.finish(mid, MEERA, 9000, seconds=60, game="lights", won=False)
+        m = self.match(mid)
+        self.assertEqual(m["winner"], "u_meera")
+        self.assertEqual({p["id"]: p["won"] for p in m["players"]}, {"u_kabir": False, "u_meera": True})
+        # a time shorter than the race really took counts as the time since it began
+        mid = self.new_match(game="lights", mode="classic")
+        self.finish(mid, KABIR, 9000, seconds=60, game="lights")
+        sid = self.session(mid, MEERA, "lights").json()["id"]
+        self.clock.advance(seconds=100)
+        self.post("/api/scores", {"sessionId": sid, "score": 9000, "level": 1, "seconds": 5, "won": True}, MEERA)
+        m = self.match(mid)
+        self.assertEqual(m["winner"], "u_kabir")
+        self.assertGreaterEqual(next(p for p in m["players"] if p["id"] == "u_meera")["seconds"], 97)
+
     def test_decide_rules(self):
         p = lambda uid, score, seconds, won=False: {"user_id": uid, "score": score, "seconds": seconds, "won": won}
         games.GAMES["racer"]["race"] = {"rule": "score", "tiebreak": "faster"}

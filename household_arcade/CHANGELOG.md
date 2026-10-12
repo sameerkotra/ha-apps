@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12.3
+
+- **Fair play with someone**: a game played with someone (a race or a turn-by-turn game) can no longer be put aside with **Save for later** — saving one and then ending the save could put a made-up score on the leaderboard and announce a household record.
+- **Races of the "solve it first" puzzles** (Slide Puzzle, Lights Out, Car Park, Colour Sort, Bolt Sort …): the app now decides who solved the puzzle from the score, not from what the phone says, and a time can't be shorter than the race really took.
+- **Children's play time**: the time counted for a game is at least the time it was open less 15 minutes of pauses, so a page can't report its time down; a game left paused for longer counts again.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; AI requests (building levels) never follow a redirect; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 1.12.2
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

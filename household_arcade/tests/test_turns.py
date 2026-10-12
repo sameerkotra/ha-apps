@@ -176,6 +176,20 @@ class TestMoves(Turns):
         self.assertEqual(self.move(mid, {"cell": 5}, second).status_code, 409)               # it's over
         self.assertEqual(self.post("/api/sessions", {"game": "tictactoe", "matchId": mid}, first).status_code, 409)
 
+    def test_a_match_session_cant_be_put_aside_to_make_a_score(self):
+        """The exploit: save a turn-by-turn match's session with a made-up score, then end the save keeping the score."""
+        mid = self.new_match(game="chess")
+        sess = self.post("/api/sessions", {"game": "chess", "matchId": mid}, KABIR).json()
+        self.clock.advance(minutes=5)
+        r = self.post(f"/api/sessions/{sess['id']}/save", {"state": {"board": []}, "stateVersion": 1, "score": 900,
+                                                             "level": 1, "seconds": 200}, KABIR)
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertEqual(self.delete("/api/saved/chess?keepScore=true", KABIR).status_code, 404)
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM scores").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM saved_games").fetchone()[0], 0)
+            self.assertIsNone(conn.execute("SELECT ended_at FROM play_sessions WHERE id = ?", (sess["id"],)).fetchone()[0])
+
     def test_practice_keeps_no_score(self):
         mid = self.new_match(practice=True)
         first, _ = self.mover(mid)

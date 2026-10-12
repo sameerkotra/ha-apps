@@ -8,9 +8,10 @@ A game on screen is a *play session*:
     POST /api/sessions/{id}/end     a game left without a result (quit, page closed)
     POST /api/scores                the result of a finished game (also ends the session)
 
-Active seconds only ever grow and are capped by the wall time since the
-session started, so a child's play time can't be talked down and a score
-can't claim more time than really passed. Sessions the browser never ended are
+Active seconds only ever grow, are capped by the wall time since the
+session started and are at least that wall time less 15 minutes of pauses,
+so a child's play time can't be talked down and a score can't claim more
+time than really passed. Sessions the browser never ended are
 closed by housekeeping.
 """
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
@@ -140,13 +141,9 @@ def _wall(row) -> float:
 
 
 def _active(row, reported) -> float:
-    """New active seconds: never less than before, never more than the wall
-    time since the session started."""
-    if isinstance(reported, bool) or not isinstance(reported, (int, float)) or reported != reported:
-        reported = row["active_seconds"]
-    started = config.parse_ts(row["started_at"])
-    wall = max(0.0, (config.utcnow() - started).total_seconds()) + WALL_SLACK_SECONDS
-    return round(max(row["active_seconds"], min(float(reported), wall)), 1)
+    """New active seconds: never less than before, never more than the wall time since the session started, and
+    never less than that wall time less the pauses a session may leave out (limits.credited_seconds)."""
+    return limits.credited_seconds(row, reported)
 
 
 def _status_json(conn, current: dict) -> dict:
@@ -455,6 +452,8 @@ def save_game(session_id: str, background: BackgroundTasks, body: dict = Body(..
             raise HTTPException(409, "That game has already ended.")
         if row["daily"]:
             raise HTTPException(409, "A daily challenge can't be put aside: finish it, or play it as Practice to take your time.")
+        if row["match_id"]:
+            raise HTTPException(409, "A game played with someone can't be put aside: finish it, or leave the match.")
         set_id = levels.mode_info(row["game"], row["mode"])["set"]
         levels_json = None
         if set_id and not row["resumed"]:

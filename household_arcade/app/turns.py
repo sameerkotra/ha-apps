@@ -263,7 +263,7 @@ def _computer_moves(conn, m, st: dict) -> dict:
 
 def _session_time(conn, match_id: str, user_id: str, session_id, reported) -> None:
     """A move carries the page's active seconds so far (as a heartbeat does), so a match that ends with this move has
-    the mover's time up to now. Only grows, never more than the wall time since the session began."""
+    the mover's time up to now. Counted as a heartbeat's is (limits.credited_seconds)."""
     if not isinstance(session_id, str) or isinstance(reported, bool) or not isinstance(reported, (int, float)) \
             or reported != reported:
         return
@@ -271,8 +271,7 @@ def _session_time(conn, match_id: str, user_id: str, session_id, reported) -> No
                        (session_id, user_id, match_id)).fetchone()
     if not row:
         return
-    wall = max(0.0, (config.utcnow() - config.parse_ts(row["started_at"])).total_seconds()) + 2
-    active = round(max(row["active_seconds"], min(float(reported), wall)), 1)
+    active = limits.credited_seconds(row, reported)
     conn.execute("UPDATE play_sessions SET active_seconds = ?, last_beat_at = ? WHERE id = ?", (active, _now_iso(), session_id))
 
 
