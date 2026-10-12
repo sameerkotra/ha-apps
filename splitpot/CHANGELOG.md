@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.1
+
+- **Load more shows the balances too**: with **Show each person's balance** ticked, the rows added by **Load more**
+  now show everyone's balance under them, like the first page.
+- **Settle-up rows fit on phones**: the "Ann → Ben $20.00 Record payment" rows no longer spill past the edge of the
+  screen; on a phone, **Record payment** sits on its own line under the names and amount.
+
 ## 2.6.0
 
 - **Each person's balance on every ledger entry**: tick **Show each person's balance** above a group's ledger to see,

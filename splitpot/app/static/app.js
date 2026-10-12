@@ -931,20 +931,24 @@ function runningBalances(e) {
     }));
 }
 
+// A ledger row plus, when the toggle is on, everyone's balance just after it. Every path that draws ledger rows
+// (the first page, Load more) goes through here.
+function ledgerRow(e) {
+  const row = expenseRow(e);
+  if (state.showRunning) {
+    const bal = runningBalances(e);
+    if (bal) row.querySelector('.row-main').append(bal);
+  }
+  return row;
+}
+
 function renderExpenseList() {
   const list = $('#expenseList');
   const g = state.currentGroup;
   if (g.expenses.length === 0) {
     UI.mount(list, UI.h('li', { class: 'empty-note' }, 'No expenses logged yet.'));
   } else {
-    UI.mount(list, g.expenses.map((e) => {
-      const row = expenseRow(e);
-      if (state.showRunning) {
-        const bal = runningBalances(e);
-        if (bal) row.querySelector('.row-main').append(bal);
-      }
-      return row;
-    }));
+    UI.mount(list, g.expenses.map(ledgerRow));
   }
   renderLedgerMore();
 }
@@ -982,7 +986,7 @@ async function loadMoreLedger() {
     const list = $('#expenseList');
     if (fresh.length) {
       if (list.querySelector('.empty-note')) list.replaceChildren();
-      fresh.forEach((e) => list.appendChild(expenseRow(e)));
+      fresh.forEach((e) => list.appendChild(ledgerRow(e)));
     }
   } catch (err) {
     alert(err.message);
