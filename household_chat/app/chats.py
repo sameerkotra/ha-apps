@@ -786,6 +786,8 @@ def remove_member(conn, out: Outbox, conv, uid: str, how: str, actor: str | None
         hand_over(conn, out, conv)
     out.event([uid], "conversation", {"id": conv["id"], "removed": True})
     conversation_members_event(conn, out, conv)
+    from . import calls
+    out.job(calls.end_for_user, uid, "failed", conv["id"])      # no longer in the group: not in its call either
 
 
 # ---------- posting ----------

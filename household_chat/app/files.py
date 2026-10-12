@@ -796,7 +796,7 @@ def move_folder_to_deleted(folder: str) -> None:
 
 def copy_into(att, conv) -> dict | None:
     """Copy a file into another chat's folder (forwarding). → new attachment fields, or None if it's gone.
-    Runs inside the caller's transaction, so no re-check here (check() may write through its own connection)."""
+    Called with no database connection held (forwarding checks the folder's limit before), so no re-check here."""
     share_root()
     try:
         src = resolve(att["rel_path"])

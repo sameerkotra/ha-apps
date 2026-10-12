@@ -81,12 +81,15 @@ class TestAttaching(TaskFilesBase):
         self.assertTrue(os.path.isfile(os.path.join(self.task_dir(t), "ticket.pdf")))
         self.assertEqual(self.attach(t).json()["name"], "ticket (2).pdf")
         self.assertEqual(self.task_json(t)["fileCount"], 2)
-        # open: inline, sandboxed; ?download=1 saves it
+        # open: inline, with no sandbox for a PDF (Chrome's viewer won't show a sandboxed one); ?download=1 saves it
         r = self.get(f"/api/tasks/{t['id']}/files/{f['id']}")
-        self.assertEqual((r.status_code, r.content, r.headers["content-security-policy"]), (200, PDF, "sandbox"))
+        self.assertEqual((r.status_code, r.content), (200, PDF))
+        self.assertNotIn("content-security-policy", r.headers)
+        self.assertEqual(r.headers["x-content-type-options"], "nosniff")
         self.assertTrue(r.headers["content-disposition"].startswith("inline"))
         r = self.get(f"/api/tasks/{t['id']}/files/{f['id']}?download=1")
         self.assertTrue(r.headers["content-disposition"].startswith("attachment"))
+        self.assertEqual(r.headers["content-security-policy"], "sandbox")
         # rename: in the folder too, the extension stays
         r = self.patch(f"/api/tasks/{t['id']}/files/{f['id']}", {"name": "Concert ticket"})
         self.assertEqual(r.json()["name"], "Concert ticket.pdf")
@@ -157,6 +160,64 @@ class TestAttaching(TaskFilesBase):
         self.tick(job)
         self.assertEqual(self.names(job), ["receipt.pdf", "photo.jpg"])         # both kept
         self.assertEqual(old["name"], "photo.jpg")
+
+
+class TestWhatAFileIs(TaskFilesBase):
+    """The stored type comes from the file's bytes: only a real PDF is shown without the sandbox, only real
+    pictures are pictures; a rename never changes the type; an oversized upload is refused before it's read."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_folder()
+        self.t = self.add("Concert", list_id=self.mine_id())
+
+    def open(self, f, q=""):
+        return self.get(f"/api/tasks/{self.t['id']}/files/{f['id']}{q}")
+
+    def test_only_a_real_pdf_is_shown_unsandboxed(self):
+        fake = self.attach(self.t, "ticket.pdf", b"<html><script>alert(1)</script>").json()
+        self.assertEqual(fake["mime"], "application/octet-stream")
+        r = self.open(fake)
+        self.assertTrue(r.headers["content-disposition"].startswith("attachment"))
+        self.assertEqual(r.headers["content-security-policy"], "sandbox")
+        with db.get_conn() as conn:
+            self.assertIsNone(task_files.the_ticket(conn, self.t["id"]))      # not a ticket for *Open ticket*
+        real = self.attach(self.t, "scan", PDF).json()                 # no extension, but a PDF
+        self.assertEqual(real["mime"], "application/pdf")
+        r = self.open(real)
+        self.assertTrue(r.headers["content-disposition"].startswith("inline"))
+        self.assertNotIn("content-security-policy", r.headers)
+
+    def test_pictures_are_checked_with_pillow(self):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (4, 4), "red").save(buf, "PNG")
+        png = self.attach(self.t, "photo.jpg", buf.getvalue()).json()   # named .jpg, really a PNG
+        self.assertEqual((png["mime"], png["thumb"]), ("image/png", True))
+        self.assertEqual(self.open(png).headers["content-security-policy"], "sandbox")
+        fake = self.attach(self.t, "map.png", b"not really a png").json()
+        self.assertEqual((fake["mime"], fake["thumb"]), ("application/octet-stream", False))
+        self.assertTrue(self.open(fake).headers["content-disposition"].startswith("attachment"))
+        doc = self.attach(self.t, "notes.txt", b"bring the tickets").json()
+        self.assertEqual(doc["mime"], "text/plain")
+
+    def test_renaming_keeps_the_type(self):
+        f = self.attach(self.t, "ticket", b"<html>hello</html>").json()
+        self.assertEqual(f["mime"], "application/octet-stream")
+        r = self.patch(f"/api/tasks/{self.t['id']}/files/{f['id']}", {"name": "ticket.pdf"})
+        self.assertEqual((r.json()["name"], r.json()["mime"]), ("ticket.pdf", "application/octet-stream"))
+        r = self.open(f)
+        self.assertTrue(r.headers["content-disposition"].startswith("attachment"))
+        self.assertEqual(r.headers["content-security-policy"], "sandbox")
+
+    def test_too_big_is_refused_before_reading(self):
+        too_big = str(maint_files.MAX_BYTES + maint_files.UPLOAD_OVERHEAD + 1)
+        for url in (f"/api/tasks/{self.t['id']}/files", "/api/maintenance/files?task_id=x"):
+            r = self.c.post(url, content=b"x", headers={**ALICE, "content-length": too_big,
+                                                        "content-type": "multipart/form-data; boundary=b"})
+            self.assertEqual(r.status_code, 413, url)
+            self.assertIn("25 MB", r.json()["detail"])
+        self.assertEqual(self.names(self.t), [])
 
 
 class TestDoneAndUndo(TaskFilesBase):

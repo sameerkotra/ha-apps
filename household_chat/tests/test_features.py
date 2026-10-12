@@ -309,6 +309,9 @@ class ExportTests(ApiTestCase):
         g = self.ok(self.post("/api/conversations", {"name": "Private"}, NISHA), 201)["id"]
         self.assertEqual(self.get(f"/api/conversations/{g}/export", ADMIN).status_code, 404)
         self.assertEqual(self.get(f"/api/conversations/{hh}/export?from=yesterday", TARUN).status_code, 422)
+        # the right shape but no such day: refused, not a server error
+        for q in ("from=2026-02-30", "to=2026-13-01"):
+            self.assertEqual(self.get(f"/api/conversations/{hh}/export?{q}", TARUN).status_code, 422, q)
         self.assertEqual(sql("SELECT action FROM audit_log WHERE action = 'exported'")[0]["action"], "exported")
 
 

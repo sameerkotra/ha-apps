@@ -1,3 +1,4 @@
+import os
 from datetime import timedelta
 
 from base import ADMIN, LEELA, NISHA, TARUN, ApiTestCase, sql
@@ -137,6 +138,27 @@ class MessageTests(ApiTestCase):
         got = self.ok(self.get(f"/api/conversations/{room}/messages", NISHA))["messages"][-1]
         self.assertEqual(got["kind"], "text")
         self.assertEqual(got["body"], "📊 When?\n- Sat\n- Sun")
+
+    def test_forward_counts_every_copy_against_the_folder_limit(self):
+        g = self.ok(self.post("/api/conversations", {"name": "Bills", "memberIds": [TARUN["id"]]}, NISHA), 201)["id"]
+        up = self.ok(self.upload(g, "bill.pdf", b"%PDF-1.4 bill", NISHA), 201)
+        m = self.send(g, "bill", NISHA, attachmentIds=[up["id"]])
+        size = sql("SELECT size FROM attachments WHERE id = ?", (up["id"],))[0]["size"]
+        # just room for one more copy, not two: forwarding to two chats is refused and leaves nothing behind
+        used = sql("SELECT COALESCE(SUM(size), 0) AS n FROM attachments")[0]["n"]
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO attachments (id, conversation_id, rel_path, original_name, mime, size, sha256, created_at) "
+                         "VALUES ('big', ?, 'x', 'x', 'x', ?, '', ?)", (g, 1024 ** 3 - used - size, config.now_iso()))
+        self.ok(self.put("/api/admin/settings", {"share_folder_quota_gb": 1}))
+        targets = [self.personal(NISHA), self.hh]
+        before = sum(len(fs) for _, _, fs in os.walk(config.SHARE_DIR))
+        r = self.post("/api/messages/forward", {"messageIds": [m["id"]], "conversationIds": targets}, NISHA)
+        self.assertEqual(r.status_code, 507)
+        self.assertEqual(sum(len(fs) for _, _, fs in os.walk(config.SHARE_DIR)), before)
+        self.assertFalse(any(x.get("forwarded") for x in
+                             self.ok(self.get(f"/api/conversations/{self.hh}/messages", NISHA))["messages"]))
+        # one copy fits
+        self.ok(self.post("/api/messages/forward", {"messageIds": [m["id"]], "conversationIds": targets[:1]}, NISHA))
 
     def test_stars_and_reminders(self):
         m = self.send(self.hh, "Electricity bill due Friday", NISHA)

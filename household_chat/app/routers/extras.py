@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
@@ -170,6 +171,11 @@ def export(cid: str, date_from: str | None = Query(default=None, alias="from"), 
     for d in (date_from, date_to):
         if d and not DATE_RE.match(d):
             raise HTTPException(422, "Dates look like 2026-09-28.")
+        if d:
+            try:
+                datetime.strptime(d, "%Y-%m-%d")        # the shape isn't enough: 2026-02-30 isn't a day
+            except ValueError:
+                raise HTTPException(422, "That isn't a date on the calendar.")
     path, name = exporter.build(cid, user, date_from, date_to)
     return FileResponse(path, media_type="application/zip", filename=name, background=BackgroundTask(os.remove, path))
 

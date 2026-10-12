@@ -1,8 +1,16 @@
 # Changelog
 
+## 2.7.1
+
+- **Open ticket shows the PDF in Chrome**: a ticket opened from the reminder (or a PDF opened from a task or a Maintenance job) now shows in Chrome's PDF viewer instead of a blank page.
+- **A file is what's in it**: a file named `.pdf` or `.jpg` that isn't really a PDF or a picture is now offered as a download instead of being shown, and a real PDF or photo is recognised even without the right extension. Renaming a file no longer changes what kind of file it is.
+- **Too-big files are refused straight away**: a file over 25 MB is turned down at once, instead of after the app has received all of it.
+- Files on a task on your personal list are private to you — and to an admin acting as you, who can see that list anyway.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 2.7.0
 
-- **Files on tasks (tickets)**: attach a concert ticket, a boarding pass, a booking confirmation or a photo to any task — **Edit task → Files → + Attach** (or drop them; a phone can take a photo). Up to 10 files per task, 25 MB each, kept in the files folder (`Tasks/<task>/`); the task row shows 📎 and how many. Only people who can see the task can open them, so a task on your personal list keeps its files private.
+- **Files on tasks (tickets)**: attach a concert ticket, a boarding pass, a booking confirmation or a photo to any task — **Edit task → Files → + Attach** (or drop them; a phone can take a photo). Up to 10 files per task, 25 MB each, kept in the files folder (`Tasks/<task>/`); the task row shows 📎 and how many. Only people who can see the task can open them, so a task on your personal list keeps its files private to you (and to an admin acting as you).
 - **Gone when it's done**: ticking a task off removes its files — unless **Keep after done** is on for a file — and unticking it within 30 days brings them back. Deleting a task (or its list) removes all its files; the folder keeps them in `_deleted` for 30 days. With the folder not connected, the files move once it's back.
 - **Open ticket**: a task's reminder (and "Remind me at") for a task with exactly one PDF has an **Open ticket** button, which opens the file in the app with **Open** and **Download**.
 - The Household Assistant mentions how many files a task has ("Flight (today, 2 files attached)"); it never reads or sends them.

@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.0"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.1"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -106,7 +106,7 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 ## 4. Security, identity & admin
 
 - **Ingress-only, enforced.** The `require_ha_ingress_auth` middleware (`auth_core.refuse_outsiders`) returns 403 unless `request.client.host` is in `auth_core.INGRESS_HOSTS` (`{172.30.32.2, 127.0.0.1, ::1}`, shared `app/common/auth_core.py`). That check is what makes the headers trustworthy, since sibling apps share the Docker network. `X-Ingress-Path` is not required. `/api/health` needs no user but is still IP-gated.
-- **Security headers** (`web_security.SecurityHeaders(CSP, pragma=True).install(app)`, policy `CSP` in `main.py`): every response gets `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` (no inline scripts, handlers or style attributes) and `X-Content-Type-Options: nosniff`. A maintenance file sets its own policy (`sandbox`), which is kept.
+- **Security headers** (`web_security.SecurityHeaders(CSP, pragma=True, csp_skip=web_security.is_pdf).install(app)`, policy `CSP` in `main.py`): every response gets `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` (no inline scripts, handlers or style attributes) and `X-Content-Type-Options: nosniff`. A stored file sets its own policy (`sandbox`), which is kept; a PDF response gets none (`csp_skip=web_security.is_pdf`), so Chrome's PDF viewer can show it.
 - **Identity** (`get_current_user`).
   - `X-Remote-User-Id` is required; without it the request gets a 401 ("Open Household Todo from its panel…"). There is **no** dev-user fallback.
   - `username` comes from `X-Remote-User-Name`; the display name from `X-Remote-User-Display-Name`, else the login, else "Home Assistant User". Both are upserted on every request.
@@ -667,7 +667,7 @@ Recipients per item = custom list or `maintenance_recipients` (+ assignee), filt
 `GET /api/calendar` returns `maintenance` (param `maintenance=0` omits it): per item the real due date (overdue shows on today, status overdue/due/upcoming) and projected later ones (`projected: true`) in range, filtered by `assignee` like schedule items.
 
 ### 14.5 Files (`maint_files.py`)
-`maintenance_files_path` ("" = off) must be inside `SHARE_ROOT` (/share), no `.`/`..`. `.household_todo_store` marker = `maint_files_store_id` (app_settings, not an App setting). Saving a new path runs `inspect` (refused: other install / missing parent / read-only → 409; files already attached or a non-empty folder → 409 unless `confirm`) then `check(allow_setup=True)`. `check()` at start-up and every 5 minutes; requests re-check an offline folder at most every 30 s; 503 with the reason while offline. Owners: item, done record or task (§17; a job is a task in the list). Names cleaned for Samba, duplicates get " (2)"; ≤25 MB (413), empty → 422; JPEG/PNG/WebP/GIF get a 320 px `_thumbs` preview. Downloads: images/PDF/text inline, others attachment, `CSP: sandbox`, `nosniff`. Deletes move to `_deleted/<date>/…` (housekeeping empties dated folders older than 30 days); purged tasks' file rows are dropped, their kept files stay. Renames reconcile item folders when online. A DB restore keeps the current path and store id.
+`maintenance_files_path` ("" = off) must be inside `SHARE_ROOT` (/share), no `.`/`..`. `.household_todo_store` marker = `maint_files_store_id` (app_settings, not an App setting). Saving a new path runs `inspect` (refused: other install / missing parent / read-only → 409; files already attached or a non-empty folder → 409 unless `confirm`) then `check(allow_setup=True)`. `check()` at start-up and every 5 minutes; requests re-check an offline folder at most every 30 s; 503 with the reason while offline. Owners: item, done record or task (§17; a job is a task in the list). Names cleaned for Samba, duplicates get " (2)"; ≤25 MB (413), empty → 422; JPEG/PNG/WebP/GIF get a 320 px `_thumbs` preview. The stored `mime` comes from the bytes (`maint_files.sniff`): a file starting `%PDF-` is `application/pdf`, an image Pillow opens as PNG/JPEG/GIF/WebP gets that type, a file *named* like a PDF or image that isn't one is `application/octet-stream`, anything else goes by extension; a rename never changes it. An upload whose `Content-Length` is over 25 MB + 1 MB (multipart overhead) is refused with 413 by the middleware before its body is read. Downloads: images/PDF/text inline, others attachment, `nosniff`, `CSP: sandbox` — except a PDF shown inline, which has no CSP at all (Chrome's PDF viewer won't render a sandboxed one; the app-wide policy skips PDFs via `web_security.is_pdf`) (`maint_files.serve_headers`). Deletes move to `_deleted/<date>/…` (housekeeping empties dated folders older than 30 days); purged tasks' file rows are dropped, their kept files stay. Renames reconcile item folders when online. A DB restore keeps the current path and store id.
 
 ### 14.6 API
 `GET /api/maintenance` (items, jobs, files status, overdueCount, currency); `POST/PATCH/DELETE /api/maintenance/items[/{id}]`; `POST …/{id}/done|undo|snooze`; `GET /api/maintenance/history[.csv]?year&category&item` (the CSV, written by `app/common/csv_export.py` with a UTF-8 BOM: Date, Item, Category, Done by, Note, Cost, Was due, Files; **formula guard**: the Item, Category, Done by, Note and Files cells starting with `=` `+` `-` `@` (or tab/CR) get a leading `'` — new; Date, Cost and Was due unchanged); `GET /api/maintenance/suggestions`; `PUT/DELETE /api/maintenance/suggestions/{key}/hidden`; `POST /api/maintenance/files?item_id|done_id|task_id`, `GET /api/maintenance/files?task_id`, `GET|DELETE /api/maintenance/files/{id}[?thumb=1]`. Admin: `GET/PUT /api/admin/maintenance` ({enabled, recipients, profile, sensor}), `POST/PATCH/DELETE /api/admin/maintenance/suggestions[/{id}]`, `POST /api/admin/settings/check-maintenance-folder`, `POST /api/admin/maintenance/files/check` ({useThisFolder, confirm}). `/api/prefs` gains `maintenanceNotify` and `maintenanceRecipient`.
@@ -764,7 +764,8 @@ need to be on). Rows are `maint_files` with `task_id`.
   Maintenance list: `Jobs/<title> (<id8>)/`). `Tasks` is never a maintenance item's folder name. A file isn't moved
   when its task is renamed or moved to another list.
 - The §14.5 rules: ≤ 25 MB (413), empty → 422, names cleaned for Samba with " (2)" for duplicates, `_thumbs` previews,
-  downloads inline for images/PDF/text (`?download=1` → attachment) with `CSP: sandbox` and `nosniff`, 503 with the
+  the stored type from the bytes, downloads inline for images/PDF/text (`?download=1` → attachment) with `nosniff`
+  and `CSP: sandbox` (not for a PDF shown inline), 503 with the
   reason while the folder is offline. At most **10 files** per task (422); a done task takes no new files (409).
 - Columns (end of `maint_files`, in `MIGRATIONS` in the same order): `keep_after_done INTEGER NOT NULL DEFAULT 0`,
   `pending TEXT` ('remove' / 'restore': a move waiting for the folder), `removed_rel TEXT` (where a removed file
@@ -780,7 +781,7 @@ task's file and doesn't serve a removed one.
 **API** — `GET /api/tasks/{id}/files` → `{taskId, title, completed, files: [{id, name, size, mime, thumb, createdAt,
 keepAfterDone}], maxFiles, folder: {configured, online, reason, maxBytes}}`; `POST /api/tasks/{id}/files`
 (multipart `file`) → 201 the file; `GET /api/tasks/{id}/files/{file_id}[?thumb=1|?download=1]`;
-`PATCH /api/tasks/{id}/files/{file_id}` `{name?, keepAfterDone?}` (a rename keeps the extension and renames the file
+`PATCH /api/tasks/{id}/files/{file_id}` `{name?, keepAfterDone?}` (a rename keeps the extension and the stored type, and renames the file
 in the folder; Keep turned off on a done task removes the file now); `DELETE /api/tasks/{id}/files/{file_id}` (to
 `_deleted/<date>/…`, no undo). Task JSON gains `fileCount` (listed files).
 

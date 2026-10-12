@@ -1,4 +1,5 @@
 """One message: edit, delete, react, pin, star, remind, forward; polls (SPEC §5.2, §15.2, §15.5, §16.1–§16.3)."""
+import os
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -208,8 +209,23 @@ class ForwardIn(Strict):
 
 @router.post("/messages/forward")
 def forward(body: ForwardIn, user: dict = Depends(require_user)):
+    """Checked (and the folder's limit with every copy counted) first; the files are copied with no write lock
+    held; then the messages are posted — after checking again that each chat still takes them."""
     out = chats.Outbox()
     made = 0
+
+    def check_targets(conn, sources):
+        targets = []
+        for cid in dict.fromkeys(body.conversationIds):
+            conv, m = chats.access(conn, cid, user)
+            chats.require_post(conn, conv, user["id"])
+            if user.get("is_child") and conv["kind"] == "direct" and any(sc["kind"] == "group" for _, sc in sources):
+                other = chats.other_member(conn, conv, user["id"])
+                if other is not None and other["is_child"]:
+                    raise HTTPException(403, "Children can't forward from a group to another child.")
+            targets.append(conv)
+        return targets
+
     with db.get_conn() as conn:
         sources = []
         for mid in dict.fromkeys(body.messageIds):
@@ -220,49 +236,68 @@ def forward(body: ForwardIn, user: dict = Depends(require_user)):
                 raise HTTPException(409, "Disappearing messages can't be forwarded.")
             sources.append((msg, conv))
         sources.sort(key=lambda r: r[0]["id"])
-        targets = []
-        for cid in dict.fromkeys(body.conversationIds):
-            conv, m = chats.access(conn, cid, user)
-            chats.require_post(conn, conv, user["id"])
-            if user.get("is_child") and conv["kind"] == "direct" and any(sc["kind"] == "group" for _, sc in sources):
-                other = chats.other_member(conn, conv, user["id"])
-                if other is not None and other["is_child"]:
-                    raise HTTPException(403, "Children can't forward from a group to another child.")
-            targets.append(conv)
+        targets = check_targets(conn, sources)
+        atts = {src["id"]: [dict(a) for a in conn.execute(
+            "SELECT * FROM attachments WHERE message_id = ? AND missing = 0 ORDER BY created_at, rowid", (src["id"],))]
+            for src, _ in sources}
+        texts = {}
+        for src, _ in sources:
+            if src["kind"] == "poll":
+                opts = [o["text"] for o in conn.execute("SELECT text FROM poll_options WHERE message_id = ? ORDER BY position",
+                                                        (src["id"],))]
+                texts[src["id"]] = "📊 " + src["body"] + "\n" + "\n".join("- " + o for o in opts)
+            else:
+                texts[src["id"]] = src["body"]
+        files.check_quota(conn, sum(a["size"] or 0 for rows in atts.values() for a in rows) * len(targets))
         chats.message_limit.take(user["id"], len(sources) * len(targets))
+    # the copies: no database connection held
+    copied = {}
+    made_files = []
+    try:
         for conv in targets:
             for src, _ in sources:
-                if src["kind"] == "poll":
-                    opts = [o["text"] for o in conn.execute("SELECT text FROM poll_options WHERE message_id = ? ORDER BY position",
-                                                            (src["id"],))]
-                    text = "📊 " + src["body"] + "\n" + "\n".join("- " + o for o in opts)
-                else:
-                    text = src["body"]
-                atts = conn.execute("SELECT * FROM attachments WHERE message_id = ? AND missing = 0 ORDER BY created_at, rowid",
-                                    (src["id"],)).fetchall()
-                copies = []
-                for a in atts:
+                for a in atts[src["id"]]:
                     c = files.copy_into(a, conv)
                     if c:
-                        copies.append((a, c))
-                if not text.strip() and not copies:
-                    continue
-                mid = chats.insert_message(conn, conv, user["id"], kind="file" if copies else "text", body=text[:chats.MAX_BODY],
-                                           forwarded=True, expires_in=conv["disappear_seconds"])
-                expires_at = chats.message_row(conn, mid)["expires_at"]
-                for a, c in copies:
-                    conn.execute(
-                        "INSERT INTO attachments (id, message_id, conversation_id, rel_path, original_name, mime, size, original_size, "
-                        "sha256, width, height, duration, voice, uploaded_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (db.new_id(), mid, conv["id"], c["rel_path"], a["original_name"], a["mime"], a["size"], a["original_size"],
-                         a["sha256"], a["width"], a["height"], a["duration"], a["voice"], user["id"], config.now_iso()))
-                if expires_at:
-                    for (na,) in conn.execute("SELECT id FROM attachments WHERE message_id = ?", (mid,)).fetchall():
-                        files.move_to_disappearing(conn, na, conv, expires_at)
-                chats.publish_message(conn, out, conv, chats.message_row(conn, mid))
-                if conv["kind"] != "personal":
-                    out.job(notifier.new_message, mid)
-                made += 1
+                        copied.setdefault((conv["id"], src["id"]), []).append((a, c))
+                        made_files.append(c["rel_path"])
+        with db.get_conn() as conn:
+            targets = check_targets(conn, sources)
+            gone = {src["id"] for src, _ in sources
+                    if (chats.message_row(conn, src["id"]) or {"deleted_at": 1})["deleted_at"]}      # deleted meanwhile
+            for conv in targets:
+                for src, _ in sources:
+                    if src["id"] in gone:
+                        continue
+                    text = texts[src["id"]]
+                    copies = copied.get((conv["id"], src["id"]), [])
+                    if not text.strip() and not copies:
+                        continue
+                    mid = chats.insert_message(conn, conv, user["id"], kind="file" if copies else "text",
+                                               body=text[:chats.MAX_BODY], forwarded=True, expires_in=conv["disappear_seconds"])
+                    expires_at = chats.message_row(conn, mid)["expires_at"]
+                    for a, c in copies:
+                        conn.execute(
+                            "INSERT INTO attachments (id, message_id, conversation_id, rel_path, original_name, mime, size, "
+                            "original_size, sha256, width, height, duration, voice, uploaded_by, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (db.new_id(), mid, conv["id"], c["rel_path"], a["original_name"], a["mime"], a["size"],
+                             a["original_size"], a["sha256"], a["width"], a["height"], a["duration"], a["voice"], user["id"],
+                             config.now_iso()))
+                    if expires_at:
+                        for (na,) in conn.execute("SELECT id FROM attachments WHERE message_id = ?", (mid,)).fetchall():
+                            files.move_to_disappearing(conn, na, conv, expires_at)
+                    chats.publish_message(conn, out, conv, chats.message_row(conn, mid))
+                    if conv["kind"] != "personal":
+                        out.job(notifier.new_message, mid)
+                    made += 1
+    except BaseException:
+        for rel in made_files:          # nothing was posted: the copies go again
+            try:
+                os.remove(files.resolve(rel))
+            except (OSError, HTTPException):
+                pass
+        raise
     out.flush()
     return {"forwarded": made}
 

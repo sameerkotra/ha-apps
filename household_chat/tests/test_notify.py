@@ -142,7 +142,7 @@ class NotifyTests(ApiTestCase):
         self.assertEqual(notifier.handle_action(reply, "yes, on my way"), "replied")
         last = self.ok(self.get(f"/api/conversations/{self.hh}/messages", NISHA))["messages"][-1]
         self.assertEqual((last["body"], last["userId"], last["via"]), ("yes, on my way", TARUN["id"], "notification"))
-        self.assertEqual(notifier.handle_action(read, None), "read")
+        self.assertEqual(notifier.handle_action(reply, "and bread"), "replied")       # Reply can be used again
         self.assertEqual(notifier.handle_action("HCHAT_REPLY_nope", "x"), "unknown token")
         self.assertEqual(notifier.handle_action("OTHER_THING", "x"), "ignored")
         self.assertEqual(notifier.handle_action(reply, "  "), "refused")
@@ -152,6 +152,12 @@ class NotifyTests(ApiTestCase):
         self.assertEqual(notifier.handle_action(reply, "late"), "expired")
         with db.get_conn() as conn:
             conn.execute("UPDATE notify_tokens SET created_at = ?", (config.now_iso(),))
+        # Mark as read works once: the notification's token is used up (a replayed action does nothing)
+        self.assertEqual(notifier.handle_action(read, None), "read")
+        self.assertEqual(notifier.handle_action(read, None), "unknown token")
+        self.assertEqual(notifier.handle_action(reply, "after read"), "unknown token")
+        self.send(self.hh, "@Tarun bread?", NISHA, mentions=[TARUN["id"]])
+        reply = self.sent.items[-1]["data"]["actions"][0]["action"]
         # removed or disabled → refused
         self.ok(self.post(f"/api/conversations/{self.hh}/leave", user=TARUN))
         self.assertIn(notifier.handle_action(reply, "after leaving"), ("refused", "unknown token"))

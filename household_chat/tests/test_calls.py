@@ -188,7 +188,7 @@ class CallTests(ApiTestCase):
         self.assertEqual(notifier.handle_action(action, None), "declined")
         self.assertEqual(self.notes()[-1]["call"]["outcome"], "declined")
         self.assertIsNone(self.ok(self.get("/api/calls/current", TARUN))["call"])
-        self.assertEqual(notifier.handle_action(action, None), "no call")
+        self.assertEqual(notifier.handle_action(action, None), "unknown token")     # once only
         self.assertNotIn(c["id"], calls._calls)
 
     def test_busy(self):
@@ -370,6 +370,40 @@ class CallTests(ApiTestCase):
         self.assertEqual({m["id"]: m["state"] for m in c["members"]}[TARUN["id"]], "busy")
         self.assertEqual({m["id"]: m["state"] for m in c["members"]}[LEELA["id"]], "busy")
         self.assertEqual({m["id"]: m["state"] for m in c["members"]}[ADMIN["id"]], "ringing")
+
+    def test_removed_or_left_group_member_is_out_of_its_call(self):
+        g = self.ok(self.post("/api/conversations", {"name": "G", "memberIds": [TARUN["id"], LEELA["id"]]}, NISHA), 201)["id"]
+        # removed while it rings: can't answer, isn't ringing any more; the call goes on ringing for Leela
+        c = self.ring(NISHA, g)
+        self.ok(self.delete(f"/api/conversations/{g}/members/{TARUN['id']}", NISHA))
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/answer", user=TARUN).status_code, 404)
+        self.assertIsNone(self.ok(self.get("/api/calls/current", TARUN))["call"])
+        self.assertFalse(calls.busy(TARUN["id"]))
+        self.assertEqual(self.call_events(TARUN["id"])[-1]["state"], "ended")
+        self.assertIn(c["id"], calls._calls)
+        self.ok(self.post(f"/api/calls/{c['id']}/end", user=NISHA))
+        # removed once joined: dropped, can't signal; the others are told (as when someone hangs up)
+        self.ok(self.post(f"/api/conversations/{g}/members", {"userIds": [TARUN["id"]]}, NISHA))
+        c = self.ring(NISHA, g)
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=TARUN))
+        self.ok(self.post(f"/api/calls/{c['id']}/answer", user=LEELA))
+        self.ok(self.delete(f"/api/conversations/{g}/members/{TARUN['id']}", NISHA))
+        r = self.post(f"/api/calls/{c['id']}/signal", {"to": NISHA["id"], "type": "offer", "sdp": SDP}, TARUN)
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(calls._calls[c["id"]].members[TARUN["id"]].state, "failed")
+        ev = self.call_events(LEELA["id"])[-1]
+        self.assertEqual((ev["state"], ev["userId"]), ("member", TARUN["id"]))
+        # leaving the group while in its call: the same; with two left, the call ends
+        self.ok(self.post(f"/api/conversations/{g}/leave", user=LEELA))
+        self.assertNotIn(c["id"], calls._calls)
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/signal", {"to": NISHA["id"], "type": "offer", "sdp": SDP},
+                                   LEELA).status_code, 404)
+
+    def test_membership_is_checked_even_before_the_call_hears_of_it(self):
+        g = self.ok(self.post("/api/conversations", {"name": "G", "memberIds": [TARUN["id"], LEELA["id"]]}, NISHA), 201)["id"]
+        c = self.ring(NISHA, g)
+        sql("DELETE FROM members WHERE conversation_id = ? AND user_id = ?", (g, TARUN["id"]))
+        self.assertEqual(self.post(f"/api/calls/{c['id']}/answer", user=TARUN).status_code, 404)
 
     def test_a_2_2_database_gets_the_call_kind(self):
         import os

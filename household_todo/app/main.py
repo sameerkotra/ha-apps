@@ -3,6 +3,7 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
@@ -103,7 +104,21 @@ async def require_ha_ingress_auth(request: Request, call_next):
     blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
     if blocked is not None:
         return blocked
+    if request.method == "POST" and _is_file_upload(request.url.path):
+        # refused before the body is read: an upload is spooled whole before its route could count it
+        try:
+            length = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            length = 0
+        if length > maint_files.MAX_BYTES + maint_files.UPLOAD_OVERHEAD:
+            return JSONResponse(status_code=413, content={
+                "detail": f"A file can be at most {maint_files.MAX_BYTES // (1024 * 1024)} MB."})
     return await call_next(request)
+
+
+def _is_file_upload(path: str) -> bool:
+    """A task's or Maintenance file upload (POST /api/tasks/{id}/files, POST /api/maintenance/files)."""
+    return path == "/api/maintenance/files" or (path.startswith("/api/tasks/") and path.endswith("/files"))
 
 
 @app.get("/api/health")
@@ -122,7 +137,7 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 # this one file can make a rebuilt app look like the update never took
 # effect. The assets themselves keep normal caching — their ?v= query
 # string (bumped with config.yaml's version) invalidates them.
-HEADERS = web_security.SecurityHeaders(CSP, pragma=True)
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True, csp_skip=web_security.is_pdf)     # a PDF: see maint_files.serve_headers
 HEADERS.install(app)
 
 

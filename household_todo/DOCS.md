@@ -78,7 +78,8 @@ app and changes apply straight away, without a restart.
   drop files there; on a phone you can take a photo). Up to 10 files per
   task, 25 MB each; the task row shows 📎 and how many. Whoever can see the
   task can open, download, rename and remove its files, so a task on your
-  personal list keeps its files private to you. When the task is **ticked
+  personal list keeps its files private to you (and to an admin acting as
+  you, who can see that list anyway). When the task is **ticked
   off, its files go** — unless you switched on **Keep after done** for a
   file. Untick it within 30 days and they come back. Deleting a task removes
   all its files (the folder keeps them in `_deleted` for 30 days). A task's

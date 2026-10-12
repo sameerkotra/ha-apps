@@ -95,6 +95,45 @@ def mime_of(name: str) -> str:
     return EXT_MIME.get(ext, "application/octet-stream")
 
 
+# what's shown in the browser is decided by the file's bytes, never only by its name
+UPLOAD_OVERHEAD = 1024 * 1024           # the multipart wrapping around a file, at most
+SNIFFED = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
+_PIL_MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif", "WEBP": "image/webp"}
+
+
+def sniff(path: str, name: str) -> str:
+    """The stored type of an upload: a real PDF (starts with %PDF-) or an image Pillow recognises gets its own
+    type whatever its name; a file named like a PDF or an image that isn't one is application/octet-stream
+    (served as a download); anything else goes by its extension (also served as a download, except text)."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(5) == b"%PDF-":
+                return "application/pdf"
+    except OSError:
+        return "application/octet-stream"
+    try:
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = 80_000_000
+        with Image.open(path) as im:
+            got = _PIL_MIME.get((im.format or "").upper())
+        if got:
+            return got
+    except Exception:
+        pass
+    by_name = mime_of(name)
+    return "application/octet-stream" if by_name in SNIFFED else by_name
+
+
+def serve_headers(mime: str, inline: bool) -> dict:
+    """A stored file's headers (task files and Maintenance alike): always nosniff and private caching; sandboxed
+    — except a PDF shown in the page, as Chrome's PDF viewer won't open a sandboxed one (only real PDFs are
+    stored as application/pdf: sniff())."""
+    headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"}
+    if not (inline and mime == "application/pdf"):
+        headers["Content-Security-Policy"] = "sandbox"
+    return headers
+
+
 # ---------- the setting ----------
 def configured() -> str:
     return (settings.get("maintenance_files_path") or "").strip()
@@ -449,7 +488,7 @@ def save_upload(root: str, rel_dir: str, filename: str, stream_read, uploaded_by
         except OSError:
             pass
         raise
-    mime = mime_of(final)
+    mime = sniff(path, final)
     rel = os.path.relpath(path, root)
     thumb = _make_thumb(root, path, mime)
     row = {"id": db.new_id(), "item_id": owner.get("item_id"), "done_id": owner.get("done_id"),

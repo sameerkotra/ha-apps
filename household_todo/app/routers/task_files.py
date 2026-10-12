@@ -55,8 +55,7 @@ def download(task_id: str, file_id: str, thumb: int = Query(default=0), download
     mime = "image/jpeg" if use_thumb else (f["mime"] or "application/octet-stream")
     inline = mime in maint_files.INLINE and not download
     return FileResponse(path, media_type=mime, filename=f["name"], content_disposition_type="inline" if inline else "attachment",
-                        headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox",
-                                 "Cache-Control": "private, max-age=3600"})
+                        headers=maint_files.serve_headers(mime, inline))
 
 
 @router.patch("/tasks/{task_id}/files/{file_id}")
@@ -92,8 +91,9 @@ def change(task_id: str, file_id: str, background: BackgroundTasks, body: dict =
             new = maint_files._unique(d, new)
             os.rename(src, os.path.join(d, new))
             with db.get_conn() as conn:
-                conn.execute("UPDATE maint_files SET name = ?, rel_path = ?, mime = ? WHERE id = ?",
-                             (new, os.path.join(os.path.dirname(f["rel_path"]), new), maint_files.mime_of(new), file_id))
+                # the type stays what the upload's bytes said (a new name can't make it a PDF or a picture)
+                conn.execute("UPDATE maint_files SET name = ?, rel_path = ? WHERE id = ?",
+                             (new, os.path.join(os.path.dirname(f["rel_path"]), new), file_id))
     if keep is not None:
         with db.get_conn() as conn:
             conn.execute("UPDATE maint_files SET keep_after_done = ? WHERE id = ?", (int(keep), file_id))

@@ -196,6 +196,11 @@ def _get(cid: str, uid: str) -> Call:
         c = _calls.get(cid) if isinstance(cid, str) else None
     if c is None or c.ended or uid not in c.members or c.members[uid].state not in ("joined", "ringing"):
         raise HTTPException(404, "That call has ended.")
+    if c.group:
+        # someone removed from the group (or who left it) is out of its call too, even before end_for_user ran
+        with db.get_conn() as conn:
+            if chats.member_row(conn, c.conversation_id, uid) is None:
+                raise HTTPException(404, "That call has ended.")
     return c
 
 
@@ -540,11 +545,16 @@ def _finish(c: Call, outcome: str) -> None:
     out.flush()
 
 
-def end_for_user(uid: str, outcome: str = "failed") -> None:
-    """Disabled (or gone): they leave their call."""
+def end_for_user(uid: str, outcome: str = "failed", conversation_id: str | None = None) -> None:
+    """Disabled (or gone): they leave their call. With `conversation_id` (removed from a group, or left it): only
+    a call of that chat — they're dropped as if they'd hung up, and the others are told."""
     with _lock:
-        cid = _by_user.get(uid)
-        c = _calls.get(cid) if cid else None
+        if conversation_id is None:
+            cid = _by_user.get(uid)
+            c = _calls.get(cid) if cid else None
+        else:
+            c = next((x for x in _calls.values() if x.conversation_id == conversation_id and not x.ended
+                      and uid in x.members and x.members[uid].state in ("joined", "ringing")), None)
         if c is None or uid not in c.members:
             return
         m = c.members[uid]

@@ -434,8 +434,7 @@ def download(file_id: str, thumb: int = Query(default=0), acting: dict = Depends
     mime = "image/jpeg" if thumb and f["thumb"] else (f["mime"] or "application/octet-stream")
     inline = mime in maint_files.INLINE
     return FileResponse(path, media_type=mime, filename=f["name"], content_disposition_type="inline" if inline else "attachment",
-                        headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox",
-                                 "Cache-Control": "private, max-age=3600"})
+                        headers=maint_files.serve_headers(mime, inline))
 
 
 @router.delete("/maintenance/files/{file_id}", status_code=204)

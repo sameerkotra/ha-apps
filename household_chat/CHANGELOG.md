@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.3
+
+- **Calls follow the group**: someone removed from a group — or who leaves it — while its call rings or is on is now taken out of that call straight away (the others see them leave, as when someone hangs up), and can no longer answer or rejoin it.
+- **Forwarding counts against the folder's limit**: forwarding messages with files to several chats now checks first that every copy fits in the chat folder's size limit, instead of going over it; the files are copied without holding up the rest of the app.
+- **Download a chat**: a date that doesn't exist (such as 30 February) gets a clear message instead of an error.
+- **Mark as read** and a call's **Decline** on the phone work once: replaying the same button later does nothing. **Reply** still works for 24 hours.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 2.6.2
 
 - **Home Assistant's time zone, always**: when the app started before Home Assistant was answering (after a reboot), it stayed on UTC — so in the Americas "today" turned into tomorrow in the evening. Now it uses the zone the Supervisor gives every app (Home Assistant's own) until Home Assistant answers, keeps asking until it does, checks again every six hours (a changed zone needs no restart), and the whole app follows that zone.

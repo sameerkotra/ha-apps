@@ -295,6 +295,11 @@ def handle_action(action: str, reply_text: str | None) -> str:
         made = config.parse_iso(t["created_at"])
         if made is None or config.utcnow() - made > timedelta(hours=TOKEN_HOURS):
             return "expired"
+        if kind in ("READ", "DECLINE"):
+            # once only: Mark as read and Decline end that notification, so a replayed action finds nothing.
+            # Reply stays usable for the 24 hours (a lock-screen conversation can go back and forth).
+            if conn.execute("DELETE FROM notify_tokens WHERE token = ?", (token,)).rowcount == 0:
+                return "unknown token"
         if kind != "DECLINE" and not settings.get("notification_reply", conn):
             return "off"
         user = chats.user_row(conn, t["user_id"])

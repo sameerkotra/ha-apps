@@ -402,7 +402,8 @@ class TestFiles(MaintBase):
         self.assertEqual(again["name"], "manual (2).pdf")
         d = self.get(f"/api/maintenance/files/{f['id']}")
         self.assertEqual((d.status_code, d.content), (200, b"%PDF-1.4 hello"))
-        self.assertEqual(d.headers["content-security-policy"], "sandbox")
+        self.assertNotIn("content-security-policy", d.headers)      # a real PDF: Chrome's viewer can show it
+        self.assertEqual(d.headers["x-content-type-options"], "nosniff")
         self.assertEqual([x["name"] for x in self.overview()["items"][0]["files"]], ["manual.pdf", "manual (2).pdf"])
         # a Mark done record's files go in a dated folder
         rec = self.post(f"/api/maintenance/items/{it['id']}/done").json()["recordId"]
