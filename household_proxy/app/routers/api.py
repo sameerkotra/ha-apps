@@ -3,9 +3,10 @@ App settings, People and Storage."""
 import os
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from .. import auth, config, db, settings, sidebar, sites
+from .. import auth, config, db, probe, settings, sidebar, sites
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -85,6 +86,88 @@ class Order(BaseModel):
 def admin_reorder(body: Order, admin: dict = Depends(require_admin)):
     sites.reorder(body.ids)
     return {"sites": sites.admin_list()}
+
+
+@router.get("/sites/{slug}/favicon")
+def site_favicon(slug: str, user: dict = Depends(get_current_user)):
+    """A site's own icon (stored by an admin), for the people who may open the site. Raster images only; served so
+    the browser can never treat it as a page."""
+    site = sites.get(slug)
+    icon = sites.favicon(slug) if site is not None and sites.can_open(user, site) else None
+    if icon is None:
+        raise HTTPException(404, "No icon.")
+    data, ctype = icon
+    return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=86400",
+                                                     "Content-Security-Policy": "sandbox; default-src 'none'",
+                                                     "X-Content-Type-Options": "nosniff"})
+
+
+# --------------------------------------------------------------------------------------------- admin: the Test
+
+class TestIn(sites.SiteIn):
+    trusted_ok: bool = True                     # the Test doesn't need the confirmation; saving does
+
+
+@router.post("/admin/sites/test")
+async def admin_test_form(body: TestIn, id: int | None = Query(None), admin: dict = Depends(require_admin)):
+    """The Test on the form as it is (not saved)."""
+    try:
+        site = sites.preview(body, id)
+    except sites.SiteError as e:
+        raise HTTPException(422, str(e))
+    return await probe.run(site)
+
+
+def _saved(site_id: int) -> sites.Site:
+    site = sites.by_id(site_id)
+    if site is None:
+        raise HTTPException(404, "No such site.")
+    return site
+
+
+@router.post("/admin/sites/{site_id}/test")
+async def admin_test_site(site_id: int, admin: dict = Depends(require_admin)):
+    return await probe.run(_saved(site_id))
+
+
+class TrustIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fingerprint: str = Field(min_length=10, max_length=200)
+
+
+@router.post("/admin/sites/{site_id}/certificate")
+async def admin_trust_certificate(site_id: int, body: TrustIn, admin: dict = Depends(require_admin)):
+    """Trust the certificate the site presents now — only if it is the one the admin saw (its fingerprint)."""
+    site = _saved(site_id)
+    try:
+        info = await probe.certificate(site)
+    except Exception as e:                      # noqa: BLE001 — an address problem, said in words
+        raise HTTPException(422, str(e))
+    if info is None:
+        raise HTTPException(422, "The site didn't present a certificate.")
+    if info["fingerprint"].replace(":", "").upper() != body.fingerprint.replace(":", "").upper():
+        raise HTTPException(409, "The site now presents a different certificate. Run the Test again.")
+    sites.set_certificate(site_id, info["pem"], info["fingerprint"])
+    return {"fingerprint": info["fingerprint"]}
+
+
+@router.delete("/admin/sites/{site_id}/certificate")
+def admin_forget_certificate(site_id: int, admin: dict = Depends(require_admin)):
+    try:
+        sites.set_certificate(site_id, None, None)
+    except LookupError:
+        raise HTTPException(404, "No such site.")
+    return {"ok": True}
+
+
+@router.post("/admin/sites/{site_id}/favicon")
+async def admin_fetch_favicon(site_id: int, admin: dict = Depends(require_admin)):
+    """Fetch the site's own icon and keep it (a small PNG, ICO, GIF, JPEG or WebP; never SVG)."""
+    icon = await probe.fetch_icon(_saved(site_id))
+    if icon is None:
+        raise HTTPException(422, "The site has no icon this app can use (a small PNG, ICO, GIF, JPEG or WebP).")
+    sites.set_favicon(site_id, *icon)
+    return {"ok": True, "type": icon[1], "bytes": len(icon[0])}
 
 
 @router.get("/admin/sites/{site_id}/log")

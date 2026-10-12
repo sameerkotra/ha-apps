@@ -146,3 +146,18 @@ table.people td { padding: 6px 8px; border-bottom: 1px solid var(--border); text
   .topbar { padding: 6px 10px; gap: 6px; }
   .header-row { grid-template-columns: 1fr; }
 }
+
+/* the Test and rules */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.test-report { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--panel-alt); }
+.test-report ul { margin: 6px 0; padding-left: 20px; }
+.verdict { font-weight: 700; }
+.verdict.v-works { color: var(--ok); }
+.verdict.v-try_spa, .verdict.v-needs_rule { color: var(--warn); }
+.verdict.v-tunnel, .verdict.v-unreachable { color: var(--down); }
+.cert { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.cert .mono { overflow-wrap: anywhere; }
+.rule-rows { display: flex; flex-direction: column; gap: 6px; }
+.rule-row { display: grid; grid-template-columns: 110px 1fr 1.3fr 1.3fr auto; gap: 6px; }
+@media (max-width: 600px) { .rule-row { grid-template-columns: 1fr; } }
+.field .link-btn { align-self: flex-start; }

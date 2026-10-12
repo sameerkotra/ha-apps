@@ -55,7 +55,7 @@
     $("#noSites").hidden = !!state.sites.length || !state.me || !state.me.user.enabled;
     for (const s of state.sites) {
       box.append(h("a", { class: "tile", href: `#/site/${s.slug}`, title: s.name },
-        h("span", { class: "tile-icon", "aria-hidden": "true" }, s.icon || "🌐"),
+        h("span", { class: "tile-icon", "aria-hidden": "true" }, s.favicon ? h("img", { src: s.favicon, alt: "" }) : (s.icon || "🌐")),
         h("span", { class: "tile-name" }, s.name)));
     }
   }
@@ -186,7 +186,7 @@
   function editSite(site) {
     const s = site || { name: "", slug: "", icon: "🌐", target: "", start_path: "/", access: "admins", people: [],
       trusted_ok: false, spa_mode: false, show_bar: true, keep_host: false, strip_csp: false, pass_user: false,
-      allow_public: false, access_log: false, timeout_s: 0, headers: [] };
+      allow_public: false, access_log: false, timeout_s: 0, headers: [], rules: [], use_favicon: false };
     const f = {
       name: h("input", { class: "input", value: s.name, maxlength: 60, required: true, placeholder: "Komodo" }),
       slug: h("input", { class: "input", value: s.slug, maxlength: 40, placeholder: "komodo" }),
@@ -229,6 +229,79 @@
     };
     (s.headers || []).forEach(addHeader);
 
+    const favicon = check("Use the site's own icon", s.use_favicon, "Fetched from the site when you save (a small PNG, ICO, GIF, JPEG or WebP).");
+
+    const ruleRows = h("div", { class: "rule-rows" });
+    const addRule = (r) => {
+      r = r || { where: "body", types: "application/javascript", match: "", replace: "" };
+      const where = h("select", { class: "input" }, h("option", { value: "body", selected: r.where === "body" }, "Body"),
+        h("option", { value: "header", selected: r.where === "header" }, "Header values"));
+      const types = h("input", { class: "input", value: r.types, placeholder: "content types (empty = all)", maxlength: 300 });
+      const match = h("input", { class: "input mono", value: r.match, placeholder: "regular expression", maxlength: 500 });
+      const replace = h("input", { class: "input mono", value: r.replace, placeholder: "replacement ($prefix = the site's prefix)", maxlength: 500 });
+      const row = h("div", { class: "rule-row" }, where, types, match, replace,
+        h("button", { type: "button", class: "icon-btn", title: "Remove", onclick: () => row.remove() }, "✕"));
+      row._get = () => ({ where: where.value, types: types.value.trim(), match: match.value, replace: replace.value });
+      ruleRows.append(row);
+    };
+    (s.rules || []).forEach(addRule);
+
+    const report = h("div", { class: "test-report", hidden: true });
+    const testBtn = h("button", { type: "button", class: "btn-secondary", onclick: () => runTest() }, "🔍 Test");
+
+    async function runTest() {
+      testBtn.disabled = true;
+      report.hidden = false;
+      mount(clear(report), h("p", { class: "dim" }, "Testing…"));
+      try {
+        const r = await api("api/admin/sites/test" + (site ? `?id=${site.id}` : ""), { method: "POST", body: body() });
+        mount(clear(report), testReport(r));
+      } catch (e) { mount(clear(report), h("p", { class: "error" }, e.message)); }
+      testBtn.disabled = false;
+    }
+
+    function testReport(r) {
+      const lines = [];
+      const li = (t, cls) => lines.push(h("li", { class: cls || null }, t));
+      if (!r.reachable) li(r.problem || "Couldn't reach the site.", "error");
+      else {
+        li(`Answered ${r.status} in ${r.ms} ms.`);
+        if (r.redirects.length) li(`Redirected: ${r.redirects.join(" → ")}`);
+        if (r.frameHeaders.length) li(`Frame-blocking headers found (${r.frameHeaders.join(", ")}) — the proxy removes them.`);
+        li(`${r.rewritten} root paths in the page are rewritten.`);
+        if (r.scripts.checked) {
+          const bits = [];
+          if (r.scripts.router) bits.push("a client-side router");
+          if (r.scripts.basename) bits.push('a fixed base path ("/")');
+          if (r.scripts.rootPaths) bits.push("root-path addresses (handled by the in-page script)");
+          li(`Checked ${r.scripts.checked} script${r.scripts.checked > 1 ? "s" : ""}: ${bits.length ? bits.join(", ") : "nothing unusual"}.`);
+        }
+      }
+      const out = [h("div", { class: `verdict v-${r.verdict}` }, r.verdictText), h("ul", null, lines)];
+      if (r.certificate) {
+        const c = r.certificate;
+        out.push(h("div", { class: "cert" },
+          h("div", null, h("strong", null, "Certificate: "), c.subject || "(no name)", c.notAfter ? `, until ${c.notAfter}` : ""),
+          h("div", { class: "mono small" }, c.fingerprint),
+          site ? h("button", { type: "button", class: "btn-secondary", onclick: async (e) => {
+            e.target.disabled = true;
+            try { await api(`api/admin/sites/${site.id}/certificate`, { method: "POST", body: { fingerprint: c.fingerprint } });
+              toast("Certificate trusted"); runTest(); }
+            catch (err2) { toast(err2.message, true); e.target.disabled = false; }
+          } }, "Trust this certificate") : h("p", { class: "hint" }, "Save the site first, then trust its certificate here."),
+          h("p", { class: "hint small" }, "Only this exact certificate will be accepted for this site, whatever its name and dates.")));
+      }
+      if (r.suggestedRule) {
+        out.push(h("div", null, h("p", { class: "hint" }, "Suggested rule:"),
+          h("code", null, `${r.suggestedRule.match} → ${r.suggestedRule.replace}`), " ",
+          h("button", { type: "button", class: "link-btn", onclick: () => { addRule(r.suggestedRule); advanced.open = true; toast("Rule added — save to keep it"); } }, "Add it")));
+      }
+      if (r.verdict === "try_spa" && !spa.box.checked) {
+        out.push(h("button", { type: "button", class: "link-btn", onclick: () => { spa.box.checked = true; runTest(); } }, "Turn on single-page app mode and test again"));
+      }
+      return out;
+    }
+
     const err = h("p", { class: "error" });
     const advanced = h("details", { class: "advanced" }, h("summary", null, "Advanced"),
       pub.el, keepHost.el, stripCsp.el, passUser.el, accessLog.el,
@@ -236,7 +309,11 @@
       h("div", { class: "field" }, h("span", { class: "field-label" }, "Extra headers"),
         h("span", { class: "hint small" }, "Added to every request to the site (e.g. a sign-in). Never sent to the browser. " +
           "Everyone allowed on this site acts as that account."),
-        headerRows, h("button", { type: "button", class: "link-btn", onclick: () => addHeader(null) }, "＋ Add a header")));
+        headerRows, h("button", { type: "button", class: "link-btn", onclick: () => addHeader(null) }, "＋ Add a header")),
+      h("div", { class: "field" }, h("span", { class: "field-label" }, "Rules"),
+        h("span", { class: "hint small" }, "For a site that hard-codes something the proxy misses: a regular expression and its " +
+          "replacement, applied to the answers of the listed content types. $prefix is the site's prefix here. The Test suggests one when it sees a common case."),
+        ruleRows, h("button", { type: "button", class: "link-btn", onclick: () => addRule(null) }, "＋ Add a rule")));
 
     const form = h("form", { class: "site-form" },
       h("div", { class: "grid2" }, field("Name", f.name), field("Icon", f.icon)),
@@ -244,7 +321,7 @@
       field("Start path", f.start),
       field("Short name", f.slug, "Used in its address: …/s/<short name>/. Lower-case letters, digits and -."),
       field("Who can open it", f.access), peopleRow,
-      trusted.el, spa.el, bar.el, advanced, err,
+      trusted.el, spa.el, bar.el, favicon.el, advanced, h("div", null, testBtn), report, err,
       h("div", { class: "row-between" },
         site ? h("button", { type: "button", class: "btn-ghost danger", onclick: () => remove() }, "Delete") : h("span"),
         h("div", null, h("button", { type: "button", class: "btn-ghost", onclick: () => modal.close() }, "Cancel"), " ",
@@ -258,15 +335,21 @@
       strip_csp: stripCsp.box.checked, pass_user: passUser.box.checked, allow_public: pub.box.checked,
       access_log: accessLog.box.checked, timeout_s: parseInt(f.timeout.value, 10) || 0,
       headers: $$(".header-row", headerRows).map((r) => r._get()).filter((x) => x.name),
+      rules: $$(".rule-row", ruleRows).map((r) => r._get()).filter((x) => x.match),
+      use_favicon: favicon.box.checked,
     });
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       err.textContent = "";
       try {
-        await api(site ? `api/admin/sites/${site.id}` : "api/admin/sites", { method: site ? "PUT" : "POST", body: body() });
+        const saved = await api(site ? `api/admin/sites/${site.id}` : "api/admin/sites", { method: site ? "PUT" : "POST", body: body() });
         modal.close();
         toast("Saved");
+        if (saved.use_favicon && !saved.has_favicon) {
+          try { await api(`api/admin/sites/${saved.id}/favicon`, { method: "POST" }); }
+          catch (e3) { toast(e3.message, true); }
+        }
         await Promise.all([loadAdminSites(), loadSites()]);
       } catch (e2) { err.textContent = e2.message; }
     });

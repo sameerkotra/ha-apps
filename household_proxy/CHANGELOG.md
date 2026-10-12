@@ -2,6 +2,17 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.3.0
+
+- **Test** on the site form: whether the site answers (and why not: refused, timed out, name not found,
+  certificate), its status and time, redirects, frame-blocking headers, what is rewritten, and whether its scripts use
+  a router or a fixed base path — with a verdict and, when it helps, a suggested rule or "try single-page app mode".
+- **Trust this certificate** for a site with a self-signed certificate: only that exact certificate is accepted.
+- **Use the site's own icon** on its tile (small PNG, ICO, GIF, JPEG or WebP; never SVG).
+- **Rules** (advanced): a regular expression and its replacement for the body or headers of chosen content types,
+  for the site that hard-codes something the proxy misses.
+- Compressed answers are read in bounded pieces, so a small compressed page can't fill the memory.
+
 ## 0.2.0
 
 - Pages that build addresses while they run work too: a small script, put first into every page, sends their requests,

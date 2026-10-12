@@ -46,6 +46,61 @@ class HeaderIn(BaseModel):
     value: str | None = Field(default=None, max_length=4096)   # None: keep the saved value
 
 
+CONTENT_TYPE_RE = re.compile(r"^[a-z0-9.+-]+/[a-z0-9.+*-]+$")
+MAX_RULES = 20
+
+
+class RuleIn(BaseModel):
+    """One rewrite rule (§3.5): a regular expression and its replacement; $prefix is the site's prefix."""
+    model_config = ConfigDict(extra="forbid")
+    where: str = "body"
+    types: str = Field(default="", max_length=300)
+    match: str = Field(min_length=1, max_length=500)
+    replace: str = Field(default="", max_length=500)
+
+    @field_validator("where")
+    @classmethod
+    def _where(cls, v):
+        if v not in ("body", "header"):
+            raise ValueError("must be body or header")
+        return v
+
+    @field_validator("types")
+    @classmethod
+    def _types(cls, v):
+        parts = [t.strip().lower() for t in v.split(",") if t.strip()]
+        for t in parts:
+            if not CONTENT_TYPE_RE.match(t):
+                raise ValueError(f"{t!r} isn't a content type (e.g. application/javascript)")
+        return ",".join(parts)
+
+    @field_validator("match")
+    @classmethod
+    def _match(cls, v):
+        try:
+            re.compile(v)
+        except re.error as e:
+            raise ValueError(f"isn't a valid regular expression: {e}")
+        return v
+
+
+@dataclass(frozen=True)
+class Rule:
+    where: str
+    types: frozenset
+    pattern: re.Pattern
+    replace: str
+
+    def applies(self, content_type: str | None) -> bool:
+        if not self.types:
+            return True
+        main = (content_type or "").split(";")[0].strip().lower()
+        return main in self.types or any(t.endswith("/*") and main.startswith(t[:-1]) for t in self.types)
+
+    def apply(self, text: str, prefix: str) -> str:
+        return self.pattern.sub(self.replace.replace("$prefix", prefix.replace("\\", "\\\\")), text)
+
+
 class SiteIn(BaseModel):
     """The Admin → Sites form."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -66,6 +121,8 @@ class SiteIn(BaseModel):
     access_log: StrictBool = False
     timeout_s: int = Field(default=0, ge=0, le=600)
     headers: list[HeaderIn] = Field(default_factory=list, max_length=20)
+    rules: list[RuleIn] = Field(default_factory=list, max_length=MAX_RULES)
+    use_favicon: StrictBool = False
 
     @field_validator("access")
     @classmethod
@@ -100,10 +157,19 @@ class Site:
     access_log: bool
     updated_at: str
     headers: tuple = field(default=())         # ((name, value), …) — secret
+    rules: tuple = field(default=())           # (Rule, …)
+    favicon: bool = False                      # the site's own icon is shown
+
+    def body_rules(self, content_type: str | None) -> list:
+        return [r for r in self.rules if r.where == "body" and r.applies(content_type)]
+
+    def header_rules(self, content_type: str | None) -> list:
+        return [r for r in self.rules if r.where == "header" and r.applies(content_type)]
 
     @property
     def version(self) -> tuple:
-        return (self.id, self.updated_at)
+        """What the site's pooled connections depend on: a change here makes new ones (proxy.client)."""
+        return (self.id, self.tls_pem, self.allow_public)
 
 
 _lock = threading.Lock()
@@ -123,6 +189,14 @@ def _load(conn) -> dict:
     headers: dict[int, list] = {}
     for r in conn.execute("SELECT site_id, name, value FROM site_headers ORDER BY name"):
         headers.setdefault(r["site_id"], []).append((r["name"], r["value"]))
+    rules: dict[int, list] = {}
+    for r in conn.execute("SELECT * FROM site_rules ORDER BY site_id, position"):
+        try:
+            pat = re.compile(r["match"])
+        except re.error:
+            continue
+        rules.setdefault(r["site_id"], []).append(Rule(r["where_"], frozenset(t for t in r["types"].split(",") if t),
+                                                       pat, r["replace"]))
     for r in conn.execute("SELECT * FROM sites ORDER BY position, id"):
         try:
             scheme, host, port = netguard.parse_target(r["target"])
@@ -135,7 +209,8 @@ def _load(conn) -> dict:
             keep_host=bool(r["keep_host"]), strip_csp=bool(r["strip_csp"]), pass_user=bool(r["pass_user"]),
             allow_public=bool(r["allow_public"]), tls_pem=r["tls_pem"], timeout_s=r["timeout_s"],
             access_log=bool(r["access_log"]), updated_at=r["updated_at"],
-            headers=tuple((n, v) for n, v in headers.get(r["id"], ()) if v))
+            headers=tuple((n, v) for n, v in headers.get(r["id"], ()) if v), rules=tuple(rules.get(r["id"], ())),
+            favicon=bool(r["use_favicon"] and r["favicon"]))
     return out
 
 
@@ -172,7 +247,8 @@ def for_user(user: dict) -> list[Site]:
 def public(site: Site) -> dict:
     """A site as the launcher shows it (nothing about its target's credentials)."""
     return {"slug": site.slug, "name": site.name, "icon": site.icon, "startPath": site.start_path,
-            "showBar": site.show_bar, "spaMode": site.spa_mode}
+            "showBar": site.show_bar, "spaMode": site.spa_mode,
+            "favicon": f"api/sites/{site.slug}/favicon?v={site.updated_at}" if site.favicon else None}
 
 
 # --------------------------------------------------------------------------------------------- admin form
@@ -182,7 +258,10 @@ def admin_row(conn, r) -> dict:
     headers = [{"name": x["name"], "saved": bool(x["value"])}
                for x in conn.execute("SELECT name, value FROM site_headers WHERE site_id = ? ORDER BY name",
                                      (r["id"],))]
-    return {"id": r["id"], "slug": r["slug"], "name": r["name"], "icon": r["icon"], "target": r["target"],
+    rules = [{"where": x["where_"], "types": x["types"], "match": x["match"], "replace": x["replace"]}
+             for x in conn.execute("SELECT * FROM site_rules WHERE site_id = ? ORDER BY position", (r["id"],))]
+    return {"rules": rules, "use_favicon": bool(r["use_favicon"]), "has_favicon": r["favicon"] is not None,
+            "id": r["id"], "slug": r["slug"], "name": r["name"], "icon": r["icon"], "target": r["target"],
             "start_path": r["start_path"], "access": r["access"], "people": people,
             "trusted_ok": bool(r["trusted_ok_at"]), "trusted_ok_at": r["trusted_ok_at"],
             "spa_mode": bool(r["spa_mode"]), "show_bar": bool(r["show_bar"]), "keep_host": bool(r["keep_host"]),
@@ -220,6 +299,36 @@ def _validate(body: SiteIn) -> tuple[str, str]:
     return netguard.origin(scheme, host, port), slug
 
 
+def preview(body: SiteIn, site_id: int | None = None) -> Site:
+    """The form's site as the proxy would use it, without saving (the Test on an unsaved form). Extra headers left
+    blank use the saved values of `site_id`; its trusted certificate too while the address is unchanged."""
+    try:
+        scheme, host, port = netguard.parse_target(body.target)
+        netguard.check_saved(host, body.allow_public)
+    except netguard.TargetError as e:
+        raise SiteError(f"Address {e}")
+    saved_headers, pem = {}, None
+    if site_id is not None:
+        with db.get_conn() as conn:
+            saved_headers = {r["name"]: r["value"] for r in
+                             conn.execute("SELECT name, value FROM site_headers WHERE site_id = ?", (site_id,))}
+            row = conn.execute("SELECT target, tls_pem FROM sites WHERE id = ?", (site_id,)).fetchone()
+            if row and row["target"] == netguard.origin(scheme, host, port):
+                pem = row["tls_pem"]
+    headers = tuple((h.name.strip(), h.value if h.value is not None else saved_headers.get(h.name.strip(), ""))
+                    for h in body.headers)
+    return Site(id=site_id or 0, slug=body.slug or slugify(body.name), name=body.name, icon=body.icon, scheme=scheme,
+                host=host, port=port, origin=netguard.origin(scheme, host, port), start_path=clean_path(body.start_path),
+                access=body.access, people=frozenset(), spa_mode=body.spa_mode, show_bar=body.show_bar,
+                keep_host=body.keep_host, strip_csp=body.strip_csp, pass_user=body.pass_user,
+                allow_public=body.allow_public, tls_pem=pem, timeout_s=body.timeout_s, access_log=False,
+                updated_at="", headers=tuple((n, v) for n, v in headers if v))
+
+
+def by_id(site_id: int) -> Site | None:
+    return next((s for s in all_sites().values() if s.id == site_id), None)
+
+
 def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
     target, slug = _validate(body)
     start = clean_path(body.start_path)
@@ -232,7 +341,7 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
                     access=body.access, spa_mode=int(body.spa_mode), show_bar=int(body.show_bar),
                     keep_host=int(body.keep_host), strip_csp=int(body.strip_csp), pass_user=int(body.pass_user),
                     allow_public=int(body.allow_public), access_log=int(body.access_log), timeout_s=body.timeout_s,
-                    updated_at=now)
+                    use_favicon=int(body.use_favicon), updated_at=now)
         if site_id is None:
             if conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0] >= MAX_SITES:
                 raise SiteError(f"At most {MAX_SITES} sites")
@@ -261,6 +370,10 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
             value = h.value if h.value is not None else saved.get(n, "")
             conn.execute("INSERT OR REPLACE INTO site_headers (site_id, name, value) VALUES (?, ?, ?)",
                          (site_id, n, value))
+        conn.execute("DELETE FROM site_rules WHERE site_id = ?", (site_id,))
+        conn.executemany("INSERT INTO site_rules (site_id, position, where_, types, match, replace) "
+                         "VALUES (?, ?, ?, ?, ?, ?)",
+                         [(site_id, i, x.where, x.types, x.match, x.replace) for i, x in enumerate(body.rules)])
         row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
         out = admin_row(conn, row)
     invalidate()
@@ -279,6 +392,20 @@ def reorder(ids: list[int]) -> None:
         for pos, sid in enumerate(ids):
             conn.execute("UPDATE sites SET position = ? WHERE id = ?", (pos, sid))
     invalidate()
+
+
+def set_favicon(site_id: int, data: bytes | None, content_type: str | None) -> None:
+    with db.get_conn() as conn:
+        if not conn.execute("UPDATE sites SET favicon = ?, favicon_type = ?, updated_at = ? WHERE id = ?",
+                            (data, content_type, config.iso(), site_id)).rowcount:
+            raise LookupError("No such site.")
+    invalidate()
+
+
+def favicon(slug: str) -> tuple[bytes, str] | None:
+    with db.get_conn() as conn:
+        r = conn.execute("SELECT favicon, favicon_type FROM sites WHERE slug = ? AND use_favicon = 1", (slug,)).fetchone()
+    return (bytes(r["favicon"]), r["favicon_type"]) if r and r["favicon"] else None
 
 
 def set_certificate(site_id: int, pem: str | None, fingerprint: str | None) -> None:

@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS sites (
     tls_fingerprint TEXT,                 -- its SHA-256, for the page
     timeout_s INTEGER NOT NULL DEFAULT 0, -- 0: the App setting
     access_log INTEGER NOT NULL DEFAULT 0,
+    use_favicon INTEGER NOT NULL DEFAULT 0, -- show the site's own icon (fetched by the Test) instead of the emoji
+    favicon BLOB,
+    favicon_type TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -76,6 +79,18 @@ CREATE TABLE IF NOT EXISTS site_headers (
     name TEXT NOT NULL,
     value TEXT NOT NULL,
     PRIMARY KEY (site_id, name)
+);
+
+-- Per-site rewrite rules (§3.5, advanced): where_ 'body' (the answer's body, for the listed content types) or 'header'
+-- (each answer header's value); $prefix in replace is the site's prefix P.
+CREATE TABLE IF NOT EXISTS site_rules (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    where_ TEXT NOT NULL CHECK (where_ IN ('body', 'header')),
+    types TEXT NOT NULL DEFAULT '',       -- comma-separated content types ('' = every type)
+    match TEXT NOT NULL,
+    replace TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (site_id, position)
 );
 
 -- Optional access log (off by default per site): no bodies, no header values, no query strings.

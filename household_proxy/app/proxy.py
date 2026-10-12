@@ -9,13 +9,14 @@ Service-Worker-Allowed), hop-by-hop headers. The extra headers an admin set are 
 """
 import asyncio
 import logging
+import zlib
 from urllib.parse import unquote, urlsplit
 
 import httpx
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 
-from . import config, netguard, rewrite, settings, sites
+from . import config, decoding, netguard, rewrite, settings, sites
 
 logger = logging.getLogger("proxy")
 
@@ -203,10 +204,19 @@ def response_headers(upstream: httpx.Response, ctx: rewrite.Ctx, site: sites.Sit
         if lk in RESPONSE_DROP:
             continue
         out.append((k, v))
+    header_rules = site.header_rules(upstream.headers.get("content-type"))
+    if header_rules:
+        out = [(k, _apply_all(header_rules, v, ctx.prefix)) for k, v in out]
     out.append(("Content-Security-Policy", OWN_FRAME_POLICY))
     if not rewritten and "content-length" in upstream.headers:
         out.append(("Content-Length", upstream.headers["content-length"]))     # the raw bytes are passed on
     return out, nonce
+
+
+def _apply_all(rules: list, value: str, prefix: str) -> str:
+    for r in rules:
+        value = r.apply(value, prefix)
+    return value.replace("\r", " ").replace("\n", " ")      # a rule can never add a header line
 
 
 def _raw(headers: list) -> list:
@@ -284,14 +294,19 @@ async def exchange(request: Request, site: sites.Site, user: dict, ctx: rewrite.
 
 async def _answer(upstream: httpx.Response, site: sites.Site, ctx: rewrite.Ctx, method: str, log_access,
                   site_path: str) -> Response:
-    kind = rewrite.kind_of(upstream.headers.get("content-type"))
-    encoding = (upstream.headers.get("content-encoding") or "identity").lower().strip()
+    content_type = upstream.headers.get("content-type")
+    kind = rewrite.kind_of(content_type)
+    rules = site.body_rules(content_type)
+    ctx.body_rules = [(lambda text, r=r: r.apply(text, ctx.prefix)) for r in rules]
+    ctx.strip_script_integrity = any(not r.types or any("javascript" in t for t in r.types)
+                                     for r in site.rules if r.where == "body")
+    encoding = upstream.headers.get("content-encoding")
     length = upstream.headers.get("content-length")
-    readable = encoding in ("identity", "gzip", "deflate", "x-gzip")
+    readable = decoding.readable(encoding)
     small = not (length and length.isdigit() and int(length) > rewrite.MAX_REWRITE_BYTES)
-    if kind and readable and small and method != "HEAD" and upstream.status_code not in (204, 304):
+    if (kind or rules) and readable and small and method != "HEAD" and upstream.status_code not in (204, 304):
         buf = bytearray()
-        it = upstream.aiter_bytes()
+        it = decoding.pieces(upstream.aiter_raw(), encoding)        # bounded pieces: no decompression bomb
         too_big = False
         try:
             async for chunk in it:
@@ -299,9 +314,9 @@ async def _answer(upstream: httpx.Response, site: sites.Site, ctx: rewrite.Ctx, 
                 if len(buf) > rewrite.MAX_REWRITE_BYTES:
                     too_big = True
                     break
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError, zlib.error) as e:
             await upstream.aclose()
-            status, detail = describe(e)
+            status, detail = describe(e) if isinstance(e, httpx.HTTPError) else (502, "The site's answer couldn't be read.")
             return error_page(status, f"{site.name} isn't answering", detail)
         if not too_big:
             await upstream.aclose()
@@ -309,7 +324,8 @@ async def _answer(upstream: httpx.Response, site: sites.Site, ctx: rewrite.Ctx, 
             if kind == "html":
                 ctx.nonce = nonce
                 ctx.shim = rewrite.shim_tag(ctx, config.APP_VERSION, site.spa_mode, site_path)
-            data = rewrite.body(kind, bytes(buf), upstream.headers.get("content-type"), ctx)
+            # parsing a page of a few MB takes a moment: off the event loop, so other requests keep flowing
+            data = await asyncio.to_thread(rewrite.body, kind or "", bytes(buf), content_type, ctx)
             headers.append(("Content-Length", str(len(data))))
             r = Response(content=b"", status_code=upstream.status_code)
             r.body = data
@@ -347,7 +363,7 @@ def _stream(upstream: httpx.Response, headers: list, site: sites.Site, log_acces
             async for chunk in source:
                 sent += len(chunk)
                 yield chunk
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, zlib.error) as e:
             logger.info("%s: the answer was cut off: %s", site.slug, e)
         finally:
             await upstream.aclose()

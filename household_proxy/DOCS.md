@@ -79,6 +79,37 @@ Add, edit, delete and reorder the sites. For each site:
   the site opens already signed in. Values are shown as "saved", never sent back to a browser and never logged.
   **Everyone allowed on the site acts as that account.**
 
+### Test
+
+**🔍 Test** on the form fetches the start page through the proxy, from Home Assistant, and says in plain words what
+it found: whether the site answers (and why not — refused, timed out, name not found, certificate), its status and
+time, redirects, frame-blocking headers (the proxy removes them), how many addresses in the page are rewritten, and
+whether its main scripts use a client-side router or a fixed base path. The verdict is **Should work**, **Try
+single-page app mode**, **Needs a rule** (with the suggested rule — **Add it**), or **Probably won't work through
+Home Assistant — use a tunnel** (for example when the site sends you to another address to sign in). The Test can
+run before you save; extra headers left blank use the saved values.
+
+### Self-signed certificates
+
+A site on `https://` with a self-signed certificate (most NAS and Proxmox installs) is refused at first: the Test
+shows its certificate — name, expiry and SHA-256 fingerprint. After saving the site, **Trust this certificate**
+accepts that exact certificate for this site from then on, whatever its name and dates; any other certificate is
+still refused. Check the fingerprint against the one the device shows if you can. Changing the site's address forgets
+the trusted certificate.
+
+### The site's own icon
+
+**Use the site's own icon** fetches the site's icon when you save and shows it on the tile instead of the emoji.
+Only small PNG, ICO, GIF, JPEG or WebP images are kept (SVG never: it can contain scripts).
+
+### Rules (advanced)
+
+For the site that hard-codes something the proxy misses: a regular expression and its replacement, applied to the
+**body** or to the **header values** of answers of the listed content types (for example
+`application/javascript`; empty means every type). `$prefix` in the replacement is the site's prefix here
+(`/api/hassio_ingress/…/s/<short name>`); `\1` refers to a group. Scripts changed by a rule lose their integrity
+hashes in the page (they no longer match). A rule can never add a header line.
+
 ## Admin → People
 
 Everyone who has opened the app. Someone turned off opens no site, whatever each site allows. You can't turn
@@ -134,4 +165,5 @@ of it (their names are kept); a restore keeps the values this install has for th
 - **"The site refused the connection"** — check the address and port, and that the device is on.
 - **"The name … couldn't be found"** — Home Assistant's DNS doesn't know a `.local` name: use the IP address.
 - **"…is an internet address"** — the name points outside your network; allow it per site only if you mean to.
-- **The site's certificate wasn't accepted** — the site uses a self-signed certificate.
+- **The site's certificate wasn't accepted** — the site uses a self-signed certificate: run the Test, check the
+  fingerprint and choose **Trust this certificate**.

@@ -27,7 +27,8 @@ class Ctx:
     secure: bool = True          # Home Assistant was reached over https (Secure cookies keep working)
     shim: str | None = None      # the <script> tag to insert first in <head> (phase 2)
     nonce: str | None = None     # the site's CSP nonce, when its policy needs one for the shim
-    body_rules: list = field(default_factory=list)
+    body_rules: list = field(default_factory=list)      # callables text -> text (per-site rules, §3.5)
+    strip_script_integrity: bool = False                  # rules rewrite scripts: their hashes no longer match
 
     @property
     def prefix(self) -> str:
@@ -176,8 +177,8 @@ class _Rewriter(HTMLParser):
                 new.append((name, None))
                 continue
             v = self._attr(tag, name, value, attrs)
-            if name == "integrity" and tag == "link":
-                changed = True                # the stylesheet is rewritten, so its hash no longer matches
+            if name == "integrity" and (tag == "link" or (tag == "script" and self.ctx.strip_script_integrity)):
+                changed = True                # the file is rewritten on its way through: its hash no longer matches
                 continue
             if v != value:
                 changed = True

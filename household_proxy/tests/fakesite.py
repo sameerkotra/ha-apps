@@ -54,6 +54,12 @@ l.onload = function () { document.getElementById("css").textContent = "css:loade
 document.head.appendChild(l);
 """
 
+BASENAME_PAGE = """<html><head><link rel="icon" href="/img/icon.png"></head><body><script src="/static/base.js"></script>
+<script src="/static/base.js" integrity="sha384-x"></script></body></html>"""
+BASENAME_JS = 'createBrowserRouter(routes, {basename:"/"}); fetch("/api/x")'
+PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+       b"\x00\x00\x00\rIDATx\x9cc\xf8\xcf\xc0\xf0\x1f\x00\x05\x00\x01\xff\x89\x99=\x1d\x00\x00\x00\x00IEND\xaeB`\x82")
+
 ECHO_SKIP = {"user-agent"}
 
 
@@ -127,6 +133,29 @@ def make_app(host: str) -> Starlette:
     async def data(request):
         return JSONResponse({"ok": "yes"})
 
+    async def basename_page(request):
+        return HTMLResponse(BASENAME_PAGE)
+
+    async def basename_js(request):
+        return Response(BASENAME_JS, media_type="application/javascript",
+                        headers={"X-Base": "/old-base", "Content-Security-Policy": "script-src 'self'"})
+
+    async def png(request):
+        return Response(PNG, media_type="image/png")
+
+    async def svg_page(request):
+        return HTMLResponse('<html><head><link rel="icon" href="/img/i.svg"></head></html>')
+
+    async def svg(request):
+        return Response('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+                        media_type="image/svg+xml")
+
+    async def bomb(request):
+        import zlib
+        c = zlib.compressobj(9, zlib.DEFLATED, 31)
+        data = c.compress(b"<html><body>" + b"A" * (20 * 1024 * 1024)) + c.compress(b"</body></html>") + c.flush()
+        return Response(data, media_type="text/html", headers={"Content-Encoding": "gzip"})
+
     async def ws_echo(websocket):
         await websocket.accept(subprotocol=(websocket.scope.get("subprotocols") or [None])[0])
         await websocket.send_json({"origin": websocket.headers.get("origin"), "host": websocket.headers.get("host"),
@@ -153,7 +182,9 @@ def make_app(host: str) -> Starlette:
         Route("/big", big), Route("/gz", gz), Route("/slow", slow), Route("/huge", huge_html),
         Route("/status/{code}", status), WebSocketRoute("/ws", ws_echo),
         Route("/stacks", spa), Route("/stacks/{rest:path}", spa), Route("/static/spa.js", spa_js),
-        Route("/api/data", data),
+        Route("/api/data", data), Route("/basename", basename_page), Route("/static/base.js", basename_js),
+        Route("/img/icon.png", png), Route("/favicon.ico", png), Route("/svgicon", svg_page), Route("/img/i.svg", svg),
+        Route("/bomb", bomb),
     ])
 
 
@@ -178,6 +209,46 @@ def start() -> int:
         time.sleep(0.05)
     _server.update(port=port, server=server)
     return port
+
+
+def start_tls(cert_file: str, key_file: str) -> int:
+    """A second copy of the fake site over https with the given certificate (a new one per call); its port."""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    config = uvicorn.Config(make_app(f"127.0.0.1:{port}"), host="127.0.0.1", port=port, log_level="warning",
+                            ssl_certfile=cert_file, ssl_keyfile=key_file)
+    server = uvicorn.Server(config)
+    threading.Thread(target=server.run, daemon=True).start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    return port
+
+
+def self_signed(folder: str, name: str = "nas.lan") -> tuple[str, str]:
+    """A fresh self-signed certificate and key in `folder`: (cert file, key file)."""
+    import datetime
+    import os
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
+    cf, kf = os.path.join(folder, name + ".crt"), os.path.join(folder, name + ".key")
+    with open(cf, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    with open(kf, "wb") as f:
+        f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+                                  serialization.NoEncryption()))
+    return cf, kf
 
 
 def _has_sansio() -> bool:
