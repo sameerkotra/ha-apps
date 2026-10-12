@@ -92,6 +92,8 @@
   $("#floatBack").addEventListener("click", () => go("#/"));
   $("#reloadBtn").addEventListener("click", () => {
     const f = $("#frame");
+    // single-page app mode: the frame's own address is the site's path, not a proxied one — start again through it
+    if (state.site && state.site.spaMode) { f.setAttribute("src", siteSrc(state.site, null) + (siteSrc(state.site, null).includes("?") ? "&" : "?") + "_hp=" + Date.now()); return; }
     try { f.contentWindow.location.reload(); } catch (e) { f.setAttribute("src", f.getAttribute("src")); }
   });
   $("#copyBtn").addEventListener("click", async () => {

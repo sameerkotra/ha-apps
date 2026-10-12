@@ -2,6 +2,13 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.2.0
+
+- Pages that build addresses while they run work too: a small script, put first into every page, sends their requests,
+  websockets, live updates, workers and new links through the proxy.
+- **Single-page app mode** (per site): apps with their own router (React, Vue — Komodo is one) see their own paths.
+- Websockets pass through both ways (terminals, live logs), with the same check of who may open the site.
+
 ## 0.1.0
 
 - First version: sites opened inside Home Assistant through its sign-in (ingress), at `…/s/<short name>/`.

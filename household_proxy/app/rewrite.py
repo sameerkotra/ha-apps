@@ -228,7 +228,37 @@ class _Rewriter(HTMLParser):
         self.out.append(f"<![{data}]>")
 
 
+SHIM_PATH = "/_hp/shim.js"
+
+
+def shim_tag(ctx: Ctx, version: str, spa: bool, site_path: str) -> str:
+    """The <script> that goes first in every proxied page (static/_hp/shim.js), its settings in data-hp; in
+    single-page app mode also a <base> so relative URLs keep loading through the proxy once the frame's address
+    shows the site's own path (§3.4)."""
+    import json
+    cfg = {"p": ctx.prefix, "i": ctx.ingress, "o": _origin(ctx), "spa": spa, "v": site_path if spa else None}
+    nonce = f' nonce="{html.escape(ctx.nonce, quote=True)}"' if ctx.nonce else ""
+    tag = (f'<script src="{html.escape(ctx.ingress + SHIM_PATH, quote=True)}?v={html.escape(version)}" '
+           f'data-hp="{html.escape(json.dumps(cfg, separators=(",", ":")), quote=True)}"{nonce}></script>')
+    if spa:
+        folder = site_path.split("?")[0].split("#")[0]
+        folder = folder[:folder.rfind("/") + 1] or "/"
+        tag += f'<base href="{html.escape(ctx.prefix + folder, quote=True)}">'
+    return tag
+
+
+def _origin(ctx: Ctx) -> str:
+    h = f"[{ctx.host}]" if ":" in ctx.host else ctx.host
+    default = (ctx.scheme == "http" and ctx.port == 80) or (ctx.scheme == "https" and ctx.port == 443)
+    return f"{ctx.scheme}://{h}" if default else f"{ctx.scheme}://{h}:{ctx.port}"
+
+
+_HAS_BASE = re.compile(r"<base[\s>/]", re.I)
+
+
 def html_text(text: str, ctx: Ctx) -> str:
+    if ctx.shim and "<base " in ctx.shim and _HAS_BASE.search(text):
+        ctx = Ctx(**{**ctx.__dict__, "shim": ctx.shim.split("<base ")[0]})     # the page has its own <base>
     p = _Rewriter(ctx)
     p.feed(text)
     p.close()

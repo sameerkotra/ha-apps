@@ -263,3 +263,33 @@ class AccessLog(ProxyCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Shim(ProxyCase):
+    def test_shim_first_in_every_page(self):
+        import html as h
+        import json as j
+        self.add_site()
+        t = self.get("/s/fake/").text
+        self.assertIn('<head><script src="/api/hassio_ingress/TOKEN123/_hp/shim.js?v=', t)
+        cfg = j.loads(h.unescape(t.split('data-hp="')[1].split('"')[0]))
+        self.assertEqual(cfg, {"p": P, "i": INGRESS, "o": f"http://127.0.0.1:{self.port}", "spa": False, "v": None})
+        self.assertNotIn("<base href=\"" + P + "/\"><base", t)
+
+    def test_single_page_app_mode(self):
+        self.add_site(spa_mode=True)
+        t = self.get("/s/fake/gz?tab=2").text
+        self.assertIn('&quot;spa&quot;:true,&quot;v&quot;:&quot;/gz?tab=2&quot;', t)
+        self.assertIn(f'<base href="{P}/">', t)
+        t = self.get("/s/fake/").text                    # the page's own <base> wins
+        self.assertEqual(t.count("<base "), 1)
+
+    def test_script_allowed_by_the_sites_policy(self):
+        self.add_site()
+        csps = self.get("/s/fake/").headers.get_list("content-security-policy")
+        self.assertIn("default-src 'self'; upgrade-insecure-requests", csps)     # 'self' already allows it
+
+    def test_shim_is_served(self):
+        r = self.get("/_hp/shim.js")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("__householdProxy", r.text)

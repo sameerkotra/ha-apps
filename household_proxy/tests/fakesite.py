@@ -31,6 +31,29 @@ PAGE = """<!DOCTYPE html>
 <p>Caf&eacute; &amp; &#169; — ünïcode</p>
 </body></html>"""
 
+# A single-page app written for "/": absolute assets, a client-side router reading location.pathname, an API call, a
+# websocket to its own host and a stylesheet added at run time.
+SPA = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>SPA</title>
+<script src="/static/spa.js" defer></script></head>
+<body><div id="route">…</div><div id="data">…</div><div id="ws">…</div><div id="css">…</div>
+<a id="nav" href="/stacks/2">next</a></body></html>"""
+
+SPA_JS = """
+function render() { document.getElementById("route").textContent = "route:" + location.pathname; }
+render();
+document.getElementById("nav").addEventListener("click", function (e) {
+  e.preventDefault(); history.pushState(null, "", "/stacks/2"); render();
+});
+fetch("/api/data").then(function (r) { return r.json(); }).then(function (j) {
+  document.getElementById("data").textContent = "data:" + j.ok;
+});
+var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + "{host}/ws");
+ws.onmessage = function (m) { if (m.data.indexOf("echo:") === 0) document.getElementById("ws").textContent = m.data; else ws.send("ping"); };
+var l = document.createElement("link"); l.rel = "stylesheet"; l.href = "/static/app.css";
+l.onload = function () { document.getElementById("css").textContent = "css:loaded"; };
+document.head.appendChild(l);
+"""
+
 ECHO_SKIP = {"user-agent"}
 
 
@@ -47,6 +70,9 @@ def make_app(host: str) -> Starlette:
 
     async def css(request):
         return Response('@import "/static/more.css"; body{background:url("/img/z.png")}', media_type="text/css")
+
+    async def more_css(request):
+        return Response("p{margin:0}", media_type="text/css")
 
     async def js(request):
         return Response('fetch("/api/data")', media_type="application/javascript")
@@ -92,6 +118,15 @@ def make_app(host: str) -> Starlette:
     async def status(request):
         return PlainTextResponse("teapot", status_code=int(request.path_params["code"]))
 
+    async def spa(request):
+        return HTMLResponse(SPA)
+
+    async def spa_js(request):
+        return Response(SPA_JS.replace("{host}", host), media_type="application/javascript")
+
+    async def data(request):
+        return JSONResponse({"ok": "yes"})
+
     async def ws_echo(websocket):
         await websocket.accept(subprotocol=(websocket.scope.get("subprotocols") or [None])[0])
         await websocket.send_json({"origin": websocket.headers.get("origin"), "host": websocket.headers.get("host"),
@@ -111,12 +146,14 @@ def make_app(host: str) -> Starlette:
             return
 
     return Starlette(routes=[
-        Route("/", home), Route("/static/app.css", css), Route("/static/app.js", js), Route("/r", redirect),
+        Route("/", home), Route("/static/app.css", css), Route("/static/more.css", more_css), Route("/static/app.js", js), Route("/r", redirect),
         Route("/r-abs", redirect_abs), Route("/r-away", redirect_away),
         Route("/echo", echo, methods=["GET", "POST", "PUT", "PATCH", "DELETE"]),
         Route("/echo/{rest:path}", echo, methods=["GET", "POST"]),
         Route("/big", big), Route("/gz", gz), Route("/slow", slow), Route("/huge", huge_html),
         Route("/status/{code}", status), WebSocketRoute("/ws", ws_echo),
+        Route("/stacks", spa), Route("/stacks/{rest:path}", spa), Route("/static/spa.js", spa_js),
+        Route("/api/data", data),
     ])
 
 

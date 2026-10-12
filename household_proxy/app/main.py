@@ -18,9 +18,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import HTTPConnection, Request
 from starlette.responses import RedirectResponse
-from starlette.websockets import WebSocketClose
+from starlette.websockets import WebSocket, WebSocketClose
 
-from . import auth, config, db, proxy, rewrite, settings, sidebar, sites
+from . import auth, config, db, proxy, rewrite, settings, sidebar, sites, wsproxy
 from .common import auth_core, deeplinks, ha_time, web_security
 from .common import housekeeping as jobs_core
 from .routers import api
@@ -109,7 +109,16 @@ async def proxied_http(scope, receive, send) -> None:
 
 
 async def proxied_websocket(scope, receive, send) -> None:
-    await WebSocketClose(code=1003)(scope, receive, send)
+    ws = WebSocket(scope, receive, send)
+    m = SITE_PATH.match(scope["path"])
+    user = await run_in_threadpool(auth.cached_user, ws)
+    site = sites.get(m.group(1)) if m else None
+    if not m or m.group(2) is None or user is None or site is None or not sites.can_open(user, site):
+        return await WebSocketClose(code=1008)(scope, receive, send)
+    rest = proxy.split_path(scope.get("raw_path") or scope["path"].encode(), site.slug)
+    if rest is None:
+        return await WebSocketClose(code=1008)(scope, receive, send)
+    await wsproxy.relay(ws, site, user, rest)
 
 
 # --------------------------------------------------------------------------------------------- the gate

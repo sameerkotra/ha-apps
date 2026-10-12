@@ -30,6 +30,17 @@ site.
 
 ### What works, and what doesn't
 
+The app also puts a small script first into every page of a site. While the page runs, it sends the requests,
+websockets, live updates and new links the page builds (`/api/…`, `wss://…`) through the proxy as well.
+
+**Single-page app mode** (per site): apps with their own router — React, Vue, Komodo — read their own address to
+decide what to show, and under the proxy they see a long Home Assistant address and show "not found". In this mode
+the frame's address is changed to the site's own path before the app starts, so its router works. Then **↻** in the
+bar starts the site again from its start page, and the frame's own address isn't a link anyone can open — use
+**Copy link**. Pages that read their own cookies from a script may not work in this mode.
+
+Websockets (terminals, live logs) pass through both ways.
+
 Most web pages expect to live at the top of their own address (`/`). Here they live under Home Assistant's
 address, so the app rewrites what it can on the way through: links, forms, images, styles, redirects and
 cookies. Big downloads and uploads stream through without waiting. Everything goes through Home Assistant —
@@ -53,7 +64,7 @@ Add, edit, delete and reorder the sites. For each site:
   address: a page there can read what Home Assistant's pages keep in the browser — including the sign-in kept
   by "Keep me logged in" — and act in Home Assistant as the person viewing it. Add only software you run and
   keep updated (Komodo, your NAS), not a router, printer or camera page with old firmware.
-- **Single-page app mode** — for apps with their own router that show "not found" under the proxy.
+- **Single-page app mode** — for apps with their own router that show "not found" under the proxy (see above).
 - **Show the bar** — on by default.
 
 **Advanced:**

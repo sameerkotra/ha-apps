@@ -9,7 +9,6 @@ Service-Worker-Allowed), hop-by-hop headers. The extra headers an admin set are 
 """
 import asyncio
 import logging
-import time
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -41,8 +40,7 @@ class TooLarge(Exception):
 
 # --------------------------------------------------------------------------------------------- clients
 
-_clients: dict = {}
-_clients_lock = asyncio.Lock()
+_clients: dict = {}     # (event loop, site id) -> (site version, client)
 
 
 def _transport(site: sites.Site) -> httpx.AsyncHTTPTransport:
@@ -54,18 +52,17 @@ def _transport(site: sites.Site) -> httpx.AsyncHTTPTransport:
 
 
 async def client(site: sites.Site) -> httpx.AsyncClient:
-    """One pooled client per site version (a saved change makes a new one; the old one is closed)."""
-    c = _clients.get(site.id)
+    """One pooled client per site version (a saved change makes a new one; the old one is closed). Nothing awaits
+    between the lookup and the store, so two requests can't both make one."""
+    loop = asyncio.get_running_loop()
+    key = (id(loop), site.id)
+    c = _clients.get(key)
     if c is not None and c[0] == site.version:
         return c[1]
-    async with _clients_lock:
-        c = _clients.get(site.id)
-        if c is not None and c[0] == site.version:
-            return c[1]
-        new = httpx.AsyncClient(transport=_transport(site), follow_redirects=False, trust_env=False)
-        _clients[site.id] = (site.version, new)
+    new = httpx.AsyncClient(transport=_transport(site), follow_redirects=False, trust_env=False)
+    _clients[key] = (site.version, new)
     if c is not None:
-        asyncio.get_running_loop().create_task(c[1].aclose())
+        loop.create_task(c[1].aclose())
     return new
 
 
@@ -251,8 +248,8 @@ async def exchange(request: Request, site: sites.Site, user: dict, ctx: rewrite.
                    log_access=None) -> Response:
     """Send the request to the site and give back its answer."""
     method = request.method.upper()
-    target = site.origin + rest + (("?" + request.scope["query_string"].decode("latin-1"))
-                                   if request.scope.get("query_string") else "")
+    query = request.scope.get("query_string", b"").decode("latin-1")
+    target = site.origin + rest + (f"?{query}" if query else "")
     ha, secure = ha_origin(request)
     ctx.secure = secure
     headers = forward_headers(request, site, user, ctx, ha)
@@ -269,7 +266,6 @@ async def exchange(request: Request, site: sites.Site, user: dict, ctx: rewrite.
         content = _body(request, limit)
     timeout = site.timeout_s or int(settings.get("request_timeout_s"))
     c = await client(site)
-    started = time.monotonic()
     try:
         req = c.build_request(method, target, headers=headers, content=content,
                               timeout=httpx.Timeout(timeout, connect=min(timeout, 15)))
@@ -283,11 +279,11 @@ async def exchange(request: Request, site: sites.Site, user: dict, ctx: rewrite.
         if log_access:
             await asyncio.to_thread(log_access, status, 0)
         return error_page(status, f"{site.name} isn't answering", detail)
-    return await _answer(upstream, site, ctx, method, log_access, started)
+    return await _answer(upstream, site, ctx, method, log_access, rest + (f"?{query}" if query else ""))
 
 
 async def _answer(upstream: httpx.Response, site: sites.Site, ctx: rewrite.Ctx, method: str, log_access,
-                  started: float) -> Response:
+                  site_path: str) -> Response:
     kind = rewrite.kind_of(upstream.headers.get("content-type"))
     encoding = (upstream.headers.get("content-encoding") or "identity").lower().strip()
     length = upstream.headers.get("content-length")
@@ -309,10 +305,10 @@ async def _answer(upstream: httpx.Response, site: sites.Site, ctx: rewrite.Ctx, 
             return error_page(status, f"{site.name} isn't answering", detail)
         if not too_big:
             await upstream.aclose()
-            need_script = kind == "html" and ctx.shim is not None
-            headers, nonce = response_headers(upstream, ctx, site, True, need_script)
-            if nonce:
+            headers, nonce = response_headers(upstream, ctx, site, True, kind == "html")
+            if kind == "html":
                 ctx.nonce = nonce
+                ctx.shim = rewrite.shim_tag(ctx, config.APP_VERSION, site.spa_mode, site_path)
             data = rewrite.body(kind, bytes(buf), upstream.headers.get("content-type"), ctx)
             headers.append(("Content-Length", str(len(data))))
             r = Response(content=b"", status_code=upstream.status_code)
