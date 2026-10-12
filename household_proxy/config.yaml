@@ -1,0 +1,50 @@
+name: "Household Proxy"
+version: "0.1.0"
+slug: household_proxy
+description: >-
+  Open the web pages of things on your home network — Komodo, a NAS,
+  Pi-hole, a printer — inside Home Assistant, from anywhere Home Assistant
+  reaches, with Home Assistant's sign-in only. Watch them, and restart a
+  stuck one with a smart plug.
+url: https://github.com/sameerkotra/ha-apps
+arch:
+  - amd64
+  - aarch64
+startup: application
+boot: auto
+init: true
+
+# Ingress-only: no ports are published to the host or LAN. The only way to
+# reach this app is through the Supervisor's authenticated ingress proxy; the
+# sites it opens are reached from here, never exposed themselves.
+ingress: true
+ingress_port: 8099
+# Uploads and downloads through a site are streamed, not buffered by the
+# Supervisor.
+ingress_stream: true
+panel_icon: mdi:web-box
+panel_title: Proxy
+# false = visible to every Home Assistant user; each person sees and opens
+# only the sites an admin allows them.
+panel_admin: false
+
+# Lets the app call the Home Assistant Core REST API (via
+# http://supervisor/core/api/, using the auto-injected SUPERVISOR_TOKEN) to
+# read HA's time zone. No other Supervisor API access is requested: the
+# sidebar page for deep links is read from the app's own info, which every
+# app may ask for.
+homeassistant_api: true
+hassio_api: false
+auth_api: false
+docker_api: false
+full_access: false
+apparmor: true
+
+# admin_users (who is an admin) is the only option. Sites, who may open them,
+# and every other setting are set in the app under Admin.
+options:
+  admin_users: []
+
+schema:
+  admin_users:
+    - "str"

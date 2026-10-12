@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Household Proxy</title>
+<script src="common/theme-boot.js?v=0.1.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=0.1.0">
+<link rel="stylesheet" href="common/settings.css?v=0.1.0">
+<link rel="stylesheet" href="style.css?v=0.1.0">
+</head>
+<body>
+<header class="topbar" id="topbar">
+  <button type="button" id="homeBtn" class="brand" title="Sites"><span aria-hidden="true">🌐</span> Proxy</button>
+  <nav class="topnav" id="topnav">
+    <button type="button" class="tab active" data-view="sites">Sites</button>
+  </nav>
+  <div class="topbar-right">
+    <button type="button" id="adminBtn" class="btn-ghost" hidden>🛡️ Admin</button>
+    <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
+    <button type="button" id="userBtn" class="btn-ghost" title="How the app sees you">—</button>
+  </div>
+</header>
+<div id="noAdminBanner" class="banner" hidden></div>
+
+<main id="sitesView" class="column">
+  <div id="offNote" class="note warn" hidden>An admin has turned you off in this app.</div>
+  <div id="tiles" class="tiles" aria-live="polite"></div>
+  <p id="noSites" class="note" hidden>No sites for you yet — ask an admin.</p>
+</main>
+
+<main id="viewerView" class="viewer" hidden>
+  <div id="viewerBar" class="viewer-bar">
+    <button type="button" id="backBtn" class="btn-ghost" title="Back to the sites">← Sites</button>
+    <span id="viewerTitle" class="viewer-title"></span>
+    <span class="viewer-tools">
+      <button type="button" id="reloadBtn" class="btn-ghost" title="Reload the site">↻</button>
+      <button type="button" id="copyBtn" class="btn-ghost" title="Copy a link to this site">🔗 Copy link</button>
+      <button type="button" id="newTabBtn" class="btn-ghost" title="Open in a new tab">↗</button>
+    </span>
+  </div>
+  <button type="button" id="floatBack" class="float-back" title="Back to the sites" hidden>←</button>
+  <iframe id="frame" class="frame" title="Site" referrerpolicy="same-origin"
+          allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+</main>
+
+<main id="adminView" class="column wide" hidden>
+  <nav class="tabs" id="adminTabs">
+    <button type="button" class="tab active" data-tab="sites">Sites</button>
+    <button type="button" class="tab" data-tab="settings">App settings</button>
+    <button type="button" class="tab" data-tab="people">People</button>
+    <button type="button" class="tab" data-tab="storage">Storage</button>
+  </nav>
+  <section id="tab-sites" class="tab-body"></section>
+  <section id="tab-settings" class="tab-body" hidden></section>
+  <section id="tab-people" class="tab-body" hidden></section>
+  <section id="tab-storage" class="tab-body" hidden>
+    <div class="card">
+      <h3>Backups</h3>
+      <p class="hint">A copy of the whole database: the sites, who may open them and the App settings. The values of
+        the sites' extra headers (passwords, keys) are left out; a restore keeps this install's values.</p>
+      <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
+      <p><label class="btn-secondary">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
+    </div>
+  </section>
+</main>
+
+<div id="toastRoot" class="toast-root"></div>
+<div id="modalRoot"></div>
+<script src="common/ui.js?v=0.1.0"></script>
+<script src="common/settings.js?v=0.1.0"></script>
+<script src="common/backnav.js?v=0.1.0"></script>
+<script src="common/whoami.js?v=0.1.0"></script>
+<script src="common/deeplink.js?v=0.1.0"></script>
+<script src="app.js?v=0.1.0"></script>
+</body>
+</html>
