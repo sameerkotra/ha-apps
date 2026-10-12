@@ -31,7 +31,6 @@ as tick boxes when it has `choices`). The validation type follows the kind unles
 """
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import threading
@@ -185,7 +184,8 @@ class Registry:
     encode / decode    encode(value) -> stored text, decode(text, key) -> value (default JSON)
     write              (conn, key, text, who, now) -> None (default: the INSERT … ON CONFLICT above)
     write_all          write every key on each update (not only the changed ones)
-    write_lock         a lock held around the read-validate-write of an update
+    write_lock         a lock held around the read-validate-write of an update (default: the Registry's own
+                       re-entrant lock, so two admins saving at once can't lose each other's change)
     on_write           (conn, changed, before, after, who) inside the write transaction (only if something changed)
     on_change          [(changed, after)] after a committed change; a failing hook is logged, never raised
     log                (who, changed, before, after) -> None (default: key names only, at INFO)
@@ -243,7 +243,7 @@ class Registry:
         self.load_check = load_check
         self.encode, self.decode, self.write = encode, decode, write
         self.write_all = write_all
-        self.write_lock = write_lock if write_lock is not None else contextlib.nullcontext()
+        self.write_lock = write_lock if write_lock is not None else threading.RLock()
         self.on_write = on_write
         self.on_change = list(on_change)
         self.logger = logger or logging.getLogger("settings")

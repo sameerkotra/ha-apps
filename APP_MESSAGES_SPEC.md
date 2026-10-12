@@ -340,6 +340,10 @@ checklist; Family Tree birthdays into the household chat. (Docs → Chat and Doc
   Chat).
 - **Sender is a claim.** `from` isn't proven; receivers treat it as a label for display and for answers, not as
   authority.
+- **Assistant tools answer only the assistant.** `assist.tools.list` and `assist.tool.call` (§6.6) from any `from`
+  other than `household_assistant` get `nack not_allowed` (detail `sender`) before anything else is checked. `from`
+  is still only a claim — a sender that forges it gets no more than the assistant could ask — but nothing else on
+  the bus can casually call a tool as another person (`requested_by`) or send `confirm: true` for them.
 - **Least revealing answers:** an answer says only what the asking dialog needs at that moment — the chat list
   names no members; a chat's member ids come only for the one chat the person picked, only when they asked to give
   its members access (§6.3).

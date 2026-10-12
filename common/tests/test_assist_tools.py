@@ -77,8 +77,8 @@ class CatalogueTests(unittest.TestCase):
         self.conn = sqlite3.connect(":memory:")
         self.conn.execute("CREATE TABLE items (text TEXT, by TEXT)")
 
-    def call(self, data):
-        msg = app_bus.Message(envelope("assist.tool.call", data))
+    def call(self, data, frm="household_assistant"):
+        msg = app_bus.Message(envelope("assist.tool.call", data, frm=frm))
         try:
             return self.cat.on_call(msg, self.conn)
         except app_bus.Nack as n:
@@ -156,6 +156,18 @@ class CatalogueTests(unittest.TestCase):
         self.assertNack(self.call(base), "not_allowed", "off")
         self.state["on"] = True
         self.assertNack(self.call(dict(base, tool="demo.refuse", args={})), "not_found", "thing")
+
+    def test_only_the_assistant_may_ask(self):
+        # Any app on the event bus could otherwise call a tool as anyone and confirm a change for them.
+        base = {"tool": "demo.items.add", "args": {"text": "milk"}, "requested_by": "u_ann", "confirm": True}
+        for frm in ("household_chat", "ha_assist", "", None):
+            self.assertNack(self.call(base, frm=frm), "not_allowed", "sender")
+            self.assertNack(self.call(dict(base, tool="demo.nope"), frm=frm), "not_allowed", "sender")
+            with self.assertRaises(app_bus.Nack) as cm:
+                self.cat.on_list(app_bus.Message(envelope("assist.tools.list", {}, frm=frm)), self.conn)
+            self.assertEqual((cm.exception.reason, cm.exception.detail), ("not_allowed", "sender"))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 0)
+        self.assertEqual(self.call(base)["text"], "Added milk.")
 
     def test_children_only_get_tools_open_to_them(self):
         self.assertIn("text", self.call({"tool": "demo.things", "args": {"when": "today"}, "requested_by": "u_kid"}))

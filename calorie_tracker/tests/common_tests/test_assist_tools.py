@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=027e53f19a27be00ac068e632dc46779ac1e893ff2f3972fecf0f85f364c6e42
+# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=bed0cfc720ba905c42886b9937e421ffbf508704a1758ff86db8c523bbdd70eb
 """Answering the Household Assistant (common/python/assist_tools.py): the catalogue, argument checks, the
 switches, result fitting and links, and both kinds through two real app buses in this process.
 HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6.
@@ -78,8 +78,8 @@ class CatalogueTests(unittest.TestCase):
         self.conn = sqlite3.connect(":memory:")
         self.conn.execute("CREATE TABLE items (text TEXT, by TEXT)")
 
-    def call(self, data):
-        msg = app_bus.Message(envelope("assist.tool.call", data))
+    def call(self, data, frm="household_assistant"):
+        msg = app_bus.Message(envelope("assist.tool.call", data, frm=frm))
         try:
             return self.cat.on_call(msg, self.conn)
         except app_bus.Nack as n:
@@ -157,6 +157,18 @@ class CatalogueTests(unittest.TestCase):
         self.assertNack(self.call(base), "not_allowed", "off")
         self.state["on"] = True
         self.assertNack(self.call(dict(base, tool="demo.refuse", args={})), "not_found", "thing")
+
+    def test_only_the_assistant_may_ask(self):
+        # Any app on the event bus could otherwise call a tool as anyone and confirm a change for them.
+        base = {"tool": "demo.items.add", "args": {"text": "milk"}, "requested_by": "u_ann", "confirm": True}
+        for frm in ("household_chat", "ha_assist", "", None):
+            self.assertNack(self.call(base, frm=frm), "not_allowed", "sender")
+            self.assertNack(self.call(dict(base, tool="demo.nope"), frm=frm), "not_allowed", "sender")
+            with self.assertRaises(app_bus.Nack) as cm:
+                self.cat.on_list(app_bus.Message(envelope("assist.tools.list", {}, frm=frm)), self.conn)
+            self.assertEqual((cm.exception.reason, cm.exception.detail), ("not_allowed", "sender"))
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM items").fetchone()[0], 0)
+        self.assertEqual(self.call(base)["text"], "Added milk.")
 
     def test_children_only_get_tools_open_to_them(self):
         self.assertIn("text", self.call({"tool": "demo.things", "args": {"when": "today"}, "requested_by": "u_kid"}))

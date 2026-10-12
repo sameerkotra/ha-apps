@@ -116,7 +116,8 @@ async def receive(source, dest_dir, *, suffix: str = ".db", prefix: str | None =
                   max_bytes: int | None = None, too_big=None) -> str:
     """Stream an upload into a new temp file in `dest_dir` and return its path (the caller deletes it).
     `source` is an UploadFile (read in 1 MB chunks) or a Request (its raw body). Past `max_bytes` the file
-    is deleted and `too_big()` is raised (an exception the app builds: its own message and status)."""
+    is deleted and `too_big()` is raised (an exception the app builds: its own message and status); without
+    `too_big`, a ValueError that says the upload is larger than the limit."""
     fd, path = _temp(dest_dir, suffix, prefix)
     size = 0
     try:
@@ -125,12 +126,22 @@ async def receive(source, dest_dir, *, suffix: str = ".db", prefix: str | None =
             async for chunk in chunks:
                 size += len(chunk)
                 if max_bytes is not None and size > max_bytes:
+                    if too_big is None:
+                        raise ValueError(f"The upload is larger than the {_size_text(max_bytes)} limit.")
                     raise too_big()
                 out.write(chunk)
     except BaseException:
         os.remove(path)
         raise
     return path
+
+
+def _size_text(n: int) -> str:
+    """1048576 → "1 MB"; small limits in KB or bytes."""
+    for unit, size in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= size:
+            return f"{n / size:.3g} {unit}"
+    return f"{n} bytes"
 
 
 async def _upload_chunks(upload):

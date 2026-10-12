@@ -86,6 +86,20 @@ class UiHelpers(unittest.TestCase):
         r = self.ui("process.stdout.write(JSON.stringify([UI.escapeHtml(`\" onmouseover='x' <b>&`), UI.escapeHtml(null)]));")
         self.assertEqual(r, ["&quot; onmouseover=&#39;x&#39; &lt;b&gt;&amp;", ""])
 
+    def test_h_never_writes_inline_handlers(self):
+        # A string under an on… key would become an inline handler (onclick="…"); only functions are listeners.
+        r = self.ui(r"""
+          const mk = (tag) => ({ tag, attrs: {}, listeners: [], kids: [], dataset: {}, style: {},
+            setAttribute(k, v) { this.attrs[k] = String(v); }, addEventListener(t) { this.listeners.push(t); },
+            appendChild(c) { this.kids.push(c); } });
+          globalThis.Node = function () {};
+          document.createElement = mk;
+          document.createTextNode = (t) => ({ text: t });
+          const el = UI.h("a", { onclick: "alert(1)", ONMOUSEOVER: "alert(2)", onFocus: () => 1, title: "ok" });
+          process.stdout.write(JSON.stringify({ attrs: el.attrs, listeners: el.listeners }));
+        """)
+        self.assertEqual(r, {"attrs": {"title": "ok"}, "listeners": ["focus"]})
+
     def test_error_message(self):
         r = self.ui("process.stdout.write(JSON.stringify([UI.errorMessage('Nope', 400), "
                     "UI.errorMessage([{ msg: 'a' }, { msg: 'b' }], 422), UI.errorMessage(null, 500)]));")

@@ -426,6 +426,16 @@ class NackTest(BusCase):
                 self.tearDown()
                 self.setUp()
 
+    def test_a_huge_ref_is_not_echoed(self):
+        # The refusal for a too-long ref must not post that ref back onto the bus.
+        ans, env = self.nack_for({"poll.create": lambda m, c: None}, {"ref": "x" * 1_000_000})
+        self.assertEqual(ans["data"], {"reason": "invalid", "detail": "ref"})
+        self.assertIsNone(ans["ref"])
+        self.tearDown()
+        self.setUp()
+        ans, env = self.nack_for({}, {"ref": "duel:3f2c"}, kind="nobody.handles")
+        self.assertEqual((ans["data"]["reason"], ans["ref"]), ("unsupported_kind", "duel:3f2c"))
+
     def test_receiver_expiry(self):
         calls = []
         past = (self.clock() - timedelta(seconds=1)).isoformat()

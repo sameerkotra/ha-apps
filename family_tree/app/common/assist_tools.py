@@ -1,4 +1,4 @@
-# Shared file: edit common/python/assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=a202089788e86c51195a0c46f3b23a3e1630b57ecce5aa70965605afc5952de9
+# Shared file: edit common/python/assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=779d9384a4e27d92553f476d153556dd31a3a4f74a2d36372a9bcd67cbc965b3
 """Answering the Household Assistant: an app's tools, like tools on an MCP server, over the app bus
 (HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6).
 
@@ -37,6 +37,10 @@ What the bus carries (APP_MESSAGES_SPEC §6.6):
   `nack not_allowed` (`no_access`); the admin switch off (`off`); the person's own switch off (`person_off`);
   a child asking a tool not open to children (`child`).
 
+Only the Household Assistant asks: either kind from any other app is refused with `nack not_allowed`
+(detail `sender`) before anything else is looked at, so another sender on the event bus can't call a tool
+as someone else (`requested_by`) or confirm a change on their behalf.
+
 Every handler answers as `requested_by` would see it in the app. Unknown arguments are ignored, as unknown
 fields are everywhere on the bus (APP_MESSAGES_SPEC §6); the model is told the arguments, not trusted with them.
 """
@@ -49,6 +53,7 @@ from datetime import date
 
 from . import app_bus
 
+ASSISTANT = "household_assistant"   # the only app that may ask (its slug, the envelope's `from`)
 MAX_TOOLS = 24
 MAX_ARGS = 8
 MAX_RESULT = 6 * 1024          # bytes of a tool's result (HOUSEHOLD_ASSISTANT_SPEC §6.2)
@@ -296,12 +301,20 @@ class Catalogue:
         bus.handler("assist.tools.list")(self.on_list)
         bus.handler("assist.tool.call")(self.on_call)
 
+    @staticmethod
+    def _from_assistant(msg) -> None:
+        """Refuse a request that doesn't come from the Household Assistant."""
+        if msg.from_app != ASSISTANT:
+            raise app_bus.Nack("not_allowed", "sender")
+
     def on_list(self, msg, conn):
+        self._from_assistant(msg)
         if self.busy:
             self.busy()
         return {"tools": self.spec(), "on": bool(self.enabled(conn))}
 
     def on_call(self, msg, conn):
+        self._from_assistant(msg)
         if self.busy:
             self.busy()
         d = msg.data

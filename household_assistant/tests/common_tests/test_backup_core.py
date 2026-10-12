@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_backup_core.py and run tools/sync_common.py; don't edit this copy. sha256=ea63546b67edc327e30291f3ca9cd187ba0b021d4d6426666d8a61e0829c2c22
+# Shared file: edit common/tests/test_backup_core.py and run tools/sync_common.py; don't edit this copy. sha256=edc7e339af0e95ecc06538aa58c6708ccb1c76e3653169a3d7dd6c84f32135b1
 """The shared backup/restore helpers (common/python/backup_core.py), tested in every app that uses them."""
 import asyncio
 import io
@@ -128,6 +128,14 @@ class BackupCore(unittest.TestCase):
         with self.assertRaises(ValueError):
             asyncio.run(backup_core.receive(FakeUpload(b"x" * (2 * 1024 * 1024 + 1)), d, max_bytes=2 * 1024 * 1024,
                                             too_big=lambda: ValueError("too big")))
+        self.assertEqual(os.listdir(d), [])
+
+    def test_receive_too_big_without_too_big_says_so(self):
+        # max_bytes alone used to end in a TypeError (calling None) instead of a readable refusal.
+        d = self.path("data")
+        with self.assertRaises(ValueError) as cm:
+            asyncio.run(backup_core.receive(FakeUpload(b"x" * (2 * 1024 * 1024 + 1)), d, max_bytes=2 * 1024 * 1024))
+        self.assertEqual(str(cm.exception), "The upload is larger than the 2 MB limit.")
         self.assertEqual(os.listdir(d), [])
 
     def test_receive_sync(self):

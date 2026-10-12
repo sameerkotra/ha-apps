@@ -129,6 +129,14 @@ class BackupCore(unittest.TestCase):
                                             too_big=lambda: ValueError("too big")))
         self.assertEqual(os.listdir(d), [])
 
+    def test_receive_too_big_without_too_big_says_so(self):
+        # max_bytes alone used to end in a TypeError (calling None) instead of a readable refusal.
+        d = self.path("data")
+        with self.assertRaises(ValueError) as cm:
+            asyncio.run(backup_core.receive(FakeUpload(b"x" * (2 * 1024 * 1024 + 1)), d, max_bytes=2 * 1024 * 1024))
+        self.assertEqual(str(cm.exception), "The upload is larger than the 2 MB limit.")
+        self.assertEqual(os.listdir(d), [])
+
     def test_receive_sync(self):
         p = backup_core.receive_sync(io.BytesIO(b"abc"), self.path("d"))
         with open(p, "rb") as f:

@@ -1,4 +1,4 @@
-# Shared file: edit common/python/backup_core.py and run tools/sync_common.py; don't edit this copy. sha256=4a18e7f3f5b39f60ef5fd8b6c9d162fb769d628d751962ce6533582bb25fd6ed
+# Shared file: edit common/python/backup_core.py and run tools/sync_common.py; don't edit this copy. sha256=205cd1126c52e900b1767ad377d9d31ec68e0f7eadae09fac4278a7cbe4ded08
 """Admin → Storage: download a backup, restore one (shared by the household apps).
 
 The database copy itself is `db_core.snapshot` / `snapshot_to_tempfile`; its checks are
@@ -117,7 +117,8 @@ async def receive(source, dest_dir, *, suffix: str = ".db", prefix: str | None =
                   max_bytes: int | None = None, too_big=None) -> str:
     """Stream an upload into a new temp file in `dest_dir` and return its path (the caller deletes it).
     `source` is an UploadFile (read in 1 MB chunks) or a Request (its raw body). Past `max_bytes` the file
-    is deleted and `too_big()` is raised (an exception the app builds: its own message and status)."""
+    is deleted and `too_big()` is raised (an exception the app builds: its own message and status); without
+    `too_big`, a ValueError that says the upload is larger than the limit."""
     fd, path = _temp(dest_dir, suffix, prefix)
     size = 0
     try:
@@ -126,12 +127,22 @@ async def receive(source, dest_dir, *, suffix: str = ".db", prefix: str | None =
             async for chunk in chunks:
                 size += len(chunk)
                 if max_bytes is not None and size > max_bytes:
+                    if too_big is None:
+                        raise ValueError(f"The upload is larger than the {_size_text(max_bytes)} limit.")
                     raise too_big()
                 out.write(chunk)
     except BaseException:
         os.remove(path)
         raise
     return path
+
+
+def _size_text(n: int) -> str:
+    """1048576 → "1 MB"; small limits in KB or bytes."""
+    for unit, size in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= size:
+            return f"{n / size:.3g} {unit}"
+    return f"{n} bytes"
 
 
 async def _upload_chunks(upload):

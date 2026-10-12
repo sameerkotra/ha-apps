@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=b16b59ce4b1372257e3d062163d1708e2b3c627dc671f857e5db051a46dd1c6b
+# Shared file: edit common/tests/test_app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=ecad111208cc2d5a567f23e855a32d9286d137867050ec052d36ab031edc315f
 """The shared app bus (common/python/app_bus.py, ha_ws.py) against a fake Home Assistant event bus
 (common/tests/fake_ha_bus.py), with two or three fake apps in this process. APP_MESSAGES_SPEC.md §3–§6, §9.
 
@@ -426,6 +426,16 @@ class NackTest(BusCase):
                 self.assertEqual(ans["data"], {"reason": "invalid", "detail": field})
                 self.tearDown()
                 self.setUp()
+
+    def test_a_huge_ref_is_not_echoed(self):
+        # The refusal for a too-long ref must not post that ref back onto the bus.
+        ans, env = self.nack_for({"poll.create": lambda m, c: None}, {"ref": "x" * 1_000_000})
+        self.assertEqual(ans["data"], {"reason": "invalid", "detail": "ref"})
+        self.assertIsNone(ans["ref"])
+        self.tearDown()
+        self.setUp()
+        ans, env = self.nack_for({}, {"ref": "duel:3f2c"}, kind="nobody.handles")
+        self.assertEqual((ans["data"]["reason"], ans["ref"]), ("unsupported_kind", "duel:3f2c"))
 
     def test_receiver_expiry(self):
         calls = []

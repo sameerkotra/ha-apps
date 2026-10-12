@@ -58,6 +58,7 @@
   // ---------- DOM ----------
   // makeH({ booleanProps: ["checked", …] }): those attributes follow truthiness (0 and "" leave them off)
   // instead of the rule below (only null/undefined/false leave an attribute off).
+  // on…: a function becomes an event listener; anything else is dropped, never an inline handler attribute.
   function makeH(options = {}) {
     const booleans = new Set(options.booleanProps || []);
     return function h(tag, attrs, ...kids) {
@@ -71,7 +72,7 @@
           else if (k === "dataset") Object.assign(el.dataset, v);
           else if (k === "style") el.style.cssText = v;
           else if (k === "value") value = v;              // applied after the children (<select> options)
-          else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
+          else if (/^on/i.test(k)) { if (typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v); }
           else if (v === true) el.setAttribute(k, "");
           else el.setAttribute(k, v);
         }

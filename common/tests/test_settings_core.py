@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from typing import Literal
 
@@ -263,6 +264,30 @@ class Registry(unittest.TestCase):
         with self.assertRaises(sc.SettingsError):
             r.update({"lit": "c"}, None)
         self.assertFalse(lock.locked())
+
+    def test_updates_at_once_take_turns_by_default(self):
+        # Two admins saving at the same moment: without a lock both read the same settings and the second
+        # write (write_all) puts the first one's change back.
+        inside, most = [0], [0]
+        guard = threading.Lock()
+
+        def prepare(partial, current, flags):
+            with guard:
+                inside[0] += 1
+                most[0] = max(most[0], inside[0])
+            time.sleep(0.15)
+            with guard:
+                inside[0] -= 1
+            return partial
+
+        r = self.make(prepare=prepare, write_all=True)
+        threads = [threading.Thread(target=r.update, args=(p, "ann")) for p in ({"days": 7}, {"on": False})]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(most[0], 1)
+        self.assertEqual((r.get("days"), r.get("on")), (7, False))
 
     def test_setting_listed_twice_or_unknown_group(self):
         with self.assertRaises(ValueError):

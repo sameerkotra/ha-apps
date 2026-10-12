@@ -1,4 +1,4 @@
-# Shared file: edit common/python/app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=780f4ea8e36ac678452283594d276c1a53faf656d093cad3f95b7b21a4848dc4
+# Shared file: edit common/python/app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=83cc92d017b3d96cfa5ace4086bcaf6acf82d1f71a1cb5e23ea31e6cbfbec1cd
 """Messages between the household apps over Home Assistant's event bus (APP_MESSAGES_SPEC.md).
 
 Shared by the household apps (common/python/app_bus.py, copied into an app's
@@ -743,9 +743,11 @@ class AppBus:
         return None
 
     def _answer(self, env: dict, reply: dict) -> None:
-        """Send a stored answer ({"kind": "ack"|"nack", "data": …}) for a received message."""
+        """Send a stored answer ({"kind": "ack"|"nack", "data": …}) for a received message. Its `ref` goes back
+        only when it is a short string (MAX_REF): a message refused for a huge `ref` doesn't get it echoed."""
+        ref = env.get("ref")
         self._post_direct(env["from"], reply["kind"], reply.get("data") or {}, reply_to=env["id"],
-                          ref=env.get("ref") if isinstance(env.get("ref"), str) else None,
+                          ref=ref if isinstance(ref, str) and 0 < len(ref) <= MAX_REF else None,
                           expires_in=timedelta(days=1))
 
     def _on_request(self, env: dict) -> None:

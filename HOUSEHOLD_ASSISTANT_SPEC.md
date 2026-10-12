@@ -300,6 +300,8 @@ their own rules, HA admins and every app with `homeassistant_api` can read the b
   So two people decide before a fact leaves an app: its admin and the person asking.
 - The assistant acts as the signed-in person (ingress identity, like every app): questions, history and actions
   are theirs; admins can't ask "as" someone.
+- Apps answer `assist.tools.list` / `assist.tool.call` only when the envelope's `from` is `household_assistant`;
+  any other sender gets `nack not_allowed` (`sender`) — `common/python/assist_tools.py`, APP_MESSAGES_SPEC §8.
 
 ### 7.3 Prompt injection
 

@@ -1,5 +1,11 @@
 """A tiny fake Home Assistant Core API for tests (shared: common/tests/fake_ha.py): records
-every request and answers like the Supervisor proxy would."""
+every request and answers like the Supervisor proxy would.
+
+What it answers, as real Home Assistant does: GET /api/config; GET /api/states (all) and
+GET /api/states/<entity_id> (200 with the state, 404 if unknown); POST/DELETE /api/states/<entity_id>;
+GET /api/services (when `notify_services` is set); POST /api/template (`people`); the notify services;
+and any other service call POST /api/services/<domain>/<service> with 200 [] —
+switch.turn_on / switch.turn_off (and switch.toggle) also change the state of a known switch."""
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -57,6 +63,10 @@ class FakeHA:
                             del outer.states[eid]
                             return self._reply(200)
                         return self._reply(404)
+                    if method == "GET":
+                        if eid in outer.states:
+                            return self._reply(200, {"entity_id": eid, **(outer.states[eid] or {})})
+                        return self._reply(404, {"message": "Entity not found."})
                 if method == "GET" and self.path == "/api/services" and outer.notify_services is not None:
                     return self._reply(200, [{"domain": "notify",
                                               "services": {n: {} for n in outer.notify_services}}])
@@ -82,6 +92,17 @@ class FakeHA:
                     name = self.path.rsplit("/", 1)[-1]
                     if outer.notify_services is not None and name not in outer.notify_services:
                         return self._reply(400, {"message": f"Service notify.{name} not found."})
+                    return self._reply(200, [])
+                if method == "POST" and self.path.count("/") == 4 and self.path.startswith("/api/services/"):
+                    domain, service = self.path.split("/")[3:5]
+                    if domain == "switch" and service in ("turn_on", "turn_off", "toggle"):
+                        ids = (body or {}).get("entity_id") or []
+                        for eid in [ids] if isinstance(ids, str) else ids:
+                            if eid in outer.states:
+                                st = dict(outer.states[eid] or {})
+                                on = {"turn_on": True, "turn_off": False}.get(service, st.get("state") != "on")
+                                st["state"] = "on" if on else "off"
+                                outer.states[eid] = st
                     return self._reply(200, [])
                 return self._reply(404)
 

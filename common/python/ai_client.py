@@ -26,8 +26,9 @@ limit), reading App settings, its prompts, its usage notes and its wording. It b
 `cfg` is any object with provider, url, model, api_key and label. A Reply has text, raw (the
 response body), payload (the parsed answer), input_tokens, output_tokens, seconds (Ollama's own
 timing, else None) and calls (the tools a model called through `tool_call`: [{"name", "args"}]).
-Every failure is an AIError(message, kind, raw) with kind one of unreachable |
-timeout | auth | rate_limit | not_found | bad_request | bad_response.
+Every failure is an AIError(message, kind, raw) with kind one of not_configured (Claude without an
+access key) | unreachable (also: the address answered with a redirect, which is never followed, so the
+key never goes anywhere else) | timeout | auth | rate_limit | not_found | bad_request | bad_response.
 
 Requests that the provider answers 429/500/502/503/504/529 are retried up to MAX_RETRIES times,
 waiting Retry-After (1–60 s) or 5, 15, 45 s. A 400 from an OpenAI-compatible server about an
@@ -83,12 +84,24 @@ class Reply:
 
 # ---- HTTP -----------------------------------------------------------------------------------------
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Don't follow redirects: urllib would send the access key (Authorization / x-api-key) on to wherever the
+    redirect points. The 3xx comes back as a status instead, and Client.request turns it into an AIError."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def post(url: str, headers: dict, body: dict | None, timeout: float | None, method: str = "POST") -> tuple[int, str, dict]:
-    """(status, body text, response headers). HTTP errors come back as a status, not an exception."""
+    """(status, body text, response headers). HTTP errors come back as a status, not an exception; so does a
+    redirect, which is never followed (see _NoRedirect)."""
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _OPENER.open(req, timeout=timeout) as resp:
             return resp.status, resp.read().decode("utf-8", "replace"), dict(resp.headers)
     except urllib.error.HTTPError as e:
         try:
@@ -119,8 +132,11 @@ def retry_after(headers: dict, attempt: int) -> float:
 
 
 def auth_headers(cfg) -> dict:
-    """Claude: x-api-key + anthropic-version; anything else: a Bearer key when one is set."""
+    """Claude: x-api-key + anthropic-version (no key is an AIError of kind not_configured); anything else: a
+    Bearer key when one is set."""
     if cfg.provider == "anthropic":
+        if not cfg.api_key:
+            raise AIError("Enter the access key first (Admin → App settings).", "not_configured")
         return {"x-api-key": cfg.api_key, "anthropic-version": ANTHROPIC_VERSION}
     return {"Authorization": f"Bearer {cfg.api_key}"} if cfg.api_key else {}
 
@@ -211,6 +227,7 @@ class Wording:
     not_json: str = "{label} returned something that isn't JSON."
     unexpected: str = "{label} returned an unexpected answer."
     no_answer: str = "{label} returned no answer."
+    redirect: str = "{label} answered with a redirect to {location}; use the final address instead of {url}."
     keep_raw: bool = True             # AIError.raw and Reply.raw = the provider's answer (else "")
     scrub_key: bool = False           # replace the access key, should a provider echo it, with "…"
     timeout_in_reason: bool = False   # a connection error caused by a timeout counts as a timeout
@@ -260,6 +277,11 @@ class Client:
                 if self.wording.timeout_in_reason and (isinstance(reason, TimeoutError) or "timed out" in str(reason)):
                     raise self._timeout(cfg, timeout) from e
                 raise self._error(cfg, self.wording.unreachable, "unreachable", reason=reason, scrub_all=True) from e
+            if 300 <= status < 400:
+                # Never followed (the key would go along): the person should enter the address it points to.
+                location = {k.lower(): v for k, v in (resp_headers or {}).items()}.get("location") or "another address"
+                raise self._error(cfg, self.wording.redirect, "unreachable", location=str(location)[:200],
+                                  scrub_all=True)
             if status in RETRY_STATUSES and attempt < MAX_RETRIES:
                 wait = retry_after(resp_headers, attempt)
                 self.log.warning("%s answered %s; retrying in %.0f s", cfg.label, status, wait)

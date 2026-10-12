@@ -37,7 +37,9 @@ with TestClient(app, client=("172.30.32.2", 50000)) as c:          # runs the ap
 print("RESULT " + json.dumps(out))
 """
 
-APPS = ["calorie_tracker", "family_tree", "household_arcade", "household_assistant", "household_chat",
+# household_ai_docker isn't here: it has no login and no ingress by design (a plain Docker container whose
+# pages have no sign-in; other apps reach its API with optional access keys).
+APPS = ["calorie_tracker", "family_tree", "household_ai", "household_arcade", "household_assistant", "household_chat",
         "household_docs", "household_proxy", "household_todo", "household_vault", "receipt_price_intelligence",
         "splitpot"]
 

@@ -215,3 +215,65 @@ class ErrorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RedirectAndKeyTests(unittest.TestCase):
+    def test_a_redirect_is_never_followed_with_the_key(self):
+        # A real server that redirects to a second one: the key must not reach the second.
+        import http.server
+        import threading
+        seen = []
+
+        class Target(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append(dict(self.headers))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"content": [{"type": "text", "text": "stolen"}]}')
+
+            def log_message(self, *a):
+                pass
+
+        target = http.server.HTTPServer(("127.0.0.1", 0), Target)
+        where = f"http://127.0.0.1:{target.server_port}/v1/messages"
+
+        class Redirect(Target):
+            def do_POST(self):
+                self.send_response(307)
+                self.send_header("Location", where)
+                self.end_headers()
+
+        start = http.server.HTTPServer(("127.0.0.1", 0), Redirect)
+        for srv in (target, start):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            c = core.Client(sleep=lambda s: None)
+            with self.assertRaises(core.AIError) as e:
+                c.anthropic(Cfg("anthropic", url=f"http://127.0.0.1:{start.server_port}", api_key="sk-secret"), "q", limit=100,
+                            timeout=5)
+        finally:
+            for srv in (target, start):
+                srv.shutdown()
+                srv.server_close()
+        self.assertEqual(seen, [])
+        self.assertEqual(e.exception.kind, "unreachable")
+        self.assertIn("redirect to " + where, str(e.exception))
+        self.assertIn("use the final address", str(e.exception))
+
+    def test_a_redirect_status_from_the_apps_post(self):
+        c, _ = client(FakePost((301, "", {"Location": "https://ai.example/v1"})))
+        with self.assertRaises(core.AIError) as e:
+            c.openai(Cfg("openai"), "q")
+        self.assertEqual(e.exception.kind, "unreachable")
+        self.assertIn("https://ai.example/v1", str(e.exception))
+
+    def test_claude_without_a_key_is_not_configured(self):
+        post = FakePost()
+        c, _ = client(post)
+        for key in (None, ""):
+            for call in (lambda cfg: c.anthropic(cfg, "q", limit=100),
+                         lambda cfg: c.tool_call(cfg, "q", [{"name": "t", "description": "", "parameters": {}}])):
+                with self.assertRaises(core.AIError) as e:
+                    call(Cfg("anthropic", api_key=key))
+                self.assertEqual(e.exception.kind, "not_configured")
+        self.assertEqual(post.calls, [])
