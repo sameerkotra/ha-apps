@@ -96,6 +96,7 @@ def make_app(host: str) -> Starlette:
         body = await request.body()
         return JSONResponse({"method": request.method, "path": request.url.path, "query": request.url.query,
                              "headers": {k: v for k, v in request.headers.items() if k not in ECHO_SKIP},
+                             "raw": [[k.decode("latin-1"), v.decode("latin-1")] for k, v in request.headers.raw],
                              "body": body.decode("latin-1"), "size": len(body)})
 
     async def big(request):

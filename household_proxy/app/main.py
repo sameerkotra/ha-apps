@@ -102,6 +102,8 @@ async def proxied_http(scope, receive, send) -> None:
     if not sites.can_open(user, site):
         return await proxy.error_page(403, "Not for you", "You aren't on this site's list of people. An admin can "
                                                           "add you in Admin → Sites.")(scope, receive, send)
+    if request.method.upper() in ("TRACE", "TRACK", "CONNECT"):     # a TRACE echo would show the extra headers
+        return await proxy.error_page(405, "Not allowed", "That request method isn't passed on.")(scope, receive, send)
     rest = proxy.split_path(scope.get("raw_path") or scope["path"].encode(), slug)
     if rest is None:
         return await proxy.error_page(400, "Bad address", "That path isn't allowed.")(scope, receive, send)
@@ -143,7 +145,8 @@ class Gate:
                 return await WebSocketClose(code=1008)(scope, receive, send)
             return await auth_core.forbidden()(scope, receive, send)
         if kind == "http":
-            blocked = web_security.refuse_cross_site(Request(scope), log=logger)
+            request = Request(scope)
+            blocked = web_security.refuse_cross_site(request, log=logger)
             if blocked is not None:
                 return await blocked(scope, receive, send)
         elif web_security.cross_origin_websocket(conn):

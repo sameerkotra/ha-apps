@@ -120,10 +120,11 @@ def on_failed(conn, row, upd, now, events) -> None:
     """After a failed check (the watchdog has already moved the state)."""
     if not row["restart_entity"]:
         return
-    went_down = upd.get("state") == "down" and row["state"] in (None, "up")
+    was = "up" if row["state"] == "waiting" and not row["incident_id"] else row["state"]
+    went_down = upd.get("state") == "down" and was in (None, "up")
     if went_down:
         upd.update(restart_due=int(row["max_restarts"] > 0), restarts_used=0, blocked_reason=None)
-    elif row["state"] == "waiting":
+    elif was == "waiting":
         if row["restarts_used"] < row["max_restarts"]:
             upd.update(state="down", restart_due=1, wait_until=None)
         else:
@@ -232,48 +233,93 @@ async def _block(rows_, reason: str) -> None:
         await _alert(sid, "couldnt_restart", {"why": reason})
 
 
+def _claim(entity: str) -> bool:
+    """Reserve a switch for one sequence before any waiting, so two can never run at once."""
+    if entity in _tasks:
+        return False
+    _tasks[entity] = "claimed"
+    return True
+
+
+def _release(entity: str, task=None) -> None:
+    if _tasks.get(entity) in ("claimed", task):
+        _tasks.pop(entity, None)
+
+
+def _off_entities(conn) -> dict:
+    """{entity: [site ids]} of the switches this app turned off and hasn't seen back on."""
+    out = {}
+    for r in conn.execute("SELECT entity, site_ids FROM switched_off"):
+        try:
+            out[r["entity"]] = [int(i) for i in json.loads(r["site_ids"])]
+        except (ValueError, TypeError):
+            out[r["entity"]] = []
+    return out
+
+
 async def advance(now: float) -> None:
     """Start the restarts that are wanted and allowed; make sure no switch this app turned off stays off."""
     with db.get_conn() as conn:
         rows = _rows(conn)
-    # never left off: a switch marked off with no sequence running is turned on first
-    for entity in {r["restart_entity"] for r in rows if r["restart_phase"] and r["restart_entity"]}:
-        if entity not in _tasks:
+        off = _off_entities(conn)
+        # a site left "restarting" with no sequence and no switch still off (its switch was changed meanwhile):
+        # it waits as after a restart, then is checked again
+        covered = {i for ids in off.values() for i in ids}
+        for r in rows:
+            if r["state"] == "restarting" and r["id"] not in covered and r["restart_entity"] not in _tasks:
+                _set(conn, [r["id"]], state="waiting", restart_phase=None, switched_off_at=None,
+                     wait_until=now + r["wait_after_s"], next_check_at=now + r["wait_after_s"])
+    # never left off: a switch this app turned off, with no sequence running, is turned on first
+    for entity in off:
+        if _claim(entity):
             await _start(entity, _ensure_on(entity))
     wanted: dict[str, list] = {}
     for r in rows:
-        if r["restart_due"] and r["restart_entity"] and r["state"] == "down" and r["restart_entity"] not in _tasks:
+        if r["restart_due"] and r["restart_entity"] and r["state"] == "down" and r["restart_entity"] not in _tasks \
+                and r["restart_entity"] not in off:
             wanted.setdefault(r["restart_entity"], []).append(r)
     for entity, group in wanted.items():
-        allowed, blocked = [], {}
-        for r in group:
-            why = rule_blocks(r, rows, now)
-            (blocked.setdefault(why, []) if why else allowed).append(r)
-        for why, rs in blocked.items():
-            await _block(rs, why)
-        if not allowed:
+        if not _claim(entity):
             continue
-        if await reference_down():
-            await _block(allowed, "the network looks down, not the device (the reference address doesn't answer)")
-            continue
-        st = await _state(entity)
-        if st in UNAVAILABLE:
-            await _block(allowed, f"Home Assistant can't reach the switch {entity}")
-            continue
-        await _start(entity, _sequence(entity, [r["id"] for r in allowed]))
+        try:
+            started = await _consider(entity, group, rows, now)
+        finally:
+            if not started:
+                _release(entity)
+
+
+async def _consider(entity: str, group: list, rows: list, now: float) -> bool:
+    """Start the restart of `entity` for the sites in `group` that the rules allow; whether it started."""
+    allowed, blocked = [], {}
+    for r in group:
+        why = rule_blocks(r, rows, now)
+        (blocked.setdefault(why, []) if why else allowed).append(r)
+    for why, rs in blocked.items():
+        await _block(rs, why)
+    if not allowed:
+        return False
+    if await reference_down():
+        await _block(allowed, "the network looks down, not the device (the reference address doesn't answer)")
+        return False
+    st = await _state(entity)
+    if st in UNAVAILABLE:
+        await _block(allowed, f"Home Assistant can't reach the switch {entity}")
+        return False
+    await _start(entity, _sequence(entity, [r["id"] for r in allowed]))
+    return True
 
 
 async def _start(entity: str, coro) -> None:
+    """Run a sequence on a switch already claimed (_claim)."""
     if INLINE:
-        _tasks[entity] = None                             # marks it running
         try:
             await coro
         finally:
-            _tasks.pop(entity, None)
+            _release(entity)
         return
     task = asyncio.get_running_loop().create_task(coro)
     _tasks[entity] = task
-    task.add_done_callback(lambda t: _tasks.pop(entity, None))
+    task.add_done_callback(lambda t: _release(entity, t))
 
 
 async def _sequence(entity: str, site_ids: list[int], manual: bool = False) -> None:
@@ -294,6 +340,8 @@ async def _sequence(entity: str, site_ids: list[int], manual: bool = False) -> N
             if r["incident_id"]:
                 conn.execute("UPDATE incidents SET restarts = restarts + 1 WHERE id = ?", (r["incident_id"],))
             notes.append((r["id"], used, max(r["max_restarts"], used)))
+        conn.execute("INSERT OR REPLACE INTO switched_off (entity, site_ids, at) VALUES (?, ?, ?)",
+                     (entity, json.dumps([r["id"] for r in rows]), now))
     sites.invalidate()
     for sid, n, of in notes:
         await _alert(sid, "restarting", {"n": n, "of": of, "manual": manual})
@@ -305,6 +353,7 @@ async def _sequence(entity: str, site_ids: list[int], manual: bool = False) -> N
         logger.debug("logbook line failed", exc_info=True)
     if not await _call("turn_off", entity):
         with db.get_conn() as conn:
+            conn.execute("DELETE FROM switched_off WHERE entity = ?", (entity,))
             for r in rows:
                 _set(conn, [r["id"]], restart_phase=None, switched_off_at=None, state=r["state"] or "down",
                      state_since=r["state_since"], restart_due=int(not manual and r["state"] == "down"),
@@ -326,6 +375,7 @@ async def _sequence(entity: str, site_ids: list[int], manual: bool = False) -> N
     await _wait_for(entity, "on")
     now = _clock()
     with db.get_conn() as conn:
+        conn.execute("DELETE FROM switched_off WHERE entity = ?", (entity,))
         for r in rows:
             wait = r["wait_after_s"]
             _set(conn, [r["id"]], restart_phase=None, switched_off_at=None, state="waiting",
@@ -338,7 +388,7 @@ async def _turn_on(entity: str, site_ids: list[int] | None = None) -> bool:
     trying: the sites stay marked "off")."""
     with db.get_conn() as conn:
         if site_ids is None:
-            site_ids = [r["id"] for r in _rows(conn, "restart_entity = ? AND restart_phase IS NOT NULL", (entity,))]
+            site_ids = _off_entities(conn).get(entity, [])
         _set(conn, site_ids, restart_phase="on")
     started = _clock()
     while True:
@@ -375,12 +425,17 @@ async def _ensure_on(entity: str) -> None:
         now = _clock()
         with db.get_conn() as conn:
             from . import watchdog
-            rows = _rows(conn, "restart_entity = ? AND state = 'restarting'", (entity,))
-            for r in rows:
-                _set(conn, [r["id"]], state="waiting", state_since=watchdog.iso(now), restart_phase=None,
-                     switched_off_at=None, wait_until=now + r["wait_after_s"], next_check_at=now + r["wait_after_s"])
-            conn.execute("UPDATE sites SET restart_phase = NULL, switched_off_at = NULL WHERE restart_entity = ?",
-                         (entity,))
+            ids = _off_entities(conn).get(entity, [])
+            conn.execute("DELETE FROM switched_off WHERE entity = ?", (entity,))
+            for i in ids:
+                r = conn.execute("SELECT * FROM sites WHERE id = ?", (i,)).fetchone()
+                if r is None:
+                    continue                      # the site was deleted meanwhile: the switch is on again anyway
+                upd = {"restart_phase": None, "switched_off_at": None}
+                if r["state"] == "restarting":
+                    upd.update(state="waiting", state_since=watchdog.iso(now), wait_until=now + r["wait_after_s"],
+                               next_check_at=now + r["wait_after_s"])
+                _set(conn, [i], **upd)
         sites.invalidate()
 
 
@@ -403,10 +458,18 @@ async def restart_now(site_id: int) -> str | None:
     if r is None or not r["restart_entity"]:
         return "This site has no switch to restart it with."
     entity = r["restart_entity"]
-    if entity in _tasks:
+    with db.get_conn() as conn:
+        if entity in _off_entities(conn):
+            return "That switch is still off from an earlier restart; the app is turning it back on."
+    if not _claim(entity):
         return "A restart of this switch is already running."
-    if await _state(entity) in UNAVAILABLE:
-        return f"Home Assistant can't reach the switch {entity}."
+    try:
+        if await _state(entity) in UNAVAILABLE:
+            _release(entity)
+            return f"Home Assistant can't reach the switch {entity}."
+    except BaseException:
+        _release(entity)
+        raise
     await _start(entity, _sequence(entity, [site_id], manual=True))
     return None
 
@@ -414,7 +477,9 @@ async def restart_now(site_id: int) -> str | None:
 def try_again(site_id: int) -> bool:
     """Admin → Try again after giving up: the restart count starts over."""
     with db.get_conn() as conn:
-        n = conn.execute("UPDATE sites SET state = 'down', restart_due = 1, restarts_used = 0, blocked_reason = NULL "
+        # last_restart_at cleared: the gap between incidents doesn't hold back an admin's Try again
+        n = conn.execute("UPDATE sites SET state = 'down', restart_due = 1, restarts_used = 0, blocked_reason = NULL, "
+                         "last_restart_at = NULL "
                          "WHERE id = ? AND state = 'needs_attention' AND restart_entity IS NOT NULL",
                          (site_id,)).rowcount
     sites.invalidate()

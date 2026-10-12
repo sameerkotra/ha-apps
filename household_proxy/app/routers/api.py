@@ -365,8 +365,9 @@ async def import_db(file: UploadFile = File(...), admin: dict = Depends(require_
     """Replaces the whole database with a downloaded backup (validated first). The extra header values this
     install has are kept for the sites that still exist (a backup carries none)."""
     with db.get_conn() as conn:
-        kept = [(r["site_id"], r["name"], r["value"]) for r in
-                conn.execute("SELECT site_id, name, value FROM site_headers WHERE value != ''")]
+        kept = [(r["site_id"], r["name"], r["value"], r["target"]) for r in
+                conn.execute("SELECT h.site_id, h.name, h.value, s.target FROM site_headers h "
+                             "JOIN sites s ON s.id = h.site_id WHERE h.value != ''")]
     tmp_path = await backup_core.receive(file, config.DATA_DIR)
     try:
         try:
@@ -375,8 +376,10 @@ async def import_db(file: UploadFile = File(...), admin: dict = Depends(require_
             raise HTTPException(400, str(e))
         db.import_from_tempfile(tmp_path)
         with db.get_conn() as conn:
-            conn.executemany("UPDATE site_headers SET value = ? WHERE site_id = ? AND name = ? AND value = ''",
-                             [(v, s, n) for s, n, v in kept])
+            # only for the same site at the same address: credentials never move to another target
+            conn.executemany("UPDATE site_headers SET value = ? WHERE site_id = ? AND name = ? AND value = '' AND "
+                             "(SELECT target FROM sites WHERE id = site_headers.site_id) = ?",
+                             [(v, s, n, t) for s, n, v, t in kept])
         sites.invalidate()
         auth.forget_cached()
     finally:

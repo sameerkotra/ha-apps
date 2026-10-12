@@ -129,7 +129,7 @@ class Sequence(RestartCase):
         self.assertEqual(sum(1 for c in self.plug.calls if c[0] == "turn_off"), 2)   # no more restarts
         self.assertEqual(self.c.post(f"/api/admin/sites/{s['id']}/retry", headers=BOB).status_code, 403)
         self.assertEqual(self.c.post(f"/api/admin/sites/{s['id']}/retry", headers=ADMIN).status_code, 200)
-        self.tick(1)
+        self.tick(1)                                          # at once: the gap rule doesn't hold back Try again
         self.assertEqual(sum(1 for c in self.plug.calls if c[0] == "turn_off"), 3)   # the count starts over
         self.assertEqual(self.row()["restarts_used"], 1)
         self.heals = True
@@ -149,6 +149,9 @@ class NeverLeftOff(RestartCase):
         self.add_restartable()
         with db.get_conn() as conn:
             conn.execute("UPDATE sites SET state = 'up', restart_phase = 'off', switched_off_at = ?", (self.now,))
+            conn.execute("INSERT INTO switched_off (entity, site_ids, at) VALUES ('switch.box_plug', '[1]', ?)",
+                         (self.now,))
+            conn.execute("UPDATE switched_off SET site_ids = (SELECT json_array(id) FROM sites WHERE slug = 'box')")
         self.plug.states["switch.box_plug"] = "off"
         restarts.recover()                                           # the app starts again
         self.assertEqual(self.row()["state"], "restarting")
@@ -170,6 +173,36 @@ class NeverLeftOff(RestartCase):
         self.tick(1)
         self.assertEqual(self.plug.calls[-1][0], "turn_on")
         self.assertIsNone(self.row()["restart_phase"])
+
+    def test_switch_changed_or_site_deleted_while_off(self):
+        s = self.add_restartable()
+        self.plug.fail_on = 1000
+        self.go_down()                                           # turned off; turning on keeps failing
+        body = {"name": "Box", "slug": "box", "use": "monitor", "target": f"127.0.0.1:{self.port_.port}",
+                "check": {"kind": "tcp", "every_s": 60, "timeout_s": 2, "down_after": 3}}
+        self.c.put(f"/api/admin/sites/{s['id']}", json=body, headers=ADMIN)       # the admin removes the switch
+        self.c.delete(f"/api/admin/sites/{s['id']}", headers=ADMIN)               # … and even deletes the site
+        self.plug.fail_on = 0
+        self.tick(700)
+        self.assertEqual(self.plug.calls[-1][:2], ("turn_on", "switch.box_plug"))
+        self.assertEqual(self.plug.states["switch.box_plug"], "on")
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM switched_off").fetchone()[0], 0)
+
+    def test_switch_changed_while_off_site_checked_again(self):
+        s = self.add_restartable()
+        self.plug.fail_on = 1000
+        self.go_down()
+        body = {"name": "Box", "slug": "box", "use": "monitor", "target": f"127.0.0.1:{self.port_.port}",
+                "check": {"kind": "tcp", "every_s": 60, "timeout_s": 2, "down_after": 3},
+                "restart": {"entity": "switch.other_plug", "confirmed": True}}
+        self.c.put(f"/api/admin/sites/{s['id']}", json=body, headers=ADMIN)
+        self.plug.fail_on = 0
+        self.port_.up()
+        for _ in range(4):
+            self.tick(130)
+        self.assertEqual(self.plug.states["switch.box_plug"], "on")
+        self.assertEqual(self.row()["state"], "up")
 
     def test_switch_off_fails(self):
         self.add_restartable()
@@ -306,6 +339,33 @@ class ByHand(RestartCase):
         self.assertEqual(self.row()["state"], "waiting")
         self.plug.unavailable.add("switch.box_plug")
         self.assertEqual(self.c.post(f"/api/admin/sites/{s['id']}/restart", headers=ADMIN).status_code, 409)
+
+    def test_restart_now_on_a_healthy_site(self):
+        s = self.add_restartable()
+        self.port_.up()
+        self.tick()
+        self.tick()
+        self.heals = False                                      # the device is slow to come back after the restart
+        self.c.post(f"/api/admin/sites/{s['id']}/restart", headers=ADMIN)
+        self.tick(130)                                          # one failed check after the wait: not "down" yet
+        self.assertEqual(sum(1 for c in self.plug.calls if c[0] == "turn_off"), 1)
+        self.assertNotIn("Box is down", self.titles())
+        self.tick()
+        self.tick()                                             # Down after 3 → down, an incident, then a restart
+        self.assertIn("Box is down", self.titles())
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 1)
+
+    def test_one_sequence_per_switch_even_by_hand(self):
+        s = self.add_restartable()
+        self.assertTrue(restarts._claim("switch.box_plug"))    # an automatic restart is deciding
+        try:
+            r = self.c.post(f"/api/admin/sites/{s['id']}/restart", headers=ADMIN)
+            self.assertEqual(r.status_code, 409)
+            self.assertIn("already running", r.text)
+        finally:
+            restarts._release("switch.box_plug")
+        self.assertEqual(self.plug.calls, [])
 
     def test_form_rules(self):
         base = {"name": "M", "use": "monitor", "target": "nas.lan", "check": {"kind": "ping"}}

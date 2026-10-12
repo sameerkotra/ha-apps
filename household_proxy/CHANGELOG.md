@@ -2,6 +2,17 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.0
+
+- Listed in the app repository, with its documentation; ready to try. Not yet tried on real hardware with Komodo and
+  a smart plug: please report what works and what doesn't.
+- Fixes from an independent review: a browser can no longer send its own `Remote-User` (or other sign-in headers)
+  to a site; `TRACE` isn't passed on (it would echo the extra headers); a site's saved header values never follow it
+  to a new address (enter them again), nor move to another address in a restore; a switch turned off for a restart
+  is turned back on even if its site is changed or deleted meanwhile; **Restart now** on a healthy site and **Try
+  again** behave as expected; a manual and an automatic restart can't run on one switch at once; an admin turned off
+  by another admin loses the admin pages.
+
 ## 0.5.0
 
 - **Auto-restart**: a site that stops answering can be power-cycled with the Home Assistant switch (a smart plug) that

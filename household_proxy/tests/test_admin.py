@@ -5,6 +5,7 @@ import _env  # noqa: F401  (must be first)
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from app import db, sites
 from helpers import ADMIN, BOB, ProxyCase
@@ -82,6 +83,42 @@ class SitesForm(ProxyCase):
             self.assertEqual(r.status_code, 403, path)
 
 
+class SecretsStayWithTheirAddress(ProxyCase):
+    def test_changed_address_needs_the_values_again(self):
+        s = self.add_site(headers=[{"name": "Authorization", "value": "Basic SECRET"}])
+        body = {"name": "Fake", "slug": "fake", "target": "http://192.168.1.11:9", "trusted_ok": True,
+                "headers": [{"name": "Authorization", "value": None}]}
+        r = self.c.put(f"/api/admin/sites/{s['id']}", json=body, headers=ADMIN)
+        self.assertEqual(r.status_code, 422)
+        self.assertIn("enter the value", r.text)
+        body["headers"] = [{"name": "Authorization", "value": "Basic NEW"}]
+        self.assertEqual(self.c.put(f"/api/admin/sites/{s['id']}", json=body, headers=ADMIN).status_code, 200)
+
+    def test_the_test_doesnt_send_saved_values_to_a_new_address(self):
+        s = self.add_site(start_path="/echo", headers=[{"name": "X-Key", "value": "k-secret"}])
+        from unittest import mock
+        from app import probe
+        seen = {}
+
+        async def fake_run(site, timeout=15):
+            seen["headers"] = site.headers
+            return {}
+        with mock.patch.object(probe, "run", fake_run):
+            self.c.post(f"/api/admin/sites/test?id={s['id']}", headers=ADMIN, json={
+                "name": "Fake", "target": "http://192.168.1.11:9", "headers": [{"name": "X-Key", "value": None}]})
+        self.assertEqual(seen["headers"], ())
+
+    def test_restore_doesnt_move_values_to_another_address(self):
+        s = self.add_site(headers=[{"name": "Authorization", "value": "Basic SECRET"}])
+        backup = self.c.get("/api/admin-storage-download-db", headers=ADMIN).content
+        body = {"name": "Fake", "slug": "fake", "target": "http://192.168.1.11:9", "trusted_ok": True,
+                "headers": [{"name": "Authorization", "value": "Basic OTHER"}]}
+        self.c.put(f"/api/admin/sites/{s['id']}", json=body, headers=ADMIN)
+        self.c.post("/api/admin-storage-import-db", files={"file": ("b.db", backup)}, headers=ADMIN)
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT value FROM site_headers").fetchone()[0], "")
+
+
 class People(ProxyCase):
     def test_turn_off_and_not_yourself(self):
         r = self.c.put("/api/admin/people/u-bob", json={"enabled": False}, headers=ADMIN)
@@ -90,6 +127,17 @@ class People(ProxyCase):
         self.assertEqual(self.c.put("/api/admin/people/nobody", json={"enabled": True}, headers=ADMIN).status_code, 404)
         me = self.c.get("/api/me", headers=BOB).json()
         self.assertFalse(me["user"]["enabled"])
+
+    def test_turned_off_admin_loses_admin_pages(self):
+        from app import auth
+        from common_tests.ingress import identity_headers
+        other = identity_headers("u-other", "otheradmin", "Other Admin")
+        with mock.patch.object(auth.config, "ADMIN_USERS", auth.config.ADMIN_USERS | {"otheradmin"}):
+            self.c.get("/api/me", headers=other)
+            self.c.put("/api/admin/people/u-other", json={"enabled": False}, headers=ADMIN)
+            self.assertEqual(self.c.get("/api/admin/sites", headers=other).status_code, 403)
+            self.assertEqual(self.c.put("/api/admin/people/u-other", json={"enabled": True},
+                                        headers=other).status_code, 403)
 
 
 class Storage(ProxyCase):
@@ -124,6 +172,24 @@ class Settings(ProxyCase):
         self.assertEqual(r.json()["values"]["request_timeout_s"], 30)
         self.assertEqual(self.c.put("/api/admin/settings", json={"request_timeout_s": 1}, headers=ADMIN).status_code, 422)
         self.assertEqual(self.c.put("/api/admin/settings", json={"nope": 1}, headers=ADMIN).status_code, 422)
+
+
+class Cache(ProxyCase):
+    def test_a_save_during_a_load_isnt_lost(self):
+        from unittest import mock as m
+        self.add_site(access="everyone")
+        sites.invalidate()
+        real = sites._load
+
+        def load_then_save(conn):
+            out = real(conn)                                  # read the old access …
+            with db.get_conn() as c2:
+                c2.execute("UPDATE sites SET access = 'admins'")
+            sites.invalidate()                                # … while an admin's save lands
+            return out
+        with m.patch.object(sites, "_load", load_then_save):
+            sites.all_sites()
+        self.assertEqual(sites.get("fake").access, "admins")
 
 
 class Pages(ProxyCase):

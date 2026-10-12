@@ -192,6 +192,8 @@ def apply(site_id: int, res: Result, now: float) -> list[tuple]:
         upd = {"last_check": iso(now), "last_ms": res.ms, "last_error": res.error,
                "next_check_at": now + row["check_every_s"]}
         state, fails = row["state"], row["fails_in_row"]
+        if state == "waiting" and not row["incident_id"]:
+            state = "up"            # after a Restart now on a healthy site: the usual "down after N" rule applies
         if res.ok:
             upd["fails_in_row"] = 0
             if state != "up":

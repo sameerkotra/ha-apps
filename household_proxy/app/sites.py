@@ -272,12 +272,13 @@ class Site:
 
 
 _lock = threading.Lock()
-_cache: dict = {"gen": None, "by_slug": None}
+_cache: dict = {"gen": None, "by_slug": None, "version": 0}
 
 
 def invalidate() -> None:
     with _lock:
         _cache["by_slug"] = None
+        _cache["version"] += 1
 
 
 def _load(conn) -> dict:
@@ -323,10 +324,12 @@ def all_sites() -> dict:
     with _lock:
         if _cache["by_slug"] is not None and _cache["gen"] == db.generation:
             return _cache["by_slug"]
+        version, gen = _cache["version"], db.generation
     with db.get_conn() as conn:
         loaded = _load(conn)
     with _lock:
-        _cache["by_slug"], _cache["gen"] = loaded, db.generation
+        if _cache["version"] == version:          # nothing was saved while this was read: keep it
+            _cache["by_slug"], _cache["gen"] = loaded, gen
     return loaded
 
 
@@ -463,11 +466,12 @@ def preview(body: SiteIn, site_id: int | None = None) -> Site:
     saved_headers, pem = {}, None
     if site_id is not None:
         with db.get_conn() as conn:
-            saved_headers = {r["name"]: r["value"] for r in
-                             conn.execute("SELECT name, value FROM site_headers WHERE site_id = ?", (site_id,))}
             row = conn.execute("SELECT target, tls_pem FROM sites WHERE id = ?", (site_id,)).fetchone()
             if row and scheme and row["target"] == netguard.origin(scheme, host, port):
+                # saved credentials and certificate only while the address is the same
                 pem = row["tls_pem"]
+                saved_headers = {r["name"]: r["value"] for r in
+                                 conn.execute("SELECT name, value FROM site_headers WHERE site_id = ?", (site_id,))}
     headers = tuple((h.name.strip(), h.value if h.value is not None else saved_headers.get(h.name.strip(), ""))
                     for h in body.headers)
     return Site(id=site_id or 0, slug=body.slug or slugify(body.name), name=body.name, icon=body.icon, scheme=scheme,
@@ -511,6 +515,7 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
         else:
             cols.update(restart_due=0, restart_ok_by=None, restart_ok_at=None)
         is_new = site_id is None
+        target_changed = False
         if site_id is None:
             if conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0] >= MAX_SITES:
                 raise SiteError(f"At most {MAX_SITES} sites")
@@ -525,7 +530,8 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
                                (site_id,)).fetchone()
             if old is None:
                 raise LookupError("No such site.")
-            if old["target"] != target:            # a trusted certificate belongs to the old address
+            target_changed = old["target"] != target
+            if target_changed:                     # a trusted certificate belongs to the old address
                 cols.update(tls_pem=None, tls_fingerprint=None)
             if body.use == "proxy":
                 cols.update(trusted_ok_by=admin["id"], trusted_ok_at=now)
@@ -540,7 +546,11 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
             conn.executemany("INSERT OR IGNORE INTO site_people (site_id, user_id) VALUES (?, ?)",
                              [(site_id, p) for p in body.people[:200] if isinstance(p, str) and p])
         saved = {r["name"]: r["value"] for r in conn.execute("SELECT name, value FROM site_headers WHERE site_id = ?",
-                                                             (site_id,))}
+                                                             (site_id,))} if not target_changed else {}
+        for h in body.headers:
+            if h.value is None and target_changed and h.name.strip():
+                raise SiteError(f"The address changed: enter the value of the extra header {h.name.strip()!r} again "
+                                "(saved values never follow a site to a new address)")
         conn.execute("DELETE FROM site_headers WHERE site_id = ?", (site_id,))
         for h in body.headers:
             n = h.name.strip()

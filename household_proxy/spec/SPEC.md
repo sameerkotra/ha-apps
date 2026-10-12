@@ -1,6 +1,6 @@
 # Household Proxy — spec
 
-Status: **being built** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; built in the phases of §11 from 2026-10-11). Decided: the
+Status: **built, not yet tried on real hardware** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built and tested 2026-10-11, version 0.6.0 listed in the repository; step 6's real-hardware run — Komodo, two or three other sites, a smart plug — is still to do). Decided: the
 name *Household Proxy*; everyone sees the panel, each person only the sites they may open; Isolated sites come in a
 later version (§14).
 

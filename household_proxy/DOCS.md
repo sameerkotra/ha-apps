@@ -72,12 +72,14 @@ Add, edit, delete and reorder the sites. For each site:
 - **Send Home Assistant's host name** — normally the site gets its own address as `Host`.
 - **Remove the site's Content-Security-Policy** — only if the site's own policy blocks the proxy.
 - **Pass the viewer's name** — adds `Remote-User` and `X-Forwarded-User` for sites that sign people in from a
-  header. Only safe when the site accepts that header from this app alone.
+  header. Only safe when the site accepts that header from this app alone. Such headers sent by a browser are always
+  removed, whether this is on or off.
 - **Keep an access log** — time, person, method, path and status for 7 days (App settings); never contents.
 - **Timeout** — this site's own request timeout (0 = the App setting).
 - **Extra headers** — added to every request to the site, for example `Authorization: Basic …` or an API key, so
   the site opens already signed in. Values are shown as "saved", never sent back to a browser and never logged.
-  **Everyone allowed on the site acts as that account.**
+  **Everyone allowed on the site acts as that account.** When you change a site's address, enter the values again:
+  saved values never follow a site to a new address.
 
 ### Test
 
@@ -198,8 +200,8 @@ people allowed to see it.
 
 ## Admin → People
 
-Everyone who has opened the app. Someone turned off opens no site, whatever each site allows. You can't turn
-yourself off.
+Everyone who has opened the app. Someone turned off opens no site, whatever each site allows — and an admin turned
+off by another admin has no admin pages either. You can't turn yourself off.
 
 ## Settings
 

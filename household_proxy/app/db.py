@@ -167,6 +167,14 @@ CREATE TABLE IF NOT EXISTS alert_mutes (
     PRIMARY KEY (site_id, user_id)
 );
 
+-- Switches this app turned off for a restart and hasn't seen back on (§13.3 "never left off"). Kept apart from the
+-- sites, so a switch is turned back on even if its site is deleted or given another switch in the meantime.
+CREATE TABLE IF NOT EXISTS switched_off (
+    entity TEXT PRIMARY KEY,
+    site_ids TEXT NOT NULL,               -- JSON list of the sites the restart was for
+    at REAL NOT NULL
+);
+
 -- Optional access log (off by default per site): no bodies, no header values, no query strings.
 CREATE TABLE IF NOT EXISTS access_log (
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,

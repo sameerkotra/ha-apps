@@ -22,8 +22,12 @@ logger = logging.getLogger("proxy")
 
 HOP_BY_HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "trailers",
               "transfer-encoding", "upgrade"}
-REQUEST_DROP = HOP_BY_HOP | {"host", "content-length", "x-ingress-path", "forwarded", "x-real-ip", "cookie",
-                             "accept-encoding", "origin", "referer"}
+# Header sign-in names a site may trust: only ever set by the proxy itself (Pass the viewer's name), never by a browser.
+SIGN_IN_HEADERS = {"remote-user", "remote-name", "remote-email", "remote-groups", "x-forwarded-user",
+                   "x-forwarded-email", "x-forwarded-preferred-username", "x-auth-request-user",
+                   "x-auth-request-email", "x-webauth-user"}
+REQUEST_DROP = HOP_BY_HOP | SIGN_IN_HEADERS | {"host", "content-length", "x-ingress-path", "forwarded", "x-real-ip",
+                                               "cookie", "accept-encoding", "origin", "referer"}
 REQUEST_DROP_PREFIXES = ("x-remote-user-", "x-hass-", "x-forwarded-", "x-supervisor")
 RESPONSE_DROP = HOP_BY_HOP | {"x-frame-options", "strict-transport-security", "public-key-pins",
                               "public-key-pins-report-only", "clear-site-data", "alt-svc", "nel", "report-to",

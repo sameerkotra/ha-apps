@@ -12,7 +12,8 @@ from helpers import ADMIN, BOB, ProxyCase
 class Websockets(ProxyCase):
     def test_relayed_both_ways(self):
         self.add_site(headers=[{"name": "Authorization", "value": "Bearer k"}])
-        with self.c.websocket_connect("/s/fake/ws?x=1", headers={**ADMIN, "Cookie": "ingress_session=S; a=1"},
+        with self.c.websocket_connect("/s/fake/ws?x=1", headers={**ADMIN, "Cookie": "ingress_session=S; a=1",
+                                                                  "Remote-User": "someone-else"},
                                       subprotocols=["chat"]) as ws:
             first = ws.receive_json()
             self.assertEqual(first["origin"], f"http://127.0.0.1:{self.port}")

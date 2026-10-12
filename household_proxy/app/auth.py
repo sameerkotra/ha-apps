@@ -57,6 +57,7 @@ async def require_admin(request: Request) -> dict:
     user = await get_current_user(request)
     auth_core.require_admin_flag(user["is_admin"], "Only admins can do this. See admin_users on the app's "
                                                    "Configuration tab.")
+    require_enabled(user)                         # an admin another admin turned off has no admin pages either
     return user
 
 

@@ -45,6 +45,12 @@ admin access to your Home Assistant or its host.
   unless you set a port on its Network tab). Through that port an app can only ask the model questions — never
   download, delete or replace models — and *Require an access key* adds keys. It is also the only app with
   `hassio_api`, used for one read of its own network settings.
+- **Household Proxy** is the one app that fetches pages from devices on your network and shows them inside Home
+  Assistant. It reaches only the sites an admin lists (never loopback; internet addresses only when allowed per
+  site, checked when connecting), never passes on Home Assistant's identity headers or its ingress cookie, and
+  refuses cross-site requests to proxied sites too. A proxied page runs on Home Assistant's own address, so it can
+  act in Home Assistant as the person viewing it: add only software you run and keep updated. Its auto-restart only
+  ever calls `switch.turn_off` / `switch.turn_on` on the switch an admin chose for a site.
 - Who someone is comes from Home Assistant's login; the admins are the names in each app's
   `admin_users` option.
 - **Household Vault is experimental** and hasn't had an independent security review. Keep your own

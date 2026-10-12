@@ -38,7 +38,8 @@ print("RESULT " + json.dumps(out))
 """
 
 APPS = ["calorie_tracker", "family_tree", "household_arcade", "household_assistant", "household_chat",
-        "household_docs", "household_todo", "household_vault", "receipt_price_intelligence", "splitpot"]
+        "household_docs", "household_proxy", "household_todo", "household_vault", "receipt_price_intelligence",
+        "splitpot"]
 
 
 class CrossSiteTests(unittest.TestCase):

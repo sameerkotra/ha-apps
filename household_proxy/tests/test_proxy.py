@@ -115,6 +115,26 @@ class RequestCleaning(ProxyCase):
         self.assertEqual(h["x-forwarded-user"], "adminy")
         self.assertEqual(h["host"], "testserver")
 
+    def test_browser_cant_forge_header_sign_in(self):
+        forged = {"Remote-User": "adminy", "Remote-Name": "Ann", "Remote-Email": "ann (at) example",
+                  "X-Forwarded-User": "adminy", "Remote-Groups": "admins"}
+        self.add_site(access="everyone")
+        raw = self.echo_as(BOB, forged)
+        self.assertFalse([k for k, _ in raw if k.lower().startswith(("remote-", "x-forwarded-user"))], raw)
+        self.add_site(name="Signed", slug="signed", access="everyone", pass_user=True)
+        r = self.c.post("/s/signed/echo", content=b"x", headers={**BOB, **forged})
+        users = [v for k, v in r.json()["raw"] if k.lower() == "remote-user"]
+        self.assertEqual(users, ["bob"])                     # exactly one, the proxy's own
+
+    def echo_as(self, who, extra):
+        return self.c.post("/s/fake/echo", content=b"x", headers={**who, **extra}).json()["raw"]
+
+    def test_trace_not_passed_on(self):
+        self.add_site(headers=[{"name": "Authorization", "value": "Basic SECRET"}])
+        r = self.c.request("TRACE", "/s/fake/echo", headers=ADMIN)
+        self.assertEqual(r.status_code, 405)
+        self.assertNotIn("SECRET", r.text)
+
     def test_extra_headers_never_reach_the_browser(self):
         self.add_site(headers=[{"name": "X-Api-Key", "value": "k-123456"}])
         r = self.get("/api/admin/sites")
