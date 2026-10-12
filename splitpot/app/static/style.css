@@ -681,3 +681,13 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .toast.error { background: var(--rust); color: #fff; }
 @media (max-width: 640px) { .toast-root { bottom: 84px; } }
 .my-prefs .pref-row .hint { margin: 2px 0 0; }
+
+/* The ledger's "Show each person's balance": everyone's balance just after each entry. */
+.ledger-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.ledger-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
+.row-list .row-balances { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.run-bal .run-name { color: var(--ink-soft); }
+.run-bal.positive { color: var(--moss-dark); }
+.run-bal.negative { color: var(--rust); }
+.run-bal.zero { color: var(--ink-soft); }

@@ -175,5 +175,35 @@ class Ledger(unittest.TestCase):
         self.assertIn("idx_expenses_group_date", names)
 
 
+    def test_each_entry_carries_everyones_balance_just_after_it(self):
+        """The ledger's "Show each person's balance": oldest first, every entry added up to that point, in cents."""
+        self.add(1, date="2026-01-01", paid_by="a", amount=30)         # Ann paid 30: Ann +20, Ben -10, Cat -10
+        self.add(1, date="2026-01-02", paid_by="b", amount=0.07)       # Ben paid 0.07 (0.03/0.02/0.02)
+        r = self.c.post(f"/api/groups/{self.gid}/payments", headers=ALICE,
+                        json={"fromUserId": "c", "toUserId": "a", "amount": 10, "date": "2026-01-03"})
+        self.assertEqual(r.status_code, 201, r.text)
+        g = self.group(limit=20)
+        after = {e["date"][:10]: {b["userId"]: b["amount"] for b in e["balancesAfter"]} for e in g["expenses"]}
+        self.assertEqual(after["2026-01-01"], {"a": 20.0, "b": -10.0, "c": -10.0})
+        self.assertEqual(after["2026-01-02"], {"a": 19.97, "b": -9.95, "c": -10.02})
+        self.assertEqual(after["2026-01-03"], {"a": 9.97, "b": -9.95, "c": -0.02})
+        for e in g["expenses"]:
+            self.assertEqual([b["name"] for b in e["balancesAfter"]], ["Ann", "Ben", "Cat"])
+            self.assertEqual(round(sum(b["amount"] for b in e["balancesAfter"]) * 100), 0)
+        newest = {b["userId"]: b["amount"] for b in g["expenses"][0]["balancesAfter"]}
+        self.assertEqual(newest, {n["userId"]: n["amount"] for n in g["balances"]["net"]})   # = the group's balances
+
+    def test_balances_after_are_the_same_on_every_page(self):
+        self.add(25, paid_by="b")
+        whole = {e["id"]: e["balancesAfter"] for e in self.group()["expenses"]}
+        g = self.group(limit=7)
+        seen = {e["id"]: e["balancesAfter"] for e in g["expenses"]}
+        cursor = g["nextCursor"]
+        while cursor:
+            p = self.page(limit=7, cursor=cursor)
+            seen.update({e["id"]: e["balancesAfter"] for e in p["expenses"]})
+            cursor = p["nextCursor"]
+        self.assertEqual(seen, whole)
+
 if __name__ == "__main__":
     unittest.main()

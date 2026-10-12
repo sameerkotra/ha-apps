@@ -125,6 +125,11 @@ Open a group and use **Add an expense** on the left:
   date, payer and how it was split. Each payer has their own colour (the name
   and a coloured left edge on the row), so you can see at a glance who paid
   what. The Dashboard's transaction list uses the same colours.
+- **Show each person's balance** (above the ledger, off by default): under
+  every expense and payment, each person's balance in the group just after it
+  — `+` is owed, `−` owes — worked out from every entry up to that point, in
+  date order. The newest entry's line is the group's current balances. The
+  choice is remembered on each device.
 - **Load more**: a group opens with its **latest 20** ledger entries, so a
   long history doesn't slow the page down. Under the list, "Showing 20 of 65
   entries" and **Load 20 more** fetch the next older ones; repeat until

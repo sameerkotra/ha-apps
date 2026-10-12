@@ -847,7 +847,39 @@ def ledger_page(conn, group_id: str, limit: Optional[int] = None, cursor: Option
     rows = rows[:limit] if limit is not None else rows
     names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
     entries = [_expense_json(conn, group_id, r, names) for r in rows]
+    after = running_balances(conn, group_id, {r["id"] for r in rows})
+    for e in entries:
+        e["balancesAfter"] = [{"userId": u, "name": names.get(u, "Unknown"), "amount": a}
+                              for u, a in after.get(e["id"], [])]
     return entries, (encode_cursor(rows[-1]["date"], rows[-1]["id"]) if more else None)
+
+
+def running_balances(conn, group_id: str, wanted: set) -> dict:
+    """{expense id: [(user id, net), …]} — each person's balance in the group just after that entry, for the entries
+    in `wanted`: every entry of the group added up oldest first in the ledger's own order (date, then id), in whole
+    cents so the running sums are exact. Positive: is owed; negative: owes. The group's members in their order, then
+    anyone else who has an entry so far."""
+    if not wanted:
+        return {}
+    conn.create_function("ledger_key", 1, date_sort_key, deterministic=True)
+    members = group_member_ids(conn, group_id)
+    shares: dict = {}
+    for r in conn.execute("SELECT s.expense_id AS e, s.user_id AS u, CAST(ROUND(s.amount * 100) AS INTEGER) AS c "
+                          "FROM expense_splits s JOIN expenses x ON x.id = s.expense_id WHERE x.group_id = ?",
+                          (group_id,)):
+        shares.setdefault(r["e"], []).append((r["u"], r["c"]))
+    cents = {m: 0 for m in members}
+    out = {}
+    for r in conn.execute("SELECT id, paid_by, CAST(ROUND(amount * 100) AS INTEGER) AS c FROM expenses "
+                          "WHERE group_id = ? ORDER BY ledger_key(date), id", (group_id,)):
+        cents[r["paid_by"]] = cents.get(r["paid_by"], 0) + r["c"]
+        for u, c in shares.get(r["id"], ()):
+            cents[u] = cents.get(u, 0) - c
+        if r["id"] in wanted:
+            out[r["id"]] = [(u, round(v / 100, 2)) for u, v in cents.items()]
+            if len(out) == len(wanted):
+                break
+    return out
 
 
 def ledger_total(conn, group_id: str) -> int:

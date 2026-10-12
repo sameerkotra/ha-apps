@@ -6,10 +6,10 @@
 <title>Splitpot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-<script src="common/theme-boot.js?v=2.5.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.5.1" />
-<link rel="stylesheet" href="common/settings.css?v=2.5.1" />
-<link rel="stylesheet" href="style.css?v=2.5.1" />
+<script src="common/theme-boot.js?v=2.6.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.6.0" />
+<link rel="stylesheet" href="common/settings.css?v=2.6.0" />
+<link rel="stylesheet" href="style.css?v=2.6.0" />
 </head>
 <body>
   <div class="app">
@@ -268,7 +268,12 @@
             </div>
           </div>
 
-          <h2>Ledger</h2>
+          <div class="ledger-head">
+            <h2>Ledger</h2>
+            <label class="ledger-toggle" title="Under each entry, everyone's balance in the group just after it">
+              <input type="checkbox" id="showRunningBalances"> Show each person's balance
+            </label>
+          </div>
           <ul id="expenseList" class="row-list ledger-list"></ul>
           <!-- the ledger loads a page at a time (newest first) -->
           <div id="ledgerMore" class="ledger-more" hidden>
@@ -282,12 +287,12 @@
 
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-  <script src="common/ui.js?v=2.5.1"></script>
-  <script src="common/settings.js?v=2.5.1"></script>
-  <script src="common/people.js?v=2.5.1"></script>
-  <script src="common/backnav.js?v=2.5.1"></script>
-  <script src="common/whoami.js?v=2.5.1"></script>
-  <script src="common/deeplink.js?v=2.5.1"></script>
-  <script src="app.js?v=2.5.1"></script>
+  <script src="common/ui.js?v=2.6.0"></script>
+  <script src="common/settings.js?v=2.6.0"></script>
+  <script src="common/people.js?v=2.6.0"></script>
+  <script src="common/backnav.js?v=2.6.0"></script>
+  <script src="common/whoami.js?v=2.6.0"></script>
+  <script src="common/deeplink.js?v=2.6.0"></script>
+  <script src="app.js?v=2.6.0"></script>
 </body>
 </html>

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.6.0
+
+- **Each person's balance on every ledger entry**: tick **Show each person's balance** above a group's ledger to see,
+  under each expense and payment, everyone's balance in the group just after it (+ is owed, − owes) — how the group
+  got to where it is. Off by default, as before; your choice is remembered on that device.
+
 ## 2.5.1
 
 - **Equal splits to the cent**: an amount split equally now gives everyone the same share, with the leftover cents going one each to the first people — 100 between 6 is 16.67, 16.67, 16.67, 16.67, 16.66, 16.66 instead of the last person getting 16.65, and a tiny amount can no longer leave someone with a negative share. The Household Assistant's "I paid 40 for groceries…" splits the same way.

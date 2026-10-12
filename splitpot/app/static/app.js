@@ -908,13 +908,43 @@ function expenseRow(e) {
       deleteBtn));
 }
 
+// "Show each person's balance": under each entry, everyone's balance in the group just after it (from the server:
+// every entry added up oldest first). Off by default; remembered on this device.
+const RUNNING_KEY = 'splitpot.ledgerRunningBalances';
+state.showRunning = UI.lsGet(RUNNING_KEY) === '1';
+$('#showRunningBalances').checked = state.showRunning;
+$('#showRunningBalances').addEventListener('change', (ev) => {
+  state.showRunning = ev.target.checked;
+  UI.lsSet(RUNNING_KEY, state.showRunning ? '1' : '0');
+  if (state.currentGroup) renderExpenseList();
+});
+
+function runningBalances(e) {
+  const h = UI.h;
+  const list = (e.balancesAfter || []);
+  if (!list.length) return null;
+  return h('div', { class: 'row-balances', title: 'Balances just after this entry — + is owed, − owes' },
+    list.map((b) => {
+      const cls = b.amount > 0.004 ? 'positive' : b.amount < -0.004 ? 'negative' : 'zero';
+      const sign = b.amount > 0.004 ? '+' : b.amount < -0.004 ? '−' : '';
+      return h('span', { class: `run-bal ${cls}` }, h('span', { class: 'run-name' }, b.name), ` ${sign}${money(Math.abs(b.amount))}`);
+    }));
+}
+
 function renderExpenseList() {
   const list = $('#expenseList');
   const g = state.currentGroup;
   if (g.expenses.length === 0) {
     UI.mount(list, UI.h('li', { class: 'empty-note' }, 'No expenses logged yet.'));
   } else {
-    UI.mount(list, g.expenses.map(expenseRow));
+    UI.mount(list, g.expenses.map((e) => {
+      const row = expenseRow(e);
+      if (state.showRunning) {
+        const bal = runningBalances(e);
+        if (bal) row.querySelector('.row-main').append(bal);
+      }
+      return row;
+    }));
   }
   renderLedgerMore();
 }
