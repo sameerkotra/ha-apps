@@ -161,6 +161,7 @@ def make_app(host: str) -> Starlette:
         await websocket.accept(subprotocol=(websocket.scope.get("subprotocols") or [None])[0])
         await websocket.send_json({"origin": websocket.headers.get("origin"), "host": websocket.headers.get("host"),
                                    "cookie": websocket.headers.get("cookie"), "path": websocket.url.path,
+                                   "query": websocket.scope.get("query_string", b"").decode("latin-1"),
                                    "remote_user": websocket.headers.get("x-remote-user-id"),
                                    "auth": websocket.headers.get("authorization")})
         try:

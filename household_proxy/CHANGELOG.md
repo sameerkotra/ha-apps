@@ -2,6 +2,12 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.3
+
+- Fix: Komodo's terminal said "connection closed" straight away. Home Assistant's ingress escapes the brackets in
+  addresses like `/ws/terminal?target[type]=…` on the way to the app, and Komodo refuses the escaped form. The proxy
+  now passes the query on as the browser sent it (for websockets and ordinary requests alike).
+
 ## 0.6.2
 
 - Shared code: a page can't set inline event handlers, safer App settings saves (no lost change when two admins save

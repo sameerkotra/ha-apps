@@ -37,7 +37,7 @@ def upstream_headers(ws: WebSocket, site: sites.Site, user: dict) -> list:
 
 
 async def relay(ws: WebSocket, site: sites.Site, user: dict, rest: str) -> None:
-    query = ws.scope.get("query_string", b"").decode("latin-1")
+    query = proxy.site_query(ws.scope)       # brackets as the browser sent them (Komodo's terminal needs it)
     scheme = "wss" if site.scheme == "https" else "ws"
     uri = f"{scheme}://{site.origin.split('://', 1)[1]}{rest}" + (f"?{query}" if query else "")
     subprotocols = [p.strip() for p in (ws.headers.get("sec-websocket-protocol") or "").split(",") if p.strip()]

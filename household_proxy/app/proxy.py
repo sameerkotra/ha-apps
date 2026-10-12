@@ -9,6 +9,7 @@ Service-Worker-Allowed), hop-by-hop headers. The extra headers an admin set are 
 """
 import asyncio
 import logging
+import re
 import zlib
 from urllib.parse import unquote, urlsplit
 
@@ -258,11 +259,24 @@ def describe(exc: Exception) -> tuple[int, str]:
     return 502, f"The site couldn't be reached: {msg}"
 
 
+# Home Assistant's ingress re-encodes the query string on its way to the app (aiohttp/yarl), escaping characters a
+# browser sends as they are: "target[type]=Server" arrives as "target%5Btype%5D=Server". Most sites decode both the
+# same, but some read brackets only literally — Komodo's terminal ("/ws/terminal?target[type]=…", parsed with
+# serde_qs's strict mode) refuses the escaped form, so its terminal closed straight away. Put them back.
+_INGRESS_ESCAPED = re.compile(r"%(5B|5D|7B|7D|7C|5E|60)", re.IGNORECASE)
+
+
+def site_query(scope) -> str:
+    """The request's query string as the browser sent it (before Home Assistant's ingress re-encoded it)."""
+    raw = scope.get("query_string", b"").decode("latin-1")
+    return _INGRESS_ESCAPED.sub(lambda m: chr(int(m.group(1), 16)), raw) if "%" in raw else raw
+
+
 async def exchange(request: Request, site: sites.Site, user: dict, ctx: rewrite.Ctx, rest: str,
                    log_access=None) -> Response:
     """Send the request to the site and give back its answer."""
     method = request.method.upper()
-    query = request.scope.get("query_string", b"").decode("latin-1")
+    query = site_query(request.scope)
     target = site.origin + rest + (f"?{query}" if query else "")
     ha, secure = ha_origin(request)
     ctx.secure = secure

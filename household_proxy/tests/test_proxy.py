@@ -101,6 +101,13 @@ class RequestCleaning(ProxyCase):
         self.assertEqual(e["query"], "a=1&b=%2F")
         self.assertEqual(e["body"], "hello")
 
+    def test_query_brackets_as_the_browser_sent_them(self):
+        # Home Assistant's ingress escapes [ ] { } | ^ ` in the query; the site gets them as the browser sent them,
+        # and every other escape is left alone.
+        self.add_site()
+        e = self.get("/s/fake/echo?f%5Bx%5D%5B%5D=1&g=%7B%7D&s=a+b&t=%2F%26%3D%25").json()
+        self.assertEqual(e["query"], "f[x][]=1&g={}&s=a+b&t=%2F%26%3D%25")
+
     def test_origin_and_referer_become_the_sites_own(self):
         self.add_site()
         e = self.echo(Origin="https://ha.example.com",

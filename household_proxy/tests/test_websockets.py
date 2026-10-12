@@ -27,6 +27,17 @@ class Websockets(ProxyCase):
             ws.send_bytes(b"\x00\x01")
             self.assertEqual(ws.receive_bytes(), b"echo:\x00\x01")
 
+    def test_query_reaches_the_site_as_the_browser_sent_it(self):
+        # Home Assistant's ingress turns "target[type]" into "target%5Btype%5D" on the way; Komodo's terminal
+        # (serde_qs, strict) refuses that form, so the terminal closed at once. The site gets the brackets back.
+        self.add_site()
+        sent = ("target%5Btype%5D=Container&target%5Bparams%5D%5Bserver%5D=abc&target%5bparams%5d%5bcontainer%5d=web"
+                "&init%5Bcommand%5D=sh+-c+%22x%22&p=1%2B1&q=%7Ba%7C%5E%60%7D")
+        with self.c.websocket_connect("/s/fake/ws?" + sent, headers=ADMIN) as ws:
+            self.assertEqual(ws.receive_json()["query"],
+                             "target[type]=Container&target[params][server]=abc&target[params][container]=web"
+                             "&init[command]=sh+-c+%22x%22&p=1%2B1&q={a|^`}")
+
     def test_access_checked_at_the_upgrade(self):
         self.add_site()
         with self.assertRaises(WebSocketDisconnect) as e:
