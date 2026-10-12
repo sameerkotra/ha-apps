@@ -384,8 +384,7 @@ def sensor_items() -> list[tuple]:
         for r in rows:
             inc = conn.execute("SELECT restarts FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone() \
                 if r["incident_id"] else None
-            last = conn.execute("SELECT MAX(started_at) FROM incidents WHERE site_id = ? AND restarts > 0",
-                                (r["id"],)).fetchone()[0]
+            last = iso(r["last_restart_at"]) if r["last_restart_at"] else None
             state = "on" if r["state"] == "up" else ("off" if r["state"] else "unknown")
             status = "paused" if paused(r, clock()) else (r["state"] or "not_checked")
             out.append((entity_id(r["slug"]), state, {

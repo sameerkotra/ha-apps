@@ -2,6 +2,19 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.5.0
+
+- **Auto-restart**: a site that stops answering can be power-cycled with the Home Assistant switch (a smart plug) that
+  powers it — off, a few seconds, on — up to a set number of times, then the app gives up and says so (**Needs
+  attention**; **Try again** starts the count over). Off for, wait after restart, restarts before giving up and an
+  optional time window are set per site.
+- Safety rules: a switch this app turned off is never left off (turned on first at start-up, retried every 30 seconds,
+  admins told); no restart when the network looks down (a reference address of your choice doesn't answer, or most
+  checked sites went down together) or when Home Assistant can't reach the switch; sites sharing a switch are
+  restarted once; a gap between incidents' restarts; nothing while paused.
+- **Restart now** (admins, asks first) on the Monitor page; every restart is in the site's history and Home
+  Assistant's logbook.
+
 ## 0.4.0
 
 - **Monitoring**: any site can be checked on a schedule — a web page, a port or a ping — and goes down only after

@@ -160,6 +160,7 @@
     if (s.error && s.state !== "up") facts.push(s.error);
     if (s.restarts) facts.push(`${s.restarts} restart${s.restarts > 1 ? "s" : ""}`);
     if (s.state === "paused") facts.push(s.pausedUntil ? `until ${when(s.pausedUntil)}` : "until resumed");
+    if (s.blocked && s.state !== "needs_attention") facts.push(`not restarted: ${s.blocked}`);
     const actions = isAdmin ? adminActions(s) : null;
     return h("div", { class: "card monitor-card", dataset: { slug: s.slug } },
       h("div", { class: "monitor-head" },
@@ -185,8 +186,15 @@
       if (!pause.value) return;
       act("pause", { hours: pause.value === "forever" ? null : Number(pause.value) }, "Paused");
     });
+    const restart = async () => {
+      if (!await UI.confirmDialog(`Restart ${s.name}?`, "Its switch is turned off for a few seconds, then on again. " +
+        "Anything else on that plug loses power too.", { okLabel: "Restart", okClass: "btn-primary danger" })) return;
+      act("restart", null, "Restarting…");
+    };
     return h("div", { class: "monitor-actions" },
       h("button", { type: "button", class: "btn-secondary", onclick: () => act("check-now", null, (r) => r.ok ? `Answered in ${r.ms} ms` : `No: ${r.error}`) }, "Check now"),
+      s.canRestart ? h("button", { type: "button", class: "btn-secondary", disabled: s.state === "restarting", onclick: restart }, "🔌 Restart now") : null,
+      s.state === "needs_attention" && s.canRestart ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("retry", null, "Trying again") }, "Try again") : null,
       s.state === "paused" ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("resume", null, "Resumed") }, "Resume") : pause,
       h("button", { type: "button", class: "btn-ghost", onclick: () => showHistory(s) }, "History"));
   }
@@ -291,7 +299,8 @@
       trusted_ok: false, spa_mode: false, show_bar: true, keep_host: false, strip_csp: false, pass_user: false,
       allow_public: false, access_log: false, timeout_s: 0, headers: [], rules: [], use_favicon: false, use: "proxy",
       check: { kind: null, path: "", every_s: 60, timeout_s: 5, down_after: 3, ok_codes: "below500", sensor: true },
-      alerts: { people: null, service: "", events: ["down", "back_up", "gave_up", "couldnt_restart"] } };
+      alerts: { people: null, service: "", events: ["down", "back_up", "gave_up", "couldnt_restart"] },
+      restart: { entity: null, confirmed: false, off_for_s: 5, wait_after_s: 120, max_restarts: 3, window_start: "", window_end: "" } };
     const f = {
       name: h("input", { class: "input", value: s.name, maxlength: 60, required: true, placeholder: "Komodo" }),
       slug: h("input", { class: "input", value: s.slug, maxlength: 40, placeholder: "komodo" }),
@@ -443,6 +452,36 @@
       field("Also send to", service, "An extra notify service (optional)."),
       field("About", events));
 
+    const rs = s.restart;
+    const rf = {
+      entity: h("select", { class: "input" }, h("option", { value: "" }, "No auto-restart"),
+        rs.entity ? h("option", { value: rs.entity, selected: true }, rs.entity) : null),
+      offFor: h("input", { class: "input", type: "number", min: 1, max: 300, value: rs.off_for_s }),
+      waitAfter: h("input", { class: "input", type: "number", min: 10, max: 3600, value: rs.wait_after_s }),
+      max: h("input", { class: "input", type: "number", min: 0, max: 10, value: rs.max_restarts }),
+      from: h("input", { class: "input", type: "time", value: rs.window_start || "" }),
+      to: h("input", { class: "input", type: "time", value: rs.window_end || "" }),
+    };
+    const plugOk = check("This switch doesn't power Home Assistant, my router or my network switch", rs.confirmed,
+      "Turning one of those off would cut Home Assistant off from the device — and from turning it back on.");
+    api("api/admin/switches").then((r) => {
+      const keep = rf.entity.value;
+      mount(clear(rf.entity), h("option", { value: "" }, "No auto-restart"),
+        r.switches.map((x) => h("option", { value: x.entity_id, selected: x.entity_id === keep }, `${x.name} (${x.entity_id}) — ${x.state}`)));
+      if (keep && !r.switches.some((x) => x.entity_id === keep)) rf.entity.append(h("option", { value: keep, selected: true }, `${keep} — not found`));
+    }).catch(() => { /* Home Assistant not reachable: the saved switch stays as it is */ });
+    const restartBody = h("div", { class: "sub-fields" }, plugOk.el,
+      h("div", { class: "grid3" }, field("Off for (seconds)", rf.offFor), field("Wait after restart (s)", rf.waitAfter),
+        field("Restarts before giving up", rf.max, "0 = never restart, only report.")),
+      h("div", { class: "grid2 even" }, field("Only restart from", rf.from), field("until", rf.to)),
+      h("p", { class: "hint small" }, "Off, wait, on — then no checks until “Wait after restart” has passed. Never when the " +
+        "network looks down or the switch is unavailable; sites sharing a switch are restarted once, together. Leave the " +
+        "times empty to restart at any time."));
+    const restartSection = h("fieldset", { class: "section" }, h("legend", null, "🔌 Auto-restart"),
+      field("Switch that powers the device", rf.entity, "A smart plug in Home Assistant. Only switch.turn_off and switch.turn_on are used."),
+      restartBody);
+    rf.entity.addEventListener("change", () => { restartBody.hidden = !rf.entity.value; });
+
     const syncUse = () => {
       const mon = use.value === "monitor";
       for (const el of proxyOnly) el.hidden = mon;
@@ -450,6 +489,8 @@
       checkBody.hidden = !kind;
       httpOnly.hidden = kind !== "http";
       alertSection.hidden = !kind;
+      restartSection.hidden = !kind;
+      restartBody.hidden = !rf.entity.value;
       if (mon && !kind) cf.kind.value = "ping", syncUse();
     };
     use.addEventListener("change", syncUse);
@@ -478,7 +519,7 @@
       startRow,
       field("Short name", f.slug, "Used in its address: …/s/<short name>/. Lower-case letters, digits and -."),
       field("Who can open it", f.access, "Also who sees its status on the Monitor page."), peopleRow,
-      trusted.el, spa.el, bar.el, favicon.el, checkSection, alertSection, advanced, h("div", null, testBtn), report, err,
+      trusted.el, spa.el, bar.el, favicon.el, checkSection, restartSection, alertSection, advanced, h("div", null, testBtn), report, err,
       h("div", { class: "row-between" },
         site ? h("button", { type: "button", class: "btn-ghost danger", onclick: () => remove() }, "Delete") : h("span"),
         h("div", null, h("button", { type: "button", class: "btn-ghost", onclick: () => modal.close() }, "Cancel"), " ",
@@ -499,6 +540,10 @@
         ok_codes: cf.codes.value, sensor: sensor.box.checked },
       alerts: { people: $$("input:checked", alertPeople).map((x) => x.value), service: service.value.trim(),
         events: $$("input:checked", events).map((x) => x.value) },
+      restart: { entity: (cf.kind.value && rf.entity.value) || null, confirmed: plugOk.box.checked,
+        off_for_s: parseInt(rf.offFor.value, 10) || 5, wait_after_s: parseInt(rf.waitAfter.value, 10) || 120,
+        max_restarts: Number.isNaN(parseInt(rf.max.value, 10)) ? 3 : parseInt(rf.max.value, 10),
+        window_start: rf.from.value || null, window_end: rf.to.value || null },
     });
 
     form.addEventListener("submit", async (e) => {

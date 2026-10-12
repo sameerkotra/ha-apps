@@ -78,6 +78,22 @@ CREATE TABLE IF NOT EXISTS sites (
     last_error TEXT,
     incident_id INTEGER,
     next_check_at REAL,
+    -- auto-restart (§13.3; restart_entity NULL = never restarted)
+    restart_entity TEXT,                  -- switch.<…> that powers the device
+    restart_ok_by TEXT,                   -- who confirmed it doesn't power Home Assistant or the network, and when
+    restart_ok_at TEXT,
+    off_for_s INTEGER NOT NULL DEFAULT 5,
+    wait_after_s INTEGER NOT NULL DEFAULT 120,
+    max_restarts INTEGER NOT NULL DEFAULT 3,
+    window_start TEXT,                    -- "HH:MM" in Home Assistant's time zone, or NULL (any time)
+    window_end TEXT,
+    restart_due INTEGER NOT NULL DEFAULT 0,       -- a restart is wanted (waiting for the safety rules)
+    restarts_used INTEGER NOT NULL DEFAULT 0,     -- in this incident since it started or since Try again
+    restart_phase TEXT CHECK (restart_phase IN ('off', 'on')),   -- written before each step (never left off)
+    switched_off_at REAL,
+    wait_until REAL,                      -- no checks before this (waiting after a restart)
+    last_restart_at REAL,
+    blocked_reason TEXT,                  -- why the wanted restart isn't happening (shown, alerted once)
     use_favicon INTEGER NOT NULL DEFAULT 0, -- show the site's own icon (fetched by the Test) instead of the emoji
     favicon BLOB,
     favicon_type TEXT,

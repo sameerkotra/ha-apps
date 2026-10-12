@@ -5,8 +5,9 @@ import os
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from starlette.concurrency import run_in_threadpool
 
-from .. import auth, config, db, probe, settings, sidebar, sites, watchdog
+from .. import auth, config, db, probe, restarts, settings, sidebar, sites, watchdog
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -105,7 +106,9 @@ def _monitor_row(conn, site: sites.Site, user: dict, now: float) -> dict:
             "restarts": inc["restarts"] if inc else 0, "strip": watchdog.strip(conn, site.id),
             "pausedUntil": None if not is_paused else (None if r["paused_until"] >= watchdog.UNTIL_RESUMED
                                                          else watchdog.iso(r["paused_until"])),
-            "muted": bool(muted), "alerted": bool(alerted), "kind": r["check_kind"]}
+            "muted": bool(muted), "alerted": bool(alerted), "kind": r["check_kind"],
+            "canRestart": bool(r["restart_entity"]) and user["is_admin"],
+            "blocked": r["blocked_reason"] if r["restart_due"] or r["state"] == "needs_attention" else None}
 
 
 @router.get("/monitor")
@@ -173,6 +176,32 @@ def admin_pause(site_id: int, body: PauseIn, admin: dict = Depends(require_admin
 def admin_resume(site_id: int, admin: dict = Depends(require_admin)):
     if not watchdog.pause(site_id, 0):
         raise HTTPException(404, "No such site.")
+    return {"ok": True}
+
+
+@router.get("/admin/switches")
+async def admin_switches(admin: dict = Depends(require_admin)):
+    """Home Assistant's switches (name and current state), for the Auto-restart picker."""
+    found = await run_in_threadpool(restarts.switches)
+    if found is None:
+        raise HTTPException(503, "Home Assistant's switches couldn't be read right now.")
+    return {"switches": found}
+
+
+@router.post("/admin/sites/{site_id}/restart")
+async def admin_restart_now(site_id: int, admin: dict = Depends(require_admin)):
+    """Restart now (the page asks first): off, wait, on — with the site's switch."""
+    why = await restarts.restart_now(site_id)
+    if why:
+        raise HTTPException(409, why)
+    return {"ok": True}
+
+
+@router.post("/admin/sites/{site_id}/retry")
+def admin_try_again(site_id: int, admin: dict = Depends(require_admin)):
+    """Try again after the app gave up: the restart count starts over."""
+    if not restarts.try_again(site_id):
+        raise HTTPException(409, "This site isn't waiting for attention.")
     return {"ok": True}
 
 

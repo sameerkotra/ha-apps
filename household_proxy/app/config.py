@@ -25,7 +25,7 @@ ADMIN_USERS = auth_core.admin_names(_raw_admins) | auth_core.env_admins("DEV_ADM
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 
 APP_TITLE = "Household Proxy"
-APP_VERSION = "0.4.0"           # config.yaml's version
+APP_VERSION = "0.5.0"           # config.yaml's version
 SLUG = "household_proxy"
 
 ZONE = ha_time.Zone(logger)       # app/common/ha_time.py

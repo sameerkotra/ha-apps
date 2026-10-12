@@ -25,9 +25,28 @@ SETTINGS = [
     Setting("max_upload_mb", 100, "Largest upload passed on", group="proxy", min=1, max=4096, unit="MB",
             help="Bigger uploads are refused before they reach the site."),
     Setting("access_log_days", 7, "Keep access logs", group="logs", min=1, max=90, unit="days"),
+    Setting("monitor_reference", "", "Network reference address", group="monitor", max_length=200,
+            placeholder="192.168.1.1", help="Your router, or anything that should always answer (host, or host:port). "
+            "Before each restart it is checked: if it doesn't answer, the network is down, not the device, and "
+            "nothing is restarted. Empty: only the rule below (most checked sites down at once) applies.",
+            validators=[lambda v: _check_reference(v)]),
+    Setting("restart_gap_min", 10, "Gap between two incidents' restarts", group="monitor", min=0, max=1440,
+            unit="minutes", help="After an incident's first restart, the next incident on the same site waits at "
+                                 "least this long before restarting (no restart loops)."),
     Setting("checks_keep_days", 30, "Keep check history", group="monitor", min=7, max=365, unit="days",
             help="Every check for a week, then hourly totals. Incidents are kept 90 days."),
 ]
+
+def _check_reference(v: str) -> str:
+    from . import netguard
+    if v:
+        try:
+            _, host, _ = netguard.parse_monitor_target(v)
+            netguard.check_saved(host, False)
+        except netguard.TargetError as e:
+            raise ValueError(str(e))
+    return v
+
 
 readable = settings_core.by_key
 

@@ -138,9 +138,48 @@ never shown on the Sites page. Its address can be a URL, a host name or address 
 **Monitor** (next to **Sites**) lists every checked site you may see — the same people who may open a site see its
 status. For each: its state and since when, the answer time, and the last 24 hours in half hours (green: up, red:
 down, amber: some of each). **🔔 / 🔕** mutes a site's alerts for you alone. Admins also get **Check now**,
-**Pause…** (for 1 hour, 8 hours or until resumed — for maintenance; nothing is checked or restarted while paused),
-**Resume** and **History**: the incidents of the last 90 days (start, end, cause, restarts, outcome) and the uptime
+**🔌 Restart now** and **Try again** (for sites with auto-restart), **Pause…** (for 1 hour, 8 hours or until
+resumed — for maintenance; nothing is checked or restarted while paused), **Resume** and **History**: the incidents of the last 90 days (start, end, cause, restarts, outcome) and the uptime
 over 24 hours, 7 and 30 days. Tiles on the Sites page show a status dot for checked sites.
+
+### Auto-restart
+
+Under **🔌 Auto-restart** in a checked site's form, choose the **switch that powers the device** (a smart plug,
+from Home Assistant's switches, with its current state) and confirm that it **doesn't power Home Assistant, your
+router or your network switch** — turning one of those off would cut Home Assistant off from the device, and from
+turning it back on. Then:
+
+- **Off for** — how long the power stays off (5 seconds; 1–300).
+- **Wait after restart** — no checks for this long while the device starts (120 seconds; 10 seconds to an hour).
+- **Restarts before giving up** — 3 by default; 0 means never restart, only report (up to 10).
+- **Only restart from … until …** (optional) — a time window in Home Assistant's time zone, e.g. 02:00–06:00.
+  Outside it the site is reported down, and restarted when the window opens if it is still down.
+
+How one incident goes: the site goes **Down** → a restart, if any are left and the safety rules allow it → **Waiting
+after restart** → one check: up closes the incident; down means the next restart → when all are used, **Needs
+attention**: checks go on, no more restarts until the site is up again or an admin presses **Try again** (the count
+starts over).
+
+The safety rules:
+
+- **Never left off.** Each step is written down before it is taken. If the app (or Home Assistant) restarts between
+  "off" and "on", the switch is turned on first, as soon as it can be; a failed "on" is retried every 30 seconds, and
+  after 10 minutes the admins are told (and it keeps being retried).
+- **Not when the network is the problem.** Before each restart the **Network reference address** (App settings,
+  e.g. your router) must answer, and — when at least 3 sites are checked — more than half of them must not have gone
+  down within the same 2 minutes. Otherwise nothing is restarted: *the network looks down, not the device*.
+- **A switch Home Assistant can't reach** (unavailable or unknown) is never used.
+- **One sequence per switch**: sites sharing a switch are restarted once, together, and it counts for each.
+- **No restart loops**: an incident's first restart waits at least the **Gap between two incidents' restarts** (App
+  settings, 10 minutes) after the site's last restart.
+- Only `switch.turn_off` and `switch.turn_on`, only on the switch chosen for that site. Every restart is in the site's
+  **History** and in Home Assistant's logbook.
+
+When a wanted restart doesn't happen, the Monitor page says why ("not restarted: …"), and the site's people are told
+once (**Couldn't restart**) — except for the time window and pausing, which are expected.
+
+**Restart now** (admins, on the Monitor page; it asks first) restarts at once — it counts in the current incident if
+there is one. The switch must be reachable; the network rules don't apply, since an admin decided.
 
 ### Alerts
 
@@ -178,6 +217,10 @@ yourself off.
 
 **🩺 Monitoring**
 
+- **Network reference address** — your router, or anything that should always answer (`host`, or `host:port`; a
+  host alone is tried on ports 53, 80 and 443). Checked before each restart. Empty: only the "most sites down
+  together" rule applies.
+- **Gap between two incidents' restarts** — 10 minutes (0–1440).
 - **Keep check history** — every check is kept for a week, then hourly totals for this long (30 days; 7–365).
   Incidents are kept 90 days.
 

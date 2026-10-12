@@ -9,11 +9,11 @@ from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
 REPO_URL = pk.REPO_URL
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 NEEDLES = pk.NEEDLES + ("c:\\" + "users",)
 ALLOWED_ADDRESSES = {"192.168.1.10", "192.168.1.11", "192.168.1.12", "192.168.1.20", "192.168.1.30", "192.168.1.5",
-                     "10.0.0.5", "192.168.0.20", "240.0.0.1", "172.30.32.2", "172.30.33.9", "169.254.1.2", "100.64.1.1"}
+                     "10.0.0.5", "192.168.1.1", "192.168.0.20", "240.0.0.1", "172.30.32.2", "172.30.33.9", "169.254.1.2", "100.64.1.1"}
 TEXT_EXT = (".py", ".html", ".md", ".yaml", ".yml", ".js", ".css", ".sql", ".txt", ".json")
 TEXT_NAMES = ("Dockerfile", ".dockerignore")
 EMAIL = re.compile(r"(?<![:/\w.+-])[\w.+-]+@[\w-]+\.[a-z]{2,}")

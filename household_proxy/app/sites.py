@@ -158,6 +158,34 @@ class AlertsIn(BaseModel):
         return list(dict.fromkeys(v))
 
 
+class RestartIn(BaseModel):
+    """§13.3: the switch that powers the device, and how restarts go (entity None = never restarted)."""
+    model_config = ConfigDict(extra="forbid")
+    entity: str | None = Field(default=None, max_length=120)
+    confirmed: StrictBool = False                 # it doesn't power Home Assistant, the router or the network switch
+    off_for_s: int = Field(default=5, ge=1, le=300)
+    wait_after_s: int = Field(default=120, ge=10, le=3600)
+    max_restarts: int = Field(default=3, ge=0, le=10)
+    window_start: str | None = None
+    window_end: str | None = None
+
+    @field_validator("entity")
+    @classmethod
+    def _entity(cls, v):
+        v = (v or "").strip() or None
+        if v is not None and not re.match(r"^switch\.[a-z0-9_]{1,100}$", v):
+            raise ValueError("must be a switch entity, e.g. switch.nas_plug")
+        return v
+
+    @field_validator("window_start", "window_end")
+    @classmethod
+    def _hm(cls, v):
+        v = (v or "").strip() or None
+        if v is not None and not re.match(r"^([01]\d|2[0-3]):[0-5]\d$", v):
+            raise ValueError("must be a time like 02:00")
+        return v
+
+
 class SiteIn(BaseModel):
     """The Admin → Sites form."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -183,6 +211,7 @@ class SiteIn(BaseModel):
     use: str = "proxy"
     check: CheckIn = Field(default_factory=CheckIn)
     alerts: AlertsIn = Field(default_factory=AlertsIn)
+    restart: RestartIn = Field(default_factory=RestartIn)
 
     @field_validator("use")
     @classmethod
@@ -353,6 +382,10 @@ def admin_row(conn, r) -> dict:
             "check": {"kind": r["check_kind"], "path": r["check_path"] or "", "every_s": r["check_every_s"],
                       "timeout_s": r["check_timeout_s"], "down_after": r["down_after"], "ok_codes": r["ok_codes"],
                       "sensor": bool(r["expose_sensor"])},
+            "restart": {"entity": r["restart_entity"], "confirmed": bool(r["restart_ok_at"]),
+                        "off_for_s": r["off_for_s"], "wait_after_s": r["wait_after_s"],
+                        "max_restarts": r["max_restarts"], "window_start": r["window_start"] or "",
+                        "window_end": r["window_end"] or ""},
             "alerts": {"people": alert_people, "service": r["alert_service"] or "",
                        "events": json.loads(r["alert_events"] or "[]")},
             "rules": rules, "use_favicon": bool(r["use_favicon"]), "has_favicon": r["favicon"] is not None,
@@ -392,6 +425,14 @@ def _validate(body: SiteIn) -> tuple[str, str]:
         raise SiteError("A port check needs host:port")
     if body.check.path:
         clean_path(body.check.path)
+    rs = body.restart
+    if rs.entity:
+        if kind is None:
+            raise SiteError("Auto-restart needs a check (it restarts when the check says the site is down)")
+        if not rs.confirmed:
+            raise SiteError("Confirm that the switch doesn't power Home Assistant, your router or your network switch")
+        if bool(rs.window_start) != bool(rs.window_end) or (rs.window_start and rs.window_start == rs.window_end):
+            raise SiteError("A restart window needs a start and a different end (e.g. 02:00 to 06:00)")
     if body.use == "proxy" and not body.trusted_ok:
         raise SiteError("Confirm that this is software you run and keep updated (a site opened here runs on Home "
                         "Assistant's own address).")
@@ -460,7 +501,15 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
                     check_timeout_s=body.check.timeout_s, down_after=body.check.down_after,
                     ok_codes=body.check.ok_codes, expose_sensor=int(body.check.sensor),
                     alert_service=body.alerts.service or None, alert_events=json.dumps(body.alerts.events),
+                    restart_entity=body.restart.entity, off_for_s=body.restart.off_for_s,
+                    wait_after_s=body.restart.wait_after_s, max_restarts=body.restart.max_restarts,
+                    window_start=body.restart.window_start if body.restart.entity else None,
+                    window_end=body.restart.window_end if body.restart.entity else None,
                     updated_at=now)
+        if body.restart.entity:
+            cols.update(restart_ok_by=admin["id"], restart_ok_at=now)
+        else:
+            cols.update(restart_due=0, restart_ok_by=None, restart_ok_at=None)
         is_new = site_id is None
         if site_id is None:
             if conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0] >= MAX_SITES:

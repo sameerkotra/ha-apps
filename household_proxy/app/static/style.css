@@ -190,3 +190,4 @@ fieldset.section legend { font-weight: 600; padding: 0 4px; }
 .grid2.wide-first { grid-template-columns: 2fr 1fr; }
 @media (max-width: 600px) { .grid3, .grid2.wide-first { grid-template-columns: 1fr; } }
 .monitor-actions select.small-select { width: auto; flex: 0 0 auto; }
+.grid2.even { grid-template-columns: 1fr 1fr; }

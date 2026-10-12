@@ -435,3 +435,9 @@ the container).
   `Strict-Transport-Security`, `Clear-Site-Data`, `Alt-Svc`, `NEL`/`Report-To` and `Service-Worker-Allowed` from a
   site are dropped (they would act on Home Assistant's own address); proxied pages get `frame-ancestors 'self'`; the
   Isolated mode of §4.3 is noted as unlikely to work through ingress.
+- 2026-10-11 (building §13): the network reference is **empty by default** (inside an app's container the default
+  route is the Supervisor's own network, which always answers — so "the gateway" would never catch a network
+  outage); an admin sets the router's address in App settings. The "more than half of the checked sites went down
+  together" rule applies only when at least 3 sites are checked (with one or two it would block every restart).
+  Choosing a switch needs a confirmation tick that it doesn't power Home Assistant, the router or the network switch
+  (stored with who and when), not only a warning. A failed turn-on after 10 minutes also tells every admin directly.
