@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import app_messages, db, ha_sync
@@ -43,6 +45,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Calorie Tracker", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    """Plain messages, and never echo the input back (it may hold NaN/Infinity, which JSON can't encode — the
+    refusal itself would otherwise be a 500)."""
+    msgs = []
+    for e in exc.errors():
+        loc = ".".join(str(x) for x in e.get("loc", []) if x not in ("body", "query", "path"))
+        msgs.append(f"{loc}: {e.get('msg')}" if loc else str(e.get("msg")))
+    return JSONResponse(status_code=422, content={"detail": "; ".join(msgs) or "Invalid request."})
 
 app.include_router(me.router)
 app.include_router(me.whoami_router)

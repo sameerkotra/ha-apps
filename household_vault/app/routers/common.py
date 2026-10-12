@@ -16,20 +16,28 @@ class Ctx:
         self.session = session
 
 
-def _ctx(x_vault_session: str | None, user: dict, allow_temporary: bool) -> Ctx:
-    s = sessions.get(x_vault_session, user)
+def _ctx(x_vault_session: str | None, user: dict, allow_temporary: bool, background: bool = False) -> Ctx:
+    # a background poll (the 2FA code refreshing, a progress check) isn't the person doing something: it mustn't
+    # keep the session from locking itself after the idle time
+    s = sessions.get(x_vault_session, user, touch=not background)
     if s.must_change and not allow_temporary:
         raise HTTPException(409, "Choose your own master password first.")
     return Ctx(user, s)
 
 
-async def unlocked(x_vault_session: str | None = Header(default=None), user: dict = Depends(require_user)) -> Ctx:
-    return _ctx(x_vault_session, user, False)
+def _is_background(value: str | None) -> bool:
+    return (value or "").strip() == "1"
 
 
-async def unlocked_any(x_vault_session: str | None = Header(default=None), user: dict = Depends(require_user)) -> Ctx:
+async def unlocked(x_vault_session: str | None = Header(default=None), x_background: str | None = Header(default=None),
+                   user: dict = Depends(require_user)) -> Ctx:
+    return _ctx(x_vault_session, user, False, _is_background(x_background))
+
+
+async def unlocked_any(x_vault_session: str | None = Header(default=None),
+                       x_background: str | None = Header(default=None), user: dict = Depends(require_user)) -> Ctx:
     """Also a first-unlock session (one-time password) — only for choosing the new password."""
-    return _ctx(x_vault_session, user, True)
+    return _ctx(x_vault_session, user, True, _is_background(x_background))
 
 
 LEVELS = {"view": service.ROLES, "edit": service.EDIT_ROLES,

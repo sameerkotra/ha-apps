@@ -81,9 +81,11 @@ async def get_summary(log_date: date_type = Query(..., alias="date"), user: dict
         goal = conn.execute(
             "SELECT * FROM goals WHERE user_id = ?", (user["id"],)
         ).fetchone()
+        # the latest weight as of the day shown (a past day doesn't show a later weigh-in); the last one
+        # entered wins when a day has two
         latest_weight = conn.execute(
-            "SELECT weight_kg FROM weight_logs WHERE user_id = ? ORDER BY date DESC LIMIT 1",
-            (user["id"],),
+            "SELECT weight_kg FROM weight_logs WHERE user_id = ? AND date <= ? ORDER BY date DESC, id DESC LIMIT 1",
+            (user["id"], str(log_date)),
         ).fetchone()
 
     totals = _totals(logs)

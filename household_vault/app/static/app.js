@@ -64,13 +64,14 @@ const FINE_POINTER = window.matchMedia && window.matchMedia("(pointer: fine)").m
 // ---------- API ----------
 class ApiError extends Error { constructor(msg, status, detail) { super(msg); this.status = status; this.detail = detail; } }
 const api = UI.makeApi({
-  headers: () => (state.token ? { "X-Vault-Session": state.token } : {}),
+  // opts.background: a poll nobody asked for (2FA code, progress) — the server doesn't count it as activity
+  headers: (opts) => Object.assign(state.token ? { "X-Vault-Session": state.token } : {}, opts && opts.background ? { "X-Background": "1" } : {}),
   message: (body, res) => {
     const detail = body ? body.detail : null;
     return typeof detail === "string" ? detail : (detail && detail.message) || `Something went wrong (HTTP ${res.status}).`;
   },
   makeError: (msg, status, body, res) => new ApiError(msg, status, res ? (body ? body.detail : null) : undefined),
-  onResponse: (res) => { if (res.ok) state.lastActivity = Date.now(); },
+  onResponse: (res, opts) => { if (res.ok && !(opts && opts.background)) state.lastActivity = Date.now(); },
   onError: (err, res, opts) => { if (res.status === 401 && state.token && !opts.noLock) { lockLocal("Locked."); } },
 });
 
@@ -900,7 +901,7 @@ async function showDetail(vaultId, id) {
     const ring = svgEl("svg", { class: "ring", viewBox: "0 0 22 22", "aria-hidden": "true" }, svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--panel-hover)", "stroke-width": 3 }), ringFg);
     let cur = null, remaining = 0, period = d.totp.period;
     const refresh = async () => {
-      try { const r = await api(`api/vaults/${vaultId}/items/${id}/totp`); cur = r.code; remaining = r.remaining; period = r.period;
+      try { const r = await api(`api/vaults/${vaultId}/items/${id}/totp`, { background: true }); cur = r.code; remaining = r.remaining; period = r.period;
         code.textContent = cur.replace(/(\d{3})(\d+)/, "$1 $2"); } catch (e) { clearInterval(state.totpTimer); }
     };
     await refresh();
@@ -1546,7 +1547,7 @@ async function healthPage() {
     state.healthPoll = setInterval(async () => {
       if (state.page !== "health") { clearInterval(state.healthPoll); return; }
       try {
-        const nr = await api("api/password-health");
+        const nr = await api("api/password-health", { background: true });
         Object.assign(r, nr);
         if (nr.breach.state !== "running") { clearInterval(state.healthPoll); state.healthMap = new Map(nr.items.map((x) => [x.vaultId + ":" + x.id, x.issues])); state.health = nr; renderSidebar(); mount(box, content()); return; }
         drawBreach();

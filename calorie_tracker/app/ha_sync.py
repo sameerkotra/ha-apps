@@ -136,11 +136,14 @@ async def push_for_user(user_id: str, user_slug: str, display_name: str):
 
 
 def _sync_push_all() -> dict:
-    from .auth import _slugify  # local: auth imports db/config, keep load order simple
+    from . import db
+    from .auth import _slugify, sensor_slugs  # local: auth imports db/config, keep load order simple
 
     if not exposed() or not _has_token():
         return {"pushed": 0, "failed": 0}
-    items = [(entity_id_for(_slugify(u["name"])), *_payload(u["name"], u["total"]))
+    with db.get_conn() as conn:
+        slugs = sensor_slugs(conn)
+    items = [(entity_id_for(slugs.get(u["id"]) or _slugify(u["name"])), *_payload(u["name"], u["total"]))
              for u in _today_totals()]       # DB connection closed before any HTTP call
     return SENSORS.publish(items, force=True)
 
@@ -157,13 +160,16 @@ def _sync_remove_all() -> dict:
     pushed under an older name). Failures are retried by the periodic job."""
     global _removal_pending
     from . import db
-    from .auth import _slugify
+    from .auth import _slugify, sensor_slugs
 
     if exposed() or not _has_token():
         return {"removed": 0, "failed": 0}
     with db.get_conn() as conn:
         names = [r["name"] for r in conn.execute("SELECT name FROM users")]
-    entity_ids = sorted({entity_id_for(_slugify(n)) for n in names} | set(SENSORS.names()))
+        slugs = sensor_slugs(conn)
+    # each person's sensor, and the shared one a name collision used to give (before the unique endings)
+    entity_ids = sorted({entity_id_for(s) for s in slugs.values()} | {entity_id_for(_slugify(n)) for n in names}
+                        | set(SENSORS.names()))
     result = SENSORS.remove(entity_ids)
     _removal_pending = result["failed"] > 0
     return result

@@ -3,6 +3,7 @@ import re
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import Field
 
@@ -258,12 +259,10 @@ class DownloadAllIn(Strict):
 @router.post("/me/download-all")
 def download_all(body: DownloadAllIn, ctx: Ctx = Depends(unlocked)):
     """One .kdbx with everything I have open, locked with my master password (SPEC §12.6)."""
-    import hmac
     with db.get_conn() as conn:
         personal = service.personal_of(conn, ctx.user["id"])
         pov = sessions.get_open(personal["id"])
-        if pov is None or not hmac.compare_digest(pov.password.encode(), body.password.encode()):
-            raise HTTPException(403, "That isn't your master password.")
+        service.check_master_password(conn, ctx.user["id"], pov, body.password, "That isn't your master password.")
         combined = kdbx.Database.create(f"Household Vault — {ctx.user['name']}")
         combined.kdf = kdbx.kdf_params(service.strong_kdf(conn))
         rows = _vault_list(conn, ctx.user["id"], ctx.session)
@@ -335,6 +334,13 @@ async def import_file(file: UploadFile = File(...), password: str = Form(""), ke
     if len(data) > storage.MAX_FILE_BYTES:
         raise HTTPException(413, "That file is bigger than 20 MB.")
     kf = await keyfile.read() if keyfile is not None else None
+    # opening the file runs its key derivation (seconds of work) and saving re-encrypts: off the event loop,
+    # so the rest of the app keeps answering meanwhile
+    return await run_in_threadpool(_import, data, kf, file.filename, password, target, name, skipDuplicates, ctx)
+
+
+def _import(data: bytes, kf: bytes | None, filename: str | None, password: str, target: str, name: str,
+            skipDuplicates: bool, ctx: Ctx) -> dict:
     src, records = None, None
     if kdbx.is_kdbx(data[:12]):
         try:
@@ -369,7 +375,7 @@ async def import_file(file: UploadFile = File(...), password: str = Form(""), ke
             seen.add(sig)
             return False
 
-        default_name = (file.filename or "Imported").rsplit(".", 1)[0]
+        default_name = (filename or "Imported").rsplit(".", 1)[0]
         if target == "new":
             vname = _name(name or (src.name if src else "") or default_name)[:60]
             vid = service.create_shared(conn, ctx.session, vname, "random", None)

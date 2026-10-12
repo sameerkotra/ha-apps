@@ -878,22 +878,36 @@ function clearFoodForm() {
   $("#aiFillStatus").textContent = "";
 }
 
+// The form's calories and macros are for ONE serving (a saved food's own numbers, an AI estimate); a food-log
+// entry keeps the totals for all the servings eaten — what the day adds up, and what the Household Assistant
+// divides back to one serving.
+function scaleByServings(perServing, servings) {
+  const n = servings > 0 ? servings : 1;
+  const out = {};
+  for (const k of ["calories", "protein", "carbs", "fat"]) out[k] = Math.round((Number(perServing[k]) || 0) * n * 10) / 10;
+  return out;
+}
+
 $("#addFoodBtn").addEventListener("click", async () => {
   const name = $("#foodName").value.trim();
   const calories = parseFloat($("#foodCalories").value);
   if (!name || isNaN(calories)) return alert("Food name and calories are required.");
   const savedFoodId = $("#savedFoodPicker").value ? parseInt($("#savedFoodPicker").value) : null;
+  const servings = parseFloat($("#foodServings").value) > 0 ? parseFloat($("#foodServings").value) : 1;
+  const totals = scaleByServings({
+    calories,
+    protein: parseFloat($("#foodProtein").value) || 0,
+    carbs: parseFloat($("#foodCarbs").value) || 0,
+    fat: parseFloat($("#foodFat").value) || 0,
+  }, servings);
   await api(withUser(`/api/logs`), {
     method: "POST",
     body: JSON.stringify({
       date: state.date,
       meal_type: $("#mealType").value,
       food_name: name,
-      servings: parseFloat($("#foodServings").value) || 1,
-      calories,
-      protein: parseFloat($("#foodProtein").value) || 0,
-      carbs: parseFloat($("#foodCarbs").value) || 0,
-      fat: parseFloat($("#foodFat").value) || 0,
+      servings,
+      ...totals,
       saved_food_id: savedFoodId,
     }),
   });

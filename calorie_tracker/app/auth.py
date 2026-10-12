@@ -29,6 +29,40 @@ def _slugify(text: str) -> str:
     return slug or "user"
 
 
+def sensor_slugs(conn) -> dict:
+    """{user id: the slug in that person's daily-calories sensor id}, unique per person and stable. A person keeps
+    _slugify(name) when nobody earlier (by created_at) has it; anyone else whose name gives the same slug
+    ("Asha K" / "Asha-K", or names with no Latin letters, which all become "user") gets a short ending from their
+    user id, so one person's sensor never overwrites another's. (The same rule as Splitpot's balance sensors.)"""
+    rows = conn.execute("SELECT id, name FROM users ORDER BY created_at, id").fetchall()
+    out: dict = {}
+    taken: set = set()
+    later = []
+    for r in rows:
+        base = _slugify(r["name"])
+        if base in taken:
+            later.append((r["id"], base))
+        else:
+            taken.add(base)
+            out[r["id"]] = base
+    for uid, base in later:
+        tail = re.sub(r"[^a-z0-9]+", "", str(uid).lower()) or "x"
+        slug = f"{base}_{tail[:6]}"
+        if slug in taken:
+            slug = f"{base}_{tail}"
+        n = 2
+        while slug in taken:            # only with hand-made ids; keeps the slug unique whatever happens
+            slug = f"{base}_{tail}_{n}"
+            n += 1
+        taken.add(slug)
+        out[uid] = slug
+    return out
+
+
+def sensor_slug(conn, user_id: str, name: str) -> str:
+    return sensor_slugs(conn).get(user_id) or _slugify(name)
+
+
 def display_name_listed(display_name: str | None) -> bool:
     return auth_core.display_name_listed(display_name, config.ADMIN_USERS)
 
@@ -83,11 +117,12 @@ async def get_current_user(request: Request) -> dict:
         conn.execute(
             "INSERT OR IGNORE INTO goals (user_id) VALUES (?)", (user_id,)
         )
+        slug = sensor_slug(conn, user_id, display_name)
 
     return {
         "id": user_id,
         "name": display_name,
-        "slug": _slugify(display_name),
+        "slug": slug,
         "is_admin": is_admin,
         # kept for the "How the app sees you" page (routers/me.py)
         "username": username,
@@ -118,11 +153,12 @@ async def get_acting_user(
         row = conn.execute(
             "SELECT id, name FROM users WHERE id = ?", (as_user,)
         ).fetchone()
+        slug = sensor_slug(conn, row["id"], row["name"]) if row else None
 
     if not row:
         return current
 
-    return {"id": row["id"], "name": row["name"], "slug": _slugify(row["name"]), "is_admin": current["is_admin"]}
+    return {"id": row["id"], "name": row["name"], "slug": slug, "is_admin": current["is_admin"]}
 
 
 async def require_admin(current: dict = Depends(get_current_user)) -> dict:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.5
+
+- **Security**: importing a KeePass file whose encryption settings would take hours or more memory than the machine has (a damaged or crafted file) is refused with a message saying so — up to about ten times KeePassXC's own settings still open. A file that unpacks to more than 256 MB is refused too, and while a file is being opened the rest of the app keeps answering.
+- **Security**: a vault left open on an item with a 2FA code now locks itself after your idle time — the code refreshing every 30 seconds no longer counts as you doing something.
+- **Security**: wrong passwords count the same everywhere you type one — unlocking, opening a vault with its password, **Download all my passwords**, changing the master password and setting up quick unlock — and several typed at the same moment each count, so none gets past the wait after 5 wrong ones.
+- **Security**: after an admin restores a backup, each person sees only what the restore undid for them (an admin still sees the whole list).
+- **Shared code**: pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 2.1.4
 
 - **Home Assistant's time zone, always**: "today" (reminders, expiry dates, file names) now follows Home Assistant's zone, read at start-up, asked again until Home Assistant answers and every six hours after; until then the zone the Supervisor gives every app (Home Assistant's own), never UTC.

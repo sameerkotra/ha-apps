@@ -18,7 +18,7 @@ from ..auth import require_admin, require_user
 from .common import Strict
 
 router = APIRouter(prefix="/api", tags=["admin"])
-APP_VERSION = "2.1.4"
+APP_VERSION = "2.1.5"
 _last_sync = {"t": 0.0}
 
 
@@ -244,7 +244,7 @@ async def import_backup(file: UploadFile = File(...), admin: dict = Depends(requ
             last = c.execute("SELECT MAX(created_at) FROM audit_log").fetchone()[0] or ""
             c.close()
             undone = [dict(r) for r in conn.execute(
-                "SELECT a.action, a.created_at, v.name AS vault, u.name AS person FROM audit_log a "
+                "SELECT a.action, a.created_at, a.user_id, v.name AS vault, u.name AS person FROM audit_log a "
                 "LEFT JOIN vaults v ON v.id = a.vault_id LEFT JOIN users u ON u.id = a.user_id WHERE a.created_at > ? "
                 "AND a.action IN ('unshared','left','user_disabled','user_reset','rekeyed','password_changed',"
                 "'emergency_revoked','emergency_denied','quick_unlock_added','guest_wifi_removed') "
@@ -278,8 +278,15 @@ async def import_backup(file: UploadFile = File(...), admin: dict = Depends(requ
 
 @router.get("/restore-notes")
 def restore_notes(user: dict = Depends(require_user)):
+    """What the last restore undid. An admin sees all of it; anyone else only what was about them (vault names and
+    people in the rest are none of their business)."""
     path = os.path.join(config.DATA_DIR, "restore_notes.json")
     if not os.path.exists(path):
         return {"notes": None}
     with open(path) as f:
-        return {"notes": json.load(f)}
+        notes = json.load(f)
+    undone = notes.get("undone") or []
+    if not user["is_admin"]:
+        undone = [x for x in undone if x.get("user_id") == user["id"]]
+    notes["undone"] = [{k: v for k, v in x.items() if k != "user_id"} for x in undone]
+    return {"notes": notes}

@@ -193,20 +193,58 @@ def check_blocked(u) -> None:
         raise HTTPException(429, f"Too many wrong passwords. Try again in {max(1, round(secs / 60))} minute(s).")
 
 
-def wrong_password(conn, user_id: str) -> None:
-    u = user_row(conn, user_id)
-    fails = u["unlock_failures"] + 1
-    until = None
+def _block_seconds(fails: int) -> int:
+    return min(60 * (2 ** (fails - 5)), 3600)
+
+
+def reserve_attempt(conn, user_id: str) -> int:
+    """Count a password attempt as wrong before checking it, in one atomic UPDATE committed at once: attempts sent
+    in parallel each take their own count, and none gets past a block (the check and the count are one step).
+    From the fifth the block is set now, for the case the attempt is wrong. Returns the count with this attempt;
+    `attempt_ok` gives it back when the password is right, `wrong_password` finishes a wrong one. 429 when blocked."""
+    now = config.utcnow()
+    row = conn.execute("UPDATE users SET unlock_failures = unlock_failures + 1 WHERE id = ? AND "
+                       "(unlock_blocked_until IS NULL OR unlock_blocked_until <= ?) RETURNING unlock_failures",
+                       (user_id, config.now_iso())).fetchone()
+    if row is None:
+        u = user_row(conn, user_id)
+        check_blocked(u)
+        raise HTTPException(429, "Too many wrong passwords. Try again in a minute.")
+    fails = row[0]
     if fails >= 5:
-        wait = min(60 * (2 ** (fails - 5)), 3600)
-        until = (config.utcnow() + timedelta(seconds=wait)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        until = (now + timedelta(seconds=_block_seconds(fails))).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        conn.execute("UPDATE users SET unlock_blocked_until = ? WHERE id = ?", (until, user_id))
+    conn.commit()
+    return fails
+
+
+def attempt_ok(conn, user_id: str) -> None:
+    """The reserved attempt was right: give its count back (and its block, unless earlier wrong ones keep it)."""
+    conn.execute("UPDATE users SET unlock_failures = MAX(unlock_failures - 1, 0), unlock_blocked_until = "
+                 "CASE WHEN unlock_failures - 1 >= 5 THEN unlock_blocked_until ELSE NULL END WHERE id = ?", (user_id,))
+    conn.commit()
+
+
+def wrong_password(conn, user_id: str, fails: int) -> None:
+    """The reserved attempt was wrong (already counted): note the block and tell the person."""
+    if fails >= 5:
         db.audit(conn, "unlock_blocked", user_id)
-    conn.execute("UPDATE users SET unlock_failures = ?, unlock_blocked_until = ? WHERE id = ?", (fails, until, user_id))
     if fails >= 3:
         alerts.send(conn, [user_id], f"Someone typed a wrong password {fails} times in a row in your Household Vault"
-                    + (" — it's now blocked for a while" if until else "")
+                    + (" — it's now blocked for a while" if fails >= 5 else "")
                     + ". If it wasn't you, change your Home Assistant password.",
                     throttle_key=f"wrong:{user_id}", throttle_seconds=900)
+    conn.commit()
+
+
+def check_master_password(conn, user_id: str, ov, password: str, message: str) -> None:
+    """A check of the master password against the open Personal vault (download all, change it, quick unlock):
+    counted and blocked like unlocking, so an unlocked tab can't be used to guess it. 403 with `message`."""
+    fails = reserve_attempt(conn, user_id)
+    if ov is None or not hmac.compare_digest(ov.password.encode(), password.encode()):
+        wrong_password(conn, user_id, fails)
+        raise HTTPException(403, message)
+    attempt_ok(conn, user_id)
 
 
 def unlock(conn, user: dict, password: str) -> tuple:
@@ -214,14 +252,17 @@ def unlock(conn, user: dict, password: str) -> tuple:
     u = user_row(conn, user["id"])
     if u["status"] == "none":
         raise HTTPException(409, "An admin hasn't set up your vault yet.")
-    check_blocked(u)
     personal = personal_of(conn, user["id"])
+    fails = reserve_attempt(conn, user["id"])
     try:
         ov = open_vault(conn, personal["id"], password)
     except kdbx.WrongKey:
-        wrong_password(conn, user["id"])
-        conn.commit()
+        wrong_password(conn, user["id"], fails)
         raise HTTPException(403, "Wrong master password.")
+    except Exception:
+        conn.rollback()
+        attempt_ok(conn, user["id"])
+        raise
     conn.execute("UPDATE users SET unlock_failures = 0, unlock_blocked_until = NULL, previous_unlock = last_unlock, "
                  "last_unlock = ? WHERE id = ?", (config.now_iso(), user["id"]))
     if u["status"] == "temporary":
@@ -290,8 +331,7 @@ def activate(conn, s: sessions.Session, user: dict, new_password: str) -> None:
 def change_master(conn, s: sessions.Session, user: dict, current: str, new: str) -> None:
     personal = personal_of(conn, user["id"])
     ov = sessions.get_open(personal["id"])
-    if ov is None or not hmac.compare_digest(current.encode(), ov.password.encode()):
-        raise HTTPException(403, "Your current master password isn't right.")
+    check_master_password(conn, user["id"], ov, current, "Your current master password isn't right.")
     msg = passwords.check_master(new, settings.get("min_master_password_length"))
     if msg:
         raise HTTPException(422, msg)
@@ -540,12 +580,17 @@ def change_vault_password(conn, s: sessions.Session, vault_id: str, new: str, re
 def open_with_password(conn, s: sessions.Session, vault_id: str, password: str, remember_it: bool) -> None:
     if role_of(conn, vault_id, s.user_id) is None:
         raise HTTPException(404, "That vault doesn't exist.")
+    fails = reserve_attempt(conn, s.user_id)
     try:
         ov = open_vault(conn, vault_id, password)
     except kdbx.WrongKey:
-        wrong_password(conn, s.user_id)
-        conn.commit()
+        wrong_password(conn, s.user_id, fails)
         raise HTTPException(403, "That isn't the vault's password.")
+    except Exception:
+        conn.rollback()
+        attempt_ok(conn, s.user_id)
+        raise
+    attempt_ok(conn, s.user_id)
     sessions.attach(s, ov)
     if remember_it and s.private_key is not None:
         remember(conn, vault_id, s.user_id, password, ov.key_epoch)

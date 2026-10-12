@@ -213,6 +213,80 @@ class TimeZone(unittest.TestCase):
         self.assertEqual((ha_time.DEFAULT_ZONE, ha_time.Zone().name), ("UTC", "UTC"))
 
 
+class Bounds(ApiBase):
+    """Numbers and names are bounded: inf/NaN, negatives, nulls and unknown meals are refused (422) instead of
+    being stored and breaking every later answer with a 500."""
+
+    def test_infinity_and_nan_are_refused(self):
+        for raw in ('{"date": "2026-09-21", "food_name": "x", "calories": 1e309}',
+                    '{"date": "2026-09-21", "food_name": "x", "calories": 10, "fat": NaN}'):
+            r = self.c.post("/api/logs", content=raw, headers={**ALICE, "Content-Type": "application/json"})
+            self.assertEqual(r.status_code, 422, raw)
+        r = self.c.put("/api/goals", content='{"calorie_goal": 1e309}', headers={**ALICE, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 422)
+        r = self.c.post("/api/weight", content='{"date": "2026-09-21", "weight_kg": 1e309}',
+                        headers={**ALICE, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(self.c.get("/api/logs?date=2026-09-21", headers=ALICE).status_code, 200)
+        self.assertEqual(self.c.get("/api/summary?date=2026-09-21", headers=ALICE).status_code, 200)
+
+    def test_negatives_nulls_and_unknown_meals_are_refused(self):
+        bad = [{"calories": -5}, {"protein": -1}, {"servings": 0}, {"meal_type": "brunch"}, {"food_name": ""},
+               {"food_name": "x" * 201}, {"calories": 10 ** 6}]
+        for extra in bad:
+            body = {"date": "2026-09-21", "food_name": "Toast", "calories": 100, **extra}
+            self.assertEqual(self.c.post("/api/logs", json=body, headers=ALICE).status_code, 422, extra)
+        for extra in ({"calorie_goal": None}, {"protein_goal": None}, {"fat_goal": -1}, {"target_weight_kg": 0}):
+            self.assertEqual(self.c.put("/api/goals", json=extra, headers=ALICE).status_code, 422, extra)
+        self.assertEqual(self.c.post("/api/saved-foods", json={"name": "x", "calories": -1}, headers=ALICE).status_code, 422)
+        self.assertEqual(self.c.post("/api/saved-foods", json={"name": "x", "calories": 1, "serving_unit": "u" * 41},
+                                     headers=ALICE).status_code, 422)
+        # what the page sends still works: the weights can be cleared with null, a goal left out is unchanged
+        r = self.c.put("/api/goals", json={"calorie_goal": 1800, "target_weight_kg": 70, "starting_weight_kg": None},
+                       headers=ALICE)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["calorie_goal"], r.json()["protein_goal"], r.json()["target_weight_kg"]),
+                         (1800, 150, 70))
+        self.assertIsNone(self.c.put("/api/goals", json={"target_weight_kg": None}, headers=ALICE).json()["target_weight_kg"])
+        self.assertEqual(self.c.get("/api/summary?date=2026-09-21", headers=ALICE).status_code, 200)
+        self.log(ALICE, meal_type="breakfast", servings=2.5, calories=250)
+
+
+class LatestWeight(ApiBase):
+    def test_a_past_day_shows_the_weight_as_of_that_day(self):
+        for d, kg in (("2026-09-01", 80), ("2026-09-10", 79), ("2026-09-10", 78.5), ("2026-09-20", 77)):
+            r = self.c.post("/api/weight", json={"date": d, "weight_kg": kg}, headers=ALICE)
+            self.assertIn(r.status_code, (200, 201), r.text)
+
+        def latest(day):
+            s = self.c.get(f"/api/summary?date={day}", headers=ALICE).json()
+            return s.get("latest_weight_kg", s.get("latest_weight"))
+        self.assertEqual(latest("2026-09-05"), 80)
+        self.assertEqual(latest("2026-09-15"), 78.5)            # two on one day: the last one entered
+        self.assertEqual(latest("2026-09-25"), 77)
+        self.assertIsNone(latest("2026-08-01"))
+
+
+class ServingsScale(unittest.TestCase):
+    """The Add Food form's numbers are for one serving; the entry stores the totals (what the assistant divides)."""
+
+    def test_page_multiplies_by_servings(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node not installed")
+        with open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "app.js"), encoding="utf-8") as f:
+            src = f.read()
+        m = re.search(r"^function scaleByServings\(.*?^}\n", src, re.S | re.M)
+        self.assertIsNotNone(m)
+        self.assertIn("...totals,", src)                        # the add-food request sends the scaled numbers
+        script = m.group(0) + ("process.stdout.write(JSON.stringify([scaleByServings({calories: 150, protein: 5.5, "
+                               "carbs: 20, fat: 3}, 2), scaleByServings({calories: 95}, 0.5), "
+                               "scaleByServings({calories: 95}, 0)]));")
+        out = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(out[0], {"calories": 300, "protein": 11, "carbs": 40, "fat": 6})
+        self.assertEqual(out[1], {"calories": 47.5, "protein": 0, "carbs": 0, "fat": 0})
+        self.assertEqual(out[2]["calories"], 95)
+
 class FrontendEscaping(unittest.TestCase):
     """escapeHtml is used inside attribute values (title="…", data-copy="…"),
     so it must escape quotes — this was a stored-XSS hole via saved-food notes."""
@@ -665,6 +739,32 @@ class DailyCaloriesSensor(ApiBase):
         self.assertEqual(self.put(False, h=ALICE).status_code, 403)
         self.assertTrue(settings.get("expose_daily_calories_sensor"))
         self.assertEqual(self.ha.calls, [])
+
+    def test_same_names_get_their_own_sensor(self):
+        # two people whose names give the same slug, and two with no Latin letters: one sensor each; the first
+        # keeps the plain name, so nobody's existing sensor is renamed
+        for uid, name in (("u_asha1", "Asha K"), ("u_asha2", "Asha-K")):
+            self.assertEqual(self.c.get("/api/me", headers=hdr(uid, name)).status_code, 200)
+            self.log(hdr(uid, name), date=self.today, calories=100)
+        posted = {e for e, _ in self.ha.of("POST")}
+        self.assertEqual(posted, {"sensor.calorie_tracker_asha_k_daily_calories",
+                                  "sensor.calorie_tracker_asha_k_uasha2_daily_calories"})
+        with db.get_conn() as conn:                              # names with no Latin letters (from Home Assistant)
+            conn.execute("INSERT INTO users (id, name, created_at) VALUES ('u_hi1', 'आशा', '2030-01-01 00:00:00'), "
+                         "('u_hi2', 'रवि', '2030-01-01 00:00:01')")
+        self.ha.calls.clear()
+        import asyncio
+        asyncio.run(ha_sync.push_all())
+        ids = [e for e, _ in self.ha.of("POST")]
+        self.assertIn("sensor.calorie_tracker_user_daily_calories", ids)
+        self.assertIn("sensor.calorie_tracker_user_uhi2_daily_calories", ids)
+        self.assertEqual(len(ids), len(set(ids)))                # 7 people, 7 sensors
+        self.assertEqual(len(ids), 7)
+        self.assertIn("sensor.calorie_tracker_alice_daily_calories", ids)
+        self.put(False)
+        deleted = {e for e, _ in self.ha.of("DELETE")}
+        self.assertTrue(set(ids) <= deleted)
+
 
 
 class AdminOnlyGuards(ApiBase):

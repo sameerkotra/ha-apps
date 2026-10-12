@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.1
+
+- **Servings count**: on the Food Log, the calories, protein, carbs and fat in **Add Food** are for one serving, and the entry adds them up for the servings you type — picking a saved food and typing 2 servings now logs twice its calories (before, it logged one serving's calories marked as 2 servings, and the Household Assistant then counted that food at half its calories). Entries you already added are unchanged.
+- **Latest Weight on a past day**: the Food Log of an earlier day shows your weight as of that day, not a later weigh-in; with two on one day, the last one entered.
+- **One calories sensor per person**: people whose names give the same sensor name ("Asha K" and "Asha-K", or names without Latin letters) shared one sensor in Home Assistant, each overwriting the other. Each now gets their own (the later ones with a short ending); everyone else's sensor keeps its name.
+- **Checks on what you enter**: calories, macros, servings, goals and weights can't be negative or impossibly large, the meal is one of the four, and names have a sensible length. Before, a value like "1e309" was saved as infinity and the Food Log and Dashboard of that day stopped loading.
+- **Shared code**: the Household Assistant tools answer only calls that come from the Household Assistant itself; the AI connection no longer follows redirects; pages no longer use inline event handlers; saving App settings is safer, and backup restores say clearly when a file is too large.
+
 ## 2.3.0
 
 - **More for the Household Assistant**: "How did I do this week?" gives your last 7 days against your goal, and "I had a banana" logs it — only after you tap the exact entry it proposes, with the calories on the button (the assistant's estimate, or for a food you saved or logged before, its own calories times the servings).

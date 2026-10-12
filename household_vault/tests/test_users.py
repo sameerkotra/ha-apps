@@ -3,8 +3,11 @@ from base import ADMIN, NEHA, PW, VIKRAM, ApiTestCase, sql
 import _env  # noqa: F401
 
 import unittest
+from unittest import mock
 
-from app import ha_client, sessions
+from fastapi import HTTPException
+
+from app import db, ha_client, sessions
 
 
 class Users(ApiTestCase):
@@ -52,6 +55,88 @@ class Users(ApiTestCase):
         self.ok(self.post("/api/users/u-admin/unblock"))
         self.unlock(ADMIN)
         self.assertEqual(sql("SELECT unlock_failures FROM users WHERE id = 'u-admin'")[0]["unlock_failures"], 0)
+
+    def test_parallel_wrong_passwords_each_count_and_none_slips_past_the_block(self):
+        import threading
+        from app import kdbx, service
+        self.set_up(ADMIN)
+        self.ok(self.post("/api/lock"))
+        sessions.end_all()                                     # Personal closed: each attempt runs the KDF
+        gate, real = threading.Barrier(5, timeout=20), kdbx.open_bytes
+
+        def slow_open(*a, **kw):
+            try:
+                gate.wait()                                    # the first five are all past the check before any fails
+            except threading.BrokenBarrierError:
+                pass
+            return real(*a, **kw)
+        codes = []
+
+        def attempt():
+            try:
+                with db.get_conn() as conn:
+                    service.unlock(conn, ADMIN, "nope")
+            except HTTPException as e:
+                codes.append(e.status_code)
+        with mock.patch.object(kdbx, "open_bytes", slow_open):
+            ts = [threading.Thread(target=attempt) for _ in range(8)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(30)
+        # before: all 8 read 0 failures, passed the check and wrote back 1. Now each attempt is counted before
+        # its KDF, and from the fifth the others are turned away at once
+        fails = sql("SELECT unlock_failures, unlock_blocked_until FROM users WHERE id = 'u-admin'")[0]
+        self.assertEqual(codes.count(403), 5, codes)
+        self.assertEqual(codes.count(429), 3, codes)
+        self.assertEqual(fails["unlock_failures"], 5)
+        self.assertTrue(fails["unlock_blocked_until"])
+        self.assertEqual(self.post("/api/unlock", {"password": PW["u-admin"]}, token=False).status_code, 429)
+        # opening another vault with its password is blocked too (it used to skip the check)
+        self.ok(self.post("/api/users/u-admin/unblock"))
+        self.unlock(ADMIN)
+        sql("UPDATE users SET unlock_blocked_until = '2999-01-01T00:00:00.000Z'")
+        hid = self.vaults()["Household"]["id"]
+        with self.assertRaises(HTTPException) as cm, db.get_conn() as conn:
+            service.open_with_password(conn, sessions._sessions[self.tokens["u-admin"]], hid, "x", False)
+        self.assertEqual(cm.exception.status_code, 429)
+
+    def test_password_checks_in_an_unlocked_tab_count_as_wrong_passwords(self):
+        self.set_up(ADMIN)
+        # download all, change master password, set up quick unlock: each wrong one counts, then all are blocked
+        self.assertEqual(self.post("/api/me/download-all", {"password": "a"}).status_code, 403)
+        self.assertEqual(self.post("/api/me/password", {"current": "b", "new": "x"}).status_code, 403)
+        for _ in range(3):
+            self.assertEqual(self.post("/api/me/download-all", {"password": "c"}).status_code, 403)
+        self.assertEqual(sql("SELECT unlock_failures FROM users WHERE id = 'u-admin'")[0]["unlock_failures"], 5)
+        self.assertEqual(self.post("/api/me/download-all", {"password": PW["u-admin"]}).status_code, 429)
+        self.assertEqual(self.post("/api/me/password", {"current": PW["u-admin"], "new": "x"}).status_code, 429)
+        # a right one gives its own count back and doesn't wipe earlier wrong ones
+        sql("UPDATE users SET unlock_failures = 2, unlock_blocked_until = NULL")
+        self.assertEqual(self.post("/api/me/download-all", {"password": PW["u-admin"]}).status_code, 200)
+        self.assertEqual(sql("SELECT unlock_failures FROM users WHERE id = 'u-admin'")[0]["unlock_failures"], 2)
+
+    def test_background_polls_dont_keep_the_session_unlocked(self):
+        self.set_up(ADMIN)
+        self.ok(self.put("/api/me/settings", {"autoLockMinutes": 1}))
+        hid = self.vaults()["Household"]["id"]
+        item = self.add_item(hid, title="Bank", totp="JBSWY3DPEHPK3PXP")
+        s = sessions._sessions[self.tokens["u-admin"]]
+        # the 2FA code refreshing every 30 s, marked as a background poll: doesn't count as activity
+        for _ in range(2):
+            s.last -= 25
+            self.ok(self.get(f"/api/vaults/{hid}/items/{item['id']}/totp", headers={"X-Background": "1"}))
+            self.ok(self.get("/api/password-health", headers={"X-Background": "1"}))
+        s.last -= 25
+        self.assertEqual(self.get(f"/api/vaults/{hid}/items/{item['id']}/totp", headers={"X-Background": "1"}).status_code,
+                         401)                                  # 75 s idle: locked, as it should be
+        # without the mark (the person did something) it does count
+        self.unlock(ADMIN)
+        s = sessions._sessions[self.tokens["u-admin"]]
+        for _ in range(3):
+            s.last -= 25
+            self.ok(self.get(f"/api/vaults/{hid}/items/{item['id']}/totp"))
+        self.ok(self.get("/api/vaults"))
 
     def test_sessions(self):
         self.set_up(ADMIN)

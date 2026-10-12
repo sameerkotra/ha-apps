@@ -297,7 +297,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 | GET `/api/admin/notify-services` · POST / DELETE `/api/admin/users/{id}/notify[/{service}]` · POST `…/notify/test` | admin | Extra notify services (§12.7) |
 | GET / PUT `/api/admin/settings` | admin | App settings: the shared payload `{values, defaults, meta, groups, …}` (`meta` replaces the old `labels`: label, help, group, kind, range, …) plus `kdf, version, personalCopies` and the session counts; PUT now answers the same as GET |
 | GET `/api/admin-storage-download-db` · POST `/api/admin-storage-import-db` | admin | Encrypted-only backup and restore (§9.1) |
-| GET `/api/restore-notes` | enabled | What the last restore undid (§4.2 #11) |
+| GET `/api/restore-notes` | enabled | What the last restore undid (§4.2 #11): all of it for an admin, only the rows about them for anyone else |
 
 ## 9. Frontend
 ### 9.1 Features shared with the other apps

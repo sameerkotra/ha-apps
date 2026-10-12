@@ -375,8 +375,8 @@ without unlocking).
 - **Backup and restore**: **Download backup** is one zip with the database, every
   vault file and every personal copy — all encrypted. **Restore…** replaces
   everything, locks everyone and lists what it undid (people removed and
-  passwords changed after the backup was taken) so you can redo it; everyone
-  sees the same list when they next unlock.
+  passwords changed after the backup was taken) so you can redo it; each person
+  sees the part of that list about them when they next unlock.
 - The Argon2 settings tuned for this machine, how many sessions are unlocked and
   vaults open, and the app's version.
 
@@ -452,6 +452,17 @@ The app's **Configuration** tab has a single option:
   longer use.
 - Someone removed from a vault keeps whatever they saw or downloaded: change
   important passwords they knew.
+- A restore trusts the backup it's given. An admin who edits a backup's database
+  before restoring it could add themselves to a shared vault, and its new random
+  password would reach them the next time a member opens it. That's the same
+  trust as root on the machine (above); keep backups where only you can change
+  them.
+- Typing a password in the app counts towards the same limit everywhere: unlocking,
+  opening a vault, downloading everything, changing the master password and
+  setting up quick unlock. After 5 wrong ones in a row it waits, longer each time.
+- KeePass files you import may not ask for more than about ten times KeePassXC's
+  own settings (up to 1 GiB of memory, 1,000 Argon2 iterations or 100 million AES
+  rounds) — a file asking for more is refused with a message saying so.
 - An independent security review is still to come.
 
 ## Limits

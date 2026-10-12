@@ -20,6 +20,7 @@ import io
 import os
 import struct
 import uuid as uuidlib
+import zlib
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
@@ -46,6 +47,20 @@ STRONG_KDF = {"memory": 64 * 1024 * 1024, "iterations": 3, "parallelism": 2}
 # Vaults locked with a random 32-byte password: a slow KDF adds nothing
 LIGHT_KDF = {"memory": 1024 * 1024, "iterations": 1, "parallelism": 1}
 MIN_ITERATIONS = 3
+
+# Limits for files from elsewhere: their key-derivation settings run before the password can be checked, so
+# a crafted file could otherwise keep the app busy for hours or ask for more memory than the machine has.
+# About ten times what KeePassXC sets by default (Argon2: 64 MiB, a one-second iteration count; AES-KDF: a
+# one-second round count, a few million rounds).
+MAX_AES_ROUNDS = 100_000_000
+MAX_ARGON2_MEMORY = 1024 * 1024 * 1024          # bytes (1 GiB)
+MAX_ARGON2_ITERATIONS = 1000
+MAX_ARGON2_PARALLELISM = 16
+MAX_ARGON2_WORK = 64 * 1024 * 1024 * 1024       # memory × iterations, bytes (e.g. 64 MiB × 1000, 1 GiB × 64)
+# The most a file's compressed content may expand to (the XML plus attachments)
+MAX_INFLATED_BYTES = 256 * 1024 * 1024
+TOO_HEAVY = ("This file's encryption settings are too heavy to open here ({}). In KeePassXC, lower them under "
+             "Database → Database Security → Encryption Settings, save, and import the file again.")
 
 
 class KdbxError(Exception):
@@ -201,6 +216,48 @@ def aes_kdf(key: bytes, seed: bytes, rounds: int) -> bytes:
     for _ in range(rounds):
         data = enc.update(data)
     return hashlib.sha256(data).digest()
+
+
+def check_kdf(kdf: dict) -> None:
+    """Refuse a file's key-derivation settings that would take too long or too much memory to run (before running
+    them — they come before anything that checks the password)."""
+    kid = kdf.get("$UUID")
+    try:
+        if kid == KDF_AES:
+            r = kdf["R"]
+            if not isinstance(kdf["S"], bytes) or not isinstance(r, int):
+                raise KeyError
+            if r > MAX_AES_ROUNDS:
+                raise KdbxError(TOO_HEAVY.format(f"{r:,} AES rounds; at most {MAX_AES_ROUNDS:,}"))
+        elif kid in (KDF_ARGON2D, KDF_ARGON2ID):
+            i, m, p = kdf["I"], kdf["M"], kdf["P"]
+            if not isinstance(kdf["S"], bytes) or not all(isinstance(x, int) and x >= 1 for x in (i, m, p)):
+                raise KeyError
+            if m > MAX_ARGON2_MEMORY:
+                raise KdbxError(TOO_HEAVY.format(f"{m // (1024 * 1024):,} MiB of memory; at most "
+                                                 f"{MAX_ARGON2_MEMORY // (1024 * 1024):,} MiB"))
+            if i > MAX_ARGON2_ITERATIONS or i * m > MAX_ARGON2_WORK:
+                raise KdbxError(TOO_HEAVY.format(f"{i:,} Argon2 iterations with {m // (1024 * 1024):,} MiB"))
+            if p > MAX_ARGON2_PARALLELISM:
+                raise KdbxError(TOO_HEAVY.format(f"parallelism {p}; at most {MAX_ARGON2_PARALLELISM}"))
+    except KeyError:
+        raise KdbxError("The file is damaged (key derivation settings).")
+
+
+def _gunzip(data: bytes, limit: int | None = None) -> bytes:
+    """gzip.decompress that stops at `limit` bytes (a small file can't expand to fill the memory)."""
+    limit = MAX_INFLATED_BYTES if limit is None else limit
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    try:
+        out = d.decompress(data, max(limit, 0) + 1)
+    except zlib.error:
+        raise KdbxError("The file is damaged (compressed content).")
+    if len(out) > limit or d.unconsumed_tail:
+        raise KdbxError(f"The file's content is bigger than {MAX_INFLATED_BYTES // (1024 * 1024)} MB once unpacked — "
+                        "too big to open here.")
+    if not d.eof:
+        raise KdbxError("The file is damaged (compressed content).")
+    return out
 
 
 def transform_key(composite: bytes, kdf: dict) -> bytes:
@@ -360,6 +417,7 @@ def _open4(data: bytes, composite: bytes) -> "Database":
     if data[pos:pos + 32] != hashlib.sha256(header).digest():
         raise KdbxError("The file is damaged (header checksum).")
     kdf = vd_parse(fields[11])
+    check_kdf(kdf)
     transformed = transform_key(composite, kdf)
     seed = fields[4]
     base = hashlib.sha512(seed + transformed + b"\x01").digest()
@@ -383,7 +441,7 @@ def _open4(data: bytes, composite: bytes) -> "Database":
     key = hashlib.sha256(seed + transformed).digest()
     plain = _decrypt(fields[2], key, fields[7], b"".join(blocks))
     if struct.unpack("<I", fields.get(3, b"\0\0\0\0"))[0] == 1:
-        plain = gzip.decompress(plain)
+        plain = _gunzip(plain)
     # inner header
     ipos, stream_id, stream_key, binaries = 0, None, None, []
     while True:
@@ -415,6 +473,7 @@ def _open4(data: bytes, composite: bytes) -> "Database":
 def _open3(data: bytes, composite: bytes) -> "Database":
     fields, pos = _read_outer_header(data, 3)
     kdf = {"$UUID": KDF_AES, "S": fields[5], "R": struct.unpack("<Q", fields[6])[0]}
+    check_kdf(kdf)
     transformed = transform_key(composite, kdf)
     key = hashlib.sha256(fields[4] + transformed).digest()
     plain = _decrypt(fields[2], key, fields[7], data[pos:])
@@ -434,19 +493,20 @@ def _open3(data: bytes, composite: bytes) -> "Database":
         chunks.append(block)
     body = b"".join(chunks)
     if struct.unpack("<I", fields.get(3, b"\0\0\0\0"))[0] == 1:
-        body = gzip.decompress(body)
+        body = _gunzip(body)
     stream = _inner_stream(struct.unpack("<I", fields[10])[0], fields[8])
     root = _parse_xml(body)
     _unprotect(root, stream)
     db = Database(root)
     # KDBX 3 keeps attachments in Meta/Binaries: move them to the KDBX 4 pool
-    pool, idmap = [], {}
+    pool, idmap, room = [], {}, max(MAX_INFLATED_BYTES - len(body), 0)
     meta_bins = root.find("Meta/Binaries")
     if meta_bins is not None:
         for b in list(meta_bins):
             raw = base64.b64decode(b.text or "")
             if b.get("Compressed", "").lower() == "true":
-                raw = gzip.decompress(raw)
+                raw = _gunzip(raw, room)
+                room -= len(raw)
             idmap[b.get("ID")] = len(pool)
             pool.append((False, raw))
         root.find("Meta").remove(meta_bins)

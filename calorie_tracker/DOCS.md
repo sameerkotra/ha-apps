@@ -97,8 +97,9 @@ last AI request, and every request is written to the app's **Log** tab with its 
 ### Food Log (the start page)
 - A **date bar** at the top: previous / next day, a date picker and **Today**. Everything on the
   Food Log follows the chosen day. "Today" follows Home Assistant's time zone, not the device's.
-- **Add Food**: meal (breakfast, lunch, dinner, snack), food name, servings, calories, protein,
-  carbs and fat. **Pick a saved food** fills the form in one click.
+- **Add Food**: meal (breakfast, lunch, dinner, snack), food name, servings, and the calories,
+  protein, carbs and fat of one serving — the entry adds them up for all the servings (2 servings
+  of a 150 kcal food log 300 kcal). **Pick a saved food** fills the form in one click.
 - **✨ Estimate with AI**: type a description in the food name box (or leave it empty to be
   asked) and the AI fills in calories and macros, with a short note about its assumptions.
   Always review the numbers before adding.

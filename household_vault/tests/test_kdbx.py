@@ -201,3 +201,75 @@ class Kdbx3Import(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def with_kdf(raw: bytes, params: list) -> bytes:
+    """A KDBX 4 file with other key-derivation settings in its header (and a matching header checksum)."""
+    fields, pos = kdbx._read_outer_header(raw, 4)
+    out = bytearray(raw[:12])
+    p = 12
+    while True:
+        fid = raw[p]
+        (size,) = struct.unpack_from("<i", raw, p + 1)
+        value = kdbx.vd_build(params) if fid == 11 else raw[p + 5:p + 5 + size]
+        out += bytes([fid]) + struct.pack("<i", len(value)) + value
+        p += 5 + size
+        if fid == 0:
+            break
+    header = bytes(out)
+    return header + hashlib.sha256(header).digest() + raw[pos + 32:]
+
+
+class UntrustedFiles(unittest.TestCase):
+    """A crafted file can't keep the app busy or fill its memory: its key-derivation settings are checked before
+    they run (they come before anything that checks the password), and unpacking stops at a limit."""
+
+    def argon(self, i, m, p):
+        return [("$UUID", 0x42, kdbx.KDF_ARGON2ID), ("S", 0x42, b"s" * 32), ("I", 0x05, i), ("M", 0x05, m),
+                ("P", 0x04, p), ("V", 0x04, 0x13)]
+
+    def test_heavy_argon2_settings_are_refused_before_running(self):
+        from unittest import mock
+        d, _b, _e = sample()
+        raw = kdbx.save_bytes(d, "pw")
+        gib = 1024 * 1024 * 1024
+        for i, m, p in ((2 ** 32, 64 * 1024 * 1024, 2), (3, 64 * gib, 2), (3, 64 * 1024 * 1024, 255),
+                        (900, gib, 1), (0, 64 * 1024 * 1024, 1)):
+            with mock.patch.object(kdbx, "argon2_raw", side_effect=AssertionError("ran")), \
+                    self.assertRaises(kdbx.KdbxError) as cm:
+                kdbx.open_bytes(with_kdf(raw, self.argon(i, m, p)), "pw")
+            self.assertNotIsInstance(cm.exception, kdbx.WrongKey)
+        with self.assertRaisesRegex(kdbx.KdbxError, "too heavy to open here"):
+            kdbx.open_bytes(with_kdf(raw, self.argon(3, 64 * gib, 2)), "pw")
+        # KeePassXC's own kind of settings still open (the header is otherwise the same file's)
+        ok = with_kdf(raw, self.argon(FAST["iterations"], FAST["memory"], FAST["parallelism"]))
+        with self.assertRaises(kdbx.WrongKey):                 # a new salt: only the password check fails
+            kdbx.open_bytes(ok, "pw")
+
+    def test_heavy_aes_kdf_rounds_are_refused_before_running(self):
+        from unittest import mock
+        root = ET.fromstring('<KeePassFile><Meta><DatabaseName>Old</DatabaseName></Meta><Root><Group>'
+                             '<UUID>' + base64.b64encode(b"g" * 16).decode() + '</UUID><Name>Old</Name>'
+                             '</Group></Root></KeePassFile>')
+        raw = write_kdbx3(root, "pw", 10)
+        self.assertEqual(kdbx.open_bytes(raw, "pw").name, "Old")
+        heavy = raw.replace(b"\x06\x08\x00" + struct.pack("<Q", 10), b"\x06\x08\x00" + struct.pack("<Q", 2 ** 40), 1)
+        self.assertNotEqual(heavy, raw)
+        with mock.patch.object(kdbx, "aes_kdf", side_effect=AssertionError("ran")), \
+                self.assertRaisesRegex(kdbx.KdbxError, "too heavy"):
+            kdbx.open_bytes(heavy, "pw")
+
+    def test_unpacking_stops_at_the_limit(self):
+        from unittest import mock
+        bomb = gzip.compress(b"\0" * 100_000)
+        self.assertEqual(len(kdbx._gunzip(bomb, 100_000)), 100_000)
+        with self.assertRaisesRegex(kdbx.KdbxError, "too big"):
+            kdbx._gunzip(bomb, 99_999)
+        with self.assertRaises(kdbx.KdbxError):
+            kdbx._gunzip(bomb[:-12], 10 ** 6)                   # cut short
+        d, _b, _e = sample()
+        d.add_entry(d.root_group, {"Title": "Big", "Notes": "x" * 50_000})
+        raw = kdbx.save_bytes(d, "pw")
+        self.assertEqual(kdbx.open_bytes(raw, "pw").name, "Test")
+        with mock.patch.object(kdbx, "MAX_INFLATED_BYTES", 20_000), self.assertRaisesRegex(kdbx.KdbxError, "too big"):
+            kdbx.open_bytes(raw, "pw")

@@ -14,7 +14,6 @@ the last 14 days; 5 failed quick unlocks remove that device; a master
 password change removes them all.
 """
 import base64
-import hmac
 import secrets
 import time
 
@@ -85,8 +84,9 @@ def register(body: RegisterIn, ctx: Ctx = Depends(unlocked)):
         u = service.user_row(conn, ctx.user["id"])
         personal = service.personal_of(conn, ctx.user["id"])
         ov = sessions.get_open(personal["id"]) if personal else None
-        if u["status"] != "active" or ov is None or not hmac.compare_digest(ov.password.encode(), body.password.encode()):
+        if u["status"] != "active" or ov is None:
             raise HTTPException(403, "That isn't your master password.")
+        service.check_master_password(conn, ctx.user["id"], ov, body.password, "That isn't your master password.")
         if conn.execute("SELECT COUNT(*) FROM quick_unlock WHERE user_id = ?", (ctx.user["id"],)).fetchone()[0] >= MAX_DEVICES:
             raise HTTPException(409, f"You can set up quick unlock on at most {MAX_DEVICES} devices.")
         conn.execute("INSERT INTO quick_unlock (id, user_id, credential_id, label, prf_salt, wrapped, key_epoch, created_at) "

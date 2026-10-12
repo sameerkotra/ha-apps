@@ -2,7 +2,9 @@
 from base import ADMIN, NEHA, PW, VIKRAM, ApiTestCase, sql
 import _env  # noqa: F401
 
+import hashlib
 import io
+import struct
 import unittest
 
 from app import db, kdbx, sessions
@@ -279,6 +281,60 @@ class Files(ApiTestCase):
         self.assertEqual([i["title"] for i in self.ok(self.get(f"/api/vaults/{self.me['id']}/items"))["items"]], ["Before"])
         bad = self.req("POST", "/api/admin-storage-import-db", files={"file": ("b.zip", io.BytesIO(b"PK junk"), "application/zip")})
         self.assertEqual(bad.status_code, 422)
+
+    def test_import_runs_off_the_event_loop_and_refuses_heavy_settings(self):
+        import threading
+        from unittest import mock
+        src = kdbx.Database.create("Laptop", {"memory": 64 * 1024, "iterations": 2, "parallelism": 1})
+        src.add_entry(src.root_group, {"Title": "Webmail", "Password": "gpw"})
+        raw = kdbx.save_bytes(src, "imp")
+        threads, real = [], kdbx.open_bytes
+
+        def spy(*a, **kw):
+            threads.append(threading.current_thread().name)
+            return real(*a, **kw)
+        with mock.patch.object(kdbx, "open_bytes", spy):
+            self.ok(self.req("POST", "/api/import", files={"file": ("a.kdbx", io.BytesIO(raw), "application/octet-stream")},
+                             data={"password": "imp"}), 201)
+        self.assertTrue(threads)
+        for name in threads:                                       # the threadpool, not the event loop's thread
+            self.assertIn("worker", name.lower())
+        # a crafted file asking for 64 GiB of Argon2 memory: refused with a message, nothing runs
+        heavy = kdbx.vd_build([("$UUID", 0x42, kdbx.KDF_ARGON2ID), ("S", 0x42, b"s" * 32), ("I", 0x05, 3),
+                               ("M", 0x05, 64 * 1024 ** 3), ("P", 0x04, 1), ("V", 0x04, 0x13)])
+        fields, pos = kdbx._read_outer_header(raw, 4)
+        out, p = bytearray(raw[:12]), 12
+        while True:
+            fid, (size,) = raw[p], struct.unpack_from("<i", raw, p + 1)
+            value = heavy if fid == 11 else raw[p + 5:p + 5 + size]
+            out += bytes([fid]) + struct.pack("<i", len(value)) + value
+            p += 5 + size
+            if fid == 0:
+                break
+        crafted = bytes(out) + hashlib.sha256(bytes(out)).digest() + raw[pos + 32:]
+        with mock.patch.object(kdbx, "argon2_raw", side_effect=AssertionError("ran")):
+            r = self.req("POST", "/api/import", files={"file": ("b.kdbx", io.BytesIO(crafted), "application/octet-stream")},
+                         data={"password": "imp"})
+        self.assertEqual(r.status_code, 422, r.text)
+        self.assertIn("too heavy to open here", r.json()["detail"])
+
+    def test_restore_notes_show_each_person_only_their_own(self):
+        r = self.get("/api/admin-storage-download-db")
+        backup = r.content
+        self.set_up(VIKRAM)
+        self.ok(self.patch("/api/users/u-neha", {"disabled": True}))
+        self.ok(self.patch("/api/users/u-vikram", {"disabled": True}))
+        self.ok(self.req("POST", "/api/admin-storage-import-db",
+                         files={"file": ("b.zip", io.BytesIO(backup), "application/zip")}))
+        everything = self.ok(self.get("/api/restore-notes"))["notes"]["undone"]
+        self.assertGreaterEqual(len(everything), 2)
+        self.assertTrue(all("user_id" not in x for x in everything))
+        # Neha (not an admin) sees only what was about her, not Vikram's
+        self.ok(self.patch("/api/users/u-neha", {"disabled": False}))
+        mine = self.ok(self.get("/api/restore-notes", NEHA, token=False))["notes"]["undone"]
+        self.assertTrue(mine)
+        self.assertEqual({x["person"] for x in mine}, {"Neha"})
+        self.assertNotIn("Vikram", str(mine))
 
 
 if __name__ == "__main__":

@@ -142,9 +142,11 @@ def _known_food(ctx, name: str):
 
 def _push_sensor(user: dict) -> None:
     """After the commit: today's calories sensor in Home Assistant (as logging on the page does)."""
-    from . import auth, ha_sync
+    from . import auth, db, ha_sync
     try:
-        asyncio.run(ha_sync.push_for_user(user["id"], auth._slugify(user["name"]), user["name"]))
+        with db.get_conn() as conn:
+            slug = auth.sensor_slug(conn, user["id"], user["name"])
+        asyncio.run(ha_sync.push_for_user(user["id"], slug, user["name"]))
     except Exception:
         logging.getLogger("tools").exception("Updating the calories sensor failed")
 

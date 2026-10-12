@@ -127,6 +127,15 @@ class TodayTests(ApiBase):
         self.assertNack(call("u_alice", tool="calorie.food.log", confirm=True, food="Pie", calories=300, meal="brunch"),
                         "invalid", "meal")
 
+    def test_a_food_logged_with_servings_on_the_page_keeps_its_calories_per_serving(self):
+        # the page logs 2 servings of a 150 kcal food as 300 kcal (totals, servings=2): the assistant's
+        # "one more of those" is 150 kcal a serving, not 75
+        self.log(ALICE, "Idli", calories=300, protein=8, servings=2, meal_type="breakfast")
+        res = call("u_alice", tool="calorie.food.log", confirm=True, food="idli", meal="snack")
+        self.assertIn("Logged idli (150 kcal)", res["text"])
+        res = call("u_alice", tool="calorie.food.log", confirm=True, food="idli", servings=3, meal="snack")
+        self.assertIn("(450 kcal)", res["text"])
+
     def test_sub_paths_redirect_to_the_page(self):
         for path, where in (("/foodlog", "../#/foodlog"), ("/foodlog/2026-09-20", "../../#/foodlog/2026-09-20"),
                             ("/dashboard", "../#/dashboard")):
