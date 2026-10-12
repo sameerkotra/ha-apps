@@ -4,8 +4,10 @@ A site is a name, an icon and a target on the home network, opened at /s/<slug>/
 default), everyone, or chosen people; admins open every site; a person turned off in Admin → People opens none.
 The proxy reads sites from a small in-memory cache that every write (and a restore) empties.
 """
+import json
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
@@ -101,6 +103,61 @@ class Rule:
         return self.pattern.sub(self.replace.replace("$prefix", prefix.replace("\\", "\\\\")), text)
 
 
+EVENTS = ("down", "restarting", "back_up", "gave_up", "couldnt_restart")
+DEFAULT_EVENTS = ["down", "back_up", "gave_up", "couldnt_restart"]
+SERVICE_RE = re.compile(r"^(notify\.)?[a-z0-9_]{1,100}$")
+
+
+class CheckIn(BaseModel):
+    """§13.2: how a site is checked (kind None = not checked)."""
+    model_config = ConfigDict(extra="forbid")
+    kind: str | None = None
+    path: str = Field(default="", max_length=500)
+    every_s: int = Field(default=60, ge=15, le=86400)
+    timeout_s: int = Field(default=5, ge=1, le=60)
+    down_after: int = Field(default=3, ge=1, le=10)
+    ok_codes: str = "below500"
+    sensor: StrictBool = True
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v):
+        if v not in (None, "http", "tcp", "ping"):
+            raise ValueError("must be http, tcp or ping")
+        return v
+
+    @field_validator("ok_codes")
+    @classmethod
+    def _codes(cls, v):
+        if v not in ("below500", "2xx3xx"):
+            raise ValueError("must be below500 or 2xx3xx")
+        return v
+
+
+class AlertsIn(BaseModel):
+    """§13.4: who is told, by which extra service, about which events."""
+    model_config = ConfigDict(extra="forbid")
+    people: list[str] | None = None            # None: every admin (a new site)
+    service: str = Field(default="", max_length=110)
+    events: list[str] = Field(default_factory=lambda: list(DEFAULT_EVENTS), max_length=5)
+
+    @field_validator("service")
+    @classmethod
+    def _service(cls, v):
+        v = v.strip()
+        if v and not SERVICE_RE.match(v):
+            raise ValueError("must be a notify service, e.g. notify.living_room_speaker")
+        return v
+
+    @field_validator("events")
+    @classmethod
+    def _events(cls, v):
+        for e in v:
+            if e not in EVENTS:
+                raise ValueError(f"unknown event {e!r}")
+        return list(dict.fromkeys(v))
+
+
 class SiteIn(BaseModel):
     """The Admin → Sites form."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -123,6 +180,16 @@ class SiteIn(BaseModel):
     headers: list[HeaderIn] = Field(default_factory=list, max_length=20)
     rules: list[RuleIn] = Field(default_factory=list, max_length=MAX_RULES)
     use_favicon: StrictBool = False
+    use: str = "proxy"
+    check: CheckIn = Field(default_factory=CheckIn)
+    alerts: AlertsIn = Field(default_factory=AlertsIn)
+
+    @field_validator("use")
+    @classmethod
+    def _use(cls, v):
+        if v not in ("proxy", "monitor"):
+            raise ValueError("must be proxy or monitor")
+        return v
 
     @field_validator("access")
     @classmethod
@@ -159,6 +226,9 @@ class Site:
     headers: tuple = field(default=())         # ((name, value), …) — secret
     rules: tuple = field(default=())           # (Rule, …)
     favicon: bool = False                      # the site's own icon is shown
+    use: str = "proxy"                         # 'monitor': never proxied (§13.1)
+    checked: bool = False                      # has checks (§13.2)
+    state: str | None = None                   # the check state, for the launcher's dot ("paused" while paused)
 
     def body_rules(self, content_type: str | None) -> list:
         return [r for r in self.rules if r.where == "body" and r.applies(content_type)]
@@ -199,18 +269,23 @@ def _load(conn) -> dict:
                                                        pat, r["replace"]))
     for r in conn.execute("SELECT * FROM sites ORDER BY position, id"):
         try:
-            scheme, host, port = netguard.parse_target(r["target"])
+            if r["use_"] == "monitor":
+                scheme, host, port = netguard.parse_monitor_target(r["target"])
+            else:
+                scheme, host, port = netguard.parse_target(r["target"])
         except netguard.TargetError:
             continue
         out[r["slug"]] = Site(
-            id=r["id"], slug=r["slug"], name=r["name"], icon=r["icon"], scheme=scheme, host=host, port=port,
-            origin=netguard.origin(scheme, host, port), start_path=r["start_path"], access=r["access"],
+            id=r["id"], slug=r["slug"], name=r["name"], icon=r["icon"], scheme=scheme, host=host, port=port or 0,
+            origin=netguard.origin(scheme, host, port) if scheme else "", start_path=r["start_path"], access=r["access"],
             people=frozenset(people.get(r["id"], ())), spa_mode=bool(r["spa_mode"]), show_bar=bool(r["show_bar"]),
             keep_host=bool(r["keep_host"]), strip_csp=bool(r["strip_csp"]), pass_user=bool(r["pass_user"]),
             allow_public=bool(r["allow_public"]), tls_pem=r["tls_pem"], timeout_s=r["timeout_s"],
             access_log=bool(r["access_log"]), updated_at=r["updated_at"],
             headers=tuple((n, v) for n, v in headers.get(r["id"], ()) if v), rules=tuple(rules.get(r["id"], ())),
-            favicon=bool(r["use_favicon"] and r["favicon"]))
+            favicon=bool(r["use_favicon"] and r["favicon"]), use=r["use_"], checked=r["check_kind"] is not None,
+            state=("paused" if r["paused_until"] and r["paused_until"] > time.time() else r["state"])
+            if r["check_kind"] else None)
     return out
 
 
@@ -241,14 +316,26 @@ def can_open(user: dict, site: Site) -> bool:
 
 
 def for_user(user: dict) -> list[Site]:
-    return [s for s in all_sites().values() if can_open(user, s)]
+    """The launcher: the proxied sites this person may open."""
+    return [s for s in all_sites().values() if s.use == "proxy" and can_open(user, s)]
+
+
+def proxied(slug: str) -> Site | None:
+    s = get(slug)
+    return s if s is not None and s.use == "proxy" else None
+
+
+def checked_for_user(user: dict) -> list[Site]:
+    """The Monitor page: the checked sites (proxied or monitor only) this person may see (§4.2 applies to status)."""
+    return [s for s in all_sites().values() if s.checked and can_open(user, s)]
 
 
 def public(site: Site) -> dict:
     """A site as the launcher shows it (nothing about its target's credentials)."""
     return {"slug": site.slug, "name": site.name, "icon": site.icon, "startPath": site.start_path,
             "showBar": site.show_bar, "spaMode": site.spa_mode,
-            "favicon": f"api/sites/{site.slug}/favicon?v={site.updated_at}" if site.favicon else None}
+            "favicon": f"api/sites/{site.slug}/favicon?v={site.updated_at}" if site.favicon else None,
+            "state": (site.state or "not_checked") if site.checked else None}
 
 
 # --------------------------------------------------------------------------------------------- admin form
@@ -260,7 +347,15 @@ def admin_row(conn, r) -> dict:
                                      (r["id"],))]
     rules = [{"where": x["where_"], "types": x["types"], "match": x["match"], "replace": x["replace"]}
              for x in conn.execute("SELECT * FROM site_rules WHERE site_id = ? ORDER BY position", (r["id"],))]
-    return {"rules": rules, "use_favicon": bool(r["use_favicon"]), "has_favicon": r["favicon"] is not None,
+    alert_people = [x["user_id"] for x in conn.execute("SELECT user_id FROM site_alert_people WHERE site_id = ?",
+                                                        (r["id"],))]
+    return {"use": r["use_"],
+            "check": {"kind": r["check_kind"], "path": r["check_path"] or "", "every_s": r["check_every_s"],
+                      "timeout_s": r["check_timeout_s"], "down_after": r["down_after"], "ok_codes": r["ok_codes"],
+                      "sensor": bool(r["expose_sensor"])},
+            "alerts": {"people": alert_people, "service": r["alert_service"] or "",
+                       "events": json.loads(r["alert_events"] or "[]")},
+            "rules": rules, "use_favicon": bool(r["use_favicon"]), "has_favicon": r["favicon"] is not None,
             "id": r["id"], "slug": r["slug"], "name": r["name"], "icon": r["icon"], "target": r["target"],
             "start_path": r["start_path"], "access": r["access"], "people": people,
             "trusted_ok": bool(r["trusted_ok_at"]), "trusted_ok_at": r["trusted_ok_at"],
@@ -278,14 +373,26 @@ def admin_list() -> list[dict]:
 
 def _validate(body: SiteIn) -> tuple[str, str]:
     try:
-        scheme, host, port = netguard.parse_target(body.target)
+        if body.use == "monitor":
+            scheme, host, port = netguard.parse_monitor_target(body.target)
+        else:
+            scheme, host, port = netguard.parse_target(body.target)
         netguard.check_saved(host, body.allow_public)
     except netguard.TargetError as e:
         raise SiteError(f"Address {e}")
     slug = body.slug or slugify(body.name)
     if not SLUG_RE.match(slug):
         raise SiteError("Short name: lower-case letters, digits and - (e.g. komodo)")
-    if not body.trusted_ok:
+    kind = body.check.kind
+    if body.use == "monitor" and kind is None:
+        raise SiteError("A monitor-only site needs a check")
+    if kind == "http" and not scheme:
+        raise SiteError("A web page check needs an address starting with http:// or https://")
+    if kind == "tcp" and not (port or scheme):
+        raise SiteError("A port check needs host:port")
+    if body.check.path:
+        clean_path(body.check.path)
+    if body.use == "proxy" and not body.trusted_ok:
         raise SiteError("Confirm that this is software you run and keep updated (a site opened here runs on Home "
                         "Assistant's own address).")
     for h in body.headers:
@@ -296,6 +403,8 @@ def _validate(body: SiteIn) -> tuple[str, str]:
             raise SiteError(f"Extra header {n!r}: the value must be one line of plain text")
     if body.access == "chosen" and not body.people:
         raise SiteError("Choose at least one person, or let admins only open it")
+    if not scheme:                            # monitor only: host, or host:port
+        return (f"[{host}]" if ":" in host else host) + (f":{port}" if port else ""), slug
     return netguard.origin(scheme, host, port), slug
 
 
@@ -303,7 +412,10 @@ def preview(body: SiteIn, site_id: int | None = None) -> Site:
     """The form's site as the proxy would use it, without saving (the Test on an unsaved form). Extra headers left
     blank use the saved values of `site_id`; its trusted certificate too while the address is unchanged."""
     try:
-        scheme, host, port = netguard.parse_target(body.target)
+        if body.use == "monitor":
+            scheme, host, port = netguard.parse_monitor_target(body.target)
+        else:
+            scheme, host, port = netguard.parse_target(body.target)
         netguard.check_saved(host, body.allow_public)
     except netguard.TargetError as e:
         raise SiteError(f"Address {e}")
@@ -313,16 +425,18 @@ def preview(body: SiteIn, site_id: int | None = None) -> Site:
             saved_headers = {r["name"]: r["value"] for r in
                              conn.execute("SELECT name, value FROM site_headers WHERE site_id = ?", (site_id,))}
             row = conn.execute("SELECT target, tls_pem FROM sites WHERE id = ?", (site_id,)).fetchone()
-            if row and row["target"] == netguard.origin(scheme, host, port):
+            if row and scheme and row["target"] == netguard.origin(scheme, host, port):
                 pem = row["tls_pem"]
     headers = tuple((h.name.strip(), h.value if h.value is not None else saved_headers.get(h.name.strip(), ""))
                     for h in body.headers)
     return Site(id=site_id or 0, slug=body.slug or slugify(body.name), name=body.name, icon=body.icon, scheme=scheme,
-                host=host, port=port, origin=netguard.origin(scheme, host, port), start_path=clean_path(body.start_path),
+                host=host, port=port or 0, origin=netguard.origin(scheme, host, port) if scheme else "",
+                start_path=clean_path(body.start_path),
                 access=body.access, people=frozenset(), spa_mode=body.spa_mode, show_bar=body.show_bar,
                 keep_host=body.keep_host, strip_csp=body.strip_csp, pass_user=body.pass_user,
                 allow_public=body.allow_public, tls_pem=pem, timeout_s=body.timeout_s, access_log=False,
-                updated_at="", headers=tuple((n, v) for n, v in headers if v))
+                updated_at="", headers=tuple((n, v) for n, v in headers if v), use=body.use,
+                checked=body.check.kind is not None)
 
 
 def by_id(site_id: int) -> Site | None:
@@ -341,21 +455,35 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
                     access=body.access, spa_mode=int(body.spa_mode), show_bar=int(body.show_bar),
                     keep_host=int(body.keep_host), strip_csp=int(body.strip_csp), pass_user=int(body.pass_user),
                     allow_public=int(body.allow_public), access_log=int(body.access_log), timeout_s=body.timeout_s,
-                    use_favicon=int(body.use_favicon), updated_at=now)
+                    use_favicon=int(body.use_favicon), use_=body.use, check_kind=body.check.kind,
+                    check_path=body.check.path or None, check_every_s=body.check.every_s,
+                    check_timeout_s=body.check.timeout_s, down_after=body.check.down_after,
+                    ok_codes=body.check.ok_codes, expose_sensor=int(body.check.sensor),
+                    alert_service=body.alerts.service or None, alert_events=json.dumps(body.alerts.events),
+                    updated_at=now)
+        is_new = site_id is None
         if site_id is None:
             if conn.execute("SELECT COUNT(*) FROM sites").fetchone()[0] >= MAX_SITES:
                 raise SiteError(f"At most {MAX_SITES} sites")
             pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM sites").fetchone()[0]
-            cols.update(position=pos, created_at=now, trusted_ok_by=admin["id"], trusted_ok_at=now)
+            cols.update(position=pos, created_at=now)
+            if body.use == "proxy":
+                cols.update(trusted_ok_by=admin["id"], trusted_ok_at=now)
             site_id = conn.execute(f"INSERT INTO sites ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                                    tuple(cols.values())).lastrowid
         else:
-            old = conn.execute("SELECT target, tls_pem FROM sites WHERE id = ?", (site_id,)).fetchone()
+            old = conn.execute("SELECT target, tls_pem, check_kind, check_every_s FROM sites WHERE id = ?",
+                               (site_id,)).fetchone()
             if old is None:
                 raise LookupError("No such site.")
             if old["target"] != target:            # a trusted certificate belongs to the old address
                 cols.update(tls_pem=None, tls_fingerprint=None)
-            cols.update(trusted_ok_by=admin["id"], trusted_ok_at=now)
+            if body.use == "proxy":
+                cols.update(trusted_ok_by=admin["id"], trusted_ok_at=now)
+            if old["check_kind"] != body.check.kind or old["check_every_s"] != body.check.every_s:
+                cols.update(next_check_at=None)       # checked again soon with the new settings
+            if body.check.kind is None and old["check_kind"] is not None:
+                cols.update(state=None, state_since=None, fails_in_row=0, incident_id=None)
             conn.execute(f"UPDATE sites SET {', '.join(f'{k} = ?' for k in cols)} WHERE id = ?",
                          (*cols.values(), site_id))
         conn.execute("DELETE FROM site_people WHERE site_id = ?", (site_id,))
@@ -370,6 +498,13 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
             value = h.value if h.value is not None else saved.get(n, "")
             conn.execute("INSERT OR REPLACE INTO site_headers (site_id, name, value) VALUES (?, ?, ?)",
                          (site_id, n, value))
+        if body.alerts.people is not None:
+            conn.execute("DELETE FROM site_alert_people WHERE site_id = ?", (site_id,))
+            conn.executemany("INSERT OR IGNORE INTO site_alert_people (site_id, user_id) VALUES (?, ?)",
+                             [(site_id, p) for p in body.alerts.people[:200] if isinstance(p, str) and p])
+        elif is_new:                              # a new site alerts every admin until someone chooses
+            conn.executemany("INSERT OR IGNORE INTO site_alert_people (site_id, user_id) VALUES (?, ?)",
+                             [(site_id, u) for u in admin_ids(conn)])
         conn.execute("DELETE FROM site_rules WHERE site_id = ?", (site_id,))
         conn.executemany("INSERT INTO site_rules (site_id, position, where_, types, match, replace) "
                          "VALUES (?, ?, ?, ?, ?, ?)",
@@ -378,6 +513,13 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
         out = admin_row(conn, row)
     invalidate()
     return out
+
+
+def admin_ids(conn) -> list[str]:
+    """The people who have opened the app and are admins (by user id or login name)."""
+    from . import auth
+    return [r["id"] for r in conn.execute("SELECT id, name, username FROM users")
+            if auth.is_admin(r["id"], r["name"], r["username"])]
 
 
 def delete(site_id: int) -> bool:

@@ -20,8 +20,8 @@ from starlette.requests import HTTPConnection, Request
 from starlette.responses import RedirectResponse
 from starlette.websockets import WebSocket, WebSocketClose
 
-from . import auth, config, db, proxy, rewrite, settings, sidebar, sites, wsproxy
-from .common import auth_core, deeplinks, ha_time, web_security
+from . import auth, config, db, proxy, rewrite, settings, sidebar, sites, watchdog, wsproxy
+from .common import auth_core, deeplinks, ha_people, ha_time, web_security
 from .common import housekeeping as jobs_core
 from .routers import api
 
@@ -32,10 +32,11 @@ SITE_PATH = re.compile(r"^/s/([a-z0-9-]{1,40})(/.*)?$")
 
 
 def housekeeping() -> None:
-    """Old access-log lines."""
+    """Old access-log lines, old checks and incidents."""
     days = int(settings.get("access_log_days"))
     with db.get_conn() as conn:
         conn.execute("DELETE FROM access_log WHERE at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?)", (f"-{days} days",))
+    watchdog.housekeeping()
 
 
 @asynccontextmanager
@@ -45,6 +46,9 @@ async def lifespan(_app: FastAPI):
     await run_in_threadpool(sidebar.load_blocking)
     jobs = jobs_core.Jobs()
     jobs.every("housekeeping", 3600, housekeeping, log=logger, error="Housekeeping failed")
+    jobs.add("ha_people", ha_people.loop)                 # people's phones, for alerts
+    if os.environ.get("PROXY_NO_WATCHDOG") != "1":        # the tests run rounds by hand
+        jobs.add("watchdog", watchdog.loop)
     jobs.start()
     try:
         yield
@@ -62,7 +66,7 @@ def health():
     return {"status": "ok"}
 
 
-deeplinks.add(pages, {"site": 1})
+deeplinks.add(pages, {"site": 1, "monitor": 1})
 
 # The app's own pages: scripts only from the app itself; frames only from the app itself (the viewer shows a
 # proxied site, which is on the same address, in a frame).
@@ -92,7 +96,7 @@ async def proxied_http(scope, receive, send) -> None:
     if user is None:
         return await proxy.error_page(401, "Not signed in", auth_core.no_user_message(config.APP_TITLE))(
             scope, receive, send)
-    site = sites.get(slug)
+    site = sites.proxied(slug)
     if site is None:
         return await proxy.error_page(404, "No such site", "This site was removed or renamed.")(scope, receive, send)
     if not sites.can_open(user, site):
@@ -112,7 +116,7 @@ async def proxied_websocket(scope, receive, send) -> None:
     ws = WebSocket(scope, receive, send)
     m = SITE_PATH.match(scope["path"])
     user = await run_in_threadpool(auth.cached_user, ws)
-    site = sites.get(m.group(1)) if m else None
+    site = sites.proxied(m.group(1)) if m else None
     if not m or m.group(2) is None or user is None or site is None or not sites.can_open(user, site):
         return await WebSocketClose(code=1008)(scope, receive, send)
     rest = proxy.split_path(scope.get("raw_path") or scope["path"].encode(), site.slug)

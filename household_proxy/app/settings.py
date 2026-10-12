@@ -15,6 +15,7 @@ logger = logging.getLogger("settings")
 GROUPS = [
     Group("proxy", "🌐 Proxy", "How pages are passed between the browser and the sites."),
     Group("logs", "📜 Logs", "Each site's access log is off unless switched on in its form."),
+    Group("monitor", "🩺 Monitoring", "Checks, restarts and alerts are set per site (Admin → Sites)."),
 ]
 
 SETTINGS = [
@@ -24,6 +25,8 @@ SETTINGS = [
     Setting("max_upload_mb", 100, "Largest upload passed on", group="proxy", min=1, max=4096, unit="MB",
             help="Bigger uploads are refused before they reach the site."),
     Setting("access_log_days", 7, "Keep access logs", group="logs", min=1, max=90, unit="days"),
+    Setting("checks_keep_days", 30, "Keep check history", group="monitor", min=7, max=365, unit="days",
+            help="Every check for a week, then hourly totals. Incidents are kept 90 days."),
 ]
 
 readable = settings_core.by_key

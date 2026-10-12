@@ -58,6 +58,26 @@ CREATE TABLE IF NOT EXISTS sites (
     tls_fingerprint TEXT,                 -- its SHA-256, for the page
     timeout_s INTEGER NOT NULL DEFAULT 0, -- 0: the App setting
     access_log INTEGER NOT NULL DEFAULT 0,
+    use_ TEXT NOT NULL DEFAULT 'proxy' CHECK (use_ IN ('proxy', 'monitor')),   -- §13.1: monitor only = never proxied
+    -- checks (§13.2; check_kind NULL = not checked)
+    check_kind TEXT CHECK (check_kind IN ('http', 'tcp', 'ping')),
+    check_path TEXT,                      -- web page checks: this path instead of the start path
+    check_every_s INTEGER NOT NULL DEFAULT 60,
+    check_timeout_s INTEGER NOT NULL DEFAULT 5,
+    down_after INTEGER NOT NULL DEFAULT 3,
+    ok_codes TEXT NOT NULL DEFAULT 'below500' CHECK (ok_codes IN ('below500', '2xx3xx')),
+    expose_sensor INTEGER NOT NULL DEFAULT 1,
+    alert_service TEXT,                   -- an extra notify service for this site's alerts (a speaker, a group)
+    alert_events TEXT NOT NULL DEFAULT '["down","back_up","gave_up","couldnt_restart"]',
+    paused_until REAL,                    -- epoch seconds; 1e18 = until resumed
+    state TEXT,                           -- up / down / restarting / waiting / needs_attention (NULL: not checked yet)
+    state_since TEXT,
+    fails_in_row INTEGER NOT NULL DEFAULT 0,
+    last_check TEXT,
+    last_ms INTEGER,
+    last_error TEXT,
+    incident_id INTEGER,
+    next_check_at REAL,
     use_favicon INTEGER NOT NULL DEFAULT 0, -- show the site's own icon (fetched by the Test) instead of the emoji
     favicon BLOB,
     favicon_type TEXT,
@@ -91,6 +111,44 @@ CREATE TABLE IF NOT EXISTS site_rules (
     match TEXT NOT NULL,
     replace TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (site_id, position)
+);
+
+-- Monitoring (§13.7): incidents kept 90 days; each check kept for the App setting's days (hourly sums after 7 days).
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY,
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    ended_at TEXT,
+    cause TEXT,
+    restarts INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT CHECK (outcome IN ('up', 'up_after_restart', 'gave_up', 'deleted'))
+);
+CREATE INDEX IF NOT EXISTS incidents_site ON incidents (site_id, started_at);
+CREATE TABLE IF NOT EXISTS checks (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    at TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    ms INTEGER,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS checks_site ON checks (site_id, at);
+CREATE TABLE IF NOT EXISTS check_hours (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    hour TEXT NOT NULL,                   -- "2026-10-11T18"
+    ok INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    PRIMARY KEY (site_id, hour)
+);
+-- Who is alerted about a site (any people, not only those who may open it), and who muted it for themselves.
+CREATE TABLE IF NOT EXISTS site_alert_people (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY (site_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS alert_mutes (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    PRIMARY KEY (site_id, user_id)
 );
 
 -- Optional access log (off by default per site): no bodies, no header values, no query strings.

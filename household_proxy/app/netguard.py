@@ -56,6 +56,22 @@ def parse_target(text: str) -> tuple[str, str, int]:
     return u.scheme, host, port or (443 if u.scheme == "https" else 80)
 
 
+def parse_monitor_target(text: str) -> tuple[str, str, int | None]:
+    """A monitor-only site's address (§13.1): a URL (as parse_target), or a host name or address alone (ping), or
+    host:port. → (scheme or "", host, port or None)."""
+    raw = (text or "").strip()
+    if "://" in raw:
+        return parse_target(raw)
+    try:
+        u = urlsplit("//" + raw)
+        port = u.port
+    except ValueError:
+        raise TargetError("isn't a valid address")
+    if not u.hostname or u.path or u.query or u.fragment or u.username or u.password:
+        raise TargetError("must be a URL, a host name or address, or host:port")
+    return "", u.hostname.lower().rstrip("."), port
+
+
 def origin(scheme: str, host: str, port: int) -> str:
     """The canonical origin: default ports left out, IPv6 in brackets."""
     h = f"[{host}]" if ":" in host else host

@@ -161,3 +161,32 @@ table.people td { padding: 6px 8px; border-bottom: 1px solid var(--border); text
 .rule-row { display: grid; grid-template-columns: 110px 1fr 1.3fr 1.3fr auto; gap: 6px; }
 @media (max-width: 600px) { .rule-row { grid-template-columns: 1fr; } }
 .field .link-btn { align-self: flex-start; }
+
+/* the Monitor page and the form's sections */
+.monitor-list { display: flex; flex-direction: column; gap: 10px; }
+.monitor-card { margin: 0; }
+.monitor-card.focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.monitor-head { display: flex; align-items: center; gap: 12px; }
+.site-icon img.fav, .site-icon img { width: 28px; height: 28px; object-fit: contain; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.8rem; font-weight: 600;
+  background: var(--panel-alt); color: var(--text-dim); }
+.badge.up { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.badge.down, .badge.needs_attention { background: color-mix(in srgb, var(--down) 20%, transparent); color: var(--down); }
+.badge.restarting, .badge.waiting { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+.strip { display: flex; gap: 2px; margin: 10px 0 4px; height: 16px; }
+.strip .seg { flex: 1; border-radius: 2px; background: var(--panel-alt); }
+.strip .seg.up { background: var(--ok); opacity: .8; }
+.strip .seg.down { background: var(--down); }
+.strip .seg.partial { background: var(--warn); }
+.monitor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+.monitor-actions .btn-secondary, .monitor-actions .btn-ghost { padding: 4px 12px; }
+.small-select { width: auto; padding: 4px 8px; }
+.uptime { display: flex; gap: 18px; margin-bottom: 10px; font-weight: 600; flex-wrap: wrap; }
+fieldset.section { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px 12px; display: flex;
+  flex-direction: column; gap: 10px; }
+fieldset.section legend { font-weight: 600; padding: 0 4px; }
+.sub-fields { display: flex; flex-direction: column; gap: 10px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.grid2.wide-first { grid-template-columns: 2fr 1fr; }
+@media (max-width: 600px) { .grid3, .grid2.wide-first { grid-template-columns: 1fr; } }
+.monitor-actions select.small-select { width: auto; flex: 0 0 auto; }

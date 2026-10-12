@@ -8,3 +8,4 @@ app_root(__file__)
 scratch_data_dir("proxy_test_")
 no_home_assistant()                               # never talk to a real Home Assistant
 os.environ.setdefault("DEV_ADMIN_USERS", "adminy")
+os.environ["PROXY_NO_WATCHDOG"] = "1"             # monitoring rounds are run by the tests themselves

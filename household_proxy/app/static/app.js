@@ -25,6 +25,8 @@
   function show(view) {
     state.view = view;
     $("#sitesView").hidden = view !== "sites";
+    $("#monitorView").hidden = view !== "monitor";
+    if (view !== "monitor") stopMonitor();
     $("#viewerView").hidden = view !== "viewer";
     $("#adminView").hidden = view !== "admin";
     $("#topbar").hidden = view === "viewer";
@@ -40,6 +42,7 @@
     const r = location.hash.replace(/^#/, "") || "/";
     let m;
     if ((m = /^\/site\/([a-z0-9-]{1,40})(\/.*)?$/.exec(r))) return openSite(m[1], m[2] || null);
+    if ((m = /^\/monitor(?:\/([a-z0-9-]{1,40}))?$/.exec(r))) return openMonitor(m[1] || null);
     if ((m = /^\/admin(?:\/([a-z]+))?$/.exec(r)) && state.me && state.me.user.isAdmin) return openAdmin(m[1] || state.adminTab);
     show("sites");
     renderTiles();
@@ -54,7 +57,8 @@
     const box = clear($("#tiles"));
     $("#noSites").hidden = !!state.sites.length || !state.me || !state.me.user.enabled;
     for (const s of state.sites) {
-      box.append(h("a", { class: "tile", href: `#/site/${s.slug}`, title: s.name },
+      box.append(h("a", { class: "tile", href: `#/site/${s.slug}`, title: s.name + (s.state ? ` — ${STATE_LABEL[s.state] || s.state}` : "") },
+        s.state ? h("span", { class: `status-dot ${s.state}`, "aria-hidden": "true" }) : null,
         h("span", { class: "tile-icon", "aria-hidden": "true" }, s.favicon ? h("img", { src: s.favicon, alt: "" }) : (s.icon || "🌐")),
         h("span", { class: "tile-name" }, s.name)));
     }
@@ -106,6 +110,104 @@
     if (state.site) window.open(location.href.split("#")[0] + `#/site/${state.site.slug}`, "_blank", "noopener");
   });
 
+  // ---------- the Monitor page (§13.6) ----------
+  const STATE_LABEL = { up: "Up", down: "Down", restarting: "Restarting", waiting: "Waiting after restart",
+    needs_attention: "Needs attention", paused: "Paused", not_checked: "Not checked" };
+  let monitorTimer = null;
+  function stopMonitor() { if (monitorTimer) { clearInterval(monitorTimer); monitorTimer = null; } }
+
+  function when(isoText) {
+    if (!isoText) return "";
+    const d = new Date(isoText);
+    if (isNaN(d)) return "";
+    const today = new Date().toDateString() === d.toDateString();
+    return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function openMonitor(focus) {
+    show("monitor");
+    stopMonitor();
+    await renderMonitor(focus);
+    monitorTimer = setInterval(() => { if (!document.hidden) renderMonitor(null); }, 15000);
+  }
+
+  async function renderMonitor(focus) {
+    let r;
+    try { r = await api("api/monitor"); } catch (e) { toast(e.message, true); return; }
+    const box = clear($("#monitorList"));
+    $("#noChecks").hidden = r.sites.length > 0;
+    for (const s of r.sites) box.append(monitorCard(s, r.isAdmin));
+    if (focus) {
+      const el = box.querySelector(`[data-slug="${focus}"]`);
+      if (el) { el.classList.add("focus"); el.scrollIntoView({ block: "center" }); }
+      else toast("That site isn't on your Monitor page.", true);
+      history.replaceState(history.state, "", "#/monitor");
+    }
+  }
+
+  function monitorCard(s, isAdmin) {
+    const strip = h("div", { class: "strip", title: "The last 24 hours" },
+      s.strip.map((b) => h("span", { class: `seg ${b || "none"}` })));
+    const mute = h("button", { type: "button", class: "icon-btn", title: s.muted ? "Alerts muted for you — select to hear them again" : "Mute this site's alerts for you",
+      onclick: async () => {
+        try { await api(`api/monitor/${s.slug}/mute`, { method: "POST", body: { muted: !s.muted } }); renderMonitor(null); }
+        catch (e) { toast(e.message, true); }
+      } }, s.muted ? "🔕" : "🔔");
+    const facts = [];
+    if (s.since) facts.push(`since ${when(s.since)}`);
+    if (s.ms != null && s.state === "up") facts.push(`${s.ms} ms`);
+    if (s.error && s.state !== "up") facts.push(s.error);
+    if (s.restarts) facts.push(`${s.restarts} restart${s.restarts > 1 ? "s" : ""}`);
+    if (s.state === "paused") facts.push(s.pausedUntil ? `until ${when(s.pausedUntil)}` : "until resumed");
+    const actions = isAdmin ? adminActions(s) : null;
+    return h("div", { class: "card monitor-card", dataset: { slug: s.slug } },
+      h("div", { class: "monitor-head" },
+        h("span", { class: "site-icon", "aria-hidden": "true" }, s.favicon ? h("img", { src: s.favicon, alt: "", class: "fav" }) : s.icon),
+        h("div", { class: "site-main" },
+          h("div", { class: "site-name" }, s.name, s.use === "monitor" ? h("span", { class: "dim small" }, "  monitor only") : null),
+          h("div", { class: "small" }, h("span", { class: `badge ${s.state}` }, STATE_LABEL[s.state] || s.state),
+            facts.length ? h("span", { class: "dim" }, "  " + facts.join(" · ")) : null)),
+        s.alerted ? mute : null),
+      strip, actions);
+  }
+
+  function adminActions(s) {
+    const act = async (path, body, msg) => {
+      try { const r = await api(`api/admin/sites/${s.id}/${path}`, { method: "POST", body: body || {} });
+        if (msg) toast(typeof msg === "function" ? msg(r) : msg); renderMonitor(null); }
+      catch (e) { toast(e.message, true); }
+    };
+    const pause = h("select", { class: "input small-select", title: "Pause checks and restarts" },
+      h("option", { value: "" }, "Pause…"), h("option", { value: "1" }, "for 1 hour"), h("option", { value: "8" }, "for 8 hours"),
+      h("option", { value: "forever" }, "until resumed"));
+    pause.addEventListener("change", () => {
+      if (!pause.value) return;
+      act("pause", { hours: pause.value === "forever" ? null : Number(pause.value) }, "Paused");
+    });
+    return h("div", { class: "monitor-actions" },
+      h("button", { type: "button", class: "btn-secondary", onclick: () => act("check-now", null, (r) => r.ok ? `Answered in ${r.ms} ms` : `No: ${r.error}`) }, "Check now"),
+      s.state === "paused" ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("resume", null, "Resumed") }, "Resume") : pause,
+      h("button", { type: "button", class: "btn-ghost", onclick: () => showHistory(s) }, "History"));
+  }
+
+  async function showHistory(s) {
+    const body = h("div", null, "Loading…");
+    openModal(`${s.name} — history`, body, { modalClass: "wide" });
+    try {
+      const r = await api(`api/admin/sites/${s.id}/history`);
+      const pct = (v) => (v == null ? "—" : `${v}%`);
+      const OUT = { up: "back up", up_after_restart: "back up after restart", gave_up: "gave up", deleted: "deleted" };
+      mount(clear(body),
+        h("div", { class: "uptime" }, h("span", null, `24 h: ${pct(r.uptime.day)}`), h("span", null, `7 days: ${pct(r.uptime.week)}`),
+          h("span", null, `30 days: ${pct(r.uptime.month)}`)),
+        r.incidents.length ? h("table", { class: "people" }, h("tbody", null, r.incidents.map((i) => h("tr", null,
+          h("td", null, when(i.started_at)), h("td", null, i.ended_at ? `→ ${when(i.ended_at)}` : "ongoing"),
+          h("td", null, i.cause || ""), h("td", null, i.restarts ? `${i.restarts} restart${i.restarts > 1 ? "s" : ""}` : ""),
+          h("td", null, OUT[i.outcome] || ""))))) : h("p", { class: "dim" }, "No incidents in the last 90 days."));
+    } catch (e) { mount(clear(body), h("p", { class: "error" }, e.message)); }
+  }
+
   // ---------- who am I ----------
   async function openWhoami() {
     const body = h("div", null, "Loading…");
@@ -121,6 +223,7 @@
   $("#adminBtn").addEventListener("click", () => go("#/admin/" + state.adminTab));
   $("#homeBtn").addEventListener("click", () => go("#/"));
   $$("#topnav .tab").forEach((b) => b.addEventListener("click", () => go(b.dataset.view === "sites" ? "#/" : `#/${b.dataset.view}`)));
+  $("#homeBtn").addEventListener("click", stopMonitor);
   $$("#adminTabs .tab").forEach((b) => b.addEventListener("click", () => go(`#/admin/${b.dataset.tab}`)));
 
   const ADMIN_TABS = { sites: loadAdminSites, settings: loadSettings, people: loadPeople, storage: () => {} };
@@ -186,7 +289,9 @@
   function editSite(site) {
     const s = site || { name: "", slug: "", icon: "🌐", target: "", start_path: "/", access: "admins", people: [],
       trusted_ok: false, spa_mode: false, show_bar: true, keep_host: false, strip_csp: false, pass_user: false,
-      allow_public: false, access_log: false, timeout_s: 0, headers: [], rules: [], use_favicon: false };
+      allow_public: false, access_log: false, timeout_s: 0, headers: [], rules: [], use_favicon: false, use: "proxy",
+      check: { kind: null, path: "", every_s: 60, timeout_s: 5, down_after: 3, ok_codes: "below500", sensor: true },
+      alerts: { people: null, service: "", events: ["down", "back_up", "gave_up", "couldnt_restart"] } };
     const f = {
       name: h("input", { class: "input", value: s.name, maxlength: 60, required: true, placeholder: "Komodo" }),
       slug: h("input", { class: "input", value: s.slug, maxlength: 40, placeholder: "komodo" }),
@@ -302,6 +407,55 @@
       return out;
     }
 
+    // Use, Check and Alerts (§13)
+    const use = h("select", { class: "input" }, h("option", { value: "proxy", selected: s.use === "proxy" }, "Open in Proxy"),
+      h("option", { value: "monitor", selected: s.use === "monitor" }, "Monitor only (never opened through the proxy)"));
+    const ck = s.check;
+    const cf = {
+      kind: h("select", { class: "input" }, [["", "Not checked"], ["http", "Web page"], ["tcp", "Port"], ["ping", "Ping"]].map(([v, l]) =>
+        h("option", { value: v, selected: (ck.kind || "") === v }, l))),
+      path: h("input", { class: "input", value: ck.path, placeholder: "the start path", maxlength: 500 }),
+      every: h("input", { class: "input", type: "number", min: 15, max: 86400, value: ck.every_s }),
+      timeout: h("input", { class: "input", type: "number", min: 1, max: 60, value: ck.timeout_s }),
+      downAfter: h("input", { class: "input", type: "number", min: 1, max: 10, value: ck.down_after }),
+      codes: h("select", { class: "input" }, h("option", { value: "below500", selected: ck.ok_codes === "below500" }, "Any answer below 500"),
+        h("option", { value: "2xx3xx", selected: ck.ok_codes === "2xx3xx" }, "Only 2xx and 3xx")),
+    };
+    const sensor = check("Home Assistant sensor", ck.sensor, "binary_sensor.household_proxy_<short name>: on while up.");
+    const httpOnly = h("div", { class: "grid2 wide-first" }, field("Path to check", cf.path), field("Up when", cf.codes));
+    const checkBody = h("div", { class: "sub-fields" },
+      httpOnly, h("div", { class: "grid3" }, field("Every (seconds)", cf.every), field("Timeout (s)", cf.timeout),
+        field("Down after (failed checks)", cf.downAfter)), sensor.el);
+    const checkSection = h("fieldset", { class: "section" }, h("legend", null, "🩺 Check"),
+      field("Kind", cf.kind, "Web page: a GET, redirects not followed. Port: a TCP connection. Ping: 3 echoes."), checkBody);
+
+    const al = s.alerts;
+    const alertPeople = h("div", { class: "people-picks" }, (state.admin.people || []).map((p) =>
+      h("label", { class: "check" }, h("input", { type: "checkbox", value: p.id,
+        checked: al.people === null ? !!p.isAdmin : al.people.includes(p.id) }), p.name)));
+    const EVENTS = [["down", "Down"], ["restarting", "Restarting (each restart)"], ["back_up", "Back up"], ["gave_up", "Gave up"],
+      ["couldnt_restart", "Couldn't restart"]];
+    const events = h("div", { class: "people-picks" }, EVENTS.map(([v, l]) =>
+      h("label", { class: "check" }, h("input", { type: "checkbox", value: v, checked: al.events.includes(v) }), l)));
+    const service = h("input", { class: "input", value: al.service, placeholder: "notify.living_room_speaker", maxlength: 110 });
+    const alertSection = h("fieldset", { class: "section" }, h("legend", null, "🔔 Alerts"),
+      field("Tell", alertPeople, "Their phones from Home Assistant. Any people — being told gives no access to the site."),
+      field("Also send to", service, "An extra notify service (optional)."),
+      field("About", events));
+
+    const syncUse = () => {
+      const mon = use.value === "monitor";
+      for (const el of proxyOnly) el.hidden = mon;
+      const kind = cf.kind.value;
+      checkBody.hidden = !kind;
+      httpOnly.hidden = kind !== "http";
+      alertSection.hidden = !kind;
+      if (mon && !kind) cf.kind.value = "ping", syncUse();
+    };
+    use.addEventListener("change", syncUse);
+    cf.kind.addEventListener("change", syncUse);
+    let proxyOnly = [];
+
     const err = h("p", { class: "error" });
     const advanced = h("details", { class: "advanced" }, h("summary", null, "Advanced"),
       pub.el, keepHost.el, stripCsp.el, passUser.el, accessLog.el,
@@ -315,13 +469,16 @@
           "replacement, applied to the answers of the listed content types. $prefix is the site's prefix here. The Test suggests one when it sees a common case."),
         ruleRows, h("button", { type: "button", class: "link-btn", onclick: () => addRule(null) }, "＋ Add a rule")));
 
+    const startRow = field("Start path", f.start);
+    proxyOnly = [startRow, trusted.el, spa.el, bar.el, favicon.el, advanced];
     const form = h("form", { class: "site-form" },
       h("div", { class: "grid2" }, field("Name", f.name), field("Icon", f.icon)),
-      field("Address", f.target, "The site's address on your network: http(s)://host:port, no path."),
-      field("Start path", f.start),
+      field("Use", use),
+      field("Address", f.target, "The site's address on your network: http(s)://host:port, no path. Monitor only: also a host name or address (ping), or host:port."),
+      startRow,
       field("Short name", f.slug, "Used in its address: …/s/<short name>/. Lower-case letters, digits and -."),
-      field("Who can open it", f.access), peopleRow,
-      trusted.el, spa.el, bar.el, favicon.el, advanced, h("div", null, testBtn), report, err,
+      field("Who can open it", f.access, "Also who sees its status on the Monitor page."), peopleRow,
+      trusted.el, spa.el, bar.el, favicon.el, checkSection, alertSection, advanced, h("div", null, testBtn), report, err,
       h("div", { class: "row-between" },
         site ? h("button", { type: "button", class: "btn-ghost danger", onclick: () => remove() }, "Delete") : h("span"),
         h("div", null, h("button", { type: "button", class: "btn-ghost", onclick: () => modal.close() }, "Cancel"), " ",
@@ -336,7 +493,12 @@
       access_log: accessLog.box.checked, timeout_s: parseInt(f.timeout.value, 10) || 0,
       headers: $$(".header-row", headerRows).map((r) => r._get()).filter((x) => x.name),
       rules: $$(".rule-row", ruleRows).map((r) => r._get()).filter((x) => x.match),
-      use_favicon: favicon.box.checked,
+      use_favicon: favicon.box.checked, use: use.value,
+      check: { kind: cf.kind.value || null, path: cf.path.value.trim(), every_s: parseInt(cf.every.value, 10) || 60,
+        timeout_s: parseInt(cf.timeout.value, 10) || 5, down_after: parseInt(cf.downAfter.value, 10) || 3,
+        ok_codes: cf.codes.value, sensor: sensor.box.checked },
+      alerts: { people: $$("input:checked", alertPeople).map((x) => x.value), service: service.value.trim(),
+        events: $$("input:checked", events).map((x) => x.value) },
     });
 
     form.addEventListener("submit", async (e) => {
@@ -362,6 +524,7 @@
     }
 
     const modal = openModal(site ? `Edit ${site.name}` : "Add a site", form, { modalClass: "wide" });
+    syncUse();
   }
 
   // Admin → App settings
@@ -415,6 +578,7 @@
     $("#userBtn").textContent = state.me.user.name;
     $("#adminBtn").hidden = !state.me.user.isAdmin;
     $("#offNote").hidden = state.me.user.enabled;
+    $("#monitorTab").hidden = !(state.me.user.isAdmin || state.me.monitor);
     HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), state.me.noAdmin, state.me.user.name, { onOpen: openWhoami });
   }
 
@@ -435,7 +599,7 @@
   }
   init().then(() => {
     if (window.HouseholdDeepLink) {
-      HouseholdDeepLink.start(state.me && state.me.page, (r) => (/^\/site\/[a-z0-9-]{1,40}$/.test(r) ? r : null),
+      HouseholdDeepLink.start(state.me && state.me.page, (r) => (/^\/(site|monitor)\/[a-z0-9-]{1,40}$/.test(r) ? r : null),
         (r) => go("#" + r));
     }
   });

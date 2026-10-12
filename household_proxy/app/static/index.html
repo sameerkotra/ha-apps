@@ -4,16 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Proxy</title>
-<script src="common/theme-boot.js?v=0.3.0"></script>
-<link rel="stylesheet" href="common/themes.css?v=0.3.0">
-<link rel="stylesheet" href="common/settings.css?v=0.3.0">
-<link rel="stylesheet" href="style.css?v=0.3.0">
+<script src="common/theme-boot.js?v=0.4.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=0.4.0">
+<link rel="stylesheet" href="common/settings.css?v=0.4.0">
+<link rel="stylesheet" href="style.css?v=0.4.0">
 </head>
 <body>
 <header class="topbar" id="topbar">
   <button type="button" id="homeBtn" class="brand" title="Sites"><span aria-hidden="true">🌐</span> Proxy</button>
   <nav class="topnav" id="topnav">
     <button type="button" class="tab active" data-view="sites">Sites</button>
+    <button type="button" class="tab" data-view="monitor" id="monitorTab" hidden>Monitor</button>
   </nav>
   <div class="topbar-right">
     <button type="button" id="adminBtn" class="btn-ghost" hidden>🛡️ Admin</button>
@@ -27,6 +28,11 @@
   <div id="offNote" class="note warn" hidden>An admin has turned you off in this app.</div>
   <div id="tiles" class="tiles" aria-live="polite"></div>
   <p id="noSites" class="note" hidden>No sites for you yet — ask an admin.</p>
+</main>
+
+<main id="monitorView" class="column wide" hidden>
+  <div id="monitorList" class="monitor-list" aria-live="polite"></div>
+  <p id="noChecks" class="note" hidden>No sites are checked yet. An admin can add checks in Admin → Sites.</p>
 </main>
 
 <main id="viewerView" class="viewer" hidden>
@@ -67,11 +73,11 @@
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=0.3.0"></script>
-<script src="common/settings.js?v=0.3.0"></script>
-<script src="common/backnav.js?v=0.3.0"></script>
-<script src="common/whoami.js?v=0.3.0"></script>
-<script src="common/deeplink.js?v=0.3.0"></script>
-<script src="app.js?v=0.3.0"></script>
+<script src="common/ui.js?v=0.4.0"></script>
+<script src="common/settings.js?v=0.4.0"></script>
+<script src="common/backnav.js?v=0.4.0"></script>
+<script src="common/whoami.js?v=0.4.0"></script>
+<script src="common/deeplink.js?v=0.4.0"></script>
+<script src="app.js?v=0.4.0"></script>
 </body>
 </html>

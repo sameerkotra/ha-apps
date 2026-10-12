@@ -2,6 +2,20 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.4.0
+
+- **Monitoring**: any site can be checked on a schedule — a web page, a port or a ping — and goes down only after
+  several failed checks in a row (3 by default), up again after one good check.
+- **Monitor only** sites: watched, never opened through the proxy (a printer, a switch, anything with a port or a
+  ping).
+- **Monitor** page: each checked site you may see, its state and since when, its answer time and the last 24 hours;
+  admins also get **Check now**, **Pause** (1 hour, 8 hours or until resumed) and **History** (incidents and
+  uptime over 24 hours, 7 and 30 days). Tiles show a status dot.
+- **Alerts** to the people chosen per site (any people; every admin by default), on their phones from Home
+  Assistant, plus an optional extra notify service; per event (down, back up, …); each person can mute a site for
+  themselves. An alert opens the Monitor page at that site.
+- A **binary sensor** per checked site in Home Assistant (`binary_sensor.household_proxy_<short name>`).
+
 ## 0.3.0
 
 - **Test** on the site form: whether the site answers (and why not: refused, timed out, name not found,

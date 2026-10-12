@@ -6,7 +6,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Reques
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from .. import auth, config, db, probe, settings, sidebar, sites
+from .. import auth, config, db, probe, settings, sidebar, sites, watchdog
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -20,7 +20,8 @@ router = APIRouter(prefix="/api")
 def me(user: dict = Depends(get_current_user)):
     return {"user": {"id": user["id"], "name": user["name"], "isAdmin": user["is_admin"],
                      "enabled": user["enabled"]},
-            "noAdmin": auth.no_admins(), "version": config.APP_VERSION, "page": sidebar.PAGE}
+            "noAdmin": auth.no_admins(), "version": config.APP_VERSION, "page": sidebar.PAGE,
+            "monitor": bool(sites.checked_for_user(user))}
 
 
 @router.get("/whoami")
@@ -49,8 +50,8 @@ def _site_error(e: Exception):
 @router.get("/admin/sites")
 def admin_sites(admin: dict = Depends(require_admin)):
     with db.get_conn() as conn:
-        people = [{"id": r["id"], "name": r["name"]} for r in
-                  conn.execute("SELECT id, name FROM users ORDER BY name COLLATE NOCASE")]
+        people = [{"id": r["id"], "name": r["name"], "isAdmin": auth.is_admin(r["id"], r["name"], r["username"])}
+                  for r in conn.execute("SELECT id, name, username FROM users ORDER BY name COLLATE NOCASE")]
     return {"sites": sites.admin_list(), "people": people}
 
 
@@ -88,6 +89,93 @@ def admin_reorder(body: Order, admin: dict = Depends(require_admin)):
     return {"sites": sites.admin_list()}
 
 
+# --------------------------------------------------------------------------------------------- the Monitor page
+
+def _monitor_row(conn, site: sites.Site, user: dict, now: float) -> dict:
+    r = conn.execute("SELECT * FROM sites WHERE id = ?", (site.id,)).fetchone()
+    inc = conn.execute("SELECT restarts, started_at FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone() \
+        if r["incident_id"] else None
+    muted = conn.execute("SELECT 1 FROM alert_mutes WHERE site_id = ? AND user_id = ?", (site.id, user["id"])).fetchone()
+    alerted = conn.execute("SELECT 1 FROM site_alert_people WHERE site_id = ? AND user_id = ?",
+                           (site.id, user["id"])).fetchone()
+    is_paused = watchdog.paused(r, now)
+    return {"slug": site.slug, "name": site.name, "icon": site.icon, "use": site.use, "id": site.id,
+            "favicon": sites.public(site)["favicon"], "state": "paused" if is_paused else (r["state"] or "not_checked"),
+            "since": r["state_since"], "lastCheck": r["last_check"], "ms": r["last_ms"], "error": r["last_error"],
+            "restarts": inc["restarts"] if inc else 0, "strip": watchdog.strip(conn, site.id),
+            "pausedUntil": None if not is_paused else (None if r["paused_until"] >= watchdog.UNTIL_RESUMED
+                                                         else watchdog.iso(r["paused_until"])),
+            "muted": bool(muted), "alerted": bool(alerted), "kind": r["check_kind"]}
+
+
+@router.get("/monitor")
+def monitor(user: dict = Depends(get_current_user)):
+    """The checked sites this person may see, with their state and the last 24 hours."""
+    now = watchdog.clock()
+    with db.get_conn() as conn:
+        rows = [_monitor_row(conn, s, user, now) for s in sites.checked_for_user(user)]
+    return {"sites": rows, "isAdmin": user["is_admin"]}
+
+
+class MuteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    muted: StrictBool
+
+
+@router.post("/monitor/{slug}/mute")
+def monitor_mute(slug: str, body: MuteIn, user: dict = Depends(get_current_user)):
+    """A person mutes (or unmutes) a site's alerts for themselves only."""
+    site = sites.get(slug)
+    if site is None or not sites.can_open(user, site):
+        raise HTTPException(404, "No such site.")
+    with db.get_conn() as conn:
+        if body.muted:
+            conn.execute("INSERT OR IGNORE INTO alert_mutes (site_id, user_id) VALUES (?, ?)", (site.id, user["id"]))
+        else:
+            conn.execute("DELETE FROM alert_mutes WHERE site_id = ? AND user_id = ?", (site.id, user["id"]))
+    return {"muted": body.muted}
+
+
+@router.get("/admin/sites/{site_id}/history")
+def admin_history(site_id: int, admin: dict = Depends(require_admin)):
+    """Incidents of the last 90 days and uptime over 24 hours, 7 and 30 days."""
+    with db.get_conn() as conn:
+        incidents = [dict(r) for r in conn.execute(
+            "SELECT started_at, ended_at, cause, restarts, outcome FROM incidents WHERE site_id = ? "
+            "ORDER BY started_at DESC LIMIT 500", (site_id,))]
+        up = {k: watchdog.uptime(conn, site_id, sec) for k, sec in (("day", 86400), ("week", 7 * 86400),
+                                                                    ("month", 30 * 86400))}
+    return {"incidents": incidents, "uptime": up}
+
+
+@router.post("/admin/sites/{site_id}/check-now")
+async def admin_check_now(site_id: int, admin: dict = Depends(require_admin)):
+    res = await watchdog.check_now(site_id)
+    if res is None:
+        raise HTTPException(404, "No such site, or it isn't checked.")
+    return {"ok": res.ok, "ms": res.ms, "error": res.error}
+
+
+class PauseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    hours: float | None = Field(default=None, gt=0, le=24 * 30)     # None: until resumed
+
+
+@router.post("/admin/sites/{site_id}/pause")
+def admin_pause(site_id: int, body: PauseIn, admin: dict = Depends(require_admin)):
+    """Pause checks — and restarts — for maintenance: 1 h, 8 h or until resumed."""
+    if not watchdog.pause(site_id, body.hours):
+        raise HTTPException(404, "No such site.")
+    return {"ok": True}
+
+
+@router.post("/admin/sites/{site_id}/resume")
+def admin_resume(site_id: int, admin: dict = Depends(require_admin)):
+    if not watchdog.pause(site_id, 0):
+        raise HTTPException(404, "No such site.")
+    return {"ok": True}
+
+
 @router.get("/sites/{slug}/favicon")
 def site_favicon(slug: str, user: dict = Depends(get_current_user)):
     """A site's own icon (stored by an admin), for the people who may open the site. Raster images only; served so
@@ -115,6 +203,14 @@ async def admin_test_form(body: TestIn, id: int | None = Query(None), admin: dic
         site = sites.preview(body, id)
     except sites.SiteError as e:
         raise HTTPException(422, str(e))
+    if body.use == "monitor":                   # monitor only: one check as the form sets it, not recorded
+        if body.check.kind is None:
+            raise HTTPException(422, "Choose a check first.")
+        res = await watchdog.check_preview(site, body.check.model_dump())
+        return {"reachable": res.ok, "ms": res.ms, "problem": res.error, "status": None, "redirects": [],
+                "frameHeaders": [], "rewritten": 0, "scripts": {"checked": 0}, "certificate": None,
+                "verdict": "works" if res.ok else "unreachable",
+                "verdictText": "Answers the check" if res.ok else "Doesn't answer the check", "monitorOnly": True}
     return await probe.run(site)
 
 

@@ -110,6 +110,53 @@ For the site that hard-codes something the proxy misses: a regular expression an
 (`/api/hassio_ingress/…/s/<short name>`); `\1` refers to a group. Scripts changed by a rule lose their integrity
 hashes in the page (they no longer match). A rule can never add a header line.
 
+## Monitoring
+
+Any site can be **checked** on a schedule, whether or not anyone has the app open. Set it up in the site's form,
+under **🩺 Check**:
+
+- **Kind** — **Web page** (a `GET` of the start path or the **Path to check**, redirects not followed, the site's
+  certificate rules and extra headers; up when it answers below 500, or only 2xx/3xx if you choose), **Port** (a
+  connection to `host:port`) or **Ping** (three echoes; up if any is answered). If the app's container doesn't allow
+  ping, the check says so: use **Port** instead.
+- **Every** (60 seconds; 15 seconds to 24 hours), **Timeout** (5 seconds; 1–60) and **Down after** (3 failed checks
+  in a row; 1–10), so one lost answer never counts as down. One good check is enough to be up again.
+- **Home Assistant sensor** (on by default) — `binary_sensor.household_proxy_<short name>`, class
+  *connectivity*: on while up. Attributes: `status` (up, down, restarting, waiting, needs_attention, paused,
+  not_checked), `since`, `last_check`, `response_ms`, `restarts` (in the current incident) and `last_restart`. Use it
+  in your own dashboards and automations. It is sent again every 5 minutes (Home Assistant forgets it when it
+  restarts) and removed when the site or its check is.
+
+### Monitor only
+
+A site's **Use** can be **Monitor only**: it is checked (and can be restarted), never opened through the proxy and
+never shown on the Sites page. Its address can be a URL, a host name or address alone (for Ping), or `host:port`
+(for Port). No "trusted software" confirmation is needed: nothing of it runs on Home Assistant's address.
+
+### The Monitor page
+
+**Monitor** (next to **Sites**) lists every checked site you may see — the same people who may open a site see its
+status. For each: its state and since when, the answer time, and the last 24 hours in half hours (green: up, red:
+down, amber: some of each). **🔔 / 🔕** mutes a site's alerts for you alone. Admins also get **Check now**,
+**Pause…** (for 1 hour, 8 hours or until resumed — for maintenance; nothing is checked or restarted while paused),
+**Resume** and **History**: the incidents of the last 90 days (start, end, cause, restarts, outcome) and the uptime
+over 24 hours, 7 and 30 days. Tiles on the Sites page show a status dot for checked sites.
+
+### Alerts
+
+Under **🔔 Alerts** in the site's form:
+
+- **Tell** — the people to alert, from everyone who has opened the app: any people, not only those who may open the
+  site. Every admin by default. Their phones come from Home Assistant (**Settings → People**, the Companion app
+  devices tracked for each person).
+- **Also send to** — an extra notify service for this site (a speaker, a group), e.g. `notify.living_room_speaker`.
+- **About** — which events: **Down**, **Restarting** (each restart), **Back up** (with how long it was down and how
+  many restarts), **Gave up**, **Couldn't restart**. All but **Restarting** by default.
+
+One "down" per incident; nothing is repeated while a site stays down. Being alerted gives no access: the message
+names the site and the event, and tapping it opens the Monitor page at that site, which shows the site only to
+people allowed to see it.
+
 ## Admin → People
 
 Everyone who has opened the app. Someone turned off opens no site, whatever each site allows. You can't turn
@@ -129,6 +176,11 @@ yourself off.
 
 - **Keep access logs** — for the sites that keep one (7 days; 1–90).
 
+**🩺 Monitoring**
+
+- **Keep check history** — every check is kept for a week, then hourly totals for this long (30 days; 7–365).
+  Incidents are kept 90 days.
+
 Changes apply at once.
 
 ### The app option (Configuration tab)
@@ -147,8 +199,9 @@ accepted. Restart the app after changing it.
 - A form or script on another web site can't change anything through the app or through a site: such requests
   are refused.
 - Nothing leaves your home network unless a site's address is an internet address you allowed.
-- The database (`/data/proxy.db`) holds the sites, who may open them, the extra headers, the access logs and the
-  App settings. It is part of the app's Home Assistant backups.
+- Alerts go only to the people chosen for each site (and its extra service), through Home Assistant.
+- The database (`/data/proxy.db`) holds the sites, who may open them, the extra headers, the access logs, the check
+  history and incidents, and the App settings. It is part of the app's Home Assistant backups.
 
 ## Backups
 
