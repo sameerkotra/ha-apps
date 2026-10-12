@@ -27,7 +27,7 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
 
 APP_TITLE = "Household Proxy"
-APP_VERSION = "0.6.1"           # config.yaml's version
+APP_VERSION = "0.6.2"           # config.yaml's version
 SLUG = "household_proxy"
 
 ZONE = ha_time.Zone(logger)       # app/common/ha_time.py

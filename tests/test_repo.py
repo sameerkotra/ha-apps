@@ -11,33 +11,33 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"calorie_tracker": "2.3.0", "family_tree": "2.6.0", "household_chat": "2.6.2", "household_todo": "2.7.0",
-            "household_vault": "2.1.4", "splitpot": "2.5.0"}
+VERSIONS = {"calorie_tracker": "2.3.1", "family_tree": "2.6.1", "household_chat": "2.6.3", "household_todo": "2.7.1",
+            "household_vault": "2.1.5", "splitpot": "2.5.1"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.4.0"
+FINANCE_VERSION = "1.4.1"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.12.2"
+ARCADE_VERSION = "1.12.3"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.3.0"
+RECEIPTS_VERSION = "1.3.1"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.6.0"
+DOCS_VERSION = "1.6.1"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.3.0"
+ASSISTANT_VERSION = "1.3.1"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
-PROXY_VERSION = "0.6.1"
+PROXY_VERSION = "0.6.2"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION), (PROXY, PROXY_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
 # others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
 HOUSEHOLD_AI = "household_ai"
-HOUSEHOLD_AI_VERSION = "1.0.3"
+HOUSEHOLD_AI_VERSION = "1.0.4"
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",

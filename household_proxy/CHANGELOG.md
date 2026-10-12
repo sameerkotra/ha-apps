@@ -2,6 +2,11 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.2
+
+- Shared code: a page can't set inline event handlers, safer App settings saves (no lost change when two admins save
+  at once) and clearer backup size messages.
+
 ## 0.6.1
 
 - Fix: the app didn't start inside Home Assistant ("module 'app.config' has no attribute 'SUPERVISOR_CORE_API'").
