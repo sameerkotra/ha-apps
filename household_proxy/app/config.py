@@ -23,9 +23,11 @@ if not isinstance(_raw_admins, list):
 ADMIN_USERS = auth_core.admin_names(_raw_admins) | auth_core.env_admins("DEV_ADMIN_USERS")
 
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+# Home Assistant's Core API through the Supervisor (the shared ha_client, ha_time, ha_people and ha_notify use it).
+SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api").rstrip("/")
 
 APP_TITLE = "Household Proxy"
-APP_VERSION = "0.6.0"           # config.yaml's version
+APP_VERSION = "0.6.1"           # config.yaml's version
 SLUG = "household_proxy"
 
 ZONE = ha_time.Zone(logger)       # app/common/ha_time.py

@@ -2,6 +2,11 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.1
+
+- Fix: the app didn't start inside Home Assistant ("module 'app.config' has no attribute 'SUPERVISOR_CORE_API'").
+  A new test starts the app with a Supervisor token against a fake Home Assistant, so this can't slip through again.
+
 ## 0.6.0
 
 - Listed in the app repository, with its documentation; ready to try. Not yet tried on real hardware with Komodo and
