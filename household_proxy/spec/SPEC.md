@@ -423,6 +423,8 @@ is never proxied and is shown only to the people allowed; each check kind (web p
 the container).
 
 ## 14. Decisions
+- 2026-10-12: an SSH terminal (Termius-style: admin-set connections, per-person access) is specced in
+  `spec/SSH_SPEC.md`, not built.
 - 2026-10-10: name **Household Proxy** (`household_proxy`), sidebar title *Proxy*.
 - 2026-10-10: everyone sees the panel; each person sees and opens only the sites they're allowed on (§4.1, §4.2).
 - 2026-10-10: Isolated sites are a later version; the first is trusted sites only, with the confirmation (§4.3, §12).
