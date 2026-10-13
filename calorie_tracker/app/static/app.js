@@ -43,6 +43,18 @@ function fmt(n) {
 }
 
 const $ = (sel) => UI.$(sel);
+
+// Every button that saves something goes through here: when the server refuses (a 422 for a number out of range, a
+// 404, a 429 …) the person sees its message instead of nothing happening.
+function withErrors(fn) {
+  return async (...args) => {
+    try {
+      return await fn(...args);
+    } catch (err) {
+      alert(err.message || "Something went wrong.");
+    }
+  };
+}
 function $all(sel) { return document.querySelectorAll(sel); }
 
 // Escapes all five HTML-significant characters, quotes included (common/ui.js): several
@@ -254,7 +266,16 @@ $("#whoamiBtn").addEventListener("click", openWhoami);
 function showAssistant(me) {
   $("#assistantCard").hidden = !me.assistant;
   $("#assistantOk").checked = me.assistantOk !== false;
+  // Goals → "Publish my calories to Home Assistant" (shown while the household switch is on)
+  $("#sensorCard").hidden = !me.sensor;
+  $("#publishSensor").checked = !!me.publishSensor;
 }
+$("#publishSensor").addEventListener("change", async (e) => {
+  const on = e.target.checked;
+  try {
+    await api("/api/me/sensor", { method: "PUT", body: JSON.stringify({ publishSensor: on }) });
+  } catch (err) { e.target.checked = !on; alert("Could not save: " + err.message); }
+});
 $("#assistantOk").addEventListener("change", async (e) => {
   const on = e.target.checked;
   try {
@@ -860,11 +881,12 @@ async function loadFoodLog() {
       </tbody>
     </table>
   `;
-  $all(".del-log-btn").forEach(btn => btn.addEventListener("click", async () => {
+  $all(".del-log-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
+    const entry = logs.find(l => String(l.id) === btn.dataset.id);
+    if (!confirm(`Delete "${entry ? entry.food_name : "this entry"}" from the log?`)) return;
     await api(withUser(`/api/logs/${btn.dataset.id}`), { method: "DELETE" });
-    await loadFoodLog();
-    await loadSummary();
-  }));
+    await Promise.all([loadFoodLog(), loadSummary(), loadHistory()]);
+  })));
 }
 
 function clearFoodForm() {
@@ -888,7 +910,7 @@ function scaleByServings(perServing, servings) {
   return out;
 }
 
-$("#addFoodBtn").addEventListener("click", async () => {
+$("#addFoodBtn").addEventListener("click", withErrors(async () => {
   const name = $("#foodName").value.trim();
   const calories = parseFloat($("#foodCalories").value);
   if (!name || isNaN(calories)) return alert("Food name and calories are required.");
@@ -912,10 +934,8 @@ $("#addFoodBtn").addEventListener("click", async () => {
     }),
   });
   clearFoodForm();
-  await loadFoodLog();
-  await loadSummary();
-  await loadHistory();
-});
+  await Promise.all([loadFoodLog(), loadSummary(), loadHistory()]);
+}));
 
 async function loadSavedFoodPicker() {
   state.savedFoods = await api(withUser(`/api/saved-foods`));
@@ -985,26 +1005,28 @@ async function loadSavedFoodsList() {
   `;
   bindEnlargeButtons(list);
 
-  $all(".del-sf-btn").forEach(btn => btn.addEventListener("click", async () => {
+  $all(".del-sf-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
     if (!confirm("Delete this saved food?")) return;
     await api(withUser(`/api/saved-foods/${btn.dataset.id}`), { method: "DELETE" });
     if (state.editingSavedFoodId === parseInt(btn.dataset.id)) cancelSavedFoodEdit();
     await loadSavedFoodsList();
     await loadSavedFoodPicker();
-  }));
+  })));
 
   $all(".edit-sf-btn").forEach(btn => btn.addEventListener("click", () => {
     const food = foods.find(f => f.id === parseInt(btn.dataset.id));
     if (food) startSavedFoodEdit(food);
   }));
 
-  $all(".use-btn").forEach(btn => btn.addEventListener("click", async () => {
+  // "＋ log": one serving on TODAY's log (what the button says), whatever day the Food Log is showing.
+  $all(".use-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
     const food = foods.find(f => f.id === parseInt(btn.dataset.id));
     if (!food) return;
+    const day = todayStr();
     await api(withUser(`/api/logs`), {
       method: "POST",
       body: JSON.stringify({
-        date: state.date,
+        date: day,
         meal_type: "snack",
         food_name: food.name,
         servings: 1,
@@ -1015,10 +1037,9 @@ async function loadSavedFoodsList() {
         saved_food_id: food.id,
       }),
     });
-    alert(`Added "${food.name}" to today's log.`);
-    await loadSummary();
-    await loadHistory();
-  }));
+    alert(`Added "${food.name}" to today's log (${day}).`);
+    await Promise.all([loadSummary(), loadHistory(), state.date === day ? loadFoodLog() : null]);
+  })));
 }
 
 function startSavedFoodEdit(food) {
@@ -1049,7 +1070,7 @@ function cancelSavedFoodEdit() {
 
 $("#sfCancelEditBtn").addEventListener("click", cancelSavedFoodEdit);
 
-$("#sfSaveBtn").addEventListener("click", async () => {
+$("#sfSaveBtn").addEventListener("click", withErrors(async () => {
   const name = $("#sfName").value.trim();
   const calories = parseFloat($("#sfCalories").value);
   if (!name || isNaN(calories)) return alert("Name and calories are required.");
@@ -1075,15 +1096,20 @@ $("#sfSaveBtn").addEventListener("click", async () => {
     });
   }
   cancelSavedFoodEdit();
-  await loadSavedFoodsList();
-  await loadSavedFoodPicker();
-});
+  await Promise.all([loadSavedFoodsList(), loadSavedFoodPicker()]);
+}));
 
 // ---------- weight ----------
 $("#weightDate").value = state.date;
 
+// The newest WEIGHT_SHOWN weigh-ins; "Show all" loads the rest.
+const WEIGHT_SHOWN = 100;
+state.weightAll = false;
+$("#weightShowAllBtn").addEventListener("click", withErrors(async () => { state.weightAll = true; await loadWeight(); }));
+
 async function loadWeight() {
-  const entries = await api(withUser(`/api/weight`));
+  const entries = await api(withUser(state.weightAll ? `/api/weight` : `/api/weight?limit=${WEIGHT_SHOWN}`));
+  $("#weightShowAllBtn").hidden = state.weightAll || entries.length < WEIGHT_SHOWN;
   const list = $("#weightList");
   if (entries.length === 0) {
     list.innerHTML = `<p class="hint">No weight entries yet.</p>`;
@@ -1099,15 +1125,15 @@ async function loadWeight() {
         </div>
       </div>
     `).join("");
-    $all(".del-w-btn").forEach(btn => btn.addEventListener("click", async () => {
+    $all(".del-w-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
+      if (!confirm("Delete this weigh-in?")) return;
       await api(withUser(`/api/weight/${btn.dataset.id}`), { method: "DELETE" });
-      await loadWeight();
-      await loadWeightHistory();
-    }));
+      await Promise.all([loadWeight(), loadWeightHistory(), loadSummary()]);
+    })));
   }
 }
 
-$("#addWeightBtn").addEventListener("click", async () => {
+$("#addWeightBtn").addEventListener("click", withErrors(async () => {
   const weight = parseFloat($("#weightValue").value);
   if (isNaN(weight)) return alert("Enter a weight value.");
   await api(withUser(`/api/weight`), {
@@ -1120,10 +1146,8 @@ $("#addWeightBtn").addEventListener("click", async () => {
   });
   $("#weightValue").value = "";
   $("#weightNote").value = "";
-  await loadWeight();
-  await loadWeightHistory();
-  await loadSummary();
-});
+  await Promise.all([loadWeight(), loadWeightHistory(), loadSummary()]);
+}));
 
 // ---------- weight history chart (daily/weekly/monthly) ----------
 $all(".wt-hist-btn").forEach(btn => {
@@ -1279,7 +1303,7 @@ async function loadGoals() {
   $("#goalTargetWeight").value = goal.target_weight_kg ?? "";
 }
 
-$("#saveGoalsBtn").addEventListener("click", async () => {
+$("#saveGoalsBtn").addEventListener("click", withErrors(async () => {
   await api(withUser(`/api/goals`), {
     method: "PUT",
     body: JSON.stringify({
@@ -1292,9 +1316,8 @@ $("#saveGoalsBtn").addEventListener("click", async () => {
     }),
   });
   alert("Goals saved.");
-  await loadSummary();
-  await loadHistory();
-});
+  await Promise.all([loadSummary(), loadHistory()]);
+}));
 
 // ---------- AI ----------
 // Builds the notices shown wherever AI is used (Food Log and Saved Foods
@@ -1364,6 +1387,11 @@ async function refreshAiStatus() {
     if (!st.configured) {
       dot.className = "status-dot err";
       text.textContent = st.message;
+    } else if (!st.admin) {
+      // the address, model and last error are for admins (GET /api/ai/status sends them only to them)
+      dot.className = st.last_ok ? "status-dot ok" : "status-dot";
+      text.textContent = `${st.providerLabel} is set up.` + (st.warmup && !st.last_ok
+        ? ` Not warmed up yet — click "Wake up model" (or just ask; the first answer takes longer).` : "");
     } else if (st.last_error) {
       dot.className = "status-dot err";
       text.textContent = `${st.providerLabel} · ${st.model} at ${st.url}. Last error: ${st.last_error}`;
@@ -1454,9 +1482,17 @@ async function sendChat() {
 }
 
 // ---------- refresh orchestration ----------
+// What depends on the day shown (the saved-food picker doesn't: it's loaded with everything else and when a saved
+// food changes).
 async function refreshDateScoped() {
-  await Promise.all([loadSummary(), loadFoodLog(), loadSavedFoodPicker(), loadHistory()]);
+  await Promise.all([loadSummary(), loadFoodLog(), loadHistory()]);
 }
+
+// Charts are drawn at the canvas's width: draw them again when the window (or the phone's orientation) changes.
+window.addEventListener("resize", UI.debounce(() => {
+  drawHistoryChart();
+  drawWeightHistoryChart();
+}, 150));
 
 async function refreshAll() {
   await Promise.all([

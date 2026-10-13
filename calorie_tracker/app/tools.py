@@ -15,7 +15,6 @@ admin's *Answer the Household Assistant* is on and the person hasn't turned off 
 for me* (Goals). The link opens that day's Food Log on the app's sidebar page.
 """
 import re
-import asyncio
 import logging
 from datetime import date, timedelta
 
@@ -30,7 +29,7 @@ DEFAULT_GOALS = {"calorie_goal": 2000, "protein_goal": 150, "carb_goal": 200, "f
 
 
 def _busy() -> None:
-    if db._import_lock.locked():                        # a backup is being restored right now
+    if db.GATE.paused or db._import_lock.locked():      # a backup is being restored right now
         raise bus.Nack("busy", "restoring")
 
 
@@ -127,13 +126,17 @@ def week(ctx):
 
 def _known_food(ctx, name: str):
     """(calories, protein, carbs, fat, saved_food_id) for one serving of a food the person saved or logged before."""
-    want = " ".join(name.split()).casefold()
-    r = ctx.conn.execute("SELECT * FROM saved_foods WHERE user_id = ? AND lower(trim(name)) = ? ORDER BY id DESC",
-                         (ctx.user["id"], want)).fetchone()
+    want = " ".join(name.split()).casefold()     # compared in Python: SQLite's lower() only folds ASCII
+
+    def same(text) -> bool:
+        return " ".join((text or "").split()).casefold() == want
+    r = next((x for x in ctx.conn.execute("SELECT * FROM saved_foods WHERE user_id = ? ORDER BY id DESC",
+                                          (ctx.user["id"],)) if same(x["name"])), None)
     if r:
         return r["calories"], r["protein"], r["carbs"], r["fat"], r["id"]
-    r = ctx.conn.execute("SELECT * FROM food_logs WHERE user_id = ? AND lower(trim(food_name)) = ? AND servings > 0 "
-                         "ORDER BY date DESC, id DESC", (ctx.user["id"], want)).fetchone()
+    r = next((x for x in ctx.conn.execute("SELECT * FROM food_logs WHERE user_id = ? AND servings > 0 "
+                                          "ORDER BY date DESC, id DESC", (ctx.user["id"],)) if same(x["food_name"])),
+             None)
     if r:
         n = r["servings"]
         return r["calories"] / n, r["protein"] / n, r["carbs"] / n, r["fat"] / n, r["saved_food_id"]
@@ -142,11 +145,9 @@ def _known_food(ctx, name: str):
 
 def _push_sensor(user: dict) -> None:
     """After the commit: today's calories sensor in Home Assistant (as logging on the page does)."""
-    from . import auth, db, ha_sync
+    from . import ha_sync
     try:
-        with db.get_conn() as conn:
-            slug = auth.sensor_slug(conn, user["id"], user["name"])
-        asyncio.run(ha_sync.push_for_user(user["id"], slug, user["name"]))
+        ha_sync.push_for_user_blocking(user["id"])
     except Exception:
         logging.getLogger("tools").exception("Updating the calories sensor failed")
 

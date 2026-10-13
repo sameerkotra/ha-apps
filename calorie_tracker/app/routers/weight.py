@@ -9,17 +9,26 @@ router = APIRouter(prefix="/api/weight", tags=["weight"])
 
 
 @router.get("")
-async def list_weight(user: dict = Depends(get_acting_user)):
+def list_weight(user: dict = Depends(get_acting_user),
+                days: int | None = Query(None, ge=1, le=36500, description="only the last N days"),
+                limit: int | None = Query(None, ge=1, le=10000, description="only the newest N weigh-ins")):
+    """Weigh-ins oldest first, as before; `days` and `limit` keep a long history from being sent whole (the Weight
+    page asks for the newest 100 and offers "Show all")."""
+    sql, args = "SELECT * FROM weight_logs WHERE user_id = ?", [user["id"]]
+    if days:
+        sql += " AND date >= ?"
+        args.append(str(config.today() - timedelta(days=days - 1)))
+    sql += " ORDER BY date DESC, id DESC"
+    if limit:
+        sql += " LIMIT ?"
+        args.append(limit)
     with db.get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM weight_logs WHERE user_id = ? ORDER BY date ASC",
-            (user["id"],),
-        ).fetchall()
-    return db.rows_to_list(rows)
+        rows = conn.execute(sql, args).fetchall()
+    return db.rows_to_list(reversed(rows))
 
 
 @router.get("/history")
-async def get_weight_history(
+def get_weight_history(
     granularity: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     user: dict = Depends(get_acting_user),
 ):
@@ -87,7 +96,7 @@ async def get_weight_history(
 
 
 @router.post("")
-async def add_weight(payload: schemas.WeightCreate, user: dict = Depends(get_acting_user)):
+def add_weight(payload: schemas.WeightCreate, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO weight_logs (user_id, date, weight_kg, note) VALUES (?, ?, ?, ?)",
@@ -101,7 +110,7 @@ async def add_weight(payload: schemas.WeightCreate, user: dict = Depends(get_act
 
 
 @router.delete("/{entry_id}")
-async def delete_weight(entry_id: int, user: dict = Depends(get_acting_user)):
+def delete_weight(entry_id: int, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         cur = conn.execute(
             "DELETE FROM weight_logs WHERE id = ? AND user_id = ?",

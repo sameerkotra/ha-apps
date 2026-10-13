@@ -3,9 +3,11 @@ dependency footprint minimal. Each request gets its own short-lived
 connection (sqlite3.connect is cheap); WAL mode lets reads and writes
 overlap without a global lock.
 """
+import json
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 
 from . import config
 from .common import backup_core, db_core
@@ -13,15 +15,51 @@ from .common import backup_core, db_core
 os.makedirs(config.DATA_DIR, exist_ok=True)
 
 _import_lock = threading.Lock()  # serializes a DB-file swap against concurrent writers
+# Every database use (requests, the Household Assistant's calls, the sensor job) runs inside GATE.work(); a restore
+# runs inside GATE.pause(), so it waits for them to finish and nothing writes into the file being replaced.
+GATE = db_core.MaintenanceGate()
+GATE_TIMEOUT = 60                 # how long a request waits for a restore before giving up
 
 
 def _connect() -> sqlite3.Connection:
-    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",))
+    # synchronous = NORMAL: safe under WAL (SCHEMA) — a power cut can lose the last commits, never the file
+    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON", "synchronous = NORMAL"))
 
 
-def get_conn():
-    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
+def _raw_conn():
+    """A transaction outside the gate: only for the restore itself (which holds the pause) and init_db."""
     return db_core.transaction(_connect)
+
+
+_inside = threading.local()       # how deep this thread is in get_conn blocks
+
+
+@contextmanager
+def _work():
+    """GATE.work(), once per thread: a connection opened inside another one's block (e.g. an App setting read
+    while a request holds its connection) must not wait for a restore that is itself waiting for that request."""
+    depth = getattr(_inside, "depth", 0)
+    if depth:
+        _inside.depth = depth + 1
+        try:
+            yield
+        finally:
+            _inside.depth = depth
+        return
+    with GATE.work(timeout=GATE_TIMEOUT):
+        _inside.depth = 1
+        try:
+            yield
+        finally:
+            _inside.depth = 0
+
+
+@contextmanager
+def get_conn():
+    """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py); waits while a
+    restore is swapping the file (GATE)."""
+    with _work(), db_core.transaction(_connect) as conn:
+        yield conn
 
 
 SCHEMA = """
@@ -81,6 +119,15 @@ CREATE TABLE IF NOT EXISTS food_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_food_logs_user_date ON food_logs(user_id, date);
+
+-- AI requests (estimate, chat) per signed-in person per day, for the daily limit (App settings → AI limits).
+-- Kept apart from anything a person can delete, so deleting entries never resets the count.
+CREATE TABLE IF NOT EXISTS ai_usage (
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,             -- YYYY-MM-DD in Home Assistant's time zone
+    requests INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
+);
 CREATE INDEX IF NOT EXISTS idx_weight_logs_user_date ON weight_logs(user_id, date);
 
 -- Admin → App settings (app/settings.py). One row per key an admin changed;
@@ -101,8 +148,9 @@ generation = 0
 
 
 def init_db():
+    """Startup, and inside a restore (which holds GATE's pause, so this uses a connection outside the gate)."""
     global generation
-    with get_conn() as conn:
+    with _raw_conn() as conn:
         conn.executescript(SCHEMA)
         _migrate(conn)
     generation += 1
@@ -113,14 +161,33 @@ MIGRATIONS = [
     ("users", "enabled", "INTEGER NOT NULL DEFAULT 1"),
     ("saved_foods", "notes", "TEXT"),
     ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),   # "Let the Household Assistant answer for me" (tools.py)
+    # "Publish my calories to Home Assistant" (Goals): off for people who open the app from now on; people who
+    # were already here get the household setting's value (_migrate), so nothing changes on the upgrade.
+    ("users", "publish_sensor", "INTEGER NOT NULL DEFAULT 0"),
 ]
+
+
+def _stored_setting(conn, key: str, default):
+    """An App setting's stored value read straight from the table (settings.py's cache isn't usable here)."""
+    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    if row is None:
+        return default
+    try:
+        return json.loads(row["value"])
+    except ValueError:
+        return default
 
 
 def _migrate(conn: sqlite3.Connection):
     """Additive, idempotent migrations for installs that predate a column.
     No migration framework dependency — this app's schema is small enough
     that a couple of guarded ALTER TABLEs are simpler and clearer."""
-    db_core.add_missing_columns(conn, MIGRATIONS)
+    added = db_core.add_missing_columns(conn, MIGRATIONS)
+    if "users.publish_sensor" in added:
+        # The daily-calories sensor used to be one switch for everyone: keep publishing for exactly the people it
+        # published for (everyone, while that switch was on).
+        on = _stored_setting(conn, "expose_daily_calories_sensor", True) is True
+        conn.execute("UPDATE users SET publish_sensor = ?", (1 if on else 0,))
 
     # Older databases stored the AI server as ollama_url / ollama_model. They
     # become ai_provider = "ollama", ai_url and ai_model (an ai_* value that
@@ -157,7 +224,10 @@ def backup_to_tempfile(after=None) -> str:
     Caller owns the returned temp file and is responsible for deleting it
     once it's done (e.g. via a FastAPI BackgroundTask after streaming it).
     """
-    return db_core.snapshot_to_tempfile(_connect, after=after)
+    return db_core.snapshot_to_tempfile(_connect, after=after, prefix=SNAPSHOT_PREFIX)   # swept if never sent
+
+
+SNAPSHOT_PREFIX = "calorie-tracker-backup-"
 
 
 REQUIRED_TABLES = {"users", "goals", "weight_logs", "saved_foods", "food_logs"}
@@ -180,7 +250,8 @@ def import_from_tempfile(tmp_path: str) -> None:
     # An older backup may lack columns or settings rows the app now
     # expects (_migrate) — init_db brings it up to date now rather than
     # serving errors until the next restart.
-    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
+    with GATE.pause(timeout=GATE_TIMEOUT):    # waits for every request and job using the database, holds new ones
+        backup_core.restore_file(tmp_path, config.DB_PATH, _raw_conn, migrate=init_db, lock=_import_lock)
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:

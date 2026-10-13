@@ -75,6 +75,11 @@ async def test_ai(payload: AIProbe | None = None, admin: dict = Depends(require_
         probe["ai_api_key"] = ""
     elif not (probe.get("ai_api_key") or "").strip():
         probe.pop("ai_api_key", None)
+        if settings.key_would_move(probe, current):
+            # the saved key was given for the saved address: it is never sent anywhere else
+            raise HTTPException(422, "ai_api_key: the address or provider changed — type the access key again to "
+                                     "test it (or tick \"Remove the saved key\"). The saved key is only ever sent to "
+                                     "the address it was saved for.")
     try:
         v = settings.AppSettings(**{**current, **probe}).model_dump()
     except ValidationError as e:
@@ -119,20 +124,29 @@ async def admin_storage_import_db(file: UploadFile = File(...), admin: dict = De
 
     The restored file's App settings apply at once — except the AI access
     key: a downloaded backup has none, so this install keeps its own."""
-    saved_secrets = settings.REGISTRY.saved_secrets()
+    saved_secrets = await asyncio.to_thread(settings.REGISTRY.saved_secrets)
     tmp_path = await backup_core.receive(file, config.DATA_DIR)
     try:
-        try:
-            db.validate_backup_file(tmp_path)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        db.import_from_tempfile(tmp_path)
-        settings.REGISTRY.keep_secrets(saved_secrets)
-        # The restored file may carry different App settings (init_db bumps
-        # db.generation, which drops settings' cache); a warm-up recorded
-        # against the old values no longer means anything.
-        ai_client.forget_state()
+        # validation and the swap block (SQLite, file renames): off the event loop. The swap waits for every
+        # request and job using the database to finish and holds new ones meanwhile (db.GATE).
+        await asyncio.to_thread(_restore, tmp_path, saved_secrets)
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
     return {"status": "ok"}
+
+
+def _restore(tmp_path: str, saved_secrets) -> None:
+    try:
+        db.validate_backup_file(tmp_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    try:
+        db.import_from_tempfile(tmp_path)
+    except TimeoutError:
+        raise HTTPException(503, "The app is busy — try the restore again in a minute.") from None
+    settings.REGISTRY.keep_secrets(saved_secrets)
+    # The restored file may carry different App settings (init_db bumps
+    # db.generation, which drops settings' cache); a warm-up recorded
+    # against the old values no longer means anything.
+    ai_client.forget_state()

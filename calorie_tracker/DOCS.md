@@ -66,13 +66,16 @@ Choose one **Provider**:
   - **Model**: e.g. `claude-sonnet-4-5` or a smaller, cheaper Claude model.
   - **Access key**: required; create one in the Anthropic Console (console.anthropic.com →
     API keys).
-  - **Longest answer (tokens)**: the most Claude may write in one answer (default 4096). The app
-    lowers it automatically if a model allows less. Other providers ignore it.
+  - **Longest answer (tokens)**: the most the model may write in one answer (default 2000, for every
+    provider). The app lowers it automatically if a Claude model allows less, and asks again without
+    it if an OpenAI-compatible server doesn't accept it.
 
 **Test connection** checks what is typed on the page before you save: it asks the provider which
 models it offers and says whether your model is among them. It generates nothing, so it is free.
-An empty key box means "use the saved key". Click **Save settings** when it looks right; the next
-AI request uses the new settings — no restart.
+An empty key box means "use the saved key" — but only for the address the key was saved for: with a
+new address or provider, type the key again (or tick **Remove**). Saving a new address or provider
+without a key removes the saved one, so a key is never sent to a server it wasn't given for. Click
+**Save settings** when it looks right; the next AI request uses the new settings — no restart.
 
 **The access key** is stored only in the app's database. The page never shows it again (only
 "Saved (…last 4 characters)"); leave the box empty to keep it, type a new one to replace it, or
@@ -89,8 +92,10 @@ rules then apply.
 
 **Cost.** Ollama and LM Studio cost nothing per request. Cloud services charge per token (a few
 hundred tokens per estimate or short chat answer); check your provider's price list and consider
-setting a spending limit in its dashboard. The AI Assistant page shows the tokens and time of the
-last AI request, and every request is written to the app's **Log** tab with its token counts.
+setting a spending limit in its dashboard. **AI limits** (App settings) cap each person at 20 AI
+requests a minute and 200 a day by default (0 = no limit), and at most two AI requests run at once
+for the whole household. For admins, the AI Assistant page shows the tokens and time of the last AI
+request, and every request is written to the app's **Log** tab with its token counts.
 
 ## What the app does
 
@@ -111,16 +116,19 @@ last AI request, and every request is written to the app's **Log** tab with its 
 - Build foods you eat often ("Protein shake", "Chicken and rice bowl") with serving size and
   unit, calories, macros and optional notes (recipe, brand, preparation). ✨ Estimate with AI
   works here too and also fills in the serving size and unit.
-- Each saved food can be **＋ logged** in one click (as a snack, on the date shown in the date
-  bar), edited (✎) or deleted (✕). Long notes open in a popup (⤢).
+- Each saved food can be **＋ logged** in one click (one serving, as a snack, on today's log),
+  edited (✎) or deleted (✕). Long notes open in a popup (⤢).
 
 ### Weight
-- Log your weight (kg) for any date, with an optional note; delete entries you don't want.
+- Log your weight (kg) for any date, with an optional note; delete entries you don't want. The
+  list shows your newest 100 weigh-ins; **Show all** shows the rest.
 - **Weight History** chart: daily (last 30 days), weekly (12 weeks) or monthly (12 months)
   averages, with a dashed line at your target weight when one is set.
 
 ### Goals
 - Daily calorie, protein, carbohydrate and fat goals, plus starting and target weight.
+- **Publish my calories to Home Assistant** and **Let the Household Assistant answer for me**:
+  your own switches (see below), always for you, never for someone an admin is acting as.
 
 ### Dashboard
 - **Summary**: a calorie chart against your goal — daily (last 14 days), weekly (8 weeks) or
@@ -132,17 +140,20 @@ last AI request, and every request is written to the app's **Log** tab with its 
 ### AI Assistant
 - Ask nutrition and fitness questions in a simple chat. Each question is answered on its own
   (the AI doesn't see your log or earlier questions).
-- Shows which provider and model are in use, the last error if any, and the tokens and time of the
-  last request. With Ollama, **Wake up model** loads the model in advance.
+- Shows which provider is in use; admins also see the address, the model, the last error if any,
+  and the tokens and time of the last request. With Ollama, **Wake up model** loads the model in
+  advance. When something goes wrong, admins get the provider's own message; everyone else a plain
+  one without the server's address.
 
 ### Admin (admins only)
-- **App settings**: the AI setup (above), **Publish daily calories to Home Assistant** and **Answer the Household Assistant**.
-  Changes apply immediately.
+- **App settings**: the AI setup (above), **AI limits**, **Publish daily calories to Home Assistant**,
+  **Answer the Household Assistant** and the **App-messages signing key**. Changes apply immediately.
 - **Users**: everyone who has opened the app. A switch hides someone from the user switcher (an
   old account, a guest); it doesn't delete their data or lock them out.
 - **Storage**: download the whole database as a backup, or restore one (see **Backups**).
 - **User switcher** (top right, admins only): view and edit another household member's log,
-  saved foods, weight and goals — for example to help a child or partner.
+  saved foods, weight and goals — for example to help a child or partner. Every change made this
+  way is written to the app's **Log** tab (who, as whom, what).
 
 ### How the app sees you
 Click your name at the bottom of the menu (👤 on a phone) to see the user name and user id Home
@@ -156,13 +167,19 @@ closes a popup first, then returns to the Food Log.
 
 ## Home Assistant sensor
 
-While **Publish daily calories to Home Assistant** is on (the default), each person who has used
-the app gets a sensor such as `sensor.calorie_tracker_jane_doe_daily_calories` whose state is
-today's total calories (kcal) — nothing else. Use it in dashboards or automations, e.g. a
-notification when someone is over their goal in the evening. The name comes from the person's
-Home Assistant display name. The value updates whenever that day's log changes and every 15
-minutes, so it returns to 0 after midnight. Turning the setting off removes these sensors from
-Home Assistant; turning it on publishes everyone's again at once.
+Each person chooses whether their calories appear in Home Assistant: **Goals → Publish my calories
+to Home Assistant**. It starts off for people who open the app for the first time; everyone who used
+the app before this switch existed keeps what they had (on, if the household setting below was on).
+A person who turns it on gets a sensor such as `sensor.calorie_tracker_jane_doe_daily_calories`
+whose state is today's total calories (kcal) — nothing else; turning it off removes their sensor.
+Use it in dashboards or automations, e.g. a notification when someone is over their goal in the
+evening. The name comes from the person's Home Assistant display name (two people whose names give
+the same sensor name each get their own, the later one with a short ending). The value updates just
+after that day's log changes, every 15 minutes and just after midnight, so a new day starts at 0.
+
+**Publish daily calories to Home Assistant** (App settings, on by default) is the household's
+master switch: off removes every sensor from Home Assistant whatever each person chose; on publishes
+the sensors of everyone who turned theirs on.
 
 ## The Household Assistant
 
@@ -201,9 +218,12 @@ before anything is saved.
 | Address | blank | The provider's address. Required for Ollama; blank = `https://api.openai.com/v1` (OpenAI-compatible) or `https://api.anthropic.com` (Claude) |
 | Model | blank | The model's exact name |
 | Access key | none | Needed for Claude and most cloud services; never shown again, left out of backups |
-| Longest answer (tokens) | 4096 | Output limit per answer (Claude requires one; others ignore it) |
-| Publish daily calories to Home Assistant | on | The per-person daily-calories sensor |
+| Longest answer (tokens) | 2000 | Output limit per answer, for every provider |
+| AI requests per person per minute | 20 | Estimates and chat messages; 0 = no limit |
+| AI requests per person per day | 200 | The same per day (Home Assistant's day); deleting entries gives none back; 0 = no limit |
+| Publish daily calories to Home Assistant | on | The household's switch for the daily-calories sensors (each person also turns on their own) |
 | Answer the Household Assistant | on | Lets the Household Assistant app tell each person their own day (see *The Household Assistant*) |
+| App-messages signing key | empty | The same secret in every household app: with it, messages between the apps are signed and unsigned ones refused. Never shown again, left out of backups |
 
 ## Configuration (the app's Configuration tab)
 
@@ -220,8 +240,8 @@ Everything else is set inside the app.
   user switcher; this is checked by the app on every request, not just hidden in the page.
 - The app is reached only through Home Assistant (ingress). It has no port of its own, and it
   refuses requests that don't come from Home Assistant's own proxy.
-- To Home Assistant it sends only each person's calorie total for today (the sensor), and only
-  while that setting is on — never macros, weights or food names.
+- To Home Assistant it sends only the calorie total for today of each person who chose to publish
+  it (the sensor), and only while the household setting is on — never macros, weights or food names.
 - To the AI provider it sends only the food descriptions you estimate and the chat questions you
   ask, and only when you use those features. With a provider outside your home network, a notice
   on the AI pages and App settings says so.
@@ -246,9 +266,12 @@ Everything else is set inside the app.
 - One Home Assistant user is one person; there are no separate profiles inside the app.
 - The AI's numbers are estimates — check them, especially for mixed dishes and restaurant food.
 - The chat has no memory of earlier questions and no access to your log.
-- There is no rate limit on AI requests; with a paid provider, set a spending limit there.
+- AI requests are limited per person (App settings → AI limits); with a paid provider, also set a
+  spending limit there.
 - The sensor name follows the display name: renaming someone in Home Assistant creates a new
-  sensor, and two people with the same display name share one.
+  sensor (the old one is removed by the next sync).
+- Requests are at most 1 MB; a database restore up to 512 MB. While a restore runs (a few seconds),
+  other requests wait for it.
 - Weights are in kilograms.
 - The time zone is read from Home Assistant when the app starts (UTC if it can't be read);
   restart the app after changing Home Assistant's time zone.
@@ -271,5 +294,8 @@ Everything else is set inside the app.
   minute and try again, or check your plan's limits.
 - **The first AI answer is slow with Ollama** — the model is being loaded; later answers are
   faster. **Wake up model** loads it ahead of time.
-- **The daily-calories sensor doesn't appear** — check that the setting is on, and look in the
+- **"Too many AI requests"** — the person reached a limit in App settings → AI limits; wait, or an
+  admin can raise it. **"The AI is busy"** — two requests are already running; try again shortly.
+- **The daily-calories sensor doesn't appear** — check that the household setting is on and that
+  the person turned on **Publish my calories to Home Assistant** (Goals), and look in the
   app's **Log** tab for messages about Home Assistant.

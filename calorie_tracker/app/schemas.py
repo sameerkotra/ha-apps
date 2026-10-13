@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Annotated, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Bounds on every number a page or script sends: no negatives, nothing absurd, and never inf/NaN
 # (JSON like 1e309 parses as infinity, which would be stored and then break every later answer).
@@ -22,13 +22,19 @@ class GoalUpdate(BaseModel):
     target_weight_kg: Optional[WeightKg] = None
 
 
+# Names and notes are trimmed first, so a name of only spaces is refused like an empty one.
+TRIMMED = ConfigDict(str_strip_whitespace=True)
+
+
 class WeightCreate(BaseModel):
+    model_config = TRIMMED
     date: date
     weight_kg: WeightKg
     note: Optional[str] = Field(default=None, max_length=500)
 
 
 class SavedFoodCreate(BaseModel):
+    model_config = TRIMMED
     name: str = Field(min_length=1, max_length=200)
     serving_size: Annotated[float, Field(gt=0, le=100_000, allow_inf_nan=False)] = 1
     serving_unit: str = Field(default="serving", min_length=1, max_length=40)
@@ -40,7 +46,9 @@ class SavedFoodCreate(BaseModel):
 
 
 class FoodLogCreate(BaseModel):
-    """calories and macros are the totals for all the servings (what the day adds up)."""
+    """calories and macros are the totals for all the servings (what the day adds up). saved_food_id, when given,
+    must be one of the acting person's own saved foods (422 otherwise)."""
+    model_config = TRIMMED
     date: date
     meal_type: MealType = "snack"
     food_name: str = Field(min_length=1, max_length=200)
@@ -49,7 +57,7 @@ class FoodLogCreate(BaseModel):
     protein: Grams = 0
     carbs: Grams = 0
     fat: Grams = 0
-    saved_food_id: Optional[int] = None
+    saved_food_id: Optional[Annotated[int, Field(ge=1, le=2**62)]] = None
 
 
 class AIEstimateRequest(BaseModel):
@@ -58,3 +66,24 @@ class AIEstimateRequest(BaseModel):
 
 class AIChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+
+
+class AIEstimate(BaseModel):
+    """What "✨ Estimate with AI" hands the page: the model's answer, checked like a food entry; any other keys the
+    model adds are dropped, and numbers given as text ("250") are read as numbers."""
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+    food_name: str = Field(min_length=1, max_length=200)
+    serving_size: Annotated[float, Field(gt=0, le=100_000, allow_inf_nan=False)] = 1
+    serving_unit: str = Field(default="serving", min_length=1, max_length=40)
+    calories: Kcal
+    protein: Grams = 0
+    carbs: Grams = 0
+    fat: Grams = 0
+    note: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("food_name", "serving_unit", "note", mode="before")
+    @classmethod
+    def _shorten(cls, v, info):
+        """A long-winded model: its words are cut to the field's length rather than the estimate refused."""
+        limit = {"food_name": 200, "serving_unit": 40, "note": 500}[info.field_name]
+        return v[:limit] if isinstance(v, str) else v

@@ -24,8 +24,9 @@ _removal_pending = False
 
 
 def exposed() -> bool:
-    """Admin → App settings → "Publish daily calories to Home Assistant",
-    read live on every push."""
+    """Admin → App settings → "Publish daily calories to Home Assistant" (the household's master switch),
+    read live on every push. Each person also has their own "Publish my calories to Home Assistant"
+    (users.publish_sensor, Goals page): a sensor exists only for people who turned theirs on."""
     return bool(settings.get("expose_daily_calories_sensor"))
 
 
@@ -83,14 +84,11 @@ SENSORS = sensor_publisher.Publisher(post=_post, delete=_delete)
 _published = SENSORS.memory
 
 
-def _sync_push_state(entity_id: str, state_value, attributes: dict) -> bool:
+def _sync_push_state(entity_id: str, state_value, attributes: dict, force: bool = False) -> bool:
+    """Post one sensor; an unchanged value isn't sent again (the periodic job re-sends everything)."""
     if not _has_token():
         return False
-    return bool(SENSORS.post(entity_id, state_value, attributes, force=True))
-
-
-def _sync_delete_state(entity_id: str) -> bool:
-    return SENSORS.delete(entity_id)
+    return SENSORS.post(entity_id, state_value, attributes, force=force) is not False
 
 
 def _payload(display_name: str, calories: float) -> tuple:
@@ -102,49 +100,70 @@ def _payload(display_name: str, calories: float) -> tuple:
     return round(calories, 1), attributes
 
 
-async def push_daily_calories(user_slug: str, display_name: str, calories: float):
-    if not exposed():
-        return
-    state, attributes = _payload(display_name, calories)
-    await run_in_threadpool(_sync_push_state, entity_id_for(user_slug), state, attributes)
-
-
 def _today_totals(user_id: str | None = None) -> list[dict]:
-    """[{id, name, total}] for every user (or one), today's calories. Opens
-    and closes its own connection — callers do their network calls after."""
+    """[{id, name, total, publish, slug}] for every user (or one), today's calories and whether they publish them.
+    Opens and closes its own connection — callers do their network calls after."""
     from . import db  # local import to avoid a circular import at module load
+    from .auth import _slugify, sensor_slugs
 
     today = str(config.today())
     where, args = ("WHERE u.id = ?", (today, user_id)) if user_id else ("", (today,))
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT u.id, u.name, COALESCE(SUM(f.calories), 0) AS total FROM users u "
+            "SELECT u.id, u.name, u.publish_sensor AS publish, COALESCE(SUM(f.calories), 0) AS total FROM users u "
             "LEFT JOIN food_logs f ON f.user_id = u.id AND f.date = ? "
             f"{where} GROUP BY u.id ORDER BY u.name",
             args,
         ).fetchall()
-    return [dict(r) for r in rows]
+        slugs = sensor_slugs(conn)
+    return [{**dict(r), "publish": bool(r["publish"]), "slug": slugs.get(r["id"]) or _slugify(r["name"])}
+            for r in rows]
 
 
-async def push_for_user(user_id: str, user_slug: str, display_name: str):
-    """Compute today's calorie total for a user from the DB and push it."""
-    if not exposed():
+def push_for_user_blocking(user_id: str) -> bool | None:
+    """After a change to someone's day (a background task, after the answer): today's total for that person,
+    if the household switch and their own are on. Never raises."""
+    try:
+        if not exposed() or not _has_token():
+            return None
+        rows = _today_totals(user_id)
+        if not rows or not rows[0]["publish"]:
+            return None
+        u = rows[0]
+        return _sync_push_state(entity_id_for(u["slug"]), *_payload(u["name"], u["total"]))
+    except Exception:
+        logger.exception("Updating the calories sensor failed")
+        return False
+
+
+async def push_for_user(user_id: str, user_slug: str | None = None, display_name: str | None = None):
+    """push_for_user_blocking in the threadpool (the slug and name are worked out from the database)."""
+    return await run_in_threadpool(push_for_user_blocking, user_id)
+
+
+def remove_for_user_blocking(user_id: str) -> None:
+    """Someone turned "Publish my calories" off: their sensor goes from Home Assistant now (best effort; the
+    periodic job removes any left over)."""
+    global _removal_pending
+    if not _has_token():
         return
     rows = _today_totals(user_id)
-    total = rows[0]["total"] if rows else 0.0
-    await push_daily_calories(user_slug, display_name, total)
+    ids = {entity_id_for(r["slug"]) for r in rows}
+    result = SENSORS.remove(sorted(ids))
+    if result["failed"]:
+        _removal_pending = True
 
 
 def _sync_push_all() -> dict:
-    from . import db
-    from .auth import _slugify, sensor_slugs  # local: auth imports db/config, keep load order simple
-
     if not exposed() or not _has_token():
         return {"pushed": 0, "failed": 0}
-    with db.get_conn() as conn:
-        slugs = sensor_slugs(conn)
-    items = [(entity_id_for(slugs.get(u["id"]) or _slugify(u["name"])), *_payload(u["name"], u["total"]))
-             for u in _today_totals()]       # DB connection closed before any HTTP call
+    people = _today_totals()                   # DB connection closed before any HTTP call
+    items = [(entity_id_for(u["slug"]), *_payload(u["name"], u["total"])) for u in people if u["publish"]]
+    # sensors this process posted for someone who has since turned theirs off (or was renamed)
+    current = {i[0] for i in items}
+    stale = [e for e in SENSORS.names() if e not in current]
+    if stale:
+        SENSORS.remove(stale)
     return SENSORS.publish(items, force=True)
 
 
@@ -190,13 +209,37 @@ async def apply_exposure_change() -> dict:
 
 
 async def periodic_sync() -> dict:
-    """One tick of main.py's periodic job: on → push everyone (so the value
+    """One tick of main.py's periodic job: on → push everyone who publishes (so the value
     rolls over to 0 after midnight); off → retry a removal that failed."""
+    global _removal_pending
     if exposed():
+        _removal_pending = False
         return await push_all()
     if _removal_pending:
         return await remove_all()
     return {}
+
+
+def seconds_to_midnight(now=None) -> float:
+    """Seconds until a few seconds after the next local midnight (Home Assistant's zone)."""
+    from datetime import datetime, timedelta
+    now = now or config.now()
+    tomorrow = (now + timedelta(days=1)).date()
+    midnight = datetime(tomorrow.year, tomorrow.month, tomorrow.day, tzinfo=now.tzinfo)
+    return max(1.0, (midnight - now).total_seconds() + 5)
+
+
+async def midnight_loop(sleep=None) -> None:
+    """Just after each local midnight, re-send everyone's sensor so a new day starts at 0 straight away
+    (the 15-minute job alone could leave yesterday's total showing for a while)."""
+    import asyncio
+    sleep = sleep or asyncio.sleep
+    while True:
+        await sleep(seconds_to_midnight())
+        try:
+            await periodic_sync()
+        except Exception as e:
+            logger.warning("Midnight sensor sync failed: %s", e)
 
 
 # ---------------------------------------------------------------------------

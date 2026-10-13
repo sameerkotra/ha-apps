@@ -69,6 +69,8 @@ def _check_key(v: str) -> str:
 GROUPS = [
     Group("ai", "🤖 AI", "Used by \"✨ Estimate with AI\" and the AI Assistant. Leave the provider on \"Not set up\" to "
           "run without AI — everything else works."),
+    Group("limits", "🚦 AI limits", "Keep one person (or a stuck page) from running up a cloud bill or tying up your "
+          "AI server. At most two AI requests run at a time for the whole household."),
     Group("ha", "🏠 Home Assistant"),
     Group("assistant", "💬 Household Assistant", "The Household Assistant app answers questions from what the household "
           "apps know. Calorie Tracker tells a person only their own day: calories and macros against their goals."),
@@ -97,16 +99,28 @@ SETTINGS = [
             help="Needed for Claude and for OpenAI and most cloud services; not for Ollama or LM Studio. Stored in "
                  "the app's database, never shown again, never logged, and left out of database downloads. Leave the "
                  "box empty to keep the saved key."),
-    Setting("ai_max_tokens", 4096, "Longest answer (tokens)", group="ai", min=256, max=200000, strict=True,
-            help="The most the model may write in one answer. Claude requires a limit; the other providers ignore it."),
+    Setting("ai_max_tokens", 2000, "Longest answer (tokens)", group="ai", min=256, max=200000, strict=True,
+            help="The most the model may write in one answer (an estimate or a chat reply), for every provider. "
+                 "2000 is plenty for both; raise it for a model that thinks out loud before answering."),
+    Setting("ai_per_minute", 20, "AI requests per person per minute", group="limits", min=0, max=1000, strict=True,
+            help="Estimates and chat messages one person can ask for in a minute; more get \"Too many AI "
+                 "requests\". 0 = no limit."),
+    Setting("ai_per_day", 200, "AI requests per person per day", group="limits", min=0, max=100000, strict=True,
+            help="Estimates and chat messages one person can ask for in a day (Home Assistant's day). Deleting "
+                 "entries doesn't give any back. 0 = no limit."),
     # Strict: true/false only (no "yes", 1, …).
     Setting("expose_daily_calories_sensor", True, "Publish daily calories to Home Assistant", group="ha", strict=True,
-            help="Publishes only each person's calories logged today, as sensor.calorie_tracker_<user>_daily_calories "
-                 "— never macros, weight or food names. Turning it on publishes everyone's sensor right away; turning "
-                 "it off removes those sensors from Home Assistant."),
+            help="The household's switch for the sensor.calorie_tracker_<user>_daily_calories sensors: only each "
+                 "person's calories logged today — never macros, weight or food names — and only for people who "
+                 "turned on \"Publish my calories to Home Assistant\" on their Goals page (on for everyone who used "
+                 "the app before that switch existed, off for people new since). Turning this off removes every "
+                 "sensor from Home Assistant; on publishes them right away."),
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant", strict=True,
             help="Lets the Household Assistant tell each person their own day — calories, macros and meals against "
                  "their goals — never anyone else's, and never weight."),
+    Setting("bus_signing_key", "", "App-messages signing key", group="assistant", secret=True, max_length=200,
+            help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+                 "Assistant's network can send messages as any other."),
 ]
 
 
@@ -133,13 +147,36 @@ def normalize_url(v: str) -> str:
 readable = settings_core.by_key           # "<key>: <message>; …" (also the test-connection route's 422)
 
 
+def effective_host(provider, url) -> str:
+    """The host an AI request would go to for this provider and address (blank address = the provider's own)."""
+    provider = provider if isinstance(provider, str) else ""
+    url = url.strip() if isinstance(url, str) else ""
+    try:
+        return (urlsplit(url or DEFAULT_URLS.get(provider, "")).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def key_would_move(partial: dict, current: dict) -> bool:
+    """True when `partial` sends the requests somewhere else (another host or provider) without a new key typed:
+    the saved key was given for the saved address, so it must not follow to a new one."""
+    provider = partial.get("ai_provider", current.get("ai_provider"))
+    url = partial.get("ai_url", current.get("ai_url"))
+    moved = (effective_host(provider, url) != effective_host(current.get("ai_provider"), current.get("ai_url"))
+             or provider != current.get("ai_provider"))
+    return moved and bool(current.get("ai_api_key"))
+
+
 def _prepare(partial: dict, current: dict, flags: dict) -> dict:
-    """A blank ai_api_key keeps the saved key; clear_ai_api_key=true removes it."""
+    """A blank ai_api_key keeps the saved key; clear_ai_api_key=true removes it; a new address or provider without
+    a new key removes it too (the key never follows to another server)."""
     if "ai_api_key" in partial:
         new_key = partial["ai_api_key"]
         if new_key is None or (isinstance(new_key, str) and not new_key.strip()):
             partial.pop("ai_api_key")             # blank box = keep the saved key
     if flags.get("clear_ai_api_key"):
+        partial["ai_api_key"] = ""
+    if "ai_api_key" not in partial and key_would_move(partial, current):
         partial["ai_api_key"] = ""
     return partial
 

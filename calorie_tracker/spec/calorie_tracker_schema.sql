@@ -19,7 +19,18 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,           -- Home Assistant user id (from X-Remote-User-Id)
     name TEXT NOT NULL,            -- Home Assistant display name
     enabled INTEGER NOT NULL DEFAULT 1,  -- 0 = hidden from the in-app switcher
-    created_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT DEFAULT (datetime('now')),
+    assistant_ok INTEGER NOT NULL DEFAULT 1,    -- migration-added: "Let the Household Assistant answer for me"
+    publish_sensor INTEGER NOT NULL DEFAULT 0   -- migration-added: "Publish my calories to Home Assistant"
+                                                -- (existing people seeded from expose_daily_calories_sensor)
+);
+
+-- AI estimates + chat per signed-in person per Home Assistant day (App settings → AI limits).
+CREATE TABLE IF NOT EXISTS ai_usage (
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, day)
 );
 
 -- 1:1 with users. Created with these defaults (INSERT OR IGNORE) when a user is first seen.

@@ -1,5 +1,48 @@
 # Changelog
 
+## 2.3.2
+
+**Security**
+- **AI limits** (Admin → App settings → AI limits): each person can ask for 20 AI estimates or chat messages a minute
+  and 200 a day (0 = no limit), and at most two AI requests run at a time for the whole household; past a limit the
+  page says so plainly. The longest answer is now 2000 tokens by default, for every provider (an admin can raise it).
+- **The access key stays with its address**: changing the AI address or provider without typing the key again clears
+  the saved key, and **Test connection** asks for the key again instead of sending the saved one to the new address.
+- **AI details for admins only**: the AI's address, model, last error and last request are shown to admins; everyone
+  else sees whether it is set up, which provider, and the privacy notice. Errors no longer show the server's address to
+  people who aren't admins.
+- **Your calories sensor is your choice**: **Goals → Publish my calories to Home Assistant**. Everyone who used the app
+  before keeps it as it was (on while the household switch was on); people new from now on start with it off. The
+  household switch in App settings stays the master switch.
+- An AI estimate is checked like a food entry before the page sees it (no negative, huge or missing calories).
+- A food entry can only point to one of the person's own saved foods.
+- Changes an admin makes while acting as someone else are written to the app's log.
+- Requests are capped at 1 MB (a restore at 512 MB), counted even without a Content-Length.
+- The app's image is pinned to one Alpine release (`python:3.12-alpine3.22`, like the other household apps).
+
+**Fixed**
+- **Errors are shown**: a refused entry, goal, weight or saved food (for example a number out of range) now says what is
+  wrong instead of doing nothing; the form fields have the same limits as the server.
+- **"+ log" from a saved food** logs it on the day you're looking at and says which day, and the Food Log list updates.
+- A month that doesn't exist on the Dashboard answers a clear error instead of a server error.
+- Names of only spaces are refused; entries made in the same second keep their order; the Household Assistant
+  recognises foods with non-English letters ("Crème brûlée") whatever their case.
+- Deleting an entry asks first, and the calorie chart updates.
+- The calories sensor goes back to 0 just after midnight instead of up to 15 minutes later, and is published again as
+  soon as the app starts.
+
+**Changed**
+- **Faster pages**: an ordinary page load no longer writes to the database, the app's database work no longer holds up
+  other requests, and the sensor is updated after the answer is sent. Restoring a backup waits for everything else
+  using the database and holds new requests for those few seconds.
+- The Weight page loads your newest 100 weigh-ins, with **Show all** for the rest; month summaries and the calorie chart
+  are added up by the database.
+- Picking a different day no longer reloads your saved foods; adding food refreshes the page's parts together; the
+  charts redraw when the window is resized.
+- **Shared code**: an optional **App-messages signing key** (Admin → App settings → Household Assistant; the same key
+  in every household app) signs the messages between the apps; API answers are never cached by the browser, while the
+  page's scripts and styles are cached until the next version, so it loads faster; database writes are lighter.
+
 ## 2.3.1
 
 - **Servings count**: on the Food Log, the calories, protein, carbs and fat in **Add Food** are for one serving, and the entry adds them up for the servings you type — picking a saved food and typing 2 servings now logs twice its calories (before, it logged one serving's calories marked as 2 servings, and the Household Assistant then counted that food at half its calories). Entries you already added are unchanged.

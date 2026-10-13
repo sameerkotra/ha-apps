@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -9,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import app_messages, db, ha_sync
-from .common import auth_core, deeplinks, web_security
+from .common import auth_core, backup_core, deeplinks, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, ai, goals, logs, me, saved_foods, users, weight
 
@@ -34,8 +35,13 @@ async def lifespan(app: FastAPI):
     # the app open, rather than waiting for their next food log change. Reads
     # the App setting every tick: while publishing is off it pushes nothing
     # (and retries removing the sensors if that failed when it was turned off).
-    jobs.every("ha_sync", 900, ha_sync.periodic_sync, thread=False, at_start=False, log=logger,
+    # At start too, so the sensors are back soon after Home Assistant or the app restarts.
+    jobs.every("ha_sync", 900, ha_sync.periodic_sync, thread=False, at_start=True, log=logger,
                error="Periodic HA sync failed", traceback=False)
+    jobs.add("ha_sync_midnight", ha_sync.midnight_loop)     # a new day's 0 just after local midnight
+    # backup downloads a browser never finished (they are made in the temp folder)
+    jobs.every("sweep", 3600, lambda: backup_core.remove_stale(tempfile.gettempdir(), db.SNAPSHOT_PREFIX, 6 * 3600),
+               at_start=False, log=logger, error="Sweeping old backup downloads failed")
     jobs.start()
     try:
         yield
@@ -45,6 +51,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Calorie Tracker", lifespan=lifespan)
+
+
+@app.exception_handler(TimeoutError)
+async def busy_restoring(request: Request, exc: TimeoutError):
+    """A request that waited the whole db.GATE_TIMEOUT for a restore to finish."""
+    return JSONResponse(status_code=503, content={"detail": "A backup is being restored — try again in a moment."},
+                        headers={"Retry-After": "30"})
 
 
 @app.exception_handler(RequestValidationError)
@@ -80,6 +93,14 @@ app.add_api_route("/foodlog/{a}", lambda a: deeplinks.redirect(["foodlog", a]), 
 # The allowlist (Supervisor's ingress proxy and loopback) is app/common/auth_core.INGRESS_HOSTS.
 
 
+# Request bodies: 1 MB for the JSON routes (counted as they arrive, chunked bodies too); a database restore up to
+# RESTORE_MAX_BYTES. Added before the guard below, so an outsider still gets its 403 first and a 413 still carries
+# the security headers.
+RESTORE_MAX_BYTES = 512 << 20
+app.add_middleware(web_security.BodyLimit, default_max=1 << 20,
+                   routes={"/api/admin-storage-import-db": RESTORE_MAX_BYTES})
+
+
 @app.middleware("http")
 async def require_ha_ingress_auth(request: Request, call_next):
     """The X-Remote-User-* headers auth.py trusts are only trustworthy if
@@ -110,10 +131,9 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 # the browser — it's what points at the versioned style.css?v=.../app.js?v=...
 # below, so a stale cached copy of JUST this one file can make a rebuilt
 # app look like the update never took effect, even after a normal
-# refresh. Static assets themselves aren't touched here: their
-# cache-busting query string (bumped alongside config.yaml's version) is
-# what invalidates them, so they can keep normal caching.
-HEADERS = web_security.SecurityHeaders(CSP, pragma=True)
+# refresh. Every asset the page links carries ?v=<version> (bumped with config.yaml's version), so those are cached
+# for good (static_immutable; the app serves its static files at "/").
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True, static_immutable=True, static_prefixes=("/",))
 HEADERS.install(app)
 
 

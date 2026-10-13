@@ -73,6 +73,7 @@ class ProviderBase(unittest.TestCase):
         for f in glob.glob(config.DB_PATH + "*"):
             os.remove(f)
         db.init_db()
+        ai_client._minute.clear()          # the per-minute AI limit counts per process
         ai_client.forget_state()
         self.fake = FakeAI()
         for p in (mock.patch.object(ai_client, "_post", self.fake),
@@ -102,7 +103,7 @@ class RequestShapes(ProviderBase):
         self.assertEqual(est["url"], "http://ollama.lan:11434/api/generate")
         self.assertEqual(est["headers"], {})                             # no auth for Ollama
         self.assertEqual(est["body"]["format"], "json")
-        self.assertEqual(est["body"]["options"], {"temperature": 0.2})
+        self.assertEqual(est["body"]["options"], {"temperature": 0.2, "num_predict": 2000})   # the answer limit
         self.assertIs(est["body"]["stream"], False)
         self.assertIn('"toast"', est["body"]["prompt"])
         # chat: system prompt + the message; warm now, so no second "hi"
@@ -123,7 +124,8 @@ class RequestShapes(ProviderBase):
         self.assertEqual(sent["body"]["response_format"], {"type": "json_object"})
         self.assertEqual(sent["body"]["messages"][-1]["role"], "user")
         self.assertNotIn(KEY, sent["url"])
-        st = self.c.get("/api/ai/status", headers=ALICE).json()
+        self.assertEqual(sent["body"]["max_tokens"], 2000)
+        st = self.c.get("/api/ai/status", headers=ADMIN).json()          # the last request: admins only
         self.assertEqual((st["last_request"]["input_tokens"], st["last_request"]["output_tokens"]), (900, 40))
         self.assertNotIn(KEY, json.dumps(st))
         self.fake.calls.clear()
@@ -155,7 +157,7 @@ class RequestShapes(ProviderBase):
         self.assertEqual((sent["body"]["max_tokens"], sent["body"]["model"]), (2000, "claude-sonnet-x"))
         content = sent["body"]["messages"][0]["content"]
         self.assertTrue(content[-1]["text"].endswith("Answer with the JSON object only."))
-        st = self.c.get("/api/ai/status", headers=ALICE).json()
+        st = self.c.get("/api/ai/status", headers=ADMIN).json()
         self.assertEqual(st["last_request"]["input_tokens"], 800)         # cache reads count as input
         self.fake.calls.clear()
         self.c.post("/api/ai/chat", json={"message": "hi?"}, headers=ALICE)
@@ -180,12 +182,13 @@ class RequestShapes(ProviderBase):
 
     def test_warmup_only_for_ollama(self):
         self.put(ai_provider="openai", ai_model="gpt-4o", ai_api_key=KEY)
-        r = self.c.post("/api/ai/warmup", headers=ALICE)
+        r = self.c.post("/api/ai/warmup", headers=ADMIN)
         self.assertEqual(r.json(), {"ok": True, "model": "gpt-4o", "skipped": True})
+        self.assertEqual(self.c.post("/api/ai/warmup", headers=ALICE).json()["model"], None)   # the model: admins
         self.assertFalse(self.c.get("/api/ai/status", headers=ALICE).json()["warmup"])
         self.assertEqual(self.requests(), [])
         self.put(ai_provider="ollama", ai_url="http://ollama.lan:11434", ai_model="llama3")
-        self.assertEqual(self.c.post("/api/ai/warmup", headers=ALICE).json(), {"ok": True, "model": "llama3"})
+        self.assertEqual(self.c.post("/api/ai/warmup", headers=ADMIN).json(), {"ok": True, "model": "llama3"})
         self.assertEqual(self.requests()[0]["body"]["prompt"], "hi")
 
     def test_settings_change_applies_to_the_next_request(self):
@@ -203,8 +206,16 @@ class ErrorsAndRetries(ProviderBase):
         super().setUp()
         self.put(ai_provider="openai", ai_model="gpt-4o", ai_api_key=KEY)
 
-    def chat(self):
-        return self.c.post("/api/ai/chat", json={"message": "x"}, headers=ALICE)
+    def chat(self, who=ADMIN):
+        """As an admin: the provider's own message, with the address. Others get a plain one (test below)."""
+        return self.c.post("/api/ai/chat", json={"message": "x"}, headers=who)
+
+    def test_members_are_told_without_the_servers_address(self):
+        self.fake.queue = [urllib.error.URLError("connection refused")]
+        detail = self.chat(ALICE).json()["detail"]
+        self.assertEqual(detail, "The AI couldn't be reached — an admin can check Admin → App settings.")
+        self.fake.queue = [(401, json.dumps({"error": {"message": "bad key"}}), {})]
+        self.assertNotIn("api.openai.com", self.chat(ALICE).json()["detail"])
 
     def test_refused_key_is_explained_without_the_key(self):
         self.fake.queue = [(401, json.dumps({"error": {"message": f"Incorrect API key provided: {KEY}"}}), {})]

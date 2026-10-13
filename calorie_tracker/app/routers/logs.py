@@ -1,7 +1,7 @@
 from calendar import monthrange
 from datetime import date as date_type, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
 from .. import config, db, ha_sync, schemas
 from ..auth import get_acting_user
@@ -23,24 +23,30 @@ def _goals(goal) -> dict:
 
 
 
-async def _sync_today(user: dict, log_date: date_type):
+def _sync_today(background: BackgroundTasks, user: dict, log_date: date_type) -> None:
+    """Today's change: the person's calories sensor, after the answer is sent (never waited for)."""
     if str(log_date) == str(config.today()):
-        await ha_sync.push_for_user(user["id"], user["slug"], user["name"])
+        background.add_task(ha_sync.push_for_user_blocking, user["id"])
 
 
+# Plain functions: FastAPI runs them in the threadpool, so SQLite never blocks the event loop.
 @router.get("/api/logs")
-async def list_logs(log_date: date_type = Query(..., alias="date"), user: dict = Depends(get_acting_user)):
+def list_logs(log_date: date_type = Query(..., alias="date"), user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM food_logs WHERE user_id = ? AND date = ? ORDER BY created_at ASC",
+            "SELECT * FROM food_logs WHERE user_id = ? AND date = ? ORDER BY created_at ASC, id ASC",
             (user["id"], str(log_date)),
         ).fetchall()
     return db.rows_to_list(rows)
 
 
 @router.post("/api/logs")
-async def create_log(payload: schemas.FoodLogCreate, user: dict = Depends(get_acting_user)):
+def create_log(payload: schemas.FoodLogCreate, background: BackgroundTasks, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
+        if payload.saved_food_id is not None and conn.execute(
+                "SELECT 1 FROM saved_foods WHERE id = ? AND user_id = ?",
+                (payload.saved_food_id, user["id"])).fetchone() is None:
+            raise HTTPException(422, "saved_food_id: that saved food doesn't exist (or isn't this person's)")
         cur = conn.execute(
             """INSERT INTO food_logs
                (user_id, date, meal_type, food_name, servings, calories, protein, carbs, fat, saved_food_id)
@@ -53,12 +59,12 @@ async def create_log(payload: schemas.FoodLogCreate, user: dict = Depends(get_ac
         )
         new_id = cur.lastrowid
         row = conn.execute("SELECT * FROM food_logs WHERE id = ?", (new_id,)).fetchone()
-    await _sync_today(user, payload.date)
+    _sync_today(background, user, payload.date)
     return db.row_to_dict(row)
 
 
 @router.delete("/api/logs/{entry_id}")
-async def delete_log(entry_id: int, user: dict = Depends(get_acting_user)):
+def delete_log(entry_id: int, background: BackgroundTasks, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         row = conn.execute(
             "SELECT date FROM food_logs WHERE id = ? AND user_id = ?",
@@ -67,12 +73,12 @@ async def delete_log(entry_id: int, user: dict = Depends(get_acting_user)):
         if not row:
             raise HTTPException(404, "Entry not found")
         conn.execute("DELETE FROM food_logs WHERE id = ?", (entry_id,))
-    await _sync_today(user, date_type.fromisoformat(row["date"]))
+    _sync_today(background, user, date_type.fromisoformat(row["date"]))
     return {"ok": True}
 
 
 @router.get("/api/summary")
-async def get_summary(log_date: date_type = Query(..., alias="date"), user: dict = Depends(get_acting_user)):
+def get_summary(log_date: date_type = Query(..., alias="date"), user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         logs = conn.execute(
             "SELECT calories, protein, carbs, fat FROM food_logs WHERE user_id = ? AND date = ?",
@@ -107,7 +113,7 @@ async def get_summary(log_date: date_type = Query(..., alias="date"), user: dict
 
 
 @router.get("/api/summary/month")
-async def get_month_summary(
+def get_month_summary(
     month: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     user: dict = Depends(get_acting_user),
 ):
@@ -115,6 +121,8 @@ async def get_month_summary(
     picked by the user (not a rolling window like /api/history), split out
     per macro plus weight — /api/history only ever tracks calories."""
     year, mon = int(month[:4]), int(month[5:7])
+    if not (1 <= mon <= 12 and year >= 1):
+        raise HTTPException(422, "month: must be a real month, YYYY-MM with 01–12")
     month_start = date_type(year, mon, 1)
     days_in_month = monthrange(year, mon)[1]
     month_end = month_start.replace(day=days_in_month)
@@ -126,16 +134,18 @@ async def get_month_summary(
 
     with db.get_conn() as conn:
         goal = conn.execute("SELECT * FROM goals WHERE user_id = ?", (user["id"],)).fetchone()
-        logs = conn.execute(
-            "SELECT calories, protein, carbs, fat FROM food_logs WHERE user_id = ? AND date >= ? AND date <= ?",
+        sums = conn.execute(
+            "SELECT COALESCE(SUM(calories), 0) AS calories, COALESCE(SUM(protein), 0) AS protein, "
+            "COALESCE(SUM(carbs), 0) AS carbs, COALESCE(SUM(fat), 0) AS fat "
+            "FROM food_logs WHERE user_id = ? AND date >= ? AND date <= ?",
             (user["id"], str(month_start), str(month_end)),
-        ).fetchall()
+        ).fetchone()
         weight_rows = conn.execute(
             "SELECT weight_kg FROM weight_logs WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date ASC",
             (user["id"], str(month_start), str(month_end)),
         ).fetchall()
 
-    totals = _totals(logs)
+    totals = {k: float(sums[k]) for k in ("calories", "protein", "carbs", "fat")}
     avg_per_day = {k: (round(v / days_elapsed, 1) if days_elapsed else 0.0) for k, v in totals.items()}
 
     goal_out = _goals(goal)
@@ -166,7 +176,7 @@ async def get_month_summary(
 
 
 @router.get("/api/history")
-async def get_history(
+def get_history(
     granularity: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     user: dict = Depends(get_acting_user),
 ):
@@ -189,14 +199,12 @@ async def get_history(
 
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT date, calories FROM food_logs WHERE user_id = ? AND date >= ? AND date <= ?",
+            "SELECT date, SUM(calories) AS calories FROM food_logs WHERE user_id = ? AND date >= ? AND date <= ? "
+            "GROUP BY date",
             (user["id"], str(range_start), str(today)),
         ).fetchall()
 
-    by_day: dict[date_type, float] = {}
-    for r in rows:
-        d = date_type.fromisoformat(r["date"])
-        by_day[d] = by_day.get(d, 0.0) + r["calories"]
+    by_day: dict[date_type, float] = {date_type.fromisoformat(r["date"]): float(r["calories"]) for r in rows}
 
     points = []
 

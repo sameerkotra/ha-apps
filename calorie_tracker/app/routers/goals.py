@@ -12,12 +12,12 @@ def _read(user_id: str):
 
 
 @router.get("")
-async def get_goal(user: dict = Depends(get_acting_user)):
+def get_goal(user: dict = Depends(get_acting_user)):
     return _read(user["id"])
 
 
 @router.put("")
-async def update_goal(payload: schemas.GoalUpdate, user: dict = Depends(get_acting_user)):
+def update_goal(payload: schemas.GoalUpdate, user: dict = Depends(get_acting_user)):
     fields = payload.model_dump(exclude_unset=True)
     if fields:
         set_clause = ", ".join(f"{k} = ?" for k in fields)

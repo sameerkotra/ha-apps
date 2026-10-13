@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.3.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.3.1">
-<link rel="stylesheet" href="common/settings.css?v=2.3.1">
-<link rel="stylesheet" href="style.css?v=2.3.1">
+<script src="common/theme-boot.js?v=2.3.2"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.3.2">
+<link rel="stylesheet" href="common/settings.css?v=2.3.2">
+<link rel="stylesheet" href="style.css?v=2.3.2">
 </head>
 <body>
 <div id="app">
@@ -101,14 +101,14 @@
           </select>
         </div>
         <div class="form-row">
-          <input id="foodName" placeholder="Food name" style="flex:2">
-          <input id="foodServings" type="number" step="0.1" value="1" placeholder="Servings" style="flex:1">
+          <input id="foodName" placeholder="Food name" maxlength="200" style="flex:2">
+          <input id="foodServings" type="number" step="0.1" min="0.1" max="1000" value="1" placeholder="Servings" style="flex:1">
         </div>
         <div class="form-row">
-          <input id="foodCalories" type="number" step="1" placeholder="Calories per serving">
-          <input id="foodProtein" type="number" step="0.1" placeholder="Protein (g) per serving">
-          <input id="foodCarbs" type="number" step="0.1" placeholder="Carbs (g) per serving">
-          <input id="foodFat" type="number" step="0.1" placeholder="Fat (g) per serving">
+          <input id="foodCalories" type="number" step="1" min="0" max="50000" placeholder="Calories per serving">
+          <input id="foodProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g) per serving">
+          <input id="foodCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g) per serving">
+          <input id="foodFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g) per serving">
         </div>
         <div class="form-row">
           <button id="aiFillBtn" class="btn-secondary">✨ Estimate with AI</button>
@@ -137,15 +137,15 @@
         <h3 id="sfFormTitle">Build a Repeated Food</h3>
         <p class="hint">Save foods you eat often (e.g. "Protein Shake", "Chicken & Rice Bowl") so you can add them to your log in one click.</p>
         <div class="form-row">
-          <input id="sfName" placeholder="Food name" style="flex:2">
-          <input id="sfServingSize" type="number" step="0.1" value="1" placeholder="Serving size">
-          <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" value="serving">
+          <input id="sfName" placeholder="Food name" maxlength="200" style="flex:2">
+          <input id="sfServingSize" type="number" step="0.1" min="0.1" max="100000" value="1" placeholder="Serving size">
+          <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" maxlength="40" value="serving">
         </div>
         <div class="form-row">
-          <input id="sfCalories" type="number" step="1" placeholder="Calories">
-          <input id="sfProtein" type="number" step="0.1" placeholder="Protein (g)">
-          <input id="sfCarbs" type="number" step="0.1" placeholder="Carbs (g)">
-          <input id="sfFat" type="number" step="0.1" placeholder="Fat (g)">
+          <input id="sfCalories" type="number" step="1" min="0" max="50000" placeholder="Calories">
+          <input id="sfProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g)">
+          <input id="sfCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g)">
+          <input id="sfFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g)">
         </div>
         <div class="form-row">
           <textarea id="sfNotes" placeholder="Additional details (optional) — recipe, brand, prep notes..." rows="2" style="flex:1"></textarea>
@@ -180,8 +180,8 @@
         <h3>Log Weight</h3>
         <div class="form-row">
           <input id="weightDate" type="date">
-          <input id="weightValue" type="number" step="0.1" placeholder="Weight (kg)">
-          <input id="weightNote" placeholder="Note (optional)" style="flex:2">
+          <input id="weightValue" type="number" step="0.1" min="0.1" max="700" placeholder="Weight (kg)">
+          <input id="weightNote" placeholder="Note (optional)" maxlength="500" style="flex:2">
           <button id="addWeightBtn" class="btn-primary">Log Weight</button>
         </div>
       </div>
@@ -198,6 +198,7 @@
         </div>
         <div class="hint" id="weightHistoryHint"></div>
         <div id="weightList"></div>
+        <button type="button" id="weightShowAllBtn" class="btn-secondary" hidden>Show all</button>
       </div>
     </section>
 
@@ -206,15 +207,15 @@
       <div class="card">
         <h3>Daily Macro Goals</h3>
         <div class="form-row">
-          <label>Calories<input id="goalCalories" type="number"></label>
-          <label>Protein (g)<input id="goalProtein" type="number"></label>
-          <label>Carbs (g)<input id="goalCarbs" type="number"></label>
-          <label>Fat (g)<input id="goalFat" type="number"></label>
+          <label>Calories<input id="goalCalories" type="number" min="0" max="20000"></label>
+          <label>Protein (g)<input id="goalProtein" type="number" min="0" max="5000"></label>
+          <label>Carbs (g)<input id="goalCarbs" type="number" min="0" max="5000"></label>
+          <label>Fat (g)<input id="goalFat" type="number" min="0" max="5000"></label>
         </div>
         <h3>Weight Goal</h3>
         <div class="form-row">
-          <label>Starting Weight (kg)<input id="goalStartWeight" type="number" step="0.1"></label>
-          <label>Target Weight (kg)<input id="goalTargetWeight" type="number" step="0.1"></label>
+          <label>Starting Weight (kg)<input id="goalStartWeight" type="number" step="0.1" min="0.1" max="700"></label>
+          <label>Target Weight (kg)<input id="goalTargetWeight" type="number" step="0.1" min="0.1" max="700"></label>
         </div>
         <button id="saveGoalsBtn" class="btn-primary">Save Goals</button>
       </div>
@@ -224,6 +225,14 @@
         <label class="check-row"><input type="checkbox" id="assistantOk"> Let the Household Assistant answer for me</label>
         <p class="hint">When you ask the Household Assistant app, it can tell you your own day: calories and macros against
           your goals, and what you logged. Never anyone else's, and never your weight.</p>
+      </div>
+      <!-- shown while an admin publishes the calories sensors (App settings); always the signed-in person -->
+      <div class="card" id="sensorCard" hidden>
+        <h3>Home Assistant</h3>
+        <label class="check-row"><input type="checkbox" id="publishSensor"> Publish my calories to Home Assistant</label>
+        <p class="hint">Your calories logged today appear in Home Assistant as a sensor (for dashboards and
+          automations) — only the number, never what you ate, your macros or your weight. Anyone who can see Home
+          Assistant's entities can see it.</p>
       </div>
     </section>
 
@@ -312,7 +321,7 @@
         <h3>Ask a nutrition question</h3>
         <div id="chatHistory" class="chat-history"></div>
         <div class="form-row">
-          <input id="chatInput" placeholder="e.g. Is 150g protein a day too much?" style="flex:3">
+          <input id="chatInput" placeholder="e.g. Is 150g protein a day too much?" maxlength="4000" style="flex:3">
           <button id="chatSendBtn" class="btn-primary">Send</button>
         </div>
       </div>
@@ -321,12 +330,12 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.3.1"></script>
-<script src="common/settings.js?v=2.3.1"></script>
-<script src="common/people.js?v=2.3.1"></script>
-<script src="common/backnav.js?v=2.3.1"></script>
-<script src="common/whoami.js?v=2.3.1"></script>
-<script src="common/deeplink.js?v=2.3.1"></script>
-<script src="app.js?v=2.3.1"></script>
+<script src="common/ui.js?v=2.3.2"></script>
+<script src="common/settings.js?v=2.3.2"></script>
+<script src="common/people.js?v=2.3.2"></script>
+<script src="common/backnav.js?v=2.3.2"></script>
+<script src="common/whoami.js?v=2.3.2"></script>
+<script src="common/deeplink.js?v=2.3.2"></script>
+<script src="app.js?v=2.3.2"></script>
 </body>
 </html>

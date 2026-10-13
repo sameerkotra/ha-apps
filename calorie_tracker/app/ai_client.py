@@ -23,12 +23,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from . import settings
+from . import config, db, schemas, settings
 from .common import ai_client as core
 
 logger = logging.getLogger("ai")
@@ -58,7 +60,7 @@ class Config:
     url: str
     model: str
     api_key: str = field(default="", repr=False)     # never in a repr / log line
-    max_tokens: int = 4096
+    max_tokens: int = 2000
 
     @property
     def label(self) -> str:
@@ -141,17 +143,25 @@ CLIENT = core.Client(post=lambda *a: _post(*a), sleep=lambda s: _sleep(s), log=l
 # ---- the three providers ---------------------------------------------------------------------------
 
 def _ollama(cfg, prompt, system, want_json, temperature, timeout) -> Reply:
-    return CLIENT.ollama(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout)
+    return CLIENT.ollama(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout,
+                         max_tokens=cfg.max_tokens or None)
+
+
+def _openai_fallback(body: dict, text: str) -> bool:
+    """A 400 for JSON mode, the temperature or max_tokens: retry without what the server named."""
+    a = core.fallback_json_and_temperature(body, text)
+    b = core.fallback_temperature_and_max_tokens(body, text)
+    return a or b
 
 
 def _openai(cfg, prompt, system, want_json, temperature, timeout) -> Reply:
     return CLIENT.openai(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout,
-                         fallback=core.fallback_json_and_temperature)
+                         max_tokens=cfg.max_tokens or None, fallback=_openai_fallback)
 
 
 def _anthropic(cfg, prompt, system, want_json, temperature, timeout) -> Reply:
     return CLIENT.anthropic(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout,
-                            limit=cfg.max_tokens or 4096, shrink=core.shrink_to_largest_smaller(4096))
+                            limit=cfg.max_tokens or 2000, shrink=core.shrink_to_largest_smaller(4096))
 
 
 _CALLS = {"ollama": _ollama, "openai": _openai, "anthropic": _anthropic}
@@ -165,19 +175,78 @@ def check_configured(cfg: Config) -> None:
                       "not_configured")
 
 
+# At most MAX_CONCURRENT requests to the model at a time, for the whole household (a slow local model or a cloud
+# bill shouldn't be multiplied by everyone pressing at once); a request waits up to SLOT_WAIT seconds for its turn.
+MAX_CONCURRENT = 2
+SLOT_WAIT = 60
+_slots = threading.BoundedSemaphore(MAX_CONCURRENT)
+BUSY_MESSAGE = "The AI is busy with other requests right now — try again in a minute."
+
+
 def generate(prompt: str, *, system: str | None = None, want_json: bool = False, temperature: float | None = None,
              timeout: float | None = QUERY_TIMEOUT, purpose: str = "AI request", cfg: Config | None = None) -> Reply:
-    """Ask the model once. Raises AIError (a readable message, never the key)."""
+    """Ask the model once (waiting for one of the MAX_CONCURRENT slots). Raises AIError (a readable message,
+    never the key); kind "busy" when no slot came free in time."""
     cfg = cfg or current()
     check_configured(cfg)
-    started = time.monotonic()
+    if not _slots.acquire(timeout=SLOT_WAIT):
+        raise AIError(BUSY_MESSAGE, "busy")
     try:
-        reply = _CALLS[cfg.provider](cfg, prompt, system, want_json, temperature, timeout)
-    except AIError as e:
-        _record(purpose, cfg, None, time.monotonic() - started, error=str(e))
-        raise
-    _record(purpose, cfg, reply, reply.seconds if reply.seconds is not None else time.monotonic() - started)
-    return reply
+        started = time.monotonic()
+        try:
+            reply = _CALLS[cfg.provider](cfg, prompt, system, want_json, temperature, timeout)
+        except AIError as e:
+            _record(purpose, cfg, None, time.monotonic() - started, error=str(e))
+            raise
+        _record(purpose, cfg, reply, reply.seconds if reply.seconds is not None else time.monotonic() - started)
+        return reply
+    finally:
+        _slots.release()
+
+
+# ---- each person's limits (App settings → AI limits) -------------------------------------------------
+
+class LimitReached(Exception):
+    """Too many AI requests from one person: the message is shown as it is (a 429)."""
+
+
+_minute: dict = {}                 # user id -> [time.monotonic() of each request in the last minute]
+_minute_lock = threading.Lock()
+
+
+def take_turn(user_id: str, clock=time.monotonic) -> None:
+    """Count one estimate or chat message for `user_id` (the signed-in person, never "acting as"), or raise
+    LimitReached. The day's count is in the database (ai_usage), so neither a restart nor deleting entries gives
+    any back."""
+    per_minute = int(settings.get("ai_per_minute") or 0)
+    per_day = int(settings.get("ai_per_day") or 0)
+    if per_minute:
+        now = clock()
+        with _minute_lock:
+            recent = [t for t in _minute.get(user_id, ()) if now - t < 60]
+            if len(recent) >= per_minute:
+                _minute[user_id] = recent
+                raise LimitReached(f"Too many AI requests — {per_minute} a minute is the limit. Try again in "
+                                   f"{max(1, int(60 - (now - recent[0])) + 1)} seconds.")
+            recent.append(now)
+            if len(_minute) > 1000:
+                _minute.clear()
+            _minute[user_id] = recent
+    day = config.today().isoformat()
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT requests FROM ai_usage WHERE user_id = ? AND day = ?", (user_id, day)).fetchone()
+        if per_day and row and row["requests"] >= per_day:
+            raise LimitReached(f"That's {per_day} AI requests today, the most App settings allow — more tomorrow.")
+        conn.execute("INSERT INTO ai_usage (user_id, day, requests) VALUES (?, ?, 1) ON CONFLICT(user_id, day) "
+                     "DO UPDATE SET requests = requests + 1", (user_id, day))
+        conn.execute("DELETE FROM ai_usage WHERE day < ?", (config.add_months(config.today(), -1).isoformat(),))
+
+
+def used_today(user_id: str) -> int:
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT requests FROM ai_usage WHERE user_id = ? AND day = ?",
+                           (user_id, config.today().isoformat())).fetchone()
+    return row["requests"] if row else 0
 
 
 def list_models(cfg: Config, timeout: float = TEST_TIMEOUT) -> list[str]:
@@ -225,14 +294,29 @@ def _sync_warmup() -> bool:
         return False
 
 
+_warm_lock = threading.Lock()
+
+
+def warmup_blocking() -> bool:
+    return _sync_warmup()
+
+
 async def warmup() -> bool:
     return await run_in_threadpool(_sync_warmup)
 
 
+def ensure_warm_blocking() -> None:
+    """Warm the Ollama model only if it hasn't answered anything recently — once, however many requests arrive
+    together (the others wait for that one warm-up instead of each sending their own)."""
+    if not (settings.ai_provider() == "ollama" and settings.ai_configured() and not is_warm()):
+        return
+    with _warm_lock:
+        if not is_warm():
+            _sync_warmup()
+
+
 async def ensure_warm() -> None:
-    """Warm the Ollama model only if it hasn't answered anything recently."""
-    if settings.ai_provider() == "ollama" and settings.ai_configured() and not is_warm():
-        await warmup()
+    await run_in_threadpool(ensure_warm_blocking)
 
 
 def _extract_json(text: str) -> dict:
@@ -269,14 +353,32 @@ CHAT_SYSTEM = ("You are a helpful, concise nutrition and fitness assistant embed
                "personal calorie tracking app. Keep answers short and practical.")
 
 
-def _sync_estimate(description: str) -> dict:
-    reply = generate(ESTIMATE_PROMPT.format(description=description), want_json=True, temperature=0.2,
-                     purpose="AI estimate")
+def read_estimate(text: str) -> dict:
+    """The model's answer as checked nutrition facts (schemas.AIEstimate: the same bounds as a food entry, only the
+    known keys), or AIError bad_response."""
     try:
-        return _extract_json(reply.text)
+        return schemas.AIEstimate.model_validate(_extract_json(text)).model_dump()
+    except ValidationError as e:
+        what = "; ".join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors()[:3])
+        raise AIError(f"The model's estimate didn't look right ({what}). Try again or describe the food "
+                      "differently.", "bad_response") from None
     except ValueError as e:
         raise AIError(f"The model's answer couldn't be read as nutrition facts ({e}). Try again or "
                       "describe the food differently.", "bad_response") from None
+
+
+def _sync_estimate(description: str) -> dict:
+    reply = generate(ESTIMATE_PROMPT.format(description=description), want_json=True, temperature=0.2,
+                     purpose="AI estimate")
+    return read_estimate(reply.text)
+
+
+def estimate_blocking(description: str) -> dict:
+    return _sync_estimate(description)
+
+
+def chat_blocking(message: str) -> str:
+    return _sync_chat(message)
 
 
 async def estimate(description: str) -> dict:
@@ -298,22 +400,24 @@ def privacy() -> dict | None:
     return {"label": PROVIDERS.get(settings.ai_provider(), "AI"), "host": settings.ai_host()}
 
 
-def status() -> dict:
-    """GET /api/ai/status — for everyone (no key, ever)."""
+def status(admin: bool = True) -> dict:
+    """GET /api/ai/status (no key, ever). Everyone gets whether it is set up, the provider's name, whether it
+    answered lately and the privacy notice; only admins also get the address, the model, the last error and the
+    last request (they are about the household's server, not the person asking)."""
     cfg = current()
     configured = settings.ai_configured()
-    return {
+    out = {
         "configured": configured,
         "message": None if configured else (
             "Anthropic Claude needs an access key — an admin can add it in Admin → App settings."
             if cfg.provider == "anthropic" and cfg.url and cfg.model and not cfg.api_key else settings.NOT_SET_UP),
         "provider": cfg.provider,
         "providerLabel": cfg.label if cfg.provider in PROVIDERS else None,
-        "url": cfg.url,
-        "model": cfg.model,
         "warmup": cfg.provider == "ollama",
         "last_ok": _last_ok,
-        "last_error": _last_error,
-        "last_request": _last_request,
         "privacy": privacy(),
+        "admin": admin,
     }
+    if admin:
+        out.update(url=cfg.url, model=cfg.model, last_error=_last_error, last_request=_last_request)
+    return out

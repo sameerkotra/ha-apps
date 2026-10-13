@@ -14,6 +14,8 @@ for the full threat-model discussion.
 """
 import logging
 import re
+import threading
+import time
 
 from fastapi import Depends, Query, Request
 
@@ -95,7 +97,40 @@ def _is_admin(user_id: str, display_name: str, username: str | None) -> bool:
     return False
 
 
-async def get_current_user(request: Request) -> dict:
+# {user id: (display name, db.generation, time.monotonic())} of people whose row is known to be up to date, so an
+# ordinary request writes nothing: the row is written only for someone new, a changed display name, or after
+# USER_ROW_FRESH seconds (a check that writes only if something differs). Dropped whenever db.generation changes
+# (startup, a restore).
+USER_ROW_FRESH = 60
+_known_rows: dict = {}
+_known_lock = threading.Lock()
+
+
+def _ensure_user_row(user_id: str, display_name: str) -> None:
+    now = time.monotonic()
+    with _known_lock:
+        known = _known_rows.get(user_id)
+    if known and known[0] == display_name and known[1] == db.generation and now - known[2] < USER_ROW_FRESH:
+        return
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            conn.execute("INSERT INTO users (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+                         (user_id, display_name))
+            conn.execute("INSERT OR IGNORE INTO goals (user_id) VALUES (?)", (user_id,))
+        else:
+            if row["name"] != display_name:
+                conn.execute("UPDATE users SET name = ? WHERE id = ?", (display_name, user_id))
+            if conn.execute("SELECT 1 FROM goals WHERE user_id = ?", (user_id,)).fetchone() is None:
+                conn.execute("INSERT INTO goals (user_id) VALUES (?)", (user_id,))
+    with _known_lock:
+        if len(_known_rows) > 1000:
+            _known_rows.clear()
+        _known_rows[user_id] = (display_name, db.generation, now)
+
+
+def get_current_user(request: Request) -> dict:
+    """The signed-in person. A plain function (FastAPI runs it in the threadpool): it may touch SQLite."""
     ident = auth_core.identity(request)            # the X-Remote-User-* headers (app/common/auth_core.py)
     user_id = ident.user_id
     username = ident.username
@@ -105,31 +140,19 @@ async def get_current_user(request: Request) -> dict:
 
     display_name = display_name or "Home Assistant User"
     is_admin = _is_admin(user_id, display_name, username)
-
-    with db.get_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO users (id, name) VALUES (?, ?)
-            ON CONFLICT(id) DO UPDATE SET name = excluded.name
-            """,
-            (user_id, display_name),
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO goals (user_id) VALUES (?)", (user_id,)
-        )
-        slug = sensor_slug(conn, user_id, display_name)
+    _ensure_user_row(user_id, display_name)
 
     return {
         "id": user_id,
         "name": display_name,
-        "slug": slug,
         "is_admin": is_admin,
         # kept for the "How the app sees you" page (routers/me.py)
         "username": username,
     }
 
 
-async def get_acting_user(
+def get_acting_user(
+    request: Request,
     as_user: str | None = Query(default=None, alias="as_user"),
     current: dict = Depends(get_current_user),
 ) -> dict:
@@ -139,7 +162,8 @@ async def get_acting_user(
     someone else — everyone else always acts as themselves, full stop,
     regardless of what `as_user` says. This check happens here, server-side,
     on every data request; the frontend hiding the switcher UI for
-    non-admins is a convenience, not the actual enforcement.
+    non-admins is a convenience, not the actual enforcement. A change made
+    while acting as someone else is written to the app's log (who, as whom, what).
     """
     if not as_user or as_user == current["id"]:
         return current
@@ -153,15 +177,17 @@ async def get_acting_user(
         row = conn.execute(
             "SELECT id, name FROM users WHERE id = ?", (as_user,)
         ).fetchone()
-        slug = sensor_slug(conn, row["id"], row["name"]) if row else None
 
     if not row:
         return current
 
-    return {"id": row["id"], "name": row["name"], "slug": slug, "is_admin": current["is_admin"]}
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        logger.info("Admin %s (%s) acting as %s (%s): %s %s", current["name"], current["id"], row["name"], row["id"],
+                    request.method, request.url.path)
+    return {"id": row["id"], "name": row["name"], "is_admin": current["is_admin"], "acted_by": current["id"]}
 
 
-async def require_admin(current: dict = Depends(get_current_user)) -> dict:
+def require_admin(current: dict = Depends(get_current_user)) -> dict:
     auth_core.require_admin_flag(current["is_admin"],
                                  "Only admins can do this. See admin_users on the app's Configuration tab.")
     return current

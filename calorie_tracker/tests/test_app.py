@@ -56,6 +56,7 @@ class ApiBase(unittest.TestCase):
         for f in glob.glob(config.DB_PATH + "*"):
             os.remove(f)
         db.init_db()
+        ai_client._minute.clear()          # the per-minute AI limit counts per process
         for h in (ADMIN, ALICE, BOB):
             self.assertEqual(self.c.get("/api/me", headers=h).status_code, 200)
 
@@ -312,8 +313,8 @@ class FrontendEscaping(unittest.TestCase):
 # (Provider request shapes, retries and the access key: test_ai_providers.py.)
 # ---------------------------------------------------------------------------
 
-DEFAULT_VALUES = {"ai_provider": "", "ai_url": "", "ai_model": "", "ai_max_tokens": 4096,
-                  "expose_daily_calories_sensor": True, "assistant_answers": True}
+DEFAULT_VALUES = {"ai_provider": "", "ai_url": "", "ai_model": "", "ai_max_tokens": 2000, "ai_per_minute": 20,
+                  "ai_per_day": 200, "expose_daily_calories_sensor": True, "assistant_answers": True}
 
 
 class AppSettingsApi(ApiBase):
@@ -329,11 +330,11 @@ class AppSettingsApi(ApiBase):
         self.assertEqual(set(j["meta"]), set(settings.DEFAULTS))
         # meta describes each field for the shared page (common/static/settings.js); none needs a restart
         self.assertTrue(all(m["restartRequired"] is False for m in j["meta"].values()))
-        self.assertTrue(all(m["label"] and m["group"] in {"ai", "ha", "assistant"} for m in j["meta"].values()))
-        self.assertEqual([g["id"] for g in j["groups"]], ["ai", "ha", "assistant"])
+        self.assertTrue(all(m["label"] and m["group"] in {"ai", "limits", "ha", "assistant"} for m in j["meta"].values()))
+        self.assertEqual([g["id"] for g in j["groups"]], ["ai", "limits", "ha", "assistant"])
         self.assertEqual(j["meta"]["ai_api_key"]["kind"], "secret")
         self.assertEqual((j["meta"]["ai_max_tokens"]["min"], j["meta"]["ai_max_tokens"]["max"]), (256, 200000))
-        self.assertEqual(j["secretsSet"], {"ai_api_key": False})
+        self.assertEqual(j["secretsSet"], {"ai_api_key": False, "bus_signing_key": False})
         self.assertEqual(j["secrets"], {"ai_api_key": {"saved": False, "hint": ""}})
         self.assertEqual(j["providers"]["openai"]["defaultUrl"], "https://api.openai.com/v1")
         self.assertEqual(j["providers"]["anthropic"]["defaultUrl"], "https://api.anthropic.com")
@@ -419,7 +420,7 @@ class AppSettingsApi(ApiBase):
         r = self.c.post("/api/admin-storage-import-db", headers=ADMIN, files={"file": ("x.db", io.BytesIO(snap))})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(settings.get("ai_model"), "from-backup")
-        self.assertEqual(self.c.get("/api/ai/status", headers=ALICE).json()["model"], "from-backup")
+        self.assertEqual(self.c.get("/api/ai/status", headers=ADMIN).json()["model"], "from-backup")
 
     def test_older_backup_without_settings_table_gets_it_on_restore(self):
         self.put({"ai_provider": "openai", "ai_model": "gpt-4o-mini"})
@@ -484,7 +485,7 @@ class OldOllamaRowsMigrate(ApiBase):
             with open(path, "rb") as f:
                 r = self.c.post("/api/admin-storage-import-db", headers=ADMIN, files={"file": ("old.db", f)})
             self.assertEqual(r.status_code, 200, r.text)
-            st = self.c.get("/api/ai/status", headers=ALICE).json()
+            st = self.c.get("/api/ai/status", headers=ADMIN).json()
             self.assertEqual((st["provider"], st["url"], st["model"], st["configured"]),
                              ("ollama", "http://10.0.0.9:11434", "llama3:8b", True))
         finally:
@@ -633,6 +634,13 @@ class DailyCaloriesSensor(ApiBase):
         ha_sync._published.clear()
         ha_sync._removal_pending = False
         self.today = str(config.today())
+        self.opt_in()
+
+    def opt_in(self, *who):
+        """Each person's own "Publish my calories to Home Assistant" (Goals): on for these tests' people."""
+        for h in who or (ADMIN, ALICE, BOB):
+            self.assertEqual(self.c.put("/api/me/sensor", json={"publishSensor": True}, headers=h).status_code, 200)
+        self.ha.calls.clear()
 
     def put(self, value, h=ADMIN):
         return self.c.put("/api/admin/settings", json={"expose_daily_calories_sensor": value}, headers=h)
@@ -745,13 +753,15 @@ class DailyCaloriesSensor(ApiBase):
         # keeps the plain name, so nobody's existing sensor is renamed
         for uid, name in (("u_asha1", "Asha K"), ("u_asha2", "Asha-K")):
             self.assertEqual(self.c.get("/api/me", headers=hdr(uid, name)).status_code, 200)
+            self.opt_in(hdr(uid, name))
+        for uid, name in (("u_asha1", "Asha K"), ("u_asha2", "Asha-K")):
             self.log(hdr(uid, name), date=self.today, calories=100)
         posted = {e for e, _ in self.ha.of("POST")}
         self.assertEqual(posted, {"sensor.calorie_tracker_asha_k_daily_calories",
                                   "sensor.calorie_tracker_asha_k_uasha2_daily_calories"})
         with db.get_conn() as conn:                              # names with no Latin letters (from Home Assistant)
-            conn.execute("INSERT INTO users (id, name, created_at) VALUES ('u_hi1', 'आशा', '2030-01-01 00:00:00'), "
-                         "('u_hi2', 'रवि', '2030-01-01 00:00:01')")
+            conn.execute("INSERT INTO users (id, name, created_at, publish_sensor) VALUES "
+                         "('u_hi1', 'आशा', '2030-01-01 00:00:00', 1), ('u_hi2', 'रवि', '2030-01-01 00:00:01', 1)")
         self.ha.calls.clear()
         import asyncio
         asyncio.run(ha_sync.push_all())

@@ -6,7 +6,7 @@ router = APIRouter(prefix="/api/saved-foods", tags=["saved-foods"])
 
 
 @router.get("")
-async def list_saved_foods(user: dict = Depends(get_acting_user)):
+def list_saved_foods(user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM saved_foods WHERE user_id = ? ORDER BY name ASC",
@@ -16,7 +16,7 @@ async def list_saved_foods(user: dict = Depends(get_acting_user)):
 
 
 @router.post("")
-async def create_saved_food(payload: schemas.SavedFoodCreate, user: dict = Depends(get_acting_user)):
+def create_saved_food(payload: schemas.SavedFoodCreate, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO saved_foods
@@ -34,7 +34,7 @@ async def create_saved_food(payload: schemas.SavedFoodCreate, user: dict = Depen
 
 
 @router.put("/{food_id}")
-async def update_saved_food(food_id: int, payload: schemas.SavedFoodCreate, user: dict = Depends(get_acting_user)):
+def update_saved_food(food_id: int, payload: schemas.SavedFoodCreate, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         cur = conn.execute(
             """UPDATE saved_foods SET name=?, serving_size=?, serving_unit=?,
@@ -52,7 +52,7 @@ async def update_saved_food(food_id: int, payload: schemas.SavedFoodCreate, user
 
 
 @router.delete("/{food_id}")
-async def delete_saved_food(food_id: int, user: dict = Depends(get_acting_user)):
+def delete_saved_food(food_id: int, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         cur = conn.execute(
             "DELETE FROM saved_foods WHERE id = ? AND user_id = ?",

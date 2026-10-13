@@ -11,7 +11,7 @@ class UserToggle(BaseModel):
 
 
 @router.get("")
-async def list_users(user: dict = Depends(require_admin)):
+def list_users(user: dict = Depends(require_admin)):
     """Every Home Assistant user who has opened this app at least once —
     used to populate the switcher and the Users tab. Admin-only: this list
     (and the enable/disable toggle below) is how switching is managed, so
@@ -28,7 +28,7 @@ async def list_users(user: dict = Depends(require_admin)):
 
 
 @router.put("/{target_id}")
-async def set_enabled(target_id: str, payload: UserToggle, user: dict = Depends(require_admin)):
+def set_enabled(target_id: str, payload: UserToggle, user: dict = Depends(require_admin)):
     """Enable/disable a user in the switcher dropdown. This only affects
     visibility in the dropdown — it does not lock anyone out of their own
     data under their own Home Assistant login, and does not delete anything."""

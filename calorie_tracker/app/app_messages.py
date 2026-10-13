@@ -20,7 +20,14 @@ def start() -> None:
     config.INGRESS_PANEL = assist_tools.sidebar_page(SLUG, token=config.SUPERVISOR_TOKEN,
                                                      supervisor_api=config.SUPERVISOR_API)
     bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, db=db.get_conn, outbox_thread=bool(config.SUPERVISOR_TOKEN),
-              api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
+              api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN,
+              signing_key=_signing_key)
+
+
+def _signing_key() -> str:
+    """Admin → App settings → App-messages signing key (empty = messages aren't signed), read live."""
+    from . import settings
+    return settings.get("bus_signing_key") or ""
 
 
 def stop() -> None:
