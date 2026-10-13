@@ -7,6 +7,7 @@ import os
 import sqlite3
 import threading
 import uuid
+from contextlib import contextmanager
 
 from . import config
 from .common import app_bus, db_core
@@ -226,6 +227,30 @@ CREATE TABLE IF NOT EXISTS folder_files (
   rel TEXT NOT NULL, size INTEGER NOT NULL, mtime REAL NOT NULL,
   PRIMARY KEY (folder_id, rel)
 );
+-- the bytes of every attachment, kept by the triggers below (the folder's limit is checked on every upload)
+CREATE TABLE IF NOT EXISTS file_usage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);
+CREATE TRIGGER IF NOT EXISTS attachments_usage_ai AFTER INSERT ON attachments BEGIN
+  UPDATE file_usage SET bytes = bytes + new.size WHERE id = 1;
+END;
+CREATE TRIGGER IF NOT EXISTS attachments_usage_ad AFTER DELETE ON attachments BEGIN
+  UPDATE file_usage SET bytes = bytes - old.size WHERE id = 1;
+END;
+CREATE TRIGGER IF NOT EXISTS attachments_usage_au AFTER UPDATE OF size ON attachments BEGIN
+  UPDATE file_usage SET bytes = bytes - old.size + new.size WHERE id = 1;
+END;
+-- files whose messages were deleted by age while "Keep the files" is on: still in the chat's folder, so still
+-- counted (in the folder's size and on the Storage page) until the chat is deleted or the file is gone
+CREATE TABLE IF NOT EXISTS kept_files (
+  rel_path TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  size INTEGER NOT NULL, kept_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS kept_files_usage_ai AFTER INSERT ON kept_files BEGIN
+  UPDATE file_usage SET bytes = bytes + new.size WHERE id = 1;
+END;
+CREATE TRIGGER IF NOT EXISTS kept_files_usage_ad AFTER DELETE ON kept_files BEGIN
+  UPDATE file_usage SET bytes = bytes - old.size WHERE id = 1;
+END;
 CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS audit_log (
   id TEXT PRIMARY KEY, user_id TEXT, actor_id TEXT, conversation_id TEXT,
@@ -248,20 +273,58 @@ END;
 # Set while an admin restore swaps the database file: requests get 503 and background jobs wait.
 RESTORING = threading.Event()
 
+# Every connection is opened inside GATE.work(): a restore (maintenance()) waits for the ones open to end
+# and holds new ones until the new file is in place — a connection opened before the swap would otherwise
+# go on writing to the old, unlinked file, and those writes would be lost (common/db_core.MaintenanceGate).
+GATE = db_core.MaintenanceGate()
+WORK_WAIT = 120                       # a connection waits at most this long for a restore to finish
+_inside = threading.local()           # this thread's open connections (a nested one doesn't wait again)
+
 
 def new_id() -> str:
     return uuid.uuid4().hex
 
 
 def _connect() -> sqlite3.Connection:
-    # secure_delete: deleted rows are overwritten, not just marked free (disappearing messages, SPEC §15.8)
+    # secure_delete: deleted rows are overwritten, not just marked free (disappearing messages, SPEC §15.8).
+    # synchronous NORMAL: the database is in WAL mode, where that never corrupts it (a power cut can lose the
+    # last moment's commits) and saves a disk flush on every commit.
     return db_core.connect(config.DB_PATH, timeout=30, check_same_thread=False,
-                           pragmas=("foreign_keys = ON", "busy_timeout = 30000", "secure_delete = ON"))
+                           pragmas=("foreign_keys = ON", "busy_timeout = 30000", "secure_delete = ON",
+                                    "synchronous = NORMAL"))
 
 
+@contextmanager
 def get_conn():
-    """A connection that commits when the block ends (and rolls back on an error) — app/common/db_core.py."""
-    return db_core.transaction(_connect)
+    """A connection that commits when the block ends (and rolls back on an error) — app/common/db_core.py.
+    Waits while a restore swaps the database (GATE)."""
+    if getattr(_inside, "depth", 0):
+        _inside.depth += 1
+        try:
+            with db_core.transaction(_connect) as conn:
+                yield conn
+        finally:
+            _inside.depth -= 1
+        return
+    with GATE.work(timeout=WORK_WAIT):
+        _inside.depth = getattr(_inside, "depth", 0) + 1
+        try:
+            with db_core.transaction(_connect) as conn:
+                yield conn
+        finally:
+            _inside.depth -= 1
+
+
+@contextmanager
+def maintenance(timeout: float = 60):
+    """Run alone: waits (at most `timeout` s, then TimeoutError) for every open connection to end and holds new
+    ones until the block ends. This thread's own connections go ahead."""
+    with GATE.pause(timeout=timeout):
+        _inside.depth = getattr(_inside, "depth", 0) + 1
+        try:
+            yield
+        finally:
+            _inside.depth -= 1
 
 
 MIGRATIONS = {
@@ -280,6 +343,9 @@ MIGRATIONS = {
 
 def _migrate(conn) -> None:
     """Columns that older databases lack (CREATE TABLE IF NOT EXISTS never adds them)."""
+    # the attachments' total, the first time (afterwards the triggers keep it)
+    conn.execute("INSERT OR IGNORE INTO file_usage (id, bytes) SELECT 1, (SELECT COALESCE(SUM(size), 0) FROM attachments) "
+                 "+ (SELECT COALESCE(SUM(size), 0) FROM kept_files)")
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     db_core.add_missing_columns(conn, {t: cols for t, cols in MIGRATIONS.items() if t in tables})
     conn.execute("CREATE INDEX IF NOT EXISTS idx_msg_expires ON messages(expires_at) WHERE expires_at IS NOT NULL")

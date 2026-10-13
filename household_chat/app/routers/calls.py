@@ -1,7 +1,7 @@
 """Voice calls (SPEC §15.12): start, offer, answer, decline, end, network candidates, and my call."""
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import Field
 
 from .. import calls, settings
@@ -47,8 +47,9 @@ def chat_for_people(body: PeopleIn, user: dict = Depends(require_user)):
 
 
 @router.get("/calls/current")
-def current(user: dict = Depends(require_user)):
-    return {"call": calls.current(user)}
+def current(since: int = Query(default=0, ge=0), ice: bool = True, user: dict = Depends(require_user)):
+    """`since`: the last signal this page has; `ice=0`: it has the STUN/relay addresses already."""
+    return {"call": calls.current(user, since, ice)}
 
 
 @router.post("/calls/{call_id}/answer")

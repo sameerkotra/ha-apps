@@ -2,11 +2,15 @@
 
 The page has no scripts and every value is escaped. Disappearing messages are left out, and so are
 files beyond the size cap (the page says what was left out)."""
+import contextlib
 import html
 import os
 import re
 import tempfile
+import threading
 import zipfile
+
+from fastapi import HTTPException
 
 from . import chats, config, db, files, settings
 
@@ -26,6 +30,9 @@ def _inline(s: str, depth: int = 0) -> str:
     out = []
     i = 0
     word = re.compile(r"\w", re.U)
+    # a mark (* _ ~) whose search for a closing one reached the end with none from position p: no opener at or
+    # after p can find one either, so it isn't searched again (`*a *a *a …` stays linear)
+    no_closer: dict = {}
     while i < len(s):
         c = s[i]
         prev = s[i - 1] if i else ""
@@ -42,12 +49,14 @@ def _inline(s: str, depth: int = 0) -> str:
             out.append(f'<a href="{html.escape(href, quote=True)}" rel="noopener noreferrer">{html.escape(u)}</a>')
             i += len(u)
             continue
-        if c in "*_~" and depth < 6 and not word.match(prev or " ") and i + 1 < len(s) and not s[i + 1].isspace() and s[i + 1] != c:
+        if (c in "*_~" and depth < 6 and not word.match(prev or " ") and i + 1 < len(s) and not s[i + 1].isspace()
+                and s[i + 1] != c and i < no_closer.get(c, len(s))):
             k = i + 2
             found = -1
             while True:
                 k = s.find(c, k)
                 if k < 0:
+                    no_closer[c] = i
                     break
                 if not s[k - 1].isspace() and not word.match(s[k + 1] if k + 1 < len(s) else " "):
                     found = k
@@ -72,6 +81,7 @@ def render_text(text: str) -> str:
             out.append('<div class="p">' + "<br>".join(_inline(x) for x in para) + "</div>")
             para.clear()
     i = 0
+    unclosed_from = len(lines) + 1      # a ``` opened at or after this line has no closing line below (searched once)
     while i < len(lines):
         t = lines[i].strip()
         if t.startswith("```"):
@@ -81,9 +91,13 @@ def render_text(text: str) -> str:
                 out.append(f"<pre>{html.escape(t[3:-3])}</pre>")
                 i += 1
                 continue
+            if i >= unclosed_from:
+                j = len(lines)
             while j < len(lines) and not lines[j].rstrip().endswith("```"):
                 body.append(lines[j])
                 j += 1
+            if j >= len(lines):
+                unclosed_from = min(unclosed_from, i)
             if j < len(lines):
                 body.append(lines[j].rstrip()[:-3])
                 out.append(f"<pre>{html.escape(chr(10).join(body).strip(chr(10)))}</pre>")
@@ -113,9 +127,38 @@ def render_text(text: str) -> str:
     return "".join(out)
 
 
+# Making a download writes a zip of up to `export_max_mb` under /data: one at a time per person, two at a
+# time in all, ten an hour per person, and never when it would leave the disk short of free space.
+MAX_RUNNING = 2
+BATCH = 500                                   # messages read from the database at a time
+export_limit = chats.RateLimit(10, 3600)
+_running: set = set()
+_run_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def _slot(uid: str):
+    with _run_lock:
+        if uid in _running:
+            raise HTTPException(429, "Your chat download is still being made — wait for it to finish.")
+        if len(_running) >= MAX_RUNNING:
+            raise HTTPException(503, "Other chat downloads are being made right now. Try again in a minute.")
+        _running.add(uid)
+    try:
+        yield
+    finally:
+        with _run_lock:
+            _running.discard(uid)
+
+
 def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) -> tuple[str, str]:
     """→ (path of a temporary zip under /data, download name)."""
-    e = html.escape
+    with _slot(user["id"]):
+        export_limit.take(user["id"])
+        return _build(conv_id, user, date_from, date_to)
+
+
+def _build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) -> tuple[str, str]:
     cap = settings.get("export_max_mb") * 1024 * 1024
     with db.get_conn() as conn:
         chats.access(conn, conv_id, user)
@@ -134,18 +177,47 @@ def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) 
         if date_to:
             where += " AND created_at < ?"
             args.append(config.iso(datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=config.tz()) + timedelta(days=1)))
-        rows = conn.execute("SELECT * FROM messages WHERE conversation_id = ? AND id > ? AND expires_at IS NULL" + where +
-                            " ORDER BY id", (conv_id, m["joined_message_id"], *args)).fetchall()
-        msgs = chats.messages_out(conn, rows, user["id"], m["joined_message_id"])
+        vf = m["joined_message_id"]
         att_rows = {a["id"]: a for a in conn.execute(
             "SELECT * FROM attachments WHERE conversation_id = ? AND message_id IS NOT NULL", (conv_id,))}
         disappearing_ids = {r["id"] for r in conn.execute(
             "SELECT id FROM messages WHERE conversation_id = ? AND expires_at IS NOT NULL", (conv_id,))}
         skipped_disappearing = conn.execute("SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND id > ? "
-                                            "AND expires_at IS NOT NULL", (conv_id, m["joined_message_id"])).fetchone()[0]
+                                            "AND expires_at IS NOT NULL", (conv_id, vf)).fetchone()[0]
         db.audit(conn, "exported", user["id"], conv_id, user["id"])
+    # room for the zip: at most the cap of files, and the page
+    files.check_free_space(config.DATA_DIR, min(cap, sum(a["size"] for a in att_rows.values())) + 16 * 1024 * 1024,
+                           "the app's data folder")
+    query = ("SELECT * FROM messages WHERE conversation_id = ? AND id > ? AND expires_at IS NULL" + where +
+             " ORDER BY id LIMIT ?")
+
+    def batches():
+        """The messages as the page shows them, BATCH at a time (a long chat isn't held in memory twice)."""
+        after = vf
+        while True:
+            with db.get_conn() as conn:
+                rows = conn.execute(query, (conv_id, after, *args, BATCH)).fetchall()
+                out = chats.messages_out(conn, rows, user["id"], vf)
+            yield from out
+            if len(rows) < BATCH:
+                return
+            after = rows[-1]["id"]
+
     fd, tmp = tempfile.mkstemp(prefix=".export-", suffix=".zip", dir=config.DATA_DIR)
     os.close(fd)
+    try:
+        return tmp, _write_zip(tmp, batches(), title, att_rows, disappearing_ids, skipped_disappearing, cap,
+                               date_from, date_to)
+    except BaseException:
+        try:
+            os.remove(tmp)                     # never left behind in /data
+        except OSError:
+            pass
+        raise
+
+
+def _write_zip(tmp, msgs, title, att_rows, disappearing_ids, skipped_disappearing, cap, date_from, date_to) -> str:
+    e = html.escape
     used, left_out = 0, []
     names_in_zip: set = set()
     body = []
@@ -176,7 +248,7 @@ def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) 
                 parts.append('<div class="del">Message deleted</div>')
             elif msg["call"]:
                 cl = msg["call"]
-                parts.append(f'<div class="poll">{e(chats.call_label(cl["outcome"], cl["seconds"]))}</div>')
+                parts.append(f'<div class="poll">{e(chats.call_label(cl["outcome"], cl["seconds"], cl.get("kind") or "audio", bool(cl.get("group"))))}</div>')
             elif msg["card"]:
                 cd = msg["card"]
                 owner = f" ({cd['owner']}'s)" if cd.get("owner") else ""
@@ -206,8 +278,12 @@ def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) 
                         parts.append(f'<div class="hint">📎 {e(a["name"])} — left out (size limit)</div>')
                         continue
                     arc = files.unique_name_in(names_in_zip, files.clean(a["name"], 120))
+                    try:
+                        z.write(src, "files/" + arc)
+                    except OSError:                  # gone (or unreadable) since it was looked at
+                        parts.append(f'<div class="hint">📎 {e(a["name"])} — no longer available</div>')
+                        continue
                     names_in_zip.add(arc)
-                    z.write(src, "files/" + arc)
                     used += size
                     href = "files/" + arc.replace("%", "%25").replace("#", "%23").replace("?", "%3F")
                     if a["image"]:
@@ -229,4 +305,4 @@ def build(conv_id: str, user: dict, date_from: str | None, date_to: str | None) 
                 + "".join(f'<p class="hint">{e(n)}</p>' for n in notes) + "".join(body) + "</body></html>")
         page_name = files.clean(title, 80) + ".html"
         z.writestr(page_name, page)
-    return tmp, files.clean(f"{title} chat.zip", 100)
+    return files.clean(f"{title} chat.zip", 100)

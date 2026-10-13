@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.6.4
+
+### Security
+
+- **Pictures are checked before they're opened**: an image of more than 40 million pixels (a JPEG photo: 200 million, it's read scaled down) is shared as a plain file without a preview, instead of being decoded — a tiny file can claim to be gigapixels. At most two pictures are processed at a time.
+- **The chat folder has a limit by default: 50 GB** (Admin → App settings → Files; 0 = no limit). An install that already holds more and never chose a limit keeps "no limit". The limit is checked again with a file's real size once it has arrived, and files waiting to be sent count.
+- **New setting "Keep this much disk space free"** (default 1 GB): uploads (also into shared folders), new folders, chat downloads and backups are refused when they'd leave less free space than that.
+- Each person can have at most two messages' worth of files uploaded and not sent (1000 MB with the default 50 MB files).
+- Chat downloads: one at a time per person, two at a time in all, ten an hour per person. New folders in a shared folder: 30 a minute.
+- Requests without a stated size are counted as they arrive, so the size limits can't be stepped round.
+- Only a group's owner can change another group admin's role (a group admin can still step down). A group can't be handed over to a child.
+- A mention counts only when the `@Name` is in the message, and `@everyone` only from an adult.
+- The phone's **Reply** button works once, like Mark as read: after a reply the chat's notification comes back quietly with your reply and new buttons, so you can carry on from the lock screen; replaying an old action does nothing.
+- At most 10 open pages per person get live updates (an eleventh makes the oldest one check every few seconds instead), and "typing…" goes out at most every 3 seconds.
+- An announcement's reminder no longer reaches people who turned their notifications off.
+- Messages made of thousands of `*`, `_`, backticks or brackets no longer slow the page or a chat download down.
+- Relay usage a phone reports is capped at what the call could have carried.
+- **New setting "App-messages signing key"** (Admin → App settings → Messages between apps, empty by default): put the same key in every household app and messages between them are signed; without it nothing changes. It isn't included in backups.
+
+### Changed
+
+- **Faster with many chats**: the chat list, catching up after a reconnect, starred messages and Admin → Chats each take a handful of database queries instead of several per chat; who's online is sent as one person's change instead of every page reloading everyone; a reaction, an edit or a new message changes only its own message on the page (a voice message that's playing keeps playing).
+- Signing in no longer writes to the database on every request (only when your name changed or every two minutes), and that's done off the main thread.
+- Uploads are written to disk a megabyte at a time without holding up the app; files are moved and folders renamed after the database change is saved, never while it's being written.
+- A call relay that fails isn't asked again for a minute, and a page in a call doesn't fetch the relay's addresses every second.
+- The disappearing-message folders are swept, and the search index fully tidied, every 5 minutes (and after each expiry a small step), instead of every 20 seconds.
+- Chat files are checked with the server each time they're shown (cached copies are confirmed, not kept for an hour), so a deleted file disappears at once.
+- **Shared code**: the app can sign its messages to the other household apps with an optional key (above); API answers are never stored by the browser; the app's script and style files are cached until the next version, so pages open faster; the database saves with one disk flush less per change.
+
+### Fixed
+
+- Two files with the same name sent at the same moment could end up as one; each now keeps its own name. The same file sent twice at once goes into one message only.
+- A failed chat download or backup no longer leaves a large temporary file in the app's data folder, and leftovers are removed at start-up and hourly. A file that disappears while a chat download is made is listed as no longer available instead of failing it.
+- The nightly clean-up (old messages, `_deleted`, missing files) no longer skips a night when the app restarted or was off at 03:30.
+- Notifications held for quiet hours or batching are no longer lost when the app restarts.
+- Messages deleted by age: replies to them say "Original message no longer available", open pages drop them at once, and their kept files still count on the Storage page and towards the folder's limit.
+- A restore waits for what's running to finish instead of half a second, so nothing is written into the replaced database (it says the app is busy if that takes over a minute).
+- A second tab polling during a call no longer takes the call's connection details away from the tab that's in it.
+- A failed upload removes its file whatever went wrong. A chat download now names video and group calls as such.
+- The base image is pinned to one Alpine release.
+
 ## 2.6.3
 
 - **Calls follow the group**: someone removed from a group — or who leaves it — while its call rings or is on is now taken out of that call straight away (the others see them leave, as when someone hangs up), and can no longer answer or rejoin it.

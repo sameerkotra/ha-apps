@@ -274,7 +274,7 @@ function mentionCandidates(q) {
   const d = state.detail;
   if (!d || d.kind === "personal") return [];
   const list = d.members.filter((m) => m.id !== state.me.id && !m.disabled).map((m) => ({ id: m.id, name: m.name }));
-  if (d.kind === "group") list.push({ id: "everyone", name: "everyone" });
+  if (d.kind === "group" && !isChild()) list.push({ id: "everyone", name: "everyone" });     // @everyone: adults only
   const ql = q.toLowerCase();
   return list.filter((m) => m.name.toLowerCase().startsWith(ql) || m.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(ql))).slice(0, 8);
 }

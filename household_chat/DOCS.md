@@ -26,7 +26,7 @@ Nobody is ever made an admin automatically, not even the first person to open th
 - **📌 My room** is a chat with only yourself: notes, links, reminders and documents (a passport scan, a warranty). Nobody else can see it in the app, admins included — but like every chat it isn't encrypted (see *Who can see what*). It's always first in the chat list and shows your own picture (📌 without one). It has files, pins, stars, reminders, search, voice memos, a description, disappearing notes and downloads, but no members, polls, announcements, reactions or send later, and it never notifies you.
 - **Direct messages** (＋ → 💬 Direct message): one chat per pair. The other person only sees it once it has a message.
 - **Groups** (＋ → 👥 New group): a name, an emoji and people.
-  - The creator is the **owner**, who can make others **group admins** and hand over ownership (**Make owner**).
+  - The creator is the **owner**, who can make others **group admins** and hand over ownership (**Make owner**, to an adult). Group admins can make members group admins too; only the owner can take that back from another group admin.
   - Owners and group admins rename the group, change its emoji and description, and add or remove people.
   - Anyone can leave. When the owner leaves, ownership passes to the oldest group admin, else the oldest member.
   - The owner can delete the group for everyone by typing its name. Its files are moved to `_deleted` and removed after 30 days.
@@ -41,7 +41,7 @@ Nobody is ever made an admin automatically, not even the first person to open th
 
 - **Sending**: Enter sends, Shift+Enter starts a new line (on a phone, use the send button).
 - **Formatting**: `*bold*`, `_italic_`, `~strike~`, `` `code` ``, ```` ```block``` ````, lists (`- ` or `1. `) and quotes (`> `). ＋ → Aa Formatting shows them. Links become clickable.
-- **@mentions**: type `@` and pick a name, or `@everyone` in a group.
+- **@mentions**: type `@` and pick a name, or `@everyone` in a group (not for children). A mention counts only while the `@Name` is in the message.
 - **Message actions**: hover a message and press ⋯ (on a computer), or long-press it (on a phone):
   - ↩ reply, react with an emoji, 📋 copy text;
   - ✏ edit (for 15 minutes by default; shown as "edited") and 🗑 delete (leaves "message deleted" and deletes its files). You can delete your own messages; a group's owner and group admins can delete anyone's in that group;
@@ -206,7 +206,7 @@ If the household also uses the **Household Assistant** app, you can ask it "Do I
   - Whether a phone is linked to you, and the chats that have their own setting.
 - **Per chat** (chat ⋯ → 🔔 Notifications): all messages, mentions only or off, and mute for 1 hour, 8 hours, a week or until you turn it back on.
 - **Fewer pushes**: several messages from one chat within a minute arrive as one ("Nisha: 3 new messages"). Nothing is sent while you're looking at that chat, or for your own room. Reading the chat cancels anything still waiting.
-- **Reply and Mark as read** buttons appear on notifications sent to a phone with the Companion app. The reply is posted as you. Admins can turn the buttons off in App settings.
+- **Reply and Mark as read** buttons appear on notifications sent to a phone with the Companion app. The reply is posted as you. Each button works once: after a Reply, the chat's notification comes back quietly showing your reply, with new buttons for the next one. Admins can turn the buttons off in App settings.
 - Tapping a notification opens the chat it's about (or the ringing screen for a call).
 - **Extra notify services**: an admin can add others for a person (a speaker, a second service) in Admin → People → 🔔 → **Also**, and **Send a test** to all of them.
 - People without access never get notifications.
@@ -223,13 +223,14 @@ Only people listed under **Admin users** in the app's **Configuration** tab are 
 
 ## App settings (Admin → App settings)
 
-The settings are in cards (Files, Chats and messages, Old messages, Notifications, Voice calls), with a line under each setting saying what it does, its range and its default. Changes are kept until you select **Save** at the bottom (it shows how many unsaved changes there are); **Discard changes** puts everything back. A number out of range is flagged at the field before anything is saved. Saved changes apply straight away, without a restart.
+The settings are in cards (Files, Chats and messages, Old messages, Notifications, Voice calls, Messages between apps, Household Assistant), with a line under each setting saying what it does, its range and its default. Changes are kept until you select **Save** at the bottom (it shows how many unsaved changes there are); **Discard changes** puts everything back. A number out of range is flagged at the field before anything is saved. Saved changes apply straight away, without a restart.
 
 | Setting | Default | What it does |
 |---|---|---|
 | Chat files folder | `/share/household_chat` | Where chat files are kept (see *The chat files folder*). |
 | Largest file (MB) | 50 | The biggest single file anyone can send (1–1024). |
-| Limit for the chat folder (GB) | 0 (no limit) | Uploads are refused once the chat folder would pass it; Storage warns at 80 %. |
+| Limit for the chat folder (GB) | 50 | 0 = no limit. Uploads are refused once the chat folder (files waiting to be sent included) would pass it; Storage warns at 80 %. An install that already holds about 45 GB or more and never chose a limit keeps "no limit". |
+| Keep this much disk space free (MB) | 1024 | 0 = don't check. Uploads (also into shared folders), chat downloads and backups are refused when they would leave less free space than this on the disk they're written to. |
 | Who can create groups | Everyone | Or admins only. |
 | Messages can be edited for (minutes) | 15 | 0 = never, up to a day. |
 | Delete messages older than (days) | 0 (keep forever) | Old messages are deleted nightly (pinned ones are kept). |
@@ -248,6 +249,7 @@ The settings are in cards (Files, Chats and messages, Old messages, Notification
 | Ring for (seconds) | 30 | 15–60; shown while Voice calls is on. |
 | Address lookup (STUN) server | empty | For calls away from home, e.g. `stun:stun.cloudflare.com:3478`. Empty = home network only. |
 | Call relay (TURN) | None | None, Cloudflare Realtime TURN (key id + API token) or your own TURN server (address + shared secret). |
+| App-messages signing key | empty | The same key in every household app (paste it into each app's App settings). With a key, messages from other apps without the right signature are refused; without one, any app on Home Assistant's network could send messages as another. Set it in every app at about the same time: an app with a key refuses the others until they have it too. Not included in backups. |
 | Answer the Household Assistant | On | Lets the Household Assistant app tell a person their unread counts (see *The Household Assistant*). |
 
 ## The chat files folder
@@ -260,13 +262,13 @@ The settings are in cards (Files, Chats and messages, Old messages, Notification
 
 ## Storage and backups (Admin → Storage)
 
-- **Space used**: the database size, space per chat (sizes only) and by type, missing files, and **Check files**.
+- **Space used**: the database size, space per chat (sizes only) and by type, missing files, files kept from messages deleted by age (they stay in the chat folders and count towards its limit until you remove them over Samba or delete the chat), and **Check files**.
 - **Clean up**: the largest files, filterable by type and age. For chats you aren't in, you see only the type and size. Deleting files moves them to `_deleted` and shows "File deleted by admin" in their chat. You can also empty `_deleted` now (otherwise it's emptied after 30 days) and delete previews (they're rebuilt when needed).
 - **Old messages**: how many messages are older than 30 days, 90 days and a year, and what the age setting would remove.
-- **Download backup**: the database, optionally with every file (can be large). Disappearing messages are left out. **The backup contains every other message readable — keep it safe.**
-- **Restore**: replaces every message with the backup (and the files, if it includes them). The chat files folder setting of this install is kept. Open pages reload.
+- **Download backup**: the database, optionally with every file (can be large: it's made in the app's data folder first, so that needs the room — it's refused when it wouldn't leave the free space App settings keeps). Disappearing messages are left out. **The backup contains every other message readable — keep it safe.**
+- **Restore**: replaces every message with the backup (and the files, if it includes them). It waits for what's running to finish (and says *busy* if that takes over a minute); nothing else uses the database while it's swapped. The chat files folder setting and the secrets (relay token, signing key) of this install are kept. Open pages reload.
 - **Home Assistant's own backups** include the app's `/data` always, and `/share` when "Share" is ticked.
-- **Automatic clean-up**: every night (03:30 Home Assistant time) old messages if an age limit is set, `_deleted` entries older than 30 days, missing files and old previews; every hour, files uploaded but never sent within a day.
+- **Automatic clean-up**: every night (03:30 Home Assistant time — or as soon as the app runs again, if it was off then) old messages if an age limit is set, `_deleted` entries older than 30 days, missing files and old previews; every hour, files uploaded but never sent within a day, and backups or chat downloads that were made but never fetched.
 
 ## Who can see what, and where data goes
 
@@ -301,15 +303,18 @@ recorder:
 ## Limits
 
 - Built for a household: up to 20 people per group and 100 groups.
-- Messages up to 8000 characters, 10 files per message; 30 messages and 20 uploads a minute per person.
+- Messages up to 8000 characters, 10 files per message; 30 messages and 20 uploads a minute per person; files uploaded and not sent yet up to two messages' worth of the largest file size (1000 MB with the default 50 MB) per person.
+- Images: at most 40 million pixels (a JPEG photo up to 200 million — it's read scaled down); a bigger one is shared as a plain file, without a preview.
+- Chat downloads: one at a time per person (two at a time in all), ten an hour per person. New folders in a shared folder: 30 a minute per person.
+- Up to 10 open pages (tabs, phones) per person get live updates; an eleventh makes the oldest one check every few seconds instead.
 - 10 pinned messages and 10 shared folders per chat; 50 open reminders and 20 scheduled messages per person; polls with 2–10 answers.
 - Calls: up to four people (each phone sends to every other; more would need a media server). No end-to-end encryption for messages, no link previews, and no access from outside Home Assistant or for people without a Home Assistant login.
 - Home Assistant can't show an unread count on the sidebar.
 - PDFs have no preview picture in the Files view.
-- Notifications still waiting (batching, quiet hours) are dropped if the app restarts.
 
 ## Troubleshooting
 
+- **"There isn't enough free disk space"**: an upload, download or backup would have left less free space than **Keep this much disk space free** (App settings → Files). Make room (Storage → Clean up, or `_deleted`), or lower that setting.
 - **"No admin yet" banner**: add your user name (shown in the banner and on *How the app sees you*) to **Admin users** in the app's **Configuration** tab, save, and restart the app (**Information** tab → **Restart**).
 - **I added my name but I'm not an admin**: restart the app after changing the list, and use your **user name or user id** exactly as *How the app sees you* shows them — display names don't count (the page tells you if yours is only matched by display name).
 - **"Ask an admin to give you access"**: an admin enables you in Admin → People.

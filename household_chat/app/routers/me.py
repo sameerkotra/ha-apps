@@ -134,7 +134,7 @@ def ping(body: PresenceIn, user: dict = Depends(require_user)):
     was = hub.is_online(user["id"])
     hub.set_tab(user["id"], body.tab, body.conversationId, body.visible)
     if not was:
-        hub.publish_all("presence", {"refresh": True})
+        presence.publish_online(user["id"])
     return {"ok": True}
 
 
@@ -147,7 +147,7 @@ def starred(user: dict = Depends(require_user)):
             "JOIN members mb ON mb.conversation_id = m.conversation_id AND mb.user_id = s.user_id "
             "WHERE s.user_id = ? AND m.deleted_at IS NULL AND m.id > mb.joined_message_id ORDER BY s.created_at DESC LIMIT 500",
             (user["id"],)).fetchall()
-        msgs = [chats.messages_out(conn, [r], user["id"], r["vf"])[0] for r in rows]
+        msgs = chats.messages_out_by_join(conn, rows, user["id"])
         names = {}
         for r in rows:
             if r["conversation_id"] not in names:

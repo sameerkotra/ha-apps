@@ -8,7 +8,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import app_messages, avatars, calls, chats, config, db, disappearing, files, ha_client, ha_events, housekeeping
+from . import (app_messages, avatars, calls, chats, config, db, disappearing, files, ha_client, ha_events, housekeeping,
+               notifier, presence, settings)
 from .common import auth_core, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .live import hub
@@ -18,11 +19,7 @@ jobs_core.setup_logging()
 logger = logging.getLogger("main")
 
 
-def _online_changed(user_id: str, online: bool) -> None:
-    hub.publish_all("presence", {"refresh": True})
-
-
-hub.on_online_change = _online_changed
+hub.on_online_change = presence.online_changed      # one person's online state, not "everyone reload"
 
 
 def remove_uploaded_photos() -> None:
@@ -43,7 +40,25 @@ def remove_uploaded_photos() -> None:
             conn.execute("UPDATE conversations SET photo_file = NULL WHERE photo_file IS NOT NULL")
 
 
+remove_stale_temp = housekeeping.remove_stale_temp
+
+
+def keep_no_limit_if_over() -> None:
+    """The chat folder's limit is 50 GB unless an admin chose another. An install that already holds more and
+    never chose one keeps "no limit", so nobody's uploads stop working after an update."""
+    with db.get_conn() as conn:
+        if db.get_setting(conn, "share_folder_quota_gb") is not None:
+            return
+        if files.usage_bytes(conn) > 0.9 * settings.DEFAULTS["share_folder_quota_gb"] * 1024 ** 3:
+            db.set_setting(conn, "share_folder_quota_gb", "0", "household_chat")
+            logger.info("The chat folder already holds more than the new default limit: it keeps no limit "
+                        "(Admin → App settings → Files).")
+    settings.invalidate()
+
+
 def startup_blocking() -> None:
+    remove_stale_temp(0)
+    keep_no_limit_if_over()
     # is the chat files folder there and ours? (creates it on the very first start; SPEC §5.3.1)
     st = files.check()
     if not st["online"]:
@@ -91,6 +106,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Reading the people from Home Assistant failed")
     await run_in_threadpool(startup_blocking)
+    await run_in_threadpool(notifier.load_held)      # quiet-hour and batched pushes held when the app stopped
     # one WebSocket to Home Assistant for the phone's notification buttons and the other apps' messages
     await run_in_threadpool(app_messages.start, ha_events.connection())
     ha_events.start()
@@ -103,6 +119,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await jobs.stop()
+        try:
+            await run_in_threadpool(notifier.save_held, True)
+        except Exception:
+            logger.exception("Saving the held notifications failed")
         app_messages.stop()
         ha_events.stop()
         hub.reset()
@@ -124,11 +144,27 @@ async def validation_error(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": "; ".join(msgs) or "Invalid request."})
 
 
-# Only Supervisor's ingress proxy and loopback get in: app/common/auth_core.INGRESS_HOSTS.
+# Only Supervisor's ingress proxy gets in: app/common/auth_core.INGRESS_HOSTS.
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
        "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'")
 MAX_BODY = 1024 * 1024
-STREAMED = ("/uploads", "/upload", "/admin-storage-import-db")     # these enforce their own limits while reading
+# File uploads (a chat's /uploads, a shared folder's /upload) and the restore enforce their own, smaller limits
+# while they read; the body limit only keeps them under the largest those settings allow.
+UPLOADS = ("/uploads", "/upload")
+UPLOAD_MAX = 1024 * 1024 * 1024 + MAX_BODY          # max_upload_mb's highest value
+RESTORE_PATH = "/api/admin-storage-import-db"
+
+
+class BodyLimit(web_security.BodyLimit):
+    """The shared limit (counted as it arrives, also without a Content-Length): 1 MB for everything but uploads."""
+
+    def limit_for(self, path: str) -> int:
+        if path.startswith("/api/") and path.endswith(UPLOADS):
+            return UPLOAD_MAX
+        return super().limit_for(path)
+
+
+app.add_middleware(BodyLimit, default_max=MAX_BODY, routes={RESTORE_PATH: admin.RESTORE_MAX})
 
 
 def _is_file(path: str) -> bool:
@@ -136,9 +172,11 @@ def _is_file(path: str) -> bool:
     return path.startswith("/api/files/") or path.startswith("/api/folders/")
 
 
+# Every page asset is linked with ?v=<version>, so a versioned one is cached for good (static files are served at /).
 HEADERS = web_security.SecurityHeaders(
     CSP, csp_skip=lambda request, _response: _is_file(request.url.path), referrer="no-referrer",
-    api_no_store="set", api_skip=lambda path: _is_file(path) or path.startswith("/api/avatars/"))
+    api_no_store="set", api_skip=lambda path: _is_file(path) or path.startswith("/api/avatars/"),
+    static_immutable=True, static_prefixes=("/",))
 
 
 @app.middleware("http")
@@ -149,13 +187,6 @@ async def guard(request: Request, call_next):
     path = request.url.path
     if db.RESTORING.is_set() and path.startswith("/api/"):
         return JSONResponse(status_code=503, content={"detail": "A backup is being restored — try again in a moment."})
-    if request.method in ("POST", "PUT", "PATCH", "DELETE") and not path.endswith(STREAMED):
-        try:
-            length = int(request.headers.get("content-length") or 0)
-        except ValueError:
-            length = 0
-        if length > MAX_BODY:
-            return JSONResponse(status_code=413, content={"detail": "That request is too big."})
     return HEADERS.apply(request, await call_next(request))
 
 

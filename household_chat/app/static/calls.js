@@ -659,7 +659,9 @@ function onCallEvent(d) {
 async function checkCurrentCall() {
   if (!state.me || state.me.disabled) return;
   let cur;
-  try { cur = (await api("api/calls/current")).call; } catch (e) { return; }
+  // in a call: only the signals after the last one a poll brought, and no STUN/relay addresses (it has them)
+  const q = call && call.id ? `?since=${call.polledSeq || 0}&ice=0` : "";
+  try { cur = (await api("api/calls/current" + q)).call; } catch (e) { return; }
   if (!cur) {
     if (call && call.id) finish("Call ended");
     if (incoming) dismissIncoming();
@@ -668,7 +670,7 @@ async function checkCurrentCall() {
   if (cur.state === "ringing" && !call) { showIncoming(cur); return; }
   if (call && call.id === cur.id) {
     for (const m of cur.members || []) if (m.id !== state.me.id && (m.state === "joined" || m.state === "ringing")) addPeer(m.id, m.name, m.state);
-    for (const s of cur.signals || []) onSignal(s);
+    for (const s of cur.signals || []) { call.polledSeq = Math.max(call.polledSeq || 0, s.id); onSignal(s); }
   }
 }
 // while live updates are down, the call is followed by asking every second

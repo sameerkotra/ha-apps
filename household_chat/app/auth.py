@@ -49,25 +49,30 @@ def identify(uid: str | None, username: str | None, display_name: str | None) ->
             conn.execute("UPDATE users SET name = ?, username = ?, last_seen = ? WHERE id = ?",
                          (display, username, now, uid))
             row = conn.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
-        if renamed:
-            from . import files
+    if renamed:
+        # their personal room's and direct chats' folders follow the new name — renamed on disk after the
+        # update above is saved, in their own short transaction (never holding the write lock meanwhile)
+        from . import files
+        with db.get_conn() as conn:
             files.refresh_folders_of_user(conn, uid)
     return user_dict(row, is_admin(uid, username), display_name_only(uid, username, display_name))
 
 
-async def get_current_user(request: Request) -> dict:
+# Plain functions, not `async def`: FastAPI runs them in its thread pool, so the database read (and the
+# write, when the name changed or last_seen is two minutes old) never holds up the event loop.
+def get_current_user(request: Request) -> dict:
     ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
     return identify(ident.user_id, ident.username, ident.display_name)
 
 
-async def require_user(current: dict = Depends(get_current_user)) -> dict:
+def require_user(current: dict = Depends(get_current_user)) -> dict:
     """Enabled people. Disabled people get 403 everywhere except /api/whoami and /api/me."""
     if current["disabled"]:
         raise HTTPException(403, "An admin hasn't given you access to Household Chat yet (or has turned it off).")
     return current
 
 
-async def require_admin(current: dict = Depends(get_current_user)) -> dict:
+def require_admin(current: dict = Depends(get_current_user)) -> dict:
     """Admins manage people and settings even if their own chat access is off. Being an
     admin never opens a chat they aren't in (SPEC §4)."""
     auth_core.require_admin_flag(current["is_admin"],

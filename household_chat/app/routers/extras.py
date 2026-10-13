@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import chats, config, db, exporter, files, scheduled, settings, shared_folders
 from ..auth import require_user
 from .common import Strict
-from .files import file_response
+from .files import WRITE_BATCH, file_response
 
 router = APIRouter(prefix="/api", tags=["extras"])
 
@@ -89,7 +89,9 @@ def schedule(cid: str, body: ScheduleIn, user: dict = Depends(require_user)):
             if (a is None or a["message_id"] is not None or a["scheduled_id"] or a["conversation_id"] != cid
                     or a["uploaded_by"] != user["id"]):
                 raise HTTPException(422, "A file wasn't uploaded to this chat (or was already sent). Add it again.")
-            conn.execute("UPDATE attachments SET scheduled_id = ? WHERE id = ?", (sid, aid))
+            if conn.execute("UPDATE attachments SET scheduled_id = ? WHERE id = ? AND message_id IS NULL "
+                            "AND scheduled_id IS NULL", (sid, aid)).rowcount != 1:
+                raise HTTPException(422, "A file wasn't uploaded to this chat (or was already sent). Add it again.")
         payload = {"body": body.body, "replyTo": body.replyTo, "mentions": body.mentions, "expiresIn": body.expiresIn,
                    "announcement": body.announcement, "poll": body.poll.model_dump() if body.poll else None}
         conn.execute("INSERT INTO scheduled (id, user_id, conversation_id, payload, send_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -203,7 +205,7 @@ def folder_search(fid: str, q: str = Query(min_length=1, max_length=200), user: 
 
 
 @router.get("/folders/{fid}/file")
-def folder_file(fid: str, path: str = Query(min_length=1, max_length=1000), download: bool = False,
+def folder_file(fid: str, request: Request, path: str = Query(min_length=1, max_length=1000), download: bool = False,
                 user: dict = Depends(require_user)):
     with db.get_conn() as conn:
         f = shared_folders.folder_row(conn, fid, user)
@@ -221,45 +223,63 @@ def folder_file(fid: str, path: str = Query(min_length=1, max_length=1000), down
                 mime = "application/octet-stream"
     elif mime in ("video/webm", "video/mp4"):
         mime = "application/octet-stream"
-    return file_response(full, mime, name, download)
+    return file_response(full, mime, name, download, request)
 
 
 @router.post("/folders/{fid}/upload", status_code=201)
 async def folder_upload(fid: str, request: Request, path: str = Query(default="", max_length=1000),
                         name: str = Query(min_length=1, max_length=255), user: dict = Depends(require_user)):
+    max_bytes = settings.get("max_upload_mb") * 1024 * 1024
+    try:
+        length = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        length = 0
+    if length > max_bytes:
+        raise HTTPException(413, f"That file is bigger than the {max_bytes // (1024 * 1024)} MB limit.")
+
     def check():
         with db.get_conn() as conn:
             f = shared_folders.folder_row(conn, fid, user)
             conv = chats.conv_row(conn, f["conversation_id"])
             chats.require_post(conn, conv, user["id"])
-            return dict(f)
-    f = await run_in_threadpool(check)
-    if f["mode"] != "rw":
-        raise HTTPException(403, "This folder is read-only.")
-    clean = files.clean(os.path.basename(name), 120)
-    if files.ext_of(clean) in settings.blocked_extensions() or clean.startswith("."):
-        raise HTTPException(422, f"“.{files.ext_of(clean)}” files can't be shared here.")
-    target_dir = shared_folders.resolve_in(f, path)
-    if not os.path.isdir(target_dir):
-        raise HTTPException(404, "That folder is gone.")
-    max_bytes = settings.get("max_upload_mb") * 1024 * 1024
+            f = dict(f)
+        if f["mode"] != "rw":
+            raise HTTPException(403, "This folder is read-only.")
+        clean = files.clean(os.path.basename(name), 120)
+        if files.ext_of(clean) in settings.blocked_extensions() or clean.startswith("."):
+            raise HTTPException(422, f"“.{files.ext_of(clean)}” files can't be shared here.")
+        target_dir = shared_folders.resolve_in(f, path)
+        if not os.path.isdir(target_dir):
+            raise HTTPException(404, "That folder is gone.")
+        files.check_free_space(target_dir, length or max_bytes, "this shared folder")
+        return clean, target_dir
+    clean, target_dir = await run_in_threadpool(check)
     chats.upload_limit.take(user["id"])
     tmp = os.path.join(target_dir, f".upload-{secrets.token_hex(8)}.part")
+    out = await run_in_threadpool(open, tmp, "wb")
     size = 0
     try:
-        with open(tmp, "wb") as out:
-            async for chunk in request.stream():
-                size += len(chunk)
-                if size > max_bytes:
-                    raise HTTPException(413, f"That file is bigger than the {max_bytes // (1024 * 1024)} MB limit.")
-                out.write(chunk)
+        buf = bytearray()
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > max_bytes:
+                raise HTTPException(413, f"That file is bigger than the {max_bytes // (1024 * 1024)} MB limit.")
+            buf += chunk
+            if len(buf) >= WRITE_BATCH:
+                await run_in_threadpool(out.write, bytes(buf))
+                buf.clear()
+        if buf:
+            await run_in_threadpool(out.write, bytes(buf))
+        await run_in_threadpool(out.close)
         if size == 0:
             raise HTTPException(422, "That file is empty.")
-        final = files.unique_name(target_dir, clean)
-        os.replace(tmp, os.path.join(target_dir, final))
+        final = await run_in_threadpool(files.place, tmp, target_dir, clean)
     finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        def tidy():
+            out.close()
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        await run_in_threadpool(tidy)
     return {"name": final, "size": size}
 
 
@@ -268,8 +288,12 @@ class MkdirIn(Strict):
     name: str = Field(min_length=1, max_length=100)
 
 
+mkdir_limit = chats.RateLimit(30)          # new folders a minute, per person
+
+
 @router.post("/folders/{fid}/mkdir", status_code=201)
 def folder_mkdir(fid: str, body: MkdirIn, user: dict = Depends(require_user)):
+    mkdir_limit.take(user["id"])
     with db.get_conn() as conn:
         f = shared_folders.folder_row(conn, fid, user)
         chats.require_post(conn, chats.conv_row(conn, f["conversation_id"]), user["id"])
@@ -279,8 +303,10 @@ def folder_mkdir(fid: str, body: MkdirIn, user: dict = Depends(require_user)):
     name = files.clean(body.name, 100)
     if name.startswith(".") or not os.path.isdir(parent):
         raise HTTPException(422, "Choose another name.")
+    files.check_free_space(parent, 0, "this shared folder")
     target = os.path.join(parent, name)
-    if os.path.exists(target):
+    try:
+        os.mkdir(target)
+    except FileExistsError:
         raise HTTPException(409, "Something with that name is already there.")
-    os.mkdir(target)
     return {"name": name}

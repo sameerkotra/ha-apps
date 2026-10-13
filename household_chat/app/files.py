@@ -4,6 +4,7 @@ Every chat has a folder named after it (`Family (a1b2c3d4)`), with a folder
 per month inside. File paths always come from the database and are
 `realpath`-checked under that folder; a client only ever names an attachment id.
 """
+import contextlib
 import hashlib
 import io
 import json
@@ -19,6 +20,7 @@ import unicodedata
 from fastapi import HTTPException
 
 from . import config, db, settings
+from .common import image_guard
 
 logger = logging.getLogger("files")
 
@@ -313,9 +315,11 @@ def _back_online() -> None:
     try:
         flush_jobs()
         with db.get_conn() as conn:
-            for r in conn.execute("SELECT id FROM conversations").fetchall():
-                refresh_folder(conn, r["id"])
-            check_missing(conn)
+            ids = [r["id"] for r in conn.execute("SELECT id FROM conversations").fetchall()]
+        for cid in ids:                          # each rename in its own short transaction
+            with db.get_conn() as conn:
+                refresh_folder(conn, cid)
+        check_missing()
     except Exception:
         logger.exception("Catching up after the chat files folder came back failed")
 
@@ -508,6 +512,46 @@ def unique_name(full_dir: str, name: str) -> str:
     return candidate
 
 
+def reserve_name(full_dir: str, name: str) -> str:
+    """A free name in `full_dir` ("Lease.pdf", else "Lease (2).pdf", …), taken at once: the empty file is
+    created with O_EXCL, so two uploads of the same name at the same moment can't both get it. The caller
+    puts its file there (os.replace / copy) — or removes the placeholder if it can't."""
+    stem, dot, ext = name.rpartition(".")
+    if not dot:
+        stem, ext = name, ""
+    candidate, n = name, 2
+    while True:
+        try:
+            fd = os.open(os.path.join(full_dir, candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            candidate = f"{stem} ({n}).{ext}" if ext else f"{stem} ({n})"
+            n += 1
+            if n > 100_000:
+                raise
+            continue
+        os.close(fd)
+        return candidate
+
+
+def place(src: str, full_dir: str, name: str) -> str:
+    """Move the file `src` into `full_dir` under a free name (reserve_name). → the name it got."""
+    final = reserve_name(full_dir, name)
+    dest = os.path.join(full_dir, final)
+    try:
+        os.replace(src, dest)
+    except BaseException:
+        _remove_quietly(dest)
+        raise
+    return final
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def thumb_path(att_id: str) -> str:
     d = os.path.join(share_root(), THUMBS)
     os.makedirs(d, exist_ok=True)
@@ -557,11 +601,18 @@ def refresh_folders_of_user(conn, user_id: str) -> None:
 
 # ---------- usage ----------
 def usage_bytes(conn, conversation_id: str | None = None) -> int:
+    """Bytes of every attachment (sent or waiting), of one chat or of all: the total is kept up to date by
+    triggers on `attachments` (db.py, file_usage), so the check on every upload doesn't add them all up."""
     if conversation_id:
         r = conn.execute("SELECT COALESCE(SUM(size), 0) FROM attachments WHERE conversation_id = ?", (conversation_id,))
     else:
-        r = conn.execute("SELECT COALESCE(SUM(size), 0) FROM attachments")
+        r = conn.execute("SELECT bytes FROM file_usage WHERE id = 1").fetchone() or \
+            conn.execute("SELECT COALESCE(SUM(size), 0) FROM attachments").fetchone()
+        return int(r[0])
     return int(r.fetchone()[0])
+
+
+quota_lock = threading.Lock()          # the last check and the attachment row it allows go in together
 
 
 def check_quota(conn, incoming: int) -> None:
@@ -570,36 +621,103 @@ def check_quota(conn, incoming: int) -> None:
         raise HTTPException(507, f"The chat folder has reached its {gb} GB limit. Ask an admin to make room.")
 
 
+def pending_limit(conn) -> int:
+    """How much one person may have uploaded and not sent yet: two messages' worth of the largest files."""
+    from . import chats
+    return 2 * chats.MAX_FILES * settings.get("max_upload_mb", conn) * 1024 * 1024
+
+
+def check_pending(conn, user_id: str, incoming: int) -> None:
+    """Unsent uploads count against the folder's limit until they're removed after a day: one person can't
+    fill the disk with files they never send."""
+    have = conn.execute("SELECT COALESCE(SUM(size), 0) FROM attachments WHERE uploaded_by = ? AND message_id IS NULL "
+                        "AND scheduled_id IS NULL", (user_id,)).fetchone()[0]
+    limit = pending_limit(conn)
+    if have + incoming > limit:
+        raise HTTPException(507, f"You have {limit // (1024 * 1024)} MB of files waiting to be sent. Send them "
+                                 "(or remove some) before adding more.")
+
+
+def min_free_bytes() -> int:
+    return settings.get("min_free_mb") * 1024 * 1024
+
+
+def check_free_space(path: str, incoming: int, where: str = "the chat files folder") -> None:
+    """Refuse (507) when writing `incoming` bytes under `path` would leave less free space on its disk than
+    App settings → Files keeps free. Home Assistant itself needs room on the same disk."""
+    floor = min_free_bytes()
+    if not floor:
+        return
+    try:
+        free = shutil.disk_usage(path).free
+    except OSError:
+        return                                  # can't tell: the other checks still apply
+    if free - max(0, incoming) < floor:
+        raise HTTPException(507, f"There isn't enough free disk space for this in {where}. An admin can make room "
+                                 "(or change “Keep this much disk space free” in App settings).")
+
+
 # ---------- images ----------
+# Every image is checked from its header before anything is decoded (common/image_guard.py): at most
+# 40 million pixels — a small PNG can declare 100 000 × 100 000 and ask for gigabytes. A JPEG may be bigger
+# (phones take 50, 108 and 200 megapixel photos), because it is never decoded at full size: draft() asks the
+# decoder for a scaled-down copy no more than twice the size we need. At most two decodes run at a time.
+IMAGE_FORMATS = {"JPEG": "image/jpeg", "PNG": "image/png", "GIF": "image/gif", "WEBP": "image/webp"}
+MAX_PIXELS = image_guard.MAX_IMAGE_PIXELS              # PNG, GIF, WebP: decoded whole
+JPEG_MAX_PIXELS = 200_000_000                          # JPEG: decoded scaled down (draft)
+
+
 def _pil():
     from PIL import Image, ImageOps
-    Image.MAX_IMAGE_PIXELS = 80_000_000
     return Image, ImageOps
 
 
+def _check(src) -> tuple[str, int, int]:
+    """(Pillow format, width, height) from the header only. ImageError when it isn't one of ours or is too big."""
+    fmt, w, h = image_guard.check_image(src, JPEG_MAX_PIXELS, formats=list(IMAGE_FORMATS))
+    if fmt != "JPEG" and w * h > MAX_PIXELS:
+        raise image_guard.ImageTooBig(f"That image is too large ({w} × {h} pixels).")
+    return fmt, w, h
+
+
+def _open(path: str, target: int):
+    """The image, checked, not decoded yet; a JPEG drafted to about `target` pixels on its longest side
+    (the draft keeps the proportions, so a long, narrow photo is scaled down as much as a square one)."""
+    fmt, w, h = _check(path)
+    longest = max(w, h)
+    draft = None
+    if fmt == "JPEG" and target and longest > target:
+        draft = ("RGB", (max(1, w * target // longest), max(1, h * target // longest)))
+    return image_guard.open_for_decode(path, JPEG_MAX_PIXELS, formats=[fmt], draft=draft)
+
+
 def sniff_image(path: str) -> tuple[str | None, int | None, int | None, bool]:
-    """(mime, width, height, animated) if Pillow recognises it as an image we show; else (None, …)."""
+    """(mime, width, height, animated) if Pillow recognises it as an image we show and it isn't too big to
+    show; else (None, …). Reads the header only."""
     try:
-        Image, ImageOps = _pil()
-        with Image.open(path) as im:
-            fmt = (im.format or "").upper()
-            mime = {"JPEG": "image/jpeg", "PNG": "image/png", "GIF": "image/gif", "WEBP": "image/webp"}.get(fmt)
+        fmt, _w, _h = _check(path)
+        # a PNG's EXIF comes after its pixels, so reading it decodes the image: one of the decode slots for that
+        slot = image_guard.decode_slot() if fmt == "PNG" else contextlib.nullcontext()
+        with slot, image_guard.open_for_decode(path, JPEG_MAX_PIXELS, formats=list(IMAGE_FORMATS)) as im:
+            mime = IMAGE_FORMATS.get((im.format or "").upper())
             if not mime:
                 return None, None, None, False
             w, h = im.size
             if (im.getexif() or {}).get(0x0112) in (5, 6, 7, 8):
                 w, h = h, w
             return mime, w, h, bool(getattr(im, "is_animated", False))
+    except image_guard.DecodeBusy as e:
+        raise HTTPException(503, str(e))
     except Exception:
         return None, None, None, False
 
 
 def shrink_photo(path: str, max_px: int) -> tuple[bytes, int, int] | None:
     """A resized JPEG (quality 85, orientation applied, EXIF — GPS included — dropped, colour profile kept),
-    or None when it's already small enough or can't be read."""
+    or None when it's already small enough or can't be read. 503 when the app is busy decoding other images."""
     try:
         Image, ImageOps = _pil()
-        with Image.open(path) as im:
+        with image_guard.decode_slot(), _open(path, max_px) as im:
             if getattr(im, "is_animated", False):
                 return None
             icc = im.info.get("icc_profile")
@@ -620,6 +738,8 @@ def shrink_photo(path: str, max_px: int) -> tuple[bytes, int, int] | None:
                 kw["icc_profile"] = icc
             im.save(out, "JPEG", **kw)
             return out.getvalue(), im.size[0], im.size[1]
+    except image_guard.DecodeBusy as e:
+        raise HTTPException(503, str(e))
     except Exception as e:
         logger.info("Couldn't resize a photo: %s", type(e).__name__)
         return None
@@ -628,7 +748,7 @@ def shrink_photo(path: str, max_px: int) -> tuple[bytes, int, int] | None:
 def make_thumb(att_id: str, src: str) -> bool:
     try:
         Image, ImageOps = _pil()
-        with Image.open(src) as im:
+        with image_guard.decode_slot(), _open(src, THUMB_PX) as im:
             im.seek(0)
             im = ImageOps.exif_transpose(im)
             if im.mode not in ("RGB", "L"):
@@ -658,10 +778,14 @@ class Incoming:
         self.size = 0
         self.sha = hashlib.sha256()
 
+    def too_big(self):
+        raise HTTPException(413, f"That file is bigger than the {self.max_bytes // (1024 * 1024)} MB limit.")
+
     def write(self, chunk: bytes) -> None:
+        """Called from a thread (the route batches the body a megabyte at a time)."""
         self.size += len(chunk)
         if self.size > self.max_bytes:
-            raise HTTPException(413, f"That file is bigger than the {self.max_bytes // (1024 * 1024)} MB limit.")
+            self.too_big()
         self.sha.update(chunk)
         self.f.write(chunk)
 
@@ -715,8 +839,7 @@ class Incoming:
             with open(self.tmp, "rb") as f:
                 if not f.read(1024).lstrip().startswith(b"%PDF-"):
                     mime = "application/octet-stream"
-        final = unique_name(self.full_dir, name)
-        os.replace(self.tmp, os.path.join(self.full_dir, final))
+        final = place(self.tmp, self.full_dir, name)
         return {"rel_path": f"{self.rel_dir}/{final}", "original_name": name, "mime": mime, "size": size,
                 "original_size": original_size, "sha256": sha, "width": width, "height": height}
 
@@ -764,11 +887,36 @@ def move_to_deleted(rel_path: str) -> None:
     stamp = config.utcnow().strftime("%Y%m%dT%H%M%S")
     dest_dir = os.path.join(share_root(), DELETED, stamp, os.path.dirname(rel_path))
     os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, unique_name(dest_dir, os.path.basename(rel_path)))
+    try:
+        dest = os.path.join(dest_dir, reserve_name(dest_dir, os.path.basename(rel_path)))
+    except OSError as e:
+        logger.warning("Couldn't move a deleted file aside: %s", e)
+        return
     try:
         shutil.move(src, dest)
     except OSError as e:
+        _remove_quietly(dest)
         logger.warning("Couldn't move a deleted file aside: %s", e)
+
+
+def discard_files(items) -> None:
+    """After a message (or its files) was deleted and the deletion saved: each file to _deleted — or straight
+    away for a disappearing one, which never goes there — and its preview removed. `items`: (id, rel_path)."""
+    for att_id, rel in items:
+        if DISAPPEARING in rel.split("/"):
+            remove_now(rel)
+        else:
+            move_to_deleted(rel)
+        remove_thumb(att_id)
+
+
+def discard_chat_folder(folder: str, att_ids) -> None:
+    """After a chat was deleted and the deletion saved: its previews, its _disappearing folder (removed at once,
+    never kept in _deleted) and the rest of its folder to _deleted."""
+    for att_id in att_ids:
+        remove_thumb(att_id)
+    remove_disappearing_dir(folder)
+    move_folder_to_deleted(folder)
 
 
 def _inside(root: str, path: str) -> bool:
@@ -805,8 +953,12 @@ def copy_into(att, conv) -> dict | None:
     if not os.path.isfile(src):
         return None
     rel_dir, full_dir = month_dir(conv["folder"])
-    final = unique_name(full_dir, os.path.basename(att["rel_path"]))
-    shutil.copyfile(src, os.path.join(full_dir, final))
+    final = reserve_name(full_dir, os.path.basename(att["rel_path"]))
+    try:
+        shutil.copyfile(src, os.path.join(full_dir, final))
+    except BaseException:
+        _remove_quietly(os.path.join(full_dir, final))
+        raise
     return {"rel_path": f"{rel_dir}/{final}"}
 
 
@@ -847,20 +999,40 @@ def remove_orphan_thumbs(conn) -> int:
     return n
 
 
-def check_missing(conn) -> int:
+def check_missing() -> int:
     """Mark attachments whose file was deleted or moved outside the app (and un-mark ones that came back).
-    Nothing is marked while the folder isn't connected."""
+    Nothing is marked while the folder isn't connected. The files are looked at (on a NAS, slowly) with no
+    transaction open; only the changes are written, in a short one of their own. Call it with no connection held."""
     if not is_online():
         return 0
-    n = 0
-    for r in conn.execute("SELECT id, rel_path, missing FROM attachments WHERE message_id IS NOT NULL").fetchall():
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT id, rel_path, missing FROM attachments WHERE message_id IS NOT NULL").fetchall()
+    n, changes = 0, []
+    for r in rows:
         try:
             present = os.path.isfile(resolve(r["rel_path"]))
         except HTTPException:
             present = False
         if present == bool(r["missing"]):
-            conn.execute("UPDATE attachments SET missing = ? WHERE id = ?", (0 if present else 1, r["id"]))
+            changes.append((0 if present else 1, r["id"], r["rel_path"]))
         n += 0 if present else 1
+    if changes:
+        with db.get_conn() as conn:
+            # only rows still pointing at the file that was looked at (one renamed meanwhile is left for next time)
+            conn.executemany("UPDATE attachments SET missing = ? WHERE id = ? AND rel_path = ?", changes)
+    # files kept from messages deleted by age: forgotten once they're gone from the folder
+    with db.get_conn() as conn:
+        kept = [r["rel_path"] for r in conn.execute("SELECT rel_path FROM kept_files").fetchall()]
+    gone = []
+    for rel in kept:
+        try:
+            if not os.path.isfile(resolve(rel)):
+                gone.append((rel,))
+        except HTTPException:
+            gone.append((rel,))
+    if gone:
+        with db.get_conn() as conn:
+            conn.executemany("DELETE FROM kept_files WHERE rel_path = ?", gone)
     return n
 
 
@@ -903,10 +1075,11 @@ def move_to_disappearing(conn, att_id: str, conv, expires_at: str) -> None:
     rel_dir = f"{conv['folder']}/{DISAPPEARING}"
     full_dir = resolve(rel_dir)
     os.makedirs(full_dir, exist_ok=True)
-    name = unique_name(full_dir, f"{stamp_of(expires_at)}__{os.path.basename(a['rel_path'])}")
     src = resolve(a["rel_path"])
     if os.path.isfile(src):
-        os.replace(src, os.path.join(full_dir, name))
+        name = place(src, full_dir, f"{stamp_of(expires_at)}__{os.path.basename(a['rel_path'])}")
+    else:
+        name = unique_name(full_dir, f"{stamp_of(expires_at)}__{os.path.basename(a['rel_path'])}")
     conn.execute("UPDATE attachments SET rel_path = ? WHERE id = ?", (f"{rel_dir}/{name}", att_id))
 
 

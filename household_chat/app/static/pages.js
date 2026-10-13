@@ -392,7 +392,9 @@ async function adminStorage() {
       h("div", { class: "kv" }, h("span", { class: "k" }, "Chat files"), h("span", null, fmtSize(s.filesBytes) + (s.quotaGb ? ` of ${s.quotaGb} GB (${quotaPct}%)` : "")),
         h("span", { class: "k" }, "Database"), h("span", null, fmtSize(s.dbBytes)),
         h("span", { class: "k" }, "Files no longer available"), h("span", null, String(s.missing)),
-        h("span", { class: "k" }, "Uploads not sent yet"), h("span", null, String(s.pending))),
+        h("span", { class: "k" }, "Uploads not sent yet"), h("span", null, String(s.pending)),
+        s.keptFiles ? h("span", { class: "k", title: "Their messages were deleted by age; the files stay in the chat folders" }, "Kept from old messages") : null,
+        s.keptFiles ? h("span", null, `${s.keptFiles} file${s.keptFiles === 1 ? "" : "s"}, ${fmtSize(s.keptBytes)}`) : null),
       quotaPct !== null && quotaPct >= 80 ? h("div", { class: "notice" }, "The chat folder is over 80% of its limit.") : null,
       h("div", { class: "bars" }, s.chats.filter((c) => c.bytes).map((c) => {
         const bar = h("span", { class: "bar-fill" }); bar.style.width = Math.max(2, Math.round(c.bytes / max * 100)) + "%";

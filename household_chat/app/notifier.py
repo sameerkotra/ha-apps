@@ -4,7 +4,10 @@ hours, "already looking", preview levels, and the Reply / Mark as read buttons.
 Everything here runs in a background thread after the message is committed.
 It reads what it needs, closes the connection, then calls Home Assistant
 (never while holding a connection). Held pushes (batching, quiet hours) are
-kept in memory; `flush()` runs from the housekeeping loop.
+kept in memory and saved to the database (app_settings `notify_held`) on every
+housekeeping tick that changed them and when the app stops, so a restart in
+someone's quiet hours doesn't lose their summary; `flush()` runs from the
+housekeeping loop.
 """
 import json
 import logging
@@ -25,6 +28,9 @@ PREVIEW_ORDER = {"none": 0, "sender": 1, "full": 2}
 _lock = threading.Lock()
 _last_sent: dict = {}      # (user, chat) → monotonic time of the last push
 _held: dict = {}           # (user, chat) → {"ids": [...], "until": monotonic or None (quiet), "quiet": bool}
+_changed = threading.Event()           # _held changed since it was last saved
+HELD_KEY = "notify_held"
+MAX_HELD_IDS = 500                     # per person and chat (a summary only counts them)
 
 deliver = ha_notify.send_to_services     # tests replace this
 
@@ -33,6 +39,63 @@ def reset() -> None:
     with _lock:
         _last_sent.clear()
         _held.clear()
+    _changed.clear()
+
+
+def _hold(key, mid: int, quiet: bool, until=None) -> None:
+    """Add a message to what's held for (user, chat). Call with _lock held."""
+    h = _held.setdefault(key, {"ids": [], "until": until, "quiet": quiet})
+    if quiet:
+        h["quiet"] = True
+    h["ids"].append(mid)
+    del h["ids"][:-MAX_HELD_IDS]
+    _changed.set()
+
+
+def save_held(force: bool = False) -> None:
+    """What's held, into the database (times as wall-clock, so they mean the same after a restart)."""
+    if not force and not _changed.is_set():
+        return
+    with _lock:
+        _changed.clear()
+        now_m, now_w = time.monotonic(), time.time()
+        data = [[u, c, list(h["ids"]), None if h["until"] is None else now_w + (h["until"] - now_m), bool(h["quiet"])]
+                for (u, c), h in _held.items()]
+    try:
+        with db.get_conn() as conn:
+            db.set_setting(conn, HELD_KEY, json.dumps(data))
+    except Exception:
+        _changed.set()
+        logger.exception("Saving the held notifications failed")
+
+
+def load_held() -> int:
+    """At start-up: what was held when the app stopped. → how many chats' worth."""
+    with db.get_conn() as conn:
+        raw = db.get_setting(conn, HELD_KEY)
+    try:
+        data = json.loads(raw) if raw else []
+    except ValueError:
+        data = []
+    n = 0
+    now_m, now_w = time.monotonic(), time.time()
+    with _lock:
+        for item in data if isinstance(data, list) else []:
+            if not (isinstance(item, list) and len(item) == 5 and all(isinstance(x, str) for x in item[:2])
+                    and isinstance(item[2], list) and all(isinstance(i, int) for i in item[2])):
+                continue
+            until = item[3] if isinstance(item[3], (int, float)) else None
+            _held[(item[0], item[1])] = {"ids": item[2][-MAX_HELD_IDS:], "quiet": bool(item[4]),
+                                         "until": None if until is None else now_m + (until - now_w)}
+            n += 1
+    return n
+
+
+def forget_held() -> None:
+    """After a restore: what was held belongs to the database that was replaced."""
+    reset()
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM app_settings WHERE key = ?", (HELD_KEY,))
 
 
 # ---------- rules ----------
@@ -167,13 +230,10 @@ def new_message(mid: int) -> None:
             with _lock:
                 held = _held.get(key)
                 if in_quiet_hours(r):
-                    h = _held.setdefault(key, {"ids": [], "until": None, "quiet": True})
-                    h["quiet"] = True
-                    h["ids"].append(mid)
+                    _hold(key, mid, True)
                     continue
                 if not msg["announcement"] and (held is not None or now - _last_sent.get(key, -1e9) < BATCH_SECONDS):
-                    h = _held.setdefault(key, {"ids": [], "until": _last_sent.get(key, now) + BATCH_SECONDS, "quiet": False})
-                    h["ids"].append(mid)
+                    _hold(key, mid, False, _last_sent.get(key, now) + BATCH_SECONDS)
                     continue
                 _last_sent[key] = now
             level = preview_level(r, conn)
@@ -185,7 +245,8 @@ def new_message(mid: int) -> None:
 
 def drop_held(uid: str, cid: str) -> None:
     with _lock:
-        _held.pop((uid, cid), None)
+        if _held.pop((uid, cid), None) is not None:
+            _changed.set()
 
 
 def cancel_held(uid: str, cid: str, up_to: int) -> None:
@@ -193,10 +254,19 @@ def cancel_held(uid: str, cid: str, up_to: int) -> None:
         h = _held.get((uid, cid))
         if h and max(h["ids"]) <= up_to:
             _held.pop((uid, cid), None)
+            _changed.set()
 
 
 def flush() -> int:
-    """Release batched pushes whose minute is up, and quiet-hour ones once quiet hours end."""
+    """Release batched pushes whose minute is up, and quiet-hour ones once quiet hours end; then save what's
+    still held if it changed."""
+    try:
+        return _flush()
+    finally:
+        save_held()
+
+
+def _flush() -> int:
     now = time.monotonic()
     with _lock:
         due = {k: v for k, v in _held.items() if (v["until"] is not None and now >= v["until"]) or v["quiet"]}
@@ -211,11 +281,13 @@ def flush() -> int:
             if user is None or user["disabled"] or m is None or conv is None:
                 with _lock:
                     _held.pop((uid, cid), None)
+                    _changed.set()
                 continue
             if h["quiet"] and in_quiet_hours(user):
                 continue
             with _lock:
                 _held.pop((uid, cid), None)
+                _changed.set()
                 _last_sent[(uid, cid)] = now
             ids = [i for i in h["ids"] if i > m["last_read_id"] and i > m["joined_message_id"]]
             msgs = [x for x in (chats.message_row(conn, i) for i in ids) if x is not None and not x["deleted_at"]]
@@ -267,11 +339,28 @@ def notify_or_hold(uid: str, cid: str, mid: int, title: str, text: str) -> None:
         return
     if in_quiet_hours(user):
         with _lock:
-            h = _held.setdefault((uid, cid), {"ids": [], "until": None, "quiet": True})
-            h["quiet"] = True
-            h["ids"].append(mid)
+            _hold((uid, cid), mid, True)
         return
     send_to_user(uid, title, text, cid)
+
+
+def reply_follow_up(uid: str, cid: str, text: str) -> None:
+    """After a Reply from the phone: the chat's notification again (same tag, so it replaces the one replied to),
+    quietly, showing the reply and carrying a new token for the next Reply."""
+    with db.get_conn() as conn:
+        user = chats.user_row(conn, uid)
+        conv = chats.conv_row(conn, cid)
+        if user is None or user["disabled"] or conv is None or chats.member_row(conn, cid, uid) is None:
+            return
+        services = ha_notify.services_for({"id": uid}, conn)
+        if not services:
+            return
+        level = preview_level(user, conn)
+        title = chats.display_name_of(conn, conv, uid)
+        body = f"You: {chats.short(text, 200)}" if level == "full" else "You replied"
+        data = push_data(conn, uid, cid)
+    data.update({"alert_once": True, "push": {"interruption-level": "passive"}})
+    deliver(services, title, body, data)
 
 
 def purge_tokens(conn) -> None:
@@ -297,7 +386,6 @@ def handle_action(action: str, reply_text: str | None) -> str:
             return "expired"
         if kind in ("READ", "DECLINE"):
             # once only: Mark as read and Decline end that notification, so a replayed action finds nothing.
-            # Reply stays usable for the 24 hours (a lock-screen conversation can go back and forth).
             if conn.execute("DELETE FROM notify_tokens WHERE token = ?", (token,)).rowcount == 0:
                 return "unknown token"
         if kind != "DECLINE" and not settings.get("notification_reply", conn):
@@ -316,10 +404,15 @@ def handle_action(action: str, reply_text: str | None) -> str:
             text = (reply_text or "").strip()
             if not text or len(text) > 2000 or not chats.can_post(conn, conv, user["id"]):
                 return "refused"
+            # Reply uses its token up too (a replayed action does nothing); the phone gets the conversation's
+            # notification again with new buttons, so the back-and-forth on the lock screen goes on
+            if conn.execute("DELETE FROM notify_tokens WHERE token = ?", (token,)).rowcount == 0:
+                return "unknown token"
             chats.message_limit.take(user["id"])
-            udict = {"id": user["id"], "name": user["name"], "is_admin": False}
+            udict = {"id": user["id"], "name": user["name"], "is_admin": False, "is_child": bool(user["is_child"])}
             mid = chats.post_message(conn, out, conv, m, udict, text, via="notification")
             chats.mark_read(conn, out, conv, chats.member_row(conn, conv["id"], user["id"]), user["id"], mid)
+            out.job(reply_follow_up, user["id"], conv["id"], text)
             result = "replied"
     if result == "decline":
         from . import calls

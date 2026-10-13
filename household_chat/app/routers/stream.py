@@ -7,7 +7,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import chats, db
 from ..auth import require_user
-from ..live import format_event, hub
+from ..live import TOO_MANY, format_event, hub
 
 router = APIRouter(prefix="/api", tags=["stream"])
 PING_SECONDS = 20
@@ -25,7 +25,7 @@ def replay(user_id: str, last_id: int) -> list:
         rows = conn.execute(
             "SELECT m.*, mb.joined_message_id AS vf FROM messages m JOIN members mb ON mb.conversation_id = m.conversation_id "
             "AND mb.user_id = ? WHERE m.id > ? AND m.id > mb.joined_message_id ORDER BY m.id", (user_id, last_id)).fetchall()
-        return [format_event("message", chats.messages_out(conn, [r], None, r["vf"])[0], r["id"]) for r in rows]
+        return [format_event("message", d, d["id"]) for d in chats.messages_out_by_join(conn, rows, None)]
 
 
 @router.get("/stream")
@@ -54,6 +54,8 @@ async def stream(request: Request, last_event_id: str | None = Header(default=No
                     yield format_event("closed", {})
                     break
                 yield item
+                if item is TOO_MANY:
+                    break
         finally:
             hub.unregister(conn)
 

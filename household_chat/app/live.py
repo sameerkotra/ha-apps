@@ -10,6 +10,7 @@ Also here: which tab is looking at which chat (for "already looking" in §7),
 who's online, and typing.
 """
 import asyncio
+import itertools
 import json
 import threading
 import time
@@ -17,11 +18,16 @@ import time
 QUEUE_MAX = 300
 LOOKING_SECONDS = 30
 ONLINE_SECONDS = 60
+MAX_PER_USER = 10           # live connections per person (tabs, phones); an eleventh closes their oldest
+TYPING_EVERY = 3.0          # a person's typing in a chat goes out at most this often (seconds)
+
+_count = itertools.count()
 
 
 class Connection:
     def __init__(self, user_id: str, loop: asyncio.AbstractEventLoop):
         self.user_id = user_id
+        self.n = next(_count)               # the order they came in
         self.loop = loop
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAX)
         self.closed = False
@@ -53,15 +59,24 @@ class Hub:
         self._conns: dict[str, set[Connection]] = {}
         self._tabs: dict[str, dict[str, tuple]] = {}     # user → tab id → (conversation id, visible, time)
         self._heartbeat: dict[str, float] = {}
+        self._typing: dict[tuple, float] = {}            # (user, chat) → when their typing last went out
         self.on_online_change = None                     # set by main: fn(user_id, online)
 
     # ----- connections -----
     def register(self, user_id: str) -> Connection:
         c = Connection(user_id, asyncio.get_running_loop())
+        dropped = []
         with self._lock:
             was = self._online_locked(user_id)
-            self._conns.setdefault(user_id, set()).add(c)
+            mine = self._conns.setdefault(user_id, set())
+            while len(mine) >= MAX_PER_USER:
+                oldest = min(mine, key=lambda x: x.n)
+                mine.discard(oldest)
+                dropped.append(oldest)
+            mine.add(c)
             self._heartbeat[user_id] = time.monotonic()
+        for old in dropped:
+            old.send(TOO_MANY)              # its page switches to asking now and then (it doesn't reconnect)
         if not was and self.on_online_change:
             self.on_online_change(user_id, True)
         return c
@@ -104,6 +119,20 @@ class Hub:
 
     def publish_all(self, event: str, data: dict) -> None:
         self.publish(self.connected_users(), event, data)
+
+    # ----- typing -----
+    def typing_allowed(self, user_id: str, conversation_id: str) -> bool:
+        """Should this "typing" go out? At most one every TYPING_EVERY seconds per person and chat."""
+        now = time.monotonic()
+        key = (user_id, conversation_id)
+        with self._lock:
+            last = self._typing.get(key)
+            if last is not None and now - last < TYPING_EVERY:
+                return False
+            if len(self._typing) > 5000:
+                self._typing = {k: t for k, t in self._typing.items() if now - t < TYPING_EVERY}
+            self._typing[key] = now
+            return True
 
     # ----- presence: looking at a chat, online -----
     def set_tab(self, user_id: str, tab: str, conversation_id: str | None, visible: bool) -> None:
@@ -161,6 +190,7 @@ class Hub:
             self._conns.clear()
             self._tabs.clear()
             self._heartbeat.clear()
+            self._typing.clear()
         for c in conns:
             c.send(None)
 
@@ -168,6 +198,10 @@ class Hub:
 def format_event(event: str, data: dict, event_id: int | None = None) -> str:
     out = f"id: {event_id}\n" if event_id is not None else ""
     return out + f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'), ensure_ascii=False)}\n\n"
+
+
+# the last thing sent to a connection closed because its person opened too many (stream.py ends it after this)
+TOO_MANY = format_event("closed", {"reason": "too_many"})
 
 
 hub = Hub()

@@ -58,7 +58,7 @@ def _check(merged: dict, partial: dict, current: dict) -> None:
         raise SettingsError("calls_relay: your own relay needs its address and shared secret.")
 
 
-SECRETS = ("calls_cf_api_token", "calls_turn_secret")
+SECRETS = ("calls_cf_api_token", "calls_turn_secret", "bus_signing_key")
 
 GROUPS = [
     Group("files", "Files"),
@@ -68,6 +68,8 @@ GROUPS = [
     Group("calls", "Voice calls", "One-to-one calls in direct chats. The sound goes straight between the two "
           "phones. At home nothing needs setting up; for calls away from home add an address lookup (STUN) and, "
           "for networks that block direct connections (common on mobile data), a call relay."),
+    Group("apps", "Messages between apps", "Household Chat answers the other household apps (Docs shares cards, the "
+          "Household Assistant asks for unread counts) through Home Assistant's event bus."),
     Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
           "apps know. Chat tells it only which chats have unread messages and how many — never what anyone wrote."),
 ]
@@ -81,8 +83,14 @@ SETTINGS = [
                  "it. Changing it doesn't move any files: copy the whole old folder, including .household_chat_store, "
                  "to the new place first."),
     Setting("max_upload_mb", 50, "Largest file (MB)", group="files", min=1, max=1024),
-    Setting("share_folder_quota_gb", 0, "Limit for the chat folder in /share (GB, 0 = no limit)", group="files",
-            min=0, max=10000),
+    Setting("share_folder_quota_gb", 50, "Limit for the chat folder in /share (GB, 0 = no limit)", group="files",
+            min=0, max=10000,
+            help="Files waiting to be sent count too. Each person can also have at most two messages' worth of "
+                 "files uploaded and not sent yet."),
+    Setting("min_free_mb", 1024, "Keep this much disk space free (MB, 0 = don't check)", group="files", min=0,
+            max=1_000_000,
+            help="Uploads, shared-folder uploads, chat downloads and backups are refused when they would leave less "
+                 "free space than this on the disk they're written to — Home Assistant needs room too."),
     Setting("who_can_create_groups", "everyone", "Who can create groups", group="messages",
             choices=[("everyone", "Everyone"), ("admins", "Admins only")]),
     Setting("edit_window_minutes", 15, "Messages can be edited for (minutes, 0 = never)", group="messages",
@@ -131,6 +139,10 @@ SETTINGS = [
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
             help="Lets the Household Assistant tell a person their unread counts, as they'd see them here. Each "
                  "person can still turn it off for themselves in Settings."),
+    Setting("bus_signing_key", "", "App-messages signing key", group="apps", secret=True, max_length=200,
+            validators=[_one_line], page={"clearFlag": "clear_bus_signing_key"},
+            help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+                 "Assistant's network can send messages as any other."),
     Setting("export_max_mb", 500, "Largest chat download, files included (MB)", group="files", min=10, max=10000),
 ]
 

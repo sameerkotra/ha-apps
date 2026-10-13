@@ -361,6 +361,10 @@ def remind_announcement(mid: int, user: dict = Depends(require_user)):
         if msg["expires_at"]:
             text = f"📢 Reminder from {user['name']} about an announcement"
         for uid in info["pending"]:
+            r = conn.execute("SELECT m.*, u.* FROM members m JOIN users u ON u.id = m.user_id "
+                             "WHERE m.conversation_id = ? AND m.user_id = ?", (conv["id"], uid)).fetchone()
+            if r is None or not notifier.wants(conn, r, r, conv, msg):
+                continue                  # their notifications are off: the reminder is for the page only
             out.job(notifier.notify_or_hold, uid, conv["id"], msg["id"], title, text)
         chats.publish_message(conn, out, conv, chats.message_row(conn, mid), "message_updated")
         res = _out(conn, mid, user, m)

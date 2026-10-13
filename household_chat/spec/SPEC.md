@@ -114,8 +114,9 @@ household_chat/
 | Key | Default | Meaning |
 |---|---|---|
 | `files_path` | `/share/household_chat` | The chat files folder (§5.3.1): an absolute, normalised path inside `/share` (not `/share` itself; no `.`/`..`). Put it on network storage with `/share/<mount>/household_chat`. Changing it never moves files; it's checked first and refused or confirmed as §5.3.1 says. A restore keeps this install's value. |
-| `max_upload_mb` | 50 | Largest single file (1–1024). Enforced before the body is read (Content-Length) and while streaming. |
-| `share_folder_quota_gb` | 0 | 0 = no limit. Uploads are refused once the chat folder would pass it. |
+| `max_upload_mb` | 50 | Largest single file (1–1024). Enforced before the body is read (Content-Length) and while streaming (also without a Content-Length). |
+| `share_folder_quota_gb` | 50 | 0 = no limit. Uploads are refused (507) once the chat folder would pass it: checked before the body is read (with the Content-Length, or `max_upload_mb` when there's none) and again, with the real size, as the attachment row is written. The total is `file_usage.bytes`, kept by triggers on `attachments` and `kept_files` (§5.1). An install that never saved a value and already holds over 90 % of 50 GB gets 0 saved at start-up, so it keeps "no limit". |
+| `min_free_mb` | 1024 | 0 = don't check. Uploads, shared-folder uploads and new folders, chat downloads and backups are refused (507) when they'd leave less free space than this on the disk they write to (`files.check_free_space`, `shutil.disk_usage`). |
 | `who_can_create_groups` | `everyone` | `everyone` or `admins`. |
 | `edit_window_minutes` | 15 | How long a message can be edited (0 = never, max 1440). |
 | `message_retention_days` | 0 | 0 = keep forever. Older messages (except pinned ones) are deleted nightly. Their files are deleted too, unless `keep_files_on_retention` is on. |
@@ -136,14 +137,15 @@ household_chat/
 | `calls_relay` | `none` | `none`, `cloudflare` or `turn` (§15.13). Needs the fields below for its choice. |
 | `calls_cf_key_id` · `calls_cf_api_token` | empty | Cloudflare TURN key id and API token (**secret**). |
 | `calls_turn_url` · `calls_turn_secret` | empty | Own TURN server address(es), `turn:`/`turns:`, comma-separated, and coturn's shared secret (**secret**). |
+| `bus_signing_key` | empty | The app-messages signing key (**secret**), the same in every household app: `app_bus.start(signing_key=…)` reads it (a function, re-read every few seconds). Empty: messages are unsigned and every message is accepted, as before; set: incoming requests need a valid `sig` (else `nack unsigned`). Group "Messages between apps". |
 
-The two secrets are write-only (the page is told only whether they're set; a blank box keeps the saved one, `clear_<key>: true` removes it) and never in a backup (§5.3 backups: `scrub_secrets` on the copy; a restore keeps this install's with `saved_secrets` / `keep_secrets`).
+The secrets are write-only (the page is told only whether they're set; a blank box keeps the saved one, `clear_<key>: true` removes it) and never in a backup (§5.3 backups: `scrub_secrets` on the copy; a restore keeps this install's with `saved_secrets` / `keep_secrets`).
 
-The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, messages, retention, notifications, calls) on the shared `settings_core.Registry` (`app/common/settings_core.py`). `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups, storage}` (`meta[key]` = label, help, group, kind, `restartRequired`, range, choices, …; `storage` as in §5.3.1); unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1) is also kept in `app_settings` but isn't a setting.
+The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, messages, retention, notifications, calls, apps, assistant) on the shared `settings_core.Registry` (`app/common/settings_core.py`). `GET/PUT /api/admin/settings` → `{values, defaults, meta, groups, storage}` (`meta[key]` = label, help, group, kind, `restartRequired`, range, choices, …; `storage` as in §5.3.1); unknown keys and out-of-range values answer 422 and nothing is saved. Values are read through a 5-second cache, so changes apply without a restart. `files_store_id` (§5.3.1), `nightly_last_run` (§10) and `notify_held` (§7) are also kept in `app_settings` but aren't settings.
 
 ## 4. Security & identity
 
-- **Ingress only.** A middleware answers 403 to any request whose TCP source isn't Supervisor's ingress proxy (`172.30.32.2`) or loopback (`auth_core.INGRESS_HOSTS`, shared `app/common/auth_core.py`), before any route runs. The security headers (CSP, `nosniff`, Cache-Control) are added at the end of that guard by `web_security.SecurityHeaders.apply` (shared `app/common/web_security.py`), the same headers as before. After that, the caller is identified by `X-Remote-User-Id` (401 without it), with `X-Remote-User-Name` (login) and `X-Remote-User-Display-Name`.
+- **Ingress only.** A middleware answers 403 to any request whose TCP source isn't Supervisor's ingress proxy (`172.30.32.2`; loopback too only outside Home Assistant, in development and tests — `auth_core.INGRESS_HOSTS`, shared `app/common/auth_core.py`), before any route runs. The security headers (CSP, `nosniff`, Cache-Control) are added at the end of that guard by `web_security.SecurityHeaders.apply` (shared `app/common/web_security.py`), the same headers as before. After that, the caller is identified by `X-Remote-User-Id` (401 without it), with `X-Remote-User-Name` (login) and `X-Remote-User-Display-Name`.
 - **Admins** are the people whose user id or login name (case-insensitive) is in `admin_users`. Display names are never matched; when an entry matches someone only by display name, `/api/me` and `/api/whoami` say so (`displayNameOnly`) and "How the app sees you" tells them what to add instead.
 - **Users.**
   - The user list mirrors HA persons: synced at start-up, every 5 minutes and on *Check Home Assistant again*. Someone who opens the app without a Person is added on first visit.
@@ -165,8 +167,13 @@ The settings are declared once in `settings.py` (`SETTINGS`, `GROUPS`: files, me
 - **Browser hardening.**
   - CSP `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'`; `Referrer-Policy: no-referrer`; `Cache-Control: no-store` on the API.
   - No `innerHTML`; message text always goes in through `textContent`; links go through a `safeUrl()` (http/https/mailto/tel only), with `rel="noopener noreferrer"`.
-  - Request bodies over 1 MB are refused (413), except uploads and restores, which enforce their own limits while streaming.
-- **Rate limits.** 30 messages and 20 uploads a minute per person.
+  - Request bodies are limited by the shared `web_security.BodyLimit` (counted as they arrive, so a body without a Content-Length is limited too): 1 MB, except uploads (`…/uploads`, `…/upload`: the largest `max_upload_mb` allows, the route enforcing the setting while streaming) and the restore (20 GB).
+  - Chat files: `Cache-Control: private, no-cache` with an `ETag`, answered `304 Not Modified` while the file is the same — the browser asks every time, so a file deleted or taken away from someone is never shown from its cache.
+  - Versioned assets (`?v=<version>`, every one the page links) are `Cache-Control: public, max-age=31536000, immutable`; the page itself is never cached.
+- **Images** are checked from their header before anything is decoded (`app/common/image_guard.py`): at most 40 million pixels (a JPEG up to 200 million: it's decoded with `draft()` at about the size needed, in the photo's proportions, never whole); a bigger one is kept as a plain file (`application/octet-stream`, no preview). At most two decodes run at a time (`decode_slot`; busy → 503).
+- **Rate limits.** 30 messages and 20 uploads a minute per person; typing events at most every 3 s per person and chat; 30 new shared-folder folders a minute; chat downloads one at a time per person, two in all, ten an hour per person. Files uploaded and not sent: at most `2 × 10 × max_upload_mb` per person. Live connections: 10 per person (an eleventh closes the oldest with `closed {reason: "too_many"}`, and that page polls instead of reconnecting).
+- **Group roles.** Owners and group admins make members group admins; only the owner changes another group admin's role (a group admin can step down). Ownership goes to adults only.
+- **Mentions** are kept only for members whose `@Name` is in the text (as the composer writes it); `@everyone` only from an adult.
 - **The server never logs** message text or file contents.
 
 ### 4.1 Who else can read chats and files (stated plainly in DOCS)
@@ -256,6 +263,10 @@ CREATE TABLE heard (attachment_id, user_id, at);       -- voice messages played
 CREATE TABLE reactions (message_id, user_id, emoji, created_at, PRIMARY KEY (message_id, user_id, emoji));
 CREATE VIRTUAL TABLE messages_fts USING fts5(body, content='messages', content_rowid='id');   -- kept by triggers
 CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT, updated_by TEXT);
+CREATE TABLE file_usage (id INTEGER PRIMARY KEY CHECK (id = 1), bytes INTEGER NOT NULL);   -- the folder's total,
+  -- kept by triggers on attachments and kept_files (the limit is checked on every upload without adding them all up)
+CREATE TABLE kept_files (rel_path TEXT PRIMARY KEY, conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+  size INTEGER, kept_at TEXT);                         -- files of messages deleted by age, kept (§3.1), still counted
 CREATE TABLE audit_log (id TEXT PRIMARY KEY, user_id TEXT, actor_id TEXT, conversation_id TEXT,
   action TEXT NOT NULL, created_at TEXT NOT NULL);     -- admin and membership actions, never content
 CREATE TABLE app_cards (message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,   -- §15.11
@@ -400,7 +411,7 @@ No admin route returns message text, file names or file contents of chats the ad
   3. It isn't their quiet hours (quiet hours hold pushes back and send one summary when they end, unless they've read it meanwhile).
   4. They aren't already looking at that chat (a live connection that reported that chat visible and focused in the last 30 s, §8).
   5. It isn't their own personal room.
-- **Batching.** The first message is sent at once. More from the same chat within 60 s are held and sent as one push: "Nisha: 3 new messages". A read marker cancels anything still held. Held pushes live in memory; a restart drops them.
+- **Batching.** The first message is sent at once. More from the same chat within 60 s are held and sent as one push: "Nisha: 3 new messages". A read marker cancels anything still held. Held pushes live in memory and are saved in `app_settings` (`notify_held`, times as wall-clock) on each tick that changed them and at shutdown, and loaded at start-up, so a restart doesn't drop them; a restore forgets them.
 - **Content.**
   - Title: the chat's name, or the sender's name in direct chats.
   - Message: according to the stricter of the App setting and the person's `notify_preview`:
@@ -418,9 +429,10 @@ No admin route returns message text, file names or file contents of chats the ad
 ## 8. Live updates (`live.py`)
 
 - **`GET /api/stream`.** Server-Sent Events, one per open tab, keyed to the user. The server sends a `: ping` every 20 s (ingress and proxies drop idle connections).
-- **Events:** `hello`; `message` (with its id, for `Last-Event-ID`); `message_updated` (edits, deletes, reactions, pins, poll votes and closing); `message_removed` (§15.8); `read`; `typing`; `conversation` (`{id, removed?}`); `unread`; `presence`; `reminder`; `scheduled`; `settings`; `storage`; `call` (§15.12, only to the two people in the call); `closed` (disabled or restored) and `reload`. Each event carries only what that user may see, re-checked against membership at send time.
+- **Events:** `hello`; `message` (with its id, for `Last-Event-ID`); `message_updated` (edits, deletes, reactions, pins, poll votes and closing); `message_removed` (§15.8, and retention); `read`; `typing`; `conversation` (`{id, removed?}`); `unread`; `presence` (`{online: {user: {online, lastSeen} | null}}` for one person coming online or going offline — patched in place by the page; `{homeAway}` with the whole map; `{refresh: true}` makes pages reload people and chats); `reminder`; `scheduled`; `settings`; `storage`; `call` (§15.12, only to the two people in the call); `closed` (disabled or restored) and `reload`. Each event carries only what that user may see, re-checked against membership at send time.
 - **Hub.** An in-memory map of user → queues, with a bounded queue per connection (a slow client is dropped and reconnects). This works because the app runs one process: uvicorn with 1 worker, and the Dockerfile says so.
-- **Resume.** The browser reconnects with `Last-Event-ID` (the newest message id it has); the server replays newer messages for the user's chats, up to 500, else tells the page to reload the chat. After reconnecting, the page also catches up through `GET …/messages?after=`.
+- **Resume.** The browser reconnects with `Last-Event-ID` (the newest message id it has); the server replays newer messages for the user's chats, up to 500 (one `messages_out` per distinct join point, not per message), else tells the page to reload the chat.
+- **The page draws one message at a time**: an event changes only its message's row (`patchMessage`), a new message is appended (`appendMessage`), and a voice message that is playing keeps its player; the whole list is drawn again only when the grouping or "Seen" would change. After reconnecting, the page also catches up through `GET …/messages?after=`.
 - **Fallback.** If SSE fails three times, the page polls every 5 s while visible and every 60 s while hidden, and tries SSE again after a minute.
 - **Presence.** The page posts `{conversationId, visible}` when it changes (for §7 rule 4) and a heartbeat every 25 s. "Online" = a live connection in the last minute; shown as a dot, and last seen as "5 min ago" (each person can hide theirs).
 
@@ -466,15 +478,18 @@ The 20-second loop is a `Jobs.every()` job of the shared runner (`app/common/hou
 - **Every minute.** Home/away from `GET /api/states` while someone has the app open (§15.3); typing states older than 6 s and expired presence are dropped.
 - **Every 5 minutes.** Check the chat files folder (§5.3.1); refresh people and phones from HA (§7); scan shared folders (§12).
 - **Every 10 minutes.** People's photos (§15.3.1).
-- **Hourly.** Unsent uploads older than 24 h are removed.
-- **Nightly (03:30 HA time).** Retention (§3.1); purge `_deleted` entries older than 30 days; mark missing files; remove orphan thumbnails; `PRAGMA optimize`. While the chat files folder isn't connected, the file jobs (purge, missing, orphan previews, stale parts) and the disappearing-file sweep skip it.
-- Background jobs wait while a restore is running.
+- **Every 5 minutes** also: the sweep of every chat's `_disappearing` folder and the full clean after deletions (§15.8).
+- **Hourly.** Unsent uploads older than 24 h are removed; `.backup-*`, `.export-*` and `.restore-*` files in `/data` older than 6 h are removed (all of them at start-up).
+- **Nightly (03:30 HA time).** Retention (§3.1: replies get "Original message no longer available", open pages get `message_removed`, and kept files are recorded in `kept_files`, which counts towards the folder's size and the Storage page until the file is gone or the chat is deleted); purge `_deleted` entries older than 30 days; mark missing files (looked at with no transaction open; changes written in one short one); remove orphan thumbnails; `PRAGMA optimize`. The day it last ran is `nightly_last_run` in `app_settings`, so a restart (or a stop over 03:30) doesn't skip it: it runs on the first tick after 03:30 of a day it hasn't. On the very first start it waits for the next night. While the chat files folder isn't connected, the file jobs (purge, missing, orphan previews, stale parts) and the disappearing-file sweep skip it.
+- Background jobs wait while a restore is running: every connection is opened inside `db.GATE.work()` (`db_core.MaintenanceGate`), and the restore swaps the file inside `db.maintenance()`, which waits (up to 60 s, else 503 "busy") for open connections to end and holds new ones until it's done.
 
 ## 11. Invariants & pitfalls
 
 - A chat's messages and files are only ever returned to its current members; being an app admin never bypasses this. Check membership on every route and at SSE send time, never only at connect. No admin route may return message text, file names or file contents from a chat the admin isn't in.
 - File paths come from the DB, are resolved under the chat files folder and `realpath`-checked. Client-supplied names are display names only.
 - No network call (HA notify, HA API) while holding a DB connection: collect recipients, commit, then send from a thread.
+- No file work (moves, renames on the NAS, folder walks) inside a write transaction: a deleted message's files, a deleted chat's folder and an admin's file deletions move in an `Outbox` job after the commit; shared folders are walked first and remembered in a short transaction; a person's new name is saved before their folders are renamed.
+- Names in the chat files folder are taken with `O_EXCL` (`files.reserve_name` / `place`), so two files of the same name arriving together each get their own.
 - Nothing is ever served inline that could run script (SVG, HTML, XML).
 - One uvicorn worker (the SSE hub lives in memory).
 - `ha_notify.py` and `ha_people.py` stay byte-identical across the household apps.
@@ -516,6 +531,10 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
 - **Chat files folder** (`test_storage.py`): connected / not connected, adopting an existing folder, changing folders (new, confirm, refused), waiting deletes, restore keeps this install's folder.
 - **Admin** (`test_admin.py`): settings validation, storage, backup and restore with and without files, retention, whoami; first run with no admins (the `noAdmin` flag, nobody promoted, the banner in the page).
 - **Features** (`test_features.py`): child accounts, announcements, disappearing messages (per chat and per message, complete deletion, `secure_delete` and WAL checkpoint, backup leaves them out, restores expire before serving, `_disappearing/` files deleted without rows), send later, drafts, chat downloads, storage clean-up, photos from HA, shared folders (rules, browse/serve/upload/announce, search and several uploads, any chats with access per chat, 10 per chat, older databases migrated), and review regressions.
+- **Limits** (`test_hardening.py`): images checked before decoding (pixel limit, scaled-down JPEG decode, busy), the folder's limit (default, existing big installs, the trigger-kept total, chunked uploads, the second check), unsent files per person, free space, chat downloads one at a time and per hour, JSON bodies without a length, shared-folder uploads and new folders, same-name uploads at once, group roles, transfer to a child, mentions in the text and `@everyone`, live connections per person, typing, announcement reminders and notifications off, relay usage cap, linear formatting (Python and the page's `format.js` under Node), the pinned base image.
+- **Speed** (`test_speed.py`): the batched chat list, replay, starred messages, admin overview and chat download give the same answers as the one-by-one versions; the identity dependency is a plain function and writes only when needed; files are moved, renamed and looked at with no write transaction open; presence events carry one person; relay failures cached; disappearing sweep and full clean every 5 minutes; `synchronous=NORMAL`; asset caching.
+- **Robustness** (`test_robustness.py`): nothing left in `/data` when a download or backup fails, leftovers swept; nightly after a restart; held notifications across a restart; retention (replies, live removal, kept files counted); the restore gate; a file sent twice at once; any upload error removes the file; `no-cache` + `304`.
+- **In a browser** (`test_calls_browser.py`, `test_chat_browser.py`, Playwright, skipped without it): a call between two pages; live events change only their own message's row.
 - **Shared** (`tests/common_tests/`, copies): `test_shared_copies.py` and the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin, web_security, backup_core).
 - **Packaging** (`test_packaging.py`, the shared checks from `common_tests/packaging_core.py`): `config.yaml` (version, url, ingress, `panel_admin: false`, no ports, options == schema == translations, empty defaults), every `?v=` equals the version, README/DOCS present, CHANGELOG.md whose newest (top) version heading equals the version, `spec/` present, icon and logo sizes, and no personal details in any text file of the app.
 
@@ -540,7 +559,7 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
   - **Mark as read** moves their read marker.
 - **How.**
   - Each notification carries `data.actions`: `[{action: "HCHAT_REPLY_<token>", title: "Reply", behavior: "textInput", textInputButtonTitle: "Send", textInputPlaceholder: "Message"}, {action: "HCHAT_READ_<token>", title: "Mark as read"}]`, and `data.tag = "hchat_<conversation id>"`, so a newer notification replaces the older one for that chat.
-  - `<token>` is 128 random bits, stored in `notify_tokens(token, user_id, conversation_id, created_at)`, valid 24 hours. **Reply** can use it any number of times within that; **Mark as read** (and a call's **Decline**, §15.12) uses it up — the row is deleted, so a replayed action finds nothing ("unknown token").
+  - `<token>` is 128 random bits, stored in `notify_tokens(token, user_id, conversation_id, created_at)`, valid 24 hours. Each button uses it up — the row is deleted, so a replayed action finds nothing ("unknown token"); a refused reply (empty, too long) doesn't. After a **Reply**, the chat's notification is sent again to that person (same tag, so it replaces the one replied to; `alert_once`, iOS `interruption-level: passive`): "You: <reply>" (or "You replied" with a stricter preview) with a new token, so a back-and-forth on the lock screen goes on. **Mark as read** and a call's **Decline** (§15.12) end it.
   - The app keeps one WebSocket open to Home Assistant (`ws://supervisor/core/websocket` with `SUPERVISOR_TOKEN`; covered by `homeassistant_api`) in `ha_events.py`, built on the shared client `app/common/ha_ws.py`: one daemon thread "ha-events", reconnect after 5 s doubling to 5 min, a ping every 50 s, and a dropped connection is also noticed when pings go unanswered for about 190 s; `stop()` closes the socket and joins the thread. Connection messages are logged by the `ha_ws` logger. It subscribes to `mobile_app_notification_action` and ignores actions without its `HCHAT_` prefix.
   - On an action it looks the token up, checks that the person is still enabled and a member and that the reply isn't empty (≤ 2000 characters), then posts the message (`via = 'notification'`) or moves the read marker.
 - **Limits.**
@@ -606,7 +625,7 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
 - Admins (or, with `who_can_announce`, group admins in their groups) can mark a message as an **announcement**, usually in the Household group ("Power cut tomorrow 10–2, charge your phones"). Not in personal rooms.
 - **Look.** It shows highlighted in a bar at the top of the chat until every member has tapped **Got it** (or the sender takes it down), and lists who has and hasn't acknowledged it. Only members who could see it (joined before it) are counted.
 - **Notifications.** An announcement is always sent, even to people who muted the chat or chose *mentions only*. It's never sent to someone whose level is *off*, and it respects quiet hours.
-- **Reminder.** The sender can send one reminder to those who haven't acknowledged it.
+- **Reminder.** The sender can send one reminder to those who haven't acknowledged it (a push only to those whose notifications aren't off; quiet hours hold it).
 - Schema: `messages.announcement`, `announcement_closed_at`, `announcement_reminded_at`; `announcement_acks(message_id, user_id, at)`.
 - API: `POST /conversations/{id}/messages {announcement: true}`; `POST /messages/{id}/ack`; `POST /messages/{id}/announcement-reminder`; `POST /messages/{id}/announcement-close`.
 
@@ -624,7 +643,7 @@ An admin shares an existing folder in Home Assistant's `/share` (e.g. `/share/Do
   - the chat's last-message preview and unread counts are recalculated, and a `message_removed` SSE event makes every open page drop it at once (pages also drop past-due messages themselves).
 - **Leaving no copies in the app.**
   - `PRAGMA secure_delete = ON`, so deleted rows are overwritten with zeros.
-  - After each expiry pass that deleted anything, the search index is merged (`optimize`) and a `wal_checkpoint(TRUNCATE)` runs, so old copies don't linger in the write-ahead log.
+  - After each expiry pass that deleted anything, the search index gets a small incremental merge and the write-ahead log a passive checkpoint; within 5 minutes (the `full` pass, with the `_disappearing` sweep, also at start-up and after a restore) the whole index is merged (`optimize`) and a `wal_checkpoint(TRUNCATE)` runs, so old copies don't linger in the index or the write-ahead log.
   - The app's **own backup** leaves out disappearing messages and their files, whether or not they've expired yet.
 - **Notifications** never include the text or file names ("Nisha sent a disappearing message"), whatever the preview level. Reminders on them say "a message".
 - **Restores.** Expiry is an absolute time stored with each message (`expires_at`), so a restore can't reset the clock.
@@ -800,7 +819,7 @@ three others; more would need a media server). Away from home needs §15.13.
   | POST `/api/calls {conversationId, kind?}` | Start → 201 `{id, kind, group, name, iceServers, ringSeconds, members: [{id, name, state}], peerId, peerName}` (the last two for a direct chat). The call rings at once (its `calls` row is written). 403 feature off; 404 not your chat; 409 personal room, read-only, nobody else in the group, you're in a call, they're on another call, everyone else is. 422 a kind other than `audio` / `video`. |
   | POST `/api/calls/{id}/answer` | Join → `{id, kind, group, iceServers, members, peers: [{id, name}]}` — `peers` are the people already joined; **the newcomer sends an offer to each**, so two sides never offer at once. 409 unless ringing for me, or the call is full. |
   | POST `/api/calls/{id}/signal {to, type, sdp?, candidate?}` | An `offer`, `answer` or `candidate` for one person, both joined (409 otherwise); delivered as an event and kept (up to 300 per person) for a page that polls. |
-  | GET `/api/calls/current` | `{call: null}` or my call: `{id, conversationId, kind, group, name, state (ringing for me / joined), role, peerId, peerName, ringLeft, members, iceServers, signals}` — `signals` are the ones waiting for me, drained on read; pages ignore signals they've seen (each has an `id`). |
+  | GET `/api/calls/current` | `{call: null}` or my call: `{id, conversationId, kind, group, name, state (ringing for me / joined), role, peerId, peerName, ringLeft, members, iceServers, signals}` — `signals` are the ones for me after `?since=<id>` (kept until the call ends, at most 300, so another tab of mine polling doesn't take them from the tab in the call); pages ignore signals they've seen (each has an `id`). `?ice=0`: without `iceServers` (a page in a call has them). |
   | POST `/api/calls/{id}/decline` | Decline while it rings for me. |
   | POST `/api/calls/{id}/end {reason?}` | Leave (the call goes on for the others while two remain). `reason`: `failed` (couldn't connect) or `no_microphone` (Answer couldn't use the microphone). |
 
@@ -893,7 +912,8 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
   token and a `User-Agent` naming the app (Cloudflare's bot filter answers 403 "error code: 1010" to Python's
   default one; straight from the app to Cloudflare, 5 s time-out) and keeps the answer's `iceServers` (username,
   credential, urls) for an hour, so a household's calls make a few requests a day. A failure is logged
-  ("Couldn't get call relay credentials from Cloudflare") and the call goes ahead without a relay. The sound through
+  ("Couldn't get call relay credentials from Cloudflare") and the call goes ahead without a relay; Cloudflare isn't
+  asked again for a minute (`CF_FAIL_CACHE`), so calls and pages that poll don't each wait for it. The sound through
   Cloudflare stays encrypted end to end. Cost: free up to a large monthly allowance (1,000 GB when this was
   written; a voice call is about 30–60 MB an hour).
 - **Own TURN server** (`calls_relay = turn`, e.g. a coturn app with a router port forwarded): the admin enters
@@ -910,7 +930,8 @@ the signalling but not the sound (tunnels don't pass UDP for public hostnames), 
   of nominated candidate pairs whose **local** candidate is `relay` — each phone counts the relay allocation it
   owns, so a pair between two phones is never counted twice — and `POST /calls/{id}/usage {relayBytes}` every
   20 s while it grows and once more as the call closes; the server keeps the highest figure per person per call
-  (accepted while the call is on and for an hour after, from someone in it) under the call's month in Home
+  (accepted while the call is on and for an hour after, from someone in it; at most what the call could have
+  carried — `RELAY_RATE`, 10 Mbit/s, per other person, for as long as it lasted plus a minute) under the call's month in Home
   Assistant's time zone. `GET /admin/calls/usage` → `{month, bytes, relayedCalls, calls, months: [{month, bytes,
   calls}] (≤ 12), relay, freeBytes (1,000 GB for Cloudflare, else null), updatedAt}`, shown under Voice calls in
   App settings with **Refresh**. Measured on the phones, not fetched from Cloudflare (no usage API is known), so

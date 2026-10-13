@@ -8,6 +8,7 @@ minute, only while someone has the app open; changes go out as `presence` events
 """
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from . import db, ha_client, settings
 from .live import hub
@@ -99,6 +100,34 @@ def online_map(conn) -> dict:
             continue
         out[r["id"]] = {"online": hub.is_online(r["id"]), "lastSeen": r["last_seen"]}
     return out
+
+
+# ---------- online / offline: one person's state to everyone (not "everyone reload everything") ----------
+_publisher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="presence")
+
+
+def online_changed(user_id: str, online: bool = True) -> None:
+    """The live hub's callback when someone comes online or goes offline. It may be called on the event loop,
+    so the database is read in a worker thread (one, so the events keep their order)."""
+    _publisher.submit(publish_online, user_id)
+
+
+def online_state(conn, user_id: str):
+    """{"online", "lastSeen"} as online_map has it, or None for someone who hides it (or has no access)."""
+    r = conn.execute("SELECT last_seen, hide_online, disabled FROM users WHERE id = ?", (user_id,)).fetchone()
+    if r is None or r["disabled"] or r["hide_online"]:
+        return None
+    return {"online": hub.is_online(user_id), "lastSeen": r["last_seen"]}
+
+
+def publish_online(user_id: str) -> None:
+    """A `presence` event with just this person's online state; pages patch it in."""
+    try:
+        with db.get_conn() as conn:
+            state = online_state(conn, user_id)
+        hub.publish_all("presence", {"online": {user_id: state}})
+    except Exception:
+        logger.exception("Telling everyone who's online failed")
 
 
 def reset() -> None:

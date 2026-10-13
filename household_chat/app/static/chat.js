@@ -293,16 +293,68 @@ function renderMessages() {
     els.push(h("div", { class: "chat-start" }, h("button", { class: "btn small", type: "button", onclick: () => onListScroll() }, "Load earlier messages")));
   }
   let prev = null;
-  const lastMine = [...state.msgs].reverse().find((m) => m.userId === state.me.id && !m.deleted && !isNote(m));
-  for (const m of state.msgs) {
+  state.lastMineId = lastMineId();
+  const playing = playingVoices(list);
+  state.msgs.forEach((m, i) => {
     const d = toDate(m.createdAt);
     if (!prev || !sameDay(toDate(prev.createdAt), d)) els.push(h("div", { class: "day-sep" }, h("span", null, fmtDay(m.createdAt))));
     if (state.unreadMarker && m.id === state.unreadMarker) els.push(h("div", { class: "unread-sep" }, h("span", null, "Unread")));
-    const grouped = prev && prev.userId === m.userId && !isNote(prev) && !isNote(m) && (d - toDate(prev.createdAt)) < 5 * 60000 && sameDay(toDate(prev.createdAt), d) && !(state.unreadMarker === m.id);
-    els.push(messageEl(m, grouped, ctx, lastMine && lastMine.id === m.id));
+    els.push(keepPlaying(messageEl(m, groupedAt(i), ctx, state.lastMineId === m.id), playing));
     prev = m;
-  }
+  });
   mount(list, els);
+  if (keepBottom) list.scrollTop = list.scrollHeight;
+  updateToBottom();
+}
+// ---- one message at a time: an event (a reaction, an edit, a vote, a new message at the end) changes only its
+// own row, so a long chat isn't drawn again for each, and a voice message that's playing goes on playing ----
+function groupedAt(i) {
+  const m = state.msgs[i], prev = i > 0 ? state.msgs[i - 1] : null;
+  if (!prev) return false;
+  const d = toDate(m.createdAt), p = toDate(prev.createdAt);
+  return prev.userId === m.userId && !isNote(prev) && !isNote(m) && (d - p) < 5 * 60000 && sameDay(p, d) && !(state.unreadMarker === m.id);
+}
+function lastMineId() {
+  const x = [...state.msgs].reverse().find((m) => m.userId === state.me.id && !m.deleted && !isNote(m));
+  return x ? x.id : null;
+}
+function msgCtx() { return { names: memberNames(), myName: state.me.name }; }
+// voice players that are playing inside `root`, by attachment id
+function playingVoices(root) {
+  const out = new Map();
+  if (root) root.querySelectorAll("audio").forEach((a) => { const w = a.closest(".voice[data-att]"); if (w && !a.paused) out.set(w.dataset.att, w); });
+  return out;
+}
+// the new row `el` takes over the playing players (the same element, so the sound doesn't stop)
+function keepPlaying(el, playing) {
+  if (!playing.size) return el;
+  el.querySelectorAll(".voice[data-att]").forEach((w) => { const p = playing.get(w.dataset.att); if (p) w.replaceWith(p); });
+  return el;
+}
+function patchMessage(m) {
+  const list = $("#msgList");
+  const old = document.getElementById("m" + m.id);
+  const i = state.msgs.findIndex((x) => x.id === m.id);
+  if (!list || !old || i < 0 || lastMineId() !== state.lastMineId || (m.expiresAt && toDate(m.expiresAt) <= Date.now())) { renderMessages(); return; }
+  const keepBottom = atBottom();
+  old.replaceWith(keepPlaying(messageEl(m, groupedAt(i), msgCtx(), state.lastMineId === m.id), playingVoices(old)));
+  if (keepBottom) list.scrollTop = list.scrollHeight;
+  updateToBottom();
+}
+function appendMessage(m) {
+  const list = $("#msgList");
+  const i = state.msgs.length - 1;
+  const prev = i > 0 ? state.msgs[i - 1] : null;
+  if (!list || state.msgs[i] !== m || (prev && !document.getElementById("m" + prev.id)) || state.unreadMarker === m.id) { renderMessages(); return; }
+  const keepBottom = atBottom();
+  const before = state.lastMineId;
+  state.lastMineId = lastMineId();
+  if (!prev || !sameDay(toDate(prev.createdAt), toDate(m.createdAt))) list.appendChild(h("div", { class: "day-sep" }, h("span", null, fmtDay(m.createdAt))));
+  list.appendChild(messageEl(m, groupedAt(i), msgCtx(), state.lastMineId === m.id));
+  if (before !== state.lastMineId && before != null) {           // "Seen" moves to my newest message
+    const pm = state.msgs.find((x) => x.id === before);
+    if (pm) patchMessage(pm);
+  }
   if (keepBottom) list.scrollTop = list.scrollHeight;
   updateToBottom();
 }
@@ -417,7 +469,7 @@ function replaceMessage(nm) {
   state.msgs[i] = nm;
   return true;
 }
-async function msgAction(p, opts) { try { const nm = await api(p, opts); replaceMessage(nm); renderMessages(); return nm; } catch (e) { fail(e); return null; } }
+async function msgAction(p, opts) { try { const nm = await api(p, opts); if (replaceMessage(nm)) patchMessage(nm); else renderMessages(); return nm; } catch (e) { fail(e); return null; } }
 function toggleReaction(m, e) {
   const cur = state.msgs.find((x) => x.id === m.id) || m;
   const mine = cur.reactions.some((r) => r.emoji === e && r.userIds.includes(state.me.id));
@@ -544,7 +596,7 @@ function voicePlayer(a) {
     if (dur) audio.currentTime = bar.value / 1000 * dur;
   });
   speed.addEventListener("click", () => { si = (si + 1) % speeds.length; audio.playbackRate = speeds[si]; speed.textContent = speeds[si] + "×"; });
-  const wrap = h("div", { class: "voice" + (a.voice && heard === false && a.uploadedBy !== state.me.id ? " unheard" : "") }, btn, bar, time, speed, audio,
+  const wrap = h("div", { class: "voice" + (a.voice && heard === false && a.uploadedBy !== state.me.id ? " unheard" : ""), "data-att": a.id }, btn, bar, time, speed, audio,
     a.voice ? null : h("span", { class: "hint ellipsis" }, a.name));
   return wrap;
 }

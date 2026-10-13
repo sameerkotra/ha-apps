@@ -120,7 +120,10 @@ class CallTests(ApiTestCase):
         self.ok(self.post(f"/api/calls/{c['id']}/signal", {"to": TARUN["id"], "type": "candidate", "candidate": {"candidate": "a"}}, NISHA))
         cur = self.ok(self.get("/api/calls/current", TARUN))["call"]
         self.assertEqual([x["type"] for x in cur["signals"]], ["answer", "candidate"])
-        self.assertEqual(self.ok(self.get("/api/calls/current", TARUN))["call"]["signals"], [])      # drained
+        # kept for every tab of theirs (another tab polling doesn't take them away); a page asks for what's newer
+        self.assertEqual(len(self.ok(self.get("/api/calls/current", TARUN))["call"]["signals"]), 2)
+        last = cur["signals"][-1]["id"]
+        self.assertEqual(self.ok(self.get(f"/api/calls/current?since={last}", TARUN))["call"]["signals"], [])
         self.assertEqual(self.post(f"/api/calls/{c['id']}/signal", {"to": LEELA["id"], "type": "offer", "sdp": SDP}, NISHA).status_code, 409)
         self.assertEqual(self.post(f"/api/calls/{c['id']}/signal", {"to": TARUN["id"], "type": "offer", "sdp": "x" * (calls.MAX_SDP + 1)}, NISHA).status_code, 422)
         # busy while it's on

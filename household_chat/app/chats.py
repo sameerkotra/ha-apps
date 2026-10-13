@@ -189,17 +189,20 @@ def short(text: str, n: int = 140) -> str:
 
 
 # ---------- system messages ----------
-def system_text(conn, body: str) -> str:
+def system_text(conn, body: str, users: dict | None = None) -> str:
+    """The line a system message shows. `users`: a cache of users rows by id, shared between calls."""
     try:
         e = json.loads(body)
     except ValueError:
         return ""
-    names = {}
+    users = {} if users is None else users
 
     def name(uid):
-        if uid not in names:
-            names[uid] = shown_name(user_row(conn, uid)) if uid else "Someone"
-        return names[uid]
+        if not uid:
+            return "Someone"
+        if uid not in users:
+            users[uid] = user_row(conn, uid)
+        return shown_name(users[uid])
     k = e.get("event")
     a, t = e.get("actor"), e.get("target")
     return {
@@ -481,6 +484,19 @@ def messages_out(conn, rows, viewer_id: str | None = None, visible_from: int = 0
     return out
 
 
+def messages_out_by_join(conn, rows, viewer_id: str | None) -> list:
+    """messages_out for rows from several chats, each row with its reader's `vf` (joined_message_id): one
+    messages_out per distinct vf instead of one per message. In the rows' order."""
+    groups: dict = {}
+    for r in rows:
+        groups.setdefault(r["vf"], []).append(r)
+    done = {}
+    for vf, group in groups.items():
+        for d in messages_out(conn, group, viewer_id, vf):
+            done[d["id"]] = d
+    return [done[r["id"]] for r in rows]
+
+
 def announcement_out(conn, r, acked: list) -> dict:
     """Who has tapped "Got it" and who hasn't; closed once everyone has, or the sender closed it."""
     everyone = [x["user_id"] for x in conn.execute(
@@ -586,15 +602,141 @@ def conversation_out(conn, conv, m, uid: str) -> dict:
     }
 
 
+def _in(conn, sql: str, ids, extra=()) -> list:
+    """`sql` with "{q}" for a list of ids, run in chunks (SQLite's limit on parameters)."""
+    ids = list(ids)
+    out = []
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        out += conn.execute(sql.format(q=",".join("?" * len(chunk))), [*extra, *chunk]).fetchall()
+    return out
+
+
+def previews(conn, msgs, users: dict) -> dict:
+    """{message id: preview_of(message)} for many messages, with a handful of queries in all. `users`: a cache
+    of users rows by id (filled here)."""
+    out = {}
+    ids = [m["id"] for m in msgs]
+    cards = {r["message_id"]: r for r in _in(conn, "SELECT * FROM app_cards WHERE message_id IN ({q})",
+                                             [m["id"] for m in msgs if m["kind"] == "card"])}
+    calls_ = {r["message_id"]: r for r in _in(conn, "SELECT * FROM calls WHERE message_id IN ({q})",
+                                              [m["id"] for m in msgs if m["kind"] == "call"])}
+    first_file: dict = {}
+    for a in _in(conn, "SELECT message_id, original_name, voice FROM attachments WHERE message_id IN ({q}) "
+                       "ORDER BY message_id, rowid", ids):
+        first_file.setdefault(a["message_id"], a)
+    for msg in msgs:
+        if msg["kind"] == "system":
+            out[msg["id"]] = system_text(conn, msg["body"], users)
+        elif msg["deleted_at"]:
+            out[msg["id"]] = "Message deleted"
+        elif msg["kind"] == "poll":
+            out[msg["id"]] = "📊 " + short(msg["body"], 100)
+        elif msg["kind"] == "card":
+            c = cards.get(msg["id"])
+            out[msg["id"]] = (CARD_ICONS.get(c["item_type"], "📄") if c else "📄") + " " + short(msg["body"], 100)
+        elif msg["kind"] == "call":
+            out[msg["id"]] = call_text(calls_.get(msg["id"]))
+        else:
+            text = short(strip_marks(msg["body"]), 100)
+            a = first_file.get(msg["id"])
+            out[msg["id"]] = text or (("🎤 Voice message" if a["voice"] else "📎 " + a["original_name"]) if a else "")
+    return out
+
+
+def conversations_out(conn, rows, uid: str) -> list:
+    """conversation_out for many chats (rows of conversations joined with the person's members row), with a
+    fixed number of queries instead of a dozen per chat. Same result, field for field."""
+    if not rows:
+        return []
+    cids = [r["id"] for r in rows]
+    users: dict = {}
+
+    def user(u):
+        if u not in users:
+            users[u] = user_row(conn, u)
+        return users[u]
+    last = {m["id"]: m for m in _in(conn, "SELECT * FROM messages WHERE id IN ({q})",
+                                     [r["last_message_id"] for r in rows if r["last_message_id"]])}
+    shown = {}
+    for r in rows:
+        m = last.get(r["last_message_id"]) if r["last_message_id"] else None
+        if m is not None and m["id"] > r["joined_message_id"]:
+            shown[r["id"]] = m
+    for u in {m["user_id"] for m in shown.values() if m["user_id"]}:
+        user(u)
+    texts = previews(conn, list(shown.values()), users)
+    # unread counts, every chat at once (the rules of unread_counts)
+    unread: dict = {}
+    for u in _in(conn,
+                 "SELECT msg.conversation_id AS cid, COUNT(*) AS n, "
+                 "SUM(CASE WHEN msg.mention_all = 1 OR instr(COALESCE(msg.mentions, ''), ?) > 0 THEN 1 ELSE 0 END) AS at "
+                 "FROM members mb JOIN messages msg ON msg.conversation_id = mb.conversation_id "
+                 "WHERE mb.user_id = ? AND msg.id > mb.last_read_id AND msg.id > mb.joined_message_id "
+                 "AND msg.deleted_at IS NULL AND msg.kind != 'system' AND (msg.user_id IS NULL OR msg.user_id != ?) "
+                 "AND (msg.kind != 'call' OR msg.id IN (SELECT c.message_id FROM calls c JOIN call_members cm "
+                 "ON cm.call_id = c.id WHERE cm.user_id = ? AND cm.state IN ('missed', 'busy'))) "
+                 "AND mb.conversation_id IN ({q}) GROUP BY msg.conversation_id",
+                 [r["id"] for r in rows if r["kind"] != "personal"], (f'"{uid}"', uid, uid, uid)):
+        unread[u["cid"]] = (u["n"], u["at"] or 0)
+    counts = {r["conversation_id"]: r["n"] for r in _in(
+        conn, "SELECT conversation_id, COUNT(*) AS n FROM members WHERE conversation_id IN ({q}) GROUP BY conversation_id", cids)}
+    drafts = {r["conversation_id"]: r for r in _in(
+        conn, "SELECT conversation_id, body, updated_at FROM drafts WHERE user_id = ? AND conversation_id IN ({q})", cids, (uid,))}
+    others: dict = {}
+    for r in _in(conn, "SELECT m.conversation_id, u.* FROM members m JOIN users u ON u.id = m.user_id "
+                       "WHERE m.user_id != ? AND m.conversation_id IN ({q}) ORDER BY m.rowid",
+                 [r["id"] for r in rows if r["kind"] == "direct"], (uid,)):
+        others.setdefault(r["conversation_id"], r)
+    me = user(uid)
+    children_ok = None
+    out = []
+    for r in rows:
+        cid = r["id"]
+        other = others.get(cid) if r["kind"] == "direct" else None
+        if r["kind"] == "direct":
+            if other is None or other["disabled"]:
+                can = False
+            elif me is not None and me["is_child"] and other["is_child"]:
+                if children_ok is None:
+                    children_ok = bool(settings.get("children_can_message_each_other", conn))
+                can = children_ok
+            else:
+                can = True
+            name = shown_name(other) if other else "Direct chat"
+        else:
+            can = True
+            name = PERSONAL_NAME if r["kind"] == "personal" else (r["name"] or "Group")
+        m = shown.get(cid)
+        n, at = (0, 0) if r["kind"] == "personal" else unread.get(cid, (0, 0))
+        muted_until = config.parse_iso(r["muted_until"])
+        d = drafts.get(cid)
+        out.append({
+            "id": cid, "kind": r["kind"], "name": name,
+            "groupName": r["name"], "icon": r["icon"], "description": r["description"] or "",
+            "isHousehold": bool(r["is_household"]), "otherUserId": other["id"] if other else None,
+            "role": r["role"], "readOnly": not can,
+            "lastMessage": {"id": m["id"], "preview": texts[m["id"]], "at": m["created_at"], "by": m["user_id"],
+                            "author": shown_name(user(m["user_id"])) if m["user_id"] else None} if m else None,
+            "lastActivityAt": r["last_activity_at"] or r["created_at"],
+            "unread": n, "mentionUnread": at, "lastReadId": r["last_read_id"],
+            "notify": r["notify"], "mutedUntil": r["muted_until"],
+            "muted": bool(muted_until and muted_until > config.utcnow()) or r["notify"] == "off",
+            "pinned": bool(r["pinned"]), "newMembersSeeHistory": bool(r["new_members_see_history"]),
+            "memberCount": counts.get(cid, 0),
+            "disappearSeconds": r["disappear_seconds"],
+            "draft": {"body": d["body"], "updatedAt": d["updated_at"]} if d else None,
+        })
+    return out
+
+
 def list_conversations(conn, uid: str) -> list:
     rows = conn.execute("SELECT c.*, m.role, m.joined_message_id, m.last_read_id, m.notify, m.muted_until, m.pinned, "
                         "m.user_id, m.joined_at, m.conversation_id FROM members m JOIN conversations c ON c.id = m.conversation_id "
                         "WHERE m.user_id = ?", (uid,)).fetchall()
-    out = []
-    for r in rows:
-        if r["kind"] == "direct" and r["last_message_id"] is None and r["created_by"] != uid:
-            continue            # made on "open": the other person sees it once there's a message
-        out.append(conversation_out(conn, r, r, uid))
+    # a direct chat made on "open": the other person sees it once there's a message
+    rows = [r for r in rows if not (r["kind"] == "direct" and r["last_message_id"] is None and r["created_by"] != uid)]
+    out = conversations_out(conn, rows, uid)
     out.sort(key=lambda c: (c["kind"] != "personal", not c["pinned"], _neg(c["lastActivityAt"])))
     return out
 
@@ -792,11 +934,20 @@ def remove_member(conn, out: Outbox, conv, uid: str, how: str, actor: str | None
 
 # ---------- posting ----------
 def _mentions(conn, conv, uid: str, body: str, requested) -> tuple[list, bool]:
+    """The people a message mentions: those the page says, if they're in the chat AND their @Name is in the
+    text (as the page puts it there) — a mention can't be added without showing it. @everyone in a group,
+    only from an adult."""
     if conv["kind"] == "personal":
         return [], False
-    ids = set(member_ids(conn, conv["id"])) - {uid}
-    got = [u for u in dict.fromkeys(requested or []) if isinstance(u, str) and u in ids]
-    everyone = conv["kind"] == "group" and "@everyone" in (body or "").lower()
+    low = (body or "").lower()
+    names = {r["id"]: r["name"] for r in conn.execute(
+        "SELECT u.id, u.name FROM members m JOIN users u ON u.id = m.user_id WHERE m.conversation_id = ? "
+        "AND u.disabled = 0 AND u.id != ?", (conv["id"], uid))}
+    got = [u for u in dict.fromkeys(requested or []) if isinstance(u, str) and u in names
+           and "@" + (names[u] or "").lower() in low]
+    author = user_row(conn, uid)
+    everyone = (conv["kind"] == "group" and "@everyone" in low
+                and not (author is not None and author["is_child"]))
     return got, everyone
 
 
@@ -874,7 +1025,10 @@ def post_message(conn, out: Outbox, conv, m, user: dict, body: str, reply_to=Non
                          mentions=ment, mention_all=everyone, via=via, expires_in=secs, announcement=announcement)
     expires_at = message_row(conn, mid)["expires_at"]
     for a in atts:
-        conn.execute("UPDATE attachments SET message_id = ?, scheduled_id = NULL WHERE id = ?", (mid, a["id"]))
+        # only while it's still unsent: two sends of the same upload at the same moment can't both take it
+        if conn.execute("UPDATE attachments SET message_id = ?, scheduled_id = NULL WHERE id = ? AND message_id IS NULL",
+                        (mid, a["id"])).rowcount != 1:
+            raise HTTPException(422, "A file wasn't uploaded to this chat (or was already sent). Add it again.")
         if expires_at:
             files.move_to_disappearing(conn, a["id"], conv, expires_at)
     conn.execute("DELETE FROM drafts WHERE user_id = ? AND conversation_id = ?", (user["id"], conv["id"]))
@@ -952,12 +1106,10 @@ def delete_message(conn, out: Outbox, msg, conv, m, user: dict) -> None:
         return
     if msg["user_id"] != user["id"] and not is_manager(conv, m, user):
         raise HTTPException(403, "You can delete your own messages; group owners and group admins can delete any.")
-    for a in conn.execute("SELECT * FROM attachments WHERE message_id = ?", (msg["id"],)).fetchall():
-        if files.DISAPPEARING in a["rel_path"].split("/"):
-            files.remove_now(a["rel_path"])          # a disappearing file never goes to _deleted
-        else:
-            files.move_to_deleted(a["rel_path"])
-        files.remove_thumb(a["id"])
+    gone = [(a["id"], a["rel_path"]) for a in conn.execute("SELECT id, rel_path FROM attachments WHERE message_id = ?",
+                                                           (msg["id"],)).fetchall()]
+    if gone:          # the files are moved after the deletion is saved, never while the transaction is open
+        out.job(files.discard_files, gone)
     conn.execute("DELETE FROM attachments WHERE message_id = ?", (msg["id"],))
     for t in ("reactions", "stars", "reminders", "poll_votes", "poll_options", "polls", "app_cards", "calls"):
         conn.execute(f"DELETE FROM {t} WHERE message_id = ?", (msg["id"],))

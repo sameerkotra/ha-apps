@@ -4,20 +4,28 @@ The row goes (and with it, by ON DELETE CASCADE: reactions, poll, stars,
 reminders, acknowledgements, attachment rows and its search entry); replies
 keep their text with "Original message no longer available"; its files and
 previews are removed from /share at once (never to _deleted). `secure_delete`
-is on for every connection, and the write-ahead log is checkpointed after a
-pass that deleted anything. The pass runs every tick, and at startup and after
+is on for every connection. The pass runs every tick, and at startup and after
 a restore *before* anything is served.
+
+After a pass that deleted anything, the search index gets a small merge and the
+write-ahead log a passive checkpoint (cheap); the full clean — the whole index
+merged (`optimize`) and `wal_checkpoint(TRUNCATE)`, so no old copy of a deleted
+message lingers anywhere — runs with the `full` pass: every 5 minutes (with the
+sweep of the _disappearing folders, which lists every chat's folder), at
+startup and after a restore.
 """
 import logging
 import sqlite3
+import threading
 
 from . import chats, config, db, files
 from .live import hub
 
 logger = logging.getLogger("disappearing")
+_dirty = threading.Event()          # deleted since the last full clean
 
 
-def run_expiry() -> int:
+def run_expiry(full: bool = True) -> int:
     now = config.now_iso()
     removed_files = []
     by_conv: dict = {}
@@ -39,14 +47,17 @@ def run_expiry() -> int:
                 conn.execute("UPDATE conversations SET last_message_id = (SELECT MAX(id) FROM messages WHERE conversation_id = ?) "
                              "WHERE id = ?", (cid, cid))
             recipients = {cid: chats.member_ids(conn, cid) for cid in by_conv}
-            # merge the search index so the deleted words don't linger in old index segments
-            conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('optimize')")
     for aid, rel in removed_files:
         files.remove_now(rel)
         files.remove_thumb(aid)
-    swept = files.sweep_disappearing(config.utcnow().strftime("%Y%m%dT%H%MZ"))
+    swept = files.sweep_disappearing(config.utcnow().strftime("%Y%m%dT%H%MZ")) if full else 0
     if by_conv:
-        checkpoint()
+        _dirty.set()
+    if full and _dirty.is_set():
+        clean(full=True)
+    elif by_conv:
+        clean(full=False)
+    if by_conv:
         for cid, mids in by_conv.items():
             hub.publish(recipients[cid], "message_removed", {"conversationId": cid, "messageIds": mids})
             hub.publish(recipients[cid], "unread", {"conversationId": cid})
@@ -54,10 +65,27 @@ def run_expiry() -> int:
     return sum(len(v) for v in by_conv.values()) + swept
 
 
-def checkpoint() -> None:
+def clean(full: bool) -> None:
+    """Deleted words out of the search index and old page copies out of the write-ahead log: all of them
+    (`full`), or a small step (an incremental merge, a passive checkpoint) between full cleans."""
+    try:
+        with db.get_conn() as conn:
+            if full:
+                conn.execute("INSERT INTO messages_fts(messages_fts) VALUES ('optimize')")
+            else:
+                conn.execute("INSERT INTO messages_fts(messages_fts, rank) VALUES ('merge', -200)")
+    except sqlite3.Error:
+        logger.warning("The search index couldn't be merged; it's tried again on the next pass.")
+        return
+    checkpoint("TRUNCATE" if full else "PASSIVE")
+    if full:
+        _dirty.clear()
+
+
+def checkpoint(mode: str = "TRUNCATE") -> None:
     try:
         c = sqlite3.connect(config.DB_PATH, timeout=30)
-        c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        c.execute(f"PRAGMA wal_checkpoint({'PASSIVE' if mode == 'PASSIVE' else 'TRUNCATE'})")
         c.close()
     except sqlite3.Error:
         logger.warning("The write-ahead log couldn't be checkpointed; old copies stay until the next pass.")

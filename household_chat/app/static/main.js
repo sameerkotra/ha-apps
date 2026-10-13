@@ -94,22 +94,44 @@ function connectLive() {
     }
   });
   es.addEventListener("unread", () => refreshConvsSoon());
-  es.addEventListener("presence", () => { refreshPresenceSoon(); });
+  es.addEventListener("presence", (e) => {
+    // one person came online / went offline, or home/away changed: patched in place; anything else reloads
+    let d = {};
+    try { d = JSON.parse(e.data || "{}") || {}; } catch (x) { /* an old server: reload */ }
+    if (d.online && typeof d.online === "object") {
+      for (const [uid, st] of Object.entries(d.online)) { if (st) state.online[uid] = st; else delete state.online[uid]; }
+      repaintPresenceSoon(); return;
+    }
+    if (d.homeAway && typeof d.homeAway === "object") { state.homeAway = d.homeAway; repaintPresenceSoon(); return; }
+    refreshPresenceSoon();
+  });
   es.addEventListener("reminder", (e) => {
     const d = JSON.parse(e.data);
     toast("⏰ Reminder — tap to see the message", { ms: 8000, onclick: () => openChatAt(d.conversationId, d.messageId) });
   });
   es.addEventListener("settings", async () => { try { state.me = await api("api/me"); renderFilesBanner(); } catch (x) { /* ignore */ } });
   es.addEventListener("storage", async () => { try { state.me = await api("api/me"); renderFilesBanner(); } catch (x) { /* ignore */ } });
-  es.addEventListener("closed", () => { es.close(); state.sse = null; location.reload(); });
+  es.addEventListener("closed", (e) => {
+    es.close(); state.sse = null;
+    let d = {};
+    try { d = JSON.parse(e.data || "{}") || {}; } catch (x) { /* plain close */ }
+    // too many open pages of yours: this one asks for news now and then instead of reconnecting
+    if (d.reason === "too_many") { startPolling(); return; }
+    location.reload();
+  });
   es.addEventListener("reload", () => { refreshConvsSoon(); if (state.current) openChat(state.current); });
 }
 const refreshConvsSoon = debounce(() => loadConvs().catch(() => {}), 300);
+const repaintPresenceSoon = debounce(() => {
+  renderConvList();
+  refreshSubline();
+  refreshDots($("#msgList"));
+}, 300);
 const refreshPresenceSoon = debounce(async () => {
   await loadPeople();
   await loadConvs().catch(() => {});
   refreshSubline();
-  if (state.current && state.page === "chat") renderMessages();
+  refreshDots($("#msgList"));
 }, 800);
 
 function onMessageEvent(m, fromPoll) {
@@ -118,9 +140,10 @@ function onMessageEvent(m, fromPoll) {
   if (!c) { refreshConvsSoon(); return; }
   if (m.conversationId === state.current && state.page === "chat" && !state.moreAfter) {
     const wasBottom = atBottom();
-    if (!replaceMessage(Object.assign(m, { _fromEvent: true }))) state.msgs.push(m);
+    if (replaceMessage(Object.assign(m, { _fromEvent: true }))) patchMessage(m);
+    else { state.msgs.push(m); appendMessage(m); }
     if (state.typing[m.conversationId] && m.userId) delete state.typing[m.conversationId][m.userId];
-    renderMessages(); renderTyping();
+    renderTyping();
     if (wasBottom || m.userId === state.me.id) scrollBottom(true);
     else if (m.userId !== state.me.id) { state.newBelow += 1; updateToBottom(); }
     markReadSoon();
@@ -143,7 +166,7 @@ function onMessageEvent(m, fromPoll) {
   rememberChat();
 }
 function onMessageUpdated(m) {
-  if (m.conversationId === state.current && replaceMessage(Object.assign(m, { _fromEvent: true }))) { renderMessages(); renderPinBar(); }
+  if (m.conversationId === state.current && replaceMessage(Object.assign(m, { _fromEvent: true }))) { patchMessage(m); renderPinBar(); }
   if (m.conversationId === state.current && m.announcement && state.detail && state.detail.announcements) {
     const i = state.detail.announcements.findIndex((a) => a.id === m.id);
     if (i >= 0) { state.detail.announcements[i] = m; renderAnnouncements(); }

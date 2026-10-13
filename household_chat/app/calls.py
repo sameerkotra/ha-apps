@@ -41,6 +41,7 @@ MAX_CANDIDATE = 1000
 MAX_SIGNALS = 300           # kept per person for the polling fallback
 MAX_PARTICIPANTS = 4        # a mesh: each phone sends to every other; beyond four it would need a media server
 GONE_SECONDS = 60           # someone with no live connection this long has left
+RELAY_RATE = 10_000_000 // 8   # bytes a second: the most one phone's relayed sound and video to one person can be
 KINDS = ("audio", "video")
 OUTCOMES = ("answered", "missed", "declined", "busy", "failed")
 MEMBER_STATES = ("ringing", "joined", "left", "declined", "missed", "busy", "failed")
@@ -53,7 +54,7 @@ class Member:
     left_at: str | None = None
     gone_since: float | None = None         # monotonic: first seen without a live connection
     pushed: bool = False                    # a ringing notification went to their phone
-    signals: list = field(default_factory=list)     # for them, until their page fetched them
+    signals: list = field(default_factory=list)     # for them (the last MAX_SIGNALS), for a page that polls
 
 
 @dataclass
@@ -104,8 +105,9 @@ def enabled(conn=None) -> bool:
 # ---------- STUN and relay (§15.13): what the browsers get as iceServers ----------
 CF_TTL = 4 * 3600                       # Cloudflare credentials last this long (longer than any call)
 CF_CACHE = 3600                         # and are fetched at most this often
+CF_FAIL_CACHE = 60                      # after a failure, calls go ahead without the relay for this long
 TURN_TTL = 4 * 3600
-_cf = {"servers": None, "until": 0.0, "key": None, "error": None}
+_cf = {"servers": None, "until": 0.0, "key": None, "error": None, "failed_until": 0.0}
 
 
 def cf_fetch(key_id: str, token: str, ttl: int = CF_TTL) -> list:
@@ -138,16 +140,19 @@ def cloudflare_servers(key_id: str, token: str) -> list:
     with _lock:
         if _cf["servers"] is not None and now < _cf["until"] and _cf["key"] == (key_id, token):
             return list(_cf["servers"])
+        if _cf["key"] == (key_id, token) and now < _cf["failed_until"]:
+            return []                             # it failed a moment ago: not asked again on every call and poll
     try:
         servers = cf_fetch(key_id, token)
     except Exception as e:                        # noqa: BLE001 — logged, the call goes on
         why = str(e) if isinstance(e, RuntimeError) else type(e).__name__
         logger.warning("Couldn't get call relay credentials from Cloudflare: %s", why)
         with _lock:
-            _cf["error"] = why
+            _cf.update(error=why, key=(key_id, token), failed_until=time.monotonic() + CF_FAIL_CACHE,
+                       servers=None, until=0.0)
         return []
     with _lock:
-        _cf.update(servers=servers, until=now + CF_CACHE, key=(key_id, token), error=None)
+        _cf.update(servers=servers, until=now + CF_CACHE, key=(key_id, token), error=None, failed_until=0.0)
     return list(servers)
 
 
@@ -175,7 +180,7 @@ def ice_servers(values: dict, call_id: str = "test") -> list:
 
 def reset_relay_cache() -> None:
     with _lock:
-        _cf.update(servers=None, until=0.0, key=None, error=None)
+        _cf.update(servers=None, until=0.0, key=None, error=None, failed_until=0.0)
 
 
 def relay_error() -> str | None:
@@ -383,9 +388,12 @@ def signal(user: dict, call_id: str, to: str, kind: str, payload) -> dict:
     return {"ok": True}
 
 
-def current(user: dict) -> dict | None:
-    """GET /calls/current: my call — ringing for me, or the one I'm in — with the signals waiting for me (a page
-    whose live updates are down polls this; pages ignore signals they've seen), or None."""
+def current(user: dict, since: int = 0, ice: bool = True) -> dict | None:
+    """GET /calls/current: my call — ringing for me, or the one I'm in — with the signals for me after `since`
+    (a page whose live updates are down polls this, saying the last signal it has; pages ignore signals they've
+    seen), or None. The signals stay until the call ends (at most MAX_SIGNALS), so a second tab of the same
+    person asking doesn't take them away from the tab that is in the call. `ice=False`: the page has the
+    STUN/relay addresses already (they aren't fetched again for every poll)."""
     with _lock:
         cid = _by_user.get(user["id"])
         c = _calls.get(cid) if cid else None
@@ -394,8 +402,7 @@ def current(user: dict) -> dict | None:
         m = c.members[user["id"]]
         if m.state not in ("joined", "ringing"):
             return None
-        signals = list(m.signals)
-        m.signals.clear()
+        signals = [s for s in m.signals if s["id"] > since]
         data = {"id": c.id, "conversationId": c.conversation_id, "kind": c.kind, "group": c.group, "state": m.state,
                 "role": "caller" if c.caller == user["id"] else "callee",
                 "peerId": c.caller if c.caller != user["id"] else None,
@@ -412,7 +419,8 @@ def current(user: dict) -> dict | None:
         data["peerId"] = next((u for u in uids if u != user["id"]), None)
     data["peerName"] = names.get(data["peerId"], "Someone")
     data["name"] = (conv["name"] if conv and c.group else None) or data["peerName"]
-    data["iceServers"] = ice_servers(values, c.id)
+    if ice:
+        data["iceServers"] = ice_servers(values, c.id)
     return data
 
 
@@ -637,6 +645,15 @@ def report_usage(user: dict, call_id: str, relay_bytes: int) -> dict:
         if ended and (config.utcnow() - ended).total_seconds() > 3600:
             raise HTTPException(409, "That call is over.")
         started = config.parse_iso(row["started_at"]) or config.utcnow()
+        # no more than the call could have carried: RELAY_RATE for each other person, for as long as it lasted
+        # (plus a minute) — a phone can't fill the month's figure with a made-up number
+        others = conn.execute("SELECT COUNT(*) FROM call_members WHERE call_id = ? AND user_id != ?",
+                              (call_id, user["id"])).fetchone()[0]
+        if in_memory:
+            with _lock:
+                others = max(others, len(c.members) - 1)
+        seconds = max(0.0, ((ended or config.utcnow()) - started).total_seconds()) + 60
+        relay_bytes = min(relay_bytes, int(seconds * RELAY_RATE * max(1, others)))
         month = started.astimezone(config.tz()).strftime("%Y-%m")
         conn.execute("INSERT INTO call_usage (call_id, user_id, relay_bytes, month, updated_at) VALUES (?, ?, ?, ?, ?) "
                      "ON CONFLICT(call_id, user_id) DO UPDATE SET relay_bytes = MAX(relay_bytes, excluded.relay_bytes), "

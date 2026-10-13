@@ -39,7 +39,7 @@ class NotifyTests(ApiTestCase):
         notifier.reset()
         n = len(self.sent.items)
         self.ok(self.put(f"/api/conversations/{self.hh}/me", {"mutedUntil": config.iso(config.utcnow() + timedelta(hours=8))}, TARUN))
-        self.send(self.hh, "muted?", NISHA, mentions=[TARUN["id"]])
+        self.send(self.hh, "@Tarun muted?", NISHA, mentions=[TARUN["id"]])
         self.assertEqual(len(self.sent.items), n)
         # level off
         self.ok(self.put(f"/api/conversations/{self.hh}/me", {"mutedUntil": None, "notify": "default"}, TARUN))
@@ -75,7 +75,7 @@ class NotifyTests(ApiTestCase):
 
     def test_preview_levels_and_buttons(self):
         self.ok(self.put("/api/me/settings", {"notifyPreview": "sender"}, TARUN))
-        self.send(self.hh, "secret", NISHA, mentions=[TARUN["id"]])
+        self.send(self.hh, "@Tarun secret", NISHA, mentions=[TARUN["id"]])
         self.assertEqual(self.sent.items[-1]["message"], "New message from Nisha")
         data = self.sent.items[-1]["data"]
         self.assertEqual(data["clickAction"], config.chat_link(self.hh))
@@ -83,7 +83,7 @@ class NotifyTests(ApiTestCase):
         notifier.reset()
         self.ok(self.put("/api/me/settings", {"notifyPreview": "full"}, TARUN))
         self.ok(self.put("/api/admin/settings", {"notify_preview": "none", "notification_reply": False}))
-        self.send(self.hh, "secret", NISHA, mentions=[TARUN["id"]])
+        self.send(self.hh, "@Tarun secret", NISHA, mentions=[TARUN["id"]])
         self.assertEqual(self.sent.items[-1]["message"], "New message in Household Chat")
         self.assertNotIn("actions", self.sent.items[-1]["data"])
 
@@ -119,13 +119,13 @@ class NotifyTests(ApiTestCase):
         end = (now + timedelta(minutes=5)).strftime("%H:%M")
         self.ok(self.put("/api/me/settings", {"quietStart": start, "quietEnd": end}, TARUN))
         self.assertEqual(self.put("/api/me/settings", {"quietStart": "22:00"}, TARUN).status_code, 422)
-        self.send(self.hh, "night", NISHA, mentions=[TARUN["id"]])
+        self.send(self.hh, "@Tarun night", NISHA, mentions=[TARUN["id"]])
         self.assertEqual(self.sent.items, [])
         notifier.flush()
         self.assertEqual(self.sent.items, [])
         self.ok(self.put("/api/me/settings", {"quietStart": None, "quietEnd": None}, TARUN))
         notifier.flush()
-        self.assertEqual(self.sent.items[-1]["message"], "Nisha: night")
+        self.assertEqual(self.sent.items[-1]["message"], "Nisha: @Tarun night")
 
     def test_already_looking(self):
         self.ok(self.post("/api/presence", {"tab": "tab-1", "conversationId": self.hh, "visible": True}, TARUN))
@@ -139,13 +139,22 @@ class NotifyTests(ApiTestCase):
         self.send(self.hh, "@Tarun milk?", NISHA, mentions=[TARUN["id"]])
         acts = self.sent.items[-1]["data"]["actions"]
         reply, read = acts[0]["action"], acts[1]["action"]
+        self.assertEqual(notifier.handle_action(reply, "  "), "refused")                 # refused: not used up
         self.assertEqual(notifier.handle_action(reply, "yes, on my way"), "replied")
         last = self.ok(self.get(f"/api/conversations/{self.hh}/messages", NISHA))["messages"][-1]
         self.assertEqual((last["body"], last["userId"], last["via"]), ("yes, on my way", TARUN["id"], "notification"))
-        self.assertEqual(notifier.handle_action(reply, "and bread"), "replied")       # Reply can be used again
+        # Reply uses its token up: replaying the same action does nothing …
+        self.assertEqual(notifier.handle_action(reply, "and bread"), "unknown token")
+        # … and the chat's notification comes back quietly, with the reply and new buttons for the next one
+        follow = self.sent.items[-1]
+        self.assertEqual((follow["title"], follow["message"]), ("Household", "You: yes, on my way"))
+        self.assertEqual(follow["data"]["tag"], f"hchat_{self.hh}")
+        self.assertTrue(follow["data"]["alert_once"])
+        reply, read = (a["action"] for a in follow["data"]["actions"])
+        self.assertEqual(notifier.handle_action(reply, "and bread"), "replied")
+        reply, read = (a["action"] for a in self.sent.items[-1]["data"]["actions"])
         self.assertEqual(notifier.handle_action("HCHAT_REPLY_nope", "x"), "unknown token")
         self.assertEqual(notifier.handle_action("OTHER_THING", "x"), "ignored")
-        self.assertEqual(notifier.handle_action(reply, "  "), "refused")
         # expired
         with db.get_conn() as conn:
             conn.execute("UPDATE notify_tokens SET created_at = '2000-01-01T00:00:00.000Z'")
@@ -260,7 +269,7 @@ class PhonesFromHomeAssistantTests(ApiTestCase):
         self.seen(LEELA)                                         # synced, not enabled: phone known, no access
         self.assertEqual(self.ha_people.phones_for(LEELA["id"]), ["mobile_app_leela_phone"])
         sql("UPDATE users SET notify_level = 'all' WHERE id = ?", (LEELA["id"],))
-        self.send(self.hh, "everyone", NISHA, mentions=[LEELA["id"]])
+        self.send(self.hh, "@Leela everyone", NISHA, mentions=[LEELA["id"]])
         self.assertFalse(notifier.send_to_user(LEELA["id"], "Reminder", "x"))
         self.assertEqual([s for s in self.sent.items if "mobile_app_leela_phone" in s["services"]], [])
         # enabled, then disabled again: nothing more

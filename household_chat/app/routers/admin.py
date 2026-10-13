@@ -18,7 +18,8 @@ import zipfile
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import app_messages, avatars, calls, chats, config, db, disappearing, files, ha_client, presence, settings, shared_folders
+from .. import (app_messages, avatars, calls, chats, config, db, disappearing, files, ha_client, notifier, presence,
+               settings, shared_folders)
 from ..common import backup_core, db_core, ha_notify, ha_people, people_admin
 from ..auth import require_admin
 from ..live import hub
@@ -30,6 +31,7 @@ _last_sync = {"t": 0.0}
 ENTITY_RE = re.compile(r"^person\.[a-z0-9_]+$")
 MAX_SERVICES_PER_USER = 5
 RESTORE_MAX = 20 * 1024 ** 3
+RESTORE_WAIT = 60                    # seconds a restore waits for running requests and jobs to finish
 
 
 def _maybe_sync():
@@ -262,13 +264,22 @@ def files_storage_check(body: dict = Body(default={}), admin: dict = Depends(req
 
 # ---------- chat overview: metadata only ----------
 def _overview(conn) -> list:
+    """Every chat's metadata, with a few grouped queries (not five per chat)."""
     out = []
+    members_of: dict = {}
+    for m in conn.execute("SELECT m.conversation_id, u.id, u.name, u.disabled FROM members m JOIN users u ON u.id = m.user_id "
+                          "ORDER BY m.conversation_id, u.name COLLATE NOCASE, m.rowid"):
+        members_of.setdefault(m["conversation_id"], []).append(m)
+    sizes = {r[0]: r[1] for r in conn.execute("SELECT conversation_id, COALESCE(SUM(size), 0) FROM attachments "
+                                              "GROUP BY conversation_id")}
+    file_counts = {r[0]: r[1] for r in conn.execute("SELECT conversation_id, COUNT(*) FROM attachments "
+                                                    "WHERE message_id IS NOT NULL GROUP BY conversation_id")}
+    message_counts = {r[0]: r[1] for r in conn.execute("SELECT conversation_id, COUNT(*) FROM messages WHERE kind != 'system' "
+                                                       "AND deleted_at IS NULL GROUP BY conversation_id")}
     for c in conn.execute("SELECT * FROM conversations ORDER BY kind, COALESCE(last_activity_at, created_at) DESC").fetchall():
-        members = conn.execute("SELECT u.id, u.name, u.disabled FROM members m JOIN users u ON u.id = m.user_id "
-                               "WHERE m.conversation_id = ? ORDER BY u.name COLLATE NOCASE", (c["id"],)).fetchall()
-        size = files.usage_bytes(conn, c["id"])
-        count = conn.execute("SELECT COUNT(*) FROM attachments WHERE conversation_id = ? AND message_id IS NOT NULL",
-                             (c["id"],)).fetchone()[0]
+        members = members_of.get(c["id"], [])
+        size = sizes.get(c["id"], 0)
+        count = file_counts.get(c["id"], 0)
         if c["kind"] == "personal":
             owner = chats.user_row(conn, c["created_by"])
             out.append({"id": c["id"], "kind": "personal", "name": f"{owner['name'] if owner else 'Someone'}'s room",
@@ -279,8 +290,7 @@ def _overview(conn) -> list:
         out.append({"id": c["id"], "kind": c["kind"], "name": name, "household": bool(c["is_household"]),
                     "members": [m["name"] + (" (no access)" if m["disabled"] else "") for m in members],
                     "createdAt": c["created_at"], "lastActivityAt": c["last_activity_at"],
-                    "messages": conn.execute("SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND kind != 'system' "
-                                             "AND deleted_at IS NULL", (c["id"],)).fetchone()[0],
+                    "messages": message_counts.get(c["id"], 0),
                     "bytes": size, "files": count,
                     "canDelete": c["kind"] == "group" and not enabled})
     return out
@@ -321,12 +331,14 @@ def storage(admin: dict = Depends(require_admin)):
         chats_ = sorted(_overview(conn), key=lambda c: -c["bytes"])
         total = files.usage_bytes(conn)
         missing = conn.execute("SELECT COUNT(*) FROM attachments WHERE missing = 1").fetchone()[0]
+        kept = conn.execute("SELECT COUNT(*), COALESCE(SUM(size), 0) FROM kept_files").fetchone()
         pending = conn.execute("SELECT COUNT(*) FROM attachments WHERE message_id IS NULL").fetchone()[0]
         quota = settings.get("share_folder_quota_gb", conn)
         retention = _retention_report(conn)
     online = files.is_online()
     return {"dbBytes": _db_bytes(), "filesBytes": total, "folder": files.configured(), "quotaGb": quota,
             "missing": missing, "pending": pending, "retention": retention,
+            "keptFiles": kept[0], "keptBytes": kept[1],          # files kept from messages deleted by age
             "storage": files.storage_info(), "waitingJobs": files.pending_jobs(),
             "deletedBytes": _dir_bytes(os.path.join(files.share_root(), files.DELETED)) if online else None,
             "chats": [{"name": c["name"], "kind": c["kind"], "bytes": c["bytes"], "files": c["files"]} for c in chats_]}
@@ -438,22 +450,21 @@ def storage_delete(body: dict = Body(...), admin: dict = Depends(require_admin))
         raise HTTPException(422, "Choose up to 200 files.")
     out = chats.Outbox()
     done = 0
+    gone = []
     with db.get_conn() as conn:
         for aid in dict.fromkeys(ids):
             a = conn.execute("SELECT * FROM attachments WHERE id = ? AND message_id IS NOT NULL AND admin_deleted_at IS NULL",
                              (aid,)).fetchone()
             if a is None:
                 continue
-            if files.DISAPPEARING in a["rel_path"].split("/"):
-                files.remove_now(a["rel_path"])          # never kept in _deleted
-            else:
-                files.move_to_deleted(a["rel_path"])
-            files.remove_thumb(aid)
+            gone.append((aid, a["rel_path"]))           # moved once this is saved (disappearing ones removed)
             conn.execute("UPDATE attachments SET admin_deleted_at = ? WHERE id = ?", (config.now_iso(), aid))
             db.audit(conn, "file_deleted_by_admin", None, a["conversation_id"], admin["id"])
             msg = chats.message_row(conn, a["message_id"])
             chats.publish_message(conn, out, chats.conv_row(conn, a["conversation_id"]), msg, "message_updated")
             done += 1
+        if gone:
+            out.job(files.discard_files, gone)
     out.flush()
     return {"deleted": done}
 
@@ -583,8 +594,9 @@ def add_folder(body: dict = Body(...), admin: dict = Depends(require_admin)):
                      (fid, rel, label, 0 if body.get("announce") is False else 1, admin["id"], config.now_iso()))
         folder = conn.execute("SELECT * FROM folders WHERE id = ?", (fid,)).fetchone()
         _apply_links(conn, out, folder, wanted, admin)
-        shared_folders.scan_one(conn, out, folder)
     out.flush()
+    # what's in it: read from the disk with no transaction open, then remembered in a short one
+    shared_folders.scan_folder(fid)
     return list_folders(admin)
 
 
@@ -634,8 +646,8 @@ def delete_folder(fid: str, admin: dict = Depends(require_admin)):
 @router.post("/admin/storage/check")
 def storage_check(admin: dict = Depends(require_admin)):
     files.require_online()
+    missing = files.check_missing()
     with db.get_conn() as conn:
-        missing = files.check_missing(conn)
         thumbs = files.remove_orphan_thumbs(conn)
     files.remove_stale_parts(3600)
     return {"missing": missing, "thumbsRemoved": thumbs}
@@ -648,6 +660,12 @@ def download_backup(includeFiles: bool = False, admin: dict = Depends(require_ad
     if includeFiles:
         files.require_online()
     os.makedirs(config.DATA_DIR, exist_ok=True)
+    # the copy and the zip are made under /data first: is there room for them?
+    need = 2 * _db_bytes()
+    if includeFiles:
+        with db.get_conn() as conn:
+            need += files.usage_bytes(conn)
+    files.check_free_space(config.DATA_DIR, need, "the app's data folder")
     fd, tmp_db = tempfile.mkstemp(prefix=".backup-", suffix=".db", dir=config.DATA_DIR)
     os.close(fd)
     fd, tmp_zip = tempfile.mkstemp(prefix=".backup-", suffix=".zip", dir=config.DATA_DIR)
@@ -678,6 +696,9 @@ def download_backup(includeFiles: bool = False, admin: dict = Depends(require_ad
             members = itertools.chain(members, ((full, name, zipfile.ZIP_STORED) for full, name in
                                                 backup_core.walk(root, prefix="files/", prune=prune, keep=keep)))
         backup_core.write_zip(tmp_zip, members)
+    except BaseException:
+        os.remove(tmp_zip)                  # never left behind in /data
+        raise
     finally:
         os.remove(tmp_db)
     with db.get_conn() as conn:
@@ -710,6 +731,25 @@ async def restore(request: Request, admin: dict = Depends(require_admin)):
             os.remove(tmp)
 
 
+def _swap_in(new_db: str, keep: list, saved_secrets) -> None:
+    """The restored database in place of ours (with nothing else using the database meanwhile)."""
+    for ext in ("-wal", "-shm"):
+        try:
+            os.remove(config.DB_PATH + ext)
+        except OSError:
+            pass
+    os.replace(new_db, config.DB_PATH)
+    db.init_db()
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM app_settings WHERE key IN ('files_path', ?)", (files.STORE_KEY,))
+        for k, v in keep:
+            db.set_setting(conn, k, v)
+        settings.REGISTRY.keep_secrets(saved_secrets, conn)
+    settings.invalidate()
+    notifier.forget_held()
+    disappearing.run_expiry()        # before anything is served again
+
+
 def _restore_from(tmp: str, admin: dict) -> dict:
     if not zipfile.is_zipfile(tmp):
         raise HTTPException(422, "That isn't a Household Chat backup (.zip).")
@@ -727,13 +767,13 @@ def _restore_from(tmp: str, admin: dict) -> dict:
                                   unsafe=lambda _n: HTTPException(422, "Unsafe path in the backup."))
         fd, new_db = tempfile.mkstemp(prefix=".restore-", suffix=".db", dir=config.DATA_DIR)
         os.close(fd)
-        with z.open("chat.db") as src, open(new_db, "wb") as dst:
-            shutil.copyfileobj(src, dst)
         try:
+            with z.open("chat.db") as src, open(new_db, "wb") as dst:
+                shutil.copyfileobj(src, dst)
             _check_db(new_db)
             if any(n.startswith("files/") and not n.endswith("/") for n in names):
                 files.require_online()          # never half-restore: the files need the folder
-        except HTTPException:
+        except BaseException:
             os.remove(new_db)
             raise
         # the chat files folder and its marker belong to this install, not to the backup
@@ -745,21 +785,14 @@ def _restore_from(tmp: str, admin: dict) -> dict:
         try:
             hub.reset()
             calls.reset()                    # calls that were on are dropped; the restored database's are closed below
-            time.sleep(0.5)          # let requests already running finish
-            for ext in ("-wal", "-shm"):
-                try:
-                    os.remove(config.DB_PATH + ext)
-                except OSError:
-                    pass
-            os.replace(new_db, config.DB_PATH)
-            db.init_db()
-            with db.get_conn() as conn:
-                conn.execute("DELETE FROM app_settings WHERE key IN ('files_path', ?)", (files.STORE_KEY,))
-                for k, v in keep:
-                    db.set_setting(conn, k, v)
-                settings.REGISTRY.keep_secrets(saved_secrets, conn)
-            settings.invalidate()
-            disappearing.run_expiry()        # before anything is served again
+            try:
+                # requests and background jobs already running finish first; new ones wait until it's swapped
+                with db.maintenance(timeout=RESTORE_WAIT):
+                    _swap_in(new_db, keep, saved_secrets)
+            except TimeoutError:
+                if os.path.exists(new_db):
+                    os.remove(new_db)
+                raise HTTPException(503, "The app is busy — try the restore again in a minute.")
             calls.close_unfinished()
         finally:
             db.RESTORING.clear()
@@ -776,8 +809,8 @@ def _restore_from(tmp: str, admin: dict) -> dict:
                 continue
             backup_core.copy_out(z, n, dest)
             restored_files += 1
+    files.check_missing()
     with db.get_conn() as conn:
-        files.check_missing(conn)
         db.audit(conn, "backup_restored", None, None, admin["id"])
     try:
         avatars.sync_blocking()          # the restored people's photos follow Home Assistant again

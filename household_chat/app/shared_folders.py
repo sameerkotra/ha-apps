@@ -176,16 +176,15 @@ def search(f, query: str, limit: int = 200) -> dict:
     return {"results": results, "truncated": truncated}
 
 
-def scan_one(conn, out, f) -> int:
-    """Remember what's in the folder (a `folders` row); announce what's new since the last scan (not on the
-    first) in every chat it's shared into, if announcements are on."""
+def walk(f) -> dict | None:
+    """What's in the folder now: {relative path: (size, mtime)}, or None when it can't be looked at. Disk only."""
     base = base_of(f)
     try:
         still_allowed(f)
     except HTTPException:
-        return 0
+        return None
     if not os.path.isdir(base):
-        return 0
+        return None
     found = {}
     for dirpath, dirnames, filenames in os.walk(base):
         rel_dir = os.path.relpath(dirpath, base)
@@ -205,6 +204,17 @@ def scan_one(conn, out, f) -> int:
                 break
         if len(found) >= MAX_SCAN_FILES:
             break
+    return found
+
+
+def scan_one(conn, out, f, found: dict | None = None) -> int:
+    """Remember what's in the folder (a `folders` row); announce what's new since the last scan (not on the
+    first) in every chat it's shared into, if announcements are on. `found`: walk(f), done before the
+    transaction (walked here otherwise)."""
+    if found is None:
+        found = walk(f)
+    if found is None:
+        return 0
     old = {r["rel"] for r in conn.execute("SELECT rel FROM folder_files WHERE folder_id = ?", (f["id"],))}
     new = sorted(set(found) - old)
     conn.execute("DELETE FROM folder_files WHERE folder_id = ?", (f["id"],))
@@ -220,18 +230,30 @@ def scan_one(conn, out, f) -> int:
     return len(new)
 
 
+def scan_folder(fid: str) -> int:
+    """One folder: walked with no transaction open (a NAS can be slow), then remembered in a short one."""
+    with db.get_conn() as conn:
+        f = conn.execute("SELECT * FROM folders WHERE id = ?", (fid,)).fetchone()
+    if f is None:
+        return 0
+    found = walk(f)
+    if found is None:
+        return 0
+    out = chats.Outbox()
+    with db.get_conn() as conn:
+        f = conn.execute("SELECT * FROM folders WHERE id = ?", (fid,)).fetchone()        # still shared?
+        n = scan_one(conn, out, f, found) if f is not None and f["path"] else 0
+    out.flush()
+    return n
+
+
 def scan_all() -> int:
     n = 0
     with db.get_conn() as conn:
         ids = [r["id"] for r in conn.execute("SELECT id FROM folders")]
     for fid in ids:
-        out = chats.Outbox()
         try:
-            with db.get_conn() as conn:
-                f = conn.execute("SELECT * FROM folders WHERE id = ?", (fid,)).fetchone()
-                if f:
-                    n += scan_one(conn, out, f)
-            out.flush()
+            n += scan_folder(fid)
         except Exception:
             logger.exception("Scanning a shared folder failed")
     return n

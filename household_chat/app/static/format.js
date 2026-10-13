@@ -4,7 +4,7 @@
 "use strict";
 
 const WORD = /[\p{L}\p{N}]/u;
-const URL_RE = /^(?:https?:\/\/|www\.)[^\s<>"]+/i;
+const URL_AT = /(?:https?:\/\/|www\.)[^\s<>"]+/iy;      // sticky: matched where it stands, the text isn't copied
 
 function safeUrl(u) {
   let url = u;
@@ -16,10 +16,18 @@ function safeUrl(u) {
   return null;
 }
 function trimUrl(u) {
-  // leave trailing punctuation out of the link; keep balanced parentheses
-  let out = u;
-  while (/[.,!?;:'"\]]$/.test(out) || (out.endsWith(")") && (out.match(/\(/g) || []).length < (out.match(/\)/g) || []).length)) out = out.slice(0, -1);
-  return out;
+  // leave trailing punctuation out of the link; keep balanced parentheses (counted once, then walked back:
+  // a link ending in thousands of brackets doesn't take thousands of passes over itself)
+  let open = 0, close = 0;
+  for (const ch of u) { if (ch === "(") open += 1; else if (ch === ")") close += 1; }
+  let end = u.length;
+  for (;;) {
+    const ch = u[end - 1];
+    if (end > 0 && ".,!?;:'\"]".includes(ch)) { end -= 1; continue; }
+    if (end > 0 && ch === ")" && open < close) { end -= 1; close -= 1; continue; }
+    break;
+  }
+  return u.slice(0, end);
 }
 function linkEl(url, text) {
   const href = safeUrl(url);
@@ -32,6 +40,10 @@ function inline(s, ctx, depth = 0) {
   let buf = "";
   const flush = () => { if (buf) { out.push(document.createTextNode(buf)); buf = ""; } };
   const names = ctx.names || [];
+  const longest = names.reduce((n, x) => Math.max(n, x ? x.length : 0), "everyone".length);
+  // a mark (* _ ~) whose search for its closing one reached the end with none from position p: no opener at or
+  // after p can find one either, so it isn't searched again ("*a *a *a …" stays linear)
+  const noCloser = {};
   let i = 0;
   while (i < s.length) {
     const c = s[i];
@@ -43,7 +55,8 @@ function inline(s, ctx, depth = 0) {
     }
     // links
     if ((c === "h" || c === "H" || c === "w" || c === "W") && !WORD.test(prev)) {
-      const m = URL_RE.exec(s.slice(i));
+      URL_AT.lastIndex = i;
+      const m = URL_AT.exec(s);
       if (m) {
         const u = trimUrl(m[0]);
         if (u.length > 4) { flush(); out.push(linkEl(u, u)); i += u.length; continue; }
@@ -51,7 +64,7 @@ function inline(s, ctx, depth = 0) {
     }
     // mentions
     if (c === "@" && !WORD.test(prev)) {
-      const rest = s.slice(i + 1);
+      const rest = s.slice(i + 1, i + 2 + longest);           // enough for the longest name and the letter after it
       const lower = rest.toLowerCase();
       const hit = ["everyone", ...names].find((n) => n && lower.startsWith(n.toLowerCase()) && !WORD.test(rest[n.length] || ""));
       if (hit) {
@@ -62,12 +75,13 @@ function inline(s, ctx, depth = 0) {
       }
     }
     // *bold* _italic_ ~strike~
-    if ((c === "*" || c === "_" || c === "~") && depth < 6 && !WORD.test(prev) && s[i + 1] && !/\s/.test(s[i + 1]) && s[i + 1] !== c) {
+    if ((c === "*" || c === "_" || c === "~") && depth < 6 && !WORD.test(prev) && s[i + 1] && !/\s/.test(s[i + 1]) && s[i + 1] !== c
+        && !(c in noCloser && i >= noCloser[c])) {
       let j = i + 2;
       let found = -1;
-      while (j < s.length) {
-        const k = s.indexOf(c, j);
-        if (k < 0) break;
+      for (;;) {
+        const k = j < s.length ? s.indexOf(c, j) : -1;
+        if (k < 0) { noCloser[c] = i; break; }
         if (!/\s/.test(s[k - 1]) && !WORD.test(s[k + 1] || "")) { found = k; break; }
         j = k + 1;
       }
@@ -88,6 +102,7 @@ function renderText(text, ctx = {}) {
   const frag = h("div", { class: "fmt" });
   const lines = String(text || "").split("\n");
   let i = 0;
+  let unclosedFrom = Infinity;     // a ``` opened at or after this line has no closing line below (searched once)
   let para = [];
   const flushPara = () => {
     if (!para.length) return;
@@ -102,13 +117,14 @@ function renderText(text, ctx = {}) {
       flushPara();
       if (t.length > 6 && t.endsWith("```")) { frag.appendChild(h("pre", null, t.slice(3, -3))); i += 1; continue; }
       const body = [t.slice(3)];
-      let j = i + 1;
+      let j = i >= unclosedFrom ? lines.length : i + 1;
       let closed = false;
       while (j < lines.length) {
         const tj = lines[j].trimEnd();
         if (tj.endsWith("```")) { body.push(tj.slice(0, -3)); closed = true; break; }
         body.push(lines[j]); j += 1;
       }
+      if (!closed) unclosedFrom = Math.min(unclosedFrom, i);
       if (closed) {
         frag.appendChild(h("pre", null, body.join("\n").replace(/^\n+|\n+$/g, "")));
         i = j + 1; continue;

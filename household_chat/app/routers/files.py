@@ -4,17 +4,21 @@ An upload is the file itself as the request body (streamed, so the size limit
 is enforced as it arrives), with its name in the query string. It stays
 *pending* until it's sent with a message; unsent uploads are removed after 24 h.
 """
+import hashlib
 import os
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from .. import chats, config, db, files, settings
 from ..auth import require_user
 
 router = APIRouter(prefix="/api", tags=["files"])
+
+
+WRITE_BATCH = 1024 * 1024        # the body is written to disk a megabyte at a time, off the event loop
 
 
 @router.post("/conversations/{cid}/uploads", status_code=201)
@@ -37,35 +41,49 @@ async def upload(cid: str, request: Request, name: str = Query(min_length=1, max
         length = 0
     if length > max_bytes:
         raise HTTPException(413, f"That file is bigger than the {s['max_upload_mb']} MB limit.")
+    expected = length or max_bytes          # no Content-Length (chunked): assume the largest it may be
 
     def prepare():
         with db.get_conn() as conn:
             conv, m = chats.access(conn, cid, user)
             chats.require_post(conn, conv, user["id"])
-            files.check_quota(conn, length)
-            return dict(conv)
+            files.check_quota(conn, expected)
+            files.check_pending(conn, user["id"], expected)
+        files.check_free_space(files.share_root(), expected)
+        return dict(conv)
     await run_in_threadpool(files.require_online)          # 503 before any of the body is read
     conv = await run_in_threadpool(prepare)
     chats.upload_limit.take(user["id"])
     inc = await run_in_threadpool(files.Incoming, None, conv, name, max_bytes)
     try:
+        buf = bytearray()
         async for chunk in request.stream():
             if chunk:
-                inc.write(chunk)
+                buf += chunk
+                if inc.size + len(buf) > max_bytes:
+                    inc.too_big()
+                if len(buf) >= WRITE_BATCH:
+                    await run_in_threadpool(inc.write, bytes(buf))
+                    buf.clear()
+        if buf:
+            await run_in_threadpool(inc.write, bytes(buf))
         fields = await run_in_threadpool(inc.finish, voice=voice, original=original, max_px=s["photo_max_px"])
     except BaseException:
-        inc.discard()
+        await run_in_threadpool(inc.discard)
         raise
     aid = db.new_id()
+    committed = []
 
     def record():
-        with db.get_conn() as conn:
+        with files.quota_lock, db.get_conn() as conn:
             now_conv, _ = chats.access(conn, cid, user)        # still a member?
+            # the real size, now that it's known (a chunked upload had no Content-Length to check before)
+            files.check_quota(conn, fields["size"])
+            files.check_pending(conn, user["id"], fields["size"])
             if not fields["rel_path"].startswith(now_conv["folder"] + "/"):
                 # the chat was renamed while this was uploading: move the file into the new folder
                 rel_dir, full_dir = files.month_dir(now_conv["folder"])
-                name_now = files.unique_name(full_dir, fields["rel_path"].rsplit("/", 1)[1])
-                os.replace(files.resolve(fields["rel_path"]), os.path.join(full_dir, name_now))
+                name_now = files.place(files.resolve(fields["rel_path"]), full_dir, fields["rel_path"].rsplit("/", 1)[1])
                 fields["rel_path"] = f"{rel_dir}/{name_now}"
             conn.execute(
                 "INSERT INTO attachments (id, message_id, conversation_id, rel_path, original_name, mime, size, original_size, "
@@ -74,12 +92,16 @@ async def upload(cid: str, request: Request, name: str = Query(min_length=1, max
                  fields["sha256"], fields["width"], fields["height"], round(duration, 1) if voice else None,
                  1 if voice else 0, user["id"], config.now_iso()))
             row = conn.execute("SELECT * FROM attachments WHERE id = ?", (aid,)).fetchone()
+        committed.append(True)
         if files.is_image(row["mime"]):
             files.ensure_thumb(row)
         return chats.attachment_out(row)
     try:
         return await run_in_threadpool(record)
-    except HTTPException:
+    except BaseException:
+        # whatever went wrong before the row was saved (a refusal, a database error): the file isn't left behind
+        if committed:
+            raise
         try:
             os.remove(files.resolve(fields["rel_path"]))
         except (OSError, HTTPException):
@@ -125,7 +147,7 @@ def _disposition(kind: str, name: str) -> str:
 
 
 @router.get("/files/{aid}")
-def serve(aid: str, download: bool = False, user: dict = Depends(require_user)):
+def serve(aid: str, request: Request, download: bool = False, user: dict = Depends(require_user)):
     with db.get_conn() as conn:
         _attachment(conn, aid, user)          # 404 before telling anyone the folder is offline
     files.require_online()                    # 503 — never mark files missing just because the NAS is off
@@ -140,13 +162,27 @@ def serve(aid: str, download: bool = False, user: dict = Depends(require_user)):
             conn.execute("UPDATE attachments SET missing = ? WHERE id = ?", (0 if present else 1, aid))
     if not present:
         raise HTTPException(404, "File no longer available.")
-    return file_response(path, a["mime"], a["original_name"], download)
+    return file_response(path, a["mime"], a["original_name"], download, request)
 
 
-def file_response(path: str, mime: str, name: str, download: bool) -> FileResponse:
+def _etag(path: str) -> str | None:
+    """The same ETag Starlette's FileResponse sends (from the file's time and size)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return '"' + hashlib.md5(f"{st.st_mtime}-{st.st_size}".encode(), usedforsecurity=False).hexdigest() + '"'
+
+
+def file_response(path: str, mime: str, name: str, download: bool, request: Request | None = None):
     """The serving rules of SPEC §4: inline only for the allow-list (sandboxed), PDFs inline without
-    the sandbox, everything else as a download; always nosniff."""
-    headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=3600"}
+    the sandbox, everything else as a download; always nosniff. The browser asks again every time
+    (no-cache) and gets "304 Not Modified" while the file is the same: a file deleted or taken away from
+    someone is never shown from the cache."""
+    headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-cache"}
+    tag = _etag(path)
+    if request is not None and tag and tag in [t.strip() for t in (request.headers.get("if-none-match") or "").split(",")]:
+        return Response(status_code=304, headers={"ETag": tag, **headers})
     if not download and mime in files.INLINE_SANDBOXED:
         headers["Content-Disposition"] = _disposition("inline", name)
         headers["Content-Security-Policy"] = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'"

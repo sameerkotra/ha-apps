@@ -219,6 +219,8 @@ def set_role(cid: str, uid: str, body: RoleIn, user: dict = Depends(require_user
             raise HTTPException(404, "They aren't in this group.")
         if target["role"] == "owner":
             raise HTTPException(409, "The owner stays the owner — hand the group over instead.")
+        if target["role"] == "admin" and m["role"] != "owner" and uid != user["id"]:
+            raise HTTPException(403, "Only the group's owner can change another group admin's role.")
         if target["role"] != body.role:
             conn.execute("UPDATE members SET role = ? WHERE conversation_id = ? AND user_id = ?", (body.role, cid, uid))
             chats.add_system(conn, out, conv, {"event": "admin_on" if body.role == "admin" else "admin_off",
@@ -258,6 +260,8 @@ def transfer(cid: str, body: TransferIn, user: dict = Depends(require_user)):
         tu = chats.user_row(conn, body.userId)
         if t is None or tu is None or tu["disabled"] or body.userId == user["id"]:
             raise HTTPException(422, "Choose someone else in the group.")
+        if tu["is_child"]:
+            raise HTTPException(409, "A child can't own a group — choose an adult.")
         conn.execute("UPDATE members SET role = 'admin' WHERE conversation_id = ? AND user_id = ?", (cid, user["id"]))
         conn.execute("UPDATE members SET role = 'owner' WHERE conversation_id = ? AND user_id = ?", (cid, body.userId))
         chats.add_system(conn, out, conv, {"event": "owner", "target": body.userId})
@@ -285,10 +289,9 @@ def delete_group(cid: str, body: dict = Body(default={}), user: dict = Depends(r
 def delete_conversation(conn, out, conv, actor: str, action: str) -> None:
     from .. import files
     uids = chats.member_ids(conn, conv["id"], enabled_only=False)
-    for a in conn.execute("SELECT id FROM attachments WHERE conversation_id = ?", (conv["id"],)).fetchall():
-        files.remove_thumb(a["id"])
-    files.remove_disappearing_dir(conv["folder"])          # disappearing files never go to _deleted
-    files.move_folder_to_deleted(conv["folder"])
+    att_ids = [a["id"] for a in conn.execute("SELECT id FROM attachments WHERE conversation_id = ?", (conv["id"],)).fetchall()]
+    # its folder moves after the deletion is saved (the outbox's job), never while the transaction is open
+    out.job(files.discard_chat_folder, conv["folder"], att_ids)
     conn.execute("DELETE FROM conversations WHERE id = ?", (conv["id"],))
     db.audit(conn, action, None, conv["id"], actor)
     out.event(uids, "conversation", {"id": conv["id"], "removed": True})
@@ -377,7 +380,8 @@ def typing(cid: str, user: dict = Depends(require_user)):
         conv, m = chats.access(conn, cid, user)
         chats.not_personal(conv)
         others = [u for u in chats.member_ids(conn, cid) if u != user["id"]]
-    hub.publish(others, "typing", {"conversationId": cid, "userId": user["id"], "name": user["name"]})
+    if hub.typing_allowed(user["id"], cid):          # pages show "typing" for 6 s; more often adds nothing
+        hub.publish(others, "typing", {"conversationId": cid, "userId": user["id"], "name": user["name"]})
     return {"ok": True}
 
 

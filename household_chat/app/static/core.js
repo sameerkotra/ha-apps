@@ -187,8 +187,18 @@ function avatar(name, uid, opts = {}) {
   const el = h("span", { class: "avatar " + colorOf(name) + (opts.small ? " small" : "") + (opts.big ? " big" : ""), "aria-hidden": "true" });
   if (version) el.appendChild(h("img", { src: `api/avatars/${encodeURIComponent(uid)}?v=${version}`, alt: "", loading: "lazy" }));
   else el.textContent = initials(name);
-  if (uid && isOnline(uid) && !opts.noDot) el.appendChild(h("span", { class: "dot", title: "Online" }));
+  if (uid && !opts.noDot) { el.dataset.uid = uid; if (isOnline(uid)) el.appendChild(h("span", { class: "dot", title: "Online" })); }
   return el;
+}
+// the online dots of the avatars inside `root`, brought up to date without drawing anything else again
+function refreshDots(root) {
+  if (!root) return;
+  root.querySelectorAll(".avatar[data-uid]").forEach((el) => {
+    const dot = el.querySelector(".dot");
+    const on = isOnline(el.dataset.uid);
+    if (on && !dot) el.appendChild(h("span", { class: "dot", title: "Online" }));
+    else if (!on && dot) dot.remove();
+  });
 }
 function convIcon(c, opts = {}) {
   if (c.kind === "personal") {
