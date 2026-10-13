@@ -15,8 +15,9 @@ ADMIN = {"id": "u-admin", "name": "admin", "display": "Kiran"}
 NEHA = {"id": "u-neha", "name": "neha", "display": "Neha"}
 VIKRAM = {"id": "u-vikram", "name": "vikram", "display": "Vikram"}
 KID = {"id": "u-kid", "name": "kid", "display": "Kid"}
-PW = {"u-admin": "maple-river-candle-orbit-zebra", "u-neha": "harbor-violet-pepper-lantern-quilt",
-      "u-vikram": "cactus-meadow-violin-rocket-tulip", "u-kid": "banana-yogurt-pirate-comet-igloo"}
+# six words: a 5-word passphrase from the app's own word list is only "fair" (passwords.WORD_BITS)
+PW = {"u-admin": "maple-river-candle-orbit-zebra-tulip", "u-neha": "harbor-violet-pepper-lantern-quilt-maple",
+      "u-vikram": "cactus-meadow-violin-rocket-tulip-river", "u-kid": "banana-yogurt-pirate-comet-igloo-candle"}
 
 
 def headers(user):

@@ -33,8 +33,10 @@ def user_dict(row, display_only=False, admin=False) -> dict:
             "public_key": row["public_key"]}
 
 
-async def get_current_user(request: Request) -> dict:
-    """The real caller, created (disabled) on first sight."""
+def get_current_user(request: Request) -> dict:
+    """The real caller, created (disabled) on first sight. A plain function, so FastAPI runs it in its thread pool:
+    the database is never opened on the event loop (review 2026-10). It writes only for a new person, a changed
+    name, or a `last_seen` more than five minutes old."""
     ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
     auth_core.require_user_id(ident.user_id, "Household Vault")
     uid, username = ident.user_id, ident.username

@@ -82,7 +82,7 @@ class PersonalCopies(ApiTestCase):
         copies.flush()
         self.assertNotIn("Tax portal", self.titles("neha.kdbx", PW["u-neha"]))
         # a new master password: the copy opens with it (and not the old one)
-        new = "cedar-violin-harbor-rocket-meadow"
+        new = "cedar-violin-harbor-rocket-meadow-tulip"
         self.ok(self.post("/api/me/password", {"current": PW["u-admin"], "new": new}))
         copies.flush()
         self.assertIn("My email", self.titles("admin.kdbx", new))

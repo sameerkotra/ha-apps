@@ -54,11 +54,14 @@ def start_breach_check(ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         _require_breach(conn, ctx)
         vaults, _ = open_vaults(conn, ctx)
-    hashes = set()
-    for _, ov in vaults:
-        with ov.lock:
-            hashes |= {f["sha1"] for f in health.facts(ov)}
-    health.start(ctx.session.token, hashes)
+    health.start(ctx.session.token, [ov for _, ov in vaults])
+    return health.status(ctx.session.token)
+
+
+@router.get("/password-health/breach-status")
+def breach_status(ctx: Ctx = Depends(unlocked)):
+    """How the running breach check is getting on — small, for the page to poll (it reloads the whole report
+    once the check is done)."""
     return health.status(ctx.session.token)
 
 

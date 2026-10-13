@@ -26,6 +26,18 @@ DELAY_S = float(os.environ.get("COPIES_DELAY_S", "10"))       # coalesce bursts 
 _lock = threading.Lock()
 _pending: set = set()
 _timer: threading.Timer | None = None
+# user id → (composite key, KDF parameters, Argon2 output) of their copy: rewriting it keeps the salt, so a rewrite
+# after every save doesn't cost a full Argon2 run per person (review 2026-10). Memory only; dropped when they lock.
+_keys: dict = {}
+
+
+def _forget_key(token: str) -> None:
+    alive = {s.user_id for s in sessions.user_sessions_all()}
+    for uid in [u for u in _keys if u not in alive]:
+        _keys.pop(uid, None)
+
+
+sessions.on_end(_forget_key)
 
 
 def copy_dir() -> str:
@@ -158,7 +170,16 @@ def rebuild(user_id: str) -> str:
         included.append("Personal" if mine else name)
     combined.reindex()
     items.sync_keepass_otp(combined)
-    data = kdbx.save_bytes(combined, pov.password, new_salt=True)
+    composite = pov.composite
+    if not composite:                                     # locked meanwhile: done at their next unlock
+        return "stale"
+    cached = _keys.get(user_id)
+    if cached and cached[0] == composite and all(cached[1].get(k) == kdf.get(k) for k in ("$UUID", "I", "M", "P")):
+        combined.kdf, combined.transformed, combined.composite = dict(cached[1]), cached[2], composite
+        data = kdbx.save_bytes(combined, composite=composite)          # same salt: no Argon2 run
+    else:
+        data = kdbx.save_bytes(combined, composite=composite, new_salt=True)
+    _keys[user_id] = (composite, dict(combined.kdf), combined.transformed)
     os.makedirs(copy_dir(), exist_ok=True)
     path = os.path.join(copy_dir(), file_name)
     with open(path + ".part", "wb") as f:

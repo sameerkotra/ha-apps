@@ -39,8 +39,8 @@ backups and in downloads the files stay encrypted.
    access** until you tap **Enable and set up** — start with yourself. You get a
    **one-time password** (shown once; copy it or print a slip).
 5. Unlock with the one-time password and **choose your own master password**
-   (at least 12 characters and a "good" strength score; a 4–5 word passphrase
-   works well). Nobody else will know it. Print the **Emergency Kit** you're
+   (at least 12 characters and a "good" strength score; a 6-word passphrase, or
+   5 words with a number, works well). Nobody else will know it. Print the **Emergency Kit** you're
    shown.
 6. Set up the rest of the household the same way and hand each person their
    one-time password in person.
@@ -72,7 +72,8 @@ they're set up again. Household and shared vaults are kept.
   face or device PIN** instead of typing your master password. It uses a passkey
   on that device; your master password is encrypted there with a key only the
   passkey can produce, and the app stores just the encrypted copy. You still
-  type your master password at least every **14 days**; 5 failed quick unlocks
+  type your master password at least every **14 days** (a reminder of it, not a
+  protection: within those days the device and its passkey are enough); 5 failed quick unlocks
   remove that device; changing your master password removes all of them; up to
   10 devices. It needs HTTPS and a browser with passkey "PRF" support (Chrome or
   Edge on a computer or Android, Safari 18 or newer); it may not work inside the
@@ -111,13 +112,16 @@ they're set up again. Household and shared vaults are kept.
 - More in the vault ⋯ menu: **Rename**, **Leave**, **Transfer ownership** (not
   Personal), **Delete** (type its name to confirm; Personal and Household can't
   be deleted), **Change vault password** (same-password vaults), **Re-key**
-  (random-password vaults: a new random password), **Show vault password**
+  (random-password vaults: a new random password; for Household, admins only),
+  **Show vault password**
   (random-password vaults, to open a download in another KeePass app),
   **⬇ Download .kdbx**, **Print household sheet**.
-- **Versions** (⋯ menu): the last 20 saves since the vault's password last
-  changed; restore any of them (it's saved as a new version). Changing a vault's
-  password removes older versions, so an old version never opens with a password
-  someone removed still knows.
+- **Versions** (⋯ menu): the last 20 saves, plus the last save of each of the
+  past 30 days; restore any of them (it's saved as a new version). Deleting or
+  moving several items at once is one save. A **re-key** keeps them: the older
+  versions are encrypted again with the new password. **Changing** a vault's
+  password (or your master password) removes older versions, so an old version
+  never opens with a password someone removed still knows.
 - Two people can work in the same vault at once. If someone changed an item
   while you were editing it, you're told and can keep either version (the other
   stays in the item's history).
@@ -265,7 +269,10 @@ after a waiting period in which you can say no.
    read-only, when the waiting period ends.
 
 You can remove a contact at any time; if they already had access, the items get
-a new password. Only marked items are ever included, and changes you make to
+a new password. Good to know: the copy of the emergency items' password meant for
+a contact is made (sealed so only they can open it) when you add them, and kept
+by the app until it's released — so the waiting period and your **Deny** are
+what protect it, together with the app itself; the contact can't open it before. Only marked items are ever included, and changes you make to
 them are passed on while you're set up. While an admin has turned your access
 off, nothing is released (you couldn't deny it) — so if the household wants
 someone's emergency items after they've gone, don't turn their access off.
@@ -399,6 +406,7 @@ changes apply at once, without a restart.
 | Longest unlocked session (hours) | 12 | Even an active session locks after this long (1–72). |
 | Name the item in expiry reminders | on | Off: reminders don't name the item, and its name isn't kept readable outside the vault. |
 | Keep one file per person in /data/copies | off | The personal copies described above. |
+| Keep the activity log for (days) | 365 | Who opened, shared, downloaded or changed what, and when (never contents); older entries are deleted once a day. 0 = kept for ever (0–3650). |
 
 The app's **Configuration** tab has a single option:
 
@@ -414,8 +422,9 @@ The app's **Configuration** tab has a single option:
   include passwords — the page asks for one field when you copy or reveal it.
 - **Readable on purpose**, each only if you use it: **vault names** and who is in
   each vault; the **names and dates of items with expiry reminders** (an admin
-  can turn the names off); the **guest Wi-Fi** you publish. An audit log records
-  actions (who, what, when) but never contents.
+  can turn the names off — the names already kept go too); the **guest Wi-Fi**
+  you publish. An activity log records actions (who, what, when) but never
+  contents, for a year by default (App settings).
 - **Sent outside your home network**: only the breach check, if an admin allows
   it and you turn it on — the first 5 characters of password hashes go to
   `api.pwnedpasswords.com`. Nothing else leaves Home Assistant, and site icons
@@ -460,16 +469,19 @@ The app's **Configuration** tab has a single option:
 - Typing a password in the app counts towards the same limit everywhere: unlocking,
   opening a vault, downloading everything, changing the master password and
   setting up quick unlock. After 5 wrong ones in a row it waits, longer each time.
-- KeePass files you import may not ask for more than about ten times KeePassXC's
-  own settings (up to 1 GiB of memory, 1,000 Argon2 iterations or 100 million AES
-  rounds) — a file asking for more is refused with a message saying so.
+- KeePass files you import may not ask for more than a few times KeePassXC's
+  own settings (up to 256 MiB of memory, 1,000 Argon2 iterations or 100 million AES
+  rounds) or unpack to more than 64 MB — a file asking for more is refused with a
+  message saying so. One file is opened at a time.
 - An independent security review is still to come.
 
 ## Limits
 
 - Made for a household (a handful of people), not an organisation.
 - 20 MB per vault file, 5,000 items per vault, 50 shared vaults, 20 people per
-  vault, the last 20 versions of each vault, 200 search results.
+  vault, the last 20 versions of each vault (plus one a day for 30 days), 200
+  search results, 20 unlocked tabs or devices per person (the oldest locks).
+- Requests: 5 MB (a file to import: 20 MB; a backup to restore: 300 MB).
 - No browser or phone autofill from the app itself, and no access outside the
   Home Assistant panel — use *Download all my passwords* in a KeePass app for
   that.

@@ -6,6 +6,8 @@ shared by every session that may use it; when the last such session locks or
 times out, the vault is closed and its password and contents are dropped.
 Nothing here is ever written to disk; an app restart locks everyone.
 """
+import hmac
+import logging
 import secrets
 import threading
 import time
@@ -13,23 +15,48 @@ from dataclasses import dataclass, field
 
 from fastapi import HTTPException
 
-from . import db, settings
+from . import db, kdbx, settings
 
+logger = logging.getLogger("sessions")
 _lock = threading.RLock()
 _sessions: dict = {}
 _open: dict = {}
+_end_hooks: list = []                # fn(token) when a session ends (per-session caches let go of it)
+MAX_SESSIONS_PER_USER = 20           # tabs and devices; the oldest is locked when a 21st unlocks
 
 
 @dataclass
 class OpenVault:
+    """One open vault, shared by every session that may use it.
+
+    `password` is kept only for random-password vaults (members are given it, sealed, and may look at it).
+    A vault with a person-chosen password — every Personal vault — keeps only the composite key (a hash of the
+    password, what opens the file), so the master password itself isn't held in memory while unlocked
+    (review 2026-10)."""
     vault_id: str
     db: object                       # kdbx.Database
-    password: str
+    password: str | None
     key_epoch: int
     lock: threading.RLock = field(default_factory=threading.RLock)
     sessions: set = field(default_factory=set)
     index: list | None = None        # search index, rebuilt lazily after changes
     health: list | None = None       # password-health facts, rebuilt lazily after changes
+    composite: bytes = b""
+    keep_password: bool = True
+
+    def __post_init__(self):
+        if self.password is not None and not self.composite:
+            self.composite = kdbx.composite_key(self.password)
+        if not self.keep_password:
+            self.password = None
+
+    def matches(self, password: str) -> bool:
+        """Does `password` open this vault? (constant-time)"""
+        return bool(self.composite) and hmac.compare_digest(self.composite, kdbx.composite_key(password))
+
+    def set_password(self, password: str) -> None:
+        self.composite = kdbx.composite_key(password)
+        self.password = password if self.keep_password else None
 
     def changed(self):
         self.index = None
@@ -52,7 +79,15 @@ def new_session(user_id: str, private_key: bytes | None, must_change: bool = Fal
     s = Session(secrets.token_urlsafe(32), user_id, now, now, private_key, must_change)
     with _lock:
         _sessions[s.token] = s
+        mine = sorted((x for x in _sessions.values() if x.user_id == user_id), key=lambda x: x.created)
+    for old in mine[:max(0, len(mine) - MAX_SESSIONS_PER_USER)]:
+        end(old.token)
     return s
+
+
+def on_end(fn) -> None:
+    """Call `fn(token)` whenever a session ends (locked, timed out, ended by an admin)."""
+    _end_hooks.append(fn)
 
 
 def _expired(s: Session, auto_lock_minutes: int, max_hours: int, now: float) -> bool:
@@ -64,11 +99,12 @@ def get(token: str | None, user: dict, touch: bool = True) -> Session:
     if not token:
         raise HTTPException(401, "Locked.")
     now = time.time()
+    max_hours = settings.get("session_max_hours")       # read (cached) before taking the lock
     with _lock:
         s = _sessions.get(token)
         if s is None or s.user_id != user["id"]:
             raise HTTPException(401, "Locked.")
-        if _expired(s, user["auto_lock_minutes"], settings.get("session_max_hours"), now):
+        if _expired(s, user["auto_lock_minutes"], max_hours, now):
             end(token)
             raise HTTPException(401, "Locked.")
         if touch:
@@ -83,6 +119,12 @@ def end(token: str) -> None:
             for vid in list(s.vaults):
                 detach(s, vid)
             s.private_key = None
+    if s:
+        for fn in list(_end_hooks):
+            try:
+                fn(token)
+            except Exception:
+                logger.exception("Couldn't tidy up after a session ended")
 
 
 def end_user(user_id: str, except_token: str | None = None) -> int:
@@ -95,14 +137,22 @@ def end_user(user_id: str, except_token: str | None = None) -> int:
 
 def end_all() -> None:
     with _lock:
-        for t in list(_sessions):
-            end(t)
-        _open.clear()
+        tokens = list(_sessions)
+    for t in tokens:
+        end(t)
+    with _lock:
+        for vid in list(_open):
+            close(vid)
 
 
 def user_sessions(user_id: str) -> list:
     with _lock:
         return [s for s in _sessions.values() if s.user_id == user_id]
+
+
+def user_sessions_all() -> list:
+    with _lock:
+        return list(_sessions.values())
 
 
 def get_open(vault_id: str) -> OpenVault | None:
@@ -156,7 +206,8 @@ def close(vault_id: str) -> None:
     with _lock:
         ov = _open.pop(vault_id, None)
         if ov is not None:
-            ov.password = ""
+            ov.password = None
+            ov.composite = b""
             ov.db = None
             ov.index = None
             ov.health = None

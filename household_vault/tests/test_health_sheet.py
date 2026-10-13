@@ -1,6 +1,6 @@
 """Download reminder, password health, breach check, 2FA export codes,
 the household sheet (SPEC §12.1–§12.3, §12.6)."""
-from base import ADMIN, NEHA, ApiTestCase, sql
+from base import ADMIN, NEHA, PW, ApiTestCase, sql
 import _env  # noqa: F401
 
 import base64
@@ -32,13 +32,13 @@ class Reminder(ApiTestCase):
         self.assertEqual((me["downloadReminderDays"], me["lastDownloadAll"]), (0, None))
         self.assertEqual(self.put("/api/me/settings", {"downloadReminderDays": 45}).status_code, 422)
         self.ok(self.put("/api/me/settings", {"downloadReminderDays": 60}))
-        r = self.post("/api/me/download-all", {"password": "maple-river-candle-orbit-zebra", "includeDeleted": False})
+        r = self.post("/api/me/download-all", {"password": PW["u-admin"], "includeDeleted": False})
         self.assertEqual(r.status_code, 200)
         me = self.ok(self.get("/api/me"))
         self.assertEqual(me["downloadReminderDays"], 60)
         self.assertIsNotNone(me["lastDownloadAll"])
         self.assertIsNone(me["lastMasterChange"])
-        self.ok(self.post("/api/me/password", {"current": "maple-river-candle-orbit-zebra", "new": "velvet-harbor-cactus-glacier-violin"}))
+        self.ok(self.post("/api/me/password", {"current": PW["u-admin"], "new": "velvet-harbor-cactus-glacier-violin-maple"}))
         me = self.ok(self.get("/api/me"))
         self.assertGreater(me["lastMasterChange"], me["lastDownloadAll"])   # the downloaded copy is out of date
 
@@ -304,7 +304,7 @@ class Sheet(ApiTestCase):
         from app import db, service
         with db.get_conn() as conn:
             service.add_member(conn, mine, "u-neha", "viewer", "u-admin")
-        self.ok(self.post(f"/api/vaults/{mine}/open", {"password": "maple-river-candle-orbit-zebra", "remember": False}, NEHA))
+        self.ok(self.post(f"/api/vaults/{mine}/open", {"password": PW["u-admin"], "remember": False}, NEHA))
         self.assertEqual(self.get(f"/api/vaults/{mine}/sheet", NEHA).status_code, 409)
         # Wi-Fi needs a password unless it's an open network
         it3 = self.add_item(mine, title="Guest Wi-Fi", username="Guest")

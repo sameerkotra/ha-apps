@@ -1,24 +1,28 @@
 """Admin: users (enable and set up, disable, reset), App settings, backup and restore (SPEC §4, §9.1).
 Admins can never open anyone's vault through these routes."""
-import io
 import itertools
 import json
+import logging
 import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
-from .. import alerts, config, copies, db, ha_client, kdbx, service, sessions, settings
+from .. import alerts, config, copies, db, ha_client, kdbx, reminders, service, sessions, settings
+from ..db import GATE
 from ..common import backup_core, db_core, ha_notify, ha_people, people_admin
 from ..auth import require_admin, require_user
 from .common import Strict
 
 router = APIRouter(prefix="/api", tags=["admin"])
-APP_VERSION = "2.1.5"
+APP_VERSION = "2.1.6"
 _last_sync = {"t": 0.0}
 
 
@@ -171,6 +175,9 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
     if values["personal_copies"] != before["personal_copies"]:
         with db.get_conn() as conn:
             copies.setting_changed(conn, values["personal_copies"])      # off: the files are deleted
+    if before["reminder_titles"] and not values["reminder_titles"]:
+        with db.get_conn() as conn:
+            reminders.forget_titles(conn)        # the names kept so far go now, not at each vault's next save
     return _settings_out()
 
 
@@ -178,36 +185,69 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
 REQUIRED_TABLES = {"users", "vaults", "vault_members", "vault_keys", "vault_versions", "audit_log", "app_settings"}
 
 
+BACKUP_PREFIX = "household-vault-backup-"           # temp files: swept by housekeeping if a download never ends
+MAX_BACKUP_BYTES = 300 * 1024 * 1024
+RESTORE_LOCK = threading.Lock()
+STAGING = ".restore-staging"
+
+
+def _build_backup() -> str:
+    """The backup zip in a temp file (streamed to the browser, then deleted): a consistent vault.db snapshot plus
+    every (encrypted) vault file and personal copy. Not built in memory — it can be hundreds of MB."""
+    fd, path = tempfile.mkstemp(prefix=BACKUP_PREFIX, suffix=".zip")
+    os.close(fd)
+    try:
+        with tempfile.TemporaryDirectory(prefix=BACKUP_PREFIX) as tmp:
+            snap = os.path.join(tmp, "vault.db")
+            src = sqlite3.connect(config.DB_PATH)
+            try:
+                db_core.snapshot(src, snap)
+            finally:
+                src.close()
+            cdir = copies.copy_dir()                    # each person's one-file copy (their master password)
+            backup_core.write_zip(path, itertools.chain(
+                [(snap, "vault.db")],
+                backup_core.walk(config.VAULT_DIR, prefix="vaults/", keep=lambda full, _rel: full.endswith(".kdbx")),
+                ((os.path.join(cdir, f), "copies/" + f) for f in (sorted(os.listdir(cdir)) if os.path.isdir(cdir) else [])
+                 if f.endswith(".kdbx"))))
+    except BaseException:
+        os.remove(path)
+        raise
+    return path
+
+
 @router.get("/admin-storage-download-db")
 def download_backup(admin: dict = Depends(require_admin)):
     """One zip: a consistent vault.db snapshot plus every (encrypted) vault file."""
-    buf = io.BytesIO()
-    with tempfile.TemporaryDirectory() as tmp:
-        snap = os.path.join(tmp, "vault.db")
-        src = sqlite3.connect(config.DB_PATH)
-        try:
-            db_core.snapshot(src, snap)
-        finally:
-            src.close()
-        cdir = copies.copy_dir()                        # each person's one-file copy (their master password)
-        backup_core.write_zip(buf, itertools.chain(
-            [(snap, "vault.db")],
-            backup_core.walk(config.VAULT_DIR, prefix="vaults/", keep=lambda full, _rel: full.endswith(".kdbx")),
-            ((os.path.join(cdir, f), "copies/" + f) for f in (sorted(os.listdir(cdir)) if os.path.isdir(cdir) else [])
-             if f.endswith(".kdbx"))))
+    path = _build_backup()
     with db.get_conn() as conn:
         db.audit(conn, "backup_downloaded", None, None, admin["id"])
     name = backup_core.file_name("household-vault-backup", ".zip")
-    # the zip is built in memory (no copy of the vault files is left in a temp folder)
-    return Response(buf.getvalue(), media_type=backup_core.ZIP_MEDIA_TYPE,
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    return FileResponse(path, media_type=backup_core.ZIP_MEDIA_TYPE, filename=name,
+                        background=BackgroundTask(_remove_quietly, path))
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 @router.post("/admin-storage-import-db")
 async def import_backup(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
-    raw = await file.read()
-    z = backup_core.open_zip(raw, lambda: HTTPException(422, "That isn't a Household Vault backup (.zip)."))
-    names = z.namelist()
+    # streamed to a temp file (not 300 MB in memory), then checked and restored in the thread pool, so the app
+    # keeps answering meanwhile (review 2026-10)
+    tmp = await backup_core.receive(file, tempfile.gettempdir(), suffix=".zip", prefix=BACKUP_PREFIX,
+                                    max_bytes=MAX_BACKUP_BYTES,
+                                    too_big=lambda: HTTPException(413, "That backup is bigger than 300 MB."))
+    try:
+        return await run_in_threadpool(_restore, tmp, admin)
+    finally:
+        _remove_quietly(tmp)
+
+
+def _check_backup(z, names: list) -> None:
     if "vault.db" not in names:
         raise HTTPException(422, "The backup has no vault.db.")
 
@@ -222,49 +262,61 @@ async def import_backup(file: UploadFile = File(...), admin: dict = Depends(requ
 
     backup_core.check_members(z, check=expected, unsafe=unexpected,
                               is_unsafe=lambda n: n.startswith("/") or ".." in n.split("/"))
-    with tempfile.TemporaryDirectory() as tmp:
-        dbfile = os.path.join(tmp, "vault.db")
-        with open(dbfile, "wb") as f:
-            f.write(z.read("vault.db"))
-        try:
-            c = sqlite3.connect(dbfile)
-            ok = c.execute("PRAGMA integrity_check").fetchone()[0]
-            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-            c.close()
-        except sqlite3.DatabaseError:
-            raise HTTPException(422, "The database in the backup is damaged.")
-        if ok != "ok" or not REQUIRED_TABLES <= tables:
-            raise HTTPException(422, "The database in the backup is damaged or from another app.")
-        for n in names:
-            if n.endswith(".kdbx") and not kdbx.is_kdbx(z.read(n)[:12]):
-                raise HTTPException(422, f"{n} isn't a KeePass file.")
-        # what the restore will undo: removals and password changes since the backup
-        with db.get_conn() as conn:
-            c = sqlite3.connect(dbfile)
-            last = c.execute("SELECT MAX(created_at) FROM audit_log").fetchone()[0] or ""
-            c.close()
-            undone = [dict(r) for r in conn.execute(
-                "SELECT a.action, a.created_at, a.user_id, v.name AS vault, u.name AS person FROM audit_log a "
-                "LEFT JOIN vaults v ON v.id = a.vault_id LEFT JOIN users u ON u.id = a.user_id WHERE a.created_at > ? "
-                "AND a.action IN ('unshared','left','user_disabled','user_reset','rekeyed','password_changed',"
-                "'emergency_revoked','emergency_denied','quick_unlock_added','guest_wifi_removed') "
-                "ORDER BY a.created_at", (last,))]
-        sessions.end_all()
-        shutil.rmtree(config.VAULT_DIR, ignore_errors=True)
-        os.makedirs(config.VAULT_DIR, exist_ok=True)
-        shutil.rmtree(copies.copy_dir(), ignore_errors=True)
-        for n in names:
-            if n.startswith("copies/"):
-                backup_core.copy_out(z, n, os.path.join(copies.copy_dir(), n.split("/", 1)[1]))
-            elif n.endswith(".kdbx"):
-                backup_core.copy_out(z, n, os.path.join(config.VAULT_DIR, os.path.relpath(n, "vaults")))
-        for ext in ("", "-wal", "-shm"):
+
+
+def _restore(tmp_zip: str, admin: dict) -> dict:
+    """Restore a backup without ever leaving a half-restored app: everything is unpacked and checked in a staging
+    folder next to the live data first, and only then moved into place, folder by folder, with the old folders
+    kept until the end (and put back if a move fails) — review 2026-10."""
+    with RESTORE_LOCK:
+        with open(tmp_zip, "rb") as f:
+            z = backup_core.open_zip(f, lambda: HTTPException(422, "That isn't a Household Vault backup (.zip)."))
+            names = z.namelist()
+            _check_backup(z, names)
+            staging = os.path.join(config.DATA_DIR, STAGING)
+            shutil.rmtree(staging, ignore_errors=True)
+            os.makedirs(os.path.join(staging, "vaults"))
+            os.makedirs(os.path.join(staging, "copies"))
             try:
-                os.remove(config.DB_PATH + ext)
-            except FileNotFoundError:
-                pass
-        shutil.copyfile(dbfile, config.DB_PATH)
+                dbfile = os.path.join(staging, "vault.db")
+                backup_core.copy_out(z, "vault.db", dbfile)
+                try:
+                    c = sqlite3.connect(dbfile)
+                    ok = c.execute("PRAGMA integrity_check").fetchone()[0]
+                    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+                    last = (c.execute("SELECT MAX(created_at) FROM audit_log").fetchone()[0] or "") \
+                        if "audit_log" in tables else ""
+                    c.close()
+                except sqlite3.DatabaseError:
+                    raise HTTPException(422, "The database in the backup is damaged.")
+                if ok != "ok" or not REQUIRED_TABLES <= tables:
+                    raise HTTPException(422, "The database in the backup is damaged or from another app.")
+                for n in names:
+                    if n.startswith("copies/"):
+                        dest = os.path.join(staging, "copies", n.split("/", 1)[1])
+                    elif n.endswith(".kdbx"):
+                        dest = os.path.join(staging, "vaults", os.path.relpath(n, "vaults"))
+                    else:
+                        continue
+                    backup_core.copy_out(z, n, dest)
+                    with open(dest, "rb") as kf:
+                        if not kdbx.is_kdbx(kf.read(12)):
+                            raise HTTPException(422, f"{n} isn't a KeePass file.")
+                # what the restore will undo: removals and password changes since the backup
+                with db.get_conn() as conn:
+                    undone = [dict(r) for r in conn.execute(
+                        "SELECT a.action, a.created_at, a.user_id, v.name AS vault, u.name AS person FROM audit_log a "
+                        "LEFT JOIN vaults v ON v.id = a.vault_id LEFT JOIN users u ON u.id = a.user_id "
+                        "WHERE a.created_at > ? AND a.action IN ('unshared','left','user_disabled','user_reset',"
+                        "'rekeyed','password_changed','emergency_revoked','emergency_denied','quick_unlock_added',"
+                        "'guest_wifi_removed') ORDER BY a.created_at", (last,))]
+                with GATE.pause(timeout=60):                # background jobs wait until the swap is done
+                    sessions.end_all()
+                    _swap_in(staging, dbfile)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
     db.init_db()
+    settings.REGISTRY.invalidate()
     with open(os.path.join(config.DATA_DIR, "restore_notes.json"), "w") as f:
         json.dump({"restoredAt": config.now_iso(), "backupUpTo": last, "undone": undone}, f)
     with db.get_conn() as conn:
@@ -273,7 +325,39 @@ async def import_backup(file: UploadFile = File(...), admin: dict = Depends(requ
         everyone = [r["id"] for r in conn.execute("SELECT id FROM users WHERE disabled = 0 AND status != 'none'")]
         alerts.send(conn, everyone, "An admin restored a Household Vault backup. Changes made after it was taken "
                     "are gone — check your vaults when you next unlock.", kind="admin")
+    # the backup's Argon2 tuning may come from another machine: measure this one again (in the background)
+    threading.Thread(target=_retune, daemon=True, name="argon2-tune").start()
     return {"ok": True, "undone": undone}
+
+
+def _retune() -> None:
+    try:
+        service.calibrate(force=True)
+    except Exception:
+        logging.getLogger("admin").exception("Couldn't tune Argon2 after the restore")
+
+
+def _swap_in(staging: str, dbfile: str) -> None:
+    """Move the staged folders and database into place; on a failure part-way, put the old ones back."""
+    moved = []
+    try:
+        for live, new in ((config.VAULT_DIR, os.path.join(staging, "vaults")),
+                          (copies.copy_dir(), os.path.join(staging, "copies"))):
+            old = live + ".before-restore"
+            shutil.rmtree(old, ignore_errors=True)
+            if os.path.exists(live):
+                os.replace(live, old)
+            moved.append((live, old))
+            os.replace(new, live)
+        db_core.swap_in(dbfile, config.DB_PATH, db.get_conn)
+    except BaseException:
+        for live, old in reversed(moved):
+            shutil.rmtree(live, ignore_errors=True)
+            if os.path.exists(old):
+                os.replace(old, live)
+        raise
+    for _live, old in moved:
+        shutil.rmtree(old, ignore_errors=True)
 
 
 @router.get("/restore-notes")

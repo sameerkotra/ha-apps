@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api", tags=["items"])
 # "Recently used" — per person, kept across sessions: vault and item ids only, never titles
 RECENT_KEEP = 30
 _secret_hits: dict = {}
+sessions.on_end(lambda token: _secret_hits.pop(token, None))      # nothing kept for a session that ended
 
 
 def _touch_recent(ctx: Ctx, vid: str, iid: str) -> None:
@@ -83,7 +84,7 @@ def _folder_name(n: str) -> str:
 def create_folder(vid: str, body: FolderIn, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
-        with ov.lock:
+        with service.editing(conn, ov):
             parent = items.find_group(ov.db, body.parentId)
             if ov.db.in_recycle_bin(parent):
                 raise HTTPException(409, "You can't make folders in the Trash.")
@@ -110,7 +111,7 @@ def _own_folder(d, fid: str, verb: str):
 def edit_folder(vid: str, fid: str, body: FolderPatch, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
-        with ov.lock:
+        with service.editing(conn, ov):
             d = ov.db
             g = _own_folder(d, fid, "changed")
             if body.name is not None:
@@ -131,7 +132,7 @@ def edit_folder(vid: str, fid: str, body: FolderPatch, ctx: Ctx = Depends(unlock
 def delete_folder(vid: str, fid: str, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
-        with ov.lock:
+        with service.editing(conn, ov):
             d = ov.db
             g = _own_folder(d, fid, "deleted")
             empty = not any(x.tag in ("Entry", "Group") for x in g)
@@ -301,8 +302,8 @@ class ItemIn(Strict):
     cardholder: str | None = None
     expiry: str | None = None
     card: dict | None = None
-    fields: list | None = None
-    tags: list | None = None
+    fields: list[dict] | None = None
+    tags: list[str] | None = None
     favourite: bool | None = None
     folderId: str | None = None
     ifModified: str | None = None
@@ -316,7 +317,7 @@ def create_item(vid: str, body: ItemIn, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
         label = _vault_label(conn, ctx, v)
-        with ov.lock:
+        with service.editing(conn, ov):
             g = items.find_group(ov.db, body.folderId)
             if ov.db.in_recycle_bin(g):
                 raise HTTPException(409, "You can't add items to the Trash.")
@@ -325,12 +326,32 @@ def create_item(vid: str, body: ItemIn, ctx: Ctx = Depends(unlocked)):
             return items.detail(ov.db, e, label)
 
 
+class BatchCreateIn(Strict):
+    items: list[ItemIn] = Field(min_length=1, max_length=100)
+    folderId: str | None = None
+
+
+@router.post("/vaults/{vid}/items/batch", status_code=201)
+def create_items(vid: str, body: BatchCreateIn, ctx: Ctx = Depends(unlocked)):
+    """Several items (codes from an authenticator export) as one change: one new version. All or nothing."""
+    with db.get_conn() as conn:
+        ov, v, role = vault_access(conn, ctx, vid, "edit")
+        label = _vault_label(conn, ctx, v)
+        with service.editing(conn, ov):
+            g = items.find_group(ov.db, body.folderId)
+            if ov.db.in_recycle_bin(g):
+                raise HTTPException(409, "You can't add items to the Trash.")
+            made = [items.create(ov.db, g, x.model_dump(exclude_unset=True, exclude={"folderId"})) for x in body.items]
+            service.save(conn, ov, ctx.user["id"])
+            return {"items": [items.summary(ov.db, e, label) for e in made]}
+
+
 @router.patch("/vaults/{vid}/items/{iid}")
 def update_item(vid: str, iid: str, body: ItemIn, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
         label = _vault_label(conn, ctx, v)
-        with ov.lock:
+        with service.editing(conn, ov):
             e = _entry(ov, iid)
             if body.ifModified and body.ifModified != ov.db.modified(e):
                 who = conn.execute("SELECT u.name FROM vaults v LEFT JOIN users u ON u.id = v.updated_by WHERE v.id = ?",
@@ -353,10 +374,31 @@ def update_item(vid: str, iid: str, body: ItemIn, ctx: Ctx = Depends(unlocked)):
 def delete_item(vid: str, iid: str, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
-        with ov.lock:
+        with service.editing(conn, ov):
             result = items.trash(ov.db, _entry(ov, iid))
             service.save(conn, ov, ctx.user["id"])
     return {"result": result}
+
+
+class BatchIn(Strict):
+    items: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/vaults/{vid}/items/delete")
+def delete_items(vid: str, body: BatchIn, ctx: Ctx = Depends(unlocked)):
+    """Several items to the Trash (or, already there, deleted for good) as one change: one new version, not one
+    per item (review 2026-10: a bulk delete of 20 items used to push every older version out)."""
+    with db.get_conn() as conn:
+        ov, v, role = vault_access(conn, ctx, vid, "edit")
+        with service.editing(conn, ov):
+            entries = [_entry(ov, iid) for iid in dict.fromkeys(body.items)]      # all found before any change
+            results = {"trashed": 0, "deleted": 0}
+            for e in entries:
+                if ov.db.parent.get(e) is None:                                     # inside one deleted just now
+                    continue
+                results[items.trash(ov.db, e)] += 1
+            service.save(conn, ov, ctx.user["id"])
+    return results
 
 
 @router.post("/vaults/{vid}/restore/{xid}")
@@ -364,7 +406,7 @@ def restore(vid: str, xid: str, ctx: Ctx = Depends(unlocked)):
     """Take an item or folder out of the Trash, back where it was."""
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
-        with ov.lock:
+        with service.editing(conn, ov):
             d = ov.db
             b64 = items.to_b64(xid)
             el = d.entries.get(b64) or d.groups.get(b64)
@@ -379,7 +421,7 @@ def restore(vid: str, xid: str, ctx: Ctx = Depends(unlocked)):
 def empty_trash(vid: str, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         ov, v, role = vault_access(conn, ctx, vid, "edit")
-        with ov.lock:
+        with service.editing(conn, ov):
             rb = ov.db.recycle_bin()
             if rb is not None:
                 for child in [x for x in rb if x.tag in ("Entry", "Group")]:
@@ -401,8 +443,7 @@ def move_items(vid: str, body: MoveIn, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
         src, v, role = vault_access(conn, ctx, vid, "view" if body.duplicate else "edit")
         dst, v2, role2 = vault_access(conn, ctx, body.toVaultId, "edit")
-        first, second = sorted([src, dst], key=lambda o: o.vault_id)
-        with first.lock, second.lock:
+        with service.editing(conn, src, dst):
             target = items.find_group(dst.db, body.toFolderId)
             if dst.db.in_recycle_bin(target):
                 raise HTTPException(409, "Use Delete to move items to the Trash.")

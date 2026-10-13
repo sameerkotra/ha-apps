@@ -77,7 +77,7 @@ household_vault/
 
 **First run.** With `admin_users` empty nobody is an admin, so nobody can open Admin. `/api/me` and `/api/whoami` return `noAdmin: true` (and `/api/me` the caller's HA `username`), and every screen — lock screen, no-access, standalone pages, the unlocked shell — shows a banner: "No admin yet — add your Home Assistant user name (**<user name>**) to `admin_users` on the app's Configuration tab, save, and restart the app." with a link to *How the app sees you*. The first visitor is never promoted.
 
-App settings (Admin → App settings, admins only; `app_settings` table; validated; apply without a restart). They're declared once in `settings.py` (`SETTINGS`, `GROUPS`: Security, Reminders and copies) on the shared `settings_core.Registry`:
+App settings (Admin → App settings, admins only; `app_settings` table; validated; apply without a restart — read through a 5-second cache that every save drops). They're declared once in `settings.py` (`SETTINGS`, `GROUPS`: Security, Reminders and copies) on the shared `settings_core.Registry`:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -85,8 +85,9 @@ App settings (Admin → App settings, admins only; `app_settings` table; validat
 | `min_master_password_length` | `12` | Also requires a strength score of "good" or better. Applies to master passwords and same-password vaults. |
 | `allow_breach_check` | `false` | Lets users opt in to the breach check (§12.1); the app then contacts `api.pwnedpasswords.com`. |
 | `session_max_hours` | `12` | Even when active, an unlocked session ends after this long (1–72). |
-| `reminder_titles` | `true` | Whether expiry reminders keep and send the item's title (§12.8). |
+| `reminder_titles` | `true` | Whether expiry reminders keep and send the item's title (§12.8); turning it off blanks the titles already kept. |
 | `personal_copies` | `false` | One `.kdbx` per person in `/data/copies` (§12.10). |
+| `audit_keep_days` | `365` | Audit-log rows older than this are deleted once a day (0 = kept for ever, up to 3650). |
 
 **Each person's own settings** (Settings): **Lock after** 1–60 minutes (default 5), stored in `users.auto_lock_minutes` and used on all their devices; lock when hidden (§12.13); search in notes (on/off); breach check (if allowed); download reminder (§12.6); security alerts and expiry reminders (§12.7).
 
@@ -126,7 +127,7 @@ App settings (Admin → App settings, admins only; `app_settings` table; validat
 | **An admin, first setup** | *Enable and set up*: one-time master password, changed by the person on first unlock (§4). | Admin rights |
 | **You, your master password** | Settings → *Change master password*. The server re-encrypts Personal (fresh salt), re-wraps your key-ring private key, **purges Personal's older versions**, bumps `key_epoch`, and ends your other sessions ("Your master password was changed — unlock again"). If you shared your Personal vault **with the same password**, the people you shared it with are told to ask you for the new one. A reminder follows to download a new Emergency Kit and a new *Download all my passwords* file, and delete the old copies. | The **current** master password |
 | **A same-password shared vault** | Owner → *Change vault password*: re-encrypted, older versions purged, the owner's remembered copy updated; every other member's remembered copy is deleted and they're told "The password of <vault> was changed — ask <owner>". | Owner, with the vault open |
-| **A random-password vault** (Household and others) | *Re-key*: new random password, file re-encrypted, older versions purged, re-sealed to every member's key ring (§5.4). Automatic after someone is removed or disabled. | Any member (Household), owner/manager (others) |
+| **A random-password vault** (Household and others) | *Re-key*: new random password, file re-encrypted, the kept older versions re-encrypted with it, re-sealed to every member's key ring (§5.4). Automatic after someone is removed or disabled. | An admin (Household), owner/manager (others) |
 | **An admin, someone else's master password** | **Not possible.** It isn't stored anywhere. | — |
 | **An admin, someone who forgot theirs** | *Reset user*: wipes that person's Personal vault and key ring, removes them from every shared vault (re-keying random-password vaults; same-password owners are asked to change theirs), then *Enable and set up* again. Their own passwords are gone. | Admin rights. The app can't check that the person agreed; the confirmation says what is lost, and the person is told on their next unlock (and by notify, if assigned). |
 | **A login stored in a vault** | Edit the entry; the old value stays in the entry's KeePass history. | Access to that vault |
@@ -138,7 +139,7 @@ HA backups made *before* a change still contain the old files, locked with the o
 |---|---|---|
 | 1 | **Anything else running as the HA web page** (a HACS card, custom panel, another app's XSS) could script into this page while it's unlocked and read what's shown or use the session token. | Strict CSP, no `innerHTML`, token only in memory, secrets fetched one at a time on demand, short auto-lock, lock on hide. **Residual:** can't be fully prevented from inside the page. Keep third-party frontend cards and panels to trusted ones. |
 | 2 | **Root on the HA host** (a trusted admin, or an attacker who gets SSH/a malicious app) could read the app's memory while vaults are open, or change its code to capture passwords. | **Accepted**: admins are trusted. Protect HA admin/SSH access, keep apps to trusted sources. Vaults are only in memory while someone's unlocked. |
-| 3 | **Weak master password** + a stolen backup, disk or download → offline guessing. | Argon2id (§5.1), minimum length 12 and a "good" score; suggest a 4–5 word passphrase. |
+| 3 | **Weak master password** + a stolen backup, disk or download → offline guessing. | Argon2id (§5.1), minimum length 12 and a "good" score; suggest a 6-word passphrase (5 words from the app's list are only "fair"). |
 | 4 | **Forgotten master password** — permanent loss of that Personal vault. | Emergency Kit at setup; *Download all my passwords* reminders. Shared vaults survive. |
 | 5 | **Someone gets your HA login.** They can reach the app but still need your master password to open anything. They *can* try passwords online. | 5 wrong passwords → 1 minute wait, doubling up to 1 hour, per user (server-side, `unlock_failures`). Version history. Turn on **HA multi-factor authentication**. |
 | 6 | **Unlocked and unattended device.** | Auto-lock after the person's own time, lock on hide, lock button, header countdown, *Lock everywhere*. |
@@ -184,8 +185,10 @@ HA backups made *before* a change still contain the old files, locked with the o
 
 ### 5.4 Household and re-keying
 - **Household** is created (random password) when the first person becomes active. Whenever anyone is unlocked and Household is open, the server seals its password to every active person who doesn't have it yet — so newcomers get it without anyone doing anything.
-- **Re-keying** a random-password vault (after a removal or disable): new random password → re-encrypt → purge older versions → re-seal to every remaining member → bump `key_epoch`, **in one DB transaction after the new file is written**. If the vault isn't open right now (nobody with access is unlocked), it's marked `rekey_pending` and done automatically the next time a member unlocks.
-- **Purging older versions on every password change** means a restore can never bring back a file locked with a password someone removed still knows, and restores never need an old password.
+- **Re-keying** a random-password vault (after a removal or disable): new random password → re-encrypt → re-encrypt the kept older versions with it (written beside the old files, moved into place once the transaction commits; a crash in between is finished at the next start, told apart by each row's SHA-256) → re-seal to every remaining member → bump `key_epoch`, **in one DB transaction after the new file is written**. If the vault isn't open right now (nobody with access is unlocked), it's marked `rekey_pending` and done automatically the next time a member unlocks. Only an admin re-keys Household by hand.
+- **Purging older versions on a password change**, and re-encrypting them on a re-key, means a restore can never bring back a file locked with a password someone removed still knows, and restores never need an old password. Files are removed only after the transaction that drops their rows has committed.
+- **Changes to an open vault** (`service.editing`): the vault's lock is taken before the transaction writes anything (`BEGIN IMMEDIATE`) and held until it commits; if anything fails, the transaction rolls back and the in-memory vault is read back from its file (with the cached key — no KDF run), so a half-made change is never saved later by someone else.
+- **What an open vault keeps in memory:** a random-password vault keeps its password (it's sealed to members and can be shown); a vault with a person-chosen password — every Personal vault — keeps only the KeePass composite key (SHA-256 of the password's SHA-256), so the master password itself isn't held while unlocked. Password checks compare composite keys.
 
 ### 5.5 Entry conventions (KeePassXC-compatible)
 | Type | Stored as |
@@ -242,7 +245,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
   key_epoch INTEGER NOT NULL, created_at TEXT NOT NULL, last_used TEXT);
 ```
 - **More tables and columns** (full definitions in `app/db.py`): tables `app_settings`, `user_notify`, `emergency_contacts`, `reminders`, `recent_items`, `guest_wifi`, `quick_unlock`, `user_copies` (§12); columns `users.last_seen`, `last_unlock`, `previous_unlock`, `breach_check`, `download_reminder_days`, `security_alerts`, `expiry_alerts`, `hide_lock_seconds`, `last_typed_unlock`, `master_epoch`, `audit_log.actor_id`, and `vaults.mirror_fp`. Columns that an older database lacks are added at start-up (`db.MIGRATIONS`), and again after a backup restore.
-- **Version history.** The last **20** versions of each vault are kept; older ones are pruned after each save, and **all** older ones are purged on a password change or re-key (§5.4).
+- **Version history.** The last **20** versions of each vault are kept, plus the newest of each of the last **30 days**; older ones are pruned after each save. All older ones are purged on a password change, and re-encrypted on a re-key (§5.4). Deleting, moving or adding several items at once is one save.
 - **Limits.** 20 MB per file, 50 shared vaults, 20 members per vault, 5 000 entries per vault (search stays instant).
 
 ## 7. Open vaults, saving & concurrency
@@ -281,13 +284,14 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 | GET `/api/vaults/{id}/items/{xid}/totp` | 🔑 | `{code, period, remaining}` |
 | POST `/api/vaults/{id}/items` · PATCH / DELETE `…/items/{xid}` | 🔑 editor | Create · update (with the `modified` it started from, 409 when stale) · delete (to the Recycle Bin) |
 | POST `/api/vaults/{id}/items/move` | 🔑 editor of both | `{items, toVaultId, toFolderId, duplicate}` — move or copy, within a vault or to another |
+| POST `/api/vaults/{id}/items/delete` · POST `…/items/batch` | 🔑 editor | `{items: [ids]}` to the Recycle Bin (or deleted for good from it) · `{items: [item bodies], folderId}` created — each one save, all or nothing |
 | POST `/api/vaults/{id}/restore/{xid}` · `…/trash/empty` | 🔑 editor | Restore from the Recycle Bin · empty it |
 | GET `/api/search?q=&vault=&folder=&type=&favourites=` · GET `/api/tags` · GET `/api/expiring?within=` | 🔑 | Search (§9.4) · tags · expiring items (§12.8); summaries only |
 | GET `/api/vaults/{id}/versions` · POST `…/versions/{n}/restore` | 🔑 owner/manager (Personal: owner) | History · restore (§7) |
 | GET `/api/vaults/{id}/download` | 🔑 member | The current encrypted file |
 | POST `/api/me/download-all` | 🔑 active | `{password, includeDeleted}` (asked again) → the combined file (§12.6) |
 | POST `/api/import` | 🔑 | Multipart `.kdbx` (+ password, optional key file) or CSV, `target` (`new` or a vault), `skipDuplicates` (§12.11) |
-| GET `/api/password-health` · POST `…/breach-check` · POST `/api/breach/check` | 🔑 | §12.1 |
+| GET `/api/password-health` · POST `…/breach-check` · GET `…/breach-status` · POST `/api/breach/check` | 🔑 | §12.1 |
 | POST `/api/totp/parse` | 🔑 | Classify scanned or pasted text (§12.2) |
 | GET / PUT `/api/vaults/{id}/sheet` · `…/items/{xid}/sheet` | 🔑 | Household sheet (§12.3) |
 | `/api/emergency…` · PUT `/api/vaults/{id}/items/{xid}/emergency` | 🔑 | Emergency access (§12.4) |
@@ -342,7 +346,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 - Vault files are always encrypted on disk, in backups and in downloads. Decrypted data, vault passwords and private keys live only in the app's memory while someone with access is unlocked; never logged, never on disk, never sent to HA.
 - List, search and detail responses never contain protected fields; secrets are fetched one field at a time.
 - The session token lives only in page memory; nothing vault-related goes in `localStorage`/`sessionStorage`/cookies (shared origin).
-- Every password change or re-key purges the vault's older versions; removal from a random-password vault always re-keys; removal from a same-password vault always prompts the owner.
+- Every password change purges the vault's older versions, and every re-key re-encrypts them; removal from a random-password vault always re-keys; removal from a same-password vault always prompts the owner.
 - A member without the vault's password (typed or remembered) can't open it.
 - Save everything written by other KeePass apps; round-trip tests must show nothing is lost.
 - Nobody has access until an admin enables and sets them up; the one-time password must be replaced on first unlock.
@@ -355,7 +359,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
   - sessions: token bound to the user, idle timeout from the person's setting, max age, lock everywhere, wrong-password back-off;
   - key ring: seal/unseal, remembered vaults open at unlock, master-password change keeps them working;
   - sharing: same-password vault needs the password even for members, *Remember*, roles (viewer can't edit), leave, remove → prompt / re-key, Personal sharing refused (members from before keep access);
-  - re-key and password change purge older versions; restore within an epoch;
+  - password change purges older versions, re-key re-encrypts them; restore within an epoch; a change that fails half-way (`test_review_2026_10.py`);
   - folders and items: create, nest, rename, move, delete to the Recycle Bin, move/copy across vaults, 409 on a stale edit, secrets never in list/search/detail payloads (a test scans every response);
   - search: matching rules, filters, ranking, protected fields never matched, notes only when enabled;
   - TOTP against RFC 6238 vectors, both TOTP field conventions; KDBX round trips (unknown fields, attachments, history kept), KDBX 3.1 import, key files; Argon2 against RFC 9106 vectors;
@@ -373,7 +377,7 @@ All of them stay inside the model above: **SQLite only**, files always encrypted
 - **Password health** (`GET /api/password-health`, `health.py`): logins with a password in open vaults, not in the Trash. *Weak* = strength score 0–1; *reused* = same password on ≥ 2 items across the person's open vaults (compared as HMAC-SHA-256 with a per-process random key); *old* = the current password was set > 365 days ago (walking entry history back while the password is unchanged); *no2fa* (§12.12). Facts are cached per open vault until it changes. No password, hash or secret is returned. Search filters `is:weak`, `is:reused`, `is:old`, `is:breached`, `is:no2fa`.
 - **Breach check** with *Have I Been Pwned* Pwned Passwords **range API** (k-anonymity): the server SHA-1-hashes the password and sends **only the first 5 hex characters** to `https://api.pwnedpasswords.com/range/<prefix>` with `Add-Padding: true` (padding lines with count 0 ignored), then compares the returned suffixes itself. The password and full hash never leave the app.
 - **Two switches:** the App setting `allow_breach_check` (default off — it needs internet) and a per-person toggle `users.breach_check` (default off; only settable while allowed).
-- **When:** on demand from Password health (`POST /api/password-health/breach-check`, a background thread per session: every login in the open vaults, 1 request per unique prefix, at most 5 per second, giving up after 3 consecutive network errors with "couldn't check"), and as a new password is typed in the editor (`POST /api/breach/check`, debounced).
+- **When:** on demand from Password health (`POST /api/password-health/breach-check`, a background thread per session that works out the SHA-1s itself and drops them when it ends (results are kept by the reuse HMAC; locking stops it); the page polls the small `GET …/breach-status`: every login in the open vaults, 1 request per unique prefix, at most 5 per second, giving up after 3 consecutive network errors with "couldn't check"), and as a new password is typed in the editor (`POST /api/breach/check`, debounced).
 - **Results** are kept in memory for the session only, with badges in the list.
 
 ### 12.2 Scan a 2FA QR code

@@ -29,12 +29,13 @@ def _is_background(value: str | None) -> bool:
     return (value or "").strip() == "1"
 
 
-async def unlocked(x_vault_session: str | None = Header(default=None), x_background: str | None = Header(default=None),
+# Plain functions (run in the thread pool): checking a session reads the App settings (cached a few seconds).
+def unlocked(x_vault_session: str | None = Header(default=None), x_background: str | None = Header(default=None),
                    user: dict = Depends(require_user)) -> Ctx:
     return _ctx(x_vault_session, user, False, _is_background(x_background))
 
 
-async def unlocked_any(x_vault_session: str | None = Header(default=None),
+def unlocked_any(x_vault_session: str | None = Header(default=None),
                        x_background: str | None = Header(default=None), user: dict = Depends(require_user)) -> Ctx:
     """Also a first-unlock session (one-time password) — only for choosing the new password."""
     return _ctx(x_vault_session, user, True, _is_background(x_background))

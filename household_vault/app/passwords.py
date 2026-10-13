@@ -23,9 +23,10 @@ COMMON = {
     "111111", "000000", "654321", "secret", "changeme", "default", "homeassistant", "hunter2", "cricket", "india",
 }
 SEQS = ["abcdefghijklmnopqrstuvwxyz", "qwertyuiop", "asdfghjkl", "zxcvbnm", "0123456789"]
-# A dictionary word counts as one pick from a 7,776-word list (the EFF list size) —
-# what an attacker would try first — even though our own list is smaller.
-WORD_BITS = math.log2(7776)
+# A dictionary word counts as one pick from our own list (about 10.5 bits for its 1,457 words): a passphrase
+# made by the generator is worth exactly that, and an attacker tries the list first (review 2026-10: it used to
+# count 12.9 bits, the EFF list's size, so a 5-word passphrase looked stronger than it is).
+WORD_BITS = math.log2(len(WORDS))
 LABELS = ["very weak", "weak", "fair", "good", "strong"]
 SYMBOLS = "!@#$%^&*()-_=+[]{};:,.?/"
 AMBIGUOUS = set("Il1O0o")
@@ -128,7 +129,7 @@ def strength(pw: str) -> dict:
 def check_master(pw: str, min_length: int) -> str | None:
     """None when fine, else a message."""
     if len(pw) < min_length:
-        return f"Use at least {min_length} characters — a passphrase of 4–5 words is easiest."
+        return f"Use at least {min_length} characters — a passphrase of 6 words is easiest."
     if strength(pw)["score"] < 3:
-        return "That password is too easy to guess. Add words or make it longer (a 4–5 word passphrase works well)."
+        return "That password is too easy to guess. Add words or make it longer (a 6-word passphrase works well)."
     return None

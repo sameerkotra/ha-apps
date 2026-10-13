@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.1.6
+
+- **Security**: a damaged or crafted KeePass file can no longer make the app loop for ever while reading it — it's refused as damaged. Importing opens one file at a time, asks for at most 256 MiB of memory (was 1 GiB) and stops at 64 MB unpacked (was 256 MB); a failed import as a new vault leaves nothing behind.
+- **Security**: if anything goes wrong half-way through a change — a save, a password change, a re-key — the vault stays exactly as it was, on disk and for everyone who has it open. Older versions are only removed once the change is safely stored, so a failure can no longer leave a vault nobody can open.
+- **Security**: only an admin can re-key Household by hand.
+- **Security**: while you're unlocked, the app keeps a key derived from your master password, not the password itself; the breach check works out its hashes only while it runs and stops when you lock.
+- **Security**: a 2FA code with odd settings in an imported file no longer breaks saving that vault; a vault that would grow past 20 MB is refused with a message instead of an error.
+- **Security**: request sizes are counted as they arrive (5 MB, 20 MB for an import, 300 MB for a restore), not just taken from what the browser says.
+- **Security**: search words no longer appear in the app's log; the browser no longer offers to save your master password.
+- **Security**: turning off item names in expiry reminders also blanks the names already kept.
+- **Fixed**: re-keying a vault keeps its older versions (they're encrypted again with the new password), and versions are kept by day too: the last 20, plus one a day for 30 days. Deleting several items at once, and adding several 2FA codes from an authenticator export, is one save.
+- **Fixed**: a shared vault whose owner is reset or turned off gets a new owner (a manager first).
+- **Fixed**: a vault you remember is no longer forgotten when its file can't be read for a moment.
+- **Fixed**: restoring a backup unpacks and checks everything first, so a bad backup changes nothing; big backups no longer have to fit in memory.
+- **Fixed**: if your vaults lock themselves while you're editing, you can unlock on the spot and what you typed is saved; typing now counts as activity too. A copied password the browser couldn't clear is cleared when you come back to the page, and when you lock.
+- **Fixed**: imported items without a proper id get one; search names a vault the way you see it ("Neha's Personal"); vault names with any characters show in the *Download all* message.
+- **Fixed**: the guest Wi-Fi sensor is updated only once a change is saved, and put right if anything about it differs.
+- **Changed**: passphrases are rated by the app's own word list: 5 words are now "fair", so a new master password needs 6 words (or 5 with a number).
+- **Changed**: a new App setting keeps the activity log for a year by default (0 = for ever); at most 20 unlocked tabs or devices per person (the oldest locks).
+- **Changed**: faster unlocking of old KeePass 3 files, fewer requests while you work, personal copies rewritten without re-running Argon2, and Argon2 tuned at start-up. Home Assistant now restarts the app if it stops answering.
+- **Shared code**: request sizes are counted as they arrive, API answers are never cached by the browser, and the app's files load faster (cached until the next version).
+
 ## 2.1.5
 
 - **Security**: importing a KeePass file whose encryption settings would take hours or more memory than the machine has (a damaged or crafted file) is refused with a message saying so — up to about ten times KeePassXC's own settings still open. A file that unpacks to more than 256 MB is refused too, and while a file is being opened the rest of the app keeps answering.

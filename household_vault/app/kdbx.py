@@ -53,12 +53,15 @@ MIN_ITERATIONS = 3
 # About ten times what KeePassXC sets by default (Argon2: 64 MiB, a one-second iteration count; AES-KDF: a
 # one-second round count, a few million rounds).
 MAX_AES_ROUNDS = 100_000_000
-MAX_ARGON2_MEMORY = 1024 * 1024 * 1024          # bytes (1 GiB)
+# 256 MiB: four times KeePassXC's default, and still safe on a 1 GB Raspberry Pi (review 2026-10: 1 GiB could
+# take the memory Home Assistant itself needs)
+MAX_ARGON2_MEMORY = 256 * 1024 * 1024           # bytes
 MAX_ARGON2_ITERATIONS = 1000
 MAX_ARGON2_PARALLELISM = 16
 MAX_ARGON2_WORK = 64 * 1024 * 1024 * 1024       # memory × iterations, bytes (e.g. 64 MiB × 1000, 1 GiB × 64)
-# The most a file's compressed content may expand to (the XML plus attachments)
-MAX_INFLATED_BYTES = 256 * 1024 * 1024
+# The most a file's compressed content may expand to (the XML plus attachments). A vault file is at most 20 MB
+# (storage.MAX_FILE_BYTES), and KeePass XML compresses about 5 to 10 times.
+MAX_INFLATED_BYTES = 64 * 1024 * 1024
 TOO_HEAVY = ("This file's encryption settings are too heavy to open here ({}). In KeePassXC, lower them under "
              "Database → Database Security → Encryption Settings, save, and import the file again.")
 
@@ -210,12 +213,24 @@ def argon2_raw(secret: bytes, salt: bytes, iterations: int, memory_bytes: int, p
                            argon2py.TYPE_D if variant_d else argon2py.TYPE_ID, version=version)
 
 
+AES_KDF_BATCH = 65536                           # blocks per call (1 MiB of zeros)
+
+
+def _aes_rounds(seed: bytes, block: bytes, rounds: int) -> bytes:
+    """`block` encrypted `rounds` times with AES-256-ECB under `seed` — done in C: AES-CBC over zero blocks with
+    the block as IV gives E(block), E(E(block)), …, so one call does a whole batch of rounds."""
+    zeros = bytes(16 * AES_KDF_BATCH)
+    while rounds > 0:
+        n = min(rounds, AES_KDF_BATCH)
+        enc = Cipher(algorithms.AES(seed), modes.CBC(block)).encryptor()
+        block = enc.update(zeros[:16 * n])[-16:]
+        rounds -= n
+    return block
+
+
 def aes_kdf(key: bytes, seed: bytes, rounds: int) -> bytes:
-    enc = Cipher(algorithms.AES(seed), modes.ECB()).encryptor()
-    data = key
-    for _ in range(rounds):
-        data = enc.update(data)
-    return hashlib.sha256(data).digest()
+    """KDBX 3's key transformation: each 16-byte half of the key AES-ECB-encrypted `rounds` times, then SHA-256."""
+    return hashlib.sha256(_aes_rounds(seed, key[:16], rounds) + _aes_rounds(seed, key[16:32], rounds)).digest()
 
 
 def check_kdf(kdf: dict) -> None:
@@ -283,8 +298,10 @@ def vd_parse(data: bytes) -> dict:
         if t == 0:
             break
         (klen,) = struct.unpack_from("<i", data, pos); pos += 4
+        _check_size(klen, pos, len(data), "KDF parameters")
         key = data[pos:pos + klen].decode("utf-8"); pos += klen
         (vlen,) = struct.unpack_from("<i", data, pos); pos += 4
+        _check_size(vlen, pos, len(data), "KDF parameters")
         raw = data[pos:pos + vlen]; pos += vlen
         if t == 0x04:
             out[key] = struct.unpack("<I", raw)[0]
@@ -332,6 +349,18 @@ def kdf_params(kind: dict) -> dict:
 # Reading
 # ---------------------------------------------------------------------------
 
+def _check_size(size: int, pos: int, end: int, what: str) -> None:
+    """A length read from the file must be ≥ 0 and fit in what's left (a negative one would make the reader go
+    backwards, and loop for ever on a crafted file — review 2026-10)."""
+    if size < 0 or pos + size > end:
+        raise KdbxError(f"The file is damaged ({what}).")
+
+
+# What a damaged or crafted file can make the parsers raise besides KdbxError: a field that's missing (KeyError),
+# too short (struct.error, IndexError) or not valid UTF-8 / not the right size for a cipher (ValueError)
+DAMAGED = (struct.error, KeyError, IndexError, ValueError, TypeError)
+
+
 def is_kdbx(data: bytes) -> bool:
     return len(data) >= 12 and struct.unpack_from("<II", data, 0) == (SIG1, SIG2)
 
@@ -340,13 +369,16 @@ def header_info(data: bytes) -> dict:
     """The unencrypted outer header: {major, minor, cipher, kdf{...}} (for checks without the key)."""
     if not is_kdbx(data):
         raise KdbxError("That isn't a KeePass (.kdbx) file.")
-    minor, major = struct.unpack_from("<HH", data, 8)
-    fields, end = _read_outer_header(data, major)
-    info = {"major": major, "minor": minor, "cipher": fields.get(2), "kdf": None}
-    if major >= 4 and 11 in fields:
-        info["kdf"] = vd_parse(fields[11])
-    elif 6 in fields:
-        info["kdf"] = {"$UUID": KDF_AES, "R": struct.unpack("<Q", fields[6])[0]}
+    try:
+        minor, major = struct.unpack_from("<HH", data, 8)
+        fields, end = _read_outer_header(data, major)
+        info = {"major": major, "minor": minor, "cipher": fields.get(2), "kdf": None}
+        if major >= 4 and 11 in fields:
+            info["kdf"] = vd_parse(fields[11])
+        elif 6 in fields:
+            info["kdf"] = {"$UUID": KDF_AES, "R": struct.unpack("<Q", fields[6])[0]}
+    except DAMAGED:
+        raise KdbxError("The file is damaged (header).")
     return info
 
 
@@ -358,6 +390,7 @@ def _read_outer_header(data: bytes, major: int):
             raise KdbxError("The file is damaged (header).")
         fid = data[pos]; pos += 1
         (size,) = struct.unpack_from(size_fmt, data, pos); pos += size_len
+        _check_size(size, pos, len(data), "header")
         value = data[pos:pos + size]; pos += size
         if fid == 0:
             return fields, pos
@@ -400,25 +433,37 @@ def open_bytes(data: bytes, password: str | None, keyfile: bytes | None = None) 
     return open_with_composite(data, composite_key(password, keyfile))
 
 
-def open_with_composite(data: bytes, composite: bytes) -> "Database":
+def open_with_composite(data: bytes, composite: bytes, known: tuple | None = None) -> "Database":
+    """Open with the composite key. `known` = (kdf parameters, transformed key) from an earlier open or save of the
+    same vault: when the file's KDF settings (salt included) are the same, that key is reused instead of running
+    the KDF again (re-reading a vault's own file after a failed change, re-encrypting its older versions)."""
     if not is_kdbx(data):
         raise KdbxError("That isn't a KeePass (.kdbx) file.")
     minor, major = struct.unpack_from("<HH", data, 8)
-    if major == 4:
-        return _open4(data, composite)
-    if major == 3:
-        return _open3(data, composite)
-    raise KdbxError(f"KDBX version {major}.{minor} isn't supported (KDBX 3.1 and 4.x are).")
+    if major not in (3, 4):
+        raise KdbxError(f"KDBX version {major}.{minor} isn't supported (KDBX 3.1 and 4.x are).")
+    try:
+        return _open4(data, composite, known) if major == 4 else _open3(data, composite)
+    except DAMAGED:
+        raise KdbxError("The file is damaged.")
 
 
-def _open4(data: bytes, composite: bytes) -> "Database":
+def same_kdf(a: dict | None, b: dict | None) -> bool:
+    keys = ("$UUID", "S", "I", "M", "P", "V", "R")
+    return bool(a) and bool(b) and all(a.get(k) == b.get(k) for k in keys)
+
+
+def _open4(data: bytes, composite: bytes, known: tuple | None = None) -> "Database":
     fields, pos = _read_outer_header(data, 4)
     header = data[:pos]
     if data[pos:pos + 32] != hashlib.sha256(header).digest():
         raise KdbxError("The file is damaged (header checksum).")
     kdf = vd_parse(fields[11])
     check_kdf(kdf)
-    transformed = transform_key(composite, kdf)
+    if known and known[1] is not None and same_kdf(known[0], kdf):
+        transformed = known[1]
+    else:
+        transformed = transform_key(composite, kdf)
     seed = fields[4]
     base = hashlib.sha512(seed + transformed + b"\x01").digest()
     hdr_mac = hmac.new(_hmac_block_key(base, 0xFFFFFFFFFFFFFFFF), header, hashlib.sha256).digest()
@@ -429,6 +474,7 @@ def _open4(data: bytes, composite: bytes) -> "Database":
     while True:
         mac = data[pos:pos + 32]
         (size,) = struct.unpack_from("<i", data, pos + 32)
+        _check_size(size, pos + 36, len(data), "blocks")
         block = data[pos + 36:pos + 36 + size]
         pos += 36 + size
         expect = hmac.new(_hmac_block_key(base, index), struct.pack("<Qi", index, size) + block, hashlib.sha256).digest()
@@ -447,6 +493,7 @@ def _open4(data: bytes, composite: bytes) -> "Database":
     while True:
         fid = plain[ipos]
         (size,) = struct.unpack_from("<i", plain, ipos + 1)
+        _check_size(size, ipos + 5, len(plain), "inner header")
         val = plain[ipos + 5:ipos + 5 + size]
         ipos += 5 + size
         if fid == 0:
@@ -484,6 +531,7 @@ def _open3(data: bytes, composite: bytes) -> "Database":
         idx, = struct.unpack_from("<I", plain, pos)
         digest = plain[pos + 4:pos + 36]
         (size,) = struct.unpack_from("<i", plain, pos + 36)
+        _check_size(size, pos + 40, len(plain), "blocks")
         block = plain[pos + 40:pos + 40 + size]
         pos += 40 + size
         if size == 0:
@@ -550,7 +598,14 @@ def _unprotect(root, stream) -> None:
     for el in root.iter():
         if el.tag == "Value" and el.get("Protected", "").lower() == "true":
             raw = base64.b64decode(el.text or "")
-            el.text = stream.update(raw).decode("utf-8", errors="replace") if stream else ""
+            if stream is None:
+                if not raw:
+                    el.text = ""
+                    continue
+                # protected values but no inner-stream key: they can't be read, and opening the file as if they
+                # were empty would lose them at the next save (review 2026-10)
+                raise KdbxError("The file is damaged (its protected values have no key).")
+            el.text = stream.update(raw).decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------------------

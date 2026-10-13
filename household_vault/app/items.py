@@ -314,11 +314,36 @@ def _clean(v, limit=MAX_FIELD) -> str:
     return s
 
 
+def _check_meta(body: dict) -> None:
+    """Refuse a bad template, expiry date or reminder before anything is changed (review 2026-10: the item used
+    to be half-changed in the shared, open vault when one of these was refused)."""
+    if "template" in body and body["template"] and body["template"] not in TEMPLATES:
+        raise HTTPException(422, "Unknown template.")
+    if "expires" in body:
+        raw = (body["expires"] or "").strip()
+        if raw:
+            try:
+                day = datetime.date.fromisoformat(raw)
+            except ValueError:
+                raise HTTPException(422, "The expiry date must look like 2027-03-31.")
+            if not 1900 <= day.year <= 2200:
+                raise HTTPException(422, "That expiry date is out of range.")
+    if "remindDays" in body and body["remindDays"] is not None and body["remindDays"] not in REMIND_CHOICES:
+        raise HTTPException(422, "Remind 1, 7, 14, 30, 60 or 90 days before, or not at all.")
+    if body.get("card") is not None and not isinstance(body["card"], dict):
+        raise HTTPException(422, "card: give the card's fields.")
+    for f in body.get("fields") or []:
+        if not isinstance(f, dict):
+            raise HTTPException(422, "fields: each field needs a name and a value.")
+
+
 def apply(d: kdbx.Database, e, body: dict, creating: bool) -> None:
-    """Set an item's fields from the API body (only keys present are changed)."""
+    """Set an item's fields from the API body (only keys present are changed). Everything is checked before the
+    item is changed."""
     t = body.get("type") or (entry_type(d, e) if e is not None else "login")
     if t not in TYPES:
         raise HTTPException(422, "Type must be login, note or card.")
+    _check_meta(body)
     fields, protected, remove = {}, set(), set()
     if "title" in body:
         title = _clean(body["title"], 500).strip()

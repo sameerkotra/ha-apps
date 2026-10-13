@@ -57,7 +57,7 @@ class QuickUnlock(ApiTestCase):
         self.assertEqual(self.post("/api/unlock", {"password": PW[ADMIN["id"]], "quickUnlockId": qid}, token=False).status_code, 409)
         self.unlock(ADMIN)                                  # typing it again renews the 14 days
         self.assertTrue(self.ok(self.get("/api/quick-unlock/options", token=False))["available"])
-        self.ok(self.post("/api/me/password", {"current": PW[ADMIN["id"]], "new": "orchid-canyon-marble-ferry-quilt"}))
+        self.ok(self.post("/api/me/password", {"current": PW[ADMIN["id"]], "new": "orchid-canyon-marble-ferry-quilt-tulip"}))
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM quick_unlock")[0]["n"], 0)
         self.assertFalse(self.ok(self.get("/api/quick-unlock/options", token=False))["available"])
 

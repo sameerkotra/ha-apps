@@ -63,7 +63,7 @@ const FINE_POINTER = window.matchMedia && window.matchMedia("(pointer: fine)").m
 
 // ---------- API ----------
 class ApiError extends Error { constructor(msg, status, detail) { super(msg); this.status = status; this.detail = detail; } }
-const api = UI.makeApi({
+const rawApi = UI.makeApi({
   // opts.background: a poll nobody asked for (2FA code, progress) — the server doesn't count it as activity
   headers: (opts) => Object.assign(state.token ? { "X-Vault-Session": state.token } : {}, opts && opts.background ? { "X-Background": "1" } : {}),
   message: (body, res) => {
@@ -72,8 +72,46 @@ const api = UI.makeApi({
   },
   makeError: (msg, status, body, res) => new ApiError(msg, status, res ? (body ? body.detail : null) : undefined),
   onResponse: (res, opts) => { if (res.ok && !(opts && opts.background)) state.lastActivity = Date.now(); },
-  onError: (err, res, opts) => { if (res.status === 401 && state.token && !opts.noLock) { lockLocal("Locked."); } },
+  onError: (err, res, opts) => {
+    // a form is open (an item being edited…): don't throw it away — api() below offers to unlock and sends it again
+    if (res.status === 401 && state.token && !opts.noLock && !modalOpen()) { lockLocal("Locked."); }
+  },
 });
+function modalOpen() { return !!document.querySelector("#modalRoot .modal-backdrop"); }
+// Every call: when the session locked itself while a form was open, ask for the master password on top of the
+// form, then send the same request again — what was typed isn't lost (review 2026-10).
+async function api(path, opts = {}) {
+  try { return await rawApi(path, opts); }
+  catch (e) {
+    if (!(e && e.status === 401 && state.token && !opts.noLock && !opts.background && modalOpen())) throw e;
+    if (!await relockPrompt()) throw e;
+    return rawApi(path, opts);
+  }
+}
+let relocking = null;
+function relockPrompt() {
+  if (relocking) return relocking;
+  relocking = new Promise((resolve) => {
+    const pw = pwInput({ label: "Master password" });
+    const err = h("div", { class: "error", role: "alert" });
+    let done = false;
+    const m = openModal("Unlock to continue", h("form", { onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = "";
+      try {
+        const r = await rawApi("api/unlock", { method: "POST", body: { password: pw.input.value }, noLock: true });
+        pw.input.value = "";
+        if (r.mustChangePassword) { done = true; m.close(); lockLocal(); resolve(false); return; }
+        state.token = r.session; state.vaults = r.vaults; state.autoLock = r.autoLockMinutes || state.autoLock;
+        startIdleWatch();
+        done = true; m.close(); resolve(true);
+      } catch (x) { err.textContent = x.message; pw.input.select(); }
+    } }, h("p", { class: "hint" }, "Your vaults locked themselves. Unlock to save what you were doing."), field("Master password", pw.el), err,
+      h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: () => m.close() }, "Lock"),
+        h("button", { class: "btn primary", type: "submit" }, "Unlock")))
+    , { sticky: true, onClose: () => { if (!done) { done = true; resolve(false); lockLocal("Locked."); } } });
+  }).finally(() => { relocking = null; });
+  return relocking;
+}
 
 // ---------- toasts, modals, menus ----------
 function toast(msg, opts = {}) {
@@ -127,7 +165,8 @@ function strengthMeter(input) {
   return h("div", null, bar, label);
 }
 function pwInput(opts = {}) {
-  const input = h("input", { type: "password", autocomplete: opts.autocomplete || "current-password", placeholder: opts.placeholder || "", "aria-label": opts.label || "Password", spellcheck: "false" });
+  // "off" by default: the browser's own password manager shouldn't offer to keep the master password
+  const input = h("input", { type: "password", autocomplete: opts.autocomplete || "off", placeholder: opts.placeholder || "", "aria-label": opts.label || "Password", spellcheck: "false" });
   const eye = h("button", { class: "icon-btn", type: "button", "aria-label": "Show password", title: "Show / hide" }, "👁");
   eye.addEventListener("click", () => { input.type = input.type === "password" ? "text" : "password"; });
   return { el: h("div", { class: "input-with" }, input, eye), input };
@@ -145,10 +184,24 @@ async function copyText(text, what) {
   const secs = state.me ? state.me.clipboardClearSeconds : 30;
   clearTimeout(state.clipboardTimer);
   if (secs > 0 && what !== "plain") {
-    state.clipboardTimer = setTimeout(() => { try { navigator.clipboard.writeText(""); } catch (e) { /* ignore */ } }, secs * 1000);
+    state.clipboardHeld = true;
+    state.clipboardTimer = setTimeout(clearClipboard, secs * 1000);
     toast(`Copied ${what || ""} — the clipboard will be cleared in ${secs} s`.replace("  ", " "));
   } else toast("Copied");
 }
+// Browsers refuse to write the clipboard from a page that isn't focused: when clearing fails it's tried again as
+// soon as the page is back (focus / visible), and on lock (review 2026-10: it used to fail silently).
+function clearClipboard() {
+  clearTimeout(state.clipboardTimer);
+  if (!state.clipboardHeld) return Promise.resolve();
+  let p;
+  try { p = navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText("") : Promise.reject(new Error("no clipboard")); }
+  catch (e) { p = Promise.reject(e); }
+  return p.then(() => { state.clipboardHeld = false; }).catch(() => { state.clipboardDue = true; });
+}
+function clipboardRetry() { if (state.clipboardDue && !document.hidden) { state.clipboardDue = false; clearClipboard(); } }
+window.addEventListener("focus", clipboardRetry);
+document.addEventListener("visibilitychange", clipboardRetry);
 
 // ---------- auto-lock ----------
 function startIdleWatch() {
@@ -162,12 +215,14 @@ function startIdleWatch() {
   }, 1000);
 }
 function stopIdleWatch() { clearInterval(state.idleTimer); state.idleTimer = null; }
-["mousedown", "keydown", "touchstart", "scroll"].forEach((ev) => document.addEventListener(ev, () => { state.lastActivity = Date.now(); }, { passive: true }));
+// Any activity — typing in a long note included, not just moving the mouse — keeps the server session in step
+// (at most one ping a minute), so it doesn't lock itself while you're busy in a form (review 2026-10)
 let pingAt = 0;
-document.addEventListener("mousemove", () => {
+function activity() {
   state.lastActivity = Date.now();
-  if (state.token && Date.now() - pingAt > 60000) { pingAt = Date.now(); api("api/session").catch(() => {}); }  // keeps the server session in step
-}, { passive: true });
+  if (state.token && Date.now() - pingAt > 60000) { pingAt = Date.now(); rawApi("api/session", { noLock: true }).catch(() => {}); }
+}
+["mousedown", "mousemove", "keydown", "touchstart", "scroll", "input"].forEach((ev) => document.addEventListener(ev, activity, { passive: true, capture: true }));
 function hideLockMs() {
   const s = state.me ? state.me.hideLockSeconds : -1;
   return s === undefined || s === null || s < 0 ? state.autoLock * 60000 : s * 1000;
@@ -183,6 +238,7 @@ document.addEventListener("visibilitychange", () => {
   else if (state.token) api("api/session").catch(() => {});
 });
 function lockLocal(reason) {
+  if (state.clipboardHeld) clearClipboard();             // a copied password doesn't outlive the unlock
   state.token = null; state.vaults = []; state.folders = {}; state.items = []; state.detail = null; state.selected = null;
   state.picked = new Set(); state.q = ""; state.health = null; state.healthMap = new Map(); state.reminderDismissed = false;
   stopIdleWatch(); clearInterval(state.totpTimer); clearInterval(state.healthPoll);
@@ -807,8 +863,9 @@ async function afterChange(keepSelection = true) {
   renderSidebar();
   if (!keepSelection) state.selected = null;
   if (state.page === "vault") await loadItems();      // on Settings / Health the page stays as it is
-  refreshHealth();
+  refreshHealthSoon();                                // one health report after a burst of changes, not one each
 }
+const refreshHealthSoon = debounce(() => refreshHealth(), 1500);
 
 // ---------- search ----------
 function searchBox() {
@@ -1215,8 +1272,14 @@ function bulkMove(copy) { const l = pickedItems(); if (l.length) moveDialog(l, c
 async function bulkDelete() {
   const l = pickedItems();
   if (!l.length || !await confirmDialog("Delete", `Move ${l.length} item${l.length > 1 ? "s" : ""} to the Trash?`, "Delete", true)) return;
-  try { for (const it of l) await api(`api/vaults/${it.vaultId}/items/${it.id}`, { method: "DELETE" }); state.picked = new Set(); state.selected = null; toast("Moved to the Trash"); await afterChange(); }
+  try { await deleteMany(l); state.picked = new Set(); state.selected = null; toast("Moved to the Trash"); await afterChange(); }
   catch (e) { fail(e); }
+}
+// One request — and one new version — per vault, however many items (review 2026-10)
+async function deleteMany(list) {
+  const byVault = {};
+  list.forEach((it) => { (byVault[it.vaultId] = byVault[it.vaultId] || []).push(it.id); });
+  for (const [vid, ids] of Object.entries(byVault)) await api(`api/vaults/${vid}/items/delete`, { method: "POST", body: { items: ids } });
 }
 
 // ---------- vaults ----------
@@ -1446,7 +1509,7 @@ function dropTarget(el, t) {
 async function doDrop(d, t, copy) {
   try {
     if (d.kind === "items" && t.trash) {
-      for (const it of d.list) await api(`api/vaults/${it.vaultId}/items/${it.id}`, { method: "DELETE" });
+      await deleteMany(d.list);
       toast(d.list.length === 1 ? `“${d.list[0].title}” moved to the Trash` : `${d.list.length} items moved to the Trash`);
     } else if (d.kind === "items") {
       const bySrc = {};
@@ -1547,9 +1610,15 @@ async function healthPage() {
     state.healthPoll = setInterval(async () => {
       if (state.page !== "health") { clearInterval(state.healthPoll); return; }
       try {
-        const nr = await api("api/password-health", { background: true });
-        Object.assign(r, nr);
-        if (nr.breach.state !== "running") { clearInterval(state.healthPoll); state.healthMap = new Map(nr.items.map((x) => [x.vaultId + ":" + x.id, x.issues])); state.health = nr; renderSidebar(); mount(box, content()); return; }
+        // the small progress answer every second; the whole report once, when the check is done
+        const st = await api("api/password-health/breach-status", { background: true });
+        Object.assign(r.breach, st);
+        if (st.state !== "running") {
+          clearInterval(state.healthPoll);
+          const nr = await api("api/password-health", { background: true });
+          Object.assign(r, nr);
+          state.healthMap = new Map(nr.items.map((x) => [x.vaultId + ":" + x.id, x.issues])); state.health = nr; renderSidebar(); mount(box, content()); return;
+        }
         drawBreach();
       } catch (e) { clearInterval(state.healthPoll); }
     }, 1000);
@@ -1818,11 +1887,10 @@ function migrationDialog(r) {
     go.disabled = true;
     let n = 0;
     try {
-      for (const { x } of chosen) {
-        await api(`api/vaults/${vaultSel.value}/items`, { method: "POST", body: { type: "login", title: x.issuer || x.account || "2FA code",
-          username: x.account, totp: x.uri, folderId: folderSel.value || null } });
-        n++;
-      }
+      // all in one request: one new version of the vault, not one per code
+      const r2 = await api(`api/vaults/${vaultSel.value}/items/batch`, { method: "POST", body: { folderId: folderSel.value || null,
+        items: chosen.map(({ x }) => ({ type: "login", title: x.issuer || x.account || "2FA code", username: x.account, totp: x.uri })) } });
+      n = r2.items.length;
       m.close(); toast(`Added ${n} item${n === 1 ? "" : "s"} with 2FA codes` + (r.batch[1] > 1 ? ` — scan the other ${r.batch[1] - 1} export code${r.batch[1] > 2 ? "s" : ""} too` : ""), { ms: 6000 });
       await afterChange();
     } catch (x) { err.textContent = `Added ${n}; then: ${x.message}`; go.disabled = false; }
@@ -1919,8 +1987,9 @@ async function settingsPage() {
       dl.input.value = "";
       try { state.me = Object.assign(state.me, await api("api/me")); lastDl.textContent = `Last downloaded ${fmtWhen(state.me.lastDownloadAll)}.`; } catch (x) { /* ignore */ }
       state.reminderDismissed = true;
-      const locked = res.headers.get("X-Locked-Vaults");
-      toast(locked ? `Downloaded. Not included (locked): ${locked.replace(/;/g, ", ")}` : "Downloaded", { ms: 5000 });
+      const locked = res.headers.get("X-Locked-Vaults");      // names percent-encoded (UTF-8), separated by ";"
+      const names = locked ? locked.split(";").map((x) => { try { return decodeURIComponent(x); } catch (e) { return x; } }) : [];
+      toast(names.length ? `Downloaded. Not included (locked): ${names.join(", ")}` : "Downloaded", { ms: 5000 });
     } catch (x) { dlErr.textContent = x.message; }
   } }, h("p", { class: "hint" }, "One .kdbx file with everything you have open, locked with your master password. Opens in KeePassXC, KeePassDX (Android) and Strongbox (iPhone) — which can autofill from it."),
   field("Master password", dl.el), h("label", { class: "check" }, inclDel, "Include deleted items (Trash)"), dlErr,

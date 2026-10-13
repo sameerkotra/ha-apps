@@ -100,7 +100,7 @@ class SecurityAlerts(AlertCase):
         self.link(ADMIN)
         from base import PW
         self.assertEqual(self.post("/api/me/download-all", {"password": PW[ADMIN["id"]]}).status_code, 200)
-        self.ok(self.post("/api/me/password", {"current": PW[ADMIN["id"]], "new": "lemon-garden-quartz-violet-anchor"}))
+        self.ok(self.post("/api/me/password", {"current": PW[ADMIN["id"]], "new": "lemon-garden-quartz-violet-anchor-tulip"}))
         msgs = self.to()
         self.assertTrue(any("copy of all your passwords" in m for m in msgs))
         self.assertTrue(any("master password was just changed" in m for m in msgs))

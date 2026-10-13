@@ -1,5 +1,9 @@
 """Vaults: list, create, share, re-key, passwords, versions, downloads, import (SPEC §5, §8)."""
+import base64
+import binascii
 import re
+import threading
+import urllib.parse
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -36,7 +40,8 @@ def _name(n: str) -> str:
 @router.post("/vaults", status_code=201)
 def create_vault(body: CreateIn, ctx: Ctx = Depends(unlocked)):
     with db.get_conn() as conn:
-        vid = service.create_shared(conn, ctx.session, _name(body.name), body.passwordMode, body.password)
+        with service.editing(conn):                   # a failure leaves no vault, folder or open vault behind
+            vid = service.create_shared(conn, ctx.session, _name(body.name), body.passwordMode, body.password)
         return _vault_out(conn, dict(service.vault_row(conn, vid), role="owner"), ctx.session, ctx.user["id"])
 
 
@@ -51,8 +56,8 @@ def rename_vault(vid: str, body: RenameIn, ctx: Ctx = Depends(unlocked)):
         if v["kind"] != "shared":
             raise HTTPException(409, "Personal and Household can't be renamed.")
         name = _name(body.name)
-        conn.execute("UPDATE vaults SET name = ? WHERE id = ?", (name, vid))
-        with ov.lock:
+        with service.editing(conn, ov):               # the vault's lock first, then the first write
+            conn.execute("UPDATE vaults SET name = ? WHERE id = ?", (name, vid))
             ov.db.set_name(name)
             service.save(conn, ov, ctx.user["id"])
         return {"ok": True}
@@ -72,7 +77,8 @@ def delete_vault(vid: str, body: DeleteIn, ctx: Ctx = Depends(unlocked)):
             raise HTTPException(422, "Type the vault's name exactly to delete it.")
         sessions.close(vid)
         conn.execute("DELETE FROM vaults WHERE id = ?", (vid,))
-        storage.delete_vault_files(vid)
+        conn.execute("DELETE FROM recent_items WHERE vault_id = ?", (vid,))
+        storage.delete_vault_files(conn, vid)             # once the delete has committed
         db.audit(conn, "deleted", ctx.user["id"], vid)
     return {"ok": True}
 
@@ -150,6 +156,9 @@ def rekey(vid: str, ctx: Ctx = Depends(unlocked)):
         ov, v, role = vault_access(conn, ctx, vid, "view")
         if v["password_mode"] != "random":
             raise HTTPException(409, "This vault has a chosen password — change the password instead.")
+        if v["kind"] == "household" and not ctx.user["is_admin"]:
+            # review 2026-10: any member could re-key Household (and so wipe its history); now only an admin
+            raise HTTPException(403, "Only an admin can re-key Household.")
         if v["kind"] != "household" and role not in service.MANAGE_ROLES:
             raise HTTPException(403, "Only the vault's owner or a manager can do this.")
         if v["kind"] == "emergency" and role != "owner":
@@ -224,11 +233,12 @@ def restore_version(vid: str, n: int, ctx: Ctx = Depends(unlocked)):
             raise HTTPException(404, "That version isn't kept any more.")
         if n == v["version"]:
             raise HTTPException(409, "That's the current version.")
-        with ov.lock:
-            old = kdbx.open_bytes(storage.read_version(vid, n), ov.password)
+        with service.editing(conn, ov):
+            old = kdbx.open_with_composite(storage.read_version(vid, n), ov.composite,
+                                           known=(ov.db.kdf, ov.db.transformed))
             ov.db = old
             service.save(conn, ov, ctx.user["id"])
-        db.audit(conn, "restored", ctx.user["id"], vid)
+            db.audit(conn, "restored", ctx.user["id"], vid)
     return {"ok": True}
 
 
@@ -287,7 +297,8 @@ def download_all(body: DownloadAllIn, ctx: Ctx = Depends(unlocked)):
     first = (ctx.user["name"] or "me").split()[0]
     return Response(data, media_type="application/octet-stream", headers={
         "Content-Disposition": f'attachment; filename="{_filename("household-vault-" + first)}"',
-        "X-Locked-Vaults": ";".join(re.sub(r"[^\w .-]", "", x) for x in locked)})
+        # percent-encoded (UTF-8): a header can only carry Latin-1, and a vault may be called "Família" or "家"
+        "X-Locked-Vaults": ";".join(urllib.parse.quote(x, safe=" ") for x in locked)})
 
 
 def _copy_tree(src: kdbx.Database, src_group, dst: kdbx.Database, dst_group, include_deleted: bool, skip=None) -> None:
@@ -296,7 +307,10 @@ def _copy_tree(src: kdbx.Database, src_group, dst: kdbx.Database, dst_group, inc
     for child in list(src_group):
         if child.tag == "Entry":
             if skip is None or not skip(child):
-                clone = src.copy_entry_into(dst, child, dst_group, new_id=False)
+                # an import into a vault that already has this id (the same file imported twice): a new id, or the
+                # two items would share one and only one could be found
+                clash = skip is not None and child.findtext("UUID") in dst.entries
+                clone = src.copy_entry_into(dst, child, dst_group, new_id=clash)
                 if skip is not None:                  # an import (not Download all): drop this household's own marks
                     items.strip_marks(dst, clone)
         elif child.tag == "Group":
@@ -306,9 +320,41 @@ def _copy_tree(src: kdbx.Database, src_group, dst: kdbx.Database, dst_group, inc
             for x in list(g):
                 if x.tag in ("Entry", "Group"):
                     g.remove(x)
+            if skip is not None and g.findtext("UUID") in dst.groups:
+                g.find("UUID").text = kdbx.new_uuid()
             dst.move(g, dst_group)
             dst.reindex()
             _copy_tree(src, child, dst, g, include_deleted, skip)
+
+
+def _valid_uuid(text: str | None) -> bool:
+    try:
+        return len(base64.b64decode(text or "", validate=True)) == 16
+    except (binascii.Error, ValueError):
+        return False
+
+
+def fix_ids(d: kdbx.Database) -> int:
+    """An imported file's entries and folders whose UUID is missing, malformed or used twice get a new one — the
+    app's ids are those UUIDs, and one it can't read used to break every listing of the vault (review 2026-10).
+    History copies keep theirs. Returns how many were changed."""
+    import xml.etree.ElementTree as ET
+    n, seen = 0, set()
+    stack = [d.root_group]
+    while stack:
+        el = stack.pop()
+        node = el.find("UUID")
+        if node is None:
+            node = ET.Element("UUID")
+            el.insert(0, node)
+        if not _valid_uuid(node.text) or node.text in seen:
+            node.text = kdbx.new_uuid()
+            n += 1
+        seen.add(node.text)
+        stack.extend(x for x in el if x.tag in ("Group", "Entry"))
+    if n:
+        d.reindex()
+    return n
 
 
 def _prune_empty(d: kdbx.Database, g) -> None:
@@ -322,6 +368,12 @@ def _prune_empty(d: kdbx.Database, g) -> None:
             d.reindex()
 
 
+# Opening a file from elsewhere runs its key derivation (up to kdbx.MAX_ARGON2_MEMORY of memory, seconds of work):
+# one at a time, so a few uploads at once can't take all the memory or every worker thread (review 2026-10)
+_IMPORT_SLOT = threading.BoundedSemaphore(1)
+IMPORT_WAIT_S = 30
+
+
 @router.post("/import", status_code=201)
 async def import_file(file: UploadFile = File(...), password: str = Form(""), keyfile: UploadFile | None = File(None),
                       target: str = Form("new"), name: str = Form(""), skipDuplicates: bool = Form(True),
@@ -330,25 +382,39 @@ async def import_file(file: UploadFile = File(...), password: str = Form(""), ke
     as a new shared vault (random password), or into a folder of a vault I can edit (`target` = its id).
     With `skipDuplicates`, items already in one of my open vaults (same name, username, website and password)
     are left out."""
-    data = await file.read()
+    data = await file.read(storage.MAX_FILE_BYTES + 1)
     if len(data) > storage.MAX_FILE_BYTES:
         raise HTTPException(413, "That file is bigger than 20 MB.")
-    kf = await keyfile.read() if keyfile is not None else None
+    kf = await keyfile.read(1024 * 1024 + 1) if keyfile is not None else None
+    if kf is not None and len(kf) > 1024 * 1024:
+        raise HTTPException(413, "That key file is bigger than 1 MB.")
     # opening the file runs its key derivation (seconds of work) and saving re-encrypts: off the event loop,
     # so the rest of the app keeps answering meanwhile
     return await run_in_threadpool(_import, data, kf, file.filename, password, target, name, skipDuplicates, ctx)
+
+
+def _open_import(data: bytes, password: str, kf: bytes | None) -> kdbx.Database:
+    if not _IMPORT_SLOT.acquire(timeout=IMPORT_WAIT_S):
+        raise HTTPException(429, "Another file is being opened right now — try again in a minute.")
+    try:
+        src = kdbx.open_bytes(data, password or None, kf)
+    except kdbx.WrongKey:
+        raise HTTPException(403, "That password (or key file) doesn't open the file.")
+    except kdbx.KdbxError as e:
+        raise HTTPException(422, str(e))
+    except (*kdbx.DAMAGED, MemoryError):
+        raise HTTPException(422, "The file is damaged.")
+    finally:
+        _IMPORT_SLOT.release()
+    fix_ids(src)
+    return src
 
 
 def _import(data: bytes, kf: bytes | None, filename: str | None, password: str, target: str, name: str,
             skipDuplicates: bool, ctx: Ctx) -> dict:
     src, records = None, None
     if kdbx.is_kdbx(data[:12]):
-        try:
-            src = kdbx.open_bytes(data, password or None, kf)
-        except kdbx.WrongKey:
-            raise HTTPException(403, "That password (or key file) doesn't open the file.")
-        except kdbx.KdbxError as e:
-            raise HTTPException(422, str(e))
+        src = _open_import(data, password, kf)
     elif importers.looks_like_csv(data):
         records = importers.parse_csv(data)
     else:
@@ -378,28 +444,30 @@ def _import(data: bytes, kf: bytes | None, filename: str | None, password: str, 
         default_name = (filename or "Imported").rsplit(".", 1)[0]
         if target == "new":
             vname = _name(name or (src.name if src else "") or default_name)[:60]
-            vid = service.create_shared(conn, ctx.session, vname, "random", None)
-            ov = sessions.get_open(vid)
-            with ov.lock:
-                if src is not None:
-                    for e in list(src.entries.values()):
-                        if not src.in_recycle_bin(e) and dup(e):
-                            src.parent[e].remove(e)
-                    src.reindex()
-                    for e in src.entries.values():
-                        items.strip_marks(src, e)
-                    src.set_name(vname)
-                    src.transformed = None
-                    src.kdf = ov.db.kdf
-                    ov.db = src
-                    added = len(items.all_live_entries(src))
-                else:
-                    added, skipped = importers.add_records(ov.db, ov.db.root_group, records, seen)
-                service.save(conn, ov, ctx.user["id"])
+            # one transaction: if the import can't be saved, the new vault — its row, its folder and the open
+            # vault — goes too (review 2026-10)
+            with service.editing(conn):
+                vid = service.create_shared(conn, ctx.session, vname, "random", None)
+                ov = sessions.get_open(vid)
+                with service.editing(conn, ov):
+                    if src is not None:
+                        for e in list(src.entries.values()):
+                            if not src.in_recycle_bin(e) and dup(e):
+                                src.parent[e].remove(e)
+                        src.reindex()
+                        for e in src.entries.values():
+                            items.strip_marks(src, e)
+                        src.set_name(vname)
+                        src.kdf, src.transformed, src.composite = ov.db.kdf, ov.db.transformed, ov.db.composite
+                        ov.db = src
+                        added = len(items.all_live_entries(src))
+                    else:
+                        added, skipped = importers.add_records(ov.db, ov.db.root_group, records, seen)
+                    service.save(conn, ov, ctx.user["id"])
         else:
             ov, v, role = vault_access(conn, ctx, target, "edit")
             vid = target
-            with ov.lock:
+            with service.editing(conn, ov):
                 label = (name or f"Imported {date.today().isoformat()}")[:60]
                 g = ov.db.add_group(ov.db.root_group, label)
                 if src is not None:

@@ -80,7 +80,7 @@ def publish(conn, user: dict, vault_id: str, item_id: str, security: str, show_p
     if before is None or before["item_id"] != item_id:
         alerts.send(conn, alerts.others_in(conn, vault_id, user["id"]),
                     f"{user['name']} put the guest Wi-Fi ({ssid}) on the Home Assistant dashboard.")
-    push_async()
+    push_after_commit(conn)
 
 
 def unpublish(conn, actor: str | None) -> None:
@@ -88,7 +88,7 @@ def unpublish(conn, actor: str | None) -> None:
         return
     conn.execute("DELETE FROM guest_wifi WHERE id = 1")
     db.audit(conn, "guest_wifi_removed", actor, None)
-    push_async()
+    push_after_commit(conn)
 
 
 def after_save(conn, vault_id: str, d) -> None:
@@ -112,7 +112,7 @@ def after_save(conn, vault_id: str, d) -> None:
         pw = ""
     if (ssid, pw) != (row["ssid"], row["password"]):
         conn.execute("UPDATE guest_wifi SET ssid = ?, password = ?, updated_at = ? WHERE id = 1", (ssid, pw, config.now_iso()))
-        push_async()
+        push_after_commit(conn)
 
 
 # ---------- Home Assistant ----------
@@ -133,24 +133,47 @@ def push_blocking() -> bool:
     return status in (200, 201)
 
 
+_absent = {"checked": False}         # nothing published, and Home Assistant has no sensor either (since start-up)
+
+
 def ensure_blocking() -> None:
-    """Every few minutes: Home Assistant forgets states set this way when it restarts, so put it back."""
+    """Every few minutes: Home Assistant forgets states set this way when it restarts, so put it back — the whole
+    sensor (name, picture, password shown or not), not just its state. With nothing published, a sensor left over
+    (a removal Home Assistant missed) is removed — checked once, not every time."""
     with db.get_conn() as conn:
         row = current(conn)
-    if row is None or not ha_client.has_token():
+    if not ha_client.has_token():
+        return
+    want = payload(row) if row else None
+    if want is None and _absent["checked"]:
         return
     status, body = ha_client.request("GET", f"/states/{ENTITY}")
+    if want is None:
+        if status == 200:
+            push_blocking()                               # deletes it
+        elif status == 404:
+            _absent["checked"] = True
+        return
+    _absent["checked"] = False
     if status == 200:
         try:
-            if json.loads(body).get("state") == row["ssid"][:255]:
+            cur = json.loads(body)
+            if cur.get("state") == want["state"] and (cur.get("attributes") or {}) == want["attributes"]:
                 return
         except ValueError:
             pass
     push_blocking()
 
 
+def push_after_commit(conn) -> None:
+    """Tell Home Assistant once the change is in the database (not before: a rolled-back change would have shown
+    on the dashboard anyway — review 2026-10)."""
+    _absent["checked"] = False
+    conn.after_commit(lambda c: push_async(0.2))
+
+
 def push_async(delay: float = 1.0) -> None:
-    """Soon, from a thread — after the caller's transaction has committed."""
+    """Soon, from a thread."""
     t = threading.Timer(delay, lambda: _safe(push_blocking))
     t.daemon = True
     t.start()

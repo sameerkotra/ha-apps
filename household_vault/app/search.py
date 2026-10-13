@@ -113,7 +113,7 @@ def score(rec: dict, terms: list, phrases: list, notes: bool) -> int | None:
     return total
 
 
-def _filters_ok(rec: dict, filters: dict, health: dict) -> bool:
+def _filters_ok(rec: dict, filters: dict, health: dict, vault_name: str | None = None) -> bool:
     s = rec["summary"]
     for t in filters.get("tag", []):
         if not any(x.startswith(t) for x in rec["tags"]):
@@ -122,7 +122,7 @@ def _filters_ok(rec: dict, filters: dict, health: dict) -> bool:
         if not any(x.startswith(f) for x in rec["folder"]):
             return False
     for v in filters.get("vault", []):
-        if not fold(s["vaultName"]).startswith(v):
+        if not fold(vault_name if vault_name is not None else s["vaultName"]).startswith(v):
             return False
     for t in filters.get("type", []):
         if not s["type"].startswith(t.rstrip("s")):
@@ -141,11 +141,14 @@ def _filters_ok(rec: dict, filters: dict, health: dict) -> bool:
 
 def query(indexes: list, q: str, notes: bool, recent: list | None = None, folder_scope: set | None = None,
           type_: str | None = None, favourites: bool = False, health: dict | None = None) -> list:
-    """indexes: [(vault dict, [records])]. Returns summaries, best first."""
+    """indexes: [(vault dict, [records])]. Returns summaries, best first. The vault's name in each result is the
+    one in the vault dict — what the person searching calls it ("Neha's Personal"), not whatever the index was
+    built with (an index is shared by everyone who has the vault open — review 2026-10)."""
     terms, phrases, filters = parse(q)
     recent = recent or []
     hits = []
-    for _vault, recs in indexes:
+    for vault, recs in indexes:
+        vname = vault.get("name")
         for rec in recs:
             s = rec["summary"]
             if s["inTrash"]:
@@ -156,7 +159,7 @@ def query(indexes: list, q: str, notes: bool, recent: list | None = None, folder
                 continue
             if favourites and not s["favourite"]:
                 continue
-            if not _filters_ok(rec, filters, health or {}):
+            if not _filters_ok(rec, filters, health or {}, vname):
                 continue
             sc = score(rec, terms, phrases, notes)
             if sc is None:
@@ -166,6 +169,6 @@ def query(indexes: list, q: str, notes: bool, recent: list | None = None, folder
             key = (s["vaultId"], s["id"])
             if key in recent:
                 sc += 10 + max(0, 10 - recent.index(key))
-            hits.append((-sc, fold(s["title"]), s))
+            hits.append((-sc, fold(s["title"]), dict(s, vaultName=vname) if vname is not None else s))
     hits.sort(key=lambda x: (x[0], x[1]))
     return [h[2] for h in hits[:MAX_RESULTS]]

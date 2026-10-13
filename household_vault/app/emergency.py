@@ -107,9 +107,8 @@ def sync(conn, owner_id: str, actor: str | None) -> bool:
                     h.remove(x)
             fresh.set_custom_data(clone, FLAG, None)
         fresh.reindex()
-    with eov.lock:
-        fresh.kdf = eov.db.kdf
-        fresh.transformed = None
+    with service.editing(conn, eov):
+        fresh.kdf, fresh.transformed, fresh.composite = eov.db.kdf, eov.db.transformed, eov.db.composite
         eov.db = fresh
         service.save(conn, eov, actor)
     version = conn.execute("SELECT version FROM vaults WHERE id = ?", (v["id"],)).fetchone()["version"]
@@ -129,8 +128,8 @@ def set_flag(conn, s: sessions.Session, vault_id: str, item_id: str, include: bo
     if personal is None or personal["id"] != vault_id:
         raise HTTPException(409, "Only items in your own Personal vault can be included in emergency access.")
     pov = sessions.get_open(vault_id)
-    open_mine(conn, s, create=include)
-    with pov.lock:
+    with service.editing(conn, pov):
+        open_mine(conn, s, create=include)
         e = items.find_entry(pov.db, item_id)
         if pov.db.in_recycle_bin(e):
             raise HTTPException(409, "That item is in the Trash.")
@@ -301,7 +300,7 @@ def forget_person(conn, user_id: str, as_owner: bool, actor: str | None) -> None
         if v is not None:
             sessions.close(v["id"])
             conn.execute("DELETE FROM vaults WHERE id = ?", (v["id"],))
-            storage.delete_vault_files(v["id"])
+            storage.delete_vault_files(conn, v["id"])
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,9 @@ password — and the opt-in breach check against Have I Been Pwned's
 Pwned Passwords range API (k-anonymity: only the first 5 hex characters of
 the SHA-1 leave the app).
 
-Breach results live in memory for the unlocked session only.
+Breach results live in memory for the unlocked session only, keyed by the
+same peppered hash as reuse; the SHA-1s exist only inside the running check
+and the check stops when the session locks.
 """
 import datetime
 import hashlib
@@ -75,8 +77,14 @@ def password_set_at(d, e, current: str) -> float | None:
     return when
 
 
+def _keyed(pw: str) -> str:
+    return hmac.new(_PEPPER, pw.encode(), hashlib.sha256).hexdigest()
+
+
 def facts(ov: sessions.OpenVault) -> list:
-    """[{id, reuse, sha1, score, label, setAt}] for every live login with a password. Call with ov.lock held."""
+    """[{id, reuse, score, label, setAt}] for every live login with a password. Call with ov.lock held. No SHA-1
+    is kept here: an unsalted hash of every password in memory for as long as the vault is open was more than the
+    breach check needs (review 2026-10)."""
     if ov.health is not None:
         return ov.health
     d = ov.db
@@ -87,8 +95,7 @@ def facts(ov: sessions.OpenVault) -> list:
             continue
         st = passwords.strength(pw)
         out.append({"id": items.to_id(e.findtext("UUID")),
-                    "reuse": hmac.new(_PEPPER, pw.encode(), hashlib.sha256).hexdigest(),
-                    "sha1": hashlib.sha1(pw.encode()).hexdigest().upper(),
+                    "reuse": _keyed(pw),
                     "score": st["score"], "label": st["label"],
                     "setAt": password_set_at(d, e, pw),
                     "no2fa": items.otp_params(d, e) is None and offers_2fa(items.host_of(d.get_field(e, "URL") or ""))})
@@ -121,8 +128,13 @@ def _counts(body: str) -> dict:
     return out
 
 
-def check_hashes(sha1s: set, progress=None) -> dict:
-    """{sha1: count (0 = not found) or None (couldn't check)} — one request per prefix, ≤ 5 a second."""
+class Cancelled(Exception):
+    pass
+
+
+def check_hashes(sha1s: set, progress=None, cancelled=None) -> dict:
+    """{sha1: count (0 = not found) or None (couldn't check)} — one request per prefix, ≤ 5 a second.
+    `cancelled()` → True stops it (Cancelled)."""
     by_prefix: dict = {}
     for h in sha1s:
         by_prefix.setdefault(h[:5], set()).add(h)
@@ -130,6 +142,8 @@ def check_hashes(sha1s: set, progress=None) -> dict:
     last = 0.0
     failures = 0
     for i, (prefix, hs) in enumerate(sorted(by_prefix.items())):
+        if cancelled is not None and cancelled():
+            raise Cancelled()
         if failures >= GIVE_UP_AFTER:              # offline: don't wait for every request to time out
             for h in hs:
                 out[h] = None
@@ -163,28 +177,60 @@ def job(token: str) -> dict | None:
 def _cleanup() -> None:
     with _jobs_lock:
         for t in [t for t in _jobs if t not in sessions._sessions]:
-            _jobs.pop(t, None)
+            _jobs.pop(t, None)["cancel"] = True
 
 
-def start(token: str, sha1s: set) -> dict:
-    """Start (or keep) a breach check for this session in the background."""
+def forget(token: str) -> None:
+    """The session ended: stop its check and drop its results."""
+    with _jobs_lock:
+        j = _jobs.pop(token, None)
+    if j is not None:
+        j["cancel"] = True
+
+
+sessions.on_end(forget)
+
+
+def _hashes(open_vaults: list, known: dict) -> dict:
+    """{keyed hash: SHA-1} of the passwords not checked yet, read from the vaults now (each under its lock)."""
+    out = {}
+    for ov in open_vaults:
+        with ov.lock:
+            if ov.db is None:                          # locked meanwhile
+                continue
+            for f in facts(ov):
+                if known.get(f["reuse"]) is None and f["reuse"] not in out:
+                    e = ov.db.entries.get(items.to_b64(f["id"]))
+                    pw = ov.db.get_field(e, "Password") if e is not None else None
+                    if pw:
+                        out[f["reuse"]] = hashlib.sha1(pw.encode()).hexdigest().upper()
+    return out
+
+
+def start(token: str, open_vaults: list) -> dict:
+    """Start (or keep) a breach check of the session's open vaults (OpenVaults) in the background. The SHA-1s are
+    worked out inside the check and dropped when it ends; results are kept by keyed hash."""
     _cleanup()
     with _jobs_lock:
         j = _jobs.get(token)
         if j and j["state"] == "running":
             return j
         known = dict(j["results"]) if j else {}
-        todo = {h for h in sha1s if known.get(h) is None}
-        j = {"state": "running", "done": 0, "total": len({h[:5] for h in todo}), "results": known,
-             "started": time.time(), "finished": None}
+        j = {"state": "running", "done": 0, "total": 0, "results": known, "started": time.time(), "finished": None,
+             "cancel": False}
         _jobs[token] = j
 
     def run():
         def prog(done, total):
             j["done"] = done
         try:
-            res = check_hashes(todo, prog)
-            j["results"].update(res)
+            todo = _hashes(open_vaults, known)
+            j["total"] = len({h[:5] for h in todo.values()})
+            res = check_hashes(set(todo.values()), prog, cancelled=lambda: j["cancel"])
+            j["results"].update({k: res.get(h) for k, h in todo.items()})
+            todo.clear()
+        except Cancelled:
+            pass
         finally:
             j["state"] = "done"
             j["finished"] = time.time()
@@ -233,7 +279,7 @@ def report(open_vaults: list, token: str | None, now: float | None = None) -> di
     counts = {k: 0 for k in ISSUES}
     for s, f in rows:
         issues = []
-        b = breach.get(f["sha1"])
+        b = breach.get(f["reuse"])
         if b:
             issues.append("breached")
         if reuse_count[f["reuse"]] > 1:
@@ -250,7 +296,7 @@ def report(open_vaults: list, token: str | None, now: float | None = None) -> di
             counts[k] += 1
         if issues:
             out.append(dict(s, issues=issues, strength=f["label"], ageDays=age,
-                            breachCount=b if b else (None if f["sha1"] not in breach else breach[f["sha1"]]),
+                            breachCount=b if b else (None if f["reuse"] not in breach else breach[f["reuse"]]),
                             reuseGroup=None))
     # number reuse groups (biggest first) so the page can show "same password as …"
     ordered = sorted(groups.values(), key=lambda g: (-len(g), items_sort(g[0])))
@@ -262,7 +308,7 @@ def report(open_vaults: list, token: str | None, now: float | None = None) -> di
         o["reuseGroup"] = group_of.get((o["vaultId"], o["id"]))
     rank = {k: n for n, k in enumerate(ISSUES)}
     out.sort(key=lambda o: (min(rank[k] for k in o["issues"]), items_sort(o)))
-    checked = sum(1 for _, f in rows if f["sha1"] in breach and breach[f["sha1"]] is not None)
+    checked = sum(1 for _, f in rows if f["reuse"] in breach and breach[f["reuse"]] is not None)
     return {"total": len(rows), "counts": counts, "items": out,
             "reuseGroups": [[{"vaultId": s["vaultId"], "id": s["id"], "title": s["title"], "vaultName": s["vaultName"]}
                              for s in g] for g in ordered],

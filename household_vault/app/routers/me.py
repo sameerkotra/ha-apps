@@ -158,26 +158,49 @@ def _vault_list(conn, ctx_user: str, s: sessions.Session) -> list:
                         "WHERE NOT (v.kind = 'emergency' AND v.owner_user_id = ?) "
                         "ORDER BY CASE v.kind WHEN 'personal' THEN 0 WHEN 'household' THEN 1 WHEN 'shared' THEN 2 ELSE 3 END, "
                         "v.name COLLATE NOCASE", (ctx_user, ctx_user)).fetchall()
-    return [_vault_out(conn, r, s, ctx_user) for r in rows]
+    if not rows:
+        return []
+    # three queries for the whole list instead of four per vault (review 2026-10)
+    ids = [r["id"] for r in rows]
+    marks = ",".join("?" * len(ids))
+    members: dict = {}
+    for m in conn.execute(f"SELECT m.vault_id, m.user_id, m.role, u.name FROM vault_members m JOIN users u ON u.id = m.user_id "
+                          f"WHERE m.vault_id IN ({marks}) ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 "
+                          f"WHEN 'editor' THEN 2 ELSE 3 END, u.name COLLATE NOCASE", ids):
+        members.setdefault(m["vault_id"], []).append(m)
+    remembered = {r["vault_id"] for r in conn.execute(f"SELECT vault_id FROM vault_keys WHERE user_id = ? AND vault_id IN "
+                                                      f"({marks})", [ctx_user, *ids])}
+    names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
+    return [_vault_out(conn, r, s, ctx_user, members=members.get(r["id"], []), remembered=r["id"] in remembered,
+                       names=names) for r in rows]
 
 
-def _vault_out(conn, r, s: sessions.Session, uid: str) -> dict:
-    members = conn.execute("SELECT m.user_id, m.role, u.name FROM vault_members m JOIN users u ON u.id = m.user_id "
-                           "WHERE m.vault_id = ? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 "
-                           "WHEN 'editor' THEN 2 ELSE 3 END, u.name COLLATE NOCASE", (r["id"],)).fetchall()
-    remembered = conn.execute("SELECT 1 FROM vault_keys WHERE vault_id = ? AND user_id = ?", (r["id"], uid)).fetchone()
-    owner = conn.execute("SELECT name FROM users WHERE id = ?", (r["owner_user_id"],)).fetchone() if r["owner_user_id"] else None
-    upd = conn.execute("SELECT name FROM users WHERE id = ?", (r["updated_by"],)).fetchone() if r["updated_by"] else None
+def _vault_out(conn, r, s: sessions.Session, uid: str, members=None, remembered=None, names=None) -> dict:
+    if members is None:
+        members = conn.execute("SELECT m.user_id, m.role, u.name FROM vault_members m JOIN users u ON u.id = m.user_id "
+                               "WHERE m.vault_id = ? ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'manager' THEN 1 "
+                               "WHEN 'editor' THEN 2 ELSE 3 END, u.name COLLATE NOCASE", (r["id"],)).fetchall()
+    if remembered is None:
+        remembered = conn.execute("SELECT 1 FROM vault_keys WHERE vault_id = ? AND user_id = ?", (r["id"], uid)).fetchone()
+
+    def name_of(user_id):
+        if not user_id:
+            return None
+        if names is not None:
+            return names.get(user_id)
+        row = conn.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
+        return row["name"] if row else None
+    owner, upd = name_of(r["owner_user_id"]), name_of(r["updated_by"])
     name = r["name"]
     if r["kind"] == "personal" and r["owner_user_id"] != uid:
-        name = f"{owner['name'] if owner else 'Someone'}'s Personal"
+        name = f"{owner or 'Someone'}'s Personal"
     elif r["kind"] == "emergency":
-        name = f"{owner['name'] if owner else 'Someone'}'s emergency items"
+        name = f"{owner or 'Someone'}'s emergency items"
     return {"id": r["id"], "kind": r["kind"], "name": name, "role": r["role"], "passwordMode": r["password_mode"],
-            "open": r["id"] in s.vaults, "remembered": bool(remembered), "owner": owner["name"] if owner else None,
+            "open": r["id"] in s.vaults, "remembered": bool(remembered), "owner": owner,
             "mine": r["owner_user_id"] == uid,
             "members": [{"id": m["user_id"], "name": m["name"], "role": m["role"]} for m in members],
-            "version": r["version"], "updatedAt": r["updated_at"], "updatedBy": upd["name"] if upd else None,
+            "version": r["version"], "updatedAt": r["updated_at"], "updatedBy": upd,
             "rekeyPending": bool(r["rekey_pending"]), "passwordChangeSuggested": bool(r["password_change_suggested"])}
 
 

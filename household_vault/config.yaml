@@ -1,5 +1,5 @@
 name: "Household Vault"
-version: "2.1.5"
+version: "2.1.6"
 slug: household_vault
 description: >-
   A household password manager inside Home Assistant: personal, household and
@@ -15,6 +15,8 @@ startup: application
 boot: auto
 ingress: true
 ingress_port: 8101
+# The Supervisor restarts the app if this stops answering (it comes from the Supervisor's own address)
+watchdog: http://[HOST]:[PORT:8101]/api/health
 panel_icon: mdi:shield-key
 panel_title: Vault
 # Everyone sees the panel; nobody gets in until an admin enables and sets them up.

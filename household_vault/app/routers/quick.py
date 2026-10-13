@@ -10,7 +10,8 @@ POST /api/unlock as usual (with `quickUnlockId`, so failures are counted).
 So the server never holds anything that opens a vault on its own, and it
 doesn't need to check WebAuthn signatures: without the authenticator the
 ciphertext is useless. Limits: the master password must have been typed in
-the last 14 days; 5 failed quick unlocks remove that device; a master
+the last 14 days (a convenience rule, not a protection: whoever holds the
+device and its passkey can unlock anyway within those days); 5 failed quick unlocks remove that device; a master
 password change removes them all.
 """
 import base64
@@ -29,6 +30,7 @@ MAX_DAYS = 14
 MAX_FAILURES = 5
 MAX_DEVICES = 10
 _pending: dict = {}                 # session token → (prf salt, challenge, time)
+sessions.on_end(lambda token: _pending.pop(token, None))          # a setup that never finished goes with its session
 
 
 def b64u(b: bytes) -> str:

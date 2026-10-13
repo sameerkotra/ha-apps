@@ -50,6 +50,11 @@ def refresh(conn, vault_id: str, d) -> None:
         conn.execute("DELETE FROM reminders WHERE vault_id = ? AND item_id = ?", (vault_id, iid))
 
 
+def forget_titles(conn) -> int:
+    """The admin turned item names in reminders off: blank every name already kept (review 2026-10)."""
+    return conn.execute("UPDATE reminders SET title = '' WHERE title != ''").rowcount
+
+
 def _when(day: datetime.date) -> str:
     return f"{day.day} {day:%b %Y}"
 

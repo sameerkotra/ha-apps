@@ -4,13 +4,22 @@ the key ring, Household, sharing, re-keying and password changes.
 Routers call these with an open DB connection; file writes happen inside the
 caller's transaction (storage.write_version), so a failure leaves the DB as
 it was and the previous file version intact.
+
+Every change to an open vault happens inside `editing(conn, ov)`: the vault's
+lock is taken **before** the transaction writes anything and held until it has
+committed, and if anything fails the in-memory vault is read back from its
+file — so a half-made change can't stay in memory for the next save to write
+(review 2026-10).
 """
-import hmac
 import os
 import logging
+import sqlite3
+import threading
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 
+from cryptography.exceptions import InvalidTag
 from fastapi import HTTPException
 
 from . import alerts, config, db, kdbx, keyring, passwords, sessions, settings, storage
@@ -27,21 +36,58 @@ MAX_MEMBERS = 20
 # KDF settings
 # ---------------------------------------------------------------------------
 
+_tuned: dict = {}                   # memory (bytes) → (iterations, seconds per iteration), measured on this machine
+_tune_lock = threading.Lock()
+
+
+def _measure(mem: int) -> tuple:
+    t0 = time.perf_counter()
+    kdbx.argon2_raw(b"x" * 32, b"s" * 32, 1, mem, 2, False)
+    one = max(time.perf_counter() - t0, 1e-4)
+    return max(kdbx.MIN_ITERATIONS, min(20, round(config.KDF_TARGET_SECONDS / one))), one
+
+
+def _store_tuning(conn, mem: int, iters: int, one: float) -> None:
+    db.set_setting(conn, "argon2_iterations", str(iters))
+    db.set_setting(conn, "argon2_memory", str(mem))
+    db.set_setting(conn, "argon2_seconds_per_iteration", f"{one:.3f}")
+
+
+def calibrate(force: bool = False) -> int:
+    """Tune the Argon2 iterations for this machine — at start-up and after a restore (the backup may come from
+    another machine), with no database transaction open while it runs (review 2026-10: it used to run inside
+    the first admin's write)."""
+    mem = config.KDF_MEMORY_KIB * 1024
+    with _tune_lock:
+        if not force:
+            with db.get_conn() as conn:
+                cached = db.get_setting(conn, "argon2_iterations")
+                same = db.get_setting(conn, "argon2_memory") == str(mem)
+                one = db.get_setting(conn, "argon2_seconds_per_iteration")
+            if cached and same:
+                _tuned[mem] = (int(cached), float(one or 0))
+                return int(cached)
+        iters, one = _measure(mem)
+        _tuned[mem] = (iters, one)
+    with db.get_conn() as conn:
+        _store_tuning(conn, mem, iters, one)
+    return iters
+
+
 def strong_kdf(conn) -> dict:
     """Argon2id for person-chosen passwords: memory from config, iterations tuned once on
     this machine to take about KDF_TARGET_SECONDS, never fewer than 3 (SPEC §5.1)."""
     mem = config.KDF_MEMORY_KIB * 1024
-    cached = db.get_setting(conn, "argon2_iterations")
-    if cached and db.get_setting(conn, "argon2_memory") == str(mem):
-        iters = int(cached)
+    if mem in _tuned:
+        iters = _tuned[mem][0]
     else:
-        t0 = time.perf_counter()
-        kdbx.argon2_raw(b"x" * 32, b"s" * 32, 1, mem, 2, False)
-        one = max(time.perf_counter() - t0, 1e-4)
-        iters = max(kdbx.MIN_ITERATIONS, min(20, round(config.KDF_TARGET_SECONDS / one)))
-        db.set_setting(conn, "argon2_iterations", str(iters))
-        db.set_setting(conn, "argon2_memory", str(mem))
-        db.set_setting(conn, "argon2_seconds_per_iteration", f"{one:.3f}")
+        cached = db.get_setting(conn, "argon2_iterations")
+        if cached and db.get_setting(conn, "argon2_memory") == str(mem):
+            iters = int(cached)
+        else:                                           # not tuned yet (start-up still running): measure now
+            iters, one = _measure(mem)
+            _store_tuning(conn, mem, iters, one)
+        _tuned[mem] = (iters, 0.0)
     return {"memory": mem, "iterations": iters, "parallelism": 2}
 
 
@@ -102,17 +148,93 @@ def forget(conn, vault_id: str, user_id: str) -> None:
 # Opening and saving
 # ---------------------------------------------------------------------------
 
+def _snapshot(ov: sessions.OpenVault) -> tuple:
+    d = ov.db
+    return (ov.password, ov.composite, ov.key_epoch,
+            dict(d.kdf) if d is not None and d.kdf else None, d.transformed if d is not None else None)
+
+
+def reload(conn, ov: sessions.OpenVault, snap: tuple) -> None:
+    """A change failed: put the open vault back as its file is — the version `conn` sees (after a rollback, the
+    committed one), opened with the key it had before the change (no KDF run: the cached key is reused). If that
+    can't be done the vault is closed, and members open it again from the file."""
+    ov.password, ov.composite, ov.key_epoch = snap[0], snap[1], snap[2]
+    ov.changed()
+    if ov.db is None:                                     # closed meanwhile
+        return
+    try:
+        row = conn.execute("SELECT version, key_epoch FROM vaults WHERE id = ?", (ov.vault_id,)).fetchone()
+        if row is None or not row["version"]:
+            sessions.close(ov.vault_id)
+            return
+        ov.db = kdbx.open_with_composite(storage.read_version(ov.vault_id, row["version"]), snap[1],
+                                         known=(snap[3], snap[4]))
+        ov.key_epoch = row["key_epoch"]
+    except Exception:
+        logger.exception("Couldn't read a vault back after a failed change; it's closed until it's opened again")
+        sessions.close(ov.vault_id)
+
+
+@contextmanager
+def editing(conn, *ovs):
+    """Change open vaults: their locks are taken in a fixed order (vault id) before the transaction writes
+    anything, and held until it has committed. If anything fails — a check after a first change, the save,
+    the commit — the transaction is rolled back and each vault is read back from its file.
+
+    Nested uses (a save inside a route's `editing`, the emergency mirror saved after the Personal vault) join
+    the outermost one: vaults locked later are held, and put back, with it. `editing(conn)` with no vault starts
+    the transaction for a change that creates vaults as it goes."""
+    state = conn.vault_edit
+    outer = state is None
+    if outer:
+        if conn.in_transaction:
+            conn.commit()                 # never wait for a vault's lock while holding the database's write lock
+        state = conn.vault_edit = {"held": []}
+    try:
+        for ov in sorted((o for o in ovs if o is not None), key=lambda o: o.vault_id):
+            if any(o is ov for o, _ in state["held"]):
+                continue
+            ov.lock.acquire()
+            state["held"].append((ov, _snapshot(ov)))
+            if ov.db is None:                       # closed (everyone locked it) since it was looked up
+                raise HTTPException(423, "That vault is locked — open it with its password first.")
+        if outer:
+            conn.execute("BEGIN IMMEDIATE")
+        yield
+        if outer:
+            conn.commit()
+    except Exception:
+        if outer:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                logger.exception("Rolling back a failed vault change failed")
+            for ov, snap in state["held"]:
+                reload(conn, ov, snap)
+        raise
+    finally:
+        if outer:
+            conn.vault_edit = None
+            for ov, _ in reversed(state["held"]):
+                ov.lock.release()
+
+
 def open_vault(conn, vault_id: str, password: str) -> sessions.OpenVault:
     """The open vault (shared), opening the file if needed. Raises kdbx.WrongKey."""
     ov = sessions.get_open(vault_id)
     if ov is not None:
-        if not hmac.compare_digest(ov.password.encode(), password.encode()):
+        if not ov.matches(password):
             raise kdbx.WrongKey("Wrong password.")
         return ov
     row = vault_row(conn, vault_id)
     data = storage.read_current(conn, vault_id)
     database = kdbx.open_bytes(data, password)
-    ov = sessions.put_open(sessions.OpenVault(vault_id, database, password, row["key_epoch"]))
+    ov = sessions.put_open(sessions.OpenVault(vault_id, database, password, row["key_epoch"],
+                                              keep_password=row["password_mode"] == "random"))
+    if ov.db is not database:                       # someone opened it at the same moment
+        if not ov.matches(password):
+            raise kdbx.WrongKey("Wrong password.")
+        return ov
     from . import items, reminders
     with ov.lock:
         reminders.refresh(conn, vault_id, ov.db)
@@ -128,31 +250,63 @@ def open_vault(conn, vault_id: str, password: str) -> sessions.OpenVault:
 
 
 def save(conn, ov: sessions.OpenVault, user_id: str | None, new_password: str | None = None,
-         kdf: dict | None = None) -> int:
+         kdf: dict | None = None, keep_history: bool = False) -> int:
     """Write the open vault as a new version. With `new_password`: a password change or re-key —
-    new KDF salt, older versions purged, key_epoch + 1 (SPEC §5.4)."""
-    from . import items
-    with ov.lock:
-        items.sync_keepass_otp(ov.db)          # every TOTP is also in KeePass's own fields
-        if new_password is not None:
-            data = kdbx.save_bytes(ov.db, new_password, kdf=kdf, new_salt=True)
-            epoch = ov.key_epoch + 1
-            conn.execute("UPDATE vaults SET key_epoch = ? WHERE id = ?", (epoch, ov.vault_id))
-            version = storage.write_version(conn, ov.vault_id, data, user_id, epoch)
-            storage.purge_older(conn, ov.vault_id)
-            ov.password = new_password
-            ov.key_epoch = epoch
-        else:
-            data = kdbx.save_bytes(ov.db, ov.password)
-            version = storage.write_version(conn, ov.vault_id, data, user_id, ov.key_epoch)
-        ov.changed()
-        from . import guest_wifi, reminders
-        reminders.refresh(conn, ov.vault_id, ov.db)
-        guest_wifi.after_save(conn, ov.vault_id, ov.db)
-    from . import copies, emergency
-    emergency.after_save(conn, ov.vault_id, user_id)
-    copies.vault_changed(conn, ov.vault_id)
+    new KDF salt, key_epoch + 1, and the older versions purged (SPEC §5.4) or, with `keep_history` (a re-key),
+    re-encrypted with the new password so they stay restorable. The files of purged versions go only once the
+    transaction commits; if anything here fails, the save's own writes are undone (a savepoint) and the open
+    vault is read back from its file."""
+    from . import copies, emergency, guest_wifi, items, reminders
+    with editing(conn, ov):
+        snap = _snapshot(ov)
+        conn.execute("SAVEPOINT vault_save")
+        try:
+            items.sync_keepass_otp(ov.db)          # every TOTP is also in KeePass's own fields
+            if new_password is not None:
+                old_composite = ov.composite
+                data = kdbx.save_bytes(ov.db, new_password, kdf=kdf, new_salt=True)
+                epoch = ov.key_epoch + 1
+                conn.execute("UPDATE vaults SET key_epoch = ? WHERE id = ?", (epoch, ov.vault_id))
+                version = storage.write_version(conn, ov.vault_id, data, user_id, epoch)
+                if keep_history:
+                    _reencrypt_history(conn, ov, old_composite, (snap[3], snap[4]), epoch)
+                else:
+                    storage.purge_older(conn, ov.vault_id)
+                ov.set_password(new_password)
+                ov.key_epoch = epoch
+            else:
+                data = kdbx.save_bytes(ov.db, composite=ov.composite)
+                version = storage.write_version(conn, ov.vault_id, data, user_id, ov.key_epoch)
+            ov.changed()
+            reminders.refresh(conn, ov.vault_id, ov.db)
+            guest_wifi.after_save(conn, ov.vault_id, ov.db)
+            emergency.after_save(conn, ov.vault_id, user_id)
+            copies.vault_changed(conn, ov.vault_id)
+            conn.execute("RELEASE vault_save")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK TO vault_save")
+                conn.execute("RELEASE vault_save")
+            except sqlite3.Error:
+                pass
+            reload(conn, ov, snap)
+            raise
     return version
+
+
+def _reencrypt_history(conn, ov: sessions.OpenVault, old_composite: bytes, old_known: tuple, epoch: int) -> None:
+    """A re-key keeps the older versions: each is opened with the old key (cached, no KDF run) and written again
+    with the new one (its KDF output is the current file's, so no KDF run either)."""
+    kdf, transformed, composite = dict(ov.db.kdf), ov.db.transformed, ov.db.composite
+    for v in storage.older_versions(conn, ov.vault_id):
+        try:
+            d = kdbx.open_with_composite(storage.read_version(ov.vault_id, v), old_composite, known=old_known)
+        except (kdbx.KdbxError, OSError):
+            logger.warning("An older version of a vault couldn't be opened while re-keying; it's dropped")
+            storage._delete_versions(conn, ov.vault_id, [v])
+            continue
+        d.kdf, d.transformed, d.composite = dict(kdf), transformed, composite
+        storage.rewrite_version(conn, ov.vault_id, v, kdbx.save_bytes(d, composite=composite), epoch)
 
 
 def create_vault_file(conn, vault_id: str, name: str, password: str, mode: str, user_id: str | None,
@@ -161,6 +315,8 @@ def create_vault_file(conn, vault_id: str, name: str, password: str, mode: str, 
     d.kdf = kdf_for(conn, mode)
     d.transformed = None
     data = kdbx.save_bytes(d, password, new_salt=True)
+    storage.forget_on_rollback(conn, vault_id)          # no folder is left behind by a create that fails
+    conn.on_rollback(lambda c: sessions.close(vault_id))
     storage.write_version(conn, vault_id, data, user_id, 1)
     return d
 
@@ -241,7 +397,7 @@ def check_master_password(conn, user_id: str, ov, password: str, message: str) -
     """A check of the master password against the open Personal vault (download all, change it, quick unlock):
     counted and blocked like unlocking, so an unlocked tab can't be used to guess it. 403 with `message`."""
     fails = reserve_attempt(conn, user_id)
-    if ov is None or not hmac.compare_digest(ov.password.encode(), password.encode()):
+    if ov is None or not ov.matches(password):
         wrong_password(conn, user_id, fails)
         raise HTTPException(403, message)
     attempt_ok(conn, user_id)
@@ -294,8 +450,15 @@ def open_remembered(conn, s: sessions.Session) -> list:
         try:
             pw = keyring.unseal(s.private_key, r["sealed"], r["vault_id"])
             ov = open_vault(conn, r["vault_id"], pw)
-        except Exception:                     # stale key (password changed) — forget it
+        except (kdbx.WrongKey, InvalidTag, ValueError, KeyError):
+            # a stale key (the password changed) or a sealed box that isn't for this key: forget it
             forget(conn, r["vault_id"], s.user_id)
+            failed.append(r["name"])
+            continue
+        except Exception:
+            # anything else (a file that can't be read right now, …) says nothing about the key: keep it, so the
+            # vault opens again once that's fixed (review 2026-10: it used to be forgotten for good)
+            logger.exception("A remembered vault couldn't be opened; its key is kept")
             failed.append(r["name"])
             continue
         sessions.attach(s, ov)
@@ -316,15 +479,17 @@ def activate(conn, s: sessions.Session, user: dict, new_password: str) -> None:
     msg = passwords.check_master(new_password, settings.get("min_master_password_length"))
     if msg:
         raise HTTPException(422, msg)
-    if hmac.compare_digest(new_password.encode(), ov.password.encode()):
+    if ov.matches(new_password):
         raise HTTPException(422, "Choose a new password — not the one-time password from your admin.")
-    save(conn, ov, user["id"], new_password=new_password, kdf=kdf_for(conn, "chosen"))
+    kdf = kdf_for(conn, "chosen")
     private, public = keyring.new_keypair()
-    conn.execute("UPDATE users SET status = 'active', public_key = ?, private_key_wrapped = ? WHERE id = ?",
-                 (public, keyring.wrap_private(private, ov.db.transformed, user["id"]), user["id"]))
+    with editing(conn, ov):              # the new file and the key ring wrapped with its key commit together
+        save(conn, ov, user["id"], new_password=new_password, kdf=kdf)
+        conn.execute("UPDATE users SET status = 'active', public_key = ?, private_key_wrapped = ? WHERE id = ?",
+                     (public, keyring.wrap_private(private, ov.db.transformed, user["id"]), user["id"]))
+        db.audit(conn, "user_activated", user["id"], personal["id"])
     s.private_key = private
     s.must_change = False
-    db.audit(conn, "user_activated", user["id"], personal["id"])
     ensure_household(conn, s)
 
 
@@ -335,18 +500,21 @@ def change_master(conn, s: sessions.Session, user: dict, current: str, new: str)
     msg = passwords.check_master(new, settings.get("min_master_password_length"))
     if msg:
         raise HTTPException(422, msg)
-    save(conn, ov, user["id"], new_password=new, kdf=kdf_for(conn, "chosen"))
-    conn.execute("UPDATE users SET private_key_wrapped = ?, master_epoch = master_epoch + 1 WHERE id = ?",
-                 (keyring.wrap_private(s.private_key, ov.db.transformed, user["id"]), user["id"]))
-    conn.execute("DELETE FROM quick_unlock WHERE user_id = ?", (user["id"],))     # they hold the old password
-    # people it's shared with (same password) must ask for the new one
-    for r in conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ? AND user_id != ?",
-                          (personal["id"], user["id"])).fetchall():
-        forget(conn, personal["id"], r["user_id"])
-        db.audit(conn, "password_changed", r["user_id"], personal["id"], user["id"])
+    kdf = kdf_for(conn, "chosen")
+    # the new file and the private key wrapped with its key commit together, or neither does (review 2026-10)
+    with editing(conn, ov):
+        save(conn, ov, user["id"], new_password=new, kdf=kdf)
+        conn.execute("UPDATE users SET private_key_wrapped = ?, master_epoch = master_epoch + 1 WHERE id = ?",
+                     (keyring.wrap_private(s.private_key, ov.db.transformed, user["id"]), user["id"]))
+        conn.execute("DELETE FROM quick_unlock WHERE user_id = ?", (user["id"],))     # they hold the old password
+        # people it's shared with (same password) must ask for the new one
+        for r in conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ? AND user_id != ?",
+                              (personal["id"], user["id"])).fetchall():
+            forget(conn, personal["id"], r["user_id"])
+            db.audit(conn, "password_changed", r["user_id"], personal["id"], user["id"])
+        db.audit(conn, "password_changed", user["id"], personal["id"])
     sessions.detach_all_but(personal["id"], user["id"])
     sessions.end_user(user["id"], except_token=s.token)
-    db.audit(conn, "password_changed", user["id"], personal["id"])
     alerts.send(conn, [user["id"]], "Your Household Vault master password was just changed. "
                 "If you didn't do this, tell an admin straight away.")
 
@@ -370,7 +538,7 @@ def reset_user(conn, user_id: str, admin_id: str) -> None:
     if personal:
         sessions.close(personal["id"])
         conn.execute("DELETE FROM vaults WHERE id = ?", (personal["id"],))
-        storage.delete_vault_files(personal["id"])
+        storage.delete_vault_files(conn, personal["id"])
     conn.execute("DELETE FROM vault_keys WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM recent_items WHERE user_id = ?", (user_id,))
     conn.execute("DELETE FROM quick_unlock WHERE user_id = ?", (user_id,))
@@ -511,46 +679,66 @@ def share(conn, s: sessions.Session, vault_id: str, user_id: str, role: str) -> 
         db.audit(conn, "shared", user_id, vault_id, s.user_id)
 
 
+def _promote_owner(conn, vault_id: str) -> str | None:
+    """A shared vault whose owner leaves (an admin reset or turned them off) gets a new owner: the longest-standing
+    manager, else the longest-standing member (review 2026-10: it used to be left without one)."""
+    r = conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ? ORDER BY CASE role WHEN 'manager' THEN 0 "
+                     "WHEN 'editor' THEN 1 ELSE 2 END, added_at, user_id LIMIT 1", (vault_id,)).fetchone()
+    if r is None:
+        return None
+    conn.execute("UPDATE vault_members SET role = 'owner' WHERE vault_id = ? AND user_id = ?", (vault_id, r["user_id"]))
+    conn.execute("UPDATE vaults SET owner_user_id = ? WHERE id = ?", (r["user_id"], vault_id))
+    db.audit(conn, "transferred", r["user_id"], vault_id, None)
+    return r["user_id"]
+
+
 def remove_member(conn, vault_id: str, user_id: str, actor: str | None, audit_action: str | None = "unshared") -> None:
     """Remove someone; random-password vaults are re-keyed (now if open, else on the next member's unlock);
     same-password vaults are flagged so the owner changes the password (SPEC §5.3)."""
-    v = vault_row(conn, vault_id)
-    if role_of(conn, vault_id, user_id) is None:
-        return
-    conn.execute("DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?", (vault_id, user_id))
-    forget(conn, vault_id, user_id)
-    sessions.detach_user(user_id, vault_id)
-    if audit_action:
-        db.audit(conn, audit_action, user_id, vault_id, actor)
-    remaining = conn.execute("SELECT COUNT(*) FROM vault_members WHERE vault_id = ?", (vault_id,)).fetchone()[0]
-    if v["kind"] in ("shared", "household") and remaining == 0:
-        sessions.close(vault_id)
-        conn.execute("DELETE FROM vaults WHERE id = ?", (vault_id,))
-        storage.delete_vault_files(vault_id)
-        return
-    if v["password_mode"] == "random":
-        ov = sessions.get_open(vault_id)
-        if ov is not None:
-            rekey(conn, ov, actor)
-        else:
+    with editing(conn, sessions.get_open(vault_id)):
+        v = vault_row(conn, vault_id)
+        role = role_of(conn, vault_id, user_id)
+        if v is None or role is None:
+            return
+        conn.execute("DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?", (vault_id, user_id))
+        forget(conn, vault_id, user_id)
+        sessions.detach_user(user_id, vault_id)
+        if audit_action:
+            db.audit(conn, audit_action, user_id, vault_id, actor)
+        remaining = conn.execute("SELECT COUNT(*) FROM vault_members WHERE vault_id = ?", (vault_id,)).fetchone()[0]
+        if v["kind"] in ("shared", "household") and remaining == 0:
+            sessions.close(vault_id)
+            conn.execute("DELETE FROM vaults WHERE id = ?", (vault_id,))
+            conn.execute("DELETE FROM recent_items WHERE vault_id = ?", (vault_id,))
+            storage.delete_vault_files(conn, vault_id)
+            return
+        if role == "owner" and v["kind"] == "shared":
+            _promote_owner(conn, vault_id)
+        if v["password_mode"] == "random":
             conn.execute("UPDATE vaults SET rekey_pending = 1 WHERE id = ?", (vault_id,))
-    else:
-        conn.execute("UPDATE vaults SET password_change_suggested = 1 WHERE id = ?", (vault_id,))
+            ov = sessions.get_open(vault_id)
+            if ov is not None:
+                rekey(conn, ov, actor)
+        else:
+            conn.execute("UPDATE vaults SET password_change_suggested = 1 WHERE id = ?", (vault_id,))
 
 
 def rekey(conn, ov: sessions.OpenVault, actor: str | None) -> None:
-    """New random password, older versions purged, re-sealed to every member (SPEC §5.4)."""
-    pw = passwords.random_vault_password()
-    save(conn, ov, actor, new_password=pw, kdf=kdbx.kdf_params(kdbx.LIGHT_KDF))
-    members = [r["user_id"] for r in conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ?", (ov.vault_id,))]
-    conn.execute("DELETE FROM vault_keys WHERE vault_id = ?", (ov.vault_id,))
-    for uid in members:
-        remember(conn, ov.vault_id, uid, pw, ov.key_epoch)
-    conn.execute("UPDATE vaults SET rekey_pending = 0 WHERE id = ?", (ov.vault_id,))
-    if vault_row(conn, ov.vault_id)["kind"] == "emergency":
-        from . import emergency
-        emergency.reseal(conn, ov)
-    db.audit(conn, "rekeyed", None, ov.vault_id, actor)
+    """New random password, re-sealed to every member (SPEC §5.4). The kept older versions are re-encrypted with
+    it, so they can still be restored (review 2026-10: a re-key used to wipe them)."""
+    with editing(conn, ov):
+        pw = passwords.random_vault_password()
+        save(conn, ov, actor, new_password=pw, kdf=kdbx.kdf_params(kdbx.LIGHT_KDF), keep_history=True)
+        members = [r["user_id"] for r in conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ?",
+                                                      (ov.vault_id,))]
+        conn.execute("DELETE FROM vault_keys WHERE vault_id = ?", (ov.vault_id,))
+        for uid in members:
+            remember(conn, ov.vault_id, uid, pw, ov.key_epoch)
+        conn.execute("UPDATE vaults SET rekey_pending = 0 WHERE id = ?", (ov.vault_id,))
+        if vault_row(conn, ov.vault_id)["kind"] == "emergency":
+            from . import emergency
+            emergency.reseal(conn, ov)
+        db.audit(conn, "rekeyed", None, ov.vault_id, actor)
 
 
 def change_vault_password(conn, s: sessions.Session, vault_id: str, new: str, remember_it: bool = True) -> None:
@@ -564,17 +752,19 @@ def change_vault_password(conn, s: sessions.Session, vault_id: str, new: str, re
     if msg:
         raise HTTPException(422, msg)
     ov = sessions.get_open(vault_id)
-    save(conn, ov, s.user_id, new_password=new, kdf=kdf_for(conn, "chosen"))
-    others = [r["user_id"] for r in conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ? AND user_id != ?",
-                                                 (vault_id, s.user_id))]
-    conn.execute("DELETE FROM vault_keys WHERE vault_id = ?", (vault_id,))
-    if remember_it:
-        remember(conn, vault_id, s.user_id, new, ov.key_epoch)
-    for uid in others:
-        db.audit(conn, "password_changed", uid, vault_id, s.user_id)
-    conn.execute("UPDATE vaults SET password_change_suggested = 0 WHERE id = ?", (vault_id,))
+    kdf = kdf_for(conn, "chosen")
+    with editing(conn, ov):              # the new file and the forgotten keys commit together
+        save(conn, ov, s.user_id, new_password=new, kdf=kdf)
+        others = [r["user_id"] for r in conn.execute("SELECT user_id FROM vault_members WHERE vault_id = ? AND "
+                                                     "user_id != ?", (vault_id, s.user_id))]
+        conn.execute("DELETE FROM vault_keys WHERE vault_id = ?", (vault_id,))
+        if remember_it:
+            remember(conn, vault_id, s.user_id, new, ov.key_epoch)
+        for uid in others:
+            db.audit(conn, "password_changed", uid, vault_id, s.user_id)
+        conn.execute("UPDATE vaults SET password_change_suggested = 0 WHERE id = ?", (vault_id,))
+        db.audit(conn, "password_changed", s.user_id, vault_id)
     sessions.detach_all_but(vault_id, s.user_id)
-    db.audit(conn, "password_changed", s.user_id, vault_id)
 
 
 def open_with_password(conn, s: sessions.Session, vault_id: str, password: str, remember_it: bool) -> None:

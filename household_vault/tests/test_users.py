@@ -186,7 +186,7 @@ class Users(ApiTestCase):
         self.set_up(ADMIN)
         other = self.ok(self.post("/api/unlock", {"password": PW["u-admin"]}, token=False))["session"]
         self.assertEqual(self.post("/api/me/password", {"current": "wrong", "new": "x"}).status_code, 403)
-        new = "velvet-harbor-cactus-glacier-violin"
+        new = "velvet-harbor-cactus-glacier-violin-tulip"
         self.ok(self.post("/api/me/password", {"current": PW["u-admin"], "new": new}))
         self.assertEqual(self.get("/api/vaults", headers={"X-Vault-Session": other}).status_code, 401)  # other device
         self.ok(self.post("/api/lock"))

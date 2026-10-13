@@ -1,6 +1,9 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
 FROM python:3.12-alpine
+# ARGs declared before FROM aren't visible after it: declared again so the labels below get their values
+ARG BUILD_ARCH
+ARG BUILD_VERSION
 
 # tzdata for local times in logs; the build packages are only needed where pip has to
 # compile argon2-cffi or cryptography (armv7) and are removed again afterwards.
@@ -25,4 +28,5 @@ EXPOSE 8101
 
 # --no-proxy-headers: the ingress check needs the real TCP peer (Supervisor's proxy), never an address
 # taken from X-Forwarded-For (tools/check_build.py checks it).
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101", "--no-proxy-headers"]
+# --no-access-log: request lines would put search words (/api/search?q=…) in Home Assistant's log.
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8101", "--no-proxy-headers", "--no-access-log"]

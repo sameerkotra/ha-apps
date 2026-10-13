@@ -1,5 +1,6 @@
 """App settings (Admin → App settings). Stored in `app_settings` (as "1"/"0" and numbers, next to the app's
-own rows such as the tuned Argon2 values); validated; apply without a restart (read on every use, no cache).
+own rows such as the tuned Argon2 values); validated; apply without a restart (read through a cache that every
+save drops, and that is read again after CACHE_SECONDS — every request checks the session's limits).
 Built on the shared registry (common/python/settings_core.py)."""
 from . import db
 from .common import settings_core
@@ -21,6 +22,9 @@ SETTINGS = [
     Setting("personal_copies", False,
             "Keep one file per person in /data/copies (all their passwords, locked with their master password; "
             "rewritten after every change)", group="data"),
+    Setting("audit_keep_days", 365, "Keep the activity log for (days, 0 = for ever)", group="data", min=0, max=3650,
+            help="Who opened, shared, downloaded or changed what, and when (never any contents). Older entries are "
+                 "deleted once a day."),
 ]
 
 
@@ -36,7 +40,8 @@ REGISTRY = settings_core.Registry(
     SETTINGS, groups=GROUPS, connect=db.get_conn, format_error=lambda e: str(e).splitlines()[0] or "Invalid value.",
     unknown_message=lambda keys: f"Unknown setting: {', '.join(keys)}", encode=_encode, decode=_decode,
     load_check="type", write_all=True, write=lambda conn, key, value, who, now: db.set_setting(conn, key, value),
-    cache_ttl=0, log=lambda *a: None)
+    cache_ttl=5, generation=db.generation, log=lambda *a: None)
+CACHE_SECONDS = 5
 
 AppSettings = REGISTRY.model
 DEFAULTS = REGISTRY.defaults

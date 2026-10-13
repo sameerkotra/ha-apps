@@ -1,5 +1,6 @@
 """SQLite metadata (SPEC §6). Vault contents are never stored here — only
 names, members, versions and sealed (encrypted) keys."""
+import logging
 import os
 import sqlite3
 import uuid
@@ -164,8 +165,59 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+logger = logging.getLogger("db")
+# Background jobs run inside GATE.work(); a restore swaps the database inside GATE.pause() (common/db_core.py)
+GATE = db_core.MaintenanceGate()
+
+
+class Connection(sqlite3.Connection):
+    """A connection that can run things once its transaction is over: `after_commit(fn)` (delete a vault's old
+    files, tell Home Assistant — only once the change is really in the database) and `on_rollback(fn)` (forget a
+    file or an open vault the rolled-back change made). Review 2026-10: files were deleted before the commit, so a
+    failure after them left a vault nobody could open."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._after_commit: list = []
+        self._on_rollback: list = []
+        self.vault_edit = None            # service.editing(): the open vaults this connection holds locked
+
+    def after_commit(self, fn) -> None:
+        self._after_commit.append(fn)
+
+    def on_rollback(self, fn) -> None:
+        self._on_rollback.append(fn)
+
+    def _run(self, fns: list, what: str) -> None:
+        for fn in fns:
+            try:
+                fn(self)
+            except Exception:
+                logger.exception("Couldn't finish a step after a %s", what)
+
+    def commit(self) -> None:
+        super().commit()
+        fns, self._after_commit, self._on_rollback = self._after_commit, [], []
+        self._run(fns, "commit")
+
+    def rollback(self) -> None:
+        try:
+            super().rollback()
+        finally:
+            fns, self._after_commit, self._on_rollback = self._on_rollback, [], []
+            self._run(list(reversed(fns)), "rollback")
+
+    def close(self) -> None:
+        if self._on_rollback or self._after_commit:       # closed without a commit: SQLite rolls back
+            fns, self._after_commit, self._on_rollback = self._on_rollback, [], []
+            self._run(list(reversed(fns)), "rollback")
+        super().close()
+
+
 def _connect() -> sqlite3.Connection:
-    return db_core.connect(config.DB_PATH, timeout=30, pragmas=("foreign_keys = ON",))
+    # synchronous stays FULL (not the shared NORMAL default): a vault save is a file plus its row here, and the row
+    # must survive a power cut as surely as the file does
+    return db_core.connect(config.DB_PATH, timeout=30, pragmas=("foreign_keys = ON",), factory=Connection)
 
 
 def get_conn():
@@ -173,7 +225,16 @@ def get_conn():
     return db_core.transaction(_connect)
 
 
+_generation = [0]
+
+
+def generation() -> int:
+    """+1 each time the database is (re)opened at start-up or after a restore: caches of what's in it start over."""
+    return _generation[0]
+
+
 def init_db() -> None:
+    _generation[0] += 1
     os.makedirs(os.path.dirname(config.DB_PATH) or ".", exist_ok=True)
     os.makedirs(config.VAULT_DIR, exist_ok=True)
     conn = _connect()

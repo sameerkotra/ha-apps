@@ -36,7 +36,12 @@ def parse(value: str) -> dict:
         q = {k.lower(): vals[-1] for k, vals in urllib.parse.parse_qs(u.query).items()}
         label = urllib.parse.unquote(u.path.lstrip("/"))
         issuer, _, account = label.partition(":") if ":" in label else ("", "", label)
-        out = {"secret": q.get("secret", ""), "digits": int(q.get("digits", 6)), "period": int(q.get("period", 30)),
+        try:
+            digits, period = int(q.get("digits", 6)), int(q.get("period", 30))
+        except ValueError:
+            # review 2026-10: a ValueError here (digits=x in an imported file) broke every later save of the vault
+            raise BadOtp("Unsupported digits or period.")
+        out = {"secret": q.get("secret", ""), "digits": digits, "period": period,
                "algorithm": q.get("algorithm", "SHA1").upper(), "issuer": q.get("issuer", issuer), "account": account}
     else:
         out = {"secret": v, "digits": 6, "period": 30, "algorithm": "SHA1", "issuer": "", "account": ""}
@@ -58,6 +63,9 @@ def from_legacy(seed: str, settings: str | None) -> dict:
             digits = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 6
         except ValueError:
             pass
+    if not 6 <= digits <= 8 or not 1 <= period <= 300:
+        raise BadOtp("Unsupported digits or period.")
+    _b32(seed)
     return {"secret": seed, "digits": digits, "period": period, "algorithm": "SHA1", "issuer": "", "account": ""}
 
 

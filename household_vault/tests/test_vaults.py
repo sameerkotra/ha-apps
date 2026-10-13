@@ -5,6 +5,7 @@ import _env  # noqa: F401
 import hashlib
 import io
 import struct
+import os
 import unittest
 
 from app import db, kdbx, sessions
@@ -42,11 +43,19 @@ class Household(ApiTestCase):
         self.ok(self.patch("/api/users/u-neha", {"disabled": True}))
         v = sql("SELECT key_epoch, rekey_pending FROM vaults WHERE id = ?", (h["id"],))[0]
         self.assertEqual((v["key_epoch"], v["rekey_pending"]), (before + 1, 0))
-        self.assertEqual(len(sql("SELECT * FROM vault_versions WHERE vault_id = ?", (h["id"],))), 1)   # older purged
         self.assertEqual(sql("SELECT user_id FROM vault_keys WHERE vault_id = ?", (h["id"],)), [{"user_id": "u-admin"}])
         # the current file opens with the new password
         pw = self.ok(self.get(f"/api/vaults/{h['id']}/password"))["password"]
         self.assertEqual(kdbx.open_bytes(self.get(f"/api/vaults/{h['id']}/download").content, pw).name, "Household")
+        # the older versions are kept, re-encrypted with the new password (not purged), so they can be restored
+        from app import storage
+        rows = sql("SELECT version, key_epoch FROM vault_versions WHERE vault_id = ? ORDER BY version", (h["id"],))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({r["key_epoch"] for r in rows}, {before + 1})
+        for r in rows:
+            self.assertEqual(kdbx.open_bytes(storage.read_version(h["id"], r["version"]), pw).name, "Household")
+        self.assertFalse([n for n in os.listdir(storage.vault_dir(h["id"])) if not n.endswith(".kdbx")])
+        self.ok(self.post(f"/api/vaults/{h['id']}/versions/{rows[0]['version']}/restore"))
 
     def test_rekey_later_when_closed(self):
         self.set_up(ADMIN)
@@ -92,7 +101,7 @@ class SamePassword(ApiTestCase):
     def test_change_password_and_remove(self):
         self.ok(self.post(f"/api/vaults/{self.vid}/members", {"userId": "u-neha", "role": "editor"}))
         self.ok(self.post(f"/api/vaults/{self.vid}/open", {"password": JOINT_PW, "remember": True}, NEHA))
-        new = "orbit-velvet-harbor-maple-glacier"
+        new = "orbit-velvet-harbor-maple-glacier-tulip"
         self.assertEqual(self.post(f"/api/vaults/{self.vid}/password", {"new": new}, NEHA).status_code, 403)
         self.ok(self.post(f"/api/vaults/{self.vid}/password", {"new": new}))
         self.assertFalse(self.vaults(NEHA)["Kiran & Neha"]["open"])       # she has to type the new one
@@ -143,7 +152,7 @@ class SamePassword(ApiTestCase):
         # she can't open my other vaults
         self.assertEqual(self.get(f"/api/vaults/{self.vid}/items", NEHA).status_code, 404)
         # when I change my master password she has to ask again
-        new = "cedar-violin-harbor-rocket-meadow"
+        new = "cedar-violin-harbor-rocket-meadow-tulip"
         self.ok(self.post("/api/me/password", {"current": PW["u-admin"], "new": new}))
         self.assertFalse(self.vaults(NEHA)["Kiran's Personal"]["open"])
         self.assertFalse(self.vaults(NEHA)["Kiran's Personal"]["remembered"])

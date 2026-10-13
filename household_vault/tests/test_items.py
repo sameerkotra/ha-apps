@@ -215,7 +215,12 @@ class Tools(unittest.TestCase):
         self.assertEqual(len(passwords.passphrase(6).split("-")), 6)
         self.assertLess(passwords.strength("password123")["score"], 2)
         self.assertLess(passwords.strength("qwerty123456")["score"], 2)
-        self.assertGreaterEqual(passwords.strength("maple-river-candle-orbit-zebra")["score"], 3)
+        # a word from the app's own list is worth log2(1,457) ≈ 10.5 bits: 5 words are "fair", 6 are "good"
+        self.assertAlmostEqual(passwords.WORD_BITS, 10.5, places=1)
+        self.assertEqual(passwords.strength("maple-river-candle-orbit-zebra")["score"], 2)
+        self.assertGreaterEqual(passwords.strength("maple-river-candle-orbit-zebra-tulip")["score"], 3)
+        self.assertIsNotNone(passwords.check_master("maple-river-candle-orbit-zebra", 12))
+        self.assertIsNone(passwords.check_master("maple-river-candle-orbit-zebra7", 12))   # 5 words and a number
         self.assertIsNotNone(passwords.check_master("Summer2024!", 12))
         self.assertIsNone(passwords.check_master(passwords.passphrase(6), 12))
 
@@ -276,7 +281,7 @@ class KeePassTotp(ApiTestCase):
             e = next(x for x in ov.db.entries.values() if ov.db.get_field(x, "Title") == "Old")
             for k in ("TimeOtp-Secret-Base32",):
                 ov.db.remove_field(e, k)
-            data = kdbx.save_bytes(ov.db, ov.password)
+            data = kdbx.save_bytes(ov.db, composite=ov.composite)
         with db.get_conn() as conn:
             storage.write_version(conn, self.vid, data, None, ov.key_epoch)
         self.assertNotIn("TimeOtp-Secret-Base32", self.entry("Old")[0])        # an older file without them
