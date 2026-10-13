@@ -69,27 +69,24 @@ def _week_start_utc() -> str:
 
 
 def leaderboard(conn, game: str, mode: str, period: str, viewer: dict, names: str = "full") -> list[dict]:
-    sql = ("SELECT s.id, s.user_id, s.score, s.level, s.seconds, s.ended_at, u.name FROM scores s "
-           "JOIN users u ON u.id = s.user_id WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1")
+    """The top TOP_N, each person's best once (the earliest of equal bests), in one query."""
+    where = "s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1"
     args: list = [game, mode]
     if period == "month":
-        sql += " AND s.ended_at >= ?"
+        where += " AND s.ended_at >= ?"
         args.append(_month_start_utc())
-    sql += " ORDER BY s.score DESC, s.ended_at ASC, s.id ASC"
-    out, seen = [], set()
-    for r in conn.execute(sql, args):
-        if r["user_id"] in seen:
-            continue
-        seen.add(r["user_id"])
-        out.append({
-            "rank": len(out) + 1, "scoreId": r["id"], "score": r["score"], "level": r["level"],
-            "seconds": r["seconds"], "at": r["ended_at"],
-            "name": first_name(r["name"]) if names == "first" else r["name"],
-            "me": r["user_id"] == viewer["id"],
-        })
-        if len(out) >= TOP_N:
-            break
-    return out
+    rows = conn.execute(
+        "SELECT id, user_id, score, level, seconds, ended_at, name FROM ("
+        "  SELECT s.id, s.user_id, s.score, s.level, s.seconds, s.ended_at, u.name, ROW_NUMBER() OVER ("
+        "    PARTITION BY s.user_id ORDER BY s.score DESC, s.ended_at ASC, s.id ASC) AS rn "
+        f"  FROM scores s JOIN users u ON u.id = s.user_id WHERE {where}) "
+        "WHERE rn = 1 ORDER BY score DESC, ended_at ASC, id ASC LIMIT ?", (*args, TOP_N)).fetchall()
+    return [{
+        "rank": i + 1, "scoreId": r["id"], "score": r["score"], "level": r["level"],
+        "seconds": r["seconds"], "at": r["ended_at"],
+        "name": first_name(r["name"]) if names == "first" else r["name"],
+        "me": r["user_id"] == viewer["id"],
+    } for i, r in enumerate(rows)]
 
 
 def _row(r) -> dict:
@@ -125,18 +122,19 @@ def bests_for(conn, user_id: str) -> dict:
 
 
 def records(conn) -> dict:
-    """{game: {"score", "mode", "name", "at", "modes": {mode: {...}}}} for the record sensors."""
+    """{game: {"score", "mode", "name", "at", "modes": {mode: {...}}}} for the record sensors: one grouped query (the
+    best of each game and mode, the earliest of equal bests)."""
+    best_of: dict = {}
+    for r in conn.execute(
+            "SELECT game, mode, score, ended_at, name FROM ("
+            "  SELECT s.game, s.mode, s.score, s.ended_at, u.name, ROW_NUMBER() OVER ("
+            "    PARTITION BY s.game, s.mode ORDER BY s.score DESC, s.ended_at ASC, s.id ASC) AS rn "
+            "  FROM scores s JOIN users u ON u.id = s.user_id WHERE u.disabled = 0 AND s.start_level = 1) "
+            "WHERE rn = 1"):
+        best_of[(r["game"], r["mode"])] = {"score": r["score"], "name": r["name"], "at": r["ended_at"]}
     out: dict = {}
     for game in games.GAME_IDS:
-        per_mode = {}
-        for mode in games.mode_ids(game):
-            r = conn.execute(
-                "SELECT s.score, s.ended_at, u.name FROM scores s JOIN users u ON u.id = s.user_id "
-                "WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1 "
-                "ORDER BY s.score DESC, s.ended_at ASC LIMIT 1",
-                (game, mode)).fetchone()
-            if r:
-                per_mode[mode] = {"score": r["score"], "name": r["name"], "at": r["ended_at"]}
+        per_mode = {mode: best_of[(game, mode)] for mode in games.mode_ids(game) if (game, mode) in best_of}
         top = max(per_mode.items(), key=lambda kv: kv[1]["score"], default=None)
         out[game] = {"score": top[1]["score"] if top else None, "mode": top[0] if top else None,
                      "name": top[1]["name"] if top else None, "at": top[1]["at"] if top else None,
@@ -144,9 +142,19 @@ def records(conn) -> dict:
     return out
 
 
+def records_key(conn) -> tuple:
+    """Changes whenever records() could: a score added or removed, a person switched off or on, or renamed."""
+    a = conn.execute("SELECT MAX(id), COUNT(*) FROM scores").fetchone()
+    b = conn.execute("SELECT group_concat(id || ':' || disabled || ':' || name, '|') FROM "
+                     "(SELECT id, disabled, name FROM users ORDER BY id)").fetchone()
+    return (a[0], a[1], b[0])
+
+
 def prune(conn, now: datetime | None = None) -> int:
     """Keep scores for N years (App settings): remove older games except each
-    person's best per game and mode. Returns how many were removed."""
+    person's best per game and mode — the best of the games started at level 1
+    when there is one (those are the bests and records), else the best of the
+    rest. Returns how many were removed."""
     years = settings.get("keep_scores_years")
     if not years:
         return 0
@@ -155,7 +163,8 @@ def prune(conn, now: datetime | None = None) -> int:
     n = conn.execute(
         "DELETE FROM scores WHERE ended_at < ? AND id NOT IN ("
         "  SELECT (SELECT s2.id FROM scores s2 WHERE s2.user_id = s1.user_id AND s2.game = s1.game "
-        "          AND s2.mode = s1.mode ORDER BY s2.score DESC, s2.ended_at ASC, s2.id ASC LIMIT 1) "
+        "          AND s2.mode = s1.mode ORDER BY (s2.start_level = 1) DESC, s2.score DESC, s2.ended_at ASC, s2.id ASC "
+        "          LIMIT 1) "
         "  FROM scores s1 WHERE s1.mode NOT LIKE 'daily-%' GROUP BY s1.user_id, s1.game, s1.mode)", (cutoff,)).rowcount
     conn.execute("DELETE FROM play_sessions WHERE ended_at IS NOT NULL AND started_at < ?", (cutoff,))
     return n

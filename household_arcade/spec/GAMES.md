@@ -7,13 +7,17 @@ contract between them and the app's shell (`index.html` / `app.js`).
 
 ## Files
 
-Loaded as classic scripts in this order, each with `?v=<app version>`:
+The page itself loads only `kit.js`, `sound.js`, `registry.js` and `manifest.js` (each with `?v=<app version>`).
+`manifest.js` (made by `node tests/js/manifest-tool.js`; a test checks it is up to date) lists each game's files and
+its help line; `ArcadeGames.load(id)` adds a game's files, in this order and with the registry's `?v=`, when the game
+is opened. The files, in the order they load:
 
 | File | What it is |
 |---|---|
 | `kit.js` | `window.ArcadeKit`: the six looks, the renderer, the fixed-step loop and the shared game session (start, pause, scores, end result) |
 | `sound.js` | `window.ArcadeSound`: short Web Audio effects, off by default |
-| `registry.js` | `window.ArcadeGames`: `register(def)`, `get(id)`, `list()` |
+| `registry.js` | `window.ArcadeGames`: `register(def)`, `get(id)`, `list()`, `load(id)` → a Promise of the definition, `info(id)` |
+| `manifest.js` | `window.ArcadeManifest`: each game's files and help line (generated) |
 | `snake-logic.js` | Snake rules — pure, no DOM, deterministic for a seed (`self.SnakeLogic`, or `module.exports` in Node) |
 | `snake.js` | Snake input and drawing; registers `snake` |
 | `brick-logic.js` | Brick Breaker rules — pure, no DOM, deterministic for a seed (`self.BrickLogic` / `module.exports`) |
@@ -171,9 +175,7 @@ Number Dash `question`, `right`, `wrong`, `streak`, `level`, `win`, `gameover`; 
 `brick`, `steel`, `hit`, `lifeLost`, `clear`, `level`, `win`, `gameover`; Sky Defenders `fire`, `hit`, `bonus`,
 `ship`, `zap`, `chip`, `lifeLost`, `level`, `win`, `gameover`; Rocks `fire`, `break`, `saucer`, `saucerHit`,
 `lifeLost`, `clear`, `level`, `win`, `gameover`; Road Hop `hop`, `bump`, `land`, `home`, `splat`, `level`, `win`,
-`gameover`; Snake Duel `go`, `eat`, `crash`, `round`, `match`, `level`, `win`, `gameover`; Tank Battle with two tanks
-also `round` (against each other), and `fire` / `hit` / `lifeLost` say which `player`; Paddle Duel · Two phones `point`
-and `paddle` say which `player`; Bubble Pop `shoot`, `bounce`, `stick`, `fizzle`, `pop`, `clear`, `lower`, `push`,
+`gameover`; Snake Duel `go`, `eat`, `crash`, `round`, `match`, `level`, `win`, `gameover`; Bubble Pop `shoot`, `bounce`, `stick`, `fizzle`, `pop`, `clear`, `lower`, `push`,
 `swapNext`, `low`, `refill`, `level`, `win`, `gameover`; Gem Swap `cursor`, `pick`, `swap`, `nope`, `match`, `cascade`,
 `special`, `shuffle`, `hint`, `hurry`, `clear`, `level`, `win`, `gameover`; Tower Stack `place`, `cut`, `perfect`, `miss`,
 `tower`, `level`, `win`, `gameover`; Runner `jump`, `land`, `coin`, `hit`, `course`, `level`, `win`, `gameover`; Lander
@@ -353,24 +355,6 @@ it stops on pause, game over, `destroy()` and when the page is hidden.
   from the seed.
   On one phone, swipes on the right half steer green and on the left half blue. Every mode plays the arena list
   (walls, speed, foods).
-- **Paddle Duel · Two phones** (`duel-logic.js`, mode `phones`): seat 1's paddle at the bottom (top edge 266), seat
-  2's at the top (bottom edge 54); the court is the same from either end (y ↔ 320 − y; the ball is out above 34 or
-  below 286). Everything in whole numbers: positions and speeds in 1/256 px, the angle from where the ball meets
-  the paddle in 21 steps of 5.5° from a table of sines (× 4096), rounded the same way on either side, so seat 2's
-  game is exactly seat 1's turned round. The ball starts at 2.4 px an update (+0.12 a return, at most 6), served
-  after 1 s (or at once by the receiver) to whoever lost the point — the first to a player chosen by the seed, at
-  up to ±27.5°. A finger sends `aim` (its x on the court; seat 2's turned round), the keys left/right held. First to
-  7: a return 10, a point 100, the match 1,000.
-- **Tank Battle · two tanks** (`tanks-logic.js`, modes `together` and `against`): player 2's tank (`p2`, its controls
-  in `ctl2`, its shells owner −1) starts right of the flag (together) or at the top facing down (against). Together:
-  1½ × the arena's enemies (rounded up), who chase the nearer tank; each player's own lives (3) and score (a tank
-  100 to whoever hit it, an arena 500 to both); friendly shells stop on the other tank; a player out of lives
-  stays out (also in the next arena); over when the flag falls or both are out. Against each other: no enemies,
-  `VERSUS_LEVELS` (four arenas whose bottom half is the top half turned round), the first from the seed and the
-  next each round; `FLAG2` at the top is player 2's; a hit 100 (the other tank's shield still protects it), a
-  round 300 (their flag — any shell, theirs too — or all their lives; 3 lives a round), the match 500 (first to 2
-  rounds; at most 5 rounds, a round at most 2 minutes, then drawn). `steer` = 1 + the direction toward a finger
-  (worked out on the phone with `steerFor`). Single-player Tank Battle is unchanged.
 - **Bubble Pop** (`bubbles-logic.js`): rows of 8 bubbles (24 px, every other row half a bubble to the right) hang
   from the ceiling; the launcher at the bottom turns 1.6° an update (←/→ held) up to 78° either way, or points at a
   finger (above the launcher; on the strip below it the finger's x sets the angle). A shot flies 7 px an update in
@@ -493,7 +477,7 @@ it stops on pause, game over, `destroy()` and when the page is hidden.
   The rules are the server's (`app/rules/<game>.py`) move for move: the same moves (canonical JSON), the same
   refusals, the same state (`digest`) — checked on 2,400 random games. A move is made with a tap on the board or the
   cursor (arrows) and `fire`; an illegal one says so on the bottom line (`nope`). Score: a win the level's base
-  (`LEVEL_BASE` 100 / 250 / 500, two phones `PHONES_BASE` 500) + a bonus up to the base, a draw base ÷ 4, a loss and
+  (`LEVEL_BASE` 100 / 250 / 500, two phones (turn by turn) `PHONES_BASE` 500) + a bonus up to the base, a draw base ÷ 4, a loss and
   one screen 0. The game ends 80 updates after the last move (the winning line shows first).
   - **Four in a Row** (`fourrow-logic.js`): 7 × 6, `{col}`; four in any line wins, a full frame draws; ↓ drops too.
     Computer: Easy wins when it can, blocks 60 % of the time, else near the middle at random; Medium and Hard search 4
@@ -656,9 +640,9 @@ line through the middle, no dots.
 
 The two-phone lockstep play of Snake Duel, Paddle Duel, Tank Battle and Carrom (SPEC §13.4) was removed in 1.8.0
 with `lockstep.js`, the kit's lockstep session (`opts.live`, `liveStatus()`), the `lockstep` / `liveModes` /
-`liveTurns` registration and the games' seat-2 views and input forwarding. The rules files keep their two-player
-code (`tanks-logic.js` `two` modes, `duel-logic.js` / `snakeduel-logic.js` / `carrom-logic.js` `phones`), unreachable
-from the game files; the logic tests still cover them.
+`liveTurns` registration and the games' seat-2 views and input forwarding. The rules files' leftover two-player code
+(Tank Battle's `together` / `against`, the `phones` modes of Paddle Duel, Snake Duel and Carrom, their checksums and
+reports) was taken out in 1.12.4.
 
 ## Wave 5 additions
 
@@ -750,7 +734,7 @@ from the game files; the logic tests still cover them.
     points (coins pocketed, + 3 for a covered queen), equal points a draw. Doubles: four on one screen, partners
     opposite, turns going round. Shot = `[place 0–1000, angle 100–1700 tenths of a degree (900 straight ahead), power
     1–100]`. Physics: whole numbers (1/256 px, 4 sub-steps an update, exact integer division and square roots, a sine
-    table built from its series, no `Math.sin`/`random`), FNV-1a checksum. The computer tries cuts of each coin into
+    table built from its series, no `Math.sin`/`random`). The computer tries cuts of each coin into
     each pocket from seven places, the same off each cushion and a few seeded shots, on a copy, and keeps the best
     (Easy 6 tried and aimed a little off, Medium 16, Hard 46; of shots that pocket nothing, the one leaving its coins
     nearer the pockets).
@@ -834,7 +818,7 @@ them all without crashing one into another.
   saving and continuing; board *n* of *Levels* is the same on every run and starting at level *n* plays it
   (SPEC §14). Python: the `games.py` entry, its modes and limits, and that a race turns hints off.
 - When built: the root README's game count (42 → 43) and its Arcade row, the DOCS game list and controls guide, and
-  `index.html`'s two script tags.
+  the game's files in `tests/js/manifest-tool.js`'s ORDER (then run it to remake `manifest.js`).
 
 ## Start-screen options that stay off in races
 
@@ -936,8 +920,11 @@ cleared.
 Add `<game>-logic.js` (pure rules with `create`, `step`, `result`) and `<game>.js`, which builds an
 `impl` (`init(seed)`, `step()` → events, `input`, `pointer`, `draw(g, info)`, `score()`, `level()`,
 `isOver()`, `result()`, `sounds`) and returns `ArcadeKit.createSession(canvas, opts, impl)` from its
-`create`, then calls `ArcadeGames.register(...)`. Add the two script tags and the server's game-table
-entry. Nothing else in the kit or the shell changes.
+`create`, then calls `ArcadeGames.register(...)`. Add the two files to `tests/js/manifest-tool.js`'s ORDER, run
+`node tests/js/manifest-tool.js`, and add the server's game-table entry. Nothing else in the kit or the shell changes.
+A game whose picture is still most of the time (a puzzle, a board game) can give its impl a `drawKey()` — a value that
+changes whenever the picture changes by itself (the clock's seconds, a timed message), or null while something moves —
+and is then drawn only when it changed or after input, events, a new look or size.
 
 ## Tests
 

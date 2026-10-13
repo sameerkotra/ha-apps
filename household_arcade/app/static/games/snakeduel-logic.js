@@ -5,10 +5,8 @@
    wins the match; then the next arena (cpu mode). One call to step() is one update (60 a second).
 
    Player 1 (index 0, green) starts on the right heading left; player 2 (index 1, blue, the computer in `cpu`)
-   starts on the left heading right. The score is player 1's; `score2` is player 2's (each player's own score
-   when two phones play one match, mode `phones`, SPEC §13.4: food 10, round 100, match 500 × min(arena, 10)).
-   Live play on two phones only uses whole numbers and Math.imul (no sin/cos/pow), so every phone computes the
-   same game; `checksum(s)` is compared between the phones every second. */
+   starts on the left heading right. The score is player 1's; `score2` is player 2's (food 10, round 100, match
+   500 × min(arena, 10)). */
 (function () {
   "use strict";
 
@@ -16,7 +14,7 @@
   var DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
   var OPP = { up: "down", down: "up", left: "right", right: "left" };
   var DIR_LIST = ["up", "right", "down", "left"];
-  var MODES = ["cpu", "two", "phones"];
+  var MODES = ["cpu", "two"];
   var START_LEN = 4;
   // where each snake's head starts and which way it heads (the body runs behind it)
   var STARTS = [{ x: 18, y: 10, dir: "left" }, { x: 5, y: 9, dir: "right" }];
@@ -268,8 +266,8 @@
       stats: { foods: 0, foodsOther: 0, rounds: 0, roundsLost: 0, draws: 0, matches: 0, matchesLost: 0, arenas: 0,
         moves: 0, winner: null, cause: null },
     };
-    // Against the computer the arenas come in order; two players (one screen or two phones) play one match on an
-    // arena picked by the seed.
+    // Against the computer the arenas come in order; two players on one screen play one match on an arena picked by
+    // the seed.
     var first = s.mode !== "cpu" ? 1 + Math.floor(rand(s) * s.arenas.length) : startAt(o.startLevel, s.arenas.length);
     loadArena(s, first);
     return s;
@@ -507,27 +505,6 @@
     return [];
   }
 
-  /** What both phones must agree on (SPEC §13.4): every number the next updates depend on. */
-  function checksum(s) {
-    var parts = [s.updates, s.phase, s.timer, s.round, s.roundTime, s.level, s.wins[0], s.wins[1], s.score, s.score2,
-      s.rng, s.over ? 1 : 0, s.matchWinner, s.roundWinner];
-    s.food.forEach(function (f) { parts.push(f.x, f.y); });
-    s.snakes.forEach(function (sn) {
-      parts.push(sn.dir, sn.queue.join(""), sn.grow, sn.pu, sn.crashed ? 1 : 0, sn.body.length);
-      sn.body.forEach(function (c) { parts.push(c.x * 32 + c.y); });
-    });
-    return hash(parts.join(","));
-  }
-  function hash(str) {          // FNV-1a, unsigned 32-bit (the same as ArcadeLockstep.hash)
-    var h = 0x811c9dc5;
-    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-    return h >>> 0;
-  }
-  /** Both players' results, for the match (SPEC §13.4): each score, and who won the match (1, 2, or 0 a draw). */
-  function report(s) {
-    return { scores: [s.score, s.score2], levels: [s.level, s.level], winner: s.matchWinner || 0 };
-  }
-
   /** A saved game (SPEC §12): the rules state as plain data, without the arena list (the server keeps it). */
   var STATE_VERSION = 1;
   function save(s) {
@@ -578,7 +555,6 @@
     MATCH_END: MATCH_END, ROUND_LIMIT: ROUND_LIMIT, MAX_QUEUE: MAX_QUEUE, EARLY_TURN: EARLY_TURN,
     LEVELS: LEVELS, usableLevels: usableLevels, STATE_VERSION: STATE_VERSION,
     create: create, step: step, turn: turn, press: press, save: save, restore: restore, result: result,
-    checksum: checksum, report: report,
     isWall: isWall, foodAt: foodAt, bodyAt: bodyAt, placeFood: placeFood, loadArena: loadArena, startRound: startRound,
     cpuDecide: cpuDecide, skill: skill, rand: rand,
   };

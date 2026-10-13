@@ -278,7 +278,7 @@
   root.ArcadeGames.register({
     id: "carrom",
     name: "Carrom",
-    modes: Logic.MODES.filter(function (m) { return m.id !== "phones"; }).map(function (m) { return { id: m.id, label: m.label }; }),
+    modes: Logic.MODES.map(function (m) { return { id: m.id, label: m.label }; }),
     defaultMode: "easy",
     controls: "touch",
     buttons: [

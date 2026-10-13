@@ -45,6 +45,8 @@
     var impl = {
       init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); setup(); },
       save: function () { return Logic.save(s); },
+      // still unless the clock's seconds, a message or the hint ring change by themselves (kit.js drawKey)
+      drawKey: function () { return s ? [Logic.effective(s), s.message, s.hint ? 1 : 0, s.won ? 1 : 0, s.stuck ? 1 : 0].join("|") : null; },
       restore: function (data) { s = Logic.restore(data); setup(); },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },

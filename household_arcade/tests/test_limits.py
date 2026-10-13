@@ -137,7 +137,7 @@ class TestActiveTime(LimitsBase):
         self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": "lots"})          # ignored, not an error
         self.assertEqual(self.post(f"/api/sessions/{sid}/beat", {}, MEERA).status_code, 404)
 
-    def test_running_game_finishes_when_time_runs_out(self):
+    def test_running_game_stops_when_time_runs_out(self):
         self.make_child(minutesSchool=10)
         self.run_for(9 * 60)
         r = self.start()
@@ -147,8 +147,12 @@ class TestActiveTime(LimitsBase):
         self.clock.advance(minutes=5)
         beat = self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 300}).json()
         self.assertEqual(beat["playTime"]["leftSeconds"], 0)
-        self.assertFalse(beat["ended"])                               # the game goes on
-        res = self.post("/api/scores", {"sessionId": sid, "score": 120, "level": 1, "seconds": 300})
+        self.assertTrue(beat["ended"])                                # the heartbeat ends the game …
+        self.assertTrue(beat["stop"])
+        self.assertIn("Play time is up", beat["reason"])
+        again = self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 310}).json()
+        self.assertTrue(again["stop"])                                # … and says so again if asked
+        res = self.post("/api/scores", {"sessionId": sid, "score": 120, "level": 1, "seconds": 300})   # its score counts
         self.assertEqual(res.status_code, 200)
         self.assertTrue(res.json()["saved"])
         self.assertEqual(self.start().status_code, 409)               # no new game

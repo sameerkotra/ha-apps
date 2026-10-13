@@ -17,7 +17,7 @@ const LOAD_ORDER = ["kit.js", "sound.js", "registry.js", "snake-logic.js", "snak
   "boardkit.js", "fourrow-logic.js", "fourrow.js", "tictactoe-logic.js", "tictactoe.js", "checkers-logic.js", "checkers.js",
   "reversi-logic.js", "reversi.js", "dots-logic.js", "dots.js", "seabattle-logic.js", "seabattle.js",
   "dicekit.js", "ludo-logic.js", "ludo.js", "snakes-logic.js", "snakes.js", "carrom-logic.js", "carrom.js", "chess-logic.js", "chess.js",
-  "arrows-logic.js", "arrows.js", "parking-logic.js", "parking.js", "watersort-logic.js", "watersort.js", "bolts-logic.js", "bolts.js", "connect-logic.js", "connect.js", "untangle-logic.js", "untangle.js"];
+  "arrows-logic.js", "arrows.js", "parking-levels.js", "parking-logic.js", "parking.js", "watersort-logic.js", "watersort.js", "bolts-logic.js", "bolts.js", "connect-logic.js", "connect.js", "untangle-logic.js", "untangle.js"];
 
 function fakeContext(canvas, counts) {
   const state = { font: "10px sans-serif" };
@@ -92,7 +92,8 @@ function makeSandbox(opts = {}) {
   };
   win.window = win; win.self = win; win.globalThis = win;
   const context = vm.createContext(win);
-  for (const f of LOAD_ORDER.concat((opts.extra || []).filter((f) => !LOAD_ORDER.includes(f)))) {
+  const files = opts.only || LOAD_ORDER.concat((opts.extra || []).filter((f) => !LOAD_ORDER.includes(f)));
+  for (const f of files) {
     vm.runInContext(fs.readFileSync(path.join(GAMES_DIR, f), "utf8"), context, { filename: f });
   }
   return {

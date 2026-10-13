@@ -122,6 +122,11 @@ SETTINGS = [
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
             help="Lets the Household Assistant tell people the leaderboard (only while the leaderboard is on) and their "
                  "own bests. Children can only ask for their own. Each person can turn it off on Settings."),
+    # app-message signing (shared app_bus): the same key in every household app; empty = unsigned, as before
+    Setting("bus_signing_key", "", "App-messages signing key", group="assistant", secret=True, max_length=200,
+            validators=[_one_line],
+            help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+                 "Assistant's network can send messages as any other."),
     Setting("ha_sensors", False, "Home Assistant sensors", group="ha",
             help="Publishes sensor.household_arcade_<game>_record, sensor.household_arcade_<person>_played_today and "
                  "binary_sensor.household_arcade_<person>_playing."),

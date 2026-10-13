@@ -5,6 +5,7 @@ import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from .. import auth, config, db, games, ha_sensors, settings
 from ..auth import require_admin
@@ -139,15 +140,16 @@ async def admin_storage_import_db(background: BackgroundTasks, file: UploadFile 
     scratch file is in DATA_DIR so the final os.replace() is a same-filesystem
     rename. A backup has no AI access key, so this install keeps its own."""
     tmp_path = await backup_core.receive(
-        file, config.DATA_DIR, max_bytes=MAX_IMPORT_BYTES,
+        file, config.DATA_DIR, prefix=db.SNAPSHOT_PREFIX, max_bytes=MAX_IMPORT_BYTES,
         too_big=lambda: HTTPException(413, "That file is too big to be a Household Arcade database."))
     try:
         try:
-            db.validate_backup_file(tmp_path)
+            await run_in_threadpool(db.validate_backup_file, tmp_path)
         except ValueError as e:
             raise HTTPException(400, str(e))
         saved_secrets = settings.REGISTRY.saved_secrets()
-        db.import_from_tempfile(tmp_path)
+        # off the event loop: the swap waits for any housekeeping pass to finish first (db.GATE)
+        await run_in_threadpool(db.import_from_tempfile, tmp_path)
         settings.REGISTRY.keep_secrets(saved_secrets)
         settings.invalidate()
     finally:

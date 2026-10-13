@@ -9,6 +9,9 @@
 (function (root) {
   "use strict";
   var Logic = root.CheckersLogic, BK = root.BoardKit;
+  // Hard thinks hardest: in a Web Worker where the page can make one (board-worker.js), so the page never stops
+  if (BK.canThinkElsewhere()) Logic.setThinker(BK.workerThinker("checkers-logic.js", "CheckersLogic", Logic));
+  var movesOf = BK.memo(function (board, first, seat) { return Logic.allMoves(board, first, seat); });   // once per position
   var CS = 27, X0 = 12, Y0 = 44;
 
   function flipped(s) { return s.mode === "phones" && s.me !== s.first; }
@@ -50,7 +53,7 @@
     }
     var mine = Logic.mySeat(s), movable = {}, dests = {};
     if (mine >= 0 && info.state === "running") {
-      var all = Logic.allMoves(s.board, s.first, mine);
+      var all = movesOf(s.board.join(",") + "|" + s.first + "|" + mine, s.board, s.first, mine);
       for (i = 0; i < all.length; i++) {
         movable[all[i][0]] = true;
         if (s.sel) {

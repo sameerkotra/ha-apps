@@ -110,6 +110,18 @@ def store(conn, user_id: str, session, body: dict, levels_json: str | None, wall
     return {"saved": public(get(conn, user_id, game)), "replaced": replaced}
 
 
+def claim(conn, user_id: str, game: str, session_id: str) -> None:
+    """A save being continued belongs to that session from now on: continuing it again (another tab) takes it over,
+    and only the session holding it may finish it with a score."""
+    conn.execute("UPDATE saved_games SET session_id = ? WHERE user_id = ? AND game = ?", (session_id, user_id, game))
+
+
+def claimed_by(conn, user_id: str, session) -> bool:
+    """Does this continued session still hold its save (not continued again elsewhere, ended or replaced)?"""
+    row = get(conn, user_id, session["game"])
+    return row is not None and row["session_id"] == session["id"]
+
+
 def consumed_by(conn, user_id: str, session) -> None:
     """A continued game ended with a score: its save is used up (unless a newer save has replaced it)."""
     if not session["resumed"]:

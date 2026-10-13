@@ -9,7 +9,10 @@
        typing goes to the game), turns + turnModes (the modes played turn by turn from two
        phones, SPEC §13.5: the server checks every move; the game's opts.turns carries the match), create(canvas, opts) }
    Adding a game later = its files in games/ plus one register() call (and its
-   entry in the server's game table). */
+   entry in the server's game table), then `node tests/js/manifest-tool.js` to list them in manifest.js.
+
+   The page loads only the kit, sound, this file and manifest.js up front; a game's own files are loaded when it is
+   opened: ArcadeGames.load(id) → a Promise of its definition (each file once, in order, with this file's ?v=). */
 (function (root) {
   "use strict";
 
@@ -83,12 +86,60 @@
     return entry;
   }
 
+  function get(id) {
+    for (var i = 0; i < defs.length; i++) if (defs[i].id === id) return defs[i];
+    return null;
+  }
+
+  // ---------- loading a game's files when it is opened ----------
+  var doc = root.document;
+  var query = "";
+  try {
+    var me = doc && doc.currentScript && doc.currentScript.src;
+    var q = me ? me.indexOf("?") : -1;
+    if (q >= 0) query = me.slice(q);          // the same ?v= as this file: a new version loads new files
+  } catch (e) { query = ""; }
+  var scripts = {}, loading = {};
+  function script(file) {
+    if (scripts[file]) return scripts[file];
+    scripts[file] = new Promise(function (resolve, reject) {
+      var s = doc.createElement("script");
+      s.src = "games/" + file + query;
+      s.async = false;
+      s.onload = function () { resolve(); };
+      s.onerror = function () { delete scripts[file]; reject(new Error(file + " couldn't be loaded")); };
+      (doc.head || doc.body || doc.documentElement).appendChild(s);
+    });
+    return scripts[file];
+  }
+  function manifest(id) {
+    var m = root.ArcadeManifest && root.ArcadeManifest.games;
+    return m && Object.prototype.hasOwnProperty.call(m, id) ? m[id] : null;
+  }
+  function load(id) {
+    var have = get(id);
+    if (have) return Promise.resolve(have);
+    var m = manifest(id);
+    if (!m || !doc) return Promise.reject(new Error("That game isn't known to this page."));
+    if (!loading[id]) {
+      loading[id] = m.files.reduce(function (p, f) { return p.then(function () { return script(f); }); }, Promise.resolve())
+        .then(function () {
+          var def = get(id);
+          if (!def) throw new Error("That game didn't load.");
+          return def;
+        })
+        .catch(function (e) { delete loading[id]; throw e; });
+    }
+    return loading[id];
+  }
+
   root.ArcadeGames = {
     register: register,
-    get: function (id) {
-      for (var i = 0; i < defs.length; i++) if (defs[i].id === id) return defs[i];
-      return null;
-    },
+    get: get,
     list: function () { return defs.slice(); },
+    /** A game's definition, loading its files first if they aren't on the page yet (a Promise). */
+    load: load,
+    /** What the page knows about a game before its files are loaded: { files, help } (manifest.js), or null. */
+    info: function (id) { var d = get(id); var m = manifest(id); return d ? { help: d.help, files: m ? m.files : [] } : m; },
   };
 })(typeof window !== "undefined" ? window : this);

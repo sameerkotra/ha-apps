@@ -26,6 +26,11 @@
   var DEFAULT_HINTS = 3;
   var MAX_TRIES = 90;               // puzzles tried for a level before the closest one is used
   var HISTORY_MAX = 400;
+  /** One step for Undo; the oldest go once there are HISTORY_MAX (a saved game stays small). */
+  function remember(s, entry) {
+    s.history.push(entry);
+    if (s.history.length > HISTORY_MAX) s.history.splice(0, s.history.length - HISTORY_MAX);
+  }
   var MESSAGE_UPDATES = 240;        // a short message stays 4 s
   var STATE_VERSION = 1;
 
@@ -449,8 +454,7 @@
     var v0 = s.vals[i], n0 = s.notes[i], changes = [];
     s.vals[i] = d; s.notes[i] = 0;
     removeNotes(s, i, d, changes);
-    s.history.push({ i: i, v0: v0, n0: n0, peers: changes });
-    if (s.history.length > HISTORY_MAX) s.history.shift();
+    remember(s, { i: i, v0: v0, n0: n0, peers: changes });
     s.stats.placed++;
     s.focus = d;
     var wrong = d !== s.solution.charCodeAt(i) - 48;
@@ -486,7 +490,7 @@
       if (s.vals[i]) { say(s, "Erase the number first to write notes."); return evs; }
       var n0 = s.notes[i];
       s.notes[i] ^= 1 << (d - 1);
-      s.history.push({ i: i, v0: 0, n0: n0, peers: [] });
+      remember(s, { i: i, v0: 0, n0: n0, peers: [] });
       s.stats.notesMade++;
       evs.push({ type: "note", cell: i, digit: d, on: !!(s.notes[i] >> (d - 1) & 1) });
       return evs;
@@ -500,7 +504,7 @@
     if (s.over || i < 0 || s.fixed[i]) return evs;
     if (s.hint) s.hint = null;
     if (!s.vals[i] && !s.notes[i]) return evs;
-    s.history.push({ i: i, v0: s.vals[i], n0: s.notes[i], peers: [] });
+    remember(s, { i: i, v0: s.vals[i], n0: s.notes[i], peers: [] });
     s.vals[i] = 0; s.notes[i] = 0; s.checking = false;
     s.stats.erased++;
     evs.push({ type: "erase", cell: i });
@@ -516,8 +520,7 @@
   function fillNotes(s) {
     if (s.over) return [];
     var cand = candidates(Int8Array.from(s.vals)), i;
-    s.history.push({ all: s.notes.slice() });
-    if (s.history.length > HISTORY_MAX) s.history.shift();
+    remember(s, { all: s.notes.slice() });
     for (i = 0; i < 81; i++) s.notes[i] = s.vals[i] ? 0 : cand[i];
     if (s.hint) s.hint = null;
     return [{ type: "fill" }];
@@ -542,7 +545,7 @@
     if (s.hint) {
       var h = s.hint;
       s.hint = null;
-      if (h.digit === 0) { s.history.push({ i: h.cell, v0: s.vals[h.cell], n0: s.notes[h.cell], peers: [] }); s.vals[h.cell] = 0; s.notes[h.cell] = 0; evs.push({ type: "erase", cell: h.cell }); }
+      if (h.digit === 0) { remember(s, { i: h.cell, v0: s.vals[h.cell], n0: s.notes[h.cell], peers: [] }); s.vals[h.cell] = 0; s.notes[h.cell] = 0; evs.push({ type: "erase", cell: h.cell }); }
       else setValue(s, h.cell, h.digit, evs, true);
       s.sel = h.cell;
       evs.push({ type: "hintFill", cell: h.cell });

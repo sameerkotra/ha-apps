@@ -24,6 +24,9 @@ logger = logging.getLogger("db")
 os.makedirs(config.DATA_DIR, exist_ok=True)
 
 _import_lock = threading.Lock()
+# Background work (housekeeping) runs inside GATE.work(); a restore pauses it, so nothing writes to the old file
+# while the database is swapped.
+GATE = db_core.MaintenanceGate()
 
 
 def new_id() -> str:
@@ -31,12 +34,22 @@ def new_id() -> str:
 
 
 def _connect(path: str | None = None) -> sqlite3.Connection:
-    return db_core.connect(path or config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",))
+    # synchronous NORMAL: safe with WAL (a power cut can lose the last commits, never the file) and one disk flush
+    # less per commit.
+    return db_core.connect(path or config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON", "synchronous = NORMAL"))
 
 
 def get_conn():
     """Commits when the block ends, rolls back on an error, always closes (app/common/db_core.py)."""
     return db_core.transaction(_connect)
+
+
+def write_lock(conn) -> None:
+    """Take the database's write lock now (BEGIN IMMEDIATE) when this connection hasn't written yet, so what the
+    request reads next (a match's board, whether a score was sent) can't change under it before it commits: a
+    second request doing the same waits for this one and then sees its result."""
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +367,21 @@ ALTER TABLE saved_games ADD COLUMN start_level INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE users ADD COLUMN favourites TEXT
 """
 
+# Fair play (1.12.4): why a play session ended (stale: no heartbeat, housekeeping closed it; replaced: another game was
+# started; limit: a child's play time ran out; NULL: the page ended it), the level the heartbeats have counted so far
+# (one level a heartbeat), a table for the app's own small values (the built-in levels' fingerprint, so start-up
+# skips checking them again), and an index for the highest level reached.
+_M11_FAIR_PLAY = """
+ALTER TABLE play_sessions ADD COLUMN end_reason TEXT;
+ALTER TABLE play_sessions ADD COLUMN level_seen INTEGER;
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scores_level ON scores(game, mode, level);
+CREATE INDEX IF NOT EXISTS idx_sessions_started ON play_sessions(started_at)
+"""
+
 # (number, description, SQL). Append only.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "people, play sessions, scores, app settings", _M1_CORE),
@@ -366,6 +394,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (8, "turn-by-turn matches: moves, state, notifications", _M8_TURNS),
     (9, "the Household Assistant: each person's switch", _M9_ASSISTANT),
     (10, "level progress, start levels, favourite games", _M10_PROGRESS),
+    (11, "fair play: how sessions ended, levels counted, app values", _M11_FAIR_PLAY),
 ]
 LATEST = MIGRATIONS[-1][0]
 
@@ -430,12 +459,15 @@ def init_db() -> None:
 # Backup / import (Admin → Storage)
 # ---------------------------------------------------------------------------
 
+SNAPSHOT_PREFIX = "household-arcade-snapshot-"     # temp files of downloads and imports (housekeeping sweeps old ones)
+
+
 def backup_to_tempfile(after=None) -> str:
     """Online-backup the live database into a fresh temp .db file and return
     its path (never a plain copy: recent commits may still be in the -wal
     file). `after(conn)` changes the copy first (the download blanks the
     secret settings). The caller deletes it."""
-    return db_core.snapshot_to_tempfile(_connect, after=after)
+    return db_core.snapshot_to_tempfile(_connect, after=after, prefix=SNAPSHOT_PREFIX)
 
 
 def validate_backup_file(path: str) -> None:
@@ -454,4 +486,5 @@ def validate_backup_file(path: str) -> None:
 def import_from_tempfile(tmp_path: str) -> None:
     """Swap the live database for an already-validated file, then migrate it
     to the current schema straight away."""
-    backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
+    with GATE.pause(timeout=60):
+        backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)

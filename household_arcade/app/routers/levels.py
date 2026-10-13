@@ -141,14 +141,21 @@ def delete_level(level_id: str, admin: dict = Depends(require_admin)):
 @router.post("/admin/ai/test")
 def ai_test(body: dict = Body(default={}), admin: dict = Depends(require_admin)):
     """Test connection with what's on App settings, or with unsaved values from the page ({provider, url, model,
-    apiKey}; an empty apiKey uses the saved one). Lists the provider's models and asks the model one tiny question."""
+    apiKey}; an empty apiKey uses the saved one — only for the saved provider and address, so the saved key is never
+    sent anywhere else). Lists the provider's models and asks the model one tiny question."""
     v = settings.all()
     body = body if isinstance(body, dict) else {}
     provider = body.get("provider") if body.get("provider") in settings.PROVIDERS else v["ai_provider"]
     url = body.get("url") if isinstance(body.get("url"), str) else v["ai_url"]
     url = (url.strip() or settings.DEFAULT_URLS.get(provider, "")).rstrip("/")
     model = body.get("model").strip() if isinstance(body.get("model"), str) else v["ai_model"]
-    key = body.get("apiKey") if isinstance(body.get("apiKey"), str) and body.get("apiKey") else v["ai_api_key"]
+    saved_url = (v["ai_url"] or settings.DEFAULT_URLS.get(v["ai_provider"], "")).rstrip("/")
+    if isinstance(body.get("apiKey"), str) and body.get("apiKey"):
+        key = body["apiKey"]
+    elif provider == v["ai_provider"] and url == saved_url:
+        key = v["ai_api_key"]
+    else:
+        key = ""                       # another provider or address: the saved key stays with the saved one
     cfg = ai_client.Config(provider=provider, url=url, model=model, api_key=key, max_output_tokens=200)
     if not url:
         return {"ok": False, "error": "Enter the address of your Ollama server first."}

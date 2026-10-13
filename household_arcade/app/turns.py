@@ -29,6 +29,7 @@ import json
 import logging
 import random
 import secrets
+import sqlite3
 from datetime import timedelta
 
 from . import config, db, games, limits, notify, rules, scores, settings
@@ -157,7 +158,9 @@ def picture(conn, m, user_id: str) -> dict:
         draw = any(p["result"] == "draw" for p in ps)
         # the winner's seat, 0 for a draw, None for no result
         result = {"winner": win if win else (0 if draw else None), "reason": m["end_reason"]}
-    players = [{"seat": p["seat"], "id": p["user_id"], "name": p["name"], "you": p["user_id"] == user_id,
+    names = together.names_for(conn, user_id)
+    players = [{"seat": p["seat"], "id": p["user_id"], "you": p["user_id"] == user_id,
+                "name": p["name"] if p["user_id"] == user_id else together.shown_name(p["name"], names),
                 "computer": bool(p["computer"]), "left": bool(p["left_at"]), "result": p["result"], "score": p["score"]}
                for p in _players(conn, mid)]
     roll = st.get("_roll") if st else None
@@ -228,7 +231,7 @@ def _store(conn, m, st_before: dict, seat: int, move, *, dice=None) -> dict:
     try:
         conn.execute("INSERT INTO match_moves (match_id, number, seat, move, dice, at) VALUES (?, ?, ?, ?, ?, ?)",
                      (m["id"], number, seat, json.dumps(record), dice, _now_iso()))
-    except Exception as e:                           # the other phone's move came first (same number)
+    except sqlite3.IntegrityError as e:              # the other phone's move came first (same number)
         raise TurnsError(409, "Another move came first — the board is updated.") from e
     return new
 
@@ -276,18 +279,21 @@ def _session_time(conn, match_id: str, user_id: str, session_id, reported) -> No
 
 
 def move(conn, match_id: str, current: dict, body) -> tuple[dict, bool]:
-    """A player's move: {move, n?} (n = the number of moves the phone has seen; a different one is 409, the board has
-    changed). Returns (the new picture, whether anyone needs telling it's their move)."""
+    """A player's move: {move, n} (n = the number of moves the phone has seen; a different one is 409, the board has
+    changed). The caller holds the write lock (db.write_lock), so the board read here is the one the move is played
+    on. Returns (the new picture, whether anyone needs telling it's their move)."""
     if not isinstance(body, dict) or "move" not in body:
-        raise TurnsError(422, "Send {move}.")
+        raise TurnsError(422, "Send {move, n}.")
+    seen_n = body.get("n")
+    if isinstance(seen_n, bool) or not isinstance(seen_n, int):
+        raise TurnsError(422, "Send n, the number of moves this phone has seen, with the move.")
     m, me = _need_playing(conn, match_id, current)
     _may_play(conn, current, m["game"])
     _session_time(conn, match_id, current["id"], body.get("sessionId"), body.get("activeSeconds"))
     mod = rules.get(m["game"])
     st = state_of(m)
-    seen_n = body.get("n")
     have = conn.execute("SELECT COUNT(*) FROM match_moves WHERE match_id = ?", (match_id,)).fetchone()[0]
-    if seen_n is not None and seen_n != have:
+    if seen_n != have:
         raise TurnsError(409, "The board has changed — it's up to date now.")
     seat = me["seat"]
     if seat - 1 not in mod.to_move(st):

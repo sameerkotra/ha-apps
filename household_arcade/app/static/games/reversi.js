@@ -7,6 +7,9 @@
 (function (root) {
   "use strict";
   var Logic = root.ReversiLogic, BK = root.BoardKit;
+  // Hard thinks hardest: in a Web Worker where the page can make one (board-worker.js), so the page never stops
+  if (BK.canThinkElsewhere()) Logic.setThinker(BK.workerThinker("reversi-logic.js", "ReversiLogic", Logic));
+  var cellsOf = BK.memo(function (board, seat) { return Logic.cells(board, seat); });     // once per position
   var CS = 27, X0 = 12, Y0 = 44;
 
   function disc(g, x, y, dark, r) {
@@ -41,7 +44,7 @@
     if (s.last >= 0) g.circle(X0 + (s.last & 7) * CS + CS / 2, Y0 + (s.last >> 3) * CS + CS / 2, 2, lcd ? 9 : 7, { solid: true, white: lcd });
     var mine = Logic.mySeat(s);
     if (mine >= 0 && info.state === "running") {
-      var cs = Logic.cells(s.board, mine);
+      var cs = cellsOf(s.board.join(",") + "|" + mine, s.board, mine);
       for (i = 0; i < cs.length; i++) g.circle(X0 + (cs[i] & 7) * CS + CS / 2, Y0 + (cs[i] >> 3) * CS + CS / 2, 3, lcd ? 0 : 7, { solid: true, a: 0.8 });
       var cx = X0 + (s.cursor & 7) * CS, cy = Y0 + (s.cursor >> 3) * CS, e = CS - 2;
       g.line(cx + 1, cy + 1, cx + e, cy + 1, lcd ? 0 : 5, 2, { cap: "butt" }); g.line(cx + 1, cy + e, cx + e, cy + e, lcd ? 0 : 5, 2, { cap: "butt" });

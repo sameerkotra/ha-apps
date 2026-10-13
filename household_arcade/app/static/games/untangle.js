@@ -20,6 +20,10 @@
     var impl = {
       init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; drag = -1; },
       save: function () { return Logic.save(s); },
+      // still unless the clock's seconds, the level or a timed tip change by themselves (kit.js drawKey)
+      drawKey: function () {
+        return s ? [Logic.seconds(s), s.phase, s.level, s.won ? 1 : 0, s.updates - s.noHintAt < 180 ? 1 : 0].join("|") : null;
+      },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; drag = -1; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
@@ -37,8 +41,19 @@
       draw: draw,
     };
 
+    // The crossings, worked out again only when a point moved (they take every pair of lines).
+    var crossCache = null, crossPts = [];
+    function crossingsNow() {
+      var same = crossCache && crossPts.length === s.pts.length * 2 + 1 && crossPts[0] === s.edges;
+      for (var k = 0; same && k < s.pts.length; k++) same = crossPts[1 + 2 * k] === s.pts[k][0] && crossPts[2 + 2 * k] === s.pts[k][1];
+      if (same) return crossCache;
+      crossPts = [s.edges];
+      for (k = 0; k < s.pts.length; k++) crossPts.push(s.pts[k][0], s.pts[k][1]);
+      return (crossCache = Logic.crossings(s.pts, s.edges));
+    }
+
     function draw(g, info) {
-      var lcd = g.kind === "lcd", i, cr = Logic.crossings(s.pts, s.edges);
+      var lcd = g.kind === "lcd", i, cr = crossingsNow();
       g.hud(s.levels ? "LEVEL " + s.level : LABELS[s.mode], Logic.clock(Logic.seconds(s)));
       g.board(Logic.X0 - 6, Logic.Y0 - 6, Logic.SIZE + 12, Logic.SIZE + 12);
       for (i = 0; i < s.edges.length; i++) {

@@ -332,8 +332,13 @@
     var d = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[action];
     if (d) {
       if (s.showCur) {
-        s.cur.x = Math.max(0, Math.min(s.cols - 1, s.cur.x + d[0]));
-        s.cur.y = Math.max(0, Math.min(s.rows - 1, s.cur.y + d[1]));
+        // on a shaped board the cursor jumps over the gaps to the next square that way (it never rests on a hole)
+        var x = s.cur.x, y = s.cur.y;
+        while (true) {
+          x += d[0]; y += d[1];
+          if (x < 0 || y < 0 || x >= s.cols || y >= s.rows) break;
+          if (!isHole(s, y * s.cols + x)) { s.cur.x = x; s.cur.y = y; break; }
+        }
       }
       s.showCur = true;            // the first arrow just shows the cursor
       evs.push({ type: "cursor" });

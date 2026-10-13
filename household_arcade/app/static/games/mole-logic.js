@@ -279,13 +279,15 @@
     evs.push({ type: "level", level: s.level, name: garden(s, s.level).name });
   }
 
+  /** The ring moves to the next hole that way, over any grass between (it never rests on grass). */
   function moveCursor(s, action) {
     var c = s.cur % s.cols, r = Math.floor(s.cur / s.cols);
-    if (action === "left") c = Math.max(0, c - 1);
-    else if (action === "right") c = Math.min(s.cols - 1, c + 1);
-    else if (action === "up") r = Math.max(0, r - 1);
-    else if (action === "down") r = Math.min(s.rows - 1, r + 1);
-    s.cur = r * s.cols + c;
+    var dc = action === "left" ? -1 : action === "right" ? 1 : 0, dr = action === "up" ? -1 : action === "down" ? 1 : 0;
+    while (true) {
+      c += dc; r += dr;
+      if (c < 0 || r < 0 || c >= s.cols || r >= s.rows) return;
+      if (isHole(s, r * s.cols + c)) { s.cur = r * s.cols + c; return; }
+    }
   }
 
   function press(s, action, down) {

@@ -11,8 +11,12 @@ admin (auth.get_current_user clears `is_child` for admins).
   no limit), plus any extra time an admin gave for today. Time counts only
   while a game runs: the browser reports the active seconds of each play
   session, and the server keeps them between the wall time since the session
-  began less at most PAUSE_MAX_SECONDS of pauses, and that wall time.
-  A session counts on the day it started.
+  began less the pauses it may leave out, and that wall time. A child's game
+  may leave out at most PAUSE_MAX_SECONDS of pauses, and all of a child's
+  games together at most DAILY_PAUSE_SECONDS a day, so starting many short
+  games doesn't add up to free time. A game that runs past midnight counts on
+  each day for the part of it played then. When the time is used up the game
+  being played ends (the heartbeat tells the page to stop).
 - **Quiet hours.** From–to times for school nights and for weekends. A window
   whose end is before its start runs past midnight. Which set applies is
   decided by the day the window ENDS on: the window that ends on a school-day
@@ -33,6 +37,7 @@ from . import config, games, settings
 TIME_RE = re.compile(r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
 WARN_SECONDS = 5 * 60
 PAUSE_MAX_SECONDS = 15 * 60        # pauses a play session's time can leave out (SPEC §7)
+DAILY_PAUSE_SECONDS = 30 * 60      # pauses all of a child's sessions of a day can leave out together
 WALL_SLACK_SECONDS = 2
 LEADERBOARD_CHOICES = ("full", "first", "hidden")
 EXTRA_CHOICES = (15, 30, 60)
@@ -99,12 +104,50 @@ def quiet_window(limits: dict, now: datetime, school_days: list[int], holiday_da
     return None
 
 
+def _span(row) -> tuple[datetime, datetime]:
+    """When a play session began, and when it ended (or its last heartbeat, while it is open)."""
+    start = config.parse_ts(row["started_at"])
+    end = config.parse_ts(row["ended_at"] or row["last_beat_at"]) or start
+    return start, max(start, end)
+
+
 def used_seconds(conn, user_id: str, d: date) -> float:
-    start, end = config.local_day_bounds_utc(d)
-    row = conn.execute(
-        "SELECT COALESCE(SUM(active_seconds), 0) AS s FROM play_sessions "
-        "WHERE user_id = ? AND started_at >= ? AND started_at < ?", (user_id, start, end)).fetchone()
-    return float(row["s"] or 0)
+    """Active seconds played on local day `d`. A session that runs past midnight counts on each day for the share
+    of its time that fell on it (its active seconds spread evenly over its span)."""
+    start_s, end_s = config.local_day_bounds_utc(d)
+    day_start, day_end = config.parse_ts(start_s), config.parse_ts(end_s)
+    since = (day_start - timedelta(days=1)).isoformat(timespec="seconds")
+    total = 0.0
+    for r in conn.execute("SELECT started_at, last_beat_at, ended_at, active_seconds FROM play_sessions "
+                          "WHERE user_id = ? AND started_at >= ? AND started_at < ?", (user_id, since, end_s)):
+        active = float(r["active_seconds"] or 0)
+        if not active:
+            continue
+        s, e = _span(r)
+        if e <= s:
+            if day_start <= s < day_end:
+                total += active
+            continue
+        overlap = (min(e, day_end) - max(s, day_start)).total_seconds()
+        if overlap > 0:
+            total += active * overlap / (e - s).total_seconds()
+    return total
+
+
+def pause_allowance(conn, user: dict, session_id: str | None) -> float:
+    """The pauses a session of `user` may still leave out of its time: PAUSE_MAX_SECONDS for anyone, and for a child
+    no more than what is left of DAILY_PAUSE_SECONDS after today's other games."""
+    if not user.get("is_child"):
+        return PAUSE_MAX_SECONDS
+    start, end = config.local_day_bounds_utc(config.today())
+    used = 0.0
+    for r in conn.execute("SELECT id, started_at, last_beat_at, ended_at, active_seconds FROM play_sessions "
+                          "WHERE user_id = ? AND started_at >= ? AND started_at < ?", (user["id"], start, end)):
+        if r["id"] == session_id:
+            continue
+        s, e = _span(r)
+        used += max(0.0, (e - s).total_seconds() - float(r["active_seconds"] or 0))
+    return max(0.0, min(PAUSE_MAX_SECONDS, DAILY_PAUSE_SECONDS - used))
 
 
 def extra_minutes(conn, user_id: str, d: date) -> int:
@@ -203,12 +246,18 @@ def save_limits(conn, user_id: str, limits: dict, who: str | None) -> None:
          limits["leaderboard"], config.now_iso(), who))
 
 
-def credited_seconds(row, reported) -> float:
+def credited_seconds(row, reported, pause_allowance: float = PAUSE_MAX_SECONDS, at: datetime | None = None) -> float:
     """A play session's active seconds after a heartbeat (`row` is its play_sessions row; `reported` the browser's
     count of unpaused seconds). Never less than before, never more than the wall time since the session began, and
-    never less than that wall time less PAUSE_MAX_SECONDS: the browser's count can't talk play time down (SPEC §7)."""
+    never less than that wall time less the pauses it may leave out (`pause_allowance`, see pause_allowance()): the
+    browser's count can't talk play time down (SPEC §7). `at` is the moment to count to (default: now)."""
     if isinstance(reported, bool) or not isinstance(reported, (int, float)) or reported != reported:
         reported = row["active_seconds"]
-    elapsed = max(0.0, (config.utcnow() - config.parse_ts(row["started_at"])).total_seconds())
-    floor = elapsed - PAUSE_MAX_SECONDS
+    elapsed = max(0.0, ((at or config.utcnow()) - config.parse_ts(row["started_at"])).total_seconds())
+    floor = elapsed - max(0.0, pause_allowance)
     return round(max(row["active_seconds"], min(max(float(reported), floor), elapsed + WALL_SLACK_SECONDS)), 1)
+
+
+def time_up(status_: dict) -> bool:
+    """A child's play time for today is used up (quiet hours don't stop a game already running)."""
+    return bool(status_.get("isChild")) and status_.get("leftSeconds") is not None and status_["leftSeconds"] <= 0

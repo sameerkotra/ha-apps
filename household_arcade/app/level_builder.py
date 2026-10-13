@@ -31,6 +31,7 @@ logger = logging.getLogger("level_builder")
 PER_REQUEST = 5              # levels asked for in one request
 MAX_FAILED_REQUESTS = 3      # requests in a row that add nothing end the build
 MAX_LOG = 40
+AUTO_COOLDOWN_SECONDS = 30 * 60   # an automatic build for a level list at most this often
 
 
 class BuildError(Exception):
@@ -204,6 +205,11 @@ def maybe_auto(set_id: str | None, level_reached, level_count: int | None) -> di
             return None
         if left_today(conn) == 0:
             return None
+        last = conn.execute("SELECT MAX(created_at) FROM level_builds WHERE game = ? AND requested_by = 'auto'",
+                            (set_id,)).fetchone()[0]
+        since = config.parse_ts(last) if last else None
+        if since and (config.utcnow() - since).total_seconds() < AUTO_COOLDOWN_SECONDS:
+            return None              # one automatic build per list in a while, however often it is asked
     try:
         return request_build(set_id, v["ai_levels_batch"], "auto")
     except BuildError as e:
@@ -288,9 +294,12 @@ def run_build(build_id: str) -> dict | None:
                     made += 1
                     added += 1
                     _note(log, f"Level {lv['number']} “{lv['name']}” added")
-                except levels.LevelError as e:
+                except Exception as e:      # LevelError, or a shape the checks didn't expect: that level is turned down
                     rejected += 1
                     name = item.get("name") if isinstance(item, dict) and isinstance(item.get("name"), str) else "?"
+                    if not isinstance(e, levels.LevelError):
+                        logger.warning("Level check failed on an unexpected shape (%s): %r", set_id, e)
+                        e = "it isn't in the shape a level needs"
                     _note(log, f"“{name[:40]}” turned down: {e}")
             ai_usage.record(ok=True, tokens_in=reply.input_tokens, tokens_out=reply.output_tokens, ms=ms,
                             made=made - made_before, rejected=rejected - rejected_before, **note)

@@ -246,6 +246,16 @@ class TestInvites(Together):
         m = self.invite(who=MEERA, to="u_kabir", rematchOf=mid).json()
         self.assertEqual(m["rematchOf"], mid)
 
+    def test_a_rematch_must_follow_a_finished_match_of_the_same_people(self):
+        self.get("/api/me", DEV)
+        self.assertEqual(self.invite(who=MEERA, to="u_kabir", rematchOf="x").status_code, 422)          # unknown
+        mid = self.new_match()
+        self.assertEqual(self.invite(who=ASHA, to="u_dev", rematchOf=mid).status_code, 422)          # still playing
+        self.finish(mid, KABIR, 10)
+        self.finish(mid, MEERA, 20)
+        self.assertEqual(self.invite(who=ASHA, to="u_dev", rematchOf=mid).status_code, 422)          # other people
+        self.assertEqual(self.invite(who=MEERA, to="u_kabir", rematchOf=mid).status_code, 201)
+
     def test_cannot_start_another_while_in_a_match(self):
         self.new_match()
         r = self.invite(who=KABIR, to="u_asha")
@@ -283,9 +293,13 @@ class TestNotification(Together):
     def test_practice_and_rematch_wording(self):
         self.invite(practice=True)
         self.assertIn("(Practice, nothing is saved)", self.ha.notifications()[0][1]["message"])
+        self.post(f"/api/matches/{self.get('/api/matches').json()['sent'][0]['id']}/cancel", None, KABIR)
+        mid = self.new_match()
+        self.finish(mid, KABIR, 10)
+        self.finish(mid, MEERA, 20)
         self.ha.requests.clear()
-        m = self.invite(who=MEERA, to="u_kabir", rematchOf="x").json()
-        self.assertEqual(m["rematchOf"], "x")
+        m = self.invite(who=MEERA, to="u_kabir", rematchOf=mid).json()
+        self.assertEqual(m["rematchOf"], mid)
         self.assertIn("Meera Rao wants a rematch in Lane Racer", self.ha.notifications()[-1][1]["message"])
 
     def test_no_actions_without_a_panel_path(self):

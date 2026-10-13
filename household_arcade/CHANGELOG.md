@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.12.4
+
+- **Children's play time can't be talked down**: a game whose page stops sending signs of life is counted up to its last one and two minutes more (it counted almost nothing before, and its score still saved); a score that comes later counts the game's time too. Pauses leave out at most 15 minutes a game and **30 minutes a day** over all a child's games, so many short games no longer add up to free time. A game that runs past midnight counts on each day for its part.
+- **When a child's time runs out the game ends there** (its score so far is kept) instead of running on until it finished by itself. Quiet hours still let a running game finish.
+- **Daily challenges**: Practice opens only after your ranked try (it showed the same puzzle first); each day's puzzle comes from a random seed the app keeps, so nobody can work it out ahead; starting the ranked try twice at once starts it once.
+- **One result per game, one move per turn**: a score sent twice at once, or two moves made at once from two phones, are now taken once (the second is refused). A turn-by-turn move must say how many moves the phone has seen.
+- **A saved game continued in two tabs** scores only once (the later tab takes it over).
+- **Level progress** moves on one level per heartbeat, and automatic AI level builds follow the level the app counted, at most once every 30 minutes per list.
+- **Playing together**: at most 20 turn-by-turn invites waiting from one person (3 to the same person), invite notifications at most every 5 minutes per person, a rematch must follow a real finished match, and accepting checks that the one who invited can still play.
+- **Children see others as on their leaderboard**: with first names only (or no leaderboard) a child sees first names when picking someone to play with and in matches, and not why another child can't play.
+- **Keep scores for** now keeps each person's best from level 1 (it could keep a higher score from a later start level and drop the real best). Old working records (play sessions and finished matches' moves after 90 days, notification marks after 30) are tidied whatever the setting says.
+- **The Games page loads much faster**: a game's own files load when you open it (not all 48 games up front), and the app's files are kept by the browser until the next version. Puzzles and board games are drawn only when something changes, so a phone stays cool while you think; the board games' computer thinks off the page (Hard never freezes it), and Car Park's levels start at once (Classic and Hard boards are made off the page).
+- Car Park: Undo takes back a whole drag (and its move on the board); Sudoku's undo history no longer grows without end; the keyboard cursor skips Mines' holes and Mole's grass; Tower Stack's camera moves the same on any screen; coming back to the app with the browser's Back button starts the game page afresh.
+- Accessibility: the Settings switches can be reached with the keyboard, the ☆ buttons are bigger, and a screen reader hears when a game starts, pauses, ends and whose move it is.
+- Home Assistant: a person switched off has their sensors shown as unavailable; the sensors update less often during play (at most every 10 seconds) and the record sensors only when scores change. The Supervisor now restarts the app if it stops answering.
+- Faster: every request no longer writes to the database (when you were last seen is written at most once a minute), and the Games, leaderboard and matches lists use fewer queries; start-up checks the built-in levels only after an update.
+- **Security**: request bodies are limited as they arrive (a request without a stated size could get past the 64 KB limit), live-link messages are limited in size and rate, and the AI connection test sends the saved access key only to the saved provider and address.
+- Removed the leftover code of the two-phone live duels (taken out of the app on 6 October): Paddle Duel's, Snake Duel's and Carrom's two-phone modes and Tank Battle's two-tank modes were no longer reachable.
+- **Shared code**: an optional **App-messages signing key** (Admin → App settings → Household Assistant) signs the messages between the household apps — put the same key in every app; API answers are never stored by the browser; the app's files load faster from the browser's cache.
+
 ## 1.12.3
 
 - **Fair play with someone**: a game played with someone (a race or a turn-by-turn game) can no longer be put aside with **Save for later** — saving one and then ending the save could put a made-up score on the leaderboard and announce a household record.

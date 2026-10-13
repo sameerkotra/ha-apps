@@ -9,7 +9,7 @@ import unittest
 from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
-VERSION = "1.12.3"
+VERSION = "1.12.4"
 REPO_URL = pk.REPO_URL
 
 
@@ -35,9 +35,10 @@ class PackagingTests(unittest.TestCase):
 
     def test_versions_match(self):
         index = read("app", "static", "index.html")
-        found = pk.check_cache_busting(HERE, VERSION, at_least=41, static_files="all")
-        # every script and stylesheet of the page carries the version (theme-boot.js, style.css, backnav.js, the game
-        # files, app.js, play.js, admin.js, together.js ...): counted from the tags, not by hand
+        found = pk.check_cache_busting(HERE, VERSION, at_least=15, static_files="all")
+        # every script and stylesheet of the page carries the version (theme-boot.js, style.css, backnav.js, the games'
+        # kit, registry and manifest, app.js, play.js, admin.js, together.js ...): counted from the tags, not by hand;
+        # a game's own files take the registry's ?v= when they load (registry.js)
         self.assertEqual(len(found), len(re.findall(r"<(?:script|link)\b[^>]*\b(?:src|href)=\"[^\"]+\.(?:js|css)", index)))
         from app import config
         self.assertEqual(config.APP_VERSION, VERSION)

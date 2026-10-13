@@ -130,10 +130,28 @@ def validate(set_id: str, data) -> tuple[dict, int, str]:
 # The table
 # ---------------------------------------------------------------------------
 
-def seed_builtins(conn) -> None:
+def builtins_fingerprint() -> str:
+    """Changes whenever the built-in levels (or the app version, whose checks may differ) do."""
+    blob = json.dumps({k: s["builtin"] for k, s in SETS.items()}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256((config.APP_VERSION + "|" + blob).encode()).hexdigest()
+
+
+def seed_builtins(conn, force: bool = False) -> bool:
     """Write the built-in levels (startup, and after an import). A built-in level is known by its key
     (`brick:1` …) and keeps the place an admin gave it; its layout follows the game files. One that is
-    missing (a new built-in level) is added at the end."""
+    missing (a new built-in level) is added at the end. Skipped (False) when the database already has this
+    version's built-in levels (their fingerprint in app_meta): checking them all takes a while."""
+    fp_now = builtins_fingerprint()
+    row = conn.execute("SELECT value FROM app_meta WHERE key = 'builtin_levels'").fetchone()
+    if row and row["value"] == fp_now and not force:
+        return False
+    _seed_builtins(conn)
+    conn.execute("INSERT INTO app_meta (key, value) VALUES ('builtin_levels', ?) "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (fp_now,))
+    return True
+
+
+def _seed_builtins(conn) -> None:
     now = config.now_iso()
     for set_id, s in SETS.items():
         for i, data in enumerate(s["builtin"], 1):
@@ -203,6 +221,12 @@ def playable(conn, set_id: str) -> list[dict]:
 
 def playable_count(conn, set_id: str) -> int:
     return conn.execute("SELECT COUNT(*) FROM levels WHERE game = ? AND status = 'ready'", (set_id,)).fetchone()[0]
+
+
+def playable_counts(conn) -> dict[str, int]:
+    """{level list: playable levels} for every list, in one query (lists without any are left out)."""
+    return {r["game"]: r["n"] for r in conn.execute(
+        "SELECT game, COUNT(*) AS n FROM levels WHERE status = 'ready' GROUP BY game")}
 
 
 def all_levels(conn, set_id: str) -> list[dict]:

@@ -1,10 +1,10 @@
 /* Household Arcade — Carrom rules and physics (pure: no DOM, deterministic for a seed and the shots).
 
-   Everything that moves is worked out in whole numbers (fixed point), so two phones playing the same shot get exactly
-   the same result, bit for bit: positions in 1/256 px, speeds in 1/256 px a sub-step (4 sub-steps an update), angles
+   Everything that moves is worked out in whole numbers (fixed point), so the same shot always gives exactly the same
+   result, bit for bit, on any phone: positions in 1/256 px, speeds in 1/256 px a sub-step (4 sub-steps an update), angles
    in tenths of a degree from a table of sines made once with + − × ÷ (no Math.sin, cos, atan2, pow or random — the
    tests run the rules with those made to throw), friction, cushions and collisions with integer division (exact,
-   truncated towards zero, the same in every engine). A checksum (FNV-1a) of the state follows every shot.
+   truncated towards zero, the same in every engine).
 
    The board: a 216 px square with a pocket in each corner; 9 white coins, 9 black and the red queen start in the
    middle (the queen in the centre, a ring of six around it, a ring of twelve around that, colours alternating). Each
@@ -13,8 +13,7 @@
    tenths of a degree in the player's own view (100–1700: 900 straight ahead, never backwards) with a power 1–100.
 
    The rules (a common family rule set, documented in spec/GAMES.md):
-   - Two players: the first (Player 1 against the computer and on one screen; from two phones the seat from the seed)
-     plays White and breaks. Doubles: four on one screen, partners opposite (seats 1 and 3 White, 2 and 4 Black),
+   - Two players: the first (Player 1, against the computer or on one screen) plays White and breaks. Doubles: four on one screen, partners opposite (seats 1 and 3 White, 2 and 4 Black),
      turns going round to the right.
    - Pocketing one of your own coins (or the queen) without a foul gives another shot; otherwise the turn passes.
      Opponents' coins you pocket stay pocketed — for them.
@@ -47,7 +46,7 @@
   var SPEED_MIN = 50, SPEED_PER_POWER = 8;               // power 1–100 → 58–850 (1/256 px a sub-step)
   var MAX_UPDATES = 3600;
   var MAX_SHOTS = 300;                                   // a board that goes on this long ends on the points so far
-  var LEVEL_BASE = { 1: 100, 2: 250, 3: 500 }, PHONES_BASE = 500, BONUS_POINT = 20, QUEEN_POINTS = 3;
+  var LEVEL_BASE = { 1: 100, 2: 250, 3: 500 }, BONUS_POINT = 20, QUEEN_POINTS = 3;
   var TIMEOUT_SHOT = [500, 900, 12];
   var MODES = [
     { id: "easy", label: "Computer · Easy (gentle)", level: 1, n: 2 },
@@ -55,7 +54,6 @@
     { id: "hard", label: "Computer · Hard", level: 3, n: 2 },
     { id: "two", label: "Two players (one screen)", level: 0, n: 2 },
     { id: "doubles", label: "Doubles: four, two teams (one screen)", level: 0, n: 4 },
-    { id: "phones", label: "Two phones (live, taking turns)", level: 0, n: 2 },
   ];
   var STATE_VERSION = 1;
 
@@ -90,12 +88,7 @@
   function sinT(a) { return SIN[a]; }                     // a: 0–1800
   function cosT(a) { return a <= 900 ? SIN[900 - a] : -SIN[a - 900]; }
 
-  function hashStr(str) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); }
-    return h >>> 0;
-  }
-  function rand(s) { // mulberry32, for the computer's choices (never during a live game)
+  function rand(s) { // mulberry32, for the computer's choices
     s.rng = (s.rng + 0x6D2B79F5) | 0;
     var t = Math.imul(s.rng ^ (s.rng >>> 15), 1 | s.rng);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -150,8 +143,8 @@
 
   function create(o) {
     o = o || {};
-    var info = modeInfo(o.mode) || MODES[0], seed = (Number(o.seed) >>> 0) || 1, phones = info.id === "phones";
-    var n = info.n, first = phones ? seed % 2 : 0;
+    var info = modeInfo(o.mode) || MODES[0], seed = (Number(o.seed) >>> 0) || 1;
+    var n = info.n, first = 0;
     var s = {
       game: "carrom", mode: info.id, level: info.level, seed: seed, rng: seed, n: n, first: first, turn: first,
       // the team that plays White: the first to shoot's
@@ -159,7 +152,7 @@
       pocketed: [[], []],               // by team: coins of that team's colour pocketed ("w"/"b" indices), in order
       queen: "on",                      // on | pending (pocketed, waiting for its cover) | team0 | team1
       queenBy: -1, pendingTeam: -1, shotBy: -1, inShot: [], foul: false, last: null,
-      over: false, winner: null, points: 0, updates: 0, me: phones ? (o.seat === 1 ? 1 : 0) : 0,
+      over: false, winner: null, points: 0, updates: 0, me: 0,
       cpu: info.level > 0 ? 1 : -1, wait: 0, ai: null, events: [],
     };
     placeStriker(s, s.turn, 500);
@@ -490,9 +483,16 @@
     }
     return sum;
   }
-  /** Play a shot on a copy and say how good it was for `seat`'s side. */
-  function trial(s, seat, v) {
-    var c = JSON.parse(JSON.stringify(s));
+  /** The board as text for trial copies: without the computer's own thinking (its list of shots), made once per update
+      the computer thinks in, not once per shot it tries. */
+  function trialBase(s) {
+    var ai = s.ai;
+    s.ai = null;
+    try { return JSON.stringify(s); } finally { s.ai = ai; }
+  }
+  /** Play a shot on a copy and say how good it was for `seat`'s side (`base`: trialBase(s), when the caller has it). */
+  function trial(s, seat, v, base) {
+    var c = JSON.parse(base || trialBase(s));
     c.cpu = -1; c.ai = null;
     var team = teamOf(c, seat), mine = colourOfTeam(c, team), theirs = mine === "w" ? "b" : "w";
     var before = [onBoard(c, mine), onBoard(c, theirs)], queenBefore = c.queen, near = pocketDistance(c, mine);
@@ -518,9 +518,9 @@
     if (!s.ai || s.ai.shot !== s.shots) {
       s.ai = { shot: s.shots, list: candidates(s, s.turn, lv.count), at: 0, best: null, bestScore: -Infinity, wait: 30 };
     }
-    var A = s.ai;
+    var A = s.ai, base = A.at < A.list.length ? trialBase(s) : null;
     for (var k = 0; k < 2 && A.at < A.list.length; k++, A.at++) {
-      var v = A.list[A.at].v, sc = trial(s, s.turn, v);
+      var v = A.list[A.at].v, sc = trial(s, s.turn, v, base);
       if (sc > A.bestScore) { A.bestScore = sc; A.best = v.slice(); }
     }
     if (A.at < A.list.length) return [];
@@ -538,15 +538,15 @@
   function teamName(team) { return team === 0 ? "first" : "second"; }
   function playerScore(s, team) {
     if (!s.over || s.winnerTeam !== team || s.mode === "two" || s.mode === "doubles") return 0;
-    var base = s.mode === "phones" ? PHONES_BASE : LEVEL_BASE[s.level] || 0;
+    var base = LEVEL_BASE[s.level] || 0;
     return base + Math.max(0, Math.min(base, BONUS_POINT * s.points));
   }
   function score(s, seat) {
-    if (seat === undefined) seat = s.mode === "phones" ? s.me : 0;
+    if (seat === undefined) seat = 0;
     return playerScore(s, teamOf(s, seat));
   }
   function result(s, player) {
-    var me = player === undefined ? (s.mode === "phones" ? s.me : 0) : player, team = teamOf(s, me);
+    var me = player === undefined ? 0 : player, team = teamOf(s, me);
     var won = s.over && s.winnerTeam === team && s.mode !== "two" && s.mode !== "doubles";
     var draw = s.over && s.winnerTeam < 0;
     var lost = s.over && !won && !draw && s.mode !== "two" && s.mode !== "doubles";
@@ -562,26 +562,9 @@
     return { score: score(s, me), level: 1, stats: { won: won, lost: lost, draw: draw, winner: s.over ? s.winnerTeam : -1, mode: s.mode,
       shots: s.shots, points: s.points, summary: lines, notSaved: note } };
   }
-  /** The end both phones of a live game must agree on (SPEC §13.4). */
-  function report(s) {
-    return { scores: [playerScore(s, 0), playerScore(s, 1)], levels: [1, 1], winner: s.over && s.winnerTeam >= 0 ? s.winnerTeam + 1 : 0 };
-  }
-  /** FNV-1a of everything that decides what happens next. */
-  function checksum(s) {
-    var parts = [s.turn, s.shots, s.moving ? 1 : 0, s.queen, s.queenBy, s.pendingTeam, s.over ? 1 : 0, s.winner === null ? -1 : s.winner,
-      s.pocketed[0].join("."), s.pocketed[1].join(".")];
-    for (var i = 0; i < s.pieces.length; i++) { var p = s.pieces[i]; parts.push(p.on ? 1 : 0, p.x, p.y, p.vx, p.vy); }
-    return hashStr(parts.join(","));
-  }
-  /** Live: the input a phone plays ("shot" = [place, angle, power]) for player 0 or 1. */
-  function press(s, action, value, player) {
-    if (action === "shot") return shoot(s, player, value);
-    return [];
-  }
-
   function save(s) { var c = JSON.parse(JSON.stringify(s)); c.ai = null; return c; }
   function restore(data) {
-    var ok = data && typeof data === "object" && data.game === "carrom" && modeInfo(data.mode) && data.mode !== "phones" &&
+    var ok = data && typeof data === "object" && data.game === "carrom" && modeInfo(data.mode) &&
       Array.isArray(data.pieces) && data.pieces.length === 20 && Array.isArray(data.pocketed) && typeof data.turn === "number";
     if (!ok) throw new Error("That saved game can't be continued.");
     var s = JSON.parse(JSON.stringify(data));
@@ -591,11 +574,11 @@
 
   var L = {
     UPS: 60, SUB: SUB, U: U, BOARD: BOARD, RC: RC, RS: RS, RP: RP, POCKET_AT: POCKET_AT, BASE_OFF: BASE_OFF, BASE_HALF: BASE_HALF,
-    SIDES: SIDES, MODES: MODES, STATE_VERSION: STATE_VERSION, TIMEOUT_SHOT: TIMEOUT_SHOT, LEVEL_BASE: LEVEL_BASE, PHONES_BASE: PHONES_BASE,
+    SIDES: SIDES, MODES: MODES, STATE_VERSION: STATE_VERSION, TIMEOUT_SHOT: TIMEOUT_SHOT, LEVEL_BASE: LEVEL_BASE,
     BONUS_POINT: BONUS_POINT, SIN: SIN, MAX_UPDATES: MAX_UPDATES, MAX_SHOTS: MAX_SHOTS,
-    create: create, step: step, shoot: shoot, press: press, turn: turn, validShot: validShot, sideOf: sideOf, teamOf: teamOf,
+    create: create, step: step, shoot: shoot, turn: turn, validShot: validShot, sideOf: sideOf, teamOf: teamOf,
     placeStriker: placeStriker, strikerPreview: strikerPreview, basePoint: basePoint, posToU: posToU, colourOfTeam: colourOfTeam,
-    onBoard: onBoard, score: score, result: result, report: report, checksum: checksum, save: save, restore: restore,
+    onBoard: onBoard, score: score, result: result, save: save, restore: restore,
     timeoutShot: function () { return TIMEOUT_SHOT.slice(); }, candidates: candidates, trial: trial, angleTo: angleTo,
     tdiv: tdiv, isqrt: isqrt, sinT: sinT, cosT: cosT, still: still, modeInfo: modeInfo,
   };

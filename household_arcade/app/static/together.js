@@ -11,6 +11,35 @@
 
 const Together = (() => {
   const INVITE_POLL_MS = 10000;
+
+  // One request for "my matches", shared by everything on the page that looks (the Games page's cards, the invite
+  // sheet, a result card's rematch): a second asker within SHARE_MS gets the same answer; nothing is asked while the
+  // page is hidden, and coming back asks at once (refreshers below).
+  const SHARE_MS = 2500;
+  let matchesAt = 0, matchesAsk = null;
+  const refreshers = new Set();
+  function matches() {
+    if (matchesAsk && Date.now() - matchesAt < SHARE_MS) return matchesAsk;
+    matchesAt = Date.now();
+    matchesAsk = api("api/matches");
+    matchesAsk.catch(() => { matchesAt = 0; });
+    return matchesAsk;
+  }
+  /** Run fn every ms while the page is shown (paused while hidden; once at once when it comes back). Returns a stop. */
+  function poll(fn, ms) {
+    let timer = null;
+    const start = () => { if (!timer) timer = setInterval(() => { if (!document.hidden) fn(); }, ms); };
+    const entry = { fn, start, stop: () => { clearInterval(timer); timer = null; } };
+    refreshers.add(entry);
+    start();
+    return () => { entry.stop(); refreshers.delete(entry); };
+  }
+  if (document.addEventListener) document.addEventListener("visibilitychange", () => {
+    for (const r of refreshers) {
+      if (document.hidden) r.stop();
+      else { r.start(); r.fn(); }
+    }
+  });
   const STATE_EVERY_MS = 400;          // my score goes out this often, when it changed
   const KEEPALIVE_MS = 2000;           // and at least this often, so the other phone sees I'm still here
   const WS_OPEN_MS = 3000;             // a socket that isn't open by now isn't going to be
@@ -224,11 +253,11 @@ const Together = (() => {
   // race that has started that I haven't joined. Refreshes itself while it is on the page.
   function homeCards() {
     const box = h("div", { class: "tg-cards", id: "togetherCards" });
-    let timer = null;
+    let stop = null;
     async function load() {
       let data;
-      try { data = await api("api/matches"); } catch (e) { return; }
-      if (!box.isConnected) { clearInterval(timer); return; }
+      try { data = await matches(); } catch (e) { return; }
+      if (!box.isConnected) { if (stop) stop(); return; }
       data.waiting.forEach(stamp); data.sent.forEach(stamp); data.playing.forEach(stamp);
       const cards = [];
       if (data.waiting.length) {
@@ -249,7 +278,7 @@ const Together = (() => {
         h("div", { class: "tg-actions" }, h("button", { class: "btn-primary btn-small", type: "button", onclick: () => { pending = m; showTab("play", { arg: m.game }); } }, "Join the race")))));
       mount(box, cards);
     }
-    timer = setInterval(() => { if (!document.hidden) load(); }, INVITE_POLL_MS / 2);
+    stop = poll(load, INVITE_POLL_MS / 2);
     load();
     return box;
   }
@@ -303,7 +332,7 @@ const Together = (() => {
       if (document.hidden || (window.Play && Play.isRunning && Play.isRunning())) return;
       if (UI.dialogs().length || (state.tab === "play" && Play._state && Play._state.phase !== "idle")) return;
       let data;
-      try { data = await api("api/matches"); } catch (e) { return; }
+      try { data = await matches(); } catch (e) { return; }
       const m = data.waiting.map(stamp).find((x) => !shown.has(x.id));
       if (!m || UI.dialogs().length) return;
       shown.add(m.id);
@@ -315,7 +344,7 @@ const Together = (() => {
           h("button", { class: "btn-primary", type: "button", id: "sheetJoin", onclick: async () => { if (await join(m)) handle.close(); else handle.close(); } }, "Join")));
       handle = openModal("Play together", body, { sheet: true });
     };
-    watchTimer = setInterval(tick, INVITE_POLL_MS);
+    watchTimer = poll(tick, INVITE_POLL_MS);
     setTimeout(tick, 1500);
   }
 
@@ -419,7 +448,7 @@ const Together = (() => {
     return box;
   }
 
-  return { link, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable,
+  return { link, invite, join, notNow, take, homeCards, afterHome, watch, againstCard, barContent, headline, resultTable, matches, poll,
     inviteLeft, startsIn, stamp, other, me, first, clock, ago, acceptInvite, yourGames, _internal: { get pending() { return pending; }, set pending(v) { pending = v; } } };
 })();
 window.Together = Together;

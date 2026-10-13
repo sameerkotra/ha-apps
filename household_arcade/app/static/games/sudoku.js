@@ -41,6 +41,8 @@
     }
 
     var impl = {
+      // still unless the clock's seconds or a message change by themselves (kit.js drawKey)
+      drawKey: function () { return s ? [Logic.effective(s), s.message, s.hint ? 1 : 0, s.won ? 1 : 0, s.over ? 1 : 0].join("|") : null; },
       init: function (seed) {
         s = Logic.create({ mode: opts.mode, seed: seed, hints: opts.config ? opts.config.hints : undefined, mistakes: o.mistakes });
         pending = [];

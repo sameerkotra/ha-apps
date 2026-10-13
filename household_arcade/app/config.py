@@ -21,7 +21,7 @@ from .common import auth_core, ha_time
 
 logger = logging.getLogger("config")
 
-APP_VERSION = "1.12.3"
+APP_VERSION = "1.12.4"
 APP_TITLE = "Household Arcade"
 
 _OPTIONS_PATH = os.environ.get("OPTIONS_PATH", "/data/options.json")

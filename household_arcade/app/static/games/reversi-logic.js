@@ -104,7 +104,9 @@
     if (rich) sc += 4 * (cells(board, me).length - cells(board, 1 - me).length);
     return sc;
   }
+  var NODE_BUDGET = 6000;            // positions Hard may look at for one move (BK.deepen)
   function search(board, toMove, me, depth, alpha, beta) {
+    BK.spend();
     var ms = cells(board, toMove);
     if (!ms.length) {
       if (!cells(board, 1 - toMove).length) {
@@ -129,18 +131,21 @@
   function aiCell(s, seat, level) {
     var ms = cells(s.board, seat);
     if (ms.length === 1 || level <= 1) return BK.pick(s, ms);
-    var best = -Infinity, bestCells = [];
-    for (var i = 0; i < ms.length; i++) {
-      var b = s.board.slice(), fl = flips(b, ms[i], seat);
-      b[ms[i]] = seat + 1;
-      for (var k = 0; k < fl.length; k++) b[fl[k]] = seat + 1;
-      var v = level === 2 ? evaluate(b, seat, false) : search(b, 1 - seat, seat, 3, best - 1, Infinity);
-      if (v > best) { best = v; bestCells = [ms[i]]; } else if (v === best) bestCells.push(ms[i]);
-    }
+    var bestCells = BK.deepen(level === 2 ? [0] : [1, 3], NODE_BUDGET, function (dep) {
+      var best = -Infinity, out = [];
+      for (var i = 0; i < ms.length; i++) {
+        var b = s.board.slice(), fl = flips(b, ms[i], seat);
+        b[ms[i]] = seat + 1;
+        for (var k = 0; k < fl.length; k++) b[fl[k]] = seat + 1;
+        var v = level === 2 ? evaluate(b, seat, false) : search(b, 1 - seat, seat, dep, best - 1, Infinity);
+        if (v > best) { best = v; out = [ms[i]]; } else if (v === best) out.push(ms[i]);
+      }
+      return out;
+    }) || ms;
     return BK.pick(s, bestCells);
   }
 
   var L = BK.game(R);
-  L.BONUS_DISC = BONUS_DISC; L.flips = flips; L.cells = cells; L.count = count; L.aiCell = aiCell;
+  L.BONUS_DISC = BONUS_DISC; L.flips = flips; L.cells = cells; L.count = count; L.aiCell = aiCell; L.NODE_BUDGET = NODE_BUDGET;
   if (typeof module === "object" && module.exports) module.exports = L; else self.ReversiLogic = L;
 })();

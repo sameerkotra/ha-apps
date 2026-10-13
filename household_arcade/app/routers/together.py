@@ -9,8 +9,9 @@
     POST /api/matches/{id}/resign      give up a turn-by-turn match
     POST /api/matches/{id}/start       turn by turn, 3–4 players: start with those who have joined
     GET  /api/matches/{id}/turns       turn by turn: the board as this player may see it (moves, view, whose move)
-    POST /api/matches/{id}/move        turn by turn: {move, n?} — checked by the server's rules (409 not your move,
-                                       422 not legal); the next player is told it's their move
+    POST /api/matches/{id}/move        turn by turn: {move, n} (n: the moves the phone has seen) — checked by the
+                                       server's rules (409 not your move or the board moved on, 422 not legal); the
+                                       next player is told it's their move
     POST /api/matches/{id}/roll        turn by turn with dice: the server's roll for the player to move
     GET  /api/matches/{id}/live        WebSocket: a race's picture pushed and my state sent
     GET  /api/against                  head to head: wins, losses, draws per person and game
@@ -36,6 +37,11 @@ MAX_WAIT = 25.0          # longest a long poll holds
 POLL_STEP = 0.2          # how often a waiting request looks for a change
 WS_IDLE = 30.0           # a phone that sends nothing for this long (it sends every 2 s) is gone
 WS_PUSH_AT_LEAST = 3.0   # push a fresh picture at least this often
+WS_MAX_MESSAGE = 1024    # a phone's message is a few numbers
+WS_RATE = 20             # messages a second a phone may send (it sends a few); more closes the link
+WS_PER_USER = 4          # live links one person can have open at once (a reload opens a new one)
+
+_sockets: dict[str, int] = {}
 
 
 def _require_enabled(current: dict) -> None:
@@ -65,6 +71,7 @@ def create_match(background: BackgroundTasks, body: dict = Body(...), current: d
     _require_enabled(current)
     try:
         with db.get_conn() as conn:
+            db.write_lock(conn)           # the invite limits are counted and the invite made together
             m = together.create(conn, current, body)
             out = together.view(conn, m, current["id"])
     except together.TogetherError as e:
@@ -98,14 +105,21 @@ async def one_match(match_id: str, since: int | None = Query(default=None), wait
         return snap
     loop = asyncio.get_running_loop()
     end = loop.time() + min(MAX_WAIT, max(0.0, wait))
+    fresh = True
     while snap["v"] == since and loop.time() < end:
         await asyncio.sleep(POLL_STEP)
+        fresh = False
         if together.signature(match_id) != since:
             snap = await run_in_threadpool(together.snapshot, match_id, uid)
+            fresh = True
             if snap is None:
                 raise HTTPException(404, "That match isn't known.")
         elif snap["status"] in together.TERMINAL:
             break
+    if not fresh:          # nothing changed while it waited: the time-relative parts (invite left, count-in) are read now
+        snap = await run_in_threadpool(together.snapshot, match_id, uid)
+        if snap is None:
+            raise HTTPException(404, "That match isn't known.")
     return snap
 
 
@@ -126,6 +140,7 @@ def post_state(match_id: str, body: dict = Body(default={}), current: dict = Dep
 def _act(fn, match_id: str, current: dict) -> dict:
     try:
         with db.get_conn() as conn:
+            db.write_lock(conn)           # read and change the match in one go: two answers at once take turns
             m = fn(conn, match_id, current)
             return together.view(conn, m, current["id"])
     except together.TogetherError as e:
@@ -199,6 +214,7 @@ def turn_picture(match_id: str, current: dict = Depends(get_current_user)):
 def turn_move(match_id: str, background: BackgroundTasks, body: dict = Body(...), current: dict = Depends(get_current_user)):
     try:
         with db.get_conn() as conn:
+            db.write_lock(conn)           # the board is read and the move stored in one go
             out, tell = turns.move(conn, match_id, current, body)
     except turns.TurnsError as e:
         raise _turns_boom(e)
@@ -212,6 +228,7 @@ def turn_move(match_id: str, background: BackgroundTasks, body: dict = Body(...)
 def turn_roll(match_id: str, background: BackgroundTasks, current: dict = Depends(get_current_user)):
     try:
         with db.get_conn() as conn:
+            db.write_lock(conn)
             out, tell = turns.roll(conn, match_id, current)
     except turns.TurnsError as e:
         raise _turns_boom(e)
@@ -250,10 +267,23 @@ async def live_link(ws: WebSocket, match_id: str):
         await _close(ws)
         return
     uid = user["id"]
+    if _sockets.get(uid, 0) >= WS_PER_USER:
+        await _close(ws, 1013)                 # try again later
+        return
     with_snapshot = await run_in_threadpool(_seen_snapshot, match_id, uid)
     if with_snapshot is None:
         await _close(ws)
         return
+    _sockets[uid] = _sockets.get(uid, 0) + 1
+    try:
+        await _serve_link(ws, match_id, uid, with_snapshot)
+    finally:
+        _sockets[uid] -= 1
+        if _sockets[uid] <= 0:
+            del _sockets[uid]
+
+
+async def _serve_link(ws: WebSocket, match_id: str, uid: str, with_snapshot: dict) -> None:
     await ws.accept()
     state = {"last": None, "pushed": 0.0}
 
@@ -274,12 +304,20 @@ async def live_link(ws: WebSocket, match_id: str):
                 await push(snap)
 
     async def reader():
+        loop = asyncio.get_running_loop()
+        window, count = loop.time(), 0
         while True:
             try:
                 text = await asyncio.wait_for(ws.receive_text(), WS_IDLE)
             except asyncio.TimeoutError:
                 return
-            if len(text) > 1024:
+            if len(text) > WS_MAX_MESSAGE:
+                return
+            if loop.time() - window >= 1.0:
+                window, count = loop.time(), 0
+            count += 1
+            if count > WS_RATE:            # far more than a phone sends: not a phone
+                logger.warning("Live link of match %s closed: too many messages", match_id)
                 return
             try:
                 msg = json.loads(text)

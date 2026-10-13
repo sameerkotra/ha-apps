@@ -193,8 +193,15 @@
   }
 
   var PLACES = {};
+  // A layout's places, worked out once: by its mode, or for a level's own layers by the layers array itself (its text
+  // made once per array, not on every call — the board asks for every tile, every frame).
+  var LAYER_KEYS = typeof WeakMap === "function" ? new WeakMap() : null;
   function pl(s) {
-    var key = s.layers ? "layouts:" + JSON.stringify(s.layers) : s.mode;
+    var key = s.mode;
+    if (s.layers) {
+      key = LAYER_KEYS && LAYER_KEYS.get(s.layers);
+      if (!key) { key = "layouts:" + JSON.stringify(s.layers); if (LAYER_KEYS) LAYER_KEYS.set(s.layers, key); }
+    }
     return PLACES[key] || (PLACES[key] = places(s));
   }
   function free(s, i) { return s.alive[i] && isFree(pl(s), s.alive, i); }

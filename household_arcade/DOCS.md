@@ -582,9 +582,10 @@ the list grows (see *AI levels*).
 ### Daily challenges
 
 Off unless an admin turns on **Show daily challenges** in *Admin → App settings*. Then each day the
-app picks three games — the same seeded puzzle for everyone — and Home shows **Today's challenges**. You get one
-ranked try at each (starting it counts, finished or not); afterwards you can replay it as Practice, which isn't
-saved. Each challenge has its own leaderboard for the day (**Scores → Daily**) and there is a "days played this
+app picks three games — the same puzzle for everyone, from a seed nobody can work out ahead — and Home shows
+**Today's challenges**. You get one ranked try at each (starting it counts, finished or not); once you've had it you
+can replay it as Practice, which isn't saved (Practice opens only after the ranked try, so nobody sees the puzzle
+first). Each challenge has its own leaderboard for the day (**Scores → Daily**) and there is a "days played this
 month" ranking. Children's limits and allowed games apply. Turning the setting off hides everything and keeps
 the scores.
 
@@ -820,7 +821,9 @@ suits you. A game can last minutes or days.
 
 1. On the game's start screen pick **Two phones (turn by turn)** (and the Size or Fleet), tap **Play with
    someone** and pick a person. They get the invite as for a race (notification, pop-up, **Waiting for you**); a
-   turn-by-turn invite lasts **7 days**. You don't have to wait on the page: **Back to games**.
+   turn-by-turn invite lasts **7 days**. You don't have to wait on the page: **Back to games**. You can have up
+   to 20 turn-by-turn invites waiting at once, at most 3 of them to the same person, and a person gets at most one
+   invite notification from you every 5 minutes (the invites still show in the app).
 2. When they join, the game starts; who moves first is chosen at random. The one whose move it is gets a phone
    notification "Your move in Four in a Row against Asha" (tap it to open the game). The **Games** page has
    **Your games**: every match going on, whose move it is and when the last move was — tap **Play** or **Open**.
@@ -876,9 +879,11 @@ with the 🔇/🔊 button on the game page; your choice is remembered.
 - After a game you see **New personal best** or **New household record** when
   you beat one.
 - The app turns away scores that are impossible for the game and the time
-  played (for example more points per second than the fastest possible play).
-  Scores come from the browser, so a determined person could still fake one;
-  in a household that's fine.
+  played (for example more points per second than the fastest possible play),
+  and a game can't claim more seconds than the app saw it running. Level
+  progress moves on one level at a time as the game reports it. Scores come
+  from the browser, so a determined person could still fake one; in a
+  household that's fine.
 - People switched off on **Admin → Users** can't play and don't appear on the
   leaderboard (their scores are kept).
 
@@ -933,10 +938,14 @@ never apply to anyone who isn't marked.
 
 - **Minutes a day** — one number for school days and one for weekends and
   holidays. Leave it empty for no limit. Time counts only while a game is
-  actually running: paused time, the start screen and the menus don't count.
+  actually running: paused time, the start screen and the menus don't count —
+  up to 15 minutes of pauses a game and 30 minutes a day over all games;
+  longer pauses count as play. A game that runs past midnight counts on each
+  day for its part. A game left without a goodbye (the tab closed, the phone
+  asleep) is counted up to its last sign of life and two minutes more.
   Five minutes before the end the child sees a warning. When the time is up,
-  the game being played finishes normally; after that no new game can start
-  until tomorrow.
+  the game being played ends there (its score so far is kept); after that no
+  new game can start until tomorrow.
 - **Quiet hours** — from–to times for school nights and for weekends, when no
   game can be started. Times like 21:00 – 07:00 run past midnight. The
   school-night times apply on the nights before a school day (Sunday to
@@ -945,7 +954,9 @@ never apply to anyone who isn't marked.
   "Time for a break".
 - **Games** — all games, or only the ones ticked.
 - **Leaderboard** — shown with full names, with first names only, or hidden
-  for that child.
+  for that child. With first names only (or hidden), the child also sees only
+  first names when picking someone to play with and in matches, and never why
+  another child can't play (their time or quiet hours).
 - **Extra time today** — **Add 15 / 30 / 60 minutes** for today only.
 - **Play history** — what the child played, when and for how long (Practice
   included), over the last 14 days.
@@ -979,7 +990,7 @@ A number out of range is flagged at the field before anything is saved.
 | Brick Breaker power-ups | on | Off: only Classic play. |
 | Default look | Modern | For people who haven't picked their own. |
 | Leaderboard | on | Off: only personal bests are shown. |
-| Keep scores for | forever | Or 1, 2 or 5 years. Older games are removed, but each person's best per game and mode is always kept. |
+| Keep scores for | forever | Or 1, 2 or 5 years. Older games are removed, but each person's best per game and mode is always kept (the best of the games started from level 1, which is what bests and records count). Whatever it says, the app's own working records are tidied: play sessions and the moves of finished matches after 90 days, sent-notification marks after 30 days (match results and head-to-head stay). |
 | School days | Mon–Fri | Days that use school-day limits for children. |
 | Holidays | none | Dates when children get weekend limits. |
 | Limit warnings to parents | off | Phone notice to the ticked admins (every admin if none is ticked). |
@@ -988,6 +999,7 @@ A number out of range is flagged at the field before anything is saved.
 | Show daily challenges | off | Today's challenges on Home, a try on each game's start screen and a Daily tab on the leaderboard. |
 | Sudoku hints per puzzle | 3 | 0 to 20; Practice has no limit. |
 | Answer the Household Assistant | on | Lets the Household Assistant app tell people the leaderboard and their own bests (see *The Household Assistant*). |
+| App-messages signing key | empty | The same key in every household app (Admin → App settings there). With a key, messages between the household apps are signed and unsigned ones are refused; without one (as before), any app on Home Assistant's network could send messages as any other. Turn it on in every app at about the same time. |
 | Home Assistant sensors | off | See below. |
 | AI levels | off | More levels made by an AI model. See *AI levels* below. |
 
@@ -1095,7 +1107,9 @@ Both are off on a new install; an admin turns each on in **App settings**.
 
 `<person>` is the person's Home Assistant user name. Use them on dashboards or
 in automations: flash a light when a record falls, or remind someone when a
-child's time is nearly up. Turning the switch off marks them unavailable.
+child's time is nearly up. Turning the switch off marks them unavailable, and
+a person switched off on **Admin → Users** has their two sensors shown as
+unavailable.
 
 **Notify new records** sends "Asha set a new Snake record: 1,240" to everyone
 else who hasn't turned off **Receive notifications** on their Settings.

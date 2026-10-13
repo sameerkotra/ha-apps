@@ -1,5 +1,5 @@
 name: "Household Arcade"
-version: "1.12.3"
+version: "1.12.4"
 slug: household_arcade
 description: >-
   Classic arcade games for everyone in the home, played from the Home Assistant
@@ -18,6 +18,8 @@ startup: application
 boot: auto
 ingress: true
 ingress_port: 8104
+# The Supervisor restarts the app when its health page stops answering.
+watchdog: http://[HOST]:[PORT:8104]/api/health
 panel_icon: mdi:gamepad-variant
 panel_title: Arcade
 # false = visible to every Home Assistant user, not just admins: the whole

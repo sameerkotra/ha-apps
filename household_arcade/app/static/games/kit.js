@@ -446,7 +446,11 @@
       return ((255 << 24) | ((n & 255) << 16) | (((n >> 8) & 255) << 8) | ((n >> 16) & 255)) >>> 0;
     }
 
+    var builtKey = "";
+    // What the built layers depend on besides the look (setLook and a theme change always build again).
+    function sizeKey() { return cw + "x" + ch + "@" + dpr + ":" + P + ":" + kind + ":" + dark; }
     function build() {
+      builtKey = sizeKey();
       generation++;
       for (var key in layers) free(layers[key].canvas);
       layers = {};
@@ -656,7 +660,8 @@
       lastFrameMs: 0,
       setLook: setLook,
       setReduceMotion: function (on) { reduce = !!on; env.reduce = reduce; },
-      resize: function () { measure(); build(); },
+      /** Measure the canvas again; the layers are built again only when its size (or pixel ratio) changed. */
+      resize: function () { measure(); if (sizeKey() !== builtKey) build(); },
       frame: frame,
       /** CSS pixels relative to the canvas → logical 240 × 300 coordinates. */
       toLogical: function (x, y) {
@@ -739,7 +744,11 @@
   // ---------- what every game shares ----------
   // impl: { init(seed), step() → events, input(action, isDown), pointer(kind, lx, ly, cssX, cssY, pointerId), wheel?(lx, ly, dy),
   //         draw(g, info), score(), level(), isOver(), result() → { score, level, stats },
-  //         sounds: { eventType: soundName } }
+  //         sounds: { eventType: soundName }, drawKey?() }
+  // drawKey (optional, for games whose picture is still most of the time — puzzles and board games): a value that
+  // changes whenever something on screen changes by itself (the clock's seconds, a message running out), or null
+  // while something moves. A running game is drawn again only when its key changed, or after input, events from
+  // step(), a new look or size; a game without drawKey is drawn every frame.
   // Turn by turn (opts.turns = { seat, picture, send(move) }, SPEC §13.5): impl.turnSync(picture) takes the match as
   // the server has it after every move (inst.turnSync); the game sends its own moves with opts.turns.send.
   function createSession(canvas, opts, impl) {
@@ -753,6 +762,9 @@
       : (Number(opts.seed) >>> 0);
     var Sound = root.ArcadeSound;
     var state = "ready", steps = 0, alpha = 0, lastScore = -1, lastLevel = -1;
+    var dirty = true, lastKey;           // drawKey: whether the picture may have changed since it was last drawn
+    // the game's state changed from outside (a board made by a worker …): drawn at the next frame, or now when not running
+    function invalidate() { dirty = true; if (state !== "running" && state !== "destroyed" && renderer) draw(); }
 
     function safe(fn) {
       if (!fn) return;
@@ -775,6 +787,7 @@
     function tick() {
       steps++;
       var evs = impl.step() || [];
+      if (evs.length) dirty = true;
       for (var i = 0; i < evs.length; i++) {
         var ev = evs[i];
         play(impl.sounds && impl.sounds[ev.type]);
@@ -799,9 +812,20 @@
       impl.restore(opts.restore.state);
       restoredSteps = Math.max(0, Math.round((Number(opts.restore.seconds) || 0) * 60));
     }
-    var renderer = createRenderer(canvas, lookId, { onInvalidate: function () { if (state !== "running" && state !== "destroyed") draw(); } });
+    var renderer = createRenderer(canvas, lookId, { onInvalidate: function () { dirty = true; if (state !== "running" && state !== "destroyed") draw(); } });
     renderer.setReduceMotion(reduce());
-    var loop = createLoop({ step: tick, draw: function (a) { alpha = a; draw(); }, onHidden: function () { inst.pause(); }, doc: canvas.ownerDocument });
+    function loopDraw(a) {
+      alpha = a;
+      if (impl.drawKey) {
+        var key = null;
+        try { key = impl.drawKey(); } catch (e) { key = null; }
+        if (!dirty && key !== null && key === lastKey) return;      // nothing on screen changed: skip the frame
+        lastKey = key;
+      }
+      dirty = false;
+      draw();
+    }
+    var loop = createLoop({ step: tick, draw: loopDraw, onHidden: function () { inst.pause(); }, doc: canvas.ownerDocument });
     if (Sound && opts.sound !== undefined) Sound.setEnabled(soundOn);
     draw();
 
@@ -811,7 +835,7 @@
         if (state === "paused") { inst.resume(); return; }
         if (state === "over") { seed = (seed + 1) >>> 0; impl.init(seed); }
         steps = restoredSteps; restoredSteps = 0; lastScore = -1; lastLevel = -1; alpha = 0;
-        state = "running";
+        state = "running"; dirty = true;
         reportScore();
         emit("start", { type: "start" });
         loop.start();
@@ -823,7 +847,7 @@
       },
       resume: function () {
         if (state !== "paused") return;
-        state = "running"; loop.start();
+        state = "running"; dirty = true; loop.start();
         emit("pause", { type: "pause", paused: false });
       },
       /** Can this game be saved to finish later? */
@@ -848,6 +872,7 @@
           game rebuilds its board from it; the events it returns play their sounds; a match that ended ends the game. */
       turnSync: function (picture) {
         if (state === "destroyed" || !impl.turnSync) return;
+        dirty = true;
         var evs = impl.turnSync(picture) || [];
         for (var i = 0; i < evs.length; i++) { play(impl.sounds && impl.sounds[evs[i].type]); emit(evs[i].type, evs[i]); }
         reportScore();
@@ -860,6 +885,8 @@
       get score() { return impl.score(); },
       get level() { return impl.level(); },
       get renderer() { return renderer; },
+      /** Ask for the picture to be drawn again at the next frame (a game with drawKey whose state changed from outside). */
+      invalidate: invalidate,
       /** The game's rules state, read-only (for tests and debugging). */
       get logic() { return impl.logic ? impl.logic() : null; },
       /** How a game that zooms is looking at its board ({ z, camX, camY }), or null (for tests). */
@@ -867,12 +894,12 @@
       setLook: function (id) {
         if (state === "destroyed") return;
         lookId = LOOKS[id] ? id : "modern";
-        renderer.setLook(lookId);
+        renderer.setLook(lookId); dirty = true;
         if (state !== "running") draw();
       },
       setSound: function (on) { soundOn = !!on; if (Sound) Sound.setEnabled(soundOn); },
       setReduceMotion: function (on) {
-        userReduce = !!on; renderer.setReduceMotion(reduce());
+        userReduce = !!on; renderer.setReduceMotion(reduce()); dirty = true;
         if (state !== "running" && state !== "destroyed") draw();
       },
       input: function (action, isDown) {
@@ -881,16 +908,19 @@
           return;
         }
         if (state !== "running") return;
+        dirty = true;
         impl.input(action, isDown !== false);
       },
       pointer: function (kind, x, y, id) {
         if (state !== "running" || !impl.pointer) return;
+        dirty = true;
         var p = renderer.toLogical(x, y);
         impl.pointer(kind, p.x, p.y, x, y, id == null ? 0 : id);
       },
       /** A mouse wheel over the game (games that zoom); true when the game used it. */
       wheel: function (x, y, dy) {
         if (state !== "running" || !impl.wheel) return false;
+        dirty = true;
         var p = renderer.toLogical(x, y);
         impl.wheel(p.x, p.y, dy);
         if (state !== "running") draw();
@@ -898,7 +928,7 @@
       },
       resize: function () {
         if (state === "destroyed") return;
-        renderer.resize();
+        renderer.resize(); dirty = true;
         if (state !== "running") draw();
       },
       destroy: function () {

@@ -481,7 +481,7 @@ class TestDiceMatches(Matches):
         who, p = self.mover(mid)
         other = next(w for w in (KABIR, MEERA, ASHA) if w is not who)
         self.assertEqual(self.post(f"/api/matches/{mid}/roll", None, other).status_code, 409)
-        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": {"token": 0}}, who).status_code, 409)
+        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": {"token": 0}, "n": self.pic(mid)["number"]}, who).status_code, 409)
         rolls, guard, left = [], 0, False
         while guard < 2000:
             guard += 1
@@ -500,9 +500,9 @@ class TestDiceMatches(Matches):
                 legal = ludo.moves(ludo_state(mid), p["toMove"][0] - 1)          # the server's state holds the roll
                 self.assertGreater(len(legal), 1)
                 # a phone can't bring a roll of its own along with the move
-                bad = self.post(f"/api/matches/{mid}/move", {"move": dict(legal[-1], roll=6)}, who)
+                bad = self.post(f"/api/matches/{mid}/move", {"move": dict(legal[-1], roll=6), "n": self.pic(mid)["number"]}, who)
                 self.assertEqual(bad.status_code, 422, bad.text)
-                r = self.post(f"/api/matches/{mid}/move", {"move": legal[-1]}, who)
+                r = self.post(f"/api/matches/{mid}/move", {"move": legal[-1], "n": self.pic(mid)["number"]}, who)
                 self.assertEqual(r.status_code, 200, r.text)
             else:
                 self.assertEqual(out["picture"]["number"], self.pic(mid)["number"])
@@ -560,12 +560,12 @@ class TestChessMatch(Matches):
         black = MEERA if white is KABIR else KABIR
         self.assertEqual(p["view"]["fen"], chess.START)
         self.assertEqual(self.post(f"/api/matches/{mid}/roll", None, white).status_code, 409)          # no dice
-        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": mv("e2", "e5")}, white).status_code, 422)
-        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": mv("e7", "e5")}, black).status_code, 409)
+        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": mv("e2", "e5"), "n": self.pic(mid)["number"]}, white).status_code, 422)
+        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": mv("e7", "e5"), "n": self.pic(mid)["number"]}, black).status_code, 409)
         for who, m in ((white, mv("f2", "f3")), (black, mv("e7", "e5")), (white, mv("g2", "g4"))):
-            r = self.post(f"/api/matches/{mid}/move", {"move": m}, who)
+            r = self.post(f"/api/matches/{mid}/move", {"move": m, "n": self.pic(mid)["number"]}, who)
             self.assertEqual(r.status_code, 200, r.text)
-        r = self.post(f"/api/matches/{mid}/move", {"move": mv("d8", "h4")}, black)
+        r = self.post(f"/api/matches/{mid}/move", {"move": mv("d8", "h4"), "n": self.pic(mid)["number"]}, black)
         self.assertTrue(r.json()["over"])
         m = self.get(f"/api/matches/{mid}").json()
         self.assertEqual(m["winner"], black["X-Remote-User-Id"])

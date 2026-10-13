@@ -20,6 +20,9 @@
   "use strict";
 
   var UPS = 60, CPU_WAIT = 36, STATE_VERSION = 1;
+  // After a change (a move, a tap, a message) the board is drawn every frame this long (its animations and timed
+  // messages run at most 240 updates); after that only when something changes (kit.js drawKey).
+  var ANIM_HOLD = 250;
   var MODES = [
     { id: "easy", label: "Computer · Easy (gentle)", level: 1 },
     { id: "medium", label: "Computer · Medium", level: 2 },
@@ -119,6 +122,10 @@
       return evs;
     }
 
+    // The computer can think elsewhere (setThinker: a Web Worker, so the page never stops while it thinks): it gets a
+    // copy of the game and answers { move, rng } — the move R.ai makes there and the random state after it, so the
+    // game goes on exactly as if it had thought here.
+    var thinker = null;
     function step(s) {
       var evs = [];
       s.updates++;
@@ -126,7 +133,22 @@
       if (R.step) evs = evs.concat(R.step(s) || []);
       if (s.over || s.cpu < 0 || toMove(s).indexOf(s.cpu) < 0) return evs;
       if (s.wait > 0) { s.wait--; return evs; }
-      var m = R.ai(s, s.cpu, s.level);
+      var m = null;
+      if (thinker) {
+        if (s.aiFor !== s.ply || !s.aiReady) {
+          if (s.aiAsked !== s.ply) {
+            var st = s, ply = s.ply;
+            s.aiAsked = ply;
+            thinker({ s: save(s), seat: s.cpu, level: s.level }, function (res) {
+              if (st.aiAsked !== ply || st.ply !== ply || st.over) return;            // the game moved on
+              if (res && res.move) { st.aiReady = res.move; st.aiRng = res.rng; st.aiFor = ply; }
+              else st.aiAsked = null;                                                // ask again
+            });
+          }
+          return evs;
+        }
+        m = s.aiReady; s.rng = s.aiRng; s.aiReady = null; s.aiFor = null; s.aiAsked = null;
+      } else m = R.ai(s, s.cpu, s.level);
       if (m) evs = evs.concat(play(s, s.cpu, m));
       return evs;
     }
@@ -190,6 +212,7 @@
       if (!ok) throw new Error("That saved game can't be continued.");
       var s = copy(data);
       s.sending = false;
+      s.aiAsked = null; s.aiReady = null; s.aiFor = null;        // a move being thought elsewhere is asked for again
       if (R.restored) R.restored(s);      // a game's own clean-up (Chess: no computer's move half thought)
       return s;
     }
@@ -205,6 +228,7 @@
           R.apply(s, list[i].seat - 1, list[i].move);
           s.lastBy = list[i].seat - 1;
         }
+        s.applied = list.length;                    // the moves this state has played (syncOn goes on from here)
       }
       s.number = p.number || list.length;
       if (p.over && p.result && (!s.over || s.winner === null || s.winner === undefined)) {      // ended another way (resigned, timeout): the server's word
@@ -214,9 +238,34 @@
       s.endReason = p.over ? p.endReason || null : null;
       return s;
     }
+    /** The match moved on by a few moves: the old state with only the new moves played (a long game isn't replayed
+        from its first move at every move); null when that can't be done (the board is the server's view, or the
+        picture isn't a continuation of the old one). The result is the state fromTurns(p) would make. */
+    function syncOn(old, p) {
+      var list = p.moves || [];
+      if (R.fromView || !old || old.over || old.mode !== "phones" || old.seed !== p.seed || old.me !== (p.seat || 1) - 1 ||
+          typeof old.number !== "number" || old.number > list.length || old.number !== old.applied || old.endReason) return null;
+      if (JSON.stringify(old.options) !== JSON.stringify(options(p.options))) return null;
+      var s = copy(old), updates = s.updates;
+      s.updates = 0;                                  // as when replayed: a move's time marks are those of a fresh game
+      s.sending = false; s.sel = null; s.msg = ""; s.msgAt = -1000; s.wait = 0;
+      for (var i = old.number; i < list.length; i++) {
+        R.apply(s, list[i].seat - 1, list[i].move);
+        s.lastBy = list[i].seat - 1;
+      }
+      s.updates = updates;
+      return s;
+    }
     /** A new picture from the server: the new state (keeping this phone's cursor) and the events to play. */
     function sync(old, p) {
-      var s = fromTurns(p), evs = [];
+      var s = syncOn(old, p) || fromTurns(p), evs = [];
+      if (!R.fromView) s.applied = (p.moves || []).length;
+      s.number = p.number || s.applied;
+      if (p.over && p.result && (!s.over || s.winner === null || s.winner === undefined)) {
+        s.over = true;
+        s.winner = p.result.winner === 0 ? -1 : p.result.winner === null ? -1 : p.result.winner - 1;
+      }
+      s.endReason = p.over ? p.endReason || null : null;
       if (old) {
         s.cursor = old.cursor; s.updates = old.updates; s.sel = null;
         if (R.keep) R.keep(old, s);
@@ -232,6 +281,8 @@
       create: create, step: step, press: press, tap: tap, play: play, moves: moves, legal: legal, toMove: toMove,
       mySeat: mySeat, score: score, result: result, save: save, restore: restore, fromTurns: fromTurns, sync: sync,
       digest: function (s) { return R.digest(s); }, options: options, rand: rand,
+      /** fn({ s, seat, level }, done({ move, rng })) thinks for the computer elsewhere; null: here (Chess has its own). */
+      setThinker: function (fn) { thinker = typeof fn === "function" ? fn : null; },
       /** Play a move for whoever's turn it is, without the screen's checks (the tests' and the fuzz runs' way in). */
       force: function (s, move) {
         var seat = toMove(s)[0];
@@ -249,7 +300,8 @@
   function session(canvas, opts, spec) {
     var Kit = root.ArcadeKit, Logic = spec.Logic;
     opts = opts || {};
-    var s = null, pending = [], turns = opts.turns || null, err = "", errAt = -1000;
+    var s = null, pending = [], turns = opts.turns || null, err = "", errAt = -1000, changedAt = -1e9;
+    function changed() { changedAt = s ? s.updates : 0; }
 
     function names() {
       if (s && s.mode === "phones") {
@@ -266,7 +318,7 @@
         if (ev.type === "send" && turns && turns.send) {
           var sent = s;
           Promise.resolve(turns.send(ev.move)).then(null, function (e) {
-            if (s === sent) { s.sending = false; err = (e && e.message) || "That move wasn't taken."; errAt = s.updates; }
+            if (s === sent) { s.sending = false; err = (e && e.message) || "That move wasn't taken."; errAt = s.updates; changed(); }
           });
         }
         pending.push(ev);
@@ -276,11 +328,16 @@
     var impl = {
       init: function (seed) {
         s = turns ? Logic.fromTurns(turns.picture) : Logic.create({ mode: opts.mode, seed: seed, options: opts.options });
-        pending = [];
+        pending = []; changed();
       },
       save: turns ? undefined : function () { return Logic.save(s); },
-      restore: function (data) { s = Logic.restore(data); pending = []; },
-      step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
+      restore: function (data) { s = Logic.restore(data); pending = []; changed(); },
+      step: function () { var evs = pending.concat(Logic.step(s)); pending = []; if (evs.length) changed(); return evs; },
+      // still between moves: drawn again only when whose move it is, the end, a send or the pass screen changes
+      drawKey: function () {
+        if (!s || s.updates - changedAt < ANIM_HOLD) return null;
+        return [s.over ? 1 : 0, s.sending ? 1 : 0, s.pass, Logic.toMove(s).join(","), s.sel === undefined ? "" : JSON.stringify(s.sel)].join("|");
+      },
       logic: function () { return s; },
       score: function () { return Logic.score(s); },
       level: function () { return 1; },
@@ -288,14 +345,16 @@
       isOver: function () { return s.over && s.updates - s.overAt >= 80; },
       result: function () { return Logic.result(s, names()); },
       sounds: Object.assign({ move: "turn", cursor: null, nope: "wall", win: "win", lose: "gameover", draw: "level", ready: "launch" }, spec.sounds || {}),
-      input: function (action, down) { handle(Logic.press(s, action, down)); },
+      input: function (action, down) { handle(Logic.press(s, action, down)); changed(); },
       pointer: function (kind, lx, ly) {
         if (kind !== "down") return;
         handle(Logic.tap(s, spec.hit(s, lx, ly)));
+        changed();
       },
       turnSync: function (p) {
         var r = Logic.sync(s, p);
         s = r.s; err = "";
+        changed();
         return r.events;
       },
       draw: draw,
@@ -362,7 +421,10 @@
       }
     }
 
-    return Kit.createSession(canvas, opts, impl);
+    var inst = Kit.createSession(canvas, opts, impl), destroy = inst.destroy, closed = false;
+    liveSessions++;
+    inst.destroy = function () { destroy(); if (!closed) { closed = true; sessionClosed(); } };
+    return inst;
   }
 
   /** The palette index of a "dark" or a "light" playing piece in a look (the looks' own ink and paper swap round in
@@ -375,7 +437,89 @@
     return dark ? 0 : 9;
   }
 
-  var BoardKit = { rand: rand, toneCi: toneCi, pick: pick, canonical: canonical, copy: copy, marginScore: marginScore, MODES: MODES,
+  // ---------- the computer's thinking within a budget ----------
+  // The deeper searches (Hard) used to take a phone half a second or more on a busy board, with the page frozen. They
+  // now deepen step by step and stop when they have looked at `budget` positions, keeping the deepest answer they
+  // finished: the same answer as before whenever the budget is enough (nearly always), and the same on every phone
+  // (it counts positions, not milliseconds).
+  var OUT = { outOfBudget: true };
+  /** run(depth) for each depth in turn while the budget lasts; the last answer run finished (null if none). The
+      search calls spend() at every position it looks at. */
+  function deepen(depths, budget, run) {
+    var last = null;
+    meter.n = 0; meter.max = budget;
+    try {
+      for (var i = 0; i < depths.length; i++) last = run(depths[i]);
+    } catch (e) {
+      if (e !== OUT) throw e;
+    } finally { meter.max = Infinity; }
+    return last;
+  }
+  var meter = { n: 0, max: Infinity };
+  function spend() { if (++meter.n > meter.max) throw OUT; }
+
+  // ---------- thinking in a Web Worker (board-worker.js, from this app's own address — the strict CSP allows it) ----
+  var workerSrc = null;
+  try {
+    var cur = root.document && root.document.currentScript && root.document.currentScript.src;
+    if (cur && /boardkit\.js(\?|$)/.test(cur)) workerSrc = cur.replace(/boardkit\.js(\?|$)/, "board-worker.js$1");
+  } catch (e) { workerSrc = null; }
+  var worker = null, workerFailed = false, jobs = {}, nextJob = 1, liveSessions = 0;
+  function thinkHere(j) {
+    setTimeout(function () {
+      var s = copy(j.job.s), move = null;
+      try { move = j.Logic.R.ai(s, j.job.seat, j.job.level); } catch (e) { move = null; }
+      j.done({ move: move, rng: s.rng });
+    }, 0);
+  }
+  /** Can the computer think in a worker here? (Not in Node, nor where workers can't be made.) */
+  function canThinkElsewhere() { return !workerFailed && !!workerSrc && typeof root.Worker === "function"; }
+  /** A thinker for Logic.setThinker: the game's rules (`file`, defining the global `name`) loaded in the worker. */
+  function workerThinker(file, name, Logic) {
+    return function (job, done) {
+      var j = { job: job, done: done, Logic: Logic };
+      if (canThinkElsewhere()) {
+        try {
+          if (!worker) {
+            worker = new root.Worker(workerSrc);
+            worker.onmessage = function (e) {
+              var d = e.data || {}, w = jobs[d.id];
+              delete jobs[d.id];
+              if (!w) return;
+              if (d.error) thinkHere(w); else w.done({ move: d.move, rng: d.rng });
+            };
+            worker.onerror = function () {
+              workerFailed = true; worker = null;
+              var left = jobs; jobs = {};
+              for (var id in left) thinkHere(left[id]);
+            };
+          }
+          var id = nextJob++;
+          jobs[id] = j;
+          worker.postMessage({ id: id, file: file, name: name, s: job.s, seat: job.seat, level: job.level });
+          return;
+        } catch (e) { workerFailed = true; worker = null; }
+      }
+      thinkHere(j);
+    };
+  }
+  /** The last board game on the page closed: let the worker go (its memory with it). */
+  function sessionClosed() {
+    liveSessions = Math.max(0, liveSessions - 1);
+    if (!liveSessions && worker) { try { worker.terminate(); } catch (e) { /* gone already */ } worker = null; jobs = {}; }
+  }
+
+  /** A one-entry cache: the last answer of fn for the same key (a board drawn many times between moves). */
+  function memo(fn) {
+    var lastKey, lastVal, have = false;
+    return function (key) {
+      if (!have || key !== lastKey) { lastVal = fn.apply(null, Array.prototype.slice.call(arguments, 1)); lastKey = key; have = true; }
+      return lastVal;
+    };
+  }
+
+  var BoardKit = { memo: memo, deepen: deepen, spend: spend, meter: meter, workerThinker: workerThinker,
+    canThinkElsewhere: canThinkElsewhere, rand: rand, toneCi: toneCi, pick: pick, canonical: canonical, copy: copy, marginScore: marginScore, MODES: MODES,
     LEVEL_BASE: LEVEL_BASE, PHONES_BASE: PHONES_BASE, CPU_WAIT: CPU_WAIT, game: game, session: session };
   if (typeof module === "object" && module.exports) module.exports = BoardKit; else root.BoardKit = BoardKit;
 })(typeof window !== "undefined" ? window : this);

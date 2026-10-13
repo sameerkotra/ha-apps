@@ -93,6 +93,17 @@ function registryGame(id) {
   }
   return null;
 }
+// What the Games page shows before a game's files are loaded (they load when it is opened): its help line, from
+// games/manifest.js. Null for a game this page doesn't have.
+function gameInfo(id) {
+  const loaded = registryGame(id);
+  if (loaded) return loaded;
+  if (!window.ArcadeGames || typeof window.ArcadeGames.info !== "function") return null;
+  for (const name of GAME_ALIASES[id] || [id]) {
+    try { const g = window.ArcadeGames.info(name); if (g) return g; } catch (e) { /* ignore */ }
+  }
+  return null;
+}
 
 // ---------- play time (children) ----------
 function timeChip(pt) {
@@ -286,7 +297,7 @@ function gameTile(g, view, tip) {
   return h("div", { class: "game-cell", dataset: { game: g.id } }, gameCard(g, view), favButton(g, tip));
 }
 function gameCard(g, view) {
-  const def = registryGame(g.id), ok = !!def;
+  const def = gameInfo(g.id), ok = !!def;
   const open = () => { if (ok) showTab("play", { arg: g.id }); else toast(`${g.name} couldn't be loaded in this browser.`, true); };
   const best = g.best !== null && g.best !== undefined ? ["Best ", h("b", null, fmtNum(g.best))] : "Not played yet";
   const savedChip = g.saved ? h("span", { class: "chip on" }, "Saved game") : null;

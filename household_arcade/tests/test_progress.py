@@ -29,13 +29,28 @@ class Progress(ApiBase):
         self.clock.advance(seconds=30)
         r = self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 30, "level": 3})
         self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.progress()["cleared"], 1)                  # one level a heartbeat: level 1 is cleared
+        self.clock.advance(seconds=15)
+        self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 45, "level": 3})
         self.assertEqual(self.progress()["cleared"], 2)                  # on level 3: levels 1 and 2 are cleared
+        self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 45, "level": 3})
+        self.assertEqual(self.progress()["cleared"], 2)                  # each level counts once
         r = self.finish(sid, level=4)
         self.assertEqual(r.json()["progress"]["cleared"], 3)            # ended on level 4: 3 cleared
         self.assertEqual(self.progress()["next"], 4)
         sid = self.begin().json()["id"]                                  # a short game never takes it back
         self.finish(sid, level=1)
         self.assertEqual(self.progress()["cleared"], 3)
+
+    def test_a_forged_heartbeat_does_not_open_every_level(self):
+        with db.get_conn() as conn:
+            count = progress.total(conn, "mines", "boards")
+        sid = self.begin().json()["id"]
+        self.clock.advance(seconds=10)
+        self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 10, "level": count})
+        self.assertEqual(self.progress()["cleared"], 1)
+        self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 10, "level": count + 5})    # past the end: ignored
+        self.assertEqual(self.progress()["cleared"], 1)
 
     def test_a_won_game_clears_its_last_level(self):
         sid = self.begin().json()["id"]

@@ -39,9 +39,16 @@ class Turns(ApiBase):
         p = self.pic(mid)
         return seats_of(self, mid)[p["toMove"][0]], p
 
+    def number(self, mid, who):
+        """The moves `who`'s phone has seen (what the page sends as n)."""
+        r = self.get(f"/api/matches/{mid}/turns", who)
+        return r.json()["number"] if r.status_code == 200 else 0
+
     def move(self, mid, move, who=None, **extra):
         if who is None:
             who, _ = self.mover(mid)
+        if "n" not in extra:
+            extra["n"] = self.number(mid, who)
         return self.post(f"/api/matches/{mid}/move", {"move": move, **extra}, who)
 
 
@@ -132,7 +139,7 @@ class TestMoves(Turns):
         other = MEERA if who is KABIR else KABIR
         self.assertEqual(self.move(mid, {"cell": 4}, other).status_code, 409)              # not your move
         for bad in ({"cell": 9}, {"cell": "4"}, {"x": 1}, [], "4", None):
-            r = self.post(f"/api/matches/{mid}/move", {"move": bad}, who)
+            r = self.post(f"/api/matches/{mid}/move", {"move": bad, "n": 0}, who)
             self.assertEqual(r.status_code, 422, (bad, r.text))
         self.assertEqual(self.post(f"/api/matches/{mid}/move", {}, who).status_code, 422)
         self.assertEqual(self.move(mid, {"cell": 4}, who, n=3).status_code, 409)            # the board moved on
@@ -531,7 +538,7 @@ class TestManyPlayers(Turns):
             self.assertEqual(conn.execute("SELECT dice FROM match_moves WHERE match_id = ?", (mid,)).fetchone()["dice"], roll["roll"])
         # a phone can't send its own roll
         nxt, _ = self.mover(mid)
-        r = self.post(f"/api/matches/{mid}/move", {"move": {"go": True, "roll": 6}}, nxt)
+        r = self.post(f"/api/matches/{mid}/move", {"move": {"go": True, "roll": 6}, "n": self.number(mid, nxt)}, nxt)
         self.assertIn(r.status_code, (409, 422))
         tm = self.post("/api/matches", {"game": "tictactoe", "mode": "phones", "opponents": ["u_meera"]}).json()["id"]
         self.post(f"/api/matches/{tm}/accept", None, MEERA)
@@ -550,7 +557,7 @@ class TestManyPlayers(Turns):
         self.assertTrue(asha["computer"] and asha["left"])
         self.assertEqual(asha["result"], "lost")
         self.assertEqual(self.get(f"/api/matches/{mid}/turns", ASHA).status_code, 200)
-        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": {"go": True}}, ASHA).status_code, 409)
+        self.assertEqual(self.post(f"/api/matches/{mid}/move", {"move": {"go": True}, "n": self.number(mid, ASHA)}, ASHA).status_code, 409)
         asha_seat = asha["seat"]
         guard = 0
         while guard < 60:

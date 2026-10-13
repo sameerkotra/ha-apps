@@ -548,7 +548,9 @@
           s.aiAsked = s.fen;
           var st = s, fen = s.fen;
           thinker({ fen: fen, level: level, seed: (s.rng ^ (s.ply * 2654435761)) >>> 0, past: s.hist.slice() }, function (mv) {
-            if (st.fen === fen && mv) { st.aiMove = mv; st.aiFor = fen; }
+            if (st.fen !== fen) return;
+            if (mv) { st.aiMove = mv; st.aiFor = fen; }
+            else st.aiAsked = null;              // no answer (the worker failed): ask again rather than wait for ever
           });
         }
         return null;

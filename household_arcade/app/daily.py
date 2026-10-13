@@ -6,8 +6,10 @@ turned off". Turning it off keeps the scores already saved; turning it back on s
 
 When on, the first request of a day (Home Assistant's time zone) picks `PER_DAY` games from `POOL` — games an
 admin has switched off are never picked — and stores them in `daily_challenges` with a seed each, so the day's
-picks don't change if a setting does. Each person gets one *ranked* try per challenge (a Practice replay isn't
-saved; any ranked session for it is the try, finished or not). A daily score is an ordinary `scores` row whose
+picks don't change if a setting does. The seed is random, made when the day's row is (nobody can work a day's
+puzzle out ahead), and a page only gets it when a game of it starts. Each person gets one *ranked* try per challenge
+(any ranked session for it is the try, finished or not); Practice replays are open once the ranked try is used, and
+aren't saved. A daily score is an ordinary `scores` row whose
 mode is `daily-<date>`, so it never mixes with the game's usual leaderboard; its personal best and records are
 left out too.
 """
@@ -16,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import random
 import re
+import secrets
 from datetime import date
 
 from . import config, games, limits, scores, settings
@@ -59,8 +62,9 @@ def day_of(mode: str) -> str | None:
     return mode[len(_PREFIX):] if is_daily_mode(mode) and _DATE_RE.match(mode[len(_PREFIX):]) else None
 
 
-def seed_for(day: str, game: str) -> int:
-    return int(hashlib.sha256(f"daily:{day}:{game}".encode()).hexdigest()[:8], 16) % 2_147_483_647
+def new_seed() -> int:
+    """A day's seed: random, so it can't be worked out before the day's row exists."""
+    return secrets.randbelow(2_147_483_646) + 1
 
 
 def pick(day: str, candidates: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -79,7 +83,7 @@ def ensure_day(conn, day: str | None = None) -> list[dict]:
         candidates = [(g, m) for g, m in POOL if games.exists(g) and settings.game_enabled(g)]
         for g, m in pick(day, candidates):
             conn.execute("INSERT OR IGNORE INTO daily_challenges (date, game, mode, seed) VALUES (?, ?, ?, ?)",
-                         (day, g, m, seed_for(day, g)))
+                         (day, g, m, new_seed()))
         rows = conn.execute("SELECT date, game, mode, seed FROM daily_challenges WHERE date = ?", (day,)).fetchall()
     order = {g: i for i, (g, _m) in enumerate(POOL)}
     return sorted((dict(r) for r in rows), key=lambda r: order.get(r["game"], 99))
@@ -106,16 +110,26 @@ def my_score(conn, user_id: str, game: str, day: str) -> int | None:
     return r["s"]
 
 
+def check_try(conn, game: str, current: dict, practice: bool, day: str) -> None:
+    """The ranked try first, then Practice: raises DailyError 409 for a second ranked try, or for Practice before the
+    ranked try (it would show the same puzzle first)."""
+    used = tried(conn, current["id"], game, day)
+    if not practice and used:
+        raise DailyError(409, f"You've already had your try at today's {games.name(game)} challenge. "
+                              "You can still play it as Practice.")
+    if practice and not used:
+        raise DailyError(409, f"Play your ranked try at today's {games.name(game)} challenge first — Practice opens "
+                              "after it.")
+
+
 def challenge_for(conn, game: str, current: dict, practice: bool) -> dict:
     """The challenge a person starts now: today's for `game`. Raises DailyError (404 off / not today's game,
-    409 the ranked try is used)."""
+    409 the ranked try is used, or Practice before it)."""
     require_enabled()
     day = config.today().isoformat()
     for r in visible(conn, current, day):
         if r["game"] == game:
-            if not practice and tried(conn, current["id"], game, day):
-                raise DailyError(409, f"You've already had your try at today's {games.name(game)} challenge. "
-                                      "You can still play it as Practice.")
+            check_try(conn, game, current, practice, day)
             return r
     raise DailyError(404, f"{games.name(game)} isn't one of today's challenges.")
 
@@ -129,8 +143,9 @@ def card(conn, current: dict) -> dict:
     for r in visible(conn, current, day):
         g = games.GAMES[r["game"]]
         played = tried(conn, current["id"], r["game"], day)
+        # (no seed: a page gets it when a game of the challenge starts)
         out.append({"game": r["game"], "name": g["name"], "icon": g["icon"], "mode": r["mode"],
-                    "modeLabel": games.mode_label(r["game"], r["mode"]), "seed": r["seed"],
+                    "modeLabel": games.mode_label(r["game"], r["mode"]),
                     "played": played, "score": my_score(conn, current["id"], r["game"], day)})
     return {"date": day, "challenges": out, "daysPlayed": days_played(conn, current["id"])}
 

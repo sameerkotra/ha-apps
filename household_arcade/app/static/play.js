@@ -92,6 +92,11 @@ const Play = (() => {
     } catch (e) { mount(root, errorCard(e, () => render(gameId, which))); return; }
     S.server = state.games.find((g) => g.id === gameId) || null;
     S.def = registryGame(gameId);
+    if (!S.def && S.server && window.ArcadeGames && typeof ArcadeGames.load === "function") {
+      try { S.def = await ArcadeGames.load(gameId); }                // the game's own files load when it is opened
+      catch (e) { console.error(e); S.def = null; }                  // eslint-disable-line no-console
+      if (S.gameId !== gameId || state.tab !== "play") return;       // the page moved on meanwhile
+    }
     if (!S.server) {
       mount(root, pageHead("Game"), h("div", { class: "card empty", id: "gameMissing" }, "That game isn't switched on for you.",
         h("div", null, h("button", { class: "btn-secondary", type: "button", style: "margin-top:10px", onclick: () => showTab("home") }, "Back to games"))));
@@ -120,13 +125,16 @@ const Play = (() => {
     el.pad = buildPad();
     el.area = h("div", { class: "play-area", id: "playArea", dataset: { hand: hand(), controls: S.def.controls } }, el.stage, el.pad);
     el.raceBar = h("div", { class: "race-bar", id: "raceBar", role: "status", "aria-live": "off", hidden: true });
+    // what a screen reader is told as the game goes (the canvas itself is a picture): the start, pauses, whose
+    // move it is, the end
+    el.live = h("div", { class: "sr-only", id: "gameStatus", role: "status", "aria-live": "polite" });
     mount(root,
       h("div", { class: "play-head" },
         h("button", { class: "icon-btn", type: "button", id: "backBtn", title: "Back to games", "aria-label": "Back to games", onclick: () => showTab("home") }, "‹"),
         h("h2", null, `${S.server.icon} ${S.server.name}`), el.favSlot = h("span", { id: "favSlot" }, favButton(S.server)),
         el.timeSlot, el.helpBtn, el.soundBtn, el.pauseBtn, el.raceBar),
       el.help,
-      el.area);
+      el.area, el.live);
     syncSoundBtn();
     wireStage();
     // Watch the page, not the stage: the stage's size is what fitStage() sets.
@@ -138,6 +146,13 @@ const Play = (() => {
     const joined = window.Together ? Together.take(gameId) : null;
     if (joined) { enterMatch(joined); return; }
     showStart();
+  }
+
+  /** Tell a screen reader (the live region under the game). */
+  function announce(text) {
+    if (!S.el.live || !text) return;
+    S.el.live.textContent = "";
+    setTimeout(() => { if (S.el.live) S.el.live.textContent = text; }, 30);
   }
 
   // ---------- overlays ----------
@@ -259,7 +274,7 @@ const Play = (() => {
       h("div", { class: "ov-row" },
         h("button", { class: played ? "btn-secondary btn-small" : "btn-primary", type: "button", id: "dailyBtn", disabled: !!blocked,
           "aria-label": played ? "Practice today's challenge" : "Play today's challenge",
-          onclick: () => startGame({ daily: true, practice: played || S.practice }) },
+          onclick: () => startGame({ daily: true, practice: played }) },        // Practice only after the ranked try
         played ? "Practice it" : "▶ Play it")));
   }
   // "Play with someone": a race on two phones (offered for the games that can be raced, to a person who isn't
@@ -308,6 +323,8 @@ const Play = (() => {
     if (b) b.focus({ preventScroll: true });
   }
   function showOver(result, saved, error) {
+    announce(`Game over. Score ${fmtNum(result.score || 0)}` + (saved && saved.householdRecord ? ", a new household record" :
+      saved && saved.personalBest ? ", a new personal best" : "") + ".");
     const badges = [];
     if (saved && saved.householdRecord) badges.push(h("span", { class: "badge record" }, "🏆 New household record!"));
     else if (saved && saved.personalBest) badges.push(h("span", { class: "badge best" }, "⭐ New personal best!"));
@@ -364,7 +381,8 @@ const Play = (() => {
       }
       if (left !== null && left <= 0 && !S.timeUpShown) {
         S.timeUpShown = true;
-        toast("Play time is up for today — this game finishes, then that's it until tomorrow.");
+        toast("Play time is up for today — this game ends now.");
+        beat();                            // the server ends the game (its answer stops it here)
       }
     } else mount(S.el.timeSlot, timeChip(pt));
   }
@@ -452,7 +470,18 @@ const Play = (() => {
       const level = S.inst ? safe(() => S.inst.level) : undefined;
       const r = await api(`api/sessions/${S.session.id}/beat`, { method: "POST", body: { activeSeconds: activeSeconds(), level } });
       if (r && r.playTime) applyPlayTime(r.playTime);
+      if (r && r.stop) stopForTime(r.reason);
     } catch (e) { /* the next beat tries again */ }
+  }
+  // A child's play time ran out (the server ended the session): the game ends here and its score so far is sent,
+  // as when a game is over.
+  function stopForTime(reason) {
+    if (!S.session || S.turns || (S.phase !== "running" && S.phase !== "paused")) return;
+    const r = S.inst ? safe(() => currentResult()) : null;
+    if (S.inst) safe(() => S.inst.stop());
+    toast(reason || "Play time is up for today.", true);
+    announce(reason || "Play time is up for today.");
+    finish({ score: r ? r.score : 0, level: r ? r.level : 1, seconds: r ? r.seconds : Math.round(activeSeconds()), stats: {} });
   }
   // Leaving the page in the middle of a game ends it, and its score so far counts like a finished game.
   function endWithScore(keepalive) {
@@ -494,8 +523,9 @@ const Play = (() => {
         if (S.match) body.won = !!(result.stats && result.stats.won);      // a race: who solved it counts for puzzles
         saved = await api("api/scores", { method: "POST", body });
         if (saved.playTime) state.me.playTime = saved.playTime;
-        if (saved.best !== null && saved.best !== undefined && S.server.bestByMode) S.server.bestByMode[S.mode] = saved.best;
-        if (saved.progress && S.server.progress) {
+        // (a daily challenge's mode is the day's, not the start screen's: it never changes the mode's best or progress)
+        if (!S.daily && saved.best !== null && saved.best !== undefined && S.server.bestByMode) S.server.bestByMode[S.mode] = saved.best;
+        if (!S.daily && saved.progress && S.server.progress) {
           S.server.progress[S.mode] = { cleared: saved.progress.cleared, total: saved.progress.total, next: saved.progress.next };
           delete S.levelChoice[S.mode];          // the next game starts at the new next level
           const g = state.games.find((x) => x.id === S.gameId);
@@ -531,7 +561,7 @@ const Play = (() => {
   // still out is withdrawn; a match being played is left to settle by itself: the score so far was sent.
   function leaveMatch(keepalive) {
     const m = S.match;
-    clearInterval(S.waitTimer); clearInterval(S.rematchTimer); clearTimeout(S.countTimer);
+    clearInterval(S.waitTimer); if (typeof S.rematchTimer === "function") S.rematchTimer(); clearTimeout(S.countTimer);
     S.waitTimer = S.rematchTimer = S.countTimer = null;
     // (a turn-by-turn invite lasts days and stays out: it is on the Games page with its own Cancel)
     if (m && m.status === "invited" && m.mine && m.kind !== "turns") api(`api/matches/${m.id}/cancel`, { method: "POST" }).catch(() => { /* it expires */ });
@@ -717,11 +747,11 @@ const Play = (() => {
   }
   // After a race the other player may ask for a rematch: it shows here as one tap.
   function pollRematch() {
-    clearInterval(S.rematchTimer);
+    if (typeof S.rematchTimer === "function") S.rematchTimer();
     const look = async () => {
-      if (S.phase !== "over" || !S.match) { clearInterval(S.rematchTimer); return; }
+      if (S.phase !== "over" || !S.match) { if (typeof S.rematchTimer === "function") S.rematchTimer(); S.rematchTimer = null; return; }
       try {
-        const data = await api("api/matches");
+        const data = await Together.matches();          // shared with the invite sheet's look; none while hidden
         const o = Together.other(S.match);
         const inv = data.waiting.find((x) => x.game === S.match.game && o && x.players.some((p) => p.id === o.id && !p.you));
         const had = S.rematchInvite && S.rematchInvite.id;
@@ -729,7 +759,7 @@ const Play = (() => {
         if ((S.rematchInvite && S.rematchInvite.id) !== had && S.match.status === "done") renderRaceOver();
       } catch (e) { /* try again */ }
     };
-    S.rematchTimer = setInterval(look, 3000);
+    S.rematchTimer = Together.poll(look, 3000);     // a stop function
     look();
   }
 
@@ -829,9 +859,14 @@ const Play = (() => {
     const T = S.turns;
     if (!T || !S.inst) return;
     if (pic.number < T.number && pic.status === T.status) return;      // an older answer
+    const wasMine = T.myTurn;
     T.number = pic.number; T.status = pic.status;
+    T.myTurn = !pic.over && (pic.toMove || []).indexOf(pic.seat) >= 0;
     safe(() => S.inst.turnSync(pic));
     showRaceBar();
+    if (pic.over) announce("The match is over.");
+    else if (T.myTurn && !wasMine) announce("Your move.");
+    else if (!T.myTurn && wasMine) announce("Move sent. Their move now.");
   }
   async function turnFetch() {
     const T = S.turns;
@@ -892,6 +927,7 @@ const Play = (() => {
   function markPaused() {
     if (S.runSince !== null) { S.activeMs += now() - S.runSince; S.runSince = null; }
     S.phase = "paused";
+    announce("Paused.");
     releaseAll();
     showPaused();
     beat();
@@ -1154,6 +1190,15 @@ const Play = (() => {
     pause();
     if (S.session) endWithScore(true);
   });
+  // Back to this page from the browser's back/forward cache: the game it showed ended when the page was left (its
+  // score was sent then), so it starts over at the start screen rather than carrying on without a session.
+  window.addEventListener("pageshow", (e) => {
+    if (!e.persisted || state.tab !== "play" || !S.gameId) return;
+    if (S.phase === "running" || S.phase === "paused" || S.phase === "starting" || S.turns || S.match) {
+      const id = S.gameId;
+      Promise.resolve(render(id)).then(() => toast("That game ended when you left the page; its score so far was kept."));
+    }
+  });
   window.addEventListener("blur", () => releaseAll());
 
   // ---------- game controller (optional) ----------
@@ -1233,7 +1278,7 @@ const Play = (() => {
     // a little short of the full width, so rounding or a scrollbar never pushes a button off the edge
     const availW = Math.floor(Math.min(el.area.clientWidth, document.documentElement.clientWidth - el.area.getBoundingClientRect().left) - 6);
     const key = `${vh}x${availW}x${window.innerWidth}`;
-    if (!force && key === S.lastFit) return;
+    if (!force && key === S.lastFit) return false;
     S.lastFit = key;
     // room under the play area: the page's own bottom padding (the help, when open, sits above it)
     const main = el.area.closest("main"), col = el.area.closest(".main-col");
@@ -1271,6 +1316,7 @@ const Play = (() => {
       el.stage.style.width = `${Math.max(200, Math.floor(cur - over * (layout === "below" ? RATIO : 1) - 2))}px`;
     }
     if (S.inst) safe(() => S.inst.resize());
+    return true;
   }
   function padExtent() {
     const el = S.el, box = el.pad.getBoundingClientRect();
@@ -1282,7 +1328,9 @@ const Play = (() => {
     }
     return [Math.ceil(r - l), Math.ceil(b - t)];
   }
-  function resize() { fitStage(false); if (S.inst) safe(() => S.inst.resize()); }
+  // fitStage resizes the game itself when it changed the layout; otherwise the game measures its canvas once (and
+  // builds nothing again unless the size really changed: the kit's renderer checks).
+  function resize() { if (!fitStage(false) && S.inst) safe(() => S.inst.resize()); }
   function themeChanged() { if (S.inst) safe(() => S.inst.setLook(look())); }
   window.addEventListener("resize", resize);
   window.addEventListener("orientationchange", () => setTimeout(() => fitStage(true), 150));

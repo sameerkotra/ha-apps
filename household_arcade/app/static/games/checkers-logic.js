@@ -180,7 +180,9 @@
     }
     return sc;
   }
+  var NODE_BUDGET = 60000;           // positions Hard may look at for one move (BK.deepen)
   function search(board, first, toMove, me, depth, alpha, beta, rich) {
+    BK.spend();
     var ms = allMoves(board, first, toMove);
     if (!ms.length) return toMove === me ? -100000 - depth : 100000 + depth;
     if (depth === 0) return evaluate(board, first, me, rich);
@@ -199,18 +201,22 @@
   function aiPath(s, seat, level) {
     var ms = allMoves(s.board, s.first, seat);
     if (ms.length === 1 || level <= 1) return BK.pick(s, ms);
-    var depth = level === 2 ? 3 : 6, rich = level >= 3, best = -Infinity, bestMoves = [];
-    for (var i = 0; i < ms.length; i++) {
-      var b = s.board.slice();
-      playPath(b, s.first, seat, ms[i]);
-      var v = search(b, s.first, 1 - seat, seat, depth - 1, best - 1, Infinity, rich);
-      if (v > best) { best = v; bestMoves = [ms[i]]; } else if (v === best) bestMoves.push(ms[i]);
-    }
+    var rich = level >= 3;
+    var bestMoves = BK.deepen(level === 2 ? [3] : [2, 4, 6], NODE_BUDGET, function (depth) {
+      var best = -Infinity, out = [];
+      for (var i = 0; i < ms.length; i++) {
+        var b = s.board.slice();
+        playPath(b, s.first, seat, ms[i]);
+        var v = search(b, s.first, 1 - seat, seat, depth - 1, best - 1, Infinity, rich);
+        if (v > best) { best = v; out = [ms[i]]; } else if (v === best) out.push(ms[i]);
+      }
+      return out;
+    }) || ms;
     return BK.pick(s, bestMoves);
   }
 
   var L = BK.game(R);
   L.BONUS_PIECE = BONUS_PIECE; L.DRAW_PLIES = DRAW_PLIES; L.allMoves = allMoves; L.owner = owner; L.isKing = isKing;
-  L.pieces = pieces; L.aiPath = aiPath; L.playPath = playPath;
+  L.pieces = pieces; L.aiPath = aiPath; L.NODE_BUDGET = NODE_BUDGET; L.playPath = playPath;
   if (typeof module === "object" && module.exports) module.exports = L; else self.CheckersLogic = L;
 })();

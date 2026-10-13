@@ -184,17 +184,29 @@ sent by `backup_core.send_file`.
   their time or during quiet hours. Ends any other open session of the person.
   Returns the session id, a seed, the person's best and the household record
   for that mode, and the play-time picture.
-- `POST /api/sessions/{id}/beat {activeSeconds}` — every 15 s while a game
+- `POST /api/sessions/{id}/beat {activeSeconds, level}` — every 15 s while a game
   runs and on pause/resume. Active seconds only grow and are capped at the wall
-  time since the session began (+2 s).
+  time since the session began (+2 s). The level moves the session's counted level
+  (`level_seen`) on by one at most per heartbeat; each level counted once records the
+  one before as cleared (§14) and is what an automatic level build looks at (§11.6).
+  When a child's time is used up the heartbeat ends the session (`end_reason
+  'limit'`) and answers `{stop: true, reason}`; the page ends the game there and sends
+  its score (accepted up to a minute of play after the stop). Quiet hours don't stop a
+  running game.
 - `POST /api/sessions/{id}/end {activeSeconds}` — a game left without a result.
 - `POST /api/scores {sessionId, score, level, seconds}` — ends the session
   and, unless it was Practice (`reason: practice`) or under 3 s
   (`reason: short`), stores the score with the app version. Returns
   `{saved, reason, personalBest, householdRecord, best, scoreId, playTime}`.
-  A session takes one score.
+  A session takes one score (the request takes the write lock first, so two at once
+  give one score and a 409). A score for a session that had already ended
+  (housekeeping, another game started, time ran out) is still taken, and the session's
+  time is counted up to now. A continued saved game (§12) takes a score only while it
+  still holds its save (`saved_games.session_id`; continuing it in another tab takes the
+  save over): 409 otherwise.
 - Honest scores (422 otherwise): whole numbers, not negative; `seconds` ≤ 6 h
-  and ≤ the wall time since the session began; `level` ≤ 100 (with a level
+  and ≤ the wall time since the session began, and ≤ the active seconds the heartbeats
+  counted + the time since the last one (+2 s); `level` ≤ 100 (with a level
   list, §11.7); score ≤ the game's most and ≤ seconds × its rate + its base
   (`games.py`):
 
@@ -257,8 +269,10 @@ sent by `backup_core.send_file`.
   queen); always at most the base again. Everyone on one phone (Ludo, Snakes and Ladders), two or four on one
   screen (Carrom) and a loss score 0 and keep nothing; a Carrom board ended before it was won says "Board not
   finished — not saved" (also when ended from the pause screen: the session's `unfinishedNote()`).
-- Housekeeping closes sessions without a heartbeat for 2 minutes at their last
-  heartbeat.
+- Housekeeping closes sessions without a heartbeat for 2 minutes: their time counts up
+  to the last heartbeat + 2 minutes, less the pauses they may leave out (§7), however
+  little the page had reported (`end_reason 'stale'`). Starting a game closes the
+  person's other open sessions the same way (`'replaced'`).
 - `GET /api/scores/mine` — bests per game and mode, last 20, totals (games
   saved, seconds played this week Monday–Sunday, Practice included).
 - `GET /api/leaderboard?game=&mode=&period=all|month` — top 10, best per
@@ -273,17 +287,19 @@ sent by `backup_core.send_file`.
 
 - A date is a school day if its weekday is in `school_days` and it isn't a
   holiday; otherwise it uses weekend limits.
-- Time used today = the sum of `active_seconds` of the person's sessions that
-  started today (Home Assistant's time zone). The browser reports each session's active (unpaused) seconds
-  with every heartbeat; the server keeps them between the wall time since the session began less at most
-  15 minutes of pauses (`limits.PAUSE_MAX_SECONDS`) and that wall time (+2 s), and they never shrink — so a page
-  can't report its time down, and a game left paused for longer than that counts again. Allowance = the day's minutes +
+- Time used today = the `active_seconds` of the person's sessions on that day (Home Assistant's time zone); a
+  session that runs past midnight counts on each day for the share of its span that fell on it. The browser
+  reports each session's active (unpaused) seconds with every heartbeat; the server keeps them between the wall
+  time since the session began less the pauses it may leave out and that wall time (+2 s), and they never shrink —
+  so a page can't report its time down. A session may leave out at most 15 minutes of pauses
+  (`limits.PAUSE_MAX_SECONDS`), and a child's sessions of a day together at most 30 minutes
+  (`limits.DAILY_PAUSE_SECONDS`; `limits.pause_allowance`), so many short games don't add up to free time. Allowance = the day's minutes +
   today's extra time; `leftSeconds` is `null` with no limit.
 - Quiet hours: a window whose end is before its start runs past midnight. The
   set that applies is chosen by the day the window ends on: ending on a school
   day → school-night times, otherwise weekend times.
-- Starting is refused during quiet hours or with no time left; a running game
-  always finishes and its score is saved.
+- Starting is refused during quiet hours or with no time left. A running game finishes when quiet hours begin;
+  when the time runs out the next heartbeat ends it (§6) and its score so far is saved.
 - Turn by turn (§13.5): the match's page is an ordinary play session (`POST /api/sessions {game, matchId}`, one per
   visit), so **every second the page is open and not paused counts as play time, whoever's move it is**, and opening
   it is refused like starting a game. Every move checks the child's limits again (allowed games 403; quiet hours or
@@ -900,9 +916,8 @@ They proved too slow to play on anything but a quiet home network (the phones wa
 frames), and were taken out rather than kept half-working. A `matches` row of kind `live` from before is only
 shown as it ended (`settle` closes a leftover one as `timeout`, no result). What remains of two-player play: the
 one-screen modes (Snake Duel's *Two players*, the board games, Carrom's *Two players* / *Doubles*) and turn by
-turn (§13.5). The rules files keep their two-player code paths (`tanks-logic.js` `two`, `duel-logic.js` and
-`snakeduel-logic.js` `phones`, `carrom-logic.js` `phones`), unreachable from the game files, so the logic tests
-still cover them; a later clean-up may take them out.
+turn (§13.5). The rules files' leftover two-phone code paths (Tank Battle's `together` / `against`, Paddle Duel's,
+Snake Duel's and Carrom's `phones`, and their checksums and reports) were taken out in 1.12.4.
 
 ### 13.5 Step 3 — Turn by turn (built)
 
@@ -1324,11 +1339,13 @@ Built: `app/daily.py`, `routers/daily.py`; the pool is Snake, Falling Blocks, Mi
   leaderboard tab, no sensors or notifications — and the server refuses daily
   scores (404 "Daily challenges are turned off"). Turning it off keeps the
   scores already saved; turning it back on shows them again.
-- When on: each day (Home Assistant's time zone) the app picks the same seeded
-  game for everyone — one each of a few games that suit it (Snake, Falling
+- When on: each day (Home Assistant's time zone) the app picks the same
+  game for everyone (its seed random, made with the day's row and given to a page only when a game of it starts —
+  never on the card) — one each of a few games that suit it (Snake, Falling
   Blocks, Mines, Merge, Sudoku, Word Guess, as each one exists). A **Today's
   challenges** card on Home shows them and whether you've played; each person
-  gets one ranked try per challenge (Practice replays aren't saved), and each
+  gets one ranked try per challenge (starting it counts; two at once start one); Practice replays open only after
+  the ranked try (409 before it) and aren't saved; and each
   challenge has its own leaderboard for the day plus a monthly "days played"
   count. Children's limits, quiet hours and allowed games apply as for any
   game; a game an admin has switched off isn't picked.
@@ -1347,3 +1364,36 @@ From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
 - **Ingress source check**: uvicorn starts with proxy headers off (`--no-proxy-headers` in the Dockerfile CMD), so `request.client.host` is always the TCP peer; `tools/check_build.py` checks it.
 - **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass. The live WebSocket's origin check is `web_security.cross_origin_websocket`.
 - **Backups without secrets**: the download blanks the secret App settings (`ai_api_key`) in the copy (`settings.REGISTRY.scrub_secrets`); a restore keeps this install's value for each one the file leaves blank (`saved_secrets` before, `keep_secrets` after the migrations; a value the file carries is used).
+
+## Review fixes (2026-10-13, 1.12.4)
+
+- **Requests**: bodies are capped at 64 KB counted as they arrive (`web_security.BodyLimit`; the backup import
+  streams with its own limit); uvicorn's WebSocket messages at 64 KB (`--ws-max-size`); a live link closes after
+  more than 20 messages a second, and a person has at most 4 open. The Supervisor's watchdog asks `/api/health`.
+- **One at a time**: a move, a roll, resign, accept / decline / start / cancel, a score, a save and starting a
+  session take SQLite's write lock first (`db.write_lock`, `BEGIN IMMEDIATE`), so what they read can't change
+  before they write. `POST /api/matches/{id}/move` needs `n` (the moves the phone has seen); only a clash of move
+  numbers reads as "Another move came first".
+- **Invites**: at most 20 turn-by-turn invites waiting per inviter and 3 to the same person; one invite
+  notification per inviter and person every 5 minutes; `rematchOf` must be a finished match of the same game
+  between the same people. Accepting checks the inviter can still play; if not the invite ends with no result.
+- **Children's view of others**: a child whose leaderboard shows first names (or none) sees first names in
+  `/api/players`, the matches and Against others, and "Can't play right now." instead of another child's time or
+  quiet hours.
+- **AI levels**: automatic builds follow the level the app counted (not a heartbeat's number) and run at most once
+  every 30 minutes per list; a level in an unexpected shape is turned down, not the build. The connection test
+  sends the saved key only to the saved provider and address.
+- **Housekeeping**: besides "Keep scores for", ended play sessions over 90 days, the moves of matches that ended over
+  90 days ago, notification marks over 30 days, extra time over 90 days and daily-challenge rows over 90 days go;
+  stale backup snapshots after 6 hours. Chess's repetition memory starts again after a pawn move or capture.
+- **Speed**: `last_seen` is written at most once a minute (plain `def` dependency); SQLite `synchronous = NORMAL`;
+  the sensors' records are one grouped query, worked out again only when the scores change, and a heartbeat posts
+  them at most every 10 s; the leaderboard, Games list and matches list use grouped queries; built-in levels are
+  checked once per version (their fingerprint in `app_meta`).
+- **The page** loads only the games kit, sound, registry and `games/manifest.js` (made by
+  `tests/js/manifest-tool.js`) up front; a game's own files load when it is opened (`ArcadeGames.load`), with the
+  registry's `?v=`; versioned files are cached for good. Puzzles and board games are drawn again only when something
+  changed (`drawKey`); the board games' computer thinks in a worker (`board-worker.js`) and, on the page, within a
+  budget of positions; Car Park's Levels boards are made ahead (`parking-levels.js`, `tests/js/parking-levels-tool.js`)
+  and Classic and Hard in a worker (`parking-worker.js`).
+

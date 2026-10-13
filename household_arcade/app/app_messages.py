@@ -4,7 +4,7 @@ For now Arcade only answers the Household Assistant (tools.py, APP_MESSAGES_SPEC
 WebSocket to Home Assistant; its outbox runs on its own thread while the background loops do (not in the tests,
 where every test recreates the database).
 """
-from . import config, db, tools
+from . import config, db, settings, tools
 from .common import app_bus as bus
 
 SLUG = "household_arcade"
@@ -17,7 +17,8 @@ def start() -> None:
     if bus.default.started:
         return
     bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, db=db.get_conn, outbox_thread=bool(config.BACKGROUND_LOOPS),
-              api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
+              api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN,
+              signing_key=lambda: settings.REGISTRY.get("bus_signing_key"))      # Admin → App settings
 
 
 def stop() -> None:

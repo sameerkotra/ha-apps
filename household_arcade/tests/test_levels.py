@@ -380,8 +380,11 @@ class TestAutomatic(AiBase):
     def test_heartbeats_report_the_level(self):
         self.ai_on()
         sid = self.start("snake", "maze").json()["id"]
-        self.clock.advance(seconds=30)
-        self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 30, "level": 9})
+        self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 0, "level": 9})
+        self.assertFalse(level_builder.building("snake"))             # one level a heartbeat: the app is at level 2
+        for i in range(7):                                            # … and on level 9 after seven more
+            self.clock.advance(seconds=15)
+            self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 15 * (i + 1), "level": 9})
         self.assertTrue(level_builder.building("snake"))
 
     def test_nothing_when_off_or_manual(self):

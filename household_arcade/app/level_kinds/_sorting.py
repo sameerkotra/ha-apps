@@ -1,6 +1,5 @@
 """Shared by Colour Sort and Bolt Sort: tubes (or bolts) drawn as strings of colour letters, bottom to top, four
 layers each, and a search that sorts them (the same rules and limits as the game files)."""
-import sys
 
 from ..level_common import LevelError
 
@@ -50,9 +49,10 @@ def solvable(tubes, pour_all: bool, budget: int = 120_000) -> bool:
     work = [list(t) for t in tubes]
     seen = set()
     count = [0]
-    sys.setrecursionlimit(max(sys.getrecursionlimit(), 5000))
 
-    def dfs() -> bool:
+    # The search as a generator per position, driven by an explicit stack below (no Python recursion, so no need
+    # to raise the process-wide recursion limit): `yield` asks for the position after a move, and gets its answer.
+    def node():
         if is_sorted(work):
             return True
         count[0] += 1
@@ -75,10 +75,20 @@ def solvable(tubes, pour_all: bool, budget: int = 120_000) -> bool:
                 n = min(_run(A), CAP - len(B)) if pour_all else 1
                 for _ in range(n):
                     B.append(A.pop())
-                if dfs():
+                if (yield):
                     return True
                 for _ in range(n):
                     A.append(B.pop())
         return False
 
-    return dfs()
+    stack = [node()]
+    answer = None
+    while stack:
+        try:
+            stack[-1].send(answer)
+            stack.append(node())          # the frame asked for the next position
+            answer = None
+        except StopIteration as done:
+            stack.pop()
+            answer = done.value
+    return bool(answer)

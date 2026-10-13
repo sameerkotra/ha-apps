@@ -62,6 +62,28 @@ def for_game(conn, user_id: str, game: str) -> dict:
     return out
 
 
+def for_games(conn, user_id: str, game_ids, counts: dict[str, int] | None = None) -> dict[str, dict]:
+    """for_game() for many games at once ({game: {mode: {cleared, total, next}}}): two queries in all. `counts` is
+    levels.playable_counts(conn) when the caller has it already."""
+    counts = levels.playable_counts(conn) if counts is None else counts
+    done_map = {(r["game"], r["mode"]): int(r["cleared"]) for r in conn.execute(
+        "SELECT game, mode, cleared FROM level_progress WHERE user_id = ?", (user_id,))}
+    out = {}
+    for game in game_ids:
+        modes = {}
+        for mode, fixed in games.continue_modes(game).items():
+            if fixed:
+                count = int(fixed)
+            else:
+                set_id = levels.mode_info(game, mode)["set"]
+                count = counts.get(set_id, 0) if set_id else 0
+            done = done_map.get((game, mode), 0)
+            done = min(done, count) if count else done
+            modes[mode] = {"cleared": done, "total": count, "next": next_level(done, count)}
+        out[game] = modes
+    return out
+
+
 def mine(conn, user_id: str) -> list[dict]:
     """Every game and mode this person has cleared a level of (My scores → Level progress)."""
     out = []

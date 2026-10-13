@@ -9,14 +9,22 @@ A game on screen is a *play session*:
     POST /api/scores                the result of a finished game (also ends the session)
 
 Active seconds only ever grow, are capped by the wall time since the
-session started and are at least that wall time less 15 minutes of pauses,
-so a child's play time can't be talked down and a score can't claim more
-time than really passed. Sessions the browser never ended are
-closed by housekeeping.
-"""
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
+session started and are at least that wall time less the pauses it may leave
+out (15 minutes a game; for a child 30 minutes a day over all games), so a
+child's play time can't be talked down and a score can't claim more time than
+really passed. Sessions the browser never ended are closed by housekeeping
+(counting the time up to then); a score that still comes for one is kept and
+its time counted. When a child's time runs out, the heartbeat ends the session
+and answers {stop: true}: the page ends the game there and sends its score.
 
+What the browser reports is trusted as far as it can be checked (SPEC §5.1):
+scores by the game's limits, a game's seconds by the time the heartbeats saw
+it running, and level progress by one level per heartbeat at most.
+"""
 import json
+from datetime import timedelta
+
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 
 from .. import config, daily, db, games, ha_sensors, level_builder, levels, limits, notify, progress, saves, scores, settings, together
 from ..auth import get_current_user
@@ -24,6 +32,8 @@ from ..auth import get_current_user
 router = APIRouter(prefix="/api", tags=["play"])
 
 WALL_SLACK_SECONDS = 2
+STALE_SECONDS = 120          # no heartbeat for this long: the game was left (housekeeping closes it)
+LIMIT_GRACE_SECONDS = 60     # a game stopped because play time ran out: its score may come this much later
 
 
 def _require_enabled(current: dict) -> None:
@@ -41,11 +51,12 @@ def list_games(current: dict = Depends(get_current_user)):
             "SELECT game, mode, MAX(score) AS m FROM scores WHERE user_id = ? AND start_level = 1 GROUP BY game, mode",
             (current["id"],))}
         favs = favourites_of(conn, current["id"])
-        prog = {gid: progress.for_game(conn, current["id"], gid) for gid in games.CONTINUE_LEVELS}
+        counts = levels.playable_counts(conn)          # one grouped query for every level list
+        prog = progress.for_games(conn, current["id"], games.CONTINUE_LEVELS, counts)
         saved = saves.mine(conn, current["id"])
         played = {r["game"]: (r["n"], r["last"]) for r in conn.execute(
             "SELECT game, COUNT(*) AS n, MAX(ended_at) AS last FROM scores WHERE user_id = ? GROUP BY game", (current["id"],))}
-        level_counts = {s: levels.playable_count(conn, s) for s in levels.SETS}
+        level_counts = {s: counts.get(s, 0) for s in levels.SETS}
         todays = daily.for_games(conn, current)           # {} while daily challenges are off
     out = []
     for gid in settings.enabled_games():
@@ -140,10 +151,32 @@ def _wall(row) -> float:
     return max(0.0, (config.utcnow() - started).total_seconds()) + WALL_SLACK_SECONDS
 
 
-def _active(row, reported) -> float:
+def _seconds_cap(row) -> float:
+    """The most seconds a result may claim: the seconds a saved game brought, the active seconds the heartbeats
+    counted, and the time since the last one (a game stopped because play time ran out: a minute's grace)."""
+    base = row["base_seconds"] or 0
+    if row["end_reason"] == "limit":
+        return base + row["active_seconds"] + LIMIT_GRACE_SECONDS
+    beat = config.parse_ts(row["last_beat_at"])
+    since = max(0.0, (config.utcnow() - beat).total_seconds()) if beat else 0.0
+    return base + row["active_seconds"] + since + WALL_SLACK_SECONDS
+
+
+def _active(conn, row, reported, current: dict, at=None) -> float:
     """New active seconds: never less than before, never more than the wall time since the session started, and
-    never less than that wall time less the pauses a session may leave out (limits.credited_seconds)."""
-    return limits.credited_seconds(row, reported)
+    never less than that wall time less the pauses the session may still leave out (limits.credited_seconds)."""
+    return limits.credited_seconds(row, reported, limits.pause_allowance(conn, current, row["id"]), at=at)
+
+
+def close_session(conn, row, user: dict, reason: str) -> None:
+    """End a session the page didn't end (`reason`: stale — no heartbeat for STALE_SECONDS; replaced — another game
+    was started): its time counts up to its last heartbeat and STALE_SECONDS more, less the pauses it may leave
+    out, however little the page had reported."""
+    beat = config.parse_ts(row["last_beat_at"])
+    at = min(config.utcnow(), beat + timedelta(seconds=STALE_SECONDS)) if beat else config.utcnow()
+    active = _active(conn, row, None, user, at=at)
+    conn.execute("UPDATE play_sessions SET active_seconds = ?, ended_at = ?, end_reason = ? WHERE id = ? AND ended_at IS NULL",
+                 (active, max(at.isoformat(timespec="seconds"), row["last_beat_at"]), reason, row["id"]))
 
 
 def _status_json(conn, current: dict) -> dict:
@@ -214,15 +247,21 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
             raise HTTPException(422, "This game always starts at level 1.")
     now = config.now_iso()
     with db.get_conn() as conn:
+        db.write_lock(conn)            # the daily try and the session go in together: two at once can't both be ranked
         if current["is_child"]:
             st = limits.status(conn, current)
             if not limits.game_allowed(st["limits"], game):
                 raise HTTPException(403, f"{games.name(game)} isn't one of your games.")
             if not st["canStart"]:
                 raise HTTPException(409, st["reason"])
-        # one game at a time: anything still open ends at its last heartbeat
-        conn.execute("UPDATE play_sessions SET ended_at = last_beat_at WHERE user_id = ? AND ended_at IS NULL",
-                     (current["id"],))
+        if daily_row:
+            try:
+                daily.check_try(conn, game, current, practice, daily_row["date"])
+            except daily.DailyError as e:
+                raise HTTPException(e.status, str(e))
+        # one game at a time: anything still open ends (its time counted up to its last heartbeat)
+        for old in conn.execute("SELECT * FROM play_sessions WHERE user_id = ? AND ended_at IS NULL", (current["id"],)).fetchall():
+            close_session(conn, old, current, "replaced")
         if start_level > 1 and not saved:
             done = progress.cleared(conn, current["id"], game, mode)
             count = progress.total(conn, game, mode)
@@ -237,12 +276,15 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
         else:
             level_list = levels.playable(conn, set_id) if set_id else None
         conn.execute("INSERT INTO play_sessions (id, user_id, game, mode, practice, started_at, last_beat_at, "
-                     "level_count, base_seconds, resumed, first_started_at, match_id, daily, start_level) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "level_count, base_seconds, resumed, first_started_at, match_id, daily, start_level, level_seen) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (sid, current["id"], game, mode, 1 if practice else 0, now, now,
                       len(level_list) if level_list is not None else None,
                       saved["seconds"] if saved else 0, 1 if saved else 0, saved["started_at"] if saved else now,
-                      match_id if match else None, daily_row["date"] if daily_row else None, start_level))
+                      match_id if match else None, daily_row["date"] if daily_row else None, start_level,
+                      max(start_level, int(saved["level"] or 1)) if saved else start_level))
+        if saved:
+            saves.claim(conn, current["id"], game, sid)     # the save goes on in this session only (SPEC §12)
         if match:
             together.attach_session(conn, match_id, current["id"], sid)
         game_progress = progress.for_game(conn, current["id"], game).get(mode)
@@ -268,13 +310,21 @@ def start_session(background: BackgroundTasks, body: dict = Body(...), current: 
                       "seconds": saved["seconds"]} if saved else None}
 
 
-def _update(conn, row, reported, end: bool) -> None:
-    active = _active(row, reported)
-    now = config.now_iso()
+def _update(conn, row, reported, end: bool, current: dict) -> None:
     if row["ended_at"]:
         return
+    active = _active(conn, row, reported, current)
+    now = config.now_iso()
     conn.execute("UPDATE play_sessions SET active_seconds = ?, last_beat_at = ?, ended_at = ? WHERE id = ?",
                  (active, now, now if end else None, row["id"]))
+
+
+def _charge_ended(conn, row, reported, current: dict) -> None:
+    """A score for a session that had already ended (housekeeping closed it, another game was started, play time ran
+    out): the game went on, so its time counts up to now."""
+    active = _active(conn, row, reported, current)
+    conn.execute("UPDATE play_sessions SET active_seconds = ?, ended_at = MAX(ended_at, ?) WHERE id = ?",
+                 (active, config.now_iso(), row["id"]))
 
 
 def _maybe_warn(background: BackgroundTasks, current: dict, status: dict) -> None:
@@ -285,24 +335,50 @@ def _maybe_warn(background: BackgroundTasks, current: dict, status: dict) -> Non
 @router.post("/sessions/{session_id}/beat")
 def beat(session_id: str, background: BackgroundTasks, body: dict = Body(default={}),
          current: dict = Depends(get_current_user)):
+    """{activeSeconds, level}. Answers {playTime, ended, stop}: `stop` (with `reason`) when a child's play time ran
+    out — the session has ended and the page ends the game there."""
     level = body.get("level") if isinstance(body, dict) else None
+    level_now = None
+    stop = None
     with db.get_conn() as conn:
+        db.write_lock(conn)
         row = _session(conn, session_id, current)
-        _update(conn, row, body.get("activeSeconds") if isinstance(body, dict) else None, end=False)
-        if not row["ended_at"] and progress.counts(row) and isinstance(level, int) and not isinstance(level, bool) \
-                and 1 < level <= games.max_level(row["game"], row["mode"], row["level_count"]):
-            progress.record(conn, current["id"], row["game"], row["mode"], level - 1)     # the level before was cleared
+        _update(conn, row, body.get("activeSeconds") if isinstance(body, dict) else None, end=False, current=current)
+        if not row["ended_at"]:
+            level_now = _level_seen(conn, row, level, current)
         status = _status_json(conn, current)
+        if not row["ended_at"] and limits.time_up(status) and not (row["match_id"] and games.is_turns(row["game"], row["mode"])):
+            conn.execute("UPDATE play_sessions SET ended_at = ?, end_reason = 'limit' WHERE id = ?",
+                         (config.now_iso(), row["id"]))
+            stop = "Play time is up for today — that's the end of this game. See you tomorrow!"
+        elif row["end_reason"] == "limit":
+            stop = "Play time is up for today."
     _maybe_warn(background, current, status)
-    background.add_task(ha_sensors.changed_blocking)
+    background.add_task(ha_sensors.beat_blocking)
     # nearly at the end of the level list? build the next levels now, before anyone needs them
-    _auto_levels(row, level)
-    return {"playTime": status, "ended": bool(row["ended_at"])}
+    if level_now is not None:
+        _auto_levels(row, level_now)
+    return {"playTime": status, "ended": bool(row["ended_at"]) or stop is not None, "stop": stop is not None,
+            "reason": stop}
+
+
+def _level_seen(conn, row, level, current: dict) -> int | None:
+    """A heartbeat's level: the game moves on one level at most per heartbeat, and each level is counted once —
+    the one before it was cleared (SPEC §14). Returns the level the app now holds for the session."""
+    seen = row["level_seen"] or row["start_level"] or 1
+    if isinstance(level, bool) or not isinstance(level, int) or level <= seen \
+            or level > games.max_level(row["game"], row["mode"], row["level_count"]):
+        return seen
+    seen += 1
+    conn.execute("UPDATE play_sessions SET level_seen = ? WHERE id = ?", (seen, row["id"]))
+    if progress.counts(row):
+        progress.record(conn, current["id"], row["game"], row["mode"], seen - 1)     # the level before was cleared
+    return seen
 
 
 def _auto_levels(row, level) -> bool:
-    """Start an automatic level build if this game reached a level near the end of its list. True if levels
-    are being built for this game now."""
+    """Start an automatic level build if this game reached a level near the end of its list (`level` is one the app
+    holds: a heartbeat's counted level, or a stored score's). True if levels are being built for this game now."""
     set_id = levels.mode_info(row["game"], row["mode"])["set"]
     if not set_id:
         return False
@@ -316,8 +392,9 @@ def _auto_levels(row, level) -> bool:
 def end_session(session_id: str, background: BackgroundTasks, body: dict = Body(default={}),
                 current: dict = Depends(get_current_user)):
     with db.get_conn() as conn:
+        db.write_lock(conn)
         row = _session(conn, session_id, current)
-        _update(conn, row, body.get("activeSeconds") if isinstance(body, dict) else None, end=True)
+        _update(conn, row, body.get("activeSeconds") if isinstance(body, dict) else None, end=True, current=current)
         status = _status_json(conn, current)
     _maybe_warn(background, current, status)
     background.add_task(ha_sensors.changed_blocking)
@@ -337,18 +414,27 @@ def post_score(background: BackgroundTasks, body: dict = Body(...), current: dic
         raise HTTPException(422, "sessionId is required.")
     score, level, seconds = body.get("score"), body.get("level", 1), body.get("seconds")
     with db.get_conn() as conn:
+        db.write_lock(conn)             # one score per game, even when the page sends it twice at once
         row = _session(conn, sid, current)
         if row["scored"]:
             raise HTTPException(409, "That game's score was already sent.")
         if row["match_id"] and games.is_turns(row["game"], row["mode"]):
             raise HTTPException(409, "A turn-by-turn match's result is worked out by the app from the moves.")
+        if row["resumed"] and not saves.claimed_by(conn, current["id"], row):
+            raise HTTPException(409, "That saved game was continued (or ended) somewhere else, so this one's score "
+                                     "isn't kept.")
         wall = _wall(row)
         base = row["base_seconds"] or 0
         reason = games.check_score(row["game"], row["mode"], score, level, seconds, row["level_count"])
         if reason is None and seconds > wall + base:
             reason = "That game is longer than the time since it started."
-        _update(conn, row, seconds - base if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None,
-                end=True)
+        if reason is None and seconds > _seconds_cap(row):
+            reason = "That game is longer than the time it was seen being played."
+        reported = seconds - base if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else None
+        if row["ended_at"]:
+            _charge_ended(conn, row, reported, current)
+        else:
+            _update(conn, row, reported, end=True, current=current)
         conn.execute("UPDATE play_sessions SET scored = 1 WHERE id = ?", (sid,))
         if reason:
             if row["match_id"]:         # an impossible score loses the race: it counts as nothing
@@ -384,7 +470,7 @@ def post_score(background: BackgroundTasks, body: dict = Body(...), current: dic
             result["progress"].update(progress.for_game(conn, current["id"], row["game"]).get(row["mode"], {}))
         status = _status_json(conn, current)
     result["playTime"] = status
-    result["levelsComing"] = _auto_levels(row, int(level))
+    result["levelsComing"] = _auto_levels(row, int(level))        # a level the score check accepted
     if result["householdRecord"]:
         background.add_task(notify.record_blocking, current["id"], row["game"], row["mode"], int(score))
     _maybe_warn(background, current, status)
@@ -447,6 +533,7 @@ def save_game(session_id: str, background: BackgroundTasks, body: dict = Body(..
     if not isinstance(body, dict):
         raise HTTPException(422, "Send the game as an object.")
     with db.get_conn() as conn:
+        db.write_lock(conn)
         row = _session(conn, session_id, current)
         if row["ended_at"] or row["scored"]:
             raise HTTPException(409, "That game has already ended.")
@@ -463,7 +550,7 @@ def save_game(session_id: str, background: BackgroundTasks, body: dict = Body(..
         except saves.SaveError as e:
             raise HTTPException(e.status, str(e))
         seconds = body.get("seconds")
-        _update(conn, row, seconds - (row["base_seconds"] or 0), end=True)
+        _update(conn, row, seconds - (row["base_seconds"] or 0), end=True, current=current)
         conn.execute("UPDATE play_sessions SET scored = 1 WHERE id = ?", (session_id,))
         out["playTime"] = _status_json(conn, current)
     background.add_task(ha_sensors.changed_blocking)
@@ -480,7 +567,9 @@ def my_saved(current: dict = Depends(get_current_user)):
 def end_saved(game: str, background: BackgroundTasks, keepScore: bool = Query(default=True),
               current: dict = Depends(get_current_user)):
     """End a saved game: keepScore=true stores its score as it stands; false throws it away."""
+    _require_enabled(current)
     with db.get_conn() as conn:
+        db.write_lock(conn)
         row = saves.get(conn, current["id"], game)
         if not row:
             raise HTTPException(404, "There's no saved game of that kind.")

@@ -4,7 +4,7 @@
 // phones (the die only ever the server's: a roll is sent, never made here; the board from the server's moves and
 // rolls); Chess's perft counts, the rules through taps (castling, en passant, the promotion chooser), the engine at
 // every level (legal, the same move for the same position, mates found, Hard beating Easy) and its thinking off the
-// main thread; Carrom's whole-number physics (the same on two "phones" bit for bit, with Math.sin & co. made to throw),
+// main thread; Carrom's whole-number physics (the same shots, the same board bit for bit, with Math.sin & co. made to throw),
 // its rules (fouls, the queen and its cover, the last coin, the board's end), the computer's levels; saving; scores
 // within the honest-score limits; every mode in all six looks.
 const test = require("node:test");
@@ -393,14 +393,14 @@ function withThrowingMaths(fn) {
   try { return fn(); } finally { Object.assign(Math, saved); Date.now = now; }
 }
 
-test("carrom: whole-number physics — two phones playing the same shots match bit for bit (no engine-dependent maths)", () => {
+test("carrom: whole-number physics — the same shots give the same board bit for bit (no engine-dependent maths)", () => {
   const sums = (seed) => withThrowingMaths(() => {
     const L = loadFresh("carrom-logic.js");
-    const s = L.create({ mode: "phones", seed }), r = rng(seed), out = [];
+    const s = L.create({ mode: "two", seed }), r = rng(seed), out = [];
     for (let k = 0; k < 120 && !s.over; k++) {
-      L.press(s, "shot", randomShot(r), s.turn);
+      L.shoot(s, s.turn, randomShot(r));
       settle(L, s);
-      out.push(L.checksum(s));
+      out.push(JSON.stringify([s.turn, s.shots, s.queen, s.pocketed, s.pieces.map((p) => [p.on ? 1 : 0, p.x, p.y, p.vx, p.vy])]));
       for (const p of s.pieces) {
         if (!p.on) continue;
         for (const v of [p.x, p.y, p.vx, p.vy]) assert.ok(Number.isInteger(v), "whole numbers");
@@ -478,24 +478,23 @@ test("carrom rules: another shot after pocketing yours, fouls, the queen and its
   assert.equal(t.over, true);
   assert.equal(t.winnerTeam, 0);
   assert.equal(t.points, 9 + 3);
-  assert.deepEqual(plain(L.report(t)), { scores: [0, 0], levels: [1, 1], winner: 1 }, "two on one screen: no score");
-  const ph = L.create({ mode: "phones", seed: 2 });
+  assert.equal(L.score(t), 0, "two on one screen: no score");
+  const ph = L.create({ mode: "hard", seed: 2 });
   Object.assign(ph, { over: true, winnerTeam: 1, winner: 1, points: 12 });
-  assert.deepEqual(plain(L.report(ph)), { scores: [0, 500 + 240], levels: [1, 1], winner: 2 });
   assert.equal(L.result(ph, 1).score, 740);
   assert.equal(L.result(ph, 0).stats.notSaved, "Not a win — not saved");
   // a board that goes on for 300 shots ends on the points so far (or a draw)
-  const long = L.create({ mode: "phones", seed: 5 });
+  const long = L.create({ mode: "two", seed: 5 });
   long.shots = L.MAX_SHOTS - 1; long.pocketed[0] = [1, 2]; long.pocketed[1] = [10];
   long.pieces[1].on = false; long.pieces[2].on = false; long.pieces[10].on = false;
   L.shoot(long, long.turn, [500, 900, 2]); settle(L, long);
   assert.equal(long.over, true);
   assert.equal(long.winnerTeam, 0);
   assert.equal(long.points, 1);
-  const even = L.create({ mode: "phones", seed: 5 });
+  const even = L.create({ mode: "two", seed: 5 });
   even.shots = L.MAX_SHOTS - 1;
   L.shoot(even, even.turn, [500, 900, 2]); settle(L, even);
-  assert.deepEqual(plain(L.report(even)), { scores: [0, 0], levels: [1, 1], winner: 0 }, "a draw");
+  assert.ok(even.over && even.winnerTeam < 0, "a draw");
   assert.equal(L.result(even, 0).stats.draw, true);
   // a place on a coin is moved along the line; shots must be whole numbers in range
   const u = L.create({ mode: "two", seed: 3 });
@@ -532,7 +531,7 @@ test("carrom: doubles go round the table, partners opposite; the computer's leve
   const s = Carrom.create({ mode: "easy", seed: 4 });
   Carrom.shoot(s, 0, [400, 880, 70]); settle(Carrom, s);
   const back = Carrom.restore(plain(Carrom.save(s)));
-  assert.equal(Carrom.checksum(back), Carrom.checksum(s));
+  assert.deepEqual(plain(Carrom.save(back)), plain(Carrom.save(s)));
   assert.throws(() => Carrom.restore(Object.assign(plain(Carrom.save(s)), { mode: "phones" })));
 });
 

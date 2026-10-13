@@ -6,6 +6,8 @@
 (function (root) {
   "use strict";
   var Logic = root.FourRowLogic, BK = root.BoardKit;
+  // Hard thinks hardest: in a Web Worker where the page can make one (board-worker.js), so the page never stops
+  if (BK.canThinkElsewhere()) Logic.setThinker(BK.workerThinker("fourrow-logic.js", "FourRowLogic", Logic));
   var COLS = 7, ROWS = 6, CS = 32, X0 = 8, Y0 = 62, R = 13;
 
   function disc(g, x, y, seat, r, a) {

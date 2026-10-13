@@ -38,6 +38,14 @@ def _warn_display_name_only(user_id: str, username: str | None, display_name: st
                        "Use the user id %s or the login name instead.", display_name, user_id)
 
 
+LAST_SEEN_EVERY = 60          # seconds: last_seen is written at most this often per person
+
+
+def _stale(last_seen: str | None) -> bool:
+    seen = config.parse_ts(last_seen) if last_seen else None
+    return seen is None or (config.utcnow() - seen).total_seconds() > LAST_SEEN_EVERY or seen > config.utcnow()
+
+
 # The only addresses a request may come from: the Supervisor's ingress proxy, or loopback (main.py).
 INGRESS_ALLOWED_HOSTS = auth_core.INGRESS_HOSTS
 
@@ -55,8 +63,11 @@ def load_user(x_remote_user_id: str | None, x_remote_user_name: str | None,
     with db.get_conn() as conn:
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         if row:
-            conn.execute("UPDATE users SET name = ?, username = ?, last_seen = ? WHERE id = ?",
-                         (display_name, username, now, user_id))
+            # Only a change (or a last_seen over a minute old) is written: heartbeats and long polls come several
+            # times a minute, and a write each time made every request wait for the disk.
+            if row["name"] != display_name or row["username"] != username or _stale(row["last_seen"]):
+                conn.execute("UPDATE users SET name = ?, username = ?, last_seen = ? WHERE id = ?",
+                             (display_name, username, now, user_id))
         else:
             conn.execute("INSERT INTO users (id, name, username, created_at, last_seen) VALUES (?, ?, ?, ?, ?)",
                          (user_id, display_name, username, now, now))
@@ -73,12 +84,14 @@ def load_user(x_remote_user_id: str | None, x_remote_user_name: str | None,
     }
 
 
-async def get_current_user(request: Request) -> dict:
+def get_current_user(request: Request) -> dict:
+    """A plain (not async) dependency: FastAPI runs it in its thread pool, so the database read never holds up the
+    event loop (long polls, the live link)."""
     ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
     return load_user(ident.user_id, ident.username, ident.display_name)
 
 
-async def require_admin(current: dict = Depends(get_current_user)) -> dict:
+def require_admin(current: dict = Depends(get_current_user)) -> dict:
     auth_core.require_admin_flag(current["is_admin"], "Only designated admins can do this. See the admin_users "
                                                        "option on the app's Configuration tab.")
     return current

@@ -9,6 +9,12 @@
 - `binary_sensor.household_arcade_<person>_playing` — on while that person is
   in a game (a play session with a heartbeat in the last 90 seconds).
 
+A person switched off on Admin → Users gets "unavailable" on their two
+sensors (they aren't counted any more). The records are worked out again only
+when a score was added or removed (or someone switched off, on or renamed);
+heartbeats post at most every BEAT_PUSH_SECONDS (the loop posts every 30 s
+anyway).
+
 `<person>` is the person's login name (or display name) made into an entity
 id. Entities posted through the Core API aren't stored by Home Assistant, so
 the loop re-posts everything every few minutes and on every change; turning
@@ -19,6 +25,7 @@ Best effort: nothing here ever fails an API request. Blocking functions run in
 a thread, never while holding a DB connection across a network call.
 """
 import logging
+import threading
 import time
 from datetime import timedelta
 
@@ -33,6 +40,11 @@ TICK_SECONDS = 30
 FULL_EVERY_SECONDS = 300
 PLAYING_WINDOW_SECONDS = 90
 PREFIX = "household_arcade_"
+BEAT_PUSH_SECONDS = 10           # a heartbeat posts the sensors at most this often (start, end and scores always do)
+
+_records_cache: dict = {"key": None, "value": None}
+_push_lock = threading.Lock()
+_last_push = [0.0]
 
 # What was last posted (entity_id -> (state, attributes)): only changes are posted between full re-posts.
 SENSORS = sensor_publisher.Publisher(post=lambda eid, state, attrs: ha_client.post_state(eid, state, attrs))
@@ -59,7 +71,10 @@ def person_slugs(conn) -> dict[str, str]:
 def entities(conn) -> list[tuple[str, str, dict]]:
     """Every entity this app publishes, with its current state and attributes."""
     out = []
-    recs = scores.records(conn)
+    key = (db.generation(),) + scores.records_key(conn)        # a restored backup is another database
+    if _records_cache["key"] != key or _records_cache["value"] is None:
+        _records_cache["value"], _records_cache["key"] = scores.records(conn), key
+    recs = _records_cache["value"]
     for game in games.GAME_IDS:
         r = recs[game]
         out.append((f"sensor.{PREFIX}{game}_record", str(r["score"] if r["score"] is not None else 0), {
@@ -70,7 +85,14 @@ def entities(conn) -> list[tuple[str, str, dict]]:
     cutoff = (config.utcnow() - timedelta(seconds=PLAYING_WINDOW_SECONDS)).isoformat(timespec="seconds")
     playing = {r["user_id"] for r in conn.execute(
         "SELECT user_id FROM play_sessions WHERE ended_at IS NULL AND last_beat_at >= ?", (cutoff,))}
-    for u in conn.execute("SELECT * FROM users WHERE disabled = 0 ORDER BY created_at, id"):
+    for u in conn.execute("SELECT * FROM users ORDER BY created_at, id"):
+        slug = slugs[u["id"]]
+        if u["disabled"]:            # switched off: shown as unavailable, not as a stale number
+            out.append((f"sensor.{PREFIX}{slug}_played_today", "unavailable",
+                        {"friendly_name": f"{u['name']} played today", "icon": "mdi:gamepad-variant"}))
+            out.append((f"binary_sensor.{PREFIX}{slug}_playing", "unavailable",
+                        {"friendly_name": f"{u['name']} playing", "icon": "mdi:controller"}))
+            continue
         child = bool(u["is_child"]) and not auth.is_admin_identity(u["id"], u["username"])
         st = limits.status(conn, {"id": u["id"], "is_child": child})
         attrs = {"friendly_name": f"{u['name']} played today", "icon": "mdi:gamepad-variant",
@@ -79,7 +101,6 @@ def entities(conn) -> list[tuple[str, str, dict]]:
             attrs.update({"minutes_left": None if st["leftSeconds"] is None else st["leftSeconds"] // 60,
                           "limit_minutes": st["limitMinutes"], "extra_minutes": st["extraMinutes"],
                           "quiet_hours": st["quiet"]})
-        slug = slugs[u["id"]]
         out.append((f"sensor.{PREFIX}{slug}_played_today", str(st["usedSeconds"] // 60), attrs))
         out.append((f"binary_sensor.{PREFIX}{slug}_playing", "on" if u["id"] in playing else "off",
                     {"friendly_name": f"{u['name']} playing", "icon": "mdi:controller"}))
@@ -93,6 +114,7 @@ def push_blocking(force: bool = False) -> dict:
         return {"pushed": 0, "failed": 0}
     with db.get_conn() as conn:
         items = entities(conn)
+    _last_push[0] = time.monotonic()
     return SENSORS.publish(items, force=force, stop_after=1)
 
 
@@ -122,6 +144,18 @@ def changed_blocking() -> None:
         push_blocking()
     except Exception:
         logger.exception("Sensor update failed")
+
+
+def beat_blocking() -> None:
+    """After a heartbeat: only when nothing was posted for BEAT_PUSH_SECONDS (several people playing would otherwise
+    post every few seconds); the loop posts every TICK_SECONDS anyway."""
+    if not enabled():
+        return
+    with _push_lock:
+        if time.monotonic() - _last_push[0] < BEAT_PUSH_SECONDS:
+            return
+        _last_push[0] = time.monotonic()
+    changed_blocking()
 
 
 async def loop() -> None:

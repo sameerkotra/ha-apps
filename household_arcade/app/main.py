@@ -98,13 +98,21 @@ def _csp_for(request: Request) -> str:
     return CSP.replace("connect-src 'self';", f"connect-src 'self' ws://{host} wss://{host};")
 
 
-# The HTML shell points at versioned ?v= assets: never cache the shell itself. API answers: no-store
-# unless the route says otherwise.
-HEADERS = web_security.SecurityHeaders(_csp_for, referrer="no-referrer", api_no_store="default", pragma=True)
+# The HTML shell points at versioned ?v= assets: never cache the shell itself; the assets are kept for good (a new
+# version changes every ?v=, and a game's files take the registry's when they load). API answers: no-store unless the
+# route says otherwise.
+HEADERS = web_security.SecurityHeaders(_csp_for, referrer="no-referrer", api_no_store="default", pragma=True,
+                                       static_immutable=True, static_prefixes=("/",))
 
 
 MAX_BODY = 64 * 1024
 STREAMED = ("/api/admin-storage-import-db",)
+
+# Request bodies: 64 KB for everything (a saved game is at most 48 KB), counted as they arrive — a body sent without
+# a Content-Length can't get past it either. The backup import streams to disk and stops at its own limit. Added
+# before the guard below, so outsiders still get the guard's 403 first (Starlette runs the last added first).
+app.add_middleware(web_security.BodyLimit, default_max=MAX_BODY,
+                   routes={STREAMED[0]: admin.MAX_IMPORT_BYTES}, streamed_prefixes=STREAMED)
 
 
 @app.middleware("http")
@@ -112,14 +120,6 @@ async def guard(request: Request, call_next):
     blocked = auth_core.refuse_outsiders(request, _INGRESS_ALLOWED_HOSTS) or web_security.refuse_cross_site(request)
     if blocked is not None:
         return blocked
-    path = request.url.path
-    if request.method in ("POST", "PUT", "PATCH", "DELETE") and path not in STREAMED:
-        try:
-            length = int(request.headers.get("content-length") or 0)
-        except ValueError:
-            length = 0
-        if length > MAX_BODY:
-            return JSONResponse(status_code=413, content={"detail": "That request is too big."})
     return HEADERS.apply(request, await call_next(request))
 
 

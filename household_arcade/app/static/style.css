@@ -262,7 +262,9 @@ button:disabled { opacity: 0.55; cursor: default; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 6px; }
 
 .toggle-switch { position: relative; width: 42px; height: 24px; flex-shrink: 0; cursor: pointer; display: inline-block; }
-.toggle-switch input { display: none; }
+/* the box itself stays in the page (visually hidden) so the switch can be reached and used with the keyboard */
+.toggle-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.toggle-switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .toggle-switch .track { position: absolute; inset: 0; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 20px; transition: background 0.2s; }
 .toggle-switch .thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; background: var(--text-dim); border-radius: 50%; transition: left 0.2s, background 0.2s; }
 .toggle-switch input:checked + .track { background: var(--accent-soft); border-color: var(--accent-dim); }
@@ -683,15 +685,17 @@ body[data-route="play"] main { max-width: none; padding-bottom: 12px; }
 /* Favourite games (spec §9): the star on each card, and the two sections of the Games page */
 .game-cell { position: relative; display: flex; min-width: 0; }
 .game-cell > .game-card { flex: 1; min-width: 0; }
-.fav-btn { position: absolute; top: 6px; right: 6px; width: 34px; height: 34px; border-radius: 50%; border: 0;
+/* 44 px: a finger-sized target */
+.fav-btn { position: absolute; top: 2px; right: 2px; width: 44px; height: 44px; border-radius: 50%; border: 0;
   background: transparent; color: var(--text-dim); font-size: 1.25rem; line-height: 1; cursor: pointer; }
 .fav-btn:hover { background: var(--panel-hover); color: var(--gold); }
 .fav-btn.on { color: var(--gold); }
 .fav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.game-grid.view-list .fav-btn { top: 50%; transform: translateY(-50%); right: 34px; }
-.game-grid.view-list .game-card { padding-right: 76px; }
-.game-grid.view-large .game-card .gc-top { padding-right: 34px; }
-.game-grid.view-small .fav-btn { top: 2px; right: 2px; width: 30px; height: 30px; font-size: 1.1rem; }
+.game-grid.view-list .fav-btn { top: 50%; transform: translateY(-50%); right: 30px; }
+.game-grid.view-list .game-card { padding-right: 82px; }
+.game-grid.view-large .game-card .gc-top { padding-right: 44px; }
+.game-grid.view-small .fav-btn { top: 0; right: 0; font-size: 1.1rem; }
+.game-grid.view-small .game-card { padding-top: 22px; }
 .games-section { margin: 18px 0 8px; font-size: 1rem; color: var(--text-dim); }
 .play-head #favSlot .fav-btn { position: static; }
 

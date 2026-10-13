@@ -51,7 +51,7 @@ def Lane():
         if set(v) != LANE_KEYS:
             raise LevelError(f'{field} must have exactly "kind", "pattern", "speed" and "dir"')
         kind, pattern, speed, direction = v["kind"], v["pattern"], v["speed"], v["dir"]
-        if kind not in LETTERS:
+        if not isinstance(kind, str) or kind not in LETTERS:
             raise LevelError(f'{field}.kind must be "road", "river" or "grass"')
         if not isinstance(pattern, str) or not 13 <= len(pattern.strip()) <= 26:
             raise LevelError(f"{field}.pattern must be 13–26 characters")

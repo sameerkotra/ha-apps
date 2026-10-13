@@ -78,10 +78,61 @@ class TestSensors(ApiBase):
         self.assertIn("sensor.household_arcade_kabir_played_today", self.ha.states)
         self.assertIn("sensor.household_arcade_kabir_2_played_today", self.ha.states)
 
-    def test_disabled_people_not_published(self):
-        self.patch("/api/admin/users/u_meera", {"disabled": True})
+    def test_disabled_people_shown_unavailable(self):
         self.settings({"ha_sensors": True})
-        self.assertNotIn("sensor.household_arcade_meera_played_today", self.ha.states)
+        self.assertEqual(self.ha.states["sensor.household_arcade_meera_played_today"]["state"], "0")
+        self.patch("/api/admin/users/u_meera", {"disabled": True})
+        ha_sensors.push_blocking()
+        self.assertEqual(self.ha.states["sensor.household_arcade_meera_played_today"]["state"], "unavailable")
+        self.assertEqual(self.ha.states["binary_sensor.household_arcade_meera_playing"]["state"], "unavailable")
+
+    def test_records_worked_out_only_when_scores_change(self):
+        from unittest import mock
+        from app import scores
+        self.settings({"ha_sensors": True})
+        self.play(100)
+        with mock.patch.object(scores, "records", wraps=scores.records) as rec:
+            ha_sensors.push_blocking()
+            ha_sensors.push_blocking()
+            self.assertEqual(rec.call_count, 0)                        # nothing changed: the cached records
+            self.play(300)
+            self.assertEqual(rec.call_count, 1)                        # a new score: worked out again
+        self.assertEqual(self.ha.states["sensor.household_arcade_snake_record"]["state"], "300")
+
+    def test_heartbeats_post_at_most_every_few_seconds(self):
+        self.settings({"ha_sensors": True})
+        sid = self.start().json()["id"]
+        self.ha.requests.clear()
+        ha_sensors._last_push[0] = 0.0
+        for i in range(5):
+            self.clock.advance(seconds=60)
+            self.post(f"/api/sessions/{sid}/beat", {"activeSeconds": 60 * (i + 1)})
+        pushes = [p for p in posted(self.ha) if p.endswith("kabir_played_today")]
+        self.assertEqual(len(pushes), 1)                               # the first beat; the loop does the rest
+
+    def test_grouped_records_match_the_old_query(self):
+        from app import db, games, scores
+        import random
+        rnd = random.Random(7)
+        with db.get_conn() as conn:
+            for i in range(300):
+                g = rnd.choice(["snake", "brick", "blocks"])
+                mode = rnd.choice(games.mode_ids(g))
+                conn.execute("INSERT INTO scores (user_id, game, mode, score, level, seconds, started_at, ended_at, "
+                             "app_version, start_level) VALUES (?, ?, ?, ?, 1, 60, ?, ?, 'x', ?)",
+                             (rnd.choice(["u_kabir", "u_meera", "u_asha"]), g, mode, rnd.randint(0, 50) * 10,
+                              f"2026-09-{rnd.randint(1, 20):02d}T10:00:{i % 60:02d}+00:00",
+                              f"2026-09-{rnd.randint(1, 20):02d}T11:{i // 60:02d}:{i % 60:02d}+00:00", rnd.choice([1, 1, 2])))
+            conn.execute("UPDATE users SET disabled = 1 WHERE id = 'u_asha'")
+            new = scores.records(conn)
+            for game in games.GAME_IDS:                                 # the old way: one query per game and mode
+                for mode in games.mode_ids(game):
+                    r = conn.execute(
+                        "SELECT s.score, s.ended_at, u.name FROM scores s JOIN users u ON u.id = s.user_id "
+                        "WHERE s.game = ? AND s.mode = ? AND u.disabled = 0 AND s.start_level = 1 "
+                        "ORDER BY s.score DESC, s.ended_at ASC, s.id ASC LIMIT 1", (game, mode)).fetchone()
+                    want = {"score": r["score"], "name": r["name"], "at": r["ended_at"]} if r else None
+                    self.assertEqual(new[game]["modes"].get(mode), want, (game, mode))
 
     def test_no_token_no_calls(self):
         self.settings({"ha_sensors": True})

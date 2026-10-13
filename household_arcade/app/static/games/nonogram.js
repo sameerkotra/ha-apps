@@ -49,6 +49,12 @@
     var impl = {
       init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, mistakes: o.mistakes, levels: opts.levels, startLevel: opts.startLevel }); pending = []; lay = layout(s, "modern"); },
       save: function () { return Logic.save(s); },
+      // still unless the clock's seconds or a message change by themselves, or a wrong square is flashing (kit.js drawKey)
+      drawKey: function () {
+        if (!s) return null;
+        for (var i = 0; i < s.wrongAt.length; i++) if (s.wrongAt[i] >= 0 && s.updates - s.wrongAt[i] < 90) return null;
+        return [Logic.effective(s), s.message, s.won ? 1 : 0, s.over ? 1 : 0].join("|");
+      },
       restore: function (data) { s = Logic.restore(data); pending = []; lay = layout(s, "modern"); },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
@@ -74,9 +80,10 @@
       g.line(x + cs - p, y + p, x + p, y + cs - p, ci, cs < 12 ? 1 : 1.6, { a: a });
     }
 
+    var layFor = null, layKind = null;
     function draw(g, info) {
       var lcd = g.kind === "lcd", lowres = g.lowres, n = s.n, i, r, c, x, y;
-      lay = layout(s, g.kind);
+      if (layFor !== s.rows || layKind !== g.kind) { lay = layout(s, g.kind); layFor = s.rows; layKind = g.kind; }   // once per picture and look
       var cs = lay.cs, gx = lay.gx, gy = lay.gy, W = cs * n;
       var hl = Logic.hintsLeft(s);
       g.hud(s.mode === "pictures" ? "PICTURE " + s.level : (Logic.LABELS[s.mode] || "").toUpperCase(), Logic.clock(Logic.effective(s)));

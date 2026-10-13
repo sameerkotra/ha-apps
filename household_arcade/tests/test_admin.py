@@ -17,12 +17,12 @@ class TestAppSettings(ApiBase):
         self.assertEqual(body["values"], {
             "disabled_games": [], "default_look": "modern", "brick_powerups": True, "leaderboard": True,
             "school_days": [1, 2, 3, 4, 5], "limit_warnings": False, "limit_warning_admins": [],
-            "notify_records": False, "notify_invites": True, "notify_turns": True, "assistant_answers": True, "ha_sensors": False, "keep_scores_years": 0,
+            "notify_records": False, "notify_invites": True, "notify_turns": True, "assistant_answers": True, "bus_signing_key": "", "ha_sensors": False, "keep_scores_years": 0,
             "show_daily_challenges": False, "sudoku_hints": 3,
             "ai_levels_enabled": False, "ai_provider": "ollama", "ai_url": "", "ai_model": "", "ai_api_key": "",
             "ai_max_output_tokens": 4000, "ai_levels_auto": True, "ai_levels_ahead": 2, "ai_levels_batch": 5,
             "ai_levels_daily_limit": 20, "ai_levels_review": False, "ai_price_in": 0.0, "ai_price_out": 0.0})
-        self.assertEqual(body["secretsSet"], {"ai_api_key": False})
+        self.assertEqual(body["secretsSet"], {"ai_api_key": False, "bus_signing_key": False})
         self.assertEqual(body["values"], body["defaults"])
         # meta describes each field for the shared page (common/static/settings.js); none needs a restart
         self.assertEqual(set(body["meta"]), set(body["values"]))

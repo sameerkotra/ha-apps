@@ -58,6 +58,10 @@ MATCH_MAX_SECONDS = 7 * 3600       # nobody plays a race longer than the longest
 ACTIVE_WITHIN = 180                # "recently open" for the people list
 RECENT_N = 10
 RACE_SLACK_SECONDS = 3             # a "fastest" race's time may be this much under the time since it began
+MAX_OPEN_INVITES = 20              # turn-by-turn invites one person can have waiting at once
+MAX_OPEN_PER_PERSON = 3            # … of them to the same person
+INVITE_PUSH_EVERY = 5 * 60         # at most one invite notification per inviter and person in this long
+META_FRESH = 1.0                   # seconds the live link trusts what it read about a match (game, players, status)
 
 TERMINAL = ("done", "declined", "expired", "cancelled")
 
@@ -176,25 +180,38 @@ def signature(match_id: str) -> int:
         seen = lv["players"][uid]["seen"]
         if seen is not None and now - seen < CONNECTED_WITHIN:
             bits |= 1 << i
-    return lv["v"] * 8 + bits
+    return lv["v"] * 16 + bits             # up to four seats: four bits
+
+
+def _meta(match_id: str) -> dict | None:
+    """The match's game, players and status as the live numbers need them, read at most every META_FRESH seconds
+    (a phone sends its numbers a few times a second)."""
+    lv = _live(match_id)
+    meta = lv.get("meta")
+    if meta is None or _mono() - meta["at"] > META_FRESH:
+        with db.get_conn() as conn:
+            m = conn.execute("SELECT game, status FROM matches WHERE id = ?", (match_id,)).fetchone()
+            members = {r["user_id"] for r in conn.execute("SELECT user_id FROM match_players WHERE match_id = ?",
+                                                          (match_id,))}
+        if not m:
+            return None
+        meta = lv["meta"] = {"game": m["game"], "status": m["status"], "players": members, "at": _mono()}
+    return meta
 
 
 def set_state(match_id: str, user_id: str, body) -> None:
     """A phone's own score / level / still-playing, a few times a second. Display only: clamped, never a score."""
     if not isinstance(body, dict):
         return
-    with db.get_conn() as conn:
-        m = conn.execute("SELECT game, status FROM matches WHERE id = ?", (match_id,)).fetchone()
-        mine = conn.execute("SELECT 1 FROM match_players WHERE match_id = ? AND user_id = ?",
-                            (match_id, user_id)).fetchone()
-    if not m or not mine:
+    m = _meta(match_id)
+    if not m or user_id not in m["players"]:
         return
     st = _player_live(match_id, user_id)
     was = (st["score"], st["level"], st["over"], st["paused"], st["seen"] is not None
            and _mono() - st["seen"] < CONNECTED_WITHIN)
     st["seen"] = _mono()
     if m["status"] == "playing":
-        top = games.GAMES[m["game"]]["max_score"]
+        top = games.GAMES.get(m["game"], {}).get("max_score", 0)
         score, level = body.get("score"), body.get("level")
         if isinstance(score, (int, float)) and not isinstance(score, bool) and score == score:
             st["score"] = int(max(0, min(top, score)))
@@ -220,10 +237,11 @@ def _is_admin(row) -> bool:
     return auth.is_admin_identity(row["id"], row["username"])
 
 
-def why_not(conn, row, game: str, who: str = "them", kind: str = "race") -> str | None:
+def why_not(conn, row, game: str, who: str = "them", kind: str = "race", private: bool = False) -> str | None:
     """Why this person can't start a race of `game` right now (a short sentence), or None. `row` is a users row.
     A turn-by-turn match (kind "turns") is played over days: a child out of time or in quiet hours can still be
-    invited (each move checks their limits), and other matches don't get in the way."""
+    invited (each move checks their limits), and other matches don't get in the way. `private`: the one asking is
+    a child, who isn't told another child's play time or quiet hours."""
     if row["disabled"]:
         return "Switched off in the app."
     if not settings.game_enabled(game):
@@ -233,6 +251,8 @@ def why_not(conn, row, game: str, who: str = "them", kind: str = "race") -> str 
         if not limits.game_allowed(st["limits"], game):
             return f"{games.name(game)} isn't one of their games." if who == "them" else f"{games.name(game)} isn't one of your games."
         if not st["canStart"] and kind != "turns":
+            if who == "them" and private:
+                return "Can't play right now."
             return st["reason"] if who != "them" else _their_reason(st)
     if kind == "turns":
         return None
@@ -260,13 +280,30 @@ def in_match(conn, user_id: str) -> str | None:
     return None
 
 
+def names_for(conn, user_id: str) -> str:
+    """How a person sees other people's names here: "first" for a child whose leaderboard shows first names only (or
+    no leaderboard), else "full" — the same as on the leaderboard (SPEC §6)."""
+    from . import auth
+    u = conn.execute("SELECT id, username, is_child FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not u or not u["is_child"] or auth.is_admin_identity(u["id"], u["username"]):
+        return "full"
+    return "full" if limits.load_limits(conn, user_id)["leaderboard"] == "full" else "first"
+
+
+def shown_name(name: str, names: str) -> str:
+    from . import scores
+    return scores.first_name(name) if names == "first" else name
+
+
 def players_for(conn, current: dict, game: str, kind: str = "race") -> list[dict]:
-    """Everyone else in the household with whether they can be invited to `game` now, and why not."""
+    """Everyone else in the household with whether they can be invited to `game` now, and why not. A child sees
+    names as on their leaderboard, and not why another child can't play."""
     out = []
+    names = names_for(conn, current["id"])
     cutoff = (config.utcnow() - timedelta(seconds=ACTIVE_WITHIN)).isoformat(timespec="seconds")
     for r in conn.execute("SELECT * FROM users WHERE id != ? ORDER BY name COLLATE NOCASE", (current["id"],)):
-        reason = why_not(conn, r, game, kind=kind)
-        out.append({"id": r["id"], "name": r["name"], "canPlay": reason is None, "reason": reason,
+        reason = why_not(conn, r, game, kind=kind, private=bool(current.get("is_child")))
+        out.append({"id": r["id"], "name": shown_name(r["name"], names), "canPlay": reason is None, "reason": reason,
                     "active": bool(r["last_seen"] and r["last_seen"] >= cutoff)})
     # the ones who can play first
     out.sort(key=lambda p: (not p["canPlay"], not p["active"], p["name"].lower()))
@@ -331,7 +368,7 @@ def settle(conn, match_id: str):
     if m["status"] == "invited":
         exp = config.parse_ts(m["expires_at"]) if m["expires_at"] else None
         if exp and now >= exp:
-            if m["kind"] == "turns":
+            if m["kind"] == "turns" and not _rules_missing(m["game"]):
                 from . import turns
                 if turns.can_start_now(conn, m):          # those who joined in the 7 days play
                     turns.start(conn, m)
@@ -341,6 +378,9 @@ def settle(conn, match_id: str):
         return m
     if m["status"] != "playing":
         return m
+    if not games.exists(m["game"]) or (m["kind"] == "turns" and _rules_missing(m["game"])):
+        _end(conn, m, "done", "unavailable", None, None)          # a game this version no longer has: no result
+        return get(conn, match_id)
     if m["kind"] == "live":                # from before 1.8.0: the app can't play it on; no result
         _end(conn, m, "done", "timeout", None, None)
         return get(conn, match_id)
@@ -368,6 +408,11 @@ def settle(conn, match_id: str):
         _end(conn, m, "done", "timeout", None, None)
         return get(conn, match_id)
     return m
+
+
+def _rules_missing(game: str) -> bool:
+    from . import rules
+    return rules.get(game) is None
 
 
 def resign(conn, match_id: str, current: dict):
@@ -430,10 +475,28 @@ def create(conn, current: dict, body) -> dict:
     mine = why_not(conn, me, game, who="me", kind=kind)
     if mine:
         raise TogetherError(409, mine)
+    names = names_for(conn, current["id"])
     for other in others:
-        theirs = why_not(conn, other, game, kind=kind)
+        theirs = why_not(conn, other, game, kind=kind, private=bool(current.get("is_child")))
         if theirs:
-            raise TogetherError(409, f"{other['name']} can't play right now: {theirs[0].lower()}{theirs[1:]}")
+            raise TogetherError(409, f"{shown_name(other['name'], names)} can't play right now: {theirs[0].lower()}{theirs[1:]}")
+    if rematch is not None:
+        old = get(conn, rematch)
+        was = {r["user_id"] for r in conn.execute("SELECT user_id FROM match_players WHERE match_id = ?", (rematch,))}
+        if not old or old["status"] != "done" or old["game"] != game or current["id"] not in was \
+                or not set(opponents) <= was:
+            raise TogetherError(422, "rematchOf must be a finished match of this game between the same people.")
+    if kind == "turns":                    # several turn-by-turn invites can be out, but not without end
+        mine_open = conn.execute("SELECT id FROM matches WHERE created_by = ? AND status = 'invited' AND kind = 'turns'",
+                                 (current["id"],)).fetchall()
+        if len(mine_open) >= MAX_OPEN_INVITES:
+            raise TogetherError(409, f"You have {MAX_OPEN_INVITES} invites waiting already. Cancel some first.")
+        for other in others:
+            n = conn.execute("SELECT COUNT(*) FROM matches m JOIN match_players p ON p.match_id = m.id "
+                             "WHERE m.created_by = ? AND m.status = 'invited' AND m.kind = 'turns' AND p.user_id = ?",
+                             (current["id"], other["id"])).fetchone()[0]
+            if n >= MAX_OPEN_PER_PERSON:
+                raise TogetherError(409, f"{shown_name(other['name'], names)} has {n} of your invites waiting already.")
     # one live invite out at a time (turn-by-turn invites last days, and several can be out)
     if kind != "turns":
         for r in conn.execute("SELECT id FROM matches WHERE created_by = ? AND status = 'invited' AND kind != 'turns'",
@@ -489,6 +552,12 @@ def accept(conn, match_id: str, current: dict):
     reason = why_not(conn, me, m["game"], who="me", kind=m["kind"])
     if reason:
         raise TogetherError(409, reason)
+    inviter = conn.execute("SELECT * FROM users WHERE id = ?", (m["created_by"],)).fetchone()
+    if not inviter or why_not(conn, inviter, m["game"], kind=m["kind"]):
+        # the one who invited can't play now (out of play time, quiet hours, switched off): the invite ends, no result
+        _end(conn, m, "cancelled", "unavailable")
+        conn.commit()
+        raise TogetherError(409, f"{inviter['name'] if inviter else 'They'} can't play right now, so the invite has ended.")
     if m["kind"] == "turns":               # everyone in: the game starts; else it waits for the others (or a Start)
         from . import turns
         conn.execute("UPDATE match_players SET invite_status = 'accepted' WHERE match_id = ? AND user_id = ?",
@@ -615,7 +684,9 @@ def record_result(conn, session, score, level, seconds, won=None) -> None:
 # What a phone sees
 # ---------------------------------------------------------------------------
 
-def view(conn, m, user_id: str) -> dict:
+def view(conn, m, user_id: str, names: str | None = None) -> dict:
+    """The match as `user_id` sees it (`names`: names_for(user_id), worked out when not given)."""
+    names = names or names_for(conn, user_id)
     lv = LIVE.get(m["id"], {"players": {}})
     now = _mono()
     ps = []
@@ -624,7 +695,8 @@ def view(conn, m, user_id: str) -> dict:
         seen = live.get("seen")
         final = bool(p["finished_at"])
         ps.append({
-            "id": p["user_id"], "name": p["name"], "seat": p["seat"], "you": p["user_id"] == user_id,
+            "id": p["user_id"], "name": p["name"] if p["user_id"] == user_id else shown_name(p["name"], names),
+            "seat": p["seat"], "you": p["user_id"] == user_id,
             "invite": p["invite_status"],
             "score": p["score"] if final else live.get("score", 0),
             "level": p["level"] if final else live.get("level", 1),
@@ -641,13 +713,14 @@ def view(conn, m, user_id: str) -> dict:
     if m["status"] == "invited" and m["expires_at"]:
         expires = max(0, int((config.parse_ts(m["expires_at"]) - config.utcnow()).total_seconds()))
     return {
-        "id": m["id"], "game": m["game"], "gameName": games.name(m["game"]), "icon": games.GAMES[m["game"]]["icon"],
+        "id": m["id"], "game": m["game"], "gameName": games.name(m["game"]), "icon": games.GAMES.get(m["game"], {}).get("icon", "🎮"),
+        "known": games.exists(m["game"]),
         "mode": m["mode"], "modeLabel": games.mode_label(m["game"], m["mode"]), "kind": m["kind"],
         "status": m["status"], "practice": bool(m["practice"]), "createdBy": m["created_by"],
         "mine": m["created_by"] == user_id, "createdAt": m["created_at"], "expiresIn": expires,
         "startsInMs": starts, "endReason": m["end_reason"], "winner": m["winner"], "rematchOf": m["rematch_of"],
         "rule": (race_rule(m["game"]) or {}).get("rule") if m["kind"] == "race" else None,
-        "turns": _turns_brief(conn, m, user_id) if m["kind"] == "turns" else None,
+        "turns": _turns_brief(conn, m, user_id) if m["kind"] == "turns" and not _rules_missing(m["game"]) else None,
         "v": signature(m["id"]), "players": ps,
     }
 
@@ -667,28 +740,29 @@ def snapshot(match_id: str, user_id: str) -> dict | None:
 
 
 def mine(conn, user_id: str) -> dict:
-    """The Games page: invites waiting for me, the one I sent, the matches I'm in, and the last few results."""
+    """The Games page: invites waiting for me, the one I sent, the matches I'm in, and the last few results. Only the
+    matches still open are brought up to date; finished ones are read as they are (the last RECENT_N)."""
     out = {"waiting": [], "sent": [], "playing": [], "recent": []}
-    ids = [r["match_id"] for r in conn.execute("SELECT match_id FROM match_players WHERE user_id = ?", (user_id,))]
-    for mid in ids:
-        settle(conn, mid)
+    names = names_for(conn, user_id)
+    for r in conn.execute("SELECT m.id FROM matches m JOIN match_players p ON p.match_id = m.id "
+                          "WHERE p.user_id = ? AND m.status IN ('invited', 'playing')", (user_id,)).fetchall():
+        settle(conn, r["id"])
     rows = conn.execute(
-        "SELECT m.* FROM matches m JOIN match_players p ON p.match_id = m.id WHERE p.user_id = ? "
+        "SELECT m.*, p.invite_status AS my_invite, p.finished_at AS my_finished FROM matches m "
+        "JOIN match_players p ON p.match_id = m.id WHERE p.user_id = ? AND m.status IN ('invited', 'playing') "
         "ORDER BY m.created_at DESC", (user_id,)).fetchall()
     for m in rows:
         if m["status"] == "invited":
-            mine_p = conn.execute("SELECT invite_status FROM match_players WHERE match_id = ? AND user_id = ?",
-                                  (m["id"], user_id)).fetchone()
-            if m["created_by"] == user_id or (mine_p and mine_p["invite_status"] == "accepted"):
-                out["sent"].append(view(conn, m, user_id))          # mine, or joined and waiting for the others
-            elif mine_p and mine_p["invite_status"] == "invited":
-                out["waiting"].append(view(conn, m, user_id))
-        elif m["status"] == "playing":
-            me = next(p for p in _players(conn, m["id"]) if p["user_id"] == user_id)
-            if not me["finished_at"]:
-                out["playing"].append(view(conn, m, user_id))
-        elif m["status"] == "done" and len(out["recent"]) < RECENT_N:
-            out["recent"].append(view(conn, m, user_id))
+            if m["created_by"] == user_id or m["my_invite"] == "accepted":
+                out["sent"].append(view(conn, m, user_id, names))          # mine, or joined and waiting for the others
+            elif m["my_invite"] == "invited":
+                out["waiting"].append(view(conn, m, user_id, names))
+        elif not m["my_finished"]:
+            out["playing"].append(view(conn, m, user_id, names))
+    for m in conn.execute("SELECT m.* FROM matches m JOIN match_players p ON p.match_id = m.id "
+                          "WHERE p.user_id = ? AND m.status = 'done' ORDER BY m.created_at DESC LIMIT ?",
+                          (user_id, RECENT_N)).fetchall():
+        out["recent"].append(view(conn, m, user_id, names))
     return out
 
 
@@ -703,6 +777,7 @@ def can_use(conn, user_id: str, match_id: str) -> bool:
 def against(conn, user_id: str) -> list[dict]:
     """For each person played: games, wins, losses, draws, and the same per game. Finished matches that weren't
     Practice, where both phones played (a match one player never started doesn't count)."""
+    names = names_for(conn, user_id)
     rows = conn.execute(
         "SELECT m.game, me.result AS mine, o.user_id AS other_id, u.name AS other_name "
         "FROM matches m JOIN match_players me ON me.match_id = m.id AND me.user_id = ? "
@@ -711,7 +786,7 @@ def against(conn, user_id: str) -> list[dict]:
         "WHERE m.status = 'done' AND m.practice = 0 AND me.result IS NOT NULL ORDER BY m.ended_at", (user_id,)).fetchall()
     people: dict[str, dict] = {}
     for r in rows:
-        p = people.setdefault(r["other_id"], {"id": r["other_id"], "name": r["other_name"], "games": 0, "wins": 0,
+        p = people.setdefault(r["other_id"], {"id": r["other_id"], "name": shown_name(r["other_name"], names), "games": 0, "wins": 0,
                                              "losses": 0, "draws": 0, "perGame": {}})
         g = p["perGame"].setdefault(r["game"], {"game": r["game"], "name": games.name(r["game"]), "games": 0,
                                                "wins": 0, "losses": 0, "draws": 0})
@@ -731,6 +806,21 @@ def against(conn, user_id: str) -> list[dict]:
 # Notification
 # ---------------------------------------------------------------------------
 
+_pushed: dict[tuple[str, str], float] = {}
+
+
+def _push_ok(inviter: str, target: str) -> bool:
+    """At most one invite notification per inviter and person every INVITE_PUSH_EVERY seconds (the invites still
+    show on the Games page)."""
+    now = _mono()
+    for k in [k for k, t in _pushed.items() if now - t > INVITE_PUSH_EVERY]:
+        del _pushed[k]
+    if (inviter, target) in _pushed:
+        return False
+    _pushed[(inviter, target)] = now
+    return True
+
+
 def invite_blocking(match_id: str) -> int:
     """The phone notification for an invite (App setting "Invites by phone notification"; the person's own
     "Receive notifications"): "Asha challenges you to Lane Racer", with Join and Not now when the app knows its
@@ -746,7 +836,7 @@ def invite_blocking(match_id: str) -> int:
             "SELECT u.id, u.name, u.username, u.disabled, u.receive_notifications FROM match_players p "
             "JOIN users u ON u.id = p.user_id WHERE p.match_id = ? AND p.user_id != ? AND p.invite_status = 'invited'",
             (match_id, m["created_by"])).fetchall()
-        targets = [t for t in targets if not t["disabled"] and t["receive_notifications"]]
+        targets = [t for t in targets if not t["disabled"] and t["receive_notifications"] and _push_ok(m["created_by"], t["id"])]
         if not inviter or not targets:
             return 0
         services = [ha_notify.services_for(dict(t), conn) for t in targets]

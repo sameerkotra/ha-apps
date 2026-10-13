@@ -114,7 +114,9 @@
     return sc;
   }
   var WIN = 1000000;
+  var NODE_BUDGET = 120000;          // positions Hard may look at for one move (BK.deepen)
   function negamax(b, me, depth, alpha, beta, filled) {
+    BK.spend();
     if (filled === COLS * ROWS) return 0;
     if (depth === 0) return evaluate(b, me);
     var best = -Infinity;
@@ -151,22 +153,28 @@
       return BK.pick(s, pool);
     }
     // leaves are judged with as many discs of each colour (an even count), so neither side is flattered by a tempo
-    var depth = level === 2 ? 4 : 7, best = -Infinity, bestCols = [];
+    var depth = level === 2 ? 4 : 7;
     if ((filled + depth) % 2) depth++;
-    for (i = 0; i < 7; i++) {
-      c = ORDER[i];
-      if (b[c] !== 0) continue;
-      var r = dropRow(b, c), cell = r * COLS + c;
-      b[cell] = me;
-      var v = -negamax(b, them, depth - 1, -Infinity, -best + 1, filled + 1);
-      b[cell] = 0;
-      if (v > best) { best = v; bestCols = [c]; } else if (v === best) bestCols.push(c);
-    }
+    var depths = [];
+    for (var dd = depth % 2 ? 3 : 2; dd <= depth; dd += 2) depths.push(dd);      // same parity as the full depth
+    var bestCols = BK.deepen(depths, NODE_BUDGET, function (dep) {
+      var best = -Infinity, cols_ = [];
+      for (var j = 0; j < 7; j++) {
+        var cc = ORDER[j];
+        if (b[cc] !== 0) continue;
+        var r = dropRow(b, cc), cell = r * COLS + cc;
+        b[cell] = me;
+        var v;
+        try { v = -negamax(b, them, dep - 1, -Infinity, -best + 1, filled + 1); } finally { b[cell] = 0; }
+        if (v > best) { best = v; cols_ = [cc]; } else if (v === best) cols_.push(cc);
+      }
+      return cols_;
+    }) || cols;
     return BK.pick(s, bestCols);
   }
 
   var L = BK.game(R);
   L.COLS = COLS; L.ROWS = ROWS; L.BONUS_CELL = BONUS_CELL; L.lineThrough = lineThrough; L.dropRow = dropRow;
-  L.aiColumn = aiColumn;
+  L.aiColumn = aiColumn; L.NODE_BUDGET = NODE_BUDGET;
   if (typeof module === "object" && module.exports) module.exports = L; else self.FourRowLogic = L;
 })();

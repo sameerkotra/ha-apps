@@ -2,10 +2,49 @@
    Registers itself as "parking" with window.ArcadeGames.
 
    Drag a car or lorry along its length (or pick it with the cursor and Space, then the arrows). The red car has a
-   white arrow on its roof, so it is known by shape as well as colour; the exit is a gap in the right wall. */
+   white arrow on its roof, so it is known by shape as well as colour; the exit is a gap in the right wall.
+
+   Classic and Hard boards take a moment to make (every position a car park can reach is worked out): a Web Worker
+   (parking-worker.js) makes them, and the page shows "Making the car park…" meanwhile; without a worker the page
+   makes it a moment later. The Levels boards are made ahead (parking-levels.js). */
 (function (root) {
   "use strict";
   var Kit = root.ArcadeKit, Logic = root.ParkingLogic;
+
+  // ---------- making Classic and Hard boards off the main thread ----------
+  var workerSrc = null;
+  try {
+    var cur = root.document && root.document.currentScript && root.document.currentScript.src;
+    if (cur && /parking\.js(\?|$)/.test(cur)) workerSrc = cur.replace(/parking\.js(\?|$)/, "parking-worker.js$1");
+  } catch (e) { workerSrc = null; }
+  var worker = null, workerFailed = false, jobs = {}, nextJob = 1;
+  function makeHere(job) { setTimeout(function () { var b = null; try { b = Logic.boardFor(job.mode, job.seed); } catch (e) { b = null; } job.done(b); }, 30); }
+  function makeBoard(mode, seed, done) {
+    var job = { mode: mode, seed: seed, done: done };
+    if (!workerFailed && workerSrc && typeof root.Worker === "function") {
+      try {
+        if (!worker) {
+          worker = new root.Worker(workerSrc);
+          worker.onmessage = function (e) {
+            var d = e.data || {}, j = jobs[d.id];
+            delete jobs[d.id];
+            if (j) { if (d.board) j.done(d.board); else makeHere(j); }
+          };
+          worker.onerror = function () {
+            workerFailed = true; worker = null;
+            var left = jobs; jobs = {};
+            for (var id in left) makeHere(left[id]);
+          };
+        }
+        var id = nextJob++;
+        jobs[id] = job;
+        worker.postMessage({ id: id, mode: mode, seed: seed });
+        return;
+      } catch (e) { workerFailed = true; worker = null; }
+    }
+    makeHere(job);
+  }
+  function slow(mode) { return mode === "classic" || mode === "hard"; }
 
   var MODES = [{ id: "little", label: "Little (gentle)" }, { id: "classic", label: "Classic" }, { id: "hard", label: "Hard" },
     { id: "levels", label: "Levels" }, { id: "book", label: "Puzzle book" }];
@@ -22,8 +61,20 @@
     }
 
     var impl = {
-      init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels }); pending = []; drag = null; },
-      save: function () { return Logic.save(s); },
+      init: function (seed) {
+        var later = slow(opts.mode);
+        s = Logic.create({ mode: opts.mode, seed: seed, hints: o.hints, startLevel: opts.startLevel, levels: opts.levels, deferBoard: later });
+        pending = []; drag = null;
+        if (later) {
+          var mine = s;
+          makeBoard(opts.mode, seed >>> 0, function (b) {
+            if (s !== mine || destroyed) return;            // another game (or none) by now
+            queue(b ? Logic.useBoard(s, b) : Logic.useBoard(s, Logic.boardFor(opts.mode, seed >>> 0)));
+            if (inst) inst.invalidate();
+          });
+        }
+      },
+      save: function () { return s.phase === "wait" ? null : Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; drag = null; },
       step: function () { var evs = pending.concat(Logic.step(s)); pending = []; return evs; },
       logic: function () { return s; },
@@ -42,7 +93,7 @@
           var veh = s.vs[drag.v], d = veh.h ? lx - drag.x : ly - drag.y;
           var want = drag.from + Math.round(d / CS), r = Logic.range(s.vs, s.pos, drag.v);
           want = Math.max(r[0], Math.min(r[1], want));
-          if (want !== s.pos[drag.v]) queue(Logic.slide(s, drag.v, want));
+          if (want !== s.pos[drag.v]) { queue(Logic.slide(s, drag.v, want, drag.moved)); drag.moved = true; }   // one undo a drag
           if (s.phase !== "play") drag = null;
         } else if (kind === "up") drag = null;
       },
@@ -68,6 +119,7 @@
       var lcd = g.kind === "lcd", i;
       g.hud(s.levels ? "LEVEL " + s.level : LABELS[s.mode], Logic.clock(Logic.seconds(s)));
       g.board(BX, BY, BS, BS);
+      if (s.phase === "wait") { g.text("Making the car park…", 120, BY + BS / 2, { size: 12, align: "center", a: 0.85 }); return; }
       for (i = 1; i < N; i++) {
         g.line(BX + i * CS, BY + 2, BX + i * CS, BY + BS - 2, 8, 1, { a: 0.5 });
         g.line(BX + 2, BY + i * CS, BX + BS - 2, BY + i * CS, 8, 1, { a: 0.5 });
@@ -102,7 +154,10 @@
       }
     }
 
-    return Kit.createSession(canvas, opts, impl);
+    var destroyed = false, inst = Kit.createSession(canvas, opts, impl);
+    var destroy = inst.destroy;
+    inst.destroy = function () { destroyed = true; destroy(); };
+    return inst;
   }
 
   root.ArcadeGames.register({

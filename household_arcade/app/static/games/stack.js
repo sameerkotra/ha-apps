@@ -10,10 +10,18 @@
 
   function create(canvas, opts) {
     opts = opts || {};
-    var s = null, pending = [], prevX = 0, cam = 0, camFor = -1;
+    var s = null, pending = [], prevX = 0, cam = 0, camFor = -1, reduceCam = !!opts.reduceMotion;
 
     function camTarget() { return Math.max(0, (s.height + 2) * BH - (GROUND - VIEW_TOP)); }
+    // The camera follows the top of the tower, eased once per update (the same on a 60 or a 120 Hz screen; at once
+    // with reduce motion or a new tower).
+    function easeCamera() {
+      var want = camTarget();
+      if (camFor !== s.level || reduceCam || Math.abs(want - cam) > 200) cam = want; else cam += (want - cam) * 0.15;
+      camFor = s.level;
+    }
     var impl = {
+      view: function () { return { camY: cam }; },           // where the camera is (for the tests)
       init: function (seed) { s = Logic.create({ mode: opts.mode, seed: seed, levels: opts.levels, startLevel: opts.startLevel }); pending = []; prevX = s.block ? s.block.x : 0; cam = camTarget(); },
       save: function () { return Logic.save(s); },
       restore: function (data) { s = Logic.restore(data, opts.levels); pending = []; prevX = s.block ? s.block.x : 0; cam = camTarget(); },
@@ -23,6 +31,7 @@
         var evs = pending.concat(Logic.step(s));
         pending = [];
         if (s.block !== b0 && s.block) prevX = s.block.x;
+        easeCamera();
         return evs;
       },
       logic: function () { return s; },
@@ -41,10 +50,9 @@
         var t = Logic.tower(s);
         g.hud("SCORE " + fmt(s.score), s.towers ? "TOWER " + s.level + "/" + s.towers.length : "FLOOR " + s.height);
 
-        // the camera follows the top of the tower (eased; at once with reduce motion or a new tower)
-        var want = camTarget();
-        if (camFor !== s.level || info.reduce || Math.abs(want - cam) > 200) cam = want; else cam += (want - cam) * 0.15;
-        camFor = s.level;
+        // the camera (eased in step); a still picture (not running) or a new tower puts it in place at once
+        reduceCam = !!info.reduce;
+        if (camFor !== s.level || (info.state !== "running" && info.reduce)) { cam = camTarget(); camFor = s.level; }
         var sy = function (wy) { return GROUND - (wy - cam); };
 
         var ctx = g.ctx;

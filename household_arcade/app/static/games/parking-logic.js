@@ -8,9 +8,15 @@
    position's fewest moves to free the red car found by a search outwards from the solved positions, and the
    position closest to the board's target chosen — so the fewest moves is known exactly. Modes: Little (gentle),
    Classic, Hard and Levels (200 numbered boards, board n from the seed "parking-level-n", carrying on, SPEC §14).
-   One board's score: 10,000 − 5 × seconds − 50 × (moves − fewest) − 200 × hints, at least 10, only when solved. */
+   One board's score: 10,000 − 5 × seconds − 50 × (moves − fewest) − 200 × hints, at least 10, only when solved.
+   The Levels boards are made once, ahead (parking-levels.js, the same boards); Classic and Hard can make theirs off
+   the page's main thread (create with deferBoard, then boardFor in parking-worker.js, then useBoard). */
 (function () {
   "use strict";
+  // the 200 Levels boards, made ahead (null in a page or worker without the file: they are made here, the same)
+  var PRE = typeof module === "object" && module.exports
+    ? (function () { try { return require("./parking-levels.js"); } catch (e) { return null; } })()
+    : (typeof self !== "undefined" && self.ParkingLevels) || null;
 
   function startAt(n, count) { n = Math.floor(Number(n) || 1); return n < 1 ? 1 : n > count ? Math.max(1, count) : n; }
 
@@ -260,11 +266,29 @@
       b.fewest = Math.max(1, fewestFrom(b.vs, b.pos));
     } else {
       if (s.levels) s.rng = hashSeed("parking-level-" + s.level);
-      b = makeBoard(s, s.levels ? levelSpec(s.level) : MODES[s.mode]);
+      var pre = s.levels && PRE ? PRE.board(s.level) : null;
+      if (pre) { b = pre; s.rng = pre.rng; }               // made ahead: exactly what makeBoard makes for this level
+      else b = makeBoard(s, s.levels ? levelSpec(s.level) : MODES[s.mode]);
     }
-    s.vs = b.vs; s.pos = b.pos; s.fewest = b.fewest; s.start = b.pos.slice();
+    useBoardNow(s, b);
+  }
+  function useBoardNow(s, b) {
+    s.vs = b.vs.map(function (v) { return { h: v.h, len: v.len, lane: v.lane }; }); s.pos = b.pos.slice(); s.fewest = b.fewest;
+    s.start = b.pos.slice();
     s.boardUpdates = 0; s.boardMoves = 0; s.boardHints = 0; s.last = -1; s.undo = [];
     s.sel = -1; s.hint = null; s.phase = "play"; s.t = 0; s.cursor = EXIT_ROW * N + b.pos[0];
+  }
+
+  /** A Classic, Little or Hard board for a seed, as create() would make it: { vs, pos, fewest } (parking-worker.js). */
+  function boardFor(mode, seed) {
+    var spec = MODES[mode] && !MODES[mode].levels && !MODES[mode].book ? MODES[mode] : MODES.classic;
+    return makeBoard({ rng: (seed >>> 0) || 1 }, spec);
+  }
+  /** The board a deferred game waited for (create with deferBoard): the game starts. */
+  function useBoard(s, b) {
+    if (!s || s.phase !== "wait" || !b || !Array.isArray(b.vs)) return [];
+    useBoardNow(s, b);
+    return [{ type: "ready" }];
   }
 
   function create(o) {
@@ -278,6 +302,10 @@
       cursor: 0, won: false, over: false, cause: null, lastBoardScore: 0, noHintAt: -1000, fewestTotal: 0,
     };
     if (s.levels) s.level = startAt(o.startLevel, total(s));
+    if (o.deferBoard && !s.levels) {          // the board comes later (useBoard): nothing counts until then
+      s.vs = []; s.pos = []; s.start = []; s.phase = "wait";
+      return s;
+    }
     startBoard(s);
     return s;
   }
@@ -288,13 +316,13 @@
   function score(s) { return s.runScore; }
   function vehicleAt(s, cell) { return occupancy(s.vs, s.pos, -1)[cell]; }
 
-  /** Slide vehicle i to start square p (if it can get there). */
-  function slide(s, i, p) {
+  /** Slide vehicle i to start square p (if it can get there). `more`: the same drag goes on (one undo for all of it). */
+  function slide(s, i, p, more) {
     var evs = [];
     if (s.over || s.phase !== "play" || !(i >= 0 && i < s.vs.length) || p === s.pos[i]) return evs;
     var r = range(s.vs, s.pos, i);
     if (p < r[0] || p > r[1]) return [{ type: "nope" }];
-    s.undo.push({ pos: s.pos.slice(), last: s.last });
+    if (!more || !s.undo.length) s.undo.push({ pos: s.pos.slice(), last: s.last, boardMoves: s.boardMoves });
     if (s.undo.length > 200) s.undo.shift();
     s.pos[i] = p;
     if (s.last !== i) { s.moves++; s.boardMoves++; s.last = i; }
@@ -313,6 +341,8 @@
     if (s.over || s.phase !== "play" || !s.undo.length) return [];
     var u = s.undo.pop();
     s.pos = u.pos; s.last = u.last; s.hint = null;
+    // the board's move count goes back with it (the run's total of moves made still counts it)
+    if (typeof u.boardMoves === "number") s.boardMoves = u.boardMoves;
     return [{ type: "undo" }];
   }
   function hint(s) {
@@ -327,7 +357,7 @@
 
   function step(s) {
     var evs = [];
-    if (s.over) return evs;
+    if (s.over || s.phase === "wait") return evs;         // waiting for the board: the clock doesn't run
     s.updates++;
     if (s.phase === "play") s.boardUpdates++;
     if (s.phase === "clear" && --s.t <= 0) {
@@ -404,6 +434,7 @@
     HINT_COST: HINT_COST, CLEAR_T: CLEAR_T, STATE_VERSION: STATE_VERSION, MODES: MODES, create: create, step: step, press: press,
     slide: slide, undo: undo, hint: hint, range: range, cellsOf: cellsOf, occupancy: occupancy, explore: explore,
     distances: distances, nextMove: nextMove, solved: solved, makeBoard: makeBoard, levelSpec: levelSpec, hashSeed: hashSeed,
+    boardFor: boardFor, useBoard: useBoard, madeAhead: function () { return !!PRE; },
     vehicleAt: vehicleAt, score: score, boardScore: boardScore, save: save, restore: restore, result: result,
     seconds: seconds, clock: clock, rand: rand,
   };

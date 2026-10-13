@@ -208,8 +208,10 @@ class TestDaily(ApiBase):
         a, b = self.todays(KABIR), self.todays(MEERA)
         self.assertEqual(a["date"], TODAY)
         self.assertEqual(len(a["challenges"]), 3)
-        self.assertEqual([(c["game"], c["mode"], c["seed"]) for c in a["challenges"]],
-                         [(c["game"], c["mode"], c["seed"]) for c in b["challenges"]])
+        self.assertEqual([(c["game"], c["mode"]) for c in a["challenges"]],
+                         [(c["game"], c["mode"]) for c in b["challenges"]])
+        for c in a["challenges"]:
+            self.assertNotIn("seed", c, "the card never gives the seed away")
         self.assertEqual(a, self.todays(KABIR), "asking again doesn't change the picks")
         self.assertEqual(self.get("/api/me").json()["dailyChallenges"], True)
         for c in a["challenges"]:
@@ -222,20 +224,24 @@ class TestDaily(ApiBase):
             self.assertEqual(x["daily"] is not None, gid in picked, gid)
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM daily_challenges WHERE date = ?", (TODAY,)).fetchone()[0], 3)
+        seeds = {h["X-Remote-User-Id"]: self.start_daily(a["challenges"][0]["game"], h=h).json()["seed"] for h in (KABIR, MEERA)}
+        self.assertEqual(len(set(seeds.values())), 1, "the same game for everyone")
 
-    def test_the_seed_and_picks_depend_on_the_date_only(self):
-        self.assertEqual(daily.seed_for("2026-09-21", "sudoku"), daily.seed_for("2026-09-21", "sudoku"))
-        self.assertNotEqual(daily.seed_for("2026-09-21", "sudoku"), daily.seed_for("2026-09-22", "sudoku"))
-        self.assertNotEqual(daily.seed_for("2026-09-21", "sudoku"), daily.seed_for("2026-09-21", "snake"))
+    def test_the_picks_depend_on_the_date_and_the_seed_is_random_and_kept(self):
+        with db.get_conn() as conn:
+            first_rows = daily.ensure_day(conn, "2026-09-21")
+            self.assertEqual(first_rows, daily.ensure_day(conn, "2026-09-21"), "the stored seed stays for the day")
+            conn.execute("DELETE FROM daily_challenges")
+            again = daily.ensure_day(conn, "2026-09-21")
+        self.assertEqual([r["game"] for r in again], [r["game"] for r in first_rows])
+        self.assertNotEqual([r["seed"] for r in again], [r["seed"] for r in first_rows],
+                            "a new row gets a new random seed: it can't be worked out from the date")
         self.assertEqual(daily.pick("2026-09-21", list(daily.POOL)), daily.pick("2026-09-21", list(daily.POOL)))
         days = {tuple(daily.pick(f"2026-10-{d:02d}", list(daily.POOL))) for d in range(1, 29)}
         self.assertGreater(len(days), 5, "the picks vary day to day")
         self.assertEqual(len(daily.pick("2026-09-21", list(daily.POOL)[:2])), 2)
-        first = self.todays()["challenges"]
         self.clock.advance(days=1)
-        second = self.todays()
-        self.assertEqual(second["date"], "2026-09-22")
-        self.assertNotEqual([c["seed"] for c in first], [c["seed"] for c in second["challenges"]])
+        self.assertEqual(self.todays()["date"], "2026-09-22")
 
     def test_games_switched_off_are_never_picked(self):
         keep = ["wordguess", "sudoku"]
@@ -262,13 +268,15 @@ class TestDaily(ApiBase):
         r = self.start_daily(gid)
         self.assertEqual(r.status_code, 201, r.text)
         body = r.json()
-        self.assertEqual((body["mode"], body["seed"], body["daily"], body["best"], body["record"]), (c["mode"], c["seed"], TODAY, None, None))
+        with db.get_conn() as conn:
+            seed = conn.execute("SELECT seed FROM daily_challenges WHERE date = ? AND game = ?", (TODAY, gid)).fetchone()[0]
+        self.assertEqual((body["mode"], body["seed"], body["daily"], body["best"], body["record"]), (c["mode"], seed, TODAY, None, None))
         sid = body["id"]
         # started and not finished: the ranked try is used
         r = self.start_daily(gid)
         self.assertEqual(r.status_code, 409)
         self.assertIn("already had your try", r.json()["detail"])
-        self.assertEqual(self.start_daily(gid, practice=True).status_code, 201, "Practice is always open")
+        self.assertEqual(self.start_daily(gid, practice=True).status_code, 201, "Practice is open after the ranked try")
         self.assertEqual(self.start_daily(gid, h=MEERA).status_code, 201, "someone else has their own try")
         self.assertEqual(self.get("/api/daily").json()["challenges"][0]["played"], True)
         self.assertTrue(sid)
@@ -311,13 +319,36 @@ class TestDaily(ApiBase):
         if gid != "sudoku":
             self.assertTrue(again.json()["personalBest"])
 
+    def test_practice_only_after_the_ranked_try(self):
+        gid = self.todays()["challenges"][0]["game"]
+        r = self.start_daily(gid, practice=True)
+        self.assertEqual(r.status_code, 409, "Practice first would show the ranked puzzle before the try")
+        self.assertIn("ranked try", r.json()["detail"])
+        self.assertFalse(self.todays()["challenges"][0]["played"], "a refused Practice doesn't use the try")
+        self.assertEqual(self.start_daily(gid).status_code, 201)
+
+    def test_two_ranked_tries_at_once_only_one_starts(self):
+        import threading
+        gid = self.todays()["challenges"][0]["game"]
+        codes = []
+        def go():
+            codes.append(self.start_daily(gid).status_code)
+        threads = [threading.Thread(target=go) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(codes), [201, 409, 409, 409])
+
     def test_a_practice_replay_is_not_saved(self):
         gid = self.todays()["challenges"][0]["game"]
+        first = self.start_daily(gid)
+        self.post(f"/api/sessions/{first.json()['id']}/end", {"activeSeconds": 1})
         r = self.start_daily(gid, practice=True)
         self.clock.advance(seconds=30)
         res = self.post("/api/scores", {"sessionId": r.json()["id"], "score": 100, "level": 1, "seconds": 30})
         self.assertFalse(res.json()["saved"]); self.assertEqual(res.json()["reason"], "practice")
-        self.assertFalse(self.todays()["challenges"][0]["played"], "Practice doesn't use the ranked try")
+        self.assertIsNone(self.todays()["challenges"][0]["score"], "Practice doesn't add a score")
 
     def test_a_daily_can_not_be_put_aside(self):
         gid = self.todays()["challenges"][0]["game"]

@@ -362,6 +362,10 @@ def apply(st: dict, seat: int, move) -> tuple[dict, dict]:
     s["ply"] += 1
     s["turn"] = 1 - seat
     k = key(p)
+    if p.half == 0:
+        # a capture or a pawn move: no position before it can come again, so only the new one is kept (the map
+        # would otherwise grow with every move of a long game)
+        s["keys"] = {}
     s["keys"][k] = s["keys"].get(k, 0) + 1
     replies = legal(p)
     if not replies:

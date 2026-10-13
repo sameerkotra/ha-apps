@@ -7,7 +7,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from app import config, db, ha_sensors, settings
+from app import config, db, ha_sensors, settings, together
 from app.common import ha_notify, ha_people
 from app.main import app
 from common_tests.fake_ha import FakeHA
@@ -72,6 +72,7 @@ class ApiBase(unittest.TestCase):
         ha_notify._targets_cache = None
         ha_notify._entity_mode.clear()
         ha_sensors._last.clear()
+        together._pushed.clear()
         for h in (ASHA, KABIR, MEERA):
             self.assertEqual(self.get("/api/me", h).status_code, 200)
 

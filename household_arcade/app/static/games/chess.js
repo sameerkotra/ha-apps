@@ -13,6 +13,9 @@
   "use strict";
   var Logic = root.ChessLogic, BK = root.BoardKit;
   var CS = 27, X0 = 12, Y0 = 40;
+  // worked out once per position, not every frame
+  var posOf = BK.memo(function (fen) { var p = Logic.fromFen(fen); return { pos: p, check: Logic.inCheck(p) }; });
+  var legalOf = BK.memo(function (s) { return Logic.legalList(s); });
 
   // ---------- the computer, off the main thread ----------
   var workerSrc = null;
@@ -50,6 +53,12 @@
     fallback(job, done);
   }
   Logic.setThinker(thinker);
+  // The worker keeps a big table of positions it has seen: when the last chess game on the page closes, it goes.
+  var live = 0;
+  function closed() {
+    live = Math.max(0, live - 1);
+    if (!live && worker) { try { worker.terminate(); } catch (e) { /* gone already */ } worker = null; jobs = {}; }
+  }
 
   // ---------- drawing ----------
   var SHAPES = {
@@ -126,10 +135,10 @@
       if (lcd) g.rect(xy[0] + 2, xy[1] + 2, CS - 4, CS - 4, 9, {});
       else g.rect(xy[0], xy[1], CS, CS, 3, { r: 0, solid: true, a: g.kind === "neon" ? 0.3 : 0.38, edge: false });
     }
-    var pos = Logic.fromFen(s.fen), b = pos.b;
+    var known = posOf(s.fen, s.fen), pos = known.pos, b = pos.b;
     // a king in check
     if (!s.over || s.reason === "checkmate") {
-      if (Logic.inCheck(pos)) {
+      if (known.check) {
         xy = cellXY(s, Logic.ext(pos.kings[pos.white ? 0 : 1]));
         g.ring(xy[0] + CS / 2, xy[1] + CS / 2, CS * 0.47, lcd ? 0 : 1, 2.5);
         if (!lcd) g.rect(xy[0], xy[1], CS, CS, 1, { r: 0, solid: true, a: 0.25, edge: false });
@@ -137,7 +146,7 @@
     }
     var mine = Logic.mySeat(s), dests = {}, movable = {};
     if (mine >= 0 && info.state === "running" && !s.promo) {
-      var list = Logic.legalList(s);
+      var list = legalOf(s.fen, s);
       for (i = 0; i < list.length; i++) { movable[list[i][0]] = true; if (s.sel === list[i][0]) dests[list[i][1]] = true; }
     }
     for (i = 0; i < 64; i++) {
@@ -190,7 +199,7 @@
   }
 
   function create(canvas, opts) {
-    return BK.session(canvas, opts, {
+    var inst = BK.session(canvas, opts, {
       Logic: Logic,
       drawBoard: drawBoard,
       seatNames: ["White", "Black"],
@@ -200,8 +209,7 @@
       yourMove: function (s) { return s.promo ? "Pick what the pawn becomes" : s.sel !== null && s.sel !== undefined ? "Tap where it goes" : "Your move — tap a piece"; },
       statusText: function (s, nm) {
         if (s.over || s.sending) return null;
-        var pos = Logic.fromFen(s.fen);
-        if (Logic.inCheck(pos)) {
+        if (posOf(s.fen, s.fen).check) {
           var mine = (s.mode === "phones" ? s.turn === s.me : s.mode === "two" || s.turn !== s.cpu);
           return mine ? "Check! Your move" : nm[s.turn] + " is in check";
         }
@@ -210,6 +218,10 @@
       sounds: { step: null, capture: "hit", castle: "turn", promote: "powerup", check: "wall", pick: "turn" },
       nopeText: "That move isn't allowed",
     });
+    var destroy = inst.destroy, done = false;
+    live++;
+    inst.destroy = function () { destroy(); if (!done) { done = true; closed(); } };
+    return inst;
   }
 
   root.ArcadeGames.register({

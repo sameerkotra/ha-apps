@@ -1,6 +1,8 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
-FROM python:3.12-alpine
+# Pinned to one Alpine release so a rebuild can't quietly move to the next one. (Pin by digest too —
+# python:3.12-alpine3.22@sha256:… — when you can look it up; the Python version stays 3.12.)
+FROM python:3.12-alpine3.22
 
 # tzdata: the app reads Home Assistant's time zone (e.g. "Europe/London") and
 # needs the zoneinfo database to turn it into "today" (children's daily play
@@ -27,5 +29,7 @@ LABEL \
 EXPOSE 8104
 
 # --no-proxy-headers: the ingress check needs the real TCP peer (Supervisor's proxy), never an address
-# taken from X-Forwarded-For (tools/check_build.py checks it).
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8104", "--no-proxy-headers"]
+# taken from X-Forwarded-For (tools/check_build.py checks it). --ws-max-size: a live link's message is a few
+# numbers; 64 KB is far more than it needs (uvicorn's default is 16 MB). The app runs as root, as Home Assistant
+# apps usually do: the container has no other users and /data belongs to root.
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8104", "--no-proxy-headers", "--ws-max-size", "65536"]
