@@ -4,7 +4,8 @@ provider and model, whether it worked, the tokens and the time — and Admin →
 days, 30 days and all time; by day, by action and by model; the latest requests; an estimated cost when prices
 are set. The monthly limit (`ai_monthly_tokens`) is checked against this month's rows before each request.
 
-Nothing about the people in the house or their documents is stored here. Rows older than KEEP_DAYS are removed by
+Nothing about the people in the house or their documents is stored in `ai_calls`. The per-person limit
+(`ai_person_monthly_tokens`) keeps one number per person and month in `ai_person_month`: the tokens used. Rows older than KEEP_DAYS are removed by
 housekeeping.
 """
 from __future__ import annotations
@@ -56,7 +57,33 @@ def limit_left(conn) -> int | None:
     return max(0, lim - month_tokens(conn))
 
 
+def _month() -> str:
+    return config.now().strftime("%Y-%m")
+
+
+def person_left(conn, user_id: str | None) -> int | None:
+    """Tokens this person has left this month (None = no per-person limit, or not a person's request)."""
+    lim = int(settings.get("ai_person_monthly_tokens", conn) or 0)
+    if not lim or not user_id:
+        return None
+    r = conn.execute("SELECT tokens FROM ai_person_month WHERE user_id = ? AND month = ?", (user_id, _month())).fetchone()
+    return max(0, lim - int(r["tokens"] if r else 0))
+
+
+def add_person(user_id: str | None, tokens: int) -> None:
+    """Count a person's tokens for the month (only the number; never raises)."""
+    if not user_id or not tokens:
+        return
+    try:
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO ai_person_month (user_id, month, tokens) VALUES (?, ?, ?) ON CONFLICT(user_id, month) "
+                         "DO UPDATE SET tokens = tokens + excluded.tokens", (user_id, _month(), int(tokens)))
+    except Exception:  # pragma: no cover
+        pass
+
+
 def prune(conn) -> int:
+    conn.execute("DELETE FROM ai_person_month WHERE month < ?", ((config.now().replace(day=1) - timedelta(days=62)).strftime("%Y-%m"),))
     return conn.execute("DELETE FROM ai_calls WHERE at < ?", (config.ago_iso(days=KEEP_DAYS),)).rowcount
 
 

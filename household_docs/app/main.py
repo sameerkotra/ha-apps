@@ -1,5 +1,6 @@
 import logging
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -95,9 +96,23 @@ async def file_gone(request: Request, exc: FileNotFoundError):
     return JSONResponse(status_code=404, content={"detail": "That isn't there any more."})
 
 
+@app.exception_handler(sqlite3.OperationalError)
+async def db_busy(request: Request, exc: sqlite3.OperationalError):
+    """The database stayed locked longer than the busy timeout (a long scan or restore): "try again", not a
+    crash (review 2026-10 DP1). Any other database error is a real error."""
+    if "locked" in str(exc) or "busy" in str(exc):
+        logger.warning("The database was busy on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=503, content={"detail": "The app is busy — try again in a moment."},
+                            headers={"Retry-After": "2"})
+    raise exc
+
+
 @app.exception_handler(OSError)
 async def os_error(request: Request, exc: OSError):
-    logger.warning("File system error on %s %s: %s", request.method, request.url.path, exc)
+    # the error number and its text only: the exception's own text holds the file's path in /share, and a file's
+    # name can say what it is about (review 2026-10 D11)
+    logger.warning("File system error on %s %s: [Errno %s] %s", request.method, request.url.path, exc.errno,
+                   exc.strerror or type(exc).__name__)
     return JSONResponse(status_code=500, content={"detail": f"The file system refused that ({exc.strerror or 'error'})."})
 
 
@@ -127,51 +142,26 @@ def _body_limit(path: str) -> int:
     return MAX_DOC_BODY if path.startswith("/api/docs") else MAX_AI_BODY if path.startswith("/api/ai/") else MAX_BODY
 
 
-class BodyLimit:
-    """The request-size limit for every route that doesn't stream its body (those count their own bytes): the
-    body is read here, counting as it comes — so a chunked body with no Content-Length can't get past the limit
-    either — and handed on whole; past the limit the answer is 413 and the route never runs."""
-
-    def __init__(self, asgi_app):
-        self.app = asgi_app
-
-    async def __call__(self, scope, receive, send):
-        if (scope["type"] != "http" or scope.get("method") not in ("POST", "PUT", "PATCH", "DELETE")
-                or _streamed(scope.get("path", ""))):
-            return await self.app(scope, receive, send)
-        limit = _body_limit(scope.get("path", ""))
-        parts, size = [], 0
-        while True:
-            msg = await receive()
-            if msg["type"] == "http.disconnect":
-                return
-            if msg["type"] != "http.request":
-                continue
-            body = msg.get("body", b"")
-            size += len(body)
-            if size > limit:
-                resp = JSONResponse(status_code=413, content={"detail": "That request is too big."})
-                return await resp(scope, receive, send)
-            parts.append(body)
-            if not msg.get("more_body", False):
-                break
-        whole = b"".join(parts)
-        sent = False
-
-        async def replay():
-            nonlocal sent
-            if not sent:
-                sent = True
-                return {"type": "http.request", "body": whole, "more_body": False}
-            return await receive()
-        return await self.app(scope, replay, send)
+STREAM_MAX = 32 * 1024 ** 3            # streamed routes: only an outer bound here; each counts its own limit
 
 
-app.add_middleware(BodyLimit)      # inside `guard` (added below, so it runs first)
+class BodyLimit(web_security.BodyLimit):
+    """The shared request-size middleware (app/common/web_security.py: a Content-Length over the limit is refused
+    before the route runs, a chunked body is counted as it arrives) with this app's limits: notes' saves, AI
+    photos, the rest 256 KB — and the routes that stream their body and count their own bytes (uploads, scans,
+    imports, restore), whose path names a node, so they are told by `_streamed`, not by a prefix."""
 
+    def limit_for(self, path: str) -> int:
+        return STREAM_MAX if _streamed(path) else _body_limit(path)
+
+
+app.add_middleware(BodyLimit, detail="That request is too big ({limit} at most).")   # inside `guard` (added below)
+
+# Every page links each asset with ?v=<version> (tests/test_packaging.py checks it), so a versioned asset is kept
+# by the browser for good: a release changes the address (review 2026-10 DFP7).
 HEADERS = web_security.SecurityHeaders(
     CSP, csp_skip=lambda request, _response: _is_file(request.url.path), referrer="no-referrer",
-    api_no_store="set", api_skip=_is_file, pragma=True)
+    api_no_store="set", api_skip=_is_file, pragma=True, static_immutable=True, static_prefixes=("/",))
 
 
 @app.middleware("http")
@@ -182,13 +172,6 @@ async def guard(request: Request, call_next):
     path = request.url.path
     if db.RESTORING.is_set() and path.startswith("/api/"):
         return JSONResponse(status_code=503, content={"detail": "A backup is being restored — try again in a moment."})
-    if request.method in ("POST", "PUT", "PATCH", "DELETE") and not _streamed(path):
-        try:
-            length = int(request.headers.get("content-length") or 0)
-        except ValueError:
-            length = 0
-        if length > _body_limit(path):
-            return JSONResponse(status_code=413, content={"detail": "That request is too big."})
     return HEADERS.apply(request, await call_next(request))
 
 
@@ -208,6 +191,8 @@ def quick_note_page():
     from fastapi.responses import FileResponse
     return FileResponse(os.path.join(_STATIC_DIR, "index.html"), media_type="text/html",
                         headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
 def deep_link(place: str, node_id: str):
     """"Open in Docs" (APP_MESSAGES_SPEC §6.5): when Home Assistant hands the app a sub-path like /doc/<id>, send the
     page to the app's own route for it (#/doc/<id>, #/folder/<id>, #/file/<id>, a view link's #/view/<token>). A relative redirect, so it stays

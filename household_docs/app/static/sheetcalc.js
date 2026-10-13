@@ -167,9 +167,15 @@
   // precedence (low → high): comparisons · & · + - · * / · ^ · % · unary - +
   function parse(text) {
     const toks = tokenize(String(text)).filter((t) => t.t !== "ws");
-    let p = 0;
+    let p = 0, nest = 0;
     const peek = () => toks[p];
     const isOp = (v) => peek() && peek().t === "op" && v.includes(peek().v);
+    // brackets, functions and signs inside each other: at most MAX_NEST deep (Excel allows 64), so a hostile
+    // formula can't overflow the stack here or when it is compiled and worked out (review 2026-10 DF1)
+    function deeper(fn) {
+      if (++nest > MAX_NEST) throw new CalcSyntax(`The formula is nested too deeply (${MAX_NEST} levels at most).`);
+      try { return fn(); } finally { nest--; }
+    }
     function bin(next, ops) {
       return function () {
         let a = next();
@@ -191,7 +197,7 @@
           return { k: "range", sheet: t.sheet, c1: Math.min(t.a.c, t.b.c), r1: Math.min(t.a.r, t.b.r), c2: Math.max(t.a.c, t.b.c), r2: Math.max(t.a.r, t.b.r), whole: !!(t.cols || t.rows) };
         }
         case "(": {
-          const e = expr();
+          const e = deeper(expr);
           if (!peek() || peek().t !== ")") throw new CalcSyntax("A bracket isn't closed.");
           p++;
           return { k: "paren", a: e };
@@ -202,7 +208,7 @@
           if (peek() && peek().t === ")") { p++; return { k: "fn", name: t.name, args }; }
           for (;;) {
             if (peek() && (peek().t === "," || peek().t === ")")) args.push({ k: "missing" });
-            else args.push(expr());
+            else args.push(deeper(expr));
             const s = toks[p++];
             if (!s) throw new CalcSyntax(`${t.name}( isn't closed.`);
             if (s.t === ")") break;
@@ -212,14 +218,14 @@
           return { k: "fn", name: t.name, args };
         }
         case "op":
-          if (t.v === "-" || t.v === "+") return { k: "un", op: t.v, a: unary() };
+          if (t.v === "-" || t.v === "+") return { k: "un", op: t.v, a: deeper(unary) };
           throw new CalcSyntax(`Unexpected “${t.v}”.`);
         default:
           throw new CalcSyntax(`Unexpected “${t.s}”.`);
       }
     }
     function unary() {
-      if (isOp("-+")) { const op = toks[p++].v; return { k: "un", op, a: unary() }; }
+      if (isOp("-+")) { const op = toks[p++].v; return { k: "un", op, a: deeper(unary) }; }
       return primary();
     }
     function percent() { let a = unary(); while (isOp("%")) { p++; a = { k: "pct", a }; } return a; }
@@ -231,7 +237,24 @@
     if (!toks.length) throw new CalcSyntax("The formula is empty.");
     const tree = expr();
     if (p < toks.length) throw new CalcSyntax(`Unexpected “${toks[p].s}”.`);
+    if (treeDepth(tree) > MAX_DEPTH) throw new CalcSyntax("The formula is too long to work out — split it over a few cells.");
     return tree;
+  }
+  const MAX_NEST = 64, MAX_DEPTH = 1000;
+  const WORK_BUDGET = 50e6;          // cells looked at by SUMIF … COUNTIFS in one recalculation
+  /** How deep a tree goes (without recursion: "1+1+1+…" makes a deep tree with no brackets at all). */
+  function treeDepth(tree) {
+    let max = 0;
+    const stack = [[tree, 1]];
+    while (stack.length) {
+      const [n, d] = stack.pop();
+      if (!n || typeof n !== "object") continue;
+      if (d > max) max = d;
+      if (n.a) stack.push([n.a, d + 1]);
+      if (n.b) stack.push([n.b, d + 1]);
+      if (n.args) for (const x of n.args) stack.push([x, d + 1]);
+    }
+    return max;
   }
 
   // ===================================================================== text rewriting (fill, insert/delete, rename)
@@ -409,24 +432,35 @@
       hits.sort((x, y) => x[0] - y[0] || x[1] - y[1]);
       for (const [r, c] of hits) { const v = this.ctx.cell(t, c, r); if (v !== null) fn(v, r - this.r1, c - this.c1); }
     }
-    /** Every cell (empties too), row by row — capped to the used part of the tab. */
-    list() {
-      const out = [];
-      for (let i = 0; i < this.rows; i++) for (let j = 0; j < this.cols; j++) out.push(this.at(i, j));
-      return out;
-    }
   }
   const isRange = (v) => v instanceof Range;
 
   // ===================================================================== criteria (SUMIF, COUNTIFS …)
-  function wildRe(s) {
-    let re = "";
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (ch === "~" && i + 1 < s.length && "*?~".includes(s[i + 1])) { re += "\\" + s[++i]; continue; }
-      if (ch === "*") re += "[\\s\\S]*"; else if (ch === "?") re += "[\\s\\S]"; else re += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Excel's wildcards (* any run, ? one character, ~ before * ? ~ for the character itself), matched without a
+  // regular expression: one pass with a single place to go back to (the last *), so a criterion such as
+  // "*a*a*a*a*b" over long text can't freeze the page (review 2026-10 DF3). Compiled once per criterion.
+  const STAR = { star: true }, ANY = { any: true };
+  function wildCompile(s) {
+    const low = String(s).toLowerCase();
+    const out = [];
+    for (let i = 0; i < low.length; i++) {
+      const ch = low[i];
+      if (ch === "~" && i + 1 < low.length && "*?~".includes(low[i + 1])) { out.push(low[++i]); continue; }
+      if (ch === "*") { if (out[out.length - 1] !== STAR) out.push(STAR); } else if (ch === "?") out.push(ANY); else out.push(ch);
     }
-    return new RegExp("^" + re + "$", "i");
+    return out;
+  }
+  function wildTest(p, text) {
+    const t = String(text).toLowerCase();
+    let i = 0, j = 0, star = -1, mark = 0;
+    while (j < t.length) {
+      if (i < p.length && p[i] === STAR) { star = i++; mark = j; }
+      else if (i < p.length && (p[i] === ANY || p[i] === t[j])) { i++; j++; }
+      else if (star >= 0) { i = star + 1; j = ++mark; }
+      else return false;
+    }
+    while (i < p.length && p[i] === STAR) i++;
+    return i === p.length;
   }
   function criterion(c) {
     if (isErr(c)) return () => false;
@@ -453,8 +487,8 @@
     }
     if (op === "=" || op === "<>") {
       if (s === "") return op === "=" ? (v) => v === null || v === "" : (v) => v !== null && v !== "";
-      const re = /[*?~]/.test(s) ? wildRe(s) : null;
-      const eq = (v) => typeof v === "string" && (re ? re.test(v) : v.toLowerCase() === s.toLowerCase());
+      const pat = /[*?~]/.test(s) ? wildCompile(s) : null, low = s.toLowerCase();
+      const eq = (v) => typeof v === "string" && (pat ? wildTest(pat, v) : v.toLowerCase() === low);
       return op === "=" ? eq : (v) => !eq(v);
     }
     const cmpT = { "<": (x) => x < 0, ">": (x) => x > 0, "<=": (x) => x <= 0, ">=": (x) => x >= 0 }[op];
@@ -489,11 +523,14 @@
     }
     return out;
   }
+  // a loop, not Math.min(...xs): spreading 150 000 numbers into a call overflows the stack (review 2026-10 DFI3)
+  function minOf(xs) { let m = Infinity; for (const x of xs) if (x < m) m = x; return m; }
+  function maxOf(xs) { let m = -Infinity; for (const x of xs) if (x > m) m = x; return m; }
   const NUMS = (fn) => (args, ctx) => { const xs = numbersOf(args, ctx); return isErr(xs) ? xs : fn(xs); };
   def("SUM", "number1, [number2], …", "Adds the numbers (text in ranges is skipped).", "=SUM(B2:B10)", NUMS((xs) => xs.reduce((a, b) => a + b, 0)));
   def("AVERAGE", "number1, [number2], …", "The average of the numbers.", "=AVERAGE(B2:B10)", NUMS((xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : ERR["#DIV/0!"])));
-  def("MIN", "number1, [number2], …", "The smallest number (0 if none).", "=MIN(B2:B10)", NUMS((xs) => (xs.length ? Math.min(...xs) : 0)));
-  def("MAX", "number1, [number2], …", "The largest number (0 if none).", "=MAX(B2:B10)", NUMS((xs) => (xs.length ? Math.max(...xs) : 0)));
+  def("MIN", "number1, [number2], …", "The smallest number (0 if none).", "=MIN(B2:B10)", NUMS((xs) => (xs.length ? minOf(xs) : 0)));
+  def("MAX", "number1, [number2], …", "The largest number (0 if none).", "=MAX(B2:B10)", NUMS((xs) => (xs.length ? maxOf(xs) : 0)));
   def("MEDIAN", "number1, [number2], …", "The middle number.", "=MEDIAN(B2:B10)", NUMS((xs) => {
     if (!xs.length) return ERR["#NUM!"];
     const s = xs.slice().sort((a, b) => a - b), m = s.length >> 1;
@@ -582,7 +619,12 @@
   function sameShape(base, other, ctx) {      // SUMIF's sum range: same size as the range, from its top-left
     return new Range(ctx, other.tab, other.c1, other.r1, other.c1 + base.cols - 1, other.r1 + base.rows - 1);
   }
-  function ifsCore(ctx, pairs, valueRange, need) {
+  /** SUMIF … COUNTIFS: the cells of the value range (or just how many) whose positions pass every test →
+   *  {count, sum, nums, err}. Only the used part of the tabs is walked: a position past the last filled row or
+   *  column of a range is empty there, so a test that an empty cell fails rules it out, and when every test
+   *  passes empty cells the rest of the range is counted without being visited (review 2026-10 DF2: an explicit
+   *  A1:XFD1048576 used to visit every one of its 17 billion cells). */
+  function ifsCore(ctx, pairs, valueRange) {
     const tests = [];
     let shape = null;
     for (const [ra, ca] of pairs) {
@@ -601,30 +643,44 @@
       if (valueRange.resize) vr = sameShape(shape, vr, ctx);
       else if (vr.rows !== shape.rows || vr.cols !== shape.cols) return ERR["#VALUE!"];
     }
-    const hits = [];
-    // walk the cells of the first range (only its filled cells can match a non-empty criterion)
-    const rows = Math.min(shape.rows, Math.max(0, (ctx.lastRow(shape.tab) - shape.r1) + 1));
-    const cols = shape.cols;
-    const matchesEmpty = tests.every(([, f]) => f(null));
-    const lim = matchesEmpty ? shape.rows : rows;
-    for (let i = 0; i < lim; i++) {
+    const usedRows = (r) => Math.min(shape.rows, Math.max(0, ctx.lastRow(r.tab) - r.r1 + 1));
+    const usedCols = (r) => Math.min(shape.cols, Math.max(0, ctx.lastCol(r.tab) - r.c1 + 1));
+    const strict = tests.filter(([, f]) => !f(null));      // tests an empty cell fails
+    let rows, cols;
+    if (strict.length) {                                     // only where every such range has something
+      rows = minOf(strict.map(([r]) => usedRows(r)));
+      cols = minOf(strict.map(([r]) => usedCols(r)));
+    } else {                                                 // the used part of every range; the rest all match
+      rows = 0; cols = 0;
+      for (const r of tests.map((x) => x[0]).concat(vr ? [vr] : [])) { rows = Math.max(rows, usedRows(r)); cols = Math.max(cols, usedCols(r)); }
+    }
+    if (!ctx.spend(rows * cols * (tests.length + (vr ? 1 : 0)))) return ERR["#NUM!"];
+    const out = { count: 0, sum: 0, nums: 0, err: null };
+    for (let i = 0; i < rows; i++) {
       for (let j = 0; j < cols; j++) {
         let ok = true;
         for (const [r, f] of tests) { if (!f(r.at(i, j))) { ok = false; break; } }
-        if (ok) hits.push(vr ? vr.at(i, j) : null);
+        if (!ok) continue;
+        out.count++;
+        if (vr) {
+          const v = vr.at(i, j);
+          if (isErr(v)) { if (!out.err) out.err = v; }
+          else if (typeof v === "number") { out.sum += v; out.nums++; }
+        }
       }
     }
-    return hits;
+    if (!strict.length) out.count += shape.rows * shape.cols - rows * cols;   // empty everywhere: they all match
+    return out;
   }
-  function sumOf(hits) { let s = 0; for (const v of hits) { if (isErr(v)) return v; if (typeof v === "number") s += v; } return s; }
-  function avgOf(hits) { let s = 0, n = 0; for (const v of hits) { if (isErr(v)) return v; if (typeof v === "number") { s += v; n++; } } return n ? s / n : ERR["#DIV/0!"]; }
+  const sumOf = (h) => h.err || h.sum;
+  const avgOf = (h) => h.err || (h.nums ? h.sum / h.nums : ERR["#DIV/0!"]);
   def("SUMIF", "range, criteria, [sum range]", "Adds the cells whose row matches.", '=SUMIF(A2:A20, "Food", B2:B20)', (args, ctx) => {
     const h = ifsCore(ctx, [[args[0], args[1]]], { arg: args[2] && args[2].k !== "missing" ? args[2] : args[0], resize: true });
     return isErr(h) ? h : sumOf(h);
   }, { min: 2, max: 3 });
   def("COUNTIF", "range, criteria", "How many cells match.", '=COUNTIF(B2:B20, ">100")', (args, ctx) => {
-    const h = ifsCore(ctx, [[args[0], args[1]]], null, "count");
-    return isErr(h) ? h : h.length;
+    const h = ifsCore(ctx, [[args[0], args[1]]], null);
+    return isErr(h) ? h : h.count;
   }, { min: 2, max: 2 });
   def("AVERAGEIF", "range, criteria, [average range]", "The average of the matching cells.", '=AVERAGEIF(A2:A20, "Food", B2:B20)', (args, ctx) => {
     const h = ifsCore(ctx, [[args[0], args[1]]], { arg: args[2] && args[2].k !== "missing" ? args[2] : args[0], resize: true });
@@ -638,8 +694,8 @@
   }, { min: 3 });
   def("COUNTIFS", "range1, criteria1, …", "How many rows match every test.", '=COUNTIFS(A2:A50, "Car", C2:C50, ">100")', (args, ctx) => {
     if (args.length < 2 || args.length % 2) return ERR["#VALUE!"];
-    const h = ifsCore(ctx, pairsFrom(args, 0), null, "count");
-    return isErr(h) ? h : h.length;
+    const h = ifsCore(ctx, pairsFrom(args, 0), null);
+    return isErr(h) ? h : h.count;
   }, { min: 2 });
   def("AVERAGEIFS", "average range, range1, criteria1, …", "The average of the cells whose rows match every test.", '=AVERAGEIFS(C2:C50, A2:A50, "Car")', (args, ctx) => {
     if (args.length < 3 || args.length % 2 === 0) return ERR["#VALUE!"];
@@ -648,10 +704,14 @@
   }, { min: 3 });
 
   // --- lookups
-  function lookupEq(v, x, wild) {
-    if (v === null || x === null) return false;
-    if (typeof v === "string" && typeof x === "string") return wild && /[*?~]/.test(v) ? wildRe(v).test(x) : v.toLowerCase() === x.toLowerCase();
-    return typeof v === typeof x && v === x;
+  /** An equality test for one looked-up value (the wildcard compiled once, not once per row — review 2026-10 DF3). */
+  function lookupEq(v, wild) {
+    if (v === null) return () => false;
+    if (typeof v === "string") {
+      const pat = wild && /[*?~]/.test(v) ? wildCompile(v) : null, low = v.toLowerCase();
+      return (x) => typeof x === "string" && (pat ? wildTest(pat, x) : x.toLowerCase() === low);
+    }
+    return (x) => x !== null && typeof v === typeof x && v === x;
   }
   function vectorOf(r) {         // a one-row or one-column range as a list (else null)
     if (r.rows === 1) return { n: r.cols, at: (k) => r.at(0, k) };
@@ -663,7 +723,8 @@
     return Math.min(r.rows, Math.max(0, ctx.lastRow(r.tab) - r.r1 + 1));
   }
   function findExact(v, n, at, rev, wild) {
-    for (let k = 0; k < n; k++) { const i = rev ? n - 1 - k : k; if (lookupEq(v, at(i), wild)) return i; }
+    const eq = lookupEq(v, wild);
+    for (let k = 0; k < n; k++) { const i = rev ? n - 1 - k : k; if (eq(at(i))) return i; }
     return -1;
   }
   function findSorted(v, n, at, desc) {   // largest ≤ v (ascending) / smallest ≥ v (descending): binary search as Excel
@@ -817,8 +878,13 @@
     const sign = e >= s ? 1 : -1;
     const [a, b] = sign > 0 ? [s, e] : [e, s];
     if (b - a > 1e6) return ERR["#NUM!"];
-    let n = 0;
-    for (let d = a; d <= b; d++) { const wd = serialParts(d).wd; if (wd !== 0 && wd !== 6 && !hol.has(d)) n++; }
+    // counted, not walked day by day (review 2026-10 DF2): 5 per whole week, the days left over one by one,
+    // then the holidays that fall on a weekday inside
+    const workday = (d) => { const wd = serialParts(d).wd; return wd !== 0 && wd !== 6; };
+    const days = b - a + 1;
+    let n = Math.floor(days / 7) * 5;
+    for (let d = a + days - (days % 7); d <= b; d++) if (workday(d)) n++;
+    for (const d of hol) if (d >= a && d <= b && workday(d)) n--;
     return sign * n;
   }, { min: 2, max: 3 });
   def("PMT", "rate, periods, present value, [future value], [type]", "The payment per period of a loan (negative = you pay). Type 1 = paid at the start of each period.", "=PMT(5%/12, 60, 20000)", (args, ctx) => {
@@ -933,8 +999,9 @@
     const byName = new Map();
     let todayFn = opts.today || (() => todaySerial());
     let dirtyAll = true;
+    let budget = WORK_BUDGET;
 
-    function makeTab(name) { return { name, cells: new Map(), maxRow: -1 }; }
+    function makeTab(name) { return { name, cells: new Map(), maxRow: -1, maxCol: -1 }; }
     const key = (c, r) => r * MAXC + c;
     const ctx = {
       cell(tab, c, r) {
@@ -943,6 +1010,10 @@
         return cell.f ? (cell.value === undefined ? null : cell.value) : cell.v;
       },
       lastRow(tab) { return tab ? tab.maxRow : -1; },
+      lastCol(tab) { return tab ? tab.maxCol : -1; },
+      /** Big range work (SUMIF over a whole sheet …) shares one budget per recalculation; past it a formula
+       *  gives #NUM! instead of freezing the page (review 2026-10 DF2). */
+      spend(n) { budget -= n; return budget >= 0; },
       evalRaw(a) { return a.fn(ctx); },
       ev(a) { return scalar(a.fn(ctx)); },
       num(a) { if (!a || a.k === "missing") return 0; const v = scalar(a.fn(ctx)); return toNum(v); },
@@ -982,12 +1053,13 @@
         const a = typeof ref === "string" ? parseRef(ref) : ref;
         const k = key(a.c, a.r);
         const prev = t.cells.get(k);
-        if (prev && prev.f) unlink(t, k, prev);
-        if (raw === null || raw === undefined || raw === "") { t.cells.delete(k); if (a.r === t.maxRow) fixMax(t); return; }
+        if (prev && prev.f) indexDirty = true;
+        if (raw === null || raw === undefined || raw === "") { t.cells.delete(k); if (a.r === t.maxRow || a.c === t.maxCol) fixMax(t); return; }
         const cell = { raw, v: raw, f: false, c: a.c, r: a.r };
-        if (!isText && typeof raw === "string" && raw.length > 1 && raw[0] === "=") { cell.f = true; compileCell(t, cell); link(t, k, cell); }
+        if (!isText && typeof raw === "string" && raw.length > 1 && raw[0] === "=") { cell.f = true; compileCell(t, cell); indexDirty = true; }
         t.cells.set(k, cell);
         if (a.r > t.maxRow) t.maxRow = a.r;
+        if (a.c > t.maxCol) t.maxCol = a.c;
       },
       raw(tab, ref) { const t = wb.tabNamed(tab); const a = parseRef(ref); const cell = t && a && t.cells.get(key(a.c, a.r)); return cell ? cell.raw : null; },
       isFormula(tab, ref) { const t = wb.tabNamed(tab); const a = parseRef(ref); const cell = t && a && t.cells.get(key(a.c, a.r)); return !!(cell && cell.f); },
@@ -1013,7 +1085,11 @@
       formulaCount() { let n = 0; for (const t of tabs) for (const cell of t.cells.values()) if (cell.f) n++; return n; },
     };
     function same(a, b) { return a === b || (isErr(a) && isErr(b) && a.code === b.code); }
-    function fixMax(t) { let m = -1; for (const k of t.cells.keys()) { const r = Math.floor(k / MAXC); if (r > m) m = r; } t.maxRow = m; }
+    function fixMax(t) {
+      let m = -1, mc = -1;
+      for (const k of t.cells.keys()) { const r = Math.floor(k / MAXC), c = k % MAXC; if (r > m) m = r; if (c > mc) mc = c; }
+      t.maxRow = m; t.maxCol = mc;
+    }
     function compileCell(t, cell) {
       cell.tab = t;
       cell.deps = []; cell.rdeps = [];
@@ -1024,17 +1100,17 @@
         cell.volatile = usesToday(tree);
         cell.syntax = null;
       } catch (e) {
-        if (!(e instanceof CalcSyntax)) throw e;
+        // anything else that goes wrong here (a stack overflow, a bug) is this cell's problem, not the whole
+        // sheet's: it shows an error and the sheet still opens (review 2026-10 DF1)
         cell.fn = () => ERR["#NAME?"];
-        cell.syntax = e.message;
+        cell.syntax = e instanceof CalcSyntax ? e.message : "This formula can't be worked out.";
+        cell.deps = []; cell.rdeps = []; cell.volatile = false;
       }
     }
     // reverse index: who reads a cell (single refs) — ranges are matched by scanning (rangeReaders)
     let readers = new Map();       // tab → Map(key → [cell]) — who reads a single cell
     let rangeReaders = new Map();  // tab → {cols: Map(col → [reader]), wide: [reader]}; reader {c1, r1, c2, r2, cell}
     let indexDirty = true;
-    function link(t, k, cell) { indexDirty = true; }
-    function unlink(t, k, cell) { indexDirty = true; }
     // formula cells by tab and column, rows sorted: finds the formulas inside a range quickly
     let colIndexByTab = new Map();
     function rebuildIndex() {
@@ -1120,6 +1196,7 @@
     let run = 0;
     function evaluate(list) {
       run++;
+      budget = WORK_BUDGET;
       const R = run;
       for (const cell of list) { cell._r = R; cell._i = -1; }
       let idx = 0, n = 0;
@@ -1339,7 +1416,7 @@
   const api = {
     workbook, parse, tokenize, shiftFormula, adjustFormula, renameTab, functionsIn, format, formatCode, parseInput,
     colName, colIndex, addr, parseRef, parseRange, tabPrefix, dateSerial, serialParts, todaySerial, toText, numText,
-    compare, ERR, WHY, isErr, timeOfDay, CalcError, CalcSyntax, FUNCTIONS, MAXR, MAXC, styledNumber, NUM_LOCALES,
+    compare, ERR, WHY, isErr, timeOfDay, CalcError, CalcSyntax, FUNCTIONS, MAXR, MAXC, styledNumber, NUM_LOCALES, minOf, maxOf,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.SheetCalc = api;

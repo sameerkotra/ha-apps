@@ -12,6 +12,7 @@
   const S = window.ScanPdf;
   const MAX_SIDE = 2000;               // longest side of a page kept (pixels)
   const VIEW_MAX = 900;                // longest side of the crop view
+  const MAX_PAGES = 30;                // pages in one scan (each is a 2000-pixel picture in memory)
 
   // =====================================================================
   // 📷 Scan
@@ -80,16 +81,22 @@
       el.addEventListener("pointerdown", (e) => {
         e.preventDefault();
         el.setPointerCapture(e.pointerId);
+        let frame = 0;
         const move = (ev) => {
           const r = view.getBoundingClientRect();
           const x = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * (page.photo.width - 1);
           const y = Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)) * (page.photo.height - 1);
           page.quad[i] = [x, y];
-          draw();
+          if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(); });     // one redraw a frame
         };
-        const up = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); onChange && onChange(); };
+        const was = page.quad[i].slice();
+        const stop = () => { el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", cancel); };
+        const up = () => { stop(); draw(); onChange && onChange(); };
+        // a gesture the browser took over (scrolling, a system swipe): the corner goes back (review 2026-10 DFI8)
+        const cancel = () => { stop(); page.quad[i] = was; draw(); };
         el.addEventListener("pointermove", move);
         el.addEventListener("pointerup", up);
+        el.addEventListener("pointercancel", cancel);
       });
       el.addEventListener("keydown", (e) => {
         const step = e.shiftKey ? 20 : 4;
@@ -125,7 +132,8 @@
         h("label", { class: "field compact" }, "Save as", asSel)),
       h("label", { class: "field" }, "Name", name),
       h("div", { class: "actions" }, h("button", { class: "btn-ghost", type: "button", onclick: () => m.close() }, "Cancel"), save));
-    const m = openModal("📷 Scan", body, { wide: true, focus: false });
+    // closing lets go of every page's picture at once (a canvas holds its pixels until it's emptied — DFP6)
+    const m = openModal("📷 Scan", body, { wide: true, focus: false, onClose: () => { for (const p of pages) { p.photo.width = 0; p.photo.height = 0; } pages.length = 0; } });
 
     function drawStrip() {
       mount(strip, pages.map((p, i) => {
@@ -152,6 +160,7 @@
     input.addEventListener("change", async () => {
       err.textContent = "";
       for (const f of Array.from(input.files)) {
+        if (pages.length >= MAX_PAGES) { err.textContent = `A scan can have at most ${MAX_PAGES} pages — save these first.`; break; }
         try {
           const photo = await loadPhoto(f);
           pages.push({ photo, quad: S.suggestQuad(photo.width, photo.height) });

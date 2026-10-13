@@ -19,6 +19,8 @@
   const DEFAULT_W = 110;
   const MAXR = 5000, MAXC = 100, MAXTABS = 10, MAXCELLS = 200000;
   const MIN_ROWS = 1000, MIN_COLS = 26;        // the empty grid shown (rows are drawn only as they scroll in)
+  const MAX_SHAPE_UNDO = 20;
+  const MAX_FORMULA = 8192;                     // characters in a formula (the server's limit too)                   // whole-sheet copies kept for undo (DFP4)
   const FORMATS = [["general", "General"], ["number", "Number"], ["currency", "Currency"], ["accounting", "Accounting"], ["percent", "Percent"],
     ["scientific", "Scientific"], ["date", "Date"], ["time", "Time"], ["datetime", "Date and time"], ["text", "Text"]];
   const NO_DECIMALS = new Set(["date", "time", "datetime", "text"]);
@@ -109,10 +111,20 @@
   }
   function rangeOf(sel) { return { c1: Math.min(sel.c1, sel.c2), r1: Math.min(sel.r1, sel.r2), c2: Math.max(sel.c1, sel.c2), r2: Math.max(sel.r1, sel.r2) }; }
   function rangeText(r) { const a = S.addr(r.c1, r.r1), b = S.addr(r.c2, r.r2); return a === b ? a : a + ":" + b; }
+  // The sheet's data version: +1 on every change of any cell (changed(), loadEngine()). What is worked out from
+  // all the cells — the used range, column totals, charts — is kept until it changes, not redone on every scroll,
+  // arrow key or resize (review 2026-10 DFP1).
+  let dataVer = 0;
+  function bumpData() { dataVer++; }
+  const usedCache = new WeakMap();
   function usedOf(tab) {
+    const hit = usedCache.get(tab);
+    if (hit && hit.ver === dataVer && hit.cells === tab.cells) return hit.val;
     let mr = -1, mc = -1;
     for (const ref of Object.keys(tab.cells)) { const p = S.parseRef(ref); if (p) { if (p.r > mr) mr = p.r; if (p.c > mc) mc = p.c; } }
-    return { rows: mr + 1, cols: mc + 1 };
+    const val = { rows: mr + 1, cols: mc + 1 };
+    usedCache.set(tab, { ver: dataVer, cells: tab.cells, val });
+    return val;
   }
   function svg(tag, attrs, ...kids) {
     const el = document.createElementNS(SVGNS, tag);
@@ -168,7 +180,7 @@
       return root;
     }
     const all = data.series.flatMap((s) => s.data);
-    let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
+    let lo = Math.min(0, S.minOf(all)), hi = Math.max(0, S.maxOf(all));
     if (hi === lo) hi = lo + 1;
     const raw = (hi - lo) / 4;
     const mag = Math.pow(10, Math.floor(Math.log10(raw)));
@@ -212,40 +224,60 @@
   D.drawChart = drawChart;
 
   // ---------------------------------------------------------------- conditional colours
-  function condMarks(tab, value) {
-    const marks = new Map();
-    for (const rule of tab.cond || []) {
-      const r = S.parseRange(rule.range);
-      if (!r) continue;
-      const cells = [];
-      for (let row = r.r1; row <= Math.min(r.r2, MAXR - 1); row++) for (let c = r.c1; c <= r.c2; c++) {
-        const v = value(tab, c, row);
-        if (v !== null && v !== undefined && v !== "") cells.push([S.addr(c, row), v]);
-      }
-      let test;
-      const nums = cells.filter(([, v]) => typeof v === "number");
-      switch (rule.type) {
-        case "gt": case "after": test = (v) => typeof v === "number" && v > rule.a; break;
-        case "lt": case "before": test = (v) => typeof v === "number" && v < rule.a; break;
-        case "between": { const lo = Math.min(rule.a, rule.b), hi = Math.max(rule.a, rule.b); test = (v) => typeof v === "number" && v >= lo && v <= hi; break; }
-        case "contains": { const t = String(rule.a).toLowerCase(); test = (v) => S.toText(v).toLowerCase().includes(t); break; }
-        case "top": case "bottom": {
-          const sorted = nums.map(([, v]) => v).sort((a, b) => (rule.type === "top" ? b - a : a - b));
-          const lim = sorted[Math.min(rule.n, sorted.length) - 1];
-          test = (v) => typeof v === "number" && sorted.length && (rule.type === "top" ? v >= lim : v <= lim);
-          break;
-        }
-        case "dup": {
-          const counts = new Map();
-          for (const [, v] of cells) { const k = typeof v === "string" ? "s" + v.toLowerCase() : "n" + S.toText(v); counts.set(k, (counts.get(k) || 0) + 1); }
-          test = (v) => (counts.get(typeof v === "string" ? "s" + v.toLowerCase() : "n" + S.toText(v)) || 0) > 1;
-          break;
-        }
-        default: test = () => false;
-      }
-      for (const [ref, v] of cells) if (!S.isErr(v) && test(v)) { const m = marks.get(ref) || {}; if (rule.fill && !m.fill) m.fill = rule.fill; if (rule.text && !m.text) m.text = rule.text; marks.set(ref, m); }
+  /** The cells one colour rule marks (refs). Only the filled cells are looked at — a rule on B:B used to read all
+   *  of the column's rows, every rule on every edit (review 2026-10 DFP2). */
+  function ruleMatches(tab, value, rule, filled) {
+    const r = S.parseRange(rule.range);
+    if (!r) return [];
+    const r2 = Math.min(r.r2, MAXR - 1);
+    const cells = [];
+    for (const [ref, p] of filled) {
+      if (p.c < r.c1 || p.c > r.c2 || p.r < r.r1 || p.r > r2) continue;
+      const v = value(tab, p.c, p.r);
+      if (v !== null && v !== undefined && v !== "") cells.push([ref, v]);
     }
-    return marks;
+    let test;
+    const nums = cells.filter(([, v]) => typeof v === "number");
+    switch (rule.type) {
+      case "gt": case "after": test = (v) => typeof v === "number" && v > rule.a; break;
+      case "lt": case "before": test = (v) => typeof v === "number" && v < rule.a; break;
+      case "between": { const lo = Math.min(rule.a, rule.b), hi = Math.max(rule.a, rule.b); test = (v) => typeof v === "number" && v >= lo && v <= hi; break; }
+      case "contains": { const t = String(rule.a).toLowerCase(); test = (v) => S.toText(v).toLowerCase().includes(t); break; }
+      case "top": case "bottom": {
+        const sorted = nums.map(([, v]) => v).sort((a, b) => (rule.type === "top" ? b - a : a - b));
+        const lim = sorted[Math.min(rule.n, sorted.length) - 1];
+        test = (v) => typeof v === "number" && sorted.length && (rule.type === "top" ? v >= lim : v <= lim);
+        break;
+      }
+      case "dup": {
+        const counts = new Map();
+        for (const [, v] of cells) { const k = typeof v === "string" ? "s" + v.toLowerCase() : "n" + S.toText(v); counts.set(k, (counts.get(k) || 0) + 1); }
+        test = (v) => (counts.get(typeof v === "string" ? "s" + v.toLowerCase() : "n" + S.toText(v)) || 0) > 1;
+        break;
+      }
+      default: test = () => false;
+    }
+    return cells.filter(([, v]) => !S.isErr(v) && test(v)).map(([ref]) => ref);
+  }
+  /** {marks: Map(ref → {fill, text}), cache}. With a cache from last time and the refs changed since (`dirty`),
+   *  only the rules whose range holds a changed cell are worked out again; dirty null = all of them. */
+  function condMarks(tab, value, cache = null, dirty = null) {
+    let filled = null;
+    const getFilled = () => filled || (filled = Object.keys(tab.cells).map((ref) => [ref, S.parseRef(ref)]).filter((x) => x[1]));
+    const dirtyAt = dirty ? [...dirty].map((ref) => S.parseRef(ref)).filter(Boolean) : null;
+    const marks = new Map(), keep = new Map();
+    for (const rule of tab.cond || []) {
+      const key = JSON.stringify(rule);
+      let refs = cache && dirtyAt ? cache.get(key) : null;
+      if (refs && dirtyAt.length) {
+        const r = S.parseRange(rule.range);
+        if (!r || dirtyAt.some((p) => p.c >= r.c1 && p.c <= r.c2 && p.r >= r.r1 && p.r <= r.r2)) refs = null;
+      }
+      if (!refs) refs = ruleMatches(tab, value, rule, getFilled());
+      keep.set(key, refs);
+      for (const ref of refs) { const m = marks.get(ref) || {}; if (rule.fill && !m.fill) m.fill = rule.fill; if (rule.text && !m.text) m.text = rule.text; marks.set(ref, m); }
+    }
+    return { marks, cache: keep };
   }
 
   // ================================================================ the editor
@@ -263,7 +295,7 @@
       sheet: doc.sheet, base: clone(doc.sheet), etag: doc.etag, tab: 0,
       pending: new Map(), calc: new Map(), metaDirty: new Set(), shape: false,
       sel: { c1: 0, r1: 0, c2: 0, r2: 0 }, editing: null, filters: {}, undo: [], redo: [],
-      saving: null, again: false, marks: null, clip: null, csvNote: false,
+      saving: null, again: false, marks: null, clip: null, csvNote: false, condCache: null, condDirty: new Map(),
     };
     const csv = doc.format === "csv";
     const canEdit = !!doc.canEdit;
@@ -278,6 +310,8 @@
       }
       wb.recalc();
       st.marks = null;
+      st.condCache = null;
+      bumpData();
     }
     function value(tab, c, r) {       // what a cell holds now (computed for formulas; Excel's value for "x" cells)
       const ref = S.addr(c, r);
@@ -414,18 +448,23 @@
         const k = cellKey(ch.tab, ch.ref);
         if (!st.pending.has(k)) st.pending.set(k, { tab: ch.tab, ref: ch.ref, was: baseCell(ch.tab, ch.ref) });
         st.calc.delete(k);
+        const dirty = st.condDirty.get(ch.tab) || new Set();
+        dirty.add(ch.ref); st.condDirty.set(ch.tab, dirty);
         const bv = before ? before.v : null, av = cell ? cell.v : null;
         if (bv !== av || !!(before && before.q) !== !!(cell && cell.q)) engine.push([ch.tab, ch.ref, av === undefined ? null : av, !!(cell && cell.q)]);
       }
       if (!undoBatch.length) return;
-      if (record) { st.undo.push({ cells: undoBatch }); if (st.undo.length > 200) st.undo.shift(); st.redo = []; }
+      if (record) { pushUndo({ cells: undoBatch }); st.redo = []; }
       if (engine.length) {
         const changed = wb.update(engine);
         // dependent formulas: their new values go into the file too (so other apps show them)
         const keys = changed === null ? allFormulaKeys() : changed;
+        if (changed === null) st.condCache = null;
         for (const key of keys) {
           const i = key.indexOf("!");
           const tn = key.slice(0, i), ref = key.slice(i + 1);
+          const dirty = st.condDirty.get(tn) || new Set();
+          dirty.add(ref); st.condDirty.set(tn, dirty);
           const k = cellKey(tn, ref);
           if (!st.pending.has(k)) st.calc.set(k, { tab: tn, ref });
         }
@@ -433,18 +472,25 @@
       st.marks = null;
       changed();
     }
+    /** Undo keeps 200 steps, of which at most MAX_SHAPE_UNDO whole-sheet copies (insert, delete, sort, tabs): past
+     *  that the oldest steps go, up to and including the oldest copy (review 2026-10 DFP4: each held the whole sheet). */
+    function pushUndo(u) {
+      st.undo.push(u);
+      if (st.undo.length > 200) st.undo.shift();
+      if (u.shape && st.undo.filter((x) => x.shape).length > MAX_SHAPE_UNDO) st.undo.splice(0, st.undo.findIndex((x) => x.shape) + 1);
+    }
     function allFormulaKeys() {
       const out = [];
       for (const t of grids()) for (const [ref, cell] of Object.entries(t.cells)) if (isFormulaCell(cell)) out.push(t.name + "!" + ref);
       return out;
     }
-    function changed() { setStatus("Unsaved changes…"); draw(); soon(); checkSecret(); }
+    function changed() { bumpData(); setStatus("Unsaved changes…"); draw(); soon(); checkSecret(); }
     function setMeta(fn) {           // widths, freeze, totals, colour rules, charts of the current tab
       if (roBlocked()) return;
       const t = cur();
       const before = clone({ cols: t.cols, freeze: t.freeze, totals: t.totals, cond: t.cond, charts: t.charts });
       fn(t);
-      st.undo.push({ meta: { tab: t.name, before } }); st.redo = [];
+      pushUndo({ meta: { tab: t.name, before } }); st.redo = [];
       st.metaDirty.add(t.name);
       st.marks = null;
       changed();
@@ -454,7 +500,7 @@
       const before = clone(st.sheet);
       const beforeTab = st.tab;
       fn();
-      st.undo.push({ shape: before, tab: beforeTab }); st.redo = [];
+      pushUndo({ shape: before, tab: beforeTab }); st.redo = [];
       st.shape = true;
       loadEngine();
       if (label) toast(label);
@@ -548,6 +594,9 @@
               for (const m of body.tabs || []) { const t = st.base.tabs.find((x) => x.name === m.name); if (t) Object.assign(t, clone(m)); }
             }
           }
+          // a cell changed again while this save was on its way: what it was is now what was just saved, not what
+          // the sheet had before (review 2026-10 DFI5: the next save reported a conflict with yourself)
+          for (const [k, p] of st.pending) if (sentPending.has(k) || sentCalc.has(k)) p.was = baseCell(p.tab, p.ref);
           setStatus(hasWork() ? "Unsaved changes…" : "Saved");
         } catch (e) {
           if (e.status === 409 && e.detail && e.detail.readOnly) { setStatus("Read only", "warn"); toast(e.message, true); D.render(); return; }
@@ -654,7 +703,13 @@
       const per = Math.ceil(viewH / RH) + 12;
       first = Math.max(fr, Math.floor(grid.scrollTop / RH) - 6);
       const last = Math.min(total, first + per);
-      if (!st.marks) st.marks = condMarks(t, value);
+      if (!st.marks) {
+        const fresh = !st.condCache || st.condCache.tab !== t.name;
+        const res = condMarks(t, value, fresh ? null : st.condCache.rules, fresh ? null : (st.condDirty.get(t.name) || new Set()));
+        st.marks = res.marks;
+        st.condCache = { tab: t.name, rules: res.cache };
+        st.condDirty.delete(t.name);
+      }
       const sel = rangeOf(st.sel);
       const lefts = [RHEAD];
       for (let c = 0; c < cols; c++) lefts.push(lefts[c] + widthOf(t, c));
@@ -689,6 +744,7 @@
       table.replaceChildren(...[colgroup, h("thead", null, headRow), tbody, foot].filter(Boolean));   // no totals: nothing (not "null")
       table.style.width = lefts[cols] + "px";
       lastDraw = { cols, rows, fr, fc, lefts, vis, total };
+      markActive();
       placeInput();
       drawBar();
       drawStatus();
@@ -704,13 +760,22 @@
       for (const el of table.querySelectorAll("th.on")) el.classList.remove("on");
       for (const td of table.querySelectorAll("tbody td.cell")) {
         const c = +td.dataset.c, r = +td.dataset.r;
-        if (c >= sel.c1 && c <= sel.c2 && r >= sel.r1 && r <= sel.r2) td.classList.add("sel");
-        if (c === st.sel.c1 && r === st.sel.r1) td.classList.add("active");
+        const on = c >= sel.c1 && c <= sel.c2 && r >= sel.r1 && r <= sel.r2;
+        if (on) td.classList.add("sel");
+        td.setAttribute("aria-selected", on ? "true" : "false");
+        if (td.id === ACTIVE_ID) td.removeAttribute("id");
+        if (c === st.sel.c1 && r === st.sel.r1) { td.classList.add("active"); td.id = ACTIVE_ID; }
       }
+      markActive();
       for (const th of table.querySelectorAll("thead th.ch")) if (+th.dataset.c >= sel.c1 && +th.dataset.c <= sel.c2) th.classList.add("on");
       for (const th of table.querySelectorAll("tbody th.rh")) if (+th.dataset.r >= sel.r1 && +th.dataset.r <= sel.r2) th.classList.add("on");
       drawBar();
       drawStatus();
+    }
+    const ACTIVE_ID = "sheetActiveCell";
+    function markActive() {
+      if (table.querySelector("#" + ACTIVE_ID)) grid.setAttribute("aria-activedescendant", ACTIVE_ID);
+      else grid.removeAttribute("aria-activedescendant");
     }
     function cellEl(t, c, r, left, sel) {
       const ref = S.addr(c, r);
@@ -728,16 +793,31 @@
         const mk = st.marks && st.marks.get(ref);
         if (mk) { if (mk.fill) cls.push("cf-fill-" + mk.fill); if (mk.text) cls.push("cf-text-" + mk.text); }
       }
-      if (c >= sel.c1 && c <= sel.c2 && r >= sel.r1 && r <= sel.r2) cls.push("sel");
-      if (c === st.sel.c1 && r === st.sel.r1) cls.push("active");
+      const selected = c >= sel.c1 && c <= sel.c2 && r >= sel.r1 && r <= sel.r2;
+      const active = c === st.sel.c1 && r === st.sel.r1;
+      if (selected) cls.push("sel");
+      if (active) cls.push("active");
       if (left !== null) cls.push("frozen");
       if (changedCells.has(t.name + "\t" + ref)) cls.push("changed-cell");     // §17.21: changed since you looked
-      const td = h("td", { class: cls.join(" "), dataset: { c: String(c), r: String(r) },
+      // a grid for screen readers too: each cell a gridcell, the selection aria-selected, the active cell named by
+      // the grid's aria-activedescendant (review 2026-10 DFI7)
+      const td = h("td", { class: cls.join(" "), dataset: { c: String(c), r: String(r) }, role: "gridcell",
+        "aria-selected": selected ? "true" : "false", id: active ? ACTIVE_ID : null,
         title: shown.error ? `${v.code} — ${v.why}` : (cell && cell.x ? "Calculated by Excel — the app can't work this formula out" : null) }, shown.text);
       if (left !== null) td.style.left = left + "px";
       return td;
     }
+    const totalsCache = new Map();          // "tab|col|fn" → value, for one data version (DFP1)
+    let totalsVer = -1;
     function totalOf(t, col, fn) {
+      if (totalsVer !== dataVer) { totalsCache.clear(); totalsVer = dataVer; }
+      const key = `${t.name}|${col}|${fn}`;
+      if (totalsCache.has(key)) return totalsCache.get(key);
+      const v = totalOfNow(t, col, fn);
+      totalsCache.set(key, v);
+      return v;
+    }
+    function totalOfNow(t, col, fn) {
       const xs = [];
       for (const [ref, cell] of Object.entries(t.cells)) {
         const p = S.parseRef(ref);
@@ -749,7 +829,7 @@
       if (!xs.length) return fn === "AVERAGE" ? S.ERR["#DIV/0!"] : 0;
       if (fn === "SUM") return xs.reduce((a, b) => a + b, 0);
       if (fn === "AVERAGE") return xs.reduce((a, b) => a + b, 0) / xs.length;
-      return fn === "MIN" ? Math.min(...xs) : Math.max(...xs);
+      return fn === "MIN" ? S.minOf(xs) : S.maxOf(xs);
     }
     function columnFormat(t, col) {
       for (const [ref, cell] of Object.entries(t.cells)) { const p = S.parseRef(ref); if (p && p.c === col && cell.f && cell.f !== "text" && cell.f !== "date" && cell.f !== "datetime") return cell; }
@@ -825,16 +905,21 @@
           const sum = xs.reduce((a, b) => a + b, 0);
           const f = columnFormat(t, r.c1);
           const fmt = (n) => S.format(n, f, opts).text;
-          parts.push(`Sum ${fmt(sum)}`, `Average ${fmt(sum / xs.length)}`, `Count ${xs.length}`, `Min ${fmt(Math.min(...xs))}`, `Max ${fmt(Math.max(...xs))}`);
+          parts.push(`Sum ${fmt(sum)}`, `Average ${fmt(sum / xs.length)}`, `Count ${xs.length}`, `Min ${fmt(S.minOf(xs))}`, `Max ${fmt(S.maxOf(xs))}`);
         } else parts.push(`${filled} filled`);
       } else if (S.isErr(v)) parts.push(`${v.code}: ${v.why}`);
       else if (cell && cell.x) parts.push("Calculated by Excel — this formula uses something the app can't work out.");
       else if (isFormulaCell(cell)) { const tc = wb.tabNamed(t.name); const ec = tc && tc.cells.get(st.sel.r1 * S.MAXC + st.sel.c1); if (ec && ec.syntax) parts.push("Formula problem: " + ec.syntax); }
       mount(statusBar, parts.map((p, i) => h("span", { class: i === 0 && S.isErr(v) ? "status-err" : "status-part" }, p)));
     }
+    let belowKey = null;
     function drawBelow() {
       const t = cur();
       const charts = t.kind === "grid" ? (t.charts || []) : [];
+      // the charts under the grid: drawn again only when they or the data changed, not on every scroll (DFP1)
+      const key = `${dataVer}|${st.tab}|${JSON.stringify(charts)}`;
+      if (key === belowKey) return;
+      belowKey = key;
       mount(below, charts.map((ch) => h("div", { class: "card chart-card", dataset: { chart: ch.id } },
         h("div", { class: "chart-head" }, h("span", { class: "hint" }, `${({ bar: "Bar", line: "Line", pie: "Pie" })[ch.type]} chart of ${ch.range}`),
           canEdit && !csv ? h("button", { class: "icon-btn", type: "button", "aria-label": "Chart options", title: "Chart options", onclick: (e) => D.menu(e.currentTarget, [
@@ -986,10 +1071,18 @@
       e.preventDefault();
       const t = cur();
       const x0 = e.clientX, w0 = widthOf(t, c);
-      const move = (ev) => { const w = Math.max(30, Math.min(800, w0 + ev.clientX - x0)); t.cols = Object.assign({}, t.cols, { [S.colName(c)]: w }); draw(); };
-      const up = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); const w = widthOf(t, c); t.cols[S.colName(c)] = w0; setMeta((x) => { x.cols = Object.assign({}, x.cols, { [S.colName(c)]: w }); }); };
+      // one redraw a frame while dragging (DFP1); a cancelled drag (a phone's gesture took over) puts it back (DFI8)
+      let frame = 0;
+      const move = (ev) => {
+        const w = Math.max(30, Math.min(800, w0 + ev.clientX - x0)); t.cols = Object.assign({}, t.cols, { [S.colName(c)]: w });
+        if (!frame) frame = requestAnimationFrame(() => { frame = 0; draw(); });
+      };
+      const stop = () => { document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", cancel); if (frame) { cancelAnimationFrame(frame); frame = 0; } };
+      const up = () => { stop(); const w = widthOf(t, c); t.cols[S.colName(c)] = w0; setMeta((x) => { x.cols = Object.assign({}, x.cols, { [S.colName(c)]: w }); }); };
+      const cancel = () => { stop(); t.cols = Object.assign({}, t.cols, { [S.colName(c)]: w0 }); draw(); };
       document.addEventListener("pointermove", move);
       document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", cancel);
     }
     function moveSel(dc, dr, extend) {
       const { rows, cols } = lastDraw || dims();
@@ -1120,7 +1213,12 @@
       }
       if (cell && typeof cell.v === "string" && cell.v.length > 32767) { toast("A cell can hold at most 32 767 characters.", true); return; }
       if (cell && isFormulaCell(cell)) {
-        try { S.parse(cell.v.slice(1)); } catch (e) { toast("Formula problem: " + e.message, true); }
+        try { S.parse(cell.v.slice(1)); } catch (e) {
+          // a formula the engine can't even read (not a typo it can show as an error) isn't saved: it could
+          // stop the sheet opening for everyone (review 2026-10 DF1)
+          if (!(e instanceof S.CalcSyntax)) { toast("This formula can't be worked out, so it wasn't saved.", true); return; }
+          toast("Formula problem: " + e.message, true);
+        }
       }
       if (cell && !old && countCells() >= MAXCELLS) { toast(`A sheet can have at most ${MAXCELLS.toLocaleString()} filled cells.`, true); return; }
       setCells([{ tab: t.name, ref, cell }]);
@@ -1372,11 +1470,25 @@
           const cell = parsed.v === null ? null : Object.assign({}, old && { f: old.f, d: old.d, b: old.b, al: old.al, red: old.red }, { v: parsed.v }, parsed.text ? { q: 1 } : {}, parsed.f && !(old && old.f) ? { f: parsed.f, d: parsed.d } : {});
           changes.push({ tab: t.name, ref, cell });
         }));
-        const rows = lines.length, cols = Math.max(...lines.map((l) => l.split("\t").length));
+        const rows = lines.length, cols = S.maxOf(lines.map((l) => l.split("\t").length));
         st.sel = { c1: at.c1, r1: at.r1, c2: Math.min(MAXC - 1, at.c1 + cols - 1), r2: Math.min(MAXR - 1, at.r1 + rows - 1) };
       }
+      if (!fitsLimits(changes)) return;
       if (st.clip && st.clip.cut && st.clip.tab === t.name && text.replace(/\r/g, "") === st.clip.text) st.clip = null;
       setCells(changes);
+    }
+    /** Paste and fill keep the limits typing keeps (review 2026-10 DFI4): text per cell, formula length, filled cells. */
+    function fitsLimits(changes) {
+      let added = 0;
+      for (const ch of changes) {
+        const v = ch.cell ? ch.cell.v : null;
+        if (typeof v === "string" && v.length > 32767) { toast("A cell can hold at most 32 767 characters.", true); return false; }
+        if (typeof v === "string" && isFormulaCell(ch.cell) && v.length > MAX_FORMULA) { toast(`A formula can be at most ${MAX_FORMULA.toLocaleString()} characters.`, true); return false; }
+        const t = st.sheet.tabs.find((x) => x.name === ch.tab);
+        if (ch.cell && t && !t.cells[ch.ref]) added++;
+      }
+      if (added && countCells() + added > MAXCELLS) { toast(`A sheet can have at most ${MAXCELLS.toLocaleString()} filled cells.`, true); return false; }
+      return true;
     }
     function clearSel() {
       if (roBlocked()) return;
@@ -1420,6 +1532,7 @@
           }
         }
       }
+      if (!fitsLimits(changes)) return;
       setCells(changes);
     }
 
@@ -1631,7 +1744,7 @@
               else { if (list.length >= 10) { toast("At most 10 charts per tab.", true); return; } list.push(Object.assign({ id: "c" + Date.now().toString(36) }, spec, { range: rangeText(rr) })); }
               x.charts = list;
             });
-            setTimeout(() => below.scrollIntoView({ block: "nearest", behavior: "smooth" }), 80);
+            setTimeout(() => below.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }), 80);
           } }, existing || chartTab ? "Save" : "Add chart"))), { wide: true, focus: false });
       redraw();
     }
@@ -1674,7 +1787,8 @@
           h("div", { class: "actions" }, h("button", { class: "btn-ghost", type: "button", onclick: () => m.close() }, "Done"),
             h("button", { class: "btn-primary", type: "button", id: "condAdd", onclick: () => {
               const rr = S.parseRange(range.value.toUpperCase());
-              if (!rr) { err.textContent = "Type cells like B2:B20."; return; }
+              // inside the sheet, as for charts — not A:XFD (review 2026-10 DFP2)
+              if (!rr || rr.c2 >= MAXC || rr.r2 >= MAXR) { err.textContent = "Type cells like B2:B20 (inside the sheet)."; return; }
               const rule = { range: rangeText(rr), type: type.value, fill: fill.value || null, text: text.value || null };
               if (!rule.fill && !rule.text) { err.textContent = "Choose a fill or a text colour."; return; }
               const num = (x) => { const p = S.parseInput(x, opts.numStyle); return typeof p.v === "number" ? p.v : null; };
@@ -1786,20 +1900,36 @@
     const onResize = debounce(() => { if (document.body.contains(grid)) draw(); }, 150);
     window.addEventListener("resize", onResize);
     const onHide = () => { if (document.visibilityState === "hidden" && hasWork()) save({ keepalive: true }); };
+    // closing or reloading the page with changes not saved yet asks first; a page that goes away sends them
+    // (review 2026-10 DFI2: the sheet had no pagehide)
+    const onPageHide = () => { if (hasWork()) save({ keepalive: true }); };
+    const onUnload = (e) => { if (canEdit && (hasWork() || st.saving)) { e.preventDefault(); e.returnValue = ""; } };
     document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onUnload);
     const cleanup = () => {
       document.removeEventListener("copy", onCopy); document.removeEventListener("cut", onCut); document.removeEventListener("paste", onPaste);
       document.removeEventListener("visibilitychange", onHide); window.removeEventListener("resize", onResize);
+      window.removeEventListener("pagehide", onPageHide); window.removeEventListener("beforeunload", onUnload);
       page.classList.remove("sheet-page");
-      clearInterval(st.poller);
+      clearInterval(st.poller); clearTimeout(st.retry);
     };
-    D.state.leaving = async () => { commitEdit(); cleanup(); await flush(); };
+    // leaving(): saves first; false when that didn't work (the router asks "Leave without saving?"); leaving(true)
+    // leaves anyway (review 2026-10 DFI1)
+    D.state.leaving = async (force) => {
+      if (!force) {
+        commitEdit();
+        for (let k = 0; k < 3 && (hasWork() || st.saving); k++) await flush();
+        if (canEdit && hasWork()) return false;
+      }
+      cleanup();
+    };
     let lastDay = todayIn(tz);
     st.poller = setInterval(async () => {
       if (!ctx.current() || D.state.route !== "doc" || !document.body.contains(grid)) { cleanup(); return; }
       if (document.visibilityState !== "visible") return;
       const day = todayIn(tz);
-      if (day !== lastDay) { lastDay = day; wb.refreshToday(); draw(); }
+      if (day !== lastDay) { lastDay = day; wb.refreshToday(); bumpData(); st.marks = null; st.condCache = null; draw(); }
       try {
         const e = await api(`api/docs/${doc.id}/etag`);
         if (head && head.editing) { head.editing.hidden = !e.editing; head.editing.textContent = e.editing ? `${e.editing} is editing` : ""; }

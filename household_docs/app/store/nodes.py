@@ -65,12 +65,21 @@ def ancestors(conn, node) -> list:
     return out
 
 
+# Everything inside a folder: a range of `rel` ("a/" ≤ rel < "a0", "0" being the character after "/"), which the
+# UNIQUE(root_id, rel) index answers — substr(rel, 1, n) = "a/" made SQLite read every row of the root (review
+# 2026-10 DP7). The same rows: in UTF-8, byte order is code point order.
+INSIDE_SQL = "n.root_id = ? AND n.rel >= ? AND n.rel < ?"
+
+
+def inside_params(root_id: str, rel: str) -> list:
+    return [root_id, rel + "/", rel + "0"]
+
+
 def descendant_ids(conn, node) -> list[str]:
     if node["kind"] != "folder":
         return []
-    return [r["id"] for r in conn.execute(
-        "SELECT id FROM nodes WHERE root_id = ? AND substr(rel, 1, ?) = ?",
-        (node["root_id"], len(node["rel"]) + 1, node["rel"] + "/"))]
+    return [r["id"] for r in conn.execute(f"SELECT n.id FROM nodes n WHERE {INSIDE_SQL}",
+                                          inside_params(node["root_id"], node["rel"]))]
 
 
 def name_parts(name: str) -> tuple[str, str | None]:
@@ -136,8 +145,8 @@ def relocate(conn, node, *, root_id: str, rel: str, parent_id: str | None) -> No
     if node["kind"] == "folder":
         ext = None
     if node["kind"] == "folder":
-        inner = conn.execute("SELECT id, rel FROM nodes WHERE root_id = ? AND substr(rel, 1, ?) = ?",
-                             (old_root, len(old_rel) + 1, old_rel + "/")).fetchall()
+        inner = conn.execute(f"SELECT n.id, n.rel FROM nodes n WHERE {INSIDE_SQL}",
+                             inside_params(old_root, old_rel)).fetchall()
         # two steps, so a rename to a name that sorts inside the old one never collides on UNIQUE(root_id, rel)
         for r in inner:
             conn.execute("UPDATE nodes SET rel = ? WHERE id = ?", (".moving/" + r["id"], r["id"]))

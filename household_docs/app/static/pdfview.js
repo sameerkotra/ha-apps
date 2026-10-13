@@ -8,7 +8,7 @@
   const D = window.Docs;
   const { h, toast, openModal, spinner } = D;
   const { mount } = UI;
-  const V = "?v=1.6.1";                       // the app's version (cache busting, checked by the packaging tests)
+  const V = "?v=1.6.2";                       // the app's version (cache busting, checked by the packaging tests)
   const BASE = "vendor/pdfjs/";
   const MAX_BYTES = 50 * 1024 * 1024;         // bigger ones download instead
   const CSS_PER_PT = 96 / 72;                 // PDF points → CSS pixels at 100 %
@@ -123,6 +123,7 @@
         canvas.width = Math.max(1, Math.floor(vp.width * k));
         canvas.height = Math.max(1, Math.floor(vp.height * k));
         canvas.className = "pdf-canvas";
+        canvas.setAttribute("role", "img");      // (a picture of the page: its text is in search, and in Download)
         canvas.setAttribute("aria-label", `Page ${s.n}`);
         const job = page.render({ canvas, canvasContext: canvas.getContext("2d"), viewport: vp,
           transform: k !== 1 ? [k, 0, 0, k, 0, 0] : null });

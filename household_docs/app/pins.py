@@ -15,7 +15,7 @@ import re
 
 from fastapi import HTTPException
 
-from . import config, db, docops, documents, settings, sharing
+from . import config, db, docops, documents, kids, settings, sharing
 from .formats import text as text_fmt
 from .store import fileio, moving, nodes, paths
 
@@ -60,6 +60,8 @@ def set_pin(conn, user: dict, node_id: str, value: bool, cell=None) -> dict:
         c = clean_cell(cell)
         if c and node["kind"] != "sheet":
             raise HTTPException(422, "Only a sheet's card shows a cell.")
+        if c:
+            kids.refuse_sheet(user, node["kind"])     # a cell's value is the sheet's content (review 2026-10 D4)
         if not pinned:
             if _count(conn, user) >= MAX_PINS:
                 raise HTTPException(409, f"You can pin up to {MAX_PINS} things — unpin one first.")
@@ -113,6 +115,8 @@ def _note_preview(conn, row) -> list[str]:
 
 def _cell_preview(conn, user: dict, row, cell: dict) -> dict:
     from . import sheets
+    if kids.is_child(user):                          # a cell chosen before they were a child: not shown (D4)
+        return {"tab": cell["tab"], "ref": cell["ref"], "error": "Sheets aren't available in Kids' space."}
     try:
         if (row["size"] or 0) > int(settings.get("max_doc_mb", conn)) * 1024 * 1024:
             return {"tab": cell["tab"], "ref": cell["ref"], "error": "too big"}

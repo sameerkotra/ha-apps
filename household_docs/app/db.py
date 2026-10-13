@@ -186,6 +186,10 @@ CREATE TABLE IF NOT EXISTS ai_folders (      -- "Read text from scans in this fo
   target TEXT PRIMARY KEY,                   -- a folder node id or "root:<id>"
   added_by TEXT, created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_person_month (  -- tokens each person's AI requests used, per month (the per-person limit)
+  user_id TEXT NOT NULL, month TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, month)
+);
 CREATE TABLE IF NOT EXISTS ai_calls (        -- every request to the AI model (Admin → AI usage); nobody's content
   id TEXT PRIMARY KEY, at TEXT NOT NULL,
   purpose TEXT NOT NULL,                     -- ocr | summarise | checklist | sheet | ask | test
@@ -308,8 +312,9 @@ def new_id() -> str:
 
 
 def _connect() -> sqlite3.Connection:
+    # synchronous = NORMAL under WAL (init_db sets it): safe against corruption, one fsync fewer per commit
     return db_core.connect(config.DB_PATH, timeout=30, check_same_thread=False,
-                           pragmas=("foreign_keys = ON", "busy_timeout = 30000"))
+                           pragmas=("foreign_keys = ON", "busy_timeout = 30000", "synchronous = NORMAL"))
 
 
 def get_conn():

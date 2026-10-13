@@ -75,7 +75,8 @@ def pdf(node_id: str, user: dict = Depends(require_user)):
         sharing.require(conn, user, node_id, "viewer")
     index.refresh_node(node_id)
     with db.get_conn() as conn:
-        name, data, bad = docpdf.make(conn, user, node_id)
+        name, job = docpdf.prepare(conn, user, node_id)
+    data, bad = docpdf.render(*job)           # in a time-limited worker, not holding the database
     headers = files.download_headers(name)
     headers["X-Docs-Unsupported"] = str(bad)
     return Response(data, media_type="application/pdf", headers=headers)

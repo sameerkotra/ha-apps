@@ -143,7 +143,7 @@ def mark_seen(conn, user: dict, ref: str | None) -> int:
     if folder is None:
         where, params = "n.root_id = ?", [root["id"]]
     else:
-        where, params = "n.root_id = ? AND substr(n.rel, 1, ?) = ?", [root["id"], len(folder["rel"]) + 1, folder["rel"] + "/"]
+        where, params = nodes.INSIDE_SQL, nodes.inside_params(root["id"], folder["rel"])
     ids = [r["id"] for r in conn.execute(acc_sql + f"SELECT n.id FROM nodes n JOIN acc ON acc.node_id = n.id WHERE {where} "
                                          f"AND {nodes.LIVE} AND n.kind != 'folder'", (*acc_params, *params))]
     for nid in ids:

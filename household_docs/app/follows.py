@@ -121,13 +121,16 @@ def _target_any(conn, user: dict, target: str):
     return "node", node
 
 
-def pending(conn, user: dict, f) -> tuple[list, str]:
-    """(activity rows not yet told, the followed item's label) — others' changes the person can open."""
+def pending(conn, user: dict, f, acc_table: str | None = None) -> tuple[list, str]:
+    """(activity rows not yet told, the followed item's label) — others' changes the person can open.
+    acc_table: a temporary table already holding the person's access (dispatch() makes it once per person)."""
     try:
         kind, row = _target_any(conn, user, f["target"])
     except HTTPException:
         return [], ""
     acc_sql, acc_params = sharing.access_cte(user["id"])
+    if acc_table:
+        acc_sql, acc_params = f"WITH acc AS (SELECT node_id, rank FROM {acc_table}) ", []
     where = ["a.last_at > ?", "(a.actor_id IS NULL OR a.actor_id != ?)", "a.action != 'shared'"]
     params: list = [f["cursor"], user["id"]]
     if kind == "root":
@@ -219,12 +222,27 @@ def dispatch(now=None) -> int:
     batch = (now - timedelta(minutes=BATCH_MINUTES)).isoformat(timespec="seconds")
     plan = []                                       # (user id, target, services, message, new cursor)
     with db.get_conn() as conn:
-        follows_ = conn.execute("SELECT f.*, u.prefs, u.disabled FROM follows f JOIN users u ON u.id = f.user_id").fetchall()
+        follows_ = conn.execute("SELECT f.*, u.prefs, u.disabled FROM follows f JOIN users u ON u.id = f.user_id "
+                                "ORDER BY f.user_id").fetchall()
+        # review 2026-10 DP4: a cheap look at Activity first (most minutes nothing new happened), and each
+        # person's access worked out once per run, not once per follow
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS follow_acc (node_id TEXT, rank INTEGER)")
+        conn.execute("CREATE INDEX IF NOT EXISTS temp.idx_follow_acc ON follow_acc(node_id)")
+        acc_for = None
         for f in follows_:
             if f["last_sent_at"] and f["last_sent_at"] > batch:
                 continue
+            if f["cursor"] is None or conn.execute(
+                    "SELECT 1 FROM activity a WHERE a.last_at > ? AND (a.actor_id IS NULL OR a.actor_id != ?) "
+                    "AND a.action != 'shared' LIMIT 1", (f["cursor"], f["user_id"])).fetchone() is None:
+                continue                            # nothing new by anyone else since the cursor
             user = {"id": f["user_id"], "disabled": bool(f["disabled"])}
-            rows, label = pending(conn, user, f)
+            if acc_for != f["user_id"]:
+                acc_sql, acc_params = sharing.access_cte(f["user_id"])
+                conn.execute("DELETE FROM follow_acc")
+                conn.execute(acc_sql + "INSERT INTO follow_acc SELECT node_id, rank FROM acc", acc_params)
+                acc_for = f["user_id"]
+            rows, label = pending(conn, user, f, "temp.follow_acc")
             if not rows:
                 continue
             newest = max(r["last_at"] for r in rows)

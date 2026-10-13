@@ -7,6 +7,7 @@
                                            br, img (shown as "🖼 alt"; only a picture kept in the app itself,
                                            ![alt](doc:<id>), is shown, and only when opts.images is on)
      DocsMd.render(blocks, doc, opts)    → a DocumentFragment built with doc.createElement / createTextNode only
+                                           (opts.linksAsText: web links as text with their whole address)
      DocsMd.safeHref(url)                → the URL when it is http: or https:, else null
      DocsMd.toggleTask(text, line)       → the text with that line's [ ] ↔ [x] switched (ticking in the preview)
      DocsMd.docLinks(text)               → the [[link]] texts in order
@@ -33,11 +34,26 @@
 
   // ---------------------------------------------------------------- inline
   const PUNCT = "\\`*_{}[]()#+-.!|~<>\"'";
+  // Past this many characters a paragraph (or heading, list item, table cell) is shown as plain text: the
+  // preview stays quick whatever is pasted into a note (review 2026-10 DF4).
+  const INLINE_MAX = 20000;
+  function plainInline(s) {
+    const out = [];
+    s.split("\n").forEach((part, k) => { if (k) out.push({ t: "br" }); if (part) out.push({ t: "text", v: part }); });
+    return out;
+  }
   function parseInline(src, depth = 0) {
     const s = String(src || "");
+    if (s.length > INLINE_MAX) return plainInline(s);
     const out = [];
     let buf = "";
     const flush = () => { if (buf) { out.push({ t: "text", v: buf }); buf = ""; } };
+    // What is known not to be there from some point on, so nothing is looked for twice (review 2026-10 DF4:
+    // "*a *a *a …" or "[a[a[a …" used to search the rest of the text again for every opener):
+    const noCloser = {};         // emphasis mark → no closing mark from this index on
+    const noFence = {};          // `code` fence length → none from this index on
+    const pairs = {};            // "[" / "(" → each opener's closer (bracketPairs), worked out once
+    const closeOf = (at, open, close) => (pairs[open] || (pairs[open] = bracketPairs(s, open, close))).get(at) ?? -1;
     let i = 0;
     while (i < s.length) {
       const c = s[i];
@@ -47,8 +63,9 @@
         let n = 1;
         while (s[i + n] === "`") n += 1;
         const fence = "`".repeat(n);
-        const end = s.indexOf(fence, i + n);
+        const end = noFence[n] !== undefined && i + n >= noFence[n] ? -1 : s.indexOf(fence, i + n);
         if (end > i) { flush(); out.push({ t: "code", v: s.slice(i + n, end).replace(/^ (.*) $/, "$1") }); i = end + n; continue; }
+        if (noFence[n] === undefined || i + n < noFence[n]) noFence[n] = i + n;
         buf += fence; i += n; continue;
       }
       if (c === "[" && s[i + 1] === "[") {
@@ -61,9 +78,9 @@
       if ((c === "!" && s[i + 1] === "[") || c === "[") {
         const img = c === "!";
         const open = img ? i + 1 : i;
-        const close = findClose(s, open, "[", "]");
+        const close = closeOf(open, "[", "]");
         if (close > 0 && s[close + 1] === "(") {
-          const pclose = findClose(s, close + 1, "(", ")");
+          const pclose = closeOf(close + 1, "(", ")");
           if (pclose > 0) {
             const label = s.slice(open + 1, close);
             const url = s.slice(close + 2, pclose).trim().split(/\s+/)[0] || "";
@@ -101,12 +118,16 @@
         if (leftOk && !wordInside) {
           let j = i + mark.length;
           let end = -1;
+          // whether a mark at k closes depends only on k, so "none from j on" holds for every later opener too
+          if (noCloser[mark] !== undefined && j >= noCloser[mark]) j = s.length;
+          const from = j;
           while (j < s.length) {
             const k = s.indexOf(mark, j);
             if (k < 0) break;
             if (!/\s/.test(s[k - 1]) && (dbl || s[k + 1] !== c) && !(c === "_" && /\w/.test(s[k + mark.length] || ""))) { end = k; break; }
             j = k + 1;
           }
+          if (end < 0 && from < s.length) noCloser[mark] = from;
           if (end >= i + mark.length) {
             const inner = s.slice(i + mark.length, end);
             if (inner) {
@@ -124,27 +145,48 @@
     flush();
     return out;
   }
-  function findClose(s, at, open, close) {
-    let depth = 0;
-    for (let i = at; i < s.length && i < at + 2000; i++) {
-      if (s[i] === "\\") { i += 1; continue; }
-      if (s[i] === open) depth += 1;
-      else if (s[i] === close) { depth -= 1; if (depth === 0) return i; }
-      else if (s[i] === "\n" && s[i + 1] === "\n") return -1;
+  /** Every opener's closer at once, in one pass: what scanning on from each opener used to give —
+   *  the matching one, not past a blank line, at most 2000 characters on, a "\" hiding the next character. */
+  function bracketPairs(s, open, close) {
+    const out = new Map();
+    const stack = [];
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "\\") { i += 1; continue; }
+      if (ch === open) stack.push(i);
+      else if (ch === close) { if (stack.length) { const o = stack.pop(); if (i < o + 2000) out.set(o, i); } }
+      else if (ch === "\n" && s[i + 1] === "\n") stack.length = 0;
     }
-    return -1;
+    return out;
   }
 
   // ---------------------------------------------------------------- blocks
   const RX = {
     fence: /^\s{0,3}(`{3,}|~{3,})\s*([\w+-]*)/,
-    head: /^\s{0,3}(#{1,6})(?:\s+(.*?))?\s*#*\s*$/,
+    head: /^\s{0,3}(#{1,6})(.*)$/,
     hr: /^\s{0,3}([-*_])(\s*\1){2,}\s*$/,
     quote: /^\s{0,3}>\s?(.*)$/,
     item: /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/,
     task: /^\[([ xX])\]\s+(.*)$/,
-    tableSep: /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/,
   };
+  // Headings and table rules are taken apart by hand: their regular expressions took cubic / quadratic time on a
+  // long line of spaces and #s or pipes and dashes (review 2026-10 DF4).
+  /** A heading line → {level, text} (closing #s and spaces dropped), or null. */
+  function headOf(line) {
+    const m = RX.head.exec(line);
+    if (!m) return null;
+    const rest = m[2];
+    if (rest && !/^\s/.test(rest)) return null;             // "#word" isn't a heading
+    let t = rest.trim(), e = t.length;
+    while (e > 0 && t[e - 1] === "#") e -= 1;
+    return { level: m[1].length, text: t.slice(0, e).trimEnd() };
+  }
+  function isTableSep(line) {
+    let t = line.trim();
+    if (t.startsWith("|")) t = t.slice(1);
+    if (t.endsWith("|")) t = t.slice(0, -1);
+    return t.split("|").every((c) => /^:?-+:?$/.test(c.trim()));
+  }
   function cells(line) {
     let t = line.trim();
     if (t.startsWith("|")) t = t.slice(1);
@@ -171,9 +213,9 @@
         continue;
       }
       if (!line.trim()) { endPara(); i += 1; continue; }
-      if ((m = RX.head.exec(line)) && (m[2] !== undefined || /^\s{0,3}#{1,6}\s*$/.test(line))) {
+      if ((m = headOf(line))) {
         endPara();
-        blocks.push({ t: "h", level: m[1].length, c: parseInline(m[2] || "") });
+        blocks.push({ t: "h", level: m.level, c: parseInline(m.text) });
         i += 1;
         continue;
       }
@@ -188,7 +230,7 @@
         blocks.push({ t: "quote", c: depth < MAX_DEPTH ? parse(q.join("\n"), depth + 1, lineOffset + start) : [] });
         continue;
       }
-      if (line.includes("|") && i + 1 < lines.length && RX.tableSep.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      if (line.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1]) && lines[i + 1].includes("-")) {
         endPara();
         const head = cells(line);
         const align = cells(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : /^:-+/.test(c) ? "left" : null));
@@ -231,8 +273,8 @@
         }
         const last = block.items[block.items.length - 1];
         if (last && indentOf(/^\s*/.exec(lines[i])[0]) > base && !RX.fence.test(lines[i])) {   // a continuation line
-          last.text += "\n" + lines[i].trim();
-          last.c = parseInline(last.text);
+          last.text += "\n" + lines[i].trim();              // its inline parts: once, at the end
+          last.c = null;
           i += 1;
           continue;
         }
@@ -252,9 +294,10 @@
       if (/\d/.test(m[2]) !== ordered) break;
       const task = /[-*+]/.test(m[2]) ? RX.task.exec(m[3]) : null;
       const text = task ? task[2] : m[3];
-      block.items.push({ checked: task ? task[1] !== " " : null, line: lineOffset + i, text, c: parseInline(text), sub: null });
+      block.items.push({ checked: task ? task[1] !== " " : null, line: lineOffset + i, text, c: null, sub: null });
       i += 1;
     }
+    for (const it of block.items) if (it.c === null) it.c = parseInline(it.text);
     return { block, next: i };
   }
 
@@ -304,6 +347,13 @@
         else if (n.t === "link") {
           const href = safeHref(n.href);
           if (!href) { inline(n.c, parent, depth + 1); continue; }
+          if (opts.linksAsText) {         // text from an AI model: never a live link, the whole address shown (DF5)
+            const span = el("span", "md-link-text");
+            inline(n.c, span, depth + 1);
+            if (span.textContent !== href) span.appendChild(text(` (${href})`));
+            parent.appendChild(span);
+            continue;
+          }
           const a = el("a", "md-link");
           a.setAttribute("href", href);
           a.setAttribute("target", "_blank");
@@ -378,7 +428,7 @@
     return frag;
   }
 
-  const api = { parse, parseInline, render, safeHref, toggleTask, docLinks };
+  const api = { parse, parseInline, render, safeHref, toggleTask, docLinks, bracketPairs, headOf, isTableSep };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.DocsMd = api;
 })(typeof window !== "undefined" ? window : globalThis);

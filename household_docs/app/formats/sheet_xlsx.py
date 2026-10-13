@@ -54,12 +54,16 @@ def run_worker(data: bytes, timeout: float = TIMEOUT) -> dict:
     """The worker's raw findings (or ReadError)."""
     if not data.startswith(b"PK"):
         raise ReadError("This isn't an .xlsx file.")
+    from .. import workers
     with _slots:
         try:
-            p = subprocess.run([sys.executable, "-I", WORKER, json.dumps(limits())], input=data,
-                               capture_output=True, timeout=timeout, env={"PATH": os.environ.get("PATH", "")})
+            with workers.heavy():
+                p = subprocess.run([sys.executable, "-I", WORKER, json.dumps(limits())], input=data,
+                                   capture_output=True, timeout=timeout, env={"PATH": os.environ.get("PATH", "")})
         except subprocess.TimeoutExpired:
             raise ReadError(f"Reading this .xlsx took longer than {int(timeout)} seconds, so it was stopped.")
+        except workers.Busy:
+            raise ReadError("The app is busy reading other files — try again in a moment.")
     try:
         out = json.loads(p.stdout or b"{}")
     except ValueError:
@@ -393,14 +397,15 @@ def write(sheet: dict, currency: str | None = None) -> bytes:
             xc = ws[ref]
             v = cell.get("v")
             if M.is_formula(cell):
-                xc.value = "=" + M.to_excel_formula(v[1:])
-                values[ref] = cell.get("c")
+                xc.value = "=" + M.to_excel_formula(M.strip_controls(v[1:]))
+                c = cell.get("c")
+                values[ref] = M.strip_controls(c) if isinstance(c, str) else c
             elif isinstance(v, str) and (cell.get("q") or v.startswith("=")):
-                xc.value = v
+                xc.value = M.strip_controls(v)
                 xc.data_type = "s"
                 xc.quotePrefix = True
             else:
-                xc.value = v
+                xc.value = M.strip_controls(v) if isinstance(v, str) else v
             nfmt = M.excel_format(cell, currency)
             if nfmt != "General":
                 xc.number_format = nfmt

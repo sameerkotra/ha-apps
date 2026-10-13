@@ -56,8 +56,8 @@ async def import_sheet(request: Request, name: str = Query(min_length=1, max_len
                        parentId: str | None = Query(default=None, max_length=70),
                        format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"), user: dict = Depends(require_user)):
     """A .csv or .xlsx (the request body is the file) into a new sheet in a folder you can edit."""
-    with db.get_conn() as conn:
-        limit = int(settings.get("max_doc_mb", conn)) * 1024 * 1024
+    from starlette.concurrency import run_in_threadpool
+    limit = await run_in_threadpool(lambda: int(settings.get("max_doc_mb")) * 1024 * 1024)
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > limit:
         raise HTTPException(413, f"A sheet can be at most {limit // (1024 * 1024)} MB.")
@@ -75,5 +75,4 @@ async def import_sheet(request: Request, name: str = Query(min_length=1, max_len
             out = node_info_json(conn, user, nid)
             out["leftOut"] = left_out
             return out
-    from starlette.concurrency import run_in_threadpool
     return await run_in_threadpool(run)

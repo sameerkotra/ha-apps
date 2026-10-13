@@ -169,7 +169,29 @@ def _read_text(path: str, limit: int, base: str | None = None) -> str | None:
     return data.decode("utf-8", errors="replace")
 
 
+WORKER_MEM = 256 * 1024 * 1024        # the worker's address space
+WORKER_CPU = 10                       # seconds of CPU time (the app stops it after REGEX_SECONDS of wall time)
+
+
+def _limit_self() -> None:
+    """Limits the worker sets on itself before it reads anything (review 2026-10 D10): memory, CPU time, no files
+    written — a pattern can't take the machine's memory even before the app stops it."""
+    try:
+        import resource
+    except ImportError:                # not on Linux
+        return
+    for what, value in (("RLIMIT_AS", WORKER_MEM), ("RLIMIT_CPU", WORKER_CPU), ("RLIMIT_FSIZE", 0)):
+        lim = getattr(resource, what, None)
+        if lim is None:
+            continue
+        try:
+            resource.setrlimit(lim, (value, value))
+        except (ValueError, OSError):
+            pass
+
+
 def main() -> None:                    # pragma: no cover - runs in the worker process (tested through run())
+    _limit_self()
     out = sys.stdout
     head = json.loads(sys.stdin.readline() or "{}")
     try:

@@ -251,7 +251,8 @@ reorder (on a phone too); **⋯ → Unpin from home** takes it off. Pins are you
   as a PDF. Sheets print from their editor (🖨).
 - **⋯ → Download as PDF** makes the PDF in the app (A4, page numbers). It uses the fonts every PDF reader has,
   which cover English and Western European languages; other alphabets and emoji show as "?" — the app says so,
-  and Print → Save as PDF keeps them.
+  and Print → Save as PDF keeps them. The PDF is made in a separate process that may take at most 60 seconds and
+  about 1 GB of memory: a note too long for that (several megabytes of text) is better printed with Print → Save as PDF.
 - **⋯ → Save PDF here** puts that PDF beside the document, when you can add files to its folder.
 
 ## Activity and following
@@ -281,8 +282,10 @@ notification when something in it changes:
 
 ## Home Assistant sensors
 
-⋯ → **Show in Home Assistant…** on a checklist, a sheet or a folder (owners and people who can edit it; an admin can
-turn this off: *Items can be shown in Home Assistant*):
+⋯ → **Show in Home Assistant…** on a checklist, a sheet or a folder (an admin can turn this off: *Items can be shown
+in Home Assistant*). A sensor shows the item to everyone who uses Home Assistant, so in a person's folder only its
+owner or a manager can make one; in an admin shared folder anyone with Read and write. People who can edit the item
+can turn its sensor off. Kids' space has no sheets, so a child can't show a sheet's cell either.
 
 | Item | Sensor | State and attributes |
 |---|---|---|
@@ -660,17 +663,26 @@ They apply at once.
   picked first when sharing with Everyone* (Can view).
 - **Documents** — *Versions kept per document* (30, 5–200), *Days before Trash is emptied* (30, 1–365),
   *Largest document the editor opens* (5 MB, 1–25; bigger files download), *Largest upload* (100 MB, 1–2048),
-  *Limit per person for their own folder* (0 = none), *Warn when a document looks like it holds a password* (on).
+  *Limit per person for their own folder* (100 GB; their files and the earlier versions kept of them; 0 = none),
+  *Keep this much disk space free* (200 MB: saving, uploading, copying and importing stop with a message before
+  the disk that holds `/share` gets fuller than that; deleting always works; 0 = no check), *Warn when a document
+  looks like it holds a password* (on).
 - **Finding files** — *Look for changes made outside the app every* (10 minutes, 2–120), *Largest text file whose
   words are searchable* (1 MB, 0–20; 0 = names only), *Allow regular-expression search* (on).
 - **Finding files** also has *Largest PDF whose text is searchable* (20 MB, 0–64; 0 = PDFs by name only).
 - **Activity, Home Assistant and imports** — *Keep activity for* (90 days, 7–730), *Items can be shown in Home
   Assistant* (on), *Import from Google Keep* (on).
 - **AI** — *AI features* (off), *Provider*, *Address*, *Access key* (never shown again once saved), *Text model*,
-  *Vision model* (empty: the text model), *Most tokens a month* (0 = no limit), prices per million tokens (for the
-  cost estimate only), and **Test connection**.
+  *Vision model* (empty: the text model), *Most tokens a month* (20 million for the household; 0 = no limit),
+  *Most tokens a month per person* (5 million; reading text in a folder's pictures in the background counts only
+  for the household; 0 = no limit), prices per million tokens (for the cost estimate only), and **Test
+  connection**. Members see only the AI's host (`https://api.example.com`), never the rest of the address.
 - **Backups** — *Backup includes the documents themselves* (off).
 - **Household Assistant** — *Answer the Household Assistant* (on; see *The Household Assistant*).
+- **Household apps** — *App-messages signing key* (empty). Put the same key in every household app (Admin → App
+  settings in each): their messages to each other are then signed, and a message without the right signature is
+  refused. Without a key, any app on Home Assistant's network could send messages as another one. Set it in all
+  of them at about the same time — an app with a key refuses the others until they have it too.
 
 ### The app option (Configuration tab)
 
@@ -775,8 +787,12 @@ since shows as different). Shared folders aren't affected. Each step is in the a
 ## Backups
 
 - **Admin → Backup → Download backup** — its size is shown next to the button; a zip with the database (sharing, the index, ticks, favourites,
-  settings). With *Backup includes the documents themselves* on, it also holds every file in the documents folder
+  settings), made while it downloads. With *Backup includes the documents themselves* on, it also holds every file in the documents folder
   (people's folders, Trash and History), which can be large.
+- The database in a backup holds no document text: the search index's copy of the words, the text read from PDFs
+  and — unless the files are in the backup too — the text the AI read from pictures are left out. After a restore
+  the app reads the files again (search finds their words once that's done; PDFs' and pictures' text is read
+  again in the background, by the AI for pictures in folders it may read).
 - **Restore** — replaces the database with the backup's (no merge, no undo), keeps this install's documents
   folder, then re-scans every folder: the index is rebuilt from what's on disk, and sharing for files that aren't
   there is kept for 30 days in case they come back (say, when you restore Share afterwards). Files in the zip are
@@ -794,7 +810,8 @@ Folders 10 deep, 50 000 files and folders per person's folder (and per shared fo
 2 000 items, sheets 10 tabs of 5 000 rows × 100 columns and 200 000 filled cells (an `.xlsx` from elsewhere that's
 bigger, unpacks to more than 64 MB or takes more than 20 seconds to read isn't opened — download it instead), names up to 200 characters (no `/ \ : * ? " < > |`, no leading dot — names Windows can hold), the
 editor's and upload limits from App settings, `.zip` downloads up to 10 000 files and 4 GB, search results up to
-500, regular expressions up to 200 characters and 5 seconds; PDF text up to 500 pages and 30 seconds a PDF; imports
+500, regular expressions up to 200 characters and 5 seconds for the whole search; PDF text up to 500 pages and 30 seconds a PDF;
+a note's PDF 60 seconds; a copy at most 500 items and 1 GB; a scan 30 pages; imports
 up to 10 000 entries, 4 GB unpacked and 5 000 Keep notes; 200 follows per person and 200 Home Assistant sensors;
 AI: 30 files and 200 000 characters for a question, 10 pages a scan. Dates follow Home Assistant's time zone.
 

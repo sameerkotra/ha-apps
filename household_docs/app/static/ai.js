@@ -8,7 +8,7 @@
   const D = window.Docs;
   const { h, api, toast, fail, openModal, spinner, pageHead, fmtWhen } = D;
   const { mount } = UI;
-  const can = (it, role) => ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[it.role] || 0) >= ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[role] || 9);
+  const can = D.can;
   const aiState = () => (D.state.me && D.state.me.ai) || {};
   const aiOn = () => !!aiState().on && D.state.me.prefs.showAi !== false && !(D.state.me && D.state.me.readOnly);
   const TEXT_KINDS = ["note", "markdown", "checklist"];
@@ -83,7 +83,7 @@
     try { r = await api("api/ai/summarise", { method: "POST", body: { id: it.id } }); } catch (e) { w.close(); fail(e); return; }
     w.close();
     const out = h("div", { class: "md-body ai-summary", id: "aiSummary" });
-    if (window.DocsMd) out.appendChild(DocsMd.render(DocsMd.parse(r.summary), document, { docLink: () => ({ state: "missing" }) }));
+    if (window.DocsMd) out.appendChild(DocsMd.render(DocsMd.parse(r.summary), document, { docLink: () => ({ state: "missing" }), linksAsText: true }));
     else out.textContent = r.summary;
     const title = D.titleOf(it) + " — summary";
     const m = openModal("Summary", h("div", null, h("p", { class: "hint" }, `Of “${it.name}”, by ${aiState().provider}. Check it against the document.`), out,
@@ -219,7 +219,7 @@
     try { r = await api("api/ai/ask", { method: "POST", body: { folder: ref, question } }); } catch (e) { w.close(); fail(e); return; }
     w.close();
     const answer = h("div", { class: "md-body ai-answer", id: "aiAnswer" });
-    if (window.DocsMd) answer.appendChild(DocsMd.render(DocsMd.parse(r.answer), document, { docLink: () => ({ state: "missing" }) }));
+    if (window.DocsMd) answer.appendChild(DocsMd.render(DocsMd.parse(r.answer), document, { docLink: () => ({ state: "missing" }), linksAsText: true }));
     else answer.textContent = r.answer;
     openModal("Answer", h("div", null, h("p", { class: "hint" }, question), answer,
       r.files.length ? h("div", { class: "ai-sources" }, h("strong", null, "Files it used"),

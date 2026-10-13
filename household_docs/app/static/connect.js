@@ -9,7 +9,7 @@
   const D = window.Docs;
   const { h, api, toast, fail, openModal, spinner, fmtWhen, titleOf } = D;
   const { mount } = UI;
-  const can = (it, role) => ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[it.role] || 0) >= ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[role] || 9);
+  const can = D.can;
   const apps = () => (D.state.me && D.state.me.apps) || {};
 
   /** Poll a request until it's answered: resolves with the request (state done / failed / pending after `ms`). */

@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from . import config, db, docops, files, settings, sharing, tags
+from . import config, db, docops, files, settings, tags
 from .store import fileio, nodes, paths, roots
 
 logger = logging.getLogger("imports")
@@ -42,6 +42,7 @@ MAX_MEMBERS = 10_000
 MAX_UNPACKED = 4 * 1024 ** 3
 MAX_RATIO = 1000
 MAX_DEPTH = 10
+TITLE_MAX = 120               # characters of a Keep note's title kept for its file name
 MAX_JSON = 2 * 1024 * 1024
 MAX_NOTES = 5000
 TOKEN_SECONDS = 3600
@@ -70,6 +71,9 @@ def prepare(user: dict, kind: str, length: int | None) -> dict:
         if length is not None and length > limit:
             raise HTTPException(413, f"That .zip is bigger than the {settings.get('upload_mb', conn)} MB upload limit.")
         fileio.ensure_writable()
+        # the .zip waits in the person's .tmp folder: it counts like an upload (review 2026-10 D12)
+        docops.check_quota(conn, root, length or 0)
+        fileio.ensure_room(length or 0)
         tmp_dir = roots.hidden_dir(root, ".tmp")
     return {"limit": limit, "tmp_dir": tmp_dir}
 
@@ -214,7 +218,7 @@ def zip_preview(path: str, name: str | None) -> dict:
                 folders.add(tuple(parts[:k]))
     stem = paths.split_ext(paths.clean_name((name or "Imported").replace("\\", "/").rsplit("/", 1)[-1], "Imported"))[0]
     return {"files": files_, "folders": len(folders), "bytes": size, "skipped": skipped[:50], "skippedCount": len(skipped),
-            "folderName": stem or "Imported"}
+            "folderName": stem or "Imported", "depth": max((len(f) for f in folders), default=0)}
 
 
 def _import_zip(user: dict, u: dict, parent_ref: str | None, job: dict) -> dict:
@@ -235,7 +239,16 @@ def _import_zip(user: dict, u: dict, parent_ref: str | None, job: dict) -> dict:
                 continue
             parts = clean_parts(i.filename)
             folder_parts = tuple(parts if i.is_dir() else parts[:-1])
-            fid = _ensure_folders(user, made, folder_parts)
+            try:
+                fid = _ensure_folders(user, made, folder_parts)
+            except HTTPException as e:                  # a folder that can't be made: its files are skipped
+                if e.status_code in (423, 507):
+                    raise
+                logger.info("Skipped a folder while importing a .zip: %s", e.detail)
+                if not i.is_dir():
+                    skipped += 1
+                    job["done"] += 1
+                continue
             if i.is_dir():
                 continue
             if i.file_size > limit:
@@ -367,7 +380,8 @@ def _note_title(n: dict) -> str:
     if not title:
         when = _usec_iso(n.get("createdTimestampUsec"))
         title = f"Keep note {when[:10]}" if when else "Keep note"
-    return paths.clean_name(title, "Keep note")
+    # a file name has room for 255 bytes with its .txt / .md; Keep's titles can be longer (review 2026-10 DI3)
+    return paths.clean_name(title[:TITLE_MAX].strip() or "Keep note", "Keep note")
 
 
 def _note_body(n: dict) -> tuple[str, bytes]:
@@ -413,8 +427,38 @@ def _set_times(conn, nid: str, user_id: str, edited: str | None, created: str | 
             pass
         st = os.stat(real, follow_symlinks=False)
         nodes.update_stat(conn, nid, st, node["sha256"], updated_by=user_id)
-    if created:
+    # Keep's own "created" date — but never for a child: Kids' space shows parents what a child made since
+    # becoming a child (ctime >= child_since), so an old date would hide the note from them (review 2026-10 D3)
+    if created and not _is_child(conn, user_id):
         conn.execute("UPDATE nodes SET ctime = ? WHERE id = ?", (created, nid))
+
+
+def _is_child(conn, user_id: str) -> bool:
+    r = conn.execute("SELECT is_child FROM users WHERE id = ?", (user_id,)).fetchone()
+    return bool(r and r["is_child"])
+
+
+def _keep_one(user: dict, n: dict, kid: str, kind: str, body: str, folder: str, edited, created) -> str:
+    """One Keep note, with its times, labels, colour and pin, in one transaction (all or nothing)."""
+    with db.get_conn() as conn:
+        nid = docops.create(conn, user, kind, _note_title(n), folder, body)
+        _set_times(conn, nid, user["id"], edited, created)
+        labels = []
+        for lb in n.get("labels") or []:
+            if isinstance(lb, dict) and isinstance(lb.get("name"), str):
+                try:
+                    labels.append(tags.clean_tag(lb["name"]))
+                except HTTPException:
+                    pass
+        colour = KEEP_COLOURS.get(str(n.get("color") or "").upper())
+        if labels or colour:
+            tags.change(conn, user, nid, add=labels[:tags.MAX_TAGS], color=colour if colour else "keep")
+        if n.get("isPinned"):
+            conn.execute("INSERT INTO user_state (user_id, node_id, favourite) VALUES (?, ?, 1) "
+                         "ON CONFLICT(user_id, node_id) DO UPDATE SET favourite = 1", (user["id"], nid))
+        conn.execute("INSERT OR IGNORE INTO keep_imports (user_id, keep_id, node_id, imported_at) VALUES (?, ?, ?, ?)",
+                     (user["id"], kid, nid, config.now_iso()))
+    return nid
 
 
 def _import_keep(user: dict, u: dict, job: dict) -> dict:
@@ -438,25 +482,15 @@ def _import_keep(user: dict, u: dict, job: dict) -> dict:
             kind, body = _note_body(n)
             edited = _usec_iso(n.get("userEditedTimestampUsec"))
             created = _usec_iso(n.get("createdTimestampUsec"))
-            with db.get_conn() as conn:
-                nid = docops.create(conn, user, kind, _note_title(n), folder, body)
-                _set_times(conn, nid, user["id"], edited, created)
-                labels = []
-                for lb in n.get("labels") or []:
-                    if isinstance(lb, dict) and isinstance(lb.get("name"), str):
-                        try:
-                            labels.append(tags.clean_tag(lb["name"]))
-                        except HTTPException:
-                            pass
-                colour = KEEP_COLOURS.get(str(n.get("color") or "").upper())
-                if labels or colour:
-                    tags.change(conn, user, nid, add=labels[:tags.MAX_TAGS], color=colour if colour else "keep")
-                if n.get("isPinned"):
-                    conn.execute("INSERT INTO user_state (user_id, node_id, favourite) VALUES (?, ?, 1) "
-                                 "ON CONFLICT(user_id, node_id) DO UPDATE SET favourite = 1", (user["id"], nid))
-                conn.execute("INSERT OR IGNORE INTO keep_imports (user_id, keep_id, node_id, imported_at) VALUES (?, ?, ?, ?)",
-                             (user["id"], kid, nid, config.now_iso()))
-                done.add(kid)
+            try:
+                _keep_one(user, n, kid, kind, body, folder, edited, created)
+            except HTTPException as e:
+                if e.status_code in (423, 507):        # read-only mode, the disk is full: stop here
+                    raise
+                logger.info("Skipped a Keep note: %s", e.detail)
+                skipped += 1
+                continue
+            done.add(kid)
             added += 1
             base = it["member"].filename.replace("\\", "/").rsplit("/", 1)[0] if "/" in it["member"].filename.replace("\\", "/") else ""
             for a in n.get("attachments") or []:
@@ -479,7 +513,16 @@ def start(user: dict, kind: str, token: str, parent_ref: str | None = None) -> d
     u = _take(user, token, kind)
     if kind == "zip":
         with db.get_conn() as conn:                     # may they add things there? (checked again inside)
-            docops.target_folder(conn, user, parent_ref)
+            _root, folder, _role = docops.target_folder(conn, user, parent_ref)
+        # the .zip's folders go inside a new folder there: refused before anything is made when that would pass
+        # the folder depth limit part way through (review 2026-10 DI4)
+        here = docops._depth(folder["rel"]) if folder is not None else 0
+        need = here + 1 + int(u["preview"].get("depth") or 0)
+        if need > docops.MAX_DEPTH:
+            with _lock:
+                _uploads[token] = u                     # still there to import somewhere else
+            raise HTTPException(422, f"This .zip has folders {u['preview'].get('depth')} deep, so here they'd go past the "
+                                     f"{docops.MAX_DEPTH}-folder limit — choose a folder nearer the top.")
     job_id = secrets.token_hex(8)
     job = {"id": job_id, "user": user["id"], "kind": kind, "state": "running", "done": 0, "total": 0, "at": time.monotonic()}
     with _lock:

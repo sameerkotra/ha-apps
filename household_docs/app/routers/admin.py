@@ -10,7 +10,7 @@ import time
 import zipfile
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from .. import auth, config, db, files, ha_client, notify, settings, share_folders
@@ -420,6 +420,30 @@ def backup_size(admin: dict = Depends(require_admin)):
     return out
 
 
+INDEX_EMPTIED = "index_emptied"
+
+
+def _scrub_copy(c, include_files: bool) -> None:
+    """The database copy in a backup: no access keys (settings), and none of the documents' text — the search
+    index's copy of it, the text read from PDFs and, unless the files themselves are in the backup, the text the
+    AI read from pictures. The app reads the files again after a restore (review 2026-10 D7). Removed for real:
+    secure_delete overwrites, the search index is rebuilt from the emptied rows, and VACUUM drops the free pages."""
+    settings.REGISTRY.scrub_secrets(c)
+    c.execute("PRAGMA secure_delete = ON")
+    c.execute("UPDATE fts SET body = ''")
+    try:
+        c.execute("INSERT INTO fts(fts) VALUES ('rebuild')")      # FTS5: its index forgets the old words too
+    except Exception:                                               # (the plain table without FTS5 has none)
+        pass
+    c.execute("DELETE FROM pdf_text")
+    if not include_files:
+        c.execute("DELETE FROM ocr_text")
+    c.execute("INSERT INTO app_settings (key, value, updated_at) VALUES (?, 'true', ?) ON CONFLICT(key) DO UPDATE "
+              "SET value = excluded.value", (INDEX_EMPTIED, config.now_iso()))
+    c.commit()
+    c.execute("VACUUM")
+
+
 @router.get("/backup")
 def backup(admin: dict = Depends(require_admin)):
     """docs.db (a consistent snapshot) — plus the documents themselves when `backup_files` is on. The AI
@@ -427,20 +451,49 @@ def backup(admin: dict = Depends(require_admin)):
     include = bool(settings.get("backup_files"))
     os.makedirs(config.DATA_DIR, exist_ok=True)
     tmp_db = db_core.snapshot_to_tempfile(db._connect, prefix=".backup-", dir=config.DATA_DIR,
-                                          after=settings.REGISTRY.scrub_secrets)
-    fd, tmp_zip = tempfile.mkstemp(prefix=".backup-", suffix=".zip", dir=config.DATA_DIR)
-    os.close(fd)
-    try:
-        backup_core.write_zip(tmp_zip, _backup_members(tmp_db, include))
-    except BaseException:
-        os.remove(tmp_zip)
-        raise
-    finally:
-        os.remove(tmp_db)
+                                          after=lambda c: _scrub_copy(c, include))
     with db.get_conn() as conn:
         db.audit(conn, "backup_downloaded", admin["id"])
     name = backup_core.file_name("household-docs-backup", ".zip", now=config.now(), fmt="%Y-%m-%d")
-    return backup_core.send_file(tmp_zip, name, backup_core.ZIP_MEDIA_TYPE)
+    # written while it's sent, not first as a second copy of everything in /data (review 2026-10 DP6)
+    return StreamingResponse(_stream_backup(tmp_db, include), media_type=backup_core.ZIP_MEDIA_TYPE,
+                             headers=files.download_headers(name))
+
+
+def _stream_backup(tmp_db: str, include: bool):
+    """The backup .zip a megabyte at a time; the database copy is deleted when it's done (or the download stops)."""
+    sink = files._Sink()
+    try:
+        with zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
+            for m in _backup_members(tmp_db, include):
+                full, arc = m[0], m[1]
+                comp = m[2] if len(m) > 2 else zipfile.ZIP_DEFLATED
+                try:
+                    f = open(full, "rb") if full == tmp_db else os.fdopen(fileio.open_fd(full), "rb")
+                except (OSError, paths.PathError):
+                    continue                    # gone (or swapped for a link) since the walk: left out
+                with f:
+                    st = os.fstat(f.fileno())
+                    when = time.localtime(st.st_mtime)[:6]
+                    zi = zipfile.ZipInfo(arc, date_time=when if when[0] >= 1980 else (1980, 1, 1, 0, 0, 0))
+                    zi.external_attr = (st.st_mode & 0xFFFF) << 16
+                    zi.file_size = st.st_size
+                    zi.compress_type = comp
+                    with z.open(zi, "w", force_zip64=st.st_size > 2 ** 31 - files.CHUNK) as w:
+                        while True:
+                            chunk = f.read(files.CHUNK)
+                            if not chunk:
+                                break
+                            w.write(chunk)
+                            if len(sink.buf) >= files.CHUNK:
+                                yield sink.take()
+                if sink.buf:
+                    yield sink.take()
+        if sink.buf:
+            yield sink.take()
+    finally:
+        if os.path.exists(tmp_db):
+            os.remove(tmp_db)
 
 
 @router.post("/restore")
@@ -509,6 +562,9 @@ def _restore_from(tmp: str, admin: dict, replace_files: bool) -> dict:
                                       "WHERE r.kind = 'person' AND u.folder IS NOT NULL").fetchall():
                     conn.execute("UPDATE roots SET path = ? WHERE id = ?",
                                  (paths.join_rel(config.share_rel(keep_path), marker.PEOPLE, r["folder"]), r["id"]))
+                if db.state_get(conn, INDEX_EMPTIED):       # a backup without the text: every file is read again
+                    conn.execute("UPDATE nodes SET mtime_ns = -1 WHERE kind != 'folder'")
+                    conn.execute("DELETE FROM app_settings WHERE key = ?", (INDEX_EMPTIED,))
             settings.invalidate()
         finally:
             db.RESTORING.clear()

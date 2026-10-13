@@ -29,7 +29,7 @@ ZIP_MAX_FILES = 10_000
 ZIP_MAX_BYTES = 4 * 1024 ** 3
 ZIP_DEPTH = 12
 CHUNK = 1024 * 1024
-RASTER_EXTS = ("png", "jpg", "jpeg", "gif", "webp")
+RASTER_EXTS = kinds.RASTER_EXTS
 
 
 # ---------- headers ----------
@@ -125,6 +125,7 @@ def prepare_upload(user: dict, ref: str | None, name: str, length: int | None) -
             raise HTTPException(413, f"That file is bigger than the {settings.get('upload_mb', conn)} MB upload limit.")
         fileio.ensure_writable()
         docops.check_quota(conn, root, length or 0)
+        fileio.ensure_room(length or 0)
         base = roots.root_real(root)
         prel = folder["rel"] if folder else ""
         folder_real = paths.resolve(base, prel)
@@ -166,8 +167,7 @@ def finish_upload(user: dict, prep: dict, tmp: str, size: int, on_clash: str = "
                     docops.check_quota(conn, root, size - old_size)
                     with fileio.file_lock(existing["id"]):
                         versions.keep_replaced(conn, root, existing, dest, user["id"])
-                        os.replace(tmp, dest)
-                        st = os.stat(dest)
+                        st = fileio.place(tmp, dest)
                         kind, sha, body, cols = _info(dest, existing["name"], st, existing["kind"], limit)
                         nodes.update_stat(conn, existing["id"], st, sha, updated_by=user["id"], kind=kind, body=body,
                                           set_body=True, stats=cols)
@@ -181,15 +181,9 @@ def finish_upload(user: dict, prep: dict, tmp: str, size: int, on_clash: str = "
                 dest = paths.resolve(base, rel)
                 nodes.free_rel(conn, root["id"], rel)
                 try:
-                    os.link(tmp, dest)            # never over a name someone took meanwhile
-                    os.remove(tmp)
+                    st = fileio.place(tmp, dest, exclusive=True)      # never over a name someone took meanwhile
                 except FileExistsError:
                     raise HTTPException(409, "Something with that name appeared just now — try again.")
-                except OSError:
-                    if os.path.lexists(dest):
-                        raise HTTPException(409, "Something with that name appeared just now — try again.")
-                    os.replace(tmp, dest)
-                st = os.stat(dest)
                 kind, sha, body, cols = _info(dest, name, st, None, limit)
                 nid = nodes.insert(conn, root_id=root["id"], rel=rel, parent_id=folder["id"] if folder else None,
                                    kind=kind, st=st, sha=sha, created_by=user["id"], updated_by=user["id"], body=body,
@@ -268,9 +262,8 @@ def _index_entries(conn, user: dict, root, base_real: str, folder, prefix: str, 
                             (root["id"],)).fetchall()
         cut = 0
     else:
-        rows = conn.execute(f"SELECT * FROM nodes n WHERE n.root_id = ? AND substr(n.rel, 1, ?) = ? "
-                            f"AND n.kind != 'folder' AND {nodes.LIVE}",
-                            (root["id"], len(folder["rel"]) + 1, folder["rel"] + "/")).fetchall()
+        rows = conn.execute(f"SELECT * FROM nodes n WHERE {nodes.INSIDE_SQL} AND n.kind != 'folder' AND {nodes.LIVE}",
+                            nodes.inside_params(root["id"], folder["rel"])).fetchall()
         cut = len(folder["rel"]) + 1
     for r in sorted(rows, key=lambda x: x["rel"]):
         if r["kind"] == "sheet" and kids.is_child(user):        # a child gets no sheets (§17.20)

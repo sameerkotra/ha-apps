@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import db, files, share_folders
 from ..auth import require_user
-from .nodes import node_info_json
+from .nodes import info_json
 
 router = APIRouter(prefix="/api", tags=["files"])
 MAX_ZIP_ITEMS = 200
@@ -50,8 +50,7 @@ async def upload(ref: str, request: Request, name: str = Query(min_length=1, max
             os.remove(tmp)
         raise
     nid = await run_in_threadpool(files.finish_upload, user, prep, tmp, size, onClash)
-    with db.get_conn() as conn:
-        return node_info_json(conn, user, nid)
+    return await run_in_threadpool(info_json, user, nid)
 
 
 def _sync(f) -> None:

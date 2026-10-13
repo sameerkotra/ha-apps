@@ -18,6 +18,7 @@ import hashlib
 import os
 import tempfile
 import threading
+import weakref
 from contextlib import contextmanager
 
 from .. import config
@@ -26,7 +27,8 @@ from . import paths, roots
 FILE_MODE = 0o664
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 CLOEXEC = getattr(os, "O_CLOEXEC", 0)
-_locks: dict[str, threading.RLock] = {}
+# a lock lives only while someone holds or waits for it (review 2026-10 DP7: one was kept for every file ever saved)
+_locks: "weakref.WeakValueDictionary[str, threading.RLock]" = weakref.WeakValueDictionary()
 _locks_guard = threading.Lock()
 
 
@@ -46,6 +48,21 @@ WRITE_GUARDS: list = [_not_moving, _docs_folder_usable]
 def ensure_writable() -> None:
     for guard in WRITE_GUARDS:
         guard()
+
+
+def ensure_room(extra: int = 0) -> None:
+    """Refuse (507) a write that would leave less free space than the `min_free_mb` App setting on the disk that
+    holds /share — Home Assistant's own disk, usually (review 2026-10 D12). Not for deleting things."""
+    from fastapi import HTTPException
+    from .. import settings
+    from . import marker
+    floor_mb = int(settings.get("min_free_mb") or 0)
+    if floor_mb <= 0:
+        return
+    free = marker.free_space(config.share_root())
+    if free is not None and free - max(0, int(extra or 0)) < floor_mb * 1024 * 1024:
+        raise HTTPException(507, f"The disk is nearly full (Docs keeps {floor_mb} MB free) — delete something and "
+                                 "empty Trash first, or ask an admin.")
 
 
 @contextmanager
@@ -158,26 +175,57 @@ def open_dir(dir_real: str) -> int:
     return fd
 
 
-def write_atomic(root, dest_real: str, data: bytes, *, exclusive: bool = False) -> os.stat_result:
+def write_atomic_stream(root, dest_real: str, src, *, exclusive: bool = False) -> tuple[os.stat_result, str]:
+    """write_atomic from an open file, a megabyte at a time (a copy of a big file never sits in memory — review
+    2026-10 D6). Returns (stat, SHA-256 of what was written)."""
+    h = hashlib.sha256()
+
+    def copy(f):
+        while True:
+            chunk = src.read(1024 * 1024)
+            if not chunk:
+                break
+            h.update(chunk)
+            f.write(chunk)
+    st = write_atomic(root, dest_real, copy, exclusive=exclusive)
+    return st, h.hexdigest()
+
+
+def write_atomic(root, dest_real: str, data, *, exclusive: bool = False) -> os.stat_result:
     """Write `data` to `dest_real` (inside `root`) through the root's .tmp folder. exclusive: refuse when the
     target already exists (FileExistsError). Returns the new file's stat. The temporary file and the folder it
     goes into are opened and checked (inside /share, no link), and the final link / rename is relative to that
-    folder's descriptor."""
+    folder's descriptor. `data` is bytes, or a function that writes to the open temporary file."""
     ensure_writable()
+    ensure_room(0 if callable(data) else len(data))
     tmp_dir = roots.hidden_dir(root, ".tmp")
     tdfd = open_dir(os.path.realpath(tmp_dir))
     os.close(tdfd)
     fd, tmp = tempfile.mkstemp(prefix="w-", suffix=".part", dir=tmp_dir)
-    name = os.path.basename(dest_real)
-    pfd = None
     try:
         with os.fdopen(fd, "wb") as f:
             check_opened(f.fileno(), tmp)
-            f.write(data)
+            if callable(data):
+                data(f)
+            else:
+                f.write(data)
             f.flush()
             os.fsync(f.fileno())
         os.chmod(tmp, FILE_MODE)
-        pfd = open_dir(os.path.dirname(dest_real))
+        return place(tmp, dest_real, exclusive=exclusive)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def place(tmp: str, dest_real: str, *, exclusive: bool = False) -> os.stat_result:
+    """Move a finished temporary file to `dest_real`: relative to its folder, opened and checked first (open_dir),
+    so a folder swapped for a link after the path was checked can't send the file elsewhere (review 2026-10 D9).
+    exclusive: never over a name that is taken (FileExistsError). Returns the new file's stat."""
+    name = os.path.basename(dest_real)
+    pfd = open_dir(os.path.dirname(dest_real))
+    try:
         if exclusive:
             try:
                 os.link(tmp, name, dst_dir_fd=pfd, follow_symlinks=False)  # fails if the name is taken
@@ -199,13 +247,8 @@ def write_atomic(root, dest_real: str, data: bytes, *, exclusive: bool = False) 
         except OSError:
             pass
         return os.stat(name, dir_fd=pfd, follow_symlinks=False)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
     finally:
-        if pfd is not None:
-            os.close(pfd)
+        os.close(pfd)
 
 
 def make_dir(path: str) -> os.stat_result:

@@ -53,9 +53,25 @@ def public_state(conn) -> dict:
     v = settings.all_values(conn)
     label = settings.PROVIDER_LABELS.get(v["ai_provider"], v["ai_provider"])
     return {"on": problem is None, "provider": label if problem is None else None,
-            "address": settings.ai_url(conn) if problem is None else None,
+            "address": host_only(settings.ai_url(conn)) if problem is None else None,
             "model": v["ai_model"] if problem is None else None,
             "visionModel": (v["ai_vision_model"] or v["ai_model"]) if problem is None else None}
+
+
+def host_only(url: str | None) -> str | None:
+    """The AI's address as every member sees it: scheme, host and port only — never a user name, password, path or
+    ?key= that may be in the address an admin typed (review 2026-10 D8)."""
+    from urllib.parse import urlsplit
+    if not url:
+        return None
+    try:
+        u = urlsplit(url)
+        host = u.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        return f"{u.scheme}://{host}" + (f":{u.port}" if u.port else "")
+    except ValueError:
+        return None
 
 
 def require(conn=None) -> None:
@@ -65,14 +81,19 @@ def require(conn=None) -> None:
 
 
 def _call(purpose: str, prompt: str, *, images=None, system: str | None = None, want_json: bool = False,
-          max_tokens: int = 4000) -> str:
-    """One request to the model (raises HTTPException with a plain message). Checks the switch and the limit first."""
+          max_tokens: int = 4000, user: dict | None = None) -> str:
+    """One request to the model (raises HTTPException with a plain message). Checks the switch and the limits
+    first: the household's month and, for a person's request, theirs (review 2026-10 D12)."""
+    uid = user["id"] if user else None
     with db.get_conn() as conn:
         require(conn)
         left = ai_usage.limit_left(conn)
+        mine = ai_usage.person_left(conn, uid)
         cfg = ai_client.current(vision=bool(images), conn=conn)
     if left is not None and left <= 0:
         raise HTTPException(429, "This month's AI limit is used up (Admin → App settings → AI).")
+    if mine is not None and mine <= 0:
+        raise HTTPException(429, "You've used your AI limit for this month (an admin sets it in App settings → AI).")
     t0 = time.monotonic()
     try:
         reply = ai_client.generate(prompt, images=images, system=system, want_json=want_json, max_tokens=max_tokens, cfg=cfg)
@@ -82,15 +103,16 @@ def _call(purpose: str, prompt: str, *, images=None, system: str | None = None, 
         raise HTTPException(502, str(e))
     ai_usage.record(purpose=purpose, provider=cfg.provider, model=cfg.model, ok=True, tokens_in=reply.input_tokens,
                     tokens_out=reply.output_tokens, ms=int((time.monotonic() - t0) * 1000))
+    ai_usage.add_person(uid, int(reply.input_tokens or 0) + int(reply.output_tokens or 0))
     return reply.text or ""
 
 
 def _json_answer(text: str) -> dict:
     t = (text or "").strip()
     t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t)
-    m = re.search(r"\{.*\}", t, re.S)
+    a, b = t.find("{"), t.rfind("}")           # what re.search(r"\{.*\}", re.S) found, without its quadratic search
     try:
-        out = json.loads(m.group(0) if m else t)
+        out = json.loads(t[a:b + 1] if 0 <= a < b else t)
     except (ValueError, AttributeError):
         raise HTTPException(502, "The AI model's answer wasn't in the expected form — try again.")
     if not isinstance(out, dict):
@@ -168,7 +190,7 @@ def ocr_node(node_id: str, user: dict | None) -> dict:
         sha = node["sha256"]
     texts = []
     for i, b64 in enumerate(imgs):
-        t = _call("ocr", OCR_PROMPT, images=[b64], max_tokens=4000).strip()
+        t = _call("ocr", OCR_PROMPT, images=[b64], max_tokens=4000, user=user).strip()
         texts.append(t if len(imgs) == 1 else f"— page {i + 1} —\n{t}")
     text = "\n\n".join(texts).strip()
     cfg_model = ai_client.current(vision=True).model
@@ -263,7 +285,7 @@ def set_folder(conn, user: dict, ref: str, on: bool) -> dict:
 def _subtree_sql(root, folder) -> tuple[str, list]:
     if folder is None:
         return "n.root_id = ?", [root["id"]]
-    return "n.root_id = ? AND substr(n.rel, 1, ?) = ?", [folder["root_id"], len(folder["rel"]) + 1, folder["rel"] + "/"]
+    return nodes.INSIDE_SQL, nodes.inside_params(folder["root_id"], folder["rel"])
 
 
 def folder_candidates(conn, limit: int = FOLDER_JOBS_PER_RUN) -> list[str]:
@@ -339,7 +361,7 @@ def summarise(user: dict, node_id: str) -> dict:
         raise HTTPException(422, "There's no text in this file to summarise.")
     prompt = (f"Summarise the document below in a few short bullet points (Markdown), in the language it is "
               f"written in. Only use what the document says.\n\nDocument: {name}\n\n{text}")
-    return {"summary": _call("summarise", prompt, max_tokens=1500).strip(), "chars": len(text)}
+    return {"summary": _call("summarise", prompt, max_tokens=1500, user=user).strip(), "chars": len(text)}
 
 
 def suggest_filing(user: dict, node_id: str) -> dict:
@@ -369,7 +391,7 @@ def suggest_filing(user: dict, node_id: str) -> dict:
               "language; start with the date as yyyy-mm-dd if the document has one) and the best folder for this "
               'document from the numbered list. Answer with JSON: {"name": "…", "folder": <number or 0 for none>}.'
               f"\n\nCurrent name: {name}\n\nFolders:\n{listing}\n\nDocument text:\n{text}")
-    out = _json_answer(_call("filing", prompt, want_json=True, max_tokens=300))
+    out = _json_answer(_call("filing", prompt, want_json=True, max_tokens=300, user=user))
     from .store import paths
     suggested = " ".join(str(out.get("name") or "").split())[:60].strip(" .")
     try:
@@ -399,7 +421,7 @@ def to_checklist(user: dict, text: str | None, node_id: str | None) -> dict:
     prompt = ('Turn the text below into a checklist of short, separate things to do or get (for a recipe: the '
               'ingredients, then the steps). Answer with JSON: {"items": ["…", "…"]}. Keep the text\'s language.'
               f"\n\nText:\n{text}")
-    out = _json_answer(_call("checklist", prompt, want_json=True, max_tokens=3000))
+    out = _json_answer(_call("checklist", prompt, want_json=True, max_tokens=3000, user=user))
     items = [" ".join(str(x).split())[:500] for x in out.get("items") or [] if str(x).strip()][:MAX_ITEMS]
     if not items:
         raise HTTPException(502, "The AI model found no items in that text.")
@@ -428,7 +450,7 @@ def to_sheet(user: dict, text: str | None, image: str | None) -> dict:
               '{"rows": [["cell", "cell"], …]} — the header row first, one list per row, numbers as numbers '
               '(no thousands separators), empty cells as "". Do not add anything that is not in the table.'
               + ("" if images else f"\n\nTable:\n{text}"))
-    out = _json_answer(_call("sheet", prompt, images=images, want_json=True, max_tokens=6000))
+    out = _json_answer(_call("sheet", prompt, images=images, want_json=True, max_tokens=6000, user=user))
     rows = []
     for row in (out.get("rows") or [])[:MAX_ROWS]:
         if not isinstance(row, list):
@@ -480,7 +502,7 @@ def ask(user: dict, ref: str, question: str) -> dict:
     prompt = (f"Answer the question using only the files below from the folder “{label}”. Cite the files you use "
               "as [1], [2] … right after what they support. If the files don't say, answer that you can't find it. "
               f"Answer in the question's language.\n\nQuestion: {question}\n\nFiles:\n{sources}")
-    answer = _call("ask", prompt, max_tokens=2000).strip()
+    answer = _call("ask", prompt, max_tokens=2000, user=user).strip()
     cited = sorted({int(n) for n in re.findall(r"\[(\d{1,2})\]", answer)})
     files_ = [{k: u[k] for k in ("n", "id", "name", "kind", "ext")} for u in used if u["n"] in cited]
     return {"answer": answer, "files": files_, "sent": [{"n": u["n"], "name": u["name"]} for u in used],

@@ -13,8 +13,7 @@
   const { h, api, toast, fail, openModal, confirmDialog, spinner, pageHead, fmtSize, fmtWhen, fmtFull, go } = D;
   const { mount } = UI;
   const MB = 1024 * 1024;
-  const roleRank = { viewer: 1, editor: 2, manager: 3, owner: 4 };
-  const can = (it, role) => (roleRank[it.role] || 0) >= roleRank[role];
+  const can = D.can;
 
   // =====================================================================
   // uploads

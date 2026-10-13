@@ -8,7 +8,7 @@ import logging
 import os
 import time
 
-from . import activity, ai, ai_usage, app_messages, db, filing, follows, ha_client, pdftext, settings, storage_report
+from . import activity, ai, ai_usage, app_messages, config, db, filing, follows, ha_client, pdftext, settings, storage_report
 from .store import index, moving, roots, trash, versions
 
 logger = logging.getLogger("housekeeping")
@@ -58,6 +58,13 @@ def remove_stale_tmp(max_age: int = 3600) -> int:
     return n
 
 
+def remove_stale_snapshots() -> int:
+    """Database copies a backup or restore left in /data when it was cut off (a download stopped half way, the app
+    restarted mid-restore): gone after 6 hours (the shared backup_core.remove_stale)."""
+    from .common import backup_core
+    return sum(backup_core.remove_stale(config.DATA_DIR, prefix, 6 * 3600) for prefix in (".backup-", ".restore-"))
+
+
 def scan_due(force: bool = False) -> bool:
     minutes = int(settings.get("scan_minutes"))
     if force or time.monotonic() - _state["last_scan"] >= minutes * 60:
@@ -77,6 +84,7 @@ def hourly() -> None:
         _safe(versions.prune_replaced)
         _safe(filing.run_cleanup)            # §17.19: each rule once a day
     _safe(index.purge_gone)
+    _safe(remove_stale_snapshots)
     _safe(storage_report.snapshot)
     with db.get_conn() as conn:
         _safe(activity.purge, conn)

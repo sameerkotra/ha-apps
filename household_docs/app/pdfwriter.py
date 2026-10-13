@@ -48,6 +48,29 @@ def width(data: bytes, font: str, size: float) -> float:
     return sum(table[c - FIRST] if c >= FIRST else 0 for c in data) * size / 1000.0
 
 
+def fit(data: bytes, font: str, size: float, avail: float) -> int:
+    """How many bytes from the start of `data` fit in `avail` (at least 1): the longest n with
+    width(data[:n]) <= avail. One pass with a running width (review 2026-10 D2: cutting a long word used to
+    re-measure it one character shorter at a time — minutes for a few thousand characters)."""
+    if font == "M":
+        step = 0.6 * size
+        n = min(len(data), int(avail // step)) if step > 0 else len(data)
+        while n < len(data) and 0.6 * size * (n + 1) <= avail:     # exactly as width() measures it
+            n += 1
+        while n > 0 and 0.6 * size * n > avail:
+            n -= 1
+        return max(1, n)
+    table = WIDTHS[FONTS[font][1]]
+    total = 0
+    n = 0
+    for c in data:
+        total += table[c - FIRST] if c >= FIRST else 0
+        if total * size / 1000.0 > avail:
+            break
+        n += 1
+    return max(1, n)
+
+
 def pdf_string(data: bytes) -> bytes:
     out = bytearray(b"(")
     for c in data:
@@ -153,9 +176,7 @@ class PdfDoc:
                 lines.append(line)
                 line, lw = [], 0.0
             while pw > avail and len(piece) > 1:                 # a very long word: cut it
-                n = len(piece)
-                while n > 1 and width(piece[:n], font, size) > avail:
-                    n -= 1
+                n = fit(piece, font, size, avail)
                 lines.append([(piece[:n], font)])
                 piece = piece[n:]
                 pw = width(piece, font, size)

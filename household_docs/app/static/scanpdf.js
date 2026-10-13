@@ -131,9 +131,12 @@
     const out = make ? make(outW, outH) : { width: outW, height: outH, data: new Uint8ClampedArray(outW * outH * 4) };
     if (!H) return out;
     const sw = src.width, sh = src.height, s = src.data, d = out.data;
+    const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = H;
     for (let y = 0; y < outH; y++) {
       for (let x = 0; x < outW; x++) {
-        const [fx, fy] = apply(H, x, y);
+        // apply(H, x, y), inline: no array made per pixel (review 2026-10 DFP6)
+        const dd = h6 * x + h7 * y + h8;
+        const fx = (h0 * x + h1 * y + h2) / dd, fy = (h3 * x + h4 * y + h5) / dd;
         const o = (y * outW + x) * 4;
         if (fx < 0 || fy < 0 || fx > sw - 1 || fy > sh - 1) { d[o] = d[o + 1] = d[o + 2] = 255; d[o + 3] = 255; continue; }
         const x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(x0 + 1, sw - 1), y1 = Math.min(y0 + 1, sh - 1);

@@ -23,7 +23,6 @@ and switches. The app never copies, moves or deletes the documents folder itself
 import hashlib
 import logging
 import os
-import shutil
 import threading
 import time
 

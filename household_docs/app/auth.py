@@ -55,7 +55,9 @@ def identify(uid: str | None, username: str | None, display_name: str | None) ->
     return user_dict(row, is_admin(uid, username), display_name_only(uid, username, display_name))
 
 
-async def get_current_user(request: Request) -> dict:
+def get_current_user(request: Request) -> dict:
+    """A plain function: FastAPI runs it in the threadpool, so its database read (and the occasional last_seen
+    write) never blocks the event loop (review 2026-10 DP2)."""
     ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
     return identify(ident.user_id, ident.username, ident.display_name)
 

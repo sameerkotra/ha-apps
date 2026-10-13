@@ -63,7 +63,6 @@
   }
 
   // ---------- the page ----------
-  let lastRun = 0;
   D.route("search", async (page, args, current) => {
     const me = D.state.me;
     const st = Object.assign({ q: "", match: "any", nameMode: "contains", contentMode: "words", sort: "relevance", group: "none", page: 1, sub: true },
@@ -179,7 +178,6 @@
     let seq = 0;
     async function run() {
       const my = ++seq;
-      lastRun = my;
       errBox.textContent = "";
       const params = T.searchArg(Object.assign({}, st, { sub: st.sub === false ? "0" : undefined }));
       if (!st.q && !Object.keys(filtersOf(st)).length) { mount(chipsBox); mount(resultsBox); drawSide(); return; }
@@ -254,10 +252,12 @@
           if (st.group !== "none" && it.group !== g) { g = it.group; kids.push(h("div", { class: "res-group", role: "presentation" }, g)); }
           kids.push(row(it));
         });
-        const head = items.length ? h("div", { class: "res-row res-head", "aria-hidden": "true" },
+        // the column names are only for the eye; the "select all" box in the same row stays reachable (DFI7)
+        const hide = { "aria-hidden": "true" };
+        const head = items.length ? h("div", { class: "res-row res-head" },
           h("label", { class: "row-tick" }, h("input", { type: "checkbox", "aria-label": "Select all on this page", checked: sel.count() === items.length,
             onchange: (e) => (e.target.checked ? sel.all() : sel.clear()) })),
-          h("span", null, "Name"), h("span", null, "Location"), h("span", null, "Modified"), h("span", null, "By"), h("span", null, "Size"), h("span", null, "Type"), h("span")) : null;
+          h("span", hide, "Name"), h("span", hide, "Location"), h("span", hide, "Modified"), h("span", hide, "By"), h("span", hide, "Size"), h("span", hide, "Type"), h("span", hide)) : null;
         mount(list, items.length ? [head, kids] : h("div", { class: "empty" }, d.searched ? "Nothing found. Try fewer words, another place, or a pattern like *.pdf." : ""));
         mount(bar, D.selectionBar(sel, { inSearch: true }));
       }

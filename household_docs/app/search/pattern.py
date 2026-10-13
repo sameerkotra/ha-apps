@@ -32,6 +32,17 @@ def wildcard_glob(pattern: str) -> str:
     return p.replace("[!", "[^")
 
 
+def wildcard_matches(pattern: str, name: str) -> bool:
+    """Does the whole name match the wildcard pattern (case-insensitive)? Runs in linear time (the shared
+    `wildcard` matcher, never a regular expression), so a pattern full of stars can't hang the app (review
+    2026-10 D1). `[^x]` is taken as `[!x]`, as in search."""
+    from ..common import wildcard
+    try:
+        return wildcard.match((pattern or "").replace("[^", "[!"), name or "")
+    except ValueError:                      # a pattern or name longer than any file name: no match
+        return False
+
+
 def wildcard_to_regex(pattern: str) -> str:
     """`bill-2026-??.pdf` → `^bill\\-2026\\-..\\.pdf$` (use with re.IGNORECASE). Unclosed `[` is a plain `[`."""
     out = ["^"]

@@ -216,6 +216,10 @@ def save(conn, user: dict, node_id: str, body: dict) -> tuple[dict, list]:
             answer["sheet"] = new                  # others' changes, for the browser to show
             answer["by"] = None if outside else documents._name_of(conn, node["updated_by"])
             answer["outside"] = outside
+        # committed while the file is still locked: the next save of this file (another tick a moment later)
+        # reads these rows, not the ones before — or it lost "ticked by" and wrote a version by "nobody"
+        # (review 2026-10 DI1)
+        conn.commit()
     return answer, conflicts
 
 

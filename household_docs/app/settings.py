@@ -21,6 +21,8 @@ GROUPS = [
     Group("assistant", "Household Assistant", "The Household Assistant app answers questions from what the household "
           "apps know. Docs lets it find and read what the asking person could open here, and make a note when they "
           "tap to confirm."),
+    Group("apps", "Household apps", "Messages between the household apps: Send to chat, Make a Todo list and the "
+          "Household Assistant's questions."),
 ]
 
 # AI (§17.6): the same three providers and settings as the other household apps with AI
@@ -70,8 +72,12 @@ SETTINGS = [
     Setting("upload_mb", 100, "Largest upload", group="documents", min=1, max=2048, unit="MB",
             help="The biggest file someone can upload (one file at a time). Bigger files can still be copied into "
                  "a folder over Samba or the File editor."),
-    Setting("quota_gb", 0, "Limit per person for their own folder", group="documents", min=0, max=10000,
-            unit="GB", help="0 = no limit. Saving past it is refused with a message."),
+    Setting("quota_gb", 100, "Limit per person for their own folder", group="documents", min=0, max=10000,
+            unit="GB", help="Their files and the earlier versions kept of them. 0 = no limit. Saving past it is refused "
+                            "with a message."),
+    Setting("min_free_mb", 200, "Keep this much disk space free", group="documents", min=0, max=100_000, unit="MB",
+            help="Saving, uploading, copying and importing are refused when less than this would be left on the disk "
+                 "that holds /share — so Docs never fills up Home Assistant's disk. 0 = no check."),
     Setting("secret_hint", True, "Warn when a document looks like it holds a password", group="documents",
             help="A light check in the browser (nothing is sent) notices things like “password:”, a card "
                  "number or an authenticator code and suggests Household Vault instead."),
@@ -111,8 +117,13 @@ SETTINGS = [
             show_if="ai_enabled",
             help="Reads text in photos and scanned PDFs and tables in photos. Empty: the text model is used (it must "
                  "understand images)."),
-    Setting("ai_monthly_tokens", 0, "Most tokens a month", group="ai", min=0, max=1_000_000_000, unit="tokens",
-            show_if="ai_enabled", help="0 = no limit. Past it, AI buttons say the month's limit is used up."),
+    Setting("ai_monthly_tokens", 20_000_000, "Most tokens a month", group="ai", min=0, max=1_000_000_000,
+            unit="tokens", show_if="ai_enabled",
+            help="For the whole household. 0 = no limit. Past it, AI buttons say the month's limit is used up."),
+    Setting("ai_person_monthly_tokens", 5_000_000, "Most tokens a month per person", group="ai", min=0,
+            max=1_000_000_000, unit="tokens", show_if="ai_enabled",
+            help="What one person's requests may use in a month. 0 = no limit per person. Reading text in a folder's "
+                 "pictures in the background counts only for the household's limit."),
     Setting("ai_price_in", 0.0, "Price per million input tokens", group="ai", min=0, max=1000, page={"step": 0.01},
             show_if="ai_enabled", help="Only for the cost estimate on Admin → AI usage. Leave 0 for your own model."),
     Setting("ai_price_out", 0.0, "Price per million output tokens", group="ai", min=0, max=1000, page={"step": 0.01},
@@ -125,6 +136,9 @@ SETTINGS = [
             help="Lets the Household Assistant search and read the documents a person can open here (their own, and "
                  "those shared with them), and make a note in their Inbox when they tap to confirm. Each person can "
                  "turn it off in Settings → You."),
+    Setting("bus_signing_key", "", "App-messages signing key", group="apps", secret=True, max_length=200,
+            help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+                 "Assistant's network can send messages as any other."),
 ]
 
 

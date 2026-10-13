@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import db, files, imports, pdftext
 from ..auth import require_user
 from ..store import paths
-from .nodes import node_info_json
+from .nodes import info_json
 
 router = APIRouter(prefix="/api", tags=["bring"])
 
@@ -66,8 +66,7 @@ async def scan(ref: str, request: Request, name: str = Query(min_length=1, max_l
     nid = await run_in_threadpool(files.finish_upload, user, prep, tmp, size, "keep")
     if type == "pdf":
         await run_in_threadpool(pdftext.index_one, nid)        # searchable straight away (usually: scanned)
-    with db.get_conn() as conn:
-        return node_info_json(conn, user, nid)
+    return await run_in_threadpool(info_json, user, nid)
 
 
 # ---------------------------------------------------------------- Google Keep and .zip imports (§17.11)

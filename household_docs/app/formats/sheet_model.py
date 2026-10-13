@@ -390,6 +390,32 @@ def index_text(sheet: dict) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------- checking a sheet from the browser
+# Control characters other than tab and line breaks: Excel's files can't hold them (openpyxl refuses the whole
+# save), so they are taken out of text as it comes in (review 2026-10 DI2).
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+MAX_NEST = 64                      # brackets inside each other in a formula, as the browser's engine allows
+
+
+def strip_controls(text: str) -> str:
+    return CONTROL.sub("", text) if CONTROL.search(text) else text
+
+
+def nesting(formula: str) -> int:
+    """How deep the brackets of a formula go (outside its "strings")."""
+    deepest = depth = 0
+    quoted = False
+    for ch in formula:
+        if ch == '"':
+            quoted = not quoted
+        elif not quoted:
+            if ch == "(":
+                depth += 1
+                deepest = max(deepest, depth)
+            elif ch == ")":
+                depth = max(0, depth - 1)
+    return deepest
+
+
 def _value(v, what="value"):
     if v is None or isinstance(v, bool):
         return v
@@ -400,7 +426,7 @@ def _value(v, what="value"):
     if isinstance(v, str):
         if len(v) > MAX_TEXT:
             raise SheetError(f"A cell can hold at most {MAX_TEXT} characters.")
-        return v
+        return strip_controls(v)
     if isinstance(v, dict) and what == "computed" and set(v) == {"e"} and v["e"] in ERRORS:
         return {"e": v["e"]}
     raise SheetError(f"A cell's {what} isn't a number, text or TRUE/FALSE.")
@@ -415,6 +441,8 @@ def clean_cell(cell) -> dict | None:
     v = _value(cell.get("v"))
     if isinstance(v, str) and v.startswith("=") and not cell.get("q") and len(v) > MAX_FORMULA:
         raise SheetError(f"A formula can be at most {MAX_FORMULA} characters.")
+    if isinstance(v, str) and v.startswith("=") and not cell.get("q") and nesting(v) > MAX_NEST:
+        raise SheetError(f"A formula can have at most {MAX_NEST} brackets inside each other.")
     if v is not None:
         out["v"] = v
     if cell.get("q") and isinstance(v, str):

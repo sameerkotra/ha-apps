@@ -107,6 +107,7 @@ class Ctx:
         self.content_rx: str | None = None
         self.name_hl: list[dict] = []        # what to highlight in names
         self.words: list[str] = []           # positive words (snippets, open-at-line)
+        self.fts_expr: str | None = None     # the FTS5 MATCH of the words (snippets of the page shown)
         self.has_criteria = False
         self.content_cte = False
         self.match_name_sql: str | None = None
@@ -215,8 +216,8 @@ def _scope(ctx: Ctx, values: list[str], token: str | None = None, param: bool = 
                 conds.append("0")
                 continue
             if ctx.o.get("sub", True):
-                conds.append("(n.root_id = ? AND substr(n.rel, 1, ?) = ?)")
-                params += [node["root_id"], len(node["rel"]) + 1, node["rel"] + "/"]
+                conds.append(f"({nodes.INSIDE_SQL})")
+                params += nodes.inside_params(node["root_id"], node["rel"])
                 label = f"in {node['name']} and its folders"
             else:
                 conds.append("n.parent_id = ?")
@@ -602,9 +603,11 @@ def _words(ctx: Ctx, p: parse.Parsed) -> None:
     use_fts = db.has_fts(ctx.conn)
     ctx.content_cte = True
     if use_fts:
-        ctx.ctes.append("ch(id, snip, score) AS (SELECT node_id, snippet(fts, 2, '⁅', '⁆', ' … ', 12), bm25(fts) "
-                        "FROM fts WHERE body MATCH ?)")
-        ctx.cte_params.append(_fts_expr(p.clauses))
+        # the snippet is made later, only for the page shown (snippets_for) — not for every hit before the access
+        # check (review 2026-10 DP5)
+        ctx.ctes.append("ch(id, snip, score) AS (SELECT node_id, NULL, bm25(fts) FROM fts WHERE body MATCH ?)")
+        ctx.fts_expr = _fts_expr(p.clauses)
+        ctx.cte_params.append(ctx.fts_expr)
     else:
         csql, cparams = _content_like(p.clauses)
         ctx.ctes.append(f"ch(id, snip, score) AS (SELECT f.node_id, substr(f.body, 1, 200), 0 FROM fts f WHERE {csql})")
@@ -779,6 +782,16 @@ def _run_regex(ctx: Ctx, limit: int) -> list:
     ctx.stopped = False
     name_any = ctx.name_rx_any
     content_rx = ctx.content_rx
+    # one time limit for the whole search, however many patterns it has (review 2026-10 D10: each name:/…/ had
+    # its own 5 seconds)
+    deadline = time.monotonic() + regex_worker.REGEX_SECONDS
+
+    def left() -> float | None:
+        s = deadline - time.monotonic()
+        if s <= 0.05:
+            ctx.stopped = True
+            return None
+        return s
     with regex_worker.busy(ctx.user["id"]):
         if content_rx and not name_any:          # only files whose text can match: narrow them in SQL
             limit_b = _content_limit(conn)
@@ -798,7 +811,12 @@ def _run_regex(ctx: Ctx, limit: int) -> list:
         spans: dict = {}
         keep = [r["id"] for r in cands]
         for rx in ctx.name_rx:                                  # every name pattern must match
-            res = regex_worker.run(rx, "name", [(i, cands[order[i]]["name"]) for i in keep], max_matches=10 ** 9)
+            secs = left()
+            if secs is None:
+                keep = []
+                break
+            res = regex_worker.run(rx, "name", [(i, cands[order[i]]["name"]) for i in keep], max_matches=10 ** 9,
+                                   seconds=secs)
             if res.error:
                 raise SearchError(res.error)
             ctx.stopped |= res.stopped
@@ -807,18 +825,19 @@ def _run_regex(ctx: Ctx, limit: int) -> list:
             for i in keep:
                 spans.setdefault(i, hit[i])
         found: dict = {i: {} for i in keep} if not (content_rx or name_any) else {}
-        if name_any and keep:                                     # name regex OR text regex (match any)
-            res = regex_worker.run(name_any, "name", [(i, cands[order[i]]["name"]) for i in keep], max_matches=limit + 1)
+        if name_any and keep and left() is not None:              # name regex OR text regex (match any)
+            res = regex_worker.run(name_any, "name", [(i, cands[order[i]]["name"]) for i in keep], max_matches=limit + 1,
+                                   seconds=left() or 0.05)
             if res.error:
                 raise SearchError(res.error)
             ctx.stopped |= res.stopped
             for m in res.matches:
                 found[m["id"]] = {}
                 spans.setdefault(m["id"], (m["s"], m["e"]))
-        if content_rx and keep:
+        if content_rx and keep and left() is not None:
             files = _content_candidates(ctx, [cands[order[i]] for i in keep if i not in found])
             res = regex_worker.run(content_rx, "content", files, limit_bytes=_content_limit(conn),
-                                   max_matches=limit + 1)
+                                   max_matches=limit + 1, seconds=left() or 0.05)
             if res.error:
                 raise SearchError(res.error)
             ctx.stopped |= res.stopped
@@ -888,9 +907,10 @@ def _content_candidates(ctx: Ctx, rows) -> list:
 # ---------------------------------------------------------------------------------------------
 # describing results
 # ---------------------------------------------------------------------------------------------
-def location(conn, row, user: dict) -> list[str]:
+def location(conn, row, user: dict, roles: dict | None = None) -> list[str]:
     """["House papers", "Taxes", "2026"] — where a result is (for your own things "My docs"; in someone else's
-    folder only the folders you can open, ["…", "Evidence"])."""
+    folder only the folders you can open, ["…", "Evidence"]). `roles`: a memo of the person's role per folder,
+    shared by the rows of one answer (review 2026-10 DP5: it was worked out again for every row)."""
     if row["trash_id"]:
         return ["Trash"]
     if row["root_kind"] == "shared":
@@ -903,7 +923,13 @@ def location(conn, row, user: dict) -> list[str]:
         chain = nodes.ancestors(conn, row)
         seen = []
         for anc in reversed(chain):
-            if sharing.role_of(conn, user, anc) is None:
+            if roles is None:
+                role = sharing.role_of(conn, user, anc)
+            else:
+                if anc["id"] not in roles:
+                    roles[anc["id"]] = sharing.role_of(conn, user, anc)
+                role = roles[anc["id"]]
+            if role is None:
                 break
             seen.append(anc["name"])
         seen.reverse()
@@ -930,7 +956,6 @@ def _mark(name: str, spans: list[tuple[int, int]]) -> str | None:
 
 def name_marks(ctx: Ctx, row) -> str | None:
     """The name with its matching part(s) wrapped in ⁅ ⁆ (plain text; the browser never parses it as HTML)."""
-    import re
     name = row["name"]
     rx = ctx.rx_spans.get(row["id"])
     if rx:
@@ -952,7 +977,7 @@ def name_marks(ctx: Ctx, row) -> str | None:
             if at >= 0:
                 spans.append((idx[at], idx[at + len(hl["v"]) - 1] + 1))
         elif hl["mode"] in ("exact", "wildcard"):
-            if hl["mode"] == "exact" or re.match(pattern.wildcard_to_regex(hl["v"]), name, re.I):
+            if hl["mode"] == "exact" or pattern.wildcard_matches(hl["v"], name):
                 spans.append((0, len(name)))
     return _mark(name, spans)
 
@@ -971,9 +996,18 @@ def _mark_words(text: str, words: list[str]) -> str:
     return _mark(text, spans) or text
 
 
-def at_line(conn, row, words: list[str]) -> int | None:
-    """The first line of a note or checklist that holds one of the words (to open it there)."""
+def at_line(conn, row, words: list[str], body: str | None = None) -> int | None:
+    """The first line of a note or checklist that holds one of the words (to open it there). `body`: the note's
+    indexed text when the search already has it (a note's is its text, line for line); a checklist's lists only
+    its items, so its file is read."""
     if row["kind"] not in ("note", "markdown", "checklist") or not words:
+        return None
+    if body is not None and row["kind"] in ("note", "markdown"):
+        folded = [fts.fold(w) for w in words if w]
+        for n, line in enumerate(body.split("\n"), 1):
+            fl = fts.fold(line)
+            if any(w and w in fl for w in folded):
+                return n
         return None
     try:
         real = roots.root_real(roots.root_row(conn, row["root_id"]))
@@ -1035,16 +1069,32 @@ def group_of(ctx: Ctx, row, loc: list[str], bounds) -> tuple:
     return (0,), None
 
 
+def snippets_for(conn, ctx: "Ctx", ids: list[str]) -> dict:
+    """{node id: (FTS snippet, indexed text)} for the results on one page whose text matched — one query through
+    the full-text index (review 2026-10 DP5: snippets were made for every hit, and each note on the page was
+    read from disk again to find the line to open it at)."""
+    if not ctx.fts_expr or not ids:
+        return {}
+    q = ",".join("?" * len(ids))
+    try:
+        return {r[0]: (r[1], r[2]) for r in conn.execute(
+            f"SELECT node_id, snippet(fts, 2, '⁅', '⁆', ' … ', 12), body FROM fts WHERE body MATCH ? "
+            f"AND node_id IN ({q})", (ctx.fts_expr, *ids))}
+    except Exception:                       # (a MATCH the index refuses already failed the search itself)
+        return {}
+
+
 def describe(conn, user: dict, res: dict, page: int) -> dict:
     """The response for one page: results with location, highlights and where to open, plus count and paging."""
     ctx = res["ctx"]
     rows = res["rows"]
     bounds = flt.today_bounds()
     locs = {}
+    roles: dict = {}
     if ctx.o["group"] != "none":
         keyed = []
         for i, r in enumerate(rows):
-            loc = location(conn, r, user)
+            loc = location(conn, r, user, roles)
             locs[r["id"]] = loc
             gk, _label = group_of(ctx, r, loc, bounds)
             keyed.append((gk, i, r))
@@ -1068,9 +1118,12 @@ def describe(conn, user: dict, res: dict, page: int) -> dict:
     from .. import changes as changes_mod, tags as tags_mod
     tag_map = tags_mod.for_ids(conn, [r["id"] for r in part])
     changed = changes_mod.row_extras(conn, user, [r for r in part if not r["trash_id"]])     # §17.21: the dots
+    snips = snippets_for(conn, ctx, [r["id"] for r in part])
     results = []
+    from .. import kids
+    child = kids.is_child(user)
     for r in part:
-        loc = locs.get(r["id"]) or location(conn, r, user)
+        loc = locs.get(r["id"]) or location(conn, r, user, roles)
         _gk, glabel = group_of(ctx, r, loc, bounds)
         extra = {"location": " › ".join(loc), "locationParts": loc, "rootKind": r["root_kind"],
                  "rootLabel": r["root_label"] if r["root_kind"] == "shared" else None,
@@ -1082,9 +1135,15 @@ def describe(conn, user: dict, res: dict, page: int) -> dict:
                  "trashId": r["trash_id"], "group": glabel, "tags": tag_map.get(r["id"], []),
                  "changed": r["id"] in changed}
         f = found.get(r["id"]) or {}
-        snip = f.get("snip") or r["snip"]
+        snip = f.get("snip") or snips.get(r["id"], (None, None))[0] or r["snip"]
         extra["snippet"] = " ".join(str(snip).split()) if snip else None
-        line = f.get("line") or (at_line(conn, r, ctx.words) if ctx.words and not r["trash_id"] else None)
+        if r["kind"] == "sheet" and child:
+            # Kids' space has no sheets: a child sees that one matched, never its cells (review 2026-10 D4)
+            extra["snippet"] = None
+            results.append(nodes.node_json(r, role=sharing.ROLE_OF_RANK.get(r["acc_rank"]), extra=extra))
+            continue
+        line = f.get("line") or (at_line(conn, r, ctx.words, snips.get(r["id"], (None, None))[1])
+                                 if ctx.words and not r["trash_id"] else None)
         extra["line"] = line
         if r["kind"] == "sheet" and ctx.words and not r["trash_id"]:
             cell = at_cell(conn, r, ctx.words)

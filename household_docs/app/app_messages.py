@@ -115,8 +115,9 @@ def start(thread: bool = True, **options) -> None:
     opts.update(options)
     from . import tools                                         # the Household Assistant's two kinds (tools.py)
     tools.tools.install(bus)
+    from . import settings
     bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, can=CAN, wants=WANTS, db=db.get_conn,
-              outbox_thread=False, **opts)
+              outbox_thread=False, signing_key=lambda: settings.REGISTRY.get("bus_signing_key"), **opts)
     _stop.clear()
     if thread:
         t = threading.Thread(target=_loop, name="docs-bus-pump", daemon=True)
@@ -540,12 +541,24 @@ def _notify_shared(r) -> int:
     return n
 
 
+_remove_lock = threading.Lock()
+
+
 def _remove_moved(sid: str) -> int:
-    """Move (§17.16): the items Todo acked leave the Docs checklist, as the person who sent them."""
+    """Move (§17.16): the items Todo acked leave the Docs checklist, as the person who sent them. One at a time,
+    and only the parts read here lose their `remove` mark afterwards: a part acked in between keeps it, so its
+    items are taken out by the next call (review 2026-10: they stayed in the checklist — the flaky
+    "removed 91 != 120")."""
+    with _remove_lock:
+        return _remove_moved_locked(sid)
+
+
+def _remove_moved_locked(sid: str) -> int:
     from . import auth, documents
     with db.get_conn() as conn:
         s = conn.execute("SELECT * FROM todo_sends WHERE id = ?", (sid,)).fetchone()
         parts = json.loads(s["parts"])
+        taken = {i for i, p in enumerate(parts) if p.get("remove")}
         keys = [k for p in parts if p.get("remove") for k in p.get("keys", [])]
         urow = conn.execute("SELECT * FROM users WHERE id = ?", (s["user_id"],)).fetchone()
     removed, error = 0, None
@@ -565,16 +578,19 @@ def _remove_moved(sid: str) -> int:
     with db.get_conn() as conn:
         s = conn.execute("SELECT * FROM todo_sends WHERE id = ?", (sid,)).fetchone()
         parts = json.loads(s["parts"])
-        for p in parts:
-            if p.get("remove"):
+        for i, p in enumerate(parts):
+            if i in taken and p.get("remove"):
                 p.pop("remove", None)
                 p.pop("keys", None)
-        more = any(p["state"] in ("waiting", "sent") for p in parts)
+        left = any(p.get("remove") for p in parts)
+        more = left or any(p["state"] in ("waiting", "sent") for p in parts)
         state = "failed" if s["state"] == "failed" else ("sending" if more else "done")
         conn.execute("UPDATE todo_sends SET parts = ?, items_removed = items_removed + ?, error = COALESCE(?, error), "
                      "state = ?, updated_at = ? WHERE id = ?", (json.dumps(parts), removed, error, state, _now(), sid))
         if state == "done" and s["request_id"]:
             _finish(conn, s["request_id"], result=_send_result(conn, sid))
+    if left:                                       # acked while this one was busy: its items go now
+        removed += _remove_moved_locked(sid)
     return removed
 
 

@@ -8,8 +8,7 @@
   const { h, api, toast, fail, openModal, spinner, pageHead, fmtWhen, titleOf, go } = D;
   const { mount } = UI;
   const COLOURS = ["red", "orange", "yellow", "green", "teal", "blue", "purple", "grey"];
-  const rank = { viewer: 1, editor: 2, manager: 3, owner: 4 };
-  const can = (it, role) => (rank[it.role] || 0) >= rank[role];
+  const can = D.can;
   const readOnlyMode = () => !!(D.state.me && D.state.me.readOnly);
   D.COLOURS = COLOURS;
 

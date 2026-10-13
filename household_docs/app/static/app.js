@@ -95,6 +95,14 @@ function titleOf(item) {
   if (item.document && item.ext && item.name.toLowerCase().endsWith("." + item.ext)) return item.name.slice(0, -(item.ext.length + 1));
   return item.name;
 }
+// Unsaved text kept on this device when a save fails or the page goes away first (review 2026-10 DFI1, DFI2);
+// offered again the next time the document is opened here. Never throws (private mode, a full storage).
+Docs.drafts = {
+  MAX: 2000000,
+  get(id) { try { const d = JSON.parse(localStorage.getItem("docs.draft." + id) || "null"); return d && typeof d.text === "string" ? d : null; } catch (e) { return null; } },
+  set(id, text, etag) { if (text.length > this.MAX) return; try { localStorage.setItem("docs.draft." + id, JSON.stringify({ text, etag, at: Date.now() })); } catch (e) { /* no room */ } },
+  drop(id) { try { localStorage.removeItem("docs.draft." + id); } catch (e) { /* ignore */ } },
+};
 function go(hash) { if (window.BackNav) BackNav.go(hash); else location.hash = hash; }
 function folderHash(ref) { return ref ? "#/folder/" + encodeURIComponent(ref) : "#/mine"; }
 function searchHash(params) { return "#/search/" + encodeURIComponent(DocsText.searchArg(params)); }
@@ -145,7 +153,6 @@ Docs.kind("folder", { icon: "📁", label: "Folder", open: (it) => go("#/folder/
 Docs.kind("note", { icon: "📝", label: "Note", open: (it) => go("#/doc/" + it.id) });
 Docs.kind("markdown", { icon: "📝", label: "Markdown note", open: (it) => go("#/doc/" + it.id) });
 Docs.kind("checklist", { icon: "☑️", label: "Checklist", open: (it) => go("#/doc/" + it.id) });
-Docs.kind("sheet", { icon: "📊", label: "Sheet", open: (it) => download(it) });
 Docs.kind("file", { icon: "📎", label: "File", open: (it) => (Docs.filePanel ? Docs.filePanel(it) : download(it)) });
 function kindOf(it) { return Docs.kinds[it.kind] || Docs.kinds.file; }
 function openItem(it) { kindOf(it).open(it); }
@@ -166,18 +173,37 @@ function iconOf(it) {
   if (it.isRoot) return it.role === "editor" ? "📂" : "🗂️";
   return kindOf(it).icon;
 }
-Object.assign(Docs, { kindOf, openItem, download, iconOf, iconBox, IMAGE_EXTS });
+// may this person do `role`'s things with the item? (one place for every page's buttons — review 2026-10 DFI9)
+const ROLE_RANK = { viewer: 1, editor: 2, manager: 3, owner: 4 };
+function can(it, role) { return (ROLE_RANK[it && it.role] || 0) >= (ROLE_RANK[role] || 9); }
+Object.assign(Docs, { kindOf, openItem, download, iconOf, iconBox, IMAGE_EXTS, can });
 
 // ---------- ⋯ menus ----------
 let openMenuEl = null;
-function closeMenu() { if (openMenuEl) { openMenuEl.remove(); openMenuEl = null; } }
+let menuOpener = null;            // where the focus goes back to when a menu closes with Escape or a choice
+function closeMenu(refocus) {
+  if (!openMenuEl) return;
+  openMenuEl.remove(); openMenuEl = null;
+  if (refocus && menuOpener && document.body.contains(menuOpener)) menuOpener.focus();
+  menuOpener = null;
+}
 function menu(anchor, entries) {
   closeMenu();
   const list = entries.filter(Boolean);
   if (!list.length) return null;
   const m = h("div", { class: "menu", role: "menu" }, list.map((e) => e === "-" ? h("hr") :
     h("button", { type: "button", role: "menuitem", class: e.danger ? "danger" : "", dataset: { action: e.id || "" },
-      onclick: () => { closeMenu(); e.run(); } }, e.icon ? h("span", { class: "menu-icon", "aria-hidden": "true" }, e.icon) : null, e.label)));
+      onclick: () => { closeMenu(true); e.run(); } }, e.icon ? h("span", { class: "menu-icon", "aria-hidden": "true" }, e.icon) : null, e.label)));
+  // a menu as menus go: ↑ ↓ Home End move between its items (review 2026-10 DFI7)
+  m.addEventListener("keydown", (ev) => {
+    const items = Array.from(m.querySelectorAll('[role="menuitem"]'));
+    const at = items.indexOf(document.activeElement);
+    const go = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[ev.key];
+    if (go === undefined || !items.length) return;
+    ev.preventDefault();
+    items[(go + items.length) % items.length].focus();
+  });
+  menuOpener = anchor;
   document.body.appendChild(m);
   const r = anchor.getBoundingClientRect();
   const w = m.offsetWidth, mh = m.offsetHeight;
@@ -192,7 +218,7 @@ function menu(anchor, entries) {
   if (first && matchMedia("(pointer: fine)").matches) first.focus();
   return m;
 }
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && openMenuEl) { closeMenu(); e.stopPropagation(); } }, true);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && openMenuEl) { closeMenu(true); e.stopPropagation(); } }, true);
 Docs.menu = menu;
 Docs.closeMenu = closeMenu;
 Docs.openMenu = () => openMenuEl;
@@ -321,8 +347,23 @@ let renderSeq = 0;
 async function render() {
   const { name, args } = parseHash();
   const fn = Docs.routes[name] || Docs.routes[""];
-  if (Docs.state.leaving) { try { await Docs.state.leaving(); } catch (e) { /* ignore */ } }
+  if (Docs.state.leaving) {
+    // the open document saves before the page changes; when it can't (offline, a conflict, an error) the
+    // person decides — nothing is dropped without asking (review 2026-10 DFI1)
+    let left = true;
+    try { left = (await Docs.state.leaving()) !== false; } catch (e) { left = false; }
+    if (!left) {
+      const leave = await confirmDialog("Leave without saving?", "Your latest changes couldn't be saved yet. If you leave, a copy stays on " +
+        "this device and is offered again when you open the document here.", "Leave", true);
+      if (!leave) {
+        if (Docs.state.hash !== undefined && location.hash !== Docs.state.hash) history.replaceState(history.state, "", Docs.state.hash || "#/");
+        return;
+      }
+      try { await Docs.state.leaving(true); } catch (e) { /* leaving anyway */ }
+    }
+  }
   Docs.state.leaving = null;
+  Docs.state.hash = location.hash;
   Docs.state.route = Docs.routes[name] ? name : "";
   Docs.state.args = args;
   if (!["folder", "doc"].includes(Docs.state.route)) Docs.state.currentSpace = null;

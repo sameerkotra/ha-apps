@@ -11,7 +11,7 @@
   // =====================================================================
   // ⋯ actions
   // =====================================================================
-  const can = (it, role) => ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[it.role] || 0) >= ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[role]);
+  const can = D.can;
   const isMine = (it) => it.role === "owner";
   const after = (msg) => { if (msg) toast(msg); D.render(); };
 
@@ -254,6 +254,8 @@
   // The editor page: #/doc/<id>
   // =====================================================================
   const POLL_MS = 10000;
+  const BIG_NOTE = 60000;            // characters: saved sooner after a change
+  const KEEPALIVE_MAX = 60000;       // a request that outlives the page carries at most 64 KB
   let poller = null;
   function stopPoll() { if (poller) { clearInterval(poller); poller = null; } }
 
@@ -689,7 +691,18 @@
     // on a phone the formatting buttons sit under the text, kept in view above the keyboard
     const phone = isMd && narrow();
     mdTools.classList.toggle("md-tools-phone", phone);
-    mount(page, head.el, tools, phone ? null : mdTools, find.el, box, phone ? mdTools : null, picInput, linksBox, secret.el);
+    // text that couldn't be saved last time on this device (DFI1): offered, never put back without asking
+    const draftBar = h("div", { class: "draft-bar", id: "draftBar", role: "status", hidden: true });
+    const draft = doc.canEdit ? D.drafts.get(doc.id) : null;
+    if (draft && draft.text !== ta.value) {
+      mount(draftBar, h("span", null, `Changes made on this device ${fmtWhen(new Date(draft.at).toISOString())} weren't saved.`),
+        h("button", { class: "btn-secondary btn-small", type: "button", id: "draftRestore", onclick: () => {
+          ta.value = draft.text; draftBar.hidden = true; changed(); drawPreview(); drawLinks();
+        } }, "Put them back"),
+        h("button", { class: "btn-ghost btn-small", type: "button", id: "draftDrop", onclick: () => { D.drafts.drop(doc.id); draftBar.hidden = true; } }, "Discard"));
+      draftBar.hidden = false;
+    } else if (draft) D.drafts.drop(doc.id);
+    mount(page, head.el, draftBar, tools, phone ? null : mdTools, find.el, box, phone ? mdTools : null, picInput, linksBox, secret.el);
     refit = keepFitted(ta);
     secret.check(ta.value);
     setStatus(doc.canEdit ? "Saved" : "");
@@ -724,18 +737,19 @@
           if (Object.keys(links).length) body.links = links;
           const r = await api(`api/docs/${doc.id}`, { method: "PATCH", body, keepalive: !!opts.keepalive });
           st.etag = r.etag;
-          if (ta.value === text) { st.dirty = false; setStatus("Saved"); } else setStatus("Unsaved changes…");
+          if (ta.value === text) { st.dirty = false; setStatus("Saved"); D.drafts.drop(doc.id); } else setStatus("Unsaved changes…");
           if (text.includes("[[") && !opts.keepalive) loadLinks();
         } catch (e) {
           if (e.status === 409 && e.detail && typeof e.detail === "object") {
             const choice = await conflictDialog(e.detail, ta.value);
             if (choice === "mine") { st.etag = e.detail.etag; st.saving = null; st.dirty = true; return save({ keepMine: true }); }
             if (choice === "theirs") { ta.value = e.detail.text || ""; st.etag = e.detail.etag; st.dirty = false; setStatus("Saved"); secret.check(ta.value); drawPreview(); drawLinks(); }
-            else setStatus("Not saved — changed elsewhere", "warn");
+            else { setStatus("Not saved — changed elsewhere", "warn"); keepDraft(); }
           } else if (!e.status) {
             setStatus("Offline — will retry", "warn");
+            keepDraft();
             clearTimeout(st.retry); st.retry = setTimeout(() => save(), 5000);
-          } else { setStatus("Not saved", "warn"); fail(e); }
+          } else { setStatus("Not saved", "warn"); keepDraft(); fail(e); }
         } finally {
           st.saving = null;
           if (st.again) { st.again = false; if (st.dirty) save(); }
@@ -743,9 +757,18 @@
       })();
       return st.saving;
     }
+    function keepDraft() { if (doc.canEdit && st.dirty) D.drafts.set(doc.id, ta.value, st.etag); }
     const soon = debounce(() => save(), 1000);
-    const later = debounce(() => { drawPreview(); drawLinks(); }, 250);
-    function changed() { st.dirty = true; setStatus("Unsaved changes…"); soon(); secret.check(ta.value); later(); }
+    const soonBig = debounce(() => save(), 400);      // a big note: sooner, so less waits for the page to go (DFI2)
+    // the preview: later for a long note, and when the browser is idle (review 2026-10 DFP3); not at all while
+    // only the text is shown (drawPreview returns at once then)
+    let laterT = null;
+    const idle = (fn) => (window.requestIdleCallback ? window.requestIdleCallback(fn, { timeout: 1000 }) : fn());
+    function later() {
+      clearTimeout(laterT);
+      laterT = setTimeout(() => idle(() => { if (ctx.current()) { drawPreview(); drawLinks(); } }), Math.min(2000, 250 + Math.floor(ta.value.length / 200)));
+    }
+    function changed() { st.dirty = true; setStatus("Unsaved changes…"); (ta.value.length > BIG_NOTE ? soonBig : soon)(); secret.check(ta.value); later(); }
     ta.addEventListener("input", (e) => {
       changed();
       if (doc.canEdit && e.inputType === "insertText" && e.data === "[" && ta.value.slice(ta.selectionStart - 2, ta.selectionStart) === "[[") insertLink(true);
@@ -757,20 +780,39 @@
       else if (isMd && doc.canEdit && (e.ctrlKey || e.metaKey) && (e.key === "i" || e.key === "I")) { e.preventDefault(); wrapSel("*", "*", "italic"); }
     });
     D.flushNote = async () => { if (st.dirty) await save(); };
-    D.state.leaving = async () => {
+    // A page that goes away (closed, reloaded, a phone switching apps): the text is kept on this device first,
+    // then sent — a request that outlives the page can carry at most 64 KB, so a big note relies on the copy
+    // (review 2026-10 DFI2). Closing or reloading with unsaved changes asks first.
+    const onHide = () => { if (document.visibilityState === "hidden" && st.dirty) { keepDraft(); save({ keepalive: ta.value.length < KEEPALIVE_MAX }); } };
+    const onPageHide = () => {
+      if (st.dirty) { keepDraft(); save({ keepalive: ta.value.length < KEEPALIVE_MAX }); }
+      if (ctx.quick && doc.canEdit && D.finishQuickNote && D.state.route === "doc") D.finishQuickNote(doc.id, true);
+    };
+    const onUnload = (e) => { if (doc.canEdit && (st.dirty || st.saving)) { keepDraft(); e.preventDefault(); e.returnValue = ""; } };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onUnload);
+    function cleanup() {                       // every listener goes with the editor (review 2026-10 DFP5)
       stopPoll();
+      clearTimeout(st.retry); clearTimeout(laterT);
       D.flushNote = null;
-      if (st.dirty) await save();
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("beforeunload", onUnload);
+    }
+    // leaving(): saves first; false when that didn't work (the router then asks). leaving(true): leave anyway,
+    // keeping the text on this device.
+    D.state.leaving = async (force) => {
+      if (!force && doc.canEdit) {
+        for (let k = 0; k < 3 && (st.dirty || st.saving); k++) { if (st.saving) await st.saving; if (st.dirty) await save(); }
+        if (st.dirty) { keepDraft(); return false; }
+      }
+      if (force) keepDraft();
+      cleanup();
       if (ctx.quick && doc.canEdit && D.finishQuickNote) await D.finishQuickNote(doc.id);
     };
-    const onHide = () => { if (document.visibilityState === "hidden" && st.dirty) save({ keepalive: true }); };
-    document.addEventListener("visibilitychange", onHide);
-    window.addEventListener("pagehide", () => {
-      if (st.dirty) save({ keepalive: true });
-      if (ctx.quick && doc.canEdit && D.finishQuickNote && D.state.route === "doc") D.finishQuickNote(doc.id, true);
-    }, { once: true });
     poller = setInterval(async () => {
-      if (!ctx.current() || D.state.route !== "doc") { stopPoll(); document.removeEventListener("visibilitychange", onHide); return; }
+      if (!ctx.current() || D.state.route !== "doc") { cleanup(); return; }
       if (document.visibilityState !== "visible") return;
       try {
         const e = await api(`api/docs/${doc.id}/etag`);
@@ -950,7 +992,10 @@
         setEditing(head.editing, e.editing);
         if (e.etag !== etag) {
           await busy;
+          const queued = busy, known = etag;
           const fresh = await api(`api/docs/${doc.id}`);
+          // a tick sent while this was on its way has the newer list: keep it (review 2026-10 DFI6)
+          if (busy !== queued || etag !== known) return;
           if (fresh.kind !== "checklist") { D.render(); return; }
           if (document.activeElement && document.activeElement.classList.contains("check-edit")) return;
           items = fresh.items; etag = fresh.etag; draw();

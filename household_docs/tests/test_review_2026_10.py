@@ -593,7 +593,7 @@ class SensorsFollowAccess(Base):
     def test_a_sensor_stops_when_its_maker_loses_access(self):
         c = self.create("checklist", "Medicines")
         self.ok(self.ops(c["id"], [{"op": "add", "text": "Insulin"}]))
-        self.ok(self.share(c["id"], MEERA, "editor"))
+        self.ok(self.share(c["id"], MEERA, "manager"))     # (an editor may not publish it: review 2026-10-13 D5)
         eid = self.ok(self.put(f"/api/nodes/{c['id']}/ha-sensor", {}, MEERA))["sensor"]["entityId"]
         ha_sensors.tick()
         self.assertIn(eid, self.ha.states)

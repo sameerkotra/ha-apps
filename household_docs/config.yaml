@@ -1,5 +1,5 @@
 name: "Household Docs"
-version: "1.6.1"
+version: "1.6.2"
 slug: household_docs
 description: >-
   Notes and checklists for your household, kept as plain files in Home
@@ -14,6 +14,8 @@ startup: application
 boot: auto
 ingress: true
 ingress_port: 8105
+# The Supervisor restarts the app when this stops answering (a request thread stuck for good).
+watchdog: http://[HOST]:[PORT:8105]/api/health
 panel_icon: mdi:file-document-multiple
 panel_title: Docs
 # false = every Home Assistant user sees the panel (the whole household uses it).

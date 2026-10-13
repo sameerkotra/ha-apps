@@ -25,7 +25,7 @@ RECEIPTS = "receipt_price_intelligence"
 RECEIPTS_VERSION = "1.3.2"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
-DOCS_VERSION = "1.6.1"
+DOCS_VERSION = "1.6.2"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
 ASSISTANT_VERSION = "1.3.1"

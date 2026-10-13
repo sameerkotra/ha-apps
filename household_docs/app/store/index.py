@@ -115,6 +115,65 @@ def read_file_info(path: str, name: str, st, previous_kind: str | None, limit: i
     return kind, sha, body, kinds.stats_for(kind, path, st.st_size, limit)
 
 
+BATCH = 500                       # entries per commit while a scan writes (review 2026-10 DP1)
+
+
+def _st_key(st) -> tuple:
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+def gather(known: dict, entries: list[Entry], limit: int) -> dict:
+    """What a scan will need to read, read before it writes (review 2026-10 DP1: hashing and parsing used to
+    happen inside the scan's one write transaction, so 20 000 files held the database for most of a minute).
+    `known` is {rel: row} of the index as it is now; the answer is {rel: (stat key, previous kind, info)} for
+    each new or changed file, with info as read_file_info gives it. Anything that doesn't fit what the scan
+    then finds (a file changed again, a move) is read again there, as before."""
+    out = {}
+    for e in entries:
+        if e.is_dir:
+            continue
+        row = known.get(e.rel)
+        prev = None
+        if row is not None and row["trash_id"] is None and row["kind"] != "folder":
+            if row["gone_at"] is None and not _changed(row, e.st):
+                continue
+            prev = row["kind"]
+        try:
+            out[e.rel] = (_st_key(e.st), prev, read_file_info(e.real, e.name, e.st, prev, limit))
+        except OSError:
+            continue
+    return out
+
+
+def _known(conn, root_id: str, rels=None) -> dict:
+    """{rel: row} of a root's index (or of `rels` in it) — the columns gather() looks at."""
+    cols = "rel, kind, mtime_ns, inode, size, gone_at, trash_id"
+    if rels is None:
+        return {r["rel"]: r for r in conn.execute(f"SELECT {cols} FROM nodes WHERE root_id = ?", (root_id,))}
+    out = {}
+    rels = list(rels)
+    for i in range(0, len(rels), 500):
+        part = rels[i:i + 500]
+        q = ",".join("?" * len(part))
+        for r in conn.execute(f"SELECT {cols} FROM nodes WHERE root_id = ? AND rel IN ({q})", (root_id, *part)):
+            out[r["rel"]] = r
+    return out
+
+
+def _file_info(infos, e: Entry, previous_kind, limit: int):
+    got = infos.get(e.rel) if infos else None
+    if got is not None and got[0] == _st_key(e.st) and got[1] == previous_kind:
+        return got[2]
+    return read_file_info(e.real, e.name, e.st, previous_kind, limit)
+
+
+def _sha_of(infos, e: Entry):
+    got = infos.get(e.rel) if infos else None
+    if got is not None and got[0] == _st_key(e.st) and got[2][1] is not None:
+        return got[2][1]
+    return sha256_file(e.real)
+
+
 def _changed(row, st) -> bool:
     return (row["mtime_ns"] != st.st_mtime_ns or row["inode"] != st.st_ino
             or (row["kind"] != "folder" and row["size"] != st.st_size))
@@ -128,7 +187,7 @@ def _recently_gone(c) -> bool:
     return c["gone_at"] >= config.ago_iso(hours=MATCH_HOURS)
 
 
-def _match(conn, root_id: str, e: Entry, missing: dict, limit: int):
+def _match(conn, root_id: str, e: Entry, missing: dict, limit: int, infos=None):
     """A node this new entry is (renamed or moved outside), or None.
 
     Only nodes of the same root are candidates — a file that turns up in another person's folder or in an admin
@@ -160,7 +219,7 @@ def _match(conn, root_id: str, e: Entry, missing: dict, limit: int):
         if c["sha256"] and c["size"] == st.st_size and st.st_size <= HASH_LIMIT:
             if sha is None:
                 try:
-                    sha = sha256_file(e.real)
+                    sha = _sha_of(infos, e)
                 except OSError:
                     return None
             if sha == c["sha256"]:
@@ -169,7 +228,7 @@ def _match(conn, root_id: str, e: Entry, missing: dict, limit: int):
         return None
     if sha is None:
         try:
-            sha = sha256_file(e.real)
+            sha = _sha_of(infos, e)
         except OSError:
             return None
     pid = _parent_id(conn, root_id, e.rel)
@@ -222,15 +281,22 @@ def _parent_id(conn, root_id: str, rel: str):
 
 
 def _apply(conn, root, entries: list[Entry], scope_rows: list, now: str) -> dict:
-    """Reconcile `entries` (what is on disk) with `scope_rows` (what the index has for the same place)."""
+    """Reconcile `entries` (what is on disk) with `scope_rows` (what the index has for the same place).
+    BATCH entries at a time: the new and changed files of the next batch are read first, with nothing written
+    yet (gather()), then that batch is written and committed — so a big scan never holds the database while it
+    reads, and others can write between batches (review 2026-10 DP1)."""
     root_id = root["id"]
     limit = _content_limit(conn)
     stats = {"new": 0, "changed": 0, "moved": 0, "gone": 0, "back": 0}
     events: list = []                       # (action, node id, detail) for 🕑 Activity (§17.4)
     on_disk = {e.rel: e for e in entries}
-    by_rel = {r["rel"]: r for r in scope_rows}
     missing = {r["id"]: r for r in scope_rows if r["rel"] not in on_disk and r["gone_at"] is None}
-    for e in entries:                       # parents first
+    infos: dict = {}
+    for n, e in enumerate(entries):         # parents first
+        if n % BATCH == 0:
+            conn.commit()                   # (nothing to commit before the first batch)
+            batch = entries[n:n + BATCH]
+            infos = gather(_known(conn, root_id, [x.rel for x in batch if not x.is_dir]), batch, limit)
         row = nodes.by_rel(conn, root_id, e.rel)
         if row is not None and row["trash_id"] is None:
             if (row["kind"] == "folder") != e.is_dir:
@@ -247,7 +313,7 @@ def _apply(conn, root, entries: list[Entry], scope_rows: list, now: str) -> dict
                 if e.is_dir:
                     nodes.update_stat(conn, row["id"], e.st, None, updated_by=row["updated_by"], kind="folder")
                 else:
-                    kind, sha, body, cols = read_file_info(e.real, e.name, e.st, row["kind"], limit)
+                    kind, sha, body, cols = _file_info(infos, e, row["kind"], limit)
                     who = row["updated_by"] if (sha is not None and sha == row["sha256"]) else None
                     nodes.update_stat(conn, row["id"], e.st, sha, updated_by=who, kind=kind, body=body, set_body=True,
                                       stats=cols)
@@ -257,7 +323,7 @@ def _apply(conn, root, entries: list[Entry], scope_rows: list, now: str) -> dict
             continue
         if row is not None:                 # a trashed row still on this rel (older data): let it go
             nodes.free_rel(conn, root_id, e.rel)
-        cand = _match(conn, root_id, e, missing, limit)
+        cand = _match(conn, root_id, e, missing, limit, infos)
         pid = _parent_id(conn, root_id, e.rel)
         if cand is not None:
             nodes.free_rel(conn, root_id, e.rel)
@@ -271,7 +337,7 @@ def _apply(conn, root, entries: list[Entry], scope_rows: list, now: str) -> dict
                 if e.is_dir:
                     nodes.update_stat(conn, cand["id"], e.st, None, updated_by=fresh["updated_by"], kind="folder")
                 else:
-                    kind, sha, body, cols = read_file_info(e.real, e.name, e.st, fresh["kind"], limit)
+                    kind, sha, body, cols = _file_info(infos, e, fresh["kind"], limit)
                     who = fresh["updated_by"] if sha == fresh["sha256"] else None
                     nodes.update_stat(conn, cand["id"], e.st, sha, updated_by=who, kind=kind, body=body, set_body=True,
                                       stats=cols)
@@ -280,7 +346,7 @@ def _apply(conn, root, entries: list[Entry], scope_rows: list, now: str) -> dict
         if e.is_dir:
             nid = nodes.insert(conn, root_id=root_id, rel=e.rel, parent_id=pid, kind="folder", st=e.st)
         else:
-            kind, sha, body, cols = read_file_info(e.real, e.name, e.st, None, limit)
+            kind, sha, body, cols = _file_info(infos, e, None, limit)
             nid = nodes.insert(conn, root_id=root_id, rel=e.rel, parent_id=pid, kind=kind, st=e.st, sha=sha, body=body,
                                stats=cols)
         stats["new"] += 1

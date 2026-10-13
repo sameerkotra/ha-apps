@@ -213,6 +213,10 @@ def save_note(conn, user: dict, node_id: str, etag: str, text: str, keep_mine: b
         # change made outside the app is classified again by the index (§5.2)
         fresh = _write(conn, user, root, node, real, data, body=text)
         links.update(conn, user, fresh, text, link_hints)
+        # committed while the file is still locked: the next save of this file (another tick a moment later)
+        # reads these rows, not the ones before — or it lost "ticked by" and wrote a version by "nobody"
+        # (review 2026-10 DI1)
+        conn.commit()
     return {"etag": etag_of_row(fresh), "modified": fresh["mtime"], "size": fresh["size"], "kind": fresh["kind"]}
 
 
@@ -281,6 +285,10 @@ def checklist_ops(conn, user: dict, node_id: str, ops: list) -> tuple[dict, list
                                  (node["id"], it.key, it.tick[0], it.tick[1]))
         out = meta_json(conn, user, nodes.get(conn, node_id), role)
         out["items"] = items_json(conn, items)
+        # committed while the file is still locked: the next save of this file (another tick a moment later)
+        # reads these rows, not the ones before — or it lost "ticked by" and wrote a version by "nobody"
+        # (review 2026-10 DI1)
+        conn.commit()
     return out, conflicts
 
 
@@ -298,7 +306,11 @@ def restore_version(conn, user: dict, node_id: str, n: int) -> dict:
         node = nodes.get(conn, node_id)
         root, real = nodes.real_path(conn, node)
         try:
-            data = versions.read(conn, root, node["id"], n)
+            if kinds.is_document(node["kind"]):
+                data = versions.read(conn, root, node["id"], n)
+            else:                                        # a replaced upload: streamed below (review 2026-10 D6)
+                data = None
+                vpath = versions.path_of(conn, root, node["id"], n)
         except FileNotFoundError:
             raise HTTPException(404, "That version isn't there any more.")
         try:
@@ -309,8 +321,13 @@ def restore_version(conn, user: dict, node_id: str, n: int) -> dict:
         except FileNotFoundError:
             raise HTTPException(404, sharing.NOT_FOUND)
         if not kinds.is_document(node["kind"]):          # a replaced upload's previous copy (§9.2)
-            versions.keep_replaced(conn, root, node, real, user["id"])
-            st = fileio.write_atomic(root, real, data)
+            try:
+                src = fileio.open_read(vpath)
+            except FileNotFoundError:
+                raise HTTPException(404, "That version isn't there any more.")
+            with src:
+                versions.keep_replaced(conn, root, node, real, user["id"])
+                st, _sha = fileio.write_atomic_stream(root, real, src)
             from .store import index
             kind, sha, body, cols = index.read_file_info(real, node["name"], st, node["kind"], _content_limit(conn))
             nodes.update_stat(conn, node["id"], st, sha, updated_by=user["id"], kind=kind, body=body, set_body=True,

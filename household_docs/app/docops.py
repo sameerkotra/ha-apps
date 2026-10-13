@@ -17,6 +17,7 @@ from .store import fileio, index, kinds, nodes, paths, roots, trash
 
 MAX_DEPTH = 10
 MAX_COPY_ENTRIES = 500
+MAX_COPY_BYTES = 1024 ** 3         # one copy at most 1 GB (it's made while you wait)
 
 
 def my_root(conn, user: dict):
@@ -79,6 +80,9 @@ def check_quota(conn, root, delta: int) -> None:
         return
     used = conn.execute("SELECT COALESCE(SUM(size), 0) FROM nodes WHERE root_id = ? AND gone_at IS NULL",
                         (root["id"],)).fetchone()[0]
+    # the earlier versions kept of them count too (review 2026-10 D12)
+    used += conn.execute("SELECT COALESCE(SUM(v.size), 0) FROM versions v JOIN nodes n ON n.id = v.node_id "
+                         "WHERE n.root_id = ?", (root["id"],)).fetchone()[0]
     if used + delta > gb * 1024 ** 3:
         who = conn.execute("SELECT name FROM users WHERE id = ?", (root["user_id"],)).fetchone()
         raise HTTPException(507, f"{(who['name'] + chr(39) + 's') if who else 'This'} folder is at its limit of {gb} GB. "
@@ -225,8 +229,8 @@ def move(conn, user: dict, node_id: str, dest_id: str | None) -> None:
     if paths.parent_rel(node["rel"]) == prel:
         return
     depth_inside = max([_depth(r["rel"]) - _depth(node["rel"]) for r in conn.execute(
-        "SELECT rel FROM nodes WHERE root_id = ? AND (rel = ? OR substr(rel, 1, ?) = ?)",
-        (node["root_id"], node["rel"], len(node["rel"]) + 1, node["rel"] + "/"))] or [0])
+        f"SELECT n.rel FROM nodes n WHERE (n.root_id = ? AND n.rel = ?) OR ({nodes.INSIDE_SQL})",
+        (node["root_id"], node["rel"], *nodes.inside_params(node["root_id"], node["rel"])))] or [0])
     if _depth(prel) + 1 + depth_inside > MAX_DEPTH:
         raise HTTPException(422, f"Folders can be at most {MAX_DEPTH} deep.")
     fileio.ensure_writable()
@@ -264,8 +268,11 @@ def copy(conn, user: dict, node_id: str, dest_id: str | None) -> str:
         raise HTTPException(403, "Sheets aren't available in Kids' space.")     # no sheets by copying either
     if len(entries) > MAX_COPY_ENTRIES:
         raise HTTPException(413, f"That folder has more than {MAX_COPY_ENTRIES} items — copy smaller parts.")
+    if sum((e["size"] or 0) for e in entries) > MAX_COPY_BYTES:
+        raise HTTPException(413, f"That's more than {MAX_COPY_BYTES // 1024 ** 3} GB — copy smaller parts.")
     check_quota(conn, root, sum((e["size"] or 0) for e in entries))
     fileio.ensure_writable()
+    fileio.ensure_room(sum((e["size"] or 0) for e in entries))
     base = roots.root_real(root)
     prel = folder["rel"] if folder else ""
     folder_real = paths.resolve(base, prel)
@@ -290,15 +297,15 @@ def copy(conn, user: dict, node_id: str, dest_id: str | None) -> str:
                                             st=st, created_by=user["id"], updated_by=user["id"])
         else:
             try:
-                with fileio.open_read(s_real) as f:
-                    data = f.read()
+                f = fileio.open_read(s_real)
             except OSError:
                 continue
-            st = fileio.write_atomic(root, d_real, data)
+            with f:                                           # streamed, not read whole (review 2026-10 D6)
+                st, sha = fileio.write_atomic_stream(root, d_real, f)
             limit = int(settings.get("content_index_mb", conn)) * 1024 * 1024
             body = kinds.index_text_for(e["kind"], d_real, paths.base_name(rel), st.st_size, limit)
             new_ids[e["id"]] = nodes.insert(conn, root_id=root["id"], rel=rel, parent_id=parent_new, kind=e["kind"],
-                                            st=st, sha=fileio.sha256_bytes(data), created_by=user["id"],
+                                            st=st, sha=sha, created_by=user["id"],
                                             updated_by=user["id"], body=body,
                                             stats=kinds.stats_for(e["kind"], d_real, st.st_size, limit))
     db.audit(conn, "copied", user["id"], new_ids.get(node["id"]), root["id"])

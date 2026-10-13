@@ -45,12 +45,16 @@ def run_worker(data: bytes, mode: str = "text", timeout: float | None = None, **
     """Run the worker on a PDF's bytes; raises WorkerError when it was stopped or broke."""
     lim = {"mode": mode, "pages": MAX_PAGES, **limits}
     timeout = TIMEOUT if timeout is None else timeout
+    from . import workers
     with _slot:
         try:
-            p = subprocess.run([sys.executable, "-I", WORKER, json.dumps(lim)], input=data, capture_output=True,
-                               timeout=timeout, env={"PATH": os.environ.get("PATH", "")})
+            with workers.heavy():
+                p = subprocess.run([sys.executable, "-I", WORKER, json.dumps(lim)], input=data, capture_output=True,
+                                   timeout=timeout, env={"PATH": os.environ.get("PATH", "")})
         except subprocess.TimeoutExpired:
             raise WorkerError(f"Reading this PDF took longer than {int(timeout)} seconds, so it was stopped.")
+        except workers.Busy:
+            raise WorkerError("The app is busy reading other files — try again in a moment.")
     if p.returncode != 0:
         raise WorkerError("Reading this PDF was stopped (it needed too much memory or time).")
     try:

@@ -27,6 +27,7 @@ from .store import nodes, roots, trash
 LARGEST = 20
 OLD_LIST = 50
 EMPTY_LIST = 100
+DUP_CHUNK = 200                  # contents looked up at once
 DUP_GROUPS = 50
 
 
@@ -183,23 +184,35 @@ def details(conn, user: dict, root, years: int = 2) -> dict:
 
 
 def duplicates(conn, user: dict, root_id: str) -> list[dict]:
-    """Groups of files with the same content, at least one copy in this folder; every copy the person can open."""
+    """Groups of files with the same content, at least one copy in this folder; every copy the person can open.
+    Two queries, not one access query per file (review 2026-10 DP3): the contents with more than one copy
+    anywhere first (no access check needed to rule the rest out), then the copies of those the person can open."""
+    cands = conn.execute(
+        f"WITH mine AS (SELECT DISTINCT n.sha256, n.size FROM nodes n WHERE n.root_id = ? AND n.kind != 'folder' "
+        f"AND n.size > 0 AND n.sha256 IS NOT NULL AND {nodes.LIVE}) "
+        f"SELECT m.sha256, m.size FROM mine m JOIN nodes n ON n.sha256 = m.sha256 AND n.size = m.size "
+        f"JOIN roots r ON r.id = n.root_id WHERE n.kind != 'folder' AND {nodes.LIVE} AND (r.kind = 'person' OR r.missing = 0) "
+        f"GROUP BY m.sha256, m.size HAVING COUNT(*) > 1 ORDER BY m.size DESC, m.sha256", (root_id,)).fetchall()
     acc_sql, acc_params = sharing.access_cte(user["id"])
-    shas = conn.execute(
-        f"SELECT n.sha256, n.size FROM nodes n WHERE n.root_id = ? AND n.kind != 'folder' AND n.size > 0 "
-        f"AND n.sha256 IS NOT NULL AND {nodes.LIVE} GROUP BY n.sha256, n.size ORDER BY n.size DESC", (root_id,)).fetchall()
     groups = []
-    for s in shas:
+    for i in range(0, len(cands), DUP_CHUNK):
+        part = cands[i:i + DUP_CHUNK]
+        q = ",".join("?" * len(part))
         rows = conn.execute(acc_sql + f"SELECT n.*, acc.rank AS acc_rank FROM nodes n JOIN acc ON acc.node_id = n.id "
-                            f"JOIN roots r ON r.id = n.root_id WHERE n.sha256 = ? AND n.size = ? AND n.kind != 'folder' "
+                            f"JOIN roots r ON r.id = n.root_id WHERE n.sha256 IN ({q}) AND n.kind != 'folder' "
                             f"AND {nodes.LIVE} AND (r.kind = 'person' OR r.missing = 0) ORDER BY n.mtime",
-                            (*acc_params, s["sha256"], s["size"])).fetchall()
-        if len(rows) < 2:
-            continue
-        groups.append({"sha256": s["sha256"], "size": s["size"], "copies": _items(conn, user, rows),
-                       "extraBytes": (len(rows) - 1) * s["size"]})
-        if len(groups) >= DUP_GROUPS:
-            break
+                            (*acc_params, *[c["sha256"] for c in part])).fetchall()
+        by = {}
+        for r in rows:
+            by.setdefault((r["sha256"], r["size"]), []).append(r)
+        for c in part:
+            copies = by.get((c["sha256"], c["size"]), [])
+            if len(copies) < 2:
+                continue
+            groups.append({"sha256": c["sha256"], "size": c["size"], "copies": _items(conn, user, copies),
+                           "extraBytes": (len(copies) - 1) * c["size"]})
+            if len(groups) >= DUP_GROUPS:
+                return groups
     return groups
 
 

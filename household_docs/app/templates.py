@@ -10,6 +10,8 @@
   mode). Kids' space: no sheets (§17.20).
 """
 import os
+import threading
+from collections import OrderedDict
 
 from fastapi import HTTPException
 
@@ -112,7 +114,30 @@ def household_dir() -> str:
     return os.path.join(roots.docs_real(), DIR)
 
 
-def _kind_of(path: str, ext: str) -> str:
+_kinds: "OrderedDict[tuple, str]" = OrderedDict()     # (path, size, mtime_ns) → kind: a .md read once per version
+_kinds_lock = threading.Lock()
+KIND_CACHE = 256
+
+
+def _kind_of(path: str, ext: str, st=None) -> str:
+    """The template's kind; a .md is read (up to 5 MB) to tell a checklist from a note — once per version of the
+    file, not on every listing (review 2026-10 DP7)."""
+    if EXTS.get(ext, "file") != "markdown" or st is None:
+        return _read_kind(path, ext)
+    key = (path, st.st_size, st.st_mtime_ns)
+    with _kinds_lock:
+        if key in _kinds:
+            _kinds.move_to_end(key)
+            return _kinds[key]
+    k = _read_kind(path, ext)
+    with _kinds_lock:
+        _kinds[key] = k
+        while len(_kinds) > KIND_CACHE:
+            _kinds.popitem(last=False)
+    return k
+
+
+def _read_kind(path: str, ext: str) -> str:
     k = EXTS.get(ext, "file")
     if k == "markdown":
         try:
@@ -136,8 +161,9 @@ def _listing(folder: str, prefix: str) -> list[dict]:
         stem, ext = paths.split_ext(e.name)
         if ext.lower() not in EXTS:
             continue
-        out.append({"ref": f"{prefix}:{e.name}", "name": stem, "kind": _kind_of(e.path, ext.lower()),
-                    "ext": ext.lower(), "size": e.stat(follow_symlinks=False).st_size})
+        st = e.stat(follow_symlinks=False)
+        out.append({"ref": f"{prefix}:{e.name}", "name": stem, "kind": _kind_of(e.path, ext.lower(), st),
+                    "ext": ext.lower(), "size": st.st_size})
     return out[:MAX_TEMPLATES]
 
 

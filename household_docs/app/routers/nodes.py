@@ -11,8 +11,7 @@ from ..store import fileio, index, moving, nodes, roots, trash
 from .common import Strict
 
 router = APIRouter(prefix="/api", tags=["nodes"])
-SORTS = {"name": "n.kind != 'folder', n.name_folded", "modified": "n.kind != 'folder', n.mtime DESC",
-         "size": "n.kind != 'folder', COALESCE(n.size, 0) DESC, n.name_folded"}
+SORTS = ("name", "modified", "size")
 SPACES = ("mine", "shared", "everyone", "favourites", "recent", "trash")
 
 
@@ -158,10 +157,12 @@ def _mode(root, role) -> str | None:
 
 
 @router.get("/list")
-def list_folder(node: str | None = Query(default=None, max_length=70), sort: str = Query(default="name"),
+def list_folder(node: str | None = Query(default=None, max_length=70), sort: str = Query(default="name", max_length=20),
                 user: dict = Depends(require_user)):
     """A folder's contents (no content), after a quick look at the folder on disk. No node: My docs;
     "root:<id>": the top of an admin shared folder."""
+    if sort not in SORTS:                         # name, modified or size; anything else: by name
+        sort = "name"
     with db.get_conn() as conn:
         root, folder, role = docops.place(conn, user, node, "viewer")
         root_id, rel = root["id"], folder["rel"] if folder else ""
@@ -299,6 +300,12 @@ class FlagIn(Strict):
 def rename(node_id: str, body: NameIn, user: dict = Depends(require_user)):
     with db.get_conn() as conn:
         docops.rename(conn, user, node_id, body.name)
+        return node_info_json(conn, user, node_id)
+
+
+def info_json(user: dict, node_id: str) -> dict:
+    """node_info_json with its own connection — for async routes, through run_in_threadpool (review 2026-10 DP2)."""
+    with db.get_conn() as conn:
         return node_info_json(conn, user, node_id)
 
 

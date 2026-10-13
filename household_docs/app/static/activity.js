@@ -8,7 +8,7 @@
   const D = window.Docs;
   const { h, api, toast, fail, openModal, confirmDialog, spinner, pageHead, fmtSize, fmtWhen, fmtFull, go } = D;
   const { mount } = UI;
-  const can = (it, role) => ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[it.role] || 0) >= ({ viewer: 1, editor: 2, manager: 3, owner: 4 }[role] || 9);
+  const can = D.can;
   const readOnlyMode = () => !!(D.state.me && D.state.me.readOnly);
   const extras = () => (D.state.me && D.state.me.extras) || {};
 
@@ -212,11 +212,11 @@
       h("p", null, `A sensor in Home Assistant with ${what}, updated whenever it changes. Everyone who can see this item is told it's on the dashboard.`),
       s ? h("p", { class: "chip ok-chip" }, "📊 On the dashboard as ", h("code", null, s.entityId)) : h("p", { class: "hint" }, "It will be ", h("code", null, info.suggested), " (or similar)."),
       !info.enabled ? h("p", { class: "hint warn" }, "An admin has turned this off (Admin → App settings).") : null,
-      info.canChange ? fields : h("p", { class: "hint" }, "Only people who can edit it can change this."),
+      info.canChange ? fields : h("p", { class: "hint" }, "Only its owner (or a manager) can change this — it shows in Home Assistant for everyone."),
       h("p", { class: "hint" }, "Sensor values are kept in Home Assistant's history. To keep a private value out of it, see “Home Assistant sensors” in the app's documentation (a recorder exclusion)."),
       err,
       h("div", { class: "actions" },
-        s && info.canChange ? h("button", { class: "btn-danger", type: "button", id: "sensorOff", onclick: () => send("DELETE") }, "Turn off") : null,
+        s && (info.canChange || info.canTurnOff) ? h("button", { class: "btn-danger", type: "button", id: "sensorOff", onclick: () => send("DELETE") }, "Turn off") : null,
         h("button", { class: "btn-ghost", type: "button", onclick: () => m.close() }, "Close"),
         info.canChange ? h("button", { class: "btn-primary", type: "button", id: "sensorSave", onclick: () => send("PUT", { name: name.value, cell: cell.value, unit: unit.value, hideItems: hide.checked }) }, s ? "Save" : "Show in Home Assistant") : null));
   }

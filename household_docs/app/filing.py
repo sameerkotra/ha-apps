@@ -75,7 +75,7 @@ def type_of(node) -> str:
 def matches(rule, node) -> bool:
     if node["kind"] == "folder":
         return False
-    if not re.match(pattern_mod.wildcard_to_regex(rule["pattern"]), node["name"], re.I):
+    if not pattern_mod.wildcard_matches(rule["pattern"], node["name"]):
         return False
     if rule["type"] and type_of(node) != rule["type"]:
         return False
@@ -307,15 +307,16 @@ def run_queue(limit: int = QUEUE_PER_RUN) -> int:
         ids = [r["node_id"] for r in conn.execute("SELECT node_id FROM filing_queue ORDER BY queued_at LIMIT ?", (limit,))]
     done = 0
     for nid in ids:
+        # off the queue first, in its own commit: an arrival that breaks the rules is tried once, not again
+        # after every restart (review 2026-10 D1)
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM filing_queue WHERE node_id = ?", (nid,))
         try:
             with db.get_conn() as conn:
-                conn.execute("DELETE FROM filing_queue WHERE node_id = ?", (nid,))
                 if apply_rules(conn, nid):
                     done += 1
         except Exception:
             logger.exception("Filing an arrived file failed")
-            with db.get_conn() as conn:
-                conn.execute("DELETE FROM filing_queue WHERE node_id = ?", (nid,))
     return done
 
 

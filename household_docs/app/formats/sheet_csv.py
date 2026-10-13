@@ -54,6 +54,7 @@ def detect_separator(text: str) -> str:
 
 
 def _cell_of(text: str) -> dict | None:
+    text = M.strip_controls(text)             # Excel's files can't hold them (review 2026-10 DI2)
     if text == "":
         return None
     if text.startswith("=") and len(text) > 1:

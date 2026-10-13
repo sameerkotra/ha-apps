@@ -24,7 +24,7 @@ import threading
 
 from fastapi import HTTPException
 
-from . import config, db, settings, sharing
+from . import config, db, kids, settings, sharing
 from .common import sensor_publisher
 from .store import nodes, roots
 
@@ -84,7 +84,17 @@ def _target(conn, user: dict, ref: str, wanted: str):
     node, role = sharing.require(conn, user, ref, wanted)
     if node["kind"] not in ("checklist", "sheet", "folder"):
         raise HTTPException(422, "Checklists, sheets and folders can be shown in Home Assistant.")
+    kids.refuse_sheet(user, node["kind"])          # no sheets in Kids' space, a cell's value either (review 2026-10 D4)
     return node["kind"], node, roots.root_row(conn, node["root_id"]), role
+
+
+def may_publish(root, role) -> bool:
+    """Showing something in Home Assistant shows it to everyone who uses Home Assistant: in a person's folder only
+    its owner or a manager may (never an editor of something shared with them — review 2026-10 D5, as for the
+    AI's folders); in an admin shared folder anyone with Read and write."""
+    if root is not None and root["kind"] == "shared":
+        return sharing.at_least(role, "editor")
+    return sharing.at_least(role, "manager")
 
 
 def row_of(conn, ref: str):
@@ -122,7 +132,8 @@ def info(conn, user: dict, ref: str) -> dict:
              "unit": opts.get("unit"), "hideItems": bool(opts.get("hideItems")), "createdAt": r["created_at"],
              "createdByName": who["name"] if who else None}
     on = bool(settings.get("ha_sensors", conn))
-    return {"sensor": s, "kind": kind, "enabled": on, "canChange": on and sharing.at_least(role, "editor"),
+    return {"sensor": s, "kind": kind, "enabled": on,
+            "canChange": on and may_publish(root, role), "canTurnOff": s is not None and sharing.at_least(role, "editor"),
             "suggested": f"sensor.docs_{slug(_title(node, root))}{SUFFIX[kind]}"}
 
 
@@ -157,7 +168,9 @@ def clean_cell(cell: str) -> str:
 def turn_on(conn, user: dict, ref: str, body: dict) -> dict:
     if not settings.get("ha_sensors", conn):
         raise HTTPException(403, "An admin has turned off showing items in Home Assistant.")
-    kind, node, root, _role = _target(conn, user, ref, "editor")
+    kind, node, root, role = _target(conn, user, ref, "editor")
+    if not may_publish(root, role):
+        raise HTTPException(403, "Only its owner (or a manager) can show this in Home Assistant.")
     name = (body.get("name") or "").strip()[:80] or _title(node, root)
     unit = (body.get("unit") or "").strip()[:20] or None
     hide = bool(body.get("hideItems"))
@@ -256,8 +269,8 @@ def state_of(conn, r) -> tuple | None:
         if node is None:
             return None
         if r["kind"] == "folder":
-            where = "n.root_id = ? AND substr(n.rel, 1, ?) = ?"
-            params = [node["root_id"], len(node["rel"]) + 1, node["rel"] + "/"]
+            where = nodes.INSIDE_SQL
+            params = nodes.inside_params(node["root_id"], node["rel"])
     if r["kind"] == "folder":
         cnt = conn.execute(f"SELECT COUNT(*) FROM nodes n WHERE {where} AND n.kind != 'folder' AND {nodes.LIVE}",
                            params).fetchone()[0]
