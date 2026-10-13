@@ -112,6 +112,51 @@ class DbCore(unittest.TestCase):
         with db_core.closing(self._connect) as c:
             self.assertEqual([r[0] for r in c.execute("SELECT id FROM users")], ["u1"])
 
+    def test_default_pragmas(self):
+        conn = self._connect()
+        try:
+            self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            self.assertEqual(conn.execute("PRAGMA synchronous").fetchone()[0], 1)      # NORMAL
+        finally:
+            conn.close()
+
+    def test_maintenance_gate(self):
+        import threading
+        import time
+        gate = db_core.MaintenanceGate()
+        order = []
+        started = threading.Event()
+
+        def worker():
+            with gate.work():
+                started.set()
+                time.sleep(0.1)
+                order.append("work")
+        t = threading.Thread(target=worker)
+        t.start()
+        started.wait(2)
+        t0 = time.monotonic()
+        with gate.pause():                               # waits for the worker
+            order.append("pause")
+            self.assertTrue(gate.paused)
+            with self.assertRaises(TimeoutError):
+                with gate.work(timeout=0.05):
+                    pass
+        t.join(2)
+        self.assertEqual(order, ["work", "pause"])
+        self.assertGreaterEqual(time.monotonic() - t0, 0.05)
+        self.assertEqual(gate.generation, 1)
+        with gate.work():                                # open again
+            pass
+        with gate.work():
+            with self.assertRaises(TimeoutError):
+                with gate.pause(timeout=0.05):
+                    pass
+        self.assertFalse(gate.paused)
+        with gate.pause():
+            pass
+        self.assertEqual(gate.generation, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

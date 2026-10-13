@@ -68,6 +68,22 @@ class BuildFilesTests(unittest.TestCase):
                 else:
                     self.assertEqual(len(check_build.proxy_header_problems("x", d)), want)
 
+    def test_unpinned_requirements_and_warnings(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("fastapi==0.1\nuvicorn[standard]==0.53.0\nrequests>=2\npytest\n-r x.txt\n")
+        try:
+            self.assertEqual(check_build.unpinned(f.name), ["requests", "pytest"])
+            self.assertEqual(check_build.requirement_lines(f.name)[1], ("uvicorn", "[standard]", "0.53.0"))
+        finally:
+            os.remove(f.name)
+        w = check_build.base_image_warning
+        self.assertIn("floats", w("x", "python:3.12-alpine"))
+        self.assertIn("floats", w("x", "docker.io/library/python:3.12-slim AS build"))
+        self.assertIn("not digest", w("x", "python:3.13-slim-trixie"))
+        self.assertIsNone(w("x", "python:3.13-slim-trixie@sha256:" + "0" * 64))
+        self.assertTrue(all(isinstance(x, str) for x in check_build.warnings()))   # warnings never fail the build
+
     def test_requirements_parsing(self):
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:

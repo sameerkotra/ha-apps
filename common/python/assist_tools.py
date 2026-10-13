@@ -45,6 +45,7 @@ fields are everywhere on the bus (APP_MESSAGES_SPEC §6); the model is told the 
 """
 import json
 import logging
+import math
 import os
 import re
 import urllib.request
@@ -139,8 +140,8 @@ class Arg:
                 raise bad
             return value
         if self.type == "number":
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value:
-                raise bad
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise bad                                   # NaN and ±Infinity (json.loads accepts them) too
             if (self.min is not None and value < self.min) or (self.max is not None and value > self.max):
                 raise bad
             return value
@@ -149,8 +150,8 @@ class Arg:
                 raise bad
             return value
         if self.type == "enum":
-            if value not in self.values:
-                raise bad
+            if isinstance(value, bool) or value not in self.values or type(value) not in {type(v) for v in self.values}:
+                raise bad                                   # True isn't the choice 1, 1 isn't the choice "1"
             return value
         if self.type == "date":
             if not isinstance(value, str) or not _DATE_RE.match(value):

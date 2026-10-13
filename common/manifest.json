@@ -1,5 +1,5 @@
 {
-  "_doc": "Which shared files each app gets, and where. Groups: python -> the app's Python package, static -> its browser files, tests -> its tests. Run tools/sync_common.py after any change.",
+  "_doc": "Which shared files each app gets, and where. Groups: python -> the app's Python package, static -> its browser files, tests -> its tests. Run tools/sync_common.py after any change. Every top-level folder that carries shared copies must be listed here: tools/sync_common.py --check fails on a stamped copy anywhere else.",
   "apps": {
     "calorie_tracker": {
       "dest": {
@@ -24,7 +24,8 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -57,7 +58,8 @@
           "fake_ha.py",
           "test_fake_ha.py",
           "test_deeplinks.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -86,7 +88,9 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py",
+          "image_guard.py"
         ],
         "static": [
           "backnav.js",
@@ -119,7 +123,9 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_deeplinks.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py",
+          "test_image_guard.py"
         ]
       }
     },
@@ -143,7 +149,8 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py"
         ],
         "tests": [
           "__init__.py",
@@ -162,7 +169,8 @@
           "fake_ha_bus.py",
           "test_app_bus.py",
           "test_assist_tools.py",
-          "test_deeplinks.py"
+          "test_deeplinks.py",
+          "test_wildcard.py"
         ],
         "static": [
           "theme-boot.js",
@@ -197,7 +205,8 @@
           "ai_client.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -229,7 +238,8 @@
           "fake_ha_bus.py",
           "test_app_bus.py",
           "test_assist_tools.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -256,7 +266,9 @@
           "web_security.py",
           "backup_core.py",
           "app_bus.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "wildcard.py",
+          "image_guard.py"
         ],
         "static": [
           "whoami.js",
@@ -286,7 +298,9 @@
           "fake_ha_bus.py",
           "test_app_bus.py",
           "test_assist_tools.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py",
+          "test_image_guard.py"
         ]
       }
     },
@@ -317,7 +331,9 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py",
+          "image_guard.py"
         ],
         "static": [
           "backnav.js",
@@ -353,7 +369,9 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_deeplinks.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py",
+          "test_image_guard.py"
         ]
       }
     },
@@ -377,7 +395,8 @@
           "settings_core.py",
           "people_admin.py",
           "web_security.py",
-          "backup_core.py"
+          "backup_core.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -405,7 +424,8 @@
           "test_people_admin.py",
           "test_web_security.py",
           "test_backup_core.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -432,7 +452,9 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py",
+          "image_guard.py"
         ],
         "static": [
           "backnav.js",
@@ -463,7 +485,9 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_deeplinks.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py",
+          "test_image_guard.py"
         ]
       }
     },
@@ -493,7 +517,8 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -527,7 +552,8 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_deeplinks.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -557,7 +583,8 @@
           "ai_client.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -592,7 +619,8 @@
           "fake_ha_bus.py",
           "test_app_bus.py",
           "test_assist_tools.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -619,7 +647,8 @@
           "ai_client.py",
           "app_bus.py",
           "ha_ws.py",
-          "assist_tools.py"
+          "assist_tools.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -649,7 +678,8 @@
           "test_assist_tools.py",
           "fake_ha.py",
           "test_fake_ha.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -670,7 +700,8 @@
           "db_core.py",
           "settings_core.py",
           "web_security.py",
-          "backup_core.py"
+          "backup_core.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -693,7 +724,8 @@
           "test_settings_core.py",
           "test_web_security.py",
           "test_backup_core.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
         ]
       }
     },
@@ -718,7 +750,8 @@
           "web_security.py",
           "backup_core.py",
           "sensor_publisher.py",
-          "deeplinks.py"
+          "deeplinks.py",
+          "wildcard.py"
         ],
         "static": [
           "backnav.js",
@@ -746,7 +779,49 @@
           "fake_ha.py",
           "test_fake_ha.py",
           "test_deeplinks.py",
-          "test_ha_time.py"
+          "test_ha_time.py",
+          "test_wildcard.py"
+        ]
+      }
+    },
+    "household_ai_docker": {
+      "dest": {
+        "python": "app/common",
+        "static": "app/static/common",
+        "tests": "tests/common_tests"
+      },
+      "files": {
+        "python": [
+          "__init__.py",
+          "auth_core.py",
+          "backup_core.py",
+          "db_core.py",
+          "ha_client.py",
+          "ha_time.py",
+          "housekeeping.py",
+          "settings_core.py",
+          "web_security.py",
+          "wildcard.py"
+        ],
+        "static": [
+          "backnav.js",
+          "settings.css",
+          "settings.js",
+          "theme-boot.js",
+          "themes.css",
+          "ui.js"
+        ],
+        "tests": [
+          "__init__.py",
+          "env.py",
+          "ingress.py",
+          "packaging_core.py",
+          "test_auth_core.py",
+          "test_backup_core.py",
+          "test_db_core.py",
+          "test_settings_core.py",
+          "test_web_security.py",
+          "test_wildcard.py"
         ]
       }
     }

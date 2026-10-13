@@ -1,4 +1,4 @@
-# Shared file: edit common/python/auth_core.py and run tools/sync_common.py; don't edit this copy. sha256=d8323804963fb9349aa318dfc1ae46cd8aa9270af7aa3063d601acf17243d08b
+# Shared file: edit common/python/auth_core.py and run tools/sync_common.py; don't edit this copy. sha256=d35b2d3f0d654b780e0f4dafc9828bb6c95ce86128cda4ed156fd167348d031c
 """Who is asking, and are they an admin? The Home Assistant ingress part every app shares
 (shared: common/python/auth_core.py, copied into each app's app/common/ by tools/sync_common.py).
 
@@ -12,7 +12,9 @@ their requests to the app (Ingress), adding:
 
 Those headers prove nothing on their own — anything else on Home Assistant's internal network could
 send them — so every app first refuses any connection that doesn't come from the ingress proxy
-(172.30.32.2) or, where the app allows it, loopback (`from_ingress` / `refuse_outsiders`).
+(172.30.32.2) (`from_ingress` / `refuse_outsiders`). Loopback is trusted only outside Home Assistant
+(`default_hosts`: no SUPERVISOR_TOKEN or no /data/options.json — tests, development), never inside a
+running app container, where another process of the same container could otherwise forge the headers.
 
 Admins are the people on the app's `admin_users` option (Configuration tab), matched by user id or
 login name without regard to case, never by display name (`is_admin`). An empty list means nobody is
@@ -46,7 +48,25 @@ logger = logging.getLogger("auth")
 # ---------------------------------------------------------------------------------------------
 INGRESS_PROXY = "172.30.32.2"                     # Supervisor's ingress proxy
 LOOPBACK = frozenset({"127.0.0.1", "::1"})        # the container itself (health checks, local tests)
-INGRESS_HOSTS = frozenset({INGRESS_PROXY}) | LOOPBACK
+OPTIONS_FILE = "/data/options.json"               # every app container the Supervisor starts has it
+
+
+def inside_home_assistant() -> bool:
+    """True in an app container that Home Assistant's Supervisor started (a token and an options file)."""
+    return bool(os.environ.get("SUPERVISOR_TOKEN")) and os.path.isfile(OPTIONS_FILE)
+
+
+def default_hosts(inside: bool | None = None) -> frozenset:
+    """The addresses `from_ingress` trusts by default. Inside Home Assistant only the ingress proxy: a
+    process in the same container (the PDF tools run as `pdfworker` by sandbox_run, a hijacked
+    library) must not be able to connect to 127.0.0.1 with forged identity headers. Outside (tests,
+    development, health checks) loopback counts too."""
+    if inside is None:
+        inside = inside_home_assistant()
+    return frozenset({INGRESS_PROXY}) if inside else frozenset({INGRESS_PROXY}) | LOOPBACK
+
+
+INGRESS_HOSTS = default_hosts()
 
 FORBIDDEN_DETAIL = "Forbidden — access only via Home Assistant"
 
@@ -57,8 +77,9 @@ def client_host(conn, default=None):
 
 
 def from_ingress(conn, allowed=INGRESS_HOSTS) -> bool:
-    """Whether the connection comes from one of the `allowed` addresses (default: the ingress proxy or
-    loopback). An unknown peer address never counts."""
+    """Whether the connection comes from one of the `allowed` addresses (default `INGRESS_HOSTS`: the
+    ingress proxy, plus loopback only outside Home Assistant — see `default_hosts`). An unknown peer
+    address never counts."""
     return client_host(conn) in allowed
 
 

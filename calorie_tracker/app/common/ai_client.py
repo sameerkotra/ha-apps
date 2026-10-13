@@ -1,4 +1,4 @@
-# Shared file: edit common/python/ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=4d205b8564d0406ea2e1c88048204e4899d253ed0cc6dc9dfff505916565014e
+# Shared file: edit common/python/ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=550955f4ad494a001ec1bf279fba4db58f3d1f73a8d6916faff36fcc2f7da1d0
 """Talking to an AI model: Ollama, any OpenAI-compatible server, or Anthropic Claude (shared by the
 household apps: common/python/ai_client.py, copied into each app's app/common/ by
 tools/sync_common.py). Standard library only; nothing is imported from the app.
@@ -32,7 +32,11 @@ access key) | unreachable (also: the address answered with a redirect, which is 
 key never goes anywhere else) | timeout | auth | rate_limit | not_found | bad_request | bad_response.
 
 Requests that the provider answers 429/500/502/503/504/529 are retried up to MAX_RETRIES times,
-waiting Retry-After (1–60 s) or 5, 15, 45 s. A 400 from an OpenAI-compatible server about an
+waiting Retry-After (1–60 s) or 5, 15, 45 s — but never past `deadline` seconds in all (a keyword of
+every call, default DEFAULT_DEADLINE = 300: the retries and waits fit in it, so one request can't hold a
+worker thread for many minutes; what remains of it also caps each attempt's timeout). The address must be
+http:// or https:// (AIError not_configured otherwise: urllib would open file:// and ftp:// addresses), and
+an answer body is read up to MAX_BODY_BYTES (20 MB) — more is bad_response. A 400 from an OpenAI-compatible server about an
 option it doesn't know is retried once without it (`openai_fallback`); a 400 from Claude about
 max_tokens is retried once with a smaller limit (`anthropic_shrink`).
 
@@ -50,6 +54,7 @@ import logging
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -58,6 +63,9 @@ ANTHROPIC_VERSION = "2023-06-01"
 RETRY_STATUSES = {429, 500, 502, 503, 504, 529}
 MAX_RETRIES = 3
 MAX_RETRY_WAIT = 60
+MAX_BODY_BYTES = 20 * 1024 * 1024
+DEFAULT_DEADLINE = 300.0
+ALLOWED_SCHEMES = ("http", "https")
 JSON_ONLY = "\n\nAnswer with the JSON object only."
 
 logger = logging.getLogger("ai_client")
@@ -96,17 +104,39 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+class BodyTooLarge(Exception):
+    """The provider's answer is over MAX_BODY_BYTES."""
+
+
+def _read_capped(fp, limit: int = MAX_BODY_BYTES) -> bytes:
+    data = fp.read(limit + 1)
+    if len(data) > limit:
+        raise BodyTooLarge(f"answer over {limit} bytes")
+    return data
+
+
+def check_url(url: str) -> None:
+    """The address must be http(s)://host…: raises ValueError otherwise (urllib would open file:// and ftp://)."""
+    u = urllib.parse.urlsplit(str(url or ""))
+    if u.scheme not in ALLOWED_SCHEMES or not u.hostname:
+        raise ValueError("The address must start with http:// or https:// and name a host.")
+
+
 def post(url: str, headers: dict, body: dict | None, timeout: float | None, method: str = "POST") -> tuple[int, str, dict]:
     """(status, body text, response headers). HTTP errors come back as a status, not an exception; so does a
-    redirect, which is never followed (see _NoRedirect)."""
+    redirect, which is never followed (see _NoRedirect). Only http(s) addresses (ValueError); a body over
+    MAX_BODY_BYTES raises BodyTooLarge."""
+    check_url(url)
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **headers}, method=method)
     try:
         with _OPENER.open(req, timeout=timeout) as resp:
-            return resp.status, resp.read().decode("utf-8", "replace"), dict(resp.headers)
+            return resp.status, _read_capped(resp).decode("utf-8", "replace"), dict(resp.headers)
     except urllib.error.HTTPError as e:
         try:
-            text = e.read().decode("utf-8", "replace")
+            text = _read_capped(e).decode("utf-8", "replace")
+        except BodyTooLarge:
+            raise
         except Exception:
             text = ""
         return e.code, text, dict(e.headers or {})
@@ -265,14 +295,24 @@ class Client:
         return self._error(cfg, self.wording.timeout, "timeout", seconds=int(timeout or 0))
 
     def request(self, cfg, path: str, headers: dict, body: dict | None, timeout: float | None,
-                method: str = "POST") -> tuple[int, str]:
-        """One call with retries on rate limits / overload; network errors become AIError."""
+                method: str = "POST", deadline: float | None = DEFAULT_DEADLINE) -> tuple[int, str]:
+        """One call with retries on rate limits / overload, all within `deadline` seconds; network errors
+        become AIError."""
         url = f"{cfg.url}{path}"
+        try:
+            check_url(url)
+        except ValueError as e:
+            raise AIError(f"{cfg.label}: {e}", "not_configured") from None
+        end = time.monotonic() + deadline if deadline else None
         for attempt in range(MAX_RETRIES + 1):
+            left = None if end is None else max(0.1, end - time.monotonic())
+            each = timeout if left is None else (left if timeout is None else min(timeout, left))
             try:
-                status, text, resp_headers = self._post(url, headers, body, timeout, method)
+                status, text, resp_headers = self._post(url, headers, body, each, method)
             except TimeoutError as e:
                 raise self._timeout(cfg, timeout) from e
+            except BodyTooLarge as e:
+                raise self._error(cfg, self.wording.unexpected, "bad_response") from e
             except (urllib.error.URLError, ConnectionError, http.client.HTTPException, OSError) as e:
                 reason = getattr(e, "reason", e)
                 if self.wording.timeout_in_reason and (isinstance(reason, TimeoutError) or "timed out" in str(reason)):
@@ -285,11 +325,13 @@ class Client:
                                   scrub_all=True)
             if status in RETRY_STATUSES and attempt < MAX_RETRIES:
                 wait = retry_after(resp_headers, attempt)
+                if end is not None and time.monotonic() + wait > end:
+                    break                                   # no time left for another try: this answer stands
                 self.log.warning("%s answered %s; retrying in %.0f s", cfg.label, status, wait)
                 self._sleep(wait)
                 continue
             return status, text
-        return status, text  # pragma: no cover
+        return status, text
 
     def check(self, cfg, status: int, text: str) -> None:
         if status < 400:
@@ -317,7 +359,8 @@ class Client:
 
     # ---- the three providers ----
     def ollama(self, cfg, prompt: str, *, images=None, system: str | None = None, want_json: bool = False,
-               max_tokens: int | None = None, temperature: float | None = None, timeout: float | None = None) -> Reply:
+               max_tokens: int | None = None, temperature: float | None = None, timeout: float | None = None,
+               deadline: float | None = DEFAULT_DEADLINE) -> Reply:
         body = {"model": cfg.model, "prompt": prompt, "stream": False}
         if system:
             body["system"] = system
@@ -332,7 +375,7 @@ class Client:
             options["temperature"] = temperature
         if options:
             body["options"] = options
-        status, text = self.request(cfg, "/api/generate", {}, body, timeout)
+        status, text = self.request(cfg, "/api/generate", {}, body, timeout, deadline=deadline)
         self.check(cfg, status, text)
         data = self.parse(cfg, text)
         total = data.get("total_duration")
@@ -344,7 +387,7 @@ class Client:
 
     def openai(self, cfg, prompt: str, *, images=None, system: str | None = None, want_json: bool = False,
                max_tokens: int | None = None, temperature: float | None = None, timeout: float | None = None,
-               fallback=fallback_json_and_max_tokens) -> Reply:
+               fallback=fallback_json_and_max_tokens, deadline: float | None = DEFAULT_DEADLINE) -> Reply:
         """images: base64 PNGs, sent as data: URLs after the text."""
         if images:
             content = [{"type": "text", "text": prompt}]
@@ -360,9 +403,9 @@ class Client:
         if temperature is not None:
             body["temperature"] = temperature
         headers = self.auth_headers(cfg)
-        status, text = self.request(cfg, "/chat/completions", headers, body, timeout)
+        status, text = self.request(cfg, "/chat/completions", headers, body, timeout, deadline=deadline)
         if status == 400 and fallback(body, text):
-            status, text = self.request(cfg, "/chat/completions", headers, body, timeout)
+            status, text = self.request(cfg, "/chat/completions", headers, body, timeout, deadline=deadline)
         self.check(cfg, status, text)
         data = self.parse(cfg, text)
         try:
@@ -378,7 +421,7 @@ class Client:
 
     def anthropic(self, cfg, prompt: str, *, limit: int, images=None, system: str | None = None,
                   want_json: bool = False, temperature: float | None = None, timeout: float | None = None,
-                  shrink=shrink_to_named_maximum(8192)) -> Reply:
+                  shrink=shrink_to_named_maximum(8192), deadline: float | None = DEFAULT_DEADLINE) -> Reply:
         """limit: max_tokens to ask for. images: base64 PNGs, sent before the text."""
         content = [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}}
                    for b64 in images or []]
@@ -389,12 +432,12 @@ class Client:
         if temperature is not None:
             body["temperature"] = temperature
         headers = self.auth_headers(cfg)
-        status, text = self.request(cfg, "/v1/messages", headers, body, timeout)
+        status, text = self.request(cfg, "/v1/messages", headers, body, timeout, deadline=deadline)
         if status == 400 and "max_tokens" in text:
             # The model allows fewer output tokens than asked.
             body["max_tokens"] = shrink(error_text(text), limit)
             if body["max_tokens"] != limit:
-                status, text = self.request(cfg, "/v1/messages", headers, body, timeout)
+                status, text = self.request(cfg, "/v1/messages", headers, body, timeout, deadline=deadline)
         self.check(cfg, status, text)
         data = self.parse(cfg, text)
         answer = "".join(p.get("text", "") for p in data.get("content", []) if isinstance(p, dict) and p.get("type") == "text")
@@ -409,10 +452,10 @@ class Client:
     # ---- native tool calling ----
     def tool_call(self, cfg, prompt: str, tools: list[dict], *, system: str | None = None,
                   max_tokens: int | None = None, temperature: float | None = None,
-                  timeout: float | None = None) -> Reply:
+                  timeout: float | None = None, deadline: float | None = DEFAULT_DEADLINE) -> Reply:
         """Offer `tools` to the model: Reply.calls holds the ones it called, Reply.text any words."""
         if cfg.provider == "anthropic":
-            return self._anthropic_tools(cfg, prompt, tools, system, max_tokens or 4096, temperature, timeout)
+            return self._anthropic_tools(cfg, prompt, tools, system, max_tokens or 4096, temperature, timeout, deadline)
         functions = [{"type": "function", "function": {"name": t["name"], "description": t.get("description", ""),
                                                        "parameters": t.get("parameters") or {"type": "object", "properties": {}}}}
                      for t in tools]
@@ -426,7 +469,7 @@ class Client:
                 options["temperature"] = temperature
             if options:
                 body["options"] = options
-            status, text = self.request(cfg, "/api/chat", {}, body, timeout)
+            status, text = self.request(cfg, "/api/chat", {}, body, timeout, deadline=deadline)
             self.check(cfg, status, text)
             data = self.parse(cfg, text)
             message = data.get("message") if isinstance(data.get("message"), dict) else {}
@@ -441,9 +484,9 @@ class Client:
         if temperature is not None:
             body["temperature"] = temperature
         headers = self.auth_headers(cfg)
-        status, text = self.request(cfg, "/chat/completions", headers, body, timeout)
+        status, text = self.request(cfg, "/chat/completions", headers, body, timeout, deadline=deadline)
         if status == 400 and fallback_temperature_and_max_tokens(body, text):
-            status, text = self.request(cfg, "/chat/completions", headers, body, timeout)
+            status, text = self.request(cfg, "/chat/completions", headers, body, timeout, deadline=deadline)
         self.check(cfg, status, text)
         data = self.parse(cfg, text)
         try:
@@ -457,7 +500,8 @@ class Client:
         return Reply(text=answer, raw=self._raw(text), payload=data, input_tokens=usage.get("prompt_tokens"),
                      output_tokens=usage.get("completion_tokens"), calls=_function_calls(message.get("tool_calls")))
 
-    def _anthropic_tools(self, cfg, prompt, tools, system, limit, temperature, timeout) -> Reply:
+    def _anthropic_tools(self, cfg, prompt, tools, system, limit, temperature, timeout,
+                         deadline: float | None = DEFAULT_DEADLINE) -> Reply:
         body = {"model": cfg.model, "max_tokens": limit, "messages": [{"role": "user", "content": prompt}],
                 "tools": [{"name": t["name"], "description": t.get("description", ""),
                            "input_schema": t.get("parameters") or {"type": "object", "properties": {}}} for t in tools]}
@@ -465,7 +509,7 @@ class Client:
             body["system"] = system
         if temperature is not None:
             body["temperature"] = temperature
-        status, text = self.request(cfg, "/v1/messages", self.auth_headers(cfg), body, timeout)
+        status, text = self.request(cfg, "/v1/messages", self.auth_headers(cfg), body, timeout, deadline=deadline)
         self.check(cfg, status, text)
         data = self.parse(cfg, text)
         blocks = [b for b in data.get("content", []) if isinstance(b, dict)]
@@ -475,17 +519,17 @@ class Client:
                      calls=[{"name": b.get("name", ""), "args": b.get("input") if isinstance(b.get("input"), dict) else {}}
                             for b in blocks if b.get("type") == "tool_use" and b.get("name")])
 
-    def list_models(self, cfg, timeout: float = 10) -> list[str]:
+    def list_models(self, cfg, timeout: float = 10, deadline: float | None = 60) -> list[str]:
         """The models the provider offers (Test connection). Generates nothing. Raises AIError."""
         if cfg.provider == "ollama":
-            status, text = self.request(cfg, "/api/tags", {}, None, timeout, method="GET")
+            status, text = self.request(cfg, "/api/tags", {}, None, timeout, method="GET", deadline=deadline)
             self.check(cfg, status, text)
             return [self.model_name(m) for m in self.parse(cfg, text).get("models", []) if isinstance(m, dict)]
         if cfg.provider == "anthropic":
             if not cfg.api_key:
                 raise AIError("Enter the access key first.", "auth")
-            status, text = self.request(cfg, "/v1/models?limit=100", self.auth_headers(cfg), None, timeout, method="GET")
+            status, text = self.request(cfg, "/v1/models?limit=100", self.auth_headers(cfg), None, timeout, method="GET", deadline=deadline)
         else:
-            status, text = self.request(cfg, "/models", self.auth_headers(cfg), None, timeout, method="GET")
+            status, text = self.request(cfg, "/models", self.auth_headers(cfg), None, timeout, method="GET", deadline=deadline)
         self.check(cfg, status, text)
         return [m.get("id", "") for m in self.parse(cfg, text).get("data", []) if isinstance(m, dict)]

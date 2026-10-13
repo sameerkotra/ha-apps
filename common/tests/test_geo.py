@@ -90,6 +90,29 @@ class GeoTests(unittest.TestCase):
                 raise RuntimeError("the request failed")
         self.assertGreater(t.last, ended)      # stamped even when the request failed
 
+    def test_wait_books_slots_without_holding_the_lock(self):
+        t = geo.Throttle(0.2)
+        t.wait()                                              # now
+        done = []
+        start = time.monotonic()
+
+        def one():
+            t.wait()
+            done.append(time.monotonic() - start)
+        threads = [threading.Thread(target=one) for _ in range(3)]
+        for th in threads:
+            th.start()
+        time.sleep(0.02)
+        self.assertFalse(t._lock.locked())                    # the sleepers don't hold the lock
+        for th in threads:
+            th.join(3)
+        self.assertEqual(len(done), 3)
+        self.assertGreaterEqual(max(done), 0.55)              # slots at 0.2, 0.4, 0.6 s
+        with self.assertRaises(geo.Busy):
+            t.wait(max_wait=0.1)                              # the next slot is ~0.2 s away
+        before = t.last
+        self.assertEqual(t.last, before)                      # nothing booked
+
 
 if __name__ == "__main__":
     unittest.main()

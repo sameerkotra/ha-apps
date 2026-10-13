@@ -1,4 +1,4 @@
-# Shared file: edit common/python/ha_ws.py and run tools/sync_common.py; don't edit this copy. sha256=aae94c3659ce7882c24a07c8588f656c9f412738a41bb45cc4571b6fab729a21
+# Shared file: edit common/python/ha_ws.py and run tools/sync_common.py; don't edit this copy. sha256=021a65cc543362adb1dbfd53a428a0c723cb161aa4c0340b0b4fc1efd8ea1ab9
 """A small WebSocket client to Home Assistant's event bus, for several subscriptions.
 
 Shared by the household apps (common/python/ha_ws.py, copied into an app's
@@ -33,6 +33,7 @@ buttons (ha_events.py) and the app bus (app_bus.start(..., ws=that client))
 share one; each user removes only its own callbacks (unsubscribe/off_connect).
 """
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -46,6 +47,14 @@ from urllib.parse import urlparse
 logger = logging.getLogger("ha_ws")
 
 DEFAULT_URL = "ws://supervisor/core/websocket"
+MAX_FRAME = 16 * 1024 * 1024               # one frame
+MAX_MESSAGE = 32 * 1024 * 1024             # a message made of several frames (Home Assistant caps events far lower)
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"   # RFC 6455's fixed string for Sec-WebSocket-Accept
+
+
+def accept_for(key: str) -> str:
+    """The Sec-WebSocket-Accept a real WebSocket server answers to `key` (RFC 6455 §4.2.2)."""
+    return base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
 
 
 class WSClosed(Exception):
@@ -81,10 +90,20 @@ class MiniWS:
             head += chunk
             if len(head) > 16384:
                 raise WSClosed("bad handshake")
-        status = head.split(b"\r\n", 1)[0]
+        raw, self.buf = head.split(b"\r\n\r\n", 1)
+        lines = raw.split(b"\r\n")
+        status = lines[0]
         if b" 101 " not in status + b" ":
             raise WSClosed(f"handshake refused: {status[:60]!r}")
-        self.buf = head.split(b"\r\n\r\n", 1)[1]
+        # Something that isn't a WebSocket server (a proxy's error page with a 101, a plain HTTP server)
+        # doesn't know the answer to our random key: refuse it rather than read its bytes as frames.
+        accept = None
+        for line in lines[1:]:
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"sec-websocket-accept":
+                accept = value.strip().decode("latin-1")
+        if accept != accept_for(key):
+            raise WSClosed("handshake answer has no valid Sec-WebSocket-Accept")
 
     def _recv_exact(self, n: int) -> bytes:
         while len(self.buf) < n:
@@ -132,7 +151,7 @@ class MiniWS:
                 n = struct.unpack("!H", self._recv_exact(2))[0]
             elif n == 127:
                 n = struct.unpack("!Q", self._recv_exact(8))[0]
-            if n > 16 * 1024 * 1024:
+            if n > MAX_FRAME or len(message) + n > MAX_MESSAGE:
                 raise WSClosed("frame too large")
             mask = self._recv_exact(4) if b2 & 0x80 else None
             payload = self._recv_exact(n)

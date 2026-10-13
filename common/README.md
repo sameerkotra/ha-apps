@@ -75,7 +75,9 @@ only the app's own calls; to intercept the shared modules too, replace it in `ap
    `sync_common.py --check`).
 4. Bump the version of every app that changed and add a CHANGELOG line ("Shared code: …").
 
-`python tools/sync_common.py --check` changes nothing and fails on any difference;
+`python tools/sync_common.py --check` changes nothing and fails on any difference — including a stamped copy in
+ANY top-level folder the manifest doesn't list (every folder that carries copies, `household_ai_docker` too,
+must be in `manifest.json`, or its copies drift unseen);
 `python tools/sync_common.py --adopt <app>/app/common/x.py` takes a copy that was edited by mistake back
 into `common/` and copies it everywhere.
 
@@ -111,6 +113,37 @@ pins exactly that version. `build/Dockerfile.template` is the Dockerfile pattern
 (also run by the repository tests, `tests/test_build.py`) checks every app's requirements, Dockerfile and
 .dockerignore against them, including that the shared copies reach the image. `docs/DOCS_TEMPLATE.md` is the
 layout of each app's README.md, DOCS.md and CHANGELOG.md.
+
+## Request bodies, uploads and images
+
+`web_security.BodyLimit` (an ASGI middleware, added before the app's own middleware) refuses a body over the route's limit with 413 — by
+Content-Length before the route runs, and by counting a chunked body as it arrives; routes that need the
+length up front refuse chunked bodies (411). `SecurityHeaders(..., static_immutable=True)` (opt-in: only for an
+app whose pages link every asset with a `?v=` that changes on each release) lets browsers keep versioned static
+assets for good (`Cache-Control: public, max-age=31536000, immutable`); the API is `no-store` by default
+(`api_no_store="default"`: a route's own Cache-Control is kept). `image_guard.check_image`
+reads an upload's header (format, width, height) without decoding it and `image_guard.decode_slot()` lets at
+most two decodes run at once. `wildcard.match` matches `*`/`?`/`[..]` patterns without regular expressions
+(a typed pattern can't hang a thread). `backup_core.check_members(..., max_total_bytes=…)` refuses a zip that
+unpacks to more than the app accepts; `sandbox_run.Scratch.read()` / `.files()` read only regular files a tool
+wrote; `db_core.MaintenanceGate` pauses background work during a restore.
+
+## App messages: signing
+
+`from` on the event bus is a claim: any app with `homeassistant_api: true` (or an HA admin) can fire a
+`household_apps` event as any app — including as the Household Assistant, which lets it call every app's
+assistant tools as any person. `app_bus.start(..., signing_key=…)` (a function reading the app's
+`bus_signing_key` secret setting) makes every event carry an HMAC-SHA256 `sig`, and an app with a key refuses
+anything unsigned (`nack unsigned`). Set the SAME key in every household app's Admin → App settings; without
+one, everything works as before (unauthenticated). The Setting line each app adds is in app_bus's docstring.
+
+## Who counts as the ingress proxy
+
+`auth_core.from_ingress` / `refuse_outsiders` trust the Supervisor's ingress proxy (172.30.32.2). Loopback
+(127.0.0.1, ::1) counts only outside Home Assistant (`auth_core.default_hosts()`: no `SUPERVISOR_TOKEN`, or no
+`/data/options.json` — tests and development); inside a running app container another process (a PDF tool, a
+hijacked library) could otherwise connect to 127.0.0.1 with forged identity headers. A health check from inside
+the container must use a route that needs no identity.
 
 ## Security headers and inline scripts
 

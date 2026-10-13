@@ -200,7 +200,8 @@ class TestBasics(ApiBase):
     def test_html_shell_not_cached(self):
         # no static dir in tests -> nothing to fetch; middleware must not break API responses
         r = self.c.get("/api/health")
-        self.assertNotIn("no-store", r.headers.get("cache-control", ""))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers.get("cache-control"), "no-store")   # the shared default: API answers aren't cached
 
 
 class TestPhonesFromHomeAssistant(ApiBase):

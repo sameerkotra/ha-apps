@@ -19,7 +19,13 @@ as root.
     with sandbox_run.Scratch() as box:
         src = box.add_file(upload_path, "in.pdf")            # a copy the tool may read
         res = box.run(["pdftotext", "-layout", src, "-"], timeout=30, text=True)
-        png = box.read("page-1.png")                          # what the tool wrote
+        png = box.read("page-1.png")                          # what the tool wrote (a regular file, at most 64 MB)
+        for name in box.files("page-*.png"): ...              # the regular files the tool wrote, sorted
+
+The tool's output is read by the app (root) from a folder the tool's user owns, so `read()` and `files()`
+only ever open a REGULAR file by that name — never a symbolic link, a device or a FIFO a hijacked tool could
+have planted there to make the app read /data — and `read()` refuses anything over `max_bytes`
+(SandboxError). The caller's glob/open on `box.path` has none of that: use these.
 
 `Scratch.run(...)` takes subprocess.run's usual capture/text/timeout arguments (list-form commands only)
 and returns a CompletedProcess; FileNotFoundError and subprocess.TimeoutExpired come through as they do
@@ -27,9 +33,11 @@ from subprocess.run. Needs nothing from the app.
 """
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import pwd
+import stat
 import resource
 import shutil
 import subprocess
@@ -46,6 +54,7 @@ FILE_BYTES = 512 * 1024 * 1024           # the largest file the tool may write
 OPEN_FILES = 64
 PROCESSES = 64                           # per user: pdfworker's own processes only
 PATH = "/usr/local/bin:/usr/bin:/bin"
+MAX_READ_BYTES = 64 * 1024 * 1024        # the largest output file read() hands back
 
 _warned = False
 
@@ -144,9 +153,44 @@ class Scratch:
         self._own(dest)
         return dest
 
-    def read(self, name: str) -> bytes:
-        with open(self.join(name), "rb") as f:
-            return f.read()
+    def read(self, name: str, max_bytes: int = MAX_READ_BYTES) -> bytes:
+        """The content of a REGULAR file the tool wrote (never through a symlink; over `max_bytes` or anything
+        that isn't a plain file is a SandboxError)."""
+        path = self.join(name)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            fd = os.open(path, flags)
+        except OSError as e:
+            if e.errno == getattr(os, "ELOOP", 40):
+                raise SandboxError(f"{name!r} is a symbolic link, not a file the tool wrote") from None
+            raise
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode):
+                raise SandboxError(f"{name!r} isn't a regular file")
+            if st.st_size > max_bytes:
+                raise SandboxError(f"{name!r} is {st.st_size} bytes, more than the {max_bytes} allowed")
+            with os.fdopen(fd, "rb") as f:
+                fd = -1
+                return f.read(max_bytes + 1)[:max_bytes]
+        finally:
+            if fd >= 0:
+                os.close(fd)
+
+    def files(self, pattern: str = "*") -> list[str]:
+        """The names (not paths) of the regular files in the scratch folder matching `pattern` (fnmatch),
+        sorted; symbolic links and anything else the tool may have planted are left out."""
+        out = []
+        for name in os.listdir(self.path):
+            if not fnmatch.fnmatchcase(name, pattern):
+                continue
+            try:
+                st = os.lstat(os.path.join(self.path, name))
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                out.append(name)
+        return sorted(out)
 
     def run(self, cmd: list, *, timeout: float, **kwargs) -> subprocess.CompletedProcess:
         """subprocess.run(cmd) as the worker user, in the scratch folder, with the limits."""

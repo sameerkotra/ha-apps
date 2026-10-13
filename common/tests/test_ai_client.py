@@ -163,6 +163,38 @@ class ErrorTests(unittest.TestCase):
         self.assertEqual(sleeps, [5.0, 15.0, 45.0])
         self.assertEqual((e.exception.kind, e.exception.raw), ("rate_limit", "busy"))
 
+    def test_deadline_cuts_the_retries(self):
+        post = FakePost(*[(503, "busy")] * 4)
+        c, sleeps = client(post)
+        with self.assertLogs("ai_client", "WARNING"), self.assertRaises(core.AIError) as e:
+            c.ollama(Cfg("ollama"), "q", deadline=10)
+        self.assertEqual(sleeps, [5.0])                       # 5 s fits in 10 s, the next 15 s wouldn't
+        self.assertEqual(e.exception.kind, "rate_limit")
+        self.assertEqual(len(post.calls), 2)
+        post = FakePost((200, {"response": "ok"}))
+        c, _ = client(post)
+        self.assertEqual(c.ollama(Cfg("ollama"), "q", timeout=120, deadline=30).text, "ok")
+
+    def test_only_http_addresses(self):
+        for url in ("file:///etc/passwd#", "ftp://x/", "ai.local", "http:///x", ""):
+            c, _ = client(FakePost((200, {"response": "ok"})))
+            with self.assertRaises(core.AIError) as e:
+                c.ollama(Cfg("ollama", url=url), "q")
+            self.assertEqual(e.exception.kind, "not_configured", url)
+        with self.assertRaises(ValueError):
+            core.post("file:///etc/passwd", {}, None, 1)
+        self.assertIsNone(core.check_url("https://api.anthropic.com"))
+
+    def test_answer_body_is_capped(self):
+        import io
+        self.assertEqual(core._read_capped(io.BytesIO(b"x" * 10), 10), b"x" * 10)
+        with self.assertRaises(core.BodyTooLarge):
+            core._read_capped(io.BytesIO(b"x" * 11), 10)
+        c, _ = client(FakePost(core.BodyTooLarge("big")))
+        with self.assertRaises(core.AIError) as e:
+            c.ollama(Cfg("ollama"), "q")
+        self.assertEqual(e.exception.kind, "bad_response")
+
     def test_retry_after_header(self):
         post = FakePost((429, "", {"Retry-After": "3"}), (200, {"response": "ok"}))
         c, sleeps = client(post)

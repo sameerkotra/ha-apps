@@ -19,7 +19,7 @@ fake_config.SUPERVISOR_TOKEN = ""
 fake_config.SUPERVISOR_CORE_API = "http://127.0.0.1:9/api"
 sys.modules["common.config"] = fake_config
 
-from common.python import ha_client, ha_time, housekeeping  # noqa: E402
+from common.python import ha_client, ha_notify, ha_time, housekeeping  # noqa: E402
 from common.tests.fake_ha import FakeHA  # noqa: E402
 
 
@@ -38,6 +38,7 @@ class HAClientTests(unittest.TestCase):
         self.ha.requests.clear()
         self.ha.states.clear()
         self.ha.fail = False
+        self.ha.people = None
         ha_client._states_cache = None
         ha_client._warned_no_token = False
 
@@ -73,8 +74,37 @@ class HAClientTests(unittest.TestCase):
         self.ha.states.update({"person.ann": {"state": "home", "attributes": {"user_id": "u1", "friendly_name": "Ann"}},
                                "person.dog": {"state": "home", "attributes": {}},
                                "sensor.x": {"state": "1", "attributes": {"user_id": "u9"}}})
+        self.assertEqual(ha_client.fetch_persons_blocking(),                 # no template answer: GET /states
+                         [{"user_id": "u1", "name": "Ann", "entity_id": "person.ann"}])
+        # Home Assistant renders just the people (POST /template): GET /states isn't read at all
+        self.ha.people = {"persons": [{"entity_id": "person.ann", "name": "Ann", "user_id": "u1"},
+                                      {"entity_id": "person.dog", "name": "Dog", "user_id": None}]}
+        self.ha.requests.clear()
         self.assertEqual(ha_client.fetch_persons_blocking(),
                          [{"user_id": "u1", "name": "Ann", "entity_id": "person.ann"}])
+        self.assertEqual([(r[0], r[1]) for r in self.ha.requests], [("POST", "/api/template")])
+        self.assertIn("states.person", self.ha.requests[0][2]["template"])
+        for odd in ([{"entity_id": "person.ann", "user_id": "u1"}], {"persons": [{"name": "x"}]}):   # the states again
+            self.ha.people = odd
+            self.assertEqual(len(ha_client.fetch_persons_blocking()), 1)
+
+    def test_notify_entities(self):
+        self.ha.notify_services = ["mobile_app_pixel"]
+        self.ha.notify_entities = ["kitchen_speaker"]
+        self.addCleanup(setattr, self.ha, "notify_services", None)
+        self.addCleanup(setattr, self.ha, "notify_entities", [])
+        ha_notify._targets_cache = None
+        self.addCleanup(setattr, ha_notify, "_targets_cache", None)
+        # no template answer: GET /states, as before
+        self.assertEqual(ha_notify.fetch_notify_targets_blocking(force=True), ({"mobile_app_pixel"}, {"kitchen_speaker"}))
+        # Home Assistant renders just the names: GET /states isn't read
+        self.ha.people = {"notify_entities": ["hall_display", "Bad Name!"]}
+        self.ha.requests.clear()
+        self.assertEqual(ha_notify.fetch_notify_targets_blocking(force=True)[1], {"hall_display"})
+        self.assertNotIn(("GET", "/api/states"), [(r[0], r[1]) for r in self.ha.requests])
+        self.assertIn("states.notify", [r for r in self.ha.requests if r[1] == "/api/template"][0][2]["template"])
+        self.ha.people = [{"entity_id": "person.ann"}]                       # an answer to another template
+        self.assertEqual(ha_notify.fetch_notify_targets_blocking(force=True)[1], {"kitchen_speaker"})
 
     def test_no_token(self):
         fake_config.SUPERVISOR_TOKEN = ""

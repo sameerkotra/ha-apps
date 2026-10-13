@@ -7,7 +7,9 @@ belong to this install, telling people, …).
 
 Download
   `file_name(prefix, ext)`         "<prefix>-YYYYmmdd-HHMMSS<ext>" (the app passes its own clock / format)
-  `send_file(path, name, type)`    the file as a download, deleted once sent
+  `send_file(path, name, type)`    the file as a download, deleted once sent (a download the browser abandons
+                                   half-way can leave the file: `remove_stale(dir, prefix, max_age)` from the app's
+                                   housekeeping sweeps those up)
   `write_zip(target, members)`     a zip (path or file object) from (path, name[, compress_type]) members
                                    and `Text(name, data)` entries, in order; members may be a generator
                                    (e.g. `walk`)
@@ -20,7 +22,10 @@ Restore
                                    refusing it past `max_bytes`; `receive_sync` for a sync route
   `open_zip(source, not_zip)`      a ZipFile from a path or bytes, or the app's own error
   `check_members(z, …)`            every member's name is safe (no absolute path, no "..", no backslash —
-                                   or the app's own rule) and passes the app's `check(info)`
+                                   or the app's own rule) and passes the app's `check(info)`; with
+                                   `max_total_bytes` (and `max_members`) the declared uncompressed sizes are
+                                   added up first and a zip over the limit raises `too_big(total)` before
+                                   anything is extracted (a "zip bomb" can't fill the disk)
   `copy_out(z, name, dest)`        extract one member, streamed, replacing `dest` atomically
   `restore_file(tmp, db_path, …)`  swap an already-validated database file in (db_core.swap_in) and run the
                                    app's migrations, under the app's lock
@@ -29,7 +34,8 @@ Secret settings (access keys, passwords) never leave in a backup, and a restore 
 install has. The secret keys and their "not set" stored text come from the app (settings_core
 `Registry.secret_blanks()`; an app without the registry passes its own dict):
   `blank_settings(conn, blanks)`   in the backup COPY (e.g. `snapshot`'s `after=`): every secret row is
-                                   set to its blank text
+                                   set to its blank text, with `PRAGMA secure_delete = ON` so the old bytes
+                                   are overwritten in the file, not left in free space
   `saved_settings(conn, blanks)`   before a restore: this install's secrets that are set {key: stored text}
   `keep_settings(conn, saved, blanks)`  after the restore (migrations done): a secret the restored file
                                    leaves blank or lacks gets this install's value back; one the file
@@ -118,6 +124,7 @@ async def receive(source, dest_dir, *, suffix: str = ".db", prefix: str | None =
     `source` is an UploadFile (read in 1 MB chunks) or a Request (its raw body). Past `max_bytes` the file
     is deleted and `too_big()` is raised (an exception the app builds: its own message and status); without
     `too_big`, a ValueError that says the upload is larger than the limit."""
+    from starlette.concurrency import run_in_threadpool
     fd, path = _temp(dest_dir, suffix, prefix)
     size = 0
     try:
@@ -129,11 +136,41 @@ async def receive(source, dest_dir, *, suffix: str = ".db", prefix: str | None =
                     if too_big is None:
                         raise ValueError(f"The upload is larger than the {_size_text(max_bytes)} limit.")
                     raise too_big()
-                out.write(chunk)
+                await run_in_threadpool(out.write, chunk)      # disk writes off the event loop
     except BaseException:
         os.remove(path)
         raise
     return path
+
+
+def remove_stale(folder: str, prefix: str, max_age: float, *, suffixes=(".db", ".zip", ".part")) -> int:
+    """Delete files in `folder` whose name starts with `prefix` (and ends with one of `suffixes`) that are
+    older than `max_age` seconds — snapshots a browser never finished downloading. Returns how many.
+    `prefix` must name the app's own snapshots (e.g. "family-tree-backup-"): an empty one would sweep
+    every other program's files in a shared temp folder, so it is refused (ValueError).
+
+        jobs.every("sweep", 3600, lambda: backup_core.remove_stale(tempfile.gettempdir(), "family-tree-", 6 * 3600))
+    """
+    import time
+    if not prefix:
+        raise ValueError("remove_stale needs the app's own file name prefix")
+    gone = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    cutoff = time.time() - max_age
+    for name in names:
+        if not name.startswith(prefix) or not name.endswith(tuple(suffixes)):
+            continue
+        full = os.path.join(folder, name)
+        try:
+            if os.path.isfile(full) and not os.path.islink(full) and os.stat(full).st_mtime < cutoff:
+                os.remove(full)
+                gone += 1
+        except OSError:
+            pass
+    return gone
 
 
 def _size_text(n: int) -> str:
@@ -178,13 +215,23 @@ def unsafe_name(name: str) -> bool:
 
 
 def check_members(z: zipfile.ZipFile, *, unsafe, check=None, check_first: bool = False, skip_dirs: bool = False,
-                  is_unsafe=unsafe_name) -> list:
+                  is_unsafe=unsafe_name, max_total_bytes: int | None = None, max_members: int | None = None,
+                  too_big=None) -> list:
     """Check every member of `z` before anything is extracted; returns their ZipInfos (in zip order).
     A name `is_unsafe` raises `unsafe(name)`; `check(info)` raises the app's own error for a member it
     doesn't expect (run before the name check with `check_first`). `skip_dirs`: folder entries are
-    neither checked nor returned."""
+    neither checked nor returned. `max_total_bytes` / `max_members`: the declared uncompressed sizes
+    (and the count) summed over the whole zip first; over the limit raises `too_big(total)` (an
+    exception the app builds; without it a ValueError)."""
+    infos = z.infolist()
+    if max_total_bytes is not None or max_members is not None:
+        total = sum(i.file_size for i in infos)
+        if (max_total_bytes is not None and total > max_total_bytes) or (max_members is not None and len(infos) > max_members):
+            if too_big is None:
+                raise ValueError(f"The backup unpacks to {_size_text(total)} in {len(infos)} files, more than this app accepts.")
+            raise too_big(total)
     out = []
-    for info in z.infolist():
+    for info in infos:
         name = info.filename
         if skip_dirs and name.endswith("/"):
             continue
@@ -239,6 +286,7 @@ def blank_settings(conn, blanks: dict, *, table: str = SETTINGS_TABLE) -> None:
     if not blanks:
         return
     try:
+        conn.execute("PRAGMA secure_delete = ON")       # overwrite the old bytes, whatever this SQLite's default is
         for key, text in blanks.items():
             conn.execute(f"UPDATE {table} SET value = ? WHERE key = ?", (text, key))
         conn.commit()

@@ -96,6 +96,30 @@ class Limits(unittest.TestCase):
                     box.join("../x")
             self.assertFalse(os.path.exists(folder))                # removed afterwards
 
+    def test_read_and_files_never_follow_what_the_tool_planted(self):
+        with tempfile.TemporaryDirectory() as d:
+            secret = os.path.join(d, "secret.db")
+            with open(secret, "wb") as f:
+                f.write(b"the household's data")
+            with sandbox_run.Scratch() as box:
+                # a hijacked tool leaves a symlink to the app's data, a FIFO and a real page
+                os.symlink(secret, os.path.join(box.path, "page-1.png"))
+                os.mkfifo(os.path.join(box.path, "page-2.png"))
+                with open(os.path.join(box.path, "page-3.png"), "wb") as f:
+                    f.write(b"\x89PNG real")
+                os.symlink(box.path, os.path.join(box.path, "loop"))
+                self.assertEqual(box.files("page-*.png"), ["page-3.png"])
+                self.assertEqual(box.files(), ["page-3.png"])
+                self.assertEqual(box.read("page-3.png"), b"\x89PNG real")
+                with self.assertRaises(sandbox_run.SandboxError):
+                    box.read("page-1.png")                      # the symlink
+                with self.assertRaises(sandbox_run.SandboxError):
+                    box.read("page-2.png")                      # the FIFO (no hang)
+                with self.assertRaises(sandbox_run.SandboxError):
+                    box.read("page-3.png", max_bytes=4)
+                with self.assertRaises(ValueError):
+                    box.read("sub/x")
+
     def test_list_form_only(self):
         with sandbox_run.Scratch() as box:
             with self.assertRaises(ValueError):

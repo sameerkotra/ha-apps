@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_auth_core.py and run tools/sync_common.py; don't edit this copy. sha256=12b5533d63cc15c1005eb5e5b6fda8b52026f707000cd9bdff9d153246907e29
+# Shared file: edit common/tests/test_auth_core.py and run tools/sync_common.py; don't edit this copy. sha256=4a6e3caf9966665281d74ff0d07f7aeee3fdff607485f44d2eb577d76259217c
 """The shared ingress identity and admin rules (common/python/auth_core.py), tested in every app that uses it."""
 import json
 import os
@@ -20,7 +20,18 @@ class _Conn:
 
 class SourceAddress(unittest.TestCase):
     def test_default_set_is_the_proxy_and_loopback(self):
+        """Outside Home Assistant (tests, development) loopback counts; inside a running app container
+        only the ingress proxy does (a process in the same container must not pass as Home Assistant)."""
         self.assertEqual(auth_core.INGRESS_HOSTS, {"172.30.32.2", "127.0.0.1", "::1"})
+        self.assertEqual(auth_core.default_hosts(inside=False), {"172.30.32.2", "127.0.0.1", "::1"})
+        self.assertEqual(auth_core.default_hosts(inside=True), {"172.30.32.2"})
+        self.assertFalse(auth_core.from_ingress(_Conn("127.0.0.1"), auth_core.default_hosts(inside=True)))
+        with mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": "t"}), \
+                mock.patch.object(auth_core.os.path, "isfile", lambda p: p == auth_core.OPTIONS_FILE):
+            self.assertTrue(auth_core.inside_home_assistant())
+            self.assertEqual(auth_core.default_hosts(), {"172.30.32.2"})
+        with mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": ""}):
+            self.assertFalse(auth_core.inside_home_assistant())
         for host in ("172.30.32.2", "127.0.0.1", "::1"):
             self.assertTrue(auth_core.from_ingress(_Conn(host)), host)
         for host in ("10.0.0.5", "testclient", ""):

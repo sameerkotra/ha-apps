@@ -46,11 +46,44 @@ receiver's rate limit, or a handler) isn't stored: the sender keeps retrying.
 
 Threads: the WebSocket client (ha_ws.HAWebSocket, receiving and answering) and
 a small outbox thread (`outbox_thread=False` to drive `run_outbox_once()` from
-the app's housekeeping instead). `stop()` ends both.
+the app's housekeeping instead). `stop()` ends both. On (re)connect the
+WebSocket thread only says hello and wakes the outbox thread, which does the
+re-sending (without an outbox thread it runs there, as before).
 
-Logs show id, from, to, kind and result only — never `data`.
+Receiving is rate-limited first (RECEIVE_LIMIT per minute per sender and
+RECEIVE_LIMIT_TOTAL per minute from everyone together, then `nack busy`; a
+hello/who over the limit is ignored), and only what passed the limit is looked
+at or recorded. A message refused before it passed the envelope checks
+(`unsupported_version`, `invalid`) isn't recorded in `bus_seen` either, so a
+flood of made-up ids can't fill it. A message whose `expires` is further away
+than the 7 days `bus_seen` keeps ids (or whose `sent` is older) is `nack
+invalid`: it could otherwise be replayed once its id is forgotten. `bus_apps`
+rows not seen for 30 days are pruned; the per-sender counters hold at most 256
+senders. When a reply callback keeps failing for one of my messages that
+expired (EXPIRE_TRIES outbox runs), the message is marked expired anyway
+(logged), so a broken callback can't make every run retry it forever.
+
+Signing (spec §8: `from` is only a claim — any app with homeassistant_api can
+fire a household_apps event as any sender). Optional, and the same key in every
+household app: `signing_key=` (a str/bytes, or a function returning the current
+one — e.g. `lambda: SETTINGS.get("bus_signing_key")` from the app's settings
+registry; the apps' Setting is `Setting("bus_signing_key", "", "App-messages
+signing key", group=..., secret=True, max_length=200, help="The same key in
+every household app (Admin → App settings there). Without one, any app on Home
+Assistant's network can send messages as any other.")`). With a key, every
+outgoing event carries `sig` = HMAC-SHA256 (hex) over
+`id|from|to|kind|sent|expires|canonical json(data)` (`sign()` / `verify()`),
+and every incoming event must carry a valid one: a request without is answered
+`nack unsigned`, a hello/who/ack/nack without is ignored. Without a key,
+everything is accepted as before. A key given as a function is read at most
+every KEY_REFRESH (5) seconds — not once per event, which a flood would turn
+into a database read each — so a changed key applies within seconds.
+
+Logs show id, from, to, kind and result only — never `data` or the key.
 """
 import collections
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -58,6 +91,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -73,15 +107,21 @@ MAX_EVENT_BYTES = 8 * 1024
 RETRY_DELAYS = (30, 120, 600)            # seconds after attempt 1, 2, 3 …
 RETRY_EVERY = 30 * 60                    # … then every 30 min
 SEEN_KEEP = timedelta(days=7)
-MAX_EXPIRES_IN = SEEN_KEEP               # longer would outlive de-duplication
+MAX_EXPIRES_IN = SEEN_KEEP               # longer would outlive de-duplication (checked by the receiver too)
 OUTBOX_KEEP = timedelta(days=7)          # finished outbox rows
+APPS_KEEP = timedelta(days=30)           # bus_apps rows of apps not heard from
+PRUNE_EVERY = timedelta(hours=1)         # how often the outbox run prunes the tables
+MAX_SENDERS = 256                        # distinct senders the rate-limit / hello counters remember
 AVAILABLE_FOR = timedelta(hours=24)
 HELLO_EVERY = timedelta(hours=6)
 HELLO_ANSWER_EVERY = timedelta(hours=1)
 SEND_LIMIT = 30                          # outbox sends per minute to one app
 RECEIVE_LIMIT = 60                       # handled messages per minute from one app (more → nack busy)
+RECEIVE_LIMIT_TOTAL = 600                # … and from every sender together (made-up senders can't add up)
+KEY_REFRESH = 5.0                        # seconds a signing key read from a function is reused
+EXPIRE_TRIES = 3                         # outbox runs a failing reply callback gets for an expired message
 NACK_REASONS = ("not_found", "not_allowed", "invalid", "unsupported_kind", "unsupported_version",
-                "expired", "busy")
+                "expired", "busy", "unsigned")
 RESERVED_KINDS = ("hello", "who", "ack", "nack")
 
 SLUG_RE = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -216,20 +256,68 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class _Window:
-    """Per-key sliding one-minute counters on the bus clock."""
+# ---------------------------------------------------------------------------
+# signing
+# ---------------------------------------------------------------------------
+def _canonical(data) -> str:
+    return json.dumps(data if isinstance(data, dict) else {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
-    def __init__(self):
-        self._hits = collections.defaultdict(collections.deque)
+
+def _key_bytes(key) -> bytes | None:
+    key = key() if callable(key) else key
+    if not key:
+        return None
+    return key.encode("utf-8") if isinstance(key, str) else bytes(key)
+
+
+def sign(env: dict, key) -> str:
+    """HMAC-SHA256 (hex) of id|from|to|kind|sent|expires|canonical json(data) with `key` (str or bytes)."""
+    k = _key_bytes(key)
+    if k is None:
+        raise ValueError("no signing key")
+    text = "|".join(str(env.get(f) or "") for f in ("id", "from", "to", "kind", "sent", "expires")) + "|" + _canonical(env.get("data"))
+    return hmac.new(k, text.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify(env: dict, key) -> bool:
+    """True when `env` carries the signature `key` would have made."""
+    sig = env.get("sig")
+    if not isinstance(sig, str) or len(sig) != 64:
+        return False
+    try:
+        return hmac.compare_digest(sign(env, key), sig.lower())
+    except (ValueError, TypeError):
+        return False
+
+
+class _Window:
+    """Per-key sliding one-minute counters on the bus clock (at most MAX_SENDERS keys: the emptiest /
+    oldest go first, so a flood of made-up senders can't grow it)."""
+
+    def __init__(self, max_keys: int = MAX_SENDERS):
+        self._hits = collections.OrderedDict()
+        self.max_keys = max_keys
 
     def allow(self, key: str, now: float, limit: int, span: float = 60) -> bool:
-        q = self._hits[key]
+        q = self._hits.get(key)
+        if q is None:
+            if len(self._hits) >= self.max_keys:
+                self._evict(now, span)
+            q = self._hits[key] = collections.deque()
+        else:
+            self._hits.move_to_end(key)
         while q and q[0] <= now - span:
             q.popleft()
         if len(q) >= limit:
             return False
         q.append(now)
         return True
+
+    def _evict(self, now: float, span: float) -> None:
+        for k in [k for k, q in self._hits.items() if not q or q[-1] <= now - span]:
+            del self._hits[k]
+        while len(self._hits) >= self.max_keys:
+            self._hits.popitem(last=False)
 
 
 # ---------------------------------------------------------------------------
@@ -248,8 +336,14 @@ class AppBus:
         self._own_ws = True
         self._send_window = _Window()
         self._recv_window = _Window()
-        self._hello_answered: dict[str, datetime] = {}
+        self._recv_total = _Window(max_keys=1)
+        self._expire_failures: dict[str, int] = {}
+        self._hello_answered: collections.OrderedDict = collections.OrderedDict()
         self._last_hello: datetime | None = None
+        self._last_prune: datetime | None = None
+        self._resend_all = False
+        self.signing_key = None
+        self._key_cache = None                       # (the key function, when read, bytes or None)
         self.slug = None
         self.started = False
         self.api_base = self.ws_url = self.token = None
@@ -259,12 +353,17 @@ class AppBus:
         self.outbox_interval = 10.0
         self.send_limit = SEND_LIMIT
         self.receive_limit = RECEIVE_LIMIT
+        self.receive_limit_total = RECEIVE_LIMIT_TOTAL
         self.ws_options: dict = {}
         self.configure(**options)
 
     def configure(self, *, api_base=None, ws_url=None, token=None, post=None, clock=None, outbox_thread=None,
-                  outbox_interval=None, send_limit=None, receive_limit=None, ws_options=None) -> None:
-        """Set transport/test options (all optional; defaults come from the environment)."""
+                  outbox_interval=None, send_limit=None, receive_limit=None, ws_options=None, signing_key=None,
+                  receive_limit_total=None) -> None:
+        """Set transport/test options (all optional; defaults come from the environment). `signing_key`: a
+        str/bytes, or a function returning the current one ("" / None: unsigned, as before)."""
+        if signing_key is not None:
+            self.signing_key = signing_key
         if api_base is not None:
             self.api_base = api_base.rstrip("/")
         if ws_url is not None:
@@ -283,6 +382,8 @@ class AppBus:
             self.send_limit = send_limit
         if receive_limit is not None:
             self.receive_limit = receive_limit
+        if receive_limit_total is not None:
+            self.receive_limit_total = receive_limit_total
         if ws_options is not None:
             self.ws_options = dict(ws_options)
 
@@ -443,12 +544,35 @@ class AppBus:
         return out
 
     # -- sending ---------------------------------------------------------------------
+    def _key(self) -> bytes | None:
+        """The signing key now (None: unsigned). A function is asked at most every KEY_REFRESH seconds."""
+        source = self.signing_key
+        if not callable(source):
+            return _key_bytes(source)
+        now = time.monotonic()
+        cached = self._key_cache
+        if cached is not None and cached[0] is source and now - cached[1] < KEY_REFRESH:
+            return cached[2]
+        try:
+            key = _key_bytes(source)
+        except Exception:
+            logger.exception("bus: reading the signing key failed")
+            if cached is not None and cached[0] is source:
+                return cached[2]                            # keep the last good key rather than go unsigned
+            key = None
+        self._key_cache = (source, now, key)
+        return key
+
     def _envelope(self, to: str, kind: str, data: dict, *, kv: int = 1, ref=None, reply_to=None,
                   expires_in: timedelta = timedelta(hours=24)) -> dict:
         now = self._now()
-        return {"id": new_ulid(now), "v": ENVELOPE_VERSION, "from": self.slug, "to": to, "kind": kind, "kv": kv,
-                "reply_to": reply_to, "ref": ref, "sent": _iso(now), "expires": _iso(now + expires_in),
-                "data": data}
+        env = {"id": new_ulid(now), "v": ENVELOPE_VERSION, "from": self.slug, "to": to, "kind": kind, "kv": kv,
+               "reply_to": reply_to, "ref": ref, "sent": _iso(now), "expires": _iso(now + expires_in),
+               "data": data}
+        key = self._key()
+        if key is not None:
+            env["sig"] = sign(env, key)
+        return env
 
     def send(self, to: str, kind: str, data: dict, ref: str | None = None,
              expires_in: timedelta = timedelta(hours=24), reply_to: str | None = None, kv: int = 1) -> str:
@@ -525,11 +649,14 @@ class AppBus:
         return RETRY_DELAYS[attempts - 1] if 1 <= attempts <= len(RETRY_DELAYS) else RETRY_EVERY
 
     def run_outbox_once(self, resend_all: bool = False) -> dict:
-        """Expire, send what's due, prune old rows and say hello every 6 hours. Called by the outbox
-        thread (or the app's housekeeping); `resend_all` sends every pending message now (start-up)."""
+        """Expire, send what's due, prune old rows (hourly) and say hello every 6 hours. Called by the outbox
+        thread (or the app's housekeeping); `resend_all` sends every pending message now (start-up, or
+        when a reconnect asked for it)."""
         if not self.started:
             return {"sent": 0, "expired": 0, "failed": 0, "limited": 0}
         with self._outbox_lock:
+            if self._resend_all:
+                self._resend_all, resend_all = False, True
             return self._run_outbox(resend_all)
 
     def _run_outbox(self, resend_all: bool) -> dict:
@@ -540,20 +667,31 @@ class AppBus:
             gone = conn.execute("SELECT id, to_app, kind, ref FROM bus_outbox WHERE state = 'pending' AND expires <= ?",
                                 (_iso(now),)).fetchall()
         for mid, to_app, kind, ref in gone:
+            give_up = self._expire_failures.get(mid, 0) >= EXPIRE_TRIES
             try:
                 with self._tx() as conn:
                     cur = conn.execute("UPDATE bus_outbox SET state = 'expired', result = ? WHERE id = ? AND "
                                        "state = 'pending'", (_dumps({"reason": "expired"}), mid))
-                    if cur.rowcount:
+                    if cur.rowcount and not give_up:
                         msg = Message({"id": None, "v": 1, "from": to_app, "to": self.slug, "kind": "nack", "kv": 1,
                                        "reply_to": mid, "ref": ref, "data": {"reason": "expired",
                                                                               "detail": "no answer"}},
                                       answers=kind, local=True)
                         self._run_reply_callbacks(msg, conn)
+                self._expire_failures.pop(mid, None)
                 stats["expired"] += 1
-                logger.info("bus expired id=%s from=%s to=%s kind=%s result=expired", mid, self.slug, to_app, kind)
+                if give_up:
+                    logger.warning("bus expired id=%s from=%s to=%s kind=%s result=expired (its reply callback "
+                                   "failed %d times; marked expired without it)", mid, self.slug, to_app, kind,
+                                   EXPIRE_TRIES)
+                else:
+                    logger.info("bus expired id=%s from=%s to=%s kind=%s result=expired", mid, self.slug, to_app, kind)
             except Exception:
-                logger.exception("bus: a reply callback failed for expired message %s", mid)
+                n = self._expire_failures[mid] = self._expire_failures.get(mid, 0) + 1
+                while len(self._expire_failures) > MAX_SENDERS:     # bounded, oldest first
+                    self._expire_failures.pop(next(iter(self._expire_failures)))
+                logger.exception("bus: a reply callback failed for expired message %s (try %d of %d)", mid, n,
+                                 EXPIRE_TRIES)
         # 2. what's due
         with self._conn() as conn:
             if resend_all:
@@ -577,11 +715,14 @@ class AppBus:
                              (attempts, _iso(now + timedelta(seconds=self.retry_delay(attempts))), mid))
             stats["sent" if ok else "failed"] += 1
             self._log("sent" if ok else "send-failed", env, f"attempt {attempts}")
-        # 3. housekeeping
-        with self._tx() as conn:
-            conn.execute("DELETE FROM bus_seen WHERE seen_at < ?", (_iso(now - SEEN_KEEP),))
-            conn.execute("DELETE FROM bus_outbox WHERE state != 'pending' AND created_at < ?",
-                         (_iso(now - OUTBOX_KEEP),))
+        # 3. housekeeping, once an hour (a write transaction every 10 s would fight the app's own writers)
+        if self._last_prune is None or now - self._last_prune >= PRUNE_EVERY or now < self._last_prune:
+            self._last_prune = now
+            with self._tx() as conn:
+                conn.execute("DELETE FROM bus_seen WHERE seen_at < ?", (_iso(now - SEEN_KEEP),))
+                conn.execute("DELETE FROM bus_outbox WHERE state != 'pending' AND created_at < ?",
+                             (_iso(now - OUTBOX_KEEP),))
+                conn.execute("DELETE FROM bus_apps WHERE last_seen < ?", (_iso(now - APPS_KEEP),))
         if self.connected and (self._last_hello is None or now - self._last_hello >= HELLO_EVERY):
             self._send_hello("*")
         return stats
@@ -599,12 +740,16 @@ class AppBus:
 
     # -- receiving ------------------------------------------------------------------------
     def _on_connect(self, first: bool) -> None:
+        """On the WebSocket thread: say hello, then hand the re-sending to the outbox thread (a long
+        outbox would otherwise block reading until Home Assistant drops the connection)."""
         if first:
             self._send_hello("*")
             self._post_direct("*", "who", {})
-            self.run_outbox_once(resend_all=True)           # restart: re-send what's still waiting
+            self._resend_all = True                         # restart: re-send what's still waiting
+        if self.outbox_thread and not self._stop.is_set():
+            self._wake.set()                                # the outbox thread (or the one start() is about to make)
         else:
-            self.run_outbox_once()
+            self.run_outbox_once()                          # no outbox thread (housekeeping drives it): here
 
     def _post_direct(self, to: str, kind: str, data: dict, *, reply_to=None, ref=None,
                      expires_in=timedelta(hours=1)) -> bool:
@@ -638,14 +783,22 @@ class AppBus:
             return
         if to == "*" and kind not in ("hello", "who"):
             return
+        key = self._key()
+        if key is not None and not verify(env, key):
+            if kind in RESERVED_KINDS or env.get("v") != ENVELOPE_VERSION:
+                self._log("ignored", env, "unsigned")
+                return
+            if to == self.slug:
+                self._refuse_unsigned(env)
+            return
         if kind in ("ack", "nack"):
             if env.get("v") == ENVELOPE_VERSION:
                 self._on_answer(env)
         elif kind == "hello":
-            if env.get("v") == ENVELOPE_VERSION:
+            if env.get("v") == ENVELOPE_VERSION and self._receive_allowed(frm, "hello"):
                 self._on_hello(env)
         elif kind == "who":
-            if env.get("v") == ENVELOPE_VERSION:
+            if env.get("v") == ENVELOPE_VERSION and self._receive_allowed(frm, "hello"):
                 self._answer_hello(frm)
         else:
             self._on_request(env)
@@ -676,6 +829,9 @@ class AppBus:
             if last is not None and now - last < HELLO_ANSWER_EVERY:
                 return
             self._hello_answered[app] = now
+            self._hello_answered.move_to_end(app)
+            while len(self._hello_answered) > MAX_SENDERS:
+                self._hello_answered.popitem(last=False)
         self._send_hello(app)
 
     def _matching_callbacks(self, msg: Message) -> list:
@@ -733,10 +889,13 @@ class AppBus:
             return "reply_to"
         if env.get("ref") is not None and (not isinstance(env["ref"], str) or len(env["ref"]) > MAX_REF):
             return "ref"
-        if _parse_time(env.get("sent")) is None:
-            return "sent"
-        if _parse_time(env.get("expires")) is None:
-            return "expires"
+        now = self._now()
+        sent = _parse_time(env.get("sent"))
+        if sent is None or sent < now - SEEN_KEEP:
+            return "sent"                                   # older than the ids we remember: could be a replay
+        expires = _parse_time(env.get("expires"))
+        if expires is None or expires > now + MAX_EXPIRES_IN:
+            return "expires"                                # would outlive de-duplication
         if not isinstance(env.get("data"), dict):
             return "data"
         return None
@@ -749,17 +908,27 @@ class AppBus:
                           ref=ref if isinstance(ref, str) and 0 < len(ref) <= MAX_REF else None,
                           expires_in=timedelta(days=1))
 
+    def _receive_allowed(self, frm: str, what: str = "") -> bool:
+        """The receive rate limit: RECEIVE_LIMIT a minute from `frm` and RECEIVE_LIMIT_TOTAL from everyone.
+        `what="hello"` counts hello/who on their own (an app's greetings don't use up its requests)."""
+        t = self._now().timestamp()
+        with self._lock:
+            return (self._recv_window.allow(f"{frm} {what}" if what else frm, t, self.receive_limit)
+                    and self._recv_total.allow("*", t, self.receive_limit_total))
+
+    def _refuse_unsigned(self, env: dict) -> None:
+        """A request without a valid signature while this app has a key: nack unsigned (not recorded —
+        nothing was looked at — and rate-limited like everything else; over the limit, no answer)."""
+        if not self._receive_allowed(env["from"]):
+            return
+        reply = {"kind": "nack", "data": Nack("unsigned", "no valid sig").data()}
+        self._log("received", env, "nack unsigned")
+        self._answer(env, reply)
+
     def _on_request(self, env: dict) -> None:
         mid, frm = env["id"], env["from"]
         now = self._now()
         kind = env.get("kind") if isinstance(env.get("kind"), str) else "?"
-        with self._conn() as conn:
-            row = conn.execute("SELECT result FROM bus_seen WHERE id = ?", (mid,)).fetchone()
-        if row:                                             # duplicate: same answer again, no second action
-            reply = json.loads(row[0]) if row[0] else {"kind": "ack", "data": {}}
-            self._log("duplicate", env, reply.get("kind"))
-            self._answer(env, reply)
-            return
 
         def refuse(reason, detail=None, record=True):
             reply = {"kind": "nack", "data": Nack(reason, detail).data()}
@@ -770,15 +939,25 @@ class AppBus:
             self._log("received", env, f"nack {reason}")
             self._answer(env, reply)
 
+        # the rate limit first: nothing past it is looked at, answered or recorded
+        if not self._receive_allowed(frm):
+            return refuse("busy", "too many messages", record=False)
+        with self._conn() as conn:
+            row = conn.execute("SELECT result FROM bus_seen WHERE id = ?", (mid,)).fetchone()
+        if row:                                             # duplicate: same answer again, no second action
+            reply = json.loads(row[0]) if row[0] else {"kind": "ack", "data": {}}
+            self._log("duplicate", env, reply.get("kind"))
+            self._answer(env, reply)
+            return
+        # refused before the envelope checks passed: not recorded (a flood of made-up ids can't fill bus_seen;
+        # a re-send gets the same answer anyway, since nothing was done)
         if env.get("v") != ENVELOPE_VERSION:
-            return refuse("unsupported_version", "envelope")
+            return refuse("unsupported_version", "envelope", record=False)
         bad = self._validate(env)
         if bad:
-            return refuse("invalid", bad)
+            return refuse("invalid", bad, record=False)
         if _parse_time(env["expires"]) <= now:
             return refuse("expired")
-        if not self._recv_window.allow(frm, now.timestamp(), self.receive_limit):
-            return refuse("busy", "too many messages", record=False)
         msg = Message(env)
         with self._lock:
             h = self._handlers.get(kind)

@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_geo.py and run tools/sync_common.py; don't edit this copy. sha256=71603abe93f63f4da44432fca380cc03a2ba6e1b1f2a0aab2ca537ff6bd07647
+# Shared file: edit common/tests/test_geo.py and run tools/sync_common.py; don't edit this copy. sha256=e74b5c7b7d0acc36beef538515d6b997c8ac13cb4a0c3b6c86924ede5f101d09
 """Tests for the shared map helpers (common/python/geo.py), against a local HTTP server."""
 import json
 import threading
@@ -90,6 +90,29 @@ class GeoTests(unittest.TestCase):
             with t.spaced():
                 raise RuntimeError("the request failed")
         self.assertGreater(t.last, ended)      # stamped even when the request failed
+
+    def test_wait_books_slots_without_holding_the_lock(self):
+        t = geo.Throttle(0.2)
+        t.wait()                                              # now
+        done = []
+        start = time.monotonic()
+
+        def one():
+            t.wait()
+            done.append(time.monotonic() - start)
+        threads = [threading.Thread(target=one) for _ in range(3)]
+        for th in threads:
+            th.start()
+        time.sleep(0.02)
+        self.assertFalse(t._lock.locked())                    # the sleepers don't hold the lock
+        for th in threads:
+            th.join(3)
+        self.assertEqual(len(done), 3)
+        self.assertGreaterEqual(max(done), 0.55)              # slots at 0.2, 0.4, 0.6 s
+        with self.assertRaises(geo.Busy):
+            t.wait(max_wait=0.1)                              # the next slot is ~0.2 s away
+        before = t.last
+        self.assertEqual(t.last, before)                      # nothing booked
 
 
 if __name__ == "__main__":

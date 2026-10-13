@@ -1,8 +1,9 @@
-# Shared file: edit common/tests/test_backup_core.py and run tools/sync_common.py; don't edit this copy. sha256=edc7e339af0e95ecc06538aa58c6708ccb1c76e3653169a3d7dd6c84f32135b1
+# Shared file: edit common/tests/test_backup_core.py and run tools/sync_common.py; don't edit this copy. sha256=908a082f52118254012209ca922b2c4094f5eaf3865077425d62754d1efe110e
 """The shared backup/restore helpers (common/python/backup_core.py), tested in every app that uses them."""
 import asyncio
 import io
 import os
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -196,6 +197,28 @@ class BackupCore(unittest.TestCase):
         with self.assertRaises(ValueError):
             backup_core.check_members(z, unsafe=ValueError)
 
+    def test_check_members_total_size(self):
+        z = zipfile.ZipFile(io.BytesIO(self.zip_bytes(["a", "b", "c"])))
+        total = sum(i.file_size for i in z.infolist())
+        self.assertEqual(len(backup_core.check_members(z, unsafe=ValueError, max_total_bytes=total, max_members=3)), 3)
+        with self.assertRaisesRegex(ValueError, "unpacks to"):
+            backup_core.check_members(z, unsafe=ValueError, max_total_bytes=total - 1)
+        with self.assertRaisesRegex(RuntimeError, f"^{total}$"):
+            backup_core.check_members(z, unsafe=ValueError, max_members=2, too_big=lambda n: RuntimeError(str(n)))
+
+    def test_remove_stale(self):
+        import time
+        old = self.put("tmp/finance-backup-1.db")
+        os.utime(old, (time.time() - 7200, time.time() - 7200))
+        self.put("tmp/finance-backup-2.db")
+        self.put("tmp/other-1.db")
+        os.utime(self.path("tmp", "other-1.db"), (time.time() - 7200, time.time() - 7200))
+        self.assertEqual(backup_core.remove_stale(self.path("tmp"), "finance-backup-", 3600), 1)
+        self.assertEqual(sorted(os.listdir(self.path("tmp"))), ["finance-backup-2.db", "other-1.db"])
+        self.assertEqual(backup_core.remove_stale(self.path("nowhere"), "x", 1), 0)
+        with self.assertRaises(ValueError):
+            backup_core.remove_stale(self.path("tmp"), "", 1)          # never "everything in the folder"
+
     def test_copy_out(self):
         z = zipfile.ZipFile(io.BytesIO(self.zip_bytes(["files/a/b.txt"])))
         dest = self.path("out", "a", "b.txt")
@@ -264,6 +287,24 @@ class SecretSettings(unittest.TestCase):
         conn = self.db(rows=[("api_key", '"sk-1"', "t", "a"), ("model", '"m"', "t", "a")])
         backup_core.blank_settings(conn, self.BLANKS)
         self.assertEqual(self.values(conn), {"api_key": '""', "model": '"m"'})
+
+    def test_blank_leaves_no_trace_in_the_file(self):
+        """The secret's bytes are overwritten in the backup file, not only unlinked from the row."""
+        secret = "sk-ant-SUPERSECRETKEY-0123456789abcdef0123456789abcdef"
+        tmp = tempfile.mkdtemp(prefix="blank-test-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "copy.db")
+        conn = sqlite3.connect(path)
+        conn.execute("PRAGMA secure_delete = OFF")              # whatever this build's default is
+        conn.execute("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT, updated_by TEXT)")
+        conn.execute("INSERT INTO app_settings VALUES ('api_key', ?, 't', 'a')", (f'"{secret}"',))
+        conn.commit()
+        backup_core.blank_settings(conn, self.BLANKS)
+        conn.close()
+        with open(path, "rb") as f:
+            data = f.read()
+        self.assertNotIn(secret.encode(), data)
+        self.assertNotIn(b"SUPERSECRET", data)
 
     def test_blank_and_keep_ignore_a_file_without_the_table(self):
         conn = sqlite3.connect(":memory:")

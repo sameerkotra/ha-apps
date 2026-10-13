@@ -1,4 +1,4 @@
-# Shared file: edit common/python/ha_client.py and run tools/sync_common.py; don't edit this copy. sha256=b568fd5aa3ab8f447dbeff8464bf76e044668a63e3f6d7b2809815e6b247769d
+# Shared file: edit common/python/ha_client.py and run tools/sync_common.py; don't edit this copy. sha256=3483fab4155ebdfd9615667665dde0845d42a1bf61abdb44f72cf57e4f6519f6
 """Home Assistant's Core API through the Supervisor proxy (shared by the household apps:
 common/python/ha_client.py, copied into each app's app/common/ by tools/sync_common.py).
 
@@ -128,9 +128,47 @@ def fetch_states_blocking(max_age: float = 30, what: str = "states") -> list | N
     return states
 
 
-def fetch_persons_blocking() -> list | None:
-    """[{user_id, name, entity_id}] for every person.* linked to a Home Assistant login (always fresh)."""
-    states = fetch_states_blocking(max_age=0, what="persons")
+# Only the people, rendered by Home Assistant itself: a few hundred bytes instead of every entity's state.
+# (An object with a named key, so an answer meant for another template can't be mistaken for it.)
+PERSONS_TEMPLATE = """{"persons": [
+{%- for p in states.person -%}
+{{ {'entity_id': p.entity_id, 'name': p.name, 'user_id': p.attributes.get('user_id')} | to_json }}{{ ',' if not loop.last }}
+{%- endfor -%}
+]}"""
+
+
+def _persons_from_template() -> list | None:
+    """[{user_id, name, entity_id}] from POST /template, or None if that didn't work (an error or an odd answer)."""
+    status, body = request("POST", "/template", {"template": PERSONS_TEMPLATE})
+    if status != 200:
+        return None
+    try:
+        rows = json.loads(body)
+    except ValueError:
+        return None
+    rows = rows.get("persons") if isinstance(rows, dict) else None
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for r in rows:
+        if not isinstance(r, dict) or not isinstance(r.get("entity_id"), str) or not r["entity_id"].startswith("person."):
+            return None
+        if r.get("user_id"):
+            out.append({"user_id": r["user_id"], "name": r.get("name") or r["entity_id"][7:], "entity_id": r["entity_id"]})
+    return out
+
+
+def fetch_persons_blocking(max_age: float = 0) -> list | None:
+    """[{user_id, name, entity_id}] for every person.* linked to a Home Assistant login (always fresh).
+    Asks Home Assistant to render just the people (POST /template) rather than reading GET /states —
+    every entity it has, often megabytes — on every sync. If the template can't be used, it falls back
+    to GET /states, at most `max_age` seconds old (the shared states cache; 0: fresh)."""
+    if not has_token():
+        return None
+    persons = _persons_from_template()
+    if persons is not None:
+        return persons
+    states = fetch_states_blocking(max_age=max_age, what="persons")
     if states is None:
         return None
     out = []

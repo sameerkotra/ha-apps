@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=bed0cfc720ba905c42886b9937e421ffbf508704a1758ff86db8c523bbdd70eb
+# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=0a5608780635f62c6e031761ecf22db74cd68f75ebc7dc5b1cc3276d974cf85f
 """Answering the Household Assistant (common/python/assist_tools.py): the catalogue, argument checks, the
 switches, result fitting and links, and both kinds through two real app buses in this process.
 HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6.
@@ -132,7 +132,9 @@ class CatalogueTests(unittest.TestCase):
                ({"when": "today", "count": "3"}, "count"), ({"when": "today", "count": True}, "count"),
                ({"when": "today", "day": "2026-02-30"}, "day"), ({"when": "today", "day": "26-1-1"}, "day"),
                ({"when": "today", "month": "2026-13"}, "month"), ({"when": "today", "word": "x" * 11}, "word"),
-               ({"when": "today", "word": "   "}, "word"), ({"when": "today", "flag": "yes"}, "flag")]
+               ({"when": "today", "word": "   "}, "word"), ({"when": "today", "flag": "yes"}, "flag"),
+               ({"when": "today", "count": float("inf")}, "count"), ({"when": "today", "count": float("nan")}, "count"),
+               ({"when": True}, "when")]
         for args, name in bad:
             self.assertNack(self.call(dict(ok, args=args)), "invalid", name)
         self.assertNack(self.call(dict(ok, args=[1])), "invalid", "args")
@@ -218,6 +220,20 @@ class CatalogueTests(unittest.TestCase):
             Arg("list")
         with self.assertRaises(ValueError):
             Arg("enum")
+
+    def test_enum_and_number_are_strict(self):
+        levels = Arg("enum", values=(1, 2, 3))
+        self.assertEqual(levels.clean("level", 2), 2)
+        for bad in (True, False, "1", 1.5):                      # True == 1 in Python, but it isn't the choice 1
+            with self.subTest(bad=bad), self.assertRaises(app_bus.Nack):
+                levels.clean("level", bad)
+        with self.assertRaises(app_bus.Nack):
+            Arg("enum", values=("1", "2")).clean("x", 1)
+        n = Arg("number", min=0, max=10)
+        self.assertEqual(n.clean("n", 2.5), 2.5)
+        for bad in (float("inf"), float("-inf"), float("nan"), True):
+            with self.subTest(bad=bad), self.assertRaises(app_bus.Nack):
+                n.clean("n", bad)
 
 
 class SidebarPageTests(unittest.TestCase):

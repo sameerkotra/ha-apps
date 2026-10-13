@@ -1,4 +1,5 @@
 """The shared security/caching headers (common/python/web_security.py), tested in every app that uses them."""
+import logging
 import unittest
 
 from fastapi import FastAPI
@@ -73,9 +74,29 @@ class SecurityHeaders(unittest.TestCase):
             r = c.get(path)
             self.assertEqual(r.headers["cache-control"], "no-cache, no-store, must-revalidate")
             self.assertEqual(r.headers["pragma"], "no-cache")
-        self.assertNotIn("cache-control", c.get("/api/x").headers)
+        self.assertEqual(c.get("/api/x").headers["cache-control"], "no-store")       # the default for the API
+        self.assertNotIn("cache-control", client(web_security.SecurityHeaders(CSP, api_no_store=None)).get("/api/x").headers)
         self.assertNotIn("cache-control", c.get("/static/app.js").headers)
         self.assertNotIn("pragma", client(web_security.SecurityHeaders(CSP)).get("/").headers)
+
+    def test_versioned_assets_are_immutable(self):
+        self.assertEqual(client(web_security.SecurityHeaders(CSP, all_no_store=True)).get("/static/app.js?v=1")
+                         .headers["cache-control"], "no-store")                     # off unless the app turns it on
+        c = client(web_security.SecurityHeaders(CSP, all_no_store=True, static_immutable=True))
+        self.assertEqual(c.get("/static/app.js?v=1.2.3").headers["cache-control"], web_security.IMMUTABLE)
+        self.assertEqual(c.get("/static/missing.js?v=1").headers["cache-control"], "no-store")   # an error isn't kept
+        self.assertEqual(c.get("/static/app.js").headers["cache-control"], "no-store")       # no version: not for good
+        self.assertEqual(c.get("/static/app.js?x=1").headers["cache-control"], "no-store")
+        self.assertEqual(c.get("/page.html?v=1").headers["cache-control"], "no-store")       # never the HTML shell
+        self.assertEqual(c.get("/api/x?v=1").headers["cache-control"], "no-store")           # not the API
+        c = client(web_security.SecurityHeaders(CSP, static_immutable=False, other_no_store=True))
+        self.assertEqual(c.get("/static/app.js?v=1").headers["cache-control"], "no-store")
+        self.assertTrue(web_security.is_versioned_asset("/common/ui.js", "v=2&x=1"))
+        self.assertFalse(web_security.is_versioned_asset("/common/ui.js", "v="))
+        self.assertTrue(web_security.is_versioned_asset("/assets/a.css", "v=1", prefixes=("/assets/",)))
+        self.assertTrue(web_security.is_versioned_asset("/app.js", "v=1", prefixes=("/",)))      # static at the root
+        self.assertFalse(web_security.is_versioned_asset("/api/photo", "v=1", prefixes=("/",)))
+        self.assertFalse(web_security.is_versioned_asset("/", "v=1", prefixes=("/",)))
 
     def test_api_no_store(self):
         c = client(web_security.SecurityHeaders(CSP, api_no_store="default"))
@@ -94,7 +115,7 @@ class SecurityHeaders(unittest.TestCase):
             self.assertEqual(c.get(path).headers["cache-control"], "no-store", path)
 
     def test_other_no_store(self):
-        c = client(web_security.SecurityHeaders(CSP, pages_no_cache=False, other_no_store=True))
+        c = client(web_security.SecurityHeaders(CSP, pages_no_cache=False, other_no_store=True, api_no_store=None))
         self.assertEqual(c.get("/").headers["cache-control"], "no-store")
         self.assertEqual(c.get("/static/app.js").headers["cache-control"], "no-store")
         self.assertNotIn("cache-control", c.get("/api/x").headers)
@@ -108,6 +129,76 @@ class SecurityHeaders(unittest.TestCase):
         resp = Response("x")
         self.assertIs(h.apply(Req, resp), resp)
         self.assertEqual(resp.headers["content-security-policy"], CSP)
+
+
+class BodyLimitTests(unittest.TestCase):
+    """BodyLimit: Content-Length over the limit is a 413 before the route; chunked bodies are counted."""
+
+    def setUp(self):
+        # an app's tests may switch logging off (logging.disable): these tests check what is logged
+        was = logging.root.manager.disable
+        logging.disable(logging.NOTSET)
+        self.addCleanup(logging.disable, was)
+
+    def app(self, **kw):
+        from fastapi import Request
+        app = FastAPI()
+
+        @app.post("/api/small")
+        async def small(request: Request):
+            return {"n": len(await request.body())}
+
+        @app.post("/api/big/up")
+        async def big(request: Request):
+            return {"n": len(await request.body())}
+
+        @app.post("/api/stream")
+        async def stream(request: Request):
+            n = 0
+            async for chunk in request.stream():
+                n += len(chunk)
+            return {"n": n}
+
+        app.add_middleware(web_security.BodyLimit, default_max=100, routes={"/api/big": 1000},
+                           no_chunked_prefixes=("/api/big",), streamed_prefixes=("/api/stream",), **kw)
+        return TestClient(app)
+
+    def test_content_length_over_the_limit_is_413(self):
+        c = self.app()
+        self.assertEqual(c.post("/api/small", content=b"x" * 100).json(), {"n": 100})
+        r = c.post("/api/small", content=b"x" * 101)
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json(), {"detail": "The request body is larger than this route allows (100 bytes)."})
+        self.assertEqual(r.headers["cache-control"], "no-store")
+        self.assertEqual(c.post("/api/big/up", content=b"x" * 1000).json(), {"n": 1000})   # longest prefix wins
+        self.assertEqual(c.post("/api/big/up", content=b"x" * 1001).status_code, 413)
+        self.assertEqual(c.post("/api/stream", content=b"x" * 101).status_code, 413)     # the length check still applies
+
+    def test_chunked_bodies_are_counted(self):
+        c = self.app()
+
+        def chunks(n, size=40):
+            for i in range(0, n, size):
+                yield b"x" * min(size, n - i)
+
+        self.assertEqual(c.post("/api/small", content=chunks(100)).json(), {"n": 100})
+        with self.assertLogs("web_security", "WARNING"):
+            r = c.post("/api/small", content=chunks(500))
+        self.assertEqual(r.status_code, 413)
+        self.assertEqual(r.json()["detail"], "The request body is larger than this route allows (100 bytes).")
+        # a route that streams and keeps its own limit is left alone
+        self.assertEqual(c.post("/api/stream", content=chunks(5000)).json(), {"n": 5000})
+        # a route that needs the length refuses chunked bodies
+        r = c.post("/api/big/up", content=chunks(50))
+        self.assertEqual((r.status_code, r.json()["detail"]), (411, "This route needs the Content-Length of the upload."))
+
+    def test_limit_for(self):
+        bl = web_security.BodyLimit(None, default_max=5, routes={"/a": 10, "/a/b": 20, "/f/": 30})
+        self.assertEqual((bl.limit_for("/x"), bl.limit_for("/a"), bl.limit_for("/a/c"), bl.limit_for("/a/b/d")), (5, 10, 10, 20))
+        self.assertEqual((bl.limit_for("/ab"), bl.limit_for("/a/bc"), bl.limit_for("/f"), bl.limit_for("/f/1")), (5, 10, 30, 30))
+        self.assertEqual(web_security.size_text(1 << 20), "1 MB")
+        self.assertEqual(web_security.size_text(2 << 30), "2 GB")
+        self.assertEqual(web_security.size_text(512), "512 bytes")
 
 
 class CrossSite(unittest.TestCase):

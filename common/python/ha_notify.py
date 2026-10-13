@@ -128,8 +128,9 @@ def fetch_notify_targets_blocking(force: bool = False) -> tuple[set[str], set[st
     """(notify action names, notify entity names) — both without the
     "notify." prefix. Actions come from GET /services (domain == "notify",
     minus the generic send_message, which needs an entity); entities are the
-    notify.* entries in GET /states (best effort — an error there just means
-    no entities). Raises NotifyListError if Home Assistant can't be asked.
+    notify.* entities (`_notify_entities_blocking`: just their names, rendered by
+    Home Assistant; best effort — an error there just means no entities).
+    Raises NotifyListError if Home Assistant can't be asked.
     Cached for 60 s. Blocking; never call it while holding a DB connection."""
     global _targets_cache
     with _targets_lock:
@@ -149,19 +150,41 @@ def fetch_notify_targets_blocking(force: bool = False) -> tuple[set[str], set[st
     except (ValueError, TypeError, AttributeError):
         raise NotifyListError("Home Assistant sent a list of services this app couldn't read.") from None
     actions = {n for n in actions if _SERVICE_RE.match(n)} - {"send_message"}
-    entities: set[str] = set()
-    status, body = ha_client.request("GET", "/states", timeout=10)
-    if status == 200:
-        try:
-            entities = {s["entity_id"][len("notify."):] for s in json.loads(body)
-                        if str(s.get("entity_id", "")).startswith("notify.")}
-            entities = {n for n in entities if _SERVICE_RE.match(n)}
-        except (ValueError, TypeError, KeyError, AttributeError):
-            entities = set()
+    entities = _notify_entities_blocking()
     result = (actions, entities)
     with _targets_lock:
         _targets_cache = (time.monotonic(), result)
     return result
+
+
+# Only the notify entities' names, rendered by Home Assistant: GET /states is every entity it has.
+# (An object with a named key, so an answer meant for another template can't be mistaken for it.)
+NOTIFY_ENTITIES_TEMPLATE = "{{ {'notify_entities': states.notify | map(attribute='object_id') | list} | to_json }}"
+
+
+def _notify_entities_blocking() -> set[str]:
+    """The notify entities' names (without "notify."): POST /template, or GET /states when the template
+    can't be used (an error, or an answer that isn't {"notify_entities": [names]}). Best effort: empty on failure."""
+    status, body = ha_client.request("POST", "/template", {"template": NOTIFY_ENTITIES_TEMPLATE}, timeout=10)
+    names = None
+    if status == 200:
+        try:
+            rows = json.loads(body)
+        except ValueError:
+            rows = None
+        rows = rows.get("notify_entities") if isinstance(rows, dict) else None
+        if isinstance(rows, list) and all(isinstance(n, str) for n in rows):
+            names = set(rows)
+    if names is None:
+        status, body = ha_client.request("GET", "/states", timeout=10)
+        if status != 200:
+            return set()
+        try:
+            names = {s["entity_id"][len("notify."):] for s in json.loads(body)
+                     if str(s.get("entity_id", "")).startswith("notify.")}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return set()
+    return {n for n in names if _SERVICE_RE.match(n)}
 
 
 def available_notify_targets() -> tuple[set[str], set[str]] | None:

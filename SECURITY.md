@@ -53,6 +53,16 @@ admin access to your Home Assistant or its host.
   ever calls `switch.turn_off` / `switch.turn_on` on the switch an admin chose for a site.
 - Who someone is comes from Home Assistant's login; the admins are the names in each app's
   `admin_users` option.
+- **Messages between the apps** travel over Home Assistant's event bus. Plainly: without a signing key, any
+  app with `homeassistant_api: true` (and any Home Assistant administrator) can send a message as any
+  household app — including as the Household Assistant, whose questions the apps answer with a person's data —
+  and can read every message and answer on the bus. Set the same **App-messages signing key** in every
+  household app's Admin → App settings (each app offers it from the release that adds it): a keyed app then
+  refuses unsigned or wrongly signed messages. Signing proves who sent a message; it doesn't hide it — the
+  bus stays readable to every app with Home Assistant API access. The key itself never travels on the bus
+  and never leaves in a backup.
+- Inside Home Assistant an app trusts identity headers only from the Supervisor's ingress proxy — not from
+  127.0.0.1 — so another process in the same container can't pose as a signed-in person.
 - **Household Vault is experimental** and hasn't had an independent security review. Keep your own
   copy of your passwords elsewhere (for example in KeePassXC) and don't rely on it alone.
 - An AI provider outside your home network receives what the app sends it (each app's Documentation

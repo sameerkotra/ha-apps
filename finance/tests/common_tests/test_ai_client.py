@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=6a8ed7d3df65a3289e689628197defeaed813229701512ce6ed04c0f063318f1
+# Shared file: edit common/tests/test_ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=fc34c69a059a1325679352678b3e22fe67f80fdfd70dd5a6e4eef1c3f8d20d19
 """Tests for the shared AI provider layer (common/python/ai_client.py), with a fake HTTP post."""
 import json
 import unittest
@@ -163,6 +163,38 @@ class ErrorTests(unittest.TestCase):
             c.ollama(Cfg("ollama"), "q")
         self.assertEqual(sleeps, [5.0, 15.0, 45.0])
         self.assertEqual((e.exception.kind, e.exception.raw), ("rate_limit", "busy"))
+
+    def test_deadline_cuts_the_retries(self):
+        post = FakePost(*[(503, "busy")] * 4)
+        c, sleeps = client(post)
+        with self.assertLogs("ai_client", "WARNING"), self.assertRaises(core.AIError) as e:
+            c.ollama(Cfg("ollama"), "q", deadline=10)
+        self.assertEqual(sleeps, [5.0])                       # 5 s fits in 10 s, the next 15 s wouldn't
+        self.assertEqual(e.exception.kind, "rate_limit")
+        self.assertEqual(len(post.calls), 2)
+        post = FakePost((200, {"response": "ok"}))
+        c, _ = client(post)
+        self.assertEqual(c.ollama(Cfg("ollama"), "q", timeout=120, deadline=30).text, "ok")
+
+    def test_only_http_addresses(self):
+        for url in ("file:///etc/passwd#", "ftp://x/", "ai.local", "http:///x", ""):
+            c, _ = client(FakePost((200, {"response": "ok"})))
+            with self.assertRaises(core.AIError) as e:
+                c.ollama(Cfg("ollama", url=url), "q")
+            self.assertEqual(e.exception.kind, "not_configured", url)
+        with self.assertRaises(ValueError):
+            core.post("file:///etc/passwd", {}, None, 1)
+        self.assertIsNone(core.check_url("https://api.anthropic.com"))
+
+    def test_answer_body_is_capped(self):
+        import io
+        self.assertEqual(core._read_capped(io.BytesIO(b"x" * 10), 10), b"x" * 10)
+        with self.assertRaises(core.BodyTooLarge):
+            core._read_capped(io.BytesIO(b"x" * 11), 10)
+        c, _ = client(FakePost(core.BodyTooLarge("big")))
+        with self.assertRaises(core.AIError) as e:
+            c.ollama(Cfg("ollama"), "q")
+        self.assertEqual(e.exception.kind, "bad_response")
 
     def test_retry_after_header(self):
         post = FakePost((429, "", {"Retry-After": "3"}), (200, {"response": "ok"}))

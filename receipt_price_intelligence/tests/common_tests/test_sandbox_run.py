@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_sandbox_run.py and run tools/sync_common.py; don't edit this copy. sha256=47d0f3b4362e30aca30c61df65c8dc157b347e71d16790c56311678afbaa1ea7
+# Shared file: edit common/tests/test_sandbox_run.py and run tools/sync_common.py; don't edit this copy. sha256=9b820ad8baba4d7ab90cc73dce3ae239f3724bde2cac36a6838e2f9d0d1b2e91
 """Running tools on untrusted files (common/python/sandbox_run.py), tested in every app that uses it.
 
 The limits are checked everywhere; the switch to the unprivileged user only when the tests run as root
@@ -96,6 +96,30 @@ class Limits(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     box.join("../x")
             self.assertFalse(os.path.exists(folder))                # removed afterwards
+
+    def test_read_and_files_never_follow_what_the_tool_planted(self):
+        with tempfile.TemporaryDirectory() as d:
+            secret = os.path.join(d, "secret.db")
+            with open(secret, "wb") as f:
+                f.write(b"the household's data")
+            with sandbox_run.Scratch() as box:
+                # a hijacked tool leaves a symlink to the app's data, a FIFO and a real page
+                os.symlink(secret, os.path.join(box.path, "page-1.png"))
+                os.mkfifo(os.path.join(box.path, "page-2.png"))
+                with open(os.path.join(box.path, "page-3.png"), "wb") as f:
+                    f.write(b"\x89PNG real")
+                os.symlink(box.path, os.path.join(box.path, "loop"))
+                self.assertEqual(box.files("page-*.png"), ["page-3.png"])
+                self.assertEqual(box.files(), ["page-3.png"])
+                self.assertEqual(box.read("page-3.png"), b"\x89PNG real")
+                with self.assertRaises(sandbox_run.SandboxError):
+                    box.read("page-1.png")                      # the symlink
+                with self.assertRaises(sandbox_run.SandboxError):
+                    box.read("page-2.png")                      # the FIFO (no hang)
+                with self.assertRaises(sandbox_run.SandboxError):
+                    box.read("page-3.png", max_bytes=4)
+                with self.assertRaises(ValueError):
+                    box.read("sub/x")
 
     def test_list_form_only(self):
         with sandbox_run.Scratch() as box:

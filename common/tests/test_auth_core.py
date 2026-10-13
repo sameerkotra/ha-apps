@@ -19,7 +19,18 @@ class _Conn:
 
 class SourceAddress(unittest.TestCase):
     def test_default_set_is_the_proxy_and_loopback(self):
+        """Outside Home Assistant (tests, development) loopback counts; inside a running app container
+        only the ingress proxy does (a process in the same container must not pass as Home Assistant)."""
         self.assertEqual(auth_core.INGRESS_HOSTS, {"172.30.32.2", "127.0.0.1", "::1"})
+        self.assertEqual(auth_core.default_hosts(inside=False), {"172.30.32.2", "127.0.0.1", "::1"})
+        self.assertEqual(auth_core.default_hosts(inside=True), {"172.30.32.2"})
+        self.assertFalse(auth_core.from_ingress(_Conn("127.0.0.1"), auth_core.default_hosts(inside=True)))
+        with mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": "t"}), \
+                mock.patch.object(auth_core.os.path, "isfile", lambda p: p == auth_core.OPTIONS_FILE):
+            self.assertTrue(auth_core.inside_home_assistant())
+            self.assertEqual(auth_core.default_hosts(), {"172.30.32.2"})
+        with mock.patch.dict(os.environ, {"SUPERVISOR_TOKEN": ""}):
+            self.assertFalse(auth_core.inside_home_assistant())
         for host in ("172.30.32.2", "127.0.0.1", "::1"):
             self.assertTrue(auth_core.from_ingress(_Conn(host)), host)
         for host in ("10.0.0.5", "testclient", ""):

@@ -13,6 +13,14 @@ tables, timeouts and error handling; this module is the mechanics.
     with THROTTLE.spaced():                        # or: one request at a time, spaced from the end of the last
         body = geo.fetch(url, headers={...}, timeout=20)
 
+Where to call it: `wait()` books the next slot under the lock and sleeps OUTSIDE it, so ten callers
+sleep for their own slots at once (1, 2, … 10 s) instead of queueing on the lock — but each still
+occupies its thread. Geocode from ONE background job (the app's housekeeping, a queue table) rather
+than from request threads: twenty members saving addresses at once would otherwise hold twenty of
+the server's worker threads for twenty seconds. `wait(max_wait=…)` raises Busy instead of sleeping
+longer than that — for a request that must answer now. `spaced()` serialises the request itself (for
+servers that allow one connection); it holds the lock while the request runs.
+
     url = geo.search_url(base, "12 Main St, Springfield")       # {base}/search?q=…&format=json&limit=1
     lat, lon = geo.first_result(body)              # the first hit of a Nominatim answer (raises if none)
     geo.lonlat([(lat, lon), …])                    # "lon,lat;lon,lat" for an OSRM URL
@@ -26,6 +34,10 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+
+
+class Busy(RuntimeError):
+    """wait(max_wait=…): the next free slot is further away than the caller can wait."""
 
 
 class Throttle:
@@ -44,11 +56,19 @@ class Throttle:
         if wait > 0:
             time.sleep(wait)
 
-    def wait(self) -> None:
-        """Block until the interval has passed since the last request started; this one starts now."""
+    def wait(self, max_wait: float | None = None) -> None:
+        """Block until the interval has passed since the last request started; this one starts now. The
+        slot is booked under the lock and the sleep happens outside it, so waiting callers don't queue on
+        the lock. With `max_wait`, a slot further away than that raises Busy (nothing is booked)."""
         with self._lock:
-            self._pause()
-            self.last = time.monotonic()
+            now = time.monotonic()
+            slot = max(now, self.last + self.interval())
+            if max_wait is not None and slot - now > max_wait:
+                raise Busy(f"next slot in {slot - now:.1f} s")
+            self.last = slot
+        delay = slot - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
 
     @contextlib.contextmanager
     def spaced(self):

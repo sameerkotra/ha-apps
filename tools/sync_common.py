@@ -85,12 +85,18 @@ def expected_copy(src):
     return header_for(src, body) + body
 
 
+SKIP_DIRS = ("__pycache__", "node_modules", ".git", "common", "tools", "tests", "integration_tests")
+
+
 def stale_copies(manifest):
-    """Copies in app folders that carry a header but are no longer in the manifest."""
+    """Stamped copies ANYWHERE in the repository (every top-level folder, not only the manifest's apps) that
+    the manifest doesn't plan: a folder that carries copies but isn't listed would otherwise drift unseen."""
     planned = {d for _, _, d in planned_copies(manifest)}
     out = []
-    for app in manifest["apps"]:
-        for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, app)):
+    for top in sorted(os.listdir(ROOT)):
+        if top in SKIP_DIRS or top.startswith(".") or not os.path.isdir(os.path.join(ROOT, top)):
+            continue
+        for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, top)):
             dirnames[:] = [d for d in dirnames if d not in ("__pycache__", "node_modules")]
             for n in filenames:
                 if os.path.splitext(n)[1] not in COMMENT:
@@ -114,11 +120,22 @@ def check(manifest):
         elif read(dest) != expected_copy(src):
             problems.append(f"{dest}: differs from {src}")
     for rel in stale_copies(manifest):
-        problems.append(f"{rel}: a shared copy no longer listed in common/manifest.json")
+        app = rel.split("/", 1)[0]
+        if app in manifest["apps"]:
+            problems.append(f"{rel}: a shared copy no longer listed in common/manifest.json")
+        else:
+            problems.append(f"{rel}: a shared copy in a folder common/manifest.json doesn't list ({app}) — add the "
+                            "folder to the manifest, or remove the copy")
     return problems
 
 
 def sync(manifest):
+    stale = stale_copies(manifest)
+    unlisted = [rel for rel in stale if rel.split("/", 1)[0] not in manifest["apps"]]
+    if unlisted:                                     # before anything is written: the manifest is incomplete
+        sys.exit("\n".join(f"{rel}: a shared copy in a folder common/manifest.json doesn't list "
+                           f"({rel.split('/', 1)[0]})" for rel in unlisted)
+                 + "\nAdd the folder to common/manifest.json, or remove the copy. Nothing was changed.")
     changed_apps, written = set(), []
     for app, src, dest in planned_copies(manifest):
         want = expected_copy(src)
@@ -130,10 +147,11 @@ def sync(manifest):
             f.write(want)
         written.append(dest)
         changed_apps.add(app)
-    for rel in stale_copies(manifest):
+    for rel in stale:
+        app = rel.split("/", 1)[0]
         os.remove(os.path.join(ROOT, rel))
         written.append(f"{rel} (removed: no longer in the manifest)")
-        changed_apps.add(rel.split("/", 1)[0])
+        changed_apps.add(app)
     return written, sorted(changed_apps)
 
 

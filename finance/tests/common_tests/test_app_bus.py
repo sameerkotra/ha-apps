@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=ecad111208cc2d5a567f23e855a32d9286d137867050ec052d36ab031edc315f
+# Shared file: edit common/tests/test_app_bus.py and run tools/sync_common.py; don't edit this copy. sha256=ffd6b4f5da17b0df149a1c6dda52deab59cae7905dd55cdea6119fef1dbca130
 """The shared app bus (common/python/app_bus.py, ha_ws.py) against a fake Home Assistant event bus
 (common/tests/fake_ha_bus.py), with two or three fake apps in this process. APP_MESSAGES_SPEC.md §3–§6, §9.
 
@@ -13,12 +13,14 @@ import logging
 import os
 import shutil
 import sqlite3
+import struct
 import sys
 import tempfile
 import threading
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 try:                                            # in an app: its own copies
     from app.common import app_bus, ha_ws
@@ -721,6 +723,200 @@ class DiscoveryTest(BusCase):
         self.assertEqual([x["slug"] for x in c.apps()], ["household_arcade", "household_chat"])
 
 
+class HardeningTest(NackTest):
+    """The rate limit comes first, bounded memory, no replay past de-duplication, pruning, signing."""
+
+    def test_flood_of_bad_envelopes_is_not_recorded(self):
+        a, b = self.pair({"poll.create": lambda m, c: None})
+        b.configure(receive_limit=4)
+        for i in range(20):                                    # invalid envelopes from one sender
+            self.fake.fire("household_apps", self.envelope("household_arcade", "household_chat", "poll.create",
+                                                           {"n": i}, kv="1"))
+        wait_until(lambda: len(self.answers("household_arcade")) == 20)
+        reasons = [x["data"]["reason"] for x in self.answers("household_arcade")]
+        self.assertEqual(reasons, ["invalid"] * 4 + ["busy"] * 16)
+        self.assertEqual(self.rows("household_chat", "SELECT * FROM bus_seen"), [])   # refused before the checks passed
+        # a duplicate past the limit isn't answered again either
+        self.assertEqual(len([x for x in self.fake.events() if x["from"] == "household_chat" and x["kind"] == "nack"]), 20)
+
+    def test_unsupported_envelope_is_not_recorded(self):
+        ans, env = self.nack_for({"poll.create": lambda m, c: None}, {"v": 2})
+        self.assertEqual(ans["data"]["reason"], "unsupported_version")
+        self.assertEqual(self.rows("household_chat", "SELECT * FROM bus_seen"), [])
+
+    def test_total_receive_limit_across_made_up_senders(self):
+        calls = []
+        a, b = self.pair({"poll.create": lambda m, c: calls.append(m.id)})
+        b.configure(receive_limit_total=5)
+        for i in range(12):                                    # twelve "different apps", one message each
+            self.fake.fire("household_apps", self.envelope(f"made_up_{i}", "household_chat", "poll.create", POLL))
+        wait_until(lambda: sum(len(self.answers(f"made_up_{i}")) for i in range(12)) == 12)
+        reasons = [x["data"].get("reason") for i in range(12) for x in self.answers(f"made_up_{i}")]
+        self.assertEqual(reasons.count("busy"), 12 - len(calls))
+        self.assertLessEqual(len(calls), 5)
+        self.assertEqual(len(self.rows("household_chat", "SELECT * FROM bus_seen")), len(calls))
+
+    def test_hellos_are_rate_limited_and_hello_memory_is_bounded(self):
+        a, b = self.pair({"poll.create": lambda m, c: None})
+        b.configure(receive_limit=3)
+        for i in range(10):
+            self.fake.fire("household_apps", self.envelope(f"greeter_{i % 2}", "*", "hello",
+                                                           {"name": "G", "version": "1", "can": [], "wants": []}))
+        wait_until(lambda: len(self.rows("household_chat", "SELECT slug FROM bus_apps WHERE slug LIKE 'greeter%'")) == 2)
+        # a greeting doesn't use up the sender's requests: a poll from arcade still gets through
+        env = self.envelope("household_arcade", "household_chat", "poll.create", POLL)
+        self.fake.fire("household_apps", env)
+        wait_until(lambda: [x for x in self.answers("household_arcade") if x["reply_to"] == env["id"]])
+        self.assertEqual([x["kind"] for x in self.answers("household_arcade") if x["reply_to"] == env["id"]], ["ack"])
+        for i in range(app_bus.MAX_SENDERS + 20):
+            b._answer_hello(f"app_{i}")
+        self.assertLessEqual(len(b._hello_answered), app_bus.MAX_SENDERS)
+
+    def test_failing_expiry_callback_gives_up(self):
+        calls = []
+
+        def broken(m, c):
+            calls.append(m.reply_to)
+            raise RuntimeError("bug in the feature")
+        a, b = self.pair({"poll.create": lambda m, c: None})
+        a.on_reply("poll.create", broken)
+        b.stop()
+        mid = a.send("household_chat", "poll.create", POLL, expires_in=timedelta(minutes=5))
+        a.run_outbox_once()
+        self.clock.advance(minutes=5)
+        for _ in range(app_bus.EXPIRE_TRIES):
+            self.assertEqual(a.run_outbox_once()["expired"], 0)
+            self.assertEqual(self.state("household_arcade", mid), "pending")   # undone: tried again next run
+        self.assertEqual(a.run_outbox_once()["expired"], 1)
+        self.assertEqual(self.state("household_arcade", mid), "expired")
+        self.assertEqual(calls, [mid] * app_bus.EXPIRE_TRIES)                 # not called a fourth time
+        self.assertEqual(a._expire_failures, {})
+
+    def test_window_forgets_senders(self):
+        w = app_bus._Window(max_keys=3)
+        for i in range(10):
+            self.assertTrue(w.allow(f"app{i}", 1000.0 + i, 5))
+        self.assertLessEqual(len(w._hits), 3)
+        self.assertTrue(w.allow("app9", 1010.0, 5))
+        for _ in range(4):
+            w.allow("app9", 1010.0, 5)
+        self.assertFalse(w.allow("app9", 1010.0, 5))           # the limit still holds for a kept key
+
+    def test_far_future_expiry_and_stale_sent_are_invalid(self):
+        far = (self.clock() + timedelta(days=8)).isoformat()
+        ans, _ = self.nack_for({"poll.create": lambda m, c: None}, {"expires": far})
+        self.assertEqual(ans["data"], {"reason": "invalid", "detail": "expires"})
+        self.tearDown()
+        self.setUp()
+        old = (self.clock() - timedelta(days=8)).isoformat()
+        ans, _ = self.nack_for({"poll.create": lambda m, c: None}, {"sent": old})
+        self.assertEqual(ans["data"], {"reason": "invalid", "detail": "sent"})
+
+    def test_apps_pruned_and_pruning_is_hourly(self):
+        a, b = self.pair({"poll.create": lambda m, c: None})
+        self.assertTrue(self.rows("household_chat", "SELECT 1 FROM bus_apps WHERE slug='household_arcade'"))
+        n = len(self.rows("household_chat", "SELECT * FROM bus_seen"))
+        with b._tx() as c:
+            c.execute("INSERT INTO bus_seen VALUES ('OLD', 'x', 'k', NULL, ?)", (app_bus._iso(self.clock() - timedelta(days=8)),))
+        self.clock.advance(minutes=30)
+        b.run_outbox_once()                                    # within the hour: no prune
+        self.assertEqual(len(self.rows("household_chat", "SELECT * FROM bus_seen")), n + 1)
+        self.clock.advance(minutes=31)
+        b.run_outbox_once()
+        self.assertEqual(len(self.rows("household_chat", "SELECT * FROM bus_seen")), n)
+        a.stop()                                               # silent from now on (it would answer Chat's hello)
+        self.clock.advance(days=31)
+        b.run_outbox_once()
+        self.assertEqual(self.rows("household_chat", "SELECT slug FROM bus_apps"), [])
+
+    def test_reconnect_resend_runs_on_the_outbox_thread(self):
+        calls = []
+        a, b = self.pair({"poll.create": lambda m, c: calls.append(m.id)})
+        b.stop()
+        mid = a.send("household_chat", "poll.create", POLL)
+        a.run_outbox_once()
+        a.stop()
+        self.make_bus("household_chat", handlers={"poll.create": lambda m, c: calls.append(m.id)})
+        a2 = self.make_bus("household_arcade", outbox_thread=True, outbox_interval=5)
+        wait_until(lambda: self.state("household_arcade", mid) == "acked")  # woken, not after 5 s
+        self.assertEqual(calls, [mid])
+        self.assertFalse(a2._resend_all)
+
+    def test_signing(self):
+        key = "household-key-1"
+        self.assertEqual(len(app_bus.sign({"id": "1", "data": {"b": 1, "a": 2}}, key)), 64)
+        env = {"id": "1", "from": "a", "to": "b", "kind": "x.y", "sent": "s", "expires": "e", "data": {"b": 1, "a": [2]}}
+        env["sig"] = app_bus.sign(env, key.encode())
+        self.assertTrue(app_bus.verify(env, key))
+        self.assertTrue(app_bus.verify(dict(env, data={"a": [2], "b": 1}), lambda: key))   # key order doesn't matter
+        self.assertFalse(app_bus.verify(dict(env, data={"a": [3], "b": 1}), key))
+        self.assertFalse(app_bus.verify(dict(env, sig=None), key))
+        self.assertFalse(app_bus.verify(env, "other"))
+        with self.assertRaises(ValueError):
+            app_bus.sign(env, "")
+
+    def test_signed_apps_talk_and_refuse_the_unsigned(self):
+        calls = []
+        a = self.make_bus("household_arcade", signing_key="k1")
+        b = self.make_bus("household_chat", handlers={"poll.create": lambda m, c: calls.append(m.id)}, signing_key=lambda: "k1")
+        wait_until(lambda: a.available("household_chat", "poll.create"))
+        mid = a.send("household_chat", "poll.create", POLL)
+        a.run_outbox_once()
+        wait_until(lambda: self.state("household_arcade", mid) == "acked")
+        self.assertEqual(calls, [mid])
+        self.assertTrue(all(len(e.get("sig") or "") == 64 for e in self.fake.events()))
+        # an impostor without the key: its request is nacked unsigned, nothing happens; its hello is ignored
+        env = self.envelope("household_todo", "household_chat", "poll.create", POLL)
+        self.fake.fire("household_apps", env)
+        wait_until(lambda: [x for x in self.answers("household_todo") if x["reply_to"] == env["id"]])
+        ans = [x for x in self.answers("household_todo") if x["reply_to"] == env["id"]][0]
+        self.assertEqual(ans["data"]["reason"], "unsigned")
+        self.assertEqual(calls, [mid])
+        self.assertEqual(self.rows("household_chat", "SELECT * FROM bus_seen WHERE id = ?", (env["id"],)), [])
+        self.fake.fire("household_apps", self.envelope("household_todo", "*", "hello", {"name": "T", "version": "1", "can": ["x.y"], "wants": []}))
+        time.sleep(0.1)
+        self.assertFalse(b.available("household_todo", "x.y"))
+        # a forged ack doesn't close a pending message
+        b.stop()
+        mid2 = a.send("household_chat", "poll.create", POLL)
+        a.run_outbox_once()
+        self.fake.fire("household_apps", self.envelope("household_chat", "household_arcade", "ack", {"result": {}}, reply_to=mid2))
+        time.sleep(0.1)
+        self.assertEqual(self.state("household_arcade", mid2), "pending")
+
+    def test_key_function_is_read_at_most_every_few_seconds(self):
+        reads = []
+
+        def key():
+            reads.append(1)
+            return "k1"
+        bus = app_bus.AppBus(signing_key=key)
+        for _ in range(50):
+            self.assertEqual(bus._key(), b"k1")
+        self.assertEqual(len(reads), 1)                         # a flood doesn't read the setting per event
+        bus._key_cache = (key, bus._key_cache[1] - app_bus.KEY_REFRESH - 1, b"k1")
+        bus._key()
+        self.assertEqual(len(reads), 2)
+        bus.configure(signing_key="")                           # a plain value: used as it is
+        self.assertIsNone(bus._key())
+
+    def test_unkeyed_receiver_accepts_signed_and_unsigned(self):
+        """Without a key an app takes everything (as before); a keyed app ignores the unkeyed one's hello."""
+        calls = []
+        b = self.make_bus("household_chat", handlers={"poll.create": lambda m, c: calls.append(m.id)})
+        a = self.make_bus("household_arcade", signing_key="k1")
+        wait_until(lambda: self.rows("household_chat", "SELECT 1 FROM bus_apps WHERE slug='household_arcade'"))
+        time.sleep(0.1)
+        self.assertFalse(a.available("household_chat", "poll.create"))          # Chat's hello was unsigned
+        env = self.envelope("household_arcade", "household_chat", "poll.create", POLL)
+        env["sig"] = app_bus.sign(env, "k1")
+        self.fake.fire("household_apps", env)
+        wait_until(lambda: calls == [env["id"]])
+        env2 = self.envelope("household_arcade", "household_chat", "poll.create", POLL)   # unsigned: taken too
+        self.fake.fire("household_apps", env2)
+        wait_until(lambda: calls == [env["id"], env2["id"]])
+
+
 class LifecycleTest(BusCase):
     def bus_threads(self):
         return [t for t in threading.enumerate() if t.name.startswith(("bus-", "ha-ws"))]
@@ -894,6 +1090,50 @@ class HAWebSocketTest(BusCase):
             self.assertEqual(ws.connections, 1)
         finally:
             ws.stop()
+
+    def test_handshake_needs_the_right_accept(self):
+        """A server answering 101 without the Sec-WebSocket-Accept for our key isn't a WebSocket server."""
+        import socket as socketlib
+        self.assertEqual(ha_ws.accept_for("dGhlIHNhbXBsZSBub25jZQ=="), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")   # RFC 6455's example
+        for accept in (None, "d3Jvbmc="):
+            with self.subTest(accept=accept):
+                srv = socketlib.socket()
+                srv.bind(("127.0.0.1", 0))
+                srv.listen(1)
+
+                def serve(srv=srv, accept=accept):
+                    c, _ = srv.accept()
+                    with c:
+                        c.recv(4096)
+                        head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                        if accept:
+                            head += f"Sec-WebSocket-Accept: {accept}\r\n"
+                        c.sendall((head + "\r\n").encode())
+                        time.sleep(0.2)
+                t = threading.Thread(target=serve, daemon=True)
+                t.start()
+                try:
+                    with self.assertRaisesRegex(ha_ws.WSClosed, "Sec-WebSocket-Accept"):
+                        ha_ws.MiniWS(f"ws://127.0.0.1:{srv.getsockname()[1]}/api/websocket", timeout=2)
+                finally:
+                    t.join(2)
+                    srv.close()
+
+    def test_fragmented_message_is_capped(self):
+        import socket as socketlib
+        a, b = socketlib.socketpair()
+        try:
+            ws = ha_ws.MiniWS.__new__(ha_ws.MiniWS)
+            ws.sock, ws.buf, ws._send_lock = a, b"", threading.Lock()
+            frame = bytes([0x01, 126]) + struct.pack("!H", 60_000) + b"x" * 60_000   # text, not the last fragment
+            more = bytes([0x00, 126]) + struct.pack("!H", 60_000) + b"x" * 60_000    # continuation
+            b.sendall(frame + more)
+            with mock.patch.object(ha_ws, "MAX_MESSAGE", 100_000):
+                with self.assertRaisesRegex(ha_ws.WSClosed, "too large"):
+                    ws.recv()
+        finally:
+            a.close()
+            b.close()
 
     def test_fake_bus_rejects_wrong_token(self):
         import urllib.error

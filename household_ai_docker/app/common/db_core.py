@@ -1,4 +1,4 @@
-# Shared file: edit common/python/db_core.py and run tools/sync_common.py; don't edit this copy. sha256=7e8488da53b81216fe194339a4868e7f1a1e96730d2b40e1dcc36edf1c7abb0e
+# Shared file: edit common/python/db_core.py and run tools/sync_common.py; don't edit this copy. sha256=a3953965676c0b08493e43127d74a6b8365d34bef7c2e1bc7d0e81abdd2964ad
 """SQLite helpers the household apps share (shared: common/python/db_core.py, copied into each app's
 app/common/ by tools/sync_common.py).
 
@@ -21,12 +21,29 @@ built on these, with its own settings as parameters:
     db_core.swap_in(tmp_path, config.DB_PATH, get_conn) # restore: replace the live file
 
 Connections are short-lived (one per request or job); WAL lets reads and writes overlap. SQLite
-doesn't keep `foreign_keys` in the file, so it's set on every connection. Needs nothing from the app.
+doesn't keep `foreign_keys` in the file, so it's set on every connection; the default pragmas also set
+`synchronous = NORMAL` (safe with WAL: a power cut can lose the last commits, never corrupt the file,
+and it saves an fsync per transaction on SD cards). Needs nothing from the app.
+
+A restore (`swap_in`) replaces the database file while other threads may hold connections to the old
+one: anything they write afterwards goes to the unlinked file and is lost. The app's lock must cover
+every writer — requests and background jobs. `MaintenanceGate` is that lock for the jobs that can't
+take the request lock:
+
+    GATE = db_core.MaintenanceGate()
+    with GATE.work():            # a background pass, a long request: many at once; blocks while paused
+        ...
+    with GATE.pause():           # a restore: waits for the passes under way, then runs alone
+        db_core.swap_in(...)
+    GATE.generation             # +1 per pause: a reader that cached things re-reads when it changed
 """
 import os
 import sqlite3
 import tempfile
+import threading
 from contextlib import contextmanager
+
+DEFAULT_PRAGMAS = ("foreign_keys = ON", "synchronous = NORMAL")
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -40,10 +57,10 @@ class ClosingConnection(sqlite3.Connection):
             self.close()
 
 
-def connect(path, *, timeout: float, pragmas=("foreign_keys = ON",), row_factory=sqlite3.Row,
+def connect(path, *, timeout: float, pragmas=DEFAULT_PRAGMAS, row_factory=sqlite3.Row,
             check_same_thread: bool = True, factory=None, functions=()) -> sqlite3.Connection:
     """A connection to `path`: `timeout` seconds to wait for a lock, rows as sqlite3.Row (by default),
-    then each of `pragmas` ("foreign_keys = ON", "busy_timeout = 30000", …) run in order, then each
+    then each of `pragmas` (default DEFAULT_PRAGMAS; "busy_timeout = 30000", "journal_mode = WAL", …) run in order, then each
     SQL function in `functions` — (name, nargs, func, deterministic) — registered."""
     kw = {"timeout": timeout}
     if not check_same_thread:
@@ -84,6 +101,55 @@ def closing(connect_fn):
         yield conn
     finally:
         conn.close()
+
+
+class MaintenanceGate:
+    """A readers/writer gate: `work()` sections run together; `pause()` waits for them to end, runs
+    alone and holds every new `work()` until it is over (a restore, a VACUUM). Thread-based; from async
+    code use it inside `run_in_threadpool`. `generation` counts the pauses."""
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._working = 0
+        self._paused = False
+        self.generation = 0
+
+    @contextmanager
+    def work(self, timeout: float | None = None):
+        """A section that must not overlap a pause. Raises TimeoutError if a pause lasts longer than `timeout`."""
+        with self._cond:
+            if not self._cond.wait_for(lambda: not self._paused, timeout):
+                raise TimeoutError("maintenance in progress")
+            self._working += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._working -= 1
+                self._cond.notify_all()
+
+    @contextmanager
+    def pause(self, timeout: float | None = None):
+        """Run alone: waits until nothing is working (TimeoutError after `timeout`), blocks new work until done."""
+        with self._cond:
+            if not self._cond.wait_for(lambda: not self._paused, timeout):
+                raise TimeoutError("another maintenance pause is in progress")
+            self._paused = True
+            if not self._cond.wait_for(lambda: self._working == 0, timeout):
+                self._paused = False
+                self._cond.notify_all()
+                raise TimeoutError("work still in progress")
+            self.generation += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._paused = False
+                self._cond.notify_all()
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
 
 
 # ---------------------------------------------------------------------------------------------
@@ -181,7 +247,9 @@ def swap_in(tmp_path, db_path, get_conn) -> None:
     WAL (through the app's `get_conn` context manager; a database that can't be opened is skipped),
     move the new file into place, and remove the old -wal/-shm files so nothing replays stale WAL
     frames against it. `tmp_path` must be on the same filesystem as `db_path`. The caller holds its
-    own lock against concurrent writers, and runs its start-up migrations afterwards."""
+    own lock against EVERY concurrent writer (requests and background jobs — `MaintenanceGate.pause()`
+    for the jobs): a connection opened before the swap still points at the old, unlinked file, and what
+    it writes there is lost. It runs its start-up migrations afterwards."""
     try:
         with get_conn() as c:
             c.execute("PRAGMA wal_checkpoint(TRUNCATE)")

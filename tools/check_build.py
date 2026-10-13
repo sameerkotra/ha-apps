@@ -7,9 +7,13 @@
 Checks, per app (the folders in common/manifest.json):
 - requirements.txt / requirements-dev.txt: every package that common/build/requirements-base.txt pins
   is pinned to exactly that version (extras like uvicorn[standard] allowed); fastapi, uvicorn and
-  python-multipart are in every app's requirements.txt; no two apps pin a package differently.
-- Dockerfile: a pinned python:3.x base image, requirements.txt copied and installed with pip, the app
-  copied (`COPY app ./app` or `COPY . .`), a CMD.
+  python-multipart are in every app's requirements.txt; no two apps pin a package differently; every
+  line of an app's requirements.txt (what goes into the image) is pinned with `==` (`unpinned()`).
+- Dockerfile: a pinned python:3.x base image (the last FROM; `docker.io/library/python:…` too), requirements.txt
+  copied and installed with pip, the app copied (`COPY app ./app` or `COPY . .`), a CMD.
+- Warnings (printed, never a failure — nothing breaks today), in `warnings()`: an extra such as
+  `uvicorn[standard]` (its own dependencies come unpinned), and a floating base tag (`python:3.12-slim`
+  without the Alpine/Debian release, or a tag without a digest).
 - The start command turns uvicorn's proxy headers off: the ingress check trusts the TCP peer address,
   which must never be rewritten from X-Forwarded-For. A CMD that runs uvicorn passes --no-proxy-headers;
   a CMD that runs a Python file (Finance's bootstrap.py, Receipt's `-m app.main`) starts uvicorn there
@@ -236,6 +240,60 @@ def proxy_header_problems(app: str, app_dir: str) -> list:
     return problems
 
 
+BASE_IMAGE_RE = re.compile(r"^(docker\.io/library/)?python:3\.\d+")
+FLOATING_TAG_RE = re.compile(r"^(docker\.io/library/)?python:3\.\d+(-alpine|-slim)?(\s|$)")   # no Alpine/Debian release
+
+
+def requirement_lines(path: str) -> list:
+    """[(package as written, extras or "", version or None)] for each requirement line of a file."""
+    out = []
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
+                continue
+            m = REQ_RE.match(line)
+            if m:
+                out.append((m.group(1), m.group(2) or "", m.group(4)))
+    return out
+
+
+def unpinned(path: str) -> list:
+    """The packages of a requirements file without an exact `==` version (a failure for requirements.txt:
+    the image would get whatever is newest on the day it is built)."""
+    return [name for name, _extras, version in requirement_lines(path) if version is None]
+
+
+def base_image_warning(app: str, base: str) -> str | None:
+    """A warning for a base image that isn't pinned to one release (None when it is pinned by digest)."""
+    if "@sha256:" in base:
+        return None
+    image = base.split()[0]
+    if FLOATING_TAG_RE.match(base):
+        return (f"{app}/Dockerfile: base image tag floats across releases ({image}); pin the Alpine/Debian "
+                "release (python:3.12-alpine3.21, python:3.13-slim-trixie) or a digest")
+    return f"{app}/Dockerfile: base image is pinned by tag, not digest ({image})"
+
+
+def warnings() -> list:
+    """Things worth knowing that aren't failures (yet): extras whose own dependencies come unpinned, and
+    base images pinned by a tag that floats (or by a tag rather than a digest)."""
+    out = []
+    for app in apps():
+        app_dir = os.path.join(ROOT, app)
+        for name, extras, _version in requirement_lines(os.path.join(app_dir, "requirements.txt")):
+            if extras:
+                out.append(f"{app}/requirements.txt: {name}{extras} pulls in extras whose versions aren't pinned")
+        froms = [a for w, a in dockerfile(app_dir) if w == "FROM"]
+        if froms:
+            w = base_image_warning(app, froms[-1])
+            if w:
+                out.append(w)
+    return out
+
+
 # ---- checks -------------------------------------------------------------------------------------------
 
 def check() -> list:
@@ -249,6 +307,8 @@ def check() -> list:
         for pkg in EVERY_APP:
             if pkg not in runtime:
                 problems.append(f"{app}/requirements.txt: {pkg} is missing")
+        for pkg in unpinned(os.path.join(app_dir, "requirements.txt")):
+            problems.append(f"{app}/requirements.txt: {pkg} isn't pinned (use {pkg}==<version>)")
         for fname, reqs in (("requirements.txt", runtime), ("requirements-dev.txt", dev)):
             for pkg, ver in reqs.items():
                 if ver is not None:
@@ -261,7 +321,7 @@ def check() -> list:
         steps = dockerfile(app_dir)
         words = [w for w, _ in steps]
         froms = [a for w, a in steps if w == "FROM"]
-        if not froms or not re.match(r"python:3\.\d+", froms[-1]):
+        if not froms or not BASE_IMAGE_RE.match(froms[-1]):
             problems.append(f"{app}/Dockerfile: base image is not a pinned python:3.x ({froms})")
         if not any(w == "COPY" and a.split()[0] == "requirements.txt" for w, a in steps):
             problems.append(f"{app}/Dockerfile: requirements.txt isn't copied on its own")
@@ -307,6 +367,8 @@ def main(argv) -> int:
             files = image_files(os.path.join(ROOT, a))
             print(f"\n{a}: {len(files)} files in the image, e.g. " +
                   ", ".join(f for f in files if "/common/" in f)[:300])
+    for w in warnings():
+        print("warning:", w)
     problems = check()
     for p in problems:
         print(p)

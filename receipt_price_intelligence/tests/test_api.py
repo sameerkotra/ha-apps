@@ -100,7 +100,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(r.headers["x-content-type-options"], "nosniff", path)
         self.assertEqual(c.get("/admin.html", headers=PAT).headers["cache-control"], "no-store")
         self.assertEqual(c.get("/static/app.js", headers=PAT).headers["cache-control"], "no-store")
-        self.assertNotIn("cache-control", c.get("/api/info", headers=PAT).headers)
+        self.assertEqual(c.get("/api/info", headers=PAT).headers["cache-control"], "no-store")   # shared default for the API
         self.assertIn("script-src 'self';", main.CSP)
 
     def test_health_answers_tell_nothing_more(self):
