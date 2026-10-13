@@ -5,7 +5,7 @@ full moon after birth (panchang.py)."""
 import json
 from datetime import date, datetime, time, timedelta
 
-from . import config, db, graph as graph_mod, panchang
+from . import config, db, features, graph as graph_mod, panchang
 
 DEFAULTS = [
     ("age", 1, "First birthday", "మొదటి పుట్టినరోజు", "पहला जन्मदिन"),
@@ -66,7 +66,7 @@ def upcoming(conn, g, today: date, horizon_days: int, lang: str = "en", leads_on
 
     def who(p):
         return {"id": p.id, "name": p.name, "given": p.given, "surname": p.surname, "photo": p.photo,
-                "photoRegion": p.photo_region, "gender": p.gender, "remind": p.remind, "nameLocal": p.local_name}
+                "photoRegion": p.photo_region, "gender": p.gender, "remind": p.remind, "nameLocal": p.local_name if features.on("script_names") else None}
 
     def add(when, m, sub, title, people, remind, extra=None):
         away = (when - today).days

@@ -38,7 +38,7 @@ class WordTests(ApiTestCase):
         self.assertLess(find_people.word_score("ravi", "sita"), 0.6)
 
 
-class RelationTests(ApiTestCase):
+class RelationTree(ApiTestCase):
     def setUp(self):
         super().setUp()
         self.old_panel = config.INGRESS_PANEL
@@ -61,6 +61,8 @@ class RelationTests(ApiTestCase):
         config.INGRESS_PANEL = self.old_panel
         super().tearDown()
 
+
+class RelationTests(RelationTree):
     def assertNack(self, res, reason, detail):
         self.assertIsInstance(res, app_bus.Nack, res)
         self.assertEqual((res.reason, res.detail), (reason, detail))
@@ -164,3 +166,36 @@ class RelationTests(ApiTestCase):
         r = self.client.get(f"/relate/{self.sita}/{self.kiran}", follow_redirects=False)
         self.assertEqual(r.status_code, 307)
         self.assertEqual(r.headers["location"], f"../../../#/relate/{self.sita}/{self.kiran}")
+
+
+class KeepOutTests(RelationTree):
+    """Someone marked "keep out of all exports" is left out of the Household Assistant's answers too."""
+
+    def keep_out(self, pid):
+        from base import ADMIN
+        self.ok(self.patch(f"/api/people/{pid}", {"never_export": True}, user=ADMIN))
+
+    def test_person_and_relation_leave_them_out(self):
+        self.assertIn("Ravi Kumar Pallem", call(ALICE["id"], tool="tree.person", person="Ramesh")["text"])
+        self.keep_out(self.ravi)
+        res = call(ALICE["id"], tool="tree.person", person="Ravi Kumar")
+        self.assertNotIn("Ravi Kumar Pallem", res["text"])
+        self.assertNotIn(self.ravi, str(res))
+        ramesh = call(ALICE["id"], tool="tree.person", person="Ramesh")["text"]
+        self.assertNotIn("Ravi", ramesh)
+        self.assertIn("Sita Pallem", ramesh)
+        # the chain through him is gone: his son and sister aren't linked any more
+        res = call(ALICE["id"], person="Kiran Pallem", to="Sita Pallem")
+        self.assertIn("aren't related", res["text"])
+        self.assertNotIn("Ravi", res["text"])
+
+    def test_birthdays_leave_them_out(self):
+        from unittest import mock
+        from datetime import date
+        with mock.patch.object(config, "today", return_value=date(2025, 12, 20)):
+            before = call(ALICE["id"], tool="tree.birthdays", days=30, everyone=True)["text"]
+            self.assertIn("Ravi", before)
+            self.keep_out(self.ravi)
+            after = call(ALICE["id"], tool="tree.birthdays", days=30, everyone=True)["text"]
+        self.assertNotIn("Ravi", after)
+        self.assertIn("Sita", after)

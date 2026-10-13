@@ -67,6 +67,9 @@ SETTINGS = [
             help="How long deleted people, families and photos can be restored before they're removed for good."),
     Setting("max_upload_mb", 20, "Largest upload (MB)", group="general", min=1, max=100, strict=True, unit="MB",
             help="The biggest photo or document anyone can upload."),
+    Setting("history_keep_days", 0, "Keep history for", group="general", min=0, max=36500, strict=True, unit="days",
+            help="0 keeps every change for ever (the default). Otherwise changes older than this are removed for "
+                 "good by the daily clean-up, and can't be undone any more; the tree itself doesn't change."),
     Setting("media_path", config.MEDIA_PATH_DEFAULT, "Photo folder", group="general", kind="text", strict=True,
             min_length=1, max_length=400, validators=[_media_path],
             help="Where photos and documents are kept, inside /share — for example /share/nas/family_tree on network "
@@ -95,6 +98,9 @@ SETTINGS = [
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant", strict=True,
             help="Lets the Household Assistant tell people the birthdays and anniversaries coming up, as Upcoming "
                  "shows them. Each person can turn it off on Settings."),
+    Setting("bus_signing_key", "", "App-messages signing key", group="assistant", secret=True, max_length=200,
+            help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+                 "Assistant's network can send messages as any other."),
     # one strict true/false per feature switch (features.py)
     *[Setting(f.key, f.default, f.label, group=_FEATURE_GROUPS[f.kind], strict=True, help=f.help)
       for f in features.FEATURES],
@@ -225,7 +231,8 @@ def update(partial: dict, user: dict | None) -> dict:
     """Validate the merged result, write only the changed keys, return all values."""
     values, changed = REGISTRY.update(partial, user["id"] if user else None)
     if changed:
-        logger.info("App settings changed by %s: %s", (user or {}).get("name") or "?", {k: values[k] for k in changed})
+        logger.info("App settings changed by %s: %s", (user or {}).get("name") or "?",
+                    {k: ("(secret)" if k in REGISTRY.secrets else values[k]) for k in changed})
     return REGISTRY.all()
 
 

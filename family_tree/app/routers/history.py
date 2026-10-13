@@ -13,8 +13,8 @@ router = APIRouter(prefix="/api", tags=["history"])
 
 ENTITY_WORDS = {"people": "person", "families": "family", "events": "event", "family_children": "child link",
                 "media": "photo", "media_links": "photo link", "stories": "story", "kin_terms": "relationship name",
-                "media_regions": "tag on a photo"}
-HIDDEN_FIELDS = {"x", "y", "w", "h", "photo_region_id", "updated_at", "updated_by", "source", "created_at", "created_by", "gedcom_extra", "sort_key", "date_y", "date_m", "date_d",
+                "media_regions": "tag on a photo", "sources": "source"}
+HIDDEN_FIELDS = {"x", "y", "w", "h", "photo_region_id", "date_sort", "updated_at", "updated_by", "source", "created_at", "created_by", "gedcom_extra", "sort_key", "date_y", "date_m", "date_d",
                  "date_approx"}
 
 
@@ -120,6 +120,8 @@ def trash(user: dict = Depends(require_admin)):
                             "WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").fetchall()
         media = conn.execute("SELECT id, title, kind, deleted_at FROM media WHERE deleted_at IS NOT NULL "
                              "ORDER BY deleted_at DESC").fetchall()
+        sources = conn.execute("SELECT id, title, deleted_at FROM sources WHERE deleted_at IS NOT NULL "
+                               "ORDER BY deleted_at DESC").fetchall()
         ids = {x for f in fams for x in (f["partner1_id"], f["partner2_id"]) if x}
         names = names_mod.people_names(conn, ids)
         items = [{"entity": "people", "id": r["id"], "deletedAt": r["deleted_at"],
@@ -131,13 +133,15 @@ def trash(user: dict = Depends(require_admin)):
         items += [{"entity": "media", "id": r["id"], "deletedAt": r["deleted_at"], "kind": r["kind"],
                    "name": r["title"] or ("Document" if r["kind"] == "document" else "Photo")}
                   for r in media]
+        items += [{"entity": "sources", "id": r["id"], "deletedAt": r["deleted_at"], "name": r["title"] or "Source"}
+                  for r in sources]
         items.sort(key=lambda x: x["deletedAt"], reverse=True)
         return {"items": items, "trashDays": housekeeping.trash_days()}
 
 
 @router.post("/trash/{entity}/{eid}/restore")
 def restore(entity: str, eid: str, user: dict = Depends(require_admin)):
-    if entity not in ("people", "families", "media"):
+    if entity not in ("people", "families", "media", "sources"):
         raise HTTPException(404, "Unknown kind of item.")
     with db.get_conn() as conn:
         row = conn.execute(f"SELECT deleted_at FROM {entity} WHERE id = ?", (eid,)).fetchone()

@@ -362,6 +362,8 @@ function personForm(initial = {}, opts = {}) {
   const gender = segmented([["male", "Male"], ["female", "Female"], ["other", "Other"], ["unknown", "Unknown"]], p.gender || opts.genderHint || "unknown");
   const deceased = h("input", { type: "checkbox", checked: !!(p.deceased || p.death) });
   const neverExport = h("input", { type: "checkbox", checked: !!p.neverExport });
+  // anyone may keep someone out of exports; only an admin can let them back in (the server checks it too)
+  if (p.neverExport && !(state.me && state.me.isAdmin)) neverExport.disabled = true;
   const editing = !!p.id;                     // new people always start with reminders off (§9)
   const remind = h("input", { type: "checkbox", checked: !!p.remind });
   const birthDate = dateInput(p.birth && p.birth.date);
@@ -425,7 +427,8 @@ function personForm(initial = {}, opts = {}) {
     h("div", { class: "form-row" }, field("Name order", order)),
     opts.compact ? null : field("Biography", bio, "wide"),
     opts.compact ? null : h("label", { class: "check-row" }, neverExport, h("span", null, "Keep out of all exports",
-      h("span", { class: "hint" }, " — never in a website or file, even when everyone is exported"))),
+      h("span", { class: "hint" }, " — never in a website or file, even when everyone is exported, nor in the Household Assistant's answers" +
+        (neverExport.disabled ? ". Only an admin can turn this off." : "")))),
     opts.compact || !editing || !feat("reminders") ? null : h("label", { class: "check-row" }, remind, h("span", null, "Send reminders for this person",
       h("span", { class: "hint" }, " — 🔔 their birthday and other days go to everyone who has reminders on"))));
   let moreShown = !opts.compact || !!(p.birthSurname || p.nickname || otherNames.length || p.givenLocal || p.surnameLocal);
@@ -1258,6 +1261,10 @@ function currentRoute() {
   return { name: parts[0] || "tree", args: parts.slice(1) };
 }
 let renderSeq = 0;
+/* Leaflet maps on the page now: removed (their listeners and tile requests with them) when the page changes. */
+const liveMaps = [];
+function trackMap(map) { liveMaps.push(map); return map; }
+function removeMaps() { for (const m of liveMaps.splice(0)) { try { m.remove(); } catch (e) { /* already gone */ } } }
 function rerender() { route(); }
 function setNav(name) {
   document.querySelectorAll(".side-nav .tab-btn").forEach((b) => {
@@ -1282,6 +1289,7 @@ function featureOffView(key) {
 async function route() {
   if (state.kids) return;              // kids mode: only the quiz screen
   const seq = ++renderSeq;
+  removeMaps();
   const { name, args } = currentRoute();
   const view = $("#view");
   const main = $("#main");
@@ -1366,7 +1374,8 @@ async function renderTree(focusId, seq) {
     mode === "chart" && feat("sides") ? sideControls(data.meId ? null : focusNode.name) : null,
     modeSwitch(mode),
     h("button", { type: "button", class: "btn-ghost btn-small", title: "Add a couple and their children at once", onclick: () => quickFamilyModal() }, "+ Family"),
-    mode === "chart" ? h("button", { type: "button", class: "btn-ghost btn-small", title: "Print or save as PDF", onclick: () => window.print() }, "🖨") : null);
+    mode === "chart" ? h("button", { type: "button", class: "btn-ghost btn-small", title: "Print or save as PDF",
+      onclick: async () => { if (chart) await chart.loadImages(); window.print(); } }, "🖨") : null);
   mount(view, h("div", { class: "tree-wrap" }, toolbar, canvas));
   const anchorFor = (id) => ({ id, name: id === data.focus ? focusNode.name : "this person", surname: id === data.focus ? focusNode.surname : "" });
   const onGhost = (g) => {
@@ -2127,7 +2136,7 @@ function placesLayer(L, map, handlers) {
           handlers.onMove ? h("button", { type: "button", class: "btn-ghost btn-small", onclick: () => { map.closePopup(); handlers.onMove(evs[0].place); } },
             evs[0].source === "manual" ? "Move pin again" : "Pin is in the wrong place? Move it") : null);
         mk.bindPopup(box, { maxWidth: 320 });
-        mk.bindTooltip(`${evs[0].place} (${evs.length})`);
+        mk.bindTooltip(h("span", null, `${evs[0].place} (${evs.length})`));   // a node: Leaflet would read a string as HTML
         mk.addTo(markers);
       }
       if (opts.lines) {
@@ -2143,12 +2152,12 @@ function placesLayer(L, map, handlers) {
             if (!last || last[0] !== e.lat || last[1] !== e.lon) pts.push([e.lat, e.lon]);
           }
           if (pts.length > 1) L.polyline(pts, { pane: "famLines", color: `hsl(${hueOf(pid)} 70% 55%)`, weight: 2.5, opacity: 0.8, dashArray: "6 5" })
-            .bindTooltip(evs[0].people.find((x) => x.id === pid).name).addTo(lines);
+            .bindTooltip(h("span", null, evs[0].people.find((x) => x.id === pid).name)).addTo(lines);
         }
       }
       if (opts.fit && points.length) {
         const b = L.latLngBounds(points.map((e) => [e.lat, e.lon]));
-        map.fitBounds(b.pad, { maxZoom: 9 });
+        map.fitBounds(b.pad(0.1), { maxZoom: 9 });
       }
     },
   };
@@ -2158,6 +2167,7 @@ function tileLayer(L, st) {
 }
 
 async function viewMap(focusPerson) {
+  const seq = renderSeq;
   const st = await api("api/map/status");
   if (!st.enabled) {
     return h("div", null, h("h2", { class: "page-title" }, "Map"), h("div", { class: "card" }, h("h3", null, "The places map is off"),
@@ -2245,7 +2255,8 @@ async function viewMap(focusPerson) {
       h("div", { class: "map-slider" }, h("span", { class: "hint" }, "Events"), yearLabel, slider, play)),
     mapEl, info, unloc);
   setTimeout(async () => {
-    map = L.map(mapEl, { worldCopyJump: true }).setView([20, 78], 3);
+    if (seq !== renderSeq) return;                 // the page changed before the map was drawn
+    map = trackMap(L.map(mapEl, { worldCopyJump: true }).setView([20, 78], 3));
     tileLayer(L, st).addTo(map);
     layer = placesLayer(L, map, { onMove: startPin });
     map.on("click", async (e) => {
@@ -2269,7 +2280,8 @@ function personMiniMap(p) {
     try {
       const [st, L, data] = await Promise.all([api("api/map/status"), loadLeaflet(), api(`api/map/points?filter=person&personId=${encodeURIComponent(p.id)}`)]);
       if (!data.points.length) { box.remove(); return; }
-      const map = L.map(el, { scrollWheelZoom: false }).setView([data.points[0].lat, data.points[0].lon], 5);
+      if (!document.body.contains(el)) return;     // the page changed meanwhile
+      const map = trackMap(L.map(el, { scrollWheelZoom: false }).setView([data.points[0].lat, data.points[0].lon], 5));
       tileLayer(L, st).addTo(map);
       placesLayer(L, map, {}).update(data.points, { lines: true, fit: true });
     } catch (e) { box.remove(); }
@@ -2345,7 +2357,7 @@ function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch (
 // ---------- trash (Admin → Trash) ----------
 async function viewTrash() {
   const r = await api("api/trash");
-  const words = { people: "Person", families: "Family", media: "Photo" };
+  const words = { people: "Person", families: "Family", media: "Photo", sources: "Source" };
   const list = h("div", { class: "card" });
   if (!r.items.length) list.appendChild(h("div", { class: "empty" }, "The trash is empty."));
   for (const it of r.items) {
@@ -2357,10 +2369,10 @@ async function viewTrash() {
   }
   const empty = r.items.length ? h("button", { type: "button", class: "btn-danger btn-small", onclick: async () => {
     if (!await confirmDialog("Empty the trash", "Permanently delete everything in the trash? This can't be undone.", "Empty trash", true)) return;
-    try { const res = await api("api/trash", { method: "DELETE" }); toast(`Deleted ${res.purged.people} people, ${res.purged.families} families, ${res.purged.media} photos`); rerender(); } catch (e) { fail(e); }
+    try { const res = await api("api/trash", { method: "DELETE" }); toast(`Deleted ${res.purged.people} people, ${res.purged.families} families, ${res.purged.sources || 0} sources, ${res.purged.media} photos` + (res.purged.skipped ? ` (${res.purged.skipped} couldn't be removed yet; see the log)` : "")); rerender(); } catch (e) { fail(e); }
   } }, "Empty trash") : null;
   return h("div", null, h("div", { class: "page-head" },
-    h("p", { class: "hint", style: "margin:0;flex:1;min-width:200px" }, `Deleted people, families and photos stay here for ${plural(r.trashDays, "day")} (see App settings), then they're removed for good. Only admins see the trash; everyone can still undo a delete from History.`), empty),
+    h("p", { class: "hint", style: "margin:0;flex:1;min-width:200px" }, `Deleted people, families, sources and photos stay here for ${plural(r.trashDays, "day")} (see App settings), then they're removed for good. Only admins see the trash; everyone can still undo a delete from History.`), empty),
     list);
 }
 

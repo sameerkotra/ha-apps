@@ -45,6 +45,8 @@ def clean(edit) -> dict | None:
         if not (0 <= x < 1 and 0 <= y < 1 and 0.05 <= w <= 1 and 0.05 <= h <= 1):
             raise EditError("The crop has to stay inside the picture and keep at least 5% of it.")
         w, h = min(w, 1 - x), min(h, 1 - y)
+        if w < 0.05 or h < 0.05:                 # clamped to the edge: hardly anything would be left
+            raise EditError("The crop has to stay inside the picture and keep at least 5% of it.")
         crop = {"x": round(x, 5), "y": round(y, 5), "w": round(w, 5), "h": round(h, 5)}
         if crop == {"x": 0, "y": 0, "w": 1, "h": 1}:
             crop = None
@@ -87,8 +89,10 @@ def render(img, edit: dict | None):
     crop = edit.get("crop")
     if crop:
         w, h = img.size
-        img = img.crop((round(crop["x"] * w), round(crop["y"] * h), round((crop["x"] + crop["w"]) * w),
-                        round((crop["y"] + crop["h"]) * h)))
+        left, top = min(round(crop["x"] * w), w - 1), min(round(crop["y"] * h), h - 1)
+        right = max(left + 1, min(w, round((crop["x"] + crop["w"]) * w)))       # never an empty picture
+        bottom = max(top + 1, min(h, round((crop["y"] + crop["h"]) * h)))
+        img = img.crop((left, top, right, bottom))
     if edit.get("autocontrast"):
         img = ImageOps.autocontrast(img.convert("RGB"), cutoff=1)
     return img

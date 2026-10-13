@@ -31,7 +31,7 @@ VERSION = 1
 DATA_NAME = "family-tree.json"
 MAX_PEOPLE = 20000
 MAX_ZIP_BYTES = 2 * 1024 * 1024 * 1024
-MAX_JSON_BYTES = 200 * 1024 * 1024
+MAX_JSON_BYTES = 64 * 1024 * 1024        # 20 000 people with their stories fit in a fraction of this
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 ENDED = ("divorced", "separated", "widowed")
 _EVENT_COLS = ("type", "title", "date_text", "date_y", "date_m", "date_d", "date_approx", "sort_key", "place",
@@ -242,11 +242,26 @@ def _event_in(e, allowed) -> dict | None:
 
 
 def validate(data) -> dict:
+    """The tree data checked and cleaned. Anything in the wrong shape (a list where an object belongs, an
+    object where a name belongs …) is a readable 422, never a crash."""
+    try:
+        return _validate(data)
+    except (TypeError, AttributeError, KeyError) as e:
+        raise ImportError_("The tree data isn't laid out the way a Family Tree export is "
+                           "(part of it has the wrong shape).") from e
+
+
+def _validate(data) -> dict:
     if not isinstance(data, dict) or data.get("format") != FORMAT:
         raise ImportError_("That isn't a Family Tree export.")
     if not isinstance(data.get("version"), int) or data["version"] > VERSION:
         raise ImportError_("That export was made by a newer Family Tree — update this app first.")
     src = data.get("source") or {}
+    if not isinstance(src, dict):
+        raise TypeError("source")
+    for k in ("people", "families", "media"):
+        if not isinstance(data.get(k) or [], list):
+            raise TypeError(k)
     out = {"source": {"id": _id(src.get("id")), "title": _s(src.get("title"), 120) or "Family Tree",
                       "exportedAt": _s(src.get("exportedAt"), 40)}, "people": [], "families": [], "media": []}
     people = data.get("people") or []
@@ -262,6 +277,9 @@ def validate(data) -> dict:
         seen.add(pid)
         g = p.get("gender") if p.get("gender") in GENDERS else "unknown"
         other = []
+        for k in ("other_names", "events", "stories"):
+            if not isinstance(p.get(k) or [], list):
+                raise TypeError(k)
         for n in (p.get("other_names") or [])[:10]:
             if isinstance(n, dict) and _s(n.get("name"), 100):
                 other.append({"type": n.get("type") if n.get("type") in OTHER_NAME_TYPES else "aka",
@@ -282,11 +300,14 @@ def validate(data) -> dict:
     for f in data.get("families") or []:
         if not isinstance(f, dict):
             raise ImportError_("The tree data has a broken family.")
-        p1 = f.get("p1") if f.get("p1") in seen else None
-        p2 = f.get("p2") if f.get("p2") in seen else None
+        for k in ("children", "events"):
+            if not isinstance(f.get(k) or [], list):
+                raise TypeError(k)
+        p1 = f.get("p1") if isinstance(f.get("p1"), str) and f["p1"] in seen else None
+        p2 = f.get("p2") if isinstance(f.get("p2"), str) and f["p2"] in seen else None
         kids = []
         for c in (f.get("children") or [])[:200]:
-            if isinstance(c, dict) and c.get("id") in seen:
+            if isinstance(c, dict) and isinstance(c.get("id"), str) and c["id"] in seen:
                 kids.append({"id": c["id"], "relation": c.get("relation") if c.get("relation") in RELATIONS else "birth"})
         if not p1 and not p2:
             continue
@@ -300,9 +321,12 @@ def validate(data) -> dict:
         fname = m.get("file")
         if not isinstance(fname, str) or not re.match(r"^media/[A-Za-z0-9_.-]{1,100}$", fname):
             continue
+        for k in ("people", "families", "events"):
+            if not isinstance(m.get(k) or [], list):
+                raise TypeError(k)
         out["media"].append({"id": _id(m.get("id")), "kind": m["kind"], "title": _s(m.get("title"), 200),
                              "description": _s(m.get("description"), 5000), "file": fname,
-                             "people": [x for x in m.get("people") or [] if x in seen],
+                             "people": [x for x in m.get("people") or [] if isinstance(x, str) and x in seen],
                              "families": [x for x in m.get("families") or [] if isinstance(x, str)],
                              "events": [x for x in m.get("events") or [] if isinstance(x, str)]})
     return out
@@ -315,10 +339,21 @@ def _norm(s) -> str:
     return " ".join((s or "").lower().split())
 
 
-def _link(conn, src, kind, rid):
-    r = conn.execute("SELECT local_id, ignored_missing FROM import_links WHERE source_id = ? AND kind = ? AND remote_id = ?",
-                     (src, kind, rid)).fetchone()
-    return r["local_id"] if r else None
+class Links:
+    """What was imported from one source before (import_links: their id → our id), read once per plan or
+    import instead of one query per person, event and story; _remember keeps it in step."""
+
+    def __init__(self, conn, src: str):
+        self.src = src
+        self.map = {(r["kind"], r["remote_id"]): r["local_id"] for r in conn.execute(
+            "SELECT kind, remote_id, local_id FROM import_links WHERE source_id = ?", (src,))}
+
+    def get(self, kind, rid):
+        return self.map.get((kind, rid))
+
+
+def _link(links: Links, kind, rid):
+    return links.get(kind, rid)
 
 
 def _alive_local(conn, kind, lid) -> bool:
@@ -334,13 +369,16 @@ def _person_label(p) -> str:
     return names.full(p.get("given_names"), p.get("surname"), p.get("nickname"), None) or "Someone"
 
 
-def plan(conn, data: dict, unmatch: set | None = None) -> dict:
+def plan(conn, data: dict, unmatch: set | None = None, details: bool = True) -> dict:
     """What an import would do, without writing anything. `unmatch`: remote ids the admin said aren't the
-    person they were matched to (they're added as new people instead)."""
+    person they were matched to (they're added as new people instead). `details`: False when only the
+    matching and the deletions are needed (apply), not what the preview lists."""
     unmatch = unmatch or set()
     src = data["source"]["id"]
     if src == install_id(conn):
         raise ImportError_("That export came from this same Family Tree — there's nothing to import.")
+    links = Links(conn, src)
+    by_id = {p["id"]: p for p in data["people"]}
     local = {r["id"]: dict(r) for r in conn.execute(
         "SELECT * FROM people WHERE deleted_at IS NULL AND merged_into IS NULL")}
     births = {r["person_id"]: r["date_y"] for r in conn.execute("SELECT person_id, date_y FROM events WHERE type = 'birth' AND person_id IS NOT NULL")}
@@ -351,10 +389,10 @@ def plan(conn, data: dict, unmatch: set | None = None) -> dict:
     linked_ids = {r["local_id"] for r in conn.execute("SELECT local_id FROM import_links WHERE kind = 'person'")}
     pmap, new_people, matched, updated = {}, [], [], []
     for p in data["people"]:
-        lid = _link(conn, src, "person", p["id"])
+        lid = _link(links, "person", p["id"])
         if lid and lid in local:
             pmap[p["id"]] = lid
-            adds = _person_additions(conn, local[lid], p, src)
+            adds = _person_additions(conn, local[lid], p, links) if details else []
             if adds:
                 updated.append({"remoteId": p["id"], "localId": lid, "name": _person_label(local[lid]), "adds": adds})
             continue
@@ -364,20 +402,20 @@ def plan(conn, data: dict, unmatch: set | None = None) -> dict:
         if len(cands) == 1 and p["id"] not in unmatch:
             pmap[p["id"]] = cands[0]
             matched.append({"remoteId": p["id"], "localId": cands[0], "name": _person_label(p), "born": birth_y,
-                            "adds": _person_additions(conn, local[cands[0]], p, src)})
+                            "adds": _person_additions(conn, local[cands[0]], p, links) if details else []})
         else:
             new_people.append({"remoteId": p["id"], "name": _person_label(p), "born": birth_y,
                                "candidate": bool(cands)})
     # families
     fam_new, fam_children = [], []
-    local_fams = [dict(r) for r in conn.execute("SELECT * FROM families WHERE deleted_at IS NULL")]
-    for f in data["families"]:
-        lid = _link(conn, src, "family", f["id"])
+    local_fams = _FamilyIndex(conn)
+    for f in data["families"] if details else ():
+        lid = _link(links, "family", f["id"])
         if lid and not _alive_local(conn, "family", lid):
             lid = None
         if not lid:
-            lid = _match_family(local_fams, pmap.get(f["p1"]), pmap.get(f["p2"]))
-        names_ = " & ".join(_person_label(next(p for p in data["people"] if p["id"] == x)) for x in (f["p1"], f["p2"]) if x)
+            lid = local_fams.match(pmap.get(f["p1"]), pmap.get(f["p2"]))
+        names_ = " & ".join(_person_label(by_id[x]) for x in (f["p1"], f["p2"]) if x)
         if not lid:
             fam_new.append({"remoteId": f["id"], "name": names_ or "A family", "children": len(f["children"])})
         else:
@@ -385,9 +423,9 @@ def plan(conn, data: dict, unmatch: set | None = None) -> dict:
             missing = [c for c in f["children"] if pmap.get(c["id"]) not in have]
             if missing:
                 fam_children.append({"remoteId": f["id"], "name": names_, "children": len(missing)})
-    deletions = _deletions(conn, data, src)
-    n_media = sum(1 for m in data["media"] if not (_link(conn, src, "media", m["id"]) and
-                                                   _alive_local(conn, "media", _link(conn, src, "media", m["id"]))))
+    deletions = _deletions(conn, data, src, details)
+    n_media = sum(1 for m in data["media"] if not (_link(links, "media", m["id"]) and
+                                                   _alive_local(conn, "media", _link(links, "media", m["id"]))))
     known = conn.execute("SELECT * FROM import_sources WHERE id = ?", (src,)).fetchone()
     return {"source": data["source"], "firstImport": known is None,
             "lastImportAt": known["last_import_at"] if known else None,
@@ -399,7 +437,7 @@ def plan(conn, data: dict, unmatch: set | None = None) -> dict:
             "mediaOnline": media.is_online(), "_pmap": pmap}
 
 
-def _person_additions(conn, row, p, src) -> list:
+def _person_additions(conn, row, p, links) -> list:
     """Human-readable list of what a linked person would gain (empty fields filled, new events/stories/photos)."""
     out = []
     for col, label in (("given_names", "first name"), ("surname", "surname"), ("nickname", "nickname"),
@@ -413,14 +451,14 @@ def _person_additions(conn, row, p, src) -> list:
     if p["other_names"] and not row.get("other_names"):
         out.append("other names")
     for e in p["events"]:
-        lid = _link(conn, src, "event", e["id"])
+        lid = _link(links, "event", e["id"])
         if lid and _alive_local(conn, "event", lid):
             continue
         if _event_exists(conn, "person_id", row["id"], e):
             continue
         out.append(e["type"].replace("_", " "))
     for s in p["stories"]:
-        lid = _link(conn, src, "story", s["id"])
+        lid = _link(links, "story", s["id"])
         if not (lid and _alive_local(conn, "story", lid)) and not conn.execute(
                 "SELECT 1 FROM stories WHERE person_id = ? AND body = ?", (row["id"], s["body"])).fetchone():
             out.append("a story")
@@ -447,8 +485,29 @@ def _match_family(local_fams, a, b):
     return None
 
 
-def _deletions(conn, data, src) -> list:
-    """Linked items from this source that aren't in the file and still exist here (and weren't kept before)."""
+class _FamilyIndex:
+    """The live families by their set of partners: _match_family's answer (the first family, in table
+    order, with exactly those partners) without a scan of every family for each family imported."""
+
+    def __init__(self, conn):
+        self.by_partners = {}
+        for r in conn.execute("SELECT id, partner1_id, partner2_id FROM families WHERE deleted_at IS NULL"):
+            self.add(r["id"], r["partner1_id"], r["partner2_id"])
+
+    def add(self, fid, a, b) -> None:
+        key = frozenset(x for x in (a, b) if x)
+        if key:
+            self.by_partners.setdefault(key, fid)
+
+    def match(self, a, b):
+        if not a and not b:
+            return None
+        return self.by_partners.get(frozenset(x for x in (a, b) if x))
+
+
+def _deletions(conn, data, src, details: bool = True) -> list:
+    """Linked items from this source that aren't in the file and still exist here (and weren't kept before).
+    details=False: the keys only (apply), without the wording."""
     present = {"person": {p["id"] for p in data["people"]}, "family": {f["id"] for f in data["families"]},
                "event": {e["id"] for p in data["people"] for e in p["events"]} | {e["id"] for f in data["families"] for e in f["events"]},
                "story": {s["id"] for p in data["people"] for s in p["stories"]}, "media": {m["id"] for m in data["media"]},
@@ -459,7 +518,8 @@ def _deletions(conn, data, src) -> list:
             continue
         if r["ignored_missing"] or not _alive_local(conn, r["kind"], r["local_id"]):
             continue
-        out.append({"key": f"{r['kind']}:{r['remote_id']}", "kind": r["kind"], "label": _describe(conn, r["kind"], r["local_id"])})
+        out.append({"key": f"{r['kind']}:{r['remote_id']}", "kind": r["kind"],
+                    "label": _describe(conn, r["kind"], r["local_id"]) if details else None})
     return out
 
 
@@ -490,19 +550,23 @@ def _describe(conn, kind, lid) -> str:
     return f"{'Photo' if r['kind'] == 'photo' else 'Document'}{' “' + r['title'] + '”' if r['title'] else ''}"
 
 
-def _remember(conn, src, kind, rid, lid) -> None:
+def _remember(conn, links: Links, kind, rid, lid) -> None:
     conn.execute("INSERT INTO import_links (source_id, kind, remote_id, local_id, ignored_missing) VALUES (?, ?, ?, ?, 0) "
                  "ON CONFLICT(source_id, kind, remote_id) DO UPDATE SET local_id = excluded.local_id, ignored_missing = 0",
-                 (src, kind, rid, lid))
+                 (links.src, kind, rid, lid))
+    links.map[(kind, rid)] = lid
 
 
-def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remove: set) -> dict:
+def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remove: set,
+          prepared: dict | None = None) -> dict:
     """Do the import in one history batch. `remove`: deletion keys ("kind:remoteId") the admin chose to
-    remove; every other listed deletion is kept and not asked about again."""
+    remove; every other listed deletion is kept and not asked about again. `prepared`: the photos already
+    checked, re-encoded and stored by prepare_media (outside this transaction); see there."""
     from .history import Batch
     from . import graph as graph_mod
-    p = plan(conn, data, unmatch)
+    p = plan(conn, data, unmatch, details=False)
     src = data["source"]["id"]
+    links = Links(conn, src)
     b = Batch(conn, user_id, f"Imported from {data['source']['title']}"[:200])
     now = b.now
     pmap = dict(p["_pmap"])                  # linked and matched people; everyone else is new
@@ -532,12 +596,12 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
             if fill:
                 b.update("people", lid, fill)
                 stats["details"] += 1
-        _remember(conn, src, "person", rp["id"], lid)
+        _remember(conn, links, "person", rp["id"], lid)
         b.touch(lid)
         for e in rp["events"]:
-            stats["events"] += _import_event(conn, b, src, e, "person_id", lid)
+            stats["events"] += _import_event(conn, b, links, e, "person_id", lid)
         for s in rp["stories"]:
-            sl = _link(conn, src, "story", s["id"])
+            sl = _link(links, "story", s["id"])
             if sl and _alive_local(conn, "story", sl):
                 continue
             if conn.execute("SELECT 1 FROM stories WHERE person_id = ? AND body = ?", (lid, s["body"])).fetchone():
@@ -545,23 +609,23 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
             sid = db.new_id()
             b.insert("stories", {"id": sid, "person_id": lid, "title": s["title"], "body": s["body"],
                                  "created_by": user_id, "created_at": now, "updated_at": now})
-            _remember(conn, src, "story", s["id"], sid)
+            _remember(conn, links, "story", s["id"], sid)
             stats["stories"] += 1
     # ---- families ----
     fmap = {}
-    local_fams = [dict(r) for r in conn.execute("SELECT * FROM families WHERE deleted_at IS NULL")]
+    local_fams = _FamilyIndex(conn)
     for f in data["families"]:
         a, c2 = pmap.get(f["p1"]), pmap.get(f["p2"])
-        lid = _link(conn, src, "family", f["id"])
+        lid = _link(links, "family", f["id"])
         if lid and not _alive_local(conn, "family", lid):
             lid = None
         if not lid:
-            lid = _match_family(local_fams, a, c2)
+            lid = local_fams.match(a, c2)
         if not lid:
             lid = db.new_id()
             b.insert("families", {"id": lid, "partner1_id": a, "partner2_id": c2, "kind": f["kind"], "ended": f["ended"],
                                   "created_at": now, "updated_at": now})
-            local_fams.append({"id": lid, "partner1_id": a, "partner2_id": c2})
+            local_fams.add(lid, a, c2)
             stats["families"] += 1
         else:
             row = dict(conn.execute("SELECT * FROM families WHERE id = ?", (lid,)).fetchone())
@@ -578,11 +642,12 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
             if fill:
                 b.update("families", lid, fill)
         fmap[f["id"]] = lid
-        _remember(conn, src, "family", f["id"], lid)
+        _remember(conn, links, "family", f["id"], lid)
         b.touch(a, c2)
         for e in f["events"]:
-            stats["events"] += _import_event(conn, b, src, e, "family_id", lid)
-    # children (after every family exists); cycles are refused and reported
+            stats["events"] += _import_event(conn, b, links, e, "family_id", lid)
+    # children (after every family exists); cycles are refused and reported. The graph is loaded once and
+    # kept in step with each link made (Graph.add_child), not loaded again per child.
     g = graph_mod.load_fresh(conn)
     for f in data["families"]:
         lid = fmap[f["id"]]
@@ -594,7 +659,7 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
                 continue
             key = f"{lid}|{cid}"
             if conn.execute("SELECT 1 FROM family_children WHERE family_id = ? AND child_id = ?", (lid, cid)).fetchone():
-                _remember(conn, src, "child", f"{f['id']}|{c['id']}", key)
+                _remember(conn, links, "child", f"{f['id']}|{c['id']}", key)
                 continue
             if any(par and par in g.people and cid in g.people and g.is_descendant(par, cid)
                    for par in (fam["partner1_id"], fam["partner2_id"])) or cid in (fam["partner1_id"], fam["partner2_id"]):
@@ -602,11 +667,11 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
                                         "wasn't added as a child: it would make someone their own ancestor.")
                 continue
             b.insert("family_children", {"family_id": lid, "child_id": cid, "position": pos, "relation": c["relation"]}, op="link")
+            g.add_child(lid, fam["partner1_id"], fam["partner2_id"], cid, c["relation"], pos)
             pos += 1
-            _remember(conn, src, "child", f"{f['id']}|{c['id']}", key)
+            _remember(conn, links, "child", f"{f['id']}|{c['id']}", key)
             b.touch(cid, fam["partner1_id"], fam["partner2_id"])
             stats["children"] += 1
-            g = graph_mod.load_fresh(conn)
     # ---- photos and documents ----
     if data["media"]:
         if not zpath:
@@ -615,12 +680,12 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
             stats["skipped"].append("Photos weren't imported: photo storage isn't reachable right now. Import the same "
                                     "zip again later to add them.")
         else:
-            stats["media"] = _import_media(conn, b, src, data, zpath, pmap, fmap, user_id, stats)
+            stats["media"] = _import_media(conn, b, links, data, zpath, pmap, fmap, user_id, stats, prepared)
     # ---- deletions the admin chose ----
     wanted = {d["key"] for d in p["deletions"]}
     for d in p["deletions"]:
         kind, rid = d["key"].split(":", 1)
-        lid = _link(conn, src, kind, rid)
+        lid = _link(links, kind, rid)
         if d["key"] in remove:
             _remove_local(b, kind, lid)
             conn.execute("DELETE FROM import_links WHERE source_id = ? AND kind = ? AND remote_id = ?", (src, kind, rid))
@@ -642,8 +707,8 @@ def apply(conn, user_id: str, data: dict, zpath: str | None, unmatch: set, remov
     return stats
 
 
-def _import_event(conn, b, src, e, col, owner) -> int:
-    lid = _link(conn, src, "event", e["id"])
+def _import_event(conn, b, links, e, col, owner) -> int:
+    lid = _link(links, "event", e["id"])
     if lid and _alive_local(conn, "event", lid):
         return 0
     if _event_exists(conn, col, owner, e):
@@ -660,56 +725,111 @@ def _import_event(conn, b, src, e, col, owner) -> int:
                 fill["time"] = e["time"]
             if fill:
                 b.update("events", ex["id"], fill)
-            _remember(conn, src, "event", e["id"], ex["id"])
+            _remember(conn, links, "event", e["id"], ex["id"])
         return 0
     cols = e["date"] or {"date_text": None, "date_y": None, "date_m": None, "date_d": None, "date_approx": 0, "sort_key": None}
     eid = db.new_id()
     b.insert("events", dict(cols, id=eid, **{col: owner}, type=e["type"], title=e["title"], place=e["place"],
                             description=e["description"], time=e["time"], created_at=b.now, updated_at=b.now))
-    _remember(conn, src, "event", e["id"], eid)
+    _remember(conn, links, "event", e["id"], eid)
     return 1
 
 
-def _import_media(conn, b, src, data, zpath, pmap, fmap, user_id, stats) -> int:
+def _media_to_import(conn, data, src) -> list:
+    """The photos and documents of the file that aren't here yet (not imported before, or since deleted)."""
+    links = Links(conn, src)
+    return [m for m in data["media"]
+            if not (_link(links, "media", m["id"]) and _alive_local(conn, "media", _link(links, "media", m["id"])))]
+
+
+def _process_member(z, m, names_in) -> dict | None:
+    """One photo or document from the zip: checked, re-encoded (photos) and stored in the photo folder.
+    → {"id", "meta", "sha"} or {"error"}; None when the zip doesn't hold the file."""
+    if m["file"] not in names_in:
+        return None
+    # Check the uncompressed size before reading: a tiny deflate entry can expand to gigabytes.
+    limit_mb = settings.get("max_upload_mb")
+    if z.getinfo(m["file"]).file_size > limit_mb * 1024 * 1024:
+        return {"error": f"A photo wasn't imported: {media.too_large_message(limit_mb)}"}
+    raw = z.read(m["file"])
+    try:
+        ctype = media.validate_upload(raw, allow_documents=True)
+        if ctype == "application/pdf":
+            processed = {"content_type": ctype, "original": raw, "thumbs": {}, "width": None, "height": None,
+                         "date_text": None, "document": True}
+        else:
+            processed = media.process_image(raw)
+    except media.MediaError as e:
+        return {"error": f"A photo wasn't imported: {e}"}
+    lid = db.new_id()
+    if processed.get("document"):
+        media.store_document(lid, processed["original"])
+    else:
+        media.store_image(lid, processed)
+    meta = {k: processed.get(k) for k in ("content_type", "width", "height", "date_text", "document")}
+    meta["size"] = len(processed["original"])
+    return {"id": lid, "meta": meta, "sha": media.sha256(raw)}
+
+
+def prepare_media(data: dict, zpath: str | None) -> dict:
+    """Before the import's write transaction: decode, re-encode and store the photos that will be imported,
+    so the database isn't held locked while pictures are processed. → {remote media id: result of
+    _process_member}. Files of results apply() doesn't use are removed with discard_prepared()."""
+    if not data["media"] or not zpath or not media.is_online():
+        return {}
+    with db.get_conn() as conn:
+        todo = _media_to_import(conn, data, data["source"]["id"])
+    out = {}
+    try:
+        with zipfile.ZipFile(zpath) as z:
+            names_in = set(z.namelist())
+            for m in todo:
+                r = _process_member(z, m, names_in)
+                if r is not None:
+                    out[m["id"]] = r
+    except Exception:
+        discard_prepared(out)
+        raise
+    return out
+
+
+def discard_prepared(prepared: dict | None, keep: set = frozenset()) -> None:
+    """Remove the stored files of prepared photos that didn't become rows (all but the media ids in `keep`)."""
+    for r in (prepared or {}).values():
+        if r.get("id") and r["id"] not in keep:
+            media.remove_files(r["id"])
+
+
+def _import_media(conn, b, links, data, zpath, pmap, fmap, user_id, stats, prepared=None) -> int:
     from .routers.media import MAX_LINKS_PER_PERSON
     n = 0
     ev_map = {r["remote_id"]: r["local_id"] for r in conn.execute(
-        "SELECT remote_id, local_id FROM import_links WHERE source_id = ? AND kind = 'event'", (src,))}
+        "SELECT remote_id, local_id FROM import_links WHERE source_id = ? AND kind = 'event'", (links.src,))}
+    prepared = prepared if prepared is not None else {}
     with zipfile.ZipFile(zpath) as z:
         names_in = set(z.namelist())
         for m in data["media"]:
-            lid = _link(conn, src, "media", m["id"])
+            lid = _link(links, "media", m["id"])
             if not (lid and _alive_local(conn, "media", lid)):
-                if m["file"] not in names_in:
+                r = prepared.get(m["id"])
+                if r is None:                      # not prepared (it was here a moment ago): done now
+                    r = _process_member(z, m, names_in)
+                    if r is None:
+                        continue
+                    prepared[m["id"]] = r
+                if r.get("error"):
+                    stats["skipped"].append(r["error"])
                     continue
-                # Check the uncompressed size before reading: a tiny deflate entry can expand to gigabytes.
-                limit_mb = settings.get("max_upload_mb")
-                if z.getinfo(m["file"]).file_size > limit_mb * 1024 * 1024:
-                    stats["skipped"].append(f"A photo wasn't imported: {media.too_large_message(limit_mb)}")
-                    continue
-                raw = z.read(m["file"])
-                try:
-                    ctype = media.validate_upload(raw, allow_documents=True)
-                    if ctype == "application/pdf":
-                        processed = {"content_type": ctype, "original": raw, "thumbs": {}, "width": None, "height": None,
-                                     "date_text": None, "document": True}
-                    else:
-                        processed = media.process_image(raw)
-                except media.MediaError as e:
-                    stats["skipped"].append(f"A photo wasn't imported: {e}")
-                    continue
-                lid = db.new_id()
-                if processed.get("document"):
-                    media.store_document(lid, processed["original"])
-                else:
-                    media.store_image(lid, processed)
-                b.insert("media", {"id": lid, "kind": "document" if processed.get("document") else "photo",
-                                   "title": m["title"], "description": m["description"], "date_text": processed["date_text"],
-                                   "content_type": processed["content_type"], "size": len(processed["original"]),
-                                   "sha256": media.sha256(raw), "width": processed["width"], "height": processed["height"],
+                lid, meta = r["id"], r["meta"]
+                b.insert("media", {"id": lid, "kind": "document" if meta.get("document") else "photo",
+                                   "title": m["title"], "description": m["description"], "date_text": meta["date_text"],
+                                   "date_sort": media.date_sort(meta["date_text"]),
+                                   "content_type": meta["content_type"], "size": meta["size"],
+                                   "sha256": r["sha"], "width": meta["width"], "height": meta["height"],
                                    "created_by": user_id, "created_at": b.now})
+                r["used"] = True
                 n += 1
-            _remember(conn, src, "media", m["id"], lid)
+            _remember(conn, links, "media", m["id"], lid)
             have = {(r["person_id"], r["family_id"], r["event_id"]) for r in conn.execute(
                 "SELECT person_id, family_id, event_id FROM media_links WHERE media_id = ?", (lid,))}
             targets = ([(pmap.get(x), None, None) for x in m["people"]] + [(None, fmap.get(x), None) for x in m["families"]]
@@ -728,7 +848,7 @@ def _import_media(conn, b, src, data, zpath, pmap, fmap, user_id, stats) -> int:
     for rp in data["people"]:
         if not rp["photo"]:
             continue
-        mid = _link(conn, src, "media", rp["photo"])
+        mid = _link(links, "media", rp["photo"])
         lid = pmap.get(rp["id"])
         if not mid or not lid:
             continue

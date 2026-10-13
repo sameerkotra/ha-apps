@@ -277,7 +277,10 @@ def _date_time(ev, mode):
     return f"{d}, {ev['time']}" if d and mode == "full" and ev.get("time") else d
 
 
-def build(conn, options: ExportOptions, me_id: str | None) -> View:
+def build(conn, options: ExportOptions, me_id: str | None, stats_only: bool = False) -> View:
+    """`stats_only`: for the Export page's preview, which shows only the counts, who is in, and the
+    warnings — no relationship labels, contact details or source lines are worked out, and no photo fix
+    is rendered just to measure its file (the estimate uses the file there is)."""
     from . import features
     on = features.states()
     # switched-off modules (Features) are hidden in the app, so they stay out of every export too
@@ -325,7 +328,17 @@ def build(conn, options: ExportOptions, me_id: str | None) -> View:
         allowed_types -= {"divorce"}
     if not on["ceremonies"]:
         allowed_types -= set(features.CEREMONY_TYPES)
-    label_graph = _label_graph(g, options) if v.relative_to else g
+    label_graph = _label_graph(g, options) if v.relative_to and not stats_only else g
+    contacts_cache = {}
+
+    def contacts_of() -> dict:
+        """Everyone's contact details in one query, the first time they're needed."""
+        if not contacts_cache:
+            contacts_cache[None] = True
+            for c in conn.execute("SELECT person_id, kind, label, value FROM contacts ORDER BY position, rowid"):
+                contacts_cache.setdefault(c["person_id"], []).append(
+                    {"kind": c["kind"], "label": c["label"], "value": c["value"]})
+        return contacts_cache
 
     def event_items(evs, hide):
         out = []
@@ -397,13 +410,12 @@ def build(conn, options: ExportOptions, me_id: str | None) -> View:
             for f in cfields if cvalues.get(pid, {}).get(f["id"])
             and not (f["kind"] == "place" and not options.places) and not (f["kind"] == "date" and options.dates == "none")]
         item["contacts"] = []
-        if options.contacts and alive[pid] and not lim:
-            item["contacts"] = [{"kind": c["kind"], "label": c["label"], "value": c["value"]} for c in conn.execute(
-                "SELECT kind, label, value FROM contacts WHERE person_id = ? ORDER BY position, rowid", (pid,))]
+        if options.contacts and alive[pid] and not lim and not stats_only:
+            item["contacts"] = contacts_of().get(pid, [])
         item["sources"] = []
-        if options.sources and not lim:
+        if options.sources and not lim and not stats_only:
             item["sources"] = _sources_for(conn, pid, allowed_types)
-        if v.relative_to:
+        if v.relative_to and not stats_only:
             lab = relations.relationship(label_graph, v.relative_to, pid)
             item["relationship"] = (lab["label"] if lab["kind"] not in ("none", "self")
                                     and lab["label"] not in ("you", "not related") else None)
@@ -424,7 +436,7 @@ def build(conn, options: ExportOptions, me_id: str | None) -> View:
                "events": event_items(events_by_family.get(f.id, []), hide)}
         v.families.append(fam)
 
-    _pick_media(conn, options, v, private, g, allowed_types)
+    _pick_media(conn, options, v, private, g, allowed_types, stats_only)
     if (options.photos != "none" or options.documents) and not media.is_online():
         v.warnings.append("Photo storage isn't reachable right now, so photos and documents can't be included.")
     return v
@@ -465,7 +477,7 @@ def _label_graph(g, options):
     return graph_mod.Graph(people, fams)
 
 
-def _pick_media(conn, options, v: View, private: set, g, allowed_types: set):
+def _pick_media(conn, options, v: View, private: set, g, allowed_types: set, stats_only: bool = False):
     """Photos and documents that can be shown, and the pages they appear on.
 
     A file is left out when anyone linked to it isn't shown in full (limited,
@@ -492,9 +504,11 @@ def _pick_media(conn, options, v: View, private: set, g, allowed_types: set):
     for l in conn.execute("SELECT ml.* FROM media_links ml JOIN media m ON m.id = ml.media_id WHERE m.deleted_at IS NULL"):
         links.setdefault(l["media_id"], []).append(l)
     rows = {r["id"]: r for r in conn.execute("SELECT * FROM media WHERE deleted_at IS NULL")}
+    photo_of = {r["id"]: (r["photo_media_id"], r["photo_region_id"]) for r in conn.execute(
+        "SELECT id, photo_media_id, photo_region_id FROM people WHERE deleted_at IS NULL AND photo_media_id IS NOT NULL")}
     profiles = {}
     for pid in shown_real:
-        prof = conn.execute("SELECT photo_media_id FROM people WHERE id = ?", (pid,)).fetchone()[0]
+        prof = photo_of.get(pid, (None, None))[0]
         if prof:
             profiles.setdefault(prof, []).append(pid)
     for mid, ls in links.items():
@@ -528,7 +542,12 @@ def _pick_media(conn, options, v: View, private: set, g, allowed_types: set):
             size_key = "original"
         edit = json.loads(m["edit"]) if m["kind"] == "photo" and m["edit"] else None     # photo fixes (§13.19)
         try:
-            path = media.served_path(mid, "display" if edit and size_key == "original" else size_key, edit)
+            if stats_only and edit:              # the preview: the fixed file if it's made, else the unfixed one
+                path = media.edited_path(mid, edit, "display" if size_key == "original" else size_key)
+                if not os.path.isfile(path):
+                    path = media.file_path(mid, size_key)
+            else:
+                path = media.served_path(mid, "display" if edit and size_key == "original" else size_key, edit)
         except Exception:
             path = media.file_path(mid, size_key)
         try:
@@ -546,10 +565,13 @@ def _pick_media(conn, options, v: View, private: set, g, allowed_types: set):
         if mid in v.media and v.media[mid]["kind"] == "photo":
             for pid in pids:
                 v.people[pid]["photo"] = mid
-                reg = conn.execute("SELECT photo_region_id FROM people WHERE id = ?", (pid,)).fetchone()[0]
-                v.people[pid]["photoRegion"] = reg
+                v.people[pid]["photoRegion"] = photo_of[pid][1]
+    on_page = {}                                       # person → their files, in v.media's order
+    for mid, m in v.media.items():
+        for pid in m["pages"]:
+            on_page.setdefault(pid, []).append(mid)
     for pid in shown_real:
-        v.people[pid]["media"] = [mid for mid, m in v.media.items() if pid in m["pages"]]
+        v.people[pid]["media"] = on_page.get(pid, [])
 
 
 def _parses(text) -> bool:

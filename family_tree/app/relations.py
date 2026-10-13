@@ -363,22 +363,9 @@ def _step_word(g: Graph, st: dict) -> str:
 
 
 def _any_path(g: Graph, a: str, b: str, limit: int = 40) -> list | None:
-    """Shortest chain of parent/child/partner links, each step named."""
-    prev = {a: None}
-    q = deque([(a, 0)])
-    while q:
-        cur, d = q.popleft()
-        if cur == b:
-            break
-        if d >= limit:
-            continue
-        nbrs = [(p, ancestor_word(1, g.people[p].gender)) for p, _f, _r in g.parents(cur)]
-        nbrs += [(c, descendant_word(1, g.people[c].gender)) for c, _f, _r in g.children(cur)]
-        nbrs += [(p, _spouse_word(g, p, f)) for p, f in g.partners(cur) if p]
-        for n, rel in nbrs:
-            if n not in prev:
-                prev[n] = (cur, rel)
-                q.append((n, d + 1))
+    """Shortest chain of parent/child/partner links, each step named. One search from `a` serves every `b`
+    (kept on the graph): asking about everyone in the tree is one walk, not one per person."""
+    prev = g.memo("bfs", (a, limit), lambda: _search_from(g, a, limit))
     if b not in prev:
         return None
     out = []
@@ -389,3 +376,22 @@ def _any_path(g: Graph, a: str, b: str, limit: int = 40) -> list | None:
         cur = p
     out.append({"id": a, "rel": None})
     return list(reversed(out))
+
+
+def _search_from(g: Graph, a: str, limit: int) -> dict:
+    """{person: (the one before them, the step's word)} for everyone within `limit` links of `a`, breadth
+    first — the same first-found links a search stopping at one person would give."""
+    prev = {a: None}
+    q = deque([(a, 0)])
+    while q:
+        cur, d = q.popleft()
+        if d >= limit:
+            continue
+        nbrs = [(p, ancestor_word(1, g.people[p].gender)) for p, _f, _r in g.parents(cur)]
+        nbrs += [(c, descendant_word(1, g.people[c].gender)) for c, _f, _r in g.children(cur)]
+        nbrs += [(p, _spouse_word(g, p, f)) for p, f in g.partners(cur) if p]
+        for n, rel in nbrs:
+            if n not in prev:
+                prev[n] = (cur, rel)
+                q.append((n, d + 1))
+    return prev

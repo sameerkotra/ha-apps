@@ -34,7 +34,6 @@ def tithi_out(conn, event_id: str, lang: str = "en") -> dict | None:
     if not t:
         return None
     t = dict(t)
-    tithi._refresh_cache(conn)
     year = config.today().year
     nxt, over = tithi.date_in(conn, event_id, t, year)
     if not nxt or nxt < config.today():
@@ -185,7 +184,6 @@ def dates_for_year(year: int = Query(ge=1800, le=2200), user: dict = Depends(req
     lang = kin.current()
     with db.get_conn() as conn:
         g = graph_mod.get(conn)
-        tithi._refresh_cache(conn)
         out = []
         for t in tithi.all_tithis(conn):
             p = g.people.get(t["person_id"])

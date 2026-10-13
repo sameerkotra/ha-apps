@@ -6,6 +6,7 @@ import io
 import os
 import time
 import unittest
+from unittest import mock
 
 from PIL import Image
 
@@ -97,7 +98,8 @@ class Inbox(ApiTestCase):
 
     def test_scan_import_duplicates_rejects(self):
         venkat = self.person("Venkat", "Sharma")
-        p1 = self.drop("Venkat/wedding_1985.jpg", photo(color=(10, 200, 10)))
+        wedding = photo(color=(10, 200, 10))
+        p1 = self.drop("Venkat/wedding_1985.jpg", wedding)
         p2 = self.drop("scan.png", image_bytes(fmt="PNG", color=(1, 2, 3)))
         p3 = self.drop("notes.docx", b"PK\x03\x04 not a photo")
         fresh = self.drop("still-copying.jpg", photo(color=(5, 5, 5)), age=0)
@@ -116,7 +118,7 @@ class Inbox(ApiTestCase):
         self.assertEqual(sql("SELECT label, user_id FROM batches ORDER BY created_at DESC, rowid DESC LIMIT 1")[0],
                          {"label": "Inbox: 2 files", "user_id": None})
         # the same file again is skipped
-        self.drop("again.jpg", photo(color=(10, 200, 10)))
+        self.drop("again.jpg", wedding)
         r = self.ok(self.post("/api/inbox/scan"))
         self.assertEqual((r["imported"], r["duplicates"]), (0, 1))
         self.assertIn("already", open(os.path.join(rej, "again.jpg.txt")).read())
@@ -133,6 +135,50 @@ class Inbox(ApiTestCase):
         set_app_settings(feature_inbox=False)
         self.assertEqual(self.post("/api/inbox/scan").status_code, 404)
         self.assertEqual(inbox.scan_blocking()["imported"], 0)
+
+    def test_oversized_file_rejected_without_reading_it(self):
+        from base import set_app_settings
+        set_app_settings(max_upload_mb=1)
+        big = self.drop("huge.jpg", photo() + b"\x00" * (2 * 1024 * 1024))
+        small = self.drop("small.jpg", photo())
+        import builtins
+        real_open, opened = builtins.open, []
+
+        def watching(path, *a, **kw):
+            opened.append(os.path.basename(str(path)))
+            return real_open(path, *a, **kw)
+
+        with mock.patch.object(builtins, "open", watching):
+            r = inbox.scan_blocking()
+        self.assertEqual((r["imported"], r["rejected"]), (1, 1))
+        self.assertNotIn("huge.jpg", opened)                 # turned away on its size alone
+        self.assertIn("small.jpg", opened)
+        with open(os.path.join(inbox.inbox_dir(), "_rejected", "huge.jpg.txt"), encoding="utf-8") as f:
+            note = f.read()
+        self.assertIn("larger than 1 MB", note)
+        self.assertFalse(os.path.exists(big) or os.path.exists(small))
+
+    def test_check_now_and_the_loop_never_scan_together(self):
+        self.drop("a.jpg", photo())
+        import threading
+        inside, release = threading.Event(), threading.Event()
+        real = inbox._scan
+
+        def slow():
+            inside.set()
+            release.wait(5)
+            return real()
+
+        results = []
+        with mock.patch.object(inbox, "_scan", slow):
+            t = threading.Thread(target=lambda: results.append(inbox.scan_blocking()))
+            t.start()
+            self.assertTrue(inside.wait(5))
+            self.assertTrue(inbox._scan_lock.locked())      # a second caller (Check now) waits for this one
+            release.set()
+            t.join(5)
+        r2 = inbox.scan_blocking()
+        self.assertEqual(results[0]["imported"] + r2["imported"], 1)
         set_app_settings(feature_inbox=True)
         with media._state_lock:
             media._state["online"] = False

@@ -96,6 +96,10 @@ def pin(body: PinIn, user: dict = Depends(require_user)):
     if not k:
         raise HTTPException(422, "Which place?")
     with db.get_conn() as conn:
+        # only places the tree uses: the table can't be filled with pins for places no event has
+        if not any(geocode.key(r["place"]) == k for r in conn.execute(
+                "SELECT DISTINCT place FROM events WHERE place IS NOT NULL AND place != ''")):
+            raise HTTPException(404, "No event in the tree has that place.")
         conn.execute(
             "INSERT INTO place_geo (place_key, place, lat, lon, source, tries, checked_at, updated_by) "
             "VALUES (?, ?, ?, ?, 'manual', 0, ?, ?) ON CONFLICT(place_key) DO UPDATE SET lat = excluded.lat, "

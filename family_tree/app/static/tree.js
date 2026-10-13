@@ -483,7 +483,8 @@
       g.appendChild(s("circle", { cx, cy, r: r + 1.5, class: "avatar-ring" }));
       const href = handlers.photoUrl ? handlers.photoUrl(p)
         : `api/media/${encodeURIComponent(p.photo)}/file?size=256${p.photoRegion ? "&region=" + encodeURIComponent(p.photoRegion) : ""}`;
-      g.appendChild(s("image", { href, x: cx - r, y: cy - r,
+      // the picture is fetched only when the card comes into view (render → loadVisible)
+      g.appendChild(s("image", { "data-href": href, x: cx - r, y: cy - r,
         width: r * 2, height: r * 2, preserveAspectRatio: "xMidYMid slice", "clip-path": `url(#${clipId})` }));
     } else {
       g.appendChild(s("circle", { cx, cy, r, class: `avatar sex-${p.gender}` }));
@@ -523,9 +524,12 @@
     for (const l of lay.lines) linesG.appendChild(s("path", { d: l.d, class: "line " + l.cls }));
     const cardsG = s("g", { class: "cards" });
     const byId = {};
+    let pending = [];                          // [{ img, c }]: photos not fetched yet
     for (const c of lay.cards) {
       const el = drawCard(c, data, handlers);
       cardsG.appendChild(el);
+      const img = el.querySelector("image[data-href]");
+      if (img) pending.push({ img, c });
       if (c.p && c.p.id === data.focus && !c.sibling) byId.focus = c;
       if (c.p) byId[c.p.id] = byId[c.p.id] || c;
     }
@@ -539,8 +543,42 @@
 
     // ---- pan & zoom ----
     const view = { k: 1, x: 0, y: 0 };
-    const apply = () => vp.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
     const rect = () => svg.getBoundingClientRect();
+    // Photos load only for cards in (or near) the visible part, and not while the chart is zoomed out so far
+    // that a face would be a few pixels: a big tree no longer asks for every photo at once.
+    let scheduled = false;
+    function loadVisible() {
+      scheduled = false;
+      if (!pending.length || !svg.isConnected) return;
+      const r = rect();
+      const win = visibleWindow(view, r.width, r.height, 0.5);
+      if (!win) return;
+      pending = pending.filter(({ img, c }) => {
+        if (!cardInWindow(c, win)) return true;
+        showImage(img);
+        return false;
+      });
+    }
+    const apply = () => {
+      vp.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
+      if (!scheduled && pending.length) {
+        scheduled = true;
+        (window.requestAnimationFrame || ((f) => setTimeout(f, 16)))(loadVisible);
+      }
+    };
+    function loadImages(timeoutMs) {
+      // every photo now (printing): resolves when they've loaded, or after timeoutMs
+      const all = pending.map((x) => x.img);
+      pending = [];
+      return Promise.race([
+        Promise.all(all.map((img) => new Promise((done) => {
+          img.addEventListener("load", done, { once: true });
+          img.addEventListener("error", done, { once: true });
+          showImage(img);
+        }))),
+        new Promise((done) => setTimeout(done, timeoutMs || 4000)),
+      ]);
+    }
     function centerOn(c, k) {
       const r = rect();
       view.k = k || view.k;
@@ -648,6 +686,7 @@
 
     return {
       restyle,
+      loadImages,
       zoomIn: () => { const r = rect(); zoomAt(1.2, r.width / 2, r.height / 2); },
       zoomOut: () => { const r = rect(); zoomAt(1 / 1.2, r.width / 2, r.height / 2); },
       fit: fitAll,
@@ -656,5 +695,29 @@
     };
   }
 
-  window.FamilyChart = { render, CARD_W: CW, CARD_H: CH };
+  // ---------- photos on demand ----------
+  const MIN_PHOTO_SCALE = 0.25;               // below this zoom a card's photo is a few pixels: not fetched
+
+  /* The part of the chart (in layout units) shown in a w × h box at this pan/zoom, widened by `margin` of
+     its size on each side; null when zoomed out too far for photos. */
+  function visibleWindow(view, w, h, margin) {
+    if (!(view.k >= MIN_PHOTO_SCALE) || !(w > 0) || !(h > 0)) return null;
+    const x0 = -view.x / view.k, y0 = -view.y / view.k, ww = w / view.k, hh = h / view.k;
+    return { x0: x0 - ww * margin, y0: y0 - hh * margin, x1: x0 + ww * (1 + margin), y1: y0 + hh * (1 + margin) };
+  }
+  function cardInWindow(c, win) {
+    return c.x + CW >= win.x0 && c.x <= win.x1 && c.y + CH >= win.y0 && c.y <= win.y1;
+  }
+  function showImage(img) {
+    const href = img.getAttribute("data-href");
+    if (!href) return;
+    img.removeAttribute("data-href");
+    img.setAttribute("href", href);
+  }
+  if (typeof window.addEventListener === "function") {
+    // Ctrl+P / the browser's own print: every chart photo first
+    window.addEventListener("beforeprint", () => document.querySelectorAll(".tree-svg image[data-href]").forEach(showImage));
+  }
+
+  window.FamilyChart = { render, CARD_W: CW, CARD_H: CH, visibleWindow, cardInWindow, MIN_PHOTO_SCALE };
 })();

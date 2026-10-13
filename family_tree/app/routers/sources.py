@@ -234,9 +234,11 @@ def patch_citation(cid: str, body: CitationPatch, user: dict = Depends(require_u
         b = Batch(conn, user["id"], "Edited a citation")
         if upd:
             b.update("citations", cid, upd)
-        b.touch(*_owner_people(conn, dict(c)))
+        empty = b.discard_if_empty()                     # nothing actually changed: no History entry
+        if not empty:
+            b.touch(*_owner_people(conn, dict(c)))
         return {"citation": citation_out(conn, conn.execute("SELECT * FROM citations WHERE id = ?", (cid,)).fetchone()),
-                "batchId": b.id}
+                "batchId": None if empty else b.id}
 
 
 @router.delete("/citations/{cid}")

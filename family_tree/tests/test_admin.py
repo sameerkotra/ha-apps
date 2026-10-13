@@ -280,6 +280,22 @@ class BackupRestore(ApiTestCase):
         self.assertEqual(self.get(f"/api/media/{mid}/file?size=256").status_code, 200)
         self.assertEqual(self.detail(pid)["photo"], mid)
 
+    def test_failed_restore_leaves_the_photos_alone(self):
+        from unittest import mock
+        pid = self.person("Ann")
+        mid = self.upload_photo(pid)
+        data = self.download(with_media=True)
+        shutil.rmtree(os.path.join(_env.MEDIA_PATH, "media"))           # the live folder lost its photos
+        with mock.patch.object(db, "replace_db", side_effect=RuntimeError("disk full")):
+            with self.assertRaises(RuntimeError):
+                self.restore(data)
+        self.assertFalse(os.path.exists(os.path.join(_env.MEDIA_PATH, "media")))       # nothing copied over
+        self.assertEqual([n for n in os.listdir(_env.MEDIA_PATH) if n.startswith(".restore-")], [])
+        # and a restore that works puts them in place, staging folder gone
+        self.ok(self.restore(data))
+        self.assertTrue(os.path.isfile(media.file_path(mid)))
+        self.assertEqual([n for n in os.listdir(_env.MEDIA_PATH) if n.startswith(".restore-")], [])
+
     def test_db_only_restore_reports_missing_media(self):
         pid = self.person("Ann")
         self.upload_photo(pid)
@@ -351,6 +367,53 @@ class BackupRestore(ApiTestCase):
         # a file for a photo the database doesn't know
         stranger = "ab" + "1" * 30
         self.assert_rejected(self.rezip(good, add={f"media/ab/{stranger}/original": image_bytes()}), "doesn't know")
+
+    def test_signing_key_is_secret_blank_in_backups_and_kept_on_restore(self):
+        self.person("Ann")
+        self.ok(self.put("/api/admin/settings", {"bus_signing_key": "s3cret-key-of-the-house"}, user=ADMIN))
+        page = self.ok(self.get("/api/admin/settings", user=ADMIN))
+        self.assertEqual(page["values"]["bus_signing_key"], "")
+        self.assertTrue(page["secretsSet"]["bus_signing_key"])
+        self.assertEqual(page["meta"]["bus_signing_key"]["kind"], "secret")
+        data = self.download()
+        self.assertNotIn(b"s3cret-key-of-the-house", zipfile.ZipFile(io.BytesIO(data)).read("family.db"))
+        r = self.ok(self.restore(data))
+        self.assertTrue(r["ok"])
+        from app import settings
+        self.assertEqual(settings.get("bus_signing_key"), "s3cret-key-of-the-house")
+
+    def test_signing_key_reaches_the_bus(self):
+        from unittest import mock
+        from app import app_messages, settings
+        from app.common import app_bus
+        seen = {}
+        with mock.patch.object(app_bus, "start", side_effect=lambda *a, **kw: seen.update(kw)), \
+                mock.patch.object(app_bus.default, "started", False):
+            app_messages.start()
+        self.ok(self.put("/api/admin/settings", {"bus_signing_key": "k1"}, user=ADMIN))
+        self.assertEqual(seen["signing_key"](), "k1")
+        self.assertEqual(settings.get("bus_signing_key"), "k1")
+
+    def test_abandoned_snapshots_are_swept(self):
+        import time
+        from app import housekeeping
+        old = os.path.join(config.DATA_DIR, db.TEMP_PREFIX + "old.zip")
+        new = os.path.join(config.DATA_DIR, db.TEMP_PREFIX + "new.db")
+        other = os.path.join(config.DATA_DIR, "someone-else.zip")
+        for p in (old, new, other):
+            with open(p, "wb") as f:
+                f.write(b"x")
+        t = time.time() - 7 * 3600
+        os.utime(old, (t, t))
+        os.utime(other, (t, t))
+        self.assertEqual(housekeeping.sweep_temp(), 1)
+        self.assertEqual([os.path.exists(p) for p in (old, new, other)], [False, True, True])
+        for p in (new, other):
+            os.remove(p)
+        # the app's own temporary files carry the prefix
+        made = db.temp_path_in_data(".db")
+        os.remove(made)
+        self.assertTrue(os.path.basename(made).startswith(db.TEMP_PREFIX))
 
     def test_restore_non_admin_403(self):
         self.person("Ann")

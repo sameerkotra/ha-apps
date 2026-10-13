@@ -13,6 +13,7 @@ Only the place text is sent — no names, no dates.
 """
 import asyncio
 import logging
+import urllib.error
 import re
 from datetime import timedelta
 
@@ -62,18 +63,34 @@ def variants(place: str) -> list:
     return out[:4]
 
 
+class LookupFailed(Exception):
+    """The place search couldn't be asked (no network, the server busy or down): nothing was learnt about
+    the place, so it doesn't count as a try."""
+
+
 def _lookup(q: str):
+    """(lat, lon), or None when the search answered and found nothing; LookupFailed when it couldn't answer."""
     _throttle()
     url = geo.search_url(settings.get("nominatim_url"), q)
     try:
-        return geo.first_result(geo.fetch(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-                                          timeout=10))
-    except Exception as e:                                   # network, no result, odd answer
-        logger.debug("Geocoding %r: %s", q, e)
+        body = geo.fetch(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"}, timeout=10)
+    except urllib.error.HTTPError as e:
+        if e.code in (400, 404, 422):                        # this query refused: an answer about the place
+            logger.debug("Geocoding %r: HTTP %s", q, e.code)
+            return None
+        raise LookupFailed(f"HTTP {e.code}") from e          # 429, 5xx …: the server, not the place
+    except (OSError, ValueError) as e:                       # no network, timeout, bad address
+        raise LookupFailed(str(e) or type(e).__name__) from e
+    try:
+        return geo.first_result(body)
+    except (IndexError, KeyError, TypeError):                # an empty list: nothing found
         return None
+    except ValueError as e:                                  # not JSON at all (an error page)
+        raise LookupFailed("the answer wasn't a place search result") from e
 
 
 def geocode_blocking(place: str):
+    """(lat, lon) or None (not found); LookupFailed when no answer could be had."""
     for q in variants(place):
         hit = _lookup(q)
         if hit:
@@ -117,7 +134,12 @@ def step_blocking() -> bool:
     if not todo:
         return False
     k, place = todo
-    hit = geocode_blocking(place)                          # no DB connection is open here
+    try:
+        hit = geocode_blocking(place)                      # no DB connection is open here
+    except LookupFailed as e:
+        # not the place's fault: no try is counted, and the loop waits a minute before asking again
+        logger.info("The place search couldn't be reached (%s); trying again later.", e)
+        return False
     with db.get_conn() as conn:
         row = conn.execute("SELECT source, tries FROM place_geo WHERE place_key = ?", (k,)).fetchone()
         if row and row["source"] == "manual":

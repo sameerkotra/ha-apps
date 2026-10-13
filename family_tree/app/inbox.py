@@ -14,11 +14,12 @@ import asyncio
 import logging
 import os
 import shutil
+import threading
 import time
 
 from starlette.concurrency import run_in_threadpool
 
-from . import config, db, features, media
+from . import config, db, features, media, settings
 from .history import Batch
 
 logger = logging.getLogger("inbox")
@@ -30,6 +31,7 @@ INTERVAL_SECONDS = 120
 SKIP_SUFFIXES = (".tmp", ".part", ".crdownload", ".partial", ".download", ".txt", ".ds_store", ".ini", ".db")
 
 _sizes: dict[str, int] = {}
+_scan_lock = threading.Lock()           # the 2-minute loop and Check now never scan at the same time
 
 
 def inbox_dir() -> str:
@@ -71,7 +73,13 @@ def title_for(rel: str) -> str:
 
 
 def scan_blocking(force: bool = False) -> dict:
-    """One pass. `force` (Check now) still waits for files that changed in the last 30 s."""
+    """One pass. `force` (Check now) still waits for files that changed in the last 30 s.
+    One scan at a time: a second caller waits for the running one, then scans what is left."""
+    with _scan_lock:
+        return _scan()
+
+
+def _scan() -> dict:
     out = {"imported": 0, "rejected": 0, "duplicates": 0, "waiting": 0}
     if not features.on("inbox") or not media.is_online():
         return out
@@ -95,12 +103,17 @@ def scan_blocking(force: bool = False) -> dict:
         ready.append(path)
     if not ready:
         return out
-    stored = []                                 # (media id, processed, raw bytes, rel)
+    stored = []                                 # (media id, processed, sha256 of the file, rel, path)
+    limit_mb = settings.get("max_upload_mb")
+    limit = limit_mb * 1024 * 1024
     for path in ready:
         rel = os.path.relpath(path, base).replace(os.sep, "/")
         try:
+            # the size first: a huge file is turned away without reading it into memory
+            if os.stat(path).st_size > limit:
+                raise media.MediaError(413, media.too_large_message(limit_mb))
             with open(path, "rb") as f:
-                data = f.read()
+                data = f.read(limit + 1)          # (it may have grown since the stat)
             ctype = media.validate_upload(data, allow_documents=True)
             sha = media.sha256(data)
             with db.get_conn() as conn:
@@ -120,7 +133,11 @@ def scan_blocking(force: bool = False) -> dict:
                 media.store_document(mid, data)
             else:
                 media.store_image(mid, processed)
-            stored.append((mid, processed, data, rel, path))
+            # keep only what the database row needs, not the picture's bytes, until the batch is written
+            meta = {k: processed.get(k) for k in ("content_type", "width", "height", "date_text", "document")}
+            meta["size"] = len(processed["original"])
+            stored.append((mid, meta, sha, rel, path))
+            del data, processed
         except media.MediaError as e:
             _reject(base, path, str(e))
             out["rejected"] += 1
@@ -133,12 +150,13 @@ def scan_blocking(force: bool = False) -> dict:
     try:
         with db.get_conn() as conn:
             b = Batch(conn, None, f"Inbox: {len(stored)} file{'s' if len(stored) != 1 else ''}")
-            for mid, p, data, rel, _path in stored:
+            for mid, p, sha, rel, _path in stored:
                 b.insert("media", {"id": mid, "kind": "document" if p.get("document") else "photo",
-                                   "title": title_for(rel), "date_text": p["date_text"], "content_type": p["content_type"],
-                                   "size": len(p["original"]), "sha256": media.sha256(data), "width": p["width"],
+                                   "title": title_for(rel), "date_text": p["date_text"],
+                                   "date_sort": media.date_sort(p["date_text"]), "content_type": p["content_type"],
+                                   "size": p["size"], "sha256": sha, "width": p["width"],
                                    "height": p["height"], "created_by": None, "created_at": b.now, "unsorted": 1,
-                                   "orig_name": rel[:300], "orig_sha256": media.sha256(data)})
+                                   "orig_name": rel[:300], "orig_sha256": sha})
     except Exception:
         for mid, *_ in stored:
             media.remove_files(mid)

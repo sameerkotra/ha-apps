@@ -203,6 +203,68 @@ class History(ApiTestCase):
         self.assertEqual(self.detail(a)["surname"], "Smith")
 
 
+class NoEmptyBatches(ApiTestCase):
+    def batches(self):
+        return sql("SELECT COUNT(*) AS n FROM batches")[0]["n"]
+
+    def test_saving_the_same_values_leaves_no_history(self):
+        a = self.person("Ann", "Rao", biography="Hi")
+        n = self.batches()
+        version = sql("SELECT value FROM settings WHERE key = 'tree_version'")[0]["value"]
+        r = self.ok(self.patch(f"/api/people/{a}", {"given_names": "Ann", "biography": "Hi"}))
+        self.assertIsNone(r["batchId"])
+        self.assertEqual(self.batches(), n)
+        self.assertEqual(sql("SELECT value FROM settings WHERE key = 'tree_version'")[0]["value"], version)
+        self.assertIsNotNone(self.ok(self.patch(f"/api/people/{a}", {"biography": "Hello"}))["batchId"])
+        self.assertEqual(self.batches(), n + 1)
+
+    def test_media_and_citations_too(self):
+        from base import image_bytes
+        a = self.person("Ann")
+        mid = self.ok(self.post("/api/media", files={"file": ("p.jpg", image_bytes(), "image/jpeg")},
+                                data={"title": "Old"}), 201)["media"]["id"]
+        sid = self.ok(self.post("/api/sources", {"title": "Letter"}), 201)["source"]["id"]
+        cid = self.ok(self.post("/api/citations", {"sourceId": sid, "personId": a, "page": "2"}), 201)["citation"]["id"]
+        n = self.batches()
+        self.assertIsNone(self.ok(self.patch(f"/api/media/{mid}", {"title": "Old"}))["batchId"])
+        self.assertIsNone(self.ok(self.patch(f"/api/media/{mid}", {}))["batchId"])
+        self.assertIsNone(self.ok(self.patch(f"/api/citations/{cid}", {"page": "2"}))["batchId"])
+        self.assertEqual(self.batches(), n)
+        self.assertIsNotNone(self.ok(self.patch(f"/api/media/{mid}", {"title": "New"}))["batchId"])
+
+
+class HistoryPruning(ApiTestCase):
+    def test_kept_for_ever_by_default_and_pruned_when_asked(self):
+        a = self.person("Ann")
+        self.ok(self.patch(f"/api/people/{a}", {"nickname": "Annie"}))
+        long_ago = (config.utcnow() - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        sql("UPDATE batches SET created_at = ?", (long_ago,))
+        sql("UPDATE changes SET created_at = ?", (long_ago,))
+        self.ok(self.patch(f"/api/people/{a}", {"nickname": "Lucky"}))
+        n = sql("SELECT COUNT(*) AS n FROM batches")[0]["n"]
+        housekeeping.purge_expired()
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM batches")[0]["n"], n)            # default: keep
+        self.ok(self.put("/api/admin/settings", {"history_keep_days": 365}, user=ADMIN))
+        housekeeping.purge_expired()
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM batches")[0]["n"], 1)            # only the recent edit is left
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM changes WHERE batch_id NOT IN (SELECT id FROM batches)")[0]["n"], 0)
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM batch_people WHERE batch_id NOT IN (SELECT id FROM batches)")[0]["n"], 0)
+        self.assertEqual(self.detail(a)["nickname"], "Lucky")                           # the tree is untouched
+        self.assertEqual(self.put("/api/admin/settings", {"history_keep_days": -1}, user=ADMIN).status_code, 422)
+
+
+class KeepOutFlag(ApiTestCase):
+    def test_anyone_sets_it_only_admins_clear_it(self):
+        a = self.person("Ann")
+        self.ok(self.patch(f"/api/people/{a}", {"never_export": True}))
+        r = self.patch(f"/api/people/{a}", {"never_export": False})
+        self.assertEqual(r.status_code, 403, r.text)
+        self.assertTrue(self.detail(a)["neverExport"])
+        self.ok(self.patch(f"/api/people/{a}", {"never_export": True, "biography": "still fine"}))
+        self.ok(self.patch(f"/api/people/{a}", {"never_export": False}, user=ADMIN))
+        self.assertFalse(self.detail(a)["neverExport"])
+
+
 class UndoAgainstLaterChanges(ApiTestCase):
     """Undo must answer 409 (never 500) when putting a row back is impossible
     because of something done later."""
@@ -312,7 +374,7 @@ class Trash(ApiTestCase):
         self.assertEqual(self.delete("/api/trash", user=ALICE).status_code, 403)
         self.assertEqual(len(self.trash()), 1)
         purged = self.ok(self.delete("/api/trash", user=ADMIN))["purged"]
-        self.assertEqual(purged, {"people": 1, "families": 0, "media": 0})
+        self.assertEqual(purged, {"people": 1, "families": 0, "sources": 0, "media": 0})
         self.assertEqual(self.trash(), [])
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM people")[0]["n"], 0)
 
@@ -327,7 +389,7 @@ class Trash(ApiTestCase):
         self.ok(self.delete(f"/api/people/{dad}"))
         self.ok(self.delete(f"/api/people/{solo}"))
         purged = self.ok(self.delete("/api/trash", user=ADMIN))["purged"]
-        self.assertEqual(purged, {"people": 2, "families": 1, "media": 0})
+        self.assertEqual(purged, {"people": 2, "families": 1, "sources": 0, "media": 0})
         fam = self.ok(self.get(f"/api/families/{fid}"))
         self.assertEqual([p["id"] for p in fam["partners"]], [mum])
         self.assertEqual([c["id"] for c in fam["children"]], [kid])
@@ -346,7 +408,7 @@ class Trash(ApiTestCase):
         self.ok(self.delete(f"/api/people/{k2}"))
         self.ok(self.delete(f"/api/families/{fid}"))
         purged = self.ok(self.delete("/api/trash", user=ADMIN))["purged"]
-        self.assertEqual(purged, {"people": 1, "families": 1, "media": 0})
+        self.assertEqual(purged, {"people": 1, "families": 1, "sources": 0, "media": 0})
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM events")[0]["n"], 0)
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM family_children")[0]["n"], 0)
         self.assertEqual(self.detail(a)["families"], [])
@@ -370,8 +432,8 @@ class Trash(ApiTestCase):
         long_ago = (config.utcnow() - timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
         sql("UPDATE people SET deleted_at = ? WHERE id = ?", (long_ago, old))
         sql("UPDATE families SET deleted_at = ? WHERE id = ?", (long_ago, f_old))
-        self.assertEqual(housekeeping.purge(older_than_days=200), {"people": 0, "families": 0, "media": 0})
-        self.assertEqual(housekeeping.purge(older_than_days=30), {"people": 1, "families": 1, "media": 0})
+        self.assertEqual(housekeeping.purge(older_than_days=200), {"people": 0, "families": 0, "sources": 0, "media": 0})
+        self.assertEqual(housekeeping.purge(older_than_days=30), {"people": 1, "families": 1, "sources": 0, "media": 0})
         left = {(i["entity"], i["id"]) for i in self.trash()}
         self.assertEqual(left, {("people", new)})
         self.assertEqual(self.ok(self.get("/api/trash", user=ADMIN))["trashDays"], 90)

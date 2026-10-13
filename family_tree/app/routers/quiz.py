@@ -14,7 +14,7 @@ import time
 from collections import deque
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import Field
 
 from .. import features, config, db, graph as graph_mod, kidmode, kin, relations, upcoming
@@ -24,6 +24,8 @@ from ..models import Strict
 router = APIRouter(prefix="/api", tags=["quiz"], dependencies=[Depends(features.required("quiz"))])
 
 QUESTION_TTL = 3600
+MAX_OPEN_PER_USER = 50      # questions asked and not answered yet, per person (the oldest go first)
+MAX_OPEN_TOTAL = 5000
 _lock = threading.Lock()
 _questions: dict[str, dict] = {}
 _recent: dict[str, deque] = {}
@@ -117,7 +119,7 @@ class NextIn(Strict):
 
 
 def _settings_for(conn, request: Request, user: dict, body: NextIn) -> dict:
-    s = kidmode.session(conn, kidmode.device_id(request.headers))
+    s = kidmode.session(conn, kidmode.request_device(request))
     if s:
         if body.mode not in s["modes"]:
             raise HTTPException(422, "That game isn't switched on for kids mode.")
@@ -194,6 +196,11 @@ def quiz_next(body: NextIn, request: Request, user: dict = Depends(require_user)
     with _lock:
         for k in [k for k, v in _questions.items() if now - v["at"] > QUESTION_TTL]:
             _questions.pop(k, None)
+        mine = [k for k, v in _questions.items() if v["user"] == user["id"]]       # oldest first
+        for k in mine[:max(0, len(mine) - MAX_OPEN_PER_USER + 1)]:
+            _questions.pop(k, None)                  # someone asking without answering keeps only their newest
+        while len(_questions) >= MAX_OPEN_TOTAL:
+            _questions.pop(next(iter(_questions)))
         _questions[token] = {"at": now, "player": player, "target": target, "mode": mode, "answer": answer,
                              "user": user["id"]}
     q["token"] = token
@@ -268,12 +275,12 @@ def _state(conn, s: dict | None, user: dict | None = None) -> dict:
 @router.get("/kidmode")
 def kidmode_state(request: Request, user: dict = Depends(require_user)):
     with db.get_conn() as conn:
-        return _state(conn, kidmode.session(conn, kidmode.device_id(request.headers)))
+        return _state(conn, kidmode.session(conn, kidmode.request_device(request)))
 
 
 @router.post("/kidmode/start")
-def kidmode_start(body: StartIn, request: Request, user: dict = Depends(require_user)):
-    device = kidmode.device_id(request.headers)
+def kidmode_start(body: StartIn, request: Request, response: Response, user: dict = Depends(require_user)):
+    device = kidmode.request_device(request)
     if not device:
         raise HTTPException(422, "This browser didn't send a device id; reload the page and try again.")
     if any(m not in kidmode.MODES for m in body.modes):
@@ -289,6 +296,7 @@ def kidmode_start(body: StartIn, request: Request, user: dict = Depends(require_
                      "started_at, ends_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                      (device, user["id"], body.playerId, json.dumps(sorted(set(body.modes), key=kidmode.MODES.index)),
                       body.scope, 1 if body.deceased else 0, now.isoformat(), ends))
+        kidmode.set_cookie(response, request, device)        # the lock stays with this browser (kidmode.py)
         return _state(conn, kidmode.session(conn, device))
 
 
@@ -296,7 +304,7 @@ def kidmode_start(body: StartIn, request: Request, user: dict = Depends(require_
 def kidmode_challenge(request: Request, user: dict = Depends(require_user)):
     """What the grown-up must answer: the PIN of whoever started kids mode, or a sum."""
     with db.get_conn() as conn:
-        s = kidmode.session(conn, kidmode.device_id(request.headers))
+        s = kidmode.session(conn, kidmode.request_device(request))
         if not s:
             return {"locked": False}
         until = kidmode.blocked_until(s)
@@ -316,10 +324,11 @@ class UnlockIn(Strict):
 
 
 @router.post("/kidmode/unlock")
-def kidmode_unlock(body: UnlockIn, request: Request, user: dict = Depends(require_user)):
+def kidmode_unlock(body: UnlockIn, request: Request, response: Response, user: dict = Depends(require_user)):
     with db.get_conn() as conn:
-        s = kidmode.session(conn, kidmode.device_id(request.headers))
+        s = kidmode.session(conn, kidmode.request_device(request))
         if not s:
+            kidmode.clear_cookie(response, request)
             return {"locked": False}
         until = kidmode.blocked_until(s)
         if until:
@@ -338,6 +347,7 @@ def kidmode_unlock(body: UnlockIn, request: Request, user: dict = Depends(requir
                       else f"That's not right. {info['triesLeft']} tries left.")
             raise HTTPException(403, detail)
         conn.execute("DELETE FROM kid_sessions WHERE device_id = ?", (s["device_id"],))
+        kidmode.clear_cookie(response, request)
         return {"locked": False}
 
 

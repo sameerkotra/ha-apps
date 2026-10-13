@@ -84,7 +84,9 @@ can be filtered by side too.
 - **✎ Edit** changes names (birth/maiden surname, nickname, other names such as
   a married or religious name), gender, birth and death, the biography and, under
   *More details*, the name order, **Keep out of all exports** and **Send
-  reminders for this person**.
+  reminders for this person**. Anyone can mark someone *Keep out of all
+  exports*; only an admin can take the mark off again. Someone kept out is
+  also left out of the Household Assistant's answers.
 - **Families** are two partners (or one) and their children. Each child is a
   birth, adopted, step or foster child. **Edit family** changes the kind
   (married, partners), whether it ended (divorced, separated, widowed), the
@@ -189,8 +191,8 @@ parents, partners with the wedding date and years married, children, brothers
 and sisters. For birthdays, Family Tree tells it what **Upcoming** would
 show you — names, dates, ages and how each person is related to you (close
 family once you've said "This is me", or everyone if you ask) — and nothing
-else: no photos, contact details or notes. Its answer links back to Family
-Tree. An admin can turn this off for everyone (**App settings → Household
+else: no photos, contact details or notes, and nothing about anyone marked
+*Keep out of all exports*. Its answer links back to Family Tree. An admin can turn this off for everyone (**App settings → Household
 Assistant**), and you can turn it off for yourself in **Settings → Household
 Assistant**.
 
@@ -204,6 +206,14 @@ recorder:
     event_types:
       - household_apps
 ```
+
+Any app on Home Assistant's network can put messages on that bus. To make sure
+a message really comes from one of the household apps, paste the same
+**App-messages signing key** (any long random text) into **Admin → App
+settings → Household Assistant** in every household app. Once a key is set,
+Family Tree refuses messages that aren't signed with it — set it in all the
+apps at about the same time. Backups never contain the key, and restoring a
+backup keeps the one this install has.
 
 ## Reminders
 
@@ -387,7 +397,9 @@ often. Answers aren't tree changes and don't appear in History.
 **Kids mode** lets a child play on your login: choose the games and an
 optional time limit and tap **🔒 Start kids mode**. This browser then shows
 only the quiz, even after a reload, and the app refuses everything else from
-it. To unlock, hold the 🔒 for 3 seconds and enter your **kids-mode PIN** (set
+it (the lock is kept in a cookie the page itself can't read or remove). While
+kids mode is on, a change that doesn't say which device it comes from is
+refused for your login on every device; the app's own pages always say. To unlock, hold the 🔒 for 3 seconds and enter your **kids-mode PIN** (set
 in Settings, 4–6 digits) or, without a PIN, answer a sum. Five wrong tries
 block unlocking for 5 minutes. Admins can end kids mode for any device in
 Admin → Users. For a full lock of the device use **iOS Guided Access** or
@@ -401,8 +413,11 @@ Ancestors / Descendants / One person**, which kinds to show, **Moves** (a line
 through each person's places in date order), a **year slider** with **▶
 Play**, and a list of places not found yet. Tap a pin to see who was there;
 if it's in the wrong place, **Move it** and click the right spot (every event
-with that place text uses your pin). Each person's Timeline tab also shows a
-small map. Admins can point the map at other servers (App settings).
+with that place text uses your pin; only places the tree's events use can be
+pinned). A place is looked up at most three times, a week apart; when the
+place search can't be reached at all, that doesn't count as a try and it asks
+again a minute later. Each person's Timeline tab also shows a small map.
+Admins can point the map at other servers (App settings).
 
 ## Indian relationship names, script names, tithi and ceremonies
 
@@ -490,7 +505,8 @@ the field before anything is saved. Saved changes apply straight away.
 | Setting | Default | What it does |
 |---|---|---|
 | Days in trash | `90` | How long deleted people, families and photos can be restored (7–3650 days) before the daily clean-up removes them for good. |
-| Largest upload (MB) | `20` | The biggest photo or document anyone can upload (1–100 MB). |
+| Largest upload (MB) | `20` | The biggest photo or document anyone can upload (1–100 MB). Any request bigger than this (plus 1 MB) is refused before it's read. |
+| Keep history for | `0` days | 0 keeps every change for good. Otherwise History entries older than this many days are removed by the daily clean-up and can no longer be undone (0–36500). |
 | Name order | first name first | How full names are written for everyone; each person can have their own. |
 | Photo folder | `/share/family_tree` | Where photos and documents are kept: a folder inside `/share` (not `/share` itself), e.g. `/share/nas/family_tree`. **Changing it doesn't move any files** — see *Moving the photo folder*. **Check folder** shows what a folder holds before you save. |
 | Default phone code | `+1` | Contact details: used when a phone number is typed without a country code. Shown while Contact details is on. |
@@ -500,6 +516,7 @@ the field before anything is saved. Saved changes apply straight away.
 | Place search address | `https://nominatim.openstreetmap.org` | Places map: the Nominatim server place names are looked up on. Shown while the map is on. |
 | Features | see above | The switches for every optional part of the app. |
 | Answer the Household Assistant | on | Lets the Household Assistant app tell people the birthdays and anniversaries coming up and how two people are related (see *Asking the Household Assistant*). |
+| App-messages signing key | not set | The same key in every household app; with one set, unsigned messages between the apps are refused (see *Asking the Household Assistant*). Never shown again after saving, and never in a backup. |
 
 The app's **Configuration** tab has only one option:
 
@@ -569,8 +586,11 @@ unless you untick it. To keep photos out of those backups:
 - **Download database + photos** — everything, for a complete copy or a move
   to another Home Assistant.
 - **Restore** — replaces the whole tree with a backup zip; it's checked
-  before anything changes. The backup's App settings come back with it, except
-  the *Photo folder*, which stays as it is on this Home Assistant. Features
+  before anything changes, and its photos are unpacked beside the folder and
+  only moved into place once the database has been swapped. Only admins can
+  send one (anyone else is turned away before the upload is read). The
+  backup's App settings come back with it, except the *Photo folder* and the
+  *App-messages signing key*, which stay as they are on this Home Assistant. Features
   that hold data in the backup are switched on (see Features).
 - **Check photos** — lists photos whose files are missing and files the
   database doesn't know (which can be moved to an `orphans/` folder).
@@ -602,11 +622,16 @@ uploads wait, and a banner says so.
 Every change is listed in **History** (and on each person's History tab) with
 who made it and when. **Undo** works as long as nothing it touched was changed
 again afterwards — otherwise undo the later change first. Undoing is itself a
-change, so it can be undone too. History is kept for good.
+change, so it can be undone too. History is kept for good unless an admin sets
+*Keep history for* (App settings); then older entries are removed by the daily
+clean-up and can't be undone any more (the tree itself doesn't change). Saving
+an edit that changes nothing adds no History entry.
 
-Anyone can delete a person, family or photo; it goes to the **Trash** and can
-be got back with **Undo**. The trash itself is in **Admin → Trash** (admins
-only), for *Days in trash* days.
+Anyone can delete a person, family, photo or source; it goes to the **Trash**
+and can be got back with **Undo**. The trash itself is in **Admin → Trash**
+(admins only), for *Days in trash* days. If the clean-up can't remove
+something, it stays in the trash (the log says why) and everything else is
+still removed.
 
 ## Themes and settings
 
@@ -623,7 +648,11 @@ reminders, milestones, the kids-mode PIN and how typed dates are read.
 - The **Everyone** view shows up to 3 000 people (relationship labels up to
   800); the Chart shows up to 2 000 cards.
 - Uploads: 1–100 MB each (App setting), one file per upload request; HEIC isn't
-  accepted.
+  accepted. Pictures may have up to 40 million pixels (60 million for a JPEG);
+  at most two are processed at a time. Uploading the very same file again gives
+  back the photo already there instead of a copy.
+- Imports: the tree data in a website zip up to 64 MB; a GEDCOM file up to
+  50 MB (2 million lines).
 - The GEDCOM file has no photos, sources or custom fields, and a GEDCOM import doesn't bring in sources, photos or
   addresses.
 - Tithi dates can be worked out for dates from 1800 on; they follow the

@@ -114,6 +114,7 @@ def quick_family(body: QuickFamily, user: dict = Depends(require_user)):
         fid = new_family(b, ids[0], ids[1] if len(ids) > 1 else None, body.kind)
         set_marriage(b, fid, body.marriage)
         order: list[str] = []
+        g = graph_mod.load_fresh(conn) if body.children else None     # once; add_child_link keeps it in step
         for ch in body.children:
             if ch.relation not in RELATIONS:
                 raise HTTPException(422, "Relation must be birth, adopted, step, foster or unknown.")
@@ -121,7 +122,7 @@ def quick_family(body: QuickFamily, user: dict = Depends(require_user)):
             if cid in order or cid in ids:
                 raise HTTPException(422, "The same person appears twice in this family.")
             order.append(cid)
-            add_child_link(b, fid, cid, ch.relation)
+            add_child_link(b, fid, cid, ch.relation, g)
         # the form's row order is the birth order the person typed
         for pos, cid in enumerate(order):
             b.update("family_children", f"{fid}|{cid}", {"position": pos})

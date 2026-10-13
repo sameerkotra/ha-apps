@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.6.2
+
+- **Emptying the trash works again**: the daily clean-up (and **Empty trash**) failed as a whole when someone in the trash had told a source's story, had other people merged into them, or a trashed photo was a source's scan. Those links are now cleared first, each item is removed on its own (one that still can't be is left in the trash and logged, the rest go), and deleted sources show in **Admin → Trash** and are cleaned up too.
+- **Security**: only admins can send a backup to **Restore** — anyone else is turned away before the upload is read, and the upload limit (*Largest upload* + 1 MB) now also counts uploads sent without a size up front.
+- **Security**: place names and people's names on the map's labels are shown as text, never read as page code.
+- **Security**: photos are checked before they're decoded: at most 40 million pixels (60 million for a JPEG, which is decoded at a reduced size) and at most two processed at a time, so a crafted or huge picture can't use up the memory. The inbox looks at a file's size before reading it.
+- **Security**: kids mode is held by a cookie the page can't read or remove, so leaving out the device header no longer gets round it; while it's on, a change that doesn't say which device it comes from is refused for that login.
+- **Security**: someone marked *Keep out of all exports* is left out of the Household Assistant's answers too, and only an admin can take that mark off. A contact's label can't break the lines of a downloaded vCard; unanswered quiz questions are capped at 50 per person; only places the tree uses can be pinned on the map; long GEDCOM notes are read in one pass and huge files are refused early (GEDCOM up to 50 MB, tree data up to 64 MB).
+- **Optional App-messages signing key** (App settings → Household Assistant): the same key in every household app makes them refuse messages that aren't signed with it. Off until you set one; backups never contain it.
+- **Big imports are much faster**: the import is read and planned in the background, the family tree isn't reloaded for every child added, and photos are processed before the database is locked; a broken data file is a clear message instead of an error.
+- **Faster on big trees**: relationship names for everyone (search by "babai", the Everyone chart, exports, the quiz) reuse their work; the photo gallery reads only the page it shows (also fixing very large galleries); the Export preview no longer works out labels, contacts or photo fixes just to count; the duplicate finder keeps its results until a name, date or family link changes, and its groups are finer so big families aren't cut short; tithi dates are worked out in memory instead of written while a page is read; exports no longer make every cached answer stale; the Admin → Storage file count is reused for ten minutes.
+- **The chart loads photos as you move to them**: only the cards on screen (and near it) fetch their photo, none while zoomed far out; printing loads them all first. A face cut from a tagged photo is made once and kept. Maps are closed when you leave the page.
+- **Uploading the same file again** gives back the photo or document already there (linked as you asked) instead of a second copy, as the inbox already did.
+- **Colours kept**: a photo with its own colour profile (Display P3, Adobe RGB) is converted to sRGB when it's stored, so it no longer looks washed out.
+- **Fixes**: a network error while looking up a place no longer counts as one of its three tries; a crop pushed against the edge can't leave an empty picture, and a photo whose fixes can't be applied says so; two photo fixes saved at once can't mix their files; people with the same name get their own pages in an exported website; tithi and milestone entries hide script names while that feature is off; a restored backup's photos are moved into place only after the database is swapped; saving an edit that changes nothing adds no History entry.
+- **New App setting *Keep history for*** (default 0 = keep everything, as before): History older than that many days is removed by the daily clean-up.
+- Under the hood: new indexes and a stored sort key for photo dates are added to the database at the first start (nothing to do); abandoned backup downloads are swept after six hours; the base image is pinned to one Alpine release.
+- **Shared code**: an optional message signing key for the household apps; API answers are never stored by the browser, while the app's own files (which carry the version) are cached for good, so pages load faster after an update's first visit; uploads without a stated size are counted; database writes need one disk sync fewer.
+
 ## 2.6.1
 
 - **Safer import of another tree's website zip**: each photo in the zip is now checked against the upload limit (Admin → App settings) before it's unpacked, so a file that would unpack to something huge is skipped with a note instead of filling the memory.

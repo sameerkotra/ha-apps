@@ -11,11 +11,14 @@ Two tools:
   own language, with the chain that links them. Names may be misspelt or partial (find_people.py); "me", "my
   mother" or "Ravi's wife" work too. Several people with the name → the choices, so the assistant can ask which.
 
-Names, dates, ages and relationships only — no photos, contact details or notes. Answered only while the admin's
+Names, dates, ages and relationships only — no photos, contact details or notes, and nothing about anyone marked
+"keep out of all exports" (they're left out of the tree the tools answer from). Answered only while the admin's
 *Answer the Household Assistant* is on and the person hasn't turned off *Let the Household Assistant answer for me*
 (Settings). Its link opens Upcoming on the app's sidebar page.
 """
 import re
+import threading
+from dataclasses import replace as dc_replace
 from datetime import date
 
 from . import config, dates, db, find_people, graph as graph_mod, kin, relations, settings, upcoming
@@ -49,6 +52,43 @@ tools = assist_tools.Catalogue(
     person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel, busy=_busy)
 
 
+_shown_lock = threading.Lock()
+_shown_cache: dict = {"graph": None, "shown": None}
+
+
+def _graph(conn):
+    """The tree as the Household Assistant may tell it: without anyone marked "keep out of all exports"
+    (they're left out of its answers altogether — names, dates and as a link in a chain). Cached for as
+    long as the tree's own cached graph (any change makes a new one)."""
+    g = graph_mod.get(conn)
+    with _shown_lock:
+        if _shown_cache["graph"] is g:
+            return _shown_cache["shown"]
+    hidden = {r["id"] for r in conn.execute("SELECT id FROM people WHERE never_export = 1 AND deleted_at IS NULL")}
+    shown = _without(g, hidden) if hidden else g
+    with _shown_lock:
+        _shown_cache.update(graph=g, shown=shown)
+    return shown
+
+
+def _without(g, hidden: set):
+    people = {pid: dc_replace(p, parent_fams=[], partner_fams=[]) for pid, p in g.people.items() if pid not in hidden}
+    families = {}
+    for fid, f in g.families.items():
+        p1 = f.p1 if f.p1 in people else None
+        p2 = f.p2 if f.p2 in people else None
+        kids = [c for c in f.children if c[0] in people]
+        if not p1 and not p2 and not kids:
+            continue
+        families[fid] = graph_mod.Family(fid, p1, p2, f.kind, f.ended, children=kids, marriage=f.marriage)
+        for par in (p1, p2):
+            if par:
+                people[par].partner_fams.append(fid)
+        for cid, rel, _pos in kids:
+            people[cid].parent_fams.append((fid, rel))
+    return graph_mod.Graph(people, families)
+
+
 def _when(d: str, days_away: int) -> str:
     if days_away == 0:
         return "today"
@@ -69,7 +109,7 @@ def birthdays(ctx):
     days = int(ctx.args.get("days", 30))
     scope = "all" if ctx.args.get("everyone") else "close"
     lang = kin.user_lang(ctx.user)
-    g = graph_mod.get(ctx.conn)
+    g = _graph(ctx.conn)
     me = ctx.user["me_person_id"] if ctx.user["me_person_id"] in g.people else None
     rows = upcoming.entries(g, config.today(), days, me, scope, remembrance=False, lang=lang)
     link = ctx.link("Upcoming in Family Tree", "/upcoming")
@@ -164,7 +204,7 @@ def _line(who: str, whose: str, r: dict) -> str:
             children=True)
 def relation(ctx):
     lang = kin.user_lang(ctx.user)
-    g = graph_mod.get(ctx.conn)
+    g = _graph(ctx.conn)
     me = ctx.user["me_person_id"] if ctx.user["me_person_id"] in g.people else None
     found, notes = [], []
     try:
@@ -226,7 +266,7 @@ def _names(g, pids) -> list[str]:
             children=True)
 def person(ctx):
     lang = kin.user_lang(ctx.user)
-    g = graph_mod.get(ctx.conn)
+    g = _graph(ctx.conn)
     me = ctx.user["me_person_id"] if ctx.user["me_person_id"] in g.people else None
     try:
         pid, note = _pick(ctx, g, ctx.args["person"], me, lang, "Family Tree")

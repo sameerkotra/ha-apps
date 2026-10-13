@@ -16,7 +16,7 @@ from . import config, db, kin
 from .common import auth_core
 
 
-def _is_admin(user_id: str, username: str | None) -> bool:
+def is_admin(user_id: str, username: str | None) -> bool:
     return auth_core.is_admin(user_id, username, config.ADMIN_NAMES)
 
 
@@ -33,11 +33,16 @@ def _stale(ts: str | None) -> bool:
         seen = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return True
-    return config.utcnow() - seen > timedelta(minutes=5)
+    return config.utcnow() - seen > timedelta(seconds=LAST_SEEN_EVERY)
 
 
-async def get_current_user(request: Request) -> dict:
-    """The real caller, created on first sight (enabled by default)."""
+LAST_SEEN_EVERY = 60          # seconds: last_seen is written at most this often per person
+
+
+def get_current_user(request: Request) -> dict:
+    """The real caller, created on first sight (enabled by default). A plain function: FastAPI runs it in
+    its thread pool, so the database read (and the rare write) never blocks the event loop. The row is
+    written only when the name changed or last_seen is over a minute old."""
     ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
     auth_core.require_user_id(ident.user_id, "Family Tree")
     uid, username = ident.user_id, ident.username
@@ -54,7 +59,7 @@ async def get_current_user(request: Request) -> dict:
                          (display, username, now, uid))
     return {
         "id": uid, "name": display, "username": username,
-        "is_admin": _is_admin(uid, username),
+        "is_admin": is_admin(uid, username),
         "display_name_only": _display_name_only(uid, username, ident.display_name),
         "disabled": bool(row["disabled"]),
         "me_person_id": row["me_person_id"],

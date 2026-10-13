@@ -8,10 +8,9 @@ stays fast. Birth and death years, birth place, gender, parents' and
 partners' names add or take away points. Pairs above THRESHOLD are listed with
 their reasons; "not the same person" dismissals are remembered.
 """
+import hashlib
 import re
 import threading
-
-from . import db
 
 THRESHOLD = 0.72
 MAX_BUCKET = 400
@@ -109,8 +108,6 @@ def score(g, a: str, b: str):
     pa, pb = g.people[a], g.people[b]
     if pa.gender in ("male", "female") and pb.gender in ("male", "female") and pa.gender != pb.gender:
         return None
-    if _related_directly(g, a, b):
-        return None
     reasons = []
     given = _name_sim(pa.given or pa.nickname, pb.given or pb.nickname)
     if given < 0.8:
@@ -122,6 +119,8 @@ def score(g, a: str, b: str):
     else:
         sur = 0.85                                         # a missing surname neither helps nor rules out
     if sur < 0.8:
+        return None
+    if _related_directly(g, a, b):                         # after the cheap name tests: it walks the tree
         return None
     s = 0.45 * given + 0.25 * sur
     reasons.append("same name" if pa.name.lower() == pb.name.lower() else
@@ -166,16 +165,21 @@ def score(g, a: str, b: str):
 
 
 def _buckets(g):
+    """Who is compared with whom: people sharing a surname initial *and* a first-name initial (spelling
+    variants like Lakshmi / Laxmi Sharma), or the first four letters of the first name (a surname that
+    changed). Finer than the surname initial alone, so a big tree's buckets stay under MAX_BUCKET instead
+    of being cut short."""
     buckets = {}
     for pid, p in g.people.items():
         keys = set()
-        for sn in (p.surname, p.birth_surname):
-            n = norm(sn)
-            if n:
-                keys.add("s:" + n[0])
         n = norm(p.given or p.nickname)
-        if n:
-            keys.add("g:" + n.split()[0][:4])
+        first = n.split()[0] if n else ""
+        for sn in (p.surname, p.birth_surname):
+            sn = norm(sn)
+            if sn:
+                keys.add("s:" + sn[0] + "|" + first[:1])
+        if first:
+            keys.add("g:" + first[:4])
         for k in keys:
             buckets.setdefault(k, []).append(pid)
     return buckets
@@ -185,11 +189,26 @@ _lock = threading.Lock()
 _cache: dict = {}
 
 
+def _fingerprint(g) -> str:
+    """What the scores depend on (names, gender, birth and death, parents, partners) — not photos, notes,
+    stories or anything else a write may change. Worked out once per graph."""
+    def make():
+        h = hashlib.sha256()
+        for pid in sorted(g.people):
+            p = g.people[pid]
+            h.update(repr((pid, p.given, p.nickname, p.surname, p.birth_surname, p.gender,
+                           _year(p.birth), _place(p.birth), _year(p.death),
+                           sorted(p.parent_fams), sorted(p.partner_fams),
+                           sorted(x for x, _f, _r in g.parents(pid)), sorted(x or "" for x, _f in g.partners(pid)))).encode())
+        return h.hexdigest()
+    return g.memo("labels", ("duplicates-fingerprint",), make)
+
+
 def find(conn, g) -> list:
-    """[{a, b, score, reasons}] best first; cached per tree version and dismissals."""
-    version = db.get_setting(conn, "tree_version", "0")
+    """[{a, b, score, reasons}] best first; cached while the people's names, dates and close family and the
+    dismissals stay the same (a new photo or story doesn't start the search again)."""
     dismissed = {(r["a"], r["b"]) for r in conn.execute("SELECT a, b FROM not_duplicates")}
-    key = (version, len(dismissed))
+    key = (_fingerprint(g), hash(frozenset(dismissed)))
     with _lock:
         if _cache.get("key") == key:
             return _cache["pairs"]

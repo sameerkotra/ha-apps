@@ -424,7 +424,9 @@ def new_id() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    return db_core.connect(config.DB_PATH, timeout=15, pragmas=("foreign_keys = ON",))
+    # synchronous = NORMAL: with WAL (set in init_db) a power cut can lose the last commits but never
+    # corrupts the file, and each commit saves an fsync
+    return db_core.connect(config.DB_PATH, timeout=15, pragmas=("foreign_keys = ON", "synchronous = NORMAL"))
 
 
 def get_conn():
@@ -468,13 +470,35 @@ MIGRATIONS = [
     ("people", "photo_region_id", "TEXT REFERENCES media_regions(id) ON DELETE SET NULL"),
     ("people", "remind", "INTEGER NOT NULL DEFAULT 0"),                               # off for everyone
     ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),                          # the Household Assistant (tools.py)
+    ("media", "date_sort", "TEXT"),                                                   # the date's sort key (gallery order)
+]
+
+# Indexes for lookups by a column that had none (2.6.2); CREATE INDEX IF NOT EXISTS, so they're added to
+# older databases at the next start.
+INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_media_orig ON media(orig_sha256)",
+    "CREATE INDEX IF NOT EXISTS idx_media_sha ON media(sha256)",
+    "CREATE INDEX IF NOT EXISTS idx_media_date ON media(date_sort)",
+    "CREATE INDEX IF NOT EXISTS idx_ml_event ON media_links(event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ml_family ON media_links(family_id)",
+    "CREATE INDEX IF NOT EXISTS idx_people_photo ON people(photo_media_id)",
+    "CREATE INDEX IF NOT EXISTS idx_cit_family ON citations(family_id)",
 ]
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Additive migrations for databases made by older versions."""
+    had_date_sort = "date_sort" in {r[1] for r in conn.execute("PRAGMA table_info(media)")}
     db_core.add_missing_columns(conn, MIGRATIONS)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_media_orig ON media(orig_sha256)")
+    if not had_date_sort:                         # fill the new column once, from the dates already there
+        from . import media
+        rows = conn.execute("SELECT id, date_text FROM media WHERE date_text IS NOT NULL").fetchall()
+        conn.executemany("UPDATE media SET date_sort = ? WHERE id = ?",
+                         [(media.date_sort(r[1]), r[0]) for r in rows])
+    for statement in INDEXES:
+        conn.execute(statement)
+    # computed tithi dates are kept in memory now (tithi.py); only hand corrections stay in the table
+    conn.execute("DELETE FROM tithi_dates WHERE overridden_by IS NULL")
     # feature switches: on where the module already has data (features.py)
     from . import features
     features.migrate(conn, config.now_iso())
@@ -491,11 +515,12 @@ def set_setting(conn, key: str, value: str) -> None:
 
 
 # ---------- backup / restore ----------
-def backup_to_file(path: str) -> None:
-    """Consistent snapshot through sqlite3's backup API (never a file copy: WAL)."""
+def backup_to_file(path: str, after=None) -> None:
+    """Consistent snapshot through sqlite3's backup API (never a file copy: WAL). `after(copy)` may change
+    the copy before it's closed (the backup download blanks the secret App settings with it)."""
     src = _connect()
     try:
-        db_core.snapshot(src, path)
+        db_core.snapshot(src, path, after)
     finally:
         src.close()
 
@@ -514,8 +539,11 @@ def replace_db(tmp_path: str) -> None:
     backup_core.restore_file(tmp_path, config.DB_PATH, get_conn, migrate=init_db, lock=_import_lock)
 
 
+TEMP_PREFIX = "family-tree-"          # every temporary file the app makes (housekeeping sweeps leftovers)
+
+
 def temp_path_in_data(suffix: str) -> str:
-    fd, path = tempfile.mkstemp(suffix=suffix, dir=config.DATA_DIR)
+    fd, path = tempfile.mkstemp(suffix=suffix, prefix=TEMP_PREFIX, dir=config.DATA_DIR)
     os.close(fd)
     return path
 

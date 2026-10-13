@@ -1,9 +1,13 @@
 """Kids mode (§13.13): a device locked to the photo quiz.
 
-The browser sends a random per-device id (`X-Device-Id`). While that device
-has a row in `kid_sessions`, every API route except the quiz, its photos and
-the unlock routes answers 423 Locked — enforced here, not just hidden in the
-page. Unlocking: the parent's kids-mode PIN (PBKDF2) or, with no PIN, a
+The browser sends a random per-device id (`X-Device-Id`). Starting kids mode
+also sets an HttpOnly cookie with that id, so a locked browser stays locked even
+when a request leaves the header out (the page's own script can't read or clear
+the cookie). While that device has a row in `kid_sessions`, every API route
+except the quiz, its photos and the unlock routes answers 423 Locked — enforced
+here, not just hidden in the page. A change (anything but GET) that carries no
+device id at all is refused too while the person has kids mode on anywhere: the
+app's own pages always send one. Unlocking: the parent's kids-mode PIN (PBKDF2) or, with no PIN, a
 grown-up sum made by the server. Five wrong tries block unlocking for five
 minutes; an admin can end kids mode for any device.
 """
@@ -30,9 +34,36 @@ _OPEN = [("GET", re.compile(r"^/api/kidmode$")), ("POST", re.compile(r"^/api/kid
 _QUIZ = re.compile(r"^/api/quiz/")
 
 
+COOKIE = "family_tree_kid"
+COOKIE_DAYS = 180
+_INGRESS_PATH = re.compile(r"^/[A-Za-z0-9_./-]{0,200}$")
+
+
 def device_id(headers) -> str | None:
     d = (headers.get("x-device-id") or "").strip()
     return d if DEVICE_RE.match(d) else None
+
+
+def request_device(request) -> str | None:
+    """This browser's device: the kids-mode cookie when there is one (set when kids mode started here),
+    else the X-Device-Id header."""
+    c = (request.cookies.get(COOKIE) or "").strip()
+    return c if DEVICE_RE.match(c) else device_id(request.headers)
+
+
+def cookie_path(request) -> str:
+    """The app's own path under Home Assistant (X-Ingress-Path), so the cookie goes to this app only."""
+    p = (request.headers.get("x-ingress-path") or "").rstrip("/")
+    return (p + "/") if p and _INGRESS_PATH.match(p) and ".." not in p else "/"
+
+
+def set_cookie(response, request, device: str) -> None:
+    response.set_cookie(COOKIE, device, max_age=COOKIE_DAYS * 86400, path=cookie_path(request),
+                        httponly=True, samesite="strict")
+
+
+def clear_cookie(response, request) -> None:
+    response.delete_cookie(COOKIE, path=cookie_path(request), httponly=True, samesite="strict")
 
 
 def session(conn, device: str | None) -> dict | None:
@@ -52,15 +83,22 @@ def time_up(s: dict, now: datetime | None = None) -> bool:
     return (now or config.utcnow()) >= datetime.fromisoformat(s["ends_at"])
 
 
-def check_blocking(method: str, path: str, device: str | None) -> tuple[int, str] | None:
-    """(status, message) when this request must be refused, else None. Opens its own connection."""
-    if not device or not path.startswith("/api/"):
+def check_blocking(method: str, path: str, device: str | None, user_id: str | None = None) -> tuple[int, str] | None:
+    """(status, message) when this request must be refused, else None. Opens its own connection.
+    `user_id` matters only without a device: a change from someone with kids mode on somewhere."""
+    if not path.startswith("/api/") or not (device or (user_id and method not in ("GET", "HEAD"))):
         return None
     from . import features
     if not features.on("quiz"):          # quiz switched off: kids mode can't hold a device either
         return None
     with db.get_conn() as conn:
-        s = session(conn, device)
+        if device:
+            s = session(conn, device)
+        else:
+            s = conn.execute("SELECT 1 FROM kid_sessions WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+            if s and not any(m == method and rx.match(path) for m, rx in _OPEN):
+                return 423, "Kids mode is on for one of your devices, and this request didn't say which device it came from."
+            return None
     if not s:
         return None
     if not any(m == method and rx.match(path) for m, rx in _OPEN):

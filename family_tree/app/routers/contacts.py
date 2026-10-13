@@ -196,8 +196,25 @@ def address_book(scope: str = Query("all", pattern="^(all|close)$"), surname: st
     return {"items": items, "total": len(items)}
 
 
+_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def _esc(v: str) -> str:
+    """A vCard text value: line breaks become \\n, other control characters go."""
+    v = _CTRL.sub(lambda m: "\n" if m.group() == "\n" else "", v.replace("\r\n", "\n").replace("\r", "\n"))
     return v.replace("\\", "\\\\").replace(",", "\\,").replace(";", "\\;").replace("\n", "\\n")
+
+
+def _param(v: str) -> str:
+    """A parameter value (TYPE=…): one line, quoted when it holds : ; or , (a label like "Work: Hyderabad"
+    must not end the parameter list or start the value)."""
+    v = _CTRL.sub(" ", v).replace('"', "'").strip()
+    return f'"{v}"' if re.search(r"[:;,]", v) else v
+
+
+def _raw(v: str) -> str:
+    """A phone number or e-mail address as it is, minus any line break that would start a new property."""
+    return _CTRL.sub("", v)
 
 
 def vcard(p, contacts: list) -> str:
@@ -215,14 +232,14 @@ def vcard(p, contacts: list) -> str:
         else:                                           # the iPhone "no year" form
             lines.append(f"BDAY;X-APPLE-OMIT-YEAR=1604:1604-{b['date_m']:02d}-{b['date_d']:02d}")
     for c in contacts:
-        typ = f";TYPE={_esc(c['label'])}" if c["label"] else ""
+        typ = f";TYPE={_param(c['label'])}" if c["label"] and _param(c["label"]) else ""
         if c["kind"] == "phone":
-            lines.append(f"TEL{typ or ';TYPE=CELL'}:{c['value']}")
+            lines.append(f"TEL{typ or ';TYPE=CELL'}:{_raw(c['value'])}")
         elif c["kind"] == "whatsapp":
-            lines.append(f"TEL;TYPE=WhatsApp:{c['value']}")
-            lines.append(f"URL:https://wa.me/{c['value'].lstrip('+')}")
+            lines.append(f"TEL;TYPE=WhatsApp:{_raw(c['value'])}")
+            lines.append(f"URL:https://wa.me/{_raw(c['value']).lstrip('+')}")
         elif c["kind"] == "email":
-            lines.append(f"EMAIL{typ}:{c['value']}")
+            lines.append(f"EMAIL{typ}:{_raw(c['value'])}")
         elif c["kind"] == "address":
             lines.append(f"ADR{typ}:;;{_esc(c['value'])};;;;")
         else:

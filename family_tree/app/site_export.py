@@ -71,7 +71,7 @@ class Site:
         self.pages = {}                       # person id → relative page path
         for pid, p in v.people.items():
             if not p["placeholder"]:
-                self.pages[pid] = f"people/{slugify(p['name'])}-{pid[:8]}.html"
+                self.pages[pid] = f"people/{slugify(p['name'])}-{pid}.html"     # the whole id: two Ann Raos never share a page
         self.files = {mid: f"{mid}.{EXT.get(m['contentType'], 'bin')}" for mid, m in v.media.items()}
         site = options.site
         self.home = (site.homePersonId if site.homePersonId in self.pages

@@ -4,6 +4,9 @@ maiden names) — through Admin → Import's preview and apply: one undoable bat
 only adds what's new. All people here are invented."""
 from base import ADMIN, sql
 
+import unittest
+import unittest.mock
+
 from test_import import ImportCase
 from app import gedcom, tree_data
 
@@ -148,3 +151,54 @@ class TestGedcom(ImportCase):
         self.assertIn("nobody in it", bad["detail"])
         bad = self.upload(b"0 HEAD\n1 SOUR X\n3 NAME skipped a level\n0 TRLR\n", name="bad.ged", status=422)
         self.assertIn("wrong level", bad["detail"])
+
+
+class GedcomText(unittest.TestCase):
+    """Line breaks and long values, without a tree (gedcom.write / to_tree_data on their own)."""
+
+    def tree(self, bio):
+        return {"source": {"id": "src", "title": "T"}, "families": [],
+                "people": [{"id": "p1", "given_names": "Ann", "surname": "Rao", "gender": "female", "deceased": False,
+                            "biography": bio, "events": [], "stories": [], "other_names": [], "nickname": None,
+                            "birth_surname": None, "photo": None, "limited": False}]}
+
+    def round_trip(self, bio):
+        text = gedcom.write(self.tree(bio))
+        for line in text.split("\n"):
+            self.assertLessEqual(len(line), 255)
+        back = tree_data.validate(gedcom.to_tree_data(text.encode()))
+        return back["people"][0]["biography"]
+
+    def test_odd_line_breaks_survive_a_round_trip(self):
+        bio = "First line second third\x0bfourth\x0cfifth\x1csixth\x85seventh"
+        self.assertEqual(self.round_trip(bio), "First line\nsecond\nthird\nfourth\nfifth\nsixth\nseventh")
+
+    def test_reader_splits_only_at_cr_and_lf(self):
+        raw = ("0 HEAD\r\n1 CHAR UTF-8\r\n0 @I1@ INDI\r\n1 NAME Ann /Rao/\r\n"
+               "1 NOTE one still one\x85and still\r2 CONT two\n0 TRLR\n").encode()
+        p = tree_data.validate(gedcom.to_tree_data(raw))["people"][0]
+        self.assertEqual(p["biography"], "one still one\x85and still\ntwo")
+
+    def test_long_values_join_in_linear_time(self):
+        import time
+        lines = ["0 HEAD", "1 CHAR UTF-8", "0 @I1@ INDI", "1 NAME Ann /Rao/", "1 NOTE start"]
+        lines += ["2 CONC " + "x" * 4 for _ in range(150_000)]
+        lines.append("0 TRLR")
+        t0 = time.monotonic()
+        records = gedcom.parse("\n".join(lines))
+        self.assertLess(time.monotonic() - t0, 5)
+        note = records[1].first("NOTE").value
+        self.assertEqual(len(note), len("start") + 4 * 150_000)
+
+    def test_caps(self):
+        too_long = "0 HEAD\n0 @I1@ INDI\n1 NOTE a\n" + "2 CONC " + "y" * 200 + "\n"
+        with self.assertRaises(gedcom.GedcomError):
+            gedcom.parse(too_long + ("2 CONC " + "y" * 200 + "\n") * (gedcom.MAX_VALUE // 200 + 2))
+        with unittest.mock.patch.object(gedcom, "MAX_LINES", 10):
+            with self.assertRaises(gedcom.GedcomError) as e:
+                gedcom.parse("0 HEAD\n" + "1 NOTE x\n" * 20)
+            self.assertIn("too long", str(e.exception))
+        with unittest.mock.patch.object(tree_data, "MAX_PEOPLE", 3):
+            with self.assertRaises(gedcom.GedcomError) as e:
+                gedcom.parse("0 HEAD\n" + "".join(f"0 @I{i}@ INDI\n1 NAME P{i}\n" for i in range(5)))
+            self.assertIn("at most 3 people", str(e.exception))

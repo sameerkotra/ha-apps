@@ -141,6 +141,19 @@ class Contacts(ApiTestCase):
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM contacts")[0]["n"], 4)
         self.assertEqual(self.get(f"/api/contacts.vcf?ids={a}").status_code, 404)
 
+    def test_vcard_labels_and_values_cannot_break_the_card(self):
+        a = self.person("Ann", "Rao")
+        self.ok(self.post(f"/api/people/{a}/contacts", {"kind": "phone", "label": "Work: Hyd;x,y", "value": "+91 90000 12345"}), 201)
+        self.ok(self.post(f"/api/people/{a}/contacts", {"kind": "email", "label": "home\nEMAIL:evil@example.com",
+                                                        "value": "ann@example.com"}), 201)
+        t = self.get(f"/api/contacts.vcf?ids={a}").text
+        self.assertIn('TEL;TYPE="Work: Hyd;x,y":+919000012345', t)
+        lines = t.split("\r\n")
+        self.assertFalse(any(l.startswith("EMAIL:evil") for l in lines), lines)
+        self.assertIn('EMAIL;TYPE="home EMAIL:evil@example.com":ann@example.com', lines)
+        from app.routers.contacts import _esc
+        self.assertEqual(_esc("a\r\nb\x07;"), "a\\nb\\;")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -67,16 +67,32 @@ def _norm(d):
 
 
 class Batch:
-    def __init__(self, conn, user_id: str | None, label: str, undo_of: str | None = None):
+    def __init__(self, conn, user_id: str | None, label: str, undo_of: str | None = None, changes_tree: bool = True):
+        """changes_tree=False: a History entry that changes nothing in the tree (an export), so the cached
+        graph and relationship answers stay valid."""
         self.conn = conn
         self.user_id = user_id
         self.id = db.new_id()
         self.seq = 0
         self.now = config.now_iso()
         self.people: set[str] = set()
+        self._version_before = db.get_setting(conn, "tree_version")
         conn.execute("INSERT INTO batches (id, user_id, label, undo_of, created_at) VALUES (?, ?, ?, ?, ?)",
                      (self.id, user_id, label[:200], undo_of, self.now))
-        db.set_setting(conn, "tree_version", self.id)   # invalidates relationship caches (relations.py)
+        if changes_tree:
+            db.set_setting(conn, "tree_version", self.id)   # invalidates relationship caches (relations.py)
+
+    def discard_if_empty(self) -> bool:
+        """An edit that changed nothing (the same values saved again): no History entry, and the caches stay
+        valid. True when the batch was dropped (its id then means nothing: answer batchId None)."""
+        if self.seq:
+            return False
+        for table in ("batch_people", "batch_me"):
+            self.conn.execute(f"DELETE FROM {table} WHERE batch_id = ?", (self.id,))
+        self.conn.execute("DELETE FROM batches WHERE id = ?", (self.id,))
+        if self._version_before is not None:
+            db.set_setting(self.conn, "tree_version", self._version_before)
+        return True
 
     # ---- recording ----
     def _record(self, table, eid, op, before, after):

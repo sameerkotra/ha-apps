@@ -56,6 +56,18 @@ class Quiz(QuizCase):
         # nothing in History
         self.assertEqual(sql("SELECT COUNT(*) n FROM batches WHERE label LIKE '%quiz%'")[0]["n"], 0)
 
+    def test_unanswered_questions_are_capped_per_person(self):
+        from app.routers import quiz as quiz_router
+        with mock.patch.object(quiz_router, "MAX_OPEN_PER_USER", 5):
+            tokens = [self.ok(self.ask("who"))["token"] for _ in range(8)]
+            mine = [v for v in quiz_router._questions.values() if v["user"] == ALICE["id"]]
+            self.assertEqual(len(mine), 5)
+            self.ok(self.post("/api/quiz/next", {"playerId": self.kid, "mode": "who", "scope": "all"}, user=BOB))
+            self.assertEqual(len([v for v in quiz_router._questions.values() if v["user"] == ALICE["id"]]), 5)
+        # the oldest went first; the newest still answer
+        self.assertEqual(self.post("/api/quiz/answer", {"token": tokens[0], "choice": "x"}).status_code, 404)
+        self.ok(self.post("/api/quiz/answer", {"token": tokens[-1], "choice": "x"}))
+
     def test_call_mode_terms_from_the_players_view(self):
         self.ok(self.put("/api/me/kin-lang", {"kinLang": "te"}))
         seen = set()
@@ -97,6 +109,21 @@ class Quiz(QuizCase):
 
 
 class KidsMode(QuizCase):
+    """self.client is the kids' browser (it keeps the kids-mode cookie); `elsewhere` is another browser."""
+
+    def setUp(self):
+        super().setUp()
+        from base import headers as user_headers
+        from common_tests.ingress import ingress_client
+        from app.main import app
+        self.other_browser = ingress_client(app)
+        self._user_headers = user_headers
+
+    def elsewhere(self, method, path, user=None, headers=None, **kw):
+        h = dict(self._user_headers(user))
+        h.update(headers or {})
+        return self.other_browser.request(method, path, headers=h, **kw)
+
     def start(self, **kw):
         body = {"playerId": self.kid, "modes": ["who", "find"], "scope": "all"}
         body.update(kw)
@@ -120,8 +147,9 @@ class KidsMode(QuizCase):
         self.assertEqual(self.get(f"/api/media/{self.mid}/file?size=256", headers=DEV).status_code, 200)
         self.assertTrue(self.ok(self.get("/api/kidmode", headers=DEV))["locked"])          # survives a reload
         # other devices of the same user aren't locked
-        self.ok(self.get("/api/people", headers=OTHER_DEV))
-        self.ok(self.get("/api/people"))
+        self.ok(self.elsewhere("GET", "/api/people", headers=OTHER_DEV))
+        self.ok(self.elsewhere("GET", "/api/people"))
+        self.ok(self.elsewhere("POST", "/api/people", json={"given_names": "Elsewhere"}, headers=OTHER_DEV), 201)
         # unlock
         self.assertEqual(self.ok(self.post("/api/kidmode/challenge", headers=DEV))["kind"], "pin")
         r = self.post("/api/kidmode/unlock", {"answer": "0000"}, headers=DEV)
@@ -165,11 +193,47 @@ class KidsMode(QuizCase):
             self.assertIn("Time's up", r.json()["detail"])
             self.assertTrue(self.ok(self.get("/api/kidmode", headers=DEV))["timeUp"])
         # an admin ends it from their own device
-        self.assertEqual(self.delete(f"/api/kidmode/{DEV['X-Device-Id']}", user=BOB).status_code, 403)
-        items = self.ok(self.get("/api/admin/kidmode", user=ADMIN))["items"]
+        self.assertEqual(self.elsewhere("DELETE", f"/api/kidmode/{DEV['X-Device-Id']}", user=BOB).status_code, 403)
+        items = self.ok(self.elsewhere("GET", "/api/admin/kidmode", user=ADMIN))["items"]
         self.assertEqual(items[0]["playerName"], "Chinni K")
-        self.ok(self.delete(f"/api/kidmode/{DEV['X-Device-Id']}", user=ADMIN))
+        self.ok(self.elsewhere("DELETE", f"/api/kidmode/{DEV['X-Device-Id']}", user=ADMIN))
         self.ok(self.get("/api/people", headers=DEV))
+
+    def test_lock_holds_without_the_device_header(self):
+        st = self.start()
+        self.assertTrue(st["locked"])
+        # the cookie the start set: HttpOnly, for this app's path only
+        self.assertIn(kidmode.COOKIE, self.client.cookies)
+        # leaving the header out (or sending another device's) doesn't get round the lock in this browser
+        for h in ({}, OTHER_DEV):
+            self.assertEqual(self.get("/api/people", headers=h).status_code, 423)
+            self.assertEqual(self.post("/api/people", {"given_names": "X"}, headers=h).status_code, 423)
+        self.assertEqual(self.get(f"/api/media/{self.mid}/file?size=256").status_code, 200)
+        # another browser of the same person with no device id at all: reading works, changes don't
+        self.ok(self.elsewhere("GET", "/api/people"))
+        r = self.elsewhere("POST", "/api/people", json={"given_names": "X"})
+        self.assertEqual(r.status_code, 423)
+        self.assertTrue(r.json()["kidMode"])
+        # someone else is not affected
+        self.ok(self.elsewhere("POST", "/api/people", json={"given_names": "Y"}, user=BOB), 201)
+        # unlocking clears the cookie, and everything works again
+        ch = self.ok(self.post("/api/kidmode/challenge"))
+        answer = sql("SELECT challenge FROM kid_sessions")[0]["challenge"]
+        self.assertEqual(ch["kind"], "question")
+        r = self.post("/api/kidmode/unlock", {"answer": answer})
+        self.assertFalse(self.ok(r)["locked"])
+        self.assertIn("max-age=0", r.headers["set-cookie"].lower())
+        self.assertNotIn(kidmode.COOKIE, self.client.cookies)
+        self.ok(self.post("/api/people", {"given_names": "Z"}), 201)
+        self.ok(self.elsewhere("POST", "/api/people", json={"given_names": "W"}), 201)
+
+    def test_cookie_attributes(self):
+        r = self.post("/api/kidmode/start", {"playerId": self.kid, "modes": ["who"]},
+                      headers={**DEV, "X-Ingress-Path": "/api/hassio_ingress/abc123"})
+        self.ok(r)
+        cookie = r.headers["set-cookie"].lower()
+        for part in ("httponly", "samesite=strict", "path=/api/hassio_ingress/abc123/", kidmode.COOKIE):
+            self.assertIn(part, cookie)
 
     def test_pin_rules(self):
         for bad in ("123", "1234567", "12a4"):

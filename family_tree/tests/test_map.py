@@ -114,6 +114,28 @@ class Settings(MapCase):
 
 
 class Geocoding(MapCase):
+    def test_network_errors_are_not_counted_as_tries(self):
+        a = self.person("Ann")
+        self.event(a, "residence", "Hyderabad, India", 1975)
+        self.enable()
+        import urllib.error
+        for err in (urllib.error.URLError("no route"), TimeoutError("timed out"),
+                    urllib.error.HTTPError("u", 503, "busy", {}, None), urllib.error.HTTPError("u", 429, "slow", {}, None)):
+            with mock.patch.object(geocode.geo, "fetch", side_effect=err):
+                self.assertFalse(geocode.step_blocking())       # nothing learnt: the loop waits, then asks again
+            self.assertEqual(sql("SELECT COUNT(*) AS n FROM place_geo")[0]["n"], 0)
+        with mock.patch.object(geocode.geo, "fetch", return_value=b"<html>error</html>"):
+            self.assertFalse(geocode.step_blocking())
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM place_geo")[0]["n"], 0)
+        # a refused query is an answer about the place: one try
+        with mock.patch.object(geocode.geo, "fetch", side_effect=urllib.error.HTTPError("u", 400, "bad", {}, None)):
+            self.assertTrue(geocode.step_blocking())
+        self.assertEqual([(r["source"], r["tries"]) for r in sql("SELECT * FROM place_geo")], [("failed", 1)])
+        # and the real answer, later
+        sql("DELETE FROM place_geo")
+        self.assertTrue(geocode.step_blocking())
+        self.assertEqual([(r["source"], r["tries"]) for r in sql("SELECT * FROM place_geo")], [("geocoder", 1)])
+
     def test_keys_and_variants(self):
         self.assertEqual(geocode.key("  Guntur ,  Andhra Pradesh, INDIA "), "guntur, andhra pradesh, india")
         self.assertEqual(geocode.variants("Flat 4B, 12 Main Road, Guntur, Andhra Pradesh, India"),
@@ -160,6 +182,15 @@ class Geocoding(MapCase):
         self.assertEqual(self.delete("/api/map/places?place=Nowhere").status_code, 404)
         for bad in ({"place": "X", "lat": 91, "lon": 0}, {"place": "X", "lat": 0, "lon": 181}, {"place": "", "lat": 0, "lon": 0}):
             self.assertEqual(self.put("/api/map/places", bad).status_code, 422, bad)
+
+    def test_pins_only_for_places_the_tree_uses(self):
+        a = self.person("Ann")
+        self.event(a, "residence", "Atlantis", 1990)
+        self.enable()
+        r = self.put("/api/map/places", {"place": "Lemuria", "lat": 1, "lon": 2})
+        self.assertEqual(r.status_code, 404, r.text)
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM place_geo WHERE place_key = 'lemuria'")[0]["n"], 0)
+        self.ok(self.put("/api/map/places", {"place": " ATLANTIS", "lat": 1, "lon": 2}))
 
 
 class Points(MapCase):
@@ -217,6 +248,20 @@ class Assets(ApiTestCase):
             self.assertEqual(hashlib.sha256(open(os.path.join(root, name), "rb").read()).hexdigest(), digest, name)
         self.assertEqual(len(want), 2)
         self.assertEqual(self.get("/vendor/leaflet/leaflet.js").status_code, 200)
+
+    def test_map_tooltips_are_text_not_markup(self):
+        # Leaflet reads a string tooltip or popup as HTML: place names and people's names go in as nodes
+        js = open(os.path.join(_env.ROOT, "app", "static", "app.js"), encoding="utf-8").read()
+        calls = re.findall(r"\.bind(?:Tooltip|Popup)\(\s*([^,)]{0,40})", js)
+        self.assertGreaterEqual(len(calls), 3)
+        for arg in calls:
+            self.assertFalse(arg.lstrip().startswith(("`", '"', "'")), arg)
+            self.assertRegex(arg.strip(), r"^(h\(|box\b)")
+
+    def test_maps_are_removed_when_the_page_changes(self):
+        js = open(os.path.join(_env.ROOT, "app", "static", "app.js"), encoding="utf-8").read()
+        self.assertEqual(len(re.findall(r"L\.map\(", js)), len(re.findall(r"trackMap\(L\.map\(", js)))
+        self.assertRegex(js, r"async function route\(\) \{[^}]*removeMaps\(\);")
 
     def test_asset_versions_match_the_addon(self):
         html = open(os.path.join(_env.ROOT, "app", "static", "index.html")).read()

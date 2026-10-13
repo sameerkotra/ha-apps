@@ -1,9 +1,12 @@
 """Photos and documents (§5, §11): profile photos, the gallery, links to people,
 families and events, and serving the files from /share."""
+import hashlib
 import io
 import json
 import logging
 import os
+import re
+import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -12,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import names as names_mod, dates, db, features, media, photoedit, settings
 from ..auth import require_user
+from ..common import image_guard
 from ..models import DateIn, Strict, clean, date_cols, require_person
 from ..history import Batch
 from .people import _nm, person_detail
@@ -30,8 +34,17 @@ async def _read_upload(file: UploadFile, allow_documents: bool) -> tuple[bytes, 
         ctype = media.validate_upload(data, allow_documents=allow_documents)
     except media.MediaError as e:
         raise HTTPException(e.status, str(e))
-    media.require_online()
+    await run_in_threadpool(media.require_online)      # it may look at the folder: not on the event loop
     return data, ctype
+
+
+def _find_duplicate(data: bytes) -> str | None:
+    """The photo or document already in the tree with exactly these bytes (as the inbox does), if any."""
+    sha = media.sha256(data)
+    with db.get_conn() as conn:
+        r = conn.execute("SELECT id FROM media WHERE (sha256 = ? OR orig_sha256 = ?) AND deleted_at IS NULL "
+                         "ORDER BY created_at LIMIT 1", (sha, sha)).fetchone()
+    return r["id"] if r else None
 
 
 async def _process(data: bytes, ctype: str) -> dict:
@@ -70,7 +83,8 @@ def _check_link_target(conn, person_id=None, family_id=None, event_id=None) -> N
 
 def _insert_media(b: Batch, mid: str, processed: dict, data: bytes, title: str | None, user: dict) -> None:
     b.insert("media", {"id": mid, "kind": "document" if processed.get("document") else "photo",
-                       "title": title, "date_text": processed["date_text"], "content_type": processed["content_type"],
+                       "title": title, "date_text": processed["date_text"],
+                       "date_sort": media.date_sort(processed["date_text"]), "content_type": processed["content_type"],
                        "size": len(processed["original"]), "sha256": media.sha256(data),
                        "width": processed["width"], "height": processed["height"],
                        "created_by": user["id"], "created_at": b.now})
@@ -80,8 +94,24 @@ def _insert_media(b: Batch, mid: str, processed: dict, data: bytes, title: str |
 async def upload_photo(pid: str, file: UploadFile = File(...), user: dict = Depends(require_user)):
     """Upload a new profile photo (it also joins the person's photos)."""
     data, ctype = await _read_upload(file, allow_documents=False)
+    dup = await run_in_threadpool(_find_duplicate, data)
+    if dup:                          # the same file again: that photo becomes the profile photo, no second copy
+        return await run_in_threadpool(_reuse_for_profile, pid, dup, user)
     processed = await _process(data, ctype)
     return await run_in_threadpool(_save_photo, pid, processed, data, user)
+
+
+def _reuse_for_profile(pid, mid, user):
+    with db.get_conn() as conn:
+        person = require_person(conn, pid)
+        b = Batch(conn, user["id"], f"New photo for {_nm(person)}")
+        if not conn.execute("SELECT 1 FROM media_links WHERE media_id = ? AND person_id = ?", (mid, pid)).fetchone():
+            _check_link_target(conn, person_id=pid)
+            b.insert("media_links", {"id": db.new_id(), "media_id": mid, "person_id": pid}, op="link")
+        b.update("people", pid, {"photo_media_id": mid, "photo_region_id": None})
+        b.touch(pid)
+        return {"person": person_detail(conn, pid, user["me_person_id"]), "mediaId": mid, "batchId": b.id,
+                "duplicate": True}
 
 
 def _save_photo(pid, processed, data, user):
@@ -275,15 +305,18 @@ def list_media(personId: str | None = None, familyId: str | None = None, kind: s
     if q and q.strip():
         where.append("(m.title LIKE ? OR m.description LIKE ?)")
         args += [f"%{q.strip()}%"] * 2
-    with db.get_conn() as conn:
-        rows = conn.execute(f"SELECT m.* FROM media m WHERE {' AND '.join(where)} ORDER BY m.created_at DESC, m.rowid DESC",
-                            args).fetchall()
-        items = media_out(conn, rows)
+    # Only the page is read and described (media_out); "by date" uses the stored sort key: undated last,
+    # newest-added first among equals — the order the whole list sorted in Python used to give.
+    order = "m.created_at DESC, m.rowid DESC"
     if sort == "date":
-        items.sort(key=lambda m: (m["_sort"] is None, m["_sort"] or ""))
-    total = len(items)
-    chunk = items[(page - 1) * page_size: page * page_size]
-    for m in items:
+        order = "(m.date_sort IS NULL), COALESCE(m.date_sort, ''), " + order
+    cond = " AND ".join(where)
+    with db.get_conn() as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM media m WHERE {cond}", args).fetchone()[0]
+        rows = conn.execute(f"SELECT m.* FROM media m WHERE {cond} ORDER BY {order} LIMIT ? OFFSET ?",
+                            args + [page_size, (page - 1) * page_size]).fetchall()
+        chunk = media_out(conn, rows)
+    for m in chunk:
         m.pop("_sort", None)
     return {"items": chunk, "total": total, "page": page, "pageSize": page_size}
 
@@ -305,9 +338,31 @@ async def upload_media(file: UploadFile = File(...), personId: str | None = Form
                        user: dict = Depends(require_user)):
     """One photo or PDF per request (the browser sends several in a row)."""
     data, ctype = await _read_upload(file, allow_documents=True)
+    dup = await run_in_threadpool(_find_duplicate, data)
+    if dup:                          # the same file again: the one already there (linked as asked), no second copy
+        return await run_in_threadpool(_reuse_upload, dup, personId, familyId, eventId, user)
     processed = await _process(data, ctype)
     guess = clean(title) or clean(os.path.splitext(os.path.basename(file.filename or ""))[0].replace("_", " ")) or None
     return await run_in_threadpool(_save_upload, processed, data, guess, personId, familyId, eventId, user)
+
+
+def _reuse_upload(mid, person_id, family_id, event_id, user):
+    with db.get_conn() as conn:
+        batch_id = None
+        if person_id or family_id or event_id:
+            _check_link_target(conn, person_id, family_id, event_id)
+            col, target = next((c, v) for c, v in (("person_id", person_id), ("family_id", family_id),
+                                                   ("event_id", event_id)) if v)
+            if not conn.execute(f"SELECT 1 FROM media_links WHERE media_id = ? AND {col} = ?", (mid, target)).fetchone():
+                b = Batch(conn, user["id"], "Linked a photo that was already in Photos")
+                b.insert("media_links", {"id": db.new_id(), "media_id": mid, "person_id": person_id,
+                                         "family_id": family_id, "event_id": event_id}, op="link")
+                if person_id:
+                    b.touch(person_id)
+                batch_id = b.id
+        item = media_out(conn, [conn.execute("SELECT * FROM media WHERE id = ?", (mid,)).fetchone()])[0]
+        item.pop("_sort", None)
+        return {"media": item, "batchId": batch_id, "duplicate": True}
 
 
 def _save_upload(processed, data, title, person_id, family_id, event_id, user):
@@ -356,13 +411,17 @@ def patch_media(mid: str, body: MediaPatch, user: dict = Depends(require_user)):
             fields["description"] = (body.description or "").strip() or None
         if "date" in sent:
             fields["date_text"] = date_cols(body.date)["date_text"]
+            fields["date_sort"] = media.date_sort(fields["date_text"])
         b = Batch(conn, user["id"], f"Edited {'a document' if row['kind'] == 'document' else 'a photo'}")
-        b.update("media", mid, fields)
-        for l in conn.execute("SELECT person_id FROM media_links WHERE media_id = ? AND person_id IS NOT NULL", (mid,)):
-            b.touch(l["person_id"])
+        if fields:
+            b.update("media", mid, fields)
+        empty = b.discard_if_empty()                     # nothing actually changed: no History entry
+        if not empty:
+            for l in conn.execute("SELECT person_id FROM media_links WHERE media_id = ? AND person_id IS NOT NULL", (mid,)):
+                b.touch(l["person_id"])
         item = media_out(conn, [conn.execute("SELECT * FROM media WHERE id = ?", (mid,)).fetchone()])[0]
         item.pop("_sort", None)
-        return {"media": item, "batchId": b.id}
+        return {"media": item, "batchId": None if empty else b.id}
 
 
 @router.delete("/media/{mid}")
@@ -519,13 +578,15 @@ def preview_edit(mid: str, edit: str = Query(..., max_length=500), user: dict = 
         raise HTTPException(404, "That photo doesn't exist.")
     media.require_online()
     try:
-        with Image.open(media.file_path(mid, "1024")) as src:
+        with image_guard.decode_slot(), Image.open(media.file_path(mid, "1024")) as src:
             src.load()
             img = photoedit.render(src.convert("RGB"), recipe)
+            out = io.BytesIO()
+            img.save(out, "JPEG", quality=80)
     except OSError:
         raise HTTPException(404, "That photo's file is missing from the media folder.")
-    out = io.BytesIO()
-    img.save(out, "JPEG", quality=80)
+    except image_guard.DecodeBusy as e:
+        raise HTTPException(503, str(e))
     return Response(content=out.getvalue(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
@@ -547,8 +608,13 @@ def edit_photo(mid: str, body: EditIn, user: dict = Depends(require_user)):
         media.require_online()
         try:
             media.ensure_edited(mid, recipe)                  # render first: a bad file fails before anything is saved
-        except OSError:
+        except FileNotFoundError:
             raise HTTPException(404, "That photo's file is missing from the media folder.")
+        except image_guard.DecodeBusy as e:
+            raise HTTPException(503, str(e))
+        except Exception:                                 # a damaged file, a full disk, Pillow refusing it …
+            logger.exception("Couldn't apply the fixes to photo %s", mid)
+            raise HTTPException(422, "Those fixes couldn't be applied to this photo (its file may be damaged).")
     with db.get_conn() as conn:
         b = Batch(conn, user["id"], "Fixed a photo" if recipe else "Put a photo back to the original")
         b.update("media", mid, {"edit": json.dumps(recipe, sort_keys=True) if recipe else None})
@@ -668,7 +734,7 @@ def delete_region(mid: str, rid: str, user: dict = Depends(require_user)):
 def _crop_bytes(path: str, box: dict, size: int) -> bytes:
     """The box, widened to a square around its centre (inside the photo), as a JPEG."""
     from PIL import Image
-    with Image.open(path) as im:
+    with image_guard.decode_slot(), Image.open(path) as im:
         im = im.convert("RGB")
         W, H = im.size
         cx, cy = (box["x"] + box["w"] / 2) * W, (box["y"] + box["h"] / 2) * H
@@ -681,6 +747,38 @@ def _crop_bytes(path: str, box: dict, size: int) -> bytes:
         out = io.BytesIO()
         crop.save(out, "JPEG", quality=85)
         return out.getvalue()
+
+
+_CROP_NAME = re.compile(r"^crop-([0-9A-Za-z_-]{1,64})-([0-9a-f]{12})-(256|1024)\.jpg$")
+
+
+def _cached_crop(mid: str, region: str, path: str, box: dict, size: int) -> bytes:
+    """A tagged face as its own picture, made once and kept next to the photo's other files
+    (crop-<region>-<key>-<size>.jpg; the key changes when the box, the photo or its fixes do).
+    Older crops of the same box are removed when a new one is made."""
+    key = hashlib.sha256(json.dumps([os.path.basename(path), [round(box[k], 6) for k in ("x", "y", "w", "h")]])
+                         .encode()).hexdigest()[:12]
+    safe = re.sub(r"[^0-9A-Za-z_-]", "", region)[:64] or "x"
+    folder = os.path.dirname(path)
+    target = os.path.join(folder, f"crop-{safe}-{key}-{size}.jpg")
+    try:
+        with open(target, "rb") as f:
+            return f.read()
+    except OSError:
+        pass
+    data = _crop_bytes(path, box, size)
+    try:
+        for name in os.listdir(folder):
+            m = _CROP_NAME.match(name)
+            if m and m.group(1) == safe and m.group(3) == str(size) and m.group(2) != key:
+                os.remove(os.path.join(folder, name))
+        tmp = f"{target}.{uuid.uuid4().hex}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, target)
+    except OSError:
+        pass                                              # served anyway; made again next time
+    return data
 
 
 @router.get("/media/{mid}/file")
@@ -711,7 +809,10 @@ def media_file(mid: str, size: str = Query("1024", pattern="^(256|1024|display|o
     if not os.path.isfile(path):
         raise HTTPException(404, "That photo's file is missing from the media folder.")
     if box:
-        data = _crop_bytes(path, box, 256 if size == "256" else 1024)
+        try:
+            data = _cached_crop(mid, region, path, box, 256 if size == "256" else 1024)
+        except image_guard.DecodeBusy as e:
+            raise HTTPException(503, str(e))
         return Response(content=data, media_type="image/jpeg", headers={
             "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline",
             "Cache-Control": "private, max-age=86400"})

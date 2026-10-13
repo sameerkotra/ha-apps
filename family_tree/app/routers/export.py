@@ -91,7 +91,7 @@ def cleanup() -> None:
 def preview(body: ExportIn, user: dict = Depends(require_user)):
     _check_format(body.format)
     with db.get_conn() as conn:
-        v = build(conn, body.options, user["me_person_id"])
+        v = build(conn, body.options, user["me_person_id"], stats_only=True)
     out = v.stats()
     out.update(included_ids(v))
     out["warnings"] = v.warnings
@@ -125,8 +125,8 @@ def _run(jid: str, user: dict, fmt: str, options: ExportOptions):
                 data = tree_data.export_data(conn, v, options, site.files, site.title)
             with zipfile.ZipFile(path, "a", zipfile.ZIP_DEFLATED) as z:
                 z.writestr(tree_data.DATA_NAME, json.dumps(data, ensure_ascii=False))
-        with db.get_conn() as conn:
-            Batch(conn, user["id"], summary_label(options, stats, fmt))
+        with db.get_conn() as conn:          # in History, without making every cached answer stale
+            Batch(conn, user["id"], summary_label(options, stats, fmt), changes_tree=False)
         with _lock:
             _jobs[jid].update(status="done", progress=100, message="Ready", path=path, finished=time.time(),
                               filename=f"family-tree-site-{stamp}.zip", size=os.path.getsize(path), stats=stats)
@@ -151,7 +151,7 @@ def export_gedcom(body: ExportIn, user: dict = Depends(require_user)):
             raise HTTPException(422, "Nobody is included with these choices.")
         data = tree_data.export_data(conn, v, body.options, {}, (body.options.site.title or "Our family").strip())
         text = gedcom.write(data)
-        Batch(conn, user["id"], summary_label(body.options, stats, "gedcom"))
+        Batch(conn, user["id"], summary_label(body.options, stats, "gedcom"), changes_tree=False)
     name = f"family-tree-{config.now().strftime('%Y%m%d')}.ged"
     return Response(text.encode("utf-8"), media_type="text/plain; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})

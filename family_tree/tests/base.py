@@ -69,6 +69,7 @@ def reset_state(setup_media: bool = True, all_features: bool = False):
         graph._cache["version"] = None
         graph._cache["graph"] = None
     with media._state_lock:
+        media._walk_cache.clear()
         media._state.update(online=False, reason="Not checked yet.", checked_at=None, store_id=None, foreign_id=None,
                             path=None)
     if all_features:
@@ -99,9 +100,27 @@ def addon_version() -> str:
         return re.search(r'^version:\s*"?([^"\s]+)"?', f.read(), re.M).group(1)
 
 
-def image_bytes(fmt="JPEG", size=(64, 48), color=(200, 30, 30), mode="RGB", **save_kw):
+_image_serial = [0]
+
+
+def image_bytes(fmt="JPEG", size=(64, 48), color=(200, 30, 30), mode="RGB", unique=True, **save_kw):
+    """A small picture. Each call gives different bytes (a comment in the file, or one corner pixel)
+    unless unique=False: uploading the very same file twice gives back the photo already there."""
     from PIL import Image
     img = Image.new(mode, size, color)
+    if unique:
+        _image_serial[0] += 1
+        n = _image_serial[0]
+        if fmt == "JPEG" and "comment" not in save_kw:
+            save_kw["comment"] = f"test picture {n}".encode()
+        elif fmt == "PNG" and "pnginfo" not in save_kw:
+            from PIL.PngImagePlugin import PngInfo
+            info = PngInfo()
+            info.add_text("Comment", f"test picture {n}")
+            save_kw["pnginfo"] = info
+        elif mode in ("RGB", "RGBA") and size[0] * size[1] > 1:
+            px = ((n * 97) % 256, (n * 57 + 128) % 256, (n * 31 + 64) % 256) + ((255,) if mode == "RGBA" else ())
+            img.putpixel((size[0] - 1, size[1] - 1), px)
     buf = io.BytesIO()
     img.save(buf, fmt, **save_kw)
     return buf.getvalue()

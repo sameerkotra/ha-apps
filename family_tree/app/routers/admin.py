@@ -21,7 +21,7 @@ from ..history import Batch
 router = APIRouter(prefix="/api", tags=["admin"])
 logger = logging.getLogger("admin")
 
-APP_VERSION = "2.6.1"
+APP_VERSION = "2.6.2"
 _MEDIA_NAME = re.compile(r"^media/([0-9a-f]{2})/([0-9a-f]{32})/(original|thumb1024\.jpg|thumb256\.jpg)$")
 MAX_DB_BYTES = 2 * 1024 ** 3
 MAX_MEDIA_FILE_BYTES = 200 * 1024 ** 2
@@ -101,11 +101,11 @@ def _scratch_dir(big: bool) -> str:
 def download_backup(media_files: bool = Query(False, alias="media"), admin: dict = Depends(require_admin)):
     if media_files:
         media.require_online()
-    fd, zpath = tempfile.mkstemp(suffix=".zip", dir=_scratch_dir(media_files))
+    fd, zpath = tempfile.mkstemp(suffix=".zip", prefix=db.TEMP_PREFIX, dir=_scratch_dir(media_files))
     os.close(fd)
     dbtmp = db.temp_path_in_data(".db")
     try:
-        db.backup_to_file(dbtmp)
+        db.backup_to_file(dbtmp, after=settings.REGISTRY.scrub_secrets)     # a backup never carries the signing key
         members = [(dbtmp, "family.db"),
                    backup_core.Text("backup.json", json.dumps({"app": "family_tree", "version": APP_VERSION,
                                                                "created": config.now_iso(), "withMedia": media_files}))]
@@ -150,9 +150,23 @@ def _validate_zip(zpath: str) -> dict:
     return {"media": media_members}
 
 
+def _move_staged(staging: str) -> None:
+    """The restored photos into place: each file renamed from the staging folder (the same disk)."""
+    for dirpath, _dirs, files in os.walk(staging):
+        for fn in files:
+            src = os.path.join(dirpath, fn)
+            dest = os.path.join(media.root(), os.path.relpath(src, staging))
+            try:
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                os.replace(src, dest)
+            except OSError:
+                logger.exception("Couldn't put the restored file %s in place", dest)
+
+
 def _restore(zpath: str, admin: dict) -> dict:
     info = _validate_zip(zpath)
     dbtmp = db.temp_path_in_data(".db")
+    staging = None
     try:
         with zipfile.ZipFile(zpath) as z:
             with z.open("family.db") as src, open(dbtmp, "wb") as dst:
@@ -179,16 +193,24 @@ def _restore(zpath: str, admin: dict) -> dict:
                     expected = known[mid] if kind == "original" else "image/jpeg"
                     if sniffed != expected:
                         raise ValueError(f"A media file in the backup isn't the type its database says ({name}).")
+                # unpacked next to the photos first; they replace the live files only once the database
+                # has been swapped, so a restore that fails half-way leaves the photos as they were
+                staging = os.path.join(media.root(), f".restore-{db.new_id()}")
                 for name, _mid, _kind in members:
-                    backup_core.copy_out(z, name, os.path.join(media.root(), name), part=".tmp")
+                    backup_core.copy_out(z, name, os.path.join(staging, name), part=".tmp")
         current_store = media.status().get("store_id")
         with db.get_conn() as conn:
             current_settings = settings.rows(conn)
+            saved_secrets = settings.REGISTRY.saved_secrets(conn)
         current_media_path = [r for r in current_settings if r[0] == "media_path"]
         db.replace_db(dbtmp)
+        if staging:
+            _move_staged(staging)
     finally:
         if os.path.exists(dbtmp):
             os.remove(dbtmp)
+        if staging:
+            shutil.rmtree(staging, ignore_errors=True)
     with db.get_conn() as conn:
         if current_store:
             db.set_setting(conn, "media_store_id", current_store)
@@ -205,6 +227,7 @@ def _restore(zpath: str, admin: dict) -> dict:
         settings.put_rows(conn, current_media_path)
         Batch(conn, admin["id"], "Restored from backup")
         rows = conn.execute("SELECT id FROM media WHERE deleted_at IS NULL").fetchall()
+    settings.REGISTRY.keep_secrets(saved_secrets)          # the backup's blanked key doesn't wipe this install's
     settings.invalidate()
     kin.invalidate()
     media.check()
@@ -232,9 +255,10 @@ async def import_backup(file: UploadFile = File(...), admin: dict = Depends(requ
 
 # ---------- media storage ----------
 @router.get("/admin/storage")
-def storage(admin: dict = Depends(require_admin)):
+def storage(refresh: bool = False, admin: dict = Depends(require_admin)):
+    """The photo folder's file count and size are reused for ten minutes; refresh=true counts again."""
     media.check()
-    info = media.storage_info()
+    info = media.storage_info(refresh)
     with db.get_conn() as conn:
         info["dbBytes"] = os.path.getsize(config.DB_PATH) if os.path.exists(config.DB_PATH) else 0
         info["people"] = conn.execute("SELECT COUNT(*) FROM people WHERE deleted_at IS NULL").fetchone()[0]

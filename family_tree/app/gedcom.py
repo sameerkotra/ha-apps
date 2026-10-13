@@ -23,7 +23,13 @@ from .ceremonies import ALL as CEREMONIES
 from .models import FAMILY_EVENT_TYPES, PERSON_EVENT_TYPES
 
 MAX_LINE = 200                 # characters of a value per line (5.5.1 allows 255 for the whole line)
-MAX_BYTES = 100 * 1024 * 1024
+MAX_BYTES = 50 * 1024 * 1024   # a GEDCOM of 20 000 people is usually 5–15 MB
+MAX_LINES = 2_000_000          # lines read before giving up (a file of 20 000 people has far fewer)
+MAX_VALUE = 1_000_000          # characters of one value once its CONT/CONC lines are joined
+# Characters Python's splitlines() treats as line breaks besides CR and LF: written as a line break (CONT),
+# so a reader that only splits on CR/LF reads the same text back.
+_ODD_BREAKS = re.compile("[\u2028\u2029\x0b\x0c\x1c\x1d\x1e\x85]")
+_NEWLINES = re.compile(r"\r\n|\r|\n")
 
 # our event type → (GEDCOM tag, TYPE for EVEN)
 PERSON_TAGS = {"birth": "BIRT", "death": "DEAT", "burial": "BURI", "baptism": "BAPM", "education": "EDUC",
@@ -64,7 +70,7 @@ def _lines(level: int, tag: str, value: str | None = None, xref: str | None = No
     head = f"{level} " + (f"{xref} " if xref else "") + tag
     if value is None or value == "":
         return [head]
-    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = _ODD_BREAKS.sub("\n", str(value).replace("\r\n", "\n").replace("\r", "\n"))
     out = []
     for i, part in enumerate(text.split("\n")):
         chunks = [part[j:j + MAX_LINE] for j in range(0, len(part), MAX_LINE)] or [""]
@@ -203,10 +209,11 @@ def write(data: dict, app_version: str | None = None) -> str:
 # reading
 # =====================================================================================================
 class Node:
-    __slots__ = ("level", "xref", "tag", "value", "children")
+    __slots__ = ("level", "xref", "tag", "value", "children", "parts")
 
     def __init__(self, level, xref, tag, value):
         self.level, self.xref, self.tag, self.value, self.children = level, xref, tag, value, []
+        self.parts = None                 # CONT/CONC pieces while reading, joined once at the end
 
     def first(self, tag):
         return next((c for c in self.children if c.tag == tag), None)
@@ -249,9 +256,13 @@ def decode(raw: bytes) -> str:
 
 
 def parse(text: str) -> list:
-    """The records (level-0 nodes) of a GEDCOM file, CONT/CONC joined into the values."""
-    roots, stack = [], []
-    for n, raw in enumerate(text.splitlines(), 1):
+    """The records (level-0 nodes) of a GEDCOM file, CONT/CONC joined into the values.
+    Lines end at CR, LF or CR LF only (not at the other characters str.splitlines() would split on)."""
+    roots, stack, joined = [], [], []
+    people = 0
+    for n, raw in enumerate(_NEWLINES.split(text), 1):
+        if n > MAX_LINES:
+            raise GedcomError("That GEDCOM file is too long to import.")
         if not raw.strip():
             continue
         m = _LINE.match(raw)
@@ -261,8 +272,19 @@ def parse(text: str) -> list:
         if tag in ("CONT", "CONC") and stack:
             parent = stack[-1] if stack[-1].level == level - 1 else next((s for s in reversed(stack) if s.level == level - 1), None)
             if parent is not None:
-                parent.value = (parent.value or "") + ("\n" if tag == "CONT" else "") + value
+                if parent.parts is None:
+                    parent.parts = [parent.value or ""]
+                    parent.value = 0                  # the joined length so far
+                    joined.append(parent)
+                parent.parts.append(("\n" if tag == "CONT" else "") + value)
+                parent.value += len(value) + 1
+                if parent.value > MAX_VALUE:
+                    raise GedcomError(f"Line {n} of that GEDCOM file continues a value that is far too long.")
                 continue
+        if level == 0 and tag == "INDI":
+            people += 1
+            if people > tree_data.MAX_PEOPLE:          # stop early, not after reading everything
+                raise GedcomError(f"An import can have at most {tree_data.MAX_PEOPLE} people.")
         node = Node(level, xref, tag, value)
         while stack and stack[-1].level >= level:
             stack.pop()
@@ -273,6 +295,8 @@ def parse(text: str) -> list:
         else:
             raise GedcomError(f"Line {n} of that GEDCOM file is at the wrong level.")
         stack.append(node)
+    for node in joined:                               # one join per value, not one copy per line
+        node.value, node.parts = "".join(node.parts), None
     if not roots or roots[0].tag != "HEAD":
         raise GedcomError("That isn't a GEDCOM file (it doesn't start with a HEAD record).")
     return roots

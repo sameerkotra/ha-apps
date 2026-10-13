@@ -279,6 +279,9 @@ def update(pid: str, body: PersonIn, user: dict = Depends(require_user)):
         row = require_person(conn, pid)
         fields = person_fields(body, only_set=True)
         sent = body.model_fields_set
+        if fields.get("never_export") == 0 and row["never_export"] and not user["is_admin"]:
+            # anyone may keep someone out of exports; only an admin may let them back in
+            raise HTTPException(403, "Only an admin can take someone off “Keep out of all exports”.")
         label = f"Edited {_nm(row)}"
         if set(fields) == {"remind"} and not sent - {"remind"}:        # the 🔔 button
             label = f"Turned reminders {'on' if fields['remind'] else 'off'} for {_nm(row)}"
@@ -292,6 +295,8 @@ def update(pid: str, body: PersonIn, user: dict = Depends(require_user)):
             set_life_event(b, pid, "birth", body.birth)
         if "death" in sent:
             set_life_event(b, pid, "death", body.death)
+        if b.discard_if_empty():                 # nothing actually changed: no History entry
+            return {"person": person_detail(conn, pid, user["me_person_id"]), "batchId": None}
         b.touch(pid)
         return {"person": person_detail(conn, pid, user["me_person_id"]), "batchId": b.id}
 
@@ -360,13 +365,15 @@ def child_position(conn, g, fid: str, child_id: str) -> int:
     return last
 
 
-def add_child_link(b: Batch, fid: str, cid: str, relation: str) -> None:
-    """Insert family_children at its birth-order position, shifting later siblings."""
+def add_child_link(b: Batch, fid: str, cid: str, relation: str, g=None) -> None:
+    """Insert family_children at its birth-order position, shifting later siblings. `g`: a graph from
+    load_fresh made earlier in this transaction, kept in step here (several children in a row)."""
     conn = b.conn
     if conn.execute("SELECT 1 FROM family_children WHERE family_id = ? AND child_id = ?", (fid, cid)).fetchone():
         raise HTTPException(409, "That child is already in this family.")
     fam = require_family(conn, fid)
-    g = graph_mod.load_fresh(conn)
+    if g is None:
+        g = graph_mod.load_fresh(conn)
     for par in (fam["partner1_id"], fam["partner2_id"]):
         if par and g.people.get(par) and cid in g.people and g.is_descendant(par, cid):
             raise HTTPException(422, "That would make someone their own ancestor.")
@@ -375,6 +382,7 @@ def add_child_link(b: Batch, fid: str, cid: str, relation: str) -> None:
                           "ORDER BY position DESC", (fid, pos)).fetchall():
         b.update("family_children", f"{fid}|{k['child_id']}", {"position": k["position"] + 1})
     b.insert("family_children", {"family_id": fid, "child_id": cid, "position": pos, "relation": relation}, op="link")
+    g.add_child(fid, fam["partner1_id"], fam["partner2_id"], cid, relation, pos)
     b.touch(cid, fam["partner1_id"], fam["partner2_id"])
 
 

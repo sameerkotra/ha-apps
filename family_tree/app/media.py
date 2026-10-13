@@ -18,16 +18,18 @@ import os
 import re
 import shutil
 import threading
-import warnings
+import uuid
 from datetime import datetime
 
 from . import config, db, settings
+from .common import image_guard
 
 logger = logging.getLogger("media")
 
 MARKER = ".family_tree_store"
 MAX_EDGE = 4096
-MAX_PIXELS = 60_000_000
+MAX_PIXELS = image_guard.MAX_IMAGE_PIXELS     # 40 million: checked in the header, before decoding
+JPEG_MAX_PIXELS = 60_000_000                  # a JPEG is decoded at a reduced scale (draft), so it may be bigger
 THUMBS = (256, 1024)
 _ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -286,7 +288,35 @@ def require_online() -> None:
         raise HTTPException(503, status()["reason"] or "Photo storage isn't reachable.")
 
 
-def storage_info() -> dict:
+STORAGE_WALK_TTL = 600            # seconds the photo folder's file count and size are reused
+_walk_cache: dict = {}
+
+
+def _walk_totals(base: str, refresh: bool = False) -> tuple[int, int]:
+    """(originals, bytes) under media/: walking a big folder (on a NAS) takes a while, so the answer is
+    reused for ten minutes (or until a refresh is asked for)."""
+    import time
+    now = time.monotonic()
+    with _state_lock:
+        hit = _walk_cache.get(base)
+    if hit and not refresh and now - hit[0] < STORAGE_WALK_TTL:
+        return hit[1], hit[2]
+    files = size = 0
+    for dirpath, _dirs, names in os.walk(base):
+        for fn in names:
+            if fn == "original":
+                files += 1
+            try:
+                size += os.path.getsize(os.path.join(dirpath, fn))
+            except OSError:
+                pass
+    with _state_lock:
+        _walk_cache.clear()
+        _walk_cache[base] = (now, files, size)
+    return files, size
+
+
+def storage_info(refresh: bool = False) -> dict:
     s = status()
     here = s["path"] == root()                    # the last check was for the folder in use now
     info = {"path": root(), "online": here and s["online"], "reason": s["reason"] if here else "Not checked yet.",
@@ -298,15 +328,7 @@ def storage_info() -> dict:
             info["freeBytes"] = usage.free
         except OSError:
             pass
-        base = os.path.join(root(), "media")
-        for dirpath, _dirs, files in os.walk(base):
-            for fn in files:
-                if fn == "original":
-                    info["files"] += 1
-                try:
-                    info["bytes"] += os.path.getsize(os.path.join(dirpath, fn))
-                except OSError:
-                    pass
+        info["files"], info["bytes"] = _walk_totals(os.path.join(root(), "media"), refresh)
     return info
 
 
@@ -347,33 +369,44 @@ def _exif_date(img) -> str | None:
         return None
 
 
+IMAGE_FORMATS = ["JPEG", "PNG", "WEBP", "GIF"]
+
+
 def process_image(data: bytes) -> dict:
     """Re-encode (drops all metadata incl. GPS), cap at 4096 px, make thumbnails.
-    Returns {content_type, original: bytes, thumbs: {256: bytes, 1024: bytes}, width, height, date_text}."""
+    Returns {content_type, original: bytes, thumbs: {256: bytes, 1024: bytes}, width, height, date_text}.
+
+    The size in the file's header is checked before anything is decoded (the shared image_guard): at
+    most MAX_PIXELS (40 million) pixels, or JPEG_MAX_PIXELS for a JPEG, which is decoded at a reduced
+    scale. At most two images are decoded at a time in the whole app (image_guard.decode_slot), so a
+    burst of uploads waits its turn instead of using the memory of all of them at once."""
     from PIL import Image, ImageOps
-    Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+    limit = JPEG_MAX_PIXELS if sniff(data[:16]) == "image/jpeg" else MAX_PIXELS
     try:
         # only the formats sniff() lets through, whatever Pillow could guess from the bytes
-        with warnings.catch_warnings():          # oversize is refused just below, not warned about
-            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
-            img = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP", "GIF"])
-    except Image.DecompressionBombError:
+        img = image_guard.open_for_decode(data, limit, formats=IMAGE_FORMATS, draft=("RGB", (MAX_EDGE, MAX_EDGE)))
+    except image_guard.ImageTooBig:
         raise MediaError(413, "That image is too large to process.")
-    except Exception:
+    except image_guard.ImageError:
         raise MediaError(415, "That image couldn't be read — it may be damaged.")
-    # Pillow only *errors* above twice MAX_IMAGE_PIXELS (it just warns in between),
-    # so check the header's size ourselves before decoding anything.
-    if img.width * img.height > MAX_PIXELS:
-        raise MediaError(413, "That image is too large to process.")
     try:
-        if img.format == "JPEG":
-            img.draft("RGB", (MAX_EDGE, MAX_EDGE))     # decode big JPEGs at a reduced scale
+        with image_guard.decode_slot():
+            return _encode(img, Image, ImageOps)
+    except image_guard.DecodeBusy as e:
+        raise MediaError(503, str(e))
+    finally:
+        img.close()
+
+
+def _encode(img, Image, ImageOps) -> dict:
+    try:
         img.load()
-    except Image.DecompressionBombError:
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
         raise MediaError(413, "That image is too large to process.")
     except Exception:
         raise MediaError(415, "That image couldn't be read — it may be damaged.")
     date_text = _exif_date(img)
+    icc = img.info.get("icc_profile")                # the colours the camera meant (Display P3, Adobe RGB …)
     try:
         img = ImageOps.exif_transpose(img)          # apply the camera's rotation before EXIF goes
     except Exception:
@@ -381,14 +414,18 @@ def process_image(data: bytes) -> dict:
     if getattr(img, "is_animated", False):
         img.seek(0)
     has_alpha = img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info)
+    if img.mode in ("RGB", "RGBA", "L"):
+        img.thumbnail((MAX_EDGE, MAX_EDGE))        # shrink first: the conversion then copies the small picture
     img = img.convert("RGBA" if has_alpha else "RGB")
     img.thumbnail((MAX_EDGE, MAX_EDGE))
+    img, icc = _to_srgb(img, icc)
+    keep = {"icc_profile": icc} if icc else {}       # only when it couldn't be converted to sRGB
     out = io.BytesIO()
     if has_alpha:
-        img.save(out, "PNG", optimize=True)
+        img.save(out, "PNG", optimize=True, **keep)
         ctype = "image/png"
     else:
-        img.save(out, "JPEG", quality=90, optimize=True)
+        img.save(out, "JPEG", quality=90, optimize=True, **keep)
         ctype = "image/jpeg"
     flat = img
     if has_alpha:
@@ -399,10 +436,37 @@ def process_image(data: bytes) -> dict:
         t = flat.copy()
         t.thumbnail((size, size))
         b = io.BytesIO()
-        t.save(b, "JPEG", quality=85)
+        t.save(b, "JPEG", quality=85, **keep)
         thumbs[size] = b.getvalue()
     return {"content_type": ctype, "original": out.getvalue(), "thumbs": thumbs,
             "width": img.width, "height": img.height, "date_text": date_text}
+
+
+def date_sort(date_text: str | None) -> str | None:
+    """The stored sort key of a photo's date (media.date_sort: the gallery's "by date" order in SQL)."""
+    if not date_text:
+        return None
+    from . import dates
+    try:
+        return dates.parse_text(date_text)["sort_key"]
+    except dates.DateError:
+        return None
+
+
+def _to_srgb(img, icc: bytes | None):
+    """(picture, profile still to embed). A photo with its own colour profile is converted to sRGB — what
+    every browser and the thumbnails assume — so re-encoding never leaves it washed out or oversaturated.
+    When that can't be done (no colour-management support in this Pillow, or an odd profile) the profile
+    is kept in the new file instead."""
+    if not icc:
+        return img, None
+    try:
+        from PIL import ImageCms
+        src = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+        converted = ImageCms.profileToProfile(img, src, ImageCms.createProfile("sRGB"), outputMode=img.mode)
+        return (converted if converted is not None else img), None
+    except Exception:
+        return img, icc
 
 
 def too_large_message(limit_mb: int) -> str:
@@ -428,11 +492,21 @@ def validate_upload(data: bytes, allow_documents: bool = False) -> str:
 
 
 def _atomic_write(path: str, data: bytes) -> None:
+    """Write next to the target, then rename: a reader sees the old file or the new one, never half of one.
+    The temporary name is unique, so two writers of the same file (two requests rendering the same fix)
+    can't write into each other's half-written file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
+    tmp = f"{path}.{uuid.uuid4().hex[:12]}.tmp"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def store_image(media_id: str, processed: dict) -> None:
@@ -464,18 +538,19 @@ def ensure_edited(media_id: str, edit: dict) -> None:
     want = {size: edited_path(media_id, edit, size) for size in _EDIT_NAMES}
     if all(os.path.isfile(p) for p in want.values()):
         return
-    with Image.open(file_path(media_id, "original")) as src:
-        src.load()
-        img = photoedit.render(src.convert("RGB"), edit)
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=90)
-    _atomic_write(want["display"], buf.getvalue())
-    for size in THUMBS:
-        t = img.copy()
-        t.thumbnail((size, size))
-        b = io.BytesIO()
-        t.save(b, "JPEG", quality=85)
-        _atomic_write(want[str(size)], b.getvalue())
+    with image_guard.decode_slot():                   # at most two decodes at a time (image_guard)
+        with Image.open(file_path(media_id, "original")) as src:
+            src.load()
+            img = photoedit.render(src.convert("RGB"), edit)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=90)
+        _atomic_write(want["display"], buf.getvalue())
+        for size in THUMBS:
+            t = img.copy()
+            t.thumbnail((size, size))
+            b = io.BytesIO()
+            t.save(b, "JPEG", quality=85)
+            _atomic_write(want[str(size)], b.getvalue())
     d = _dir_for(media_id)
     for name in os.listdir(d):
         if re.match(r"^(display|thumb1024|thumb256)-[0-9a-f]{12}\.jpg$", name) and k not in name:

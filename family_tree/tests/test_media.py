@@ -6,6 +6,7 @@ import _env
 import io
 import os
 import unittest
+from unittest import mock
 
 from PIL import Image
 
@@ -431,6 +432,160 @@ class Hardening(MediaCase):
         os.makedirs(outside, exist_ok=True)
         media.remove_files("../..")                      # a no-op, never an rmtree outside media/
         self.assertTrue(os.path.isdir(outside))
+
+
+def _png_claiming(width, height):
+    """A tiny PNG whose header claims width × height (its pixels would be gigabytes when decoded)."""
+    import struct
+    import zlib
+    data = bytearray(image_bytes("PNG", size=(4, 4), unique=False))
+    # IHDR is the first chunk: length(4) "IHDR"(4) width(4) height(4) ...
+    data[16:24] = struct.pack(">II", width, height)
+    crc = zlib.crc32(bytes(data[12:29])) & 0xFFFFFFFF
+    data[29:33] = struct.pack(">I", crc)
+    return bytes(data)
+
+
+def _jpeg_claiming(width, height):
+    """A small JPEG whose start-of-frame header claims width × height."""
+    import struct
+    data = bytearray(image_bytes("JPEG", size=(16, 16)))
+    i = data.index(b"\xff\xc0")
+    data[i + 5:i + 9] = struct.pack(">HH", height, width)
+    return bytes(data)
+
+
+class ImageGuard(MediaCase):
+    """Uploads go through the shared image_guard: the header's size is checked before decoding, and at most
+    two images are decoded at a time."""
+
+    def test_huge_png_header_refused_before_decoding(self):
+        r = self.upload(_png_claiming(8000, 5200), name="bomb.png")          # 41.6 million pixels
+        self.assertEqual(r.status_code, 413, r.text)
+        self.assertIn("too large", r.json()["detail"])
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM media")[0]["n"], 0)
+
+    def test_png_limit_is_40_megapixels_jpeg_60(self):
+        self.assertEqual(media.MAX_PIXELS, 40_000_000)
+        self.assertEqual(media.JPEG_MAX_PIXELS, 60_000_000)
+        # a 49-million-pixel JPEG passes the header check (it is decoded at a reduced scale)
+        r = self.upload(_jpeg_claiming(7000, 7000))
+        self.assertIn(r.status_code, (201, 415), r.text)
+        r = self.upload(_jpeg_claiming(9000, 7000))                          # 63 million
+        self.assertEqual(r.status_code, 413, r.text)
+
+    def test_decodes_wait_for_a_slot(self):
+        import contextlib
+        from app.common import image_guard
+        seen = []
+
+        @contextlib.contextmanager
+        def busy(timeout=30):
+            seen.append(timeout)
+            raise image_guard.DecodeBusy("Too many images are being processed right now; try again in a moment.")
+            yield
+
+        with mock.patch.object(image_guard, "decode_slot", busy):
+            r = self.upload(image_bytes())
+        self.assertEqual(r.status_code, 503, r.text)
+        self.assertEqual(len(seen), 1)
+        self.upload_ok()
+
+    def test_pillow_limit_not_raised_process_wide(self):
+        from PIL import Image
+        self.upload_ok(image_bytes(size=(300, 200)))
+        self.assertEqual(Image.MAX_IMAGE_PIXELS, 40_000_000)
+
+
+class ColourProfiles(MediaCase):
+    def jpeg_with_profile(self):
+        from PIL import Image, ImageCms
+        icc = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        buf = io.BytesIO()
+        Image.new("RGB", (40, 30), (10, 200, 30)).save(buf, "JPEG", icc_profile=icc, quality=95)
+        return buf.getvalue(), icc
+
+    def stored(self, mid):
+        with open(media.file_path(mid), "rb") as f:
+            return Image.open(io.BytesIO(f.read()))
+
+    def test_profile_converted_to_srgb(self):
+        data, _icc = self.jpeg_with_profile()
+        img = self.stored(self.upload_ok(data))
+        self.assertIsNone(img.info.get("icc_profile"))              # now plain sRGB
+        r, g, b = img.convert("RGB").getpixel((20, 15))
+        self.assertTrue(abs(r - 10) < 12 and abs(g - 200) < 12 and abs(b - 30) < 12, (r, g, b))
+
+    def test_profile_kept_when_it_cant_be_converted(self):
+        data, icc = self.jpeg_with_profile()
+        from PIL import ImageCms
+        with mock.patch.object(ImageCms, "profileToProfile", side_effect=ImageCms.PyCMSError("no")):
+            mid = self.upload_ok(data)
+        self.assertEqual(self.stored(mid).info.get("icc_profile"), icc)
+        with open(media.file_path(mid, "256"), "rb") as f:
+            self.assertEqual(Image.open(io.BytesIO(f.read())).info.get("icc_profile"), icc)
+
+
+class Duplicates(MediaCase):
+    """The very same file uploaded again gives back the photo already there (as the inbox does)."""
+
+    def test_same_file_twice_in_photos(self):
+        data = image_bytes()
+        first = self.ok(self.post("/api/media", files={"file": ("a.jpg", data, "image/jpeg")}), 201)["media"]["id"]
+        bob = self.person("Bob")
+        again = self.ok(self.post("/api/media", files={"file": ("b.jpg", data, "image/jpeg")}, data={"personId": bob}), 201)
+        self.assertEqual(again["media"]["id"], first)
+        self.assertTrue(again["duplicate"])
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM media")[0]["n"], 1)
+        self.assertEqual([l["personId"] for l in again["media"]["links"]], [bob])       # linked as asked
+        # and once more: nothing new to link, no history entry
+        third = self.ok(self.post("/api/media", files={"file": ("c.jpg", data, "image/jpeg")}, data={"personId": bob}), 201)
+        self.assertIsNone(third["batchId"])
+        self.assertEqual(len(sql("SELECT id FROM media_links")), 1)
+
+    def test_same_file_as_profile_photo(self):
+        data = image_bytes()
+        mid = self.upload_ok(data)
+        bob = self.person("Bob")
+        body = self.ok(self.upload(data, pid=bob), 201)
+        self.assertEqual(body["mediaId"], mid)
+        self.assertEqual(body["person"]["photo"], mid)
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM media")[0]["n"], 1)
+
+    def test_a_trashed_copy_does_not_count(self):
+        data = image_bytes()
+        mid = self.upload_ok(data)
+        self.ok(self.delete(f"/api/media/{mid}"))
+        self.assertNotEqual(self.upload_ok(data), mid)
+
+
+class CropCache(MediaCase):
+    def test_face_crops_are_made_once(self):
+        mid = self.upload_ok(image_bytes(size=(400, 300)))
+        rid = self.ok(self.post(f"/api/media/{mid}/regions", {"personId": self.pid, "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.3}), 201)["regionId"]
+        from app.routers import media as media_router
+        real = media_router._crop_bytes
+        calls = []
+
+        def counting(*a):
+            calls.append(a)
+            return real(*a)
+
+        with mock.patch.object(media_router, "_crop_bytes", counting):
+            one = self.get(f"/api/media/{mid}/file?size=256&region={rid}")
+            two = self.get(f"/api/media/{mid}/file?size=256&region={rid}")
+        self.assertEqual((one.status_code, two.status_code), (200, 200))
+        self.assertEqual(one.content, two.content)
+        self.assertEqual(len(calls), 1)
+        folder = os.path.dirname(media.file_path(mid))
+        crops = [n for n in os.listdir(folder) if n.startswith("crop-")]
+        self.assertEqual(len(crops), 1)
+        # moving the box makes a new crop and drops the old one
+        self.ok(self.patch(f"/api/media/{mid}/regions/{rid}", {"x": 0.5, "y": 0.1, "w": 0.2, "h": 0.3}))
+        self.assertEqual(self.get(f"/api/media/{mid}/file?size=256&region={rid}").status_code, 200)
+        crops2 = [n for n in os.listdir(folder) if n.startswith("crop-")]
+        self.assertEqual(len(crops2), 1)
+        self.assertNotEqual(crops, crops2)
 
 
 if __name__ == "__main__":

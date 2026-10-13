@@ -62,9 +62,34 @@ class Family:
 
 
 class Graph:
+    # Answers worked out from a graph are kept on it (a cached graph never changes: any write makes a new
+    # one), at most this many of each kind.
+    MEMO_LIMITS = {"ancestors": 5000, "bfs": 16, "labels": 32}
+
     def __init__(self, people: dict, families: dict):
         self.people = people
         self.families = families
+        self._memo = {kind: {} for kind in self.MEMO_LIMITS}
+
+    def memo(self, kind: str, key, make):
+        """make() once per key for this graph (thread-safe enough: two threads may both make it)."""
+        box = self._memo[kind]
+        try:
+            return box[key]
+        except KeyError:
+            pass
+        value = make()
+        box[key] = value
+        while len(box) > self.MEMO_LIMITS[kind]:
+            try:
+                box.pop(next(iter(box)), None)              # the oldest
+            except (RuntimeError, StopIteration):
+                break
+        return value
+
+    def forget(self) -> None:
+        for box in self._memo.values():
+            box.clear()
 
     # ---- neighbours ----
     def parents(self, pid) -> list:
@@ -132,7 +157,11 @@ class Graph:
         return set(seen)
 
     def ancestors(self, pid, max_gen: int = 12) -> dict:
-        """{ancestor_id: [path from pid to ancestor]} (pid itself at depth 0), BFS so paths are shortest."""
+        """{ancestor_id: [path from pid to ancestor]} (pid itself at depth 0), BFS so paths are shortest.
+        Worked out once per person for this graph: don't change what it returns."""
+        return self.memo("ancestors", (pid, max_gen), lambda: self._ancestors(pid, max_gen))
+
+    def _ancestors(self, pid, max_gen: int) -> dict:
         paths = {pid: [pid]}
         frontier = [pid]
         for _ in range(max_gen):
@@ -161,6 +190,23 @@ class Graph:
                     seen.add(cid)
                     stack.append(cid)
         return False
+
+    def add_child(self, fid, p1, p2, cid, relation, position) -> None:
+        """Keep a graph from load_fresh in step with a child link just written in the same transaction,
+        instead of loading the whole tree again for the next check (imports and quick families add many)."""
+        self.forget()
+        f = self.families.get(fid)
+        if f is None:
+            p1 = p1 if p1 in self.people else None
+            p2 = p2 if p2 in self.people else None
+            f = self.families[fid] = Family(fid, p1, p2, "unknown", None)
+            for par in (p1, p2):
+                if par:
+                    self.people[par].partner_fams.append(fid)
+        f.children.append((cid, relation, position))
+        c = self.people.get(cid)
+        if c is not None:
+            c.parent_fams.append((fid, relation))
 
     def in_loop(self, pid) -> bool:
         """pid is their own ancestor (only possible through data imported/edited around the checks)."""

@@ -26,8 +26,10 @@ def start() -> None:
     if bus.default.started:
         return
     learn_panel()
+    from . import settings
     bus.start(SLUG, config.APP_TITLE, APP_VERSION, db=db.get_conn, api_base=config.SUPERVISOR_CORE_API,
-              ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
+              ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN,
+              signing_key=lambda: settings.REGISTRY.get("bus_signing_key"))   # optional (App settings)
 
 
 def stop() -> None:

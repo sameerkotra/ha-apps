@@ -14,6 +14,7 @@ import time
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import Field
+from starlette.concurrency import run_in_threadpool
 
 from .. import config, db, tree_data
 from ..auth import require_admin
@@ -88,13 +89,18 @@ async def upload(file: UploadFile = File(...), admin: dict = Depends(require_adm
         os.remove(path)
         raise HTTPException(422, "That file is empty.")
     try:
-        data, _ = tree_data.read_package(path)
-        with db.get_conn() as conn:
-            plan = tree_data.plan(conn, data, set())
+        # reading a large file and planning take a while: in a thread, never on the event loop
+        plan = await run_in_threadpool(_read_and_plan, path)
     except tree_data.ImportError_ as e:
         os.remove(path)
         raise HTTPException(422, str(e))
     return dict(_public(plan), token=token, fileName=(file.filename or "")[:200])
+
+
+def _read_and_plan(path: str) -> dict:
+    data, _ = tree_data.read_package(path)
+    with db.get_conn() as conn:
+        return tree_data.plan(conn, data, set())
 
 
 class PreviewIn(Strict):
@@ -120,11 +126,18 @@ def apply(body: ApplyIn, admin: dict = Depends(require_admin)):
     try:
         path = _path(body.token)
         data, zpath = _load(body.token)
-        with db.get_conn() as conn:
-            try:
-                stats = tree_data.apply(conn, admin["id"], data, zpath, set(body.unmatch), set(body.remove))
-            except tree_data.ImportError_ as e:
-                raise HTTPException(422, str(e))
+        # photos are decoded and stored first, so the write transaction below doesn't wait for them
+        prepared = tree_data.prepare_media(data, zpath)
+        try:
+            with db.get_conn() as conn:
+                stats = tree_data.apply(conn, admin["id"], data, zpath, set(body.unmatch), set(body.remove), prepared)
+        except tree_data.ImportError_ as e:
+            tree_data.discard_prepared(prepared)
+            raise HTTPException(422, str(e))
+        except BaseException:
+            tree_data.discard_prepared(prepared)
+            raise
+        tree_data.discard_prepared(prepared, keep={r["id"] for r in prepared.values() if r.get("used")})
         try:
             os.remove(path)
         except OSError:

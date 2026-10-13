@@ -27,10 +27,10 @@ FEATURE_DEFAULTS = {"feature_reminders": True, "feature_milestones": True, "feat
                     "feature_duplicates": True, "feature_quiz": True, "feature_printing": True, "feature_export": True,
                     "feature_map": False, "feature_kin_names": False, "feature_script_names": False,
                     "feature_tithi": False, "feature_ceremonies": False}
-DEFAULTS = {"trash_days": 90, "max_upload_mb": 20, "media_path": _env.MEDIA_PATH, "relationship_language": "en", "name_order": "given_first",
+DEFAULTS = {"trash_days": 90, "max_upload_mb": 20, "history_keep_days": 0, "media_path": _env.MEDIA_PATH, "relationship_language": "en", "name_order": "given_first",
             "default_phone_code": "+1", "tithi_rule": "aparahna",
             "map_tiles_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            "nominatim_url": "https://nominatim.openstreetmap.org", "assistant_answers": True, **FEATURE_DEFAULTS}
+            "nominatim_url": "https://nominatim.openstreetmap.org", "assistant_answers": True, "bus_signing_key": "", **FEATURE_DEFAULTS}
 
 
 def V(**changed):

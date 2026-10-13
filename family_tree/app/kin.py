@@ -521,7 +521,9 @@ def labeler(g, viewer: str | None, lang: str | None = None):
     if not viewer or viewer not in g.people:
         return None
     lang = lang or current()
-    cache: dict = {}
+    # kept on the graph (per viewer and language), so the next request for the same tree reuses it; the
+    # family's own words are history changes too, which make a new graph
+    cache: dict = g.memo("labels", (viewer, lang), dict)
 
     def label(pid):
         if pid not in cache:

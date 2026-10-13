@@ -644,9 +644,6 @@ class SiteTests(ExportCase):
         self.assertNotIn("Sarala", text)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class Extras080(ExportCase):
     """Custom fields, contacts and sources in exports; the print data."""
@@ -686,3 +683,19 @@ class Extras080(ExportCase):
         self.assertTrue(all("path" not in m for m in r["media"].values()))
         self.assertEqual(self.post("/api/export/print", {"format": "site", "options": {
             "scope": {"type": "selected", "ids": []}}}).status_code, 422)
+
+
+class PageNames(unittest.TestCase):
+    def test_people_with_the_same_name_and_id_start_get_their_own_pages(self):
+        from app.export_view import ExportOptions, View
+        from app.site_export import Site
+        v = View()
+        for pid in ("abcdef01" + "1" * 24, "abcdef01" + "2" * 24):
+            v.people[pid] = {"placeholder": False, "name": "Ann Rao"}
+        pages = Site(v, ExportOptions()).pages
+        self.assertEqual(len(set(pages.values())), 2)
+        self.assertTrue(all(p.endswith(pid + ".html") for pid, p in pages.items()))
+
+
+if __name__ == "__main__":
+    unittest.main()
