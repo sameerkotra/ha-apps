@@ -12,7 +12,7 @@ Splitwise-style household expense splitter, shipped only as a Home Assistant app
 - The group ledger loads a page at a time (newest 20, then **Load more**), with keyset paging (§6 "Ledger paging").
 - Groups → expenses (equal split, or custom by amount or by percentage) → per-group net balances and suggested settle-up transfers; settle-up payments can be recorded.
 - A dashboard shows overall balances, week/month spending and the activity log. Each person's balance is pushed to HA as a sensor.
-- Deliberately absent: local login; user create/delete endpoints; removing members or renaming groups; any HA sensor except `sensor.splitpot_balance_<slug>`; a stored or cached `balances` table.
+- Deliberately absent: local login; user create/delete endpoints; any HA sensor except `sensor.splitpot_balance_<slug>`; a stored or cached `balances` table.
 
 ## 2. Stack & file layout
 
@@ -66,7 +66,7 @@ splitpot/
 | `notify_charges` | strict bool | `false` | `notify_new_charge` / `notify_payment` (§7.1), `GET /api/me/prefs` | no |
 | `notify_payments` | strict bool, `enabled_if` `notify_charges` | `true` | `notify_payment` (needs `notify_charges` too) | no |
 
-- Notifications are **off by default on new and existing installs** (no row = the default), like Arcade's record notifications: an admin opts the household in. `notify_payments` defaults on so that switching the main switch on covers settle-ups too. Group `notify` ("Notifications", help: edits and deletions are never notified).
+- Notifications are **off by default on new and existing installs** (no row = the default), like Arcade's record notifications: an admin opts the household in. `notify_payments` defaults on so that switching the main switch on covers settle-ups too. Group `notify` ("Notifications", help: deletions and edits that only change words or the date are never notified). Group `limits` ("Limits"): `max_groups_per_person` (200), `max_entries_per_group` (20,000), `writes_per_minute` (60 per Home Assistant login, in memory, 429 with `Retry-After`), `keep_activity_days` (365; housekeeping prunes `events` once a day) — 0 = no limit for each. `bus_signing_key` (secret, group `assistant`) is handed to `app_bus.start(signing_key=…)` as a function read live.
 
 - The settings are declared once in `main.py` — `SETTINGS` (`settings_core.Setting(...)`: label, help, group, range, `enabled_if`, page options) and `SETTINGS_GROUPS` (Money, Home Assistant, Notifications) — on the shared `settings_core.Registry` (`SETTINGS_REGISTRY`, `app/common/settings_core.py`), which validates, stores and caches them and builds the GET/PUT payload; the `settings_changed` activity-log line is its `on_write` hook.
 - `settings_all()` / `get_setting(key)` read through an in-memory cache, invalidated by `update_settings` and every `init_db()` (so also after a restore). A generation counter stops a read that raced a write from caching stale values. A stored value that fails validation falls back to the default with a warning.
@@ -79,7 +79,7 @@ splitpot/
 1. `request.client.host` must be in `auth_core.INGRESS_HOSTS` (`{172.30.32.2, 127.0.0.1, ::1}`; `auth_core.refuse_outsiders`). Anything else gets **403** `"Forbidden — access only via Home Assistant"`. This blocks other containers from reaching the API directly and skipping Ingress auth.
 2. For paths starting with `/api/`, the `X-Remote-User-Id` header is required, otherwise **401**. Static files are exempt so the page shell can load.
 
-**Security headers** (`web_security.SecurityHeaders(CSP, pragma=True).install(app)`, policy `CSP` in `main.py`): every response gets `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` (Google Fonts allowed: `fonts.googleapis.com` styles, `fonts.gstatic.com` fonts) and `X-Content-Type-Options: nosniff`. No inline scripts or `on…=` handlers in the page.
+**Security headers** (`web_security.SecurityHeaders(CSP, pragma=True).install(app)`, policy `CSP` in `main.py`): every response gets `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` (the fonts are served by the app: `static/fonts/`) and `X-Content-Type-Options: nosniff`. `static_immutable=True, static_prefixes=("/",)`: every `?v=` asset is cached for a year (`public, max-age=31536000, immutable`); the page itself never. `web_security.BodyLimit` caps request bodies at 1 MB (counted as they arrive, chunked too; 413), the restore at 512 MB. No inline scripts or `on…=` handlers in the page.
 
 **Identity headers:** `X-Remote-User-Id`, `X-Remote-User-Name` (login name), `X-Remote-User-Display-Name`, `X-Ingress-Path`.
 - The actor written to `events.actor` is `display name → login name → "Someone"`. It is independent of `paid_by`, since one person can log another person's expense.
@@ -89,7 +89,7 @@ splitpot/
 - `no_admin_yet()` = `ADMIN_NAMES` is empty (a fresh install; `auth_core.no_admin`). `/api/whoami` reports it as `noAdmin` to everyone; nobody becomes admin until a name is listed and the app restarted.
 - If the display name alone matches, the check returns false and logs a one-time warning per user id naming the id or login name to list instead. `/api/whoami` reports this as `displayNameOnly`.
 - `require_admin` is a route dependency (`auth_core.require_admin_flag`) that returns 403 `"Only designated admins can do this. See the admin_users option in the app's Configuration tab."`. It guards: `GET /api/admin/settings`, `PUT /api/admin/settings`, `GET /api/admin/users`, `GET /api/admin/notify-services`, `POST /api/admin/users/{id}/notify`, `DELETE /api/admin/users/{id}/notify/{service}`, `POST /api/admin/users/{id}/notify/test`, `PATCH /api/users/{id}`, `DELETE /api/expenses/{id}`, `DELETE /api/groups/{id}`, `GET /api/admin/backup-db`, `POST /api/admin/import-db`.
-- Everyone else can: list users for the pickers (`GET /api/users`), create groups, add members, add and edit expenses, record payments, see balances/dashboard, set the default group, and read/change their own My settings (`/api/me/prefs`).
+- Everyone else can: list users for the pickers (`GET /api/users`), see every group (the open model: one household sharing its costs openly), create groups, add and edit expenses, record and change payments, see balances/dashboard, set their own default group, and read/change their own My settings (`/api/me/prefs`).
 - Hiding admin-only buttons in the UI is cosmetic only; the server enforces every rule.
 
 **Other:**
@@ -106,21 +106,22 @@ A process-wide `threading.Lock` (`_lock`) serialises every write. Reads take no 
 |---|---|
 | `users` | Only the HA sync inserts or renames users (keyed by `ha_entity_id`, which has a partial unique index). `ha_user_id` is the Person's `attributes.user_id`, lower-cased, refreshed on every sync; it identifies the signed-in person. No row is ever deleted, so historical expenses always resolve. `disabled=1` hides the person from every picker; a re-sync never resets it. `receive_notifications` (default 1) is the person's own opt-out (My settings) |
 | `user_notify` | Extra notify services per person (`"notify.<name>"`), PK `(user_id, service)`, `created_at`, `created_by` (the admin's login name or id). Keyed by Splitpot's **own** `users.id` (FK, cascade) — not the HA user id, which is what the shared table means in the apps whose users.id *is* the HA id; see §7.1 |
-| `groups` | `is_default`: at most one group, enforced by the write and backstopped by the partial unique index `idx_groups_one_default` |
+| `groups` | `is_default`: the household default of older versions (at most one, `idx_groups_one_default`); no longer written. It is the default of anyone without a `user_prefs` row |
+| `user_prefs` | `ha_user_id` PK (the Home Assistant login, lower case), `default_group_id` (`ON DELETE SET NULL`; NULL = "no default", chosen), `updated_at`: each person's own default group |
 | `group_members` | PK `(group_id,user_id)`; `position` keeps add order |
 | `expenses` | `amount` is the total. `split_type` is `equal`, `custom` (amounts), `percent` or `payment`. `date` is either a full UTC timestamp or a bare `YYYY-MM-DD` meaning that calendar day in HA's time zone |
 | `expense_splits` | One row per person per expense, in entry order (read `ORDER BY rowid`); shares sum to the amount. `percent` (nullable) is set only for `percent` expenses |
 | `events` | Append-only. `group_id` is a soft reference (no FK). `message` is pre-rendered text |
 | `app_settings` | `key` PK, `value` JSON, `updated_at`, `updated_by` (the admin's display/login name). A missing row means the default |
 
-- **Cascades:** deleting a group removes its members, expenses and splits; deleting an expense removes its splits. `events` rows are never deleted. Old events keep a dangling `group_id`, so `groupName` becomes null.
-- **Migrations:** `init_db()` runs at import and after every restore. It does `CREATE TABLE/INDEX IF NOT EXISTS` (including `app_settings`, so an older backup gets it on restore), then adds the columns of `main.MIGRATIONS` that are missing (`db_core.add_missing_columns`: `users.ha_entity_id`, `events.actor`, `users.disabled`, `users.ha_user_id`, `expense_splits.percent`, `groups.is_default`, `users.receive_notifications`, in that order; `user_notify` and the index `idx_expenses_group_date (group_id, date, id)` come from `CREATE … IF NOT EXISTS`). It then creates `idx_users_ha_entity` and `idx_groups_one_default` and sets WAL mode.
+- **Cascades:** deleting a group removes its members, expenses and splits; deleting an expense removes its splits. `events` rows older than `keep_activity_days` are pruned once a day. Old events keep a dangling `group_id`, so `groupName` becomes null.
+- **Migrations:** `init_db()` runs at import and after every restore. It does `CREATE TABLE/INDEX IF NOT EXISTS` (including `app_settings`, so an older backup gets it on restore), then adds the columns of `main.MIGRATIONS` that are missing (`db_core.add_missing_columns`: `users.ha_entity_id`, `events.actor`, `users.disabled`, `users.ha_user_id`, `expense_splits.percent`, `groups.is_default`, `users.receive_notifications`, `users.assistant_ok`, `expenses.sort_key`, in that order; `user_notify` and `user_prefs` come from `CREATE … IF NOT EXISTS`). It drops `OLD_INDEXES` (covered by primary keys or the new indexes), creates `idx_expenses_group_sort (group_id, sort_key, id)`, `idx_expenses_sort (sort_key)`, `idx_users_ha_entity` and `idx_groups_one_default`, fills `sort_key` where it is NULL and works out again every picked day's key for the zone in use (`fill_sort_keys`), and sets WAL mode. Connections use `foreign_keys = ON, synchronous = NORMAL`.
 - **Payment:** stored as an expense with `paid_by=from`, one split `{to: amount}`, `split_type='payment'` and description `"<From> paid <To>"`. The existing balance maths settles it automatically. Payments are **excluded from spending**: `/api/transactions`, dashboard week/month totals, `expensesCount`, and each group's `expenseCount`.
 - **Event types** (message formats in parentheses):
   - `group_created` ("A created group 'G' with N members")
   - `member_added`
   - `group_deleted` (no `group_id`)
-  - `group_default_set` / `group_default_cleared`
+  - `group_renamed`, `member_removed`, `payment_edited` (the default group is personal and not logged)
   - `expense_added` ("A added 'D' ($X) to G[, paid by P]"; the suffix appears only when the payer isn't the actor)
   - `expense_edited` ("… → 'D2' ($Y)" when the description or amount changed)
   - `payment_recorded`
@@ -135,7 +136,7 @@ A process-wide `threading.Lock` (`_lock`) serialises every write. Reads take no 
   - Every member starts at 0. For each expense, `net[payer] += amount` and `net[split.user] -= share`. Each net is then rounded to 2 dp.
   - Debtors are people with net < −0.001 and creditors those with net > 0.001, each sorted by size, largest first.
   - Greedy matching: take the head debtor and head creditor and create a transfer of `min(debt, credit)`, rounded to 2 dp. Subtract it from both, and advance past whichever side drops below 0.005. Repeat until either list runs out.
-- **Overall (`compute_overall_net`):** each person's per-group nets summed across all groups, sorted descending. The greedy transfers are **not** run on this total: people in unrelated groups would be told to pay each other.
+- **Overall (`compute_overall_net`):** two `GROUP BY` sums in whole cents (paid − owed) over every entry, everyone in a group listed (0 when square), sorted by amount descending, then name. The greedy transfers are **not** run on this total: people in unrelated groups would be told to pay each other.
 - **Equal split (`equal_shares`):** participants are deduplicated in order; in whole cents (`cents = round(round(amount, 2)·100)`) everyone gets `cents // n` and the first `cents % n` people one cent more, so shares sum exactly to the amount and none is negative (0.07 between 9 → seven at 0.01, two at 0.00; 100 between 6 → 16.67×4 + 16.66×2). Also used by the assistant's `splitpot.expense.add`.
 - **Custom split (`custom`, by amount):** amounts, in whole cents, must sum to exactly the total (400 "Splits must add up to exactly X — they add up to Y (Z short/over)"), so the group's nets always sum to zero. Zero shares are dropped, and at least one share must be > 0.
 - **Percent split (`percent`, `percent_shares`):** each `SplitItem.percent` is rounded to 2 dp and the rounded values must total exactly 100.00 (checked in integer hundredths; 400 "Percentages must add up to 100%"). Working in integers — `cents = round(amount·100)`, `h = round(percent·100)` — each share is `cents·h // 10000`; the `cents − Σshares` leftover cents (always fewer than the number of rows) go one each to the largest remainders `cents·h % 10000`, ties by list order. So the shares add up exactly to the amount and none is negative. 0% rows are dropped (at least one must be > 0); a row with a positive percentage can still get $0.00 on a tiny amount and is kept. Stored with each row's `percent`. Examples: 100 at 33.33/33.33/33.34 → 33.33/33.33/33.34; 10.00 → 3.33/3.33/3.34; 0.01 at 50/50 → 0.01/0.00; 1000.01 at 12.5%×8 → 125.01 + 7×125.00.
@@ -152,14 +153,15 @@ A process-wide `threading.Lock` (`_lock`) serialises every write. Reads take no 
   - Empty, or today's date in the local zone, is stored as `now_iso()`.
   - Any other date is stored as bare `YYYY-MM-DD`.
   - 400 for an unparseable date, a date more than one day in the future, or a year before 2000.
-- `PaymentCreate`: `fromUserId ≠ toUserId`, both must be members, amount validated like expenses, optional date.
+- `PaymentCreate`: `fromUserId ≠ toUserId`, both must be members (and not disabled, unless already in the payment being changed), amount validated like expenses, optional date.
+- Amounts are 0.01–1,000,000 with at most 2 decimals (422 otherwise). Ids are 1–64 characters; a group name up to 80; at most 50 members/participants/split rows in one request. Disabled people can't pay or share a new entry; an edit keeps those already in it; an equal split with nobody picked leaves them out.
 
 ## 6. API
 
 Routes are on `APIRouter(prefix="/api")`, registered before `app/static/` is mounted at `/` (`StaticFiles(html=True)`, the folder next to `main.py`). Request and response bodies use camelCase. "Group" below means the full `serialize_group` response:
-- group fields: `{id, name, createdAt, isDefault, memberIds, members:[{id,name}], expenses, ledgerTotal, nextCursor, balances}`
+- group fields: `{id, name, createdAt, isDefault (the asker's own default), memberIds, members:[{id,name}], expenses, ledgerTotal, expenseCount, paymentCount, nextCursor, balances}`
 - each expense: `{id, groupId, description, amount, paidBy, paidByName, splitType, date, splits:[{userId,amount,name,percent?}]}` (`percent` only on `percent` expenses), ordered by `date DESC, id DESC`
-- each entry in `expenses` (in a Group or a `/ledger` page) has `balancesAfter: [{userId, name, amount}]`: everyone's net in the group just after that entry — every entry up to it, oldest first in the ledger's own order (date, then id), summed in whole cents (positive = is owed). The group's members in their order, then anyone else with an entry. The page shows it under each row when **Show each person's balance** is ticked (off by default, remembered per device in localStorage).
+- with `balances=1` (every route answering with the group, and `/ledger`), each entry in `expenses` has `balancesAfter: [{userId, name, amount}]`: everyone's net in the group just after that entry — every entry up to it, oldest first in the ledger's own order (date, then id), summed in whole cents (positive = is owed). The group's members in their order, then anyone else with an entry. The page shows it under each row when **Show each person's balance** is ticked (off by default, remembered per device in localStorage).
 - `expenses` is the whole ledger unless the route got `?limit=N` (1–500): then only the newest N, and `nextCursor` (else null) continues it through `GET /groups/{id}/ledger`. `ledgerTotal` = every entry (expenses + payments). `balances` always come from every entry (see "Ledger paging" below). Every route answering with a Group takes the same optional `limit`; without it the answer is what it always was.
 - `balances`: `{net:[{userId,name,amount}], transfers:[{from,to,amount,fromName,toName}]}`
 
@@ -178,8 +180,11 @@ Routes are on `APIRouter(prefix="/api")`, registered before `app/static/` is mou
 | POST `/groups` | `{name, memberIds}` | 201 `{id,name,createdAt,memberIds}`. Name is trimmed and required. Ids are deduplicated; needs at least 1; 400 for unknown or disabled ids |
 | GET `/groups/{id}` | `limit?` | Group, or 404 |
 | GET `/groups/{id}/ledger` | `limit` 1–500 (default 20), `cursor?` | `{expenses, nextCursor, total}`: the entries after `cursor` (none = from the newest), newest first. 400 for a malformed cursor, 404 for an unknown group |
-| POST `/groups/{id}/members` | `{userId}`, `limit?` | Group. 404 for an unknown group; 400 for an unknown or disabled user. Idempotent: re-adding an existing member does nothing |
-| PUT `/groups/{id}/default` | `{isDefault}`, `limit?` | Group. Setting `true` clears every other group's flag in the same transaction |
+| POST `/groups/{id}/members` | `{userId}`, `limit?` | Group. Only the group's members (the asker's linked person) and admins (403). 404 for an unknown group; 400 for an unknown or disabled user, or one already in `max_groups_per_person` groups. Idempotent |
+| DELETE `/groups/{id}/members/{userId}` | `limit?` | Group. Members and admins; 400 unless that person's balance in the group is 0, or for the last member; 404 for a non-member. Their entries stay |
+| PUT `/groups/{id}` | `{name}` (1–80), `limit?` | Group, renamed (members and admins; logged) |
+| PUT `/groups/{id}/default` | `{isDefault}`, `limit?` | Group. The asker's own default (`user_prefs`); `false` on their default = no default |
+| PUT `/payments/{id}` | `PaymentCreate`, `limit?` | Group. Changes a settle-up payment (404 for anything else); logged in full; the people it affects are notified |
 | DELETE `/groups/{id}` 🔒 | – | 204, or 404. Cascades, logs, pushes sensors |
 | POST `/groups/{id}/expenses` | `ExpenseCreate` | 201 with the expense object (`splits` without names). 404 for an unknown group. Queues `notify_new_charge` as a background task (§7.1) |
 | PUT `/expenses/{id}` | `ExpenseCreate`, `limit?` | Group. 404 for an unknown expense; 400 if it is a payment. Keeps the stored date when the submitted day equals the stored local day; otherwise re-resolves it. Replaces all splits |
@@ -200,8 +205,9 @@ Routes are on `APIRouter(prefix="/api")`, registered before `app/static/` is mou
 🔒 = `require_admin`. The backend runs `push_balances_to_ha()` after the lock is released, following: add expense, edit expense, record payment, delete expense, delete group.
 
 **Ledger paging** (`ledger_page`, `encode_cursor` / `decode_cursor`, `group_net`):
-- Order: `ORDER BY ledger_key(date) DESC, id DESC` — `ledger_key` is `date_sort_key` (registered on the connection): the date as a UTC timestamp, a bare day being local midnight (`parse_date`), so bare days and timestamps compare in real time order whatever the zone; the id breaks ties, so the order is total. `/transactions` sorts by the same key.
-- Cursor: the last returned row's `(date, id)` as base64url JSON, opaque to the browser. The next page is `WHERE group_id = ? AND (ledger_key(date) < k OR (ledger_key(date) = k AND id < i))` with `k = date_sort_key(d)`, `LIMIT limit + 1` (the extra row only tells whether there is a next page, so a page that ends exactly at the last entry has `nextCursor: null`). Entries added later with a newer date land above the cursor and never shift or repeat a page; one back-dated below the cursor shows up in a later page. A well-formed cursor that matches no row is simply a position.
+- Order: `ORDER BY sort_key DESC, id DESC` — `expenses.sort_key` is `date_sort_key(date)`, stored with every write (`insert_entry`, the edits) and indexed: the date as a UTC timestamp, a bare day being local midnight (`parse_date`), so bare days and timestamps compare in real time order whatever the zone; the id breaks ties, so the order is total. `/transactions` sorts by the same key.
+- A picked day's key depends on Home Assistant's zone: `rekey_if_zone_changed` (after the zone is read at start-up, from housekeeping every 10 minutes, and `set_timezone`) works them out again when the zone changes.
+- Cursor: the last returned row's `(sort_key, id)` as base64url JSON, opaque to the browser (an older cursor's date works too: `date_sort_key` of a key is the key). The next page is `WHERE group_id = ? AND (sort_key, id) < (k, i)`, `LIMIT limit + 1` (the extra row only tells whether there is a next page, so a page that ends exactly at the last entry has `nextCursor: null`). Entries added later with a newer date land above the cursor and never shift or repeat a page; one back-dated below the cursor shows up in a later page. A well-formed cursor that matches no row is simply a position.
 - Balances never come from a page: `group_net` sums `ROUND(amount·100)` per payer and per split person over **every** entry in SQL (integer cents, so the order doesn't matter), then `settle_up` (the greedy matching, shared with `compute_balances`). Nets list members first in their order, then anyone else with an entry. `GET /groups` counts, the delete-group confirmation (`ledgerTotal`) and the CSV export (unpaged `serialize_group`) cover every entry too.
 
 **Restore flow:**
@@ -273,7 +279,7 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
   - `splitpot.recent` (`group?`, `days?` 1–90): each group's newest 20 entries (`ledger_page`), merged newest
     first, the first 20 kept (`more` when there were more) as `{date (local day), group, what ("payment" for a
     settle-up), paid_by, amount, your_share}`.
-- **Off by default** (App settings → **Answer the Household Assistant**, `assistant_answers`: money is private); a
+- **Off by default** (App settings → **Answer the Household Assistant**, `assistant_answers`: the assistant only ever tells a person about their own groups, so it is opt-in); a
   person can also turn it off on My settings (`users.assistant_ok`, default on; `PUT /me/prefs {assistantOk}`).
   Otherwise `nack not_allowed` (`off` / `person_off`). Links open each group in the answer on the sidebar page (`/group/<id>`, as the notifications do).
 
@@ -301,7 +307,7 @@ Single page. Sections `.view` are toggled with `.active` by `showView(name)`.
 - `api()` sends JSON by default and throws `detail` on errors. For the multipart upload it is called with `headers: {}`.
 
 **Shell & theming**
-- `<title>Splitpot</title>`. Google Fonts: Source Serif 4 (headings) and Inter (body).
+- `<title>Splitpot</title>`. Fonts: Source Serif 4 (headings) and Inter (body), served by the app (`static/fonts/fonts.css`, woff2 from the `@fontsource` npm packages, Latin and Latin Extended; SIL OFL 1.1, licences next to them).
 - Theme boot is `common/theme-boot.js` (an external script in `<head>`, before the stylesheets `common/themes.css`, `common/settings.css`, `style.css`; no inline script). It applies `localStorage.theme` (`midnight` (default) `|slate|daylight|auto`; the old `paper` maps to Midnight) to `html[data-theme]` (always the resolved theme; Auto = Daylight on a light device, else Midnight) and `sidebarCollapsed==="1"` to `html[data-sidebar=collapsed]`, so nothing flashes on load. The Theme `<select>` is filled by `HouseholdTheme.bindSelect()`.
 - CSS tokens: the surfaces, text and state colours come from `common/themes.css`; Splitpot's `--paper --paper-dim --ink --ink-soft --line` map onto the shared `--bg --panel --text --text-dim --border`. Its own, per theme in `:root, [data-theme="midnight"]`, `[data-theme="slate"]`, `[data-theme="daylight"]`: `--moss --moss-dark --rust --gold --line-strong` (and the accent, moss: Midnight moss `#4F9468` / rust `#E28259` / gold `#D8AC4E`).
 - Layout is `.app` (a **class**, so use `.app` selectors, never `#app`) as a flex row:
@@ -343,10 +349,10 @@ Clicking a tab reloads Groups or Dashboard; Admin opens its last tab.
 
 **Groups**
 - Create form: name (`maxlength 60`, a client-side limit only) and a chip picker of enabled people.
-- List rows: a ☆/★ star (`data-toggle-default`, checked before the open-group handler), name, "Default" badge, member names, expense count.
+- List rows: a ☆/★ star for the asker's own default (`data-toggle-default`, checked before the open-group handler; errors shown as a toast), name, "Default" badge, member names, "N expenses · M payments" (`entryCounts`, also used by the delete confirmation).
 
 **Group detail**
-- Header: title, `#groupDefaultBtn` ("☆ Set as default" / "★ Default group"), `#groupExportBtn` ("⬇ Export CSV", a link to `api/groups/<id>/export.csv`, for everyone; greyed out while the group has no expenses), and `#groupDeleteBtn` ("Delete group", `hidden` unless admin). Delete asks for confirmation, showing the expense/payment count, then returns to the Groups list.
+- Header: title, `#groupDefaultBtn` ("☆ Set as my default" / "★ My default group"), `#groupEditBtn` ("✎ Name and members", for members and admins: `#groupEditPanel` with Rename, Take out per member, and Add someone), `#groupExportBtn` ("⬇ Export CSV", a link to `api/groups/<id>/export.csv`, for everyone; greyed out while the group has no expenses), and `#groupDeleteBtn` ("Delete group", `hidden` unless admin). Delete asks for confirmation, showing the expense/payment count, then returns to the Groups list.
 - Member pills include disabled members, marked "(disabled)".
 - Two-column layout:
   - Left: expense form, all selectors scoped to `#addExpenseForm .split-btn` (a bare `.split-btn` also catches the dashboard toggle). Fields:
@@ -418,7 +424,6 @@ There is no "Opened through Home Assistant" row. Advice text, in priority order:
 
 ## 12. Possible future work
 
-- Remove group members and rename groups (deliberately absent today).
 - Remove a renamed person's old balance sensor straight away instead of when sync is switched off or Home Assistant restarts.
 
 ## Security notes (2026-10)

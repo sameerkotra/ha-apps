@@ -698,3 +698,11 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 @media (max-width: 640px) {
   .settle-row .settle-btn { flex: 1 0 100%; margin-left: 0; padding: 8px 10px; }
 }
+
+/* The group's name and members (✎ Name and members), and a settle-up payment being changed in its row */
+.group-edit { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.group-edit h3 { margin: 4px 0 0; font-size: 0.95rem; }
+.group-edit .member-edit-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.group-edit select, .group-edit input[type="text"] { flex: 1; min-width: 0; }
+.payment-edit .field-row { flex-wrap: wrap; margin-top: 6px; }
+.payment-edit .field { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }

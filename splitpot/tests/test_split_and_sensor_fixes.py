@@ -128,6 +128,7 @@ class LedgerOrder(Base):
                              "VALUES (?, ?, 'x', 1, 'a', 'equal', ?)", (eid, self.gid, date))
                 conn.execute("INSERT INTO expense_splits (expense_id, user_id, amount) VALUES (?, 'a', 1)", (eid,))
             conn.commit()
+            main.fill_sort_keys(conn)           # rows written without a key (as before the upgrade) get theirs
             entries, _ = main.ledger_page(conn, self.gid)
             self.assertEqual([e["id"] for e in entries], ["e1", "e2", "e3"])   # strings alone: e2, e1, e3
             first, cursor = main.ledger_page(conn, self.gid, 1)

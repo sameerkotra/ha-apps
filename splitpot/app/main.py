@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
 import tempfile
 
@@ -21,7 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, FastAPI, File, HT
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator, model_validator
 
 from . import app_messages, config
 from .common import auth_core, backup_core, csv_export, db_core, deeplinks, ha_time, sensor_publisher, settings_core, web_security
@@ -102,8 +102,11 @@ SUPERVISOR_CORE_API = "http://supervisor/core/api"
 def set_timezone(name: str) -> bool:
     """Switch week_range()/month_range() to `name` (an IANA zone like
     'Europe/Berlin'). Returns False (and keeps the current zone) if `name`
-    isn't recognized."""
-    return _ZONE.set(name)
+    isn't recognized. The ledger's stored order of picked days follows."""
+    ok = _ZONE.set(name)
+    if ok:
+        rekey_if_zone_changed()
+    return ok
 
 
 def tz():
@@ -295,14 +298,30 @@ def balance_sensor_states(conn) -> list:
     ]
 
 
-def push_balances_to_ha() -> int:
-    """Push every balance sensor, if sensor sync is on (live setting).
-    Returns how many were pushed."""
+def push_balances_to_ha(force: bool = True) -> int:
+    """Push every balance sensor, if sensor sync is on (live setting). Returns how many were pushed.
+    `force` re-posts unchanged ones too (the background sync: Home Assistant forgets posted states when it
+    restarts); after a change only the sensors whose balance changed are sent (push_changed_balances).
+    A sensor this app posted earlier that is no longer in the list (the person's last group was deleted, or
+    their sensor id changed with a rename) is removed from Home Assistant."""
     if not sensor_sync_enabled():
         return 0
     with get_conn() as conn:
         states = balance_sensor_states(conn)
-    return SENSORS.publish(states, force=True)["pushed"]   # network calls after the connection is closed
+    current = {s[0] for s in states}
+    stale = [n for n in SENSORS.names() if n.startswith(BALANCE_SENSOR_PREFIX) and n not in current]
+    if stale:                                          # network calls after the connection is closed
+        SENSORS.remove(stale)
+    return SENSORS.publish(states, force=force)["pushed"]
+
+
+def push_changed_balances() -> int:
+    """After a change (a background task, after the answer is sent): only the sensors whose value changed."""
+    try:
+        return push_balances_to_ha(force=False)
+    except Exception:          # a Home Assistant problem must never surface anywhere
+        logger.exception("Updating the balance sensors failed")
+        return 0
 
 
 def remove_balance_sensors() -> int:
@@ -368,6 +387,7 @@ def fetch_ha_persons() -> list:
 PERSONS_CACHE_SECONDS = 300
 _persons_cache: tuple[float, list] | None = None
 _persons_cache_lock = threading.Lock()
+_persons_synced: Optional[float] = None      # the cache's time when its people were last written to `users`
 
 
 def cached_ha_persons() -> list:
@@ -385,6 +405,13 @@ def cached_ha_persons() -> list:
         with _persons_cache_lock:
             _persons_cache = (time.monotonic(), persons)
     return persons
+
+
+def forget_persons() -> None:
+    """Read Home Assistant's people again on the next request (e.g. after a restore replaced `users`)."""
+    global _persons_cache, _persons_synced
+    with _persons_cache_lock:
+        _persons_cache, _persons_synced = None, None
 
 
 def sync_users_from_ha(conn, persons: Optional[list] = None) -> None:
@@ -417,7 +444,8 @@ def sync_users_from_ha(conn, persons: Optional[list] = None) -> None:
 
 def _connect() -> sqlite3.Connection:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return db_core.connect(DB_FILE, timeout=10, pragmas=("foreign_keys = ON",))
+    # synchronous = NORMAL: safe under WAL (set in init_db) — a power cut can lose the last commits, never the file
+    return db_core.connect(DB_FILE, timeout=10, pragmas=("foreign_keys = ON", "synchronous = NORMAL"))
 
 
 def get_conn():
@@ -437,7 +465,12 @@ MIGRATIONS = [
     ("groups", "is_default", "INTEGER NOT NULL DEFAULT 0"),
     ("users", "receive_notifications", "INTEGER NOT NULL DEFAULT 1"),   # the person's own opt-out (My settings)
     ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),            # "Let the Household Assistant answer for me"
+    ("expenses", "sort_key", "TEXT"),          # date_sort_key(date): the ledger's order, stored (filled in below)
 ]
+
+# Indexes older versions made that a primary key or a newer index already covers.
+OLD_INDEXES = ("idx_group_members_group", "idx_expense_splits_expense", "idx_expenses_group",
+               "idx_expenses_group_date", "idx_expenses_date")
 
 
 def init_db() -> None:
@@ -473,7 +506,8 @@ def init_db() -> None:
                 amount REAL NOT NULL,
                 paid_by TEXT NOT NULL REFERENCES users(id),
                 split_type TEXT NOT NULL,
-                date TEXT NOT NULL
+                date TEXT NOT NULL,
+                sort_key TEXT              -- date as a sortable UTC time (date_sort_key), set on every write
             );
 
             CREATE TABLE IF NOT EXISTS expense_splits (
@@ -512,17 +546,29 @@ def init_db() -> None:
                 PRIMARY KEY (user_id, service)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
-            CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
-            CREATE INDEX IF NOT EXISTS idx_expense_splits_expense ON expense_splits(expense_id);
-            CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
-            -- the group ledger, newest first, a page at a time (keyset on date + id)
-            CREATE INDEX IF NOT EXISTS idx_expenses_group_date ON expenses(group_id, date, id);
+            -- Each person's own choices that aren't about money, keyed by their Home Assistant login (so they
+            -- work before Home Assistant links the login to a person): the group Splitpot opens into.
+            -- default_group_id NULL = "no default" (chosen); no row = the household's old default, if any.
+            CREATE TABLE IF NOT EXISTS user_prefs (
+                ha_user_id TEXT PRIMARY KEY,
+                default_group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
             CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
             """
         )
         # Older databases may lack columns added to the tables above (MIGRATIONS).
         db_core.add_missing_columns(conn, MIGRATIONS)
+        for name in OLD_INDEXES:
+            conn.execute(f"DROP INDEX IF EXISTS {name}")
+        # the group ledger, newest first, a page at a time (keyset on sort_key + id); the Dashboard's week/month
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_expenses_group_sort ON expenses(group_id, sort_key, id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_expenses_sort ON expenses(sort_key)")
+        # Rows written before sort_key existed (or restored from an older backup) get theirs now, and the picked
+        # days (whose place depends on the time zone) are worked out again for the zone in use.
+        fill_sort_keys(conn, all_local_days=True)
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ha_entity ON users(ha_entity_id) "
             "WHERE ha_entity_id IS NOT NULL"
@@ -598,40 +644,78 @@ SETTINGS = [
         "notify_charges", False, "Notify people about new charges", group="notify", strict=True,
         help="When someone adds a charge, everyone in it — whoever paid and everyone with a share — gets a phone "
              "notification through Home Assistant, except whoever added it: who added what, the amount, the group and "
-             "their share. Phones come from Home Assistant (Settings → People → the person → Track device); extra "
+             "their share. When an edit changes who paid or someone's share, the people it affects are told too. "
+             "Phones come from Home Assistant (Settings → People → the person → Track device); extra "
              "notify services can be added under Admin → Users. Each person can turn them off under My settings."),
     settings_core.Setting(
         "notify_payments", True, "Also notify settle-up payments", group="notify", strict=True,
         enabled_if="notify_charges",
-        help="When a settle-up payment is recorded, the two people in it are told too (not whoever recorded it)."),
+        help="When a settle-up payment is recorded or changed, the people in it are told too (not whoever did it)."),
     settings_core.Setting(
         "assistant_answers", False, "Answer the Household Assistant", group="assistant", strict=True,
         help="Lets the Household Assistant tell a person the balances and recent expenses of the groups they are in — "
              "who owes whom, and what was spent, by whom and how much. Off until an admin turns it on; each person can "
              "still turn it off for themselves under My settings."),
+    settings_core.Setting(
+        "max_groups_per_person", 200, "Groups per person", group="limits", min=0, max=10000, strict=True,
+        help="The most groups one person can be in; creating a group or adding someone past it is refused. "
+             "0 = no limit."),
+    settings_core.Setting(
+        "max_entries_per_group", 20000, "Entries per group", group="limits", min=0, max=1000000, strict=True,
+        help="The most expenses and settle-up payments one group can hold; adding more is refused (start a new "
+             "group). 0 = no limit."),
+    settings_core.Setting(
+        "writes_per_minute", 60, "Changes per person per minute", group="limits", min=0, max=10000, strict=True,
+        help="How many changes (adding, editing, recording, creating) one Home Assistant user can make in a minute; "
+             "more are refused with \"too many changes\" until the minute is up. 0 = no limit."),
+    settings_core.Setting(
+        "keep_activity_days", 365, "Keep the activity log (days)", group="limits", min=0, max=36500, strict=True,
+        help="Activity log entries older than this are removed once a day. Expenses, payments and balances are "
+             "never removed. 0 = keep everything."),
+    settings_core.Setting(
+        "bus_signing_key", "", "App-messages signing key", group="assistant", secret=True, max_length=200,
+        help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+             "Assistant's network can send messages as any other."),
 ]
 SETTINGS_GROUPS = [settings_core.Group("money", "Money"), settings_core.Group("ha", "Home Assistant"),
                    settings_core.Group("notify", "Notifications",
-                                       "Phone notifications through Home Assistant. Edits and deletions are never "
-                                       "notified; the activity log on the Dashboard shows them."),
+                                       "Phone notifications through Home Assistant. Deletions are never notified, "
+                                       "and neither are edits that only change a description or date; the activity "
+                                       "log on the Dashboard shows them."),
                    settings_core.Group("assistant", "Household Assistant",
                                        "The Household Assistant app answers questions from what the household apps "
-                                       "know. Money is private, so Splitpot doesn't answer it until you turn this on.")]
+                                       "know. Everyone who opens Splitpot sees every group; the Household Assistant "
+                                       "is more private — it tells each person only about the groups they are in, "
+                                       "and Splitpot doesn't answer it until you turn this on."),
+                   settings_core.Group("limits", "Limits",
+                                       "Generous caps so one person (or a stuck script) can't fill the database.")]
 
 
 def _settings_log_event(conn, changed, current, merged, user):
+    def onoff(v):
+        return "on" if v else "off"
+
     def describe(k):
         if k == "ha_sync_enabled":
-            return f"sensor sync {'on' if merged[k] else 'off'}"
+            return f"sensor sync {onoff(merged[k])}"
         if k == "sync_interval_minutes":
             return f"sync interval {current[k]} → {merged[k]} min"
         if k == "notify_charges":
-            return f"charge notifications {'on' if merged[k] else 'off'}"
+            return f"charge notifications {onoff(merged[k])}"
         if k == "notify_payments":
-            return f"settle-up notifications {'on' if merged[k] else 'off'}"
-        return f"currency {current[k]} → {merged[k]}"
+            return f"settle-up notifications {onoff(merged[k])}"
+        if k == "assistant_answers":
+            return f"Household Assistant answers {onoff(merged[k])}"
+        if k == "currency":
+            return f"currency {current[k]} → {merged[k]}"
+        if k == "bus_signing_key":                       # a secret: never written anywhere
+            return "app-messages signing key " + ("set" if merged[k] else "cleared")
+        return f"{SETTINGS_LABELS_BY_KEY.get(k, k).lower()} {current[k]} → {merged[k]}"
     what = ", ".join(describe(k) for k in changed)
     log_event(conn, "settings_changed", f"{user or 'Someone'} changed the app settings: {what}", actor=user)
+
+
+SETTINGS_LABELS_BY_KEY = {s.key: s.label for s in SETTINGS}
 
 
 SETTINGS_REGISTRY = settings_core.Registry(
@@ -786,13 +870,13 @@ LEDGER_PAGE = 20          # what the group page loads first, and per "Load more"
 LEDGER_MAX_LIMIT = 500
 
 
-def encode_cursor(date: str, expense_id: str) -> str:
-    """The position after a ledger row, opaque to the browser."""
-    return base64.urlsafe_b64encode(json.dumps([date, expense_id]).encode()).decode().rstrip("=")
+def encode_cursor(key: str, expense_id: str) -> str:
+    """The position after a ledger row (its sort key, or a date, and its id), opaque to the browser."""
+    return base64.urlsafe_b64encode(json.dumps([key, expense_id]).encode()).decode().rstrip("=")
 
 
 def decode_cursor(cursor: str) -> tuple[str, str]:
-    """(date, id) from encode_cursor, or a 400."""
+    """(sort key or date, id) from encode_cursor, or a 400."""
     try:
         date, eid = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
         if isinstance(date, str) and isinstance(eid, str) and date and eid:
@@ -802,8 +886,7 @@ def decode_cursor(cursor: str) -> tuple[str, str]:
     raise HTTPException(400, "That ledger position isn't valid — reload the group.")
 
 
-def _expense_json(conn, group_id: str, e, names: dict) -> dict:
-    splits = fetch_expense_splits(conn, e["id"])
+def _expense_json(group_id: str, e, names: dict, splits: list) -> dict:
     return {
         "id": e["id"],
         "groupId": group_id,
@@ -827,31 +910,92 @@ def date_sort_key(value) -> str:
         return str(value)
 
 
-def ledger_page(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None):
-    """(entries, next cursor) — the group's expenses and payments newest first, starting after `cursor`;
-    at most `limit` of them (None = all, and no next cursor)."""
+# The order itself is the stored `sort_key` (date_sort_key of the date, written with every entry), so the ledger's
+# pages, its running balances and the Dashboard's weeks and months are index range reads. A picked day's key
+# depends on Home Assistant's time zone: fill_sort_keys works those out again when the zone changes.
+_keyed_zone: Optional[str] = None      # the zone the stored picked days' keys were worked out in
+
+
+def fill_sort_keys(conn, all_local_days: bool = False) -> int:
+    """Give every entry without a sort_key its key; with `all_local_days`, also work out again the keys of the
+    picked days (bare YYYY-MM-DD dates) for the zone in use. Commits. Returns how many rows were written."""
+    global _keyed_zone
+    zone = _ZONE.name
     conn.create_function("ledger_key", 1, date_sort_key, deterministic=True)
-    sql = "SELECT id, description, amount, paid_by, split_type, date FROM expenses WHERE group_id = ?"
+    where = "sort_key IS NULL OR length(date) = 10" if all_local_days else "sort_key IS NULL"
+    n = conn.execute(f"UPDATE expenses SET sort_key = ledger_key(date) WHERE {where}").rowcount
+    conn.commit()
+    if all_local_days:
+        _keyed_zone = zone
+    return n
+
+
+def rekey_if_zone_changed() -> int:
+    """After Home Assistant's time zone was read (at start-up, and whenever it changes): the picked days' keys."""
+    if _ZONE.name == _keyed_zone:
+        return 0
+    with _lock, get_conn() as conn:
+        return fill_sort_keys(conn, all_local_days=True)
+
+
+def insert_entry(conn, expense_id: str, group_id: str, description: str, amount: float, paid_by: str,
+                 split_type: str, date: str) -> None:
+    """One new expense or payment row, with its sort key."""
+    conn.execute(
+        "INSERT INTO expenses (id, group_id, description, amount, paid_by, split_type, date, sort_key) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (expense_id, group_id, description, amount, paid_by, split_type, date, date_sort_key(date)),
+    )
+
+
+def user_names(conn) -> dict:
+    """{users.id: name} for everyone (one query instead of one per row)."""
+    return {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
+
+
+def splits_for(conn, expense_ids: list) -> dict:
+    """{expense id: split rows (as fetch_expense_splits)} for many entries, in a few IN queries."""
+    out: dict = {eid: [] for eid in expense_ids}
+    ids = list(out)
+    for i in range(0, len(ids), 900):              # well under SQLite's limit on query parameters
+        chunk = ids[i:i + 900]
+        for r in conn.execute(
+                f"SELECT expense_id, user_id, amount, percent FROM expense_splits "
+                f"WHERE expense_id IN ({','.join('?' * len(chunk))}) ORDER BY rowid", chunk):
+            item = {"userId": r["user_id"], "amount": r["amount"]}
+            if r["percent"] is not None:
+                item["percent"] = r["percent"]
+            out[r["expense_id"]].append(item)
+    return out
+
+
+def ledger_page(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None,
+                balances: bool = False):
+    """(entries, next cursor) — the group's expenses and payments newest first, starting after `cursor`;
+    at most `limit` of them (None = all, and no next cursor). With `balances`, each entry carries everyone's
+    balance just after it (`balancesAfter`, the ledger's "Show each person's balance"); without, it doesn't."""
+    sql = "SELECT id, description, amount, paid_by, split_type, date, sort_key FROM expenses WHERE group_id = ?"
     args: list = [group_id]
     if cursor:
-        date, eid = decode_cursor(cursor)
-        key = date_sort_key(date)
-        sql += " AND (ledger_key(date) < ? OR (ledger_key(date) = ? AND id < ?))"
-        args += [key, key, eid]
-    sql += " ORDER BY ledger_key(date) DESC, id DESC"
+        key, eid = decode_cursor(cursor)
+        sql += " AND (sort_key, id) < (?, ?)"
+        args += [date_sort_key(key), eid]      # a key from encode_cursor stays as it is; an older cursor's date too
+    sql += " ORDER BY sort_key DESC, id DESC"
     if limit is not None:
         sql += " LIMIT ?"
         args.append(limit + 1)                 # one more: is there a next page?
     rows = conn.execute(sql, args).fetchall()
     more = limit is not None and len(rows) > limit
     rows = rows[:limit] if limit is not None else rows
-    names = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
-    entries = [_expense_json(conn, group_id, r, names) for r in rows]
-    after = running_balances(conn, group_id, {r["id"] for r in rows})
-    for e in entries:
-        e["balancesAfter"] = [{"userId": u, "name": names.get(u, "Unknown"), "amount": a}
-                              for u, a in after.get(e["id"], [])]
-    return entries, (encode_cursor(rows[-1]["date"], rows[-1]["id"]) if more else None)
+    names = user_names(conn)
+    splits = splits_for(conn, [r["id"] for r in rows])
+    entries = [_expense_json(group_id, r, names, splits[r["id"]]) for r in rows]
+    if balances:
+        after = running_balances(conn, group_id, {r["id"] for r in rows})
+        for e in entries:
+            e["balancesAfter"] = [{"userId": u, "name": names.get(u, "Unknown"), "amount": a}
+                                  for u, a in after.get(e["id"], [])]
+    return entries, (encode_cursor(rows[-1]["sort_key"], rows[-1]["id"]) if more else None)
 
 
 def running_balances(conn, group_id: str, wanted: set) -> dict:
@@ -861,7 +1005,6 @@ def running_balances(conn, group_id: str, wanted: set) -> dict:
     anyone else who has an entry so far."""
     if not wanted:
         return {}
-    conn.create_function("ledger_key", 1, date_sort_key, deterministic=True)
     members = group_member_ids(conn, group_id)
     shares: dict = {}
     for r in conn.execute("SELECT s.expense_id AS e, s.user_id AS u, CAST(ROUND(s.amount * 100) AS INTEGER) AS c "
@@ -871,7 +1014,7 @@ def running_balances(conn, group_id: str, wanted: set) -> dict:
     cents = {m: 0 for m in members}
     out = {}
     for r in conn.execute("SELECT id, paid_by, CAST(ROUND(amount * 100) AS INTEGER) AS c FROM expenses "
-                          "WHERE group_id = ? ORDER BY ledger_key(date), id", (group_id,)):
+                          "WHERE group_id = ? ORDER BY sort_key, id", (group_id,)):
         cents[r["paid_by"]] = cents.get(r["paid_by"], 0) + r["c"]
         for u, c in shares.get(r["id"], ()):
             cents[u] = cents.get(u, 0) - c
@@ -901,31 +1044,56 @@ def group_net(conn, group_id: str, member_ids: List[str]) -> dict:
     return {k: round(v / 100, 2) for k, v in cents.items()}
 
 
-def serialize_group(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None) -> dict:
+def default_group_for(conn, ha_user: Optional[str]) -> Optional[str]:
+    """The group this person's Splitpot opens into: their own choice (user_prefs, by Home Assistant login), or —
+    until they choose — the group that was the household's default before defaults became each person's own."""
+    if ha_user:
+        row = conn.execute("SELECT default_group_id FROM user_prefs WHERE ha_user_id = ?", (ha_user,)).fetchone()
+        if row:
+            return row["default_group_id"]
+    row = conn.execute("SELECT id FROM groups WHERE is_default = 1").fetchone()
+    return row["id"] if row else None
+
+
+def entry_counts(conn, group_id: str) -> tuple[int, int]:
+    """(expenses, settle-up payments) in the group."""
+    r = conn.execute("SELECT COUNT(*) AS n, SUM(split_type = 'payment') AS p FROM expenses WHERE group_id = ?",
+                     (group_id,)).fetchone()
+    return r["n"] - (r["p"] or 0), r["p"] or 0
+
+
+def serialize_group(conn, group_id: str, limit: Optional[int] = None, cursor: Optional[str] = None,
+                    viewer: Optional[str] = None, balances: bool = False) -> dict:
     """The group. `expenses` is the whole ledger, or with `limit` its newest `limit` entries (`nextCursor` then
-    points at the rest: GET /groups/{id}/ledger). Balances and `ledgerTotal` always cover every entry."""
-    g = conn.execute("SELECT id, name, created_at, is_default FROM groups WHERE id = ?", (group_id,)).fetchone()
+    points at the rest: GET /groups/{id}/ledger). Balances and `ledgerTotal` always cover every entry.
+    `viewer`: the Home Assistant login asking (for `isDefault`, their own default group). `balances`: each
+    entry's running balances (ledger_page)."""
+    g = conn.execute("SELECT id, name, created_at FROM groups WHERE id = ?", (group_id,)).fetchone()
     if not g:
         raise HTTPException(404, "Group not found")
 
+    names = user_names(conn)
     member_ids = group_member_ids(conn, group_id)
-    expenses, next_cursor = ledger_page(conn, group_id, limit, cursor)
+    expenses, next_cursor = ledger_page(conn, group_id, limit, cursor, balances=balances)
     net, transfers = settle_up(group_net(conn, group_id, member_ids))
+    expense_count, payment_count = entry_counts(conn, group_id)
 
     return {
         "id": g["id"],
         "name": g["name"],
         "createdAt": g["created_at"],
-        "isDefault": bool(g["is_default"]),
+        "isDefault": default_group_for(conn, viewer) == group_id,
         "memberIds": member_ids,
-        "members": [{"id": m, "name": user_name(conn, m)} for m in member_ids],
+        "members": [{"id": m, "name": names.get(m, "Unknown")} for m in member_ids],
         "expenses": expenses,
-        "ledgerTotal": ledger_total(conn, group_id),
+        "ledgerTotal": expense_count + payment_count,
+        "expenseCount": expense_count,
+        "paymentCount": payment_count,
         "nextCursor": next_cursor,
         "balances": {
-            "net": [{"userId": uid, "name": user_name(conn, uid), "amount": amt} for uid, amt in net.items()],
+            "net": [{"userId": uid, "name": names.get(uid, "Unknown"), "amount": amt} for uid, amt in net.items()],
             "transfers": [
-                {**t, "fromName": user_name(conn, t["from"]), "toName": user_name(conn, t["to"])}
+                {**t, "fromName": names.get(t["from"], "Unknown"), "toName": names.get(t["to"], "Unknown")}
                 for t in transfers
             ],
         },
@@ -1037,13 +1205,29 @@ def group_breakdown(expenses: list[dict]) -> list[dict]:
 
 
 # ---------- models ----------
+MAX_GROUP_NAME = 80
+MAX_GROUP_MEMBERS = 50          # people picked for one group (or one split) at a time
+Ident = Annotated[str, Field(min_length=1, max_length=64)]      # a users.id
+
+
+def _two_decimals(v: Optional[float]) -> Optional[float]:
+    """Money has whole cents: 12.345 would be stored as 12.35 (round) but split from 1234.5 cents — refused."""
+    if v is not None and abs(v * 100 - round(v * 100)) > 1e-6:
+        raise ValueError("use at most 2 decimals")
+    return v
+
+
 class GroupCreate(BaseModel):
-    name: str
-    memberIds: List[str] = Field(default_factory=list)
+    name: str = Field(max_length=MAX_GROUP_NAME)
+    memberIds: List[Ident] = Field(default_factory=list, max_length=MAX_GROUP_MEMBERS)
+
+
+class GroupRename(BaseModel):
+    name: str = Field(max_length=MAX_GROUP_NAME)
 
 
 class MemberAdd(BaseModel):
-    userId: str
+    userId: Ident
 
 
 class GroupDefaultUpdate(BaseModel):
@@ -1054,33 +1238,34 @@ MAX_AMOUNT = 1_000_000
 
 
 class SplitItem(BaseModel):
-    userId: str
+    userId: Ident
     # >= 0 and finite: JSON allows Infinity/NaN, and a single infinite
     # amount would break every balance (and the JSON of every response
     # that includes it) for the whole household.
     # splitType "custom" needs `amount`; "percent" needs `percent` (0–100).
-    amount: Optional[float] = Field(None, ge=0, le=MAX_AMOUNT, allow_inf_nan=False)
+    amount: Optional[Annotated[float, AfterValidator(_two_decimals)]] = Field(None, ge=0, le=MAX_AMOUNT,
+                                                                              allow_inf_nan=False)
     percent: Optional[float] = Field(None, ge=0, le=100, allow_inf_nan=False)
 
 
 class ExpenseCreate(BaseModel):
     description: str = Field(max_length=200)
-    amount: float = Field(gt=0, le=MAX_AMOUNT, allow_inf_nan=False)
-    paidBy: str
+    amount: Annotated[float, AfterValidator(_two_decimals)] = Field(ge=0.01, le=MAX_AMOUNT, allow_inf_nan=False)
+    paidBy: Ident
     splitType: Optional[Literal["equal", "custom", "percent"]] = "equal"
-    participants: Optional[List[str]] = None
-    splits: Optional[List[SplitItem]] = None
-    date: Optional[str] = None   # YYYY-MM-DD in the household's time zone; omitted = now
+    participants: Optional[List[Ident]] = Field(None, max_length=MAX_GROUP_MEMBERS)
+    splits: Optional[List[SplitItem]] = Field(None, max_length=MAX_GROUP_MEMBERS)
+    date: Optional[str] = Field(None, max_length=40)   # YYYY-MM-DD in the household's time zone; omitted = now
 
 
 class PaymentCreate(BaseModel):
     """A settle-up payment: `fromUserId` paid `toUserId` back. Stored as a
     one-person "expense" (split_type 'payment') so the existing balance maths
     handles it — but excluded from spending totals everywhere."""
-    fromUserId: str
-    toUserId: str
-    amount: float = Field(gt=0, le=MAX_AMOUNT, allow_inf_nan=False)
-    date: Optional[str] = None
+    fromUserId: Ident
+    toUserId: Ident
+    amount: Annotated[float, AfterValidator(_two_decimals)] = Field(ge=0.01, le=MAX_AMOUNT, allow_inf_nan=False)
+    date: Optional[str] = Field(None, max_length=40)
 
 
 # ---------- expense validation (shared by add / edit / payment) ----------
@@ -1104,15 +1289,23 @@ def resolve_expense_date(value: Optional[str]) -> str:
     return now_iso() if d == today else d.isoformat()
 
 
-def build_splits(member_ids: List[str], payload: "ExpenseCreate") -> tuple[list, str]:
+def build_splits(member_ids: List[str], payload: "ExpenseCreate", disabled=frozenset(),
+                 keep=frozenset()) -> tuple[list, str]:
     """Validated split rows + split type for an expense. Everyone involved
     must be a member of the group, and nobody may appear twice — a duplicate
     would hit the (expense_id, user_id) primary key as a 500, and a
-    non-member would be silently charged a share of a group they're not in."""
+    non-member would be silently charged a share of a group they're not in.
+    Nobody `disabled` may pay or share, except the people in `keep` (who already
+    paid or shared the expense being edited); an equal split with nobody picked
+    leaves them out."""
     members = set(member_ids)
+    blocked = set(disabled) - set(keep)
     amt = payload.amount
     if payload.paidBy not in members:
         raise HTTPException(400, "Payer must be a group member")
+    if payload.paidBy in blocked:
+        raise HTTPException(400, "The payer is disabled — pick someone else, or an admin can enable them in "
+                                 "Admin → Users")
     if payload.splitType in ("custom", "percent"):
         if not payload.splits:
             raise HTTPException(400, "Provide custom split amounts" if payload.splitType == "custom"
@@ -1122,6 +1315,8 @@ def build_splits(member_ids: List[str], payload: "ExpenseCreate") -> tuple[list,
             raise HTTPException(400, "Each person can only appear once in a split")
         if not set(ids) <= members:
             raise HTTPException(400, "Everyone in a split must be a member of this group")
+        if set(ids) & blocked:
+            raise HTTPException(400, _DISABLED_IN_SPLIT)
     if payload.splitType == "percent":
         if any(s.percent is None for s in payload.splits):
             raise HTTPException(400, "Provide a percentage for each person")
@@ -1142,12 +1337,23 @@ def build_splits(member_ids: List[str], payload: "ExpenseCreate") -> tuple[list,
         if not splits:
             raise HTTPException(400, "At least one person needs a share greater than 0")
         return splits, "custom"
-    participants = list(dict.fromkeys(payload.participants or member_ids))   # dedupe, keep order
+    picked = payload.participants or [m for m in member_ids if m not in blocked]
+    participants = list(dict.fromkeys(picked))   # dedupe, keep order
     if not participants:
         raise HTTPException(400, "Pick at least one person to split with")
     if not set(participants) <= members:
         raise HTTPException(400, "Everyone in a split must be a member of this group")
+    if set(participants) & blocked:
+        raise HTTPException(400, _DISABLED_IN_SPLIT)
     return equal_shares(amt, participants), "equal"
+
+
+_DISABLED_IN_SPLIT = ("Someone in the split is disabled — leave them out, or an admin can enable them in "
+                      "Admin → Users")
+
+
+def disabled_ids(conn) -> set:
+    return {r["id"] for r in conn.execute("SELECT id FROM users WHERE disabled = 1")}
 
 
 def equal_shares(amount: float, participants: list) -> list:
@@ -1168,7 +1374,7 @@ def percent_shares(amount: float, rows: list) -> list:
     and none is negative. All in integers (cents, hundredths of a percent) to
     stay clear of float drift. 0% rows are dropped; at least one must be > 0.
     Returns [{userId, amount, percent}] in list order."""
-    cents = round(amount * 100)
+    cents = round(round(amount, 2) * 100)       # the amount as stored (round(amount, 2)), like equal_shares
     hundredths = [(uid, round(pct * 100)) for uid, pct in rows]   # 33.335 -> 3334 (= 33.34%)
     if sum(h for _, h in hundredths) != 10000:
         raise HTTPException(400, "Percentages must add up to 100%")
@@ -1340,6 +1546,210 @@ def notify_payment(expense_id: str, actor_ha_id: Optional[str], actor: str) -> i
         return 0
 
 
+# ---------- edits: what changed (activity log) and who is told ----------
+def _cents(x) -> Optional[int]:
+    return None if x is None else round(x * 100)
+
+
+def entry_snapshot(conn, expense_id: str) -> Optional[dict]:
+    """An entry as it is now, for describing an edit: its row fields and {user id: share}."""
+    e = conn.execute("SELECT id, group_id, description, amount, paid_by, split_type, date FROM expenses WHERE id = ?",
+                     (expense_id,)).fetchone()
+    if not e:
+        return None
+    splits = fetch_expense_splits(conn, expense_id)
+    return {**dict(e), "splits": splits, "shares": {s["userId"]: s["amount"] for s in splits}}
+
+
+def _local_day(date: str) -> str:
+    try:
+        return parse_date(date).astimezone(tz()).date().isoformat()
+    except (ValueError, TypeError):
+        return str(date)
+
+
+def describe_split(entry: dict, names: dict) -> str:
+    """"equally between Ann, Ben" / "by amount: Ann $30.00, Cat $30.00" / "by percentage: Ann 60%, Ben 40%"."""
+    who = [(names.get(s["userId"], "Unknown"), s) for s in entry["splits"]]
+    if entry["split_type"] == "percent":
+        return "by percentage: " + ", ".join(f"{n} {s.get('percent', 0):g}%" for n, s in who)
+    if entry["split_type"] == "custom":
+        return "by amount: " + ", ".join(f"{n} {money(s['amount'])}" for n, s in who)
+    return "equally between " + ", ".join(n for n, _ in who)
+
+
+def describe_changes(before: dict, after: dict, names: dict) -> list:
+    """What an edit changed, in words: description, amount, who paid, the split and the date."""
+    parts = []
+    if before["description"] != after["description"] and after["split_type"] != "payment":   # a payment's is made up
+        parts.append(f"'{before['description']}' → '{after['description']}'")
+    if _cents(before["amount"]) != _cents(after["amount"]):
+        parts.append(f"amount {money(before['amount'])} → {money(after['amount'])}")
+    if before["paid_by"] != after["paid_by"]:
+        parts.append(f"paid by {names.get(before['paid_by'], 'Unknown')} → {names.get(after['paid_by'], 'Unknown')}")
+    if after["split_type"] == "payment":
+        old_to = before["splits"][0]["userId"] if before["splits"] else None
+        new_to = after["splits"][0]["userId"] if after["splits"] else None
+        if old_to != new_to:
+            parts.append(f"paid to {names.get(old_to, 'Unknown')} → {names.get(new_to, 'Unknown')}")
+    else:
+        old_split, new_split = describe_split(before, names), describe_split(after, names)
+        if before["split_type"] != after["split_type"] or old_split != new_split:
+            parts.append(f"split {old_split} → {new_split}")
+    if _local_day(before["date"]) != _local_day(after["date"]):
+        parts.append(f"date {_local_day(before['date'])} → {_local_day(after['date'])}")
+    return parts
+
+
+def edit_notices(before: dict, after: dict, names: dict, group_name: str, actor_id: Optional[str],
+                 actor: str) -> list:
+    """Who hears about an edit, and what: when the payer changed, everyone in the entry before or after; otherwise
+    only the people whose share changed. Never whoever made the edit. A new description or date alone tells nobody."""
+    payer_changed = before["paid_by"] != after["paid_by"]
+    old, new = before["shares"], after["shares"]
+    people = list(dict.fromkeys([before["paid_by"], after["paid_by"], *old, *new]))
+    payer_name = names.get(after["paid_by"], "someone")
+    if after["split_type"] == "payment":
+        to_name = names.get(next(iter(new), None), "someone")
+        head = (f"{actor} changed a settle-up payment in {group_name}: now {payer_name} paid {to_name} "
+                f"{money(after['amount'])}")
+        if _cents(before["amount"]) != _cents(after["amount"]):
+            head += f" (was {money(before['amount'])})"
+        changed = payer_changed or set(old) != set(new) or _cents(before["amount"]) != _cents(after["amount"])
+        return [(uid, head + ".") for uid in people if changed and uid != actor_id]
+    head = f"{actor} changed '{after['description']}' ({money(after['amount'])}) in {group_name}"
+    out = []
+    for uid in people:
+        if uid == actor_id:
+            continue
+        o, n = _cents(old.get(uid)), _cents(new.get(uid))
+        if not payer_changed and o == n:
+            continue
+        bits = []
+        if payer_changed:
+            bits.append("now paid by you" if uid == after["paid_by"] else f"now paid by {payer_name}")
+        if n is None and o is not None:
+            bits.append(f"you're no longer in the split (your share was {money(old[uid])})")
+        elif n is not None and o is None:
+            bits.append(f"your share: {money(new[uid])}")
+        elif n is not None and o != n:
+            bits.append(f"your share: {money(new[uid])} (was {money(old[uid])})")
+        elif n is not None:
+            bits.append(f"your share: {money(new[uid])}")
+        out.append((uid, f"{head}: " + "; ".join(bits) + "."))
+    return out
+
+
+def notify_edit(before: dict, expense_id: str, actor_ha_id: Optional[str], actor: str) -> int:
+    """Background task after an edit that changed who paid or anyone's share (charges: "Notify people about new
+    charges"; payments: also "Also notify settle-up payments")."""
+    try:
+        payment = before["split_type"] == "payment"
+        if not get_setting("notify_charges") or (payment and not get_setting("notify_payments")) \
+                or not ha_core.has_token():
+            return 0
+        with get_conn() as conn:
+            after = entry_snapshot(conn, expense_id)
+            if not after:
+                return 0
+            group = conn.execute("SELECT name FROM groups WHERE id = ?", (after["group_id"],)).fetchone()
+            names = user_names(conn)
+        notices = edit_notices(before, after, names, group["name"] if group else "a group",
+                               linked_user_id(actor_ha_id), actor)
+        return send_notices(notices, notify_link(after["group_id"])) if notices else 0
+    except Exception:
+        logger.exception("Sending the notifications about an edit failed")
+        return 0
+
+
+# ---------- housekeeping ----------
+HOUSEKEEPING_SECONDS = 600
+SNAPSHOT_PREFIX = "splitpot-backup-"          # Admin → Storage downloads, made in the temp folder
+_last_prune: Optional[float] = None
+
+
+def prune_events(now: Optional[datetime] = None) -> int:
+    """Remove activity log entries older than the "Keep the activity log" setting (0 = keep all)."""
+    days = int(get_setting("keep_activity_days") or 0)
+    if days <= 0:
+        return 0
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=days)).isoformat()
+    with _lock, get_conn() as conn:
+        n = conn.execute("DELETE FROM events WHERE created_at < ?", (cutoff,)).rowcount
+        conn.commit()
+    if n:
+        logger.info("Removed %d activity log entr%s older than %d days", n, "y" if n == 1 else "ies", days)
+    return n
+
+
+def housekeeping() -> None:
+    """Every few minutes, in a thread: follow a changed time zone in the ledger's order, sweep backup downloads a
+    browser never finished, and once a day prune the activity log."""
+    global _last_prune
+    rekey_if_zone_changed()
+    backup_core.remove_stale(tempfile.gettempdir(), SNAPSHOT_PREFIX, 6 * 3600)
+    if _last_prune is None or time.monotonic() - _last_prune >= 24 * 3600:
+        _last_prune = time.monotonic()
+        prune_events()
+
+
+# ---------- per-person write limit (App settings → Limits) ----------
+class WriteLimiter:
+    """At most `limit()` changes per Home Assistant user in any 60 seconds (0 = no limit), kept in memory."""
+
+    WINDOW = 60.0
+
+    def __init__(self, limit, clock=time.monotonic):
+        self._limit, self._clock = limit, clock
+        self._seen: dict = {}
+        self._lock = threading.Lock()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._seen.clear()
+
+    def check(self, who: str) -> Optional[int]:
+        """None when `who` may make another change (it is counted); else the seconds until they may."""
+        limit = int(self._limit() or 0)
+        if limit <= 0:
+            return None
+        now = self._clock()
+        with self._lock:
+            if len(self._seen) > 1000:               # forget people who stopped
+                self._seen = {k: v for k, v in self._seen.items() if v and now - v[-1] < self.WINDOW}
+            times = [t for t in self._seen.get(who, ()) if now - t < self.WINDOW]
+            if len(times) >= limit:
+                self._seen[who] = times
+                return max(1, int(self.WINDOW - (now - times[0])) + 1)
+            times.append(now)
+            self._seen[who] = times
+            return None
+
+
+WRITES = WriteLimiter(lambda: get_setting("writes_per_minute"))
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def check_room(conn, *, group_id: Optional[str] = None, people=()) -> None:
+    """The Limits settings: room for one more entry in `group_id`, and for one more group for each of `people`."""
+    if group_id:
+        cap = int(get_setting("max_entries_per_group") or 0)
+        if cap and conn.execute("SELECT COUNT(*) AS c FROM expenses WHERE group_id = ?",
+                                (group_id,)).fetchone()["c"] >= cap:
+            raise HTTPException(400, f"This group already has {cap:,} entries, the most App settings allow. "
+                                     "Start a new group.")
+    cap = int(get_setting("max_groups_per_person") or 0)
+    if cap and people:
+        ids = list(people)
+        full = conn.execute(f"SELECT u.name FROM group_members m JOIN users u ON u.id = m.user_id "
+                            f"WHERE m.user_id IN ({','.join('?' * len(ids))}) GROUP BY m.user_id "
+                            f"HAVING COUNT(*) >= ? ORDER BY u.name", [*ids, cap]).fetchall()
+        if full:
+            raise HTTPException(400, f"{', '.join(r['name'] for r in full)} "
+                                     f"{'is' if len(full) == 1 else 'are'} already in {cap:,} groups, the most "
+                                     "App settings allow.")
+
+
 # ---------- app ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1354,6 +1764,10 @@ async def lifespan(app: FastAPI):
             logger.exception("Reading the people and notify services from Home Assistant failed")
 
     try:
+        await asyncio.to_thread(rekey_if_zone_changed)  # picked days in the ledger, for Home Assistant's zone
+    except Exception:
+        logger.exception("Updating the ledger's order for the time zone failed")
+    try:
         await asyncio.to_thread(app_messages.start)     # the household apps bus (the Household Assistant asks)
     except Exception:
         logger.exception("Starting the app bus failed")
@@ -1361,6 +1775,8 @@ async def lifespan(app: FastAPI):
     if ha_connected():   # sync on/off is checked live inside the loop
         jobs.add("sensor_sync", periodic_sync)
         jobs.add("ha_people", ha_people.loop)
+    jobs.every("housekeeping", HOUSEKEEPING_SECONDS, housekeeping, at_start=False, log=logger,
+               error="Housekeeping failed")
     jobs.start()
     yield
     await jobs.stop()
@@ -1397,30 +1813,43 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 # (the allowlist — the proxy and loopback — is app/common/auth_core.INGRESS_HOSTS)
 
 
+# Request bodies: 1 MB for the JSON routes (a group or an expense is a few hundred bytes), counted as they arrive
+# even without a Content-Length; a database restore up to RESTORE_MAX_BYTES. Added before the guard below, so an
+# outsider still gets the guard's 403 first and a 413 still carries the security headers.
+RESTORE_MAX_BYTES = 512 << 20
+app.add_middleware(web_security.BodyLimit, default_max=1 << 20, routes={"/api/admin/import-db": RESTORE_MAX_BYTES})
+
+
 @app.middleware("http")
 async def require_ha_ingress_auth(request: Request, call_next):
     blocked = auth_core.refuse_outsiders(request) or web_security.refuse_cross_site(request)
     if blocked is not None:
         return blocked
-    if request.url.path.startswith("/api/") and not auth_core.identity(request).user_id:
-        return JSONResponse(status_code=401, content={"detail": "Not authenticated with Home Assistant"})
+    if request.url.path.startswith("/api/"):
+        who = auth_core.identity(request).user_id
+        if not who:
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated with Home Assistant"})
+        if request.method in WRITE_METHODS:
+            wait = WRITES.check(who.strip().lower())
+            if wait is not None:
+                return JSONResponse(status_code=429, headers={"Retry-After": str(wait)}, content={
+                    "detail": f"Too many changes in a minute — wait {wait} seconds and try again."})
     return await call_next(request)
 
 
 # Scripts only from the app itself (no inline scripts or handlers); a few inline style attributes remain;
-# the page's two typefaces come from Google Fonts.
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-       "img-src 'self' data: blob:; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; object-src 'none'; "
+# the page's two typefaces are served by the app itself (static/fonts), so nothing is loaded from elsewhere.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; "
        "base-uri 'self'; form-action 'self'; frame-ancestors 'self'")
 
 # The HTML shell (index.html, served for "/") must never be cached by
 # the browser — it's what points at the versioned style.css?v=.../app.js?v=...
 # below, so a stale cached copy of JUST this one file is enough to make a
 # rebuilt app look like the update never took effect, even after a
-# normal refresh. Static assets themselves aren't touched here: their
-# cache-busting query string (bumped alongside config.yaml's version) is
-# what invalidates them, so they can keep normal caching.
-HEADERS = web_security.SecurityHeaders(CSP, pragma=True)
+# normal refresh. Every asset the page links carries ?v=<version> (bumped with config.yaml's version), so those
+# are cached for good (static_immutable; the app serves its static files at "/").
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True, static_immutable=True, static_prefixes=("/",))
 HEADERS.install(app)
 
 
@@ -1431,10 +1860,23 @@ router = APIRouter(prefix="/api")
 # Two lists: GET /users is the picker list everyone needs (group member
 # chips, Paid by, Acting as, "(disabled)" markers); managing users (the
 # Admin → Users page and enabling/disabling someone) is admin-only.
-def synced_user_rows() -> list:
+def sync_people_if_new() -> None:
+    """Write Home Assistant's people into `users` when the Person list was (re)read since the last time — not on
+    every request: the list is cached for PERSONS_CACHE_SECONDS, and an unchanged one needs no write lock."""
+    global _persons_synced
     persons = cached_ha_persons()   # network call — deliberately outside the write lock
+    with _persons_cache_lock:
+        stamp = _persons_cache[0] if _persons_cache else None
+    if stamp is None or stamp == _persons_synced:   # nothing read (no Home Assistant), or already written
+        return
     with _lock, get_conn() as conn:
         sync_users_from_ha(conn, persons)
+    _persons_synced = stamp
+
+
+def synced_user_rows() -> list:
+    sync_people_if_new()
+    with get_conn() as conn:
         return conn.execute(
             "SELECT u.id, u.name, u.created_at, u.disabled, u.ha_entity_id, u.ha_user_id, u.receive_notifications, "
             "(SELECT COUNT(*) FROM group_members gm WHERE gm.user_id = u.id) AS group_count "
@@ -1618,35 +2060,67 @@ def update_user(user_id: str, payload: UserUpdate, request: Request, _admin: Non
 
 
 # -- groups --
+# Everyone signed in to Home Assistant sees every group and can add expenses and payments to it (one household
+# sharing its costs openly: DOCS "Who can see what"). Who is in a group and its name are changed only by its
+# members and admins; deleting stays admin-only.
+def viewer_of(request: Request) -> str:
+    """The signed-in Home Assistant login (lower case): whose own preferences apply."""
+    return (auth_core.identity(request).user_id or "").strip().lower()
+
+
+def acting_person(request: Request) -> Optional[str]:
+    """The Splitpot person behind this login, if Home Assistant links one. May ask Home Assistant (cached), so
+    call it before taking the write lock."""
+    return linked_user_id(auth_core.identity(request).user_id)
+
+
+def require_member_or_admin(conn, request: Request, group_id: str, me: Optional[str]) -> None:
+    if is_admin(request):
+        return
+    if me and conn.execute("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?",
+                           (group_id, me)).fetchone():
+        return
+    raise HTTPException(403, "Only the group's members and admins can change who is in it or rename it.")
+
+
+def clean_group_name(raw: str) -> str:
+    name = " ".join((raw or "").split())
+    if not name:
+        raise HTTPException(400, "Group name is required")
+    return name
+
+
 @router.get("/groups")
-def list_groups():
+def list_groups(request: Request):
     with get_conn() as conn:
-        groups = conn.execute("SELECT id, name, created_at, is_default FROM groups ORDER BY created_at").fetchall()
-        out = []
-        for g in groups:
-            member_ids = group_member_ids(conn, g["id"])
-            expense_count = conn.execute(
-                "SELECT COUNT(*) AS c FROM expenses WHERE group_id = ? AND split_type != 'payment'", (g["id"],)
-            ).fetchone()["c"]
-            out.append(
-                {
-                    "id": g["id"],
-                    "name": g["name"],
-                    "createdAt": g["created_at"],
-                    "isDefault": bool(g["is_default"]),
-                    "memberIds": member_ids,
-                    "memberNames": [user_name(conn, m) for m in member_ids],
-                    "expenseCount": expense_count,
-                }
-            )
-        return out
+        groups = conn.execute("SELECT id, name, created_at FROM groups ORDER BY created_at").fetchall()
+        names = user_names(conn)
+        members: dict = {}
+        for r in conn.execute("SELECT group_id, user_id FROM group_members ORDER BY group_id, position"):
+            members.setdefault(r["group_id"], []).append(r["user_id"])
+        counts = {r["group_id"]: (r["n"] - (r["p"] or 0), r["p"] or 0) for r in conn.execute(
+            "SELECT group_id, COUNT(*) AS n, SUM(split_type = 'payment') AS p FROM expenses GROUP BY group_id")}
+        default = default_group_for(conn, viewer_of(request))
+    out = []
+    for g in groups:
+        member_ids = members.get(g["id"], [])
+        expense_count, payment_count = counts.get(g["id"], (0, 0))
+        out.append({
+            "id": g["id"],
+            "name": g["name"],
+            "createdAt": g["created_at"],
+            "isDefault": g["id"] == default,
+            "memberIds": member_ids,
+            "memberNames": [names.get(m, "Unknown") for m in member_ids],
+            "expenseCount": expense_count,
+            "paymentCount": payment_count,
+        })
+    return out
 
 
 @router.post("/groups", status_code=201)
 def create_group(payload: GroupCreate, request: Request):
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(400, "Group name is required")
+    name = clean_group_name(payload.name)
     payload.memberIds = list(dict.fromkeys(payload.memberIds))   # dedupe, keep order
     if len(payload.memberIds) < 1:
         raise HTTPException(400, "Pick at least one member")
@@ -1665,6 +2139,7 @@ def create_group(payload: GroupCreate, request: Request):
         ).fetchone()["c"]
         if disabled_count:
             raise HTTPException(400, "One or more selected people are disabled")
+        check_room(conn, people=payload.memberIds)
         group_id = new_id()
         created_at = now_iso()
         conn.execute(
@@ -1688,39 +2163,66 @@ def create_group(payload: GroupCreate, request: Request):
 
 
 # `limit` (on every route that answers with the group): only the newest `limit` ledger entries, plus `nextCursor`
-# for the rest. Without it the whole ledger, as before.
+# for the rest. Without it the whole ledger, as before. `balances=1`: each entry carries everyone's balance just
+# after it (the ledger's "Show each person's balance"); without it, no `balancesAfter`.
+LimitQ = Annotated[Optional[int], Query(ge=1, le=LEDGER_MAX_LIMIT)]
+BalancesQ = Annotated[bool, Query()]
+
+
 @router.get("/groups/{group_id}")
-def get_group(group_id: str, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
+def get_group(group_id: str, request: Request, limit: LimitQ = None, balances: BalancesQ = False):
     with get_conn() as conn:
-        return serialize_group(conn, group_id, limit)
+        return serialize_group(conn, group_id, limit, viewer=viewer_of(request), balances=balances)
 
 
 @router.get("/groups/{group_id}/ledger")
 def get_group_ledger(group_id: str, limit: int = Query(LEDGER_PAGE, ge=1, le=LEDGER_MAX_LIMIT),
-                     cursor: Optional[str] = Query(None, max_length=1000)):
+                     cursor: Optional[str] = Query(None, max_length=1000), balances: BalancesQ = False):
     """The next page of the group's ledger ("Load more"): entries after `cursor` (from the group's or the previous
     page's `nextCursor`; none = from the newest), newest first. `nextCursor` is null on the last page."""
     with get_conn() as conn:
         group_name_or_404(conn, group_id)
-        entries, next_cursor = ledger_page(conn, group_id, limit, cursor)
+        entries, next_cursor = ledger_page(conn, group_id, limit, cursor, balances=balances)
         return {"expenses": entries, "nextCursor": next_cursor, "total": ledger_total(conn, group_id)}
 
 
-@router.post("/groups/{group_id}/members")
-def add_member(group_id: str, payload: MemberAdd, request: Request, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
+@router.put("/groups/{group_id}")
+def rename_group(group_id: str, payload: GroupRename, request: Request, background: BackgroundTasks,
+                 limit: LimitQ = None, balances: BalancesQ = False):
+    """Rename a group (its members and admins)."""
+    name = clean_group_name(payload.name)
     actor = ha_actor_name(request)
+    me = acting_person(request)
+    with _lock, get_conn() as conn:
+        old = group_name_or_404(conn, group_id)
+        require_member_or_admin(conn, request, group_id, me)
+        if name != old:
+            conn.execute("UPDATE groups SET name = ? WHERE id = ?", (name, group_id))
+            log_event(conn, "group_renamed", f"{actor} renamed group '{old}' to '{name}'", group_id=group_id,
+                      actor=actor)
+            conn.commit()
+        return serialize_group(conn, group_id, limit, viewer=viewer_of(request), balances=balances)
+
+
+@router.post("/groups/{group_id}/members")
+def add_member(group_id: str, payload: MemberAdd, request: Request, background: BackgroundTasks,
+               limit: LimitQ = None, balances: BalancesQ = False):
+    """Add someone to the group — only its members and admins can."""
+    actor = ha_actor_name(request)
+    me = acting_person(request)
     with _lock, get_conn() as conn:
         group_name = group_name_or_404(conn, group_id)
-        u = conn.execute("SELECT id, disabled FROM users WHERE id = ?", (payload.userId,)).fetchone()
+        require_member_or_admin(conn, request, group_id, me)
+        u = conn.execute("SELECT id, name, disabled FROM users WHERE id = ?", (payload.userId,)).fetchone()
         if not u:
             raise HTTPException(400, "Unknown user")
         if u["disabled"]:
             raise HTTPException(400, "This person is disabled")
-        u_name = user_name(conn, payload.userId)
         already = conn.execute(
             "SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, payload.userId)
         ).fetchone()
         if not already:
+            check_room(conn, people=[payload.userId])
             next_pos = conn.execute(
                 "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM group_members WHERE group_id = ?",
                 (group_id,),
@@ -1729,15 +2231,40 @@ def add_member(group_id: str, payload: MemberAdd, request: Request, limit: Optio
                 "INSERT INTO group_members (group_id, user_id, position) VALUES (?, ?, ?)",
                 (group_id, payload.userId, next_pos),
             )
-            log_event(
-                conn,
-                "member_added",
-                f"{actor} added {u_name} to {group_name}",
-                group_id=group_id,
-                actor=actor,
-            )
+            log_event(conn, "member_added", f"{actor} added {u['name']} to {group_name}", group_id=group_id,
+                      actor=actor)
             conn.commit()
-        return serialize_group(conn, group_id, limit)
+            background.add_task(push_changed_balances)     # a new member has a balance (0) in the group
+        return serialize_group(conn, group_id, limit, viewer=viewer_of(request), balances=balances)
+
+
+@router.delete("/groups/{group_id}/members/{user_id}")
+def remove_member(group_id: str, user_id: str, request: Request, background: BackgroundTasks,
+                  limit: LimitQ = None, balances: BalancesQ = False):
+    """Take someone out of the group — its members and admins, and only while that person's balance in the group is
+    zero (settle up first). Their past entries stay as they are."""
+    actor = ha_actor_name(request)
+    me = acting_person(request)
+    with _lock, get_conn() as conn:
+        group_name = group_name_or_404(conn, group_id)
+        require_member_or_admin(conn, request, group_id, me)
+        member_ids = group_member_ids(conn, group_id)
+        if user_id not in member_ids:
+            raise HTTPException(404, "That person isn't in this group")
+        if len(member_ids) == 1:
+            raise HTTPException(400, "A group needs at least one member")
+        name = user_names(conn).get(user_id, "Unknown")
+        balance = group_net(conn, group_id, member_ids).get(user_id, 0.0)
+        if round(balance * 100):
+            owes = "is owed" if balance > 0 else "owes"
+            raise HTTPException(400, f"{name} {owes} {money(abs(balance))} in {group_name} — settle up first, then "
+                                     "take them out of the group.")
+        conn.execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))
+        log_event(conn, "member_removed", f"{actor} took {name} out of {group_name}", group_id=group_id, actor=actor)
+        conn.commit()
+        result = serialize_group(conn, group_id, limit, viewer=viewer_of(request), balances=balances)
+    background.add_task(push_changed_balances)
+    return result
 
 
 # Text for a CSV cell. A leading = + - @ would make a spreadsheet run it as a formula, so it gets a '.
@@ -1775,7 +2302,8 @@ def export_group_csv(group_id: str):
 
 
 @router.delete("/groups/{group_id}", status_code=204)
-def delete_group(group_id: str, request: Request, _admin: None = Depends(require_admin)):
+def delete_group(group_id: str, request: Request, background: BackgroundTasks,
+                 _admin: None = Depends(require_admin)):
     """Admin-only: deleting a group permanently removes every
     expense and payment in it, with no undo."""
     actor = ha_actor_name(request)
@@ -1784,28 +2312,25 @@ def delete_group(group_id: str, request: Request, _admin: None = Depends(require
         conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
         log_event(conn, "group_deleted", f"{actor} deleted group '{group_name}'", actor=actor)
         conn.commit()
-    push_balances_to_ha()
+    background.add_task(push_changed_balances)   # after the answer; a sensor for nobody's balance is removed
     return Response(status_code=204)
 
 
 @router.put("/groups/{group_id}/default")
-def set_group_default(group_id: str, payload: GroupDefaultUpdate, request: Request, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
-    """Marks (or unmarks) this group as the one the app opens straight into
-    instead of the Dashboard. At most one group can be default at a time —
-    setting one clears any other, enforced here and backstopped by a partial
-    unique index (idx_groups_one_default) on the table."""
-    actor = ha_actor_name(request)
+def set_group_default(group_id: str, payload: GroupDefaultUpdate, request: Request,
+                      limit: LimitQ = None, balances: BalancesQ = False):
+    """Marks (or unmarks) this group as the one Splitpot opens straight into, instead of the Dashboard, for the
+    person asking (their Home Assistant login) — everyone chooses their own. Unmarking it means "no default"."""
+    viewer = viewer_of(request)
     with _lock, get_conn() as conn:
-        group_name = group_name_or_404(conn, group_id)
-        if payload.isDefault:
-            conn.execute("UPDATE groups SET is_default = 0 WHERE id != ?", (group_id,))
-            conn.execute("UPDATE groups SET is_default = 1 WHERE id = ?", (group_id,))
-            log_event(conn, "group_default_set", f"{actor} set '{group_name}' as the default group", group_id=group_id, actor=actor)
-        else:
-            conn.execute("UPDATE groups SET is_default = 0 WHERE id = ?", (group_id,))
-            log_event(conn, "group_default_cleared", f"{actor} removed '{group_name}' as the default group", group_id=group_id, actor=actor)
+        group_name_or_404(conn, group_id)
+        current = default_group_for(conn, viewer)
+        new = group_id if payload.isDefault else (None if current == group_id else current)
+        conn.execute("INSERT INTO user_prefs (ha_user_id, default_group_id, updated_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(ha_user_id) DO UPDATE SET default_group_id = excluded.default_group_id, "
+                     "updated_at = excluded.updated_at", (viewer, new, now_iso()))
         conn.commit()
-        return serialize_group(conn, group_id, limit)
+        return serialize_group(conn, group_id, limit, viewer=viewer, balances=balances)
 
 
 # -- expenses --
@@ -1818,14 +2343,11 @@ def add_expense(group_id: str, payload: ExpenseCreate, request: Request, backgro
     date = resolve_expense_date(payload.date)
     with _lock, get_conn() as conn:
         group_name = group_name_or_404(conn, group_id)
-        final_splits, split_type = build_splits(group_member_ids(conn, group_id), payload)
+        final_splits, split_type = build_splits(group_member_ids(conn, group_id), payload, disabled_ids(conn))
+        check_room(conn, group_id=group_id)
         expense_id = new_id()
         rounded_amt = round(payload.amount, 2)
-        conn.execute(
-            "INSERT INTO expenses (id, group_id, description, amount, paid_by, split_type, date) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (expense_id, group_id, description, rounded_amt, payload.paidBy, split_type, date),
-        )
+        insert_entry(conn, expense_id, group_id, description, rounded_amt, payload.paidBy, split_type, date)
         write_splits(conn, expense_id, final_splits)
         paid_by_name = user_name(conn, payload.paidBy)
         event_message = f"{actor} added '{description}' ({money(rounded_amt)}) to {group_name}"
@@ -1834,8 +2356,8 @@ def add_expense(group_id: str, payload: ExpenseCreate, request: Request, backgro
         log_event(conn, "expense_added", event_message, group_id=group_id, actor=actor)
         conn.commit()
 
-    push_balances_to_ha()
-    # after the response is sent: adding a charge never waits for (or fails because of) a notification
+    # after the response is sent: adding a charge never waits for (or fails because of) Home Assistant
+    background.add_task(push_changed_balances)
     background.add_task(notify_new_charge, expense_id, auth_core.identity(request).user_id, actor)
     return {
         "id": expense_id,
@@ -1849,52 +2371,82 @@ def add_expense(group_id: str, payload: ExpenseCreate, request: Request, backgro
     }
 
 
+def _edited_date(stored: str, wanted: Optional[str]) -> str:
+    """Keep the stored timestamp when the day didn't change."""
+    same_day = not wanted or parse_date(stored).astimezone(tz()).date().isoformat() == wanted[:10]
+    return stored if same_day else resolve_expense_date(wanted)
+
+
+def _log_edit(conn, actor: str, kind: str, before: dict, after: dict, group_name: str) -> list:
+    """The activity log line for an edit: everything it changed. Returns the changes."""
+    names = user_names(conn)
+    parts = describe_changes(before, after, names)
+    what = (f"a settle-up payment ({names.get(before['paid_by'], 'Unknown')} → "
+            f"{names.get(before['splits'][0]['userId'] if before['splits'] else None, 'Unknown')}, "
+            f"{money(before['amount'])})" if kind == "payment_edited"
+            else f"'{before['description']}' ({money(before['amount'])})")
+    log_event(conn, kind, f"{actor} edited {what} in {group_name}: " + ("; ".join(parts) or "nothing changed"),
+              group_id=before["group_id"], actor=actor)
+    return parts
+
+
+def _who_changed(before: dict, after: dict) -> bool:
+    return before["paid_by"] != after["paid_by"] or \
+        {u: _cents(a) for u, a in before["shares"].items()} != {u: _cents(a) for u, a in after["shares"].items()}
+
+
 @router.put("/expenses/{expense_id}")
-def edit_expense(expense_id: str, payload: ExpenseCreate, request: Request, limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
+def edit_expense(expense_id: str, payload: ExpenseCreate, request: Request, background: BackgroundTasks,
+                 limit: LimitQ = None, balances: BalancesQ = False):
     """Edit an expense in place — description, amount, payer, split and date
     are all replaced (same body and validation as adding one). Settle-up
-    payments aren't edited here: delete and re-record them instead."""
+    payments have their own route (PUT /payments/{id}). The activity log says exactly what changed, and the
+    people a changed payer or share affects are notified (when notifications are on)."""
     actor = ha_actor_name(request)
     description = payload.description.strip()
     if not description:
         raise HTTPException(400, "Description is required")
     with _lock, get_conn() as conn:
-        row = conn.execute(
-            "SELECT group_id, description, amount, split_type, date FROM expenses WHERE id = ?", (expense_id,)
-        ).fetchone()
-        if not row:
+        before = entry_snapshot(conn, expense_id)
+        if not before:
             raise HTTPException(404, "Expense not found")
-        if row["split_type"] == "payment":
-            raise HTTPException(400, "Payments can't be edited — delete it and record it again")
-        # Keep the stored timestamp when the day didn't change.
-        same_day = not payload.date or parse_date(row["date"]).astimezone(tz()).date().isoformat() == payload.date[:10]
-        date = row["date"] if same_day else resolve_expense_date(payload.date)
-        final_splits, split_type = build_splits(group_member_ids(conn, row["group_id"]), payload)
+        if before["split_type"] == "payment":
+            raise HTTPException(400, "This is a settle-up payment — change it with the payment's own Edit")
+        date = _edited_date(before["date"], payload.date)
+        final_splits, split_type = build_splits(group_member_ids(conn, before["group_id"]), payload,
+                                                disabled_ids(conn), keep={before["paid_by"], *before["shares"]})
         rounded_amt = round(payload.amount, 2)
         conn.execute(
-            "UPDATE expenses SET description = ?, amount = ?, paid_by = ?, split_type = ?, date = ? WHERE id = ?",
-            (description, rounded_amt, payload.paidBy, split_type, date, expense_id),
+            "UPDATE expenses SET description = ?, amount = ?, paid_by = ?, split_type = ?, date = ?, sort_key = ? "
+            "WHERE id = ?",
+            (description, rounded_amt, payload.paidBy, split_type, date, date_sort_key(date), expense_id),
         )
         write_splits(conn, expense_id, final_splits)
-        group_name = group_name_or_404(conn, row["group_id"])
-        log_event(
-            conn,
-            "expense_edited",
-            f"{actor} edited '{row['description']}' ({money(row['amount'])}) in {group_name}"
-            + ("" if (description, rounded_amt) == (row["description"], row["amount"])
-               else f" → '{description}' ({money(rounded_amt)})"),
-            group_id=row["group_id"],
-            actor=actor,
-        )
+        after = entry_snapshot(conn, expense_id)
+        _log_edit(conn, actor, "expense_edited", before, after, group_name_or_404(conn, before["group_id"]))
         conn.commit()
-        result = serialize_group(conn, row["group_id"], limit)
-    push_balances_to_ha()
+        result = serialize_group(conn, before["group_id"], limit, viewer=viewer_of(request), balances=balances)
+    background.add_task(push_changed_balances)
+    if _who_changed(before, after):
+        background.add_task(notify_edit, before, expense_id, auth_core.identity(request).user_id, actor)
     return result
+
+
+def _check_payment_people(conn, group_id: str, payload: PaymentCreate, keep=frozenset()) -> tuple[str, str]:
+    """Both people are members (and not disabled, unless already in the payment being edited); their names."""
+    if payload.fromUserId == payload.toUserId:
+        raise HTTPException(400, "Pick two different people")
+    members = set(group_member_ids(conn, group_id))
+    if payload.fromUserId not in members or payload.toUserId not in members:
+        raise HTTPException(400, "Both people must be members of this group")
+    if {payload.fromUserId, payload.toUserId} & (disabled_ids(conn) - set(keep)):
+        raise HTTPException(400, "One of them is disabled — an admin can enable them in Admin → Users")
+    return user_name(conn, payload.fromUserId), user_name(conn, payload.toUserId)
 
 
 @router.post("/groups/{group_id}/payments", status_code=201)
 def record_payment(group_id: str, payload: PaymentCreate, request: Request, background: BackgroundTasks,
-                   limit: Optional[int] = Query(None, ge=1, le=LEDGER_MAX_LIMIT)):
+                   limit: LimitQ = None, balances: BalancesQ = False):
     """Record that one member paid another back ("settle up"). Balances move
     exactly as if the payer had covered an expense entirely for the
     recipient, which cancels out what they owed."""
@@ -1904,17 +2456,12 @@ def record_payment(group_id: str, payload: PaymentCreate, request: Request, back
     date = resolve_expense_date(payload.date)
     with _lock, get_conn() as conn:
         group_name = group_name_or_404(conn, group_id)
-        members = set(group_member_ids(conn, group_id))
-        if payload.fromUserId not in members or payload.toUserId not in members:
-            raise HTTPException(400, "Both people must be members of this group")
+        from_name, to_name = _check_payment_people(conn, group_id, payload)
+        check_room(conn, group_id=group_id)
         amt = round(payload.amount, 2)
-        from_name, to_name = user_name(conn, payload.fromUserId), user_name(conn, payload.toUserId)
         expense_id = new_id()
-        conn.execute(
-            "INSERT INTO expenses (id, group_id, description, amount, paid_by, split_type, date) "
-            "VALUES (?, ?, ?, ?, ?, 'payment', ?)",
-            (expense_id, group_id, f"{from_name} paid {to_name}", amt, payload.fromUserId, date),
-        )
+        insert_entry(conn, expense_id, group_id, f"{from_name} paid {to_name}", amt, payload.fromUserId, "payment",
+                     date)
         write_splits(conn, expense_id, [{"userId": payload.toUserId, "amount": amt}])
         log_event(
             conn,
@@ -1924,14 +2471,42 @@ def record_payment(group_id: str, payload: PaymentCreate, request: Request, back
             actor=actor,
         )
         conn.commit()
-        result = serialize_group(conn, group_id, limit)
-    push_balances_to_ha()
+        result = serialize_group(conn, group_id, limit, viewer=viewer_of(request), balances=balances)
+    background.add_task(push_changed_balances)
     background.add_task(notify_payment, expense_id, auth_core.identity(request).user_id, actor)
     return result
 
 
+@router.put("/payments/{payment_id}")
+def edit_payment(payment_id: str, payload: PaymentCreate, request: Request, background: BackgroundTasks,
+                 limit: LimitQ = None, balances: BalancesQ = False):
+    """Change a settle-up payment: who paid whom, the amount and the date (same checks as recording one)."""
+    actor = ha_actor_name(request)
+    with _lock, get_conn() as conn:
+        before = entry_snapshot(conn, payment_id)
+        if not before or before["split_type"] != "payment":
+            raise HTTPException(404, "Payment not found")
+        from_name, to_name = _check_payment_people(conn, before["group_id"], payload,
+                                                   keep={before["paid_by"], *before["shares"]})
+        date = _edited_date(before["date"], payload.date)
+        amt = round(payload.amount, 2)
+        conn.execute("UPDATE expenses SET description = ?, amount = ?, paid_by = ?, date = ?, sort_key = ? "
+                     "WHERE id = ?", (f"{from_name} paid {to_name}", amt, payload.fromUserId, date,
+                                      date_sort_key(date), payment_id))
+        write_splits(conn, payment_id, [{"userId": payload.toUserId, "amount": amt}])
+        after = entry_snapshot(conn, payment_id)
+        _log_edit(conn, actor, "payment_edited", before, after, group_name_or_404(conn, before["group_id"]))
+        conn.commit()
+        result = serialize_group(conn, before["group_id"], limit, viewer=viewer_of(request), balances=balances)
+    background.add_task(push_changed_balances)
+    if _who_changed(before, after):
+        background.add_task(notify_edit, before, payment_id, auth_core.identity(request).user_id, actor)
+    return result
+
+
 @router.delete("/expenses/{expense_id}", status_code=204)
-def delete_expense(expense_id: str, request: Request, _admin: None = Depends(require_admin)):
+def delete_expense(expense_id: str, request: Request, background: BackgroundTasks,
+                   _admin: None = Depends(require_admin)):
     """Admin-only: deleting an expense or a settle-up payment can't
     be undone. Everyone can still add and edit expenses and record payments."""
     actor = ha_actor_name(request)
@@ -1942,18 +2517,17 @@ def delete_expense(expense_id: str, request: Request, _admin: None = Depends(req
         if not row:
             raise HTTPException(404, "Expense not found")
         conn.execute("DELETE FROM expenses WHERE id = ?", (expense_id,))
-        if row:
-            group_row = conn.execute("SELECT name FROM groups WHERE id = ?", (row["group_id"],)).fetchone()
-            group_name = group_row["name"] if group_row else "a group"
-            log_event(
-                conn,
-                "expense_deleted",
-                f"{actor} deleted '{row['description']}' ({money(row['amount'])}) from {group_name}",
-                group_id=row["group_id"],
-                actor=actor,
-            )
+        group_row = conn.execute("SELECT name FROM groups WHERE id = ?", (row["group_id"],)).fetchone()
+        group_name = group_row["name"] if group_row else "a group"
+        log_event(
+            conn,
+            "expense_deleted",
+            f"{actor} deleted '{row['description']}' ({money(row['amount'])}) from {group_name}",
+            group_id=row["group_id"],
+            actor=actor,
+        )
         conn.commit()
-    push_balances_to_ha()
+    background.add_task(push_changed_balances)
     return Response(status_code=204)
 
 
@@ -1987,51 +2561,47 @@ def list_events(limit: int = Query(50, ge=1, le=300)):
 
 
 # -- weekly / monthly transactions view --
+def utc_key(dt: datetime) -> str:
+    """An aware datetime in the stored sort-key form (date_sort_key), for range reads on expenses.sort_key."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+
+def period_expenses(conn, start: datetime, end: datetime) -> list:
+    """The expenses (not payments: paying someone back isn't spending) dated in [start, end), newest first — an index
+    range read on the stored sort key."""
+    names = user_names(conn)
+    rows = conn.execute(
+        "SELECT e.id, e.group_id, g.name AS group_name, e.description, e.amount, e.paid_by, e.date "
+        "FROM expenses e JOIN groups g ON g.id = e.group_id "
+        "WHERE e.split_type != 'payment' AND e.sort_key >= ? AND e.sort_key < ? "
+        "ORDER BY e.sort_key DESC, e.id DESC", (utc_key(start), utc_key(end))).fetchall()
+    return [{"id": r["id"], "groupId": r["group_id"], "groupName": r["group_name"], "description": r["description"],
+             "amount": r["amount"], "paidBy": r["paid_by"], "paidByName": names.get(r["paid_by"], "Unknown"),
+             "date": r["date"]} for r in rows]
+
+
+def cents_total(amounts) -> float:
+    """A sum of 2-decimal amounts, exactly (in whole cents)."""
+    return round(sum(round(a * 100) for a in amounts) / 100, 2)
+
+
 @router.get("/transactions")
 def list_transactions(period: Literal["week", "month"] = "week", offset: int = Query(0, ge=-1200, le=1200)):
+    start, end, label = week_range(offset) if period == "week" else month_range(offset)
     with get_conn() as conn:
-        start, end, label = week_range(offset) if period == "week" else month_range(offset)
-
-        rows = conn.execute(
-            "SELECT e.id, e.group_id, g.name AS group_name, e.description, e.amount, "
-            "e.paid_by, e.date "
-            "FROM expenses e JOIN groups g ON g.id = e.group_id "
-            "WHERE e.split_type != 'payment' "   # paying someone back isn't spending
-            "ORDER BY e.date DESC"
-        ).fetchall()
-
-        expenses = []
-        for r in rows:
-            dt = parse_date(r["date"])
-            if start <= dt < end:
-                expenses.append(
-                    {
-                        "id": r["id"],
-                        "groupId": r["group_id"],
-                        "groupName": r["group_name"],
-                        "description": r["description"],
-                        "amount": r["amount"],
-                        "paidBy": r["paid_by"],
-                        "paidByName": user_name(conn, r["paid_by"]),
-                        "date": r["date"],
-                    }
-                )
-        expenses.sort(key=lambda e: date_sort_key(e["date"]), reverse=True)
-
-        total = round(sum(e["amount"] for e in expenses), 2)
-        breakdown = weekday_breakdown(expenses, start) if period == "week" else group_breakdown(expenses)
-
-        return {
-            "period": period,
-            "offset": offset,
-            "label": label,
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "total": total,
-            "count": len(expenses),
-            "expenses": expenses,
-            "breakdown": breakdown,
-        }
+        expenses = period_expenses(conn, start, end)
+    breakdown = weekday_breakdown(expenses, start) if period == "week" else group_breakdown(expenses)
+    return {
+        "period": period,
+        "offset": offset,
+        "label": label,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "total": cents_total(e["amount"] for e in expenses),
+        "count": len(expenses),
+        "expenses": expenses,
+        "breakdown": breakdown,
+    }
 
 
 # -- dashboard summary --
@@ -2039,37 +2609,18 @@ def compute_overall_net(conn) -> list:
     """Each person's net balance summed across every group they belong to.
     Intentionally NOT run through the debt-simplifying transfer algorithm
     globally — two people who never shared an expense could get matched up
-    incorrectly if we netted across unrelated groups."""
-    overall: dict = {}
-    names: dict = {}
-    groups = conn.execute("SELECT id FROM groups").fetchall()
-    for g in groups:
-        member_ids = group_member_ids(conn, g["id"])
-        expense_rows = conn.execute(
-            "SELECT id, paid_by, amount FROM expenses WHERE group_id = ?", (g["id"],)
-        ).fetchall()
-        expenses = []
-        for e in expense_rows:
-            expenses.append(
-                {
-                    "paidBy": e["paid_by"],
-                    "amount": e["amount"],
-                    "splits": fetch_expense_splits(conn, e["id"]),
-                }
-            )
-        net, _ = compute_balances(member_ids, expenses)
-        for uid, amt in net.items():
-            overall[uid] = overall.get(uid, 0.0) + amt
-            if uid not in names:
-                names[uid] = user_name(conn, uid)
-
-    return sorted(
-        (
-            {"userId": uid, "name": names[uid], "amount": round(amt, 2)}
-            for uid, amt in overall.items()
-        ),
-        key=lambda x: -x["amount"],
-    )
+    incorrectly if we netted across unrelated groups. Two GROUP BY sums in whole cents (what each paid, what
+    each owes), so the totals are exact; everyone in a group is listed, at 0 when square. Largest first."""
+    cents: dict = {r["user_id"]: 0 for r in conn.execute("SELECT DISTINCT user_id FROM group_members")}
+    for r in conn.execute("SELECT paid_by AS u, SUM(CAST(ROUND(amount * 100) AS INTEGER)) AS c FROM expenses "
+                          "GROUP BY paid_by"):
+        cents[r["u"]] = cents.get(r["u"], 0) + r["c"]
+    for r in conn.execute("SELECT user_id AS u, SUM(CAST(ROUND(amount * 100) AS INTEGER)) AS c FROM expense_splits "
+                          "GROUP BY user_id"):
+        cents[r["u"]] = cents.get(r["u"], 0) - r["c"]
+    names = user_names(conn)
+    out = [{"userId": uid, "name": names.get(uid, "Unknown"), "amount": round(c / 100, 2)} for uid, c in cents.items()]
+    return sorted(out, key=lambda x: (-x["amount"], x["name"].casefold(), x["userId"]))
 
 
 def build_dashboard_data(conn) -> dict:
@@ -2079,27 +2630,21 @@ def build_dashboard_data(conn) -> dict:
 
     overall_net = compute_overall_net(conn)
 
+    def spent(start: datetime, end: datetime) -> dict:
+        r = conn.execute("SELECT COUNT(*) AS n, SUM(CAST(ROUND(amount * 100) AS INTEGER)) AS c FROM expenses "
+                         "WHERE split_type != 'payment' AND sort_key >= ? AND sort_key < ?",
+                         (utc_key(start), utc_key(end))).fetchone()
+        return {"total": round((r["c"] or 0) / 100, 2), "count": r["n"]}
+
     week_start, week_end, _ = week_range(0)
     month_start, month_end, _ = month_range(0)
-    all_dates = conn.execute("SELECT amount, date FROM expenses WHERE split_type != 'payment'").fetchall()
-    week_count = month_count = 0
-    week_sum = month_sum = 0.0
-    for r in all_dates:
-        dt = parse_date(r["date"])
-        if week_start <= dt < week_end:
-            week_sum += r["amount"]
-            week_count += 1
-        if month_start <= dt < month_end:
-            month_sum += r["amount"]
-            month_count += 1
-
     return {
         "peopleCount": people_count,
         "groupsCount": groups_count,
         "expensesCount": expenses_count,
         "overallNet": overall_net,
-        "week": {"total": round(week_sum, 2), "count": week_count},
-        "month": {"total": round(month_sum, 2), "count": month_count},
+        "week": spent(week_start, week_end),
+        "month": spent(month_start, month_end),
     }
 
 
@@ -2119,28 +2664,26 @@ def splitpot_user_for(request: Request) -> Optional[str]:
     returned. Used to preselect "Acting as" and "Paid by"."""
     uid = (request.headers.get("x-remote-user-id") or "").strip().lower()
     display = (request.headers.get("x-remote-user-display-name") or "").strip()
-    with get_conn() as conn:
-        if uid:
-            row = conn.execute(
-                "SELECT id FROM users WHERE ha_user_id = ? AND disabled = 0", (uid,)
-            ).fetchone()
+    if uid:
+        with get_conn() as conn:
+            row = conn.execute("SELECT id FROM users WHERE ha_user_id = ? AND disabled = 0", (uid,)).fetchone()
+        if row:
+            return row["id"]
+        # Not stored yet: the Person list (cached; may ask Home Assistant — no connection held) may know the link.
+        entity = next((p["entity_id"] for p in cached_ha_persons()
+                       if (p.get("user_id") or "").strip().lower() == uid), None)
+        if entity:
+            with get_conn() as conn:
+                row = conn.execute("SELECT id FROM users WHERE ha_entity_id = ? AND disabled = 0",
+                                   (entity,)).fetchone()
             if row:
                 return row["id"]
-            # Not stored yet: the Person list (cached) may still know the link.
-            entity = next((p["entity_id"] for p in cached_ha_persons()
-                           if (p.get("user_id") or "").strip().lower() == uid), None)
-            if entity:
-                row = conn.execute(
-                    "SELECT id FROM users WHERE ha_entity_id = ? AND disabled = 0", (entity,)
-                ).fetchone()
-                if row:
-                    return row["id"]
-        if display:
-            rows = conn.execute(
-                "SELECT id FROM users WHERE name = ? COLLATE NOCASE AND disabled = 0", (display,)
-            ).fetchall()
-            if len(rows) == 1:
-                return rows[0]["id"]
+    if display:
+        with get_conn() as conn:
+            rows = conn.execute("SELECT id FROM users WHERE name = ? COLLATE NOCASE AND disabled = 0",
+                                (display,)).fetchall()
+        if len(rows) == 1:
+            return rows[0]["id"]
     return None
 
 
@@ -2211,7 +2754,7 @@ def admin_backup_db(_admin: None = Depends(require_admin)):
     backup API (Connection.backup()) produces one complete, internally
     consistent file even while the database is actively taking writes,
     which a raw copy can't guarantee."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    fd, tmp_path = tempfile.mkstemp(prefix=SNAPSHOT_PREFIX, suffix=".db")   # swept by housekeeping if never sent
     os.close(fd)
     with _lock, get_conn() as src:
         db_core.snapshot(src, tmp_path)
@@ -2242,44 +2785,50 @@ async def admin_storage_import_db(file: UploadFile = File(...), _admin: None = D
     os.replace() can't do a cross-device move — it fails with
     "OSError: [Errno 18] Cross-device link" if the two paths aren't on
     the same filesystem."""
-    tmp_path = await backup_core.receive(file, DATA_DIR)
+    tmp_path = await backup_core.receive(
+        file, DATA_DIR, max_bytes=RESTORE_MAX_BYTES,
+        too_big=lambda: HTTPException(413, f"That file is larger than {web_security.size_text(RESTORE_MAX_BYTES)}."))
     try:
-        try:
-            tables = db_core.validate_file(
-                tmp_path, {"users", "groups", "group_members", "expenses", "expense_splits", "events"},
-                app_name="Splitpot")
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        backup_has_settings = "app_settings" in tables
-
-        with _lock:
-            # A backup from an older database has no App settings; keep the
-            # current ones rather than silently falling back to the defaults.
-            carry_settings = []
-            if not backup_has_settings:
-                try:
-                    with get_conn() as c:
-                        carry_settings = [tuple(r) for r in c.execute(
-                            "SELECT key, value, updated_at, updated_by FROM app_settings").fetchall()]
-                except sqlite3.Error:
-                    carry_settings = []
-            # An older backup may lack columns the app now uses (see
-            # init_db's migrations) — init_db brings it up to date now
-            # instead of serving errors until the next restart.
-            backup_core.restore_file(tmp_path, DB_FILE, get_conn, migrate=init_db)
-            if carry_settings:
-                with get_conn() as c:
-                    c.executemany(
-                        "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)",
-                        carry_settings,
-                    )
-                    c.commit()
-                invalidate_settings_cache()
+        await asyncio.to_thread(_restore_from, tmp_path)     # validation and the swap: blocking, off the event loop
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
-
     return {"status": "ok"}
+
+
+def _restore_from(tmp_path: str) -> None:
+    try:
+        tables = db_core.validate_file(
+            tmp_path, {"users", "groups", "group_members", "expenses", "expense_splits", "events"},
+            app_name="Splitpot")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    backup_has_settings = "app_settings" in tables
+
+    with _lock:
+        # A backup from an older database has no App settings; keep the
+        # current ones rather than silently falling back to the defaults.
+        carry_settings = []
+        if not backup_has_settings:
+            try:
+                with get_conn() as c:
+                    carry_settings = [tuple(r) for r in c.execute(
+                        "SELECT key, value, updated_at, updated_by FROM app_settings").fetchall()]
+            except sqlite3.Error:
+                carry_settings = []
+        # An older backup may lack columns the app now uses (see
+        # init_db's migrations) — init_db brings it up to date now
+        # instead of serving errors until the next restart.
+        backup_core.restore_file(tmp_path, DB_FILE, get_conn, migrate=init_db)
+        if carry_settings:
+            with get_conn() as c:
+                c.executemany(
+                    "INSERT OR IGNORE INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, ?, ?)",
+                    carry_settings,
+                )
+                c.commit()
+            invalidate_settings_cache()
+    forget_persons()            # the restored `users` get Home Assistant's people again on the next request
 
 
 app.include_router(router)

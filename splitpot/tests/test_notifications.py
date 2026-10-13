@@ -52,6 +52,7 @@ class Base(unittest.TestCase):
             if os.path.exists(p):
                 os.remove(p)
         main.init_db()
+        main.WRITES.clear()   # the per-person write limit counts per process
         with main.get_conn() as conn:
             for uid, name, ha in (("asha", "Asha", "ha_asha"), ("ravi", "Ravi", "ha_ravi"), ("mia", "Mia", "ha_mia"),
                                   ("zed", "Zed", None)):          # Zed: no Home Assistant login linked
@@ -142,25 +143,66 @@ class Charges(Base):
         self.settings(notify_charges=True)
         r = self.c.put("/api/me/prefs", json={"receiveNotifications": False}, headers=RAVI)
         self.assertEqual(r.json()["receiveNotifications"], False)
-        self.add(who=NOBODY)
+        e = self.add(who=NOBODY)
         self.assertEqual(set(self.sent()), {"mobile_app_asha_pixel"})
         self.ha.requests.clear()
         with main.get_conn() as conn:
             conn.execute("UPDATE users SET disabled = 1 WHERE id = 'asha'")
             conn.execute("UPDATE users SET receive_notifications = 1 WHERE id = 'ravi'")
             conn.commit()
-        self.add(who=NOBODY)
+        # an edit that changes everyone's share: Asha (disabled, but already in it) is never told
+        r = self.c.put(f"/api/expenses/{e['id']}", headers=NOBODY, json={
+            "description": "Groceries", "amount": 120, "paidBy": "asha", "participants": ["asha", "ravi", "mia"]})
+        self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(set(self.sent()), {"mobile_app_ravi_phone"})
+        # and a new charge can't be paid by (or shared with) a disabled person at all
+        r = self.c.post(f"/api/groups/{self.gid}/expenses", headers=NOBODY,
+                        json={"description": "x", "amount": 9, "paidBy": "asha", "participants": ["ravi"]})
+        self.assertEqual(r.status_code, 400)
 
-    def test_edits_and_deletes_are_not_notified(self):
+    def test_deletes_and_edits_of_only_words_or_date_are_not_notified(self):
         self.settings(notify_charges=True)
         e = self.add(who=NOBODY)
         self.ha.requests.clear()
-        r = self.c.put(f"/api/expenses/{e['id']}", json={"description": "Fixed", "amount": 50, "paidBy": "ravi"},
-                       headers=NOBODY)
+        r = self.c.put(f"/api/expenses/{e['id']}", headers=NOBODY, json={
+            "description": "Fixed", "amount": 90, "paidBy": "asha", "participants": ["asha", "ravi", "mia"]})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.c.delete(f"/api/expenses/{e['id']}", headers=ADMIN).status_code, 204)
         self.assertEqual(self.ha.notifications(), [])
+
+    def test_changed_payer_or_shares_tell_the_people_affected(self):
+        self.settings(notify_charges=True)
+        e = self.add(who=NOBODY)                                    # Asha paid 90, three ways
+        self.ha.requests.clear()
+        # Ravi edits: now Ravi paid, split between Asha and Ravi only
+        r = self.c.put(f"/api/expenses/{e['id']}", headers=RAVI, json={
+            "description": "Groceries", "amount": 90, "paidBy": "ravi", "participants": ["asha", "ravi"]})
+        self.assertEqual(r.status_code, 200, r.text)
+        sent = self.sent()
+        self.assertEqual(set(sent), {"mobile_app_asha_pixel"})     # not Ravi (he made the edit); Mia has no phone
+        self.assertEqual(sent["mobile_app_asha_pixel"][0]["message"],
+                         "Ravi changed 'Groceries' ($90.00) in Flat: now paid by Ravi; your share: $45.00 (was $30.00).")
+        # the activity log says what changed, in full
+        msg = next(x["message"] for x in self.c.get("/api/events", headers=ASHA).json() if x["type"] == "expense_edited")
+        self.assertEqual(msg, "Ravi edited 'Groceries' ($90.00) in Flat: paid by Asha → Ravi; split equally between "
+                              "Asha, Ravi, Mia → equally between Asha, Ravi")
+        # off: nothing
+        self.settings(notify_charges=False)
+        self.ha.requests.clear()
+        self.c.put(f"/api/expenses/{e['id']}", headers=RAVI, json={
+            "description": "Groceries", "amount": 80, "paidBy": "ravi", "participants": ["asha", "ravi"]})
+        self.assertEqual(self.ha.notifications(), [])
+
+    def test_someone_taken_out_of_the_split_hears_it(self):
+        self.settings(notify_charges=True)
+        e = self.add(who=NOBODY, participants=["asha", "ravi"])     # Asha paid, Asha and Ravi share
+        self.ha.requests.clear()
+        r = self.c.put(f"/api/expenses/{e['id']}", headers=ASHA, json={
+            "description": "Groceries", "amount": 90, "paidBy": "asha", "participants": ["asha", "mia"]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.sent()["mobile_app_ravi_phone"][0]["message"],
+                         "Asha changed 'Groceries' ($90.00) in Flat: you're no longer in the split "
+                         "(your share was $45.00).")
 
     def test_home_assistant_down_or_missing_never_breaks_adding(self):
         self.settings(notify_charges=True)

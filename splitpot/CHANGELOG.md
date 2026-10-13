@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.6.2
+
+**Security**
+- **Only a group's members (and admins) can change who is in it.** Anyone could add people to any group before. Everyone
+  still sees every group and can add expenses to it — Splitpot is built for one household that shares its costs
+  openly, and the documentation now says so plainly; the Household Assistant is the narrower view (only your own groups).
+- **Your default group is your own.** Starring a group used to change where Splitpot opens for the whole household; now
+  it only changes it for you. A group that was the household default stays everyone's default until they pick their own.
+- **Edits are written out in full and the people affected are told.** The activity log now says exactly what an edit
+  changed — who paid, the split, the amount, the date — and when an edit changes who paid or someone's share, those
+  people get a notification (when notifications are on), like a new charge.
+- **Limits, generous by default** (Admin → App settings → Limits): 200 groups per person, 20,000 entries per group and
+  60 changes per person per minute; 0 switches each one off. Group names are up to 80 characters and one request can
+  name at most 50 people. Requests are capped at 1 MB (a restore at 512 MB), counted even without a Content-Length.
+- **Disabled people can't be put into new charges or payments.** Editing an entry they're already in still works.
+- **The fonts come from Splitpot itself** instead of Google Fonts, so the page loads nothing from the internet.
+- The app's image is pinned to one Alpine release (`python:3.12-alpine3.22`, like the other household apps), with
+  plain, pinned uvicorn instead of `uvicorn[standard]`.
+
+**Fixed**
+- **Amounts with more than two decimals are refused** instead of being rounded one way for the total and another for a
+  percentage split, and the smallest amount is 0.01.
+- **Balance sensors no longer linger**: a renamed person's old sensor, and the sensors of people whose last group was
+  deleted, are removed from Home Assistant.
+- The Household Assistant asks which group you mean when two of your groups have the same name, uses your own default
+  group, and leaves disabled people out of an equal split.
+- After a change, the ledger keeps every entry you had loaded, even past 500.
+- Starring a group shows an error if it fails; recording a payment no longer shows a group you have just left; the
+  Groups list and the delete confirmation count expenses and payments the same way.
+
+**Changed**
+- **Rename a group, take someone out of it, and change a settle-up payment** (✎ Name and members, and Edit on a
+  payment's row). Someone can be taken out only once their balance in that group is zero.
+- **Faster big groups and Dashboard**: the ledger's order is stored and indexed (worked out once for existing entries
+  when the app starts), so pages, weeks and months are quick lookups; "Show each person's balance" is only worked out
+  while it is ticked; overall balances are two sums instead of one query per expense.
+- Balance sensors are updated just after the answer is sent, and only the ones whose balance changed (the background
+  sync still re-sends all of them).
+- The Users list only writes Home Assistant's people when it has read them again, not on every page load.
+- The activity log keeps a year by default (**Keep the activity log**; 0 keeps everything).
+- **Shared code**: an optional **App-messages signing key** (Admin → App settings → Household Assistant; the same key
+  in every household app) signs the messages between the apps; API answers are never cached by the browser, while the
+  page's scripts, styles and fonts are cached until the next version, so it loads faster; database writes are lighter.
+
 ## 2.6.1
 
 - **Load more shows the balances too**: with **Show each person's balance** ticked, the rows added by **Load more**

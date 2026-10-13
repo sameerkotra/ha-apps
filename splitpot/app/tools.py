@@ -9,8 +9,9 @@ app/common/assist_tools.py).
   the proposed change in the assistant, checked as the Add expense form checks it, logged and notified the same.
 
 Only the groups the person is a member of, matched to their Home Assistant login (`users.ha_user_id`), never by
-name. Money is private, so the admin's *Answer the Household Assistant* is **off** until turned on; each person can
-also turn it off for themselves (My settings). Links open each group on the app's sidebar page (`/group/<id>`).
+name. Inside Splitpot everyone sees every group; the assistant is narrower (the person's own groups only), and the
+admin's *Answer the Household Assistant* is **off** until turned on; each person can also turn it off for themselves
+(My settings). Links open each group on the app's sidebar page (`/group/<id>`).
 """
 import re
 from datetime import datetime, timedelta, timezone
@@ -34,7 +35,7 @@ def _actor(conn, uid: str):
                      (uid.strip().lower(),)).fetchone()
     if r is None or r["disabled"]:
         return None
-    return {"id": r["id"], "name": r["name"], "assistant_ok": bool(r["assistant_ok"])}
+    return {"id": r["id"], "name": r["name"], "assistant_ok": bool(r["assistant_ok"]), "ha": uid.strip().lower()}
 
 
 def _panel():
@@ -49,15 +50,27 @@ _GROUP = Arg("string", "a group's name; leave out for all the person's groups", 
 
 
 def _groups(ctx) -> list:
-    """The person's groups (id, name), or the one named in `group` (any case); Nack not_found otherwise."""
+    """The person's groups (id, name) — their default group first —, or the ones named in `group` (any case; two
+    groups can share a name); Nack not_found otherwise."""
     rows = ctx.conn.execute("SELECT g.id, g.name FROM groups g JOIN group_members m ON m.group_id = g.id "
-                            "WHERE m.user_id = ? ORDER BY g.is_default DESC, g.created_at", (ctx.user["id"],)).fetchall()
+                            "WHERE m.user_id = ? ORDER BY g.created_at", (ctx.user["id"],)).fetchall()
+    default = _main().default_group_for(ctx.conn, ctx.user.get("ha"))
+    rows = sorted(rows, key=lambda r: r["id"] != default)          # stable: then oldest first
     want = ctx.args.get("group")
     if want is not None:
-        rows = [r for r in rows if r["name"].strip().lower() == want.strip().lower()]
+        rows = [r for r in rows if r["name"].strip().casefold() == want.strip().casefold()]
         if not rows:
             raise bus.Nack("not_found", "group")
     return rows
+
+
+def _which(ctx, groups, names: dict) -> str:
+    """"Which group? Trip (Asha, Ravi), Trip (Asha, Meera)" — the members tell same-named groups apart."""
+    m = _main()
+
+    def label(g):
+        return f"{g['name']} ({', '.join(names.get(u, 'Unknown') for u in m.group_member_ids(ctx.conn, g['id']))})"
+    return "Which group? " + ", ".join(label(g) for g in groups) + ". Nothing was added."
 
 
 def _links(ctx, groups) -> list:
@@ -135,7 +148,7 @@ def recent(ctx):
             entries.append({"date": at.astimezone(m.tz()).date().isoformat(), "group": g["name"],
                             "what": "payment" if e["splitType"] == "payment" else e["description"],
                             "paid_by": e["paidByName"], "amount": e["amount"], "your_share": share,
-                            "_at": at})
+                            "_at": at, "_group": g["id"]})
     entries.sort(key=lambda x: x["_at"], reverse=True)
     if len(entries) > PAGE:
         entries, more = entries[:PAGE], True
@@ -148,8 +161,8 @@ def recent(ctx):
     text = (f"{len(entries)} recent entries (spent {m.money(spent)}): "
             + "; ".join(f"{x['date']} {x['what']} {m.money(x['amount'])} paid by {x['paid_by']} ({x['group']})"
                         for x in entries[:6]) + ("…" if len(entries) > 6 else "") + ".")
-    shown = {x["group"] for x in entries}
-    return ctx.result(text, items=entries, links=_links(ctx, [g for g in groups if g["name"] in shown]), more=more)
+    shown = {x.pop("_group") for x in entries}
+    return ctx.result(text, items=entries, links=_links(ctx, [g for g in groups if g["id"] in shown]), more=more)
 
 
 def _member(ctx, members: list, text: str):
@@ -181,22 +194,25 @@ def expense_add(ctx):
     link = ctx.link("Splitpot")
     if not groups:
         return ctx.result(f"{ctx.user['name']} isn't in any Splitpot group. Nothing was added.", links=[link])
-    if len(groups) > 1 and "group" not in ctx.args:
-        default = ctx.conn.execute("SELECT id, name FROM groups WHERE is_default = 1 AND id IN (%s)"
-                                   % ",".join("?" * len(groups)), [g["id"] for g in groups]).fetchone()
-        if default is None:
+    names = _names(ctx.conn)
+    if len(groups) > 1 and "group" in ctx.args:                  # two of their groups have that name
+        return ctx.result(_which(ctx, groups, names), links=_links(ctx, groups))
+    if len(groups) > 1:
+        default = m.default_group_for(ctx.conn, ctx.user.get("ha"))   # the person's own default group
+        picked = [g for g in groups if g["id"] == default]
+        if not picked:
             return ctx.result("Which group? " + ", ".join(g["name"] for g in groups) + ". Nothing was added.",
                               links=_links(ctx, groups))
-        groups = [default]
+        groups = picked
     g = groups[0]
     ids = m.group_member_ids(ctx.conn, g["id"])
-    names = _names(ctx.conn)
+    off = m.disabled_ids(ctx.conn)
     members = [(u, names.get(u, "Unknown")) for u in ids]
     payer = _member(ctx, members, ctx.args.get("paid_by") or "me")
     if payer is None:
         return ctx.result(f"Nobody in {g['name']} is called “{ctx.args.get('paid_by')}”. Members: "
                           + ", ".join(n for _, n in members) + ". Nothing was added.", links=_links(ctx, [g]))
-    participants = list(ids)
+    participants = [u for u in ids if u not in off]
     if ctx.args.get("split_with"):
         participants = []
         for part in [p for p in ctx.args["split_with"].replace(" and ", ",").split(",") if p.strip()]:
@@ -212,15 +228,15 @@ def expense_add(ctx):
         when = m.resolve_expense_date(ctx.args.get("date"))
         payload = m.ExpenseCreate(description=description, amount=float(ctx.args["amount"]), paidBy=payer[0],
                                   splitType="equal", participants=participants)
-        splits, split_type = m.build_splits(ids, payload)
+        splits, split_type = m.build_splits(ids, payload, off)
+        m.check_room(ctx.conn, group_id=g["id"])
     except m.HTTPException as e:
         return ctx.result(f"{e.detail}. Nothing was added.", links=_links(ctx, [g]))
     except ValueError:
         raise bus.Nack("invalid", "amount") from None
     eid = m.new_id()
     amount = round(payload.amount, 2)
-    ctx.conn.execute("INSERT INTO expenses (id, group_id, description, amount, paid_by, split_type, date) "
-                     "VALUES (?, ?, ?, ?, ?, ?, ?)", (eid, g["id"], description, amount, payer[0], split_type, when))
+    m.insert_entry(ctx.conn, eid, g["id"], description, amount, payer[0], split_type, when)
     m.write_splits(ctx.conn, eid, splits)
     actor = ctx.user["name"]
     message = f"{actor} added '{description}' ({m.money(amount)}) to {g['name']} with the Household Assistant"
@@ -228,7 +244,7 @@ def expense_add(ctx):
         message += f", paid by {payer[1]}"
     m.log_event(ctx.conn, "expense_added", message, group_id=g["id"], actor=actor)
     ha_id = ctx.msg.data.get("requested_by")
-    ctx.msg.after_commit(m.push_balances_to_ha)
+    ctx.msg.after_commit(m.push_changed_balances)
     ctx.msg.after_commit(lambda: m.notify_new_charge(eid, ha_id, actor))
     shares = [{"who": names.get(sp["userId"], "Unknown"), "share": sp["amount"]} for sp in splits]
     text = (f"Added “{description}” ({m.money(amount)}) to {g['name']}, paid by "

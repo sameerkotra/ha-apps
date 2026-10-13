@@ -13,7 +13,7 @@ cloud service, no published port.
 
 ## Features
 
-- Groups for a household, a trip or a project, with one group as the start page
+- Groups for a household, a trip or a project, renamed and with members added or taken out later; each person can pick a group as their start page
 - Expenses split equally, by exact amounts or by percentages, always to the cent
 - Per-group balances with "who pays whom" suggestions, and recorded settle-up payments
 - Dashboard: overall balance, weekly and monthly spending, and an activity log

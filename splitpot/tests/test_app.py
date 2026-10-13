@@ -50,6 +50,7 @@ class Base(unittest.TestCase):
             if os.path.exists(p):
                 os.remove(p)
         main.init_db()
+        main.WRITES.clear()   # the per-person write limit counts per process
         with main.get_conn() as conn:
             for uid, name in (("a", "Ann"), ("b", "Ben"), ("c", "Cat"), ("x", "Xavier")):
                 conn.execute("INSERT INTO users (id, name, created_at) VALUES (?, ?, ?)", (uid, name, main.now_iso()))

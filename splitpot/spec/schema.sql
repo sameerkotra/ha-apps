@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS groups (
     created_at  TEXT NOT NULL,
     is_default  INTEGER NOT NULL DEFAULT 0   -- app opens into this group (migration-added)
 );
--- At most one default group (also enforced in PUT /api/groups/{id}/default).
+-- The household default of older versions (no longer written; the default of anyone without a user_prefs row).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_one_default ON groups(is_default)
     WHERE is_default = 1;
 
@@ -37,7 +37,14 @@ CREATE TABLE IF NOT EXISTS group_members (
     position  INTEGER NOT NULL,              -- add order, for display
     PRIMARY KEY (group_id, user_id)
 );
-CREATE INDEX IF NOT EXISTS idx_group_members_group ON group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
+
+-- Each person's own default group, by Home Assistant login. NULL = "no default"; no row = groups.is_default.
+CREATE TABLE IF NOT EXISTS user_prefs (
+    ha_user_id       TEXT PRIMARY KEY,
+    default_group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
+    updated_at       TEXT NOT NULL
+);
 
 -- Expenses AND settle-up payments (split_type = 'payment').
 CREATE TABLE IF NOT EXISTS expenses (
@@ -47,12 +54,12 @@ CREATE TABLE IF NOT EXISTS expenses (
     amount      REAL NOT NULL,               -- total, rounded to 2 dp
     paid_by     TEXT NOT NULL REFERENCES users(id),  -- payments: the person paying back
     split_type  TEXT NOT NULL,               -- 'equal' | 'custom' | 'percent' | 'payment'
-    date        TEXT NOT NULL                -- full UTC timestamp, or bare 'YYYY-MM-DD' = that local (HA time zone) day
+    date        TEXT NOT NULL,               -- full UTC timestamp, or bare 'YYYY-MM-DD' = that local (HA time zone) day
+    sort_key    TEXT                         -- date as a sortable UTC time (date_sort_key; migration-added, backfilled)
 );
-CREATE INDEX IF NOT EXISTS idx_expenses_group ON expenses(group_id);
-CREATE INDEX IF NOT EXISTS idx_expenses_date  ON expenses(date);
--- The group ledger newest first, a page at a time (keyset on date + id; SPEC §6).
-CREATE INDEX IF NOT EXISTS idx_expenses_group_date ON expenses(group_id, date, id);
+-- The group ledger newest first, a page at a time (keyset on sort_key + id; SPEC §6); the Dashboard's weeks/months.
+CREATE INDEX IF NOT EXISTS idx_expenses_group_sort ON expenses(group_id, sort_key, id);
+CREATE INDEX IF NOT EXISTS idx_expenses_sort ON expenses(sort_key);
 
 -- Each person's share of one expense; shares sum to expenses.amount.
 -- Payments have exactly one row: the recipient, for the full amount.
@@ -63,7 +70,6 @@ CREATE TABLE IF NOT EXISTS expense_splits (
     percent    REAL,                         -- split_type 'percent' only: the person's %, 2 dp (migration-added)
     PRIMARY KEY (expense_id, user_id)
 );
-CREATE INDEX IF NOT EXISTS idx_expense_splits_expense ON expense_splits(expense_id);
 
 -- Append-only activity log, written in the same transaction as the change.
 -- group_id is a soft reference (no FK) so rows survive group deletion.

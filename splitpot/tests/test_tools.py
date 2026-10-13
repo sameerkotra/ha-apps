@@ -69,6 +69,7 @@ class ToolTests(unittest.TestCase):
             if os.path.exists(p):
                 os.remove(p)
         main.init_db()
+        main.WRITES.clear()   # the per-person write limit counts per process
         with main.get_conn() as conn:
             for uid, name, ha in (("asha", "Asha", "ha_asha"), ("ravi", "Ravi", "ha_ravi"), ("mia", "Mia", "ha_mia")):
                 conn.execute("INSERT INTO users (id, name, created_at, ha_user_id) VALUES (?, ?, ?, ?)",
@@ -213,6 +214,35 @@ class ToolTests(unittest.TestCase):
         res = self.act("ha_ravi", description="Snacks", amount=8)
         self.assertTrue(res["text"].startswith("Which group?"), res["text"])
         self.assertNotIn("Snacks", [e["description"] for e in self.expenses(self.flat) + self.expenses(self.trip)])
+
+    def test_two_groups_with_one_name_ask_which(self):
+        other = self.group("flat", ["asha", "mia"])
+        res = self.act("ha_asha", description="Bread", amount=4, group="Flat")
+        self.assertEqual(res["text"], "Which group? Flat (Asha, Ravi, Mia), flat (Asha, Mia). Nothing was added.")
+        self.assertEqual(len(res["links"]), 2)
+        self.assertNotIn("Bread", [e["description"] for e in self.expenses(self.flat) + self.expenses(other)])
+        self.add(other, "Jam", 6, "mia", ["asha", "mia"])
+        res = call("splitpot.recent", "ha_asha", group="flat")       # both shown, each linked by its own id
+        self.assertEqual({lk["target"] for lk in res["links"]}, {f"/group/{self.flat}", f"/group/{other}"})
+
+    def test_each_persons_own_default_group(self):
+        r = self.c.put(f"/api/groups/{self.trip}/default", json={"isDefault": True}, headers=RAVI)
+        self.assertEqual(r.status_code, 200, r.text)
+        res = self.act("ha_ravi", description="Fuel", amount=40)
+        self.assertIn("to Trip", res["text"])
+        res = self.act("ha_asha", description="Snacks", amount=8)      # Asha chose nothing: only Flat is hers
+        self.assertIn("to Flat", res["text"])
+        res = call("splitpot.balances", "ha_ravi")
+        self.assertEqual(res["links"][0]["target"], f"/group/{self.trip}")   # their default first
+
+    def test_disabled_people_are_left_out_of_the_split(self):
+        with main.get_conn() as conn:
+            conn.execute("UPDATE users SET disabled = 1 WHERE id = 'mia'")
+            conn.commit()
+        res = self.act("ha_asha", description="Soap", amount=10)
+        self.assertNotIn("Mia", res["text"])
+        res = self.act("ha_asha", description="Soap", amount=10, split_with="Mia, me")
+        self.assertIn("Nothing was added", res["text"])
 
     def test_catalogue(self):
         tools.tools.check()

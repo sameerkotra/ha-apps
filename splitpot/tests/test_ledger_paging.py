@@ -30,9 +30,11 @@ class Ledger(unittest.TestCase):
             if os.path.exists(p):
                 os.remove(p)
         main.init_db()
+        main.WRITES.clear()   # the per-person write limit counts per process
         with main.get_conn() as conn:
             for uid, name in (("a", "Ann"), ("b", "Ben"), ("c", "Cat")):
                 conn.execute("INSERT INTO users (id, name, created_at) VALUES (?, ?, ?)", (uid, name, main.now_iso()))
+            conn.execute("UPDATE users SET ha_user_id = 'u_alice' WHERE id = 'a'")   # Alice is Ann (a member)
             conn.commit()
         r = self.c.post("/api/groups", json={"name": "House", "memberIds": ["a", "b", "c"]}, headers=ALICE)
         self.gid = r.json()["id"]
@@ -172,7 +174,8 @@ class Ledger(unittest.TestCase):
     def test_ledger_index_exists(self):
         with main.get_conn() as conn:
             names = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
-        self.assertIn("idx_expenses_group_date", names)
+        self.assertIn("idx_expenses_group_sort", names)
+        self.assertNotIn("idx_expenses_group_date", names)              # replaced by the stored sort key
 
 
     def test_each_entry_carries_everyones_balance_just_after_it(self):
@@ -182,7 +185,7 @@ class Ledger(unittest.TestCase):
         r = self.c.post(f"/api/groups/{self.gid}/payments", headers=ALICE,
                         json={"fromUserId": "c", "toUserId": "a", "amount": 10, "date": "2026-01-03"})
         self.assertEqual(r.status_code, 201, r.text)
-        g = self.group(limit=20)
+        g = self.group(limit=20, balances=1)
         after = {e["date"][:10]: {b["userId"]: b["amount"] for b in e["balancesAfter"]} for e in g["expenses"]}
         self.assertEqual(after["2026-01-01"], {"a": 20.0, "b": -10.0, "c": -10.0})
         self.assertEqual(after["2026-01-02"], {"a": 19.97, "b": -9.95, "c": -10.02})
@@ -195,12 +198,12 @@ class Ledger(unittest.TestCase):
 
     def test_balances_after_are_the_same_on_every_page(self):
         self.add(25, paid_by="b")
-        whole = {e["id"]: e["balancesAfter"] for e in self.group()["expenses"]}
-        g = self.group(limit=7)
+        whole = {e["id"]: e["balancesAfter"] for e in self.group(balances=1)["expenses"]}
+        g = self.group(limit=7, balances=1)
         seen = {e["id"]: e["balancesAfter"] for e in g["expenses"]}
         cursor = g["nextCursor"]
         while cursor:
-            p = self.page(limit=7, cursor=cursor)
+            p = self.page(limit=7, cursor=cursor, balances=1)
             seen.update({e["id"]: e["balancesAfter"] for e in p["expenses"]})
             cursor = p["nextCursor"]
         self.assertEqual(seen, whole)

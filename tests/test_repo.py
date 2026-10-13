@@ -12,7 +12,7 @@ ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", 
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
 VERSIONS = {"calorie_tracker": "2.3.1", "family_tree": "2.6.2", "household_chat": "2.6.4", "household_todo": "2.7.2",
-            "household_vault": "2.1.6", "splitpot": "2.6.1"}
+            "household_vault": "2.1.6", "splitpot": "2.6.2"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"

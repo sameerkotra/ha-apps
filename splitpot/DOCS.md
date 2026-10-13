@@ -72,15 +72,21 @@ open the app.
 
 ## Groups
 
-- **Create a group** under **Groups**: give it a name (up to 60 characters)
-  and tick the people in it. Members are chosen when the group is created.
-- The **Groups** list shows each group's members and how many expenses it
-  has (settle-up payments aren't counted).
-- **Default group**: click the star (☆) next to a group, or **☆ Set as
+- **Create a group** under **Groups**: give it a name (up to 80 characters)
+  and tick the people in it.
+- **✎ Name and members** (top of the group's page, for the group's members
+  and administrators): rename the group, add someone, or take someone out.
+  Someone can be taken out only once their balance in that group is zero
+  (record a settle-up payment first); their past expenses and payments stay.
+  A group always keeps at least one member.
+- The **Groups** list shows each group's members and how many expenses and
+  settle-up payments it has.
+- **Default group**: click the star (☆) next to a group, or **☆ Set as my
   default** on the group's page. Splitpot then opens straight into that group
-  instead of the Dashboard. There is one default for the whole household;
-  marking another group moves it, and clicking the star on the current
-  default clears it.
+  for you instead of the Dashboard. Everyone chooses their own; clicking the
+  star on your default clears it. A group that was the household's default
+  before this became a personal choice stays the default for everyone who
+  hasn't picked one.
 - **Delete group** (administrators only, top of the group's page) removes the
   group with all its expenses and payments, after a confirmation that says
   how many go with it. This can't be undone; the activity log keeps a record
@@ -119,7 +125,9 @@ Open a group and use **Add an expense** on the left:
 - **Edit**: every ledger row has an **Edit** button. The form loads the
   expense (a percentage split opens with its saved percentages); change
   anything, including switching between equal, amounts and percentages, and
-  click **Save changes**, or **Cancel**. Balances update straight away.
+  click **Save changes**, or **Cancel**. Balances update straight away. The
+  activity log says exactly what changed (description, amount, who paid, the
+  split and the date).
 - **Delete** (administrators only) removes an expense after a confirmation.
 - **The ledger** lists the group's expenses and payments, newest first, with
   date, payer and how it was split. Each payer has their own colour (the name
@@ -152,9 +160,9 @@ activity log with who made it.
   payment appears in the ledger as "💸 Ann paid Ben · settle-up payment" and
   moves the balances as if that money had been paid back, so a full payment
   brings both people to zero.
-- Payments are not spending: they're left out of the Dashboard's totals and
-  transaction list. They can't be edited; an administrator can delete one to
-  undo it.
+- **Edit** on a payment's ledger row changes who paid whom, the amount and the
+  date. Payments are not spending: they're left out of the Dashboard's totals
+  and transaction list. An administrator can delete one to undo it.
 
 ## Dashboard
 
@@ -171,9 +179,11 @@ The first item in the sidebar:
   week, or by group for a month) and the list of expenses with date, group
   and payer. Weeks start on Monday. Weeks and months follow Home Assistant's
   time zone.
-- **Activity log**: the latest 50 changes (groups created, members added,
-  expenses added/edited/deleted, payments, default group, users disabled or
-  enabled, settings changed), newest first, with who did it and when.
+- **Activity log**: the latest 50 changes (groups created or renamed, members
+  added or taken out, expenses added/edited/deleted, payments recorded or
+  changed, users disabled or enabled, settings changed), newest first, with
+  who did it and when. Entries older than a year are removed (App settings →
+  Limits).
 
 ## Phone notifications
 
@@ -188,8 +198,11 @@ share — **except the person who added it**, e.g.
 Tapping it opens Splitpot on that group. With **Also notify settle-up
 payments** (on unless switched off) the two people in a recorded settle-up
 payment are told too ("Ravi paid you $25.00 in Trip"), again not whoever
-recorded it. Editing or deleting an entry never sends a notification; the
-activity log shows those.
+recorded it. When someone **edits** an entry and changes who paid or anyone's
+share, the people that affects are told ("Ravi changed 'Groceries' ($90.00) in
+Flat: now paid by Ravi; your share: $45.00 (was $30.00)"), again not whoever
+made the change. Deleting an entry, or an edit that only changes the
+description or date, never sends a notification; the activity log shows those.
 
 - **Which phones**: the ones Home Assistant links to the person — Settings →
   People → the person → **Track device**, picking their phone with the Home
@@ -223,7 +236,9 @@ If the household also uses the **Household Assistant** app, you can ask it
   the Add expense form, shows in the group's activity as added with the
   Household Assistant, and notifies people as an added charge does.
 
-Money is private, so this is **off until an admin turns it on** (**Admin → App
+Inside Splitpot everyone sees every group (see *Who can see what*); the
+Household Assistant is narrower: it tells each person only about the groups
+they are in. It is **off until an admin turns it on** (**Admin → App
 settings → Household Assistant → Answer the Household Assistant**). You can also
 turn it off for yourself on **My settings → Let the Household Assistant answer
 for me**. You're matched by your Home Assistant login, never by name; a person
@@ -271,8 +286,9 @@ person" suggestion. No other entities are created.
 Turning sync off removes the sensors from Home Assistant. They are created
 through Home Assistant's API, so after a Home Assistant restart they come
 back with the next sync. If someone is renamed, a sensor with the new name
-appears; the old one lingers until sync is switched off or Home Assistant
-restarts.
+appears and the old one is removed; when someone is in no group any more
+(their last group was deleted), their sensor is removed. Sensors are updated
+just after each change, and only those whose balance changed.
 
 ## Admin area
 
@@ -282,8 +298,8 @@ page", and the server refuses its functions. It has three tabs.
 
 ### App settings
 
-Household-wide settings, in four cards (Money, Home Assistant, Notifications
-and Household Assistant), with a
+Household-wide settings, in five cards (Money, Home Assistant, Notifications,
+Household Assistant and Limits), with a
 line under each setting saying what it does, its range and its default. Your
 changes are kept until you select **Save settings** at the bottom (it shows
 how many unsaved changes there are); **Discard changes** puts everything back.
@@ -299,6 +315,11 @@ activity log.
 | Notify people about new charges | off | Phone notifications for new charges (see *Phone notifications* above). |
 | Also notify settle-up payments | on | The two people in a recorded settle-up payment are told too. Greyed out while the switch above is off. |
 | Answer the Household Assistant | off | Lets the Household Assistant app tell people the balances and recent expenses of their own groups (see *The Household Assistant*). |
+| App-messages signing key | empty | A secret shared by every household app (paste the same key in each one's App settings). With a key, Splitpot refuses messages from other apps that aren't signed with it; without one, any app on Home Assistant's network could send messages as any other. Never shown again after saving, and left out of backups. |
+| Groups per person | `200` | The most groups one person can be in. 0 = no limit. |
+| Entries per group | `20000` | The most expenses and payments in one group; start a new group past it. 0 = no limit. |
+| Changes per person per minute | `60` | How many changes one Home Assistant user can make in a minute; more get "Too many changes" until the minute is up. 0 = no limit. |
+| Keep the activity log (days) | `365` | Older activity log entries are removed once a day. Expenses and balances are never removed. 0 = keep everything. |
 
 ### Users
 
@@ -345,11 +366,14 @@ instead.
 ## Who can see what, and where data goes
 
 - **Everyone** who can log in to Home Assistant can open Splitpot
-  (`panel_admin: false`) and see every group, expense, balance and the
-  activity log, and add or edit expenses and payments. It's built for one
-  household that shares its expenses openly. If there are Home Assistant
-  accounts that shouldn't see this, Splitpot is not the right place for that
-  data.
+  (`panel_admin: false`): everyone sees every group, expense, balance and the
+  activity log, and can add or edit expenses and payments in any group. It's
+  built for one household that shares its expenses openly. If there are Home
+  Assistant accounts that shouldn't see this, Splitpot is not the right place
+  for that data. The one narrower view is the Household Assistant's, which
+  only tells each person about their own groups.
+- **A group's members** (and administrators) are the only ones who can rename
+  it or change who is in it. Your default group is your own choice.
 - **Administrators** (the `admin_users` list) additionally get the Admin area
   and can delete. The server enforces this; hidden buttons are only a
   convenience.
@@ -363,12 +387,9 @@ instead.
   Supervisor's API (the app asks for `homeassistant_api` for this; Home
   Assistant doesn't offer a narrower permission). Anything that can read your
   Home Assistant states can read the balance sensors.
-- **Outside your home network**: Splitpot's server sends nothing anywhere.
-  The only request that leaves your network is your browser loading the two
-  fonts (Source Serif 4 and Inter) from Google Fonts
-  (`fonts.googleapis.com`, `fonts.gstatic.com`), which is a normal web font
-  request and contains none of your Splitpot data. If those can't be reached
-  the app uses your system fonts.
+- **Outside your home network**: nothing. Splitpot's server sends nothing
+  anywhere, and the page loads everything, including its two fonts (Source
+  Serif 4 and Inter, under the SIL Open Font License), from the app itself.
 - **Storage**: one SQLite file, `/data/splitpot.db`, in the app's own
   storage. It isn't encrypted: anyone with access to the Home Assistant host
   or a copy of a Home Assistant backup can read it.
@@ -383,18 +404,22 @@ page.
 
 ## Limits
 
-- Members are chosen when a group is created; there's no screen to add or
-  remove members later or to rename a group. Create a new group instead.
+- Someone can be taken out of a group only while their balance there is
+  zero.
 - Users can't be created or deleted in Splitpot; they come from Home
   Assistant Persons that are linked to a user.
 - One currency for the whole app; no conversion between currencies.
-- Amounts are between 0.01 and 1,000,000 with two decimals. Descriptions
+- Amounts are between 0.01 and 1,000,000 with at most two decimals (more are
+  refused rather than rounded). Descriptions
   are up to 80 characters in the form. Dates must be from 2000 onwards and
   not in the future.
 - Splitpot doesn't track who has actually paid outside the app; it only knows
   the payments you record.
 - Deletes and restores can't be undone.
 - Balance sensors exist only for people in at least one group.
+- Limits (App settings → Limits, generous by default): 200 groups per person,
+  20,000 entries per group, 60 changes per person per minute. Requests are at
+  most 1 MB (a database restore up to 512 MB).
 
 ## Troubleshooting
 

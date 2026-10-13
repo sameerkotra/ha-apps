@@ -16,7 +16,9 @@ const state = {
   adminTab: 'settings',
   adminUsers: [],
   editingExpenseId: null,
+  editingPaymentId: null, // a settle-up payment being changed in its ledger row
   ledgerLoading: false,   // a "Load more" request is on its way
+  me: null,               // the Splitpot person Home Assistant links to the signed-in login (from /whoami)
 };
 
 // The group ledger loads a page at a time (newest first): LEDGER_PAGE entries when the group opens, then
@@ -485,23 +487,38 @@ function renderGroups() {
     const li = document.createElement('li');
     li.innerHTML = `
       <button type="button" class="star-btn ${g.isDefault ? 'is-default' : ''}" data-toggle-default="${g.id}" data-is-default="${g.isDefault}"
-        title="${g.isDefault ? 'Remove as default group' : 'Open this group when the app starts'}"
-        aria-label="${g.isDefault ? 'Remove as default group' : 'Set as default group'}">${g.isDefault ? '★' : '☆'}</button>
+        title="${g.isDefault ? 'Your default group — click to open the Dashboard instead' : 'Open this group when Splitpot starts (just for you)'}"
+        aria-label="${g.isDefault ? 'Remove as my default group' : 'Set as my default group'}">${g.isDefault ? '★' : '☆'}</button>
       <button class="group-link" data-open-group="${g.id}">
         <div class="row-main">
           <span class="row-title">${escapeHtml(g.name)}${g.isDefault ? ' <span class="default-badge">Default</span>' : ''}</span>
           <span class="row-sub">${g.memberNames.map(escapeHtml).join(', ')}</span>
         </div>
       </button>
-      <span class="row-sub">${g.expenseCount} expense${g.expenseCount === 1 ? '' : 's'}</span>
+      <span class="row-sub">${entryCounts(g)}</span>
     `;
     list.appendChild(li);
   });
 }
 
+// "12 expenses · 3 payments" — the same counts in the Groups list and the delete confirmation.
+function entryCounts(g) {
+  const e = g.expenseCount || 0;
+  const p = g.paymentCount || 0;
+  const parts = [`${e} expense${e === 1 ? '' : 's'}`];
+  if (p) parts.push(`${p} payment${p === 1 ? '' : 's'}`);
+  return parts.join(' · ');
+}
+
+// Your default group (just yours): Splitpot opens straight into it instead of the Dashboard.
 async function toggleGroupDefault(id, makeDefault) {
-  await api(`/groups/${id}/default`, { method: 'PUT', body: JSON.stringify({ isDefault: makeDefault }) });
-  await loadGroups();
+  try {
+    await api(`/groups/${id}/default?limit=1`, { method: 'PUT', body: JSON.stringify({ isDefault: makeDefault }) });
+    await loadGroups();
+  } catch (err) {
+    toast(err.message, true);
+    return;
+  }
   if (state.currentGroupId === id && state.currentGroup) {
     state.currentGroup.isDefault = makeDefault;
     renderGroupDetail();
@@ -511,8 +528,7 @@ async function toggleGroupDefault(id, makeDefault) {
 $('#groupDeleteBtn').addEventListener('click', async () => {
   const g = state.currentGroup;
   if (!g) return;
-  const n = g.ledgerTotal;
-  const what = n ? ` and its ${n} expense${n === 1 ? '' : 's'}/payment${n === 1 ? '' : 's'}` : '';
+  const what = g.ledgerTotal ? ` and its ${entryCounts(g).replace(' · ', ' and ')}` : '';
   if (!confirm(`Delete the group "${g.name}"${what}? Balances from it disappear too. This can't be undone.`)) return;
   try {
     await api(`/groups/${g.id}`, { method: 'DELETE' });
@@ -524,6 +540,57 @@ $('#groupDeleteBtn').addEventListener('click', async () => {
     alert(err.message);
   }
 });
+
+// -- the group's name and members (members and admins) --
+$('#groupEditBtn').addEventListener('click', () => {
+  const panel = $('#groupEditPanel');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) renderGroupEdit();
+});
+
+function renderGroupEdit() {
+  const h = UI.h;
+  const g = state.currentGroup;
+  const err = h('div', { class: 'error', role: 'alert', id: 'groupEditError' });
+  const run = async (path, options, done) => {
+    err.textContent = '';
+    try {
+      await changeGroup(path, options);
+      if (done) toast(done);
+      loadGroups().catch(() => {});
+    } catch (ex) {
+      err.textContent = ex.message;
+    }
+  };
+  const base = `/groups/${encodeURIComponent(g.id)}`;
+  const name = h('input', { type: 'text', id: 'groupRenameInput', maxlength: '80', 'aria-label': 'Group name', value: g.name });
+  const rename = h('form', { class: 'field-row group-rename', onsubmit: (ev) => {
+    ev.preventDefault();
+    run(base, { method: 'PUT', body: JSON.stringify({ name: name.value }) }, 'Renamed');
+  } }, name, h('button', { class: 'btn ghost', type: 'submit' }, 'Rename'));
+  const disabledIds = new Set(state.users.filter((u) => u.disabled).map((u) => u.id));
+  const members = h('ul', { class: 'row-list member-edit-list' }, g.members.map((m) => h('li', null,
+    h('span', { class: 'row-title' }, m.name, disabledIds.has(m.id) ? ' (disabled)' : ''),
+    g.members.length > 1 ? h('button', { class: 'btn danger-text', type: 'button', title: 'Only while their balance in this group is zero',
+      onclick: () => {
+        if (!confirm(`Take ${m.name} out of ${g.name}? Their past entries stay.`)) return;
+        run(`${base}/members/${encodeURIComponent(m.id)}`, { method: 'DELETE' }, `${m.name} is no longer in ${g.name}`);
+      } }, 'Take out') : null)));
+  const others = state.users.filter((u) => !u.disabled && !g.memberIds.includes(u.id));
+  const pick = h('select', { id: 'groupAddMember', 'aria-label': 'Add someone' },
+    h('option', { value: '' }, others.length ? 'Add someone…' : 'Everyone is in this group'),
+    others.map((u) => h('option', { value: u.id }, u.name)));
+  const add = h('form', { class: 'field-row' , onsubmit: (ev) => {
+    ev.preventDefault();
+    if (!pick.value) return;
+    run(`${base}/members`, { method: 'POST', body: JSON.stringify({ userId: pick.value }) }, 'Added');
+  } }, pick, h('button', { class: 'btn ghost', type: 'submit', disabled: !others.length }, 'Add'));
+  UI.mount($('#groupEditPanel'),
+    h('h3', null, 'Name'), rename,
+    h('h3', null, 'Members'),
+    h('p', { class: 'hint' }, 'Someone can be taken out once their balance in this group is zero; their past entries stay.'),
+    members, add, err);
+}
 
 $('#groupDefaultBtn').addEventListener('click', () => {
   if (!state.currentGroup) return;
@@ -563,6 +630,8 @@ $('#addGroupForm').addEventListener('submit', async (e) => {
 async function openGroup(id) {
   state.currentGroupId = id;
   state.currentGroup = null;
+  state.editingPaymentId = null;
+  $('#groupEditPanel').hidden = true;
   showView('group');
   await loadConfig();
   await refreshGroup();
@@ -570,18 +639,51 @@ async function openGroup(id) {
 }
 
 // How many ledger entries to (re)load: the first page, or — after a change, so the list doesn't jump back —
-// as many as are showing now.
-function ledgerLimit(keep) {
+// as many as are showing now (more than one request when that is over the server's largest page).
+function ledgerWanted(keep) {
   const shown = keep && state.currentGroup && state.currentGroup.id === state.currentGroupId ? state.currentGroup.expenses.length : 0;
-  return Math.min(LEDGER_MAX, Math.max(LEDGER_PAGE, shown));
+  return Math.max(LEDGER_PAGE, shown);
+}
+
+// The query for a group or a ledger page: `limit`, and everyone's running balances only while
+// "Show each person's balance" is ticked (the server works them out only when asked).
+function ledgerQuery(limit) {
+  return `limit=${Math.min(LEDGER_MAX, limit)}${state.showRunning ? '&balances=1' : ''}`;
+}
+
+// Load further pages into `g` until it holds `want` entries (or the whole ledger).
+async function topUpLedger(g, want) {
+  while (g.nextCursor && g.expenses.length < want) {
+    const page = await api(`/groups/${encodeURIComponent(g.id)}/ledger?${ledgerQuery(want - g.expenses.length)}&cursor=${encodeURIComponent(g.nextCursor)}`);
+    const seen = new Set(g.expenses.map((e) => e.id));
+    g.expenses.push(...page.expenses.filter((e) => !seen.has(e.id)));
+    g.nextCursor = page.nextCursor;
+    g.ledgerTotal = page.total;
+  }
+  return g;
 }
 
 async function refreshGroup(keep = false) {
-  const g = await api(`/groups/${state.currentGroupId}?limit=${ledgerLimit(keep)}`);
+  const id = state.currentGroupId;
+  const want = ledgerWanted(keep);
+  const g = await topUpLedger(await api(`/groups/${encodeURIComponent(id)}?${ledgerQuery(want)}`), want);
+  if (state.currentGroupId !== id) return;   // another group was opened meanwhile
   state.currentGroup = g;
   const disabledIds = new Set(state.users.filter((u) => u.disabled).map((u) => u.id));
-  state.splitParticipants = new Set(g.memberIds.filter((id) => !disabledIds.has(id)));
+  state.splitParticipants = new Set(g.memberIds.filter((x) => !disabledIds.has(x)));
   renderGroupDetail();
+}
+
+// A change that answers with the group (payments, members, the name): show that answer — with as many ledger
+// entries as were showing — unless another group was opened while it was on its way. Throws the server's message.
+async function changeGroup(path, options) {
+  const id = state.currentGroupId;
+  const want = ledgerWanted(true);
+  const g = await topUpLedger(await api(`${path}${path.includes('?') ? '&' : '?'}${ledgerQuery(want)}`, options), want);
+  if (state.currentGroupId !== id) return null;
+  state.currentGroup = g;
+  renderGroupDetail();
+  return g;
 }
 
 function renderGroupDetail() {
@@ -593,10 +695,15 @@ function renderGroupDetail() {
   $('#groupMembersList').innerHTML = g.members.map((m) => `<span class="member-pill">${escapeHtml(m.name)}${disabledIds.has(m.id) ? ' (disabled)' : ''}</span>`).join('');
   const defaultBtn = $('#groupDefaultBtn');
   defaultBtn.classList.toggle('is-default', !!g.isDefault);
-  defaultBtn.innerHTML = g.isDefault ? '★ Default group' : '☆ Set as default';
-  defaultBtn.title = g.isDefault ? 'Open the Dashboard when the app starts, instead of this group' : 'Open this group when the app starts, instead of the Dashboard';
+  defaultBtn.innerHTML = g.isDefault ? '★ My default group' : '☆ Set as my default';
+  defaultBtn.title = g.isDefault ? 'Open the Dashboard when Splitpot starts, instead of this group (just for you)' : 'Open this group when Splitpot starts, instead of the Dashboard (just for you)';
   // Deleting a group is admin-only (enforced server-side too).
   $('#groupDeleteBtn').hidden = !state.isAdmin;
+  // The group's name and members: its members and admins (enforced server-side too).
+  const canEdit = state.isAdmin || (state.me && g.memberIds.includes(state.me));
+  $('#groupEditBtn').hidden = !canEdit;
+  if (!canEdit) $('#groupEditPanel').hidden = true;
+  if (!$('#groupEditPanel').hidden) renderGroupEdit();
   // Export is for everyone; it sits beside Delete (relative URL: ingress serves the app under a sub-path)
   const exportBtn = $('#groupExportBtn');
   exportBtn.href = `api/groups/${encodeURIComponent(g.id)}/export.csv`;
@@ -853,7 +960,11 @@ function startEditExpense(id) {
   state.editingExpenseId = id;
   $('#expDescription').value = e.description;
   $('#expAmount').value = e.amount.toFixed(2);
-  $('#expPaidBy').value = e.paidBy;
+  const paidBy = $('#expPaidBy');
+  if (![...paidBy.options].some((o) => o.value === e.paidBy)) {   // a disabled payer stays possible for this expense
+    paidBy.appendChild(UI.h('option', { value: e.paidBy }, `${e.paidByName} (disabled)`));
+  }
+  paidBy.value = e.paidBy;
   $('#expDate').value = localDateInputValue(parseWhen(e.date));
   state.splitParticipants = new Set(e.splits.map((s) => s.userId));
   const custom = e.splitType === 'custom' || e.splitType === 'percent';
@@ -886,13 +997,16 @@ function expenseRow(e) {
   // Deleting is admin-only (enforced server-side); others don't get a button that would just be refused.
   const deleteBtn = state.isAdmin ? h('button', { class: 'btn danger-text', type: 'button', dataset: { removeExpense: e.id } }, 'Delete') : null;
   if (e.splitType === 'payment') {
+    if (state.editingPaymentId === e.id) return paymentEditor(e);
     // A settle-up payment: paidBy paid the one person in splits back.
     const to = e.splits[0] ? e.splits[0].name : 'someone';
     return h('li', { class: `payment-row payer-row ${payerRowClass(e.paidBy)}`, dataset: { expenseId: e.id } },
       h('div', { class: 'row-main' },
         h('span', { class: 'row-title' }, '💸 ', payer, ` paid ${to}`),
         h('span', { class: 'row-sub' }, `${when} · settle-up payment`)),
-      h('div', { class: 'row-actions' }, h('span', { class: 'row-amount' }, money(e.amount)), deleteBtn));
+      h('div', { class: 'row-actions' }, h('span', { class: 'row-amount' }, money(e.amount)),
+        h('button', { class: 'btn ghost', type: 'button', dataset: { editPayment: e.id } }, 'Edit'),
+        deleteBtn));
   }
   // Percent splits: "split by percentage · Ann 60% ($30.00) · …"
   const splitDesc = e.splitType === 'percent'
@@ -908,6 +1022,47 @@ function expenseRow(e) {
       deleteBtn));
 }
 
+// Changing a settle-up payment, in its own ledger row: who paid whom, how much and when.
+function paymentEditor(e) {
+  const h = UI.h;
+  const g = state.currentGroup;
+  const disabledIds = new Set(state.users.filter((u) => u.disabled).map((u) => u.id));
+  const to = e.splits[0] ? e.splits[0].userId : '';
+  const people = g.members.filter((m) => !disabledIds.has(m.id) || m.id === e.paidBy || m.id === to);
+  const pick = (label, selected) => h('label', { class: 'field' }, h('span', null, label),
+    h('select', { 'aria-label': label, value: selected }, people.map((m) => h('option', { value: m.id }, m.name))));
+  const from = pick('Who paid', e.paidBy);
+  const toPick = pick('To', to);
+  const amount = h('input', { type: 'number', step: '0.01', min: '0.01', 'aria-label': 'Amount', value: e.amount.toFixed(2) });
+  const date = h('input', { type: 'date', 'aria-label': 'Date', max: localDateInputValue(), value: localDateInputValue(parseWhen(e.date)) });
+  const err = h('div', { class: 'error', role: 'alert' });
+  const save = async () => {
+    err.textContent = '';
+    try {
+      await changeGroup(`/payments/${encodeURIComponent(e.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ fromUserId: from.querySelector('select').value, toUserId: toPick.querySelector('select').value,
+          amount: parseFloat(amount.value), date: date.value || localDateInputValue() }),
+      });
+      state.editingPaymentId = null;
+      if (state.currentGroup) renderExpenseList();
+    } catch (ex) {
+      err.textContent = ex.message;
+    }
+  };
+  const cancel = () => { state.editingPaymentId = null; renderExpenseList(); };
+  return h('li', { class: 'payment-row payment-edit', dataset: { expenseId: e.id } },
+    h('div', { class: 'row-main' },
+      h('span', { class: 'row-title' }, '💸 Change this settle-up payment'),
+      h('div', { class: 'field-row' }, from, toPick,
+        h('label', { class: 'field' }, h('span', null, 'Amount'), amount),
+        h('label', { class: 'field' }, h('span', null, 'Date'), date)),
+      err),
+    h('div', { class: 'row-actions' },
+      h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save'),
+      h('button', { class: 'btn ghost', type: 'button', onclick: cancel }, 'Cancel')));
+}
+
 // "Show each person's balance": under each entry, everyone's balance in the group just after it (from the server:
 // every entry added up oldest first). Off by default; remembered on this device.
 const RUNNING_KEY = 'splitpot.ledgerRunningBalances';
@@ -916,7 +1071,13 @@ $('#showRunningBalances').checked = state.showRunning;
 $('#showRunningBalances').addEventListener('change', (ev) => {
   state.showRunning = ev.target.checked;
   UI.lsSet(RUNNING_KEY, state.showRunning ? '1' : '0');
-  if (state.currentGroup) renderExpenseList();
+  if (!state.currentGroup) return;
+  // The balances come with the entries only when asked for: fetch them (keeping what's loaded) the first time.
+  if (state.showRunning && state.currentGroup.expenses.some((e) => !e.balancesAfter)) {
+    refreshGroup(true).catch((err) => toast(err.message, true));
+  } else {
+    renderExpenseList();
+  }
 });
 
 function runningBalances(e) {
@@ -976,7 +1137,7 @@ async function loadMoreLedger() {
   renderLedgerMore();
   const groupId = g.id;
   try {
-    const page = await api(`/groups/${encodeURIComponent(groupId)}/ledger?limit=${LEDGER_PAGE}&cursor=${encodeURIComponent(g.nextCursor)}`);
+    const page = await api(`/groups/${encodeURIComponent(groupId)}/ledger?${ledgerQuery(LEDGER_PAGE)}&cursor=${encodeURIComponent(g.nextCursor)}`);
     if (state.currentGroup !== g) return;   // the group was reloaded or left meanwhile
     const seen = new Set(g.expenses.map((e) => e.id));
     const fresh = page.expenses.filter((e) => !seen.has(e.id));
@@ -1002,6 +1163,12 @@ $('#expenseList').addEventListener('click', async (e) => {
   const editId = e.target.closest('[data-edit-expense]')?.dataset.editExpense;
   if (editId) {
     startEditExpense(editId);
+    return;
+  }
+  const paymentId = e.target.closest('[data-edit-payment]')?.dataset.editPayment;
+  if (paymentId) {
+    state.editingPaymentId = paymentId;
+    renderExpenseList();
     return;
   }
   const id = e.target.closest('[data-remove-expense]')?.dataset.removeExpense;
@@ -1034,11 +1201,10 @@ $('#balancesBox').addEventListener('click', async (e) => {
     return;
   }
   try {
-    state.currentGroup = await api(`/groups/${g.id}/payments?limit=${ledgerLimit(true)}`, {
+    await changeGroup(`/groups/${encodeURIComponent(g.id)}/payments`, {
       method: 'POST',
       body: JSON.stringify({ fromUserId: from, toUserId: to, amount, date: localDateInputValue() }),
     });
-    renderGroupDetail();
   } catch (err) {
     alert(err.message);
   }
@@ -1276,6 +1442,7 @@ function renderNoAdminBanner(who) {
     state.isAdmin = !!who.isAdmin;
     state.sensorSyncEnabled = !!who.sensorSyncEnabled;
     state.haConnected = !!who.haConnected;
+    state.me = who.userId || null;
   } catch (e) { /* not fatal — treated as a non-admin */ }
   $('#adminTabBtn').hidden = !state.isAdmin;   // the server enforces it too
   renderNoAdminBanner(who);
