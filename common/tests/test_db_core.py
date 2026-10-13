@@ -157,6 +157,38 @@ class DbCore(unittest.TestCase):
             pass
         self.assertEqual(gate.generation, 2)
 
+    def test_maintenance_gate_nested_work_does_not_deadlock(self):
+        import threading
+        gate = db_core.MaintenanceGate()
+        inside, release, done = threading.Event(), threading.Event(), threading.Event()
+
+        def worker():
+            with gate.work():
+                inside.set()
+                release.wait(2)
+                with gate.work(timeout=1):              # a pause is now waiting: this must not block
+                    pass
+            done.set()
+        t = threading.Thread(target=worker)
+        t.start()
+        inside.wait(2)
+        paused = threading.Event()
+
+        def pauser():
+            with gate.pause(timeout=3):
+                paused.set()
+        p = threading.Thread(target=pauser)
+        p.start()
+        while not gate.paused:                          # the pause has started waiting for the worker
+            threading.Event().wait(0.01)
+        release.set()
+        t.join(3)
+        p.join(3)
+        self.assertTrue(done.is_set())
+        self.assertTrue(paused.is_set())
+        with gate.work():                               # depth is reset afterwards
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()

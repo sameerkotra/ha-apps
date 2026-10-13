@@ -24,7 +24,8 @@ class FakePost:
         self.calls = []
 
     def __call__(self, url, headers, body, timeout, method="POST"):
-        self.calls.append({"url": url, "headers": headers, "body": json.loads(json.dumps(body)), "method": method})
+        self.calls.append({"url": url, "headers": headers, "body": json.loads(json.dumps(body)), "method": method,
+                           "timeout": timeout})
         a = self.answers.pop(0)
         if isinstance(a, Exception):
             raise a
@@ -174,6 +175,16 @@ class ErrorTests(unittest.TestCase):
         post = FakePost((200, {"response": "ok"}))
         c, _ = client(post)
         self.assertEqual(c.ollama(Cfg("ollama"), "q", timeout=120, deadline=30).text, "ok")
+
+    def test_default_deadline_never_cuts_a_longer_timeout(self):
+        post = FakePost((200, {"response": "ok"}))
+        c, _ = client(post)
+        self.assertEqual(c.ollama(Cfg("ollama"), "q", timeout=900).text, "ok")
+        self.assertGreater(post.calls[0]["timeout"], 899)     # not capped at the 300 s default
+        post = FakePost((200, {"response": "ok"}))
+        c, _ = client(post)
+        c.ollama(Cfg("ollama"), "q", timeout=900, deadline=120)
+        self.assertLessEqual(post.calls[0]["timeout"], 120)   # an explicit deadline still wins
 
     def test_only_http_addresses(self):
         for url in ("file:///etc/passwd#", "ftp://x/", "ai.local", "http:///x", ""):

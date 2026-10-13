@@ -2,6 +2,7 @@
 
 ## 2.1.6
 
+- The image is built on one fixed Alpine release, so a rebuild can't quietly move to the next one.
 - **Security**: a damaged or crafted KeePass file can no longer make the app loop for ever while reading it — it's refused as damaged. Importing opens one file at a time, asks for at most 256 MiB of memory (was 1 GiB) and stops at 64 MB unpacked (was 256 MB); a failed import as a new vault leaves nothing behind.
 - **Security**: if anything goes wrong half-way through a change — a save, a password change, a re-key — the vault stays exactly as it was, on disk and for everyone who has it open. Older versions are only removed once the change is safely stored, so a failure can no longer leave a vault nobody can open.
 - **Security**: only an admin can re-key Household by hand.

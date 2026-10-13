@@ -1,4 +1,4 @@
-# Shared file: edit common/python/ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=550955f4ad494a001ec1bf279fba4db58f3d1f73a8d6916faff36fcc2f7da1d0
+# Shared file: edit common/python/ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=de9b993d0f99be09c9f963b8c12dd2f7fcbdbb0dbe161627cb759852144ef47d
 """Talking to an AI model: Ollama, any OpenAI-compatible server, or Anthropic Claude (shared by the
 household apps: common/python/ai_client.py, copied into each app's app/common/ by
 tools/sync_common.py). Standard library only; nothing is imported from the app.
@@ -34,7 +34,8 @@ key never goes anywhere else) | timeout | auth | rate_limit | not_found | bad_re
 Requests that the provider answers 429/500/502/503/504/529 are retried up to MAX_RETRIES times,
 waiting Retry-After (1–60 s) or 5, 15, 45 s — but never past `deadline` seconds in all (a keyword of
 every call, default DEFAULT_DEADLINE = 300: the retries and waits fit in it, so one request can't hold a
-worker thread for many minutes; what remains of it also caps each attempt's timeout). The address must be
+worker thread for many minutes; what remains of it also caps each attempt's timeout; a call whose own
+timeout is longer than the default gets that timeout + 60 s instead). The address must be
 http:// or https:// (AIError not_configured otherwise: urllib would open file:// and ftp:// addresses), and
 an answer body is read up to MAX_BODY_BYTES (20 MB) — more is bad_response. A 400 from an OpenAI-compatible server about an
 option it doesn't know is retried once without it (`openai_fallback`); a 400 from Claude about
@@ -303,6 +304,8 @@ class Client:
             check_url(url)
         except ValueError as e:
             raise AIError(f"{cfg.label}: {e}", "not_configured") from None
+        if deadline == DEFAULT_DEADLINE and timeout and timeout > deadline:
+            deadline = timeout + 60                 # the default never cuts an app's own longer timeout short
         end = time.monotonic() + deadline if deadline else None
         for attempt in range(MAX_RETRIES + 1):
             left = None if end is None else max(0.1, end - time.monotonic())

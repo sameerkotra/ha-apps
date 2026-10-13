@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=fc34c69a059a1325679352678b3e22fe67f80fdfd70dd5a6e4eef1c3f8d20d19
+# Shared file: edit common/tests/test_ai_client.py and run tools/sync_common.py; don't edit this copy. sha256=5fe0ae92e9077f136589bbd96424b0b936eb034f537fda8887964d8b5be7845c
 """Tests for the shared AI provider layer (common/python/ai_client.py), with a fake HTTP post."""
 import json
 import unittest
@@ -25,7 +25,8 @@ class FakePost:
         self.calls = []
 
     def __call__(self, url, headers, body, timeout, method="POST"):
-        self.calls.append({"url": url, "headers": headers, "body": json.loads(json.dumps(body)), "method": method})
+        self.calls.append({"url": url, "headers": headers, "body": json.loads(json.dumps(body)), "method": method,
+                           "timeout": timeout})
         a = self.answers.pop(0)
         if isinstance(a, Exception):
             raise a
@@ -175,6 +176,16 @@ class ErrorTests(unittest.TestCase):
         post = FakePost((200, {"response": "ok"}))
         c, _ = client(post)
         self.assertEqual(c.ollama(Cfg("ollama"), "q", timeout=120, deadline=30).text, "ok")
+
+    def test_default_deadline_never_cuts_a_longer_timeout(self):
+        post = FakePost((200, {"response": "ok"}))
+        c, _ = client(post)
+        self.assertEqual(c.ollama(Cfg("ollama"), "q", timeout=900).text, "ok")
+        self.assertGreater(post.calls[0]["timeout"], 899)     # not capped at the 300 s default
+        post = FakePost((200, {"response": "ok"}))
+        c, _ = client(post)
+        c.ollama(Cfg("ollama"), "q", timeout=900, deadline=120)
+        self.assertLessEqual(post.calls[0]["timeout"], 120)   # an explicit deadline still wins
 
     def test_only_http_addresses(self):
         for url in ("file:///etc/passwd#", "ftp://x/", "ai.local", "http:///x", ""):

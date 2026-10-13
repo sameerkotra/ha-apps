@@ -6,8 +6,8 @@
 
 Checks, per app (the folders in common/manifest.json):
 - requirements.txt / requirements-dev.txt: every package that common/build/requirements-base.txt pins
-  is pinned to exactly that version (extras like uvicorn[standard] allowed); fastapi, uvicorn and
-  python-multipart are in every app's requirements.txt; no two apps pin a package differently; every
+  is pinned to exactly that version (extras like uvicorn[standard] allowed); fastapi and uvicorn are in
+  every app's requirements.txt, and python-multipart in every app that parses forms or uploads; no two apps pin a package differently; every
   line of an app's requirements.txt (what goes into the image) is pinned with `==` (`unpinned()`).
 - Dockerfile: a pinned python:3.x base image (the last FROM; `docker.io/library/python:…` too), requirements.txt
   copied and installed with pip, the app copied (`COPY app ./app` or `COPY . .`), a CMD.
@@ -34,7 +34,22 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = os.path.join(ROOT, "common", "build", "requirements-base.txt")
-EVERY_APP = ("fastapi", "uvicorn", "python-multipart")
+EVERY_APP = ("fastapi", "uvicorn")
+# python-multipart is only needed by an app that parses form posts or file uploads (FastAPI's Form/File/
+# UploadFile, Starlette's request.form()); an app that doesn't need it may leave it out.
+FORMS_RE = re.compile(r"UploadFile|[^A-Za-z_]Form\(|[^A-Za-z_]File\(|\.form\(\)")
+
+
+def uses_forms(app_dir: str) -> bool:
+    """Whether the app's own code (not the shared copies) parses form posts or uploads."""
+    for root, dirs, files in os.walk(os.path.join(app_dir, "app")):
+        dirs[:] = [d for d in dirs if d not in ("common", "static", "__pycache__")]
+        for name in files:
+            if name.endswith(".py"):
+                with open(os.path.join(root, name), encoding="utf-8") as f:
+                    if FORMS_RE.search(f.read()):
+                        return True
+    return False
 REQ_RE = re.compile(r"^([A-Za-z0-9_.-]+)(\[[^\]]*\])?\s*(==\s*([^\s;#]+))?")
 
 
@@ -304,7 +319,7 @@ def check() -> list:
         app_dir = os.path.join(ROOT, app)
         runtime = read_requirements(os.path.join(app_dir, "requirements.txt"))
         dev = read_requirements(os.path.join(app_dir, "requirements-dev.txt"))
-        for pkg in EVERY_APP:
+        for pkg in EVERY_APP + (("python-multipart",) if uses_forms(app_dir) else ()):
             if pkg not in runtime:
                 problems.append(f"{app}/requirements.txt: {pkg} is missing")
         for pkg in unpinned(os.path.join(app_dir, "requirements.txt")):

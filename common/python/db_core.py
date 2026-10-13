@@ -111,18 +111,31 @@ class MaintenanceGate:
         self._cond = threading.Condition()
         self._working = 0
         self._paused = False
+        self._depth = threading.local()
         self.generation = 0
 
     @contextmanager
     def work(self, timeout: float | None = None):
-        """A section that must not overlap a pause. Raises TimeoutError if a pause lasts longer than `timeout`."""
+        """A section that must not overlap a pause. Raises TimeoutError if a pause lasts longer than `timeout`.
+        Nested in the same thread, an inner section joins the outer one instead of waiting (a pause that
+        started in between would otherwise wait for the outer section while it waits for the pause)."""
+        depth = getattr(self._depth, "n", 0)
+        if depth:
+            self._depth.n = depth + 1
+            try:
+                yield
+            finally:
+                self._depth.n -= 1
+            return
         with self._cond:
             if not self._cond.wait_for(lambda: not self._paused, timeout):
                 raise TimeoutError("maintenance in progress")
             self._working += 1
+        self._depth.n = 1
         try:
             yield
         finally:
+            self._depth.n = 0
             with self._cond:
                 self._working -= 1
                 self._cond.notify_all()

@@ -1,6 +1,7 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
-FROM python:3.12-alpine
+# Pinned to one Alpine release so a rebuild cannot quietly move to the next one (add the digest when you can).
+FROM python:3.12-alpine3.22
 # ARGs declared before FROM aren't visible after it: declared again so the labels below get their values
 ARG BUILD_ARCH
 ARG BUILD_VERSION

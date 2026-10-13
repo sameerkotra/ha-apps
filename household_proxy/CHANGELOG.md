@@ -45,6 +45,7 @@ All notable changes to Household Proxy. See the [repository](https://github.com/
 
 ### Changed
 
+- The image is built on one fixed Alpine release, so a rebuild can't quietly move to the next one.
 - Websockets now have access-log lines (opened, and closed with how long and how much), for sites that keep a log.
 - One person can have at most 48 requests and 16 websockets open on a site at once; at most 3 pages are rewritten at
   the same time.

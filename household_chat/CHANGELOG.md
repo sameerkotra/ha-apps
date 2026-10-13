@@ -21,6 +21,7 @@
 
 ### Changed
 
+- The image no longer installs python-multipart, which the app never used.
 - **Faster with many chats**: the chat list, catching up after a reconnect, starred messages and Admin → Chats each take a handful of database queries instead of several per chat; who's online is sent as one person's change instead of every page reloading everyone; a reaction, an edit or a new message changes only its own message on the page (a voice message that's playing keeps playing).
 - Signing in no longer writes to the database on every request (only when your name changed or every two minutes), and that's done off the main thread.
 - Uploads are written to disk a megabyte at a time without holding up the app; files are moved and folders renamed after the database change is saved, never while it's being written.

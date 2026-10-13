@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_db_core.py and run tools/sync_common.py; don't edit this copy. sha256=f9da4113a98a462ad192616865b642f19fc6dbc1d930d9bf525bde111c392ee1
+# Shared file: edit common/tests/test_db_core.py and run tools/sync_common.py; don't edit this copy. sha256=adb28627a38f438d576e0c57afaff3d60d7a7ad7c91425f8b14e3c197f13ac24
 """The shared SQLite helpers (common/python/db_core.py), tested in every app that uses them."""
 import os
 import sqlite3
@@ -157,6 +157,38 @@ class DbCore(unittest.TestCase):
         with gate.pause():
             pass
         self.assertEqual(gate.generation, 2)
+
+    def test_maintenance_gate_nested_work_does_not_deadlock(self):
+        import threading
+        gate = db_core.MaintenanceGate()
+        inside, release, done = threading.Event(), threading.Event(), threading.Event()
+
+        def worker():
+            with gate.work():
+                inside.set()
+                release.wait(2)
+                with gate.work(timeout=1):              # a pause is now waiting: this must not block
+                    pass
+            done.set()
+        t = threading.Thread(target=worker)
+        t.start()
+        inside.wait(2)
+        paused = threading.Event()
+
+        def pauser():
+            with gate.pause(timeout=3):
+                paused.set()
+        p = threading.Thread(target=pauser)
+        p.start()
+        while not gate.paused:                          # the pause has started waiting for the worker
+            threading.Event().wait(0.01)
+        release.set()
+        t.join(3)
+        p.join(3)
+        self.assertTrue(done.is_set())
+        self.assertTrue(paused.is_set())
+        with gate.work():                               # depth is reset afterwards
+            pass
 
 
 if __name__ == "__main__":

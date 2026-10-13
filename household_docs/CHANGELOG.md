@@ -2,6 +2,7 @@
 
 ## 1.6.2
 
+- The image is built on one fixed Alpine release, and no longer installs python-multipart, which the app never used.
 - **No more freezes from a name pattern**: a filing rule or a search with many `*` (like `*a*a*a*a*b`) could stop the app for minutes, and after a restart again. Patterns are now matched in one pass, and Home Assistant restarts the app if it ever stops answering (a watchdog).
 - **Download as PDF of an odd note** (a very long word, a line of `#`s or `|`s, lots of `*` or `[`) took minutes and held the app; it now takes a moment. The PDF is made in a separate process that stops after 60 seconds — a note too long for that says to use Print → Save as PDF.
 - **Opening a folder no longer stalls everyone else's saves**: looking for changes on disk read and hashed the files while holding the database; it now reads first and writes in small steps. If the database is busy anyway, the app says "try again in a moment" instead of failing.

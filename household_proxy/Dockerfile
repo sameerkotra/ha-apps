@@ -1,6 +1,7 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
-FROM python:3.12-alpine
+# Pinned to one Alpine release so a rebuild cannot quietly move to the next one (add the digest when you can).
+FROM python:3.12-alpine3.22
 
 # tzdata: the app reads Home Assistant's time zone (times on the Monitor page and in alerts).
 RUN apk add --no-cache tzdata

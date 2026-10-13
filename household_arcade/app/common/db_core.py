@@ -1,4 +1,4 @@
-# Shared file: edit common/python/db_core.py and run tools/sync_common.py; don't edit this copy. sha256=a3953965676c0b08493e43127d74a6b8365d34bef7c2e1bc7d0e81abdd2964ad
+# Shared file: edit common/python/db_core.py and run tools/sync_common.py; don't edit this copy. sha256=4a43dca5465b329c543bebd9d2b68e7d3f17bb6f0001f81625cfdc653c4ed48e
 """SQLite helpers the household apps share (shared: common/python/db_core.py, copied into each app's
 app/common/ by tools/sync_common.py).
 
@@ -112,18 +112,31 @@ class MaintenanceGate:
         self._cond = threading.Condition()
         self._working = 0
         self._paused = False
+        self._depth = threading.local()
         self.generation = 0
 
     @contextmanager
     def work(self, timeout: float | None = None):
-        """A section that must not overlap a pause. Raises TimeoutError if a pause lasts longer than `timeout`."""
+        """A section that must not overlap a pause. Raises TimeoutError if a pause lasts longer than `timeout`.
+        Nested in the same thread, an inner section joins the outer one instead of waiting (a pause that
+        started in between would otherwise wait for the outer section while it waits for the pause)."""
+        depth = getattr(self._depth, "n", 0)
+        if depth:
+            self._depth.n = depth + 1
+            try:
+                yield
+            finally:
+                self._depth.n -= 1
+            return
         with self._cond:
             if not self._cond.wait_for(lambda: not self._paused, timeout):
                 raise TimeoutError("maintenance in progress")
             self._working += 1
+        self._depth.n = 1
         try:
             yield
         finally:
+            self._depth.n = 0
             with self._cond:
                 self._working -= 1
                 self._cond.notify_all()

@@ -89,7 +89,8 @@ class PackagingTests(unittest.TestCase):
 
     def test_requirements_pinned(self):
         reqs = [l.strip() for l in read("requirements.txt").splitlines() if l.strip() and not l.startswith("#")]
-        self.assertEqual(reqs[:3], ["fastapi==0.141.1", "uvicorn==0.53.0", "python-multipart==0.0.32"])
+        self.assertEqual(reqs[:2], ["fastapi==0.141.1", "uvicorn==0.53.0"])
+        self.assertNotIn("python-multipart", " ".join(reqs))            # no form posts or uploads use it
         for r in reqs:
             self.assertRegex(r, r"^[A-Za-z0-9_.-]+==[0-9][0-9A-Za-z.]*$")           # every one pinned exactly
         # sheets (SPEC §8.4): openpyxl with defusedxml (and openpyxl's one dependency, pinned for a reproducible image)

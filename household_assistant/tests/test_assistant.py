@@ -235,6 +235,9 @@ class AssistantTests(Household):
         with mock.patch.object(engine, "question_timeout", return_value=0.2):
             q = self.ask(model=Model(slow))
         self.assertEqual((q["state"], q["error"]), ("failed", "That took too long — try a narrower question."))
+        deadline = time.monotonic() + 5                        # the timed-out model call keeps Alice busy until it
+        while engine._thread_running_for("u_alice") and time.monotonic() < deadline:   # returns (0.4 s)
+            time.sleep(0.05)
         with mock.patch.object(ai_client, "generate", Model(slow)):
             qid = self.c.post("/api/ask", json={"text": "Slow one"}, headers=ALICE).json()["id"]
             self.assertEqual(self.c.post(f"/api/ask/{qid}/stop", headers=BOB).status_code, 404)
