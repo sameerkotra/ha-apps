@@ -30,4 +30,4 @@ Documentation tab (DOCS.md) for the full guide.
 - **Checklists from Household Docs** — *Make a Todo list* in Household Docs
   turns a checklist into tasks here (Admin → App settings → Connected apps).
 - **Admin** — in-app settings, users and notify services, "act as" another
-  person, and database backup and restore.
+  person, database backup and restore, and a 30-day bin for deleted shared lists.

@@ -70,6 +70,13 @@ def _usage(conn, place_id: str, acting_id: str) -> int:
     ).fetchone()[0]
 
 
+def _usages(conn, acting_id: str) -> dict[str, int]:
+    """{place id: _usage} for every place in use, in one query."""
+    return {r[0]: r[1] for r in conn.execute(
+        f"SELECT t.place_id, COUNT(*) FROM tasks t JOIN lists l ON l.id = t.list_id "
+        f"WHERE t.place_id IS NOT NULL AND {taskview.VISIBLE_SQL} GROUP BY t.place_id", (acting_id,))}
+
+
 def _json(row, usage: int) -> dict:
     # estimated drive time from home, in minutes (spec §7.3); null until computed,
     # if the feature isn't configured or failed, or while the "Drive times" switch is off
@@ -99,7 +106,8 @@ def get_places(q: str | None = Query(default=None), acting: dict = Depends(get_a
         needle = (q or "").strip().lower()
         if needle:
             rows = [r for r in rows if needle in r["name"].lower() or needle in r["address"].lower()]
-        return [_json(r, _usage(conn, r["id"], acting["id"])) for r in rows]
+        usage = _usages(conn, acting["id"])
+        return [_json(r, usage.get(r["id"], 0)) for r in rows]
 
 
 @router.post("/places", status_code=201)

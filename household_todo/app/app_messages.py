@@ -172,7 +172,14 @@ def start() -> None:
     config.SIDEBAR_PAGE = assist_tools.sidebar_page(SLUG, token=config.SUPERVISOR_TOKEN,
                                                     supervisor_api=config.SUPERVISOR_API)
     bus.start(SLUG, config.APP_TITLE, config.APP_VERSION, db=db.get_conn, outbox_thread=False,
-              api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
+              api_base=config.SUPERVISOR_CORE_API, ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN,
+              signing_key=signing_key)
+
+
+def signing_key() -> str:
+    """Admin → App settings → App-messages signing key: the same in every household app; blank = unsigned."""
+    from . import settings
+    return settings.get("bus_signing_key") or ""
 
 
 def stop() -> None:

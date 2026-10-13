@@ -33,6 +33,7 @@ def attach(task_id: str, file: UploadFile = File(...), acting: dict = Depends(ge
         if len(task_files.listed(conn, task_id)) >= task_files.MAX_FILES:
             raise HTTPException(422, f"A task can have at most {task_files.MAX_FILES} files.")
     root = maint_files.require_online()          # never holding a connection
+    maint_files.check_free_space(root, file.size)
     with db.get_conn() as conn:
         rel_dir = task_files.folder_for(conn, task, lst.get("role"))
     keep = lst.get("role") == "maintenance"       # a job's receipts and photos stay, as before
@@ -89,7 +90,11 @@ def change(task_id: str, file_id: str, background: BackgroundTasks, body: dict =
                 raise HTTPException(404, "The file is no longer in the files folder.")
             d = os.path.dirname(src)
             new = maint_files._unique(d, new)
-            os.rename(src, os.path.join(d, new))
+            try:
+                os.rename(src, os.path.join(d, new))
+            except OSError as e:                 # e.g. the share went read-only, or a name it won't take
+                raise HTTPException(409, f"Couldn't rename the file in the files folder ({e.strerror or e}). "
+                                         "Nothing was changed.")
             with db.get_conn() as conn:
                 # the type stays what the upload's bytes said (a new name can't make it a PDF or a picture)
                 conn.execute("UPDATE maint_files SET name = ?, rel_path = ? WHERE id = ?",

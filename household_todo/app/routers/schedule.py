@@ -169,7 +169,8 @@ def _queue_ping(background: BackgroundTasks, acting: dict, old_assignee, item: d
     """Assignment ping, same rule as tasks: only when the assignee changed to
     someone other than the person acting."""
     new = item.get("assigned_to")
-    if new and new != old_assignee and new != acting["id"]:
+    if (new and new != old_assignee and new != acting["id"]
+            and reminders.ping_allowed(acting.get("real", acting)["id"], new)):
         detail = recurrence.describe_rule(item["rule"])
         if schedule_logic.is_timed(item):
             detail += ", " + schedule_logic.time_range(item)
@@ -252,6 +253,11 @@ def update_item(item_id: str, background: BackgroundTasks, body: dict = Body(...
         if "icon" in body:
             updates["icon"] = _icon(body["icon"])
         updates.update(_person_fields(conn, body, item, acting))
+        if (updates.get("visibility") == "private" and item.get("visibility") != "private"
+                and "expose_sensor" not in body and item["expose_sensor"]):
+            # any Home Assistant user can read a sensor: an item made private stops being published unless the
+            # request asks for it to stay published
+            updates["expose_sensor"] = 0
         rule = body.get("rule", item["rule"])
         anchor = body.get("anchor_date", item["anchor_date"])
         if "rule" in body or "anchor_date" in body:
@@ -370,7 +376,7 @@ def hand_over_turn(item_id: str, day: str, background: BackgroundTasks, body: di
         result = _item_json(conn, dict(conn.execute("SELECT * FROM schedule_items WHERE id = ?", (item_id,)).fetchone()))
     if item["expose_sensor"]:
         background.add_task(ha_sensors.push_item_blocking, item_id)
-    if uid and uid != acting["id"]:
+    if uid and uid != acting["id"] and reminders.ping_allowed(acting.get("real", acting)["id"], uid):
         background.add_task(reminders.send_assignment_ping_blocking, uid, acting["name"], item["name"], d.isoformat(),
                             detail="your turn", url=item.get("url"), place_id=item.get("place_id"))
     return result

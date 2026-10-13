@@ -280,3 +280,143 @@ class Between(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# The arithmetic next-occurrence (13 October review) against the day-by-day
+# stepping it replaced: the old functions are kept here, verbatim, as the
+# reference. occurs_on is unchanged and is what defines a rule.
+# ---------------------------------------------------------------------------
+def old_next_rule_occurrence(rule, anchor_date, day):
+    anchor = r.parse_date(anchor_date)
+    day = r.parse_date(day)
+    if anchor is None or day is None:
+        return None
+    d = max(day, anchor)
+    for _ in range(r._MAX_STEP_DAYS + 1):
+        if r.occurs_on(rule, anchor, d):
+            return d
+        d += timedelta(days=1)
+    return None
+
+
+def old_next_on_or_after(rule, anchor_date, day, removed=(), added=()):
+    anchor = r.parse_date(anchor_date)
+    day = r.parse_date(day)
+    if anchor is None or day is None:
+        return None
+    removed = {r.parse_date(x) for x in removed}
+    added = {r.parse_date(x) for x in added}
+    added_ahead = [a for a in added if a is not None and a >= day]
+    best_added = min(added_ahead) if added_ahead else None
+    d = max(day, anchor)
+    budget = r._MAX_STEP_DAYS * 51
+    while budget > 0:
+        if best_added is not None and d >= best_added:
+            return best_added
+        if r.occurs_on(rule, anchor, d) and d not in removed:
+            return d
+        d += timedelta(days=1)
+        budget -= 1
+    return best_added
+
+
+def old_rule_occurrences_between(rule, anchor_date, start, end):
+    anchor = r.parse_date(anchor_date)
+    start = r.parse_date(start)
+    end = r.parse_date(end)
+    if anchor is None or start is None or end is None:
+        return []
+    out = []
+    d = max(start, anchor)
+    while d <= end:
+        if r.occurs_on(rule, anchor, d):
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def _rules():
+    out = ["daily"] + [f"every:{n}" for n in (1, 2, 3, 7, 10, 13, 30, 90, 365, 999)]
+    for n in (1, 2, 3, 4, 13, 52):
+        for days in ((1,), (7,), (3,), (1, 4), (2, 4, 5), (1, 2, 3, 4, 5, 6, 7), (6, 7)):
+            out.append(f"weeks:{n}:{','.join(map(str, days))}")
+    out += [f"monthly:{d}" for d in (1, 15, 28, 29, 30, 31)]
+    out += [f"months:{n}:{d}" for n in (2, 3, 6, 12, 36) for d in (1, 29, 30, 31)]
+    out += [f"years:{n}" for n in (1, 2, 4, 10)]
+    out += [f"nth:{n}:{d}" for n in (1, 2, 3, 4, -1) for d in range(1, 8)]
+    return out
+
+
+# month ends, leap days, year ends and the days clocks change (US and Europe, 2025–2027)
+SPECIAL = [D(x) for x in ("2024-02-28", "2024-02-29", "2024-03-01", "2024-12-31", "2025-01-31", "2025-03-09",
+                          "2025-03-30", "2025-10-26", "2025-11-02", "2026-02-28", "2026-03-08", "2026-03-29",
+                          "2026-04-30", "2026-10-25", "2026-10-31", "2026-11-01", "2026-12-31", "2027-03-14",
+                          "2027-03-28", "2028-02-29")]
+ANCHORS = [D(x) for x in ("2020-02-29", "2023-01-31", "2024-02-29", "2025-08-31", "2026-01-01", "2026-03-08",
+                          "2026-03-29", "2026-09-21", "2026-10-25", "2026-11-01", "2026-12-31")]
+
+
+class ArithmeticMatchesStepping(unittest.TestCase):
+    def setUp(self):
+        import random
+        self.rng = random.Random(20261013)
+
+    def days(self, n, special=SPECIAL):
+        base = D("2019-06-01")
+        return list(special) + [base + timedelta(days=self.rng.randrange(0, 4000)) for _ in range(n)]
+
+    def anchor_for(self, rule, anchor):
+        """A weeks rule's anchor must fall on one of its weekdays (validate_rule): the first such day on or
+        after it."""
+        if rule.startswith("weeks:"):
+            days = [int(x) for x in rule.split(":")[2].split(",")]
+            while anchor.isoweekday() not in days:
+                anchor += timedelta(days=1)
+        return anchor
+
+    def test_next_rule_occurrence(self):
+        checked = 0
+        for rule in _rules():
+            sparse = rule.startswith(("years:", "months:36", "months:12", "every:999", "every:365", "weeks:52"))
+            # the sparse rules step through years of days in the old version: fewer of them keep this fast
+            for anchor in ANCHORS[::3] if sparse else ANCHORS:
+                anchor = self.anchor_for(rule, anchor)
+                for day in self.days(2, SPECIAL[::3]) if sparse else self.days(8):
+                    got, want = r.next_rule_occurrence(rule, anchor, day), old_next_rule_occurrence(rule, anchor, day)
+                    if got != want:
+                        self.fail(f"{rule} from {anchor}, on or after {day}: {got} != {want}")
+                    checked += 1
+        self.assertGreater(checked, 25000)
+
+    def test_with_exceptions(self):
+        for rule in ("daily", "every:3", "weeks:2:2,4", "monthly:31", "months:3:30", "nth:-1:5", "years:1", "weeks:1:1"):
+            anchor = self.anchor_for(rule, D("2026-01-01"))
+            occ = old_rule_occurrences_between(rule, anchor, D("2026-01-01"), D("2028-12-31"))
+            for day in self.days(15):
+                removed = set(self.rng.sample(occ, min(len(occ), 40)))
+                removed |= set(occ[:5])                                   # a run of skipped ones
+                added = {day + timedelta(days=self.rng.randrange(0, 400)) for _ in range(3)}
+                for rem, add in ((removed, ()), ((), added), (removed, added), (set(occ), ())):
+                    with self.subTest(rule=rule, day=day):
+                        self.assertEqual(r.next_on_or_after(rule, anchor, day, rem, add),
+                                         old_next_on_or_after(rule, anchor, day, rem, add))
+
+    def test_occurrences_between(self):
+        for rule in _rules():
+            for anchor in ANCHORS[::3]:
+                anchor = self.anchor_for(rule, anchor)
+                for start in self.days(1)[::4]:
+                    end = start + timedelta(days=self.rng.choice((0, 1, 6, 41, 120, 400)))
+                    with self.subTest(rule=rule, anchor=anchor, start=start, end=end):
+                        self.assertEqual(r.rule_occurrences_between(rule, anchor, start, end),
+                                         old_rule_occurrences_between(rule, anchor, start, end))
+
+    def test_bad_input_behaves_the_same(self):
+        for args in (("daily", None, "2026-01-01"), ("daily", "2026-01-01", "x"), ("weeks:1:1", "2026-13-01", "2026-01-01")):
+            self.assertEqual(r.next_rule_occurrence(*args), old_next_rule_occurrence(*args))
+            self.assertEqual(r.next_on_or_after(*args), old_next_on_or_after(*args))
+        with self.assertRaises(ValueError):
+            r.next_rule_occurrence("weekly", "2026-01-01", "2026-01-02")
+        with self.assertRaises(ValueError):
+            old_next_rule_occurrence("weekly", "2026-01-01", "2026-01-02")

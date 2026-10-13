@@ -46,11 +46,19 @@ def _usage(conn, type_id: str, acting_id: str) -> int:
     ).fetchone()[0]
 
 
+def _usages(conn, acting_id: str) -> dict[str, int]:
+    """{type id: _usage} for every type in use, in one query."""
+    return {r[0]: r[1] for r in conn.execute(
+        f"SELECT t.type_id, COUNT(*) FROM tasks t JOIN lists l ON l.id = t.list_id "
+        f"WHERE t.type_id IS NOT NULL AND {taskview.VISIBLE_SQL} GROUP BY t.type_id", (acting_id,))}
+
+
 @router.get("/task-types")
 def get_types(acting: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM task_types ORDER BY position, name COLLATE NOCASE").fetchall()
-        return [_json(r, _usage(conn, r["id"], acting["id"])) for r in rows]
+        usage = _usages(conn, acting["id"])
+        return [_json(r, usage.get(r["id"], 0)) for r in rows]
 
 
 @router.post("/task-types", status_code=201)

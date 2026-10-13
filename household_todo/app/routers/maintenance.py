@@ -6,6 +6,7 @@ Turning the feature on or off, the household recipients, the home profile, the o
 suggestions and the files folder are admin-only. While the feature is off, everything but the admin routes
 answers 409."""
 import json
+import math
 import os
 from datetime import date, timedelta
 
@@ -70,7 +71,7 @@ def _write_recipients(conn, item_id: str, ids: list[str] | None) -> None:
 
 
 def _item_out(conn, item_id: str) -> dict:
-    return mt.serialize(mt.load_item(conn, item_id), config.today(), mt.lookups(conn))
+    return mt.serialize(mt.load_item(conn, item_id), config.today(), mt.lookups(conn, [item_id]))
 
 
 @router.post("/maintenance/items", status_code=201)
@@ -159,7 +160,9 @@ def _clean_done(body: dict, today: date) -> tuple[date, str | None, int | None]:
     cost = body.get("cost")
     cents = None
     if cost not in (None, ""):
-        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0 or cost > 10_000_000:
+        # NaN and Infinity aren't numbers here (Python's JSON reader accepts them)
+        if (isinstance(cost, bool) or not isinstance(cost, (int, float)) or not math.isfinite(cost)
+                or cost < 0 or cost > 10_000_000):
             raise HTTPException(422, "The cost must be a number from 0 to 10,000,000.")
         cents = int(round(cost * 100))
     return d, note, cents
@@ -370,21 +373,37 @@ def unhide_suggestion(key: str, acting: dict = Depends(get_acting_user)):
 # ---------------------------------------------------------------------------
 # files
 # ---------------------------------------------------------------------------
+MAX_ITEM_FILES = 50          # manuals, warranty papers … on one maintenance item
+MAX_RECORD_FILES = 20        # photos and receipts on one "done" record
+
+
 def _check_owner(conn, item_id, done_id, task_id) -> None:
+    """The file's owner exists, can take one more file (a job like any task: at most task_files.MAX_FILES, and
+    not once it's done)."""
     given = [x for x in (item_id, done_id, task_id) if x]
     if len(given) != 1:
         raise HTTPException(422, "Attach the file to exactly one item, record or job.")
     if item_id:
         mt.load_item(conn, item_id)
+        n, cap, what = conn.execute("SELECT COUNT(*) FROM maint_files WHERE item_id = ?", (item_id,)).fetchone()[0], \
+            MAX_ITEM_FILES, "An item"
     elif done_id:
         if not conn.execute("SELECT 1 FROM maint_done WHERE id = ?", (done_id,)).fetchone():
             raise HTTPException(404, "That record doesn't exist (any more).")
+        n, cap, what = conn.execute("SELECT COUNT(*) FROM maint_files WHERE done_id = ?", (done_id,)).fetchone()[0], \
+            MAX_RECORD_FILES, "A record"
     else:
-        row = conn.execute("SELECT l.role FROM tasks t JOIN lists l ON l.id = t.list_id WHERE t.id = ?", (task_id,)).fetchone()
+        row = conn.execute("SELECT l.role, t.completed FROM tasks t JOIN lists l ON l.id = t.list_id WHERE t.id = ?",
+                           (task_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Task not found.")
         if row["role"] != mt.LIST_ROLE:
             raise HTTPException(422, "Files can only be attached to jobs in the Maintenance list.")
+        if row["completed"]:
+            raise HTTPException(409, "This job is done. Untick it to attach files.")
+        n, cap, what = len(task_files.listed(conn, task_id)), task_files.MAX_FILES, "A job"
+    if n >= cap:
+        raise HTTPException(422, f"{what} can have at most {cap} files.")
 
 
 @router.post("/maintenance/files", status_code=201)
@@ -394,6 +413,7 @@ def upload(file: UploadFile = File(...), item_id: str | None = Query(default=Non
     with db.get_conn() as conn:
         _check_owner(conn, item_id, done_id, task_id)
     root = maint_files.require_online()
+    maint_files.check_free_space(root, file.size)
     with db.get_conn() as conn:
         rel_dir, owner = maint_files.target_dir(conn, item_id=item_id, done_id=done_id, task_id=task_id)
     row = maint_files.save_upload(root, rel_dir, file.filename, file.file.read, acting["id"], owner,

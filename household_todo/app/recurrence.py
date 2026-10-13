@@ -36,7 +36,7 @@ WEEKDAY_ABBR = {1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "
 WEEKDAY_FULL = {1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday",
                 5: "Friday", 6: "Saturday", 7: "Sunday"}
 
-# Upper bound for stepping: the sparsest legal rule is years:10 (~3,653 days).
+# How far ahead an occurrence is looked for: the sparsest legal rule is years:10 (~3,653 days).
 _MAX_STEP_DAYS = 3700
 
 
@@ -140,6 +140,83 @@ def occurs_on(rule: str, anchor_date, day) -> bool:
     return False
 
 
+def _months_later(year: int, month: int, n: int) -> tuple[int, int]:
+    m = year * 12 + (month - 1) + n
+    return m // 12, m % 12 + 1
+
+
+def _clamped(year: int, month: int, dom: int) -> date | None:
+    """`dom` in that month, clamped to its last day (None past the calendar's end, year 9999)."""
+    if year > 9999:
+        return None
+    return date(year, month, min(dom, monthrange(year, month)[1]))
+
+
+def _nth_weekday(year: int, month: int, n: int, wd: int) -> date:
+    """The nth (1–4, or -1 = last) ISO weekday `wd` of the month."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(wd - first.isoweekday()) % 7 + 7 * (n - 1))
+    last = date(year, month, monthrange(year, month)[1])
+    return last - timedelta(days=(last.isoweekday() - wd) % 7)
+
+
+def _next_parsed(parsed, anchor: date, d: date) -> date | None:
+    """First occurrence of the parsed rule on or after `d` (d >= anchor), worked out directly rather than by
+    trying every day — the same dates occurs_on() accepts (tests/test_recurrence.py compares the two)."""
+    kind = parsed[0]
+    if kind == "daily":
+        return d
+    if kind == "every":
+        n = parsed[1]
+        return d + timedelta(days=-(d - anchor).days % n)
+    if kind == "weeks":
+        _, n, days = parsed
+        days = sorted(set(days))
+        a_monday = _monday(anchor)
+        week = (_monday(d) - a_monday).days // 7
+        if week % n == 0:
+            later = [x for x in days if x >= d.isoweekday()]
+            if later:
+                return _monday(d) + timedelta(days=later[0] - 1)
+            week += n
+        else:
+            week += n - week % n
+        return a_monday + timedelta(days=7 * week + days[0] - 1)
+    if kind == "monthly":
+        dom = parsed[1]
+        this = _clamped(d.year, d.month, dom)
+        if this >= d:
+            return this
+        return _clamped(*_months_later(d.year, d.month, 1), dom)
+    if kind == "months":
+        _, n, dom = parsed
+        gap = (d.year * 12 + d.month) - (anchor.year * 12 + anchor.month)
+        if gap % n == 0:
+            this = _clamped(d.year, d.month, dom)
+            if this >= d:
+                return this
+            step = n
+        else:
+            step = n - gap % n
+        return _clamped(*_months_later(d.year, d.month, step), dom)
+    if kind == "years":
+        n = parsed[1]
+        year = d.year + (-(d.year - anchor.year)) % n
+        this = _clamped(year, anchor.month, anchor.day)
+        if this is not None and this < d:
+            this = _clamped(year + n, anchor.month, anchor.day)
+        return this
+    if kind == "nth":
+        _, n, wd = parsed
+        this = _nth_weekday(d.year, d.month, n, wd)
+        if this >= d:
+            return this
+        y, m = _months_later(d.year, d.month, 1)
+        return None if y > 9999 else _nth_weekday(y, m, n, wd)
+    return None
+
+
 def next_rule_occurrence(rule: str, anchor_date, day) -> date | None:
     """First rule occurrence on or after `day` (no exceptions), or None."""
     anchor = parse_date(anchor_date)
@@ -147,19 +224,17 @@ def next_rule_occurrence(rule: str, anchor_date, day) -> date | None:
     if anchor is None or day is None:
         return None
     d = max(day, anchor)
-    for _ in range(_MAX_STEP_DAYS + 1):
-        if occurs_on(rule, anchor, d):
-            return d
-        d += timedelta(days=1)
-    return None
+    found = _next_parsed(_parse_rule(rule), anchor, d)
+    if found is None or (found - d).days > _MAX_STEP_DAYS:
+        return None
+    return found
 
 
 def next_on_or_after(rule: str, anchor_date, day, removed: Iterable = (), added: Iterable = ()) -> date | None:
     """First *effective* occurrence on or after `day` (§8k): the earlier of
     (a) the first rule occurrence not in `removed` and (b) the earliest date
-    in `added` on or after `day`. Always terminates: without exceptions
-    within 1,100 days, and with them after stepping over at most the
-    50-exception cap of further occurrences."""
+    in `added` on or after `day`. Looks at most _MAX_STEP_DAYS × 51 days
+    ahead (an occurrence, plus up to 50 removed ones to step over)."""
     anchor = parse_date(anchor_date)
     day = parse_date(day)
     if anchor is None or day is None:
@@ -169,17 +244,18 @@ def next_on_or_after(rule: str, anchor_date, day, removed: Iterable = (), added:
     added_ahead = [a for a in added if a is not None and a >= day]
     best_added = min(added_ahead) if added_ahead else None
 
-    d = max(day, anchor)
-    # 1,100 days per occurrence, plus up to 50 removed ones to step over.
-    budget = _MAX_STEP_DAYS * 51
-    while budget > 0:
-        if best_added is not None and d >= best_added:
+    start = d = max(day, anchor)
+    parsed = _parse_rule(rule)
+    horizon = start + timedelta(days=_MAX_STEP_DAYS * 51)     # the first day no longer looked at
+    while True:
+        found = _next_parsed(parsed, anchor, d)
+        if found is None or found >= horizon:
             return best_added
-        if occurs_on(rule, anchor, d) and d not in removed:
-            return d
-        d += timedelta(days=1)
-        budget -= 1
-    return best_added
+        if best_added is not None and found >= best_added:
+            return best_added
+        if found not in removed:
+            return found
+        d = found + timedelta(days=1)
 
 
 def is_effective(rule: str, anchor_date, day, removed: Iterable = (), added: Iterable = ()) -> bool:
@@ -201,10 +277,15 @@ def rule_occurrences_between(rule: str, anchor_date, start, end) -> list[date]:
         return []
     out = []
     d = max(start, anchor)
+    if d > end:
+        return out
+    parsed = _parse_rule(rule)
     while d <= end:
-        if occurs_on(rule, anchor, d):
-            out.append(d)
-        d += timedelta(days=1)
+        found = _next_parsed(parsed, anchor, d)
+        if found is None or found > end:
+            break
+        out.append(found)
+        d = found + timedelta(days=1)
     return out
 
 

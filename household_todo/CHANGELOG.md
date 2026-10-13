@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.7.2
+
+### Security
+
+- **Pictures are checked before they're opened**: a photo of more than 40 million pixels is kept as a file without a preview, instead of being decoded — a tiny file can claim to be gigapixels. Previews are made from a scaled-down JPEG, at most two at a time.
+- **Limits on Maintenance files**: at most 50 files on a maintenance item, 20 on a Mark done record and 10 on a job (like any task), and a job that's done takes no new files.
+- **New setting "Keep this much disk space free"** (Admin → App settings → Files, default 1 GB, 0 = don't check): a file is refused when saving it would leave less free space than that on the files folder's disk.
+- Every request now has a size limit, also when it doesn't say its size up front: 1 MB, a file upload 26 MB, a backup restore 2 GB.
+- A household schedule item made private stops being published to Home Assistant (where every user can read it) unless you tick **Publish to Home Assistant** again.
+- "Assigned to you" notifications: at most 5 from the same person to the same person in 10 minutes (the assignments themselves always go through).
+- A Mark done cost of `NaN` or `Infinity` is refused, and a maintenance item's place or person must be an id.
+- **New setting "App-messages signing key"** (Admin → App settings → Household Assistant, empty by default): put the same key in every household app and messages between them are signed; without it nothing changes. It isn't included in backups, and a restore keeps this install's key.
+- The app's image is pinned to one Alpine release.
+
+### Changed
+
+- **A deleted shared list is kept for 30 days**: an admin can bring it back — with its tasks, checklists and files — or delete it for good from **Admin → Storage → Deleted lists**. A personal list is still deleted at once.
+- **One reminder instead of a burst**: when several "N before" reminders for a task or schedule item are due at once (the app was off, or the task was just added), you get one notification that says how long is really left ("due in 40 minutes"), instead of one per reminder with the wrong times.
+- **The calendar and pages refresh themselves**: coming back to the app after more than a minute, or every five minutes while it's open, the page shows what others changed meanwhile (not while a dialog is open or you're typing).
+- Faster: signing in no longer writes to the database on every request (only when your name changed) and is done off the main thread; repeating schedule items work out their next date directly instead of trying every day (the same dates, checked against the old way); Maintenance notifications are worked out only when it's someone's time; Places, Task types and the Maintenance tab need far fewer database queries; the calendar no longer loads the whole dashboard for its overdue count; a restore is checked and swapped in without holding up the app; files of ticked-off tasks are moved without holding the database.
+- Old "already sent" records of digests and weekly summaries are cleared after 30 days, and leftover backup temp files after 6 hours.
+- **Shared code**: the app can sign its messages to the other household apps with an optional key (above); API answers are never stored by the browser; the app's script and style files are cached until the next version, so pages open faster; the database saves with one disk flush less per change.
+
+### Fixed
+
+- **A late digest time works past midnight**: a digest (or weekly summary, or Maintenance notification) at 23:30 can still go out at 00:15 if Home Assistant was slow; and a digest whose time came while the app was restarting is sent up to three hours late.
+- **"N before" reminders across a clock change** come exactly that long before (a 12-hour reminder the night the clocks go forward came an hour late).
+- When Home Assistant doesn't answer at all, the reminder pass stops and tries again a minute later, instead of waiting 10 seconds for every reminder in turn.
+- Assigning an existing task to someone now names its place in their notification, as a new task's does.
+- Purged tasks' photo previews are removed from the files folder's `_thumbs` along with them.
+- Renaming a file the files folder won't let you rename says so instead of failing with an error.
+
 ## 2.7.1
 
 - **Open ticket shows the PDF in Chrome**: a ticket opened from the reminder (or a PDF opened from a task or a Maintenance job) now shows in Chrome's PDF viewer instead of a blank page.

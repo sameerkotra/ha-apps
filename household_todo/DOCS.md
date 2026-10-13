@@ -43,7 +43,9 @@ app and changes apply straight away, without a restart.
   the app. Anyone can add more lists: *Shared* (everyone sees it) or *Only
   me* (private). A list can be renamed or deleted (deleting removes its
   tasks); whether it is shared or private can't be changed later. Drag the
-  list cards to reorder them.
+  list cards to reorder them. A deleted **shared** list is kept for 30 days:
+  an admin can bring it back, with its tasks and their files, from
+  **Admin → Storage → Deleted lists**. A deleted personal list is gone at once.
 - **Tasks.** Only a **title** is required. Optional: notes, a **link**, a due
   **date** and **time**, a **priority** (low, medium, high), a **type**
   (Appointment, Doctor appointment, Errand, Chore, Bill, or your own), a saved
@@ -261,8 +263,9 @@ list and makes every admin a recipient).
   (how many are overdue) and an optional per-item binary sensor that is on
   while the item is due or overdue.
 - **Files folder:** an admin picks a folder inside `/share` in App settings
-  (the same folder holds the files on tasks). Files (up to 25 MB each; photos
-  get a preview) are stored there by item and date, one-off jobs' under
+  (the same folder holds the files on tasks). Files (up to 25 MB each; up to
+  50 on an item, 20 on a Mark done record and 10 on a job, which takes none
+  once it's done; photos get a preview) are stored there by item and date, one-off jobs' under
   `Jobs/` and other tasks' under `Tasks/`; deleted files wait 30 days in
   `_deleted`. The folder is checked at start-up and every 5 minutes, and
   changing it never moves files. While it isn't connected (a NAS that's off),
@@ -280,8 +283,16 @@ its own switch in **Settings → Reminders** (off until a person turns it on):
 - **Weekly summary** on a day and time you pick: the week ahead.
 - **"N before" reminders** (up to 5, e.g. 2 hours and 15 minutes before) for
   your tasks that have a time, and for timed schedule items that are for you.
-- **Assigned to you**: when someone else assigns you a task or schedule item.
+- **Assigned to you**: when someone else assigns you a task or schedule item
+  (at most 5 from the same person in 10 minutes).
 - **Send test notification** checks it works.
+
+The digest, the weekly summary and Maintenance's notification go out in the
+hour after your time — for a late time, that hour runs past midnight. If the
+app wasn't running at your time (Home Assistant restarted, say), it sends
+them up to three hours late. When several "N before" reminders for the same
+task are due at once (the app was off, or the task was just added), you get
+one notification that says how long is really left.
 
 "Your tasks" are tasks assigned to you or in your personal lists. Schedule
 items that are for you (private ones included) are part of your reminders
@@ -366,7 +377,9 @@ this page", and the server refuses them either way.
   phones from Home Assistant, add extra notify services, send a test.
 - **Maintenance.** Turn maintenance on, who is told, the home profile, the
   overdue sensor and your own suggestions.
-- **Storage.** Download a backup and restore one (see *Backups*).
+- **Storage.** Download a backup and restore one (see *Backups*), and
+  **Deleted lists**: shared lists deleted in the last 30 days, with **Bring
+  back** and **Delete now**.
 - **Connected apps** (under App settings, read only): the other household
   apps this one exchanges messages with (for example Household Docs), their
   version, when they were last heard from and what they can do. An app not
@@ -390,7 +403,10 @@ the field before anything is saved.
 | Address lookup server (Nominatim) | `https://nominatim.openstreetmap.org` | A Nominatim-compatible server. Blank = the public default. |
 | Avoid toll roads | On | Estimate on routes without toll roads when there is one. |
 | Files folder | blank | A folder inside `/share` for files on tasks (tickets) and Maintenance's manuals, receipts and photos. Blank = attaching files is off. |
+| Keep this much disk space free (MB, 0 = don't check) | 1024 | A file is refused when saving it would leave less free space than this on the files folder's disk. |
 | Answer the Household Assistant | On | Lets the Household Assistant app tell people their tasks, lists and schedule, and add a task when they tap to confirm (see *The Household Assistant*). |
+
+| App-messages signing key | not set | The same key in every household app. With a key, Todo answers only messages signed with it (from Household Docs, the Household Assistant …). Without one, any app on Home Assistant's network can send messages as any other. It is never shown again after saving, and backups don't contain it. |
 
 Maintenance's own settings are on **Admin → Maintenance**. The daily reminder
 time isn't an App setting: each person picks their own.
@@ -451,7 +467,8 @@ time isn't an App setting: each person picks their own.
 - **Import** replaces everything with an uploaded backup — no merge, no undo.
   The file is checked first; a file that isn't a Household Todo backup is
   refused. Older backups are upgraded on import. The current files folder
-  is kept.
+  and the App-messages signing key are kept (a backup never contains the
+  key). A backup file can be at most 2 GB.
 - Home Assistant's own backups of the app include the database too. The
   **files** (on tasks and Maintenance's) are not in the app's backup: include
   **Share** in Home Assistant's backups.
@@ -464,7 +481,9 @@ time isn't an App setting: each person picks their own.
 - From Household Docs: list names up to 60 characters, items up to 200
   characters; a long checklist arrives in several parts.
 - Up to 5 "N before" reminders per person, 10 extra notify services per
-  person, files up to 25 MB, 10 files per task.
+  person, files up to 25 MB, 10 files per task (and per Maintenance job), 50
+  per maintenance item, 20 per Mark done record.
+- A request to the app can carry at most 1 MB (a file upload 26 MB).
 - Completed tasks are removed after 60 days.
 - Dates and "today" follow Home Assistant's time zone.
 

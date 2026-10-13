@@ -46,8 +46,10 @@ One asyncio loop ticks every 60 seconds and runs all four scheduled passes
 import asyncio
 import logging
 import re
+import threading
+import time
 import urllib.parse
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from starlette.concurrency import run_in_threadpool
 
@@ -360,66 +362,129 @@ def _offset_label(minutes: int) -> str:
 # The daily pass
 # ---------------------------------------------------------------------------
 
+# Catching up: a digest (weekly summary, maintenance notification) whose time came while the app wasn't running
+# is still sent up to CATCH_UP_MINUTES after that time, once the reminders loop is going again.
+CATCH_UP_MINUTES = 180
+_loop_since: datetime | None = None          # when the reminders loop started (None: not running, e.g. tests)
+
+
+def _parse_hhmm(hhmm) -> tuple[int, int] | None:
+    try:
+        hh, mm = (int(x) for x in hhmm.split(":"))
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            return hh, mm
+    except (ValueError, AttributeError):
+        pass
+    return None
+
+
+def window_day(now: datetime, hhmm) -> date | None:
+    """The day whose "HH:MM" send time `now` is in the window after: today's, or — for a time late in the
+    evening — yesterday's, whose window runs past midnight. The window is WINDOW_MINUTES long, or
+    CATCH_UP_MINUTES when the app wasn't running yet at that time (it was restarted, or off). None: outside."""
+    t = _parse_hhmm(hhmm)
+    if t is None:
+        return None
+    for day in (now.date(), now.date() - timedelta(days=1)):
+        start = now.replace(year=day.year, month=day.month, day=day.day, hour=t[0], minute=t[1], second=0,
+                            microsecond=0)
+        minutes = WINDOW_MINUTES
+        if _loop_since is not None and _loop_since > start:
+            minutes = CATCH_UP_MINUTES
+        if start <= now < start + timedelta(minutes=minutes):
+            return day
+    return None
+
+
 def _in_time_window(now: datetime, hh: int, mm: int) -> bool:
-    start = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    return start <= now < start + timedelta(minutes=WINDOW_MINUTES)
+    return window_day(now, f"{hh:02d}:{mm:02d}") is not None
 
 
 def _services_if_due(conn, u, now: datetime, hhmm: str | None) -> list[str]:
     """The person's notify services when `now` is inside the window after
     their "HH:MM" send time; [] otherwise (or if the time is unreadable)."""
-    try:
-        hh, mm = (int(x) for x in hhmm.split(":"))
-    except (ValueError, AttributeError):
-        return []
-    if not _in_time_window(now, hh, mm):
+    if window_day(now, hhmm) is None:
         return []
     return ha_notify.services_for(dict(u), conn)
+
+
+# ---------------------------------------------------------------------------
+# Home Assistant not answering
+# ---------------------------------------------------------------------------
+
+class HomeAssistantDown(Exception):
+    """A send failed and Home Assistant doesn't answer at all: the rest of this tick waits for the next one."""
+
+
+_down_at: float | None = None
+
+
+def _after_failed_send() -> None:
+    """A notification wasn't accepted. If Home Assistant answers (the phone's service is wrong, say), the pass
+    carries on with everyone else; if it doesn't answer at all, stop here instead of waiting out a 10-second
+    timeout for every person and every reminder in turn — they're all tried again on the next tick."""
+    status, _ = ha_client.request("GET", "/", timeout=5)
+    if status is None:
+        raise HomeAssistantDown()
+
+
+def _down(name: str) -> None:
+    global _down_at
+    _down_at = time.monotonic()
+    logger.warning("Home Assistant isn't answering: the %s pass stopped and tries again in a minute.", name)
 
 
 def run_digest_pass_blocking(now: datetime | None = None, sender=None) -> int:
     """One pass of the digest. Each person's digest fires in the 60 minutes
     after their own `digest_time` (08:00 if they never set one), mirroring
-    how the weekly summary already works per person. Returns how many
-    digests were sent. `sender` defaults to ha_notify.send_notify (tests
-    inject a fake)."""
+    how the weekly summary already works per person — for a late time, that
+    hour runs past midnight; after a restart, a digest whose time came while
+    the app was off is caught up for three hours. Returns how many digests
+    were sent. `sender` defaults to ha_notify.send_notify (tests inject a
+    fake)."""
     now = now or config.now()
     if not ha_client.has_token():
         return 0
     sender = sender or ha_notify.send_notify
-    today = now.date()
     sent = 0
-    with db.get_conn() as conn:
-        users = conn.execute(
-            """
-            SELECT u.id, u.name, u.username, p.lead_days, p.digest_time
-            FROM users u JOIN user_prefs p ON p.user_id = u.id
-            WHERE u.disabled = 0 AND p.notifications_enabled = 1
-              AND NOT EXISTS (SELECT 1 FROM notification_log n
-                              WHERE n.user_id = u.id AND n.kind = 'digest' AND n.sent_on = ?)
-            """,
-            (today.isoformat(),),
-        ).fetchall()
-        for u in users:
-            services = _services_if_due(conn, u, now, u["digest_time"] or db.DEFAULT_DIGEST_TIME)
-            if not services:
-                continue
-            tasks = collect_digest_tasks(conn, u["id"], u["lead_days"], today)
-            tasks += collect_schedule_occurrences(conn, u["id"], today, today + timedelta(days=u["lead_days"]))
-            tasks.sort(key=lambda t: _entry_key(t, today))
-            message = format_digest(tasks, today)
-            if not message:
-                continue  # never send an empty digest
-            if _send_text(sender, services, message):
-                conn.execute(
-                    "INSERT OR IGNORE INTO notification_log (id, user_id, kind, sent_on, created_at) "
-                    "VALUES (?, ?, 'digest', ?, ?)",
-                    (db.new_id(), u["id"], today.isoformat(), config.now_iso()),
-                )
-                conn.commit()
-                sent += 1
-            # a failed send is not recorded: it is retried next tick, but only
-            # inside the 60-minute window (§8b)
+    try:
+        with db.get_conn() as conn:
+            users = conn.execute(
+                """
+                SELECT u.id, u.name, u.username, p.lead_days, p.digest_time
+                FROM users u JOIN user_prefs p ON p.user_id = u.id
+                WHERE u.disabled = 0 AND p.notifications_enabled = 1
+                """
+            ).fetchall()
+            for u in users:
+                day = window_day(now, u["digest_time"] or db.DEFAULT_DIGEST_TIME)
+                if day is None or conn.execute(
+                        "SELECT 1 FROM notification_log WHERE user_id = ? AND kind = 'digest' AND sent_on = ?",
+                        (u["id"], day.isoformat())).fetchone():
+                    continue
+                services = ha_notify.services_for(dict(u), conn)
+                if not services:
+                    continue
+                tasks = collect_digest_tasks(conn, u["id"], u["lead_days"], day)
+                tasks += collect_schedule_occurrences(conn, u["id"], day, day + timedelta(days=u["lead_days"]))
+                tasks.sort(key=lambda t: _entry_key(t, day))
+                message = format_digest(tasks, day)
+                if not message:
+                    continue  # never send an empty digest
+                if _send_text(sender, services, message):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO notification_log (id, user_id, kind, sent_on, created_at) "
+                        "VALUES (?, ?, 'digest', ?, ?)",
+                        (db.new_id(), u["id"], day.isoformat(), config.now_iso()),
+                    )
+                    conn.commit()
+                    sent += 1
+                else:
+                    # a failed send is not recorded: it is retried next tick, but only
+                    # inside the 60-minute window (§8b)
+                    _after_failed_send()
+    except HomeAssistantDown:
+        _down("digest")
     return sent
 
 
@@ -429,51 +494,56 @@ def run_digest_pass_blocking(now: datetime | None = None, sender=None) -> int:
 
 def run_weekly_pass_blocking(now: datetime | None = None, sender=None) -> int:
     """Once per person, on their own configured day-of-week (ISO 1=Mon..
-    7=Sun) and time, inside the same 60-minute catch-up window as the daily
-    digest. Gated by the per-user weekly-summary toggle alone."""
+    7=Sun) and time, inside the same window as the daily digest (past
+    midnight for a late time, caught up after a restart). Gated by the
+    per-user weekly-summary toggle alone."""
     now = now or config.now()
     if not ha_client.has_token():
         return 0
     sender = sender or ha_notify.send_notify
-    today = now.date()
-    iso_dow = today.isoweekday()
     sent = 0
-    with db.get_conn() as conn:
-        users = conn.execute(
-            """
-            SELECT u.id, u.name, u.username, w.time
-            FROM users u
-            JOIN user_weekly_prefs w ON w.user_id = u.id
-            WHERE u.disabled = 0 AND w.enabled = 1
-              AND w.day_of_week = ?
-              AND NOT EXISTS (SELECT 1 FROM weekly_summary_log l
-                              WHERE l.user_id = u.id AND l.sent_on = ?)
-            """,
-            (iso_dow, today.isoformat()),
-        ).fetchall()
-        for u in users:
-            services = _services_if_due(conn, u, now, u["time"])
-            if not services:
-                continue
-            tasks = collect_weekly_tasks(conn, u["id"], today)
-            tasks += collect_schedule_occurrences(conn, u["id"], today + timedelta(days=1),
-                                                  today + timedelta(days=WEEKLY_LOOKAHEAD_DAYS))
-            tasks.sort(key=lambda t: _entry_key(t, today))
-            message = format_weekly_summary(tasks, today)
-            from . import maint_notify   # their maintenance this week, in its own section
-            maint = maint_notify.weekly_lines(conn, u["id"], today)
-            if maint:
-                message = ((message + "\n\n") if message else "") + "Maintenance:\n" + "\n".join(maint[:MAX_WEEKLY_LINES])
-            if not message:
-                continue  # never send an empty summary
-            if _send_text(sender, services, message):
-                conn.execute(
-                    "INSERT OR IGNORE INTO weekly_summary_log (id, user_id, sent_on, created_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (db.new_id(), u["id"], today.isoformat(), config.now_iso()),
-                )
-                conn.commit()
-                sent += 1
+    try:
+        with db.get_conn() as conn:
+            users = conn.execute(
+                """
+                SELECT u.id, u.name, u.username, w.time, w.day_of_week
+                FROM users u
+                JOIN user_weekly_prefs w ON w.user_id = u.id
+                WHERE u.disabled = 0 AND w.enabled = 1
+                """
+            ).fetchall()
+            for u in users:
+                today = window_day(now, u["time"])
+                if today is None or today.isoweekday() != u["day_of_week"] or conn.execute(
+                        "SELECT 1 FROM weekly_summary_log WHERE user_id = ? AND sent_on = ?",
+                        (u["id"], today.isoformat())).fetchone():
+                    continue
+                services = ha_notify.services_for(dict(u), conn)
+                if not services:
+                    continue
+                tasks = collect_weekly_tasks(conn, u["id"], today)
+                tasks += collect_schedule_occurrences(conn, u["id"], today + timedelta(days=1),
+                                                      today + timedelta(days=WEEKLY_LOOKAHEAD_DAYS))
+                tasks.sort(key=lambda t: _entry_key(t, today))
+                message = format_weekly_summary(tasks, today)
+                from . import maint_notify   # their maintenance this week, in its own section
+                maint = maint_notify.weekly_lines(conn, u["id"], today)
+                if maint:
+                    message = ((message + "\n\n") if message else "") + "Maintenance:\n" + "\n".join(maint[:MAX_WEEKLY_LINES])
+                if not message:
+                    continue  # never send an empty summary
+                if _send_text(sender, services, message):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO weekly_summary_log (id, user_id, sent_on, created_at) "
+                        "VALUES (?, ?, ?, ?)",
+                        (db.new_id(), u["id"], today.isoformat(), config.now_iso()),
+                    )
+                    conn.commit()
+                    sent += 1
+                else:
+                    _after_failed_send()
+    except HomeAssistantDown:
+        _down("weekly summary")
     return sent
 
 
@@ -498,80 +568,121 @@ def _reminder_users(conn) -> dict[str, list]:
     return by_user
 
 
+ON_TIME = timedelta(minutes=5)       # a reminder sent this late still says its own "in 1 hour"
+
+
+def _utc(dt: datetime) -> datetime:
+    return dt.astimezone(timezone.utc)
+
+
+def _remaining_label(minutes: float) -> str:
+    """"in 40 minutes" / "in 3 hours" / "in 2 days", from the time really left (rounded)."""
+    m = max(1, round(minutes))
+    if m < 90:
+        return f"in {m} minute{'s' if m != 1 else ''}"
+    if m < 36 * 60:
+        h = round(m / 60)
+        return f"in {h} hour{'s' if h != 1 else ''}"
+    d = round(m / 1440)
+    return f"in {d} day{'s' if d != 1 else ''}"
+
+
+def _due_offsets(at: datetime, now: datetime, offsets: list[int], logged) -> tuple[list[int], str] | None:
+    """The person's "N before" offsets that are due for something happening at `at` and not sent yet, and the
+    "in …" words for the one notification that covers them: the smallest due offset's own words when it is
+    on time, else the time really left (the app was off, or the offset was just added). Times are compared
+    in UTC, so an offset across a clock change is exact. None: nothing to send."""
+    at_utc, now_utc = _utc(at), _utc(now)
+    if at_utc <= now_utc:
+        return None                                  # already started / due: a "before" ping is moot
+    due = sorted(m for m in set(offsets) if at_utc - timedelta(minutes=m) <= now_utc and not logged(m))
+    if not due:
+        return None
+    smallest = due[0]
+    if now_utc - (at_utc - timedelta(minutes=smallest)) <= ON_TIME:
+        words = _in_label(smallest)
+    else:
+        words = _remaining_label((at_utc - now_utc).total_seconds() / 60)
+    return due, words
+
+
 def run_task_reminder_pass_blocking(now: datetime | None = None, sender=None) -> int:
     """Each user's own configured minute-offsets, applied to their own open
     tasks that have a due *time* — an offset needs a clock time, so a
     date-only task is only ever covered by the daily digest. A reminder
     fires once `now` reaches `due_datetime - minutes_before`, and stays
-    eligible (for a restart to catch up on) until `due_datetime` itself."""
+    eligible (for a restart to catch up on) until `due_datetime` itself.
+    Several offsets due at once (after a restart, or a just-added task) make
+    ONE notification, worded from the time really left; the larger ones are
+    logged as sent with it."""
     now = now or config.now()
     if not ha_client.has_token():
         return 0
     sender = sender or ha_notify.send_notify
     sent = 0
-    with db.get_conn() as conn:
-        by_user = _reminder_users(conn)
-        if not by_user:
-            return 0
-        # The widest legal offset is 7 days, so a task due further out than
-        # that can't have a reminder due yet; bound the scan accordingly.
-        window_start = (now.date() - timedelta(days=1)).isoformat()
-        window_end = (now.date() + timedelta(days=10)).isoformat()
-        for user_id, rows in by_user.items():
-            services = ha_notify.services_for({"id": user_id, "username": rows[0]["username"]}, conn)
-            if not services:
-                continue
-            tasks = conn.execute(
-                taskview.TASK_SELECT
-                + """
-                WHERE t.completed = 0 AND t.due_date IS NOT NULL AND t.due_time IS NOT NULL
-                  AND (t.assigned_to = ? OR (l.kind = 'personal' AND l.owner_user_id = ?))
-                  AND (l.kind = 'shared' OR l.owner_user_id = ?)
-                  AND t.due_date >= ? AND t.due_date <= ?
-                """,
-                (user_id, user_id, user_id, window_start, window_end),
-            ).fetchall()
-            for t in tasks:
-                try:
-                    due_dt = datetime.combine(
-                        date.fromisoformat(t["due_date"]),
-                        datetime.strptime(t["due_time"], "%H:%M").time(),
-                        tzinfo=now.tzinfo,
-                    )
-                except (ValueError, TypeError):
+    try:
+        with db.get_conn() as conn:
+            by_user = _reminder_users(conn)
+            if not by_user:
+                return 0
+            # The widest legal offset is 7 days, so a task due further out than
+            # that can't have a reminder due yet; bound the scan accordingly.
+            window_start = (now.date() - timedelta(days=1)).isoformat()
+            window_end = (now.date() + timedelta(days=10)).isoformat()
+            for user_id, rows in by_user.items():
+                services = ha_notify.services_for({"id": user_id, "username": rows[0]["username"]}, conn)
+                if not services:
                     continue
-                if due_dt <= now:
-                    continue  # already due — a "before it's due" ping is moot
-                for r in rows:
-                    minutes_before = r["minutes_before"]
-                    reminder_at = due_dt - timedelta(minutes=minutes_before)
-                    if reminder_at > now:
-                        continue  # not time yet
-                    already = conn.execute(
-                        "SELECT 1 FROM task_reminder_log WHERE task_id = ? AND user_id = ? "
-                        "AND minutes_before = ? AND due_date = ? AND due_time = ?",
-                        (t["id"], user_id, minutes_before, t["due_date"], t["due_time"]),
-                    ).fetchone()
-                    if already:
+                tasks = conn.execute(
+                    taskview.TASK_SELECT
+                    + """
+                    WHERE t.completed = 0 AND t.due_date IS NOT NULL AND t.due_time IS NOT NULL
+                      AND (t.assigned_to = ? OR (l.kind = 'personal' AND l.owner_user_id = ?))
+                      AND (l.kind = 'shared' OR l.owner_user_id = ?)
+                      AND t.due_date >= ? AND t.due_date <= ?
+                    """,
+                    (user_id, user_id, user_id, window_start, window_end),
+                ).fetchall()
+                offsets = [r["minutes_before"] for r in rows]
+                for t in tasks:
+                    try:
+                        due_dt = datetime.combine(
+                            date.fromisoformat(t["due_date"]),
+                            datetime.strptime(t["due_time"], "%H:%M").time(),
+                            tzinfo=now.tzinfo,
+                        )
+                    except (ValueError, TypeError):
                         continue
-                    message = f"{t['title']} — {_offset_label(minutes_before)} ({t['due_time']})"
+                    logged = {r[0] for r in conn.execute(
+                        "SELECT minutes_before FROM task_reminder_log WHERE task_id = ? AND user_id = ? "
+                        "AND due_date = ? AND due_time = ?", (t["id"], user_id, t["due_date"], t["due_time"]))}
+                    todo = _due_offsets(due_dt, now, offsets, logged.__contains__)
+                    if todo is None:
+                        continue
+                    due, words = todo
+                    message = f"{t['title']} — due {words} ({t['due_time']})"
                     if t["place_name"]:
                         message += f" @ {t['place_name']}"
                         message += _drive_note(t["due_date"], t["due_time"], t["place_drive_minutes"])
                     details = place_details({"address": t["place_address"], "phone": t["place_phone"]}) \
                         if t["place_name"] else None
                     if _send_one(sender, services, message, t["url"], details, _ticket_action(conn, t["id"])):
-                        conn.execute(
-                            "INSERT OR IGNORE INTO task_reminder_log "
-                            "(id, task_id, user_id, minutes_before, due_date, due_time, created_at) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (db.new_id(), t["id"], user_id, minutes_before, t["due_date"], t["due_time"],
-                             config.now_iso()),
-                        )
+                        for minutes_before in due:
+                            conn.execute(
+                                "INSERT OR IGNORE INTO task_reminder_log "
+                                "(id, task_id, user_id, minutes_before, due_date, due_time, created_at) "
+                                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (db.new_id(), t["id"], user_id, minutes_before, t["due_date"], t["due_time"],
+                                 config.now_iso()),
+                            )
                         conn.commit()
                         sent += 1
-                    # a failed send is not recorded and is retried next tick,
-                    # right up until due_dt makes it moot (mirrors the digest)
+                    else:
+                        # a failed send is not recorded and is retried next tick,
+                        # right up until due_dt makes it moot (mirrors the digest)
+                        _after_failed_send()
+    except HomeAssistantDown:
+        _down("task reminder")
     return sent
 
 
@@ -583,68 +694,104 @@ def run_schedule_reminder_pass_blocking(now: datetime | None = None, sender=None
     """The assignee's own "N before" offsets, applied to the start time of
     each effective occurrence of their timed schedule items (household or
     private). Same timing rule as task reminders: due once
-    `now >= start - offset`, pointless once `now >= start`. Deduplicated in
-    schedule_reminder_log on (item, user, offset, date, start_time), so
-    moving an occurrence or changing the item's times re-arms it."""
+    `now >= start - offset`, pointless once `now >= start`, and several due
+    at once make one notification. Deduplicated in schedule_reminder_log on
+    (item, user, offset, date, start_time), so moving an occurrence or
+    changing the item's times re-arms it."""
     now = now or config.now()
     if not ha_client.has_token():
         return 0
     sender = sender or ha_notify.send_notify
     sent = 0
     today = now.date()
-    with db.get_conn() as conn:
-        by_user = _reminder_users(conn)
-        if not by_user:
-            return 0
-        excs = schedule_logic.load_exceptions(conn)
-        _, places = schedule_logic.lookups(conn)
-        for user_id, rows in by_user.items():
-            services = ha_notify.services_for({"id": user_id, "username": rows[0]["username"]}, conn)
-            if not services:
-                continue
-            items = [dict(r) for r in conn.execute(
-                "SELECT * FROM schedule_items WHERE (assigned_to = ? OR rotation IS NOT NULL) "
-                "AND start_time IS NOT NULL AND end_time IS NOT NULL", (user_id,))]
-            schedule_logic.attach_turns(conn, items)
-            for item in items:
-                place = places.get(item["place_id"])
-                # the widest legal offset is 7 days, so nothing further out can be due yet
-                for d, turn in schedule_logic.effective_turns_between(item, excs.get(item["id"], []), today, today + timedelta(days=8)):
-                    if item["assigned_to"] != user_id and turn != user_id:
-                        continue              # taken in turns: only the one whose turn it is
-                    start_dt = datetime.combine(d, datetime.strptime(item["start_time"], "%H:%M").time(), tzinfo=now.tzinfo)
-                    if start_dt <= now:
-                        continue   # already started
-                    for r in rows:
-                        minutes_before = r["minutes_before"]
-                        if start_dt - timedelta(minutes=minutes_before) > now:
-                            continue   # not time yet
-                        key = (item["id"], user_id, minutes_before, d.isoformat(), item["start_time"])
-                        if conn.execute(
-                            "SELECT 1 FROM schedule_reminder_log WHERE item_id = ? AND user_id = ? "
-                            "AND minutes_before = ? AND date = ? AND start_time = ?", key,
-                        ).fetchone():
+    try:
+        with db.get_conn() as conn:
+            by_user = _reminder_users(conn)
+            if not by_user:
+                return 0
+            excs = schedule_logic.load_exceptions(conn)
+            _, places = schedule_logic.lookups(conn)
+            for user_id, rows in by_user.items():
+                services = ha_notify.services_for({"id": user_id, "username": rows[0]["username"]}, conn)
+                if not services:
+                    continue
+                offsets = [r["minutes_before"] for r in rows]
+                items = [dict(r) for r in conn.execute(
+                    "SELECT * FROM schedule_items WHERE (assigned_to = ? OR rotation IS NOT NULL) "
+                    "AND start_time IS NOT NULL AND end_time IS NOT NULL", (user_id,))]
+                schedule_logic.attach_turns(conn, items)
+                for item in items:
+                    place = places.get(item["place_id"])
+                    # the widest legal offset is 7 days, so nothing further out can be due yet
+                    for d, turn in schedule_logic.effective_turns_between(item, excs.get(item["id"], []), today, today + timedelta(days=8)):
+                        if item["assigned_to"] != user_id and turn != user_id:
+                            continue              # taken in turns: only the one whose turn it is
+                        start_dt = datetime.combine(d, datetime.strptime(item["start_time"], "%H:%M").time(), tzinfo=now.tzinfo)
+                        logged = {r[0] for r in conn.execute(
+                            "SELECT minutes_before FROM schedule_reminder_log WHERE item_id = ? AND user_id = ? "
+                            "AND date = ? AND start_time = ?", (item["id"], user_id, d.isoformat(), item["start_time"]))}
+                        todo = _due_offsets(start_dt, now, offsets, logged.__contains__)
+                        if todo is None:
                             continue
-                        message = f"{item['name']} — starts {_in_label(minutes_before)} ({schedule_logic.time_range(item)})"
+                        due, words = todo
+                        message = f"{item['name']} — starts {words} ({schedule_logic.time_range(item)})"
                         if place:
                             message += f" @ {place['name']}"
                             message += _drive_note(d.isoformat(), item["start_time"], place["drive_minutes"])
                         if _send_one(sender, services, message, item["url"], place_details(place)):
-                            conn.execute(
-                                "INSERT OR IGNORE INTO schedule_reminder_log "
-                                "(id, item_id, user_id, minutes_before, date, start_time, created_at) "
-                                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                                (db.new_id(), *key, config.now_iso()),
-                            )
+                            for minutes_before in due:
+                                conn.execute(
+                                    "INSERT OR IGNORE INTO schedule_reminder_log "
+                                    "(id, item_id, user_id, minutes_before, date, start_time, created_at) "
+                                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                    (db.new_id(), item["id"], user_id, minutes_before, d.isoformat(),
+                                     item["start_time"], config.now_iso()),
+                                )
                             conn.commit()
                             sent += 1
-                        # a failed send is retried next tick, until the start time
+                        else:
+                            _after_failed_send()      # retried next tick, until the start time
+    except HomeAssistantDown:
+        _down("schedule reminder")
     return sent
 
 
 # ---------------------------------------------------------------------------
 # Assignment pings
 # ---------------------------------------------------------------------------
+
+# "X assigned you …" pings: at most PING_BURST from one person to another in PING_WINDOW_S seconds (the
+# assignment itself always goes through; only the extra pings are dropped), so nobody can flood a phone by
+# re-assigning things.
+PING_BURST = 5
+PING_WINDOW_S = 600
+_ping_lock = threading.Lock()
+_pings: dict[tuple[str, str], list[float]] = {}
+
+
+def ping_allowed(actor_id: str, assignee_id: str, now: float | None = None) -> bool:
+    """Count one assignment ping from `actor_id` to `assignee_id`; False when they've had PING_BURST already."""
+    now = time.monotonic() if now is None else now
+    with _ping_lock:
+        if len(_pings) > 1000:                     # forget pairs that have been quiet for a window
+            for k in [k for k, v in _pings.items() if not v or now - v[-1] > PING_WINDOW_S]:
+                del _pings[k]
+        recent = [t for t in _pings.get((actor_id, assignee_id), []) if now - t < PING_WINDOW_S]
+        if len(recent) >= PING_BURST:
+            _pings[(actor_id, assignee_id)] = recent
+            logger.info("Not sending another “assigned you” notification to %s for now (%d in %d minutes).",
+                        assignee_id, PING_BURST, PING_WINDOW_S // 60)
+            return False
+        recent.append(now)
+        _pings[(actor_id, assignee_id)] = recent
+        return True
+
+
+def reset_ping_limits() -> None:
+    """Tests."""
+    with _ping_lock:
+        _pings.clear()
+
 
 def send_assignment_ping_blocking(assignee_id: str, actor_name: str, title: str, due_date: str | None, sender=None,
                                   detail: str | None = None, url: str | None = None,
@@ -715,12 +862,19 @@ def run_alarm_pass_blocking(now: datetime | None = None, sender=None) -> int:
                 conn.commit()
                 continue
             services = ha_notify.services_for({"id": r["user_id"], "username": r["username"]}, conn)
-            if services and _send_one(sender, services, f"⏰ {r['title']} ({r['at'][11:]})", r["url"],
-                                      extra_actions=_ticket_action(conn, r["task_id"])):
+            if not services:
+                continue                 # nothing to send to: tried again next tick, up to an hour late
+            if _send_one(sender, services, f"⏰ {r['title']} ({r['at'][11:]})", r["url"],
+                         extra_actions=_ticket_action(conn, r["task_id"])):
                 conn.execute("UPDATE task_alarms SET sent_at = ? WHERE id = ?", (config.now_iso(), r["id"]))
                 conn.commit()
                 sent += 1
-            # nothing to send to, or every phone refused: tried again next tick, up to an hour late
+            else:
+                try:                     # every phone refused: tried again next tick, up to an hour late
+                    _after_failed_send()
+                except HomeAssistantDown:
+                    _down("alarm")
+                    break
     return sent
 
 
@@ -740,8 +894,13 @@ async def loop() -> None:
         (run_schedule_reminder_pass_blocking, "schedule reminder"),
         (_maintenance_pass, "maintenance"),
     )
+    global _loop_since
+    _loop_since = config.now()            # digests whose time came before this are caught up (window_day)
     while True:
+        tick = time.monotonic()
         for fn, name in passes:
+            if _down_at is not None and _down_at >= tick:
+                break                     # Home Assistant isn't answering: the rest waits for the next tick
             try:
                 await run_in_threadpool(fn)
             except asyncio.CancelledError:

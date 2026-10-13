@@ -57,6 +57,13 @@ def get_calendar(
             f"WHERE {taskview.VISIBLE_SQL} AND t.completed = 0 AND t.due_date IS NULL",
             (acting["id"],),
         ).fetchone()[0]
+        # the dashboard's overdue count (completion-required tasks past their date, §8l), for the calendar's banner
+        overdue = conn.execute(
+            "SELECT COUNT(*) FROM tasks t JOIN lists l ON l.id = t.list_id "
+            f"WHERE {taskview.VISIBLE_SQL} AND t.completed = 0 AND t.due_date IS NOT NULL AND t.due_date < ? "
+            "AND t.completion_required = 1",
+            (acting["id"], today.isoformat()),
+        ).fetchone()[0]
         entries = []
         if schedule == 1:
             # someone else's private item never shows up (§4)
@@ -92,4 +99,4 @@ def get_calendar(
         by_date.setdefault(t["dueDate"], []).append(t)
     ordered = [t for d in sorted(by_date) for t in taskview.sort_for_day(by_date[d])]
     return {"today": today.isoformat(), "tasks": ordered, "schedule": entries, "maintenance": maint,
-            "undatedCount": undated}
+            "undatedCount": undated, "overdueCount": overdue}

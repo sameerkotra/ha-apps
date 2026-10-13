@@ -137,30 +137,58 @@ def _drop(conn, root: str, row: dict) -> None:
     maint_files.remove_thumbs(root, [row["thumb"]])
 
 
+# a task in a deleted list's bin counts as there: its files wait with it (list_bin.py)
+_ROW = ("SELECT f.*, COALESCE(t.id, b.task_id) AS task_there FROM maint_files f LEFT JOIN tasks t ON t.id = f.task_id "
+        "LEFT JOIN list_bin_tasks b ON b.task_id = f.task_id WHERE f.id = ?")
+
+
 def _flush_one(root: str, file_id: str) -> None:
+    """Make one waiting move. The file moves outside any transaction (a network share can be slow, and the
+    database stays free for everyone else meanwhile); the row is then updated only if nobody changed it during
+    the move — otherwise the file goes back where the row now expects it, and the next flush looks again."""
     with db.get_conn() as conn:
-        conn.execute("BEGIN IMMEDIATE")            # nobody changes the row while its file moves
-        r = conn.execute("SELECT f.*, t.id AS task_there FROM maint_files f LEFT JOIN tasks t ON t.id = f.task_id "
-                         "WHERE f.id = ?", (file_id,)).fetchone()
-        if not r or not r["pending"]:
-            return
-        r = dict(r)
-        if r["pending"] == "remove":
-            day = config.today().isoformat()
-            new = _move(root, r["rel_path"], os.path.join(maint_files.DELETED, day, os.path.dirname(r["rel_path"])))
-            if new is None or not r["task_there"]:
+        r = conn.execute(_ROW, (file_id,)).fetchone()
+    if not r or not r["pending"]:
+        return
+    r = dict(r)
+    if r["pending"] == "remove":
+        day = config.today().isoformat()
+        new = _move(root, r["rel_path"], os.path.join(maint_files.DELETED, day, os.path.dirname(r["rel_path"])))
+    elif r["pending"] == "restore":
+        back = os.path.dirname(r["removed_rel"] or "") or maint_files.TASKS
+        new = _move(root, r["rel_path"], back) if r["task_there"] else None
+    else:
+        return
+    undo = orphan = None
+    with db.get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        now = conn.execute(_ROW, (file_id,)).fetchone()
+        if now is None:
+            if r["pending"] == "restore" and new is not None:
+                orphan = new                        # removed meanwhile: back to _deleted it goes
+        elif (now["pending"], now["rel_path"], now["removed_rel"]) != (r["pending"], r["rel_path"], r["removed_rel"]):
+            undo = new                              # changed meanwhile (unticked, ticked again …)
+        elif r["pending"] == "remove":
+            if new is None or not now["task_there"]:
                 _drop(conn, root, r)                # gone already, or its task is: nothing to bring back
             else:
                 conn.execute("UPDATE maint_files SET rel_path = ?, removed_rel = ?, removed_at = ?, pending = NULL "
                              "WHERE id = ?", (new, r["rel_path"], config.now_iso(), r["id"]))
-        elif r["pending"] == "restore":
-            back = os.path.dirname(r["removed_rel"] or "") or maint_files.TASKS
-            new = _move(root, r["rel_path"], back) if r["task_there"] else None
-            if new is None:
-                _drop(conn, root, r)                # emptied from _deleted, or moved by hand
+        else:
+            if new is None or not now["task_there"]:
+                _drop(conn, root, r)                # emptied from _deleted, moved by hand, or its task is gone
+                orphan = new
             else:
                 conn.execute("UPDATE maint_files SET rel_path = ?, name = ?, removed_rel = NULL, removed_at = NULL, "
                              "pending = NULL WHERE id = ?", (new, os.path.basename(new), r["id"]))
+    if orphan:
+        maint_files.to_deleted(root, [orphan])
+    if undo:
+        back = _move(root, undo, os.path.dirname(r["rel_path"]))
+        if back is not None and back != r["rel_path"]:
+            with db.get_conn() as conn:          # its old name was taken meanwhile: the row follows the file
+                conn.execute("UPDATE maint_files SET rel_path = ? WHERE id = ? AND rel_path = ?",
+                             (back, file_id, r["rel_path"]))
 
 
 def flush() -> int:
@@ -189,7 +217,8 @@ def flush() -> int:
             # rows of tasks that are gone (deleted with a list, purged) once nothing waits on them
             for r in [dict(x) for x in conn.execute(
                     "SELECT id, thumb FROM maint_files WHERE task_id IS NOT NULL AND removed_at IS NOT NULL "
-                    "AND pending IS NULL AND task_id NOT IN (SELECT id FROM tasks)")]:
+                    "AND pending IS NULL AND task_id NOT IN (SELECT id FROM tasks) "
+                    "AND task_id NOT IN (SELECT task_id FROM list_bin_tasks)")]:
                 _drop(conn, root, r)
     return n
 

@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.1"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.2"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -122,7 +122,7 @@ The Dockerfile's CMD is `uvicorn app.main:app --host 0.0.0.0 --port 8100`.
 - **Visibility.** User U sees a list or task if `l.kind='shared' OR l.owner_user_id = U`. Someone else's personal list is a **403** ("That list is private to someone else"); a missing one is a 404. Only an admin acting as the owner can see into it.
 - **Private schedule items** (`visibility='private'`) exist only for their assignee: `schedule_logic.VISIBLE_SQL` = `(visibility = 'household' OR assigned_to = ?)` filters the schedule list, calendar, dashboard, reminders (assignee only) and every item/exception route, where an invisible item is a **404**. An admin sees one only while acting as the assignee. HA sensors publish it only if its `expose_sensor` is on (§7.2).
 - **"U's task"** (used by reminders and workload) is a visible task that is assigned to U **or** sits in U's personal list.
-- **Ownership.** Anyone may rename or delete a shared list; only the owner may for a personal one. Places, types and household schedule items (assigned or not) belong to the household: anyone can edit them. A private schedule item can be changed only by its assignee (`can_edit`; 403 guard, though visibility already makes it a 404 for everyone else).
+- **Ownership.** Anyone may rename or delete a shared list; only the owner may for a personal one. A deleted shared list goes to a 30-day bin (`list_bin`, `list_bin_tasks`; app/list_bin.py): an admin can bring it back with its tasks, checklists and unsent alarms (`POST /api/admin/deleted-lists/{id}/restore`) or delete it now (`DELETE /api/admin/deleted-lists/{id}`); its tasks' files stay in place until then. A personal list is deleted at once. Places, types and household schedule items (assigned or not) belong to the household: anyone can edit them. A private schedule item can be changed only by its assignee (`can_edit`; 403 guard, though visibility already makes it a 404 for everyone else).
 - **Whoami** always reports the real caller, with counts only, never the lists. The UI doesn't show `viaIngress`, but the API returns it.
 
 ## 5. Data model

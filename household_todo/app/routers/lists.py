@@ -1,7 +1,7 @@
 """Lists: every shared list plus the acting user's own personal lists (SPEC §6, §8d)."""
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Response
 
-from .. import config, db, settings, task_files, taskview
+from .. import config, db, list_bin, settings, task_files, taskview
 from ..auth import get_acting_user
 
 router = APIRouter(prefix="/api", tags=["lists"])
@@ -101,6 +101,10 @@ def delete_list(list_id: str, background: BackgroundTasks, acting: dict = Depend
         if lst.get("role") == "maintenance" and settings.get("maintenance_enabled"):
             raise HTTPException(409, "The Maintenance list holds the one-off maintenance jobs, so it can't be deleted "
                                      "while Maintenance is on. You can rename it.")
+        if lst["kind"] == "shared":
+            # anyone may delete a shared list: it's kept 30 days, and an admin can bring it back (list_bin.py)
+            list_bin.put(conn, lst, acting["real"]["id"])
+            return Response(status_code=204)
         ids = [r["id"] for r in conn.execute("SELECT id FROM tasks WHERE list_id = ?", (list_id,))]
         if task_files.on_delete(conn, ids):                           # their files move to _deleted (SPEC §17)
             task_files.flush_soon(background)

@@ -284,9 +284,32 @@ class TestDoneAndUndo(TaskFilesBase):
         r = self.post("/api/lists", {"name": "Trip", "kind": "shared"})
         self.assertEqual(r.status_code, 201, r.text)
         trip = self.add("Train", list_id=r.json()["id"])
-        self.attach(trip, "train.pdf")
+        f = self.attach(trip, "train.pdf").json()
+        where = os.path.join(self.task_dir(trip), "train.pdf")
+        gone = self.path("_deleted", "2026-09-21", "Tasks", f"Train ({trip['id'][:8]})", "train.pdf")
         self.assertEqual(self.delete(f"/api/lists/{trip['listId']}").status_code, 204)
-        self.assertTrue(os.path.isfile(self.path("_deleted", "2026-09-21", "Tasks", f"Train ({trip['id'][:8]})", "train.pdf")))
+        # a shared list waits 30 days in the bin: its tasks' files stay where they are, unreachable meanwhile
+        task_files.flush()
+        housekeeping.run_pass_blocking()
+        self.assertTrue(os.path.isfile(where))
+        self.assertEqual(self.get(f"/api/tasks/{trip['id']}/files/{f['id']}").status_code, 404)
+        # brought back: so are the files
+        self.assertEqual(self.post(f"/api/admin/deleted-lists/{trip['listId']}/restore", {}, ADMIN).status_code, 200)
+        self.assertEqual(self.get(f"/api/tasks/{trip['id']}/files/{f['id']}").content, PDF)
+        # deleted again and emptied from the bin: the files go to _deleted
+        self.assertEqual(self.delete(f"/api/lists/{trip['listId']}").status_code, 204)
+        self.assertEqual(self.delete(f"/api/admin/deleted-lists/{trip['listId']}", ADMIN).status_code, 204)
+        self.assertTrue(os.path.isfile(gone))
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM maint_files WHERE task_id = ?", (trip["id"],)).fetchone()[0], 0)
+
+    def test_a_personal_list_is_deleted_at_once(self):
+        mine = self.post("/api/lists", {"name": "Mine", "kind": "personal"}).json()
+        t = self.add("Ticket", list_id=mine["id"])
+        self.attach(t, "t.pdf")
+        self.assertEqual(self.delete(f"/api/lists/{mine['id']}").status_code, 204)
+        self.assertTrue(os.path.isfile(self.path("_deleted", "2026-09-21", "Tasks", f"Ticket ({t['id'][:8]})", "t.pdf")))
+        self.assertEqual(self.get("/api/admin/deleted-lists", ADMIN).json()["lists"], [])
 
     def test_the_assistant_ticking_off(self):
         res = call("todo.items.done", confirm=True, task="Theatre")
@@ -301,6 +324,106 @@ class TestDoneAndUndo(TaskFilesBase):
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM maint_files").fetchone()[0], 0)
         self.assertTrue(os.path.isfile(os.path.join(self.task_dir(self.t), "seating plan.pdf")))
+
+
+class TestReviewFixes(TaskFilesBase):
+    """13 October review: moves outside the write lock, previews removed with purged rows, rename errors."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_folder()
+        self.t = self.add("Theatre", due_date="2026-09-25")
+        self.ticket = self.attach(self.t).json()
+        self.where = os.path.join(self.task_dir(self.t), "ticket.pdf")
+
+    def test_the_move_holds_no_write_lock_and_a_change_meanwhile_wins(self):
+        from unittest import mock
+        real_move = task_files._move
+        seen = []
+
+        def move_while_someone_unticks(root, rel, dest):
+            out = real_move(root, rel, dest)
+            if seen:                                                     # the move back
+                return out
+            # another request writes during the move: this would wait for the lock (and fail) if the flush held it
+            with db.get_conn() as conn:
+                conn.execute("UPDATE tasks SET completed = 0, completed_at = NULL WHERE id = ?", (self.t["id"],))
+                task_files.on_reopen(conn, self.t["id"])
+            seen.append(out)
+            return out
+
+        with db.get_conn() as conn:
+            conn.execute("UPDATE tasks SET completed = 1, completed_at = ? WHERE id = ?", (config.now_iso(), self.t["id"]))
+            task_files.on_done(conn, [self.t["id"]])
+        with mock.patch.object(task_files, "_move", side_effect=move_while_someone_unticks):
+            task_files.flush()
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(os.path.isfile(self.where))                      # put back: the task is open again
+        self.assertEqual(self.names(self.t), ["ticket.pdf"])
+        self.assertEqual(self.get(f"/api/tasks/{self.t['id']}/files/{self.ticket['id']}").content, PDF)
+        task_files.flush()                                               # nothing left to do
+        self.assertTrue(os.path.isfile(self.where))
+
+    def test_a_file_removed_during_its_restore_goes_back_to_deleted(self):
+        from unittest import mock
+        self.tick(self.t)
+        real_move = task_files._move
+
+        def move_then_delete_row(root, rel, dest):
+            out = real_move(root, rel, dest)
+            with db.get_conn() as conn:
+                conn.execute("DELETE FROM maint_files WHERE id = ?", (self.ticket["id"],))
+            return out
+
+        with db.get_conn() as conn:
+            conn.execute("UPDATE tasks SET completed = 0, completed_at = NULL WHERE id = ?", (self.t["id"],))
+            task_files.on_reopen(conn, self.t["id"])
+        with mock.patch.object(task_files, "_move", side_effect=move_then_delete_row):
+            task_files.flush()
+        self.assertFalse(os.path.exists(self.where))
+        self.assertTrue(any("ticket" in n for _, _, names in os.walk(self.path("_deleted")) for n in names))
+
+    def test_purged_tasks_previews_are_removed(self):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (40, 30), "red").save(buf, "PNG")
+        photo = self.attach(self.t, "seat.png", buf.getvalue()).json()
+        self.patch(f"/api/tasks/{self.t['id']}/files/{photo['id']}", {"keepAfterDone": True})
+        self.assertEqual(len(os.listdir(self.path("_thumbs"))), 1)
+        self.tick(self.t)
+        self.at(config.COMPLETED_RETENTION_DAYS + 2)
+        housekeeping.run_pass_blocking()
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM maint_files").fetchone()[0], 0)
+        self.assertEqual(os.listdir(self.path("_thumbs")), [])
+        self.assertTrue(os.path.isfile(os.path.join(self.task_dir(self.t), "seat.png")))     # kept
+
+    def test_purged_rows_with_previews_wait_while_the_folder_is_away(self):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (40, 30), "red").save(buf, "PNG")
+        photo = self.attach(self.t, "seat.png", buf.getvalue()).json()
+        self.patch(f"/api/tasks/{self.t['id']}/files/{photo['id']}", {"keepAfterDone": True})
+        self.tick(self.t)
+        task_files.flush()
+        self.at(config.COMPLETED_RETENTION_DAYS + 2)
+        os.remove(self.path(maint_files.MARKER))
+        maint_files.check()
+        housekeeping.run_pass_blocking()
+        with db.get_conn() as conn:
+            self.assertEqual([r[0] for r in conn.execute("SELECT name FROM maint_files")], ["seat.png"])
+        self.assertTrue(self.post("/api/admin/maintenance/files/check", {"useThisFolder": True}, ADMIN).json()["online"])
+        housekeeping.run_pass_blocking()
+        self.assertEqual(os.listdir(self.path("_thumbs")), [])
+
+    def test_a_rename_the_folder_refuses(self):
+        from unittest import mock
+        with mock.patch("app.routers.task_files.os.rename", side_effect=PermissionError(13, "Permission denied")):
+            r = self.patch(f"/api/tasks/{self.t['id']}/files/{self.ticket['id']}", {"name": "new"})
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertIn("Permission denied", r.json()["detail"])
+        self.assertEqual(self.names(self.t), ["ticket.pdf"])
+        self.assertTrue(os.path.isfile(self.where))
 
 
 class TestNotConnected(TaskFilesBase):

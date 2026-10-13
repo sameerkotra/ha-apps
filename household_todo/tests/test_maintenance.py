@@ -207,6 +207,51 @@ class TestItems(MaintBase):
         self.assertEqual(self.get("/api/maintenance/history?year=abc").status_code, 422)
 
 
+class TestLookupsOct13(MaintBase):
+    def old_lookups(self, conn):
+        """maintenance.lookups as it was before the 13 October review (every item, done history in Python)."""
+        users = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
+        places = {r["id"]: dict(r) for r in conn.execute("SELECT id, name, address, drive_minutes FROM places")}
+        custom = {r["item_id"]: [] for r in conn.execute("SELECT DISTINCT item_id FROM maint_recipients")}
+        for r in conn.execute("SELECT item_id, user_id FROM maint_recipients"):
+            custom[r["item_id"]].append(r["user_id"])
+        files = {}
+        for r in conn.execute("SELECT * FROM maint_files WHERE item_id IS NOT NULL ORDER BY created_at"):
+            files.setdefault(r["item_id"], []).append(mt.file_json(r))
+        last, counts = {}, {}
+        for r in conn.execute("SELECT item_id, done_on, done_by, created_at FROM maint_done ORDER BY done_on, created_at"):
+            last[r["item_id"]] = dict(r)
+            counts[r["item_id"]] = counts.get(r["item_id"], 0) + 1
+        return {"users": users, "places": places, "custom": custom, "files": files, "last": last, "counts": counts}
+
+    def test_same_answers_as_before(self):
+        import random
+        rng = random.Random(3)
+        self.enable(recipients=[self.uid("Alice")])
+        items = [self.item(name=f"Item {i}") for i in range(8)]
+        with db.get_conn() as conn:
+            for n in range(80):
+                it = rng.choice(items)
+                done_on = f"2026-0{rng.randint(1, 9)}-{rng.randint(10, 28)}"
+                created = f"2026-09-{rng.randint(10, 20)}T10:00:{rng.randint(10, 59)}+00:00"
+                conn.execute("INSERT INTO maint_done (id, item_id, done_on, done_by, prev_state, created_at) "
+                             "VALUES (?, ?, ?, ?, '{}', ?)",
+                             (f"d{n}", it["id"], done_on, self.uid("Bob"), created))
+            for n in range(20):
+                conn.execute("INSERT INTO maint_files (id, item_id, rel_path, name, size, created_at) VALUES (?, ?, ?, ?, 1, ?)",
+                             (f"f{n}", rng.choice(items)["id"], f"x/{n}", f"{n}.pdf", f"2026-09-{10 + n}T00:00:00+00:00"))
+            for it in items[:3]:
+                conn.execute("INSERT INTO maint_recipients (item_id, user_id) VALUES (?, ?)", (it["id"], self.uid("Bob")))
+            old = self.old_lookups(conn)
+            self.assertEqual(mt.lookups(conn), old)
+            for it in items:
+                one = mt.lookups(conn, [it["id"]])
+                for key in ("custom", "files", "last", "counts"):
+                    self.assertEqual(one[key], {k: v for k, v in old[key].items() if k == it["id"]}, key)
+                self.assertEqual(mt.serialize(mt.load_item(conn, it["id"]), config.today(), one),
+                                 mt.serialize(mt.load_item(conn, it["id"]), config.today(), old))
+
+
 class TestSuggestions(MaintBase):
     def setUp(self):
         super().setUp()
@@ -283,6 +328,24 @@ class TestNotifications(MaintBase):
 
     def run_at(self, hh, day=21):
         return maint_notify.run_pass_blocking(now=at(hh, day=day))
+
+    def test_nothing_is_worked_out_while_its_nobodys_time(self):
+        from unittest import mock
+        self.item(name="Filter", last_done="2026-06-01")
+        with mock.patch.object(mt, "all_items", side_effect=AssertionError("worked out")):
+            self.assertEqual(self.run_at(7), 0)
+            self.assertEqual(self.run_at(12), 0)
+        self.assertEqual(self.run_at(8), 1)
+
+    def test_a_late_time_reaches_past_midnight(self):
+        self.item(name="Filter", last_done="2026-06-01")
+        with db.get_conn() as conn:
+            conn.execute("UPDATE user_prefs SET digest_time = '23:45' WHERE user_id = ?", (self.uid("Alice"),))
+            if not conn.execute("SELECT 1 FROM user_prefs WHERE user_id = ?", (self.uid("Alice"),)).fetchone():
+                conn.execute("INSERT INTO user_prefs (user_id, digest_time) VALUES (?, '23:45')", (self.uid("Alice"),))
+        self.assertEqual(maint_notify.run_pass_blocking(now=datetime(2026, 9, 22, 0, 20, tzinfo=timezone.utc)), 1)
+        (svc, msg), = self.sent()
+        self.assertEqual(msg, "• Filter — 20 days overdue")                    # Monday's notification
 
     def test_one_grouped_message_at_their_time(self):
         self.item(name="Filter", last_done="2026-06-01")                                   # overdue
@@ -443,6 +506,91 @@ class TestFiles(MaintBase):
         self.assertEqual(len(self.get(f"/api/maintenance/files?task_id={job['id']}").json()), 1)
         self.assertTrue(os.path.isdir(os.path.join(self.folder, "Jobs", f"Tap ({job['id'][:8]})")))
         self.assertEqual(self.overview()["jobs"][0]["fileCount"], 1)
+
+    def test_job_files_follow_the_task_rules_and_owners_have_caps(self):
+        from app import task_files
+        from app.routers import maintenance as mroute
+        it = self.item()
+        self.set_folder()
+        job = self.add("Tap", list_id=self.overview()["listId"])
+        for i in range(task_files.MAX_FILES):
+            self.assertEqual(self.upload(name=f"p{i}.txt", data=b"x", task_id=job["id"]).status_code, 201)
+        r = self.upload(name="one-more.txt", data=b"x", task_id=job["id"])
+        self.assertEqual(r.status_code, 422, r.text)
+        self.assertIn(str(task_files.MAX_FILES), r.json()["detail"])
+        done = self.add("Done job", list_id=self.overview()["listId"])
+        self.patch(f"/api/tasks/{done['id']}", {"completed": True})
+        self.assertEqual(self.upload(task_id=done["id"]).status_code, 409)       # a ticked-off job takes no files
+        old = (mroute.MAX_ITEM_FILES, mroute.MAX_RECORD_FILES)
+        mroute.MAX_ITEM_FILES = mroute.MAX_RECORD_FILES = 2
+        try:
+            self.assertEqual(self.upload(item_id=it["id"]).status_code, 201)
+            self.assertEqual(self.upload(item_id=it["id"]).status_code, 201)
+            self.assertEqual(self.upload(item_id=it["id"]).status_code, 422)
+            rec = self.post(f"/api/maintenance/items/{it['id']}/done").json()["recordId"]
+            self.assertEqual(self.upload(done_id=rec).status_code, 201)
+            self.assertEqual(self.upload(done_id=rec).status_code, 201)
+            self.assertEqual(self.upload(done_id=rec).status_code, 422)
+        finally:
+            mroute.MAX_ITEM_FILES, mroute.MAX_RECORD_FILES = old
+
+    def test_free_space_floor(self):
+        from collections import namedtuple
+        from unittest import mock
+        it = self.item()
+        self.set_folder()
+        usage = namedtuple("usage", "total used free")
+        low = usage(10 << 30, 10 << 30, 500 << 20)                          # 500 MB free, 1 GB kept free
+        with mock.patch.object(maint_files.shutil, "disk_usage", return_value=low):
+            r = self.upload(item_id=it["id"])
+            self.assertEqual(r.status_code, 507, r.text)
+            job = self.add("A ticket")
+            r = self.c.post(f"/api/tasks/{job['id']}/files", files={"file": ("t.pdf", io.BytesIO(b"%PDF-1"))}, headers=ALICE)
+            self.assertEqual(r.status_code, 507, r.text)
+            self.assertEqual(self.put("/api/admin/settings", {"files_min_free_mb": 0}, ADMIN).status_code, 200)
+            self.assertEqual(self.upload(item_id=it["id"]).status_code, 201)      # 0 = don't check
+        self.assertFalse([n for n in os.listdir(os.path.join(self.folder, "Replace furnace filter")) if n.endswith(".part")])
+
+    def test_a_cost_must_be_a_real_number_and_ids_must_be_text(self):
+        it = self.item()
+        for bad in ("NaN", "Infinity", "-Infinity"):
+            r = self.c.post(f"/api/maintenance/items/{it['id']}/done", content='{"cost": %s}' % bad,
+                            headers={**ALICE, "Content-Type": "application/json"})
+            self.assertEqual(r.status_code, 422, (bad, r.text))
+        for key in ("place_id", "assigned_to"):
+            for bad in ([1], {"a": 1}, 5, True):
+                r = self.patch(f"/api/maintenance/items/{it['id']}", {key: bad})
+                self.assertEqual(r.status_code, 422, (key, bad, r.text))
+
+    def test_a_huge_photo_is_kept_without_decoding_it(self):
+        import struct
+        import zlib
+        from unittest import mock
+
+        def png(w, h):
+            def chunk(t, b):
+                return struct.pack(">I", len(b)) + t + b + struct.pack(">I", zlib.crc32(t + b) & 0xFFFFFFFF)
+            return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                    + chunk(b"IDAT", zlib.compress(b"\0" * 10)) + chunk(b"IEND", b""))
+        from app.common import image_guard
+        it = self.item()
+        self.set_folder()
+        with mock.patch.object(image_guard, "decode_slot", side_effect=AssertionError("decoded")):
+            f = self.upload(name="bomb.png", data=png(30_000, 30_000), item_id=it["id"])      # 900 megapixels
+            self.assertEqual(f.status_code, 201, f.text)
+            f = f.json()
+            self.assertEqual(f["mime"], "image/png")
+            self.assertFalse(f["thumb"])
+            f2 = self.upload(name="big.png", data=png(7000, 7000), item_id=it["id"]).json()     # 49 MP: over 40
+            self.assertFalse(f2["thumb"])
+        self.assertEqual(os.listdir(os.path.join(self.folder, "_thumbs")), [])
+        # a normal photo still gets its preview
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (1200, 900), "red").save(buf, "JPEG")
+        ok = self.upload(name="photo.jpg", data=buf.getvalue(), item_id=it["id"]).json()
+        self.assertTrue(ok["thumb"])
+        self.assertEqual(self.get(f"/api/maintenance/files/{ok['id']}?thumb=1").headers["content-type"], "image/jpeg")
 
     def test_not_connected(self):
         it = self.item()

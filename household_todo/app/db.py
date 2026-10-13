@@ -49,7 +49,10 @@ _FUNCTIONS = (("normalize_addr", 1, normalize_address, True),)
 
 
 def _connect() -> sqlite3.Connection:
-    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",), functions=_FUNCTIONS)
+    # synchronous = NORMAL: safe with WAL (a power cut may lose the last commits, never corrupt the file) and
+    # it saves an fsync on every commit
+    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON", "synchronous = NORMAL"),
+                           functions=_FUNCTIONS)
 
 
 def get_conn():
@@ -279,6 +282,24 @@ CREATE TABLE IF NOT EXISTS places (
     created_by TEXT REFERENCES users(id),
     created_at TEXT NOT NULL
 );
+
+-- Deleted shared lists, kept 30 days so an admin can bring one back (list_bin.py): the list, its tasks, their
+-- checklist items and unsent alarms as JSON; list_bin_tasks keeps the tasks' files from being cleaned up meanwhile.
+CREATE TABLE IF NOT EXISTS list_bin (
+    id TEXT PRIMARY KEY,                -- the list's own id
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    deleted_by TEXT,
+    deleted_at TEXT NOT NULL,
+    task_count INTEGER NOT NULL DEFAULT 0,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_list_bin_deleted ON list_bin(deleted_at);
+CREATE TABLE IF NOT EXISTS list_bin_tasks (
+    task_id TEXT PRIMARY KEY,
+    list_id TEXT NOT NULL REFERENCES list_bin(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_list_bin_tasks_list ON list_bin_tasks(list_id);
 
 CREATE TABLE IF NOT EXISTS task_items (
     id TEXT PRIMARY KEY,
@@ -586,12 +607,18 @@ def _seed_first_run(conn: sqlite3.Connection) -> None:
     conn.execute(f"PRAGMA user_version = {_SEEDED_VERSION}")
 
 
-def backup_to_tempfile() -> str:
+# Temp files of downloads and restores start with this, so housekeeping can sweep the ones left behind
+# (a browser that never finished a download, a crash mid-restore).
+TEMP_PREFIX = "household-todo-"
+
+
+def backup_to_tempfile(after=None) -> str:
     """Online-backup the live database into a fresh temp .db file and return
     its path. Deliberately not a plain file copy: the DB runs in WAL mode, so
     recent commits may still be in the -wal file. sqlite3's backup API yields
-    one complete, consistent file. The caller deletes the temp file."""
-    return db_core.snapshot_to_tempfile(_connect)
+    one complete, consistent file. The caller deletes the temp file.
+    `after(conn)` runs on the copy (e.g. blanking secret settings)."""
+    return db_core.snapshot_to_tempfile(_connect, prefix=TEMP_PREFIX, after=after)
 
 
 def validate_backup_file(path: str) -> None:

@@ -204,20 +204,32 @@ def eligible(conn, user_ids) -> list[dict]:
 # ---------------------------------------------------------------------------
 # JSON
 # ---------------------------------------------------------------------------
-def lookups(conn) -> dict:
+def lookups(conn, item_ids=None) -> dict:
+    """What serialize() needs beyond the item: names, places, recipient lists, files and the done history's last
+    record and count — for every item, or only for `item_ids` (one item's answer doesn't read every item's)."""
     users = {r["id"]: r["name"] for r in conn.execute("SELECT id, name FROM users")}
     places = {r["id"]: dict(r) for r in conn.execute("SELECT id, name, address, drive_minutes FROM places")}
-    custom = {r["item_id"]: [] for r in conn.execute("SELECT DISTINCT item_id FROM maint_recipients")}
-    for r in conn.execute("SELECT item_id, user_id FROM maint_recipients"):
-        custom[r["item_id"]].append(r["user_id"])
+    if item_ids is None:
+        where, args = "", []
+    else:
+        ids = list(item_ids)
+        where, args = f" AND item_id IN ({','.join('?' * len(ids))})", ids
+    custom: dict[str, list] = {}
+    for r in conn.execute(f"SELECT item_id, user_id FROM maint_recipients WHERE 1 = 1{where}", args):
+        custom.setdefault(r["item_id"], []).append(r["user_id"])
     files: dict[str, list] = {}
-    for r in conn.execute("SELECT * FROM maint_files WHERE item_id IS NOT NULL ORDER BY created_at"):
+    for r in conn.execute(f"SELECT * FROM maint_files WHERE item_id IS NOT NULL{where} ORDER BY created_at", args):
         files.setdefault(r["item_id"], []).append(file_json(r))
     last: dict[str, dict] = {}
     counts: dict[str, int] = {}
-    for r in conn.execute("SELECT item_id, done_on, done_by, created_at FROM maint_done ORDER BY done_on, created_at"):
-        last[r["item_id"]] = dict(r)
-        counts[r["item_id"]] = counts.get(r["item_id"], 0) + 1
+    # each item's latest record (by date, then when it was entered) and how many there are, worked out by SQLite
+    for r in conn.execute(
+            "SELECT item_id, done_on, done_by, created_at, n FROM (SELECT item_id, done_on, done_by, created_at, "
+            "COUNT(*) OVER (PARTITION BY item_id) AS n, ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY done_on DESC, "
+            f"created_at DESC, rowid DESC) AS k FROM maint_done WHERE 1 = 1{where}) WHERE k = 1", args):
+        last[r["item_id"]] = {"item_id": r["item_id"], "done_on": r["done_on"], "done_by": r["done_by"],
+                              "created_at": r["created_at"]}
+        counts[r["item_id"]] = r["n"]
     return {"users": users, "places": places, "custom": custom, "files": files, "last": last, "counts": counts}
 
 
@@ -399,11 +411,15 @@ def clean_item(conn, body: dict, current: dict | None, acting: dict, today: date
         out["overdue_every"] = v
     if "place_id" in body:
         pid = body["place_id"]
+        if pid is not None and not isinstance(pid, str):
+            raise HTTPException(422, "place_id must be a place's id or null.")
         if pid is not None and not conn.execute("SELECT 1 FROM places WHERE id = ?", (pid,)).fetchone():
             raise HTTPException(404, "Place not found.")
         out["place_id"] = pid
     if "assigned_to" in body:
         uid = body["assigned_to"]
+        if uid is not None and not isinstance(uid, str):
+            raise HTTPException(422, "assigned_to must be a person's id or null.")
         if uid is not None:
             u = conn.execute("SELECT disabled FROM users WHERE id = ?", (uid,)).fetchone()
             if not u:

@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import (app_messages, config, db, drive_time, geocode, ha_client, ha_sensors, housekeeping, maint_files,
+from . import (app_messages, config, db, drive_time, ha_client, ha_sensors, housekeeping, maint_files,
                maint_notify, reminders, task_files)
 from .common import auth_core, deeplinks, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
@@ -21,14 +21,13 @@ logger = logging.getLogger("main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: create (and migrate) the schema, read Home Assistant's time
-    zone once, geocode home
-    (§8n, best effort), then start the four background loops (digest,
-    sensors, housekeeping, drive-time) unless BACKGROUND_LOOPS=0 (the tests).
+    zone once, then start the background loops (digest, sensors,
+    housekeeping, drive-time — which geocodes home first, §8n) unless
+    BACKGROUND_LOOPS=0 (the tests).
     They are cancelled on shutdown, and shutdown waits for any pass already
     running in a worker thread — no separate process, no cron."""
     db.init_db()
     await ha_client.load_timezone()
-    await geocode.load_home()
     try:   # people and their phones, from Home Assistant (Settings → People)
         await run_in_threadpool(ha_people.refresh_blocking, True)
     except Exception:
@@ -91,6 +90,22 @@ app.add_api_route("/lists/{a}", lambda a: deeplinks.redirect(["lists", a]), meth
 # The allowlist (Supervisor's ingress proxy and loopback) is app/common/auth_core.INGRESS_HOSTS.
 
 
+# Request bodies (counted as they arrive, also without a Content-Length — app/common/web_security.py): 1 MB for
+# JSON, a file plus its multipart wrapping for an upload, RESTORE_MAX for a database restore.
+MAX_JSON = 1024 * 1024
+UPLOAD_MAX = maint_files.MAX_BYTES + maint_files.UPLOAD_OVERHEAD
+
+
+class BodyLimit(web_security.BodyLimit):
+    def limit_for(self, path: str) -> int:
+        if _is_file_upload(path):
+            return UPLOAD_MAX
+        return super().limit_for(path)
+
+
+app.add_middleware(BodyLimit, default_max=MAX_JSON, routes={admin.RESTORE_PATH: admin.RESTORE_MAX})
+
+
 @app.middleware("http")
 async def require_ha_ingress_auth(request: Request, call_next):
     """The X-Remote-User-* headers auth.py trusts are only trustworthy if
@@ -135,9 +150,11 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 # The HTML shell must never be browser-cached: it points at the
 # versioned style.css?v=... / app.js?v=..., so a stale cached copy of just
 # this one file can make a rebuilt app look like the update never took
-# effect. The assets themselves keep normal caching — their ?v= query
-# string (bumped with config.yaml's version) invalidates them.
-HEADERS = web_security.SecurityHeaders(CSP, pragma=True, csp_skip=web_security.is_pdf)     # a PDF: see maint_files.serve_headers
+# effect. Every asset index.html links carries ?v=<version> (bumped with
+# config.yaml's version; tests/test_packaging.py checks it), so a versioned
+# one is cached for good (the static files are served at /).
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True, csp_skip=web_security.is_pdf,     # a PDF: see maint_files.serve_headers
+                                       static_immutable=True, static_prefixes=("/",))
 HEADERS.install(app)
 
 

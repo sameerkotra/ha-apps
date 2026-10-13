@@ -918,7 +918,8 @@ async function renderListDetail(list, box, { onCounts = () => {}, onRenamed = ()
   };
   const del = async () => {
     const open = list.openCount ? ` (${list.openCount} open task${list.openCount === 1 ? "" : "s"})` : "";
-    if (!confirm(`Delete the list “${list.name}” and every task in it${open}? This can't be undone.`)) return;
+    const undo = list.kind === "shared" ? " An admin can bring it back within 30 days (Admin → Storage)." : " This can't be undone.";
+    if (!confirm(`Delete the list “${list.name}” and every task in it${open}?${undo}`)) return;
     try { await api(`/api/lists/${listId}`, { method: "DELETE" }); toast("List deleted"); onDeleted(); } catch (e) { fail(e); }
   };
 
@@ -1137,11 +1138,11 @@ async function loadCalendar() {
   if (cal.type) q.set("type", cal.type);
   if (cal.assignee) q.set("assignee", cal.assignee);
   try {
-    const [data, dash] = await Promise.all([api(`/api/calendar?${q}`), api("/api/dashboard").catch(() => null)]);
+    const data = await api(`/api/calendar?${q}`);
     state.today = data.today;
     cal.raw = data;
     applyScheduleFilter();
-    cal.overdue = dash ? dash.counts.overdue : 0;
+    cal.overdue = data.overdueCount || 0;
     paintCalendar();
   } catch (e) { mount(root, pageHead("Calendar"), errorCard(e, loadCalendar)); }
 }
@@ -1602,8 +1603,10 @@ function openScheduleForm(item, onSaved) {
   const place = placePicker(editing ? item : null);
   const privateCb = h("input", { type: "checkbox", checked: editing && item.visibility === "private" });
   const privateRow = h("label", { class: "mini-toggle" }, privateCb, "Only visible to me");
-  const publishCb = h("input", { type: "checkbox", checked: editing ? item.exposeSensor : true });
-  let publishTouched = editing;
+  const publishDefault = editing ? !!item.exposeSensor : true;
+  const publishCb = h("input", { type: "checkbox", checked: publishDefault });
+  // a household item made private stops being published unless you tick it again (any HA user can read sensors)
+  let publishTouched = editing && item.visibility === "private";
   publishCb.addEventListener("change", () => { publishTouched = true; });
   const timesHint = h("div", { class: "hint" });
   const reminderHint = h("div", { class: "hint" });
@@ -1678,7 +1681,7 @@ function openScheduleForm(item, onSaved) {
   [kindSel, weeksN, daysN, monthsN, yearsN, dom, nth, nthWd, lead, startIn, endIn, forSel].forEach((el) => el.addEventListener("input", () => { readState(); snapAnchor(); refresh(); }));
   privateCb.addEventListener("change", () => {
     // any HA user can read sensors, so a new private item isn't published unless you choose to
-    if (!publishTouched) publishCb.checked = !privateCb.checked;
+    if (!publishTouched) publishCb.checked = privateCb.checked ? false : publishDefault;
     refresh();
   });
   publishCb.addEventListener("change", refresh);
@@ -2234,7 +2237,39 @@ function renderStorage(box) {
     } catch (e) { err.textContent = e.message; }
     btn.disabled = false;
   });
+  const binBox = h("div", null, spinner());
+  const drawBin = async () => {
+    let data;
+    try { data = await adminApi("/api/admin/deleted-lists"); } catch (e) { mount(binBox, h("div", { class: "error-text" }, e.message)); return; }
+    if (!data.lists.length) { mount(binBox, h("div", { class: "hint" }, "No deleted lists.")); return; }
+    mount(binBox, h("div", { class: "bin-list" }, data.lists.map((l) => {
+      const restore = h("button", { class: "btn-secondary btn-small", type: "button" }, "Bring back");
+      const forget = h("button", { class: "btn-danger btn-small", type: "button" }, "Delete now");
+      restore.addEventListener("click", async () => {
+        restore.disabled = true;
+        try { await adminApi(`/api/admin/deleted-lists/${encodeURIComponent(l.id)}/restore`, { method: "POST" }); toast(`“${l.name}” is back`); await loadLookups(); }
+        catch (e) { fail(e); }
+        drawBin();
+      });
+      forget.addEventListener("click", async () => {
+        if (!confirm(`Delete “${l.name}” and its ${l.taskCount} task${l.taskCount === 1 ? "" : "s"} for good? Its tasks' files move to the files folder's _deleted folder.`)) return;
+        forget.disabled = true;
+        try { await adminApi(`/api/admin/deleted-lists/${encodeURIComponent(l.id)}`, { method: "DELETE" }); toast("Deleted"); }
+        catch (e) { fail(e); }
+        drawBin();
+      });
+      const when = new Date(l.deletedAt).toLocaleDateString();
+      return h("div", { class: "bin-row" },
+        h("div", null, h("strong", null, l.name), h("div", { class: "hint" },
+          `${l.taskCount} task${l.taskCount === 1 ? "" : "s"} · deleted ${when}${l.deletedBy ? ` by ${l.deletedBy}` : ""} · gone for good on ${l.goneOn}`)),
+        h("div", { class: "list-actions" }, restore, forget));
+    })));
+  };
+  drawBin();
   mount(box,
+    h("div", { class: "card" }, h("h3", null, "Deleted lists"),
+      h("div", { class: "hint", style: "margin-bottom:10px" }, "A deleted shared list is kept here, with its tasks, for 30 days."),
+      binBox),
     h("div", { class: "card" }, h("h3", null, "Backup"),
       h("div", { class: "hint", style: "margin-bottom:10px" }, "A complete snapshot of the household's data: every person's lists, tasks, places and schedule items, plus the App settings and notify services."),
       h("a", { class: "btn-primary", href: "api/admin-storage-download-db", download: "" }, "Download backup (.db)")),
@@ -2336,8 +2371,32 @@ function showTab(tab, opts = {}) {
   }
   document.querySelectorAll(".side-nav .tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   TABS.forEach((t) => $("#tab-" + t).classList.toggle("active", t === tab));
+  lastDrawn = Date.now();
   RENDERERS[tab]();
 }
+
+// Coming back to the app (another browser tab, the phone unlocked): the page is drawn again when it becomes
+// visible after more than a minute away, and every five minutes while it stays open — so it shows what others
+// changed meanwhile. Never while a dialog is open or someone is typing, and never on Settings or Admin (forms).
+const REFRESH_AFTER_MS = 60 * 1000;
+const REFRESH_EVERY_MS = 5 * 60 * 1000;
+let lastDrawn = Date.now();
+
+function quietRefresh() {
+  if (!state.me || document.hidden || !RENDERERS[state.tab]) return;
+  if (state.tab === "settings" || state.tab === "admin") return;
+  if (UI.dialogs().length) return;
+  const el = document.activeElement;
+  if (el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable)) return;
+  lastDrawn = Date.now();
+  const y = window.scrollY;
+  Promise.resolve(RENDERERS[state.tab]()).then(() => window.scrollTo(0, y)).catch(() => { /* the page shows its own error */ });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - lastDrawn > REFRESH_AFTER_MS) quietRefresh();
+});
+setInterval(() => { if (Date.now() - lastDrawn >= REFRESH_EVERY_MS) quietRefresh(); }, 30 * 1000);
 
 window.addEventListener("hashchange", () => {
   if (!state.me) return;

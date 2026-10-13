@@ -23,7 +23,7 @@ except ImportError:
     USING_SHIM = True
 
 
-from app import config, db, settings
+from app import config, db, reminders, settings
 from app.common import ha_notify, ha_people  # noqa: E402
 from app.main import app  # noqa: E402
 from common_tests.fake_ha import FakeHA  # noqa: E402
@@ -79,6 +79,7 @@ class ApiBase(unittest.TestCase):
         self.ha.people = None
         self.ha.notify_services = None
         ha_people.reset()
+        reminders.reset_ping_limits()
         # everyone opens the app once so they exist
         for h in (ADMIN, ALICE, BOB):
             self.assertEqual(self.get("/api/whoami", h).status_code, 200)
@@ -954,6 +955,292 @@ class TestPersonalSchedule(ApiBase):
         self.patch(f"/api/schedule/{item['id']}", {"name": "Yoga 2"})                 # assignee unchanged: no ping
         self.post("/api/schedule", {"name": "Mine", "rule": "daily", "anchor_date": "2026-09-21", "assigned_to": bob}, BOB)
         self.assertEqual(self.ha.notifications(), [])
+
+
+class TestReviewFixesOct13(ApiBase):
+    """13 October review: private items stop being published, assignment pings are rate limited and carry the
+    place, the identity write happens only on a change, request bodies are capped."""
+
+    def pinged_bob(self):
+        link("bob", "mobile_app_bob")
+        bob = self.uid("Bob")
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO user_prefs (user_id, notifications_enabled, lead_days, notify_on_assign) VALUES (?,1,0,1)", (bob,))
+        return bob
+
+    def test_a_household_item_made_private_stops_being_published(self):
+        alice = self.uid("Alice")
+        body = {"name": "Physio", "rule": "weeks:1:2", "anchor_date": "2026-09-22", "assigned_to": alice}
+        item = self.post("/api/schedule", body).json()
+        self.assertEqual((item["visibility"], item["exposeSensor"]), ("household", True))
+        self.assertIn(item["entityId"], self.ha.states)
+        r = self.patch(f"/api/schedule/{item['id']}", {"visibility": "private"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["visibility"], r.json()["exposeSensor"]), ("private", False))
+        self.assertNotIn(item["entityId"], self.ha.states)                       # its sensor is removed
+        # asked for explicitly, it stays published
+        item2 = self.post("/api/schedule", {**body, "name": "Dentist"}).json()
+        r = self.patch(f"/api/schedule/{item2['id']}", {"visibility": "private", "expose_sensor": True})
+        self.assertEqual((r.json()["visibility"], r.json()["exposeSensor"]), ("private", True))
+        # other edits of a household item don't touch the switch
+        item3 = self.post("/api/schedule", {**body, "name": "Bins"}).json()
+        r = self.patch(f"/api/schedule/{item3['id']}", {"name": "Bins out"})
+        self.assertTrue(r.json()["exposeSensor"])
+
+    def test_assignment_pings_are_rate_limited_per_person(self):
+        bob = self.pinged_bob()
+        t = self.add("Ping-pong")
+        for _ in range(reminders.PING_BURST + 3):
+            self.assertEqual(self.patch(f"/api/tasks/{t['id']}", {"assigned_to": bob}).status_code, 200)
+            self.assertEqual(self.patch(f"/api/tasks/{t['id']}", {"assigned_to": None}).status_code, 200)
+        self.assertEqual(len(self.ha.notifications()), reminders.PING_BURST)
+        self.assertEqual(self.get(f"/api/lists/{t['listId']}/tasks").status_code, 200)   # assignments still work
+        # another person's pings are counted on their own
+        self.ha.requests.clear()
+        self.patch(f"/api/tasks/{t['id']}", {"assigned_to": bob}, ADMIN)
+        self.assertEqual(len(self.ha.notifications()), 1)
+        # and the window moves on
+        self.assertTrue(reminders.ping_allowed("x", "y", now=0.0))
+        for _ in range(reminders.PING_BURST - 1):
+            reminders.ping_allowed("x", "y", now=1.0)
+        self.assertFalse(reminders.ping_allowed("x", "y", now=2.0))
+        self.assertTrue(reminders.ping_allowed("x", "y", now=reminders.PING_WINDOW_S + 1.0))
+
+    def test_assigning_an_existing_task_names_its_place(self):
+        bob = self.pinged_bob()
+        place = self.post("/api/places", {"name": "Garage", "address": "2 Lane"}).json()
+        t = self.add("Collect car", place_id=place["id"])
+        self.patch(f"/api/tasks/{t['id']}", {"assigned_to": bob})
+        self.assertEqual([b["message"].split("\n")[0] for _, b in self.ha.notifications()],
+                         ["Alice assigned you: Collect car @ Garage"])
+
+    def test_who_is_calling_is_written_only_when_it_changed(self):
+        from unittest import mock
+        from app import auth
+        writes = []
+        real = db.get_conn
+
+        class Spy:
+            def __init__(self):
+                self.cm = real()
+
+            def __enter__(self):
+                conn = self.cm.__enter__()
+                conn.set_trace_callback(lambda sql: writes.append(sql) if sql.lstrip().upper().startswith(("UPDATE", "INSERT")) else None)
+                return conn
+
+            def __exit__(self, *a):
+                return self.cm.__exit__(*a)
+
+        with mock.patch.object(auth.db, "get_conn", Spy):
+            self.get("/api/whoami")
+            self.get("/api/whoami")
+        self.assertEqual([w for w in writes if "users" in w], [])
+        renamed = hdr("u_alice", "Alice B", "alice")
+        with mock.patch.object(auth.db, "get_conn", Spy):
+            self.get("/api/whoami", renamed)
+        self.assertEqual(len([w for w in writes if "UPDATE users" in w]), 1)
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT name FROM users WHERE id = 'u_alice'").fetchone()[0], "Alice B")
+
+    def test_a_new_person_arriving_twice_at_once_gets_one_list(self):
+        import threading
+        from app import auth
+        from starlette.requests import Request
+        newbie = hdr("u_new", "Newbie", "newbie")
+        scope = {"type": "http", "method": "GET", "path": "/", "headers": [(k.lower().encode(), v.encode()) for k, v in newbie.items()],
+                 "client": ("127.0.0.1", 1), "query_string": b""}
+        errors = []
+
+        def go():
+            try:
+                auth.get_current_user(Request(scope))
+            except Exception as e:                 # noqa: BLE001
+                errors.append(e)
+        threads = [threading.Thread(target=go) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM lists WHERE owner_user_id = 'u_new'").fetchone()[0], 1)
+
+    def test_json_bodies_are_capped_even_without_a_content_length(self):
+        big = b'{"title": "' + b"x" * (1024 * 1024 + 10) + b'"}'
+        r = self.c.post(f"/api/lists/{self.shared_id()}/tasks", content=big,
+                        headers={**ALICE, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 413)
+
+        def chunks():
+            for _ in range(20):
+                yield b"x" * (64 * 1024)
+        r = self.c.post(f"/api/lists/{self.shared_id()}/tasks", content=chunks(),
+                        headers={**ALICE, "Content-Type": "application/json"})
+        self.assertEqual(r.status_code, 413, r.text)
+        self.assertEqual(self.titles(self.shared_id()), [])
+
+    def test_versioned_assets_are_cached_for_good(self):
+        r = self.c.get(f"/app.js?v={config.APP_VERSION}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["cache-control"], "public, max-age=31536000, immutable")
+        self.assertNotEqual(self.c.get("/app.js").headers.get("cache-control"), "public, max-age=31536000, immutable")
+        self.assertIn("no-store", self.c.get("/").headers["cache-control"])
+
+
+class TestFasterQueriesOct13(ApiBase):
+    """13 October review: one GROUP BY instead of a COUNT per row, the calendar's own overdue count — the same
+    answers as before on a seeded household."""
+
+    def seed(self):
+        import random
+        rng = random.Random(7)
+        places = [self.post("/api/places", {"name": f"Place {i}", "address": f"{i} Road"}).json()["id"] for i in range(6)]
+        types = [self.post("/api/task-types", {"name": f"Type {i}"}).json()["id"] for i in range(4)]
+        lists = [self.shared_id(), self.mine_id(), self.mine_id(BOB)]
+        for i in range(60):
+            lid = rng.choice(lists)
+            who = BOB if lid == lists[2] else ALICE
+            body = {"title": f"T{i}", "place_id": rng.choice(places + [None]), "type_id": rng.choice(types + [None]),
+                    "due_date": rng.choice([None, "2026-09-01", "2026-09-20", "2026-09-21", "2026-09-30"]),
+                    "completion_required": rng.choice([True, False])}
+            t = self.add(**body, list_id=lid, h=who)
+            if rng.random() < 0.2:
+                self.patch(f"/api/tasks/{t['id']}", {"completed": True}, who)
+        return places, types
+
+    def test_usage_counts_match_counting_each_row(self):
+        from app.routers import places as places_router, task_types as types_router
+        self.seed()
+        for h, uid in ((ALICE, "u_alice"), (BOB, "u_bob")):
+            with db.get_conn() as conn:
+                want_p = {r["id"]: places_router._usage(conn, r["id"], uid) for r in conn.execute("SELECT id FROM places")}
+                want_t = {r["id"]: types_router._usage(conn, r["id"], uid) for r in conn.execute("SELECT id FROM task_types")}
+            self.assertEqual({p["id"]: p["usageCount"] for p in self.get("/api/places", h).json()}, want_p)
+            self.assertEqual({t["id"]: t["usageCount"] for t in self.get("/api/task-types", h).json()}, want_t)
+            self.assertTrue(any(want_p.values()) and any(want_t.values()))
+
+    def test_calendar_overdue_count_is_the_dashboards(self):
+        self.seed()
+        for h in (ALICE, BOB):
+            cal = self.get("/api/calendar", h, params={"from": "2026-09-01", "to": "2026-09-30"}).json()
+            self.assertEqual(cal["overdueCount"], self.get("/api/dashboard", h).json()["counts"]["overdue"])
+        self.assertGreater(cal["overdueCount"], 0)
+
+
+class TestListBinOct13(ApiBase):
+    """A deleted shared list is kept 30 days; an admin can bring it back."""
+
+    def make(self):
+        lst = self.post("/api/lists", {"name": "Holiday", "kind": "shared"}).json()
+        place = self.post("/api/places", {"name": "Airport", "address": "1 Runway"}).json()
+        t1 = self.add("Pack", list_id=lst["id"], items=["Passports", "Chargers"], place_id=place["id"],
+                      assigned_to=self.uid("Bob"), due_date="2026-09-25", due_time="09:00")
+        t2 = self.add("Book taxi", list_id=lst["id"])
+        self.patch(f"/api/tasks/{t2['id']}", {"completed": True})
+        return lst, place, t1, t2
+
+    def tasks_of(self, lid, h=ALICE):
+        return sorted((t["title"], t["completed"], t["itemsTotal"], t["placeId"], t["assignedTo"])
+                      for show in ("open", "completed") for t in self.get(f"/api/lists/{lid}/tasks", h, params={"show": show}).json())
+
+    def test_delete_and_bring_back(self):
+        lst, place, t1, t2 = self.make()
+        before = self.tasks_of(lst["id"])
+        self.assertEqual(self.delete(f"/api/lists/{lst['id']}", BOB).status_code, 204)          # anyone may
+        self.assertNotIn(lst["id"], [l["id"] for l in self.lists()])
+        self.assertEqual(self.get(f"/api/lists/{lst['id']}/tasks").status_code, 404)
+        self.assertEqual(self.get("/api/admin/deleted-lists", ALICE).status_code, 403)
+        bin_ = self.get("/api/admin/deleted-lists", ADMIN).json()
+        self.assertEqual([(x["name"], x["taskCount"], x["deletedBy"], x["goneOn"]) for x in bin_["lists"]],
+                         [("Holiday", 2, "Bob", "2026-10-21")])
+        self.assertEqual(self.post(f"/api/admin/deleted-lists/{lst['id']}/restore", {}, ALICE).status_code, 403)
+        r = self.post(f"/api/admin/deleted-lists/{lst['id']}/restore", {}, ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIn(lst["id"], [l["id"] for l in self.lists()])
+        self.assertEqual(self.tasks_of(lst["id"]), before)
+        self.assertEqual(self.get("/api/admin/deleted-lists", ADMIN).json()["lists"], [])
+        self.assertEqual(self.post(f"/api/admin/deleted-lists/{lst['id']}/restore", {}, ADMIN).status_code, 404)
+
+    def test_a_place_deleted_meanwhile_is_left_empty(self):
+        lst, place, t1, t2 = self.make()
+        self.delete(f"/api/lists/{lst['id']}")
+        self.assertEqual(self.delete(f"/api/places/{place['id']}").status_code, 204)
+        self.assertEqual(self.post(f"/api/admin/deleted-lists/{lst['id']}/restore", {}, ADMIN).status_code, 200)
+        self.assertEqual({t[0]: t[3] for t in self.tasks_of(lst["id"])}, {"Pack": None, "Book taxi": None})
+
+    def test_gone_for_good_after_30_days(self):
+        from datetime import timedelta
+        from app import housekeeping
+        lst, *_ = self.make()
+        self.delete(f"/api/lists/{lst['id']}")
+        config.utcnow = lambda: NOW + timedelta(days=29)
+        housekeeping.run_pass_blocking()
+        self.assertEqual(len(self.get("/api/admin/deleted-lists", ADMIN).json()["lists"]), 1)
+        config.utcnow = lambda: NOW + timedelta(days=31)
+        housekeeping.run_pass_blocking()
+        self.assertEqual(self.get("/api/admin/deleted-lists", ADMIN).json()["lists"], [])
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM list_bin_tasks").fetchone()[0], 0)
+
+    def test_delete_now(self):
+        lst, *_ = self.make()
+        self.delete(f"/api/lists/{lst['id']}")
+        self.assertEqual(self.delete(f"/api/admin/deleted-lists/{lst['id']}", ALICE).status_code, 403)
+        self.assertEqual(self.delete(f"/api/admin/deleted-lists/{lst['id']}", ADMIN).status_code, 204)
+        self.assertEqual(self.post(f"/api/admin/deleted-lists/{lst['id']}/restore", {}, ADMIN).status_code, 404)
+
+
+class TestBackupsOct13(ApiBase):
+    def test_backups_carry_no_signing_key_and_a_restore_keeps_ours(self):
+        import tempfile
+        settings.update({"bus_signing_key": "k1"}, None)
+        data = self.get("/api/admin-storage-download-db", ADMIN).content
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.write(fd, data)
+        os.close(fd)
+        try:
+            row = sqlite3.connect(path).execute("SELECT value FROM app_settings WHERE key = 'bus_signing_key'").fetchone()
+            self.assertIn(row, (None, ('""',)))
+        finally:
+            os.remove(path)
+        r = self.c.post("/api/admin-storage-import-db", files={"file": ("b.db", io.BytesIO(data))}, headers=ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(settings.get("bus_signing_key"), "k1")
+        settings.update({"bus_signing_key": ""}, None)
+
+    def test_too_big_a_restore_is_refused(self):
+        from app.routers import admin
+        old = admin.RESTORE_MAX
+        admin.RESTORE_MAX = 1000
+        try:
+            r = self.c.post("/api/admin-storage-import-db", files={"file": ("b.db", io.BytesIO(b"x" * 5000))}, headers=ADMIN)
+        finally:
+            admin.RESTORE_MAX = old
+        self.assertEqual(r.status_code, 413, r.text)
+        self.assertEqual([n for n in os.listdir(config.DATA_DIR) if n.startswith(db.TEMP_PREFIX)], [])
+
+    def test_left_over_temp_files_are_swept(self):
+        import tempfile
+        import time
+        from app import housekeeping
+        made = []
+        for folder in (tempfile.gettempdir(), config.DATA_DIR):
+            for age in (7 * 3600, 60):
+                p = os.path.join(folder, f"{db.TEMP_PREFIX}test{age}-{os.getpid()}.db")
+                with open(p, "wb") as fh:
+                    fh.write(b"x")
+                os.utime(p, (time.time() - age, time.time() - age))
+                made.append((p, age))
+        try:
+            housekeeping.run_pass_blocking()
+            for p, age in made:
+                self.assertEqual(os.path.exists(p), age < 3600, p)
+            self.assertTrue(os.path.exists(config.DB_PATH))
+        finally:
+            for p, _ in made:
+                if os.path.exists(p):
+                    os.remove(p)
 
 
 class TestCalendarDashboard(ApiBase):

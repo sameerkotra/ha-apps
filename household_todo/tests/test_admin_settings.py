@@ -61,7 +61,7 @@ class TestSettingsApi(SettingsBase):
         # meta describes each field for the shared page (common/static/settings.js); none needs a restart
         self.assertTrue(all(m["restartRequired"] is False and m["label"] for m in body["meta"].values()))
         self.assertTrue(body["meta"]["maintenance_profile"]["hidden"])     # edited on Admin → Maintenance
-        self.assertEqual(set(body), {"values", "defaults", "meta", "groups", "maintenanceFiles"})
+        self.assertEqual(set(body), {"values", "defaults", "meta", "groups", "secretsSet", "maintenanceFiles"})
         self.assertNotIn("reminder_time", body["values"])   # each person has their own digest time
         self.assertNotIn("admin_users", body["values"])   # stays on the app's Configuration tab
         self.assertNotIn("notify_targets", body["values"])  # became per-user assignments

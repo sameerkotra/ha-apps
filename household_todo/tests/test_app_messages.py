@@ -315,6 +315,28 @@ class EndToEndTests(HandlerBase):
             app_messages.stop()
         wait_until(lambda: self.fake.subscribers() == 1, what="Todo's socket closed")
 
+    def test_with_a_signing_key_only_signed_messages_are_answered(self):
+        from app import settings
+        settings.update({"bus_signing_key": "same-key-everywhere"}, None)
+        app_bus.default._key_cache = None             # the bus re-reads the key every 5 s; don't wait for it here
+        config.SUPERVISOR_TOKEN, config.SUPERVISOR_CORE_WS = "t0k", self.fake.ws_url
+        config.SUPERVISOR_CORE_API = self.api
+        app_messages.start()
+        try:
+            wait_until(lambda: self.docs.available("household_todo", "todo.lists.list"), what="Todo's hello")
+            ans = self.ask("todo.lists.list", {"requested_by": "u_alice"})
+            self.assertEqual((ans.kind, ans.reason), ("nack", "unsigned"))
+            self.docs.configure(signing_key="same-key-everywhere")
+            ans = self.ask("todo.lists.list", {"requested_by": "u_alice"})
+            self.assertEqual(ans.kind, "ack")
+            # the key is a secret setting: never sent to the page, never in a backup
+            page = self.get("/api/admin/settings", ADMIN).json()
+            self.assertEqual(page["values"]["bus_signing_key"], "")
+            self.assertTrue(page["secretsSet"]["bus_signing_key"])
+        finally:
+            app_messages.stop()
+            settings.update({"bus_signing_key": ""}, None)
+
     def test_lifespan_starts_and_stops_the_bus(self):
         config.SUPERVISOR_TOKEN, config.SUPERVISOR_CORE_WS, config.BACKGROUND_LOOPS = "t0k", self.fake.ws_url, True
         orig_api = config.SUPERVISOR_CORE_API

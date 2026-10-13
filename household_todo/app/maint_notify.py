@@ -39,21 +39,56 @@ def _when(due: date, today: date) -> str:
     return f"due {due.strftime('%a')} {due.day} {due.strftime('%b')}"
 
 
-def _logged(conn, ref, uid, kind, due, sent_on=""):
-    return conn.execute("SELECT 1 FROM maint_notify_log WHERE ref = ? AND user_id = ? AND kind = ? AND due_date = ? "
-                        "AND sent_on = ?", (ref, uid, kind, due, sent_on)).fetchone() is not None
+class _Who:
+    """Everyone who may hear about maintenance (enabled, not muted), the items' own recipient lists and what was
+    already sent — each read once per pass instead of once per item and person."""
+
+    def __init__(self, conn, only=None):
+        rows = conn.execute("SELECT u.id, u.name, u.username, p.digest_time, COALESCE(p.maintenance_notify, 1) AS on_ "
+                            "FROM users u LEFT JOIN user_prefs p ON p.user_id = u.id WHERE u.disabled = 0").fetchall()
+        self.users = {r["id"]: dict(r) for r in rows if r["on_"] and (only is None or r["id"] in only)}
+        self.default = mt.default_recipients()
+        self.custom: dict[str, list[str]] = {}
+        for r in conn.execute("SELECT item_id, user_id FROM maint_recipients"):
+            self.custom.setdefault(r["item_id"], []).append(r["user_id"])
+        self.sent: set[tuple] = set()
+        self.last_overdue: dict[tuple, str] = {}
+        ids = list(self.users)
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            for r in conn.execute("SELECT ref, user_id, kind, due_date, sent_on FROM maint_notify_log "
+                                  f"WHERE user_id IN ({','.join('?' * len(chunk))})", chunk):
+                self.sent.add((r["ref"], r["user_id"], r["kind"], r["due_date"], r["sent_on"]))
+                if r["kind"] == "overdue":
+                    k = (r["ref"], r["user_id"], r["due_date"])
+                    self.last_overdue[k] = max(self.last_overdue.get(k, ""), r["sent_on"])
+
+    def of(self, ids) -> list[dict]:
+        """mt.eligible(), from what's loaded (the same people, in the same order: by id)."""
+        return [self.users[i] for i in sorted(set(ids)) if i in self.users]
+
+    def for_item(self, item: dict) -> list[dict]:
+        """mt.eligible(conn, mt.chosen_recipients(conn, item))."""
+        ids = list(self.custom.get(item["id"], [])) if item["recipients_mode"] == "custom" else list(self.default)
+        if item.get("assigned_to"):
+            ids.append(item["assigned_to"])
+        return self.of(ids)
+
+    def logged(self, ref, uid, kind, due, sent_on="") -> bool:
+        return (ref, uid, kind, due, sent_on) in self.sent
+
+    def last_overdue_on(self, ref, uid, due) -> date | None:
+        r = self.last_overdue.get((ref, uid, due))
+        return date.fromisoformat(r) if r else None
 
 
-def _last_overdue(conn, ref, uid, due) -> date | None:
-    r = conn.execute("SELECT MAX(sent_on) FROM maint_notify_log WHERE ref = ? AND user_id = ? AND kind = 'overdue' "
-                     "AND due_date = ?", (ref, uid, due)).fetchone()[0]
-    return date.fromisoformat(r) if r else None
-
-
-def collect(conn, today: date) -> dict[str, dict]:
+def collect(conn, today: date, only=None) -> dict[str, dict]:
     """user id → {"user": row, "lines": [(sort key, text)], "log": [(ref, kind, due, sent_on)]}, for
-    everyone who has something to hear about today (before the time-of-day check)."""
+    everyone (of `only`, when given) who has something to hear about today."""
     out: dict[str, dict] = {}
+    who = _Who(conn, only)
+    if not who.users:
+        return out
 
     def add(u, key, text, log):
         slot = out.setdefault(u["id"], {"user": u, "lines": [], "log": []})
@@ -65,20 +100,20 @@ def collect(conn, today: date) -> dict[str, dict]:
         if due is None or st == "upcoming":
             continue
         iso = due.isoformat()
-        people = mt.eligible(conn, mt.chosen_recipients(conn, item))
+        people = who.for_item(item)
         icon = (item["icon"] + " ") if item["icon"] else ""
         for u in people:
             if st == "overdue":
                 if not item["overdue_every"]:
                     continue
-                last = _last_overdue(conn, item["id"], u["id"], iso)
+                last = who.last_overdue_on(item["id"], u["id"], iso)
                 if last and (today - last).days < item["overdue_every"]:
                     continue
                 add(u, (0, iso), f"• {icon}{item['name']} — {_when(due, today)}", (item["id"], "overdue", iso, today.isoformat()))
             elif due == today:
-                if not _logged(conn, item["id"], u["id"], "today", iso):
+                if not who.logged(item["id"], u["id"], "today", iso):
                     add(u, (1, iso), f"• {icon}{item['name']} — due today", (item["id"], "today", iso, ""))
-            elif not _logged(conn, item["id"], u["id"], "soon", iso):
+            elif not who.logged(item["id"], u["id"], "soon", iso):
                 add(u, (2, iso), f"• {icon}{item['name']} — {_when(due, today)}", (item["id"], "soon", iso, ""))
 
     lid = mt.list_id(conn)
@@ -86,10 +121,10 @@ def collect(conn, today: date) -> dict[str, dict]:
         jobs = conn.execute("SELECT id, title, due_date FROM tasks WHERE list_id = ? AND completed = 0 AND assigned_to IS NULL "
                             "AND due_date = ?", (lid, today.isoformat())).fetchall()
         if jobs:
-            people = mt.eligible(conn, mt.default_recipients())
+            people = who.of(who.default)
             for j in jobs:
                 for u in people:
-                    if not _logged(conn, j["id"], u["id"], "job", j["due_date"]):
+                    if not who.logged(j["id"], u["id"], "job", j["due_date"]):
                         add(u, (1, j["due_date"]), f"• 🔧 {j['title']} — job due today", (j["id"], "job", j["due_date"], ""))
 
     sth = mt.south()
@@ -102,9 +137,22 @@ def collect(conn, today: date) -> dict[str, dict]:
             names = ", ".join(s["name"] for s in fits[:3]) + ("…" if len(fits) > 3 else "")
             text = (f"• {cat.SEASON_LABEL[season]}: {len(fits)} job{'s' if len(fits) != 1 else ''} to consider "
                     f"({names}) — see Suggestions")
-            for u in mt.eligible(conn, mt.default_recipients()):
-                if not _logged(conn, key, u["id"], "season", key):
+            for u in who.of(who.default):
+                if not who.logged(key, u["id"], "season", key):
                     add(u, (3, ""), text, (key, "season", key, ""))
+    return out
+
+
+def _due_now(conn, now: datetime) -> dict[date, set[str]]:
+    """{the day whose send time it is: the people whose window is open now} — checked before anything else is
+    worked out, so the 59 ticks an hour when it's nobody's time cost one query."""
+    out: dict[date, set[str]] = {}
+    for r in conn.execute("SELECT u.id, p.digest_time FROM users u LEFT JOIN user_prefs p ON p.user_id = u.id "
+                          "WHERE u.disabled = 0 AND COALESCE(p.maintenance_notify, 1) = 1"):
+        hhmm = r["digest_time"] if reminders._parse_hhmm(r["digest_time"] or "") else db.DEFAULT_DIGEST_TIME
+        day = reminders.window_day(now, hhmm)
+        if day is not None:
+            out.setdefault(day, set()).add(r["id"])
     return out
 
 
@@ -114,35 +162,33 @@ def run_pass_blocking(now: datetime | None = None, sender=None) -> int:
     if not mt.enabled() or not ha_client.has_token():
         return 0
     sender = sender or ha_notify.send_notify
-    today = now.date()
     sent = 0
-    with db.get_conn() as conn:
-        pending = collect(conn, today)
-        for uid, slot in pending.items():
-            u = slot["user"]
-            try:
-                hh, mm = (int(x) for x in (u.get("digest_time") or db.DEFAULT_DIGEST_TIME).split(":"))
-            except ValueError:
-                hh, mm = 8, 0
-            if not reminders._in_time_window(now, hh, mm):
-                continue
-            services = ha_notify.services_for(u, conn)
-            if not services:
-                continue
-            lines = [t for _, t in sorted(slot["lines"], key=lambda x: x[0])]
-            text = "\n".join(lines[:MAX_LINES]) + (f"\n+{len(lines) - MAX_LINES} more" if len(lines) > MAX_LINES else "")
-            page = config.SIDEBAR_PAGE and config.SIDEBAR_PAGE + "/maintenance"    # the Maintenance tab (deeplink.js)
-            data = {"url": page, "clickAction": page} if page else None
-            ok = False
-            for s in services:
-                ok = bool(sender(s, TITLE, text, data=data) if data else sender(s, TITLE, text)) or ok
-            if not ok:
-                continue          # retried next tick, inside the hour
-            for ref, kind, due, sent_on in slot["log"]:
-                conn.execute("INSERT OR IGNORE INTO maint_notify_log (id, ref, user_id, kind, due_date, sent_on, created_at) "
-                             "VALUES (?, ?, ?, ?, ?, ?, ?)", (db.new_id(), ref, uid, kind, due, sent_on, config.now_iso()))
-            conn.commit()
-            sent += 1
+    try:
+        with db.get_conn() as conn:
+            for today, uids in sorted(_due_now(conn, now).items()):
+                pending = collect(conn, today, uids)
+                for uid, slot in pending.items():
+                    u = slot["user"]
+                    services = ha_notify.services_for(u, conn)
+                    if not services:
+                        continue
+                    lines = [t for _, t in sorted(slot["lines"], key=lambda x: x[0])]
+                    text = "\n".join(lines[:MAX_LINES]) + (f"\n+{len(lines) - MAX_LINES} more" if len(lines) > MAX_LINES else "")
+                    page = config.SIDEBAR_PAGE and config.SIDEBAR_PAGE + "/maintenance"    # the Maintenance tab (deeplink.js)
+                    data = {"url": page, "clickAction": page} if page else None
+                    ok = False
+                    for s in services:
+                        ok = bool(sender(s, TITLE, text, data=data) if data else sender(s, TITLE, text)) or ok
+                    if not ok:
+                        reminders._after_failed_send()
+                        continue          # retried next tick, inside the hour
+                    for ref, kind, due, sent_on in slot["log"]:
+                        conn.execute("INSERT OR IGNORE INTO maint_notify_log (id, ref, user_id, kind, due_date, sent_on, created_at) "
+                                     "VALUES (?, ?, ?, ?, ?, ?, ?)", (db.new_id(), ref, uid, kind, due, sent_on, config.now_iso()))
+                    conn.commit()
+                    sent += 1
+    except reminders.HomeAssistantDown:
+        reminders._down("maintenance")
     return sent
 
 
@@ -150,12 +196,15 @@ def weekly_lines(conn, user_id: str, today: date) -> list[str]:
     """For the weekly summary: this person's maintenance that is overdue or due in the next 7 days."""
     if not mt.enabled():
         return []
+    who = _Who(conn, {user_id})
+    if user_id not in who.users:
+        return []
     out = []
     for item in mt.all_items(conn):
         st, due = mt.status_of(item, today)
         if due is None or (due - today).days > 7:
             continue
-        if user_id not in [u["id"] for u in mt.eligible(conn, mt.chosen_recipients(conn, item))]:
+        if not who.for_item(item):
             continue
         out.append((due, f"• 🔧 {item['name']} — {_when(due, today)}"))
     out.sort()

@@ -37,7 +37,9 @@ def _is_admin(user_id: str, username: str | None) -> bool:
     return auth_core.is_admin(user_id, username, config.ADMIN_NAMES)
 
 
-async def get_current_user(request: Request) -> dict:
+# Plain functions, not `async def`: FastAPI runs them in its thread pool, so their SQLite reads (and the rare
+# write) never hold up the event loop.
+def get_current_user(request: Request) -> dict:
     ident = auth_core.identity(request)          # the X-Remote-User-* headers (app/common/auth_core.py)
     user_id = ident.user_id
     username = ident.username
@@ -47,15 +49,19 @@ async def get_current_user(request: Request) -> dict:
 
     display_name = display_name or "Home Assistant User"
     with db.get_conn() as conn:
-        exists = conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
-        if exists:
-            conn.execute("UPDATE users SET name = ?, username = ? WHERE id = ?", (display_name, username, user_id))
+        row = conn.execute("SELECT name, username FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row:
+            # written only when Home Assistant's name for them changed — not on every request
+            if (row["name"], row["username"]) != (display_name, username):
+                conn.execute("UPDATE users SET name = ?, username = ? WHERE id = ?", (display_name, username, user_id))
         else:
             now = config.now_iso()
-            conn.execute(
-                "INSERT INTO users (id, name, username, created_at, disabled) VALUES (?, ?, ?, ?, 0)",
+            # OR IGNORE: their first two requests can arrive together (worker threads); only one creates them
+            added = conn.execute(
+                "INSERT OR IGNORE INTO users (id, name, username, created_at, disabled) VALUES (?, ?, ?, ?, 0)",
                 (user_id, display_name, username, now),
-            )
+            ).rowcount
+        if not row and added:
             # a brand-new user gets their personal "My Tasks" list (§5)
             pos_row = conn.execute(
                 "SELECT MAX(position) AS m FROM lists WHERE kind = 'personal' AND owner_user_id = ?", (user_id,)
@@ -74,7 +80,7 @@ async def get_current_user(request: Request) -> dict:
     }
 
 
-async def get_acting_user(
+def get_acting_user(
     request: Request,
     as_user: str | None = Query(default=None),
     current: dict = Depends(get_current_user),
@@ -104,7 +110,7 @@ async def get_acting_user(
     return acting
 
 
-async def get_real_user_for_prefs(
+def get_real_user_for_prefs(
     as_user: str | None = Query(default=None),
     current: dict = Depends(get_current_user),
 ) -> dict:
@@ -116,7 +122,7 @@ async def get_real_user_for_prefs(
     return current
 
 
-async def require_admin(current: dict = Depends(get_current_user)) -> dict:
+def require_admin(current: dict = Depends(get_current_user)) -> dict:
     auth_core.require_admin_flag(current["is_admin"], "Only designated admins can do this. See the admin_users "
                                                        "option on the app's Configuration tab.")
     return current

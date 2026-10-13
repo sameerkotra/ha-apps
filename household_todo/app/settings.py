@@ -55,6 +55,12 @@ def _http_url(v: str) -> str:
     return v.rstrip("/") if v else v
 
 
+def _one_line(v: str) -> str:
+    if any(ord(c) < 32 or ord(c) == 127 for c in v):
+        raise ValueError("must be one line of text")
+    return v
+
+
 GROUPS = [
     Group("sensors", "Home Assistant sensors"),
     Group("drive", "Drive time"),
@@ -113,9 +119,18 @@ SETTINGS = [
                  "photos are kept in a folder inside /share (a network share mounted in Home Assistant works too). "
                  "Saving creates the folder and what the app needs. Changing it later never moves files. Blank turns "
                  "attaching files off."),
+    Setting("files_min_free_mb", 1024, "Keep this much disk space free (MB, 0 = don't check)", group="maintenance",
+            min=0, max=1_000_000,
+            help="A file is refused when saving it would leave less free space than this on the disk the files folder "
+                 "is on — Home Assistant may need room on the same disk."),
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant",
             help="Lets the Household Assistant tell people their tasks, lists and what's coming up on the schedule, "
                  "and add a task when they tap to confirm it. Each person can turn it off on Settings."),
+    # app-message signing (shared app_bus): the same key in every household app; empty = unsigned, as before
+    Setting("bus_signing_key", "", "App-messages signing key", group="assistant", secret=True, max_length=200,
+            validators=[_one_line],
+            help="The same key in every household app (Admin → App settings there). Without one, any app on Home "
+                 "Assistant's network can send messages as any other."),
 ]
 
 REGISTRY = settings_core.Registry(

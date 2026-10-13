@@ -421,6 +421,72 @@ class Digest(Base):
         self.assertEqual(self.ha.notifications(), [])
 
 
+class DigestWindowOct13(Base):
+    """13 October review: a late digest time's window runs past midnight; a digest missed while the app was off
+    is caught up for three hours; Home Assistant not answering stops the pass."""
+
+    sent = Digest.sent
+
+    def setUp(self):
+        super().setUp()
+        config.utcnow = lambda: datetime(2026, 9, 21, 8, 5, tzinfo=UTC)
+        link("ann", "mobile_app_ann")
+        link("bob", "mobile_app_bob")
+        with db.get_conn() as c:
+            add_user(c, "u1", "Ann", "ann")
+            add_user(c, "u2", "Bob", "bob")
+            add_list(c, "ann_p", "My Tasks", "personal", "u1")
+            add_list(c, "bob_p", "My Tasks", "personal", "u2")
+            for u in ("u1", "u2"):
+                c.execute("INSERT INTO user_prefs (user_id, notifications_enabled, lead_days, notify_on_assign) VALUES (?,1,1,1)", (u,))
+            add_task(c, "t1", "ann_p", "Late one", due_date="2026-09-21")
+            c.execute("UPDATE user_prefs SET notifications_enabled = 0 WHERE user_id != 'u1'")
+        self.addCleanup(setattr, reminders, "_loop_since", None)
+
+    def test_a_window_that_crosses_midnight(self):
+        with db.get_conn() as c:
+            c.execute("UPDATE user_prefs SET digest_time = '23:30' WHERE user_id = 'u1'")
+        out, fake = self.sent()
+        config.utcnow = lambda: datetime(2026, 9, 22, 0, 15, tzinfo=UTC)       # 45 minutes after Monday's 23:30
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=fake), 1)
+        self.assertIn("Late one — today", out[-1][2])                              # Monday's digest
+        with db.get_conn() as c:
+            self.assertEqual(c.execute("SELECT sent_on FROM notification_log").fetchone()[0], "2026-09-21")
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=fake), 0)       # once
+        config.utcnow = lambda: datetime(2026, 9, 22, 0, 31, tzinfo=UTC)
+        self.assertIsNone(reminders.window_day(config.now(), "23:30"))
+
+    def test_caught_up_after_a_restart(self):
+        out, fake = self.sent()
+        config.utcnow = lambda: datetime(2026, 9, 21, 10, 0, tzinfo=UTC)       # two hours after 08:00
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=fake), 0)       # running all along: missed
+        reminders._loop_since = datetime(2026, 9, 21, 9, 55, tzinfo=UTC)          # the app came back at 09:55
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=fake), 1)
+        reminders._loop_since = datetime(2026, 9, 21, 11, 5, tzinfo=UTC)
+        config.utcnow = lambda: datetime(2026, 9, 21, 11, 5, tzinfo=UTC)          # more than 3 hours: too late
+        with db.get_conn() as c:
+            c.execute("DELETE FROM notification_log")
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=fake), 0)
+
+    def test_home_assistant_not_answering_stops_the_pass(self):
+        with db.get_conn() as c:
+            c.execute("UPDATE user_prefs SET notifications_enabled = 1")
+            add_task(c, "t2", "bob_p", "Bob's", due_date="2026-09-21")
+        calls = []
+
+        def down(service, title, message):
+            calls.append(service)
+            return False
+        with mock.patch.object(reminders.ha_client, "request", return_value=(None, b"")) as probe:
+            self.assertEqual(reminders.run_digest_pass_blocking(sender=down), 0)
+        self.assertEqual(len(calls), 1)                  # stopped after the first: no 10 s wait per person
+        self.assertEqual(probe.call_count, 1)
+        calls.clear()
+        # Home Assistant answers (only that phone's service is wrong): everyone else still gets theirs
+        self.assertEqual(reminders.run_digest_pass_blocking(sender=down), 0)
+        self.assertEqual(len(calls), 2)
+
+
 class WeeklySummary(Base):
     def setUp(self):
         super().setUp()
@@ -537,6 +603,37 @@ class TaskReminders(Base):
         self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
         self.assertIn("due in 1 hour", out[-1][2])
         self.assertEqual(len(out), 2)   # the date-only task never got a task reminder
+
+    def test_several_due_at_once_make_one_notification_with_the_real_time_left(self):
+        self.add_offsets(1440, 300, 60)
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Flight", due_date="2026-09-21", due_time="12:40")   # 40 minutes away
+        out, fake = self.sent()
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        self.assertEqual([m for _, _, m in out], ["Flight — due in 40 minutes (12:40)"])
+        with db.get_conn() as c:
+            self.assertEqual(sorted(r[0] for r in c.execute("SELECT minutes_before FROM task_reminder_log")), [60, 300, 1440])
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 0)
+        # due in 3 hours: the 1-day and 5-hour ones are due, the 1-hour one later, on time
+        with db.get_conn() as c:
+            add_task(c, "t2", "ann_p", "Dentist", due_date="2026-09-21", due_time="15:00")
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        self.assertEqual(out[-1][2], "Dentist — due in 3 hours (15:00)")
+        config.utcnow = lambda: datetime(2026, 9, 21, 14, 0, 30, tzinfo=UTC)
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        self.assertEqual(out[-1][2], "Dentist — due in 1 hour (15:00)")
+
+    def test_an_offset_across_a_clock_change_is_exact(self):
+        config.set_timezone("America/New_York")           # clocks go forward at 02:00 on Sunday 8 March 2026
+        self.add_offsets(720)                             # 12 hours before
+        with db.get_conn() as c:
+            add_task(c, "t1", "ann_p", "Brunch", due_date="2026-03-08", due_time="09:00")   # 13:00 UTC
+        out, fake = self.sent()
+        config.utcnow = lambda: datetime(2026, 3, 8, 0, 59, tzinfo=UTC)          # 19:59 EST: a minute early
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 0)
+        config.utcnow = lambda: datetime(2026, 3, 8, 1, 0, tzinfo=UTC)           # 20:00 EST = 12 real hours before
+        self.assertEqual(reminders.run_task_reminder_pass_blocking(sender=fake), 1)
+        self.assertEqual(out[-1][2], "Brunch — due in 12 hours (09:00)")
 
     def test_includes_place_and_drive_note(self):
         self.add_offsets(60)
@@ -1074,7 +1171,7 @@ class ScheduleReminders(Base):
             c.execute("UPDATE schedule_items SET start_time='18:30', end_time='19:30' WHERE id='yoga'")
         config.utcnow = at(2026, 9, 21, 18, 5)
         self.assertEqual(run(sender=fake), 1)
-        self.assertIn("starts in 1 hour (18:30–19:30)", out[-1][2])
+        self.assertIn("starts in 25 minutes (18:30–19:30)", out[-1][2])     # late: the time really left
         # moving Tuesday's class to Wednesday moves its reminder too
         with db.get_conn() as c:
             add_exc(c, "e1", "yoga", "move", "2026-09-22", "2026-09-23")

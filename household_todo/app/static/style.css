@@ -620,3 +620,7 @@ input[type="color"] { width: 40px; height: 32px; padding: 2px; cursor: pointer; 
 .turns-pick button.on { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
 .turn-select { font-size: .8rem; padding: 2px 6px; max-width: 12rem; }
 .turn-select.handed { border-color: var(--accent); }
+
+/* Admin → Storage → Deleted lists */
+.bin-list { display: flex; flex-direction: column; gap: 10px; }
+.bin-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }

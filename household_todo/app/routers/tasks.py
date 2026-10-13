@@ -157,7 +157,8 @@ def _queue_ping(background: BackgroundTasks, acting: dict, old_assignee, cols_or
     to a *different person than the one acting* (§8b). Best effort, after
     the response."""
     new = cols_or_row.get("assigned_to")
-    if new and new != old_assignee and new != acting["id"]:
+    if (new and new != old_assignee and new != acting["id"]
+            and reminders.ping_allowed(acting.get("real", acting)["id"], new)):
         background.add_task(
             reminders.send_assignment_ping_blocking, new, acting["name"], cols_or_row["title"], cols_or_row.get("due_date"),
             url=cols_or_row.get("url"), place_id=cols_or_row.get("place_id"),
@@ -305,7 +306,7 @@ def update_task(task_id: str, background: BackgroundTasks, body: dict = Body(...
     if "assigned_to" in updates:
         _queue_ping(background, acting, task["assigned_to"],
                     {"assigned_to": updates["assigned_to"], "title": result["title"], "due_date": result["dueDate"],
-                     "url": result["url"]})
+                     "url": result["url"], "place_id": result["placeId"]})
     return result
 
 

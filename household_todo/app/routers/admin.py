@@ -2,15 +2,21 @@
 database backup and restore. The Users tab's routes are in
 users.py."""
 import json
+import logging
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Response, UploadFile
+from starlette.concurrency import run_in_threadpool
 
-from .. import app_messages, config, db, geocode, ha_sensors, maint_files, settings
+from .. import app_messages, config, db, geocode, ha_sensors, list_bin, maint_files, settings, task_files
 from ..auth import require_admin
 from ..common import backup_core
 
 router = APIRouter(prefix="/api", tags=["admin"])
+logger = logging.getLogger("admin")
+
+RESTORE_PATH = "/api/admin-storage-import-db"
+RESTORE_MAX = 2 * 1024 * 1024 * 1024          # a restored database file, at most (2 GB)
 
 
 # ---------------------------------------------------------------------------
@@ -100,12 +106,64 @@ def put_settings(background: BackgroundTasks, body=Body(...), admin: dict = Depe
     return dict(settings.payload(), maintenanceFiles=maint_files.admin_status())
 
 
+# ---------------------------------------------------------------------------
+# Deleted lists (Admin → Storage): shared lists are kept 30 days after they're deleted
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/deleted-lists")
+def deleted_lists(admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        return {"keepDays": list_bin.KEEP_DAYS, "lists": list_bin.entries(conn)}
+
+
+@router.post("/admin/deleted-lists/{list_id}/restore")
+def restore_deleted_list(list_id: str, admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        row = list_bin.restore(conn, list_id, admin["id"])
+    logger.info("AUDIT %s brought back the deleted list %r", admin["name"], row["name"])
+    return {"id": row["id"], "name": row["name"]}
+
+
+@router.delete("/admin/deleted-lists/{list_id}", status_code=204)
+def remove_deleted_list(list_id: str, background: BackgroundTasks, admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        list_bin.remove(conn, list_id)
+    task_files.flush_soon(background)
+    return Response(status_code=204)
+
+
 @router.get("/admin-storage-download-db")
 def admin_storage_download_db(admin: dict = Depends(require_admin)):
     """A full, consistent snapshot of the whole database — every household
     member's data. Never a plain file copy: the DB is in WAL mode, so see
-    db.backup_to_tempfile."""
-    return backup_core.send_file(db.backup_to_tempfile(), backup_core.file_name("household-todo-backup", ".db"))
+    db.backup_to_tempfile. Secret App settings (the app-messages signing key)
+    are blanked in the copy."""
+    return backup_core.send_file(db.backup_to_tempfile(after=settings.REGISTRY.scrub_secrets),
+                                 backup_core.file_name("household-todo-backup", ".db"))
+
+
+def _too_big() -> HTTPException:
+    return HTTPException(413, f"A backup file can be at most {RESTORE_MAX // (1024 * 1024 * 1024)} GB.")
+
+
+def _restore_blocking(tmp_path: str) -> None:
+    """Validate and swap in the uploaded file (in a worker thread: both read the whole file)."""
+    try:
+        db.validate_backup_file(tmp_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    # this install's maintenance files folder stays in use: the restored file may name another one
+    keep_path, keep_store = maint_files.configured(), maint_files.store_id()
+    secrets = settings.REGISTRY.saved_secrets()          # a backup carries no secrets: keep this install's
+    db.import_from_tempfile(tmp_path)
+    settings.invalidate()
+    with db.get_conn() as conn:
+        conn.execute("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES "
+                     "('maintenance_files_path', ?, ?, NULL) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                     (json.dumps(keep_path), config.now_iso()))
+    maint_files.restore_store_id(keep_store)
+    settings.REGISTRY.keep_secrets(secrets)
+    settings.invalidate()
 
 
 @router.post("/admin-storage-import-db")
@@ -117,23 +175,12 @@ async def admin_storage_import_db(background: BackgroundTasks, file: UploadFile 
     The scratch file is created inside config.DATA_DIR (not /tmp) so the
     final os.replace() is a same-filesystem rename: /tmp and /data are
     separate mounts in the app's container, and os.replace() can't cross
-    devices (OSError 18)."""
-    tmp_path = await backup_core.receive(file, config.DATA_DIR)
+    devices (OSError 18). Checking and swapping run in a worker thread, so
+    the rest of the app keeps answering meanwhile."""
+    tmp_path = await backup_core.receive(file, config.DATA_DIR, prefix=db.TEMP_PREFIX, max_bytes=RESTORE_MAX,
+                                         too_big=_too_big)
     try:
-        try:
-            db.validate_backup_file(tmp_path)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        # this install's maintenance files folder stays in use: the restored file may name another one
-        keep_path, keep_store = maint_files.configured(), maint_files.store_id()
-        db.import_from_tempfile(tmp_path)
-        settings.invalidate()
-        with db.get_conn() as conn:
-            conn.execute("INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES "
-                         "('maintenance_files_path', ?, ?, NULL) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                         (json.dumps(keep_path), config.now_iso()))
-        maint_files.restore_store_id(keep_store)
-        settings.invalidate()
+        await run_in_threadpool(_restore_blocking, tmp_path)
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)

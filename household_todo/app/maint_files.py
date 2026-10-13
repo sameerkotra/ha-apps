@@ -32,6 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 
 from . import config, db, settings
+from .common import image_guard
 
 logger = logging.getLogger("maint_files")
 
@@ -101,25 +102,42 @@ SNIFFED = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/web
 _PIL_MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "GIF": "image/gif", "WEBP": "image/webp"}
 
 
+_MAGIC = ((b"\x89PNG\r\n\x1a\n", "image/png"), (b"\xff\xd8\xff", "image/jpeg"), (b"GIF87a", "image/gif"),
+          (b"GIF89a", "image/gif"))
+
+
+def _magic(head: bytes) -> str | None:
+    """The image type from the first bytes alone (the same signatures Pillow looks for)."""
+    for sig, mime in _MAGIC:
+        if head.startswith(sig):
+            return mime
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def sniff(path: str, name: str) -> str:
     """The stored type of an upload: a real PDF (starts with %PDF-) or an image Pillow recognises gets its own
     type whatever its name; a file named like a PDF or an image that isn't one is application/octet-stream
-    (served as a download); anything else goes by its extension (also served as a download, except text)."""
+    (served as a download); anything else goes by its extension (also served as a download, except text).
+    Only the image's header is read (image_guard.check_image), never its pixels; an image with too many pixels
+    to make a preview of is still recognised by its first bytes."""
     try:
         with open(path, "rb") as f:
-            if f.read(5) == b"%PDF-":
+            head = f.read(16)
+            if head.startswith(b"%PDF-"):
                 return "application/pdf"
+            try:
+                fmt, _w, _h = image_guard.check_image(f, formats=list(_PIL_MIME))
+                got = _PIL_MIME.get(fmt.upper())
+            except image_guard.ImageTooBig:
+                got = _magic(head)
+            except Exception:                         # not an image (or one Pillow can't read)
+                got = None
     except OSError:
         return "application/octet-stream"
-    try:
-        from PIL import Image
-        Image.MAX_IMAGE_PIXELS = 80_000_000
-        with Image.open(path) as im:
-            got = _PIL_MIME.get((im.format or "").upper())
-        if got:
-            return got
-    except Exception:
-        pass
+    if got:
+        return got
     by_name = mime_of(name)
     return "application/octet-stream" if by_name in SNIFFED else by_name
 
@@ -404,6 +422,22 @@ def admin_status() -> dict:
     return info
 
 
+def check_free_space(root: str, incoming: int | None) -> None:
+    """Refuse (507) a file that would leave less free space on the files folder's disk than App settings → Keep
+    this much disk space free (0 = don't check). `incoming`: the file's size, when known (else the largest)."""
+    floor = int(settings.get("files_min_free_mb") or 0) * 1024 * 1024
+    if not floor:
+        return
+    try:
+        free = shutil.disk_usage(root).free
+    except OSError:
+        return                                  # can't tell: the other limits still apply
+    need = MAX_BYTES if incoming is None else max(0, int(incoming))
+    if free - need < floor:
+        raise HTTPException(507, "There isn't enough free disk space in the files folder for this file. An admin "
+                                 "can make room (or change “Keep this much disk space free” in App settings).")
+
+
 # ---------- where things go ----------
 def _within(root: str, rel: str) -> str:
     p = os.path.realpath(os.path.join(root, rel))
@@ -502,20 +536,29 @@ def save_upload(root: str, rel_dir: str, filename: str, stream_read, uploaded_by
 
 
 def _make_thumb(root: str, path: str, mime: str) -> str | None:
+    """A small JPEG preview of a photo, or None. The header is checked first (image_guard: at most 40 million
+    pixels, nothing decoded before that), a JPEG is decoded at a reduced scale (draft), and at most two
+    previews are made at a time in the whole app."""
     if mime not in THUMBABLE:
         return None
     try:
-        from PIL import Image, ImageOps
+        from PIL import ImageOps
     except ImportError:
         return None
+    rel = os.path.join(THUMBS, db.new_id() + ".jpg")
     try:
-        Image.MAX_IMAGE_PIXELS = 80_000_000
-        rel = os.path.join(THUMBS, db.new_id() + ".jpg")
-        with Image.open(path) as im:
-            im = ImageOps.exif_transpose(im).convert("RGB")
-            im.thumbnail((THUMB_PX, THUMB_PX))
-            im.save(os.path.join(root, rel), "JPEG", quality=80)
+        with open(path, "rb") as f:
+            image_guard.check_image(f, formats=list(_PIL_MIME))
+            with image_guard.decode_slot():
+                with image_guard.open_for_decode(f, formats=list(_PIL_MIME),
+                                                 draft=("RGB", (THUMB_PX, THUMB_PX))) as im:
+                    im = ImageOps.exif_transpose(im)
+                    im.thumbnail((THUMB_PX, THUMB_PX))
+                    im.convert("RGB").save(os.path.join(root, rel), "JPEG", quality=80)
         return rel
+    except image_guard.ImageTooBig:
+        logger.info("No preview for %s: it has too many pixels.", os.path.basename(path))
+        return None
     except Exception:
         return None
 
