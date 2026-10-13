@@ -16,13 +16,27 @@
         "title": "Household Assistant",
         "data": {
           "voice_user": "Answer voice satellites as",
+          "voice_person_only": "Voice: household-scope tools off",
+          "signing_key": "App-messages signing key",
           "timeout": "Wait for an answer (seconds)"
         },
         "data_description": {
-          "voice_user": "A voice satellite doesn't say who is speaking. Its questions are asked as this person, with their access in each app, or not at all.",
+          "voice_user": "A voice satellite doesn't say who is speaking. Its questions are asked as this person, with their access in each app, or not at all. Choose a dedicated user with few rights rather than an admin.",
+          "voice_person_only": "Questions from voice satellites use only the tools about that person (their own tasks, food log, …), never household-wide ones (spending, everyone's balances). Questions asked as yourself (the app, the Assist dialog) aren't limited.",
+          "signing_key": "The same key as App settings → App-messages signing key in the household apps. Empty: messages aren't signed (any app on Home Assistant's network could answer as the assistant).",
           "timeout": "A model on the Home Assistant machine's CPU can take several minutes; the answer is also on the app's page."
-        }
+        },
+        "description": "Tip: for voice satellites, make a dedicated Home Assistant user with no admin rights, choose it below, and mark it as a child in the Household Assistant app (Admin → People), so a voice in the room can only ask about that user's own things."
       }
+    },
+    "error": {
+      "bad_key": "The key must be at most 200 characters, without spaces."
+    }
+  },
+  "issues": {
+    "recorder_keeps_messages": {
+      "title": "The recorder keeps the household apps' messages",
+      "description": "The household apps' questions and answers travel as {event} events, and Home Assistant's recorder keeps them in its history. Add this to configuration.yaml, then restart Home Assistant:\n\n```yaml\nrecorder:\n  exclude:\n    event_types:\n      - {event}\n```"
     }
   }
 }

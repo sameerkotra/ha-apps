@@ -1,6 +1,8 @@
 ARG BUILD_ARCH
 ARG BUILD_VERSION
-FROM python:3.12-alpine
+# Pinned to one Alpine release so a rebuild can't quietly move to the next one. (Pin by digest too —
+# python:3.12-alpine3.22@sha256:… — when you can look it up; the Python version stays 3.12.)
+FROM python:3.12-alpine3.22
 
 # tzdata: the app reads Home Assistant's time zone (e.g. "Europe/Berlin") to tell the model today's date.
 RUN apk add --no-cache tzdata

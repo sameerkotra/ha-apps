@@ -4,14 +4,16 @@ It sends `assist.tools.list` (catalogue.py) and `assist.tool.call` (engine.py) a
 `bus.on_reply`. It answers one kind of its own, `assist.ask`, from the companion Home Assistant integration
 (`custom_components/household_assistant`) that makes the assistant an Assist conversation agent:
 
-    assist.ask    integration → assistant   {requested_by: <HA user id>, name?: <their name>, text}
+    assist.ask    integration → assistant   {requested_by: <HA user id>, name?: <their name>, text,
+                                             scope?: "person" (only tools about the person: a voice satellite)}
                   ack {} at once (the question is started after the bus commits), nack not_allowed "off" while
                   App settings → Answer Assist is off, nack invalid <field>
     assist.answer assistant → integration   a reply to the ask (reply_to its id, same ref), when the question ends:
                   {question, state: done|failed|stopped, answer?, error?, sources: [app names]}
 
 The bus opens its own WebSocket to Home Assistant and runs its outbox on its own thread; without a Supervisor token
-(the tests) it stays off.
+(the tests) it stays off. With App settings → *App-messages signing key* set, every message is signed and only
+signed ones are taken (the shared app_bus; the integration has the same key in its options).
 """
 import logging
 from datetime import timedelta
@@ -35,23 +37,25 @@ def on_ask(msg, conn):
         raise bus.Nack("not_allowed", "sender")
     if not settings.get("assist_answers"):
         raise bus.Nack("not_allowed", "off")
-    uid, text, name = d.get("requested_by"), d.get("text"), d.get("name")
+    uid, text, name, scope = d.get("requested_by"), d.get("text"), d.get("name"), d.get("scope")
     if not isinstance(uid, str) or not bus.ID_RE.match(uid):
         raise bus.Nack("invalid", "requested_by")
     if not isinstance(text, str) or not text.strip() or len(text) > engine.MAX_QUESTION:
         raise bus.Nack("invalid", "text")
     if name is not None and not isinstance(name, str):
         raise bus.Nack("invalid", "name")
+    if scope not in (None, "person"):
+        raise bus.Nack("invalid", "scope")
     sender, ask_id, ref = msg.from_app, msg.id, msg.ref
     # engine.ask writes to this database, which the bus holds until its commit: start the question after it
-    msg.after_commit(lambda: _start(sender, ask_id, ref, uid, name, text))
+    msg.after_commit(lambda: _start(sender, ask_id, ref, uid, name, text, scope == "person"))
     return {}
 
 
-def _start(sender: str, ask_id: str, ref, uid: str, name, text: str) -> None:
+def _start(sender: str, ask_id: str, ref, uid: str, name, text: str, person_only: bool = False) -> None:
     try:
         user = auth.user_by_id(uid, name)
-        qid = engine.ask(user, text)
+        qid = engine.ask(user, text, person_only=person_only)
     except (PermissionError, ValueError, engine.LimitError) as e:
         _answer(sender, ask_id, ref, {"question": None, "state": "failed", "error": str(e), "sources": []})
         return
@@ -88,7 +92,12 @@ def start() -> None:
         return
     bus.start(config.SLUG, config.APP_TITLE, config.APP_VERSION, can=[ASK_KIND], db=db.get_conn,
               outbox_thread=bool(config.SUPERVISOR_TOKEN), api_base=config.SUPERVISOR_CORE_API,
-              ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN)
+              ws_url=config.SUPERVISOR_CORE_WS, token=config.SUPERVISOR_TOKEN, signing_key=signing_key)
+
+
+def signing_key() -> str:
+    """App settings → App-messages signing key ("" = unsigned); app_bus reads it at most every few seconds."""
+    return settings.get("bus_signing_key") or ""
 
 
 def stop() -> None:

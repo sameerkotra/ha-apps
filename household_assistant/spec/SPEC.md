@@ -7,22 +7,32 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 
 - `app/config.py` — options (`admin_users` only), Home Assistant's time zone, `DB_PATH` = `/data/assistant.db`.
 - `app/db.py` — the schema (below), backups.
-- `app/auth.py` — the ingress identity; `users` row on every request; admins from `admin_users` (id or login
-  name). No "act as".
+- `app/auth.py` — the ingress identity (a plain dependency, run in the threadpool): the `users` row is read on every
+  request and written only when it is new (`reviewed` 0) or the name changed; admins from `admin_users` (id or
+  login name). No "act as".
 - `app/settings.py` — App settings (`settings_core` registry): AI (`ai_provider`, `ai_url`, `ai_model`,
   `ai_api_key` secret, `ai_max_tokens`), `children_may_ask` (off), `questions_per_hour` (30), `questions_per_day`
-  (200), `question_timeout` (300 s, 60–900), `keep_days` (30, 1–365), `recorder_excluded` (off), `shared_open` (off).
+  (200), `question_timeout` (300 s, 60–900), `keep_days` (30, 1–365), `recorder_excluded` (off), `shared_open` (off),
+  `briefing_speakers` ("" = all; media players, comma-separated), `quiet_from` / `quiet_until` (HH:MM, "" = never
+  quiet), `bus_signing_key` (secret, "" = unsigned; `clear_bus_signing_key`). A saved `ai_api_key` is kept only
+  while the provider and the address's scheme, host and port stay the same: changing them without a new key (or
+  `clear_ai_api_key`) is a 422, and Test connection answers "Type the access key again" instead of sending it.
 - `app/ai_client.py` — the shared `common/ai_client.py` with this app's wording; `generate()` is the only way to the
-  model (tests replace it).
+  model (tests replace it). Each call's `deadline` (retries included) is what is left of the question (the engine
+  passes it); by default the larger of its timeout and the shared 300 s.
 - `app/catalogue.py` — the tools the apps offer (`assist.tools.list`), per person.
 - `app/engine.py` — plan → call → answer; actions; the page's view of a question; housekeeping.
-- `app/app_messages.py` — starts the bus (`can` is empty: the app answers no kinds).
+- `app/app_messages.py` — starts the bus with `signing_key` (App settings → `bus_signing_key`, read at most every
+  5 s); it answers `assist.ask`.
 - `app/routers/api.py` — the API (below). `app/main.py` — start-up, jobs, the ingress guard, CSP.
 - `app/static/` — `index.html`, `app.js`, `style.css` and the shared `common/` files (no inline scripts).
 
 ## Data (`/data/assistant.db`)
 
-- `users (id, name, enabled, is_child, created_at)`.
+- `users (id, name, enabled, is_child, created_at, reviewed)` — `reviewed` 0: new (Admin → People shows it; any
+  change there or `{reviewed: true}` sets it); rows from before the column count as reviewed.
+- `rate_events (user_id, kind question|briefing, at)` — what the hourly limits count; not deleted with the
+  questions; pruned after a day.
 - `questions (id, user_id, asked_at, text, answer, state planning|calling|answering|done|failed|stopped, error,
   rounds, input_tokens, output_tokens, seconds)`.
 - `calls (id, question_id → questions ON DELETE CASCADE, app, tool, args, say, bus_id, round, confirmed_at,
@@ -43,17 +53,23 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   minute and asks an app with no list yet, a new version since its list, or a list over a day old.
 - The answer replaces the app's tools; each tool is checked (`clean_tool`): the name `area.thing[.verb]`, never
   the `vault` area, at most 8 arguments of the known types (an enum needs values), texts shortened, at most 24
-  tools. Tools that aren't well formed are left out and counted in `error`. A nack is kept as `error` ("The tool
+  tools; `scope` is `person` only when the tool says so, else `household`. Tools that aren't well formed are left
+  out and counted in `error`. The household's own apps (`KNOWN_AREAS`: `household_todo` → `todo`, …) may offer
+  tools only in their area, and no other app in one of those areas (left out, in `error`). A new `assist_apps` row
+  starts `enabled` for those apps and off for any other. A nack is kept as `error` ("The tool
   list is too big." for `answer too large`, "Didn't answer." when it expired).
-- `for_user`: tools of apps with `enabled` and `app_on`, heard from in 24 hours, tool `enabled`; for a child only
-  `scope: person` tools.
+- `for_user`: tools of apps with `enabled` and `app_on`, heard from in 24 hours, tool `enabled`; a name that more
+  than one app offers is offered by neither; for a child, or a question asked `person_only` (Assist's `scope:
+  person`), only `scope: person` tools.
 
 ## A question
 
 - `POST /api/ask` → `engine.ask`: 403 when the person can't ask (`users.enabled` off; a child while *Children
   may ask* is off; the AI not set up), 422 for an empty or too long question (1000 characters), 429 while one of
-  theirs is still running (younger than 5 minutes), over *Questions per person per hour*, or over *Questions per
-  day* (the household; `usage_days`). Then a thread answers it.
+  theirs is still running (younger than 5 minutes, or its thread hasn't returned yet — also after Stop), over
+  *Questions per person per hour* (`rate_events`), or over *Questions per day* (the household; `usage_days`). The
+  question's Stop is registered before its row is committed (so housekeeping never takes it for one left by a
+  restart); then a thread answers it.
 - Warm-up: with Ollama, when the model hasn't answered for 4 minutes, `warmup_sync()` sends "hi" first (up to 120 s; progress "Waking up the model…"); the question's clock starts after it.
 - The loop (at most 3 rounds, *Longest a question may take* in all — `question_timeout`, 300 s, 60–900; `Stopped` / `TooLong` checked between steps; a `TooLong` or `AIError` after some apps answered ends the question
   `done` with the apps' own `text`s, one line each, under a line saying the model didn't finish):
@@ -90,8 +106,10 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   person, if they may still ask (`can_ask`) and the tool is still offered to them (403 otherwise; 409 when already
   done — only the request that moves the row from `proposed` to `sent` sends it; 404 for someone else's).
 - `GET /api/ask/{id}/events` → Server-Sent Events: `event: question` with the same view each time it changes (the
-  engine's `touch(qid)` on every state change, warm-up, call sent and answer; checked again every second anyway),
-  until the question ends; `: ping` every 20 s while quiet.
+  engine's `touch(qid)` on every state change, warm-up, call sent and answer sets an `asyncio.Event` of each stream
+  watching it, via `call_soon_threadsafe`; the stream reads the question only then, or after 20 quiet seconds,
+  when it also sends `: ping`), until the question ends. At most 6 streams per person (429). Versions are kept only
+  while the question's thread runs or a stream watches it.
 - `POST /api/ask/{id}/stop` → state `stopped` at once; the thread ends at its next check.
 
 ## API
@@ -103,15 +121,17 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/tools` | user | the person's tools in words |
 | `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
 | `GET /api/history?before=&limit=` · `DELETE /api/history` | user | own questions, newest first; clear (not a running one) |
-| `GET /api/briefing` · `PUT /api/briefing {on, time, days, eveningOn?, eveningTime?, speaker?}` · `POST /api/briefing/send?kind=morning\|evening` | user | the person's morning and evening briefings and speaker (HOUSEHOLD_ASSISTANT_SPEC §16) |
+| `GET /api/briefing` · `PUT /api/briefing {on, time, days, eveningOn?, eveningTime?, speaker?}` · `POST /api/briefing/send?kind=morning\|evening` | user | the person's morning and evening briefings and speaker (HOUSEHOLD_ASSISTANT_SPEC §16); only the speakers the admin allows; `quiet` (the admin's quiet hours). Send: the slot is taken first (`briefing.reserve`, one write transaction; 429 when 5 this hour); `quiet: true` when not read aloud for quiet hours |
 | `GET/PUT /api/admin/settings` · `POST /api/admin/settings/test-ai` | admin | App settings; Test connection |
 | `GET /api/admin/tools` · `POST /api/admin/tools/refresh` · `PUT /api/admin/tools/{app}` `{enabled}` | admin | Apps |
-| `GET /api/admin/people` · `PUT /api/admin/people/{id}` `{enabled?, isChild?}` | admin | People (not oneself off) |
+| `GET /api/admin/people` · `PUT /api/admin/people/{id}` `{enabled?, isChild?, reviewed?}` | admin | People (not oneself off); `new` until reviewed, new ones first |
 | `GET /api/admin/usage` · `GET /api/admin/connected-apps` | admin | Usage; Connected apps |
 | `GET /api/admin-storage-download-db` · `POST /api/admin-storage-import-db` | admin | backups without the AI key; restore keeps this install's key |
 
 Every route is behind the ingress guard and the shared cross-site check; the page's CSP allows scripts only
-from the app.
+from the app. Request bodies: 1 MB (`web_security.BodyLimit`), the restore 1 GB with a Content-Length. Files
+asked for with `?v=` are cached for good (`static_immutable`); the page links every file with the app's version.
+`GET /api/history` builds its page with `engine.views` (the apps' names and the calls read once).
 
 ## The page
 
@@ -130,9 +150,16 @@ Test connection), People, Usage, Storage.
 `custom_components/household_assistant` (repository root; HACS via `hacs.json`) is a Home Assistant integration: a
 config entry, a `conversation` entity (the agent), options *Answer voice satellites as* (an HA user) and *Wait for
 an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds the messages; on the bus it is
-`ha_assist`:
+`ha_assist`. Its options also have *Voice: household-scope tools off* (`voice_person_only`: a turn without a user
+is asked with `scope: "person"`) and the *App-messages signing key* (`signing_key`: every message it fires is
+signed with the shared app_bus HMAC — `protocol.sign` — and replies without a valid `sig` are ignored). It says
+hello at start and to the app when the app says hello or `who` (at most once a minute); a `nack busy` is asked
+once more after 2 s; on Home Assistant with chat logs it answers through `_async_handle_message` and sets
+`continue_conversation` when the answer is a question back; a Repairs issue (`recorder_keeps_messages`) while the
+recorder doesn't exclude `household_apps`:
 
-- `assist.ask` (`{requested_by, name?, text}`, expires in 5 minutes; ref `assist:<id>`) → `app_messages.on_ask`:
+- `assist.ask` (`{requested_by, name?, text, scope?: "person"}`, expires in 5 minutes; ref `assist:<id>`) →
+  `app_messages.on_ask`:
   `nack not_allowed sender` unless it is from `ha_assist`, `nack not_allowed off` while *Answer Assist*
   (`assist_answers`) is off, `nack invalid <field>`; else `ack {}` and, after the bus commits (the bus holds the
   database), `auth.user_by_id` (the person's users row; made only when Home Assistant's people list links that user
@@ -152,12 +179,16 @@ an answer* (300 s; 30–900). `protocol.py` (no Home Assistant imports) builds t
 - Every minute: `catalogue.check()`, `briefing.check()` (the morning and evening briefings that are due).
 - Every 5 minutes: the people and their phones from Home Assistant (the shared `ha_people.loop`).
 - Every hour: `engine.housekeeping()` — questions older than *Keep questions for* (their calls go with them),
-  questions left running by a restart → failed, calls left `sent` over 2 minutes → timeout, usage older than
-  400 days.
+  questions left running by a restart (older than 30 s, no thread) → failed, calls left `sent` over 2 minutes →
+  timeout, usage older than 400 days, `rate_events` older than a day; and download copies
+  (`household-assistant-*.db` in the temp folder) older than 6 hours (`backup_core.remove_stale`).
+- Briefings: due from their time until 3 hours after it, also past midnight (`due_day`: at 00:30 a 23:00 one is
+  the previous day's, marked as that day's); a scheduled one counts in `rate_events` too; never read aloud during
+  the admin's quiet hours.
 
 ## Tests
 
 `tests/test_assistant.py` runs the real app against a fake household (`tests/fakes.py`): fake Todo, Finance and
 Vault apps, each a real `AppBus` with a real `assist_tools.Catalogue`, on one in-process bus, and a scripted
-model. `tests/test_briefing.py` the morning briefing on the same household (with Finance's `finance.bills`);
+model. `tests/test_review_oct13.py` the October 13 review's regressions. `tests/test_briefing.py` the morning briefing on the same household (with Finance's `finance.bills`);
 `tests/test_page_browser.py` the page, its dialog included, in headless Chromium. `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.

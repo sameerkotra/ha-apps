@@ -13,11 +13,15 @@ summary to their phone, and reads it aloud on a Home Assistant speaker when they
 - It shows up in the person's conversation ("Morning briefing" / "Evening briefing"), with Sources and "What was
   shared", like any answer, and goes to the phones Home Assistant links to the person (Settings → People → Track
   device).
-- **Speaker** (optional, per person): a `media_player` in Home Assistant; the briefing is read aloud there with
-  Home Assistant's text-to-speech (`tts.speak` with the first `tts.*` engine, Settings → Voice assistants), without
-  the emoji.
+- **Speaker** (optional, per person): a `media_player` in Home Assistant — one of those the admin allows (App
+  settings → Briefings → *Speakers briefings may use*; empty: any) — the briefing is read aloud there with Home
+  Assistant's text-to-speech (`tts.speak` with the first `tts.*` engine, Settings → Voice assistants), without the
+  emoji; never during the admin's *Quiet hours* (it still goes to the phones).
 - Settings are per person (`briefings`): the morning on/off, time, every day or weekdays; the evening on/off and
-  time (same days); the speaker. Each is sent at most once a day, from its time until three hours after it.
+  time (same days); the speaker. Each is sent at most once a day, from its time until three hours after it (also
+  past midnight: a 23:00 one missed while the app restarted still goes at 00:30, as that day's).
+- At most SENDS_PER_HOUR briefings an hour per person, "Send me one now" and the day's own together, counted in
+  `rate_events` (clearing one's questions doesn't reset it); a "Send me one now" takes its place first.
 - Who: people the assistant is on for (Admin → People); children only while *Children may ask* is on.
 """
 from __future__ import annotations
@@ -80,9 +84,22 @@ def get(conn, user_id: str) -> dict:
             "speaker": r["speaker"]}
 
 
+NOT_A_SPEAKER = "Choose one of Home Assistant's speakers."
+
+
+def check_speaker(speaker) -> None:
+    """A new speaker must be one of Home Assistant's that the admin allows (it asks Home Assistant: call it before
+    opening a database transaction, then save(..., speaker_checked=True))."""
+    if speaker not in (False, None, "") and not SPEAKER_RE.match(speaker):
+        raise ValueError("The speaker must be a media player, e.g. media_player.kitchen.")
+    if speaker not in (False, None, "") and not is_speaker(speaker):
+        raise ValueError(NOT_A_SPEAKER)
+
+
 def save(conn, user_id: str, on: bool, time: str, days: str, *, evening_on: bool | None = None,
-         evening_time: str | None = None, speaker: str | None | bool = False) -> dict:
-    """Save the person's settings; the evening and speaker only when given (speaker None clears it)."""
+         evening_time: str | None = None, speaker: str | None | bool = False, speaker_checked: bool = False) -> dict:
+    """Save the person's settings; the evening and speaker only when given (speaker None clears it).
+    `speaker_checked`: check_speaker() already said yes (outside the transaction)."""
     if not TIME_RE.match(time or ""):
         raise ValueError("The time must be HH:MM (24-hour), e.g. 07:30.")
     if days not in DAYS:
@@ -92,8 +109,9 @@ def save(conn, user_id: str, on: bool, time: str, days: str, *, evening_on: bool
     if speaker not in (False, None, "") and not SPEAKER_RE.match(speaker):
         raise ValueError("The speaker must be a media player, e.g. media_player.kitchen.")
     old = get(conn, user_id)
-    if speaker not in (False, None, "") and speaker != old["speaker"] and not is_speaker(speaker):
-        raise ValueError("Choose one of Home Assistant's speakers.")
+    if speaker not in (False, None, "") and speaker != old["speaker"] and not speaker_checked \
+            and not is_speaker(speaker):
+        raise ValueError(NOT_A_SPEAKER)
     ev_on = old["eveningOn"] if evening_on is None else bool(evening_on)
     ev_at = evening_time or old["eveningTime"]
     spk = old["speaker"] if speaker is False else (speaker or None)
@@ -113,19 +131,38 @@ def phones(user_id: str) -> list[dict]:
 
 
 def speakers() -> dict:
-    """{speakers: [{entity, name}], tts: the first text-to-speech engine or None} from Home Assistant's states."""
+    """{speakers: [{entity, name}], tts: the first text-to-speech engine or None} from Home Assistant's states;
+    only the speakers the admin allows (App settings → Briefings; empty: all)."""
     states = ha_client.fetch_states_blocking() or []
+    allowed = settings.allowed_speakers()
     players = sorted(({"entity": s["entity_id"], "name": (s.get("attributes") or {}).get("friendly_name")
                        or s["entity_id"]} for s in states
-                      if str(s.get("entity_id", "")).startswith("media_player.") and SPEAKER_RE.match(s["entity_id"])),
+                      if str(s.get("entity_id", "")).startswith("media_player.") and SPEAKER_RE.match(s["entity_id"])
+                      and (not allowed or s["entity_id"] in allowed)),
                      key=lambda x: x["name"].casefold())
     tts = sorted(s["entity_id"] for s in states if str(s.get("entity_id", "")).startswith("tts."))
     return {"speakers": players, "tts": tts[0] if tts else None}
 
 
 def is_speaker(entity: str) -> bool:
-    """Whether `entity` is one of the speakers Home Assistant has now (speakers())."""
+    """Whether `entity` is one of the speakers Home Assistant has now and the admin allows (speakers())."""
     return any(p["entity"] == entity for p in speakers()["speakers"])
+
+
+def _minutes(hhmm: str) -> int:
+    h, m = (int(x) for x in hhmm.split(":"))
+    return h * 60 + m
+
+
+def quiet_now(now: datetime | None = None) -> bool:
+    """Whether it is the admin's quiet hours now (Home Assistant's zone): no reading aloud. They may run past
+    midnight (22:00–07:00); both times empty, or the same: never quiet."""
+    start, end = settings.get("quiet_from"), settings.get("quiet_until")
+    if not (TIME_RE.match(start or "") and TIME_RE.match(end or "")) or start == end:
+        return False
+    now = now or config.now()
+    t, a, b = now.hour * 60 + now.minute, _minutes(start), _minutes(end)
+    return a <= t < b if a < b else (t >= a or t < b)
 
 
 def parts_for(conn, user: dict, kind: str = "morning") -> list[dict]:
@@ -229,11 +266,21 @@ def speak(speaker: str, text: str) -> bool:
 
 def sends_left(user_id: str) -> int:
     """How many more briefings the person may have this hour (SENDS_PER_HOUR; each one asks every app)."""
-    since = engine._iso(config.utcnow() - timedelta(hours=1))
     with db.get_conn() as conn:
-        n = conn.execute("SELECT COUNT(*) FROM questions WHERE user_id = ? AND asked_at > ? AND text IN (?, ?)",
-                         (user_id, since, KINDS["morning"]["question"], KINDS["evening"]["question"])).fetchone()[0]
+        n = engine.count_recent(conn, user_id, "briefing", config.utcnow() - timedelta(hours=1))
     return max(0, SENDS_PER_HOUR - n)
+
+
+def reserve(user_id: str) -> bool:
+    """Take one of the person's briefings for this hour before making it ("Send me one now"): checked and counted in
+    one write transaction, so two at once can't both pass the limit. False when none is left."""
+    now = config.utcnow()
+    with db.get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if engine.count_recent(conn, user_id, "briefing", now - timedelta(hours=1)) >= SENDS_PER_HOUR:
+            return False
+        engine.record_event(conn, user_id, "briefing", now)
+    return True
 
 
 def send(user: dict, kind: str = "morning") -> dict:
@@ -252,36 +299,49 @@ def send(user: dict, kind: str = "morning") -> dict:
         if targets else {}
     with db.get_conn() as conn:
         speaker = get(conn, user["id"])["speaker"]
-    said = None
-    if speaker:
+    said, quiet = None, False
+    if speaker and quiet_now():
+        quiet = True
+        logger.info("Quiet hours: %s's briefing wasn't read aloud.", user.get("name"))
+    elif speaker:
         word = "Good morning" if kind == "morning" else "Good evening"
         first = (str(user.get("name") or "").split() or ["there"])[0]
         said = speak(speaker, f"{word}, {first}. {k['question']} for {made['head']}. "
                      + " ".join(made["spoken"]))
-    return {"question": made["question"], "sent": sent, "phones": targets, "spoken": said}
+    return {"question": made["question"], "sent": sent, "phones": targets, "spoken": said, "quiet": quiet}
 
 
 # --------------------------------------------------------------------------------------------- the clock
 
-def due(row, now: datetime, kind: str = "morning") -> bool:
-    """Whether a person's briefing of `kind` is due at `now` (Home Assistant's zone)."""
+def due_day(row, now: datetime, kind: str = "morning") -> str | None:
+    """The day (YYYY-MM-DD) whose briefing of `kind` is due at `now` (Home Assistant's zone), or None. Its window is
+    from its time until LATE after it, also past midnight: at 00:30, a 23:00 one is yesterday's, still due."""
     on, at_col, last_col = COLS[kind]
     at_text = row[at_col]
     if not row[on] or not TIME_RE.match(at_text or ""):
-        return False
-    if row["days"] == "weekdays" and now.weekday() >= 5:
-        return False
-    if row[last_col] == now.date().isoformat():
-        return False
+        return None
     h, m = (int(x) for x in at_text.split(":"))
-    at = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    return at <= now < at + LATE
+    for back in (0, 1):
+        day = now.date() - timedelta(days=back)
+        at = datetime.combine(day, datetime.min.time(), now.tzinfo).replace(hour=h, minute=m)
+        if not (at <= now < at + LATE):
+            continue
+        if row["days"] == "weekdays" and day.weekday() >= 5:
+            return None
+        if row[last_col] == day.isoformat():
+            return None
+        return day.isoformat()
+    return None
+
+
+def due(row, now: datetime, kind: str = "morning") -> bool:
+    """Whether a person's briefing of `kind` is due at `now` (Home Assistant's zone)."""
+    return due_day(row, now, kind) is not None
 
 
 def check() -> int:
     """Every minute: send the briefings that are due. Returns how many were started."""
     now = config.now()
-    today = now.date().isoformat()
     started = 0
     todo = []
     with db.get_conn() as conn:
@@ -290,10 +350,12 @@ def check() -> int:
         for r in rows:
             user = {"id": r["uid"], "name": r["name"], "enabled": bool(r["enabled"]), "is_child": bool(r["is_child"])}
             for kind in KINDS:
-                if not due(r, now, kind) or may_have(user):
+                day = due_day(r, now, kind)
+                if day is None or may_have(user):
                     continue
                 # marked first, so a slow or failing app never makes it send twice
-                conn.execute(f"UPDATE briefings SET {COLS[kind][2]} = ? WHERE user_id = ?", (today, r["uid"]))
+                conn.execute(f"UPDATE briefings SET {COLS[kind][2]} = ? WHERE user_id = ?", (day, r["uid"]))
+                engine.record_event(conn, r["uid"], "briefing")          # counts towards the hourly limit
                 todo.append((user, kind))
     for user, kind in todo:
         with _lock:

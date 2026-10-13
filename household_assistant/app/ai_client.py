@@ -143,18 +143,28 @@ CLIENT = core.Client(post=lambda *a: _post(*a), sleep=lambda s: _sleep(s), log=l
 
 # ---- the three providers ---------------------------------------------------------------------------
 
-def _ollama(cfg, prompt, system, want_json, temperature, timeout) -> Reply:
-    return CLIENT.ollama(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout)
+def _ollama(cfg, prompt, system, want_json, temperature, timeout, deadline) -> Reply:
+    return CLIENT.ollama(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout,
+                         deadline=deadline)
 
 
-def _openai(cfg, prompt, system, want_json, temperature, timeout) -> Reply:
+def _openai(cfg, prompt, system, want_json, temperature, timeout, deadline) -> Reply:
     return CLIENT.openai(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout,
-                         fallback=core.fallback_json_and_temperature)
+                         fallback=core.fallback_json_and_temperature, deadline=deadline)
 
 
-def _anthropic(cfg, prompt, system, want_json, temperature, timeout) -> Reply:
+def _anthropic(cfg, prompt, system, want_json, temperature, timeout, deadline) -> Reply:
     return CLIENT.anthropic(cfg, prompt, system=system, want_json=want_json, temperature=temperature, timeout=timeout,
-                            limit=cfg.max_tokens or 4096, shrink=core.shrink_to_largest_smaller(4096))
+                            limit=cfg.max_tokens or 4096, shrink=core.shrink_to_largest_smaller(4096),
+                            deadline=deadline)
+
+
+def _deadline(timeout: float | None, deadline: float | None) -> float | None:
+    """The shared client stops retrying after DEFAULT_DEADLINE (300 s) unless told otherwise: a question may take
+    up to its own timeout (App settings → Longest a question may take, up to 900 s), so that is the deadline."""
+    if deadline is not None:
+        return deadline
+    return max(core.DEFAULT_DEADLINE, timeout) if timeout else core.DEFAULT_DEADLINE
 
 
 _CALLS = {"ollama": _ollama, "openai": _openai, "anthropic": _anthropic}
@@ -169,13 +179,15 @@ def check_configured(cfg: Config) -> None:
 
 
 def generate(prompt: str, *, system: str | None = None, want_json: bool = False, temperature: float | None = None,
-             timeout: float | None = QUERY_TIMEOUT, purpose: str = "AI request", cfg: Config | None = None) -> Reply:
-    """Ask the model once. Raises AIError (a readable message, never the key)."""
+             timeout: float | None = QUERY_TIMEOUT, purpose: str = "AI request", cfg: Config | None = None,
+             deadline: float | None = None) -> Reply:
+    """Ask the model once (retries on overload included, all within `deadline` seconds — by default the larger of
+    `timeout` and the shared 300 s). Raises AIError (a readable message, never the key)."""
     cfg = cfg or current()
     check_configured(cfg)
     started = time.monotonic()
     try:
-        reply = _CALLS[cfg.provider](cfg, prompt, system, want_json, temperature, timeout)
+        reply = _CALLS[cfg.provider](cfg, prompt, system, want_json, temperature, timeout, _deadline(timeout, deadline))
     except AIError as e:
         _record(purpose, cfg, None, time.monotonic() - started, error=str(e))
         raise
@@ -191,7 +203,7 @@ def tools_supported(cfg: Config | None = None) -> bool:
 
 def generate_tools(prompt: str, tools: list[dict], *, system: str | None = None, temperature: float | None = None,
                    timeout: float | None = QUERY_TIMEOUT, purpose: str = "AI request",
-                   cfg: Config | None = None) -> Reply | None:
+                   cfg: Config | None = None, deadline: float | None = None) -> Reply | None:
     """Offer `tools` natively (OpenAI tools, Claude tool_use, Ollama chat tools): Reply.calls and Reply.text.
     None when this model doesn't take tools (remembered): the caller asks for JSON instead. Raises AIError."""
     cfg = cfg or current()
@@ -201,7 +213,8 @@ def generate_tools(prompt: str, tools: list[dict], *, system: str | None = None,
     started = time.monotonic()
     try:
         reply = CLIENT.tool_call(cfg, prompt, tools, system=system, temperature=temperature, timeout=timeout,
-                                 max_tokens=cfg.max_tokens if cfg.provider == "anthropic" else None)
+                                 max_tokens=cfg.max_tokens if cfg.provider == "anthropic" else None,
+                                 deadline=_deadline(timeout, deadline))
     except AIError as e:
         _record(purpose, cfg, None, time.monotonic() - started, error=str(e))
         if e.kind == "bad_request":
@@ -257,7 +270,7 @@ def warmup_sync() -> bool:
     if cfg.provider != "ollama":
         return True
     try:
-        generate("hi", timeout=WARMUP_TIMEOUT, purpose="Warm-up", cfg=cfg)
+        generate("hi", timeout=WARMUP_TIMEOUT, deadline=WARMUP_TIMEOUT, purpose="Warm-up", cfg=cfg)
         return True
     except AIError:
         return False

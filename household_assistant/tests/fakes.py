@@ -128,7 +128,8 @@ class Model:
         self.warmups = 0                                    # "hi"s that load the model, outside the script
         self.lock = threading.Lock()
 
-    def __call__(self, prompt, *, system=None, want_json=False, temperature=None, timeout=None, purpose="", cfg=None):
+    def __call__(self, prompt, *, system=None, want_json=False, temperature=None, timeout=None, purpose="", cfg=None,
+                 deadline=None):
         if purpose == "Warm-up":
             with self.lock:
                 self.warmups += 1
@@ -149,7 +150,8 @@ class NativeModel:
         self.prompts: list[tuple[str, str]] = []             # (prompt, the tool names offered)
         self.specs: list[dict] = []
 
-    def __call__(self, prompt, specs, *, system=None, temperature=None, timeout=None, purpose="", cfg=None):
+    def __call__(self, prompt, specs, *, system=None, temperature=None, timeout=None, purpose="", cfg=None,
+                 deadline=None):
         self.prompts.append((prompt, ",".join(s["name"] for s in specs)))
         self.specs = specs
         step = self.script.pop(0) if self.script else ([], "Nothing more.")

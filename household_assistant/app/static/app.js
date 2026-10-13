@@ -354,6 +354,8 @@
       h("h4", null, "Where it goes"), phones,
       h("div", { class: "row" }, h("label", { for: "brSpeaker" }, "Also read it aloud on "), speaker),
       b.tts ? null : h("p", { class: "dim" }, "Reading aloud needs a text-to-speech engine in Home Assistant (Settings → Voice assistants)."),
+      b.quiet && b.quiet.from && b.quiet.until && b.quiet.from !== b.quiet.until
+        ? h("p", { class: "dim" }, `Never read aloud between ${b.quiet.from} and ${b.quiet.until} (quiet hours); your phone still gets it.`) : null,
       h("div", { class: "actions" }, now, nowEv, save));
     const m = UI.openModal("🌅 Briefings", body);
     save.addEventListener("click", async () => {
@@ -373,7 +375,7 @@
         try {
           const r = await api(`api/briefing/send?kind=${btn.dataset.kind}`, { method: "POST" });
           const ok = Object.values(r.sent).filter(Boolean).length;
-          const aloud = r.spoken === null ? "" : r.spoken ? " Read aloud too." : " Reading it aloud failed.";
+          const aloud = r.quiet ? " Not read aloud: it's quiet hours." : r.spoken === null ? "" : r.spoken ? " Read aloud too." : " Reading it aloud failed.";
           toast((r.phones.length ? `Sent to ${ok} of ${r.phones.length} phone${r.phones.length === 1 ? "" : "s"}.` : "Made — it's in your questions (no phone to send it to).") + aloud,
             (r.phones.length > 0 && ok === 0) || r.spoken === false);
           m.close();
@@ -487,13 +489,21 @@
         try { await api(`api/admin/people/${encodeURIComponent(p.id)}`, { method: "PUT", body }); }
         catch (e) { el.checked = !el.checked; toast(e.message, true); }
       };
-      on.addEventListener("change", () => send({ enabled: on.checked }, on));
-      child.addEventListener("change", () => send({ isChild: child.checked }, child));
-      return h("tr", null, h("td", null, p.name), h("td", null, h("label", null, on, " May ask")),
-        h("td", null, h("label", null, child, " Child")));
+      on.addEventListener("change", () => send({ enabled: on.checked }, on).then(loadPeople));
+      child.addEventListener("change", () => send({ isChild: child.checked }, child).then(loadPeople));
+      let fresh = null;
+      if (p.new) {
+        const ok = h("button", { type: "button", class: "btn-ghost" }, "Looks right");
+        ok.addEventListener("click", () => send({ reviewed: true }, ok).then(loadPeople));
+        fresh = h("span", null, h("span", { class: "badge-new", title: "New since an admin last looked: check May ask and Child" }, "New"), " ", ok);
+      }
+      return h("tr", { class: p.new ? "new-person" : "" }, h("td", null, p.name, fresh ? " " : null, fresh),
+        h("td", null, h("label", null, on, " May ask")), h("td", null, h("label", null, child, " Child")));
     };
+    const fresh = r.people.filter((p) => p.new).length;
     mount(clear(box), h("div", { class: "card" },
       h("p", { class: "hint" }, "Everyone who has opened the assistant. A child asks only when App settings → Children may ask is on, and then only about their own things. Nobody, admins included, can see anyone else's questions."),
+      fresh ? h("p", { class: "note warn" }, `${fresh} new ${fresh === 1 ? "person" : "people"}: everyone new may ask and counts as an adult until you change it. Check them, then tap Looks right.`) : null,
       h("table", { class: "people" }, h("tbody", null, r.people.map(row)))));
   }
 

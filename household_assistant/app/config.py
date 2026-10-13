@@ -4,7 +4,6 @@
 "today" for the model's prompt follows Home Assistant's own time zone (read once at start-up), never the
 container's UTC clock: use config.today() / config.now().
 """
-import json
 import logging
 import os
 from datetime import date, datetime, timezone
@@ -19,12 +18,7 @@ OPTIONS_PATH = os.path.join(DATA_DIR, "options.json")
 
 
 def _load() -> dict:
-    try:
-        with open(OPTIONS_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return auth_core.read_options(OPTIONS_PATH, log=logger, errors=(OSError, ValueError))
 
 
 _raw_admins = _load().get("admin_users") or []
@@ -39,7 +33,7 @@ SUPERVISOR_CORE_WS = os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/
 SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/")
 
 APP_TITLE = "Household Assistant"
-APP_VERSION = "1.3.1"           # config.yaml's version: the app bus says it in its hello
+APP_VERSION = "1.3.2"           # config.yaml's version: the app bus says it in its hello
 SLUG = "household_assistant"
 
 ZONE = ha_time.Zone(logger)       # app/common/ha_time.py

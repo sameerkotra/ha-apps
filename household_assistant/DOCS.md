@@ -50,7 +50,18 @@ recorder:
       - household_apps
 ```
 
-The app can't check this for you; until you tick it in **App settings → Privacy**, admins see a reminder.
+The app can't check this for you; until you tick it in **App settings → Privacy**, admins see a reminder. The
+companion Assist integration (below) checks it from Home Assistant's side: while the recorder keeps these events,
+it raises an issue in **Settings → Repairs**.
+
+## Signing the apps' messages
+
+By default any app on Home Assistant's network could send a message that claims to come from one of the household
+apps. To stop that, choose a long random key and paste the same one into **App settings → Household apps →
+App-messages signing key** of every household app — and into the Assist integration's **Configure**, if you use
+it. From then on every message is signed and unsigned ones are refused. Set it in all of them within a few
+minutes: an app with the key refuses the apps that don't have it yet. The key is never shown again and is left out
+of backups; leave the box empty to keep it, or remove it to go back to unsigned messages.
 
 ## Asking
 
@@ -89,10 +100,13 @@ it off) are on. Household Vault is never asked: passwords stay there.
   app on your phone). Tapping it opens the assistant.
 - **Read it aloud**: choose a **speaker** (one of Home Assistant's media players) and the briefing is also spoken there,
   starting "Good morning, Asha." It uses Home Assistant's text-to-speech (the first `tts.` entity, e.g. Google
-  Translate or Piper — the dialog says when there is none). Leave it on *No speaker* for the phone only.
+  Translate or Piper — the dialog says when there is none). Leave it on *No speaker* for the phone only. An admin
+  can limit which speakers may be chosen (**App settings → Briefings → Speakers briefings may use**; empty: all of
+  them) and set **Quiet hours** (e.g. 22:00 to 07:00) when nothing is read aloud — the phone still gets it.
 - It needs no AI model: it is what the apps said, as they said it, so it costs nothing. It also appears in your
   questions as "Morning briefing" or "Evening briefing", with Sources and **What was shared**.
-- **Send a morning one now** / **Send an evening one now** make and send one at once, to try it.
+- **Send a morning one now** / **Send an evening one now** make and send one at once, to try it. Each person gets
+  at most 5 briefings an hour, these and the day's own together; clearing your questions doesn't reset that.
 
 ## Follow-up questions
 
@@ -118,19 +132,37 @@ Each question is asked as the Home Assistant user speaking — someone who has o
 Assistant's people (Settings → People); a removed or turned-off user isn't asked for — with everything above (their own apps, switches and
 limits; their question appears in their history here). A voice satellite doesn't say who is speaking: in the
 integration's **Configure**, choose the person whose questions it asks, or leave it at *Nobody* and it says so.
-The answer is spoken without its links; **Sources** and **What was shared** are on this page. Questions and
-answers travel over Home Assistant's event bus like the apps' answers (keep `household_apps` out of the recorder,
-above). Assist waits up to 5 minutes for an answer (the integration's **Configure**).
+Anyone in the room can talk to a satellite, so:
+
+- Choose a **dedicated Home Assistant user with few rights** for satellites (not an admin), and mark it as a
+  **Child** on this app's **Admin → People**: then it asks only about that user's own things.
+- Or turn on **Voice: household-scope tools off** in the integration's **Configure**: questions from satellites
+  then use only the tools about that person (their tasks, their food log, …), never household-wide ones
+  (spending, balances, everyone's birthdays). Questions asked as yourself (the phone app, the Assist dialog) aren't
+  limited.
+
+The answer is spoken without its links; **Sources** and **What was shared** are on this page. When the answer is a
+question back ("Which month?"), Assist keeps listening for your reply. Questions and answers travel over Home
+Assistant's event bus like the apps' answers (keep `household_apps` out of the recorder, above; with an
+app-messages signing key, enter it in the integration's **Configure** too). Assist waits up to 5 minutes for an
+answer (the integration's **Configure**); if the app says it is busy, it asks once more a moment later.
 
 ## Admin
 
 - **Apps**: each app that offered tools, its switch here (both this one and the app's own must be on), whether
-  it was heard from in the last day, any problem with its tool list, and **Connected apps**.
+  it was heard from in the last day, any problem with its tool list, and **Connected apps**. The household's own
+  apps start switched on; any other app that offers tools starts **off** until you turn it on. A tool named for one
+  of the household's apps (`todo.…` is Household Todo's) is taken only from that app, and a tool name two apps
+  offer is offered by neither (the Apps tab says so).
 - **App settings**: AI; **People → Children may ask** (off: people marked as children on the People tab can't
   ask; on: they ask only about their own things, from apps that let children ask); **Limits** (30 questions per
-  person per hour, 200 per day for the household, keep questions 30 days); **Privacy** (the recorder tick; *Show
-  "What was shared" open*).
-- **People**: everyone who has opened the assistant, **May ask** and **Child**.
+  person per hour, 200 per day for the household, keep questions 30 days — clearing questions doesn't reset the
+  hourly limit); **Privacy** (the recorder tick; *Show "What was shared" open*); **Briefings** (the speakers they
+  may use, quiet hours); **Household apps** (the app-messages signing key, above). The AI access key is sent only
+  to the provider and address it was saved for: after changing either, type the key again.
+- **People**: everyone who has opened the assistant, **May ask** and **Child**. Someone new — they opened the app,
+  or Assist asked for them — is marked **New** (everyone new may ask and counts as an adult): check them, then tap
+  **Looks right**.
 - **Usage**: questions, tool calls and tokens per day for the last 30 days — counts only, never who asked what.
 - **Storage**: backups (below).
 
@@ -155,7 +187,9 @@ access key. Home Assistant's own backups include the app's data too.
 ## Limits
 
 At most 3 rounds of asking the apps and 8 questions to apps per question; each app has 20 seconds to answer
-(after that it "didn't answer"); one question at a time per person; and the limits in App settings.
+(after that it "didn't answer"); one question at a time per person (after **Stop**, until the model has let go of
+it); at most 6 answers followed live at once per person (more tabs fall back to asking every second); requests up
+to 1 MB (a backup to restore up to 1 GB); and the limits in App settings.
 
 ## Configuration (the app's Configuration tab)
 
@@ -171,5 +205,9 @@ At most 3 rounds of asking the apps and 8 questions to apps per question; each a
 - **"X didn't answer"**: the app took longer than 20 seconds or isn't running. Ask again.
 - **"You've turned off answers from X"**: turn **Let the Household Assistant answer for me** back on in that
   app.
+- **An app's tools don't show up**: an app that isn't one of the household's own starts switched off — turn it on
+  in **Admin → Apps**.
+- **Nothing answers after setting a signing key**: every household app (and the Assist integration) needs the same
+  key; until then they refuse each other.
 - **Strange answers**: small local models sometimes misread the plan format. A larger model, or a clearer
   question ("spending on groceries in September"), helps; **What was shared** shows what the apps actually said.

@@ -4,6 +4,7 @@ question, answer and action is the signed-in person's own — admins can't see o
 import asyncio
 import json
 import os
+import threading
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
@@ -17,6 +18,7 @@ from ..common import whoami as whoami_core
 
 router = APIRouter(prefix="/api")
 PING_SECONDS = 20                     # a comment line on a quiet stream, so proxies keep it open
+MAX_STREAMS_PER_PERSON = 6            # live question streams one person may have open at once (tabs, retries)
 
 _AI_KEYS = {"ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens", "ai_tool_calls"}
 DEFAULT_SUGGESTIONS = ["What's on my list today?", "Spending this month", "What's on the shopping list?",
@@ -95,34 +97,76 @@ def get_question(qid: str, user: dict = Depends(get_current_user)):
         return engine.view(conn, _own(conn, qid, user))
 
 
+_streams: dict[str, int] = {}
+_streams_lock = threading.Lock()
+
+
+def _open_stream(user_id: str) -> bool:
+    with _streams_lock:
+        if _streams.get(user_id, 0) >= MAX_STREAMS_PER_PERSON:
+            return False
+        _streams[user_id] = _streams.get(user_id, 0) + 1
+        return True
+
+
+def _close_stream(user_id: str) -> None:
+    with _streams_lock:
+        n = _streams.get(user_id, 0) - 1
+        if n > 0:
+            _streams[user_id] = n
+        else:
+            _streams.pop(user_id, None)
+
+
 @router.get("/ask/{qid}/events")
 async def question_events(qid: str, request: Request, user: dict = Depends(get_current_user)):
     """The question as GET /api/ask/{qid} gives it, sent again each time it changes (Server-Sent Events), until it
-    is answered, failed or stopped. The page falls back to polling when the stream can't be opened."""
+    is answered, failed or stopped. The page falls back to polling when the stream can't be opened.
+
+    The stream sleeps until the engine says the question changed (engine.touch sets an asyncio.Event on this loop)
+    and reads it again only then — or after PING_SECONDS of quiet, in case something changed it without saying so.
+    At most MAX_STREAMS_PER_PERSON at once per person (429 beyond)."""
     def load() -> dict:
         with db.get_conn() as conn:
             return engine.view(conn, _own(conn, qid, user))
 
-    first = await run_in_threadpool(load)
+    loop = asyncio.get_running_loop()
+    changed = asyncio.Event()
+    engine.watch(qid, loop, changed)
+    seen = engine.version(qid)                 # read before each load: a change during the load isn't missed
+    try:
+        first = await run_in_threadpool(load)
+    except BaseException:
+        engine.unwatch(qid, loop, changed)
+        raise
+    if not _open_stream(user["id"]):
+        engine.unwatch(qid, loop, changed)
+        raise HTTPException(429, "Too many live answers open at once — close a tab or two.")
 
     async def gen():
-        yield "retry: 3000\n\n"
-        q, last, seen, quiet = first, None, 0, 0.0
-        while True:
-            body = json.dumps(q, separators=(",", ":"))
-            if body != last:
-                yield f"event: question\ndata: {body}\n\n"
-                last, quiet = body, 0.0
-            if q["state"] not in engine.RUNNING:
-                return
-            if quiet >= PING_SECONDS:
-                if await request.is_disconnected():
+        try:
+            yield "retry: 3000\n\n"
+            q, last, version = first, None, seen
+            while True:
+                body = json.dumps(q, separators=(",", ":"))
+                if body != last:
+                    yield f"event: question\ndata: {body}\n\n"
+                    last = body
+                if q["state"] not in engine.RUNNING:
                     return
-                yield ": ping\n\n"
-                quiet = 0.0
-            seen = await run_in_threadpool(engine.wait_change, qid, seen, 1.0)   # a change, or a second
-            quiet += 1.0
-            q = await run_in_threadpool(load)
+                changed.clear()
+                if engine.version(qid) == version:     # nothing since the last load: sleep until something
+                    try:
+                        await asyncio.wait_for(changed.wait(), PING_SECONDS)
+                    except asyncio.TimeoutError:
+                        if await request.is_disconnected():
+                            return
+                        yield ": ping\n\n"
+                version = engine.version(qid)
+                q = await run_in_threadpool(load)
+        finally:
+            engine.unwatch(qid, loop, changed)
+            _close_stream(user["id"])
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
@@ -155,12 +199,14 @@ def history(before: str | None = Query(None, max_length=40), limit: int = Query(
     with db.get_conn() as conn:
         rows = conn.execute("SELECT * FROM questions WHERE user_id = ? AND asked_at < ? ORDER BY asked_at DESC, id DESC "
                             "LIMIT ?", (user["id"], before or "9999", limit + 1)).fetchall()
-        items = [engine.view(conn, q) for q in rows[:limit]]
+        items = engine.views(conn, rows[:limit])
     return {"questions": items, "more": len(rows) > limit}
 
 
 @router.delete("/history")
 def clear_history(user: dict = Depends(get_current_user)):
+    """Deletes the person's questions (not a running one). The hourly limits are counted apart (rate_events), so
+    clearing doesn't reset them."""
     with db.get_conn() as conn:
         n = conn.execute(f"DELETE FROM questions WHERE user_id = ? AND state NOT IN "
                          f"({','.join('?' * len(engine.RUNNING))})", (user["id"], *engine.RUNNING)).rowcount
@@ -169,19 +215,22 @@ def clear_history(user: dict = Depends(get_current_user)):
 
 # --------------------------------------------------------------------------------------------- the briefings
 
-def _briefing_view(conn, user: dict) -> dict:
+def _briefing_view(user: dict) -> dict:
+    """Home Assistant is asked for its speakers first, outside any database transaction."""
     sp = briefing.speakers()
-    return {**briefing.get(conn, user["id"]), "phones": briefing.phones(user["id"]),
-            "parts": briefing.parts_for(conn, user), "eveningParts": briefing.parts_for(conn, user, "evening"),
-            "speakers": sp["speakers"], "tts": sp["tts"], "why": briefing.may_have(user)}
+    with db.get_conn() as conn:
+        mine = briefing.get(conn, user["id"])
+        parts, evening = briefing.parts_for(conn, user), briefing.parts_for(conn, user, "evening")
+    return {**mine, "phones": briefing.phones(user["id"]), "parts": parts, "eveningParts": evening,
+            "speakers": sp["speakers"], "tts": sp["tts"], "why": briefing.may_have(user),
+            "quiet": {"from": settings.get("quiet_from"), "until": settings.get("quiet_until")}}
 
 
 @router.get("/briefing")
 def get_briefing(user: dict = Depends(get_current_user)):
     """The person's briefings: morning and evening on or off with their times, days, the speaker, their phones,
-    the speakers Home Assistant has, and what each briefing would include."""
-    with db.get_conn() as conn:
-        return _briefing_view(conn, user)
+    the speakers Home Assistant has (those the admin allows), and what each briefing would include."""
+    return _briefing_view(user)
 
 
 class BriefingIn(BaseModel):
@@ -198,14 +247,18 @@ class BriefingIn(BaseModel):
 def put_briefing(body: BriefingIn, user: dict = Depends(get_current_user)):
     if (body.on or body.eveningOn) and briefing.may_have(user):
         raise HTTPException(403, briefing.may_have(user))
+    speaker = False if "speaker" not in body.model_fields_set else (body.speaker or None)
     with db.get_conn() as conn:
-        try:
+        old = briefing.get(conn, user["id"])["speaker"]
+    try:
+        if speaker not in (False, None, old):
+            briefing.check_speaker(speaker)                       # asks Home Assistant: before the transaction
+        with db.get_conn() as conn:
             briefing.save(conn, user["id"], body.on, body.time, body.days, evening_on=body.eveningOn,
-                          evening_time=body.eveningTime,
-                          speaker=False if "speaker" not in body.model_fields_set else (body.speaker or None))
-        except ValueError as e:
-            raise HTTPException(422, str(e))
-        return _briefing_view(conn, user)
+                          evening_time=body.eveningTime, speaker=speaker, speaker_checked=True)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return _briefing_view(user)
 
 
 @router.post("/briefing/send")
@@ -215,13 +268,17 @@ async def send_briefing(kind: str = Query("morning", pattern="^(morning|evening)
     why = briefing.may_have(user)
     if why:
         raise HTTPException(403, why)
-    if not briefing.sends_left(user["id"]):
+    if not await run_in_threadpool(briefing.reserve, user["id"]):        # counted first: two at once can't both pass
         raise HTTPException(429, "That's the most briefings for one hour — try again a little later.")
     out = await run_in_threadpool(briefing.send, user, kind)
-    with db.get_conn() as conn:
-        q = conn.execute("SELECT * FROM questions WHERE id = ?", (out["question"],)).fetchone()
-        view = engine.view(conn, q)
-    return {"question": view, "phones": out["phones"], "sent": out["sent"], "spoken": out["spoken"]}
+
+    def read():
+        with db.get_conn() as conn:
+            q = conn.execute("SELECT * FROM questions WHERE id = ?", (out["question"],)).fetchone()
+            return engine.view(conn, q)
+    view = await run_in_threadpool(read)
+    return {"question": view, "phones": out["phones"], "sent": out["sent"], "spoken": out["spoken"],
+            "quiet": out.get("quiet", False)}
 
 
 # --------------------------------------------------------------------------------------------- admin
@@ -255,12 +312,20 @@ class AIProbe(BaseModel):
 async def test_ai(payload: AIProbe | None = None, admin: dict = Depends(require_admin)):
     """Test connection: which models the provider offers, with the values typed on the page (unsaved)."""
     p = payload or AIProbe()
-    current = settings.all()
+    current = await asyncio.to_thread(settings.all)
     probe = {k: v for k, v in p.model_dump().items() if k != "clear_ai_api_key" and v is not None}
     if p.clear_ai_api_key:
         probe["ai_api_key"] = ""
     elif not (probe.get("ai_api_key") or "").strip():
         probe.pop("ai_api_key", None)
+        if current["ai_api_key"] and settings.key_target_changed(current, probe):
+            # the saved key goes only where it was saved for: another provider or address needs it typed again
+            provider = probe.get("ai_provider", current["ai_provider"])
+            if provider in ("openai", "anthropic"):
+                return {"provider": provider, "label": settings.PROVIDERS.get(provider, "AI"), "ok": False,
+                        "message": "Type the access key again to test another provider or address: the saved key "
+                                   "is only sent where it was saved for."}
+            probe["ai_api_key"] = ""
     try:
         v = settings.AppSettings(**{**current, **probe}).model_dump()
     except ValidationError as e:
@@ -305,15 +370,17 @@ def admin_usage(admin: dict = Depends(require_admin)):
 @router.get("/admin/people")
 def admin_people(admin: dict = Depends(require_admin)):
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT id, name, enabled, is_child FROM users ORDER BY name COLLATE NOCASE").fetchall()
-    return {"people": [{"id": r["id"], "name": r["name"], "enabled": bool(r["enabled"]), "isChild": bool(r["is_child"])}
-                       for r in rows]}
+        rows = conn.execute("SELECT id, name, enabled, is_child, reviewed, created_at FROM users "
+                            "ORDER BY reviewed, name COLLATE NOCASE").fetchall()
+    return {"people": [{"id": r["id"], "name": r["name"], "enabled": bool(r["enabled"]), "isChild": bool(r["is_child"]),
+                        "new": not r["reviewed"], "since": r["created_at"]} for r in rows]}
 
 
 class PersonIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool | None = None
     isChild: StrictBool | None = None
+    reviewed: StrictBool | None = None          # "Looks right": no longer shown as new
 
 
 @router.put("/admin/people/{user_id}")
@@ -325,6 +392,8 @@ def admin_person(user_id: str, body: PersonIn, admin: dict = Depends(require_adm
         sets["enabled"] = int(body.enabled)
     if body.isChild is not None:
         sets["is_child"] = int(body.isChild)
+    if sets or body.reviewed:
+        sets["reviewed"] = 1                    # an admin has looked at them
     with db.get_conn() as conn:
         if sets and not conn.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?",
                                      (*sets.values(), user_id)).rowcount:
@@ -348,16 +417,18 @@ def download_db(admin: dict = Depends(require_admin)):
 @router.post("/admin-storage-import-db")
 async def import_db(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
     """Replaces the whole database with a downloaded backup (validated first); this install keeps its AI key."""
-    saved = settings.REGISTRY.saved_secrets()
+    saved = await run_in_threadpool(settings.REGISTRY.saved_secrets)
     tmp_path = await backup_core.receive(file, config.DATA_DIR)
-    try:
-        try:
-            db.validate_backup_file(tmp_path)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
+
+    def swap():
+        db.validate_backup_file(tmp_path)
         db.import_from_tempfile(tmp_path)
         settings.REGISTRY.keep_secrets(saved)
         ai_client.forget_state()
+    try:
+        await run_in_threadpool(swap)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)

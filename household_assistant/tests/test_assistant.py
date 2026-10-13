@@ -39,7 +39,10 @@ class Household(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._ctx = ingress_client(app)
-        cls.c = cls._ctx.__enter__()                  # runs the start-up (no Supervisor token: the bus stays off)
+        # runs the start-up (no Supervisor token: the bus stays off); its first housekeeping would race with
+        # setUp removing the database files, so the start-up's jobs get a housekeeping that does nothing
+        with mock.patch.object(engine, "housekeeping", lambda: None):
+            cls.c = cls._ctx.__enter__()
 
     @classmethod
     def tearDownClass(cls):
@@ -51,7 +54,9 @@ class Household(unittest.TestCase):
             os.remove(f)
         db.init_db()
         self.router = Router()
-        bus.default.configure(post=self.router.post, outbox_interval=0.02, send_limit=100000)
+        # many tests a minute on one bus: its per-sender receive limit (60 a minute) would refuse the fakes' answers
+        bus.default.configure(post=self.router.post, outbox_interval=0.02, send_limit=100000, receive_limit=100000,
+                              receive_limit_total=100000)
         self.router.buses[config.SLUG] = bus.default
         bus.start(config.SLUG, config.APP_TITLE, config.APP_VERSION, can=[], db=db.get_conn, token="",
                   outbox_thread=True)
@@ -532,11 +537,14 @@ class AssistantTests(Household):
             conn.execute("UPDATE questions SET asked_at = ? WHERE id = ?",
                          (engine._iso(config.utcnow() - timedelta(days=31)), q["id"]))
             conn.execute("INSERT INTO questions (id, user_id, asked_at, text, state) VALUES "
-                         "('stuck', 'u_alice', ?, 'x', 'calling')", (engine._iso(),))
+                         "('stuck', 'u_alice', ?, 'x', 'calling')", (engine._iso(config.utcnow() - timedelta(minutes=2)),))
+            # a question just stored, whose thread is about to start: never taken for one left by a restart
+            conn.execute("INSERT INTO questions (id, user_id, asked_at, text, state) VALUES "
+                         "('fresh', 'u_bob', ?, 'x', 'planning')", (engine._iso(),))
         engine.housekeeping()
         with db.get_conn() as conn:
             rows = {r["id"]: r["state"] for r in conn.execute("SELECT id, state FROM questions")}
-        self.assertEqual(rows, {"stuck": "failed"})
+        self.assertEqual(rows, {"stuck": "failed", "fresh": "planning"})
 
     def test_settings_and_whoami(self):
         r = self.c.get("/api/admin/settings", headers=ADMIN).json()
@@ -587,7 +595,9 @@ class PlanParsingTests(unittest.TestCase):
         t = catalogue.clean_tool({"name": "a.b", "what": "  W  ", "acts": "yes", "args": {"n": {"type": "number", "min": 1}},
                                   "scope": "weird", "examples": ["e1", 2]})
         self.assertEqual(t, {"name": "a.b", "what": "W", "args": {"n": {"type": "number", "min": 1}}, "returns": "",
-                             "acts": False, "scope": "person", "examples": ["e1"]})
+                             "acts": False, "scope": "household", "examples": ["e1"]})   # not said: household-wide
+        self.assertEqual(catalogue.clean_tool({"name": "a.b", "scope": "person"})["scope"], "person")
+        self.assertEqual(catalogue.clean_tool({"name": "a.b"})["scope"], "household")
 
 
 if __name__ == "__main__":

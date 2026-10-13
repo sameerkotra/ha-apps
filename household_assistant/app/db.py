@@ -19,7 +19,7 @@ _import_lock = threading.Lock()  # serializes a database-file swap against concu
 
 
 def _connect() -> sqlite3.Connection:
-    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",))
+    return db_core.connect(config.DB_PATH, timeout=10)      # foreign keys on, synchronous = NORMAL (WAL)
 
 
 def get_conn():
@@ -31,14 +31,25 @@ SCHEMA = """
 PRAGMA journal_mode = WAL;
 
 -- Everyone who has opened the app (Home Assistant identity). enabled = 0: may not ask. is_child: asks only
--- when "Children may ask" is on, and then only `person` tools.
+-- when "Children may ask" is on, and then only `person` tools. reviewed = 0: new, shown as such on Admin → People
+-- until an admin changes or dismisses them (new rows are inserted with 0; rows from before the column count as seen).
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     is_child INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    reviewed INTEGER NOT NULL DEFAULT 1
 );
+
+-- What the hourly limits count (questions asked, briefings made): one row each, kept when people clear their
+-- questions (so clearing doesn't reset a limit); pruned after a day by the housekeeping.
+CREATE TABLE IF NOT EXISTS rate_events (
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL,             -- 'question' | 'briefing'
+    at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS rate_events_user ON rate_events (user_id, kind, at);
 
 CREATE TABLE IF NOT EXISTS questions (
     id TEXT PRIMARY KEY,
@@ -130,7 +141,8 @@ CREATE TABLE IF NOT EXISTS app_settings (
 """
 
 # Columns added after their table was first made (older databases and restored backups get them at start-up).
-MIGRATIONS = {"briefings": [("evening_on", "INTEGER NOT NULL DEFAULT 0"), ("evening_at", "TEXT NOT NULL DEFAULT '20:00'"),
+MIGRATIONS = {"users": [("reviewed", "INTEGER NOT NULL DEFAULT 1")],
+              "briefings": [("evening_on", "INTEGER NOT NULL DEFAULT 0"), ("evening_at", "TEXT NOT NULL DEFAULT '20:00'"),
                             ("evening_last_sent", "TEXT"), ("speaker", "TEXT")]}
 
 # Bumped by every init_db() (start-up, restore): settings.py drops its cache when it changes.
@@ -146,9 +158,12 @@ def init_db():
     generation += 1
 
 
+SNAPSHOT_PREFIX = "household-assistant-"   # download copies; one left by a broken download is swept hourly
+
+
 def backup_to_tempfile(after=None) -> str:
     """A complete, consistent copy of the live database (WAL included) in a temp file; the caller deletes it."""
-    return db_core.snapshot_to_tempfile(_connect, after=after)
+    return db_core.snapshot_to_tempfile(_connect, after=after, prefix=SNAPSHOT_PREFIX)
 
 
 REQUIRED_TABLES = {"users", "questions", "calls", "assist_tools", "app_settings"}

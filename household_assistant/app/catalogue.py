@@ -9,7 +9,11 @@
   their own *Answer the Household Assistant*, and said hello in the last 24 hours; children get only `person`
   tools, and only while *Children may ask* is on. Never anything of Household Vault's.
 
-What an app sends is checked, not trusted: names, argument types and lengths, and at most 24 tools.
+What an app sends is checked, not trusted: names, argument types and lengths, and at most 24 tools. A tool's
+name says whose it is: the household's own apps each have their area (`todo.` is Household Todo's), no other app
+may offer a tool in one of them, and a name two apps offer is offered by neither. An app that isn't one of the
+household's own starts switched off here (Admin → Apps), so a new app on the bus is never asked until an admin
+turns it on. A tool that doesn't say it is about the person (`scope: person`) counts as household-wide.
 """
 from __future__ import annotations
 
@@ -30,6 +34,12 @@ STALE = timedelta(hours=24)
 ACTIVE = timedelta(hours=24)
 NEVER_APPS = ("household_vault",)
 NEVER_AREAS = ("vault",)
+# The household's own apps (this repository) and the one area each offers its tools in. They start switched on
+# here; any other app starts off until an admin turns it on, and may not use these areas.
+KNOWN_AREAS = {"household_todo": ("todo",), "finance": ("finance",), "family_tree": ("tree",),
+               "splitpot": ("splitpot",), "calorie_tracker": ("calorie",), "receipt_price_intelligence": ("receipt",),
+               "household_docs": ("docs",), "household_chat": ("chat",), "household_arcade": ("arcade",)}
+RESERVED_AREAS = {a: slug for slug, areas in KNOWN_AREAS.items() for a in areas}
 
 _TOOL_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,2}$")
 _ARG_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -83,12 +93,28 @@ def clean_tool(raw) -> dict | None:
             return None
     return {"name": raw["name"], "what": _text(raw.get("what"), 400), "args": args,
             "returns": _text(raw.get("returns"), 200), "acts": raw.get("acts") is True,
-            "scope": "household" if raw.get("scope") == "household" else "person",
+            # only a tool that says it is about the person is one: anything else is household-wide (children
+            # and voice satellites never get those)
+            "scope": "person" if raw.get("scope") == "person" else "household",
             "examples": [_text(e, 120) for e in (raw.get("examples") or [])[:3] if isinstance(e, str)]
             if isinstance(raw.get("examples"), list) else []}
 
 
 # --------------------------------------------------------------------------------------------- asking
+
+def area_allowed(app: str, name: str) -> bool:
+    """Whether `app` may offer tool `name`: one of the household's own apps only in its own area; any other app
+    never in one of theirs."""
+    area = name.split(".", 1)[0]
+    if app in KNOWN_AREAS:
+        return area in KNOWN_AREAS[app]
+    return area not in RESERVED_AREAS
+
+
+def first_enabled(app: str) -> int:
+    """The admin's switch for an app seen for the first time: on for the household's own apps, else off."""
+    return 1 if app in KNOWN_AREAS else 0
+
 
 def _bus_apps() -> list[dict]:
     return bus.apps() if bus.default.started else []
@@ -108,8 +134,9 @@ def refresh(apps=None) -> list[str]:
             logger.info("Couldn't ask %s for its tools: %s", a["slug"], e)
             continue
         with db.get_conn() as conn:
-            conn.execute("INSERT INTO assist_apps (app, name, app_version) VALUES (?, ?, ?) ON CONFLICT(app) DO "
-                         "UPDATE SET name = excluded.name", (a["slug"], a["name"], None))
+            conn.execute("INSERT INTO assist_apps (app, name, app_version, enabled) VALUES (?, ?, ?, ?) ON "
+                         "CONFLICT(app) DO UPDATE SET name = excluded.name",
+                         (a["slug"], a["name"], None, first_enabled(a["slug"])))
         asked.append(a["slug"])
     return asked
 
@@ -138,8 +165,8 @@ def _on_list_answer(msg, conn) -> None:
     row = conn.execute("SELECT name, version FROM bus_apps WHERE slug = ?", (app,)).fetchone()
     name, version = (row[0], row[1]) if row else (None, None)
     now = _iso(datetime.now(timezone.utc))
-    conn.execute("INSERT INTO assist_apps (app, name) VALUES (?, ?) ON CONFLICT(app) DO UPDATE SET "
-                 "name = COALESCE(excluded.name, assist_apps.name)", (app, name))
+    conn.execute("INSERT INTO assist_apps (app, name, enabled) VALUES (?, ?, ?) ON CONFLICT(app) DO UPDATE SET "
+                 "name = COALESCE(excluded.name, assist_apps.name)", (app, name, first_enabled(app)))
     if msg.kind != "ack":
         detail = msg.data.get("detail")
         error = ("The tool list is too big." if detail == "answer too large" else
@@ -150,11 +177,29 @@ def _on_list_answer(msg, conn) -> None:
         return
     result = msg.result if isinstance(msg.result, dict) else {}
     raw = result.get("tools") if isinstance(result.get("tools"), list) else []
-    tools = [t for t in (clean_tool(x) for x in raw[:MAX_TOOLS]) if t]
-    skipped = len(raw[:MAX_TOOLS]) - len(tools) + max(0, len(raw) - MAX_TOOLS)
+    cleaned = [t for t in (clean_tool(x) for x in raw[:MAX_TOOLS]) if t]
+    tools, seen = [], set()
+    for t in cleaned:
+        if t["name"] in seen:                     # the same name twice in one list: the first one
+            continue
+        seen.add(t["name"])
+        tools.append(t)
+    outside = [t["name"] for t in tools if not area_allowed(app, t["name"])]
+    tools = [t for t in tools if area_allowed(app, t["name"])]
+    skipped = len(raw[:MAX_TOOLS]) - len(cleaned) + max(0, len(raw) - MAX_TOOLS)
+    others = {r[0]: r[1] for r in conn.execute("SELECT name, app FROM assist_tools WHERE app != ?", (app,))}
+    clashes = sorted(t["name"] for t in tools if t["name"] in others)
+    problems = []
+    if skipped:
+        problems.append(f"{skipped} tool(s) weren't well formed and are left out.")
+    if outside:
+        problems.append(f"{len(outside)} tool(s) are named for another app ({', '.join(outside[:3])}) and are left "
+                        "out.")
+    if clashes:
+        problems.append(f"{len(clashes)} tool(s) have the same name as another app's ({', '.join(clashes[:3])}): "
+                        "neither app's is offered.")
     conn.execute("UPDATE assist_apps SET app_on = ?, learned_at = ?, app_version = ?, error = ? WHERE app = ?",
-                 (1 if result.get("on") is True else 0, now, version,
-                  f"{skipped} tool(s) weren't well formed and are left out." if skipped else None, app))
+                 (1 if result.get("on") is True else 0, now, version, " ".join(problems) or None, app))
     old = {r[0]: r[1] for r in conn.execute("SELECT name, enabled FROM assist_tools WHERE app = ?", (app,))}
     conn.execute("DELETE FROM assist_tools WHERE app = ?", (app,))
     for t in tools:
@@ -187,9 +232,14 @@ def app_names(conn) -> dict[str, str]:
 
 
 def for_user(conn, user: dict) -> dict[str, dict]:
-    """tool name -> {app, appName, spec} that this person may be offered."""
+    """tool name -> {app, appName, spec} that this person may be offered. A name offered by two apps (whatever
+    their switches) is offered by neither. Children, and questions asked `person_only` (a voice satellite), get
+    only `scope: person` tools."""
     active = _active_apps(conn)
-    child = bool(user.get("is_child"))
+    person_only = bool(user.get("is_child")) or bool(user.get("person_only"))
+    owners: dict[str, set] = {}
+    for app, name in conn.execute("SELECT app, name FROM assist_tools"):
+        owners.setdefault(name, set()).add(app)
     rows = conn.execute("SELECT t.app, t.spec, a.name FROM assist_tools t JOIN assist_apps a ON a.app = t.app "
                         "WHERE a.enabled = 1 AND a.app_on = 1 AND t.enabled = 1 ORDER BY t.app, t.name").fetchall()
     out = {}
@@ -200,7 +250,9 @@ def for_user(conn, user: dict) -> dict[str, dict]:
             t = json.loads(spec)
         except ValueError:
             continue
-        if child and t.get("scope") != "person":
+        if len(owners.get(t.get("name"), ())) > 1 or not area_allowed(app, str(t.get("name") or "")):
+            continue
+        if person_only and t.get("scope") != "person":
             continue
         out[t["name"]] = {"app": app, "appName": name or active[app], "spec": t}
     return out

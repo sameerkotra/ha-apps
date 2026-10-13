@@ -2,6 +2,9 @@
 main.py refuses every other address). There is no login screen and no "act as": every question, answer and
 action belongs to the signed-in person, admins included (HOUSEHOLD_ASSISTANT_SPEC.md §7.2).
 
+`get_current_user` is a plain dependency (run in the threadpool): it reads the person's row and writes it only when
+it is new or their name changed.
+
 Admins are the people on the `admin_users` option, by user id or login name (never display name).
 """
 import logging
@@ -30,14 +33,21 @@ def _is_admin(user_id: str, display_name: str, username: str | None) -> bool:
     return False
 
 
-async def get_current_user(request: Request) -> dict:
+def get_current_user(request: Request) -> dict:
+    """The signed-in person. A plain (sync) dependency, so FastAPI runs it in its threadpool and the SQLite work
+    never blocks the event loop. One read per request; the row is written only when it is new or the name changed."""
     ident = auth_core.identity(request)
     auth_core.require_user_id(ident.user_id, config.APP_TITLE)
     name = ident.display_name or ident.username or "Home Assistant User"
     with db.get_conn() as conn:
-        conn.execute("INSERT INTO users (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name",
-                     (ident.user_id, name))
-        row = conn.execute("SELECT enabled, is_child FROM users WHERE id = ?", (ident.user_id,)).fetchone()
+        row = conn.execute("SELECT name, enabled, is_child FROM users WHERE id = ?", (ident.user_id,)).fetchone()
+        if row is None:
+            # reviewed = 0: shown as new on Admin → People until an admin looks at them
+            conn.execute("INSERT INTO users (id, name, reviewed) VALUES (?, ?, 0) ON CONFLICT(id) DO UPDATE SET "
+                         "name = excluded.name", (ident.user_id, name))
+            row = conn.execute("SELECT name, enabled, is_child FROM users WHERE id = ?", (ident.user_id,)).fetchone()
+        elif row["name"] != name:
+            conn.execute("UPDATE users SET name = ? WHERE id = ?", (name, ident.user_id))
     return {"id": ident.user_id, "name": name, "username": ident.username,
             "is_admin": _is_admin(ident.user_id, name, ident.username),
             "enabled": bool(row["enabled"]), "is_child": bool(row["is_child"])}
@@ -58,14 +68,15 @@ def user_by_id(user_id: str, name: str | None = None) -> dict:
             if person is None:
                 raise PermissionError(UNKNOWN_PERSON)
             name = (person.get("name") or name or "").strip()[:80] or "Home Assistant User"
-            conn.execute("INSERT INTO users (id, name) VALUES (?, ?) ON CONFLICT(id) DO NOTHING", (user_id, name))
+            conn.execute("INSERT INTO users (id, name, reviewed) VALUES (?, ?, 0) ON CONFLICT(id) DO NOTHING",
+                         (user_id, name))
             row = conn.execute("SELECT name, enabled, is_child FROM users WHERE id = ?", (user_id,)).fetchone()
     return {"id": user_id, "name": row["name"], "username": None, "is_admin": _is_admin(user_id, row["name"], None),
             "enabled": bool(row["enabled"]), "is_child": bool(row["is_child"])}
 
 
-async def require_admin(request: Request) -> dict:
-    user = await get_current_user(request)
+def require_admin(request: Request) -> dict:
+    user = get_current_user(request)
     auth_core.require_admin_flag(user["is_admin"], "Only admins can do this. See admin_users on the app's "
                                                    "Configuration tab.")
     return user

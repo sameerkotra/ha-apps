@@ -11,6 +11,10 @@ Admins change them inside the app, without a restart. Only `admin_users` stays o
   `question_timeout` (seconds, 300; 60–900), `keep_days` (30).
 - Privacy: `recorder_excluded` (the admin's tick that `household_apps` is out of the recorder), `shared_open`
   ("What was shared" open by default).
+- Briefings: `briefing_speakers` (the speakers a briefing may be read aloud on; empty = every one of Home
+  Assistant's), `quiet_from` / `quiet_until` (HH:MM; no reading aloud between them; both empty = never quiet).
+- Household apps: `bus_signing_key` (SECRET: the app-messages signing key, the same in every household app; empty =
+  unsigned, as before).
 
 Which apps the assistant may ask is not here: it is the `assist_apps` table (Admin → Apps).
 """
@@ -33,6 +37,9 @@ DEFAULT_URLS = {"ollama": "", "openai": "https://api.openai.com/v1", "anthropic"
 NOT_SET_UP = "The assistant's AI isn't set up — an admin can set it up in Admin → App settings."
 
 _KEY_CHARS = re.compile(r"^[\x21-\x7e]+$")     # printable ASCII, no spaces: safe in a header
+_SPEAKER_RE = re.compile(r"^media_player\.[a-z0-9_]{1,100}$")
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+MAX_SPEAKERS = 50
 
 
 def _check_provider(v: str) -> str:
@@ -58,12 +65,38 @@ def _check_key(v: str) -> str:
     return v
 
 
+def _check_speakers(v: str) -> str:
+    """ "media_player.kitchen, media_player.lounge" (commas, spaces or new lines between them), tidied."""
+    names = [x for x in re.split(r"[\s,;]+", v or "") if x]
+    bad = [x for x in names if not _SPEAKER_RE.match(x)]
+    if bad:
+        raise ValueError(f"must be media players, e.g. media_player.kitchen (not {bad[0][:40]!r})")
+    names = list(dict.fromkeys(names))
+    if len(names) > MAX_SPEAKERS:
+        raise ValueError(f"at most {MAX_SPEAKERS} speakers")
+    return ", ".join(names)
+
+
+def _check_time(v: str) -> str:
+    v = (v or "").strip()
+    if v and not _TIME_RE.match(v):
+        raise ValueError("must be a time as HH:MM (24-hour), e.g. 22:00, or empty")
+    return v
+
+
+def allowed_speakers() -> set[str]:
+    """The speakers an admin allows briefings on; empty = every one of Home Assistant's."""
+    return {x for x in get("briefing_speakers").split(", ") if x}
+
+
 GROUPS = [
     Group("ai", "🤖 AI", "The model that plans which apps to ask and writes the answers. The assistant does nothing "
           "until it is set up. Nothing is sent to an outside service unless you choose one."),
     Group("people", "👥 People"),
     Group("limits", "⏱️ Limits"),
     Group("privacy", "🔒 Privacy"),
+    Group("briefings", "🌅 Briefings", "Where and when a briefing may be read aloud. Phones get it whatever is set here."),
+    Group("apps", "🔗 Household apps"),
 ]
 
 # Every key applies live (read at the moment it's used); none needs a restart.
@@ -125,6 +158,23 @@ SETTINGS = [
                  "history (see the documentation). The app can't check this; tick it once done."),
     Setting("shared_open", False, "Show \"What was shared\" open", group="privacy", strict=True,
             help="Under each answer, the exact tool calls and what each app returned. Closed by default."),
+    Setting("briefing_speakers", "", "Speakers briefings may use", group="briefings", strict=True, max_length=6000,
+            validators=[_check_speakers], placeholder="media_player.kitchen, media_player.lounge",
+            help="The media players a person may choose to hear their briefing on, separated by commas. Empty: every "
+                 "speaker Home Assistant has. A speaker taken off this list is no longer read aloud on."),
+    Setting("quiet_from", "", "Quiet hours from", group="briefings", strict=True, max_length=5,
+            validators=[_check_time], placeholder="22:00",
+            help="From this time (HH:MM) briefings aren't read aloud on speakers; they still go to phones. Empty with "
+                 "Quiet hours until: never quiet."),
+    Setting("quiet_until", "", "Quiet hours until", group="briefings", strict=True, max_length=5,
+            validators=[_check_time], placeholder="07:00",
+            help="Until this time (HH:MM). Quiet hours may run past midnight, e.g. 22:00 to 07:00."),
+    # SECRET: never returned or shown; blanked in backups.
+    Setting("bus_signing_key", "", "App-messages signing key", group="apps", secret=True, max_length=200,
+            page={"clearFlag": "clear_bus_signing_key"},
+            help="The same key in every household app (Admin → App settings there), and in the Household Assistant "
+                 "integration's options for Assist. Without one, any app on Home Assistant's network can send "
+                 "messages as any other. Leave the box empty to keep the saved key."),
 ]
 
 
@@ -152,14 +202,41 @@ readable = settings_core.by_key           # "<key>: <message>; …" (also the te
 
 
 def _prepare(partial: dict, current: dict, flags: dict) -> dict:
-    """A blank ai_api_key keeps the saved key; clear_ai_api_key=true removes it."""
-    if "ai_api_key" in partial:
-        new_key = partial["ai_api_key"]
-        if new_key is None or (isinstance(new_key, str) and not new_key.strip()):
-            partial.pop("ai_api_key")             # blank box = keep the saved key
-    if flags.get("clear_ai_api_key"):
-        partial["ai_api_key"] = ""
+    """A blank secret keeps the saved one; clear_<secret>=true removes it. A saved access key goes only to the
+    provider and address it was typed for: changing either needs the key typed again (or cleared)."""
+    for key in ("ai_api_key", "bus_signing_key"):
+        if key in partial:
+            new_key = partial[key]
+            if new_key is None or (isinstance(new_key, str) and not new_key.strip()):
+                partial.pop(key)                  # blank box = keep the saved key
+        if flags.get(f"clear_{key}"):
+            partial[key] = ""
+    if current.get("ai_api_key") and "ai_api_key" not in partial and key_target_changed(current, partial):
+        raise SettingsError(RETYPE_KEY)
     return partial
+
+
+RETYPE_KEY = ("ai_api_key: the saved access key was for another provider or address. Type the key again for the new "
+              "one, or remove it.")
+
+
+def _target(provider: str, url: str) -> tuple[str, str]:
+    """Where a key goes: the provider and the host:port of its address (the standard one when blank)."""
+    full = ai_url(provider, url)
+    try:
+        parts = urlsplit(full)
+        return provider, f"{parts.scheme}://{(parts.hostname or '').lower()}:{parts.port or ''}"
+    except ValueError:
+        return provider, full
+
+
+def key_target_changed(current: dict, new: dict) -> bool:
+    """True when `new` (a partial: missing keys keep `current`'s) sends the key somewhere else."""
+    provider = new.get("ai_provider", current.get("ai_provider")) or ""
+    url = new.get("ai_url", current.get("ai_url")) or ""
+    if isinstance(url, str):
+        url = url.strip()
+    return _target(provider, str(url)) != _target(current.get("ai_provider") or "", current.get("ai_url") or "")
 
 
 def _check(merged: dict, partial: dict, current: dict) -> None:
@@ -175,7 +252,8 @@ REGISTRY = settings_core.Registry(
     SETTINGS, groups=GROUPS, connect=db.get_conn, model_config={"str_strip_whitespace": True},
     format_error=readable, unknown_message=lambda keys: f"Unknown setting(s): {', '.join(sorted(keys))}",
     not_object_message="Expected a JSON object of settings.",
-    flags={"clear_ai_api_key": "clear_ai_api_key: must be true or false"},
+    flags={"clear_ai_api_key": "clear_ai_api_key: must be true or false",
+           "clear_bus_signing_key": "clear_bus_signing_key: must be true or false"},
     prepare=_prepare, check=_check, load_check="isinstance", now=_now_iso,
     generation=lambda: db.generation, secret_values="omit", logger=logger)
 
@@ -259,13 +337,15 @@ def payload() -> dict:
     key = values["ai_api_key"]
     return REGISTRY.payload(
         values,
-        secrets={"ai_api_key": {"saved": bool(key), "hint": api_key_hint(key)}},
+        secrets={"ai_api_key": {"saved": bool(key), "hint": api_key_hint(key)},
+                 "bus_signing_key": {"saved": bool(values["bus_signing_key"]), "hint": ""}},
         providers={k: {"label": PROVIDERS[k], "defaultUrl": DEFAULT_URLS[k]} for k in PROVIDERS})
 
 
 def update(partial: dict, user: dict | None) -> list[str]:
     """Validate {current values + partial} and store the keys that changed.
     Returns the list of changed keys. A blank `ai_api_key` keeps the saved
-    key; `clear_ai_api_key: true` removes it. Raises SettingsError."""
+    key; `clear_ai_api_key: true` removes it; a new provider or address with a
+    saved key needs the key again. Raises SettingsError."""
     who = (user.get("id") or user.get("name")) if user else None
     return REGISTRY.update(partial, who)[1]
