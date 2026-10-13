@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, config, db, probe, restarts, settings, sidebar, sites, watchdog
+from .. import auth, config, db, probe, proxy, restarts, settings, sidebar, sites, watchdog
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -92,18 +92,23 @@ def admin_reorder(body: Order, admin: dict = Depends(require_admin)):
 
 # --------------------------------------------------------------------------------------------- the Monitor page
 
+MONITOR_COLUMNS = ("s.id, s.state, s.state_since, s.last_check, s.last_ms, s.last_error, s.paused_until, "
+                   "s.check_kind, s.restart_entity, s.restart_due, s.blocked_reason, COALESCE(i.restarts, 0) AS restarts, "
+                   "EXISTS (SELECT 1 FROM alert_mutes m WHERE m.site_id = s.id AND m.user_id = ?) AS muted, "
+                   "EXISTS (SELECT 1 FROM site_alert_people a WHERE a.site_id = s.id AND a.user_id = ?) AS alerted")
+
+
 def _monitor_row(conn, site: sites.Site, user: dict, now: float) -> dict:
-    r = conn.execute("SELECT * FROM sites WHERE id = ?", (site.id,)).fetchone()
-    inc = conn.execute("SELECT restarts, started_at FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone() \
-        if r["incident_id"] else None
-    muted = conn.execute("SELECT 1 FROM alert_mutes WHERE site_id = ? AND user_id = ?", (site.id, user["id"])).fetchone()
-    alerted = conn.execute("SELECT 1 FROM site_alert_people WHERE site_id = ? AND user_id = ?",
-                           (site.id, user["id"])).fetchone()
+    r = conn.execute(f"SELECT {MONITOR_COLUMNS} FROM sites s LEFT JOIN incidents i ON i.id = s.incident_id "
+                     "WHERE s.id = ?", (user["id"], user["id"], site.id)).fetchone()
+    if r is None:
+        return None
+    muted, alerted = r["muted"], r["alerted"]
     is_paused = watchdog.paused(r, now)
     return {"slug": site.slug, "name": site.name, "icon": site.icon, "use": site.use, "id": site.id,
             "favicon": sites.public(site)["favicon"], "state": "paused" if is_paused else (r["state"] or "not_checked"),
             "since": r["state_since"], "lastCheck": r["last_check"], "ms": r["last_ms"], "error": r["last_error"],
-            "restarts": inc["restarts"] if inc else 0, "strip": watchdog.strip(conn, site.id),
+            "restarts": r["restarts"], "strip": watchdog.strip_cached(conn, site.id),
             "pausedUntil": None if not is_paused else (None if r["paused_until"] >= watchdog.UNTIL_RESUMED
                                                          else watchdog.iso(r["paused_until"])),
             "muted": bool(muted), "alerted": bool(alerted), "kind": r["check_kind"],
@@ -117,7 +122,7 @@ def monitor(user: dict = Depends(get_current_user)):
     now = watchdog.clock()
     with db.get_conn() as conn:
         rows = [_monitor_row(conn, s, user, now) for s in sites.checked_for_user(user)]
-    return {"sites": rows, "isAdmin": user["is_admin"]}
+    return {"sites": [r for r in rows if r is not None], "isAdmin": user["is_admin"]}
 
 
 class MuteIn(BaseModel):
@@ -156,7 +161,7 @@ async def admin_check_now(site_id: int, admin: dict = Depends(require_admin)):
     res = await watchdog.check_now(site_id)
     if res is None:
         raise HTTPException(404, "No such site, or it isn't checked.")
-    return {"ok": res.ok, "ms": res.ms, "error": res.error}
+    return {"ok": res.ok, "ms": res.ms, "error": res.error, "recorded": res.recorded}
 
 
 class PauseIn(BaseModel):
@@ -297,8 +302,9 @@ async def admin_fetch_favicon(site_id: int, admin: dict = Depends(require_admin)
 
 @router.get("/admin/sites/{site_id}/log")
 def admin_site_log(site_id: int, limit: int = Query(200, ge=1, le=1000), admin: dict = Depends(require_admin)):
+    proxy.flush_access_log()
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT l.at, l.method, l.path, l.status, l.bytes, u.name FROM access_log l "
+        rows = conn.execute("SELECT l.at, l.method, l.path, l.status, l.bytes, l.seconds, u.name FROM access_log l "
                             "LEFT JOIN users u ON u.id = l.user_id WHERE l.site_id = ? ORDER BY l.at DESC LIMIT ?",
                             (site_id, limit)).fetchall()
     return {"log": [dict(r) for r in rows]}

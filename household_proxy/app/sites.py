@@ -7,7 +7,6 @@ The proxy reads sites from a small in-memory cache that every write (and a resto
 import json
 import re
 import threading
-import time
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
@@ -83,7 +82,49 @@ class RuleIn(BaseModel):
             re.compile(v)
         except re.error as e:
             raise ValueError(f"isn't a valid regular expression: {e}")
+        if nested_repeat(v):
+            raise ValueError("repeats something that repeats itself (like (a+)+ or (x*y)*): on some pages that takes "
+                             "minutes to run. Write it without the repeat around the repeat")
         return v
+
+
+def nested_repeat(pattern: str) -> bool:
+    """A repeat (more than once) around something that repeats without limit — the shape that makes Python's regular
+    expressions slow down exponentially on text that almost matches. Possessive repeats and atomic groups don't
+    backtrack, so they are fine."""
+    try:
+        from re import _constants as c, _parser as p             # Python 3.11+
+    except ImportError:                                          # pragma: no cover — older Pythons
+        import sre_constants as c
+        import sre_parse as p
+    try:
+        tree = p.parse(pattern)
+    except Exception:                                            # noqa: BLE001 — re.compile already accepted it
+        return False
+    repeats = {c.MAX_REPEAT, c.MIN_REPEAT}
+
+    def walk(items, inside: bool) -> bool:
+        for op, av in items:
+            if op in repeats:
+                _lo, hi, sub = av
+                if hi == c.MAXREPEAT and inside:
+                    return True
+                if walk(sub, inside or hi > 1):
+                    return True
+            elif op == c.SUBPATTERN:
+                if walk(av[-1], inside):
+                    return True
+            elif op == c.BRANCH:
+                if any(walk(b, inside) for b in av[1]):
+                    return True
+            elif op in (c.ASSERT, c.ASSERT_NOT):
+                if walk(av[1], inside):
+                    return True
+            elif op == c.GROUPREF_EXISTS:
+                if any(walk(b, inside) for b in av[1:] if b):
+                    return True
+        return False
+    return walk(tree, False)
 
 
 @dataclass(frozen=True)
@@ -257,7 +298,17 @@ class Site:
     favicon: bool = False                      # the site's own icon is shown
     use: str = "proxy"                         # 'monitor': never proxied (§13.1)
     checked: bool = False                      # has checks (§13.2)
-    state: str | None = None                   # the check state, for the launcher's dot ("paused" while paused)
+    state: str | None = None                   # the check state, for the launcher's dot
+    paused_until: float | None = None          # checks paused until then (epoch seconds; 1e18: until resumed)
+
+    def current_state(self) -> str | None:
+        """The check state now ("paused" while paused — read at the time of asking, not when the cache was made)."""
+        if not self.checked:
+            return None
+        from . import watchdog
+        if self.paused_until and self.paused_until > watchdog.clock():
+            return "paused"
+        return self.state
 
     def body_rules(self, content_type: str | None) -> list:
         return [r for r in self.rules if r.where == "body" and r.applies(content_type)]
@@ -273,12 +324,36 @@ class Site:
 
 _lock = threading.Lock()
 _cache: dict = {"gen": None, "by_slug": None, "version": 0}
+_listeners: list = []
+
+
+def on_invalidate(fn) -> None:
+    """Call fn() (from any thread) whenever the sites change: open websockets check they are still allowed."""
+    _listeners.append(fn)
 
 
 def invalidate() -> None:
     with _lock:
         _cache["by_slug"] = None
         _cache["version"] += 1
+    for fn in _listeners:
+        try:
+            fn()
+        except Exception:                      # noqa: BLE001 — a listener never stops a save
+            import logging
+            logging.getLogger("sites").exception("a sites listener failed")
+
+
+_columns: dict = {"gen": None, "sql": None}
+
+
+def columns(conn) -> str:
+    """Every column of `sites` but the icon's bytes (read only when the icon is served), plus has_favicon."""
+    if _columns["gen"] != db.generation or _columns["sql"] is None:
+        names = [r["name"] for r in conn.execute("PRAGMA table_info(sites)") if r["name"] != "favicon"]
+        _columns["sql"] = ", ".join(names) + ", favicon IS NOT NULL AS has_favicon"
+        _columns["gen"] = db.generation
+    return _columns["sql"]
 
 
 def _load(conn) -> dict:
@@ -297,7 +372,7 @@ def _load(conn) -> dict:
             continue
         rules.setdefault(r["site_id"], []).append(Rule(r["where_"], frozenset(t for t in r["types"].split(",") if t),
                                                        pat, r["replace"]))
-    for r in conn.execute("SELECT * FROM sites ORDER BY position, id"):
+    for r in conn.execute(f"SELECT {columns(conn)} FROM sites ORDER BY position, id"):
         try:
             if r["use_"] == "monitor":
                 scheme, host, port = netguard.parse_monitor_target(r["target"])
@@ -313,9 +388,8 @@ def _load(conn) -> dict:
             allow_public=bool(r["allow_public"]), tls_pem=r["tls_pem"], timeout_s=r["timeout_s"],
             access_log=bool(r["access_log"]), updated_at=r["updated_at"],
             headers=tuple((n, v) for n, v in headers.get(r["id"], ()) if v), rules=tuple(rules.get(r["id"], ())),
-            favicon=bool(r["use_favicon"] and r["favicon"]), use=r["use_"], checked=r["check_kind"] is not None,
-            state=("paused" if r["paused_until"] and r["paused_until"] > time.time() else r["state"])
-            if r["check_kind"] else None)
+            favicon=bool(r["use_favicon"] and r["has_favicon"]), use=r["use_"], checked=r["check_kind"] is not None,
+            state=r["state"] if r["check_kind"] else None, paused_until=r["paused_until"])
     return out
 
 
@@ -331,6 +405,14 @@ def all_sites() -> dict:
         if _cache["version"] == version:          # nothing was saved while this was read: keep it
             _cache["by_slug"], _cache["gen"] = loaded, gen
     return loaded
+
+
+def peek() -> dict | None:
+    """The cached {slug: Site} if it is current, else None (the caller loads it in a worker thread: all_sites)."""
+    with _lock:
+        if _cache["by_slug"] is not None and _cache["gen"] == db.generation:
+            return _cache["by_slug"]
+    return None
 
 
 def get(slug: str) -> Site | None:
@@ -367,7 +449,7 @@ def public(site: Site) -> dict:
     return {"slug": site.slug, "name": site.name, "icon": site.icon, "startPath": site.start_path,
             "showBar": site.show_bar, "spaMode": site.spa_mode,
             "favicon": f"api/sites/{site.slug}/favicon?v={site.updated_at}" if site.favicon else None,
-            "state": (site.state or "not_checked") if site.checked else None}
+            "state": (site.current_state() or "not_checked") if site.checked else None}
 
 
 # --------------------------------------------------------------------------------------------- admin form
@@ -391,7 +473,7 @@ def admin_row(conn, r) -> dict:
                         "window_end": r["window_end"] or ""},
             "alerts": {"people": alert_people, "service": r["alert_service"] or "",
                        "events": json.loads(r["alert_events"] or "[]")},
-            "rules": rules, "use_favicon": bool(r["use_favicon"]), "has_favicon": r["favicon"] is not None,
+            "rules": rules, "use_favicon": bool(r["use_favicon"]), "has_favicon": bool(r["has_favicon"]),
             "id": r["id"], "slug": r["slug"], "name": r["name"], "icon": r["icon"], "target": r["target"],
             "start_path": r["start_path"], "access": r["access"], "people": people,
             "trusted_ok": bool(r["trusted_ok_at"]), "trusted_ok_at": r["trusted_ok_at"],
@@ -404,7 +486,8 @@ def admin_row(conn, r) -> dict:
 
 def admin_list() -> list[dict]:
     with db.get_conn() as conn:
-        return [admin_row(conn, r) for r in conn.execute("SELECT * FROM sites ORDER BY position, id").fetchall()]
+        return [admin_row(conn, r) for r in
+                conn.execute(f"SELECT {columns(conn)} FROM sites ORDER BY position, id").fetchall()]
 
 
 def _validate(body: SiteIn) -> tuple[str, str]:
@@ -568,9 +651,30 @@ def save(body: SiteIn, admin: dict, site_id: int | None = None) -> dict:
         conn.executemany("INSERT INTO site_rules (site_id, position, where_, types, match, replace) "
                          "VALUES (?, ?, ?, ?, ?, ?)",
                          [(site_id, i, x.where, x.types, x.match, x.replace) for i, x in enumerate(body.rules)])
-        row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
+        row = conn.execute(f"SELECT {columns(conn)} FROM sites WHERE id = ?", (site_id,)).fetchone()
         out = admin_row(conn, row)
+        out["warnings"] = warnings(conn, body, row)
     invalidate()
+    return out
+
+
+def warnings(conn, body: SiteIn, row) -> list[str]:
+    """What the admin should know about a site just saved (shown after saving; nothing is refused)."""
+    out = []
+    try:
+        host = netguard.parse_monitor_target(body.target)[1]
+    except netguard.TargetError:
+        host = ""
+    w = netguard.target_warning(host)
+    if w:
+        out.append(w)
+    if body.restart.entity and body.check.kind:
+        from . import settings
+        checked = conn.execute("SELECT COUNT(*) FROM sites WHERE check_kind IS NOT NULL").fetchone()[0]
+        if not settings.get("monitor_reference") and checked < 3:
+            out.append("No Network reference address is set (Admin → App settings) and fewer than 3 sites are "
+                       "checked, so the app can't tell a network outage from a stuck device: it may restart this one "
+                       "when the network is the problem. Set the reference to your router's address.")
     return out
 
 

@@ -1,2 +1,4 @@
 -r requirements.txt
+# httpx2: the HTTP client Starlette's TestClient uses (by httpx's author, Tom Christie; the name checked
+# 2026-10-13 — not a look-alike of httpx). Tests only: never in the app's image.
 httpx2==2.13.1

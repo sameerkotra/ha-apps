@@ -83,6 +83,32 @@ class SitesForm(ProxyCase):
             self.assertEqual(r.status_code, 403, path)
 
 
+class SaveWarnings(ProxyCase):
+    """Saved, with a word of warning: Home Assistant's own network, link-local addresses, and auto-restart that can't
+    tell a network outage from a stuck device."""
+
+    def post(self, **kw):
+        body = {"name": "X", "target": "http://192.168.1.10:9120", "trusted_ok": True}
+        body.update(kw)
+        r = self.c.post("/api/admin/sites", json=body, headers=ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()["warnings"]
+
+    def test_addresses(self):
+        self.assertEqual(self.post(), [])
+        self.assertIn("internal network", self.post(slug="ha", target="http://172.30.32.1:8123")[0])
+        self.assertIn("link-local", self.post(slug="ll", target="http://169.254.1.2")[0])
+
+    def test_auto_restart_without_a_reference(self):
+        from app import settings
+        restart = {"entity": "switch.plug", "confirmed": True}
+        w = self.post(slug="m", use="monitor", target="nas.lan", check={"kind": "ping"}, restart=restart)
+        self.assertTrue(any("Network reference address" in x for x in w), w)
+        settings.update({"monitor_reference": "192.168.1.1"}, None)
+        self.assertEqual(self.post(slug="m2", use="monitor", target="nas.lan", check={"kind": "ping"},
+                                   restart=restart), [])
+
+
 class SecretsStayWithTheirAddress(ProxyCase):
     def test_changed_address_needs_the_values_again(self):
         s = self.add_site(headers=[{"name": "Authorization", "value": "Basic SECRET"}])
@@ -164,6 +190,18 @@ class Storage(ProxyCase):
         self.assertEqual(r.status_code, 400)
         with db.get_conn() as conn:
             self.assertIsNotNone(conn.execute("SELECT 1 FROM users").fetchone())
+
+
+class StaleCopies(ProxyCase):
+    def test_backup_copies_named_and_swept(self):
+        import time
+        from app import main
+        path = db.backup_to_tempfile()
+        self.assertTrue(os.path.basename(path).startswith(db.SNAPSHOT_PREFIX))
+        old = time.time() - 7 * 3600
+        os.utime(path, (old, old))                      # a download nobody finished, hours ago
+        main.housekeeping()
+        self.assertFalse(os.path.exists(path))
 
 
 class Settings(ProxyCase):

@@ -129,7 +129,14 @@
     show("monitor");
     stopMonitor();
     await renderMonitor(focus);
-    monitorTimer = setInterval(() => { if (!document.hidden) renderMonitor(null); }, 15000);
+    monitorTimer = setInterval(() => { if (!document.hidden && !menuOpen()) renderMonitor(null); }, 15000);
+  }
+
+  // The page refreshes itself every 15 seconds; not while an admin has a Pause menu (or another control) open in it,
+  // which a refresh would close under their finger.
+  function menuOpen() {
+    const el = document.activeElement;
+    return !!(el && el !== document.body && $("#monitorList").contains(el) && el.tagName === "SELECT");
   }
 
   async function renderMonitor(focus) {
@@ -192,7 +199,8 @@
       act("restart", null, "Restarting…");
     };
     return h("div", { class: "monitor-actions" },
-      h("button", { type: "button", class: "btn-secondary", onclick: () => act("check-now", null, (r) => r.ok ? `Answered in ${r.ms} ms` : `No: ${r.error}`) }, "Check now"),
+      h("button", { type: "button", class: "btn-secondary", onclick: () => act("check-now", null, (r) =>
+        (r.ok ? `Answered in ${r.ms} ms` : `No: ${r.error}`) + (r.recorded === false ? " (not counted: it is restarting or starting up)" : "")) }, "Check now"),
       s.canRestart ? h("button", { type: "button", class: "btn-secondary", disabled: s.state === "restarting", onclick: restart }, "🔌 Restart now") : null,
       s.state === "needs_attention" && s.canRestart ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("retry", null, "Trying again") }, "Try again") : null,
       s.state === "paused" ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("resume", null, "Resumed") }, "Resume") : pause,
@@ -553,6 +561,7 @@
         const saved = await api(site ? `api/admin/sites/${site.id}` : "api/admin/sites", { method: site ? "PUT" : "POST", body: body() });
         modal.close();
         toast("Saved");
+        for (const w of saved.warnings || []) UI.toast("⚠️ " + w, { ms: 12000, wrap: true });   // saved, but worth knowing
         if (saved.use_favicon && !saved.has_favicon) {
           try { await api(`api/admin/sites/${saved.id}/favicon`, { method: "POST" }); }
           catch (e3) { toast(e3.message, true); }

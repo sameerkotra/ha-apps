@@ -37,9 +37,22 @@ websockets, live updates and new links the page builds (`/api/…`, `wss://…`)
 decide what to show, and under the proxy they see a long Home Assistant address and show "not found". In this mode
 the frame's address is changed to the site's own path before the app starts, so its router works. Then **↻** in the
 bar starts the site again from its start page, and the frame's own address isn't a link anyone can open — use
-**Copy link**. Pages that read their own cookies from a script may not work in this mode.
+**Copy link**.
 
-Websockets (terminals, live logs) pass through both ways.
+Websockets (terminals, live logs) pass through both ways. The address a page asks for — its query too — reaches the
+site as the browser sent it: Home Assistant escapes a few characters on the way (`[`, `]`, `{`, `}`, `|`, `^`, `` ` ``),
+and the proxy puts them back (since 0.6.3; Komodo's terminal needs it).
+
+**Cookies and browser storage** are kept per site. Every site shares Home Assistant's address in your browser, so the
+app keeps each site's cookies under the site's own name (`hp_<short name>_<cookie>`, on the site's own path) and
+passes only those to it, and the small script keeps each site's localStorage and sessionStorage keys apart in the same
+way. A site can't read or wipe Home Assistant's sign-in, or another site's, by accident. (Upgrading to 0.6.4 renamed
+them: sites that keep you signed in with a cookie asked you to sign in once.)
+
+What the script can't reach, and so may not work: addresses a page writes into HTML as text (`innerHTML`,
+`document.write`), requests made by a page's own background workers, a page sending the whole frame to a root address
+(`location.href = "/login"`) in browsers without the Navigation API (Safari, Firefox — Chrome and Edge have it), and
+browser storage used other ways than its methods (`localStorage.key = …`, IndexedDB, the Cookie Store API).
 
 Most web pages expect to live at the top of their own address (`/`). Here they live under Home Assistant's
 address, so the app rewrites what it can on the way through: links, forms, images, styles, redirects and
@@ -60,12 +73,25 @@ Add, edit, delete and reorder the sites. For each site:
 - **Start path** — the page the tile opens (`/dashboard`).
 - **Who can open it** — **Admins only** (the default), **Everyone**, or **Chosen people** (everyone who has
   opened this app is listed). Admins open every site.
-- **This is software I run and keep updated** — required. A site opened here runs on Home Assistant's own
-  address: a page there can read what Home Assistant's pages keep in the browser — including the sign-in kept
-  by "Keep me logged in" — and act in Home Assistant as the person viewing it. Add only software you run and
-  keep updated (Komodo, your NAS), not a router, printer or camera page with old firmware.
+- **This is software I run and keep updated** — required. See **Trusted software only** below.
 - **Single-page app mode** — for apps with their own router that show "not found" under the proxy (see above).
 - **Show the bar** — on by default.
+
+### Trusted software only
+
+**A flaw in any site you list exposes Home Assistant for whoever opens it.** A site opened here runs on Home
+Assistant's own address. A page there — or a script injected into it through a bug in the site — can read what Home
+Assistant's pages keep in the browser, including the sign-in kept by "Keep me logged in", and act in Home Assistant as
+the person viewing it, with everything that person may do. The app makes accidents unlikely — each site's cookies and
+browser storage are kept apart, and requests to the app's own admin pages from a proxied page are refused — but none
+of that stops a page written to get around it: the browser treats every site here as Home Assistant itself.
+
+So: add only software you run and keep updated (Komodo, your NAS), not a router, printer or camera page with old
+firmware; keep **Who can open it** on **Admins only** unless others need the site; and for anything you don't fully
+trust, use a tunnel and a Webpage dashboard card instead (see Troubleshooting).
+
+When you save a site, the form also warns (and saves anyway) when its address is on Home Assistant's own internal
+network (Home Assistant, the Supervisor, your other apps) or is a link-local address.
 
 **Advanced:**
 
@@ -74,7 +100,8 @@ Add, edit, delete and reorder the sites. For each site:
 - **Pass the viewer's name** — adds `Remote-User` and `X-Forwarded-User` for sites that sign people in from a
   header. Only safe when the site accepts that header from this app alone. Such headers sent by a browser are always
   removed, whether this is on or off.
-- **Keep an access log** — time, person, method, path and status for 7 days (App settings); never contents.
+- **Keep an access log** — time, person, method, path and status for 7 days (App settings); never contents. A
+  websocket has a line when it opens and one when it closes (with how long it was open and how much it carried).
 - **Timeout** — this site's own request timeout (0 = the App setting).
 - **Extra headers** — added to every request to the site, for example `Authorization: Basic …` or an API key, so
   the site opens already signed in. Values are shown as "saved", never sent back to a browser and never logged.
@@ -110,7 +137,10 @@ For the site that hard-codes something the proxy misses: a regular expression an
 **body** or to the **header values** of answers of the listed content types (for example
 `application/javascript`; empty means every type). `$prefix` in the replacement is the site's prefix here
 (`/api/hassio_ingress/…/s/<short name>`); `\1` refers to a group. Scripts changed by a rule lose their integrity
-hashes in the page (they no longer match). A rule can never add a header line.
+hashes in the page (they no longer match). A rule can never add a header line. A rule applies to answers of up to
+5 MB that say their length (HTML and CSS: also without), never to live updates (`text/event-stream`) or partial
+downloads. An expression that repeats something that itself repeats without limit (`(a+)+`, `(x*y)*`) is refused:
+on some pages it could take minutes.
 
 ## Monitoring
 
@@ -139,8 +169,8 @@ never shown on the Sites page. Its address can be a URL, a host name or address 
 
 **Monitor** (next to **Sites**) lists every checked site you may see — the same people who may open a site see its
 status. For each: its state and since when, the answer time, and the last 24 hours in half hours (green: up, red:
-down, amber: some of each). **🔔 / 🔕** mutes a site's alerts for you alone. Admins also get **Check now**,
-**🔌 Restart now** and **Try again** (for sites with auto-restart), **Pause…** (for 1 hour, 8 hours or until
+down, amber: some of each). **🔔 / 🔕** mutes a site's alerts for you alone. Admins also get **Check now** (while a site is restarting or starting up, it shows the answer without counting
+it), **🔌 Restart now** and **Try again** (for sites with auto-restart), **Pause…** (for 1 hour, 8 hours or until
 resumed — for maintenance; nothing is checked or restarted while paused), **Resume** and **History**: the incidents of the last 90 days (start, end, cause, restarts, outcome) and the uptime
 over 24 hours, 7 and 30 days. Tiles on the Sites page show a status dot for checked sites.
 
@@ -158,9 +188,9 @@ turning it back on. Then:
   Outside it the site is reported down, and restarted when the window opens if it is still down.
 
 How one incident goes: the site goes **Down** → a restart, if any are left and the safety rules allow it → **Waiting
-after restart** → one check: up closes the incident; down means the next restart → when all are used, **Needs
-attention**: checks go on, no more restarts until the site is up again or an admin presses **Try again** (the count
-starts over).
+after restart** → checks again: one good check closes the incident; **Down after** failed checks in a row (3 by
+default) mean the next restart → when all are used, **Needs attention**: checks go on, no more restarts until the site
+is up again or an admin presses **Try again** (the count starts over).
 
 The safety rules:
 
@@ -171,9 +201,15 @@ The safety rules:
   e.g. your router) must answer, and — when at least 3 sites are checked — more than half of them must not have gone
   down within the same 2 minutes. Otherwise nothing is restarted: *the network looks down, not the device*.
 - **A switch Home Assistant can't reach** (unavailable or unknown) is never used.
-- **One sequence per switch**: sites sharing a switch are restarted once, together, and it counts for each.
-- **No restart loops**: an incident's first restart waits at least the **Gap between two incidents' restarts** (App
-  settings, 10 minutes) after the site's last restart.
+- **One sequence per switch**: sites sharing a switch are restarted once, together, and it counts for each site that
+  is down. The others on the switch lose power too, so they show **Restarting**, then **Waiting after restart**, and
+  aren't checked meanwhile (a site that gave up keeps **Needs attention**). Nothing on the switch is restarted while any
+  site on it is paused or outside its restart window.
+- **No restart loops**: after a restart, a site needs its **Down after** failed checks in a row again before the next
+  one; a new incident's first restart waits at least the **Gap between two incidents' restarts** (App settings, 10
+  minutes) after the site's last restart, and twice as long for each further restart within 24 hours (20, 40, 80
+  minutes…, at most 12 hours); and a site is restarted automatically at most **Most automatic restarts per day** times
+  in 24 hours (App settings, 6). Then it is reported (**Couldn't restart**), not restarted.
 - Only `switch.turn_off` and `switch.turn_on`, only on the switch chosen for that site. Every restart is in the site's
   **History** and in Home Assistant's logbook.
 
@@ -181,7 +217,11 @@ When a wanted restart doesn't happen, the Monitor page says why ("not restarted:
 once (**Couldn't restart**) — except for the time window and pausing, which are expected.
 
 **Restart now** (admins, on the Monitor page; it asks first) restarts at once — it counts in the current incident if
-there is one. The switch must be reachable; the network rules don't apply, since an admin decided.
+there is one. The switch must be reachable and no site on it paused; the network rules, the restart windows and the
+daily most don't apply, since an admin decided. **Try again** also starts the day's count over.
+
+When you save a site with auto-restart while no **Network reference address** is set and fewer than 3 sites are
+checked, the form warns you: the app then can't tell a network outage from a stuck device.
 
 ### Alerts
 
@@ -212,6 +252,12 @@ off by another admin has no admin pages either. You can't turn yourself off.
 - **Request timeout** — how long to wait for a site to start answering (60 seconds; 5–600). Once a page,
   download or live stream has started, it isn't cut off.
 - **Largest upload passed on** — bigger uploads are refused before they reach the site (100 MB; 1–4096).
+- **Collect uploads sent without a size** — a browser sometimes sends an upload without saying its size first, and
+  some sites refuse that: such uploads up to this size are collected first and passed on with their size; bigger ones
+  stream on (8 MB; 0–64; 0: always stream).
+
+One person can have at most 48 requests (downloads and live streams included) and 16 websockets open on one site at a
+time; more get "Too many at once" until some finish.
 
 **📜 Logs**
 
@@ -222,7 +268,10 @@ off by another admin has no admin pages either. You can't turn yourself off.
 - **Network reference address** — your router, or anything that should always answer (`host`, or `host:port`; a
   host alone is tried on ports 53, 80 and 443). Checked before each restart. Empty: only the "most sites down
   together" rule applies.
-- **Gap between two incidents' restarts** — 10 minutes (0–1440).
+- **Gap between two incidents' restarts** — 10 minutes (0–1440); twice as long for each further restart within 24
+  hours (at least 5 minutes from the second, at most 12 hours).
+- **Most automatic restarts per day** — per site, whatever its incidents (6; 1–100). Restart now and Try again still
+  work.
 - **Keep check history** — every check is kept for a week, then hourly totals for this long (30 days; 7–365).
   Incidents are kept 90 days.
 
@@ -236,11 +285,16 @@ accepted. Restart the app after changing it.
 ## Who can see what, and where your data goes
 
 - Only the Supervisor's ingress proxy can reach the app; Home Assistant has already checked who you are.
-- A site is opened only by the people allowed on it, checked on every request.
+- A site is opened only by the people allowed on it, checked on every request (and every 30 seconds, and at once on a
+  change, for an open websocket). Someone not allowed on a site gets "No such site", as for one that doesn't exist.
 - The app connects only to the sites an admin added; a request can never name another address.
 - Home Assistant's own sign-in details (its identity headers and its `ingress_session` cookie) are never passed
-  to a site. A site's cookies are kept to that site's own path, so they never reach Home Assistant or another
-  site.
+  to a site, nor are headers a browser makes up to look like a sign-in (`Remote-User`, also written `Remote_User`).
+  A site's cookies are kept under its own name and path, and only they are passed to it, so they never reach Home
+  Assistant or another site — and no other cookie reaches the site.
+- A page opened through the proxy can't use the app's admin pages or change anything through the app (it is refused
+  when the browser shows where the request came from) — but see **Trusted software only**: it is a safeguard, not a
+  wall.
 - A form or script on another web site can't change anything through the app or through a site: such requests
   are refused.
 - Nothing leaves your home network unless a site's address is an internet address you allowed.

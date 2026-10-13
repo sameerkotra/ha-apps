@@ -157,6 +157,27 @@ def make_app(host: str) -> Starlette:
         data = c.compress(b"<html><body>" + b"A" * (20 * 1024 * 1024)) + c.compress(b"</body></html>") + c.flush()
         return Response(data, media_type="text/html", headers={"Content-Encoding": "gzip"})
 
+    async def host_cookie(request):
+        r = PlainTextResponse("ok")
+        r.headers.append("Set-Cookie", "__Host-tok=t1; Path=/; Secure; HttpOnly")
+        r.headers.append("Set-Cookie", "__Secure-s=s1; Path=/app; Secure")
+        return r
+
+    async def partial(request):
+        return HTMLResponse("<html><body><a href='/x'>x</a></body></html>", status_code=206,
+                            headers={"Content-Range": "bytes 0-43/100"})
+
+    async def meta_csp(request):
+        return HTMLResponse('<html><head><meta http-equiv="Content-Security-Policy" content="default-src \'self\'; '
+                            'frame-ancestors \'none\'; upgrade-insecure-requests"></head><body>m</body></html>')
+
+    async def events(request):
+        async def gen():
+            for i in range(2):
+                yield f"data: /api/{i}\n\n".encode()
+                await asyncio.sleep(0.05)
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
     async def ws_echo(websocket):
         await websocket.accept(subprotocol=(websocket.scope.get("subprotocols") or [None])[0])
         await websocket.send_json({"origin": websocket.headers.get("origin"), "host": websocket.headers.get("host"),
@@ -186,7 +207,8 @@ def make_app(host: str) -> Starlette:
         Route("/stacks", spa), Route("/stacks/{rest:path}", spa), Route("/static/spa.js", spa_js),
         Route("/api/data", data), Route("/basename", basename_page), Route("/static/base.js", basename_js),
         Route("/img/icon.png", png), Route("/favicon.ico", png), Route("/svgicon", svg_page), Route("/img/i.svg", svg),
-        Route("/bomb", bomb),
+        Route("/bomb", bomb), Route("/cookie-host", host_cookie), Route("/partial", partial),
+        Route("/meta-csp", meta_csp), Route("/events", events),
     ])
 
 

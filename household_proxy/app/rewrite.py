@@ -29,6 +29,7 @@ class Ctx:
     nonce: str | None = None     # the site's CSP nonce, when its policy needs one for the shim
     body_rules: list = field(default_factory=list)      # callables text -> text (per-site rules, §3.5)
     strip_script_integrity: bool = False                  # rules rewrite scripts: their hashes no longer match
+    strip_csp: bool = False                               # the site's own Content-Security-Policy is removed
 
     @property
     def prefix(self) -> str:
@@ -166,17 +167,31 @@ class _Rewriter(HTMLParser):
                 return refresh(value, ctx)
         return value
 
+    def _meta_csp(self, attrs: list) -> str | None:
+        """A <meta http-equiv="Content-Security-Policy"> cleaned like the header: its new content, or "" to leave the
+        tag out (the admin removed the site's policy, or nothing is left of it). The shim has run by the time such a
+        tag is read (it is the first script in the page), so the policy needn't allow it."""
+        if not any(k == "http-equiv" and (v or "").strip().lower() == "content-security-policy" for k, v in attrs):
+            return None
+        if self.ctx.strip_csp:
+            return ""
+        content = next((v for k, v in attrs if k == "content"), None) or ""
+        return csp(content, self.ctx, False)[0] or ""
+
     def _tag(self, tag: str, attrs: list, closed: bool) -> None:
         raw = self.get_starttag_text() or ""
         if not self.injected and tag not in ("html", "head"):
             self._inject(True, tag)           # a page without <head>: before its first element
+        meta_policy = self._meta_csp(attrs) if tag == "meta" else None
+        if meta_policy == "":
+            return                            # a policy that would block the shim, or one the admin removed
         new = []
         changed = False
         for name, value in attrs:
             if value is None:
                 new.append((name, None))
                 continue
-            v = self._attr(tag, name, value, attrs)
+            v = meta_policy if (meta_policy is not None and name == "content") else self._attr(tag, name, value, attrs)
             if name == "integrity" and (tag == "link" or (tag == "script" and self.ctx.strip_script_integrity)):
                 changed = True                # the file is rewritten on its way through: its hash no longer matches
                 continue
@@ -237,7 +252,8 @@ def shim_tag(ctx: Ctx, version: str, spa: bool, site_path: str) -> str:
     single-page app mode also a <base> so relative URLs keep loading through the proxy once the frame's address
     shows the site's own path (§3.4)."""
     import json
-    cfg = {"p": ctx.prefix, "i": ctx.ingress, "o": _origin(ctx), "spa": spa, "v": site_path if spa else None}
+    cfg = {"p": ctx.prefix, "i": ctx.ingress, "o": _origin(ctx), "s": ctx.slug, "spa": spa,
+           "v": site_path if spa else None}
     nonce = f' nonce="{html.escape(ctx.nonce, quote=True)}"' if ctx.nonce else ""
     tag = (f'<script src="{html.escape(ctx.ingress + SHIM_PATH, quote=True)}?v={html.escape(version)}" '
            f'data-hp="{html.escape(json.dumps(cfg, separators=(",", ":")), quote=True)}"{nonce}></script>')
@@ -330,12 +346,36 @@ def link_header(value: str, ctx: Ctx) -> str:
     return _LINK_URL.sub(lambda m: f"<{url(m.group(1), ctx)}>", value)
 
 
+def cookie_prefix(slug: str) -> str:
+    """What a site's cookies are called in the browser: hp_<slug>_<the site's name> (a slug never has "_")."""
+    return f"hp_{slug}_"
+
+
+def site_cookies(header: str | None, slug: str) -> str | None:
+    """The browser's Cookie header as the site gets it: only this site's own cookies (hp_<slug>_…), named as the site
+    named them. Home Assistant's own cookies (ingress_session) and other sites' are never passed on."""
+    pre = cookie_prefix(slug)
+    out = []
+    for part in (header or "").split(";"):
+        part = part.strip()
+        name, eq, value = part.partition("=")
+        name = name.strip()
+        if eq and name.startswith(pre):
+            mine = name[len(pre):]
+            out.append(f"{mine}={value}" if mine else value)
+    return "; ".join(out) or None
+
+
 def set_cookie(value: str, ctx: Ctx) -> str:
-    """Domain removed; Path put under P (so the site's cookies reach only this site through the proxy, never Home
-    Assistant or another site); Secure and SameSite=None dropped when Home Assistant itself is plain http (else the
-    browser would refuse the cookie)."""
+    """The site's cookie renamed hp_<slug>_<name> (only those come back to it: site_cookies), Domain removed, Path put
+    under P (so it never reaches Home Assistant or another site); Secure and SameSite=None dropped when Home Assistant
+    itself is plain http (else the browser would refuse the cookie). A __Host- or __Secure- cookie keeps its name for
+    the site, but in the browser the renamed cookie no longer starts with the prefix, so its Path under P is
+    accepted."""
     parts = [p.strip() for p in value.split(";")]
     head, attrs = parts[0], parts[1:]
+    name, eq, val = head.partition("=")
+    head = f"{cookie_prefix(ctx.slug)}{name.strip()}={val}" if eq else f"{cookie_prefix(ctx.slug)}={head}"
     out, path = [head], "/"
     for a in attrs:
         if not a:
@@ -362,15 +402,30 @@ def set_cookie(value: str, ctx: Ctx) -> str:
 _NONCE = re.compile(r"'nonce-([A-Za-z0-9+/=_-]+)'")
 
 
+def _allow_shim(bits: list) -> tuple[list, str | None]:
+    """One script directive's sources with the shim allowed: the site's nonce when it relies on 'strict-dynamic'
+    (returned), else 'self' added (and 'none' taken out)."""
+    low = [b.lower() for b in bits[1:]]
+    if "'strict-dynamic'" in low:
+        m = _NONCE.search(" ".join(bits))
+        return bits, (m.group(1) if m else None)
+    if "'self'" not in low and "*" not in low:
+        bits = [b for b in bits if b.lower() != "'none'"] + ["'self'"]
+    return bits, None
+
+
 def csp(value: str, ctx: Ctx, need_script: bool) -> tuple[str | None, str | None]:
     """The site's policy with frame-ancestors removed (the site is shown in a frame of Home Assistant's own page),
     upgrade-insecure-requests / block-all-mixed-content removed when Home Assistant is plain http, and — when the
     shim is inserted — the app's own scripts allowed ('self' added to script-src, or the site's nonce used when it
-    relies on 'strict-dynamic'). Returns (policy or None if nothing is left, the nonce for the shim's tag)."""
+    relies on 'strict-dynamic'). A policy with only default-src gets a script-src of its own (default-src's sources
+    plus the shim), so the other kinds of content stay as strict as the site made them. Returns (policy or None if
+    nothing is left, the nonce for the shim's tag)."""
     nonce = None
     kept = []
     directives = [d.strip() for d in value.split(";") if d.strip()]
     names = {d.split()[0].lower() for d in directives}
+    has_script = "script-src" in names or "script-src-elem" in names
     for d in directives:
         bits = d.split()
         name = bits[0].lower()
@@ -378,18 +433,15 @@ def csp(value: str, ctx: Ctx, need_script: bool) -> tuple[str | None, str | None
             continue
         if not ctx.secure and name in ("upgrade-insecure-requests", "block-all-mixed-content"):
             continue
-        script_dir = name in ("script-src", "script-src-elem") or (name == "default-src" and
-                                                                    "script-src" not in names and
-                                                                    "script-src-elem" not in names)
-        if need_script and script_dir:
-            low = [b.lower() for b in bits[1:]]
-            if "'strict-dynamic'" in low:
-                m = _NONCE.search(d)
-                nonce = m.group(1) if m else nonce
-            elif "'self'" not in low and "*" not in low:
-                if "'none'" in low:
-                    bits = [b for b in bits if b.lower() != "'none'"]
-                bits.append("'self'")
+        if need_script and name in ("script-src", "script-src-elem"):
+            bits, n = _allow_shim(bits)
+            nonce = n or nonce
             d = " ".join(bits)
+        elif need_script and name == "default-src" and not has_script:
+            script, n = _allow_shim(["script-src"] + bits[1:])
+            nonce = n or nonce
+            if script[1:] != bits[1:]:
+                kept.append(d)
+                d = " ".join(script)
         kept.append(d)
     return ("; ".join(kept) or None), nonce

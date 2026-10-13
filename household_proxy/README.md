@@ -4,8 +4,9 @@
 > endorsed by Home Assistant or Nabu Casa. It was built with Claude, Anthropic's AI model, and is
 > provided as-is: try it out first, and keep your own backups.
 
-> **Trusted software only.** A site opened here runs on Home Assistant's own address, so add only
-> software you run and keep updated.
+> **Trusted software only.** A site opened here runs on Home Assistant's own address: a flaw in any
+> site you list exposes Home Assistant for whoever opens it. Add only software you run and keep
+> updated, and keep sites to admins unless others need them.
 
 Open the web pages of things on your home network — Komodo, a NAS, Pi-hole, Proxmox, a printer —
 inside Home Assistant, from anywhere Home Assistant itself can be reached. Home Assistant's sign-in is

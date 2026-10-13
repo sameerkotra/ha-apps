@@ -2,6 +2,59 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.4
+
+### Security
+
+- Each site's cookies are now its own: in your browser they are named after the site (`hp_<short name>_…`) and only
+  those reach it — never Home Assistant's cookies or another site's. **After the upgrade, sites that keep you signed in
+  with a cookie may ask you to sign in once.**
+- Each site's browser storage (localStorage, sessionStorage) is kept apart too, so a site can't read or clear Home
+  Assistant's (or another site's) by accident. Sites that keep a sign-in or settings there may ask for them once.
+- A page opened through the proxy can no longer use the app's admin pages or change anything through the app (a
+  speed bump, not a wall — see "Trusted software only" in the documentation, which now says plainly what a site you
+  add can do).
+- A browser can no longer slip a sign-in header past the proxy by writing it with underscores (`Remote_User`).
+- An open websocket (a terminal, live logs) is closed as soon as its person is turned off or taken off the site.
+- A site you may not open now answers "No such site", the same as one that doesn't exist (no guessing short names).
+- Rewrite rules that could take minutes on some pages (a repeat inside a repeat, like `(a+)+`) are refused when saved.
+- The site form warns about addresses on Home Assistant's own internal network and link-local addresses.
+
+### Fixed
+
+- Sites sharing a smart plug: a restart now marks every site on the plug (none is checked while it starts), and none
+  is restarted while one of them is paused or outside its restart window. The switch is still never left off.
+- After a restart, a site needs its usual number of failed checks in a row (3 by default) before the next restart,
+  not one.
+- A site that keeps going down and coming back is restarted at most 6 times a day (new App setting **Most automatic
+  restarts per day**), and each further restart within 24 hours waits twice as long as the one before.
+- **Check now** while a site is restarting or starting up shows the answer without counting it, and a check that was
+  running when a restart began no longer counts.
+- After **Restart now** on a healthy site, it shows **Up** again after its first good check (it stayed on "Waiting").
+- The Monitor page's refresh no longer closes a **Pause…** menu you have open.
+- Paused sites show as paused on the Sites page until the pause ends, not until the next change.
+- Uploads a browser sends without saying their size reach the site with their size (up to 8 MB, new App setting
+  **Collect uploads sent without a size**); bigger ones stream on as before.
+- Live updates (server-sent events) and partial downloads are never held back or changed by rewriting; a page's own
+  `<meta>` Content-Security-Policy is cleaned like the header (and removed with **Remove the site's
+  Content-Security-Policy**); gzip answers in several parts are read to the end; websockets keep their connection
+  alive, try each address of a site, and pass on addresses with non-ASCII characters.
+- A site's policy with only `default-src` gets its own `script-src` for the proxy's script, instead of loosening
+  `default-src` for everything.
+- Pages that make their own kind of WebSocket (a subclass) keep working.
+
+### Changed
+
+- Websockets now have access-log lines (opened, and closed with how long and how much), for sites that keep a log.
+- One person can have at most 48 requests and 16 websockets open on a site at once; at most 3 pages are rewritten at
+  the same time.
+- Faster: the Monitor page and the checks read less from the database, a slow check no longer holds up the others,
+  name lookups and certificates are reused, the access log is written in batches, and nothing is written for a
+  person on every page load.
+- Shared code: answers from the app's own API are never cached by the browser, its scripts and styles are kept until
+  the next version (faster loading), request bodies are limited even when sent in pieces, and database writes need
+  one disk sync less (a power cut can lose the last moment's changes, never the file).
+
 ## 0.6.3
 
 - Fix: Komodo's terminal said "connection closed" straight away. Home Assistant's ingress escapes the brackets in

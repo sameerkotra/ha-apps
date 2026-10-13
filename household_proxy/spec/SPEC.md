@@ -1,6 +1,9 @@
 # Household Proxy — spec
 
-Status: **built, not yet tried on real hardware** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built and tested 2026-10-11, version 0.6.0 listed in the repository; step 6's real-hardware run — Komodo, two or three other sites, a smart plug — is still to do). Decided: the
+Status: **built; 0.6.4 current** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built
+and tested 2026-10-11, 0.6.0 listed in the repository; 0.6.3 fixed Komodo's terminal; 0.6.4 (2026-10-13) the fixes of
+the 13 Oct review — §14). Step 6's real-hardware run — two or three sites besides Komodo, a smart plug — is still to
+do. This spec describes 0.6.4 as built. Decided: the
 name *Household Proxy*; everyone sees the panel, each person only the sites they may open; Isolated sites come in a
 later version (§14).
 
@@ -49,9 +52,7 @@ Paths inside the app:
 
 | Path | What |
 |---|---|
-| `/` | the launcher: tiles for the sites this person may open |
-| `/v/<site>[/<path>]` | the viewer: a slim bar (optional, §5.1) and the site in a frame |
-| `/monitor` | the Monitor page: status of the checked sites this person may see (§13.6) |
+| `/` | the app's one page: the launcher (tiles for the sites this person may open), and as views of it (`#/site/<site>`, `#/monitor`, `#/admin`) the viewer — a slim bar (optional, §5.1) and the site in a frame —, the Monitor page (§13.6) and Admin |
 | `/s/<site>/<path>` | the site itself, proxied (every method, websockets too) |
 | `/_hp/shim.js`, `/_hp/…` | the app's own scripts injected into proxied pages (§3.3) |
 | `/api/…` | the app's own API (§9) |
@@ -71,8 +72,14 @@ The core problem: a site expects to be at `/`, so its page asks for `/assets/app
 - `Host` = the target's host (option: keep the original), `Origin` and `Referer` rewritten from Home Assistant's
   address to the target's, so sites that check them (CSRF guards) are satisfied.
 - **Never forwarded**: `X-Remote-User-*`, `X-Ingress-Path`, `X-Hass-*`, `X-Forwarded-*` from the Supervisor,
-  Home Assistant's cookies (`ingress_session` and every cookie not set through this site's `P`), and any
-  `Authorization` that didn't come from the site's own pages.
+  header sign-in names (`Remote-User`, `X-Forwarded-User`, …) a browser sent, and Home Assistant's cookies. A header
+  name is compared with `_` read as `-` (`Remote_User` is dropped like `Remote-User`). **Cookies are per site**: the
+  site's `Set-Cookie` names are kept in the browser as `hp_<slug>_<name>` (§3.2), and only the cookies with this
+  site's prefix are forwarded, with the prefix taken off — `ingress_session`, every other cookie of Home Assistant's
+  and every other site's never reach it. (`X-Forwarded-Proto`/`-Host` from Home Assistant's ingress are read to know
+  whether Home Assistant is on https when the browser sent no Origin/Referer, then dropped.)
+- A body sent without a length (chunked) is collected up to an App setting (8 MB) and passed on with its
+  `Content-Length`; a bigger one streams on chunked.
 - Per site, optional **extra headers** added here (e.g. `Authorization: Basic …`, an API key) — stored server-side,
   never sent to the browser (§4.4).
 - `Accept-Encoding` is passed on; responses that are rewritten are decompressed first (§3.2).
@@ -88,11 +95,18 @@ The core problem: a site expects to be at `/`, so its page asks for `/assets/app
 - **JavaScript and JSON are not rewritten** by default (guessing at strings in code breaks things); the shim
   handles what code builds at run time, and per-site rules (§3.5) can rewrite bodies when a site needs it.
 - **Headers**: `X-Frame-Options` and CSP `frame-ancestors` are removed (the site is shown in a frame); the rest of
-  the site's CSP is kept, with `P/_hp/` allowed where it lists script sources (or, per site, the CSP is removed).
-  `Set-Cookie`: `Domain` removed, `Path` put under `P` (so each site's cookies stay its own and never reach Home
-  Assistant or another site).
-- Everything that isn't rewritten — images, downloads, video, server-sent events, `Range` requests, chunked
-  responses — is **streamed** through, never buffered.
+  the site's CSP is kept, with the shim allowed where it lists script sources — `'self'` added to `script-src`
+  (the shim is `<ingress>/_hp/shim.js`, on Home Assistant's own origin), the site's nonce used with
+  `'strict-dynamic'`, and a policy with only `default-src` gets a `script-src` of its own (default-src's sources plus
+  `'self'`) instead of a looser `default-src` — or, per site, the CSP is removed. A `<meta http-equiv=
+  Content-Security-Policy>` in the page is cleaned the same way (removed with the per-site option).
+  `Set-Cookie`: renamed `hp_<slug>_<name>`, `Domain` removed, `Path` put under `P` (so each site's cookies stay its
+  own and never reach Home Assistant or another site; a `__Host-`/`__Secure-` cookie's browser name no longer starts
+  with the prefix, so its `Path` under `P` is accepted, and the site gets its own name back).
+- Everything that isn't rewritten — images, downloads, video, server-sent events (never buffered, even for a rule),
+  partial answers (206, never rewritten), chunked responses — is **streamed** through. A rule's own target (not HTML
+  or CSS) is buffered only when it says its length. Gzip answers made of several members are read to the end. At most
+  3 rewrites run at once.
 
 ### 3.3 The browser shim (`/_hp/shim.js`)
 A small script, loaded first in every proxied HTML page, that rewrites URLs the page builds while it runs:
@@ -104,7 +118,17 @@ A small script, loaded first in every proxied HTML page, that rewrites URLs the 
   `Worker`/`SharedWorker`, `history.pushState`/`replaceState`, and the `src`/`href`/`action` property setters and
   `setAttribute` on script, link, img, iframe, source, a and form elements — the setters, so the browser never
   starts a request to the wrong place (a bundler's lazily added stylesheet or script included).
-- It knows `P`, the target's origin and the site's mode from a small JSON block the server writes next to it.
+- **Storage and cookies per site** (added 0.6.4): `Storage.prototype` (`getItem`, `setItem`, `removeItem`, `key`,
+  `length`, `clear`) keeps this site's keys as `hp:<slug>:<key>` (clear() removes only those), and `document.cookie`
+  reads and writes only `hp_<slug>_<name>` cookies, on path `P/` (or `P` + the path asked), without `Domain`, and
+  without `Secure` when Home Assistant is plain http — the same names the server gives `Set-Cookie`. This stops
+  accidents (a site wiping Home Assistant's sign-in with `localStorage.clear()`), not a hostile page (named-property
+  storage access, IndexedDB and the Cookie Store API aren't wrapped; DOCS.md says so).
+- The wrapped constructors keep `new.target` (`Reflect.construct`), so a page's own subclass of `WebSocket` works.
+- It knows `P`, the target's origin, the slug and the site's mode from a small JSON block the server writes next to
+  it.
+- Known limits (DOCS.md): URLs written as HTML text (`innerHTML`, `document.write`), a worker's own requests, and a
+  full navigation to a root address in browsers without the Navigation API.
 
 ### 3.4 Single-page app mode (per site, off by default)
 Apps with their own client-side router (React Router, Vue Router — Komodo's UI is one) read
@@ -123,8 +147,12 @@ common pattern (e.g. a `basename:"/"` or `"/api/"` string in the main script).
 
 ### 3.6 Websockets
 `/s/<site>/…` accepts the upgrade (the Supervisor's ingress passes websockets), opens one to the target (`ws`/`wss`,
-same path, subprotocols kept, `Origin` rewritten as §3.1), and relays frames both ways until either side closes.
-The same access check as every request (§4.2), at the upgrade.
+same path, subprotocols kept, `Origin` rewritten as §3.1, the site's own cookies only), trying each checked address in
+turn, and relays frames both ways until either side closes (pings every 30 s; close codes that may only be observed —
+1005, 1006, 1015 — are passed on as 1000). The same access check as every request (§4.2), at the upgrade — and again
+while it is open: every 30 s, and at once when a site or a person changes; a person who may no longer open the site
+has it closed (1008). At most 16 open per person and site. With the access log on, a line when it opens and one when
+it closes (close code, bytes carried, seconds open).
 
 ## 4. Security and identity
 
@@ -137,12 +165,18 @@ the sidebar, and each person sees and opens only the sites they're allowed on (�
 Before anything else, a **gate** (the outermost ASGI app) checks every connection, plain requests and websockets
 alike: the ingress source; a state-changing request the browser labels `Sec-Fetch-Site: cross-site`/`same-site` is
 refused **on `/s/…` too** — a proxied site can't defend itself here, because its `Origin`/`Referer` are rewritten to
-its own address (§3.1); a websocket whose `Origin` names another host is refused.
+its own address (§3.1); a websocket whose `Origin` names another host is refused; and (0.6.4) a call to the app's
+`/api/admin…`, or any state-changing call to its `/api/…`, whose `Referer` is a proxied page (`<ingress>/s/…`, or
+outside the ingress path altogether, as a single-page app mode frame shows) or whose `Sec-Fetch-Dest` isn't `empty`
+(a form, a frame) is refused — a speed bump against a proxied page using the admin API, not a hard boundary (§4.3).
+The app's own API also limits request bodies (1 MB; a restore 2 GB with its length), counting chunked ones.
 
 ### 4.2 Who opens a site
 Per site: **Admins only** (the default), **Everyone**, or **Chosen people** (from Home Assistant's people, the
-shared people page). Checked on every request to `/s/<site>/…`, on the websocket upgrade and on the viewer; the
-launcher lists only allowed sites. A person turned off in Admin → Users opens none.
+shared people page). Checked on every request to `/s/<site>/…`, on the websocket upgrade (and while it stays open,
+§3.6) and on the viewer; the launcher lists only allowed sites. A site the person may not open answers 404, exactly as
+one that doesn't exist (no guessing which slugs exist). A person turned off in Admin → People opens none (403, the same
+for every slug). At most 48 requests (streams included) per person and site at once (429 beyond).
 
 ### 4.3 Trusted sites only (Isolated later)
 Proxied pages run **on Home Assistant's own address**. A page there can read what Home Assistant's pages store in
@@ -151,7 +185,13 @@ the person viewing it. (Every app with ingress is in this position; this app mak
 software's* pages there.) So in the first version **every site is trusted**, and the add form says so in two
 sentences with a tick to confirm: *add only software you run and keep updated (Komodo, your NAS) — not a
 router, printer or camera page with old firmware.* The confirmation is stored with the site (`trusted_ok_by`,
-`trusted_ok_at`).
+`trusted_ok_at`). DOCS.md and the README say it plainly (0.6.4): **a flaw in any listed site exposes Home Assistant
+for whoever opens it**; add only sites you trust; prefer *Admins only*.
+
+Mitigations (0.6.4), none of them a wall against a page written to get around them: cookies and browser storage per
+site (§3.1–§3.3), the admin API refused to proxied pages (§4.1), websockets closed when access is withdrawn (§3.6),
+and the form warns about targets on Home Assistant's internal network (`172.30.32.0/23`, `supervisor`,
+`homeassistant`) and link-local addresses (allowed, as before: §4.5).
 
 **Later version — Isolated sites** (doubtful: see the note below): served with `Content-Security-Policy: sandbox allow-scripts allow-forms
 allow-popups allow-downloads` (no `allow-same-origin`), so the page gets an origin of its own and can read nothing
@@ -179,7 +219,8 @@ account.* Optional **Pass the viewer's name** adds `Remote-User`/`X-Forwarded-Us
 
 ### 4.6 Logs
 No bodies, no header values, no cookies. Per site, an optional access log (time, person, method, path, status,
-size) kept 7 days, off by default.
+size; for a websocket an opening line and a closing line with its duration) kept 7 days, off by default. Lines are
+buffered and written every 5 seconds (and before the log is read, and at shutdown).
 
 ## 5. What people see
 
@@ -211,14 +252,16 @@ single-page app mode** · **Needs a rule** (with the suggested rule) · **Probab
 
 ### 5.4 App settings (shared settings page)
 Request timeout (default 60 s; websockets unlimited), largest upload passed on (default 100 MB; `ingress_stream`),
-access log retention; for monitoring (§13): the network reference address (default: the gateway), the gap between
-two incidents' restarts (default 10 min), check history kept (default 30 days).
+uploads without a size collected up to (default 8 MB; 0 = always stream), access log retention; for monitoring
+(§13): the network reference address (empty by default, §14), the gap between two incidents' restarts (default
+10 min, doubling for each further restart within 24 h), the most automatic restarts per day (default 6), check
+history kept (default 30 days).
 
 ## 6. Manifest
 
 | | |
 |---|---|
-| App | `slug: household_proxy`, `version: "0.1.0"`, amd64 and aarch64, `startup: application`, `boot: auto` |
+| App | `slug: household_proxy`, `version: "0.6.4"`, amd64 and aarch64, `startup: application`, `boot: auto` |
 | Ingress | `ingress: true`, `ingress_port: 8099`, `ingress_stream: true`, `panel_icon: mdi:web-box`, `panel_title: Proxy`, `panel_admin: false`; no `ports` |
 | APIs | `hassio_api: false` (its own sidebar page for deep links comes from `GET /addons/self/info`, which every app may ask with its own token — as the other apps do); `homeassistant_api: true` (§13: the list of switches, `switch.turn_off`/`turn_on` on the switches an admin chose, the sites' binary sensors, notifications) |
 | Network | `host_network: false`: the LAN is reached through the Supervisor's network as any app reaches it. A `.local` name Home Assistant's DNS can't resolve needs the IP instead (the Test says so). |
@@ -232,14 +275,24 @@ themes). SQLite `/data/proxy.db`.
 
 ```
 household_proxy/app/
-  main.py         routes: launcher, viewer, /s/<site> (HTTP + websocket), /_hp, /api, deep links
-  sites.py        sites, access, target checks (§4.5)
-  proxy.py        one HTTP exchange: request cleaning (§3.1), streaming, response headers (§3.2)
-  rewrite.py      HTML / CSS / Location / Set-Cookie rewriting, rules (§3.5)
+  main.py         the gate (§4.1), /s/<site> (HTTP + websocket), the app's pages and /api, deep links, jobs
+  auth.py         who is asking (identity headers), admins, the short cache for proxied requests
+  config.py       options (admin_users), paths, the version, Home Assistant's time zone
+  db.py           SQLite schema and migrations, backups
+  settings.py     App settings (§5.4)
+  sites.py        sites, access, the saved form and its warnings, the in-memory cache
+  netguard.py     target checks (§4.5): parsing, address kinds, resolve at connect time, TLS contexts
+  proxy.py        one HTTP exchange: request cleaning (§3.1), bodies, streaming, response headers (§3.2), the
+                  access log, per-person limits
+  rewrite.py      HTML / CSS / Location / Set-Cookie / CSP rewriting, site cookies, rules (§3.5), the shim's tag
+  decoding.py     gzip/deflate read in bounded pieces
   wsproxy.py      websocket relay (§3.6)
-  probe.py        the Test (§5.3), favicon; the check kinds (§13.2)
-  watchdog.py     check schedule, states, incidents, restart sequences and their safety rules (§13)
-  static/         launcher.js, viewer.js, monitor.js, admin.js, style.css, hp/shim.js
+  probe.py        the Test (§5.3), favicon, certificates
+  watchdog.py     checks (§13.2), their schedule, states, incidents, alerts, sensors, history
+  restarts.py     auto-restart sequences and their safety rules (§13.3)
+  sidebar.py      the app's sidebar page (deep links)
+  routers/api.py  the app's API (§9, §13.8)
+  static/         index.html, app.js, style.css, _hp/shim.js (+ common/)
 ```
 
 `web_security`'s CSP and cross-site guard apply to the app's own pages and API, never to `/s/…` responses
@@ -254,7 +307,8 @@ household_proxy/app/
 - `users` as the other apps (people from Home Assistant, enabled switch).
 
 ## 9. API (sketch)
-`GET /api/sites` (the viewer's sites); admin: `GET/POST /api/admin/sites`, `PATCH/DELETE /api/admin/sites/{id}`,
+`GET /api/sites` (the viewer's sites); admin: `GET/POST /api/admin/sites`, `PUT/DELETE /api/admin/sites/{id}`
+(the save answers with the site and `warnings`),
 `POST /api/admin/sites/reorder`, `POST /api/admin/sites/test` (a site body, not saved) and
 `/api/admin/sites/{id}/test`, `GET /api/admin/sites/{id}/log`; monitoring in §13.8; the shared settings, users and
 backup routes.
@@ -356,9 +410,19 @@ Safety rules:
   checked sites went down within the same 2 minutes, no restart happens — *the network looks down, not the
   device* — and the incident waits.
 - **A switch Home Assistant can't reach** (`unavailable`/`unknown`) → no restart; *couldn't restart* notification.
-- **One sequence per switch**: sites sharing a switch are restarted once, together, and the restart counts for each.
-- **No restart loops**: after an incident's first restart, the next incident on the same site waits at least the
-  App settings gap (default 10 min) before restarting.
+- **One sequence per switch**: sites sharing a switch are restarted once, together, and the restart counts for each
+  site that is down (or waiting in an incident). Since 0.6.4 every site on the switch is marked when the sequence
+  starts: one that was up goes *Restarting* then *Waiting after restart* too (no incident; checked as usual after the
+  wait), one that gave up keeps *Needs attention* but isn't checked until it has started; all get `last_restart_at`
+  and a `restart_log` row, and all are in the `switched_off` record (never left off covers them). The restart doesn't
+  happen while **any** site on the switch is paused (also for Restart now) or outside its window.
+- **No restart loops** (0.6.4): after a restart, `down_after` failed checks in a row again before the next one (not
+  one); a new incident's first restart waits at least the App settings gap (default 10 min) after the site's last
+  restart, twice as long for each further restart within 24 h (at least 5 min from the second, at most 12 h); and at
+  most `max_restarts_per_day` automatic restarts per site in 24 h (App setting, default 6; Restart now isn't held
+  back, Try again empties the count). Being held back by the daily most is alerted (*couldn't restart*).
+- **Check now** while restarting or waiting (or while a scheduled check runs) shows the answer, not recorded; a
+  check that started before the latest restart is dropped when it ends.
 - Only `switch.turn_off` / `switch.turn_on`, only on the entity an admin chose for that site. Every restart is in
   the site's history (§13.6) and Home Assistant's logbook.
 - **By hand** (admins): **Restart now** (asks first; counts in the incident if there is one), **Pause checks** for
@@ -416,13 +480,26 @@ With a fake clock and the shared fake Home Assistant recording service calls: do
 *Off for* → on with the configured times; nothing checked during *Wait after restart*; up after a restart closes the
 incident; gives up after *K* restarts and restarts again only after being up or *Try again*; **a crash between off
 and on → on at start-up**; the network guard (reference down; most sites down together); an unavailable switch;
-two sites on one switch → one sequence; the time window; the gap between incidents; pause; manual restart is
+two sites on one switch → one sequence, the sibling that was up marked too, a paused or out-of-window sibling holds it
+back, a sibling that gave up keeps its state, never-left-off covers every site on the switch; `down_after` failures
+again after a restart; the daily most and the growing gap with a flapping site; Check now during the wait and a check
+started before a restart not recorded; the time window; the gap between incidents; pause; manual restart is
 admins-only; alerts go to exactly the site's chosen people (not people who merely can see it), per event, and
 not to someone who muted it; an alerted person who can't see the site gets no access from the link; the binary sensor's state and attributes; a monitor-only site
 is never proxied and is shown only to the people allowed; each check kind (web page statuses, port, ping refused by
 the container).
 
 ## 14. Decisions
+- 2026-10-13 (independent review, 0.6.4): the shared origin stays (§4.3) and is said plainly in DOCS and README;
+  mitigations, none a hard boundary: per-site cookie names (`hp_<slug>_<name>`, only those forwarded — existing
+  sites' cookies were re-issued, so sites may ask people to sign in once), per-site Storage keys in the shim, the
+  admin API and API writes refused from proxied pages (Referer / Sec-Fetch-Dest), websockets re-checked every 30 s and
+  on changes, 404 for sites a person may not open, `_` read as `-` in header names, per-person limits (48 requests,
+  16 websockets per site), rule expressions with a repeat inside an unlimited repeat refused, warnings for targets on
+  Home Assistant's internal network or link-local. Auto-restart: siblings on a switch marked and respected (pause,
+  window), `down_after` again after a restart, daily most (6) and a doubling gap, Check now guarded. The httpx
+  transport's address check is attached and verified (the app refuses to start a transport without it). The SSH
+  terminal (`spec/SSH_SPEC.md`) stays on hold.
 - 2026-10-12: an SSH terminal (Termius-style: admin-set connections, per-person access) is specced in
   `spec/SSH_SPEC.md`, not built.
 - 2026-10-10: name **Household Proxy** (`household_proxy`), sidebar title *Proxy*.

@@ -24,6 +24,10 @@ SETTINGS = [
                  "once they are open. A site can have its own timeout."),
     Setting("max_upload_mb", 100, "Largest upload passed on", group="proxy", min=1, max=4096, unit="MB",
             help="Bigger uploads are refused before they reach the site."),
+    Setting("collect_upload_mb", 8, "Collect uploads sent without a size", group="proxy", min=0, max=64, unit="MB",
+            help="A browser sometimes sends an upload without saying its size first; some sites refuse that. Such "
+                 "uploads up to this size are collected first and passed on with their size; bigger ones stream on "
+                 "as they come. 0: always stream."),
     Setting("access_log_days", 7, "Keep access logs", group="logs", min=1, max=90, unit="days"),
     Setting("monitor_reference", "", "Network reference address", group="monitor", max_length=200,
             placeholder="192.168.1.1", help="Your router, or anything that should always answer (host, or host:port). "
@@ -31,8 +35,13 @@ SETTINGS = [
             "nothing is restarted. Empty: only the rule below (most checked sites down at once) applies.",
             validators=[lambda v: _check_reference(v)]),
     Setting("restart_gap_min", 10, "Gap between two incidents' restarts", group="monitor", min=0, max=1440,
-            unit="minutes", help="After an incident's first restart, the next incident on the same site waits at "
-                                 "least this long before restarting (no restart loops)."),
+            unit="minutes", help="After a restart, a new incident on the same site waits at least this long before "
+                                 "restarting (no restart loops). Each further restart within 24 hours waits twice "
+                                 "as long as the one before (at least 5 minutes, at most 12 hours)."),
+    Setting("max_restarts_per_day", 6, "Most automatic restarts per day", group="monitor", min=1, max=100,
+            unit="per site", help="A site that keeps going down is restarted at most this many times in 24 hours, "
+                                  "whatever its incidents; then it is reported, not restarted. Restart now and Try "
+                                  "again still work (Try again starts the count over)."),
     Setting("checks_keep_days", 30, "Keep check history", group="monitor", min=7, max=365, unit="days",
             help="Every check for a week, then hourly totals. Incidents are kept 90 days."),
 ]

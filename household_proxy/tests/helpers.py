@@ -4,7 +4,7 @@ import _env  # noqa: F401  (must be first)
 
 import unittest
 
-from app import auth, db, main, netguard, sites
+from app import auth, db, main, netguard, proxy, settings, sites
 from common_tests.ingress import identity_headers, ingress_client
 
 import fakesite
@@ -27,10 +27,12 @@ def client():
 
 def reset_db() -> None:
     with db.get_conn() as conn:
-        for t in ("switched_off", "alert_mutes", "site_alert_people", "check_hours", "checks", "incidents", "access_log", "site_rules", "site_headers", "site_people", "sites", "users", "app_settings"):
+        for t in ("restart_log", "switched_off", "alert_mutes", "site_alert_people", "check_hours", "checks", "incidents", "access_log", "site_rules", "site_headers", "site_people", "sites", "users", "app_settings"):
             conn.execute(f"DELETE FROM {t}")
     sites.invalidate()
     auth.forget_cached()
+    settings.REGISTRY.invalidate()            # App settings back to their defaults
+    proxy.flush_access_log()                  # lines of an earlier test (their sites are gone: dropped)
 
 
 class ProxyCase(unittest.TestCase):

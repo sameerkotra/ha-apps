@@ -16,8 +16,9 @@ os.makedirs(config.DATA_DIR, exist_ok=True)
 _import_lock = threading.Lock()  # serializes a database-file swap against concurrent writers
 
 
+# WAL (below) with synchronous = NORMAL: a power cut can lose the last commits, never the file; one fsync less each.
 def _connect() -> sqlite3.Connection:
-    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON",))
+    return db_core.connect(config.DB_PATH, timeout=10, pragmas=("foreign_keys = ON", "synchronous = NORMAL"))
 
 
 def get_conn():
@@ -175,7 +176,17 @@ CREATE TABLE IF NOT EXISTS switched_off (
     at REAL NOT NULL
 );
 
--- Optional access log (off by default per site): no bodies, no header values, no query strings.
+-- Every power cut of a site's switch (automatic, by hand, or for another site on the same switch), for the most
+-- restarts per day (App settings). Try again empties a site's list.
+CREATE TABLE IF NOT EXISTS restart_log (
+    site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    at REAL NOT NULL,
+    manual INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS restart_log_site ON restart_log (site_id, at);
+
+-- Optional access log (off by default per site): no bodies, no header values, no query strings. A websocket has a
+-- line when it opens (status 101) and one when it closes (its close code, the bytes it carried, seconds open).
 CREATE TABLE IF NOT EXISTS access_log (
     site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
     at TEXT NOT NULL,
@@ -183,7 +194,8 @@ CREATE TABLE IF NOT EXISTS access_log (
     method TEXT NOT NULL,
     path TEXT NOT NULL,
     status INTEGER NOT NULL,
-    bytes INTEGER NOT NULL DEFAULT 0
+    bytes INTEGER NOT NULL DEFAULT 0,
+    seconds REAL
 );
 CREATE INDEX IF NOT EXISTS access_log_site ON access_log (site_id, at);
 
@@ -197,7 +209,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 """
 
 # Columns added after their table was first made (older databases and restored backups get them at start-up).
-MIGRATIONS: dict = {}
+MIGRATIONS: dict = {"access_log": [("seconds", "REAL")]}
 
 # Bumped by every init_db() (start-up, restore): caches (settings, sites) drop what they hold when it changes.
 generation = 0
@@ -211,9 +223,12 @@ def init_db():
     generation += 1
 
 
+SNAPSHOT_PREFIX = "household-proxy-backup-"       # copies a browser never finished downloading are swept hourly
+
+
 def backup_to_tempfile(after=None) -> str:
     """A complete, consistent copy of the live database (WAL included) in a temp file; the caller deletes it."""
-    return db_core.snapshot_to_tempfile(_connect, after=after)
+    return db_core.snapshot_to_tempfile(_connect, prefix=SNAPSHOT_PREFIX, after=after)
 
 
 REQUIRED_TABLES = {"users", "sites", "site_people", "site_headers", "app_settings"}

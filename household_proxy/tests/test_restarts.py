@@ -356,6 +356,16 @@ class ByHand(RestartCase):
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0], 1)
 
+    def test_healthy_site_is_up_again_after_restart_now(self):
+        s = self.add_restartable()
+        self.port_.up()
+        self.tick()
+        self.tick()
+        self.c.post(f"/api/admin/sites/{s['id']}/restart", headers=ADMIN)
+        self.assertEqual(self.row()["state"], "waiting")
+        self.tick(130)
+        self.assertEqual(self.row()["state"], "up")             # it used to stay "waiting" for good
+
     def test_one_sequence_per_switch_even_by_hand(self):
         s = self.add_restartable()
         self.assertTrue(restarts._claim("switch.box_plug"))    # an automatic restart is deciding
@@ -390,6 +400,220 @@ class ByHand(RestartCase):
                                 ("turn_off", "switch.plug; light.x")):
             with self.assertRaises(ValueError):
                 REAL_HA_CALL(service, entity)
+
+
+class SharedSwitch(RestartCase):
+    """Sites on one switch: one sequence, every site on it marked, none restarted while any of them is paused or outside
+    its window — and the switch is never left off."""
+
+    def setUp(self):
+        super().setUp()
+        self.second = Port()
+        self.addCleanup(self.second.down)
+
+    def both(self, **second_restart):
+        a = self.add_restartable()
+        b = self.add_restartable(slug="other", port=self.second, **second_restart)
+        self.second.up()
+        self.port_.up()
+        self.tick()
+        self.tick()
+        return a, b
+
+    def offs(self):
+        return sum(1 for c in self.plug.calls if c[0] == "turn_off")
+
+    def test_a_sibling_that_was_up_restarts_too_and_waits(self):
+        self.both()
+        self.port_.down()                       # only box goes down; "other" is up on the same plug
+        for _ in range(3):
+            self.tick()
+        self.assertEqual(self.offs(), 1)
+        box, other = self.row("box"), self.row("other")
+        self.assertEqual((box["state"], box["restarts_used"]), ("waiting", 1))
+        self.assertEqual(other["state"], "waiting")                     # it lost power as well
+        self.assertEqual(other["restarts_used"], 0)                     # but nothing of it was down
+        self.assertIsNotNone(other["last_restart_at"])
+        self.assertEqual(other["last_restart_at"], box["last_restart_at"])
+        self.assertIsNone(other["incident_id"])
+        self.assertIn("Other: restarting", self.titles())
+        self.assertIn("shares a switch with Box", [t for _, title, t, _ in self.sent if title == "Other: restarting"][0])
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM restart_log").fetchone()[0], 2)
+        checks = self.count_checks()
+        self.tick(60)
+        self.assertEqual(self.count_checks(), checks)                   # neither is checked while it starts
+        self.tick(70)
+        self.assertEqual((self.row("box")["state"], self.row("other")["state"]), ("up", "up"))
+
+    def test_restart_now_marks_the_siblings(self):
+        a, _ = self.both()
+        self.c.post(f"/api/admin/sites/{a['id']}/restart", headers=ADMIN)
+        self.assertEqual(self.offs(), 1)
+        self.assertEqual((self.row("box")["state"], self.row("other")["state"]), ("waiting", "waiting"))
+
+    def test_paused_sibling_holds_back_the_restart(self):
+        _, b = self.both()
+        self.c.post(f"/api/admin/sites/{b['id']}/pause", json={"hours": 1}, headers=ADMIN)
+        self.port_.down()
+        for _ in range(4):
+            self.tick()
+        self.assertEqual(self.offs(), 0)
+        self.assertIn("Other, on the same switch, is paused", self.row("box")["blocked_reason"])
+        self.assertNotIn("Box: couldn't restart", self.titles())        # maintenance: expected, not alerted
+        r = self.c.post(f"/api/admin/sites/{self.row('box')['id']}/restart", headers=ADMIN)
+        self.assertEqual(r.status_code, 409)                            # not by hand either
+        self.assertIn("paused", r.json()["detail"])
+        self.c.post(f"/api/admin/sites/{b['id']}/resume", headers=ADMIN)
+        self.tick()
+        self.assertEqual(self.offs(), 1)
+
+    def test_sibling_outside_its_window_holds_back_the_restart(self):
+        with mock.patch.object(restarts, "_local_hm", lambda now: "12:00"):
+            self.both(window_start="02:00", window_end="06:00")
+            self.port_.down()
+            for _ in range(4):
+                self.tick()
+        self.assertEqual(self.offs(), 0)
+        self.assertIn("Other, on the same switch", self.row("box")["blocked_reason"])
+        with mock.patch.object(restarts, "_local_hm", lambda now: "03:00"):
+            self.tick()
+        self.assertEqual(self.offs(), 1)
+
+    def test_a_sibling_that_gave_up_keeps_its_state(self):
+        self.both()
+        with db.get_conn() as conn:
+            conn.execute("UPDATE sites SET state = 'needs_attention', restart_due = 0 WHERE slug = 'other'")
+        self.second.down()
+        self.port_.down()
+        for _ in range(3):
+            self.tick()
+        self.assertEqual(self.offs(), 1)
+        other = self.row("other")
+        self.assertEqual(other["state"], "needs_attention")             # no second "gave up"
+        self.assertGreater(other["wait_until"], self.now)              # not checked while it starts again
+        self.assertEqual(self.titles().count("Other needs attention"), 0)
+
+    def test_never_left_off_covers_every_site_on_the_switch(self):
+        self.both()
+        self.plug.fail_on = 1000
+        self.port_.down()
+        for _ in range(3):
+            self.tick()
+        with db.get_conn() as conn:
+            ids = conn.execute("SELECT site_ids FROM switched_off").fetchone()[0]
+        self.assertEqual(sorted(json_ids(ids)), sorted([self.row("box")["id"], self.row("other")["id"]]))
+        restarts.recover()                                             # the app starts again
+        self.assertEqual(self.row("other")["state"], "restarting")
+        self.plug.fail_on = 0
+        self.tick(1)
+        self.assertEqual(self.plug.calls[-1][0], "turn_on")
+        self.assertEqual((self.row("box")["restart_phase"], self.row("other")["restart_phase"]), (None, None))
+        self.assertEqual(self.row("other")["state"], "waiting")
+
+    def count_checks(self):
+        with db.get_conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM checks").fetchone()[0]
+
+
+def json_ids(text):
+    import json
+    return json.loads(text)
+
+
+class Flapping(RestartCase):
+    """A site that keeps going down: no restart on a single failed check after a restart, a growing wait between
+    incidents' restarts, and at most a set number of automatic restarts a day."""
+
+    def offs(self):
+        return sum(1 for c in self.plug.calls if c[0] == "turn_off")
+
+    def test_down_after_failures_needed_again_after_a_restart(self):
+        self.heals = False
+        self.add_restartable(max_restarts=3)
+        self.go_down()
+        self.assertEqual(self.offs(), 1)
+        self.tick(130)                                     # the wait is over: one failed check
+        self.assertEqual(self.offs(), 1)
+        self.assertEqual(self.row()["state"], "waiting")
+        self.tick()                                        # two
+        self.assertEqual(self.offs(), 1)
+        self.tick()                                        # three in a row: the next restart
+        self.assertEqual(self.offs(), 2)
+
+    def test_up_for_one_check_doesnt_reset_everything(self):
+        settings.update({"restart_gap_min": 0, "max_restarts_per_day": 3}, None)
+        self.add_restartable()
+        self.go_down()                                     # restart 1 (heals)
+        for _ in range(6):
+            self.tick(130)                                 # up once …
+            self.port_.down()                              # … and down again: a new incident each time
+            for _ in range(3):
+                self.tick()                                # (each restart brings it back: the plug heals it)
+        self.assertEqual(self.offs(), 3)                   # the most per day, whatever the incidents
+        self.assertIn("most automatic restarts per day", self.row()["blocked_reason"])
+        self.assertIn("Box: couldn't restart", self.titles())          # people are told
+        # Restart now still works, and Try again starts the count over
+        self.assertEqual(self.c.post(f"/api/admin/sites/{self.row()['id']}/restart", headers=ADMIN).status_code, 200)
+
+    def test_the_wait_between_incidents_grows(self):
+        settings.update({"restart_gap_min": 10}, None)
+        self.assertEqual([restarts.required_gap(n) for n in (0, 1, 2, 3, 4)], [600, 600, 1200, 2400, 4800])
+        settings.update({"restart_gap_min": 0}, None)
+        self.assertEqual([restarts.required_gap(n) for n in (1, 2, 3)], [0, 600, 1200])     # at least 5 minutes
+        settings.update({"restart_gap_min": 1440}, None)
+        self.assertEqual(restarts.required_gap(5), 12 * 3600)                                 # at most 12 hours
+
+    def test_try_again_clears_the_daily_count(self):
+        s = self.add_restartable(max_restarts=1)
+        with db.get_conn() as conn:
+            conn.executemany("INSERT INTO restart_log (site_id, at, manual) VALUES (?, ?, 0)",
+                             [(s["id"], self.now - 100 * i) for i in range(6)])
+            conn.execute("UPDATE sites SET state = 'needs_attention' WHERE id = ?", (s["id"],))
+        self.assertTrue(restarts.try_again(s["id"]))
+        with db.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM restart_log").fetchone()[0], 0)
+
+
+class CheckNowDuringARestart(RestartCase):
+    def test_check_now_while_waiting_isnt_recorded(self):
+        s = self.add_restartable()
+        self.heals = False
+        self.go_down()
+        self.assertEqual(self.row()["state"], "waiting")
+        before = self.row()
+        r = self.c.post(f"/api/admin/sites/{s['id']}/check-now", headers=ADMIN).json()
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["recorded"])
+        after = self.row()
+        self.assertEqual((after["state"], after["fails_in_row"], after["restarts_used"], after["restart_due"]),
+                         (before["state"], before["fails_in_row"], before["restarts_used"], before["restart_due"]))
+        self.assertEqual(sum(1 for c in self.plug.calls if c[0] == "turn_off"), 1)    # no extra restart
+
+    def test_check_started_before_a_restart_is_dropped(self):
+        s = self.add_restartable()
+        self.port_.up()
+        self.tick()
+        self.tick()
+        started = self.now
+        self.now += 1
+        self.c.post(f"/api/admin/sites/{s['id']}/restart", headers=ADMIN)     # meanwhile, an admin restarts it
+        self.tick(130)
+        res = watchdog.Result(False, None, "refused")
+        self.assertEqual(watchdog.apply(s["id"], res, self.now, started), [])
+        self.assertFalse(res.recorded)
+        self.assertEqual(self.row()["fails_in_row"], 0)
+
+    def test_check_now_while_a_scheduled_check_runs(self):
+        s = self.add_restartable()
+        self.port_.up()
+        watchdog._running.add(s["id"])
+        try:
+            r = self.c.post(f"/api/admin/sites/{s['id']}/check-now", headers=ADMIN).json()
+        finally:
+            watchdog._running.discard(s["id"])
+        self.assertTrue(r["ok"])
+        self.assertFalse(r["recorded"])
 
 
 if __name__ == "__main__":

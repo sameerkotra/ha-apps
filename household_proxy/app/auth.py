@@ -31,30 +31,47 @@ def is_admin(user_id: str, display_name: str, username: str | None) -> bool:
 
 
 def user_from(conn) -> dict | None:
-    """The person behind a request or WebSocket (their row made or refreshed), or None when Home Assistant sent
-    no user id."""
+    """The person behind a request or WebSocket (their row made, or its name refreshed when it changed — nothing is
+    written otherwise), or None when Home Assistant sent no user id. Blocking (SQLite): call it from a thread."""
     ident = auth_core.identity(conn)
     if not ident.user_id:
         return None
     name = (ident.display_name or ident.username or "Home Assistant User").strip()[:80] or "Home Assistant User"
     with db.get_conn() as c:
-        c.execute("INSERT INTO users (id, name, username) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
-                  "name = excluded.name, username = excluded.username", (ident.user_id, name, ident.username))
-        row = c.execute("SELECT enabled FROM users WHERE id = ?", (ident.user_id,)).fetchone()
+        row = c.execute("SELECT name, username, enabled FROM users WHERE id = ?", (ident.user_id,)).fetchone()
+        if row is None:
+            c.execute("INSERT INTO users (id, name, username) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
+                      "name = excluded.name, username = excluded.username", (ident.user_id, name, ident.username))
+            enabled = True
+        else:
+            if row["name"] != name or row["username"] != ident.username:
+                c.execute("UPDATE users SET name = ?, username = ? WHERE id = ?", (name, ident.username, ident.user_id))
+            enabled = bool(row["enabled"])
     return {"id": ident.user_id, "name": name, "username": ident.username,
-            "is_admin": is_admin(ident.user_id, name, ident.username), "enabled": bool(row["enabled"]),
+            "is_admin": is_admin(ident.user_id, name, ident.username), "enabled": enabled,
             "ingress_path": ident.ingress_path}
 
 
-async def get_current_user(request: Request) -> dict:
+def user_by_id(user_id: str) -> dict | None:
+    """A known person as the database has them now (an open websocket checking it may still stay open)."""
+    with db.get_conn() as c:
+        row = c.execute("SELECT id, name, username, enabled FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row is None:
+        return None
+    return {"id": row["id"], "name": row["name"], "username": row["username"],
+            "is_admin": is_admin(row["id"], row["name"], row["username"]), "enabled": bool(row["enabled"])}
+
+
+# Plain functions, not async: FastAPI runs them in its thread pool, so the SQLite read never blocks the event loop.
+def get_current_user(request: Request) -> dict:
     user = user_from(request)
     if user is None:
         auth_core.require_user_id(None, config.APP_TITLE)
     return user
 
 
-async def require_admin(request: Request) -> dict:
-    user = await get_current_user(request)
+def require_admin(request: Request) -> dict:
+    user = get_current_user(request)
     auth_core.require_admin_flag(user["is_admin"], "Only admins can do this. See admin_users on the app's "
                                                    "Configuration tab.")
     require_enabled(user)                         # an admin another admin turned off has no admin pages either
@@ -71,19 +88,42 @@ def require_enabled(user: dict) -> None:
 # every CACHE_S seconds, not on each one. Admin → People changes empty the cache at once.
 CACHE_S = 30
 _cache: dict[str, tuple[float, dict]] = {}
+_listeners: list = []
+
+
+def on_forget(fn) -> None:
+    """Call fn() (from any thread) whenever people change in Admin → People (open websockets check again)."""
+    _listeners.append(fn)
 
 
 def forget_cached() -> None:
     _cache.clear()
+    for fn in _listeners:
+        try:
+            fn()
+        except Exception:                          # noqa: BLE001 — a listener never stops the change
+            logger.exception("a people listener failed")
 
 
-def cached_user(conn) -> dict | None:
+def peek_user(conn) -> dict | None:
+    """The person from the cache only (no database: safe on the event loop), or None if they aren't in it."""
     ident = auth_core.identity(conn)
     if not ident.user_id:
         return None
     hit = _cache.get(ident.user_id)
     if hit and hit[0] > time.monotonic() and hit[1]["username"] == ident.username:
         return dict(hit[1], ingress_path=ident.ingress_path)
+    return None
+
+
+def cached_user(conn) -> dict | None:
+    """The person, from the cache or the database (blocking: from a thread)."""
+    hit = peek_user(conn)
+    if hit is not None:
+        return hit
+    ident = auth_core.identity(conn)
+    if not ident.user_id:
+        return None
     user = user_from(conn)
     if user is not None:
         if len(_cache) > 500:

@@ -1,5 +1,5 @@
 name: "Household Proxy"
-version: "0.6.3"
+version: "0.6.4"
 slug: household_proxy
 description: >-
   Open the web pages of things on your home network — Komodo, a NAS,
@@ -29,10 +29,12 @@ panel_title: Proxy
 panel_admin: false
 
 # Lets the app call the Home Assistant Core REST API (via
-# http://supervisor/core/api/, using the auto-injected SUPERVISOR_TOKEN) to
-# read HA's time zone. No other Supervisor API access is requested: the
-# sidebar page for deep links is read from the app's own info, which every
-# app may ask for.
+# http://supervisor/core/api/, using the auto-injected SUPERVISOR_TOKEN): HA's
+# time zone, the people and their phones (alerts), notify services, the list of
+# switches (Auto-restart picker), switch.turn_off / switch.turn_on on the one
+# switch an admin chose for a site, a logbook line per restart, and the sites'
+# binary sensors. No other Supervisor API access is requested: the sidebar page
+# for deep links is read from the app's own info, which every app may ask for.
 homeassistant_api: true
 hassio_api: false
 auth_api: false

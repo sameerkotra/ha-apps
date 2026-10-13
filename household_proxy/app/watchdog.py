@@ -30,11 +30,20 @@ UNTIL_RESUMED = 1e18
 SENSOR_REFRESH_S = 300
 INCIDENT_DAYS = 90
 RAW_CHECK_DAYS = 7
+STRIP_CACHE_S = 60
 
 clock = time.time
 SENSORS = sensor_publisher.Publisher()
+INLINE = False                        # the tests: a round waits for its checks (else they run on as tasks)
 _refresh = {"at": 0.0}
 _running: set[int] = set()            # sites with a check in flight
+_tasks: set = set()                   # the checks running as tasks (kept so they aren't collected early)
+
+# What a round reads of each checked site (named: never the icon's bytes).
+ROUND_COLUMNS = ("id, slug, name, check_kind, check_path, check_every_s, check_timeout_s, down_after, ok_codes, "
+                 "paused_until, state, state_since, fails_in_row, incident_id, next_check_at, restart_entity, "
+                 "off_for_s, wait_after_s, max_restarts, window_start, window_end, restart_due, restarts_used, "
+                 "restart_phase, wait_until, last_restart_at, blocked_reason, expose_sensor")
 
 
 def iso(epoch: float) -> str:
@@ -55,9 +64,41 @@ def epoch(text: str | None) -> float | None:
 class Result:
     def __init__(self, ok: bool, ms: int | None = None, error: str | None = None):
         self.ok, self.ms, self.error = ok, ms, error
+        self.recorded = True             # False: the site was restarting or waiting, so it didn't count
 
     def __repr__(self):
         return f"Result(ok={self.ok}, ms={self.ms}, error={self.error!r})"
+
+
+# One client per site for web page checks (made again when the site's address or certificate changes), without
+# keep-alive: each check is a fresh connection, as a browser coming to the device would make.
+_check_clients: dict = {}            # site id -> (event loop, what it was made for, client)
+
+
+def _check_client(site: sites.Site, timeout: float) -> httpx.AsyncClient:
+    loop = asyncio.get_running_loop()
+    want = (site.version, timeout)
+    hit = _check_clients.get(site.id)
+    if hit is not None and hit[0] is loop and hit[1] == want:
+        return hit[2]
+    new = probe._client(site, timeout, limits=httpx.Limits(max_keepalive_connections=0))
+    _check_clients[site.id] = (loop, want, new)
+    if hit is not None and hit[0] is loop:
+        loop.create_task(hit[2].aclose())
+    for sid in [k for k, v in _check_clients.items() if v[0].is_closed()]:
+        _check_clients.pop(sid, None)            # made in a loop that has ended (the tests start one per round)
+    return new
+
+
+async def close_clients() -> None:
+    loop = asyncio.get_running_loop()
+    for sid, (lp, _, c) in list(_check_clients.items()):
+        if lp is loop:
+            _check_clients.pop(sid, None)
+            try:
+                await c.aclose()
+            except Exception:                    # noqa: BLE001
+                pass
 
 
 async def check_http(site: sites.Site, row) -> Result:
@@ -66,10 +107,10 @@ async def check_http(site: sites.Site, row) -> Result:
     path = row["check_path"] or site.start_path or "/"
     started = time.monotonic()
     try:
-        async with probe._client(site, row["check_timeout_s"]) as c:
-            req = c.build_request("GET", site.origin + path, headers=list(site.headers))
-            r = await c.send(req, stream=True)
-            await r.aclose()
+        c = _check_client(site, row["check_timeout_s"])
+        req = c.build_request("GET", site.origin + path, headers=list(site.headers))
+        r = await c.send(req, stream=True)
+        await r.aclose()
     except (httpx.HTTPError, netguard.TargetError, OSError) as e:
         kind, words = probe._problem(e)
         return Result(False, None, {"timeout": "timed out", "refused": "refused", "dns": "name not found",
@@ -179,14 +220,21 @@ def _spread(site_id: int, every: int) -> float:
     return (zlib.crc32(str(site_id).encode()) % 1000) / 1000 * min(every, 60)
 
 
-def apply(site_id: int, res: Result, now: float) -> list[tuple]:
-    """Record one check's result and move the site's state; the events to tell people about."""
+def apply(site_id: int, res: Result, now: float, started: float | None = None) -> list[tuple]:
+    """Record one check's result and move the site's state; the events to tell people about. A result that comes in
+    while the site is restarting or waiting after a restart — or from a check that started before the latest restart —
+    is not recorded (res.recorded = False): it says nothing about the device as it is now."""
     from . import restarts
     events = []
     with db.get_conn() as conn:
-        row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
+        row = conn.execute(f"SELECT {ROUND_COLUMNS} FROM sites WHERE id = ?", (site_id,)).fetchone()
         if row is None or row["check_kind"] is None:
             return []
+        stale = started is not None and row["last_restart_at"] and row["last_restart_at"] >= started
+        if not restarts.may_check(row, now) or stale:
+            res.recorded = False
+            return []
+        _strips.pop(site_id, None)
         conn.execute("INSERT INTO checks (site_id, at, ok, ms, error) VALUES (?, ?, ?, ?, ?)",
                      (site_id, iso(now), int(res.ok), res.ms, res.error))
         upd = {"last_check": iso(now), "last_ms": res.ms, "last_error": res.error,
@@ -196,7 +244,7 @@ def apply(site_id: int, res: Result, now: float) -> list[tuple]:
             state = "up"            # after a Restart now on a healthy site: the usual "down after N" rule applies
         if res.ok:
             upd["fails_in_row"] = 0
-            if state != "up":
+            if row["state"] != "up":        # (waiting after a Restart now on a healthy site included)
                 upd.update(state="up", state_since=iso(now))
                 if row["incident_id"]:
                     inc = conn.execute("SELECT * FROM incidents WHERE id = ?", (row["incident_id"],)).fetchone()
@@ -227,50 +275,91 @@ def paused(row, now: float) -> bool:
     return bool(row["paused_until"] and row["paused_until"] > now)
 
 
-async def tick() -> None:
-    """One round: the checks that are due (at most MAX_PARALLEL at a time), restart sequences that are waiting, the
-    alerts, the sensors."""
-    from . import restarts
-    now = clock()
+def _round_rows(now: float):
+    """The checked sites (named columns), giving a first check time to new ones; and whether any switch is still
+    marked off (a round has work even with no checked site left)."""
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT * FROM sites WHERE check_kind IS NOT NULL").fetchall()
+        rows = conn.execute(f"SELECT {ROUND_COLUMNS} FROM sites WHERE check_kind IS NOT NULL").fetchall()
         for r in rows:
             if r["next_check_at"] is None:
                 conn.execute("UPDATE sites SET next_check_at = ? WHERE id = ?",
                              (now + _spread(r["id"], r["check_every_s"]), r["id"]))
-    due = [r for r in rows if r["next_check_at"] is not None and r["next_check_at"] <= now and not paused(r, now)
-           and r["id"] not in _running and restarts.may_check(r, now)]
-    by_id = {s.id: s for s in sites.all_sites().values()}
-    sem = asyncio.Semaphore(MAX_PARALLEL)
+        off = conn.execute("SELECT 1 FROM switched_off LIMIT 1").fetchone() is not None
+    return rows, off
 
-    async def one(r):
-        site = by_id.get(r["id"])
-        if site is None:
-            return
-        _running.add(r["id"])
-        try:
-            async with sem:
-                res = await run_check(site, r)
-            events = await asyncio.to_thread(apply, r["id"], res, clock())
-            for kind, info in events:
-                await asyncio.to_thread(alert, r["id"], kind, info)
-        finally:
-            _running.discard(r["id"])
 
-    await asyncio.gather(*(one(r) for r in due))
-    await restarts.advance(clock())
+async def _one(site: sites.Site, row) -> None:
+    """One scheduled check: run, record, alert (the site is in _running until it ends)."""
+    try:
+        started = clock()
+        res = await run_check(site, row)
+        events = await asyncio.to_thread(apply, row["id"], res, clock(), started)
+        for kind, info in events:
+            await asyncio.to_thread(alert, row["id"], kind, info)
+    finally:
+        _running.discard(row["id"])
+
+
+async def tick() -> None:
+    """One round: start the checks that are due (at most MAX_PARALLEL running at a time; each runs on as a task, so a
+    slow one never holds up the others or the round), start the restarts that are wanted, publish the sensors."""
+    from . import restarts
+    now = clock()
+    rows, any_off = await asyncio.to_thread(_round_rows, now)
+    if not rows and not any_off and not SENSORS.names():
+        return                                   # nothing is checked: nothing to do
+    due = sorted((r for r in rows if r["next_check_at"] is not None and r["next_check_at"] <= now
+                  and not paused(r, now) and r["id"] not in _running and restarts.may_check(r, now)),
+                 key=lambda r: r["next_check_at"])[:max(0, MAX_PARALLEL - len(_running))]
+    started = []
+    if due:
+        known = sites.peek()
+        if known is None:
+            known = await asyncio.to_thread(sites.all_sites)
+        by_id = {s.id: s for s in known.values()}
+        for r in due:
+            site = by_id.get(r["id"])
+            if site is None:
+                continue
+            _running.add(r["id"])
+            t = asyncio.get_running_loop().create_task(_one(site, r))
+            _tasks.add(t)
+            t.add_done_callback(_tasks.discard)
+            started.append(t)
+    if INLINE and started:
+        await asyncio.gather(*started)
+        rows = None                              # the checks moved states: the restarts read them afresh
+    await restarts.advance(clock(), rows)
     await asyncio.to_thread(publish_sensors)
 
 
 async def check_now(site_id: int) -> Result | None:
-    """Admin → Check now: one check at once, recorded like any other."""
-    site = sites.by_id(site_id)
-    with db.get_conn() as conn:
-        row = conn.execute("SELECT * FROM sites WHERE id = ?", (site_id,)).fetchone()
+    """Admin → Check now: one check at once, recorded like any other — unless the site is restarting or waiting after
+    a restart, or a scheduled check of it is running: then the answer is shown but not recorded."""
+    from . import restarts
+    known = sites.peek()
+    if known is None:
+        known = await asyncio.to_thread(sites.all_sites)
+    site = next((s for s in known.values() if s.id == site_id), None)
+
+    def read():
+        with db.get_conn() as conn:
+            return conn.execute(f"SELECT {ROUND_COLUMNS} FROM sites WHERE id = ?", (site_id,)).fetchone()
+    row = await asyncio.to_thread(read)
     if site is None or row is None or row["check_kind"] is None:
         return None
-    res = await run_check(site, row)
-    for kind, info in await asyncio.to_thread(apply, site_id, res, clock()):
+    if site_id in _running or not restarts.may_check(row, clock()):
+        res = await run_check(site, row)
+        res.recorded = False
+        return res
+    _running.add(site_id)
+    try:
+        started = clock()
+        res = await run_check(site, row)
+        events = await asyncio.to_thread(apply, site_id, res, clock(), started)
+    finally:
+        _running.discard(site_id)
+    for kind, info in events:
         await asyncio.to_thread(alert, site_id, kind, info)
     await asyncio.to_thread(publish_sensors)
     return res
@@ -312,6 +401,9 @@ def _local(epoch_s: float) -> str:
 def message(kind: str, info: dict) -> str:
     if kind == "down":
         return f"Not answering ({info.get('cause') or 'no answer'}) since {_local(clock())}."
+    if kind == "restarting" and info.get("with"):
+        why = "which an admin is restarting" if info.get("manual") else "which isn't answering"
+        return f"Turning it off and on again: it shares a switch with {info['with']}, {why}."
     if kind == "restarting":
         return f"Turning it off and on again (restart {info.get('n')} of {info.get('of')})."
     if kind == "back_up":
@@ -381,18 +473,21 @@ def entity_id(slug: str) -> str:
 
 def sensor_items() -> list[tuple]:
     with db.get_conn() as conn:
-        rows = conn.execute("SELECT * FROM sites WHERE check_kind IS NOT NULL AND expose_sensor = 1").fetchall()
-        out = []
-        for r in rows:
-            inc = conn.execute("SELECT restarts FROM incidents WHERE id = ?", (r["incident_id"],)).fetchone() \
-                if r["incident_id"] else None
-            last = iso(r["last_restart_at"]) if r["last_restart_at"] else None
-            state = "on" if r["state"] == "up" else ("off" if r["state"] else "unknown")
-            status = "paused" if paused(r, clock()) else (r["state"] or "not_checked")
-            out.append((entity_id(r["slug"]), state, {
-                "friendly_name": r["name"], "device_class": "connectivity", "status": status,
-                "since": r["state_since"], "last_check": r["last_check"], "response_ms": r["last_ms"],
-                "restarts": inc["restarts"] if inc else 0, "last_restart": last}))
+        rows = conn.execute(
+            "SELECT s.slug, s.name, s.state, s.state_since, s.last_check, s.last_ms, s.paused_until, "
+            "s.last_restart_at, COALESCE(i.restarts, 0) AS restarts FROM sites s "
+            "LEFT JOIN incidents i ON i.id = s.incident_id "
+            "WHERE s.check_kind IS NOT NULL AND s.expose_sensor = 1").fetchall()
+    out = []
+    now = clock()
+    for r in rows:
+        last = iso(r["last_restart_at"]) if r["last_restart_at"] else None
+        state = "on" if r["state"] == "up" else ("off" if r["state"] else "unknown")
+        status = "paused" if paused(r, now) else (r["state"] or "not_checked")
+        out.append((entity_id(r["slug"]), state, {
+            "friendly_name": r["name"], "device_class": "connectivity", "status": status,
+            "since": r["state_since"], "last_check": r["last_check"], "response_ms": r["last_ms"],
+            "restarts": r["restarts"], "last_restart": last}))
     return out
 
 
@@ -439,19 +534,35 @@ def uptime(conn, site_id: int, seconds: int) -> float | None:
 
 
 def strip(conn, site_id: int, hours: int = 24, buckets: int = 48) -> list[str]:
-    """The last 24 hours in half hours: 'up', 'down', 'partial' or '' (no checks)."""
+    """The last 24 hours in half hours: 'up', 'down', 'partial' or '' (no checks). Counted by SQLite, one row per half
+    hour (not one per check)."""
     now = clock()
     size = hours * 3600 / buckets
     start = now - hours * 3600
     counts = [[0, 0] for _ in range(buckets)]
-    for r in conn.execute("SELECT at, ok FROM checks WHERE site_id = ? AND at >= ?", (site_id, iso(start))):
-        t = epoch(r["at"])
-        if t is None:
-            continue
-        i = min(buckets - 1, max(0, int((t - start) / size)))
-        counts[i][0] += r["ok"]
-        counts[i][1] += 1
+    for b, ok, total in conn.execute(
+            "SELECT CAST((CAST(strftime('%s', at) AS REAL) - ?) / ? AS INTEGER) AS b, SUM(ok), COUNT(*) "
+            "FROM checks WHERE site_id = ? AND at >= ? AND strftime('%s', at) IS NOT NULL GROUP BY b",
+            (start, size, site_id, iso(start))):
+        i = min(buckets - 1, max(0, b))
+        counts[i][0] += ok
+        counts[i][1] += total
     return ["" if t == 0 else "up" if ok == t else "down" if ok == 0 else "partial" for ok, t in counts]
+
+
+_strips: dict = {}                   # site id -> (until, strip): kept a minute, dropped when a check is recorded
+
+
+def strip_cached(conn, site_id: int) -> list[str]:
+    now = clock()
+    hit = _strips.get(site_id)
+    if hit is not None and hit[0] > now:
+        return hit[1]
+    out = strip(conn, site_id)
+    if len(_strips) > 500:
+        _strips.clear()
+    _strips[site_id] = (now + STRIP_CACHE_S, out)
+    return out
 
 
 async def loop() -> None:

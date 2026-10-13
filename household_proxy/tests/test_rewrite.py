@@ -103,10 +103,10 @@ class Headers(unittest.TestCase):
     def test_set_cookie(self):
         c = ctx()
         self.assertEqual(rewrite.set_cookie("a=1; Path=/app; Domain=nas.lan; HttpOnly", c),
-                         f"a=1; Path={P}/app; HttpOnly")
-        self.assertEqual(rewrite.set_cookie("a=1", c), f"a=1; Path={P}/")
+                         f"hp_nas_a=1; Path={P}/app; HttpOnly")
+        self.assertEqual(rewrite.set_cookie("a=1", c), f"hp_nas_a=1; Path={P}/")
         c.secure = False
-        self.assertEqual(rewrite.set_cookie("a=1; Secure; SameSite=None", c), f"a=1; Path={P}/; SameSite=Lax")
+        self.assertEqual(rewrite.set_cookie("a=1; Secure; SameSite=None", c), f"hp_nas_a=1; Path={P}/; SameSite=Lax")
 
     def test_csp(self):
         c = ctx()
@@ -125,6 +125,46 @@ class Headers(unittest.TestCase):
         self.assertEqual(rewrite.link_header("</a.js>; rel=preload, <https://cdn.example.com/b>; rel=x", c),
                          f"<{P}/a.js>; rel=preload, <https://cdn.example.com/b>; rel=x")
         self.assertEqual(rewrite.refresh("5;url=/next", c), f"5;url={P}/next")
+
+    def test_policy_with_only_default_src_gets_its_own_script_src(self):
+        c = ctx()
+        policy, _ = rewrite.csp("default-src 'none'; img-src data:", c, True)
+        self.assertEqual(policy, "default-src 'none'; script-src 'self'; img-src data:")     # images etc. untouched
+        policy, _ = rewrite.csp("default-src https://cdn.example.com", c, True)
+        self.assertEqual(policy, "default-src https://cdn.example.com; script-src https://cdn.example.com 'self'")
+        policy, nonce = rewrite.csp("default-src 'nonce-n1' 'strict-dynamic'", c, True)
+        self.assertEqual((policy, nonce), ("default-src 'nonce-n1' 'strict-dynamic'", "n1"))
+        self.assertEqual(rewrite.csp("default-src 'self'", c, True)[0], "default-src 'self'")
+
+    def test_meta_policy_in_the_page(self):
+        c = ctx(secure=False, shim="<script src=x></script>")
+        page = ('<html><head><meta http-equiv="Content-Security-Policy" content="script-src \'none\'; '
+                'frame-ancestors \'none\'; upgrade-insecure-requests"><title>t</title></head></html>')
+        out = rewrite.html_text(page, c)
+        self.assertIn('content="script-src &#x27;none&#x27;"', out)        # the shim has run already
+        self.assertNotIn("frame-ancestors", out)
+        self.assertNotIn("upgrade-insecure", out)
+        c.strip_csp = True
+        self.assertNotIn("Content-Security-Policy", rewrite.html_text(page, c))
+        only = '<head><meta http-equiv="content-security-policy" content="frame-ancestors \'none\'"></head>'
+        self.assertEqual(rewrite.html_text(only, ctx(strip_csp=False)), "<head></head>")
+
+    def test_site_cookies_only(self):
+        self.assertEqual(rewrite.site_cookies("hp_nas_a=1; b=2; hp_nas2_c=3; hp_nas_d=x=y; ingress_session=s", "nas"),
+                         "a=1; d=x=y")
+        self.assertIsNone(rewrite.site_cookies("ingress_session=s", "nas"))
+        self.assertIsNone(rewrite.site_cookies(None, "nas"))
+
+
+class Decoding(unittest.TestCase):
+    def test_several_gzip_members_read_to_the_end(self):
+        import gzip
+        from app import decoding
+        data = gzip.compress(b"<html>one ") + gzip.compress(b"two ") + gzip.compress(b"three</html>") + b"\0" * 4
+        for split in (1, 2, 20, 21, 22, len(data) - 1):
+            d = decoding.Decoder("gzip")
+            out = b"".join([*d.feed(data[:split]), *d.feed(data[split:]), *d.flush()])
+            self.assertEqual(out, b"<html>one two three</html>", split)
 
     def test_kinds(self):
         self.assertEqual(rewrite.kind_of("text/html; charset=utf-8"), "html")

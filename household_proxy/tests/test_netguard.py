@@ -60,8 +60,7 @@ class Resolve(unittest.TestCase):
 
     def resolve(self, host, addrs, allow_public=False):
         async def go():
-            loop = asyncio.get_running_loop()
-            with mock.patch.object(loop, "getaddrinfo", self.fake_dns(*addrs)):
+            with mock.patch.object(netguard, "_lookup", self.fake_dns(*addrs)):
                 return await netguard.resolve(host, 80, allow_public)
         return self.run_(go())
 
@@ -88,8 +87,7 @@ class Resolve(unittest.TestCase):
             return "stream"
 
         async def go():
-            loop = asyncio.get_running_loop()
-            with mock.patch.object(loop, "getaddrinfo", self.fake_dns("192.168.1.30")), \
+            with mock.patch.object(netguard, "_lookup", self.fake_dns("192.168.1.30")), \
                     mock.patch.object(backend._inner, "connect_tcp", fake_connect):
                 return await backend.connect_tcp(b"nas.lan", 443)
         self.assertEqual(self.run_(go()), "stream")
@@ -99,8 +97,7 @@ class Resolve(unittest.TestCase):
         backend = netguard.GuardedBackend(False)
 
         async def go():
-            loop = asyncio.get_running_loop()
-            with mock.patch.object(loop, "getaddrinfo", self.fake_dns("8.8.8.8")):
+            with mock.patch.object(netguard, "_lookup", self.fake_dns("8.8.8.8")):
                 await backend.connect_tcp("dns.example", 80)
         with self.assertRaises(httpcore.ConnectError):
             self.run_(go())
@@ -120,6 +117,46 @@ class Tls(unittest.TestCase):
         self.assertEqual(ctx.verify_mode, ssl.CERT_REQUIRED)
         self.assertFalse(ctx.check_hostname)
         self.assertEqual(ctx.cert_store_stats()["x509"], 1)     # that one certificate, no public authorities
+
+
+class Faster(unittest.TestCase):
+    def test_context_made_once_per_certificate(self):
+        self.assertIs(netguard.ssl_context(None), netguard.ssl_context(None))
+        pem = _self_signed()
+        self.assertIs(netguard.ssl_context(pem), netguard.ssl_context(pem))
+        self.assertIsNot(netguard.ssl_context(pem), netguard.ssl_context(None))
+
+    def test_a_name_not_found_is_remembered_for_a_few_seconds(self):
+        import socket
+        calls = []
+
+        async def missing(host, port):
+            calls.append(host)
+            raise socket.gaierror("not known")
+        netguard._not_found.clear()
+        try:
+            with mock.patch.object(netguard, "_lookup", missing):
+                for _ in range(3):
+                    with self.assertRaises(netguard.TargetError):
+                        asyncio.run(netguard.resolve("gone.lan", 80, False))
+            self.assertEqual(calls, ["gone.lan"])
+            with mock.patch.object(netguard.time, "monotonic", lambda: 1e12), \
+                    mock.patch.object(netguard, "_lookup", missing):
+                with self.assertRaises(netguard.TargetError):
+                    asyncio.run(netguard.resolve("gone.lan", 80, False))
+            self.assertEqual(len(calls), 2)                      # asked again once the few seconds are over
+        finally:
+            netguard._not_found.clear()
+
+
+class Warnings(unittest.TestCase):
+    def test_home_assistants_network_and_link_local(self):
+        for host in ("172.30.32.1", "172.30.33.9", "supervisor", "homeassistant"):
+            self.assertIn("Home Assistant's own internal network", netguard.target_warning(host), host)
+        for host in ("169.254.1.2", "fe80::1"):
+            self.assertIn("link-local", netguard.target_warning(host), host)
+        for host in ("192.168.1.10", "nas.lan", "172.30.34.1", ""):
+            self.assertIsNone(netguard.target_warning(host), host)
 
 
 def _self_signed() -> str:

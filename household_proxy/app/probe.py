@@ -44,9 +44,8 @@ VERDICTS = {
 }
 
 
-def _client(site: sites.Site, timeout: float) -> httpx.AsyncClient:
-    t = httpx.AsyncHTTPTransport(verify=netguard.ssl_context(site.tls_pem), retries=0)
-    t._pool._network_backend = netguard.GuardedBackend(site.allow_public)
+def _client(site: sites.Site, timeout: float, **limits) -> httpx.AsyncClient:
+    t = netguard.guarded_transport(site.tls_pem, site.allow_public, **limits)
     return httpx.AsyncClient(transport=t, follow_redirects=False, trust_env=False,
                              timeout=httpx.Timeout(timeout, connect=min(timeout, 10)))
 

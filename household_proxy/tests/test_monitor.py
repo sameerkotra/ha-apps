@@ -44,6 +44,7 @@ class MonitorCase(ProxyCase):
         self.posted = {}
         patches = [
             mock.patch.object(watchdog, "clock", lambda: self.now),
+            mock.patch.object(watchdog, "INLINE", True),               # a round waits for its checks
             mock.patch.object(watchdog, "send", lambda svc, title, text, data: self.sent.append((svc, title, text, data)) or True),
             mock.patch.object(ha_people, "phones_for", lambda uid: {"u-admin": ["mobile_app_ann"], "u-bob": ["mobile_app_bob"],
                                                                      "u-carol": ["mobile_app_carol"]}.get(uid, [])),
@@ -315,6 +316,130 @@ class History(MonitorCase):
         self.assertTrue(r["ok"])
         with db.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM checks").fetchone()[0], 1)
+
+
+def old_strip(conn, site_id, now, hours=24, buckets=48):
+    """The Monitor page's 24-hour strip as 0.6.3 computed it (one row per check, parsed in Python)."""
+    size = hours * 3600 / buckets
+    start = now - hours * 3600
+    counts = [[0, 0] for _ in range(buckets)]
+    for r in conn.execute("SELECT at, ok FROM checks WHERE site_id = ? AND at >= ?", (site_id, watchdog.iso(start))):
+        t = watchdog.epoch(r["at"])
+        if t is None:
+            continue
+        i = min(buckets - 1, max(0, int((t - start) / size)))
+        counts[i][0] += r["ok"]
+        counts[i][1] += 1
+    return ["" if t == 0 else "up" if ok == t else "down" if ok == 0 else "partial" for ok, t in counts]
+
+
+class Faster(MonitorCase):
+    def test_strip_counted_by_sqlite_matches_the_old_way(self):
+        import random
+        s = self.add_checked()
+        rnd = random.Random(7)
+        with db.get_conn() as conn:
+            rows = [(s["id"], watchdog.iso(self.now - rnd.uniform(-60, 26 * 3600)), int(rnd.random() < 0.7))
+                    for _ in range(3000)]
+            rows += [(s["id"], watchdog.iso(self.now - 86400 + d), 0) for d in (-1, 0, 1, 1799, 1800, 1801)]
+            conn.executemany("INSERT INTO checks (site_id, at, ok) VALUES (?, ?, ?)", rows)
+            for frac in (0.0, 0.25, 0.5, 0.999):
+                with mock.patch.object(watchdog, "clock", lambda f=frac: self.now + f):
+                    self.assertEqual(watchdog.strip(conn, s["id"]), old_strip(conn, s["id"], self.now + frac), frac)
+            self.assertIn("partial", watchdog.strip(conn, s["id"]))
+
+    def test_strip_cache_dropped_when_a_check_is_recorded(self):
+        s = self.add_checked()
+        with db.get_conn() as conn:
+            first = watchdog.strip_cached(conn, s["id"])
+        self.port_.up()
+        self.tick()
+        self.tick()
+        with db.get_conn() as conn:
+            self.assertNotEqual(watchdog.strip_cached(conn, s["id"]), first)
+
+    def test_monitor_page_never_reads_the_icons_bytes(self):
+        s = self.add_checked()
+        from app import sites as sites_mod
+        sites_mod.set_favicon(s["id"], b"\x89PNG" + b"x" * 50000, "image/png")
+        seen = []
+        real = db._connect
+
+        def spy():
+            conn = real()
+            conn.set_trace_callback(seen.append)
+            return conn
+        with mock.patch.object(db, "_connect", spy):
+            self.assertEqual(self.get("/api/monitor").status_code, 200)
+            self.get("/api/sites")
+            sites_mod.invalidate()
+            sites_mod.all_sites()
+        self.assertTrue(seen)
+        for q in seen:
+            self.assertNotRegex(q, r"(?i)select\s+\*\s+from\s+sites\b")             # every column: the icon too
+
+    def test_a_slow_check_doesnt_hold_up_the_round(self):
+        self.add_checked()
+        self.add_checked(slug="two", name="Two")
+        gate = {}
+
+        async def slow(site, row):
+            await gate["ev"].wait()
+            return watchdog.Result(True, 1)
+
+        async def go():
+            gate["ev"] = asyncio.Event()
+            with mock.patch.object(watchdog, "INLINE", False), mock.patch.object(watchdog, "run_check", slow):
+                self.now += 61
+                await watchdog.tick()
+                self.now += 61
+                await asyncio.wait_for(watchdog.tick(), 2)          # the round ends; the checks still run
+                running = set(watchdog._running)
+                gate["ev"].set()
+                await asyncio.gather(*list(watchdog._tasks))
+                return running
+        running = asyncio.run(go())
+        self.assertEqual(len(running), 2)
+        self.assertEqual(watchdog._running, set())
+        self.assertEqual((self.row("box")["state"], self.row("two")["state"]), ("up", "up"))
+
+    def test_nothing_to_do_without_checked_sites(self):
+        with mock.patch.object(watchdog, "publish_sensors") as pub:
+            self.tick()
+        pub.assert_not_called()
+
+    def test_paused_is_worked_out_when_asked(self):
+        s = self.add_checked(use="proxy", target=f"http://127.0.0.1:{self.port_.port}", trusted_ok=True,
+                             access="everyone")
+        self.c.post(f"/api/admin/sites/{s['id']}/pause", json={"hours": 1}, headers=ADMIN)
+        self.assertEqual(self.get("/api/sites").json()["sites"][0]["state"], "paused")
+        self.now += 3601                                         # nothing saved since: the cache still holds it
+        self.assertNotEqual(self.get("/api/sites").json()["sites"][0]["state"], "paused")
+
+
+class PeopleWrites(MonitorCase):
+    def test_a_known_person_is_written_only_when_their_name_changes(self):
+        with db.get_conn() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS t_writes (n INTEGER)")
+            conn.execute("DELETE FROM t_writes")
+            conn.execute("CREATE TRIGGER IF NOT EXISTS t_users_w AFTER UPDATE ON users BEGIN "
+                         "INSERT INTO t_writes VALUES (1); END")
+        try:
+            for _ in range(3):
+                self.get("/api/me")
+            with db.get_conn() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM t_writes").fetchone()[0], 0)
+            from common_tests.ingress import identity_headers
+            from helpers import INGRESS
+            self.get("/api/me", identity_headers("u-admin", "adminy", "Ann A. Admin", ingress_path=INGRESS))
+            with db.get_conn() as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM t_writes").fetchone()[0], 1)
+                self.assertEqual(conn.execute("SELECT name FROM users WHERE id = 'u-admin'").fetchone()[0],
+                                 "Ann A. Admin")
+        finally:
+            with db.get_conn() as conn:
+                conn.execute("DROP TRIGGER IF EXISTS t_users_w")
+                conn.execute("DROP TABLE IF EXISTS t_writes")
 
 
 if __name__ == "__main__":

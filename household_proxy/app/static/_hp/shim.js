@@ -16,8 +16,15 @@
  * own path ("/stacks"), and kept that way when the app navigates, so its router sees what it would at its own address.
  * The server adds <base href="P/…"> to such pages so relative URLs still load through the proxy.
  *
+ * Each site keeps its own browser storage and cookies, apart from Home Assistant's and the other sites' (they all
+ * share Home Assistant's address): localStorage / sessionStorage keys are kept as "hp:<slug>:<key>" (getItem, setItem,
+ * removeItem, key, length and clear see only this site's — clear() never empties Home Assistant's), and document.cookie
+ * reads and writes "hp_<slug>_<name>" cookies on path P/, as the server does with the site's Set-Cookie. This keeps
+ * sites from tripping over each other and over Home Assistant by accident; it is not a wall against a hostile page
+ * (storage["key"] and the browser's other storage APIs aren't covered — see DOCS.md, "Trusted software only").
+ *
  * Its settings come from the data-hp attribute of its own <script> tag: {p: P, i: ingress path, o: the site's origin,
- * spa: bool, v: the site's own path for single-page app mode}.
+ * s: the site's short name, spa: bool, v: the site's own path for single-page app mode}.
  */
 (function () {
   "use strict";
@@ -26,6 +33,7 @@
   var C;
   try { C = JSON.parse(me.getAttribute("data-hp")); } catch (e) { return; }
   var P = C.p, ING = C.i || "", SITE = C.o, SPA = !!C.spa;
+  var SLUG = C.s || String(P).split("/s/").pop();
   var HERE = location;
   var siteHost = "";
   try { siteHost = new URL(SITE).host; } catch (e) { /* no origin: only root-relative URLs are rewritten */ }
@@ -94,12 +102,14 @@
   wrapMethod(window, "open", 0);
   if (navigator.serviceWorker) wrapMethod(navigator.serviceWorker, "register", 0);
 
-  // constructors: WebSocket, EventSource, Worker, SharedWorker
+  // constructors: WebSocket, EventSource, Worker, SharedWorker (a page's own subclass of one keeps its class)
   function wrapCtor(name) {
     var Orig = window[name];
     if (typeof Orig !== "function") return;
-    var Wrapped = function (url, opt) {
-      return arguments.length > 1 ? new Orig(fix(url), opt) : new Orig(fix(url));
+    var Wrapped = function () {
+      var args = Array.prototype.slice.call(arguments);
+      if (args.length) args[0] = fix(args[0]);
+      return Reflect.construct(Orig, args, new.target || Orig);
     };
     Wrapped.prototype = Orig.prototype;
     Object.getOwnPropertyNames(Orig).forEach(function (k) {
@@ -149,6 +159,71 @@
       return origSetNS.call(this, ns, name, local === "href" ? fix(value) : value);
     };
   }
+
+  // browser storage: this site's own keys only
+  if (window.Storage && Storage.prototype) {
+    var SK = "hp:" + SLUG + ":";
+    var SP = Storage.prototype;
+    var sGet = SP.getItem, sSet = SP.setItem, sRemove = SP.removeItem, sKey = SP.key;
+    var sLen = Object.getOwnPropertyDescriptor(SP, "length");
+    var mine = function (st) {
+      var out = [], n = sLen && sLen.get ? sLen.get.call(st) : 0;
+      for (var i = 0; i < n; i++) {
+        var k = sKey.call(st, i);
+        if (typeof k === "string" && k.indexOf(SK) === 0) out.push(k.slice(SK.length));
+      }
+      return out;
+    };
+    SP.getItem = function (k) { return sGet.call(this, SK + String(k)); };
+    SP.setItem = function (k, v) { return sSet.call(this, SK + String(k), v); };
+    SP.removeItem = function (k) { return sRemove.call(this, SK + String(k)); };
+    SP.key = function (i) { var ks = mine(this); i = Math.floor(Number(i)) || 0; return i >= 0 && i < ks.length ? ks[i] : null; };
+    SP.clear = function () { var ks = mine(this); for (var j = 0; j < ks.length; j++) sRemove.call(this, SK + ks[j]); };
+    if (sLen && sLen.get) {
+      Object.defineProperty(SP, "length", { configurable: true, enumerable: sLen.enumerable,
+        get: function () { return mine(this).length; } });
+    }
+  }
+
+  // cookies: this site's own (hp_<slug>_<name>, on path P/) — the same names the server gives the site's Set-Cookie
+  var CK = "hp_" + SLUG + "_";
+  var cookieD = window.Document && Document.prototype && Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+  function cookiePath(p) {
+    p = String(p || "").trim();
+    if (p.charAt(0) !== "/") return P + "/";
+    return p === P || p.indexOf(P + "/") === 0 ? p : P + p;
+  }
+  function toBrowser(text) {
+    var parts = String(text).split(";");
+    var head = parts.shift(), eq = head.indexOf("=");
+    var name = eq < 0 ? "" : head.slice(0, eq).trim(), value = eq < 0 ? head.trim() : head.slice(eq + 1);
+    var out = [CK + name + "=" + value], path = P + "/";
+    var plain = HERE.protocol === "http:";
+    parts.forEach(function (a) {
+      var k = a.split("=")[0].trim().toLowerCase(), v = a.slice(a.indexOf("=") + 1).trim();
+      if (!k || k === "domain") return;
+      if (k === "path") { path = cookiePath(a.indexOf("=") < 0 ? "" : v); return; }
+      if (plain && k === "secure") return;
+      if (plain && k === "samesite" && v.toLowerCase() === "none") { out.push("SameSite=Lax"); return; }
+      out.push(a.trim());
+    });
+    out.push("path=" + path);
+    return out.join("; ");
+  }
+  function fromBrowser(all) {
+    return String(all || "").split(/;\s*/).filter(function (c) {
+      return c.indexOf(CK) === 0 && c.indexOf("=") > 0;
+    }).map(function (c) {
+      var rest = c.slice(CK.length);
+      return rest.charAt(0) === "=" ? rest.slice(1) : rest;
+    }).join("; ");
+  }
+  if (cookieD && cookieD.get && cookieD.set) {
+    Object.defineProperty(Document.prototype, "cookie", { configurable: true, enumerable: cookieD.enumerable,
+      get: function () { return fromBrowser(cookieD.get.call(this)); },
+      set: function (v) { cookieD.set.call(this, toBrowser(v)); } });
+  }
+  window.__householdProxy.cookie = toBrowser;
 
   // history: in single-page app mode the frame keeps the site's own paths; otherwise addresses stay under P
   if (SPA) {

@@ -32,6 +32,20 @@ function browser(opts = {}) {
   class ES { constructor(u) { calls.push(["es", u]); } }
   class Worker { constructor(u) { calls.push(["worker", u]); } }
   class Req { constructor(u, init) { this.url = u instanceof Req ? u.url : u; this.init = init; } }
+  class Storage {
+    constructor(init) { Object.defineProperty(this, "_m", { value: new Map(Object.entries(init || {})) }); }
+    getItem(k) { return this._m.has(String(k)) ? this._m.get(String(k)) : null; }
+    setItem(k, v) { this._m.set(String(k), String(v)); }
+    removeItem(k) { this._m.delete(String(k)); }
+    key(i) { const ks = [...this._m.keys()]; return i < ks.length ? ks[i] : null; }
+    clear() { this._m.clear(); }
+    get length() { return this._m.size; }
+  }
+  const jar = new Map(Object.entries(opts.cookies || {}));
+  class Document {
+    get cookie() { return [...jar].map(([k, v]) => `${k}=${v}`).join("; "); }
+    set cookie(v) { calls.push(["cookie", v]); const nv = v.split(";")[0]; const i = nv.indexOf("="); jar.set(nv.slice(0, i), nv.slice(i + 1)); }
+  }
   const history = { state: null, pushState: (s, t, u) => calls.push(["push", u]), replaceState: (s, t, u) => calls.push(["replace", u]) };
   const navListeners = [];
   const win = {
@@ -39,7 +53,8 @@ function browser(opts = {}) {
     fetch: (u, init) => { calls.push(["fetch", u instanceof Req ? u.url : u]); return Promise.resolve(); },
     open: (u) => calls.push(["open", u]),
     XMLHttpRequest: XHR, WebSocket: WS, EventSource: ES, Worker,
-    Element,
+    Element, Storage, Document,
+    localStorage: new Storage(opts.storage), sessionStorage: new Storage(),
     HTMLScriptElement: el("HTMLScriptElement", ["src"]), HTMLImageElement: el("HTMLImageElement", ["src", "srcset"]),
     HTMLAnchorElement: el("HTMLAnchorElement", ["href"]), HTMLFormElement: el("HTMLFormElement", ["action"]),
     HTMLLinkElement: el("HTMLLinkElement", ["href"]),
@@ -48,10 +63,12 @@ function browser(opts = {}) {
   win.window = win;
   win.navigator = { sendBeacon: (u) => calls.push(["beacon", u]) };
   const cfg = { p: P, i: ING, o: SITE, spa: !!opts.spa, v: opts.spa ? "/stacks/1?x=1" : null };
-  win.document = { currentScript: { getAttribute: () => JSON.stringify(cfg) } };
+  const cfg2 = opts.noSlug ? (delete cfg.s, cfg) : Object.assign(cfg, { s: "nas" });
+  win.document = new Document();
+  win.document.currentScript = { getAttribute: () => JSON.stringify(cfg2) };
   vm.createContext(win);
   vm.runInContext(SRC, win);
-  return { win, calls, navListeners };
+  return { win, calls, navListeners, jar };
 }
 
 test("root-relative, site-origin and Home Assistant-origin URLs go through P", () => {
@@ -150,4 +167,57 @@ test("runs once", () => {
   const fetchBefore = win.fetch;
   vm.runInContext(SRC, win);
   assert.equal(win.fetch, fetchBefore);
+});
+
+test("a page's own subclass of WebSocket keeps its class", () => {
+  const { win, calls } = browser();
+  const r = vm.runInContext("class MyWS extends WebSocket { hi() { return 'hi'; } }; " +
+    "const m = new MyWS('/live'); [m instanceof MyWS, m.hi(), new WebSocket('/x') instanceof WebSocket]", win);
+  assert.deepEqual(Array.from(r), [true, "hi", true]);
+  assert.deepEqual(calls.filter((c) => c[0] === "ws").map((c) => c[1]), [P + "/live", P + "/x"]);
+});
+
+test("each site sees only its own browser storage", () => {
+  const { win } = browser({ storage: { hassTokens: "secret", "hp:other:k": "theirs" } });
+  const ls = win.localStorage;
+  assert.equal(ls.getItem("hassTokens"), null);              // Home Assistant's sign-in isn't this site's
+  assert.equal(ls.length, 0);
+  ls.setItem("theme", "dark");
+  ls.setItem("k", "mine");
+  assert.equal(ls.getItem("theme"), "dark");
+  assert.equal(ls._m.get("hp:nas:theme"), "dark");
+  assert.equal(ls.length, 2);
+  assert.deepEqual([ls.key(0), ls.key(1), ls.key(2)], ["theme", "k", null]);
+  ls.removeItem("theme");
+  assert.equal(ls.getItem("theme"), null);
+  ls.clear();                                                // clears this site's keys only
+  assert.deepEqual([...ls._m.keys()], ["hassTokens", "hp:other:k"]);
+  win.sessionStorage.setItem("s", "1");
+  assert.equal(win.sessionStorage._m.get("hp:nas:s"), "1");
+});
+
+test("each site sees and sets only its own cookies, on its own path", () => {
+  const { win, calls, jar } = browser({ cookies: { ingress_session: "HA", hp_nas_sid: "1", hp_other_x: "2" } });
+  assert.equal(win.document.cookie, "sid=1");
+  win.document.cookie = "lang=en; path=/; domain=nas.lan; Secure; SameSite=None";
+  win.document.cookie = "tab=2";
+  win.document.cookie = "deep=1; Path=/app";
+  win.document.cookie = "__Host-t=1; Path=/; Secure";
+  assert.deepEqual(calls.filter((c) => c[0] === "cookie").map((c) => c[1]), [
+    `hp_nas_lang=en; Secure; SameSite=None; path=${P}/`, `hp_nas_tab=2; path=${P}/`, `hp_nas_deep=1; path=${P}/app`,
+    `hp_nas___Host-t=1; Secure; path=${P}/`]);
+  assert.equal(jar.get("ingress_session"), "HA");
+  assert.equal(win.document.cookie, "sid=1; lang=en; tab=2; deep=1; __Host-t=1");
+});
+
+test("on plain http, Secure is left out (the browser would refuse the cookie)", () => {
+  const { win, calls } = browser({ href: `http://ha.local:8123${P}/` });
+  win.document.cookie = "a=1; Secure; SameSite=None";
+  assert.deepEqual(calls.filter((c) => c[0] === "cookie").map((c) => c[1]), [`hp_nas_a=1; SameSite=Lax; path=${P}/`]);
+});
+
+test("without the short name in its settings, it is read from P", () => {
+  const { win } = browser({ noSlug: true });
+  win.localStorage.setItem("a", "1");
+  assert.equal(win.localStorage._m.get("hp:nas:a"), "1");
 });

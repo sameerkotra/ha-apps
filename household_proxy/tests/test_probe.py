@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import fakesite
+from app import sites
 from helpers import ADMIN, BOB, INGRESS, ProxyCase
 
 P = f"{INGRESS}/s/fake"
@@ -148,6 +149,16 @@ class Rules(ProxyCase):
             r = self.c.post("/api/admin/sites", headers=ADMIN, json={
                 "name": "Fake", "target": f"http://127.0.0.1:{self.port}", "trusted_ok": True, "rules": [bad]})
             self.assertEqual(r.status_code, 422, bad)
+
+    def test_rules_that_could_run_for_minutes_refused(self):
+        for bad in (r"(a+)+$", r"(x*y?)*z", r"(?:\w+\s?)+:", r"(a|b+){2,}"):
+            r = self.c.post("/api/admin/sites", headers=ADMIN, json={
+                "name": "Fake", "target": f"http://127.0.0.1:{self.port}", "trusted_ok": True,
+                "rules": [{"match": bad}]})
+            self.assertEqual(r.status_code, 422, bad)
+            self.assertIn("repeats something that repeats", r.text)
+        for fine in (r"basename:(\s*)([\"'])/\2", r"/api/", r"(ab){2}", r"(a{2})+", r"(?>a+)+b", r"a++b"):
+            self.assertFalse(sites.nested_repeat(fine), fine)
 
     def test_a_rule_cant_add_a_header_line(self):
         self.add_site(rules=[{"where": "header", "match": "/old-base", "replace": "x\r\nSet-Cookie: evil=1"}])
