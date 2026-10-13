@@ -1,5 +1,5 @@
 name: "Household AI"
-version: "1.0.4"
+version: "1.0.5"
 slug: household_ai
 description: >-
   An AI model on your Home Assistant machine's own CPU, for the other household
@@ -29,7 +29,7 @@ panel_admin: true
 ports:
   11434/tcp: null
 ports_description:
-  11434/tcp: "AI model for other computers on your network (leave empty: only apps inside Home Assistant)"
+  11434/tcp: "AI model for other computers on your network, with an access key (leave empty: only apps inside Home Assistant)"
 
 # The Supervisor restarts the app if the gateway stops answering (it answers while the model server is off).
 watchdog: http://[HOST]:[PORT:11434]/api/version

@@ -9,7 +9,7 @@ Admins change them inside the app, without a restart. Only `admin_users` stays o
   window; 0 = right after each answer), `preload`, `max_loaded` (1–2).
 - Limits (§6.1): `threads` (0 = automatic), `context`, `max_answer_tokens`, `max_run_min`, `queue`.
 - Callers: `answer_first` (caller names whose requests go first; ticked on the callers list, so hidden here),
-  `require_key`.
+  `require_key`, `allowed_hosts` (more names the gateway answers to, app/hosts.py).
 
 `max_loaded` and `context` are the model server's own settings: changing them restarts it (the page says so).
 """
@@ -18,7 +18,7 @@ import re
 
 from pydantic import StrictStr
 
-from . import config, db
+from . import config, db, hosts
 from .common import settings_core
 from .common.settings_core import Group, Setting, SettingsError  # noqa: F401  (SettingsError: the routes' name)
 
@@ -55,6 +55,20 @@ def _check_callers(v: list) -> list:
     if len(out) > 50:
         raise ValueError("at most 50 callers")
     return out
+
+
+HOST_NAME = re.compile(r"^(\*|\.?[a-z0-9_]([a-z0-9_-]{0,62})(\.[a-z0-9_]([a-z0-9_-]{0,62}))*)$")
+
+
+def _check_hosts(v: str) -> str:
+    names = sorted(hosts.parse_list(v))
+    for n in names:
+        if not HOST_NAME.match(n):
+            raise ValueError(f"{n!r} isn't a host name (e.g. homeassistant.fritz.box, or .example.com for every "
+                             "name under it)")
+    if len(names) > 20:
+        raise ValueError("at most 20 names")
+    return ", ".join(names)
 
 
 GROUPS = [
@@ -104,8 +118,15 @@ SETTINGS = [
             validators=[_check_callers]),
     Setting("require_key", False, "Require an access key", group="access", strict=True,
             help="Off: any app on Home Assistant's internal network may use the model (never download, delete or "
-                 "replace models). On: every app needs a key from the Access keys list. Turn it on if you install "
-                 "an app you don't trust, or when the model is published on your network."),
+                 "replace models); while port 11434 is published on your network, other computers are refused. "
+                 "On: every app and computer needs a key from the Access keys list. Turn it on if you install an "
+                 "app you don't trust, or to use the model from other computers."),
+    Setting("allowed_hosts", "", "Other names for this machine", group="access", type=StrictStr, max_length=1000,
+            validators=[_check_hosts], placeholder="homeassistant.fritz.box",
+            help="The gateway answers to the app's host name, IP addresses, localhost and local names (.local, "
+                 ".lan, .home.arpa, .internal). If something reaches it by another full name, list it here "
+                 "(comma-separated; .example.com for every name under it). A web page elsewhere that points its "
+                 "own name at this machine is refused."),
 ]
 
 

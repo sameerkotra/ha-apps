@@ -15,7 +15,7 @@ address in its own AI settings.
 - **A fair queue**: one request at a time, the assistant first (a person is waiting), at most two waiting per
   app.
 - **Safe by default**: the other apps can ask the model questions, never download, delete or replace models;
-  only apps inside Home Assistant can reach it unless you publish it, and access keys are a switch away.
+  only apps inside Home Assistant can use it without an access key — even when you publish its port.
 
 🐢 **Not fast**: on a CPU a short text answer takes seconds, a receipt photo or a statement page from about 30
 seconds to several minutes. 64-bit machines only (amd64, aarch64 — a Raspberry Pi 4 or 5 with 8 GB works for

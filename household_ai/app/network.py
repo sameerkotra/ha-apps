@@ -2,7 +2,9 @@
 
 Home Assistant publishes an app's ports only from the app's Network tab, which an app can't change. The app reads
 what is set from the Supervisor's info about itself — `GET /addons/self/info`, the one Supervisor call it makes
-(hassio_api with the default role) — so the page's warning is true rather than guessed.
+(hassio_api with the default role) — so the page's warning is true rather than guessed. The gateway reads the
+cached answer (`cached()`, refreshed every minute by main.py): while the port is published and keys are off, it
+serves only callers inside Home Assistant's network.
 """
 import logging
 import time
@@ -22,7 +24,9 @@ async def published_port(force: bool = False) -> dict:
     """{"known": bool, "port": int | None}: the host port 11434 is published on, None when it isn't."""
     if not force and time.monotonic() - _cache["at"] < CACHE_SECONDS and _cache["value"] is not None:
         return _cache["value"]
-    value = {"known": False, "port": None}
+    # A failed read keeps what was known: a Supervisor hiccup mustn't lift the gateway's published-port rule.
+    last = _cache["value"]
+    value = last if last is not None and last["known"] else {"known": False, "port": None}
     if config.SUPERVISOR_TOKEN:
         try:
             async with httpx.AsyncClient(timeout=5, trust_env=False) as c:
@@ -38,3 +42,8 @@ async def published_port(force: bool = False) -> dict:
             logger.warning("Reading the app's network settings failed: %s", e)
     _cache.update(at=time.monotonic(), value=value)
     return value
+
+
+def cached() -> dict:
+    """The last answer, without asking (the gateway calls this on every request)."""
+    return _cache["value"] or {"known": False, "port": None}

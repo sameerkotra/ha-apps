@@ -86,9 +86,15 @@ def init_db():
     generation += 1
 
 
+# File name prefixes of the backup copies (in the temp folder) and of uploaded restores (in DATA_DIR): housekeeping
+# removes ones left behind (main.housekeeping).
+BACKUP_PREFIX = "household-ai-backup-"
+RESTORE_PREFIX = "household-ai-restore-"
+
+
 def backup_to_tempfile(after=None) -> str:
     """A complete, consistent copy of the live database (WAL included) in a temp file; the caller deletes it."""
-    return db_core.snapshot_to_tempfile(_connect, after=after)
+    return db_core.snapshot_to_tempfile(_connect, prefix=BACKUP_PREFIX, after=after)
 
 
 REQUIRED_TABLES = {"model_keys", "model_usage", "app_settings"}

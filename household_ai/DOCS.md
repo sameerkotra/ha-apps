@@ -24,8 +24,9 @@ https://github.com/sameerkotra/ha-apps
 | Access key | empty (or a key from **Access keys**, when *Require an access key* is on) |
 | Model / Vision model | one of the downloaded models (*Test connection* lists them) |
 
-Ollama is recommended because its requests carry the schedule and the limits exactly; an OpenAI-compatible
-request runs with the model server's own thread count.
+Ollama is recommended because its requests carry the schedule and the limits exactly. An OpenAI-compatible request
+is sent the *Threads* and *Context length* settings too, but Ollama's OpenAI routes may ignore them (then it runs with
+the model server's own thread count).
 
 **Timeouts**: an app's timeout covers the time its request waits in the queue as well as the answer, because the
 apps wait for the whole answer. On a CPU:
@@ -84,7 +85,10 @@ One model answers one request at a time. **App settings → Limits**:
   to try again shortly (the apps retry by themselves). There is no limit on how long a request waits: an app that
   gives up has its request dropped.
 - **Answer first** (on **Use it in other apps**): apps whose waiting requests go ahead of the others; the assistant
-  by default.
+  by default. With access keys on, a key labelled *Household Assistant* (the app's name) counts as the assistant,
+  and **Access keys → New key** can tick *Answer first* for any key.
+- Changing *Context length* or *Models loaded at once*, deleting a model, or restoring a backup with other server
+  settings waits for the request running now to finish, so no answer is cut off.
 - **Longest run** (15 minutes): a request still running is stopped.
 - **Longest answer** (2048 tokens), **Context length** (8192 tokens) and **Threads** (all cores but one): whatever
   an app asks for, it gets at most these. Changing *Context length* or *Models loaded at once* restarts the model
@@ -100,8 +104,15 @@ The model server runs at a lower priority than Home Assistant, so the home stays
   *Access key* field. A key is shown once; the app keeps only a hash of it. Revoking a key refuses that app at once.
   Turn keys on if you install an app you don't trust.
 - **On my network**: to use the model from other computers, enter a host port for 11434 on the app's **Network**
-  tab in Home Assistant (empty = not published). The Status tab shows whether it is published, and warns while it
-  is published without keys. The connection is plain HTTP.
+  tab in Home Assistant (empty = not published), **and turn on Require an access key**: while the port is published
+  and keys are off, only apps inside Home Assistant are served — other computers get *only apps inside Home
+  Assistant may use it*. The Status tab shows whether the port is published. The connection is plain HTTP.
+- **Names**: the gateway answers only to this machine's names — the app's host name (as the page shows it), IP
+  addresses, `localhost` and local names ending in `.local`, `.lan`, `.home.arpa` or `.internal`. A web page
+  elsewhere that points its own name at your machine ("DNS rebinding") is refused. If a computer reaches the gateway
+  by another full name (for example `homeassistant.fritz.box`), add it under **App settings → Access → Other names
+  for this machine**.
+- **Limits on the page itself**: a request to the page is at most 1 MB, a restored backup at most 256 MB.
 
 ## Usage and privacy
 
@@ -127,4 +138,8 @@ holds no usable key) and the usage. Models are not in it.
   smaller model, set *Models loaded at once* to 1, or unload sooner.
 - **Answers time out in another app**: raise that app's timeout (see *Timeouts*), or set its requests to
   *Answer first*.
+- **"Household AI doesn't answer to the name …"**: the address uses a name the gateway doesn't know; use the
+  address the page shows, the machine's IP address, or add the name under *Other names for this machine*.
+- **"only apps inside Home Assistant may use it"**: a computer outside Home Assistant uses the published port while
+  keys are off; turn on *Require an access key* and give it a key.
 - **The model server log** (Status) shows the last 50 lines of the model server's own output.

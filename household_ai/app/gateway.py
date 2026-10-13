@@ -6,16 +6,19 @@ small ASGI app, served on its own port next to the ingress page, passes on only 
     GET /api/version, GET /api/tags, POST /api/show, POST /api/generate, POST /api/chat, POST /api/embed,
     GET /v1/models, POST /v1/chat/completions
 
-Everything else is 404. Every request is checked before it is queued (on a Docker host, a Host header that names
-this machine (app/hosts.py); a JSON body (a browser's "simple" text/plain or form POST is 415); body ≤ 32 MB, and at
-most MAX_READING bodies read at once; the model downloaded; the caller's keep_alive replaced by the schedule's; only
-the sampling options passed on (OPTIONS), num_ctx capped at *Context length*, num_thread set to *Threads*,
-num_predict / max_tokens capped at *Longest answer*), then waits its turn (app/jobqueue.py), runs alone, and
-is counted (tokens, seconds, wait). A caller that goes away while waiting leaves the queue; one that goes away
-while its answer runs has the request to Ollama closed, which stops it. A run past *Longest run* is stopped
+Everything else is 404. Every request is checked before it is queued (a Host header that names this machine
+(app/hosts.py: DNS rebinding); with keys off and the port published on the LAN (Home Assistant app), a caller from
+inside Home Assistant's network; a JSON body (a browser's "simple" text/plain or form POST is 415); body ≤ 32 MB,
+arriving within READ_TIMEOUT, and at most MAX_READING bodies read at once; the model downloaded; the caller's
+keep_alive replaced by the schedule's; only the sampling options passed on (OPTIONS), num_ctx capped at *Context
+length*, num_thread set to *Threads*, num_predict / max_tokens capped at *Longest answer*), then waits its turn
+(app/jobqueue.py), runs alone, and is counted (tokens, seconds, wait). A caller that goes away while waiting leaves
+the queue; one that goes away while its answer runs (or while the model loads, before the first token) has the
+request to Ollama closed, which stops it. A run past *Longest run*, counted from when its turn came, is stopped
 (504, or an error line on a stream).
 """
 import asyncio
+import ipaddress
 import json
 import logging
 import time
@@ -27,8 +30,8 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
-from . import callers, config, hosts, keys, machine, ollama, schedule, settings, usage
-from .jobqueue import Full, RequestQueue
+from . import callers, config, hosts, keys, machine, network, ollama, schedule, settings, usage
+from .jobqueue import PER_CALLER, Full, RequestQueue
 
 logger = logging.getLogger("gateway")
 
@@ -38,6 +41,10 @@ ANSWERING = {"/api/generate", "/api/chat", "/api/embed", "/v1/chat/completions"}
 # Bodies being read (or checked) before they are queued: each may be up to 32 MB, so at most this many at once (503).
 MAX_READING = 4
 READING = {"n": 0}
+# A body must arrive within this many seconds, or the request is 408 and its reading place is freed.
+READ_TIMEOUT = 30
+# An unknown model makes the gateway ask Ollama for its list again — at most this often (seconds).
+REFRESH_EVERY = 5
 # The options a caller may set in "options" (Ollama's sampling options); the rest (num_gpu, num_batch, use_mlock,
 # num_keep, main_gpu, numa, …) are dropped. num_ctx and num_predict are capped, num_thread is the *Threads* setting.
 OPTIONS = {"temperature", "top_p", "top_k", "min_p", "typical_p", "tfs_z", "seed", "stop", "repeat_penalty",
@@ -79,15 +86,40 @@ def from_browser_unless_json(request: Request) -> bool:
     return not is_json(request) and request.headers.get("origin") is not None
 
 
+def extra_hosts() -> frozenset:
+    """The names this machine answers to besides addresses, names without a dot and local names (app/hosts.py):
+    config.ALLOWED_HOSTS (a Docker host's environment) and the *Other names for this machine* setting."""
+    return frozenset(config.ALLOWED_HOSTS) | frozenset(hosts.parse_list(settings.get("allowed_hosts")))
+
+
 def host_refused(request: Request) -> bool:
-    """On a Docker host (config.ALLOWED_HOSTS set): a Host header that doesn't name this machine (DNS rebinding,
-    app/hosts.py). The Home Assistant app's gateway is reached by its app host name and isn't checked."""
-    extra = getattr(config, "ALLOWED_HOSTS", None)
-    return extra is not None and not hosts.allowed(request.headers.get("host"), extra)
+    """A Host header that doesn't name this machine (DNS rebinding, app/hosts.py): a web page elsewhere that points
+    its own name at this machine. The household apps use the app's host name (no dot) or an address."""
+    return not hosts.allowed(request.headers.get("host"), extra_hosts())
 
 
-HOST_MESSAGE = ("Household AI doesn't answer to the name {host}: add it to ALLOWED_HOSTS (docker-compose.yml) if it "
-                "is this machine's name.")
+HOST_MESSAGE = "Household AI doesn't answer to the name {host}" + config.HOST_HINT
+
+
+def outsider_refused(address: str | None) -> bool:
+    """With keys off, on the Home Assistant app (config.INSIDE_NETWORK set) whose port is published on the LAN:
+    a caller from outside Home Assistant's internal network (another computer). Inside it (the apps, Home
+    Assistant itself) callers are served as before."""
+    inside = config.INSIDE_NETWORK
+    if inside is None or not network.cached().get("port"):
+        return False
+    try:
+        ip = ipaddress.ip_address(address or "")
+    except ValueError:
+        return True
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return not any(ip in n for n in inside)
+
+
+OUTSIDER_MESSAGE = ("Household AI's port is published on your network, but Require an access key is off, so only "
+                    "apps inside Home Assistant may use it. To use it from this computer, turn on Require an access "
+                    "key (Household AI → App settings → Access) and use a key from its Access keys tab.")
 
 
 def server_ready() -> bool:
@@ -105,21 +137,26 @@ def not_ready_message() -> str:
 # -------------------------------------------------------------------------------------------- who is asking
 
 async def identify(request: Request, path: str) -> tuple[str, dict | None]:
-    """(caller name, key row or None). Raises Refused (401/429) when keys are on and the key is wrong."""
+    """(caller name, key row or None). Raises Refused (401/403/429) when keys are on and the key is wrong, or when
+    keys are off and the caller is outside Home Assistant while the port is published (outsider_refused)."""
     address = request.client.host if request.client else None
     if not settings.get("require_key"):
+        if outsider_refused(address):
+            raise Refused(403, OUTSIDER_MESSAGE)
         return await callers.RESOLVER.caller(address), None
     addr = address or "unknown"
-    if keys.FAILURES.is_blocked(addr):
-        raise Refused(429, "Too many wrong access keys — try again in a minute.", {"Retry-After": "60"})
     auth = request.headers.get("authorization", "")
     token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+    # A right key is always served, even from an address that sent wrong ones (on a Docker host every household
+    # app shares Home Assistant's address, so one misconfigured app mustn't lock the others out).
     row = await asyncio.to_thread(keys.check, token) if token else None
-    if row is None:
-        keys.FAILURES.fail(addr)
-        raise Refused(401, "Household AI needs an access key: paste one from Household AI → Access keys into this "
-                           "app's AI settings." if not token else "That access key isn't valid (revoked or mistyped).")
-    return row["id"], row
+    if row is not None:
+        return row["id"], row
+    if keys.FAILURES.is_blocked(addr):
+        raise Refused(429, "Too many wrong access keys — try again in a minute.", {"Retry-After": "60"})
+    keys.FAILURES.fail(addr)
+    raise Refused(401, "Household AI needs an access key: paste one from Household AI → Access keys into this "
+                       "app's AI settings." if not token else "That access key isn't valid (revoked or mistyped).")
 
 
 # -------------------------------------------------------------------------------------------- the request
@@ -146,8 +183,10 @@ async def check_model(name, key: dict | None) -> str:
         raise Refused(400, "The request names no model.")
     model = schedule.norm_model(name)
     if not ollama.MODELS.has(model):
+        # A model downloaded since the last look (by hand, with ollama in the container): look again, but at most
+        # every REFRESH_EVERY seconds, so a caller naming a missing model can't make every request a lookup.
         try:
-            await ollama.MODELS.refresh()
+            await ollama.MODELS.refresh_if_older(REFRESH_EVERY)
         except Exception:
             pass
         if not ollama.MODELS.has(model):
@@ -177,6 +216,9 @@ def rewrite(path: str, body: dict, model: str) -> dict:
         body["options"] = opts
     else:                                   # /v1/chat/completions
         body.pop("keep_alive", None)
+        # The same thread count and context as a native request: an Ollama that reads "options" on its OpenAI
+        # routes uses them (one that doesn't ignores the field). The caller's own "options" are not passed on.
+        body["options"] = {"num_thread": threads(), "num_ctx": int(values["context"])}
         for k in ("max_tokens", "max_completion_tokens"):
             n = body.get(k)
             if k in body and (not isinstance(n, int) or isinstance(n, bool) or n <= 0 or n > cap):
@@ -270,11 +312,16 @@ def note_model(model: str) -> None:
 async def reset_timer(path: str, model: str) -> None:
     """/v1 requests carry no keep_alive: reset the model's timer to the schedule's (SPEC.md §6.2). Called while the
     request still holds the queue, so the empty generate can't reload this model after the next request swapped
-    it out (with one model loaded at a time)."""
+    it out (with one model loaded at a time). Skipped when the schedule's value is the one the model server was
+    started with (OLLAMA_KEEP_ALIVE, which a /v1 request already got): at night, and in the day for a model other
+    than the kept one while both unload times are the same."""
     if path != "/v1/chat/completions":
         return
+    from .server import SERVER
     values = settings.all()
     ka = schedule.keep_alive(model, values, config.now(), schedule.kept_model(values, ollama.MODELS.text_models()))
+    if ka == SERVER.default_keep_alive:
+        return
     try:
         await ollama.set_keep_alive(model, ka, timeout=30)
     except Exception as e:
@@ -319,7 +366,11 @@ async def proxy(request: Request) -> Response:
     READING["n"] += 1
     try:
         try:
-            raw = await read_body(request)
+            try:
+                async with asyncio.timeout(READ_TIMEOUT):
+                    raw = await read_body(request)
+            except TimeoutError:
+                raise Refused(408, f"The request body didn't arrive within {READ_TIMEOUT} seconds.")
             try:
                 body = json.loads(raw or b"{}")
             except ValueError:
@@ -338,123 +389,174 @@ async def proxy(request: Request) -> Response:
         except ClientDisconnect:
             return Response(status_code=499)
 
-        # Waiting for our turn: until granted, or the caller goes away.
         from .server import SCHEDULE
         if SCHEDULE is not None:
             SCHEDULE.manual_unload = False
-        first = caller in (settings.get("answer_first") or [])
         try:
-            ticket = QUEUE.enter(caller, model, first)
+            ticket = QUEUE.enter(caller, model, answers_first(caller, key), per_caller=per_caller(caller, key))
         except Full as e:
             return error(path, 503, str(e), {"Retry-After": str(e.retry_after)})
     finally:
         READING["n"] -= 1
+
+    # The ticket is ours from here: every way out frees it — the stream's own cleanup once it is handed over.
+    handed_over = False
+    send = upstream = None
     gone = asyncio.create_task(wait_for_disconnect(request))
-    granted = asyncio.create_task(QUEUE.wait(ticket))
-    done, _ = await asyncio.wait({gone, granted}, return_when=asyncio.FIRST_COMPLETED)
-    if granted not in done:
-        granted.cancel()
-        QUEUE.leave(ticket)
-        return Response(status_code=499)
-    waited = ticket.waited(QUEUE.clock())
-    note_model(model)
-
-    stream = wants_stream(path, body)
-    asked_usage = False
-    if stream and path == "/v1/chat/completions":
-        so = body.get("stream_options")
-        asked_usage = isinstance(so, dict) and so.get("include_usage") is True
-        body["stream_options"] = {**(so if isinstance(so, dict) else {}), "include_usage": True}
-    limit = int(settings.get("max_run_min")) * MINUTE
-    counter = Counter(path)
-    started = time.monotonic()
-    client = ollama.client()
-
-    if not stream:
-        gone_task = gone
-        call = asyncio.create_task(client.post(path, json=body, timeout=httpx.Timeout(limit + 5, connect=5)))
-        try:
-            done, _ = await asyncio.wait({call, gone_task}, timeout=limit, return_when=asyncio.FIRST_COMPLETED)
-            if call not in done:
-                call.cancel()
-                try:
-                    await call
-                except BaseException:
-                    pass
-                if gone_task in done:
-                    logger.info("%s went away; stopped its %s request", callers.label(caller), model)
-                    return Response(status_code=499)
-                return error(path, 504, f"Stopped after the longest run ({settings.get('max_run_min')} min).")
-            try:
-                r = call.result()
-            except httpx.HTTPError as e:
-                return error(path, 502, f"The model server didn't answer: {e}")
-            if r.status_code == 200:
-                counter.whole(r.content)
-            return Response(r.content, status_code=r.status_code,
-                            media_type=r.headers.get("content-type", "application/json"))
-        finally:
-            gone_task.cancel()
-            ran = time.monotonic() - started
-            try:
-                await reset_timer(path, model)
-            finally:
-                QUEUE.leave(ticket)
-            await after_answer(path, model, caller, address, counter, ran, waited)
-
-    # Streaming: Starlette stops the generator when the caller goes away; closing the upstream stops Ollama.
-    gone.cancel()
     try:
-        upstream = await client.send(client.build_request("POST", path, json=body,
-                                                          timeout=httpx.Timeout(limit + 5, connect=5)), stream=True)
-    except httpx.HTTPError as e:
-        QUEUE.leave(ticket)
-        return error(path, 502, f"The model server didn't answer: {e}")
-    if upstream.status_code != 200:
-        content = await upstream.aread()
-        await upstream.aclose()
-        QUEUE.leave(ticket)
-        return Response(content, status_code=upstream.status_code, media_type="application/json")
-
-    finished = False
-
-    async def cleanup():
-        nonlocal finished
-        if finished:
-            return
-        finished = True
-        with anyio.CancelScope(shield=True):
-            try:
-                await upstream.aclose()
-                await reset_timer(path, model)
-            finally:
-                QUEUE.leave(ticket)
-            await after_answer(path, model, caller, address, counter, time.monotonic() - started, waited)
-
-    async def lines():
-        buf = b""
+        # Waiting for our turn: until granted, or the caller goes away.
+        granted = asyncio.create_task(QUEUE.wait(ticket))
         try:
-            async with asyncio.timeout(limit):
-                async for chunk in upstream.aiter_raw():
-                    buf += chunk
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        counter.line(line)
-                        if not asked_usage and path.startswith("/v1/") and counter.is_usage_only(line):
-                            continue
-                        yield line + b"\n"
-            if buf:
-                counter.line(buf)
-                yield buf
-        except TimeoutError:
-            msg = f"Stopped after the longest run ({settings.get('max_run_min')} min)."
-            yield ((b"data: " + json.dumps({"error": {"message": msg}}).encode() + b"\n\n")
-                   if path.startswith("/v1/") else json.dumps({"error": msg}).encode() + b"\n")
+            done, _ = await asyncio.wait({gone, granted}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            await cleanup()
+            if not granted.done():
+                granted.cancel()
+        if granted not in done:
+            return Response(status_code=499)
+        waited = ticket.waited(QUEUE.clock())
+        note_model(model)
 
-    media = upstream.headers.get("content-type", "application/x-ndjson")
-    return Stream(lines(), cleanup, media_type=media)
+        stream = wants_stream(path, body)
+        asked_usage = False
+        if stream and path == "/v1/chat/completions":
+            so = body.get("stream_options")
+            asked_usage = isinstance(so, dict) and so.get("include_usage") is True
+            body["stream_options"] = {**(so if isinstance(so, dict) else {}), "include_usage": True}
+        limit = int(settings.get("max_run_min")) * MINUTE
+        counter = Counter(path)
+        started = time.monotonic()
+        deadline = started + limit           # *Longest run* counts from our turn, model loading included
+        client = ollama.client()
+
+        if not stream:
+            call = asyncio.create_task(client.post(path, json=body, timeout=httpx.Timeout(limit + 5, connect=5)))
+            try:
+                done, _ = await asyncio.wait({call, gone}, timeout=limit, return_when=asyncio.FIRST_COMPLETED)
+                if call not in done:
+                    await _stop(call)
+                    if gone in done:
+                        logger.info("%s went away; stopped its %s request", callers.label(caller), model)
+                        return Response(status_code=499)
+                    return error(path, 504, f"Stopped after the longest run ({settings.get('max_run_min')} min).")
+                try:
+                    r = call.result()
+                except httpx.HTTPError as e:
+                    return error(path, 502, f"The model server didn't answer: {e}")
+                if r.status_code == 200:
+                    counter.whole(r.content)
+                return Response(r.content, status_code=r.status_code,
+                                media_type=r.headers.get("content-type", "application/json"))
+            finally:
+                await _stop(call)
+                ran = time.monotonic() - started
+                try:
+                    await reset_timer(path, model)
+                finally:
+                    QUEUE.leave(ticket)
+                await after_answer(path, model, caller, address, counter, ran, waited)
+
+        # Streaming. Until Ollama's first line (a model loading can take a minute) the caller going away, or the
+        # longest run passing, stops the request; after that Starlette notices a caller gone and stops the stream,
+        # and closing the upstream stops Ollama.
+        send = asyncio.create_task(client.send(
+            client.build_request("POST", path, json=body, timeout=httpx.Timeout(limit + 5, connect=5)), stream=True))
+        done, _ = await asyncio.wait({send, gone}, timeout=limit, return_when=asyncio.FIRST_COMPLETED)
+        if send not in done:
+            if gone in done:
+                logger.info("%s went away; stopped its %s request", callers.label(caller), model)
+                return Response(status_code=499)
+            return error(path, 504, f"Stopped after the longest run ({settings.get('max_run_min')} min).")
+        gone.cancel()                        # Starlette watches for the caller going away from here on
+        try:
+            upstream = send.result()
+        except httpx.HTTPError as e:
+            return error(path, 502, f"The model server didn't answer: {e}")
+        if upstream.status_code != 200:
+            content = await upstream.aread()
+            await upstream.aclose()
+            return Response(content, status_code=upstream.status_code, media_type="application/json")
+
+        finished = False
+
+        async def cleanup():
+            nonlocal finished
+            if finished:
+                return
+            finished = True
+            with anyio.CancelScope(shield=True):
+                try:
+                    await upstream.aclose()
+                    await reset_timer(path, model)
+                finally:
+                    QUEUE.leave(ticket)
+                await after_answer(path, model, caller, address, counter, time.monotonic() - started, waited)
+
+        async def lines():
+            buf = b""
+            try:
+                async with asyncio.timeout(max(0.0, deadline - time.monotonic())):
+                    async for chunk in upstream.aiter_raw():
+                        buf += chunk
+                        while b"\n" in buf:
+                            line, buf = buf.split(b"\n", 1)
+                            counter.line(line)
+                            if not asked_usage and path.startswith("/v1/") and counter.is_usage_only(line):
+                                continue
+                            yield line + b"\n"
+                if buf:
+                    counter.line(buf)
+                    yield buf
+            except TimeoutError:
+                msg = f"Stopped after the longest run ({settings.get('max_run_min')} min)."
+                yield ((b"data: " + json.dumps({"error": {"message": msg}}).encode() + b"\n\n")
+                       if path.startswith("/v1/") else json.dumps({"error": msg}).encode() + b"\n")
+            finally:
+                await cleanup()
+
+        media = upstream.headers.get("content-type", "application/x-ndjson")
+        handed_over = True
+        return Stream(lines(), cleanup, media_type=media)
+    finally:
+        gone.cancel()
+        if not handed_over:
+            with anyio.CancelScope(shield=True):
+                if send is not None:
+                    await _stop(send)
+                if upstream is not None:
+                    await upstream.aclose()
+            QUEUE.leave(ticket)
+
+
+async def _stop(task: asyncio.Task) -> None:
+    """Cancel a request to Ollama that is still running (closing it stops Ollama) and wait until it has ended."""
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except BaseException:
+        pass
+
+
+def per_caller(caller: str, key: dict | None) -> int:
+    """How many requests one caller may have waiting. Without keys, an address that isn't a known household app
+    (addr:…) gets config.ADDR_PER_CALLER: on a Docker host every household app comes from Home Assistant's one
+    address."""
+    if key is None and caller.startswith("addr:"):
+        return max(PER_CALLER, int(config.ADDR_PER_CALLER))
+    return PER_CALLER
+
+
+def answers_first(caller: str, key: dict | None) -> bool:
+    """On *Answer first*: the caller's name (a household app's slug, an address, or a key's id), or — with keys
+    on — the app the key's label names ("Household Assistant" matches household_assistant, the default)."""
+    first = settings.get("answer_first") or []
+    if caller in first:
+        return True
+    if key is not None:
+        slug = callers.slug_for_label(key.get("label") or "")
+        return slug is not None and slug in first
+    return False
 
 
 class Stream(StreamingResponse):

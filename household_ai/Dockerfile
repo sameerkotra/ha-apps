@@ -7,6 +7,8 @@ ARG BUILD_VERSION
 FROM ollama/ollama:0.40.0 AS ollama
 RUN mkdir /ollama-cpu && find /usr/lib/ollama -maxdepth 1 ! -type d -exec cp -a {} /ollama-cpu/ \;
 
+# Pinned to one Debian release (trixie) so a rebuild can't quietly move to the next one. (Pin by digest too —
+# python:3.13-slim-trixie@sha256:… — when you can look it up; the Python version stays 3.13.)
 FROM python:3.13-slim-trixie
 
 # tzdata: the daytime window follows Home Assistant's time zone. ca-certificates: downloads from Ollama's library.

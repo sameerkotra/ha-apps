@@ -3,6 +3,7 @@ Home Assistant's time zone (the daytime window follows it: SPEC.md §6.2).
 
 `admin_users` is the only option; every other setting is an App setting (app/settings.py, stored in SQLite).
 """
+import ipaddress
 import logging
 import os
 import socket
@@ -30,7 +31,7 @@ SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", f"{SUPERVISOR_API}/core/api")
 
 APP_TITLE = "Household AI"
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 SLUG = "household_ai"
 
 # The model server: Ollama, a child process listening on loopback only (SPEC.md §3).
@@ -42,6 +43,21 @@ GATEWAY_PORT = int(os.environ.get("GATEWAY_PORT", "11434"))
 GATEWAY_HOST = os.environ.get("GATEWAY_HOST", "0.0.0.0")
 # Where the recommended models and "Other model…" come from (download sizes, SPEC.md §3).
 REGISTRY_URL = os.environ.get("OLLAMA_REGISTRY_URL", "https://registry.ollama.ai").rstrip("/")
+# Downloads from any registry (an admin's choice on the Models tab); the Docker build limits them.
+ALLOWED_REGISTRIES: frozenset | None = None
+
+# The gateway answers only to this machine's names (DNS rebinding, app/hosts.py): addresses, names without a dot (the
+# apps use "<prefix>-household-ai"), localhost and local names (.local, .lan, .home.arpa, .internal). More names: the
+# *Other names for this machine* App setting. (The Docker build adds its ALLOWED_HOSTS variable here.)
+ALLOWED_HOSTS: frozenset = frozenset()
+HOST_HINT = (": use the app's host name or the machine's IP address, or add the name under Household AI → App "
+             "settings → Access → Other names for this machine.")
+
+# Home Assistant's internal network (the Supervisor's, 172.30.32.0/23): the apps and Home Assistant itself. With keys
+# off and port 11434 published on the LAN, callers from anywhere else are refused (gateway.outsider_refused).
+INSIDE_NETWORK = (ipaddress.ip_network(os.environ.get("INSIDE_NETWORK", "172.30.32.0/23")),)
+# Requests one unknown address may have waiting without keys (every household app has its own address here).
+ADDR_PER_CALLER = 2
 
 
 def own_hostname() -> str:

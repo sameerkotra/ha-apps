@@ -151,7 +151,7 @@
           h("td", null, gb(d.size)), h("td", null, h("label", null, radio, d.kept ? " kept in the day" : "")),
           h("td", null, button("Delete", async () => {
             if (!(await UI.confirmDialog("Delete model", `Delete ${d.name}? Apps using it get "not found" until it is downloaded again.`, { okLabel: "Delete" }))) return;
-            await api(`api/models/${encodeURIComponent(d.name)}`, { method: "DELETE" });
+            await api(`api/downloaded/${encodeURIComponent(d.name)}`, { method: "DELETE" });
             toast(`Deleted ${d.name}.`);
             loadModels();
           })));
@@ -240,6 +240,8 @@
     mount(clear(box),
       card("Values for another app's AI settings",
         h("p", { class: "hint" }, "In each household app in Home Assistant: Admin → App settings → AI. The address is this machine as your browser reached this page; use its IP address if Home Assistant can't resolve the name."), values,
+        c.local ? h("p", { class: "warn-text" }, "This page was opened on this machine itself, so it can't tell the address Home Assistant reaches it by: put this machine's IP address (e.g. 192.168.1.10) in the address.") : null,
+        h("p", { class: "hint" }, "Without an access key, every household app shares 6 waiting places in the queue (they all come from Home Assistant's address); with one key per app, each has 2 of its own."),
         h("p", { class: "hint" }, "Every household app reaches this machine from Home Assistant's address, so without keys they are all listed as that one computer. To see each app on its own (and to tick Answer first for the Household Assistant), turn on Require an access key and give each app its own key."),
         h("p", { class: "hint" }, "An app's timeout covers its wait in the queue as well as the answer: allow more than one vision job (several minutes) for apps that share the model with Receipt Price Intelligence or Finance.")),
       card("Apps that have used it", rows.length ? h("table", { class: "grid" },
@@ -254,6 +256,9 @@
     let r;
     try { r = await api("api/keys"); } catch (e) { fail(box, e); return; }
     const label = h("input", { type: "text", placeholder: "e.g. Receipt Price Intelligence", maxlength: 80, "aria-label": "Label" });
+    // Answer first: offered for the Household Assistant's key (a person waits on its page) — ticked when the label names it.
+    const first = h("input", { type: "checkbox" });
+    label.addEventListener("input", () => { first.checked = /assistant/i.test(label.value); });
     const list = r.keys.filter((k) => !k.revokedAt);
     mount(clear(box),
       card("Access keys",
@@ -271,8 +276,8 @@
               await api(`api/keys/${encodeURIComponent(k.id)}`, { method: "DELETE" });
               loadKeys();
             })))))) : h("p", { class: "hint" }, "No keys."),
-        h("div", { class: "row" }, label, button("New key", async () => {
-          const r2 = await api("api/keys", { method: "POST", body: { label: label.value.trim() } });
+        h("div", { class: "row" }, label, h("label", { title: "Its requests go ahead of the other apps' (a request already running is never interrupted)" }, first, " Answer first"), button("New key", async () => {
+          const r2 = await api("api/keys", { method: "POST", body: { label: label.value.trim(), answerFirst: first.checked } });
           UI.openModal("New access key", h("div", null,
             h("p", null, "Paste it into the app's AI settings now: it is shown only this once."),
             h("p", null, copyable(r2.key))));

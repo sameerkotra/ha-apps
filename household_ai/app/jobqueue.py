@@ -3,9 +3,11 @@
 - Callers on *Answer first* go ahead of the others; then arrival order. A running request is never interrupted.
 - No limit on waiting time: a waiting request stays until its turn. The bound is the caller's own timeout — the
   gateway drops a request whose caller has gone (`leave()`).
-- At most `limit` requests wait (the *Queue length* setting), and at most PER_CALLER from one caller; beyond
-  that `enter()` raises Full with a Retry-After: the running job's expected time left, from the model's recent
-  seconds per request, between 10 and 60 s.
+- At most `limit` requests wait (the *Queue length* setting), and at most PER_CALLER from one caller (the gateway
+  may allow a caller more); beyond that `enter()` raises Full with a Retry-After: the running job's expected time
+  left, from the model's recent seconds per request, between 10 and 60 s.
+- The app's own jobs (restarting the model server, deleting a model) enter with `force`: never refused, so they
+  wait for the running request to end instead of cutting it off.
 """
 import asyncio
 import itertools
@@ -44,16 +46,20 @@ class RequestQueue:
         self.seconds: dict[str, float] = {}      # model → recent seconds per request (moving average)
 
     # ------------------------------------------------------------------ entering and leaving
-    def enter(self, caller: str, model: str, first: bool = False) -> Ticket:
-        """A ticket for this request: granted at once when nothing runs, else waiting. Raises Full."""
+    def enter(self, caller: str, model: str, first: bool = False, per_caller: int = PER_CALLER,
+              force: bool = False) -> Ticket:
+        """A ticket for this request: granted at once when nothing runs, else waiting. Raises Full (never with
+        `force`)."""
         t = Ticket(caller, model, first, self.clock())
         if self.running is None and not self.waiting:
             self._grant(t)
             return t
-        if len(self.waiting) >= max(1, int(self.limit())):
-            raise Full("The model is busy and the queue is full — try again shortly.", self.retry_after())
-        if sum(1 for w in self.waiting if w.caller == caller) >= PER_CALLER:
-            raise Full("This app already has 2 requests waiting — try again shortly.", self.retry_after())
+        if not force:
+            if len(self.waiting) >= max(1, int(self.limit())):
+                raise Full("The model is busy and the queue is full — try again shortly.", self.retry_after())
+            if sum(1 for w in self.waiting if w.caller == caller) >= per_caller:
+                raise Full(f"This app already has {per_caller} requests waiting — try again shortly.",
+                           self.retry_after())
         self.waiting.append(t)
         return t
 

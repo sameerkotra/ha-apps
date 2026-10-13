@@ -4,10 +4,12 @@ The app starts it when *Model server* is on: `nice -n 10 ollama serve` (Home Ass
 model works), on 127.0.0.1:11435 only, models in /data/models. It is watched (/api/version every 30 s),
 restarted when it exits (5 s, doubling to 5 min; back to 5 s once it has run 10 minutes) and stopped with
 SIGTERM on shutdown (10 s, then SIGKILL). Killed by the kernel for lack of memory (SIGKILL we didn't send), it
-says so.
+says so. A restart the admin causes (a server setting, a restore) takes its turn in the gateway's queue
+(`restart_soon`), so it never cuts off an answer.
 """
 import asyncio
 import collections
+import contextlib
 import logging
 import os
 import shlex
@@ -45,9 +47,13 @@ def command() -> list[str]:
     return [nice, "-n", "10", *cmd] if nice else cmd
 
 
+# Secrets in the app's environment that the model server never needs: Home Assistant's token (under both of the
+# Supervisor's names) and, on a Docker host, the settings page's password.
+SECRET_ENV = ("SUPERVISOR_TOKEN", "HASSIO_TOKEN", "ADMIN_PASSWORD")
+
+
 def environment(values: dict) -> dict:
-    env = dict(os.environ)
-    env.pop("SUPERVISOR_TOKEN", None)          # the model server never needs Home Assistant's token
+    env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
     env.update({
         "OLLAMA_HOST": f"127.0.0.1:{config.OLLAMA_PORT}",
         "OLLAMA_MODELS": config.MODELS_DIR,
@@ -73,6 +79,11 @@ class ModelServer:
         self._wanted = False
         self._stopping = False
         self.on_ready = []                     # async callbacks after each (re)start
+        # The keep_alive (seconds) the running server was started with (OLLAMA_KEEP_ALIVE): what a request without
+        # one gets. None until it has started.
+        self.default_keep_alive: int | None = None
+        self._restart: asyncio.Task | None = None
+        self._restart_began = False
 
     # ------------------------------------------------------------------ control
     def running(self) -> bool:
@@ -101,13 +112,50 @@ class ModelServer:
         await self.stop("Restarting")
         await self.start()
 
+    def restart_soon(self, queue) -> asyncio.Task:
+        """Restart in turn: after the request running now, ahead of the waiting ones (`turn`). A setting changed
+        again before the restart begins is picked up by the same restart; one changed while it runs gets another."""
+        if self._restart is not None and not self._restart.done() and not self._restart_began:
+            return self._restart
+        previous = self._restart
+        self._restart_began = False
+        self._restart = asyncio.create_task(self._restart_in_turn(queue, previous), name="ollama-restart")
+        return self._restart
+
+    async def _restart_in_turn(self, queue, previous) -> None:
+        if previous is not None and not previous.done():
+            with contextlib.suppress(Exception):
+                await previous
+        async with turn(queue, "household_ai:restart"):
+            if not self._wanted:                         # turned off meanwhile
+                return
+            self._restart_began = True
+            await self.restart()
+            await self.wait_ready(READY_TIMEOUT)
+
+    async def wait_ready(self, timeout: float) -> bool:
+        end = time.monotonic() + timeout
+        while self.state != "ready" and self._wanted and time.monotonic() < end:
+            await asyncio.sleep(0.1)
+        return self.state == "ready"
+
+    async def cancel_restart(self) -> None:
+        """At shutdown: a restart still waiting for its turn is dropped."""
+        task, self._restart = self._restart, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
     # ------------------------------------------------------------------ the child process
     async def _spawn(self) -> None:
         os.makedirs(config.MODELS_DIR, exist_ok=True)
         cmd = command()
         self.log.append(f"[household_ai] starting: {' '.join(cmd)}")
+        values = settings.all()
+        self.default_keep_alive = int(values["night_unload_min"]) * 60
         self.proc = await asyncio.create_subprocess_exec(
-            *cmd, env=environment(settings.all()), stdin=asyncio.subprocess.DEVNULL,
+            *cmd, env=environment(values), stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
         self.started_at = time.monotonic()
         asyncio.create_task(self._read_output(self.proc), name="ollama-log")
@@ -215,6 +263,19 @@ class ModelServer:
 
 
 SERVER = ModelServer()
+
+
+@contextlib.asynccontextmanager
+async def turn(queue, caller: str):
+    """Hold the gateway's queue while the app does something an answer must not overlap (restarting the model
+    server, deleting a model): waits for the running request to finish, goes ahead of the waiting ones, and is
+    never refused for a full queue."""
+    ticket = queue.enter(caller, caller, first=True, force=True)
+    try:
+        await queue.wait(ticket)
+        yield
+    finally:
+        queue.leave(ticket)
 
 
 # ---------------------------------------------------------------------------------------------- the schedule

@@ -1,19 +1,21 @@
 """Household AI: the admin page (ingress), the model server it starts, and the gateway on port 11434.
 
 Start-up: the database, Home Assistant's time zone, the gateway (its own uvicorn server on 11434, in this
-process), then the model server when *Model server* is on. Every minute: the callers' host names and the
-day/night schedule; every hour: housekeeping (usage older than 30 days).
+process), then the model server when *Model server* is on. Every minute: the callers' host names, whether 11434 is
+published (app/network.py) and the day/night schedule; every hour: housekeeping (usage older than 30 days, backup
+copies a browser never finished downloading).
 """
 import asyncio
 import logging
 import os
+import tempfile
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from . import callers, config, db, gateway, ollama, server, settings, usage
-from .common import auth_core, ha_time, web_security
+from . import callers, config, db, gateway, network, ollama, server, settings, usage
+from .common import auth_core, backup_core, ha_time, web_security
 from .common import housekeeping as jobs_core
 from .routers import api
 
@@ -39,12 +41,15 @@ async def lifespan(app: FastAPI):
                traceback=False)
     jobs.every("schedule", 60, server.SCHEDULE.tick, thread=False, at_start=False, log=logger,
                error="The schedule failed")
-    jobs.every("housekeeping", 3600, usage.housekeeping, log=logger, error="Housekeeping failed")
+    jobs.every("network", 60, lambda: network.published_port(force=True), thread=False, log=logger,
+               error="Reading the app's network settings failed", traceback=False)
+    jobs.every("housekeeping", 3600, housekeeping, log=logger, error="Housekeeping failed")
     jobs.start()
     try:
         yield
     finally:
         await jobs.stop()
+        await server.SERVER.cancel_restart()
         if gw is not None:
             gw.should_exit = True
             try:
@@ -55,8 +60,20 @@ async def lifespan(app: FastAPI):
         await ollama.close()
 
 
+def housekeeping() -> None:
+    usage.housekeeping()
+    # Backup copies (Storage → Download) a browser abandoned half-way, and restores cut off mid-upload.
+    backup_core.remove_stale(tempfile.gettempdir(), db.BACKUP_PREFIX, 6 * 3600)
+    backup_core.remove_stale(config.DATA_DIR, db.RESTORE_PREFIX, 6 * 3600)
+
+
 app = FastAPI(title="Household AI", lifespan=lifespan)
 app.include_router(api.router)
+
+# Request bodies: 1 MB, a restored backup up to api.RESTORE_MAX (and it must say its size). Added first, so it runs
+# inside the guard below: outsiders still get the guard's 403.
+app.add_middleware(web_security.BodyLimit, default_max=1 << 20, routes={api.RESTORE_PATH: api.RESTORE_MAX},
+                   no_chunked_prefixes=(api.RESTORE_PATH,))
 
 
 @app.middleware("http")
@@ -77,7 +94,8 @@ def health():
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
        "frame-ancestors 'self'")
-HEADERS = web_security.SecurityHeaders(CSP, pragma=True)
+# The page links every file with ?v=<version>, so those are cached for good (a new version has new links).
+HEADERS = web_security.SecurityHeaders(CSP, pragma=True, static_immutable=True, static_prefixes=("/",))
 HEADERS.install(app)
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")

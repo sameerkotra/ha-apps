@@ -1,9 +1,10 @@
 """Household AI on its own Docker host: settings come from environment variables (the docker-compose.yml), the paths
 live under /data (a volume), and the daytime window follows the container's time zone (the TZ variable).
 
-There is no Home Assistant here: no Supervisor, no ingress, no login. The settings page (WEB_PORT, 8080) is open to
-anyone who can reach it — keep that port to your own network. Every other setting is an App setting
-(app/settings.py, stored in SQLite).
+There is no Home Assistant here: no Supervisor, no ingress, no Home Assistant login. The settings page (WEB_PORT, 8080)
+is published on this machine only (127.0.0.1 in docker-compose.yml); ADMIN_PASSWORD, when set, makes the page ask for
+it (HTTP Basic), so it can be opened from other computers. Every other setting is an App setting (app/settings.py,
+stored in SQLite).
 """
 import logging
 import os
@@ -26,7 +27,7 @@ SUPERVISOR_API = ""
 SUPERVISOR_CORE_API = ""
 
 APP_TITLE = "Household AI"
-APP_VERSION = "1.0.4-docker"
+APP_VERSION = "1.0.5-docker"
 SLUG = "household_ai"
 STANDALONE = True
 
@@ -44,6 +45,19 @@ PUBLIC_GATEWAY_PORT = int(os.environ.get("PUBLIC_GATEWAY_PORT", "11434"))
 WEB_PORT = int(os.environ.get("WEB_PORT", "8080"))
 # Where the recommended models and "Other model…" come from.
 REGISTRY_URL = os.environ.get("OLLAMA_REGISTRY_URL", "https://registry.ollama.ai").rstrip("/")
+# Downloads come from Ollama's library and Hugging Face only, unless ALLOW_ANY_REGISTRY=1 (app/models.py).
+ALLOWED_REGISTRIES: frozenset | None = (None if os.environ.get("ALLOW_ANY_REGISTRY", "").strip() == "1"
+                                        else frozenset({"registry.ollama.ai", "hf.co", "huggingface.co"}))
+
+# The settings page's password (HTTP Basic, any user name): empty = no password, for a page published on this machine
+# only (docker-compose.yml's 127.0.0.1:8080). The model server never sees it (server.SECRET_ENV).
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+# No Home Assistant network here: callers are never refused for their address (keys protect the gateway).
+INSIDE_NETWORK = None
+# Requests one address may have waiting without keys: every household app reaches this machine from Home Assistant's
+# one address, so they share these places (with keys, each app has its own 2).
+ADDR_PER_CALLER = 6
 
 
 def own_hostname() -> str:
@@ -58,6 +72,8 @@ def own_hostname() -> str:
 # ".example.com" for every name under it, "*" for any name).
 ALLOWED_HOSTS = frozenset(hosts.parse_list(os.environ.get("ALLOWED_HOSTS"))
                           | hosts.parse_list(own_hostname()))
+HOST_HINT = (": add it to ALLOWED_HOSTS (docker-compose.yml), or under App settings → Access → Other names for this "
+             "machine, if it is this machine's name.")
 
 
 # The container's time zone (TZ, e.g. Europe/London); UTC when it isn't set or isn't known.

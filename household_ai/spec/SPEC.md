@@ -132,8 +132,10 @@ on port 11434:
   off. Everything else
   (`/api/pull`, `/api/delete`, `/api/create`, `/api/copy`, `/api/push`, blobs) is 404 — model management is only on
   the admin page, behind ingress and the admin check.
-- **Checks every request** before queueing it: a body over 32 MB is 413 (a few photos as base64 fit); the
-  caller's `keep_alive` is replaced by the schedule's (§6.2); `options.num_ctx` is capped at *Context length*,
+- **Checks every request** before queueing it: the Host header must name this machine (the app's host name, an
+  address, `localhost`, a local name, or one listed in *Other names for this machine*), else 403 — a web page that
+  points its own name here (DNS rebinding) is refused; a body over 32 MB is 413 (a few photos as base64 fit), and
+  one that hasn't arrived within 30 s is 408; the caller's `keep_alive` is replaced by the schedule's (§6.2); `options.num_ctx` is capped at *Context length*,
   `options.num_thread` is set to *Threads*, and `options.num_predict` (`max_tokens` on `/v1`) is capped at *Longest
   answer* (default 2048 tokens) — so no caller can load a model with a context that fills the RAM, or keep the CPU
   generating without end. `/api/tags` and `/v1/models` list only downloaded models (and, with keys on, only those
@@ -163,9 +165,11 @@ on port 11434:
   full slug with `_` turned into `-` (APP_MESSAGES_SPEC §6.5), e.g. `http://a1b2c3d4-household-ai:11434`.
   `config.yaml` declares 11434 but leaves it **unpublished** by default (§3). To use the model from other machines
   on the LAN, the admin enters a host port for it on the app's **Network** tab in Home Assistant (the page explains
-  how; the app can't publish it itself). Published with *Require an access key* off, the page shows a standing
-  warning ("Anyone on your network can use the model and its CPU"); the page offers to turn keys
-  on, and says plain HTTP on the LAN shows a key to anyone listening.
+  how; the app can't publish it itself). Published with *Require an access key* off, the gateway serves only
+  callers inside the Supervisor's network (172.30.32.0/23: the apps and Home Assistant itself) and refuses other
+  computers with 403 "only apps inside Home Assistant may use it" — the page says so and offers to turn keys on, and
+  says plain HTTP on the LAN shows a key to anyone listening. (Whether the port is published is read from the
+  Supervisor every minute; a failed read keeps the last answer.)
 - **Other apps on the internal network** (community apps too) can use the model without a key while keys are off —
   the accepted trade-off of the default; they still can't manage models, and the queue limits them like any app.
 - **Logging**: per caller (key, or host name/address), per request: time, model, path, input/output tokens,
@@ -239,8 +243,9 @@ the gateway, not Ollama, queues:
   both (the page adds up the two models' RAM and warns when that leaves Home Assistant under 4 GB).
 - **Threads** (default: all cores but one, at least 1) and **Context length** (default 8192) are settings. Ollama
   has no server-wide thread setting, so the gateway sets `options.num_thread` on every native request (§4);
-  `/v1` requests have no `options`, so they run with Ollama's own default (all physical cores) — one more reason
-  the page recommends the Ollama provider. *Context length* is also Ollama's `OLLAMA_CONTEXT_LENGTH` (§3), and the
+  `/v1` requests are sent `options: {num_thread, num_ctx}` as well (since 1.0.5), but Ollama's OpenAI routes may
+  ignore it, and then they run with Ollama's own default (all physical cores) — one more reason the page
+  recommends the Ollama provider. *Context length* is also Ollama's `OLLAMA_CONTEXT_LENGTH` (§3), and the
   gateway caps a caller's larger `num_ctx` at it.
 
 ### 6.2 When models stay loaded (day and night)
@@ -362,5 +367,12 @@ Size: about Calorie Tracker's (≈1,500 lines of Python, ≈700 of page, ≈2,00
   The page recommends the Ollama provider instead; every household app already supports it.
 - **`hassio_api` for one call** (2026-10-07): only to read whether 11434 is published, so the page's LAN warning
   is true rather than guessed.
+- **Host check in the Home Assistant app too** (2026-10-13, review): the app's gateway had none because the apps
+  reach it by host name; once the port is published a web page on the LAN could reach it through DNS rebinding. The
+  same rule as the Docker build, plus an App setting for other names.
+- **A published port without keys serves only Home Assistant's network** (2026-10-13, review): publishing the port
+  is for other computers, and keys are what tells them apart; the apps inside keep working with no key.
+- **The app's own restarts and deletes take a turn in the queue** (2026-10-13, review): they wait for the running
+  answer (ahead of the waiting ones, never refused for a full queue) instead of cutting it off.
 - **No GPU support in the first release**: Home Assistant OS machines rarely have one usable from an app; the
   gateway and settings would not change if a GPU build were added later.

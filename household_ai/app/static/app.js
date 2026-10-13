@@ -83,8 +83,9 @@
     if (!net.known) netBody = h("p", { class: "hint" }, "Couldn't read the app's network settings.");
     else if (!net.port) netBody = h("p", null, "Not published: only apps inside Home Assistant can use the model (the safest choice).");
     else netBody = h("p", { class: net.requireKey ? null : "warn-text" },
-      `Published on port ${net.port} of the Home Assistant machine: other computers on your network can use it.`,
-      net.requireKey ? "" : " Anyone on your network can use the model and its CPU — turn on Require an access key (App settings → Access). Plain HTTP shows a key to anyone listening on the network.");
+      `Published on port ${net.port} of the Home Assistant machine.`,
+      net.requireKey ? " Other computers on your network can use it with an access key. Plain HTTP shows a key to anyone listening on the network."
+        : " Require an access key is off, so only apps inside Home Assistant can use it: other computers on your network are refused. To let them in, turn on Require an access key (App settings → Access) and give each one a key — or remove the port if nothing outside needs it.");
     const keepPick = sched.kept ? `${sched.kept} — kept ${sched.dayStart}–${sched.dayEnd}` : "None";
 
     mount(clear(box),
@@ -151,7 +152,7 @@
           h("td", null, gb(d.size)), h("td", null, h("label", null, radio, d.kept ? " kept in the day" : "")),
           h("td", null, button("Delete", async () => {
             if (!(await UI.confirmDialog("Delete model", `Delete ${d.name}? Apps using it get "not found" until it is downloaded again.`, { okLabel: "Delete" }))) return;
-            await api(`api/models/${encodeURIComponent(d.name)}`, { method: "DELETE" });
+            await api(`api/downloaded/${encodeURIComponent(d.name)}`, { method: "DELETE" });
             toast(`Deleted ${d.name}.`);
             loadModels();
           })));
@@ -254,12 +255,15 @@
     let r;
     try { r = await api("api/keys"); } catch (e) { fail(box, e); return; }
     const label = h("input", { type: "text", placeholder: "e.g. Receipt Price Intelligence", maxlength: 80, "aria-label": "Label" });
+    // Answer first: offered for the Household Assistant's key (a person waits on its page) — ticked when the label names it.
+    const first = h("input", { type: "checkbox" });
+    label.addEventListener("input", () => { first.checked = /assistant/i.test(label.value); });
     const list = r.keys.filter((k) => !k.revokedAt);
     mount(clear(box),
       card("Access keys",
         h("p", { class: r.requireKey ? null : "hint" }, r.requireKey
           ? "Require an access key is on: every app needs one of these keys in its AI settings (Access key)."
-          : "Require an access key is off (App settings → Access): any app inside Home Assistant may use the model, and keys aren't checked. Turn it on if you install an app you don't trust, or when the model is published on your network."),
+          : "Require an access key is off (App settings → Access): any app inside Home Assistant may use the model, and keys aren't checked; other computers are refused even when the port is published. Turn it on if you install an app you don't trust, or to use the model from other computers."),
         list.length ? h("table", { class: "grid" },
           h("thead", null, h("tr", null, ["Label", "Created", "Last used", "Models", ""].map((t) => h("th", null, t)))),
           h("tbody", null, list.map((k) => h("tr", null, h("td", null, k.label),
@@ -271,8 +275,8 @@
               await api(`api/keys/${encodeURIComponent(k.id)}`, { method: "DELETE" });
               loadKeys();
             })))))) : h("p", { class: "hint" }, "No keys."),
-        h("div", { class: "row" }, label, button("New key", async () => {
-          const r2 = await api("api/keys", { method: "POST", body: { label: label.value.trim() } });
+        h("div", { class: "row" }, label, h("label", { title: "Its requests go ahead of the other apps' (a request already running is never interrupted)" }, first, " Answer first"), button("New key", async () => {
+          const r2 = await api("api/keys", { method: "POST", body: { label: label.value.trim(), answerFirst: first.checked } });
           UI.openModal("New access key", h("div", null,
             h("p", null, "Paste it into the app's AI settings now: it is shown only this once."),
             h("p", null, copyable(r2.key))));

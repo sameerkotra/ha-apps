@@ -50,7 +50,7 @@ class SettingsPage(unittest.TestCase):
         for method, path, body in (("POST", "api/keys", {"label": "stolen"}),
                                    ("PUT", "api/admin/settings", {"require_key": False}),
                                    ("POST", "api/models/pull", {"name": "qwen2.5:3b"}),
-                                   ("DELETE", "api/models/qwen2.5:3b", None)):
+                                   ("DELETE", "api/downloaded/qwen2.5:3b", None)):
             r = evil.request(method, path, json=body, headers={"Origin": "http://evil.example.com:8080",
                                                                "Sec-Fetch-Site": "same-origin"})
             self.assertEqual(r.status_code, 403, path)

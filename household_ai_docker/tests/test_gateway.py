@@ -100,6 +100,7 @@ class Routes(Base):
         self.assertEqual(self.h.requests(GEN)[-1]["keep_alive"], 180)
 
     def test_v1_max_tokens_capped_and_tokens_counted(self):
+        settings.update({"day_start": "00:00", "day_end": "00:00"}, None)     # daytime all day: the kept model
         r = self.h.gw("127.0.0.3").post("/v1/chat/completions", json={
             "model": "qwen2.5:3b", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 50000})
         self.assertEqual(r.status_code, 200, r.text)
@@ -107,8 +108,9 @@ class Routes(Base):
         self.assertEqual(body["max_tokens"], 2048)
         self.assertNotIn("keep_alive", body)
         self.assertIn(("household_docs", "qwen2.5:3b", 1, 7, 4), usage_rows())
-        # The model's timer is reset after a /v1 answer (an empty generate with the schedule's keep_alive).
-        self.assertTrue(any("prompt" not in b and "keep_alive" in b for b in self.h.requests(GEN)))
+        # The model's timer is reset after a /v1 answer (an empty generate with the schedule's keep_alive: the
+        # kept model stays loaded all day).
+        self.assertIn({"model": "qwen2.5:3b", "keep_alive": -1}, self.h.requests(GEN))
 
     def test_v1_stream_counts_tokens_and_hides_the_usage_chunk_it_added(self):
         r = self.h.gw("127.0.0.3").post("/v1/chat/completions", json={

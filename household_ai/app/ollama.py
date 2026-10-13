@@ -134,8 +134,17 @@ class Models:
         self.rows: list[dict] = []
         self.kinds: dict[str, str] = {}          # digest → "text" | "vision" | "both"
         self.loaded_at = 0.0
+        self.tried_at = 0.0                      # time.monotonic() of the last refresh started
+
+    async def refresh_if_older(self, seconds: float) -> list[dict]:
+        """`refresh()`, unless one started less than `seconds` ago (then the list as it is): the gateway looks
+        again for a model it doesn't know, but not on every request that names one."""
+        if time.monotonic() - self.tried_at < seconds:
+            return self.rows
+        return await self.refresh()
 
     async def refresh(self) -> list[dict]:
+        self.tried_at = time.monotonic()
         rows = await tags()
         for row in rows:
             digest = row.get("digest") or row.get("name")

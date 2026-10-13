@@ -10,4 +10,4 @@ configuration:
       name: "How the app sees you" shows the exact value. Restart the app
       (Information tab → Restart) after changing this list.
 network:
-  11434/tcp: AI model for other computers on your network (leave empty so only apps inside Home Assistant can use it)
+  11434/tcp: AI model for other computers on your network, with an access key (leave empty so only apps inside Home Assistant can use it)

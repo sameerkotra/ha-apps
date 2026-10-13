@@ -2,7 +2,7 @@
 
 A key is 32 random bytes (base64url), shown once and stored as its SHA-256 hash with a label, so a backup carries
 no usable key and restoring one keeps the keys working. Ten failures in a minute from one address are answered
-429 for a minute.
+429 for a minute — a wrong key, that is: a right key is always served (gateway.identify checks it first).
 """
 import base64
 import hashlib
@@ -69,7 +69,7 @@ def check(key: str) -> dict | None:
         return None
     h = _hash(key)
     with db.get_conn() as conn:
-        r = conn.execute("SELECT id, models FROM model_keys WHERE key_hash = ? AND revoked_at IS NULL",
+        r = conn.execute("SELECT id, models, label FROM model_keys WHERE key_hash = ? AND revoked_at IS NULL",
                          (h,)).fetchone()
         if r is None:
             return None
@@ -82,7 +82,7 @@ def check(key: str) -> dict | None:
                 _written[r[0]] = now
             conn.execute("UPDATE model_keys SET last_used_at = ? WHERE id = ?",
                          (config.utcnow().isoformat(timespec="seconds"), r[0]))
-    return {"id": r[0], "models": json.loads(r[1]) if r[1] else None}
+    return {"id": r[0], "models": json.loads(r[1]) if r[1] else None, "label": r[2]}
 
 
 def labels() -> dict:
@@ -97,6 +97,8 @@ class Failures:
         self.clock = clock
         self.seen: dict[str, list[float]] = {}
         self.blocked: dict[str, float] = {}
+
+    KEEP = 1000                       # addresses remembered before the old ones are forgotten
 
     def is_blocked(self, address: str) -> bool:
         until = self.blocked.get(address)
@@ -114,8 +116,10 @@ class Failures:
         if len(recent) >= FAILS_PER_MINUTE:
             self.blocked[address] = now + 60
             self.seen[address] = []
-        if len(self.seen) > 1000:                       # forget old addresses
+        if len(self.seen) > self.KEEP:                  # forget old addresses
             self.seen = {a: ts for a, ts in self.seen.items() if ts and now - ts[-1] < 60}
+        if len(self.blocked) > self.KEEP:               # and blocks that have run out
+            self.blocked = {a: until for a, until in self.blocked.items() if until > now}
 
 
 FAILURES = Failures()

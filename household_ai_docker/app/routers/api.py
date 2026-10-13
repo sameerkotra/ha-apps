@@ -1,5 +1,7 @@
-"""The settings page's API. No login on a Docker host (app/auth.py): main.py refuses only cross-site writes."""
+"""The settings page's API. No login on a Docker host (app/auth.py) unless ADMIN_PASSWORD is set: main.py checks
+the page's names (DNS rebinding), the password, and refuses cross-site writes."""
 import asyncio
+import ipaddress
 import os
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
@@ -11,6 +13,9 @@ from ..auth import get_current_user, require_admin
 from ..common import backup_core
 
 router = APIRouter(prefix="/api")
+
+RESTORE_PATH = "/api/admin-storage-import-db"
+RESTORE_MAX = 256 << 20          # a restored database: settings, key hashes and 30 days of usage — far less than this
 
 
 def _schedule():
@@ -36,34 +41,47 @@ def me(user: dict = Depends(get_current_user)):
 
 @router.get("/status")
 async def status(admin: dict = Depends(require_admin)):
+    """Polled by the page every few seconds while the gateway streams answers on the same event loop: the file and
+    database reads (machine, settings, key labels) run in a worker thread."""
     sched = _schedule()
-    loaded = []
+    raw = []
     if server.SERVER.state == "ready":
         try:
-            loaded = sched.describe(await ollama.ps())
+            raw = await ollama.ps()
         except Exception:
-            loaded = []
-    values = settings.all()
+            raw = []
+    queue = gateway.QUEUE.snapshot()          # on the loop: the queue belongs to it
     lan = await network.published_port()
+
+    def parts():
+        values = settings.all()
+        return values, machine.summary(), sched.describe(raw), _named(queue)
+    values, mach, loaded, named = await asyncio.to_thread(parts)
     switches = gateway.STATS["switches"] if gateway.STATS["day"] == config.today().isoformat() else 0
     return {
         "server": server.SERVER.status(),
-        "machine": machine.summary(),
+        "machine": mach,
         "loaded": loaded,
         "schedule": {"day": sched.is_day(values), "dayStart": values["day_start"], "dayEnd": values["day_end"],
                      "kept": sched.kept(values), "manualUnload": sched.manual_unload},
-        "queue": _named(gateway.QUEUE.snapshot()),
+        "queue": named,
         "switchesToday": switches,
         "network": {"known": lan["known"], "port": lan["port"], "requireKey": values["require_key"]},
         "version": config.APP_VERSION,
     }
 
 
+# The app's own places in the queue (server.turn and the day's loading), as the page names them.
+OWN_JOBS = {"household_ai": "Household AI (loading for the day)",
+            "household_ai:restart": "Household AI (restarting the model server)",
+            "household_ai:delete": "Household AI (deleting a model)"}
+
+
 def _named(snap: dict) -> dict:
     names = keys.labels()
 
     def name(c):
-        return "Household AI (loading for the day)" if c == "household_ai" else names.get(c) or callers.label(c)
+        return OWN_JOBS.get(c) or names.get(c) or callers.label(c)
     if snap["running"]:
         snap["running"]["caller"] = name(snap["running"]["caller"])
     for w in snap["waiting"]:
@@ -78,7 +96,7 @@ class ServerIn(BaseModel):
 
 @router.put("/server")
 async def put_server(body: ServerIn, admin: dict = Depends(require_admin)):
-    settings.update({"server_on": body.on}, admin)
+    await asyncio.to_thread(settings.update, {"server_on": body.on}, admin)
     if body.on:
         await server.SERVER.start()
     else:
@@ -145,18 +163,25 @@ def pull_cancel(pull_id: str, admin: dict = Depends(require_admin)):
     return {"status": "ok"}
 
 
-@router.delete("/models/{name:path}")
+@router.delete("/downloaded/{name:path}")
 async def delete_model(name: str, admin: dict = Depends(require_admin)):
+    """Delete a downloaded model. Its own path (not under /models/, where /models/pull/<id> is a download), and in
+    turn: after the answer running now, so no answer loses its model half-way."""
     _need_ready()
     if not settings.MODEL_NAME.match(name):
         raise HTTPException(400, "That isn't a model name.")
-    try:
-        await ollama.delete(name)
-    except ollama.OllamaError as e:
-        raise HTTPException(400, str(e))
-    if settings.get("keep_model") and schedule.norm_model(settings.get("keep_model")) == schedule.norm_model(name):
-        settings.update({"keep_model": ""}, admin)
-    await ollama.MODELS.refresh()
+    async with server.turn(gateway.QUEUE, "household_ai:delete"):
+        try:
+            await ollama.delete(name)
+        except ollama.OllamaError as e:
+            raise HTTPException(400, str(e))
+        await ollama.MODELS.refresh()
+
+    def forget_kept():
+        kept = settings.get("keep_model")
+        if kept and kept != "none" and schedule.norm_model(kept) == schedule.norm_model(name):
+            settings.update({"keep_model": ""}, admin)
+    await asyncio.to_thread(forget_kept)
     return {"status": "ok"}
 
 
@@ -178,13 +203,24 @@ def keep_model(body: KeepIn, admin: dict = Depends(require_admin)):
 
 def connection(request: Request | None = None) -> dict:
     """The address to paste into the other apps: this machine's name or address as the browser reached the page,
-    with the gateway's published port."""
+    with the gateway's published port. A page opened on this machine itself (localhost, the compose file's default)
+    can't know the address Home Assistant reaches it by: the page says to put the machine's IP address there."""
     host = (request.url.hostname if request is not None else None) or config.own_hostname()
-    if ":" in host and not host.startswith("["):
+    local = host == "localhost" or host.endswith(".localhost") or _is_loopback(host)
+    if local:
+        host = "<this machine's IP address>"
+    elif ":" in host and not host.startswith("["):
         host = f"[{host}]"                      # an IPv6 address
     port = config.PUBLIC_GATEWAY_PORT
     return {"host": host, "address": f"http://{host}:{port}", "openaiAddress": f"http://{host}:{port}/v1",
-            "prefixKnown": False, "standalone": True}
+            "prefixKnown": False, "standalone": True, "local": local}
+
+
+def _is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
 
 
 @router.get("/callers")
@@ -210,16 +246,10 @@ class FirstIn(BaseModel):
 def answer_first(caller: str, body: FirstIn, admin: dict = Depends(require_admin)):
     if not settings.CALLER_NAME.match(caller) and not caller.startswith("key_"):
         raise HTTPException(400, "That isn't a caller.")
-    cur = list(settings.get("answer_first") or [])
-    if body.on and caller not in cur:
-        cur.append(caller)
-    if not body.on:
-        cur = [c for c in cur if c != caller]
     try:
-        settings.update({"answer_first": cur}, admin)
+        return {"answerFirst": _set_answer_first(caller, body.on, admin)}
     except settings.SettingsError as e:
         raise HTTPException(422, str(e))
-    return {"answerFirst": settings.get("answer_first")}
 
 
 @router.get("/usage")
@@ -237,6 +267,17 @@ class KeyIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     label: str = Field(min_length=1, max_length=80)
     models: list[str] | None = Field(default=None, max_length=50)
+    answerFirst: StrictBool = False
+
+
+def _set_answer_first(caller: str, on: bool, admin: dict) -> list:
+    cur = list(settings.get("answer_first") or [])
+    if on and caller not in cur:
+        cur.append(caller)
+    if not on:
+        cur = [c for c in cur if c != caller]
+    settings.update({"answer_first": cur}, admin)
+    return settings.get("answer_first")
 
 
 @router.post("/keys")
@@ -248,13 +289,20 @@ def new_key(body: KeyIn, admin: dict = Depends(require_admin)):
         kid, key = keys.create(body.label, body.models, admin["id"])
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return {"id": kid, "key": key}
+    if body.answerFirst:
+        try:
+            _set_answer_first(kid, True, admin)
+        except settings.SettingsError as e:
+            raise HTTPException(422, str(e))
+    return {"id": kid, "key": key, "answerFirst": body.answerFirst}
 
 
 @router.delete("/keys/{kid}")
 def revoke_key(kid: str, admin: dict = Depends(require_admin)):
     if not keys.revoke(kid):
         raise HTTPException(404, "No such key (or already revoked).")
+    if kid in (settings.get("answer_first") or []):
+        _set_answer_first(kid, False, admin)
     return {"status": "ok"}
 
 
@@ -268,12 +316,13 @@ def get_settings(admin: dict = Depends(require_admin)):
 @router.put("/admin/settings")
 async def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
     try:
-        changed = settings.update(body, admin)
+        changed = await asyncio.to_thread(settings.update, body, admin)
     except settings.SettingsError as e:
         raise HTTPException(422, str(e))
     if settings.SERVER_KEYS & set(changed) and server.SERVER.running():
-        asyncio.create_task(server.SERVER.restart())
-    return settings.payload()
+        # In turn: after the answer running now (server.turn); the page says the server restarts.
+        server.SERVER.restart_soon(gateway.QUEUE)
+    return await asyncio.to_thread(settings.payload)
 
 
 # --------------------------------------------------------------------------------------------- backups
@@ -285,17 +334,41 @@ def download_db(admin: dict = Depends(require_admin)):
     return backup_core.send_file(tmp_path, backup_core.file_name("household-ai-backup", ".db", now=config.now()))
 
 
+def _server_values() -> dict:
+    values = settings.all()
+    return {k: values[k] for k in ("server_on", *sorted(settings.SERVER_KEYS))}
+
+
+def _restore(tmp_path: str) -> tuple[dict, dict]:
+    """Validate and swap in the backup (blocking: run in a thread); the model server's settings before and after."""
+    try:
+        db.validate_backup_file(tmp_path)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    before = _server_values()
+    db.import_from_tempfile(tmp_path)
+    settings.invalidate()
+    return before, _server_values()
+
+
 @router.post("/admin-storage-import-db")
 async def import_db(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
-    tmp_path = await backup_core.receive(file, config.DATA_DIR)
+    def too_big():
+        return HTTPException(413, f"A backup of Household AI is never this large (over {RESTORE_MAX >> 20} MB).")
+    tmp_path = await backup_core.receive(file, config.DATA_DIR, prefix=db.RESTORE_PREFIX, max_bytes=RESTORE_MAX,
+                                         too_big=too_big)
     try:
-        try:
-            db.validate_backup_file(tmp_path)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        db.import_from_tempfile(tmp_path)
-        settings.invalidate()
+        before, after = await asyncio.to_thread(_restore, tmp_path)
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+    # The model server follows the restored settings: on or off, and restarted for a changed context or models
+    # loaded at once.
+    if after["server_on"] != before["server_on"]:
+        if after["server_on"]:
+            await server.SERVER.start()
+        else:
+            await server.SERVER.stop("Turned off by the restored backup")
+    elif after != before and server.SERVER.running():
+        server.SERVER.restart_soon(gateway.QUEUE)
     return {"status": "ok"}

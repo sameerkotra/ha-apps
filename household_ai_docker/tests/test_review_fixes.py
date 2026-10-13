@@ -107,6 +107,8 @@ class KeepAliveInsideTheQueue(Base):
             seen.append(gateway.QUEUE.running is not None)
             return await real(name, keep_alive, timeout=timeout)
         ollama.set_keep_alive = spy
+        from app import settings
+        settings.update({"day_start": "00:00", "day_end": "00:00"}, None)     # daytime all day: the kept model
         try:
             msg = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "hi"}]}
             self.assertEqual(self.h.gw().post(V1, json=msg).status_code, 200)
@@ -205,31 +207,44 @@ class OtherRegistries(unittest.TestCase):
 
 
 class HostCheck(Base):
-    def test_rebinding_names_refused_only_when_allowed_hosts_is_set(self):
+    def test_rebinding_names_are_refused(self):
+        """In both builds (13 Oct review: the Home Assistant app's gateway had no Host check)."""
         c = self.h.gw()
-        missing = object()
-        saved = getattr(config, "ALLOWED_HOSTS", missing)
+        saved = config.ALLOWED_HOSTS
         try:
             config.ALLOWED_HOSTS = frozenset({"nas.example.com"})
             for host in ("evil.example.com", "evil.example.com:11434", "127.0.0.1.nip.io"):
                 r = c.post(GEN, json=gen(), headers={"Host": host})
                 self.assertEqual(r.status_code, 403, host)
-                self.assertIn("ALLOWED_HOSTS", r.json()["error"])
+                self.assertIn("doesn't answer to the name", r.json()["error"])
                 self.assertEqual(c.get("/api/version", headers={"Host": host}).status_code, 403)
                 self.assertEqual(c.get("/api/ps", headers={"Host": host}).status_code, 403)
             r = c.post(V1, json={"model": "qwen2.5:3b", "messages": []}, headers={"Host": "evil.example.com"})
             self.assertEqual(r.json()["error"]["type"], "permission_error")
             self.assertEqual(self.h.requests(GEN), [])
             for host in ("192.168.1.10:11434", "[::1]:11434", "localhost:11434", "nas", "nas.local:11434",
-                         "nas.example.com:11434", "NAS.Example.COM."):
+                         "nas.example.com:11434", "NAS.Example.COM.", "a1b2c3d4-household-ai:11434"):
                 self.assertEqual(c.post(GEN, json=gen(), headers={"Host": host}).status_code, 200, host)
-            config.ALLOWED_HOSTS = None                       # the Home Assistant app: not checked
-            self.assertEqual(c.post(GEN, json=gen(), headers={"Host": "evil.example.com"}).status_code, 200)
         finally:
-            if saved is missing:
-                config.__dict__.pop("ALLOWED_HOSTS", None)
-            else:
-                config.ALLOWED_HOSTS = saved
+            config.ALLOWED_HOSTS = saved
+
+    def test_the_build_checks_hosts_by_default(self):
+        self.assertIsInstance(config.ALLOWED_HOSTS, frozenset)
+        r = self.h.gw().post(GEN, json=gen(), headers={"Host": "evil.example.com"})
+        self.assertEqual(r.status_code, 403)
+        self.assertIn(config.HOST_HINT, r.json()["error"])
+
+    def test_other_names_from_the_app_setting(self):
+        from app import settings
+        c = self.h.gw()
+        self.assertEqual(c.post(GEN, json=gen(), headers={"Host": "homeassistant.fritz.box"}).status_code, 403)
+        settings.update({"allowed_hosts": "Homeassistant.Fritz.Box:11434, .example.org"}, None)
+        self.assertEqual(settings.get("allowed_hosts"), ".example.org, homeassistant.fritz.box")
+        for host in ("homeassistant.fritz.box", "ai.example.org:11434", "example.org"):
+            self.assertEqual(c.post(GEN, json=gen(), headers={"Host": host}).status_code, 200, host)
+        self.assertEqual(c.post(GEN, json=gen(), headers={"Host": "evil.example.com"}).status_code, 403)
+        with self.assertRaises(settings.SettingsError):
+            settings.update({"allowed_hosts": "bad/name"}, None)
 
 
 class Hosts(unittest.TestCase):

@@ -8,8 +8,8 @@ Receipt Price Intelligence, Docs, Calorie Tracker, Arcade) use it exactly as the
   open (no downloading or deleting models from outside), with a fair queue, the day/night schedule, limits, usage
   counts and optional access keys.
 - **Port 8080 — the settings page.** Everything the Home Assistant app's page has: status, models (download,
-  delete, *Keep loaded*), *Use it in other apps*, access keys, App settings, usage, backups. **No login**: anyone who
-  can open the page can change it, so keep port 8080 to your own network (never forward it on your router).
+  delete, *Keep loaded*), *Use it in other apps*, access keys, App settings, usage, backups. It is published on
+  **this machine only** (`127.0.0.1:8080`) unless you set a password: see [The settings page](#the-settings-page).
 
 ## Start it
 
@@ -22,7 +22,8 @@ docker compose up -d --build
 ```
 
 1. Set your time zone in `docker-compose.yml` (`TZ`) first: the daytime window follows it.
-2. Open `http://<this machine>:8080`. The model server starts on its own.
+2. On this machine, open `http://localhost:8080` (from another computer: set `ADMIN_PASSWORD` first, see
+   [The settings page](#the-settings-page)). The model server starts on its own.
 3. **Models** tab: download a model — `qwen2.5:3b` for text (the assistant, Docs, Arcade, Calorie) and
    `qwen2.5vl:7b` for reading receipts and statements (Receipt, Finance). Or one **Text + vision** model for both:
    `gemma4:e2b-it-q4_K_M` (~6 GB of memory), `gemma4:e4b-it-q4_K_M` (~8 GB) or, with a graphics card,
@@ -37,8 +38,8 @@ and models stay in `./data`.
 
 ```bash
 docker build -t household-ai:local .
-docker run -d --name household-ai --restart unless-stopped \
-  -p 8080:8080 -p 11434:11434 -e TZ=Europe/London -v "$PWD/data:/data" household-ai:local
+docker run -d --name household-ai --restart unless-stopped --security-opt no-new-privileges:true \
+  -p 127.0.0.1:8080:8080 -p 11434:11434 -e TZ=Europe/London -v "$PWD/data:/data" household-ai:local
 ```
 
 Add `--gpus all` for an NVIDIA graphics card, and `--build-arg OLLAMA_LIBS=cpu` to the build for a much smaller
@@ -58,15 +59,15 @@ steps above:
   container can't write its settings and models.
 - **Firewall:** Podman doesn't open ports in firewalld the way Docker does. If the household apps can't reach the
   machine: `sudo firewall-cmd --permanent --add-port=11434/tcp && sudo firewall-cmd --reload` (and `8080/tcp` if
-  you open the page from another computer).
+  you open the page from another computer, with a password: see [The settings page](#the-settings-page)).
 
 ### Start it (Podman)
 
 ```bash
 mkdir -p data
 podman build --format docker -t household-ai:local .
-podman run -d --name household-ai --restart unless-stopped \
-  -p 8080:8080 -p 11434:11434 -e TZ=Europe/London -v "$PWD/data:/data:Z" localhost/household-ai:local
+podman run -d --name household-ai --restart unless-stopped --security-opt no-new-privileges \
+  -p 127.0.0.1:8080:8080 -p 11434:11434 -e TZ=Europe/London -v "$PWD/data:/data:Z" localhost/household-ai:local
 ```
 
 Drop the `:Z` where there's no SELinux (Debian, Ubuntu, Windows, macOS) — it's harmless but unnecessary. Add
@@ -107,7 +108,7 @@ Description=Household AI
 [Container]
 ContainerName=household-ai
 Image=localhost/household-ai:local
-PublishPort=8080:8080
+PublishPort=127.0.0.1:8080:8080
 PublishPort=11434:11434
 Environment=TZ=Europe/London
 Volume=/path/to/household_ai_docker/data:/data:Z
@@ -168,6 +169,8 @@ they all look like one computer on the page. With a key each, the page shows eac
 | `PUBLIC_GATEWAY_PORT` | `11434` | The host port 11434 is published on (`-p <this>:11434`), shown on the page as the address |
 | `DATA_DIR` | `/data` | Where settings and models live (mount a volume there) |
 | `ALLOWED_HOSTS` | (empty) | Extra names the page and the gateway answer to, comma-separated (see below) |
+| `ADMIN_PASSWORD` | (empty) | The settings page's password (see [The settings page](#the-settings-page)) |
+| `ALLOW_ANY_REGISTRY` | `0` | `1` lets the page download models from any registry; otherwise only Ollama's library (`registry.ollama.ai`) and Hugging Face (`hf.co/…`, `huggingface.co/…`) |
 
 ### The machine's name (`ALLOWED_HOSTS`)
 
@@ -188,13 +191,70 @@ in `docker-compose.yml` and run `docker compose up -d` again:
 (`-e ALLOWED_HOSTS=nas.example.com` with `docker run` / `podman run`.) `*` turns the check off — don't, unless
 something in front of this machine (a reverse proxy) checks the name itself.
 
+Names can also be added on the page: **App settings → Access → Other names for this machine**.
+
 Everything else is on the settings page.
+
+## The settings page
+
+The page has no Home Assistant login. Anyone who can open it can make and see access keys, turn *Require an access
+key* off, and download or delete models. So by default `docker-compose.yml` publishes it on **this machine only**:
+
+```yaml
+    ports:
+      - "127.0.0.1:8080:8080"
+```
+
+Open it on this machine at `http://localhost:8080`, or from another computer through an SSH tunnel
+(`ssh -L 8080:localhost:8080 <this machine>`, then `http://localhost:8080` there).
+
+**To open it from other computers on your network**, set a password, then publish the port on every interface:
+
+```yaml
+    ports:
+      - "8080:8080"
+    environment:
+      ADMIN_PASSWORD: "a long password of your own"
+```
+
+Then `docker compose up -d`. The browser asks for the password once (the user name can be anything; with `curl`:
+`curl -u admin:<password> http://<this machine>:8080/api/status`). Ten wrong passwords in a minute from one address
+are refused for a minute. The password travels in plain HTTP, like the access keys: keep the page to your own
+network, never forward port 8080 on your router, and put an HTTPS reverse proxy in front if you need more. The model
+server never sees the password. Only `/api/health` answers without it.
+
+On *Use it in other apps*, a page opened at `localhost` can't know the address Home Assistant reaches this machine by:
+put the machine's IP address there.
+
+## Hardening
+
+`docker-compose.yml` already sets `no-new-privileges` (nothing in the container can gain privileges; Ollama and the
+app need none) and gives a stop 30 seconds, so an answer can end cleanly.
+
+Two more settings work on most machines, but aren't tested with every Ollama image and graphics card setup, so they
+are left for you to turn on in `docker-compose.yml` (remove the `#`, then `docker compose up -d` and check that the
+Status tab says **Ready** and a model answers):
+
+- `cap_drop: [ALL]` — the container keeps none of root's extra powers. If `./data` was made by your own user
+  rather than by Docker, the container then can't write there: `sudo chown -R root:root ./data`, or use `user:`.
+- `user: "1000:1000"` — runs the app and Ollama as that user instead of root. First give it the data folder:
+  `sudo chown -R 1000:1000 ./data`, and add `HOME: "/data"` under `environment:` (Ollama keeps a small file in its
+  home folder). With an NVIDIA card, that user may also need the `video` group (`group_add: [video]`).
+
+If the model server then stops at once, its log (Status → *Model server log*) says why; put the `#` back.
+
+**Model downloads** come only from Ollama's library and Hugging Face. `ALLOW_ANY_REGISTRY: "1"` allows any registry
+(a model is a large file the model server runs: download only from places you trust).
 
 ## Differences from the Home Assistant app
 
-- No login and no Home Assistant identity: whoever opens the page is its admin. Writes from another website are
-  still refused (a page elsewhere can't change settings through your browser), and the page and the gateway answer
-  only to this machine's names (`ALLOWED_HOSTS`).
+- No Home Assistant identity: whoever opens the page is its admin — on this machine only by default, or with
+  `ADMIN_PASSWORD` from other computers. Writes from another website are still refused (a page elsewhere can't
+  change settings through your browser), and the page and the gateway answer only to this machine's names
+  (`ALLOWED_HOSTS`).
+- Without keys, every household app comes from Home Assistant's one address, so they share 6 waiting places in the
+  queue (each app has 2 of its own with a key). The Home Assistant app's rule that only apps inside Home Assistant
+  may use a published port without a key doesn't apply here: turn on *Require an access key* instead.
 - The time zone comes from `TZ`, not from Home Assistant.
 - The household apps can't be recognised by their Home Assistant host names here; use one access key per app.
 - The model server is on from the first start (it's a machine of its own).

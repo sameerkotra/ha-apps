@@ -124,10 +124,29 @@ def fmt(n: int | None) -> str:
     return f"{n / GB:.1f} GB"
 
 
+def registry_of(name: str) -> str:
+    """The registry a model name downloads from: its first part when that names a host ("hf.co/…"), else Ollama's."""
+    first, sep, _ = schedule.norm_model(name).rpartition(":")[0].partition("/")
+    if sep and ("." in first or ":" in first or first == "localhost"):
+        return first.lower()
+    return OLLAMA_REGISTRY
+
+
+def check_registry(name: str) -> None:
+    """On a Docker host (config.ALLOWED_REGISTRIES set), downloads only from Ollama's library and Hugging Face,
+    unless ALLOW_ANY_REGISTRY=1."""
+    allowed = config.ALLOWED_REGISTRIES
+    host = registry_of(name)
+    if allowed is not None and host not in allowed:
+        raise ValueError(f"Downloads from {host} are turned off: only {', '.join(sorted(allowed))} are allowed. "
+                         "Set ALLOW_ANY_REGISTRY=1 in docker-compose.yml to allow any registry.")
+
+
 async def start_pull(name: str) -> Pull:
     name = name.strip()
     if not settings.MODEL_NAME.match(name):
         raise ValueError("That isn't a model name (e.g. qwen2.5:3b).")
+    check_registry(name)
     for p in PULLS.values():
         if not p.done and schedule.norm_model(p.name) == schedule.norm_model(name):
             return p

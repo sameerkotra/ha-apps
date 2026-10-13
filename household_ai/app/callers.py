@@ -63,6 +63,17 @@ def label(caller: str) -> str:
     return APPS.get(caller, caller)
 
 
+def slug_for_label(text: str) -> str | None:
+    """The household app an access key's label names, as its slug: "Household Assistant", "household-assistant"
+    or "household_assistant" → "household_assistant"; None when it names none."""
+    words = "".join(ch if ch.isalnum() else " " for ch in (text or "").lower()).split()
+    slug = "_".join(words)
+    if slug in APPS:
+        return slug
+    by_name = {"_".join(name.lower().split()): s for s, name in APPS.items()}
+    return by_name.get(slug)
+
+
 class Resolver:
     """address → household app slug, refreshed with `refresh()` (every minute)."""
 

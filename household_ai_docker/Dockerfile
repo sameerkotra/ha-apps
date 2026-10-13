@@ -14,6 +14,8 @@ RUN mkdir /ollama-libs \
          cp -a /usr/lib/ollama/. /ollama-libs/ ; \
        fi
 
+# Pinned to one Debian release (trixie) so a rebuild can't quietly move to the next one. (Pin by digest too —
+# python:3.13-slim-trixie@sha256:… — when you can look it up; the Python version stays 3.13.)
 FROM docker.io/library/python:3.13-slim-trixie
 
 # tzdata: the daytime window follows TZ. ca-certificates: model downloads. libstdc++6, libgomp1, libopenblas0: what

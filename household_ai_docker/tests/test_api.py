@@ -79,9 +79,9 @@ class Api(unittest.TestCase):
         # Downloaded models can be used through the gateway at once.
         r = self.h.gw().post("/api/generate", json={"model": "llama3.2:3b", "prompt": "x", "stream": False})
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(self.c.delete("api/models/llama3.2:3b", headers=A).status_code, 200)
+        self.assertEqual(self.c.delete("api/downloaded/llama3.2:3b", headers=A).status_code, 200)
         self.assertNotIn("llama3.2:3b", [d["name"] for d in self.get("api/models")["downloaded"]])
-        self.assertEqual(self.c.delete("api/models/llama3.2:3b", headers=A).status_code, 400)
+        self.assertEqual(self.c.delete("api/downloaded/llama3.2:3b", headers=A).status_code, 400)
 
     def test_gemma_answers_text_and_reads_images(self):
         """A Gemma 4 model does both: listed as "Text + vision", and it can be the model kept loaded."""
@@ -94,7 +94,7 @@ class Api(unittest.TestCase):
             self.assertEqual(kinds[name], "both")
             self.assertIn(name, ollama.MODELS.text_models())
         finally:
-            self.c.delete(f"api/models/{name}", headers=A)
+            self.c.delete(f"api/downloaded/{name}", headers=A)
 
     def test_model_kinds(self):
         k = ollama.kind_of

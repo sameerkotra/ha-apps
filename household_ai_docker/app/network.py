@@ -7,3 +7,8 @@ from . import config
 async def published_port(force: bool = False) -> dict:
     """{"known": True, "port": the published port}."""
     return {"known": True, "port": config.PUBLIC_GATEWAY_PORT}
+
+
+def cached() -> dict:
+    """The same, without waiting (the gateway's call)."""
+    return {"known": True, "port": config.PUBLIC_GATEWAY_PORT}
