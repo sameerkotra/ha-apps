@@ -8,15 +8,16 @@ the whole of every job and every admin debug re-send, so nothing in this app
 ever asks the model to do two vision jobs at once.
 
 The queue lives in memory, so a restart loses it. recover_interrupted_jobs()
-runs at startup and turns anything left 'processing' into an error the person
-can Restart (SPEC.md section 4).
+runs at startup: an upload that was being read becomes an error the person
+can Restart (SPEC.md section 4); one that was still waiting its turn is queued
+again (resume_waiting).
 """
 import asyncio
 import logging
 import threading
 
 from . import ai_usage, settings
-from .db import get_db
+from .db import GATE, get_db
 from .parser.pipeline import process_statement
 from .parser.toll_pipeline import process_toll_statement
 from .parser.utility_pipeline import process_utility_bill
@@ -54,11 +55,12 @@ def _get_queue() -> asyncio.Queue:
 
 
 def _run(kind: str, job_id: int, user_id: str, account_id: int | None) -> None:
-    """The address and model are read from Admin → App settings for every job, so a change there
-    applies to the next job without a restart. Every AI request the job makes is stored on
+    """The settings are read from Admin → App settings when each job starts and kept for its whole
+    run (settings.pinned), so a change there applies to the next job without a restart and never
+    mixes two providers' address, key and model inside one job. Every AI request the job makes is stored on
     its row (ai_usage) for the debug page — this run's only, replacing an earlier run's."""
-    url, model = settings.ai_url(), settings.ai_model()
-    with ai_usage.recording() as calls:
+    with GATE.work(), settings.pinned(), ai_usage.recording() as calls:
+        url, model = settings.ai_url(), settings.ai_model()
         try:
             if kind == "statement":
                 process_statement(job_id, user_id, account_id, url, model)
@@ -138,20 +140,49 @@ def start_job(kind: str, job_id: int, user_id: str, account_id: int | None = Non
 
 
 def recover_interrupted_jobs() -> int:
-    """Anything still 'processing' at startup was cut off by the restart (the
-    queue that held it is gone). Mark it as an error so Restart is offered;
-    Restart already knows how to clean up a partial earlier run."""
+    """Anything still 'processing' at startup was cut off by the restart (the queue that held it is
+    gone). One that had started (it shows a step other than "Queued") is marked as an error the person
+    can Restart — Restart already knows how to clean up a partial earlier run, and a PDF that made the
+    app fall over isn't simply read again. One that was only waiting its turn is put back in the queue
+    by resume_waiting() once the worker runs. Returns how many were marked as errors."""
+    global _waiting
     total = 0
+    _waiting = []
     with get_db() as conn:
-        for table in TABLES.values():
+        for kind, table in TABLES.items():
+            account = "account_id" if table == "statements" else "NULL AS account_id"
+            for row in conn.execute(
+                    f"SELECT id, user_id, {account}, current_step FROM {table} "
+                    "WHERE status = 'processing' AND deleted_at IS NULL ORDER BY id"):
+                step = row["current_step"] or ""
+                if not step or step.startswith("Queued"):
+                    _waiting.append((kind, row["id"], row["user_id"], row["account_id"]))
             total += conn.execute(
                 f"UPDATE {table} SET status = 'error', error_message = ?, current_step = NULL "
-                "WHERE status = 'processing'",
+                "WHERE status = 'processing' AND NOT (deleted_at IS NULL AND "
+                "(current_step IS NULL OR current_step = '' OR current_step LIKE 'Queued%'))",
                 (INTERRUPTED_MESSAGE,),
             ).rowcount
     if total:
         logger.warning("Marked %d interrupted job(s) as needing Restart", total)
     return total
+
+
+_waiting: list[tuple[str, int, str, int | None]] = []
+
+
+def resume_waiting() -> int:
+    """Put the uploads that were waiting their turn before the restart back in the queue, in upload
+    order (call after start(), on the event loop). Returns how many."""
+    queue = _get_queue()
+    resumed = 0
+    for item in sorted(_waiting, key=lambda job: (job[0] != "statement", job[1])):
+        queue.put_nowait(item)
+        resumed += 1
+    _waiting.clear()
+    if resumed:
+        logger.info("Put %d upload(s) that were waiting before the restart back in the queue", resumed)
+    return resumed
 
 
 def busy_reason() -> str | None:

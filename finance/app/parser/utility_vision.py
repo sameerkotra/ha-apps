@@ -17,7 +17,7 @@ printed text, not to re-derive them independently.
 from dataclasses import dataclass
 from typing import Callable
 
-from .vision import MAX_NOTES_CHARS, ask_vision_json, debug_call
+from .vision import MAX_NOTES_CHARS, ask_vision_json, clean_amount, clean_date, clean_text, debug_call
 
 
 @dataclass
@@ -146,6 +146,19 @@ Rules:
   or a comma."""
 
 
+MAX_PROVIDER_CHARS = 60
+MAX_UNIT_CHARS = 20
+MAX_LAST4_CHARS = 8
+
+
+def _number(value) -> float:
+    """A finite number, or ValueError (the bill entry is then skipped)."""
+    number = clean_amount(value)
+    if number is None:
+        raise ValueError(f"not a number: {value!r}")
+    return number
+
+
 def debug_call_utility(pdf_path: str, ollama_url: str, model: str, provider: str | None = None,
                        notes: str = "") -> tuple[float, str]:
     """parser.vision.debug_call with this bill's prompt."""
@@ -209,19 +222,25 @@ def extract_vision_utility(
                 meter_kwargs = {}
                 for field_name in _METER_FIELDS:
                     v = meter_raw.get(field_name)
-                    meter_kwargs[field_name] = float(v) if v is not None else None
+                    meter_kwargs[field_name] = _number(v) if v is not None else None
                 meter = ElectricMeterDetails(**meter_kwargs)
 
+            # Dates as ISO (every filter compares the strings), finite numbers only (a NaN or an
+            # infinity would fail the save or poison every total), and short text.
+            start, end = clean_date(row["period_start_date"]), clean_date(row["period_end_date"])
+            if start is None or end is None:
+                raise ValueError("unreadable billing period")
             bills.append(ParsedUtilityBill(
                 utility_type=utility_type,
-                provider=str(row["provider"]),
-                period_start_date=str(row["period_start_date"]),
-                period_end_date=str(row["period_end_date"]),
-                usage_amount=(float(row["usage_amount"]) if row.get("usage_amount") is not None else None),
-                usage_unit=(str(row["usage_unit"]) if row.get("usage_unit") is not None else None),
-                cost=float(row["cost"]),
-                due_date=(str(row["due_date"]) if row.get("due_date") else None),
-                account_number_last4=(str(row["account_number_last4"]) if row.get("account_number_last4") else None),
+                provider=clean_text(row["provider"], MAX_PROVIDER_CHARS),
+                period_start_date=start,
+                period_end_date=end,
+                usage_amount=(_number(row["usage_amount"]) if row.get("usage_amount") is not None else None),
+                usage_unit=(clean_text(row["usage_unit"], MAX_UNIT_CHARS) or None if row.get("usage_unit") is not None else None),
+                cost=round(_number(row["cost"]), 2),
+                due_date=(clean_date(row["due_date"]) if row.get("due_date") else None),
+                account_number_last4=(clean_text(row["account_number_last4"], MAX_LAST4_CHARS) or None
+                                      if row.get("account_number_last4") else None),
                 electric_meter_details=meter,
             ))
         except (KeyError, TypeError, ValueError):

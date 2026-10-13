@@ -39,6 +39,11 @@ Test connection lists the models the provider offers. An optional **text model**
 one) is used for suggesting categories and writing SQL. The access key is stored in the app's
 database, is never shown again, and is left out of database downloads.
 
+**Most pages per PDF** (default 30) — every page of a PDF goes to the model as an image in one
+request, so a longer PDF is refused with a message saying so instead of taking a very long time
+(or costing a lot). Raise it if your statements are longer. A PDF upload reads with the settings
+it started with: changing the AI settings meanwhile applies from the next upload.
+
 **Privacy.** With a provider outside your home network, the pages of every PDF you upload are
 sent to it as images, and transaction descriptions are sent to suggest categories. The app then
 shows a notice on Home, App settings and the upload pages. That provider's own privacy and
@@ -58,15 +63,18 @@ or two years side by side.
 ### Transactions
 - **All**: search by notes, description, account, category, money in/out, excluded, dates and
   amounts; edit categories (and save a rule), notes and Exclude; select several at once;
-  export to CSV.
+  export to CSV. A long result shows 100 rows a page (250 or 1000 if you choose); the count and
+  total are for every matching row, and the export has them all.
 - **Transfers**: money between your own accounts (card payments, checking ↔ savings) is linked
-  automatically and counted as neither income nor spending; confirm the ambiguous ones.
+  automatically — when a statement or CSV is imported and whenever a transaction is added,
+  reviewed, included, deleted or restored — and counted as neither income nor spending; confirm
+  the ambiguous ones. **Link unambiguous** runs the matching on demand.
 - **Recurring**: subscriptions and bills detected from your history, weekly to yearly.
 - **Accounts**: each account's latest transaction, so you know which statement is due.
 
 ### Upload
-- **Statements**: PDF statements (up to 50 MB, with a text layer — scanned images aren't
-  supported) and CSV exports. Each PDF is read by the AI and checked against the balances and
+- **Statements**: PDF statements (up to 50 MB each, at most 20 files at a time, with a text layer —
+  scanned images aren't supported) and CSV exports (up to 20 MB each). Each PDF is read by the AI and checked against the balances and
   amounts printed in it. Confirm it against the PDF, or **Re-extract** telling the AI what was
   wrong. Possible duplicates are skipped and can be inserted anyway.
 - **Review**: everything waiting for you.
@@ -99,7 +107,9 @@ write the SQL from a plain-English question.
 ### Setup
 - **Accounts**: add, rename, archive, set the preferred upload type and a website link.
 - **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
-  before the built-in ones and the AI.
+  before the built-in ones and the AI. **Also apply to all existing transactions** gives the
+  transactions the new rule matches the category your rules give them (a more specific rule
+  still wins); other transactions keep theirs.
 
 ### Look and feel
 - **Theme** (bottom of the menu; **More** on a phone): Midnight (the default), Slate, Daylight,
@@ -117,7 +127,8 @@ write the SQL from a plain-English question.
   (reading PDFs, categories, Write SQL) and by model. Re-processing or deleting a statement
   doesn't lower it. An install that already had statements starts the total from the AI usage
   stored on each of them (their last processing run only).
-- **App settings**: AI, AI usage display and prices, Features, and Household Assistant. Changes apply at once.
+- **App settings**: AI, AI usage display and prices, Features, and Household Assistant (with the
+  app-messages signing key). Changes apply at once.
 
 Admins can **act as** any user (the switch at the top right) to see and fix their data.
 
@@ -140,6 +151,12 @@ answer for me** on **Who am I**; the assistant then won't answer their questions
   months (12 unless you say), each month's, and the latest charges;
 - "What's the balance on my accounts?" — each account's balance as its latest statement printed it
   (for a card, what was owed), with that statement's month.
+
+**App-messages signing key** (same section, optional): the household apps talk over Home
+Assistant's event bus, and without a key any app on Home Assistant's network could send a message
+as any other. Paste the same long random key into every household app's App settings (at about
+the same time: an app with a key refuses messages from apps without it). It is never shown again
+and is left out of database downloads.
 
 The answers travel through Home Assistant's event bus, which Home Assistant's recorder keeps in
 its history unless told not to. **If you turn this on**, add this to Home Assistant's
@@ -166,7 +183,11 @@ Everything else is set inside the app on **Admin → App settings**.
 
 - **64-bit only.** Finance Dashboard runs on amd64 and aarch64 (e.g. a Raspberry Pi 4 or 5 with
   the 64-bit Home Assistant OS). It isn't offered on 32-bit systems (armv7, armhf, i386).
-- One PDF is read at a time; others wait in a queue (shown on the upload page).
+- One PDF is read at a time; others wait in a queue (shown on the upload page). If the app
+  restarts, the ones still waiting are read after the restart; the one being read shows an error
+  with **Restart**.
+- A statement, bill or toll statement can't be deleted while it is being read: wait until it is
+  done (or failed).
 - PDFs need a text layer (no OCR). Password-protected PDFs aren't supported.
 - A PDF is kept until its statement is confirmed, then deleted.
 - The app is reached only through Home Assistant (ingress); it has no port of its own.
@@ -174,3 +195,9 @@ Everything else is set inside the app on **Admin → App settings**.
   include its data too. Importing a database, even one from an older version of the app, brings
   it up to date straight away (the AI usage total included); restart the app afterwards.
   Backups leave out access keys and passwords; after restoring on a new install, enter them again. (Importing keeps the AI access key this install already has.)
+  An import waits up to a minute for a PDF being read to finish, and otherwise asks you to try
+  again. Home Assistant backs the app up while it runs: just before, the app writes all recent
+  changes into its database file, so the backup is complete. Before the app upgrades its database
+  it keeps a copy of it next to it (`finance.db.pre-NNNN`, the latest only).
+- A no-time-limit query on **Admin → Query** still stops after 30 minutes, and the admin's debug
+  "re-send to the AI" waits at most 30 minutes.

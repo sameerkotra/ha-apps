@@ -58,9 +58,13 @@ checking-to-checking transfer are the same type):
     unlink/delete can't silently inflate a dashboard income total the
     user never actually decided was real income.
 """
+from collections import Counter
 from datetime import date as date_cls
 
+from .amounts import to_cents
+
 AMOUNT_TOLERANCE = 0.01  # cents-rounding only; a real mismatch is never this close
+AMOUNT_TOLERANCE_CENTS = 1   # the same, compared in whole cents (0.07 - 0.06 > 0.01 in floating point)
 DATE_WINDOW_DAYS = 5     # a transfer commonly posts a day or two off on the other side
 
 
@@ -127,21 +131,57 @@ def find_transfer_candidates(conn, user_id: str):
     return outflows, inflows
 
 
+def _amounts_match(a: float, b: float) -> bool:
+    """Same size within a cent, compared in whole cents."""
+    return abs(abs(to_cents(a)) - abs(to_cents(b))) <= AMOUNT_TOLERANCE_CENTS
+
+
+class InflowIndex:
+    """The inflows grouped by size in whole cents, so finding one outflow's candidates looks at three
+    small groups (a cent either side) instead of every inflow. Candidates come back in the inflows'
+    own order, exactly as a scan of the whole list would give them."""
+
+    def __init__(self, inflows):
+        self._by_cents: dict[int, list] = {}
+        for position, row in enumerate(inflows):
+            self._by_cents.setdefault(abs(to_cents(row["amount"])), []).append(
+                (position, row, _parse_date(row["date"])))
+
+    def candidates(self, outflow) -> list:
+        outflow_date = _parse_date(outflow["date"])
+        if outflow_date is None:
+            return []
+        cents = abs(to_cents(outflow["amount"]))
+        found = []
+        for c in range(cents - AMOUNT_TOLERANCE_CENTS, cents + AMOUNT_TOLERANCE_CENTS + 1):
+            for position, row, inflow_date in self._by_cents.get(c, ()):
+                if row["account_id"] == outflow["account_id"]:
+                    continue
+                if inflow_date is None or abs((inflow_date - outflow_date).days) > DATE_WINDOW_DAYS:
+                    continue
+                found.append((position, row))
+        found.sort(key=lambda pair: pair[0])
+        return [row for _, row in found]
+
+
 def _candidates_for(outflow, inflows) -> list:
-    """Inflow rows within AMOUNT_TOLERANCE and DATE_WINDOW_DAYS of one
+    """Inflow rows within a cent (AMOUNT_TOLERANCE_CENTS) and DATE_WINDOW_DAYS of one
     outflow row, on a DIFFERENT account than the outflow — an inflow on
     the very same account the outflow left from isn't a transfer
     anywhere, it's just two rows in one account (e.g. a same-day refund
-    against a purchase) that happen to net out by coincidence."""
+    against a purchase) that happen to net out by coincidence.
+    `inflows` is a list of rows or an InflowIndex built from them (much
+    faster when many outflows are checked against the same inflows)."""
+    if isinstance(inflows, InflowIndex):
+        return inflows.candidates(outflow)
     outflow_date = _parse_date(outflow["date"])
     if outflow_date is None:
         return []
-    target_amount = abs(outflow["amount"])
     matches = []
     for i in inflows:
         if i["account_id"] == outflow["account_id"]:
             continue
-        if abs(abs(i["amount"]) - target_amount) > AMOUNT_TOLERANCE:
+        if not _amounts_match(i["amount"], outflow["amount"]):
             continue
         inflow_date = _parse_date(i["date"])
         if inflow_date is None or abs((inflow_date - outflow_date).days) > DATE_WINDOW_DAYS:
@@ -201,7 +241,7 @@ def candidates_for_transaction(conn, user_id: str, txn_id: int):
     is_credit_card_payment = row["amount"] < 0 and row["account_type"] == "credit_card"
     is_plain_inflow = row["amount"] > 0 and row["account_type"] in ("checking", "savings")
     if is_credit_card_payment or is_plain_inflow:
-        candidates = [o for o in outflows if any(m["id"] == row["id"] for m in _candidates_for(o, [row]))]
+        candidates = [o for o in outflows if _candidates_for(o, [row])]
         return row, candidates, "inflow", None
 
     # A positive row on a credit_card account (a plain purchase — see
@@ -249,7 +289,7 @@ def diagnose_no_match(conn, user_id: str, row, role: str) -> str:
 
     near = []
     for o in raw:
-        if abs(abs(o["amount"]) - target_amount) > AMOUNT_TOLERANCE:
+        if not _amounts_match(o["amount"], target_amount):
             continue
         d = _parse_date(o["date"])
         if d is None or abs((d - row_date).days) > DATE_WINDOW_DAYS:
@@ -291,10 +331,12 @@ def link_transfer(conn, txn_id_a: int, txn_id_b: int) -> None:
 
 
 def auto_link_unambiguous(conn, user_id: str) -> int:
-    """The whole-user sweep — called both at the end of a statement's
-    processing (parser/pipeline.py) and whenever the Transfers page loads
-    (routes/transfers.py), so most pairs are typically already linked by
-    the time a human looks at the page at all.
+    """The whole-user sweep — called in the same transaction as every change
+    that can make a row a candidate (a statement's processing, a CSV import, a
+    manual transaction, review, exclude/include, delete/restore, undoing a
+    link — see relink) and by the Transfers page's "Link unambiguous" button,
+    so pairs are already linked by the time a human looks at the page. Pages
+    only read: opening one never writes.
 
     Links an outflow to an inflow only when the match is mutually
     unique: the outflow has exactly one inflow candidate, AND that
@@ -303,39 +345,27 @@ def auto_link_unambiguous(conn, user_id: str) -> int:
     ambiguous as an outflow with two candidate inflows — checking only
     one direction would silently pick an arbitrary winner.
 
-    Re-fetches candidates after each link (a newly-consumed row can't be
-    offered to a later match in the same pass, and removing one row can
-    turn a previously-ambiguous match into an unambiguous one) — bounded
-    by the number of unlinked outflows, so this always terminates.
+    One pass is enough. Think of every possible (outflow, inflow) match as
+    a line between the two: a pair linked here is a line with nothing else
+    touching either end. Linking it removes just those two rows, and no
+    other row had either of them as a candidate, so no other row's
+    candidates change — a fresh look after each link (what this used to
+    do, refetching everything every time) finds exactly the same pairs.
+    The inflows are grouped by size in whole cents (InflowIndex), so this
+    takes time in proportion to the number of rows, not their square.
     Returns the number of pairs linked."""
+    outflows, inflows = find_transfer_candidates(conn, user_id)
+    if not outflows or not inflows:
+        return 0
+    index = InflowIndex(inflows)
+    matches = {o["id"]: index.candidates(o) for o in outflows}
+    times_offered = Counter(i["id"] for found in matches.values() for i in found)
     linked = 0
-    while True:
-        outflows, inflows = find_transfer_candidates(conn, user_id)
-        if not outflows or not inflows:
-            break
-
-        made_a_link = False
-        for outflow in outflows:
-            matches = _candidates_for(outflow, inflows)
-            if len(matches) != 1:
-                continue
-            inflow = matches[0]
-
-            other_outflow_matches = any(
-                o["id"] != outflow["id"]
-                and any(m["id"] == inflow["id"] for m in _candidates_for(o, inflows))
-                for o in outflows
-            )
-            if other_outflow_matches:
-                continue
-
-            link_transfer(conn, outflow["id"], inflow["id"])
+    for outflow in outflows:
+        found = matches[outflow["id"]]
+        if len(found) == 1 and times_offered[found[0]["id"]] == 1:
+            link_transfer(conn, outflow["id"], found[0]["id"])
             linked += 1
-            made_a_link = True
-            break  # candidate pools changed — restart from a fresh fetch
-
-        if not made_a_link:
-            break
     return linked
 
 
@@ -414,3 +444,9 @@ def cascade_unlink_on_delete(conn, user_id: str, deleting_ids: list[int]) -> Non
         partner_id = r["transfer_pair_id"]
         if partner_id not in deleting_set:
             _revert_transfer_side(conn, partner_id)
+
+
+def relink(conn, user_id: str) -> int:
+    """After a change that can make a transaction a transfer candidate (or stop one being one): link
+    whatever is now unambiguous, in the caller's transaction (the caller commits)."""
+    return auto_link_unambiguous(conn, user_id)

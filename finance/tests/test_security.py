@@ -47,8 +47,9 @@ def test_restart_turns_stuck_processing_rows_into_restartable_errors(make_env):
     path = env.pdf(["Statement", "Previous Balance $10.00", "New Balance $10.00"])
     sid = env.insert("statements", user_id="tester", account_id=a, original_filename="s.pdf",
                      pdf_path=path, file_hash="h1", status="processing", current_step="Analyzing with AI")
-    uid = env.insert("utility_bills", user_id="tester", provider="Xcel Energy", status="processing")
-    tid = env.insert("toll_statements", user_id="tester", status="processing")
+    uid = env.insert("utility_bills", user_id="tester", provider="Xcel Energy", status="processing",
+                     current_step="Extracting text (pdftotext)")
+    tid = env.insert("toll_statements", user_id="tester", status="processing", current_step="Comparing the two readings")
 
     env2 = make_env(tmp=env.dir)  # the app restarts on the same database
     with env2.db() as c:
@@ -58,6 +59,21 @@ def test_restart_turns_stuck_processing_rows_into_restartable_errors(make_env):
     up = env2.get("uploads").text
     assert f"statement-restart?id={sid}" in up
     assert env2.post(f"statement-restart?id={sid}").status_code == 200
+
+
+def test_restart_queues_again_what_was_only_waiting(make_env):
+    """An upload still waiting its turn (no step yet, or "Queued — ...") when the app restarted goes
+    back in the queue and is read, instead of becoming an "interrupted" error (review 2026-10, FI6)."""
+    env = make_env()
+    a = env.account()
+    waiting = [env.insert("statements", user_id="tester", account_id=a, original_filename=f"s{i}.pdf",
+                          pdf_path=env.pdf(["x"]), file_hash=f"w{i}", status="processing", current_step=step)
+               for i, step in enumerate((None, "Queued — waiting for 1 earlier item"))]
+    env2 = make_env(tmp=env.dir)
+    for sid in waiting:
+        row = env2.wait_status("statements", sid)
+        # it was read again: this tiny PDF has no text layer, which is what the job reports
+        assert row["status"] == "error" and "No text layer" in row["error_message"], dict(row)
 
 
 # ---- uploads ---------------------------------------------------------------------------------
@@ -200,12 +216,26 @@ def test_thirty_day_purge_covers_utility_bills_and_keeps_shared_pdfs(env):
 
 def test_csp_and_no_store_on_every_response(env):
     from app import main
-    for url in ("dashboard", "static/style.css", "static/base.js"):
+    for url in ("dashboard", "static/style.css", "static/base.js", "api/health"):
         r = env.get(url)
         assert r.headers["content-security-policy"] == main.CSP, url
         assert r.headers["x-content-type-options"] == "nosniff", url
         assert r.headers["cache-control"] == "no-store", url
     assert "script-src 'self';" in main.CSP and "unsafe-eval" not in main.CSP
+
+
+def test_versioned_static_files_are_kept_for_good(env):
+    """Every page links its scripts and styles with ?v=<version>: those are cached for good (the version
+    changes with each release); the same file without a version, or a missing one, is not."""
+    from app.version import APP_VERSION
+    for url in ("static/style.css", "static/base.js", "static/htmx.min.js", "static/common/ui.js"):
+        r = env.get(f"{url}?v={APP_VERSION}")
+        assert r.status_code == 200 and r.headers["cache-control"] == "public, max-age=31536000, immutable", url
+    assert env.get("static/nothing.js?v=1").headers["cache-control"] == "no-store"
+    page = env.get("dashboard").text
+    import re
+    links = re.findall(r'(?:src|href)="(static/[^"]+)"', page)
+    assert links and all(f"v={APP_VERSION}" in link for link in links), links
 
 
 def test_templates_keep_to_the_csp():

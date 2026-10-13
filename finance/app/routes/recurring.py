@@ -5,6 +5,7 @@ per-transaction "is this recurring?" modal and the manual mark/dismiss
 actions.
 """
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -23,13 +24,11 @@ templates.env.globals["app_version"] = APP_VERSION
 
 def _account_qs_params(account_id: str, current: User, acting: User, **extra) -> str:
     """Query string for redirects back to the recurring page."""
-    params = [f"{k}={v}" for k, v in extra.items()]
+    params = [(k, str(v)) for k, v in extra.items()]
     if account_id.strip():
-        params.append(f"account_id={account_id.strip()}")
-    qs = _acting_qs(current, acting)
-    if qs:
-        params.append(qs)
-    return ("?" + "&".join(params)) if params else ""
+        params.append(("account_id", account_id.strip()))
+    params += parse_qsl(_acting_qs(current, acting))
+    return ("?" + urlencode(params)) if params else ""
 
 
 @router.get("/recurring")

@@ -13,11 +13,16 @@ import os
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
-from .. import ai_client
+import re
+import subprocess
+
+from .. import ai_client, settings
+from ..amounts import parse_number
 from ..common import sandbox_run
+from ..datenorm import normalize_date
 
 MAX_JSON_RETRIES = 2  # section 5: retry limit on JSON parse failures
 
@@ -37,6 +42,9 @@ class ParsedTransaction:
 # genuinely hadn't finished loading yet. Generous on purpose.
 WARMUP_TIMEOUT_SECONDS = 300     # loading a large model into memory
 GENERATE_TIMEOUT_SECONDS = 900   # the real multi-image extraction call
+# The admin's debug re-send waits for the model however long it takes — but not forever: it holds the
+# model for every queued upload meanwhile.
+DEBUG_TIMEOUT_SECONDS = 30 * 60
 
 # Skip the warm-up when any Ollama call succeeded this recently: the model is
 # still loaded (Ollama keeps it for a few minutes by default), so back-to-back
@@ -66,6 +74,28 @@ def _model_recently_used() -> bool:
 class VisionResult:
     transactions: list[ParsedTransaction]
     raw_response: str  # kept for the admin debug view (section 13)
+    rejected: list[str] = field(default_factory=list)   # lines left out (unreadable date or amount), for the debug page
+
+
+MAX_DESCRIPTION_CHARS = 500
+
+
+def clean_date(value) -> str | None:
+    """The model's date as ISO YYYY-MM-DD (it is told to write that, but doesn't always), or None when it
+    can't be read: every date filter and sort compares the stored strings."""
+    text = str(value or "").strip()
+    return normalize_date(text) or (normalize_date(text[:10]) if len(text) > 10 else None)
+
+
+def clean_amount(value) -> float | None:
+    """A finite amount (a JSON number, or a string like "$1,234.56"); None for NaN, infinity or text."""
+    if isinstance(value, bool):
+        return None
+    return parse_number(value)
+
+
+def clean_text(value, limit: int) -> str:
+    return " ".join(str(value if value is not None else "").split())[:limit]
 
 
 class VisionExtractionError(Exception):
@@ -80,21 +110,51 @@ class VisionExtractionError(Exception):
         self.raw_response = raw_response  # whatever Ollama actually said, if anything — for the debug view
 
 
-def rasterize_pdf(pdf_path: str) -> tuple[str, list[str]]:
+_PAGES_LINE = re.compile(r"^Pages:\s*(\d+)\s*$", re.MULTILINE)
+
+
+def count_pages(pdf_path: str) -> int:
+    """How many pages the PDF has (pdfinfo, on a copy, as pdfworker, with limits)."""
+    with sandbox_run.Scratch(prefix="pdfinfo-") as box:
+        src = box.add_file(pdf_path, "in.pdf")
+        result = box.run(["pdfinfo", src], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+    m = _PAGES_LINE.search(result.stdout[:100000].decode(errors="replace"))
+    if result.returncode != 0 or not m:
+        raise VisionExtractionError(
+            "Couldn't count the PDF's pages: " + (result.stderr[:300].decode(errors="replace").strip() or "pdfinfo failed"))
+    return int(m.group(1))
+
+
+def max_pages() -> int:
+    """The most pages one PDF may send to the AI (Admin → App settings)."""
+    return settings.get_int("max_pdf_pages") or 30
+
+
+def rasterize_pdf(pdf_path: str, limit: int | None = None) -> tuple[str, list[str]]:
     """pdftoppm -png, one file per page, in a fresh temp dir the caller
     is responsible for cleaning up — returns (dir, image_paths); the dir
     itself, not just the files in it, since the caller needs it to
     actually remove the directory afterward. pdftoppm runs on a copy of the
     file as the unprivileged pdfworker user, with resource limits, in a
     scratch folder of its own (common/python/sandbox_run.py); the pages are
-    moved from there into out_dir."""
+    moved from there into out_dir.
+
+    A PDF with more pages than `limit` (Most pages per PDF on App settings) is refused before
+    anything is rendered — every page goes to the model in one request — and pdftoppm is told
+    to stop at the limit anyway."""
+    limit = limit or max_pages()
+    pages = count_pages(pdf_path)
+    if pages > limit:
+        raise VisionExtractionError(
+            f"This PDF has {pages} pages; the most the app sends to the AI is {limit} "
+            "(an admin can change it on Admin → App settings: Most pages per PDF).")
     out_dir = tempfile.mkdtemp(prefix="pages-")
     prefix = os.path.join(out_dir, "page")
     try:
         with sandbox_run.Scratch(prefix="pdftoppm-") as box:
             src = box.add_file(pdf_path, "in.pdf")
             result = box.run(
-                ["pdftoppm", "-png", "-r", "150", src, os.path.join(box.path, "page")],
+                ["pdftoppm", "-png", "-r", "150", "-l", str(limit), src, os.path.join(box.path, "page")],
                 capture_output=True, text=True, timeout=60,
             )
             if result.returncode == 0:
@@ -240,16 +300,16 @@ def ask_vision_json(
 
 
 def debug_call(pdf_path: str, ollama_url: str, model: str, prompt: str = _PROMPT) -> tuple[float, str]:
-    """Admin debug action: re-send a PDF with no timeout and no retries and
+    """Admin debug action: re-send a PDF with a long timeout (DEBUG_TIMEOUT_SECONDS) and no retries and
     return (elapsed_seconds, the provider's whole raw response) — the whole
     response, since a reasoning model's real output may be in another field
     ("thinking"). Raises VisionExtractionError when the AI or pdftoppm fails."""
     start = time.monotonic()
-    warmup_model(ollama_url, model, timeout=None)
+    warmup_model(ollama_url, model, timeout=DEBUG_TIMEOUT_SECONDS)
     out_dir, page_images = rasterize_pdf(pdf_path)
     try:
         reply = _ask(ollama_url, model, prompt, images=_images_b64(page_images), want_json=True,
-                     timeout=None, purpose="Debug re-send")
+                     timeout=DEBUG_TIMEOUT_SECONDS, purpose="Debug re-send")
         try:
             raw = json.dumps(json.loads(reply.raw), indent=2)
         except json.JSONDecodeError:
@@ -264,14 +324,21 @@ def extract_vision(
     on_step: Callable[[str], None] | None = None,
     account_type: str | None = None, notes: str = "",
 ) -> VisionResult:
-    """Bank/credit-card statement transactions. A malformed row is skipped, not fatal."""
+    """Bank/credit-card statement transactions. A malformed row is skipped, not fatal; one whose date
+    or amount can't be read (or isn't a real number: NaN, infinity) is left out and named in
+    `rejected`, which the statement's debug page lists (the balance check then shows something is
+    missing)."""
     data, raw = ask_vision_json(pdf_path, ollama_url, model, statement_prompt(account_type, notes), on_step)
-    transactions = []
-    for row in data.get("transactions", []):
-        try:
-            transactions.append(ParsedTransaction(
-                date=row["date"], amount=float(row["amount"]), description=str(row["description"]),
-            ))
-        except (KeyError, TypeError, ValueError):
+    transactions, rejected = [], []
+    rows = data.get("transactions", []) if isinstance(data, dict) else []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or "description" not in row:
             continue
-    return VisionResult(transactions=transactions, raw_response=raw)
+        date, amount = clean_date(row.get("date")), clean_amount(row.get("amount"))
+        description = clean_text(row.get("description"), MAX_DESCRIPTION_CHARS)
+        if date is None or amount is None:
+            rejected.append(f"{clean_text(row.get('date'), 30)!s} {description!r} {clean_text(row.get('amount'), 30)} — "
+                            "the date or amount couldn't be read, not imported.")
+            continue
+        transactions.append(ParsedTransaction(date=date, amount=amount, description=description))
+    return VisionResult(transactions=transactions, raw_response=raw, rejected=rejected)

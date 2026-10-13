@@ -66,9 +66,14 @@ def _owner(ctx) -> tuple[str, str]:
         "SELECT a.owner_id AS id, COALESCE(k.name, a.owner_id) AS name FROM user_access a "
         "LEFT JOIN known_users k ON k.id = a.owner_id WHERE a.viewer_id = ? AND COALESCE(k.assistant_ok, 1) = 1",
         (ctx.user["id"],)).fetchall()
-    for r in rows:
-        if want.casefold() in (r["name"].casefold(), r["id"].casefold()):
-            return r["id"], r["name"]
+    # The user id decides first; a display name only when exactly one shared owner has it (two
+    # people may share a name, and a name may look like someone else's id).
+    wanted = want.casefold()
+    by_id = [r for r in rows if r["id"].casefold() == wanted]
+    by_name = [r for r in rows if r["name"].casefold() == wanted]
+    found = by_id or (by_name if len(by_name) == 1 else [])
+    if found:
+        return found[0]["id"], found[0]["name"]
     raise bus.Nack("not_found", "person")                  # not shared with them looks like nobody
 
 
@@ -264,10 +269,15 @@ def balances(ctx):
     if not accounts:
         return ctx.result(f"No accounts{_whose(owner, ctx)} yet.", links=[link])
     items, parts = [], []
+    # Each account's latest complete statement with a balance, all in one query.
+    latest = {r["account_id"]: r for r in ctx.conn.execute(
+        "SELECT account_id, statement_period, new_balance FROM ("
+        "  SELECT account_id, statement_period, new_balance, ROW_NUMBER() OVER ("
+        "    PARTITION BY account_id ORDER BY statement_period DESC, id DESC) AS n "
+        "  FROM statements WHERE user_id = ? AND deleted_at IS NULL AND status = 'complete' "
+        "  AND new_balance IS NOT NULL) WHERE n = 1", (uid,)).fetchall()}
     for a in accounts:
-        st = ctx.conn.execute("SELECT statement_period, new_balance FROM statements WHERE account_id = ? AND "
-                              "deleted_at IS NULL AND status = 'complete' AND new_balance IS NOT NULL "
-                              "ORDER BY statement_period DESC, id DESC LIMIT 1", (a["id"],)).fetchone()
+        st = latest.get(a["id"])
         name = a["name"] + (f" ••{a['account_number_last4']}" if a["account_number_last4"] else "")
         if st is None:
             items.append({"account": name, "type": a["type"], "balance": None, "statement": None})

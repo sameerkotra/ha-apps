@@ -6,16 +6,19 @@ listed read-only so a person can see why a row landed where it did.
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
-from ..categorize import _BUILTIN_RULES, create_custom_category, list_all_categories, recategorize_transactions, save_rule
+from ..categorize import _BUILTIN_RULES, create_custom_category, list_all_categories, recategorize_for_rule, save_rule
 from ..db import get_db
+from .. import notices
 from ..version import APP_VERSION
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
+MAX_PATTERN_LENGTH = 200     # the form's own maxlength
+MAX_CATEGORY_LENGTH = 60
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 templates.env.globals["app_version"] = APP_VERSION
 
@@ -86,7 +89,7 @@ def create_custom_category_route(
         if ok:
             conn.commit()
         else:
-            return JSONResponse({"error": result}, status_code=400)
+            return notices.form_error(request, templates, acting, _acting_qs(current, acting), result, "categories")
 
     qs = _acting_qs(current, acting)
     return RedirectResponse(url=f"categories{'?' + qs if qs else ''}", status_code=303)
@@ -127,25 +130,28 @@ def create_category_rule(
     updates its category rather than piling up a near-duplicate row.
 
     recategorize="1" (an opt-in checkbox on the Add-a-rule form) also
-    applies the user's full current rule set to every one of the user's
-    existing transactions — including overwriting a category a row
-    already had — for any whose description a rule now matches; see
-    categorize.py's recategorize_transactions for the exact scope. Off
+    applies it to the existing transactions it matches — including
+    overwriting a category a row already had, with the user's full rule
+    set deciding between overlapping rules; see categorize.py's
+    recategorize_for_rule for the exact scope. Off
     by default: adding a rule alone never touches existing data unless
     the user explicitly asks for that."""
     pattern = pattern.strip()
     category = category.strip()
-    if not pattern:
-        return JSONResponse({"error": "Match text is required"}, status_code=400)
-    if not category:
-        return JSONResponse({"error": "Category is required"}, status_code=400)
+    problem = ("Match text is required" if not pattern
+               else "Category is required" if not category
+               else f"Match text is too long (max {MAX_PATTERN_LENGTH} characters)" if len(pattern) > MAX_PATTERN_LENGTH
+               else f"Category is too long (max {MAX_CATEGORY_LENGTH} characters)" if len(category) > MAX_CATEGORY_LENGTH
+               else None)
+    if problem:
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, "categories")
     safe_match_type = match_type if match_type in ("exact", "prefix", "substring") else "substring"
 
     recat_count = 0
     with get_db() as conn:
         save_rule(conn, acting.id, pattern, safe_match_type, category)
         if recategorize == "1":
-            recat_count = recategorize_transactions(conn, acting.id)
+            recat_count = recategorize_for_rule(conn, acting.id, pattern, safe_match_type)
         conn.commit()
 
     qs_parts = [p for p in (

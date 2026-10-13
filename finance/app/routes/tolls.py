@@ -39,6 +39,7 @@ from .. import toll_trips as toll_trips_module  # MIN_TRIPS is read at call time
 from ..tolls import device_label, vehicle_label
 from ..version import APP_VERSION
 from .accounts import _acting_banner, _acting_qs
+from .. import notices
 from .dashboard import _MONTH_RE, _YEAR_RE, month_label, month_range, resolve_period, year_range
 
 router = APIRouter(dependencies=[Depends(_features.required("tolls"))])
@@ -226,21 +227,27 @@ _CLEAN_PASS = "x.deleted_at IS NULL AND x.review_status = 'clean' AND s.deleted_
 
 
 def _devices_for_user(conn, user_id: str) -> list[dict]:
-    """Every tag found on a statement, with the car it is assigned to (if any) and its own figures."""
+    """Every tag found on a statement, with the car it is assigned to (if any) and its own figures —
+    added up for all the person's devices in one pass over their passes (not four lookups per device)."""
     rows = conn.execute(
-        "SELECT d.*, c.name AS car_name, "
-        f"(SELECT COUNT(*) FROM toll_transactions x JOIN toll_statements s ON s.id = x.statement_id WHERE x.device_ref = d.id AND {_CLEAN_PASS}) AS pass_count, "
-        f"(SELECT COALESCE(SUM(x.amount), 0) FROM toll_transactions x JOIN toll_statements s ON s.id = x.statement_id WHERE x.device_ref = d.id AND {_CLEAN_PASS}) AS total, "
-        f"(SELECT MIN(x.date) FROM toll_transactions x JOIN toll_statements s ON s.id = x.statement_id WHERE x.device_ref = d.id AND {_CLEAN_PASS}) AS first_date, "
-        f"(SELECT MAX(x.date) FROM toll_transactions x JOIN toll_statements s ON s.id = x.statement_id WHERE x.device_ref = d.id AND {_CLEAN_PASS}) AS last_date, "
-        "(SELECT COUNT(*) FROM toll_transactions x WHERE x.device_ref = d.id) AS any_rows "
-        "FROM toll_devices d LEFT JOIN toll_cars c ON c.id = d.car_id WHERE d.user_id = ? ORDER BY d.id", (user_id,)).fetchall()
+        "SELECT d.*, c.name AS car_name, COALESCE(agg.pass_count, 0) AS pass_count, COALESCE(agg.total, 0) AS total, "
+        "agg.first_date, agg.last_date, COALESCE(anyrows.n, 0) AS any_rows "
+        "FROM toll_devices d LEFT JOIN toll_cars c ON c.id = d.car_id "
+        "LEFT JOIN (SELECT x.device_ref, COUNT(*) AS pass_count, SUM(x.amount) AS total, MIN(x.date) AS first_date, "
+        f"          MAX(x.date) AS last_date FROM toll_transactions x JOIN toll_statements s ON s.id = x.statement_id "
+        f"          WHERE x.device_ref IN (SELECT id FROM toll_devices WHERE user_id = ?) AND {_CLEAN_PASS} "
+        "          GROUP BY x.device_ref) agg ON agg.device_ref = d.id "
+        "LEFT JOIN (SELECT x.device_ref, COUNT(*) AS n FROM toll_transactions x "
+        "          WHERE x.device_ref IN (SELECT id FROM toll_devices WHERE user_id = ?) GROUP BY x.device_ref) anyrows "
+        "       ON anyrows.device_ref = d.id "
+        "WHERE d.user_id = ? ORDER BY d.id", (user_id, user_id, user_id)).fetchall()
     return [{**dict(r), "label": device_label(r)} for r in rows]
 
 
-def _cars_for_user(conn, user_id: str) -> list[dict]:
-    """The person's cars, each with its tags and the figures of those tags together."""
-    devices = _devices_for_user(conn, user_id)
+def _cars_for_user(conn, user_id: str, devices: list[dict] | None = None) -> list[dict]:
+    """The person's cars, each with its tags and the figures of those tags together. Pass `devices`
+    (_devices_for_user) when the page has them already."""
+    devices = devices if devices is not None else _devices_for_user(conn, user_id)
     cars = []
     for r in conn.execute("SELECT * FROM toll_cars WHERE user_id = ? ORDER BY id", (user_id,)).fetchall():
         mine = [d for d in devices if d["car_id"] == r["id"]]
@@ -270,10 +277,10 @@ def toll_car_add(
     """Create a car. A car is just a name; devices are assigned to it afterwards."""
     name = " ".join(name.split())[:60]
     if not name:
-        return _cars_redirect(current, acting, "Give the car a name.")
+        return _cars_redirect(current, acting, "car_name_missing")
     with get_db() as conn:
         if conn.execute("SELECT 1 FROM toll_cars WHERE user_id = ? AND name = ? COLLATE NOCASE", (acting.id, name)).fetchone():
-            return _cars_redirect(current, acting, f"You already have a car called {name}.")
+            return _cars_redirect(current, acting, "car_name_taken")
         conn.execute("INSERT INTO toll_cars (user_id, name) VALUES (?, ?)", (acting.id, name))
     return _cars_redirect(current, acting)
 
@@ -289,12 +296,12 @@ def toll_car_update(
     """Rename a car (a blank name is ignored: a car always has one)."""
     name = " ".join(name.split())[:60]
     if not name:
-        return _cars_redirect(current, acting, "A car needs a name.")
+        return _cars_redirect(current, acting, "car_name_missing")
     with get_db() as conn:
         clash = conn.execute("SELECT 1 FROM toll_cars WHERE user_id = ? AND name = ? COLLATE NOCASE AND id != ?",
                              (acting.id, name, id)).fetchone()
         if clash:
-            return _cars_redirect(current, acting, f"You already have a car called {name}.")
+            return _cars_redirect(current, acting, "car_name_taken")
         conn.execute("UPDATE toll_cars SET name = ? WHERE id = ? AND user_id = ?", (name, id, acting.id))
     return _cars_redirect(current, acting)
 
@@ -401,10 +408,10 @@ def toll_group_add(
     of a morning and an evening tag). A group is just a name; tags are assigned to it below."""
     name = " ".join(name.split())[:60]
     if not name:
-        return _analyze_redirect(current, acting, period, "Give the group a name.")
+        return _analyze_redirect(current, acting, period, "group_name_missing")
     with get_db() as conn:
         if conn.execute("SELECT 1 FROM toll_pattern_groups WHERE user_id = ? AND name = ? COLLATE NOCASE", (acting.id, name)).fetchone():
-            return _analyze_redirect(current, acting, period, f"You already have a group called {name}.")
+            return _analyze_redirect(current, acting, period, "group_name_taken")
         conn.execute("INSERT INTO toll_pattern_groups (user_id, name) VALUES (?, ?)", (acting.id, name))
     return _analyze_redirect(current, acting, period)
 
@@ -421,12 +428,12 @@ def toll_group_update(
     """Rename a group (a blank name is ignored: a group always has one)."""
     name = " ".join(name.split())[:60]
     if not name:
-        return _analyze_redirect(current, acting, period, "A group needs a name.")
+        return _analyze_redirect(current, acting, period, "group_name_missing")
     with get_db() as conn:
         clash = conn.execute("SELECT 1 FROM toll_pattern_groups WHERE user_id = ? AND name = ? COLLATE NOCASE AND id != ?",
                              (acting.id, name, id)).fetchone()
         if clash:
-            return _analyze_redirect(current, acting, period, f"You already have a group called {name}.")
+            return _analyze_redirect(current, acting, period, "group_name_taken")
         conn.execute("UPDATE toll_pattern_groups SET name = ? WHERE id = ? AND user_id = ?", (name, id, acting.id))
     return _analyze_redirect(current, acting, period)
 
@@ -538,13 +545,14 @@ def tolls_page(
     try:
         if tab == "upload":
             history = _history_rows(conn, acting.id)
+            devices = _devices_for_user(conn, acting.id)          # once for both lists
             view = TableView(request, "tolls", "tu_", history, _STATEMENT_SORT_KEYS, "uploaded", extra_qs=acting_qs)
             context.update({
                 "history_view": view, "history_columns": STATEMENT_SORT_COLUMNS, "statements": view.rows,
                 "processing": any(r["status"] == "processing" for r in history),
-                "cars": _cars_for_user(conn, acting.id), "devices": _devices_for_user(conn, acting.id),
-                "car_error": car_error or None,
-                "open_cars": open_section == "cars" or bool(car_error), "open_devices": open_section == "devices",
+                "cars": _cars_for_user(conn, acting.id, devices), "devices": devices,
+                "car_error": notices.text(car_error) or None,
+                "open_cars": open_section == "cars" or bool(notices.text(car_error)), "open_devices": open_section == "devices",
             })
             return templates.TemplateResponse(request, "tolls.html", context)
 
@@ -577,8 +585,9 @@ def tolls_page(
         list_view = TableView(request, "tolls", "tl_", rows, _TOLL_SORT_KEYS, "when", extra_qs=acting_qs)
         pending = conn.execute("SELECT COUNT(*) AS n FROM toll_statements WHERE user_id = ? AND deleted_at IS NULL "
                                "AND status = 'pending_review'", (acting.id,)).fetchone()["n"]
-        all_cars = _cars_for_user(conn, acting.id)
-        unassigned = sum(1 for d in _devices_for_user(conn, acting.id) if d["car_id"] is None and d["pass_count"])
+        devices = _devices_for_user(conn, acting.id)
+        all_cars = _cars_for_user(conn, acting.id, devices)
+        unassigned = sum(1 for d in devices if d["car_id"] is None and d["pass_count"])
     finally:
         conn.close()
 
@@ -723,8 +732,9 @@ def toll_compare(
 
     with get_db() as conn:
         months, years = available_periods(conn, acting.id)
-        all_cars = _cars_for_user(conn, acting.id)
-        has_unassigned = any(d["car_id"] is None and d["pass_count"] for d in _devices_for_user(conn, acting.id))
+        devices = _devices_for_user(conn, acting.id)
+        all_cars = _cars_for_user(conn, acting.id, devices)
+        has_unassigned = any(d["car_id"] is None and d["pass_count"] for d in devices)
         trend_series, trend_periods = _tag_group_series(conn, acting.id, mode, period_keys, safe_car)
         car_series, car_periods = _car_series(conn, acting.id, mode, period_keys, safe_car)
 
@@ -786,8 +796,9 @@ def toll_analyze(
             "SELECT * FROM toll_patterns WHERE user_id = ? AND ignored = 0 ORDER BY created_at, id", (acting.id,))]
         ignored = [dict(r) for r in conn.execute(
             "SELECT signature, window_start_min, window_end_min FROM toll_patterns WHERE user_id = ? AND ignored = 1", (acting.id,))]
-        vehicle_names = {f"c{c['id']}": c["label"] for c in _cars_for_user(conn, acting.id)}
-        vehicle_names.update({f"d{d['id']}": vehicle_label(None, d) for d in _devices_for_user(conn, acting.id)})
+        devices = _devices_for_user(conn, acting.id)
+        vehicle_names = {f"c{c['id']}": c["label"] for c in _cars_for_user(conn, acting.id, devices)}
+        vehicle_names.update({f"d{d['id']}": vehicle_label(None, d) for d in devices})
         groups = _groups_for_user(conn, acting.id)
 
     for t in trips:
@@ -812,7 +823,7 @@ def toll_analyze(
         "user": acting, "period": safe_period, "months": months, "years": years,
         "month_labels": {m: month_label(m) for m in months},
         "suggestions": suggestions, "min_suggest_trips": toll_trips_module.MIN_TRIPS, "patterns": patterns, "trip_view": view, "trip_columns": TRIP_SORT_COLUMNS,
-        "trips_shown": view.rows, "trip_total": len(trips), "error": error or None, "groups": groups,
+        "trips_shown": view.rows, "trip_total": len(trips), "error": notices.text(error) or None, "groups": groups,
         "acting_qs": acting_qs, "acting_as_banner": _acting_banner(current, acting),
         "is_admin": current.is_admin, "active_page": "tolls",
     })
@@ -820,6 +831,11 @@ def toll_analyze(
 
 def _analyze_redirect(current: User, acting: User, period: str, error: str = "") -> RedirectResponse:
     return _redirect("toll-analyze", current, acting, period=period if period != "all" else "", error=error)
+
+
+# A tag's signature (and a trip's key) is the app's own text for a route; anything much longer than the
+# longest real one came from a hand-made request.
+MAX_SIGNATURE_LENGTH = 2000
 
 
 @router.post("/toll-pattern-save")
@@ -838,7 +854,9 @@ def toll_pattern_save(
     lo, hi = parse_clock(start), parse_clock(end)
     name = name.strip()[:60]
     if lo is None or hi is None or lo > hi or not name:
-        return _analyze_redirect(current, acting, period, "Give the tag a name and a start time that is not after its end time.")
+        return _analyze_redirect(current, acting, period, "tag_invalid")
+    if len(signature) > MAX_SIGNATURE_LENGTH:
+        return _analyze_redirect(current, acting, period, "too_long")
     with get_db() as conn:
         tag_id = _int_or_none(id)
         if tag_id is not None:
@@ -880,6 +898,8 @@ def toll_pattern_ignore(
 ):
     """Dismiss a suggestion: stored as an ignored pattern (no name) that never tags anything."""
     lo, hi = parse_clock(start), parse_clock(end)
+    if len(signature) > MAX_SIGNATURE_LENGTH:
+        return _analyze_redirect(current, acting, period, "too_long")
     if lo is not None and hi is not None and signature.strip():
         with get_db() as conn:
             conn.execute("INSERT INTO toll_patterns (user_id, name, signature, window_start_min, window_end_min, ignored) "
@@ -897,6 +917,8 @@ def toll_trip_tag(
     acting: User = Depends(get_acting_user),
 ):
     """A manual choice for one trip: an existing tag, 'none' (not regular), or '' (remove my choice)."""
+    if len(trip_key) > MAX_SIGNATURE_LENGTH:
+        return _analyze_redirect(current, acting, period, "too_long")
     with get_db() as conn:
         trip = conn.execute("SELECT trip_key FROM toll_trips WHERE user_id = ? AND trip_key = ?", (acting.id, trip_key)).fetchone()
         first = conn.execute(
@@ -911,7 +933,7 @@ def toll_trip_tag(
                     owned = conn.execute("SELECT id FROM toll_patterns WHERE id = ? AND user_id = ? AND ignored = 0",
                                          (_int_or_none(choice), acting.id)).fetchone()
                     if owned is None:
-                        return _analyze_redirect(current, acting, period, "That tag no longer exists.")
+                        return _analyze_redirect(current, acting, period, "tag_gone")
                     pattern_id = owned["id"]
                 conn.execute(
                     "INSERT INTO toll_trip_overrides (user_id, trip_key, first_dedupe_key, pattern_id) VALUES (?, ?, ?, ?) "

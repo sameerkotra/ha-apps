@@ -11,6 +11,7 @@
     Anything deleted from this account stays here for 30 days before it's
     permanently purged &mdash; restore it any time before then with one click.
 </p>
+{% if error %}<div class="warning-hint" role="alert"><p>{{ error }}</p></div>{% endif %}
 
 <h2>Statements</h2>
 {% if statements %}

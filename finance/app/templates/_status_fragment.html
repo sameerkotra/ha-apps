@@ -3,7 +3,7 @@
       hx-get="statement-status?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
       hx-trigger="every 3s"
       hx-target="closest tr" hx-swap="outerHTML">
-  {{ row.current_step or "Processing&hellip;" }}
+  {{ row.current_step or "Processing…" }}
 </span>
 {% elif row.status == "error" %}
 <span id="status-cell-{{ row.id }}" class="status-cell-stack">

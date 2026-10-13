@@ -40,12 +40,13 @@
                 <input id="set-{{ key }}" type="number" name="{{ key }}" min="0" step="any" inputmode="decimal" value="{{ values[key] }}">
             </div>
             {% elif s.kind == "int" %}
-            <input id="set-{{ key }}" type="number" name="{{ key }}" min="256" max="200000" step="1" inputmode="numeric" value="{{ values[key] }}">
+            <input id="set-{{ key }}" type="number" name="{{ key }}" min="{{ s.minimum }}" max="{{ s.maximum }}" step="1" inputmode="numeric" value="{{ values[key] }}">
             {% elif s.kind == "choice" %}
             <select id="set-{{ key }}" name="{{ key }}">
                 {% for v, label in s.choices %}<option value="{{ v }}" {{ "selected" if values[key] == v }}>{{ label }}</option>{% endfor %}
             </select>
             {% elif s.kind == "secret" %}
+            {% set key_hint = key_hints.get(key) %}
             <input id="set-{{ key }}" type="password" name="{{ key }}" value="" autocomplete="new-password" spellcheck="false"
                    maxlength="500" placeholder="{{ 'A key is saved (' ~ key_hint ~ ') — type a new one to replace it' if key_hint else 'Paste the key' }}">
             {% if key_hint %}
@@ -61,7 +62,7 @@
             {% if m and s.kind != "secret" %}<p class="hint settings-meta">
                 {% if m.updated_by == "add-on options" %}Copied from the old app options ({{ m.updated_at }} UTC).
                 {% else %}Last changed {{ m.updated_at }} UTC{% if m.updated_by %} by {{ m.updated_by }}{% endif %}.{% endif %}
-            </p>{% elif m and key_hint %}<p class="hint settings-meta">Saved {{ m.updated_at }} UTC{% if m.updated_by %} by {{ m.updated_by }}{% endif %}.</p>{% endif %}
+            </p>{% elif m and key_hints.get(key) %}<p class="hint settings-meta">Saved {{ m.updated_at }} UTC{% if m.updated_by %} by {{ m.updated_by }}{% endif %}.</p>{% endif %}
         </div>
         {% endfor %}
         {% if "ai_url" in keys %}

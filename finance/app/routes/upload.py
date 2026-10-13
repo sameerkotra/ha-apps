@@ -22,7 +22,7 @@ from ..parser.documents import prepare_restart
 from ..parser.pipeline import check_duplicate, finalize_if_ready
 from ..parser.vision import MAX_NOTES_CHARS, debug_call, statement_prompt, VisionExtractionError
 from ..paging import TableView
-from ..matching import cascade_unlink_on_delete
+from ..matching import cascade_unlink_on_delete, relink
 from .accounts import _acting_banner, _acting_qs
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,12 @@ templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_privacy"] = _ai_client.privacy
 templates.env.globals["ai_configured"] = _settings.ai_configured
 templates.env.globals["ai_usage_view"] = ai_usage.view
+
+
+def _name(filename: str | None) -> str | None:
+    """The uploaded file's own name, as shown in the history (cut to a sane length)."""
+    return filename[:255] if filename else None
+
 
 @router.post("/upload")
 async def upload_statements(
@@ -44,27 +50,38 @@ async def upload_statements(
 ):
     """Several PDFs for one account per request. Unless `skip_confirmation`
     is ticked, each statement waits for a human to open the PDF and confirm
-    its money in/out before it completes (finalize_if_ready)."""
+    its money in/out before it completes (finalize_if_ready). The files and
+    the database are handled in a worker thread, never on the event loop."""
+    if len(files) > storage.MAX_FILES_PER_REQUEST:
+        return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
     needs_confirmation = 0 if skip_confirmation else 1
+    results = await asyncio.to_thread(_store_statements, acting.id, account_id, files, needs_confirmation)
+    if results is None:
+        return JSONResponse({"error": "Account not found"}, status_code=404)
+    return JSONResponse({"results": results})
+
+
+def _store_statements(user_id: str, account_id: int, files: list, needs_confirmation: int) -> list[dict] | None:
+    """Save each PDF (streamed to disk while hashing), skip a file already uploaded, and queue the rest.
+    None when the account isn't the user's live, unarchived one."""
     results = []
     conn = get_db()
     try:
         account = conn.execute(
             "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND is_archived = 0",
-            (account_id, acting.id),
+            (account_id, user_id),
         ).fetchone()
         if account is None:
-            return JSONResponse({"error": "Account not found"}, status_code=404)
+            return None
 
         for upload in files:
             try:
-                content = await storage.read_upload(upload, storage.MAX_PDF_BYTES, pdf=True)
+                tmp_path, hash_ = storage.save_upload(upload, storage.user_dir(user_id), "upload", ".pdf",
+                                                      storage.MAX_PDF_BYTES, pdf=True)
             except storage.UploadRejected as e:
                 results.append({"filename": upload.filename, "error": str(e)})
                 continue
-            tmp_path, hash_ = await asyncio.to_thread(
-                storage.save_file, storage.user_dir(acting.id), "upload", ".pdf", content)
-            dup = check_duplicate(conn, acting.id, hash_)
+            dup = check_duplicate(conn, user_id, hash_)
             if dup is not None:
                 storage.remove_stored_file(tmp_path)
                 if dup["status"] == "error":
@@ -85,17 +102,16 @@ async def upload_statements(
                 "INSERT INTO statements "
                 "(user_id, account_id, original_filename, pdf_path, file_hash, status, needs_confirmation) "
                 "VALUES (?, ?, ?, ?, ?, 'processing', ?)",
-                (acting.id, account_id, upload.filename, tmp_path, hash_, needs_confirmation),
+                (user_id, account_id, _name(upload.filename), tmp_path, hash_, needs_confirmation),
             )
             conn.commit()
             statement_id = cur.lastrowid
 
-            start_job("statement", statement_id, acting.id, account_id)
+            start_job("statement", statement_id, user_id, account_id)
             results.append({"filename": upload.filename, "statement_id": statement_id, "status": "processing"})
     finally:
         conn.close()
-
-    return JSONResponse({"results": results})
+    return results
 
 
 # Columns _status_fragment.html / _statement_row.html read. flagged_count
@@ -260,6 +276,7 @@ def statement_reextract(
         if txn_ids:
             placeholders = ",".join("?" for _ in txn_ids)
             conn.execute(f"DELETE FROM transactions WHERE id IN ({placeholders})", tuple(txn_ids))
+            relink(conn, acting.id)
 
         conn.execute(
             "UPDATE statements SET status = 'processing', error_message = NULL, extraction_notes = ? WHERE id = ?",
@@ -446,7 +463,7 @@ def statement_confirm_page(
         statement = _statement_awaiting_confirmation(conn, id, acting.id)
         if statement is None:
             return templates.TemplateResponse(request, "not_found.html", {"user": acting}, status_code=404)
-        flow = statement_flows(conn, acting.id).get(id, {"money_in": 0, "money_out": 0})
+        flow = statement_flows(conn, acting.id, id).get(id, {"money_in": 0, "money_out": 0})
         txn_count, flagged_count = conn.execute(
             "SELECT COUNT(*), COALESCE(SUM(review_status = 'pending_review'), 0) FROM transactions "
             "WHERE statement_id = ? AND deleted_at IS NULL",

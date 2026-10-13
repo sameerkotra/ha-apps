@@ -22,9 +22,11 @@ extracted text instead:
     per-row agreement alone can never catch, since every row can
     individually check out and the total still be wrong).
 
-Categorization (categorize_transactions, SPEC.md section 9) runs
-last, inside the same atomic transaction as the inserts — every row gets
-a category, explicit "Uncategorized" rather than a silent NULL.
+Categorization (plan_categories, SPEC.md section 9) is decided in memory
+before anything is written (its LLM fallback can take minutes, and no write
+transaction may be open meanwhile); the rows, their categories and the
+statement's result are then written in one short transaction — every row
+gets a category, explicit "Uncategorized" rather than a silent NULL.
 """
 import dataclasses
 import json
@@ -34,7 +36,8 @@ import sqlite3
 from collections import Counter
 from functools import partial
 
-from ..categorize import categorize_transactions
+from ..amounts import to_cents
+from ..categorize import apply_categories, plan_categories
 from ..db import get_db
 from ..matching import auto_link_unambiguous, cascade_unlink_on_delete
 from ..storage import forget_pdf
@@ -46,6 +49,12 @@ logger = logging.getLogger(__name__)
 
 
 RECONCILIATION_TOLERANCE = 0.01  # cents-rounding only; a real missing/duplicated transaction is never this close
+RECONCILIATION_TOLERANCE_CENTS = 1   # the same, compared in whole cents (floats can't hold 0.01 exactly)
+DELETED_WHILE_READING = "Deleted while it was being read — nothing was saved. Restore it, then Restart to read it again."
+
+
+def _off_by_more_than_a_cent(a: float, b: float) -> bool:
+    return abs(to_cents(a) - to_cents(b)) > RECONCILIATION_TOLERANCE_CENTS
 
 AMOUNT_NOT_FOUND_REASON = (
     "This amount wasn't found anywhere in the statement's own extracted text "
@@ -129,7 +138,7 @@ def _partition_duplicates(
     skipped: list[dict] = []
 
     for txn in transactions:
-        key = (txn.date, round(txn.amount, 2), txn.description)
+        key = (txn.date, to_cents(txn.amount), txn.description)
         if seen_within[key] > 0:
             seen_within[key] += 1
             notes.append(
@@ -231,7 +240,7 @@ def _check_reconciliation(
     actual_delta = round(sum(t.amount for t in transactions), 2)
     printed_delta = round(new_balance - previous_balance, 2)
 
-    if abs(actual_delta - printed_delta) > RECONCILIATION_TOLERANCE:
+    if _off_by_more_than_a_cent(actual_delta, printed_delta):
         return (
             f"Statement's printed balance moved {printed_delta:+.2f} "
             f"(previous {previous_balance:.2f} -> new {new_balance:.2f}), but the "
@@ -289,16 +298,16 @@ def _fix_card_signs(previous_balance, new_balance, for_reconciliation, to_insert
                 f"payment(s) came out as charges); purchases are stored as money out on a card.")
     if verdict is not None:
         total = round(sum(t.amount for t in for_reconciliation), 2)
-        if have_balances and total != 0 and abs(total - printed) > RECONCILIATION_TOLERANCE \
-                and abs(-total - printed) <= RECONCILIATION_TOLERANCE:
+        if have_balances and total != 0 and _off_by_more_than_a_cent(total, printed) \
+                and not _off_by_more_than_a_cent(-total, printed):
             new_balance = round(previous_balance - printed, 2)
             note = ((note + " ") if note else "") + (
                 f"The printed balance movement ({printed:+.2f}) was read with the wrong sign (a credit balance) "
                 f"and is taken as {-printed:+.2f}.")
         return for_reconciliation, to_insert, note, new_balance
     total = round(sum(t.amount for t in for_reconciliation), 2)
-    if have_balances and total != 0 and abs(total - printed) > RECONCILIATION_TOLERANCE \
-            and abs(-total - printed) <= RECONCILIATION_TOLERANCE:
+    if have_balances and total != 0 and _off_by_more_than_a_cent(total, printed) \
+            and not _off_by_more_than_a_cent(-total, printed):
         return flip(for_reconciliation), flip(to_insert), (
             f"Signs flipped: the model signed purchases and payments the opposite way round (extracted total "
             f"{total:+.2f}, printed balance moved {printed:+.2f}); purchases are stored as money out on a card."), new_balance
@@ -375,10 +384,10 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
         # drop them before anything else. A nonzero credit-card interest charge
         # increases what's owed, so it is stored positive whatever sign the
         # extraction gave it.
-        zero_amount_notes: list[str] = []
+        zero_amount_notes: list[str] = list(getattr(vision_result, "rejected", None) or [])
         nonzero_transactions: list[ParsedTransaction] = []
         for txn in vision_result.transactions:
-            if round(txn.amount, 2) == 0:
+            if to_cents(txn.amount) == 0:
                 zero_amount_notes.append(
                     f"{txn.date} {txn.description!r} — extracted as $0.00 (no charge this period), not imported."
                 )
@@ -387,11 +396,23 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
                 txn = dataclasses.replace(txn, amount=abs(txn.amount))
             nonzero_transactions.append(txn)
 
+        # A card read the wrong way round is put right BEFORE looking for transactions already on
+        # file: those are matched by amount, and a backwards reading would match nothing (or the
+        # wrong rows). The decision only needs the lines repeated within this reading set aside
+        # (a repeat has the same sign as its first copy, so flipping doesn't change which repeat).
+        flip_note = None
+        card_new_balance = det_result.new_balance
+        if account_type == "credit_card":
+            unique = _first_copies(nonzero_transactions)
+            _, nonzero_transactions, flip_note, card_new_balance = _fix_card_signs(
+                det_result.previous_balance, det_result.new_balance, unique, nonzero_transactions)
+
         # Split out lines repeated within this extraction and transactions
         # already on file (see _partition_duplicates for how each is treated).
         for_reconciliation, to_insert, true_duplicate_notes, skipped = _partition_duplicates(
             conn, user_id, account_id, nonzero_transactions,
         )
+        conn.commit()      # end the read: nothing below may hold the database while the AI is asked
 
         if not to_insert and true_duplicate_notes:
             # Every single extracted transaction turned out to already be
@@ -402,6 +423,11 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
             # kept so Restart still works, and the reason is explicit
             # rather than a generic failure. The skipped lines are kept so
             # Review can still insert any that are real.
+            conn.execute("BEGIN IMMEDIATE")
+            if _deleted(conn, statement_id):
+                conn.rollback()
+                _fail(conn, statement_id, DELETED_WHILE_READING)
+                return
             _record_skipped(conn, user_id, account_id, statement_id, skipped)
             conn.commit()
             _fail(
@@ -417,73 +443,65 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
         # entirely $0.00 interest lines and nothing else (no real activity
         # this period) is never mislabeled "Duplicate" when it isn't one.
         duplicate_notes = zero_amount_notes + true_duplicate_notes
+        if flip_note:
+            duplicate_notes.append(flip_note)
 
         _set_step(conn, statement_id, "Validating amounts against statement text")
         amount_counts = det_result.amount_counts  # mutated by _consume_amount below
 
         _set_step(conn, statement_id, "Reconciling against statement balance")
-        if account_type == "credit_card":
-            for_reconciliation, to_insert, flip_note, card_new_balance = _fix_card_signs(
-                det_result.previous_balance, det_result.new_balance, for_reconciliation, to_insert)
-            if flip_note:
-                duplicate_notes.append(flip_note)
-                skipped = [dict(s, txn=dataclasses.replace(s["txn"], amount=-s["txn"].amount)) for s in skipped]
         reconciliation_note = _check_reconciliation(
             det_result.previous_balance, card_new_balance if account_type == "credit_card" else det_result.new_balance,
             for_reconciliation,
         )
         statement_period = _infer_statement_period(for_reconciliation)
 
+        # A reconciliation mismatch is a whole-statement flag, not tied
+        # to any one row — it alone is enough to keep this statement in
+        # pending_review even if every individual transaction's amount
+        # checked out.
+        any_pending = reconciliation_note is not None
+        rows: list[tuple[ParsedTransaction, str, str | None]] = []   # (txn, review_status, flag_reason)
+        for txn in to_insert:
+            if _consume_amount(amount_counts, txn.amount):
+                rows.append((txn, "clean", None))
+            else:
+                # This amount doesn't appear anywhere in the statement's
+                # own extracted text — flag it rather than silently
+                # trusting a figure that may have been misread or
+                # fabricated (see deterministic.py's module docstring
+                # for the real case this caught: $287.00 -> $2187).
+                any_pending = True
+                rows.append((txn, "pending_review", AMOUNT_NOT_FOUND_REASON))
+
+        # Categorization (section 9) runs whatever the review status, decided in
+        # memory BEFORE the rows are written: its LLM fallback can take minutes,
+        # and no write transaction may be open meanwhile. A credit-card payment
+        # (negative on a card) isn't a merchant purchase, so it goes straight to
+        # "Payments" instead of through the cascade.
+        _set_step(conn, statement_id, "Categorizing transactions")
+        card_payment = {i for i, (txn, _, _) in enumerate(rows) if account_type == "credit_card" and txn.amount < 0}
+        plan = plan_categories(conn, user_id, ollama_url, ollama_model,
+                               [(i, txn.description) for i, (txn, _, _) in enumerate(rows) if i not in card_payment])
+        conn.commit()
+        for i in card_payment:
+            plan.assignments[i] = ("Payments", "card_payment", None)
+
         _set_step(conn, statement_id, "Saving transactions")
-        # The rows are committed when the "Categorizing" step is shown (so the
-        # slow LLM call doesn't hold the write lock); a failure or interruption
-        # after that leaves rows that _clear_previous_run removes on Restart.
-        conn.execute("BEGIN")
+        # One short write transaction: every row, the skipped lines, the
+        # transfer auto-link and the statement's own result land together.
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            # A reconciliation mismatch is a whole-statement flag, not tied
-            # to any one row — it alone is enough to keep this statement in
-            # pending_review even if every individual transaction's amount
-            # checked out.
-            any_pending = reconciliation_note is not None
-            inserted: list[tuple[int, str]] = []  # (transaction_id, description) — fed to categorization below
-            for txn in to_insert:
-                if _consume_amount(amount_counts, txn.amount):
-                    txn_id = _insert_transaction(conn, user_id, account_id, statement_id, txn, review_status="clean")
-                else:
-                    # This amount doesn't appear anywhere in the statement's
-                    # own extracted text — flag it rather than silently
-                    # trusting a figure that may have been misread or
-                    # fabricated (see deterministic.py's module docstring
-                    # for the real case this caught: $287.00 -> $2187).
-                    any_pending = True
-                    txn_id = _insert_transaction(
-                        conn, user_id, account_id, statement_id, txn,
-                        review_status="pending_review", flag_reason=AMOUNT_NOT_FOUND_REASON,
-                    )
-                inserted.append((txn_id, txn.description))
-
+            if _deleted(conn, statement_id):
+                conn.rollback()
+                _fail(conn, statement_id, DELETED_WHILE_READING)
+                return
+            ids = {}
+            for i, (txn, review_status, flag_reason) in enumerate(rows):
+                ids[i] = _insert_transaction(conn, user_id, account_id, statement_id, txn,
+                                             review_status=review_status, flag_reason=flag_reason)
             _record_skipped(conn, user_id, account_id, statement_id, skipped)
-
-            # Categorization (section 9) runs whatever the review status. A
-            # credit-card payment (negative on a card) isn't a merchant purchase,
-            # so it goes straight to "Payments" instead of through the cascade.
-            _set_step(conn, statement_id, "Categorizing transactions")
-            # Pair with to_insert (what was actually written), not the raw extraction.
-            card_payment_ids = [
-                txn_id for (txn_id, _), txn in zip(inserted, to_insert)
-                if account_type == "credit_card" and txn.amount < 0
-            ]
-            if card_payment_ids:
-                conn.executemany(
-                    "UPDATE transactions SET category = 'Payments', category_source = 'card_payment' WHERE id = ?",
-                    [(tid,) for tid in card_payment_ids],
-                )
-            card_payment_id_set = set(card_payment_ids)
-            remaining = [
-                (txn_id, description) for txn_id, description in inserted
-                if txn_id not in card_payment_id_set
-            ]
-            categorize_transactions(conn, user_id, ollama_url, ollama_model, remaining, statement_id=statement_id)
+            apply_categories(conn, plan, ids, statement_id=statement_id)
 
             # Transfer auto-link over the whole user (section 8): the other side
             # of a new card payment is often an older, still-unmatched outflow.
@@ -493,7 +511,7 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
                 "UPDATE statements SET status = ?, raw_text_length = ?, "
                 "deterministic_amounts = ?, previous_balance = ?, new_balance = ?, "
                 "balance_mismatch = ?, statement_period = ?, duplicate_transactions = ?, "
-                "processed_at = datetime('now') WHERE id = ?",
+                "current_step = NULL, processed_at = datetime('now') WHERE id = ?",
                 (
                     "pending_review" if (any_pending or needs_confirmation) else "complete",
                     det_result.raw_text_length,
@@ -532,6 +550,24 @@ def process_statement(statement_id: int, user_id: str, account_id: int, ollama_u
             conn.close()
 
 
+def _first_copies(transactions: list[ParsedTransaction]) -> list[ParsedTransaction]:
+    """The extraction without lines it read more than once (see _partition_duplicates)."""
+    seen: set = set()
+    out = []
+    for txn in transactions:
+        key = (txn.date, to_cents(txn.amount), txn.description)
+        if key not in seen:
+            seen.add(key)
+            out.append(txn)
+    return out
+
+
+def _deleted(conn: sqlite3.Connection, statement_id: int) -> bool:
+    """The statement was deleted (or purged) while its PDF was being read."""
+    row = conn.execute("SELECT deleted_at FROM statements WHERE id = ?", (statement_id,)).fetchone()
+    return row is None or row["deleted_at"] is not None
+
+
 def _clear_previous_run(conn: sqlite3.Connection, user_id: str, statement_id: int) -> None:
     """Remove the live transactions an earlier run of this statement left behind
     (unlinking any transfer partner first). A statement being processed has no
@@ -543,6 +579,7 @@ def _clear_previous_run(conn: sqlite3.Connection, user_id: str, statement_id: in
     if ids:
         cascade_unlink_on_delete(conn, user_id, ids)
         conn.execute(f"DELETE FROM transactions WHERE id IN ({','.join('?' * len(ids))})", ids)
+        auto_link_unambiguous(conn, user_id)    # a partner left free may now match something else
     conn.execute("DELETE FROM skipped_duplicates WHERE statement_id = ? AND user_id = ?", (statement_id, user_id))
     conn.commit()
 
@@ -557,7 +594,7 @@ def _insert_transaction(
             (user_id, account_id, statement_id, date, amount, description, review_status, flag_reason)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (user_id, account_id, statement_id, txn.date, txn.amount, txn.description, review_status, flag_reason),
+        (user_id, account_id, statement_id, txn.date, round(txn.amount, 2), txn.description, review_status, flag_reason),
     )
     return cur.lastrowid
 

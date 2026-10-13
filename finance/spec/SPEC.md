@@ -45,11 +45,20 @@ shares it (section 20).
   MST). The image installs `tzdata`. SQLite `datetime('now')` audit timestamps
   stay UTC.
 - **App options** (the app's Configuration tab): `admin_users` (list) and `trusted_client_ips` (list) only.
-  The AI address and model are set in the app on Admin → App settings (section 21). A TCP `watchdog` lets Supervisor restart a hung app.
-- **Caching.** Every response is `Cache-Control: no-store`, static files
-  included (the HA companion app's WebView was seen serving stale, even mixed,
-  stylesheets). Static URLs also carry `?v=<version>`.
-- **Security headers** (`web_security.SecurityHeaders(CSP, all_no_store=True).install(app)`,
+  The AI address and model are set in the app on Admin → App settings (section 21). An HTTP `watchdog`
+  (`GET /api/health`) lets Supervisor restart a hung app. `backup: hot` with `backup_pre:
+  python3 /app/backup_hook.py`, which checkpoints the WAL into `finance.db` just before a backup.
+- **Caching.** Every page, fragment and API answer is `Cache-Control: no-store`
+  (the HA companion app's WebView was seen serving stale pages). Every static URL
+  carries `?v=<version>`, and such a versioned static file is `public,
+  max-age=31536000, immutable` (the shared rule; a new release changes the
+  address). The PDF viewer's page images are `private, max-age=86400`, their
+  address carrying the file's stamp.
+- **Request bodies** are counted as they arrive (shared `web_security.BodyLimit`): 2 MB
+  by default, `MAX_FILES_PER_REQUEST` (20) × the file limit for the upload routes, 2 GB
+  for a backup import (which also needs a Content-Length). Upload routes save each file
+  to disk in chunks while hashing it, in a worker thread.
+- **Security headers** (`web_security.SecurityHeaders(CSP, static_immutable=True, other_no_store=True).install(app)`,
   shared `app/common/web_security.py`, policy `CSP` in `app/main.py`): every
   response gets `Content-Security-Policy: default-src 'self'; script-src 'self';
   style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self';
@@ -107,15 +116,19 @@ the acting user's id, and every write by id first checks ownership.
   three messages as before); the current WAL is checkpointed and its sidecar files removed, then the file is
   swapped in atomically inside `/data`, and the migrations run on it at once, so a
   backup from an older version gets the newer tables (such as `ai_usage_log`, section
-  21.3) before any page or AI request uses them. Restart the app afterwards.
+  21.3) before any page or AI request uses them. The swap runs with the background
+  writers (PDF jobs, purge) paused (`db.GATE`, the shared `MaintenanceGate`); if a
+  job is still running after a minute the import is refused ("try again"). Restart
+  the app afterwards. Temporary download/import copies left by a crash are swept
+  daily (`backup_core.remove_stale`).
 - HA's own backups also cover `/data`.
 
 ## 4. Bank statements — upload and processing
 
 1. **Upload** (Upload → Statements): one account, several PDFs per request, and a "Skip
    the PDF confirmation step" box (unchecked by default, section 7). Each file
-   must be a PDF of at most 50 MB (`MAX_PDF_MB`). Password-protected PDFs are not
-   supported.
+   must be a PDF of at most 50 MB (`MAX_PDF_MB`), at most 20 files per request.
+   Password-protected PDFs are not supported.
 2. **One job at a time.** Statements, utility bills and toll statements share one
    in-memory FIFO queue with a single worker (`app/jobs.py`); every vision call —
    admin debug re-sends included — holds one lock, so the local model never does
@@ -126,14 +139,22 @@ the acting user's id, and every write by id first checks ownership.
    new balance. It does not build transactions.
 4. **Vision pass** — the only source of transactions. Pages are rendered to PNG
    (`pdftoppm`) and sent to the AI model (section 22) as images, deliberately not
-   the text above, so a text-extraction mistake can't agree with itself. With
+   the text above, so a text-extraction mistake can't agree with itself. A PDF
+   with more pages than **Most pages per PDF** (App settings, default 30) is
+   refused before anything is rendered (`pdfinfo`). A row whose date or amount
+   can't be read (or is NaN/infinite) is left out and listed on the debug page;
+   dates are stored ISO and text is cut to its column's length. With
    Ollama a warm-up call loads the model unless it answered in the last 2
    minutes. Failures (the AI unreachable or refusing the key, bad
    JSON after retries, a non-vision model) end as `error` with a message, never a
    silent fallback.
-5. **Save** in one database transaction: rows (after sections 5 and 6),
-   categorization (section 9) and transfer auto-linking (section 8). Then
-   `finalize_if_ready` decides `complete` (PDF deleted) or `pending_review`.
+5. **Save** in one short database transaction (`BEGIN IMMEDIATE`): rows (after
+   sections 5 and 6, amounts rounded to cents), their categories and transfer
+   auto-linking (section 8). Categorization is decided before it, in memory — its
+   LLM call never runs with the database held. A statement deleted while it was
+   being read saves nothing (checked inside that transaction). A card read the
+   wrong way round is put right before rows are compared with those on file.
+   Then `finalize_if_ready` decides `complete` (PDF deleted) or `pending_review`.
 6. **Statuses:** `processing`, `pending_review`, `complete`, `error`.
    - **Restart** (failed statements only) re-runs the job on the stored PDF.
    - **Re-extract** (any `pending_review` statement) permanently removes its
@@ -145,11 +166,15 @@ the acting user's id, and every write by id first checks ownership.
      shown on the debug page and used by its re-send) and sent to the model with
      the PDF, told to follow it over the default rules. Leaving it empty clears
      the notes.
-   - **Interrupted jobs:** the queue doesn't survive a restart, so at startup
-     every row still `processing` becomes `error` ("Processing was interrupted …
-     Click Restart"). Same for utility bills and toll statements.
+   - **Interrupted jobs:** the queue doesn't survive a restart, so at startup a
+     row that had started (its step isn't "Queued …") becomes `error` ("Processing
+     was interrupted … Click Restart"); one that was only waiting is queued again.
+     Same for utility bills and toll statements. A job reads App settings once, at
+     its start (`settings.pinned`).
+   - A statement, utility bill or toll statement can't be deleted while it is
+     `processing`, nor can its account or the user's data be wiped.
 7. **Admin Debug** (`statement-debug`): steps, skipped lines, raw model response,
-   categorization breakdown, and a re-send with no timeout.
+   categorization breakdown, and a re-send that waits up to 30 minutes.
 
 ## 5. Parsing robustness
 
@@ -236,10 +261,14 @@ the acting user's id, and every write by id first checks ownership.
   recurring detection and CSV Debit/Credit import all follow it. The type is not
   editable after creation for this reason.
 - **Transfers:** an outflow on one account matched to an inflow on another,
-  same amount (±$0.01) within 5 days (`app/matching.py`). On a credit card the
-  receiving side is the negative payment line; a card purchase is never part of
-  a transfer. Unambiguous matches link automatically after an import; ambiguous
-  ones wait on the Transfers page. Both rows are linked in one database
+  same amount (within one cent, compared in whole cents) within 5 days
+  (`app/matching.py`). On a credit card the receiving side is the negative
+  payment line; a card purchase is never part of a transfer. Unambiguous
+  matches link automatically in the same transaction as every change that can
+  make a row a candidate (`matching.relink`: imports, manual rows, review,
+  exclude/include, deletes, restores, unlinking); opening a page never writes.
+  The sweep is one pass over inflows grouped by cents. Ambiguous ones wait on
+  the Transfers page. Both rows are linked in one database
   transaction. Linked pairs count as neither spend nor income.
 - **Unlinking, or deleting one side,** reverts the survivor: a checking side
   becomes an expense; a card side becomes income with `is_excluded` set, so it
@@ -338,7 +367,11 @@ Uncategorized — it never fails an import.
   user switch to restore someone else's items.
 - A daily sweep (`app/purge.py`) erases anything past 30 days, with its PDFs; a
   PDF shared by two utility bills stays while either still exists; an account is
-  only purged once nothing live points at it.
+  only purged once nothing live points at it (and its statements' PDFs go with
+  it). A purged statement or CSV import takes all its soft-deleted transactions.
+  Files are removed only after the rows' deletion is committed.
+- A restore brings back only what was deleted with it (one stamp), and is refused
+  while the item's account is deleted.
 
 ## 12. Tech stack and data
 
@@ -351,8 +384,11 @@ Uncategorized — it never fails an import.
   `db_core.ClosingConnection`); `with get_db() as conn` commits and closes.
 - **Migrations:** `migrations/NNNN_*.sql`, applied in order at startup and
   recorded in `schema_version` (each file inserts its own row). Never edit an
-  applied migration — add a new file. A migration that leaves foreign-key
-  violations is not recorded.
+  applied migration — add a new file. Each file runs in one transaction
+  (`BEGIN IMMEDIATE … COMMIT`; its own `PRAGMA foreign_keys` lines are applied
+  around it), so a failure leaves the database as it was; a migration that
+  leaves foreign-key violations is rolled back and not recorded. Before the
+  first pending migration a copy is kept as `finance.db.pre-NNNN` (latest only).
 - Dates are ISO text so string order is date order; legacy non-ISO dates are
   normalised at startup.
 - Ollama is usually plain HTTP on the LAN, so statement page images cross the
@@ -706,8 +742,9 @@ re-run of the AI.
 ### 21.1 Admin → App settings (`settings`, admin only)
 
 - An App settings tab on Admin (and a link under Admin in the More panel), for the admin only; a regular user gets 403. The settings are app-wide, not per user, whoever the admin is acting as.
-- Stored in `app_settings` (key, value, updated_at, updated_by; migration 0022) and read on every use, so **a change applies at once, without restarting the app**: the next PDF job, CSV categorization, debug re-send or Write SQL request uses it; nothing already running is interrupted.
-- **AI:** provider, address, model, access key, text model, longest answer (section 22).
+- Stored in `app_settings` (key, value, updated_at, updated_by; migration 0022). Reads come from an in-memory copy refreshed whenever the database changed (`PRAGMA data_version` on one long-lived read connection, `db.WATCHER`; a restore's new file is noticed by its inode), so **a change applies at once, without restarting the app**: the next PDF job, CSV categorization, debug re-send or Write SQL request uses it; nothing already running is interrupted (a job keeps the settings it started with).
+- **AI:** provider, address, model, access key, text model, longest answer (section 22), most pages per PDF (1–500, default 30).
+- **Household Assistant:** answer the Household Assistant (section 23a) and the app-messages signing key (secret; the same key in every household app; with a key, unsigned bus messages are refused).
 - **AI usage on debug pages:** Show AI token usage (on by default) and prices per million input and output tokens (default 0; a local model costs nothing but time). The prices are also used for the cost on Admin → AI usage (section 21.3).
 - **Features:** Utilities and tolls on or off (section 23).
 - **Not app options.** The AI settings are set only on this page (keys `ai_*`; migration 0023 renamed the earlier `ollama_url` / `ollama_model`). An older install's leftover `ollama_url` / `ollama_model` in `/data/options.json` (or `OLLAMA_URL` / `OLLAMA_MODEL` in the environment, for local development) fill in the address and model once if they're still empty ("Copied from the old app options"; the stored `updated_by` marker stays `add-on options`). While the AI isn't set up (no model; Ollama without an address; Claude without a key) App settings and the Statements, Utility bill and Tolls upload pages say so (the admin gets a link to App settings), and a PDF job fails with the same message.

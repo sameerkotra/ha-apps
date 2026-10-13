@@ -7,6 +7,7 @@ in app/matching.py; this module is just the routes on top of it.
 import calendar
 import logging
 from datetime import date
+from urllib.parse import parse_qsl, urlencode
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -18,12 +19,14 @@ from ..db import get_db
 from ..security import safe_next
 from ..version import APP_VERSION
 from ..matching import (
+    InflowIndex,
     _candidates_for,
     auto_link_unambiguous,
     candidates_for_transaction,
     diagnose_no_match,
     find_transfer_candidates,
     link_transfer,
+    relink,
     unlink_transfer,
 )
 from .accounts import _acting_banner, _acting_qs
@@ -44,6 +47,8 @@ def list_transfers(
     highlight: str = "",
     linked: str = "",
     link_error: str = "",
+    link_side: str = "",
+    link_id: str = "",
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -71,15 +76,10 @@ def list_transfers(
         return (not start_date or date_str >= start_date) and (not end_date or date_str <= end_date)
 
     with get_db() as conn:
-        # Run the sweep on every page load, same as the end of every
-        # statement import — most pairs are already linked by the time a
-        # human looks at this page at all, so this just catches anything
-        # a prior sweep couldn't (e.g. a flagged row resolving to
-        # 'clean' during review just made it eligible for the first
-        # time).
-        auto_link_unambiguous(conn, acting.id)
-        conn.commit()
-
+        link_error_text = _link_problem_text(conn, acting.id, link_error, link_side, link_id) if link_error else ""
+        # Opening the page only reads: unambiguous pairs were linked when the
+        # data changed (matching.relink — every import, review, edit, delete
+        # and restore), and "Link unambiguous" runs the sweep on demand.
         accounts = conn.execute(
             "SELECT id, name, type FROM accounts WHERE user_id = ? AND deleted_at IS NULL AND is_archived = 0 "
             "ORDER BY name COLLATE NOCASE",
@@ -87,6 +87,7 @@ def list_transfers(
         ).fetchall()
 
         outflows, inflows = find_transfer_candidates(conn, acting.id)
+        inflows = InflowIndex(inflows)       # grouped by size: each outflow looks at a few rows, not all
         ambiguous = []
         for outflow in outflows:
             if from_account_id and outflow["account_id"] != from_account_id:
@@ -170,7 +171,7 @@ def list_transfers(
             "highlight_txn_id": highlight_txn_id,
             "dates_sent": not defaulted_to_this_month,
             "just_linked": just_linked,
-            "link_error": link_error[:300],
+            "link_error": link_error_text,
             "impersonation_qs_value": acting.id if acting.id != current.id else "",
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
@@ -179,26 +180,52 @@ def list_transfers(
     )
 
 
-def _why_not_linkable(conn, user_id: str, txn_id: int, side: str) -> str | None:
-    """None if the row can be this side of a transfer, else a plain reason (shown on the page)."""
-    row = conn.execute(
+_LINK_PROBLEMS = {
+    "missing": "{label} wasn't found in this data (it may belong to another user's view).",
+    "deleted": "{label} ({where}) has been deleted.",
+    "linked": "{label} ({where}) is already linked to another transfer.",
+    "pending": "{label} ({where}) is still pending review.",
+    "not_outflow": "{label} must be money out of a checking or savings account.",
+    "not_inflow": "{label} must be money into checking/savings or a payment to a card.",
+    "same_account": "Both sides are on the same account, so they can't be a transfer.",
+}
+
+
+def _linkable_row(conn, user_id: str, txn_id: int):
+    return conn.execute(
         "SELECT t.*, a.type AS account_type, a.name AS account_name FROM transactions t "
         "JOIN accounts a ON a.id = t.account_id WHERE t.id = ? AND t.user_id = ?", (txn_id, user_id)).fetchone()
-    label = "The paying side" if side == "outflow" else "The receiving side"
+
+
+def _why_not_linkable(conn, user_id: str, txn_id: int, side: str) -> str | None:
+    """None if the row can be this side of a transfer, else a short code (_LINK_PROBLEMS)."""
+    row = _linkable_row(conn, user_id, txn_id)
     if row is None:
-        return f"{label} wasn't found in this data (it may belong to another user's view)."
+        return "missing"
     if row["deleted_at"]:
-        return f"{label} ({row['account_name']} {row['date']}) has been deleted."
+        return "deleted"
     if row["transfer_pair_id"]:
-        return f"{label} ({row['account_name']} {row['date']}) is already linked to another transfer."
+        return "linked"
     if row["review_status"] != "clean":
-        return f"{label} ({row['account_name']} {row['date']}) is still pending review."
+        return "pending"
     if side == "outflow" and not (row["amount"] < 0 and row["account_type"] in ("checking", "savings")):
-        return f"{label} must be money out of a checking or savings account."
+        return "not_outflow"
     if side == "inflow" and not ((row["account_type"] in ("checking", "savings") and row["amount"] > 0)
                                  or (row["account_type"] == "credit_card" and row["amount"] < 0)):
-        return f"{label} must be money into checking/savings or a payment to a card."
+        return "not_inflow"
     return None
+
+
+def _link_problem_text(conn, user_id: str, code: str, side: str, txn_id: str) -> str:
+    """The sentence for a refused link, rebuilt from the code in the address and the acting user's own
+    row (the address never carries the text itself)."""
+    template = _LINK_PROBLEMS.get(code)
+    if template is None:
+        return ""
+    label = "The paying side" if side == "outflow" else "The receiving side"
+    row = _linkable_row(conn, user_id, int(txn_id)) if txn_id.isdigit() else None
+    where = f"{row['account_name']} {row['date']}" if row is not None else "that transaction"
+    return template.format(label=label, where=where)
 
 
 def _transfers_url(current: User, acting: User, filters: dict, **extra) -> str:
@@ -240,19 +267,24 @@ def confirm_transfer_link(
     filters = {"from_account": from_account, "to_account": to_account, "start_date": start_date,
                "end_date": end_date, "dates_sent": dates_sent}
     with get_db() as conn:
-        problem = (_why_not_linkable(conn, acting.id, outflow_id, "outflow")
-                   or _why_not_linkable(conn, acting.id, inflow_id, "inflow"))
+        side, problem_id = "outflow", outflow_id
+        problem = _why_not_linkable(conn, acting.id, outflow_id, "outflow")
+        if problem is None:
+            side, problem_id = "inflow", inflow_id
+            problem = _why_not_linkable(conn, acting.id, inflow_id, "inflow")
         if problem is None:
             accounts = conn.execute("SELECT id, account_id FROM transactions WHERE id IN (?, ?)",
                                     (outflow_id, inflow_id)).fetchall()
             if len({r["account_id"] for r in accounts}) != 2:
-                problem = "Both sides are on the same account, so they can't be a transfer."
+                problem = "same_account"
         if problem is None:
             link_transfer(conn, outflow_id, inflow_id)
+            relink(conn, acting.id)      # taking these two out may leave another pair unambiguous
             conn.commit()
     if problem:
         logger.warning("Transfer link %s -> %s refused for %s: %s", outflow_id, inflow_id, acting.id, problem)
-        return RedirectResponse(url=_transfers_url(current, acting, filters, link_error=problem), status_code=303)
+        return RedirectResponse(url=_transfers_url(current, acting, filters, link_error=problem, link_side=side,
+                                                   link_id=str(problem_id)), status_code=303)
     return RedirectResponse(url=_transfers_url(current, acting, filters, linked=str(outflow_id)), status_code=303)
 
 
@@ -271,14 +303,14 @@ def run_transfer_sweep(
         linked = auto_link_unambiguous(conn, acting.id)
         conn.commit()
 
-    qs_parts = [p for p in (
-        _acting_qs(current, acting),
-        f"period={period}" if period else "",
-        f"account_id={account_id}" if account_id else "",
-    ) if p]
-    qs_parts.append(f"matched={linked}")
-    qs = "&".join(qs_parts)
-    return RedirectResponse(url=f"{safe_next(next, 'dashboard')}?{qs}", status_code=303)
+    params = dict(parse_qsl(_acting_qs(current, acting)))
+    if period:
+        params["period"] = period
+    if account_id:
+        params["account_id"] = account_id
+    params["matched"] = str(linked)
+    target = safe_next(next, "dashboard")
+    return RedirectResponse(url=target + ("&" if "?" in target else "?") + urlencode(params), status_code=303)
 
 
 @router.post("/transfer-unlink")
@@ -299,6 +331,7 @@ def undo_transfer_link(
         ).fetchone()
         if row is not None:
             unlink_transfer(conn, id)
+            relink(conn, acting.id)
             conn.commit()
 
     qs = _acting_qs(current, acting)
@@ -354,6 +387,7 @@ def match_one_transaction(
                 link_transfer(conn, row["id"], other["id"])
             else:
                 link_transfer(conn, other["id"], row["id"])
+            relink(conn, acting.id)
             conn.commit()
             linked_partner_id = other["id"]
             message = f"Linked to {other['account_name']} {other['date']} \u2014 {abs(other['amount']):.2f}."

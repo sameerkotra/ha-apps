@@ -29,7 +29,7 @@ def _page(request, current: User, acting: User, *, values: dict, errors=None, sa
     return templates.TemplateResponse(request, "settings.html", {
         "user": acting, "acting_as_banner": _acting_banner(current, acting), "acting_qs": _acting_qs(current, acting),
         "active_page": "settings", "groups": settings.GROUPS, "defs": settings.SETTINGS, "values": values,
-        "meta": settings.meta(), "errors": errors or [], "saved": saved, "key_hint": settings.api_key_hint(),
+        "meta": settings.meta(), "errors": errors or [], "saved": saved, "key_hints": settings.secret_hints(),
         "ai_ready": settings.ai_configured(), "default_urls": settings.DEFAULT_URLS,
     })
 
@@ -38,7 +38,7 @@ def _page(request, current: User, acting: User, *, values: dict, errors=None, sa
 async def settings_page(request: Request, saved: str = "", current: User = Depends(require_admin),
                         acting: User = Depends(get_acting_user)):
     values = await asyncio.to_thread(settings.all_values)
-    return _page(request, current, acting, values=values, saved=saved == "1")
+    return await asyncio.to_thread(lambda: _page(request, current, acting, values=values, saved=saved == "1"))
 
 
 @router.post("/settings")
@@ -53,7 +53,7 @@ async def settings_save(request: Request, current: User = Depends(require_admin)
         for key, s in settings.SETTINGS.items():   # an unticked box isn't sent at all
             if s.kind == "bool":
                 shown[key] = "1" if values.get(key) in ("1", "on", "true") else "0"
-        return _page(request, current, acting, values=shown, errors=errors)
+        return await asyncio.to_thread(lambda: _page(request, current, acting, values=shown, errors=errors))
     qs = _acting_qs(current, acting)
     return RedirectResponse(url="settings?saved=1" + (f"&{qs}" if qs else ""), status_code=303)
 

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Not saved{% endblock %}
+{% block content %}
+<h1>Not saved</h1>
+<div class="warning-hint" role="alert"><p>{{ message }}</p></div>
+<p>Nothing was changed. Go back, correct it and send it again.</p>
+<p><a href="{{ back }}{% if acting_qs %}{{ '&' if '?' in back else '?' }}{{ acting_qs }}{% endif %}">&larr; Back</a></p>
+{% endblock %}

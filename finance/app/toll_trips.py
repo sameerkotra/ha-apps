@@ -103,14 +103,18 @@ def build_trips(passes: list[dict]) -> list[dict]:
     for vehicle, items in by_vehicle.items():
         items.sort(key=lambda p: (p["occurred_at"], p["id"]))
         current: list[dict] = []
+        previous_at = None            # the last pass's time, parsed once
         for p in items:
+            at = datetime.strptime(p["occurred_at"], _FMT)
             if current:
-                gap = (datetime.strptime(p["occurred_at"], _FMT) - datetime.strptime(current[-1]["occurred_at"], _FMT)).total_seconds()
+                gap = (at - previous_at).total_seconds()
                 if p["direction"].title() == current[-1]["direction"].title() and gap <= TRIP_GAP_MIN * 60:
                     current.append(p)
+                    previous_at = at
                     continue
                 trips.append(_trip(vehicle, current))
             current = [p]
+            previous_at = at
         if current:
             trips.append(_trip(vehicle, current))
     trips.sort(key=lambda t: (t["started_at"], t["vehicle"]))

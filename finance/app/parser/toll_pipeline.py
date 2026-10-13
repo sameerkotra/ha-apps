@@ -51,6 +51,7 @@ TOLERANCE = 0.005
 
 check_duplicate_toll = partial(documents.find_duplicate, "toll_statements")
 _set_step = partial(documents.set_step, "toll_statements")
+DELETED_WHILE_READING = "Deleted while it was being read — nothing was saved. Restore it, then Restart to read it again."
 _fail = partial(documents.fail, "toll_statements")
 delete_pdf_toll = partial(forget_pdf, "toll_statements")
 
@@ -341,6 +342,7 @@ def process_toll_statement(statement_id: int, user_id: str, ollama_url: str, oll
 
         gone = conn.execute("SELECT deleted_at FROM toll_statements WHERE id = ?", (statement_id,)).fetchone()
         if gone is None or gone["deleted_at"] is not None:
+            _fail(conn, statement_id, DELETED_WHILE_READING)
             return          # deleted while it was being read: nothing to save
 
         _set_step(conn, statement_id, "Comparing the two readings")
@@ -369,8 +371,13 @@ def process_toll_statement(statement_id: int, user_id: str, ollama_url: str, oll
         _set_step(conn, statement_id, "Saving passes")
         ai_dict = ai.to_dict()
         ai_dict["rejected"] = vision.rejected
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
         try:
+            gone = conn.execute("SELECT deleted_at FROM toll_statements WHERE id = ?", (statement_id,)).fetchone()
+            if gone is None or gone["deleted_at"] is not None:
+                conn.rollback()     # deleted while it was being read (checked again inside the write)
+                _fail(conn, statement_id, DELETED_WHILE_READING)
+                return
             saved = save_rows(conn, statement_id, user_id, rows, "clean" if clean else "pending_review")
             extra_devices, extra_changes = _ensure_devices_for(conn, user_id, det)
             new_devices = saved["new_devices"] + [c for c in extra_devices if c not in saved["new_devices"]]

@@ -76,7 +76,7 @@ def test_rasterize(pdf):
 def test_rasterize_failure_cleans_up(tmp_path):
     bad = tmp_path / "bad.pdf"
     bad.write_bytes(b"not a pdf")
-    with pytest.raises(vision.VisionExtractionError, match="pdftoppm failed"):
+    with pytest.raises(vision.VisionExtractionError, match="pdftoppm failed|count the PDF.s pages"):
         vision.rasterize_pdf(str(bad))
 
 

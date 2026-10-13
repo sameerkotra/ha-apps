@@ -230,7 +230,7 @@
 {% endif %}
 
 {% if unassigned_devices and selected_car_id != "none" %}
-<p class="hint">{{ unassigned_devices }} device{{ "s" if unassigned_devices != 1 else "" }} with tolls {{ "isn&rsquo;t" if unassigned_devices == 1 else "aren&rsquo;t" }} assigned to a car yet &mdash; their tolls show under the device.
+<p class="hint">{{ unassigned_devices }} device{{ "s" if unassigned_devices != 1 else "" }} with tolls {{ "isn’t" if unassigned_devices == 1 else "aren’t" }} assigned to a car yet &mdash; their tolls show under the device.
     <a href="tolls?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}&open=devices#toll-devices">Assign them on Upload &rarr; Toll statement</a>.</p>
 {% endif %}
 

@@ -47,7 +47,7 @@ _KNOWN_USER_REFRESH_SECONDS = 600
 _known_user_seen: dict[str, tuple[str, float]] = {}
 
 
-def _remember_known_user(user_id: str, name: str) -> None:
+def _remember_known_user(conn, user_id: str, name: str) -> None:
     """Keeps the admin user-switch dropdown's directory (known_users) current —
     there is no live call to Home Assistant's user list. Written at most every
     10 minutes per user (or at once when the display name changes), not on
@@ -59,15 +59,18 @@ def _remember_known_user(user_id: str, name: str) -> None:
     if seen is not None and seen[0] == name and now - seen[1] < _KNOWN_USER_REFRESH_SECONDS:
         return
     try:
-        with get_db() as conn:
-            conn.execute(
-                "INSERT INTO known_users (id, name, last_seen_at) VALUES (?, ?, datetime('now')) "
-                "ON CONFLICT(id) DO UPDATE SET name = excluded.name, last_seen_at = excluded.last_seen_at",
-                (user_id, name),
-            )
+        conn.execute(
+            "INSERT INTO known_users (id, name, last_seen_at) VALUES (?, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, last_seen_at = excluded.last_seen_at",
+            (user_id, name),
+        )
+        conn.commit()
         _known_user_seen[user_id] = (name, now)
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def get_current_user(request: Request) -> User:
@@ -85,8 +88,6 @@ def get_current_user(request: Request) -> User:
     is_admin = is_admin_identity(user_id, name)
     user = User(id=user_id, name=name, is_admin=is_admin)
 
-    _remember_known_user(user_id, name)
-
     # On request.state (not a route's context) so base.html's admin-only
     # user switch appears on every page and follows the REAL admin, even
     # while they act as someone else (whose User has is_admin=False).
@@ -97,21 +98,31 @@ def get_current_user(request: Request) -> User:
     request.state.known_users = []
     request.state.shared_owners = []
     user.home_id = user.id
-    if not is_admin:
-        owners = shared_owners(user.id)
-        if owners:
-            request.state.shared_owners = owners
-            user.home_id = owners[0]["id"]
-    # The banner's "your own data" link: ?as_user=<self> only when this person opens into someone else's.
-    request.state.own_data_qs = f"?as_user={user.id}" if user.home_id != user.id else ""
-    if is_admin:
-        try:
-            with get_db() as conn:
+    # Everything auth needs from the database, on one connection.
+    try:
+        conn = get_db()
+    except Exception:
+        conn = None
+    try:
+        if conn is not None:
+            _remember_known_user(conn, user_id, name)
+        if not is_admin:
+            owners = _shared_owners(conn, user.id) if conn is not None else []
+            if owners:
+                request.state.shared_owners = owners
+                user.home_id = owners[0]["id"]
+        elif conn is not None:
+            try:
                 request.state.known_users = conn.execute(
                     "SELECT id, name FROM known_users ORDER BY name COLLATE NOCASE"
                 ).fetchall()
-        except Exception:
-            pass  # dropdown just renders empty (plus the "you" fallback base.html adds) — never blocks the page
+            except Exception:
+                pass  # dropdown just renders empty (plus the "you" fallback base.html adds) — never blocks the page
+    finally:
+        if conn is not None:
+            conn.close()
+    # The banner's "your own data" link: ?as_user=<self> only when this person opens into someone else's.
+    request.state.own_data_qs = f"?as_user={user.id}" if user.home_id != user.id else ""
 
     return user
 
@@ -120,10 +131,17 @@ def shared_owners(viewer_id: str) -> list[dict]:
     """The users whose data `viewer_id` was given access to, oldest grant first ([] on any error)."""
     try:
         with get_db() as conn:
-            rows = conn.execute(
-                "SELECT a.owner_id AS id, COALESCE(k.name, a.owner_id) AS name FROM user_access a "
-                "LEFT JOIN known_users k ON k.id = a.owner_id WHERE a.viewer_id = ? "
-                "ORDER BY a.granted_at, a.owner_id", (viewer_id,)).fetchall()
+            return _shared_owners(conn, viewer_id)
+    except Exception:
+        return []
+
+
+def _shared_owners(conn, viewer_id: str) -> list[dict]:
+    try:
+        rows = conn.execute(
+            "SELECT a.owner_id AS id, COALESCE(k.name, a.owner_id) AS name FROM user_access a "
+            "LEFT JOIN known_users k ON k.id = a.owner_id WHERE a.viewer_id = ? "
+            "ORDER BY a.granted_at, a.owner_id", (viewer_id,)).fetchall()
         return [dict(r) for r in rows]
     except Exception:
         return []
@@ -155,15 +173,10 @@ def get_acting_user(
         return current
 
     # Acting as the target: data is scoped to them; the name (from
-    # known_users, else the raw id) is only for the "Viewing as" banner.
-    target_name = target_id
-    try:
-        with get_db() as conn:
-            row = conn.execute("SELECT name FROM known_users WHERE id = ?", (target_id,)).fetchone()
-        if row is not None:
-            target_name = row["name"]
-    except Exception:
-        pass
+    # known_users — already loaded for the admin's user switch — else the
+    # raw id) is only for the "Viewing as" banner.
+    target_name = next((r["name"] for r in getattr(request.state, "known_users", []) if r["id"] == target_id),
+                       target_id)
 
     return User(id=target_id, name=target_name, is_admin=False, home_id=current.id)
 

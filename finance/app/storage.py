@@ -16,6 +16,12 @@ PENDING_DIR = os.environ.get("PENDING_DIR", "/data/pending")
 MAX_PDF_BYTES = int(os.environ.get("MAX_PDF_MB", "50")) * 1024 * 1024
 MAX_CSV_BYTES = int(os.environ.get("MAX_CSV_MB", "20")) * 1024 * 1024
 _CHUNK = 1024 * 1024
+# Files one upload request may carry (the Upload pages pick several at once). The request's whole body is
+# capped too, before it is read (main.py: BodyLimit), at this many files of the largest size.
+MAX_FILES_PER_REQUEST = 20
+MAX_UPLOAD_REQUEST_BYTES = MAX_FILES_PER_REQUEST * MAX_PDF_BYTES + 1024 * 1024
+MAX_CSV_REQUEST_BYTES = MAX_FILES_PER_REQUEST * MAX_CSV_BYTES + 1024 * 1024
+TOO_MANY_FILES = f"Upload at most {MAX_FILES_PER_REQUEST} files at a time."
 
 # Tables whose rows keep a pdf_path + pdf_deleted_at pair.
 _PDF_TABLES = {"statements", "utility_bills", "toll_statements"}
@@ -50,22 +56,53 @@ def save_file(directory: str, prefix: str, suffix: str, content: bytes) -> tuple
     return path, file_hash(path)
 
 
-async def read_upload(upload, max_bytes: int, *, pdf: bool) -> bytes:
-    """The upload's bytes, read in chunks so an oversized file is refused before
-    it is fully in memory. Raises UploadRejected."""
+def save_upload(upload, directory: str, prefix: str, suffix: str, max_bytes: int, *, pdf: bool) -> tuple[str, str]:
+    """Copy an uploaded file to a new randomly named file in `directory`, hashing it on the way:
+    (path, sha256). Chunk by chunk, so the file is never whole in memory. Blocking — call it from a
+    worker thread. Raises UploadRejected (and leaves nothing behind) for a file over `max_bytes` or,
+    with pdf=True, one that isn't a PDF."""
+    source = getattr(upload, "file", upload)
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, f"{prefix}-{os.urandom(8).hex()}{suffix}")
+    h, size, head = hashlib.sha256(), 0, b""
+    try:
+        with open(path, "wb") as out:
+            while True:
+                chunk = source.read(_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > max_bytes:
+                    raise UploadRejected(f"File is larger than {max_bytes // (1024 * 1024)} MB.")
+                if len(head) < 1024:
+                    head += chunk[:1024 - len(head)]
+                h.update(chunk)
+                out.write(chunk)
+        if pdf and b"%PDF-" not in head:
+            raise UploadRejected("That file isn't a PDF.")
+    except BaseException:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        raise
+    return path, h.hexdigest()
+
+
+def read_upload_sync(upload, max_bytes: int) -> bytes:
+    """The upload's bytes (a CSV, decoded whole anyway), read in chunks from a worker thread so an
+    oversized file is refused before it is fully in memory. Raises UploadRejected."""
+    source = getattr(upload, "file", upload)
     parts, size = [], 0
     while True:
-        chunk = await upload.read(_CHUNK)
+        chunk = source.read(_CHUNK)
         if not chunk:
             break
         size += len(chunk)
         if size > max_bytes:
             raise UploadRejected(f"File is larger than {max_bytes // (1024 * 1024)} MB.")
         parts.append(chunk)
-    content = b"".join(parts)
-    if pdf and b"%PDF-" not in content[:1024]:
-        raise UploadRejected("That file isn't a PDF.")
-    return content
+    return b"".join(parts)
 
 
 def is_stored(path: str | None) -> bool:

@@ -45,7 +45,8 @@ def test_link_this_explains_a_refusal(env):
     with env.db() as c:
         c.execute("UPDATE transactions SET review_status = 'pending_review' WHERE id = ?", (to_card,))
     r = env.post("transfer-link", data={"outflow_id": to_sav, "inflow_id": out})       # sides swapped
-    assert "must+be+money+out" in r.headers["location"]
+    assert "link_error=not_outflow" in r.headers["location"]          # a code, never the sentence itself
+    assert "must be money out of a checking or savings account" in env.get(r.headers["location"]).text
     # another user's view never links these ids
     r = env.post("transfer-link", data={"outflow_id": out, "inflow_id": to_sav},
                  headers={"x-remote-user-id": "other", "x-remote-user-name": "Other"})
@@ -56,3 +57,9 @@ def test_link_this_explains_a_refusal(env):
     assert r.status_code == 303 and "link_error=" in r.headers["location"]
     page = env.get(r.headers["location"]).text
     assert "link that pair: The receiving side (Card 2026-08-02) is still pending review." in page
+
+
+def test_a_made_up_link_error_shows_nothing(env):
+    """The address carries a code; any other text in it is never put on the page (review 2026-10, FS4)."""
+    page = env.get("transfers?link_error=Your+account+is+locked.+Call+555-0100").text
+    assert "Call 555-0100" not in page and "Couldn't link that pair" not in page

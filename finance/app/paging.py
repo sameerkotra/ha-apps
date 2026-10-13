@@ -91,3 +91,44 @@ class TableView:
     @property
     def show_pager(self) -> bool:
         return self.total > DEFAULT_SIZE or self.size != DEFAULT_SIZE
+
+
+class SqlPager:
+    """Paging for a list too long to fetch whole (Transactions): the route counts the rows in SQL,
+    then fetches one page with LIMIT/OFFSET. Has the attributes _paging_macros.pager reads.
+    `<prefix>page` and `<prefix>size` (100, 250 or 1000) are in the address."""
+
+    sizes = (100, 250, 1000)
+    default_size = 100
+
+    def __init__(self, request, path: str, total: int, prefix: str = "", extra_qs: str = ""):
+        self._path, self._prefix = path, prefix
+        self._params = dict(parse_qsl(extra_qs))
+        self._params.update(request.query_params)
+        size = self._params.get(prefix + "size")
+        self.size = int(size) if size in {str(s) for s in self.sizes} else self.default_size
+        self.total = total
+        self.pages = max(1, -(-total // self.size))
+        self.page = min(_positive_int(self._params.get(prefix + "page"), 1), self.pages)
+        self.offset, self.limit = (self.page - 1) * self.size, self.size
+        self.first = self.offset + 1 if total else 0
+        self.last = min(self.offset + self.size, total)
+
+    def _url(self, **changes) -> str:
+        params = dict(self._params)
+        for name, value in changes.items():
+            if value is None:
+                params.pop(self._prefix + name, None)
+            else:
+                params[self._prefix + name] = value
+        return self._path + ("?" + urlencode(params) if params else "")
+
+    def page_url(self, page: int) -> str:
+        return self._url(page=page if page > 1 else None)
+
+    def size_url(self, size) -> str:
+        return self._url(size=None if size == self.default_size else size, page=None)
+
+    @property
+    def show_pager(self) -> bool:
+        return self.total > self.default_size or self.size != self.default_size

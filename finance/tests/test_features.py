@@ -200,7 +200,7 @@ def test_a_failure_while_saving_leaves_no_half_saved_rows(env, fake_vision, monk
 
     def boom(*a, **k):
         raise RuntimeError("categorizer exploded")
-    monkeypatch.setattr(pl, "categorize_transactions", boom)
+    monkeypatch.setattr(pl, "plan_categories", boom)
     pl.process_statement(sid, "tester", a, "http://x", "m")
     with env.db() as c:
         st = c.execute("SELECT status FROM statements WHERE id=?", (sid,)).fetchone()[0]

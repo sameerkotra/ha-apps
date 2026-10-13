@@ -9,9 +9,10 @@ aware (section 8's sign convention):
 
 Category rows and the cards link to Transactions with the same filters
 (`flow`, category, dates), so a figure and its drill-down always agree.
-The transfer auto-link sweep runs on load, and what is still ambiguous is
-counted and shown, because an unlinked transfer looks like spend on one side
-and income on the other until it is linked.
+Unambiguous transfers are linked when the data changes (matching.relink), and
+what is still ambiguous is counted and shown, because an unlinked transfer looks
+like spend on one side and income on the other until it is linked. Transactions
+on a deleted account are left out.
 """
 import calendar
 import re
@@ -26,7 +27,7 @@ from .. import ai_client as _ai_client
 from ..auth import User, get_current_user, get_acting_user
 from ..db import get_db
 from ..version import APP_VERSION
-from ..matching import _candidates_for, auto_link_unambiguous, find_transfer_candidates
+from ..matching import InflowIndex, find_transfer_candidates
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
@@ -124,7 +125,8 @@ def dashboard(
     # most join accounts "a") — spend needs the account type now, same
     # as income already did, so this file uses one consistent shape
     # throughout instead of switching between prefixed/unprefixed.
-    where = "t.user_id = ? AND t.deleted_at IS NULL AND t.review_status = 'clean'"
+    # a.deleted_at: a transaction restored on its own while its account stays deleted isn't counted.
+    where = "t.user_id = ? AND t.deleted_at IS NULL AND t.review_status = 'clean' AND a.deleted_at IS NULL"
     params: list = [acting.id]
     if drill_start_date:
         where += " AND t.date >= ? AND t.date <= ?"
@@ -183,24 +185,19 @@ def dashboard(
         excluded_row = conn.execute(
             f"""
             SELECT COALESCE(SUM(ABS(t.amount)), 0) AS total, COUNT(*) AS n
-            FROM transactions t
+            FROM transactions t JOIN accounts a ON a.id = t.account_id
             WHERE {where} AND (t.txn_type = 'transfer' OR t.is_excluded = 1)
             """,
             params,
         ).fetchone()
 
-        # Self-healing sweep (see this file's module docstring) — same
-        # call the Transfers page already makes on every load. Anything
-        # unambiguous links immediately; whatever's left with at least
-        # one candidate is genuinely ambiguous and needs a human choice,
-        # which is what unmatched_transfer_count reports below. Run
-        # AFTER the totals above are computed so a pair this very sweep
-        # just linked is reflected as excluded in the numbers the user
-        # sees on this same page load, not one page load behind.
-        auto_link_unambiguous(conn, acting.id)
-        conn.commit()
+        # Unambiguous pairs were linked when the data changed (matching.relink),
+        # so whatever still has a candidate is genuinely ambiguous and needs a
+        # human choice, which is what unmatched_transfer_count reports below.
+        # Opening the page only reads.
         outflows, inflows = find_transfer_candidates(conn, acting.id)
-        unmatched_transfer_count = sum(1 for o in outflows if _candidates_for(o, inflows))
+        index = InflowIndex(inflows)
+        unmatched_transfer_count = sum(1 for o in outflows if index.candidates(o))
 
     total_spend = spend_row["total"]
     selected_account_name = next(
@@ -244,7 +241,8 @@ def period_totals(conn, user_id: str, start: str, end: str, account_id: int | No
     """Income and spend for one date range, each split by category — the same rules as the
     Overview totals (clean rows only; transfers and excluded rows left out; income only on
     checking/savings; a card purchase counts as spend)."""
-    where = "t.user_id = ? AND t.deleted_at IS NULL AND t.review_status = 'clean' AND t.date >= ? AND t.date <= ?"
+    where = ("t.user_id = ? AND t.deleted_at IS NULL AND t.review_status = 'clean' AND a.deleted_at IS NULL "
+             "AND t.date >= ? AND t.date <= ?")
     params: list = [user_id, start, end]
     if account_id is not None:
         where += " AND t.account_id = ?"

@@ -2,9 +2,12 @@
 (`statements`), utility bills (`utility_bills`) and toll statements
 (`toll_statements`). All three tables have the same status / current_step /
 error_message / file_hash columns."""
+import logging
 import sqlite3
 
 from .. import storage
+
+logger = logging.getLogger(__name__)
 
 TABLES = ("statements", "utility_bills", "toll_statements")
 
@@ -25,9 +28,17 @@ def find_duplicate(table: str, conn: sqlite3.Connection, user_id: str, hash_: st
 
 
 def set_step(table: str, conn: sqlite3.Connection, row_id: int, step: str) -> None:
-    """Committed at once so the Uploads page's status polling sees it."""
-    conn.execute(f"UPDATE {_table(table)} SET current_step = ? WHERE id = ?", (step, row_id))
-    conn.commit()
+    """Committed at once so the Uploads page's status polling sees it. Best effort: a busy database
+    must not turn into a job stuck in 'processing' (the step is only a progress note)."""
+    try:
+        conn.execute(f"UPDATE {_table(table)} SET current_step = ? WHERE id = ?", (step, row_id))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        logger.warning("Couldn't show step %r of %s %s: %s", step, table, row_id, e)
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
 
 
 def fail(table: str, conn: sqlite3.Connection, row_id: int, message: str) -> None:

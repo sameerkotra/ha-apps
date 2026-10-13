@@ -38,6 +38,7 @@ limit) while also failing to move the reconciliation total noticeably.
 They're cheap sanity checks, not a second full extraction.
 """
 import re
+import subprocess
 from collections import Counter
 from dataclasses import dataclass
 
@@ -70,7 +71,10 @@ MIN_TEXT_LENGTH = 50
 # The integer part is optional: statements print amounts under a dollar as
 # ".50" as often as "0.50", and the lookbehind stops a bare ".50" from being
 # carved out of the tail of a longer number or an ellipsis ("....50").
-_AMOUNT_TOKEN = re.compile(r"-?\$?\s*(?<![\d,.])(?P<amount>(?:\d[\d,]*)?\.\d{2})\s*(?:CR)?", re.IGNORECASE)
+# Only the amount itself is matched: a sign, "$" or "CR" around it was never captured, and an
+# uncaptured "\s*" in front made every position of a long run of spaces rescan the whole run
+# (quadratic). The lookbehind alone decides where an amount may start, so the same amounts are found.
+_AMOUNT_TOKEN = re.compile(r"(?<![\d,.])(?P<amount>(?:\d[\d,]*)?\.\d{2})")
 
 # Label phrasings for the balance a statement period started/ended at.
 # Ordered roughly by how common each phrasing is; the first match wins —
@@ -93,22 +97,32 @@ _NEW_BALANCE_LABELS = [
 ]
 
 
-def run_pdftotext(pdf_path: str) -> str:
+# The most text one PDF may give (a real statement is a few hundred KB at most). The tool writes
+# to a file in its scratch folder (capped by the sandbox's file-size limit) and only this much is read.
+MAX_TEXT_BYTES = 5 * 1024 * 1024
+
+
+def run_pdftotext(pdf_path: str, *args: str, max_bytes: int = MAX_TEXT_BYTES, timeout: float = 30) -> str:
     """Shells out to pdftotext -layout. -layout isn't load-bearing for
     either check here (no columns to line up — both scan the whole text),
     but it's kept because it's the one pdftotext call this path makes and
     losing layout would only ever hurt, never help, either regex.
     Runs on a copy of the file as the unprivileged pdfworker user, with
-    resource limits (common/python/sandbox_run.py)."""
+    resource limits (common/python/sandbox_run.py). The text goes to a file,
+    never a pipe, so a huge output can't fill the app's memory."""
     with sandbox_run.Scratch(prefix="pdftotext-") as box:
         src = box.add_file(pdf_path, "in.pdf")
         result = box.run(
-            ["pdftotext", "-layout", src, "-"],
-            capture_output=True, text=True, timeout=30,
+            ["pdftotext", *(args or ("-layout",)), src, "out.txt"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=timeout,
         )
-    if result.returncode != 0:
-        raise RuntimeError(f"pdftotext failed: {result.stderr.strip()}")
-    return result.stdout
+        if result.returncode != 0:
+            raise RuntimeError(f"pdftotext failed: {result.stderr.decode(errors='replace').strip()[:500]}")
+        try:
+            data = box.read("out.txt", max_bytes=max_bytes)
+        except sandbox_run.SandboxError:
+            raise RuntimeError(f"The PDF's text is larger than {max_bytes // (1024 * 1024)} MB.") from None
+    return data.decode("utf-8", errors="replace")
 
 
 def extract_amounts(text: str) -> Counter:
@@ -132,6 +146,7 @@ def _find_labeled_amount(text: str, label_patterns: list[str]) -> float | None:
     balance is printed several ways, and every one of them is negative:
     "-$14.01", "$-14.01", "−$14.01", "($14.01)", "$14.01-" and "$14.01 CR". A "+" or a
     colon between the label and the figure is just punctuation."""
+    text = _collapse_spaces(text)
     for label in label_patterns:
         m = _labeled_amount_re(label).search(text)
         if m:
@@ -140,6 +155,17 @@ def _find_labeled_amount(text: str, label_patterns: list[str]) -> float | None:
                             or m.group("cr") or m.group("trail"))
             return -value if negative else value
     return None
+
+
+_SPACES = re.compile(r"\s+")
+
+
+def _collapse_spaces(text: str) -> str:
+    """Every run of whitespace as one space. The pattern below has several optional-whitespace parts
+    in a row; on a long run of spaces after a label with no figure they could split it in very many
+    ways (a 400-space gap took minutes). With one space at most, each part has one choice, and since
+    the pattern only asks whether there is whitespace, never how much, what it finds is unchanged."""
+    return _SPACES.sub(" ", text)
 
 
 def _labeled_amount_re(label: str) -> re.Pattern:

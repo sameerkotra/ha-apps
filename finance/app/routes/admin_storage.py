@@ -5,14 +5,15 @@ import sqlite3
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, UploadFile, File, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_acting_user, require_admin
-from ..db import get_db, DB_PATH, run_migrations
+from ..db import GATE, WATCHER, get_db, DB_PATH, run_migrations
+from .. import notices
+from ..purge import BACKUP_PREFIX, IMPORT_PREFIX
 from ..version import APP_VERSION
 from .. import settings as app_settings, storage
 from ..common import backup_core, db_core
@@ -160,7 +161,7 @@ def admin_storage(
             "total_bytes": total_bytes,
             "purged": int(purged) if purged.isdigit() else None,
             "imported": bool(imported),
-            "import_error": import_error or None,
+            "import_error": notices.text(import_error) or None,
             "acting_as_banner": _acting_banner(admin, acting),
             "acting_qs": _acting_qs(admin, acting),
             "active_page": "admin_storage",
@@ -213,13 +214,17 @@ def admin_storage_download_db(
     """Admin-only: a consistent copy of the whole database (every user's data)
     made with SQLite's backup API — a plain copy of DB_PATH could miss data
     still in the WAL. Written to a temp file that is deleted once sent."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".db")
+    fd, tmp_path = tempfile.mkstemp(prefix=BACKUP_PREFIX, suffix=".db")   # a leftover is swept (purge.py)
     os.close(fd)
-    src = sqlite3.connect(DB_PATH)
     try:
-        db_core.snapshot(src, tmp_path, after=_blank_secrets)
-    finally:
-        src.close()
+        src = sqlite3.connect(DB_PATH)
+        try:
+            db_core.snapshot(src, tmp_path, after=_blank_secrets)
+        finally:
+            src.close()
+    except BaseException:
+        os.remove(tmp_path)          # a failed copy leaves nothing behind
+        raise
 
     return backup_core.send_file(tmp_path, backup_core.file_name("finance-backup", ".db"))
 
@@ -241,28 +246,53 @@ def admin_storage_import_db(
     reopened, so the page tells the admin to restart the app. Migrations run on the imported
     file at once, so an older backup gets the tables this version needs."""
     if confirm != "yes":
-        return RedirectResponse(
-            url="admin-storage?import_error=" + quote("Import not confirmed."),
-            status_code=303,
-        )
+        return RedirectResponse(url="admin-storage?import_error=import_not_confirmed", status_code=303)
 
     db_dir = os.path.dirname(DB_PATH) or "."
-    tmp_path = backup_core.receive_sync(db_file.file, db_dir)  # streamed, never fully in memory
+    # streamed, never fully in memory; a leftover (crash) is swept by purge.py
+    tmp_path = backup_core.receive_sync(db_file.file, db_dir, prefix=IMPORT_PREFIX)
     try:
         try:
             db_core.validate_file(
                 tmp_path, {"schema_version", "accounts", "transactions", "statements"},
-                integrity_msg="Failed integrity check: {integrity}",
-                missing_msg="Doesn't look like a Finance Dashboard database (missing tables: {missing}).",
-                invalid_msg="That file isn't a valid SQLite database.")
+                integrity_msg="import_damaged", missing_msg="import_not_finance", invalid_msg="import_not_sqlite")
         except ValueError as e:
             os.remove(tmp_path)                    # a rejected upload leaves nothing behind in /data
-            return RedirectResponse(url="admin-storage?import_error=" + quote(str(e)), status_code=303)
+            logger.warning("Backup import refused: %s", e)
+            code = str(e) if notices.text(str(e)) else "import_failed"
+            return RedirectResponse(url="admin-storage?import_error=" + code, status_code=303)
 
-        saved_secrets = _saved_secrets()
+        try:
+            # The PDF jobs and the purge sweep write in GATE.work(): wait (a little) for a running one
+            # to finish and hold new ones back, so nothing writes into the file being replaced.
+            with GATE.pause(timeout=IMPORT_WAIT_SECONDS):
+                _swap_in(tmp_path)
+        except TimeoutError:
+            os.remove(tmp_path)
+            return RedirectResponse(url="admin-storage?import_error=import_busy", status_code=303)
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+    app_settings.invalidate()          # the settings now come from the restored file
 
+    return RedirectResponse(url="admin-storage?imported=1", status_code=303)
+
+
+IMPORT_WAIT_SECONDS = 60
+
+
+def _swap_in(tmp_path: str) -> None:
+    """Swap a validated backup in for the live database (called with the background writers paused)."""
+    saved_secrets = _saved_secrets()
+
+    # The app's one long-lived connection (db.WATCHER, behind the settings) is closed and kept closed
+    # until the new file is in place: a connection still open on the old file would, when it closes,
+    # delete "the" -wal file by name — by then the new database's.
+    with WATCHER.lock:
+        WATCHER._close_locked()
         # Flush and empty the CURRENT db's WAL before swapping the file
-        # out from under it — see docstring.
+        # out from under it — see the import route's docstring.
         try:
             cur = sqlite3.connect(DB_PATH, timeout=10.0)
             try:
@@ -278,10 +308,6 @@ def admin_storage_import_db(
                 os.remove(sidecar)
 
         os.replace(tmp_path, DB_PATH)
-    except Exception:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise
 
     # Bring an older backup up to date now (the restart does it too), so pages that need newer
     # tables, such as Admin → AI usage, work straight away.
@@ -290,8 +316,6 @@ def admin_storage_import_db(
     except Exception:
         logger.exception("Migrations after the database import failed; they run again on restart")
     _keep_secrets(saved_secrets)
-
-    return RedirectResponse(url="admin-storage?imported=1", status_code=303)
 
 
 @router.post("/admin-storage-delete-pdf")

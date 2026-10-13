@@ -57,7 +57,7 @@
     <div class="pdf-pages">
         {% for pg in pages %}
         <div class="pdf-page" id="pdf-page-{{ pg.number }}" style="aspect-ratio: {{ pg.width }} / {{ pg.height }};">
-            <img src="pdf-page?kind={{ doc.kind }}&amp;id={{ doc.id }}&amp;page={{ pg.number }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}"
+            <img src="pdf-page?kind={{ doc.kind }}&amp;id={{ doc.id }}&amp;page={{ pg.number }}&amp;v={{ doc.stamp }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}"
                  alt="Page {{ pg.number }}" loading="{{ 'eager' if loop.first else 'lazy' }}">
             {% for h in pg.hits %}
             <span class="pdf-hit pdf-hit-{{ h.kind }}" title="{{ h.label }}"

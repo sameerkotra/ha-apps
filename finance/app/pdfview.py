@@ -12,14 +12,18 @@ WebView, which an embedded PDF frame does not.
 import html
 import os
 import re
+import threading
 from collections import OrderedDict
 
 from .common import sandbox_run
+from .parser.deterministic import run_pdftotext
 
 # ~2x a phone screen's CSS pixels, so text stays sharp when pinch-zoomed.
 RENDER_DPI = 200
 _TIMEOUT = 60
-_CACHE_SIZE = 8
+# The word boxes of one PDF are about 100 bytes a word: 20 MB is far more than any statement or bill.
+MAX_BBOX_BYTES = 20 * 1024 * 1024
+MAX_PAGE_PNG_BYTES = 40 * 1024 * 1024
 
 _PAGE_RE = re.compile(r'<page width="([\d.]+)" height="([\d.]+)">(.*?)</page>', re.S)
 _WORD_RE = re.compile(r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">(.*?)</word>', re.S)
@@ -27,8 +31,55 @@ _WORD_RE = re.compile(r'<word xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yM
 # An amount as printed: 1,234.56  .50  $12.00  (12.00)  12.00CR  -12.00 — always two decimals.
 _AMOUNT_WORD = re.compile(r"^\(?-?\$?(\d[\d,]*|)\.(\d{2})\)?(?:CR|DR|-)?$", re.IGNORECASE)
 
-_words_cache: "OrderedDict[tuple, list]" = OrderedDict()
-_image_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
+# Rendered pages and word lists are kept in memory by size, not by count: a page image of a big
+# scanned bill can be several MB, so "the last 8" could mean very different amounts of memory.
+CACHE_BYTES = 64 * 1024 * 1024
+# Rendering is CPU-heavy: two at a time, others wait their turn (a viewer opens pages one by one).
+RENDER_SLOTS = threading.BoundedSemaphore(2)
+
+
+class _ByteCache:
+    """Least recently used entries are dropped once the total size passes `limit`."""
+
+    def __init__(self, limit: int):
+        self.limit, self.total = limit, 0
+        self._items: "OrderedDict[tuple, tuple]" = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            item = self._items.get(key)
+            if item is None:
+                return None
+            self._items.move_to_end(key)
+            return item[0]
+
+    def put(self, key, value, size: int):
+        with self._lock:
+            if key in self._items:
+                self.total -= self._items.pop(key)[1]
+            if size <= self.limit:
+                self._items[key] = (value, size)
+                self.total += size
+            while self.total > self.limit and self._items:
+                self.total -= self._items.popitem(last=False)[1][1]
+        return value
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return key in self._items
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+            self.total = 0
+
+
+_words_cache = _ByteCache(CACHE_BYTES // 2)
+_image_cache = _ByteCache(CACHE_BYTES // 2)
 
 
 def _stamp(path: str) -> tuple:
@@ -36,39 +87,39 @@ def _stamp(path: str) -> tuple:
     return path, st.st_mtime_ns, st.st_size
 
 
-def _remember(cache: OrderedDict, key: tuple, value):
-    cache[key] = value
-    while len(cache) > _CACHE_SIZE:
-        cache.popitem(last=False)
-    return value
+def stamp_tag(path: str) -> str:
+    """A short tag that changes whenever the file does (for the page images' cache headers)."""
+    _, mtime, size = _stamp(path)
+    return f"{mtime:x}-{size:x}"
 
 
 def load_pages(path: str) -> list[dict]:
     """[{"width", "height", "words": [(text, x0, y0, x1, y1), ...]}, ...] in PDF points."""
     key = _stamp(path)
-    if key in _words_cache:
-        return _words_cache[key]
-    with sandbox_run.Scratch(prefix="pdftotext-") as box:          # a copy, as pdfworker, with limits
-        src = box.add_file(path, "in.pdf")
-        result = box.run(["pdftotext", "-bbox", src, "-"], capture_output=True, text=True, timeout=_TIMEOUT)
-    if result.returncode != 0:
-        raise RuntimeError(f"pdftotext failed: {result.stderr.strip()}")
+    cached = _words_cache.get(key)
+    if cached is not None:
+        return cached
+    # A copy, as pdfworker, with limits; the word list goes to a file and at most MAX_BBOX_BYTES is read.
+    with RENDER_SLOTS:
+        text = run_pdftotext(path, "-bbox", max_bytes=MAX_BBOX_BYTES, timeout=_TIMEOUT)
     pages = []
-    for width, height, body in _PAGE_RE.findall(result.stdout):
+    for width, height, body in _PAGE_RE.findall(text):
         words = [
             (html.unescape(text).strip(), float(x0), float(y0), float(x1), float(y1))
             for x0, y0, x1, y1, text in _WORD_RE.findall(body)
         ]
         pages.append({"width": float(width), "height": float(height), "words": words})
-    return _remember(_words_cache, key, pages)
+    return _words_cache.put(key, pages, 200 + sum(100 + sum(len(w[0]) for w in p["words"]) * 2 + 80 * len(p["words"])
+                                                  for p in pages))
 
 
 def render_page(path: str, page: int) -> bytes:
     """PNG bytes of one 1-based page."""
     key = _stamp(path) + (page,)
-    if key in _image_cache:
-        return _image_cache[key]
-    with sandbox_run.Scratch(prefix="pdftoppm-") as box:           # a copy, as pdfworker, with limits
+    cached = _image_cache.get(key)
+    if cached is not None:
+        return cached
+    with RENDER_SLOTS, sandbox_run.Scratch(prefix="pdftoppm-") as box:   # a copy, as pdfworker, with limits
         src = box.add_file(path, "in.pdf")
         root = os.path.join(box.path, "page")
         result = box.run(
@@ -78,9 +129,8 @@ def render_page(path: str, page: int) -> bytes:
         out = root + ".png"
         if result.returncode != 0 or not os.path.exists(out):
             raise RuntimeError(f"pdftoppm failed: {result.stderr.decode(errors='replace').strip()}")
-        with open(out, "rb") as f:
-            png = f.read()
-    return _remember(_image_cache, key, png)
+        png = box.read("page.png", max_bytes=MAX_PAGE_PNG_BYTES)
+    return _image_cache.put(key, png, len(png))
 
 
 def word_amount(text: str) -> float | None:

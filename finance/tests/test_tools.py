@@ -181,7 +181,10 @@ def test_links_open_the_right_page(env):
     finally:
         tools.PANEL["value"] = None
     r = env.get(f"month/{month}", follow_redirects=False)
-    assert (r.status_code, r.headers["location"]) == (307, f"../dashboard?period={month}")
+    assert (r.status_code, r.headers["location"]) == (307, f"../dashboard?period=m:{month}")
+    # ...and that address shows that month, not this one (a bare month used to fall back to this month)
+    shown = env.get(f"dashboard?period=m:{month}").text
+    assert f'<option value="m:{month}" selected' in shown
     assert env.get("month/2026-13", follow_redirects=False).status_code == 404
 
 

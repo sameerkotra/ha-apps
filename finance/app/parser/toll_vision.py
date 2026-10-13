@@ -12,7 +12,7 @@ from typing import Callable
 from .toll_deterministic import (
     TollCarBlock, TollExtraction, TollPass, clean_amount, normalize_direction, parse_datetime, parse_plate,
 )
-from .vision import ask_vision_json, debug_call
+from .vision import ask_vision_json, clean_date, clean_text, debug_call
 
 
 @dataclass
@@ -124,8 +124,8 @@ def parse_toll_response(data: dict) -> tuple[TollExtraction, list[str]]:
     if total is not None:
         value = clean_amount(total)
         ex.grand_total = round(abs(value), 2) if value is not None else None
-    ex.period_start = str(data["period_start"]) if data.get("period_start") else None
-    ex.period_end = str(data["period_end"]) if data.get("period_end") else None
+    ex.period_start = clean_date(data["period_start"]) if data.get("period_start") else None
+    ex.period_end = clean_date(data["period_end"]) if data.get("period_end") else None
 
     blocks: dict[tuple, TollCarBlock] = {}
     last_key: tuple | None = None
@@ -153,9 +153,10 @@ def parse_toll_response(data: dict) -> tuple[TollExtraction, list[str]]:
                 if occurred is None or amount is None or amount <= 0:
                     raise ValueError("unreadable date/time or amount")
                 block.passes.append(TollPass(
-                    occurred_at=occurred, agency=str(t.get("agency") or "").strip().upper(),
-                    road=str(t.get("road") or "").strip().upper(), plaza=str(t.get("plaza") or "").strip(),
-                    lane=str(t.get("lane") or "").strip(), direction=normalize_direction(str(t.get("direction") or "")),
+                    occurred_at=occurred, agency=clean_text(t.get("agency") or "", 20).upper(),
+                    road=clean_text(t.get("road") or "", 60).upper(), plaza=clean_text(t.get("plaza") or "", 200),
+                    lane=clean_text(t.get("lane") or "", 20),
+                    direction=normalize_direction(clean_text(t.get("direction") or "", 20)),
                     amount=round(amount, 2),
                 ))
             except (AttributeError, ValueError, TypeError):

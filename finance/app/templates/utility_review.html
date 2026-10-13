@@ -111,8 +111,8 @@
         <input type="hidden" name="id" value="{{ bill.id }}">
         <p class="hint">The values above are replaced by a new reading{% if bill.file_hash %} of every bill in this PDF{% endif %}.
             Anything you write is sent to the AI with the PDF.</p>
-        <label for="reextract-notes" class="panel-title">What was wrong? (optional)</label>
-        <textarea id="reextract-notes" name="notes" rows="4" maxlength="{{ max_notes }}" class="q-ai-question"
+        <label for="utility-reextract-notes" class="panel-title">What was wrong? (optional)</label>
+        <textarea id="utility-reextract-notes" name="notes" rows="4" maxlength="{{ max_notes }}" class="q-ai-question"
                   placeholder="e.g. The cost is the Current Charges total ($84.12), not the account balance. Usage is in CCF.">{{ bill.extraction_notes or "" }}</textarea>
         <p><button type="submit" class="btn-secondary">Re-extract</button></p>
     </form>

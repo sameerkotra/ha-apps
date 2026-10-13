@@ -110,7 +110,8 @@
 
             const uploadBody = new FormData(form);
             uploadBody.set("account_id", accountId);
-            const data = await readJson(await fetch("upload", { method: "POST", body: uploadBody }));
+            // The same "viewing as" (as_user) as the page: without it an admin's upload landed in their own data.
+            const data = await readJson(await fetch("upload" + (qs ? "?" + qs : ""), { method: "POST", body: uploadBody }));
             resultEl.innerHTML = (data.results || []).map(function (r) {
                 const name = escapeHtml(r.filename);
                 if (r.duplicate_of) return "<p>" + name + ": " + escapeHtml(r.message) + "</p>";

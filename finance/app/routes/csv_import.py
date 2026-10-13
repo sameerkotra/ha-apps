@@ -1,5 +1,6 @@
 """CSV import (SPEC.md section 10): one csv_imports row per file; flexible column matching (Date / Description / Amount, or Debit + Credit), an optional Status column that keeps only posted/cleared rows, per-row duplicate skipping, and categorization of rows with no Category."""
 import asyncio
+import logging
 import csv
 import io
 import json
@@ -9,7 +10,8 @@ from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
-from ..categorize import categorize_transactions
+from ..categorize import apply_categories, plan_categories
+from ..matching import relink
 from ..db import get_db
 from ..version import APP_VERSION
 from ..datenorm import normalize_date
@@ -19,6 +21,7 @@ from .. import ai_usage, settings
 from .transactions import _insert_manual_transaction
 from .accounts import _acting_banner, _acting_qs
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 templates.env.globals["app_version"] = APP_VERSION
@@ -59,6 +62,20 @@ def _debit_credit_amount(debit_raw: str, credit_raw: str, account_type: str) -> 
     if account_type == "credit_card":
         return (debit if debit is not None else -credit), None
     return (-debit if debit is not None else credit), None
+
+
+# The row errors / duplicates / skipped statuses kept on the import for its debug page: the first
+# MAX_KEPT_LINES of each (a 100,000-row file of errors would otherwise be one huge column).
+MAX_KEPT_LINES = 1000
+
+
+def _kept_json(lines: list[str]) -> str | None:
+    if not lines:
+        return None
+    kept = lines[:MAX_KEPT_LINES]
+    if len(lines) > MAX_KEPT_LINES:
+        kept.append(f"... and {len(lines) - MAX_KEPT_LINES} more")
+    return json.dumps(kept)
 
 
 def _import_csv_file(
@@ -169,6 +186,7 @@ def _import_csv_file(
             fatal_error = "Selected default account wasn't found."
 
     inserted_ids: list[int] = []
+    inserted_set: set[int] = set()       # the same ids, for the "repeated in this file" check below
     to_categorize: list[tuple[int, str]] = []
     row_errors: list[str] = []
     duplicates: list[str] = []
@@ -227,7 +245,7 @@ def _import_csv_file(
                 (user_id, account_id, date_norm, amount_norm, description_norm),
             ).fetchone()
             if dup is not None:
-                repeated = dup[0] in inserted_ids
+                repeated = dup[0] in inserted_set
                 duplicates.append(
                     f"Row {i}: same date, amount and description as an earlier row of this file \u2014 skipped"
                     if repeated else
@@ -242,6 +260,7 @@ def _import_csv_file(
         )
         if ok:
             inserted_ids.append(result)
+            inserted_set.add(result)
             if not raw_category:
                 to_categorize.append((result, description))
         else:
@@ -256,10 +275,9 @@ def _import_csv_file(
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id, filename, len(inserted_ids), fatal_error, len(row_errors), len(duplicates),
-                json.dumps(row_errors) if row_errors else None,
-                json.dumps(duplicates) if duplicates else None,
+                _kept_json(row_errors), _kept_json(duplicates),
                 len(skipped_status),
-                json.dumps(skipped_status) if skipped_status else None,
+                _kept_json(skipped_status),
             ),
         ).lastrowid
         if inserted_ids:
@@ -274,13 +292,25 @@ def _import_csv_file(
                 [(user_id, a, csv_import_id, d, amt, desc, cat, reason, m)
                  for a, d, amt, desc, cat, reason, m in skipped_rows],
             )
+        relink(conn, user_id)      # an imported row can be one side of a transfer
+        # The rows are saved (committed) before the categorization's AI call,
+        # which can take minutes: no write may wait on the model meanwhile.
+        # They show as uncategorized until the categories are written, in one
+        # short transaction after the call.
+        conn.commit()
         if to_categorize:
+            plan = None
             with ai_usage.recording() as calls:
-                categorize_transactions(conn, user_id, settings.ai_url(), settings.ai_model(), to_categorize,
-                                        csv_import_id=csv_import_id)
+                try:
+                    plan = plan_categories(conn, user_id, settings.ai_url(), settings.ai_model(), to_categorize)
+                except Exception:      # the rows are saved already: they just stay Uncategorized
+                    logger.exception("Categorizing CSV import %s failed", csv_import_id)
+            conn.commit()
+            if plan is not None:
+                apply_categories(conn, plan, csv_import_id=csv_import_id)
             if calls:
                 conn.execute("UPDATE csv_imports SET ai_usage = ? WHERE id = ?", (ai_usage.to_json(calls), csv_import_id))
-        conn.commit()
+            conn.commit()
 
     return {
         "filename": filename, "csv_import_id": csv_import_id, "imported": len(inserted_ids),
@@ -288,6 +318,15 @@ def _import_csv_file(
         "skipped_status": skipped_status,
         "needs_date_column": needs_date_column, "date_column_candidates": date_column_candidates,
     }
+
+
+def _read_and_import(user_id: str, csv_dir: str, upload, default_account_id: str, date_column: str | None) -> dict:
+    try:
+        raw, rejected = storage.read_upload_sync(upload, storage.MAX_CSV_BYTES), None
+    except storage.UploadRejected as e:
+        raw, rejected = b"", str(e)
+    return _import_one(user_id, csv_dir, upload.filename[:255] if upload.filename else None, raw, default_account_id, date_column,
+                       rejected)
 
 
 def _import_one(user_id: str, csv_dir: str, filename: str | None, raw: bytes, default_account_id: str,
@@ -330,18 +369,14 @@ async def import_transactions_csv(
     wants_json = "application/json" in request.headers.get("accept", "")
     csv_dir = storage.user_dir(acting.id, "csv-imports")
 
+    if len(files) > storage.MAX_FILES_PER_REQUEST:
+        return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
     results = []
     for upload in files:
-        try:
-            raw = await storage.read_upload(upload, storage.MAX_CSV_BYTES, pdf=False)
-            rejected = None
-        except storage.UploadRejected as e:
-            raw, rejected = b"", str(e)
-        # Parsing, inserts and the categorization LLM call are blocking: run
-        # them in a thread so the whole app doesn't freeze meanwhile.
+        # Reading, parsing, inserts and the categorization LLM call are blocking:
+        # run them in a thread so the whole app doesn't freeze meanwhile.
         results.append(await asyncio.to_thread(
-            _import_one, acting.id, csv_dir, upload.filename, raw, default_account_id,
-            date_column or None, rejected,
+            _read_and_import, acting.id, csv_dir, upload, default_account_id, date_column or None,
         ))
 
     if wants_json:

@@ -492,3 +492,15 @@ CREATE INDEX idx_utility_bills_status   ON utility_bills(status) WHERE status = 
 CREATE INDEX idx_utility_bills_type     ON utility_bills(user_id, utility_type);
 
 CREATE INDEX idx_utility_bills_user     ON utility_bills(user_id);
+
+CREATE INDEX idx_transactions_user_date ON transactions(user_id, date) WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_skipped_duplicates_statement ON skipped_duplicates(statement_id);
+
+CREATE INDEX idx_skipped_duplicates_csv_import ON skipped_duplicates(csv_import_id);
+
+CREATE INDEX idx_skipped_duplicates_matched ON skipped_duplicates(matched_transaction_id);
+
+CREATE INDEX idx_skipped_duplicates_inserted ON skipped_duplicates(inserted_transaction_id);
+
+CREATE INDEX idx_toll_transactions_trip ON toll_transactions(trip_id);

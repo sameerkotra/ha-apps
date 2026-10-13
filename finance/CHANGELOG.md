@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.4.2
+
+- **Transfers link when your data changes, and fast**: matching now runs whenever a statement or CSV is imported or a transaction is added, reviewed, included, deleted or restored — opening the Dashboard or Transfers no longer changes anything — and it takes moments on a long history instead of minutes. Amounts a cent apart now always match.
+- **Saving a statement or CSV no longer holds up the app** while the AI suggests categories: the rows are saved in one short step around the AI's answer.
+- **A statement, utility bill or toll statement can't be deleted while it is being read** (wait until it is done or failed); one deleted anyway in that moment saves nothing. Wiping someone's data waits the same way.
+- **Restore brings back only what was deleted with it**: a transaction deleted on its own before its statement stays deleted, and nothing is restored onto a deleted account (restore the account first). The Dashboard leaves out rows on a deleted account.
+- **Purging** a statement or CSV import takes all its deleted transactions, an account takes its statements' PDFs, and files are removed only once the rows are gone.
+- **Credit cards read the wrong way round** are put right before looking for transactions already on file, so a charge already imported from a CSV is recognised.
+- **Amounts are stored in whole cents** (older ones are rounded once), and a CSV or typed amount like *12,50* is refused instead of being read as 1250.
+- **The AI's answers are checked**: a date is stored as YYYY-MM-DD, a row with an unreadable date or amount (or NaN/infinity) is left out and listed on the debug page, and long text is cut to the field's size.
+- **New setting — Most pages per PDF** (Admin → App settings → AI, default 30): a longer PDF is refused with a message instead of sending every page to the AI. Raise it if your statements are longer.
+- **After a restart**, uploads that were only waiting their turn are read; only the one being read becomes an error with Restart. A job keeps the AI settings it started with.
+- **Links from Home Assistant to a month** open that month on the Dashboard (they opened the current month).
+- **Uploading while viewing as someone** puts the statement in their data, not yours.
+- **Transactions** shows 100 rows a page (250 or 1000 if you choose); the count and total cover every matching row, and the CSV export is streamed. Saving a row's category keeps your search.
+- **Also apply to all existing transactions** (Categories) changes the transactions the new rule matches, decided by all your rules as before; other transactions keep their category. A blank rule pattern is refused.
+- **Forms that can't be saved** show a page saying why, with a link back, instead of raw text; an account with no name or an unknown type is refused instead of failing.
+- **Faster pages**: settings are read from memory, toll cars and devices are added up once, the Recurring page is quicker and kept until the data changes, the utility dashboard polls with a tiny request, PDF page images are cached by the browser, and new database indexes.
+- **Database upgrades are all-or-nothing**, and a copy of the database is kept as *finance.db.pre-NNNN* before one runs. Home Assistant backups now get a complete database file (its recent changes are written in first).
+- **Restoring a backup** waits for a PDF being read to finish (or asks you to try again), and a failed download no longer leaves a temporary copy behind.
+- Smaller fixes: *Processing…* and *isn’t* show as characters, a missing cost no longer breaks Compare, the bulk-delete question says an admin can restore for 30 days, *Not found* no longer always says "account", and the Supervisor's watchdog now checks the app answers (not just that its port is open).
+- **Security**: uploads and forms are size-limited before they are read (20 files per upload, 2 MB per form), pages only show messages the app wrote (an address can't put its own text on a page), a "next" address can't leave the app, PDF viewer searches are limited, long statement text can no longer make the parser spin for minutes, a no-time-limit query stops after 30 minutes, and an AI debug re-send after 30.
+- **Shared code**: an optional **App-messages signing key** (Admin → App settings → Household Assistant) — put the same key in every household app so they can tell each other's messages from a fake; API answers are never cached, and the app's scripts and styles are cached by the browser until the next version, so pages load faster.
+
 ## 1.4.1
 
 - **Re-extracting a utility bill keeps the confirmed ones**: re-extracting the pending gas bill from a dual-fuel PDF read the whole upload again and replaced its electric bill too — even after you had confirmed it and corrected its meter figures. It's now refused while another bill from the same PDF is confirmed (correct the bill on its Check & confirm page instead), and the notes you type are kept on the bill you were reviewing.

@@ -19,9 +19,10 @@ from dataclasses import dataclass, field
 from . import db
 
 TIME_LIMIT_SECONDS = 10
+LONG_LIMIT_SECONDS = 30 * 60      # "No time limit" still ends somewhere: half an hour
 MAX_SQL_BYTES = 20_000
 MAX_ROWS = 100_000
-MAX_VALUE_BYTES = 10_000_000          # SQLITE_LIMIT_LENGTH on query connections (Python 3.11+)
+MAX_VALUE_BYTES = 1_000_000           # SQLITE_LIMIT_LENGTH on query connections (Python 3.11+): one value
 MAX_RESULT_BYTES = 64 * 1024 * 1024   # a single result, checked while fetching
 CACHE_TTL_SECONDS = 600
 CACHE_MAX_BYTES = 64 * 1024 * 1024
@@ -262,7 +263,7 @@ def execute(user_id: str, sql: str, params: dict | None = None, *, time_limit: b
     """Runs one read-only SELECT as `user_id` sees the data. Blocking: call it in a thread."""
     check_sql(sql)
     started = time.monotonic()
-    deadline = started + TIME_LIMIT_SECONDS if time_limit else None
+    deadline = started + (TIME_LIMIT_SECONDS if time_limit else LONG_LIMIT_SECONDS)
     conn = _open(user_id)
     state = {"why": None}
 
@@ -281,17 +282,19 @@ def execute(user_id: str, sql: str, params: dict | None = None, *, time_limit: b
         columns = [d[0] for d in (cur.description or [])]
         rows: list[tuple] = []
         used = 0
+        # A hundred rows at a time and the size checked after every row: with 1 MB values, a batch of
+        # a thousand could hold a gigabyte before the first check.
         while len(rows) <= MAX_ROWS:
-            batch = cur.fetchmany(1000)
+            batch = cur.fetchmany(100)
             if not batch:
                 break
             for r in batch:
                 row = tuple(_cell(v) for v in r)
-                used += 64 + sum(len(v) if isinstance(v, str) else 16 for v in row)
+                used += 64 + sum(len(v) if isinstance(v, (str, bytes)) else 16 for v in row)
+                if used > MAX_RESULT_BYTES:
+                    raise QueryError(f"The result is larger than {MAX_RESULT_BYTES // (1024 * 1024)} MB. "
+                                     "Select fewer rows or columns (long text columns add up quickly).")
                 rows.append(row)
-            if used > MAX_RESULT_BYTES:
-                raise QueryError(f"The result is larger than {MAX_RESULT_BYTES // (1024 * 1024)} MB. "
-                                 "Select fewer rows or columns (long text columns add up quickly).")
         truncated = len(rows) > MAX_ROWS
         del rows[MAX_ROWS:]
     except sqlite3.ProgrammingError as err:
@@ -303,6 +306,8 @@ def execute(user_id: str, sql: str, params: dict | None = None, *, time_limit: b
     except sqlite3.Error as err:
         if state["why"] == "cancelled":
             raise QueryCancelled("The query was cancelled.") from None
+        if state["why"] == "timeout" and not time_limit:
+            raise QueryError(f"The query ran for {LONG_LIMIT_SECONDS // 60} minutes and was stopped.") from None
         if state["why"] == "timeout":
             raise QueryError(f"The query took longer than {TIME_LIMIT_SECONDS} seconds and was stopped. "
                              "Turn on “No time limit” to let it run longer.") from None

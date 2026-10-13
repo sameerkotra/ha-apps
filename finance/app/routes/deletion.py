@@ -24,10 +24,11 @@ from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..db import get_db
 from ..toll_trips import rebuild_trips
 from ..version import APP_VERSION
-from ..matching import cascade_unlink_on_delete
+from ..matching import cascade_unlink_on_delete, relink
+from .. import notices
 from ..purge import (
     account_has_live_rows, hard_delete_account, hard_delete_csv_import, hard_delete_statement,
-    hard_delete_transaction, hard_delete_utility_bill, hard_delete_toll_statement,
+    hard_delete_transaction, hard_delete_utility_bill, hard_delete_toll_statement, remove_files,
 )
 from .accounts import _acting_banner, _acting_qs
 
@@ -60,6 +61,7 @@ def _with_qs(path: str, current: User, acting: User) -> str:
 @router.get("/recently-deleted")
 def recently_deleted(
     request: Request,
+    error: str = "",
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
     _admin: User = Depends(require_admin),  # Recently deleted is admin only (SPEC.md section 11)
@@ -147,6 +149,7 @@ def recently_deleted(
         "recently_deleted.html",
         {
             "user": acting,
+            "error": notices.text(error),
             "statements": statements,
             "csv_imports": csv_imports,
             "transactions": transactions,
@@ -192,7 +195,7 @@ def statement_delete_confirm(
             "txn_count": counts["n"],
             "transfer_count": counts["transfers"] or 0,
             "confirm_label": _statement_confirm_label(stmt["account_name"], stmt["statement_period"]),
-            "error": error,
+            "error": notices.text(error),
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "uploads",
@@ -218,10 +221,11 @@ def statement_delete(
             return RedirectResponse(url=_with_qs("uploads", current, acting), status_code=303)
 
         expected = _statement_confirm_label(stmt["account_name"], stmt["statement_period"])
-        if confirm_text.strip() != expected:
-            target = "statement-delete-confirm?" + urlencode(
-                {"id": id, "error": "Typed text didn't match — nothing was deleted."}
-            )
+        problem = ("no_match" if confirm_text.strip() != expected
+                   else "processing" if stmt["status"] == "processing" else None)
+        if problem:
+            # A statement being read can't be deleted: the job would save its transactions anyway.
+            target = "statement-delete-confirm?" + urlencode({"id": id, "error": problem})
             qs = _acting_qs(current, acting)
             if qs:
                 target += "&" + qs
@@ -239,13 +243,17 @@ def statement_delete(
             ).fetchall()
         ]
         cascade_unlink_on_delete(conn, acting.id, txn_ids)
+        # One stamp for the statement and its transactions, so Restore brings back exactly this
+        # batch (a transaction deleted on its own earlier keeps its own stamp and stays deleted).
+        stamp = conn.execute("SELECT datetime('now')").fetchone()[0]
         if txn_ids:
             placeholders = ",".join("?" for _ in txn_ids)
             conn.execute(
-                f"UPDATE transactions SET deleted_at = datetime('now') WHERE id IN ({placeholders})",
-                tuple(txn_ids),
+                f"UPDATE transactions SET deleted_at = ? WHERE id IN ({placeholders})",
+                (stamp, *txn_ids),
             )
-        conn.execute("UPDATE statements SET deleted_at = datetime('now') WHERE id = ?", (id,))
+        conn.execute("UPDATE statements SET deleted_at = ? WHERE id = ?", (stamp, id))
+        relink(conn, acting.id)
         conn.commit()
 
     return RedirectResponse(url=_with_qs("uploads", current, acting), status_code=303)
@@ -260,17 +268,32 @@ def statement_restore(
     _admin: User = Depends(require_admin),  # Recently deleted is admin only (SPEC.md section 11)
 ):
     with get_db() as conn:
-        conn.execute(
-            "UPDATE statements SET deleted_at = NULL WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL",
+        row = conn.execute(
+            "SELECT s.deleted_at, a.deleted_at AS account_deleted_at FROM statements s "
+            "JOIN accounts a ON a.id = s.account_id WHERE s.id = ? AND s.user_id = ? AND s.deleted_at IS NOT NULL",
             (id, acting.id),
-        )
-        conn.execute(
-            "UPDATE transactions SET deleted_at = NULL "
-            "WHERE statement_id = ? AND user_id = ? AND deleted_at IS NOT NULL",
-            (id, acting.id),
-        )
-        conn.commit()
+        ).fetchone()
+        if row is not None and row["account_deleted_at"] is not None:
+            return _recently_deleted_error(current, acting, "account_deleted")
+        if row is not None:
+            conn.execute("UPDATE statements SET deleted_at = NULL WHERE id = ?", (id,))
+            # Only the transactions deleted WITH the statement (same stamp; up to two seconds
+            # earlier for a statement deleted before both got one stamp). One deleted on its own,
+            # at another time, stays deleted.
+            conn.execute(
+                "UPDATE transactions SET deleted_at = NULL WHERE statement_id = ? AND user_id = ? "
+                "AND deleted_at BETWEEN datetime(?, '-2 seconds') AND ?",
+                (id, acting.id, row["deleted_at"], row["deleted_at"]),
+            )
+            relink(conn, acting.id)
+            conn.commit()
     return RedirectResponse(url=_with_qs("recently-deleted", current, acting), status_code=303)
+
+
+def _recently_deleted_error(current: User, acting: User, code: str) -> RedirectResponse:
+    qs = _acting_qs(current, acting)
+    return RedirectResponse(url="recently-deleted?" + urlencode({"error": code}) + (f"&{qs}" if qs else ""),
+                            status_code=303)
 
 
 @router.get("/csv-import-delete-confirm")
@@ -306,7 +329,7 @@ def csv_import_delete_confirm(
             "txn_count": counts["n"],
             "transfer_count": counts["transfers"] or 0,
             "confirm_label": _csv_import_confirm_label(csv_import["original_filename"], csv_import["id"]),
-            "error": error,
+            "error": notices.text(error),
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "uploads",
@@ -332,9 +355,7 @@ def csv_import_delete(
 
         expected = _csv_import_confirm_label(csv_import["original_filename"], csv_import["id"])
         if confirm_text.strip() != expected:
-            target = "csv-import-delete-confirm?" + urlencode(
-                {"id": id, "error": "Typed text didn't match — nothing was deleted."}
-            )
+            target = "csv-import-delete-confirm?" + urlencode({"id": id, "error": "no_match"})
             qs = _acting_qs(current, acting)
             if qs:
                 target += "&" + qs
@@ -364,6 +385,7 @@ def csv_import_delete(
                 (now, *txn_ids),
             )
         conn.execute("UPDATE csv_imports SET deleted_at = ? WHERE id = ?", (now, id))
+        relink(conn, acting.id)
         conn.commit()
 
     return RedirectResponse(url=_with_qs("uploads", current, acting), status_code=303)
@@ -393,10 +415,13 @@ def csv_import_restore(
             # regular transaction-delete path) keeps its own deleted_at
             # and stays deleted, rather than coming back just because
             # the import did.
+            # ...and only those on an account that isn't deleted itself (they come back with it).
             conn.execute(
-                "UPDATE transactions SET deleted_at = NULL WHERE csv_import_id = ? AND deleted_at = ?",
-                (id, deleted_at),
+                "UPDATE transactions SET deleted_at = NULL WHERE csv_import_id = ? AND deleted_at = ? "
+                "AND account_id IN (SELECT id FROM accounts WHERE user_id = ? AND deleted_at IS NULL)",
+                (id, deleted_at, acting.id),
             )
+            relink(conn, acting.id)
             conn.commit()
     return RedirectResponse(url=_with_qs("recently-deleted", current, acting), status_code=303)
 
@@ -410,10 +435,18 @@ def transaction_restore(
     _admin: User = Depends(require_admin),  # Recently deleted is admin only (SPEC.md section 11)
 ):
     with get_db() as conn:
+        row = conn.execute(
+            "SELECT a.deleted_at AS account_deleted_at FROM transactions t JOIN accounts a ON a.id = t.account_id "
+            "WHERE t.id = ? AND t.user_id = ? AND t.deleted_at IS NOT NULL",
+            (id, acting.id),
+        ).fetchone()
+        if row is not None and row["account_deleted_at"] is not None:
+            return _recently_deleted_error(current, acting, "account_deleted")
         conn.execute(
             "UPDATE transactions SET deleted_at = NULL WHERE id = ? AND user_id = ? AND deleted_at IS NOT NULL",
             (id, acting.id),
         )
+        relink(conn, acting.id)
         conn.commit()
     return RedirectResponse(url=_with_qs("recently-deleted", current, acting), status_code=303)
 
@@ -457,7 +490,7 @@ def account_delete_confirm(
         "account_delete_confirm.html",
         {
             "user": acting, "account": account, "counts": counts, "confirm_label": account["name"],
-            "error": error,
+            "error": notices.text(error),
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "accounts",
@@ -487,11 +520,9 @@ def account_delete(
         if account is None:
             return RedirectResponse(url=_with_qs("accounts", current, acting), status_code=303)
         if confirm_text.strip() != account["name"]:
-            return _back_to_confirm("Typed name didn't match \u2014 nothing was deleted.")
+            return _back_to_confirm("name_no_match")
         if _account_delete_counts(conn, id)["processing"]:
-            return _back_to_confirm(
-                "A statement for this account is still being processed \u2014 wait for it to finish, then try again."
-            )
+            return _back_to_confirm("account_processing")
 
         txn_ids = [r["id"] for r in conn.execute(
             "SELECT id FROM transactions WHERE account_id = ? AND user_id = ? AND deleted_at IS NULL", (id, acting.id)
@@ -504,6 +535,7 @@ def account_delete(
                 f"UPDATE {table} SET deleted_at = ? WHERE {column} = ? AND user_id = ? AND deleted_at IS NULL",
                 (stamp, id, acting.id),
             )
+        relink(conn, acting.id)
         conn.commit()
 
     return RedirectResponse(url=_with_qs("accounts", current, acting), status_code=303)
@@ -542,6 +574,7 @@ def account_restore(
                 "UPDATE transactions SET deleted_at = NULL WHERE account_id = ? AND deleted_at = ?",
                 (id, deleted_at),
             )
+            relink(conn, acting.id)
             conn.commit()
     return RedirectResponse(url=_with_qs("recently-deleted", current, acting), status_code=303)
 
@@ -650,7 +683,7 @@ def permanent_delete_confirm(
         {
             "user": acting, "kind": kind, "item_id": id, "label": spec["label"],
             "details": spec["details"](row), "child_count": child_count,
-            "confirm_label": spec["confirm_text"](row), "error": error,
+            "confirm_label": spec["confirm_text"](row), "error": notices.text(error),
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "recently_deleted",
@@ -678,15 +711,24 @@ def permanent_delete(
         if row is None:
             return RedirectResponse(url=_with_qs("recently-deleted", current, acting), status_code=303)
         if confirm_text.strip() != spec["confirm_text"](row):
-            return _back_to_confirm("Typed text didn't match \u2014 nothing was deleted.")
+            return _back_to_confirm("no_match")
         if kind == "account" and account_has_live_rows(conn, id):
-            return _back_to_confirm(
-                "This account still has live statements or transactions \u2014 restore or delete them first."
-            )
-        spec["purge"](conn, id)
+            return _back_to_confirm("live_rows")
+        files = spec["purge"](conn, id)
         conn.commit()
+    remove_files(files)      # only once the rows are gone for good
 
     return RedirectResponse(url=_with_qs("recently-deleted", current, acting), status_code=303)
+
+
+def _anything_processing(conn, user_id: str) -> bool:
+    """An upload of this person's is being read (or waiting to be): its job would save it anyway."""
+    return conn.execute(
+        "SELECT 1 WHERE EXISTS (SELECT 1 FROM statements WHERE user_id = ? AND deleted_at IS NULL AND status = 'processing') "
+        "OR EXISTS (SELECT 1 FROM utility_bills WHERE user_id = ? AND deleted_at IS NULL AND status = 'processing') "
+        "OR EXISTS (SELECT 1 FROM toll_statements WHERE user_id = ? AND deleted_at IS NULL AND status = 'processing')",
+        (user_id, user_id, user_id),
+    ).fetchone() is not None
 
 
 @router.get("/user-wipe")
@@ -718,7 +760,7 @@ def user_wipe_confirm(
         {
             "user": acting,
             "counts": counts,
-            "error": error,
+            "error": notices.text(error),
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "recently_deleted",
@@ -734,14 +776,19 @@ def user_wipe(
     acting: User = Depends(get_acting_user),
     _admin: User = Depends(require_admin),  # Recently deleted is admin only (SPEC.md section 11)
 ):
-    if confirm_text.strip() != acting.name:
-        target = "user-wipe?" + urlencode({"error": "Typed name didn't match — nothing was deleted."})
+    def _back(code: str) -> RedirectResponse:
+        target = "user-wipe?" + urlencode({"error": code})
         qs = _acting_qs(current, acting)
         if qs:
             target += "&" + qs
         return RedirectResponse(url=target, status_code=303)
 
+    if confirm_text.strip() != acting.name:
+        return _back("name_no_match")
+
     with get_db() as conn:
+        if _anything_processing(conn, acting.id):
+            return _back("user_processing")
         stamp = conn.execute("SELECT datetime('now')").fetchone()[0]  # one batch, one timestamp
         # No cascade_unlink_on_delete call here (unlike statement delete /
         # transactions-bulk's delete action) — every transfer pair links

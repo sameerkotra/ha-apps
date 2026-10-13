@@ -9,7 +9,7 @@
     if (window.HouseholdDeepLink) {
         window.HouseholdDeepLink.start(document.body.getAttribute("data-page"), function (route) {
             var m = /^\/month\/(\d{4}-(0[1-9]|1[0-2]))$/.exec(route);
-            if (m) return "dashboard?period=" + m[1];
+            if (m) return "dashboard?period=m:" + m[1];      // the dashboard's key for one month
             return route === "/recurring" ? "recurring" : route === "/dashboard" ? "dashboard" : null;
         }, function (href) { location.href = href; });
     }
@@ -156,7 +156,7 @@
             alert("Select at least one transaction first.");
             return;
         }
-        if (action === "delete" && !confirm("Delete " + ids.length + " transaction(s)? This can't be undone from here.")) {
+        if (action === "delete" && !confirm("Delete " + ids.length + " transaction(s)? An admin can restore them from Recently deleted for 30 days.")) {
             return;
         }
 

@@ -11,6 +11,7 @@ Scoping: the acting user's own rows; an admin (the debug views' audience) may
 open any row. Only files inside PENDING_DIR are ever read (app/storage.py). The PDF is gone once a
 statement has completed, in which case the page says so instead of erroring.
 """
+import math
 import sqlite3
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from ..auth import User, get_acting_user, get_current_user
 from .. import storage
 from ..db import get_db
-from ..pdfview import find_hits, load_pages, render_page
+from ..pdfview import find_hits, load_pages, render_page, stamp_tag
 from ..version import APP_VERSION
 from .accounts import _acting_banner, _acting_qs
 from .upload import statement_flows
@@ -29,6 +30,15 @@ from .upload import statement_flows
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 templates.env.globals["app_version"] = APP_VERSION
+
+
+# What a viewer link may ask for: a search text and a few amounts to highlight. Each one is matched
+# against every word of every page, so they are capped.
+MAX_QUERY_CHARS = 200
+MAX_AMOUNTS = 10
+# The page images never change for a given file (the address carries the file's stamp), so the
+# browser may keep them for a day instead of fetching every page again on each visit.
+PAGE_CACHE = "private, max-age=86400"
 
 
 def _money(value: float) -> str:
@@ -106,7 +116,7 @@ def pdf_view(
 
     qs = _acting_qs(current, acting)
     context = {
-        "user": acting, "embed": bool(embed), "doc": doc, "q": q.strip(), "pages": [], "summary": [],
+        "user": acting, "embed": bool(embed), "doc": doc, "q": q.strip()[:MAX_QUERY_CHARS], "pages": [], "summary": [],
         "acting_qs": qs, "acting_as_banner": _acting_banner(current, acting),
         "active_page": {"utility": "utilities", "toll": "tolls"}.get(kind, "uploads"), "tab": "upload",
         "error": None,
@@ -121,17 +131,20 @@ def pdf_view(
 
     try:
         pages = load_pages(path)
+        doc["stamp"] = stamp_tag(path)
     except Exception as exc:  # surfaced on the page, not a 500
         context["error"] = f"Could not read this PDF: {exc}"
         return templates.TemplateResponse(request, "pdf_view.html", context)
 
     # Figures to highlight: the app's own totals, any ?amount=, and the search text.
     targets = [t for t in doc["targets"] if t.get("amount")]
-    for raw in request.query_params.getlist("amount"):
+    for raw in request.query_params.getlist("amount")[:MAX_AMOUNTS]:
         try:
-            targets.append({"kind": "find", "label": "Amount", "amount": abs(float(raw))})
+            value = abs(float(raw[:40]))
         except ValueError:
-            pass
+            continue
+        if math.isfinite(value):
+            targets.append({"kind": "find", "label": "Amount", "amount": value})
     if context["q"]:
         targets.append({"kind": "find", "label": context["q"], "text": context["q"]})
     per_page = find_hits(pages, targets)
@@ -158,6 +171,7 @@ def pdf_page(
     kind: str,
     id: int,
     page: int,
+    v: str = "",
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -171,4 +185,6 @@ def pdf_page(
         return Response("PDF not found", status_code=404)
     if not 1 <= page <= len(load_pages(path)):
         return Response("No such page", status_code=404)
-    return Response(render_page(path, page), media_type="image/png")
+    # Cached by the browser only when the address names this very file (v= is its stamp).
+    cache = PAGE_CACHE if v and v == stamp_tag(path) else "no-store"
+    return Response(render_page(path, page), media_type="image/png", headers={"Cache-Control": cache})

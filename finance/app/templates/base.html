@@ -27,7 +27,7 @@
        snapshot (a snapshot can hold half-swapped or stale pollers - one cause of "stuck until I refresh").
        timeout: a request that never answers is aborted after 30s (htmx:timeout -> ui.js shows the banner). #}
     <meta name="htmx-config" content='{"historyCacheSize": 0, "timeout": 30000}'>
-    <script src="static/htmx.min.js"></script>
+    <script src="static/htmx.min.js?v={{ app_version }}"></script>
 </head>
 <body data-page="{{ request.state.sidebar_page or '' }}">
     {% set qs = "?" + acting_qs if acting_qs else "" %}

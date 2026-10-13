@@ -1,6 +1,8 @@
+{% import "_paging_macros.html" as paging %}
 <div id="transactions-table-wrap">
 {% if transactions %}
-{% set next_page = "transactions" %}
+{# A category saved on one row comes back to this same filtered view. #}
+{% set next_page = "transactions" ~ ("?" ~ filter_qs if filter_qs else "") %}
 {# data-next carries the current filters so a bulk action returns to this view. #}
 <div class="bulk-bar-wrap bulk-collapsed" data-action-url="transactions-bulk{% if acting_qs %}?{{ acting_qs }}{% endif %}" data-next="transactions{% if filter_qs %}?{{ filter_qs }}{% endif %}">
     {# Collapsed by default: one small button. Opening it shows the checkboxes and the bulk actions (categorize / exclude / delete several rows at once). #}
@@ -58,8 +60,9 @@
         </tbody>
     </table>
     </div>
+    {% if pager %}{{ paging.pager(pager) }}{% endif %}
     <p class="list-total">
-        {{ transactions | length }} transaction{{ "s" if transactions | length != 1 else "" }},
+        {{ txn_count }} transaction{{ "s" if txn_count != 1 else "" }},
         total <span class="{{ 'negative' if total < 0 else '' }}">{{ "%.2f"|format(total) }}</span>
     </p>
 </div>

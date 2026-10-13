@@ -1,7 +1,8 @@
 """App settings edited on Admin → App settings (SPEC.md sections 21–23).
 
-Stored in the app_settings table and read on every use, so a change takes effect at once without
-restarting the app. The AI settings live only here (they're not app options). An older
+Stored in the app_settings table. Every value is read from an in-memory copy that is refreshed whenever
+the database has changed since (SQLite's data_version, on one long-lived read connection), so a change
+takes effect at once without restarting the app, and a page doesn't open a database connection per value. The AI settings live only here (they're not app options). An older
 install's leftover ollama_url / ollama_model, or the OLLAMA_URL / OLLAMA_MODEL environment (local
 development), fill in the address and model once if they are still empty.
 
@@ -9,11 +10,15 @@ A new option: add a Setting to SETTINGS and its key to a GROUPS entry; the page 
 """
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import os
+import sqlite3
+import threading
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from . import db as _db
 from .db import get_db
 
 
@@ -25,6 +30,8 @@ class Setting:
     default: str
     help: str = ""
     choices: tuple = ()      # (value, label) pairs for "choice"
+    minimum: int = 256       # "int": the allowed range
+    maximum: int = 200000
 
 
 PROVIDER_CHOICES = (("ollama", "Ollama (on your network)"), ("openai", "OpenAI-compatible"),
@@ -49,6 +56,10 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
     Setting("ai_max_output_tokens", "Longest answer (tokens)", "int", "16000",
             "The most the model may write for one PDF (Claude needs a limit; OpenAI-compatible and Ollama ignore it). "
             "Long statements need more; the app lowers it if the model allows less."),
+    Setting("max_pdf_pages", "Most pages per PDF", "int", "30",
+            "A PDF with more pages than this isn't sent to the AI (every page goes as an image in one request, "
+            "so a very long one would take a long time or cost a lot). The upload shows why it stopped.",
+            minimum=1, maximum=500),
     Setting("show_ai_usage", "Show AI token usage on debug pages", "bool", "1",
             "Tokens sent and received, time taken and (if prices are set) cost, for every AI request."),
     Setting("price_input_per_million", "Price per million input tokens", "price", "0",
@@ -63,6 +74,10 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "Lets the Household Assistant app tell each person their own month — income, spending by category, their "
             "largest charges, recurring charges and bills coming up — and what an admin shared with them here. Never "
             "notes. Off until you turn it on: money is private."),
+    Setting("bus_signing_key", "App-messages signing key", "secret", "",
+            "The same key in every household app (Admin → App settings there). Without one, any app on Home "
+            "Assistant's network can send messages as any other. Set it in every app at about the same time: "
+            "an app with a key refuses messages from apps without it."),
 ]}
 
 _SEEDED_FROM_ENV = {"ai_url": "OLLAMA_URL", "ai_model": "OLLAMA_MODEL"}
@@ -71,13 +86,13 @@ _SEEDED_FROM_ENV = {"ai_url": "OLLAMA_URL", "ai_model": "OLLAMA_MODEL"}
 GROUPS: list[tuple[str, str, list[str]]] = [
     ("AI", "Used to read PDFs, suggest categories and write SQL. The next request uses a change — nothing "
      "that is already running is interrupted.",
-     ["ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_text_model", "ai_max_output_tokens"]),
+     ["ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_text_model", "ai_max_output_tokens", "max_pdf_pages"]),
     ("AI usage on debug pages", "Every request to the model is recorded with the upload it belongs to, and added to "
      "the running total on Admin → AI usage. The prices are used for the cost on both.",
      ["show_ai_usage", "price_input_per_million", "price_output_per_million"]),
     ("Features", "Parts of the app that not everyone needs.", ["feature_utilities", "feature_tolls"]),
     ("Household Assistant", "The Household Assistant app answers questions from what the household apps know. Its "
-     "answers travel through Home Assistant's event bus.", ["assistant_answers"]),
+     "answers travel through Home Assistant's event bus.", ["assistant_answers", "bus_signing_key"]),
 ]
 
 
@@ -91,13 +106,61 @@ def seed_from_addon_options() -> None:
                              (key, value))
 
 
-def _stored(key: str) -> str | None:
+class _Snapshot:
+    """Every stored setting, read in one query and kept until the database changes (db.WATCHER: a
+    commit from any connection, or a restore swapping the file, moves its generation)."""
+
+    def __init__(self):
+        self._generation = None
+        self._values: dict[str, str] | None = None
+
+    def values(self) -> dict[str, str]:
+        watcher = _db.WATCHER
+        with watcher.lock:
+            generation = watcher._generation_locked()
+            if generation is None:
+                return {}          # e.g. before the first migration: no database yet
+            if self._values is None or generation != self._generation:
+                try:
+                    self._values = dict(watcher.read("SELECT key, value FROM app_settings"))
+                except sqlite3.Error:
+                    return {}      # no table yet
+                self._generation = generation
+            return self._values
+
+    def forget(self) -> None:
+        self._values, self._generation = None, None
+        _db.WATCHER.forget()
+
+
+_SNAPSHOT = _Snapshot()
+# A background job reads the settings it started with for its whole run (pinned()).
+_pinned = threading.local()
+
+
+def invalidate() -> None:
+    """Drop the in-memory copy (after a restore swapped the database, and in tests)."""
+    _SNAPSHOT.forget()
+
+
+@contextlib.contextmanager
+def pinned():
+    """Within the block, this thread sees the settings as they were when it started. A job reads the
+    provider, address, key and model separately; an admin saving App settings halfway through must
+    not give it one provider's address with another's key."""
+    previous = getattr(_pinned, "values", None)
+    _pinned.values = dict(_SNAPSHOT.values())
     try:
-        with get_db() as conn:
-            row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
-    except Exception:
-        return None
-    return row[0] if row is not None else None
+        yield
+    finally:
+        _pinned.values = previous
+
+
+def _stored(key: str) -> str | None:
+    values = getattr(_pinned, "values", None)
+    if values is None:
+        values = _SNAPSHOT.values()
+    return values.get(key)
 
 
 def get(key: str) -> str:
@@ -148,10 +211,18 @@ def has_api_key() -> bool:
     return bool(get("ai_api_key"))
 
 
+def secret_hint(key: str) -> str:
+    """'…abcd' for the page: enough to recognise a saved key, never the key."""
+    value = get(key)
+    return f"…{value[-4:]}" if len(value) >= 12 else ("saved" if value else "")
+
+
 def api_key_hint() -> str:
-    """'…abcd' for the page: enough to recognise a key, never the key."""
-    key = get("ai_api_key")
-    return f"…{key[-4:]}" if len(key) >= 12 else ("saved" if key else "")
+    return secret_hint("ai_api_key")
+
+
+def secret_hints() -> dict[str, str]:
+    return {key: secret_hint(key) for key, s in SETTINGS.items() if s.kind == "secret"}
 
 
 def ai_configured() -> bool:
@@ -206,8 +277,8 @@ def clean(key: str, raw: str) -> tuple[str | None, str | None]:
             value = int(raw or s.default)
         except ValueError:
             return None, f"{s.label} must be a whole number."
-        if not 256 <= value <= 200000:
-            return None, f"{s.label} must be between 256 and 200000."
+        if not s.minimum <= value <= s.maximum:
+            return None, f"{s.label} must be between {s.minimum} and {s.maximum}."
         return str(value), None
     if s.kind == "choice":
         if raw not in {v for v, _ in s.choices}:
@@ -252,6 +323,7 @@ def save(values: dict[str, str], user_id: str) -> list[str]:
                 "INSERT INTO app_settings (key, value, updated_at, updated_by) VALUES (?, ?, datetime('now'), ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, "
                 "updated_by = excluded.updated_by", (key, value, user_id))
+    invalidate()
     return []
 
 

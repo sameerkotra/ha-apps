@@ -5,7 +5,7 @@ routes/review.py and CSV import in routes/csv_import.py.
 from pathlib import Path
 from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user
@@ -13,11 +13,13 @@ from ..categorize import UNCATEGORIZED, list_all_categories
 from ..common import csv_export
 from ..db import get_db
 from ..version import APP_VERSION
-from ..matching import cascade_unlink_on_delete
+from ..matching import cascade_unlink_on_delete, relink
+from .. import notices
 from ..datenorm import normalize_date
 from ..amounts import parse_number
 from ..security import safe_next
 from ..parser.pipeline import finalize_if_ready
+from ..paging import SqlPager
 from .accounts import _acting_banner, _acting_qs, htmx_fragment_requested
 
 router = APIRouter()
@@ -25,6 +27,9 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 templates.env.globals["app_version"] = APP_VERSION
 
 MAX_NOTE_LENGTH = 1000  # generous for a short note; just a sanity bound, not a design constraint
+MAX_DESCRIPTION_LENGTH = 500   # the same bound the form's own maxlength and the AI reading use
+MAX_CATEGORY_LENGTH = 60       # the same as a category added on the Categories page
+MAX_BULK_IDS = 5000            # one bulk action: far more than a page shows, and one SQL statement's worth
 
 def _insert_manual_transaction(
     conn, user_id: str, account_id: int, date: str, amount: str, description: str, category: str,
@@ -69,8 +74,12 @@ def _insert_manual_transaction(
     description = description.strip()
     if not description:
         return False, "Description is required"
+    if len(description) > MAX_DESCRIPTION_LENGTH:
+        return False, f"Description is too long (max {MAX_DESCRIPTION_LENGTH} characters)"
 
     category = category.strip() or UNCATEGORIZED
+    if len(category) > MAX_CATEGORY_LENGTH:
+        return False, f"Category is too long (max {MAX_CATEGORY_LENGTH} characters)"
 
     cur = conn.execute(
         "INSERT INTO transactions "
@@ -103,16 +112,17 @@ def create_manual_transaction(
     (moved there from the Transactions page) — `next` defaults to
     "uploads" accordingly, same pattern every other next-aware redirect
     in this app already uses."""
+    next = safe_next(next, "uploads")
     with get_db() as conn:
         ok, result = _insert_manual_transaction(conn, acting.id, account_id, date, amount, description, category)
         if ok:
+            relink(conn, acting.id)
             conn.commit()
         else:
-            return JSONResponse({"error": result}, status_code=400)
+            return notices.form_error(request, templates, acting, _acting_qs(current, acting), result, next)
 
     qs = _acting_qs(current, acting)
-    next = safe_next(next, "uploads")
-    return RedirectResponse(url=f"{next}{'?' + qs if qs else ''}", status_code=303)
+    return RedirectResponse(url=f"{next}{('&' if '?' in next else '?') + qs if qs else ''}", status_code=303)
 
 
 def _parsed_transaction_filters(
@@ -319,50 +329,50 @@ def list_transactions(
     filter_qs = _transactions_filter_qs(f, searched=bool(searched))
     has_filter = bool(filter_qs)
 
-    with get_db() as conn:
-        # Only query once a filter (or an explicit Search) is present; the
-        # accounts and categories for the dropdowns are cheap and always loaded.
-        transactions = conn.execute(
-            f"""
-            SELECT t.*, a.name AS account_name, a.type AS account_type
-            FROM transactions t
-            JOIN accounts a ON a.id = t.account_id
-            WHERE {' AND '.join(conditions)}
-            ORDER BY t.date DESC, t.id DESC
-            """,
-            params,
-        ).fetchall() if has_filter else []
-        accounts = conn.execute(
-            "SELECT id, name, type FROM accounts WHERE user_id = ? AND deleted_at IS NULL AND is_archived = 0",
-            (acting.id,),
-        ).fetchall()
-        all_categories = list_all_categories(conn, acting.id)
-
-    # Total for whatever's currently filtered/displayed (Phase 4/13) —
-    # computed over the exact same rows just fetched, so it can never
-    # drift from what's actually shown in the table below it. For the
+    # Total for whatever's currently filtered (Phase 4/13) — over every
+    # matching row, not just the page shown, computed in SQL with the same
+    # WHERE as the rows themselves, so it can never drift from them. For the
     # `flow=expense` drill-down specifically, this uses the same
     # account-type-aware magnitude as the dashboard's own Spend total
     # (routes/dashboard.py's spend_amount_expr) rather than a raw signed
     # sum — a credit-card purchase (positive there) and a checking
     # purchase (negative there) must both add POSITIVELY to "how much
     # was spent", or this total would silently disagree with the exact
-    # dashboard figure that linked here in the first place (a raw sum
-    # would partially cancel the two signs instead of adding them).
-    # Every other view (flow=income, or no flow at all — just browsing/
-    # filtering by account, category, or date) sums the amount column
-    # exactly as displayed: flow=income is already all-positive/
-    # checking-savings-only so a raw sum already matches the dashboard,
-    # and a plain browse has no dashboard figure to match at all, so the
-    # most transparent total is simply what the visible numbers add up
-    # to.
-    if flow == "expense":
-        total = sum(
-            (t["amount"] if t["account_type"] == "credit_card" else -t["amount"])
-            for t in transactions
-        )
-    else:
-        total = sum(t["amount"] for t in transactions)
+    # dashboard figure that linked here in the first place. Every other
+    # view sums the amount column exactly as displayed.
+    total_expr = ("CASE WHEN a.type = 'credit_card' THEN t.amount ELSE -t.amount END"
+                  if flow == "expense" else "t.amount")
+    where_sql = " AND ".join(conditions)
+    pager = None
+    transactions: list = []
+    total, txn_count = 0.0, 0
+    with get_db() as conn:
+        # Only query once a filter (or an explicit Search) is present; the
+        # accounts and categories for the dropdowns are cheap and always loaded.
+        # One page at a time (SqlPager): a long history no longer renders every row.
+        if has_filter:
+            txn_count, total = conn.execute(
+                f"SELECT COUNT(*), COALESCE(SUM({total_expr}), 0) FROM transactions t "
+                f"JOIN accounts a ON a.id = t.account_id WHERE {where_sql}",
+                params,
+            ).fetchone()
+            pager = SqlPager(request, "transactions", txn_count)
+            transactions = conn.execute(
+                f"""
+                SELECT t.*, a.name AS account_name, a.type AS account_type
+                FROM transactions t
+                JOIN accounts a ON a.id = t.account_id
+                WHERE {where_sql}
+                ORDER BY t.date DESC, t.id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, pager.limit, pager.offset],
+            ).fetchall()
+        accounts = conn.execute(
+            "SELECT id, name, type FROM accounts WHERE user_id = ? AND deleted_at IS NULL AND is_archived = 0",
+            (acting.id,),
+        ).fetchall()
+        all_categories = list_all_categories(conn, acting.id)
 
     # The CSV export button lives inside the #txn-filters search form
     # itself now (transactions_list.html) as a native form submit
@@ -372,7 +382,7 @@ def list_transactions(
     context = {
         "user": acting, "transactions": transactions, "accounts": accounts,
         "categories": all_categories,
-        "total": total,
+        "total": total, "txn_count": txn_count, "pager": pager,
         "q": q, "selected_account_id": account_id_int,
         "filter_category": category, "filter_txn_type": txn_type, "filter_flow": flow,
         "filter_start_date": start_date, "filter_end_date": end_date,
@@ -432,28 +442,43 @@ def export_transactions_csv(
                                     excluded)
     conditions, params = _build_transaction_conditions(acting.id, f)
 
-    with get_db() as conn:
-        transactions = conn.execute(
-            f"""
-            SELECT t.date, a.name AS account_name, a.type AS account_type, t.description,
-                   t.amount, t.category, t.txn_type, t.is_excluded, t.note
-            FROM transactions t
-            JOIN accounts a ON a.id = t.account_id
-            WHERE {' AND '.join(conditions)}
-            ORDER BY t.date DESC, t.id DESC
-            """,
-            params,
-        ).fetchall()
+    where_sql = " AND ".join(conditions)
 
-    rows = ([
-        t["date"], _csv_safe(t["account_name"]), t["account_type"], _csv_safe(t["description"]),
-        f"{t['amount']:.2f}", _csv_safe(t["category"] or ""), t["txn_type"],
-        "yes" if t["is_excluded"] else "no", _csv_safe(t["note"] or ""),
-    ] for t in transactions)
+    def rows():
+        """Read while the file is sent, 500 rows at a time (each batch on its own short connection:
+        a streamed answer may be read on a different thread each time), never the whole history at once."""
+        after = None   # (date, id) of the last row sent
+        while True:
+            extra, extra_params = "", []
+            if after is not None:
+                extra = " AND (t.date < ? OR (t.date = ? AND t.id < ?))"
+                extra_params = [after[0], after[0], after[1]]
+            with get_db() as conn:
+                batch = conn.execute(
+                    f"""
+                    SELECT t.id, t.date, a.name AS account_name, a.type AS account_type, t.description,
+                           t.amount, t.category, t.txn_type, t.is_excluded, t.note
+                    FROM transactions t
+                    JOIN accounts a ON a.id = t.account_id
+                    WHERE {where_sql}{extra}
+                    ORDER BY t.date DESC, t.id DESC
+                    LIMIT 500
+                    """,
+                    [*params, *extra_params],
+                ).fetchall()
+            if not batch:
+                break
+            after = (batch[-1]["date"], batch[-1]["id"])
+            for t in batch:
+                yield [
+                    t["date"], _csv_safe(t["account_name"]), t["account_type"], _csv_safe(t["description"]),
+                    f"{t['amount']:.2f}", _csv_safe(t["category"] or ""), t["txn_type"],
+                    "yes" if t["is_excluded"] else "no", _csv_safe(t["note"] or ""),
+                ]
 
     return StreamingResponse(
         csv_export.stream(["Date", "Account", "Account Type", "Description", "Amount", "Category", "Type",
-                           "Excluded", "Note"], rows),
+                           "Excluded", "Note"], rows()),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=transactions.csv"},
     )
@@ -521,8 +546,11 @@ def set_transaction_category(
 ):
     """Manual category edit (SPEC.md section 9) — allowed whatever the
     review_status. Just the category: rules are made on the Categories page."""
-    if not category.strip():
-        return JSONResponse({"error": "Category is required"}, status_code=400)
+    next = safe_next(next, "transactions")
+    if not category.strip() or len(category.strip()) > MAX_CATEGORY_LENGTH:
+        message = ("Category is required" if not category.strip()
+                   else f"Category is too long (max {MAX_CATEGORY_LENGTH} characters)")
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), message, next)
 
     with get_db() as conn:
         row = conn.execute(
@@ -540,9 +568,9 @@ def set_transaction_category(
         )
         conn.commit()
 
+    # `next` may carry the filtered view to return to (its own querystring).
     qs = _acting_qs(current, acting)
-    next = safe_next(next, "transactions")
-    return RedirectResponse(url=f"{next}{'?' + qs if qs else ''}", status_code=303)
+    return RedirectResponse(url=f"{next}{('&' if '?' in next else '?') + qs if qs else ''}", status_code=303)
 
 
 @router.post("/transaction-exclude")
@@ -575,6 +603,7 @@ def set_transaction_exclude(
 
         excluded = 1 if is_excluded == "1" else 0
         conn.execute("UPDATE transactions SET is_excluded = ? WHERE id = ?", (excluded, id))
+        relink(conn, acting.id)
         conn.commit()
 
     return templates.TemplateResponse(
@@ -599,14 +628,21 @@ def bulk_action(
     """Bulk actions (SPEC.md sections 7, 13): approve, categorize,
     exclude, un-exclude, delete. `ids` is a comma-joined list of ids. Every
     UPDATE is scoped by user_id, so a tampered list can't reach other users."""
+    back = safe_next(next, "transactions")
+
+    def problem(message: str):
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), message, back)
+
     if action not in ("approve", "categorize", "delete", "exclude", "unexclude"):
-        return JSONResponse({"error": "Unknown action"}, status_code=400)
+        return problem("Unknown action")
     try:
         id_list = [int(x) for x in ids.split(",") if x.strip()]
     except ValueError:
-        return JSONResponse({"error": "Invalid transaction ids"}, status_code=400)
+        return problem("Invalid transaction ids")
     if not id_list:
-        return JSONResponse({"error": "No transactions selected"}, status_code=400)
+        return problem("No transactions selected")
+    if len(id_list) > MAX_BULK_IDS:
+        return problem(f"Choose at most {MAX_BULK_IDS} transactions at a time")
 
     placeholders = ",".join("?" for _ in id_list)
     with get_db() as conn:
@@ -628,13 +664,15 @@ def bulk_action(
                 f"WHERE id IN ({placeholders}) AND user_id = ? AND deleted_at IS NULL",
                 (*id_list, acting.id),
             )
+            relink(conn, acting.id)
             conn.commit()
             for sid in statement_ids:
                 finalize_if_ready(conn, sid)
             conn.commit()
         elif action == "categorize":
-            if not category.strip():
-                return JSONResponse({"error": "No category selected"}, status_code=400)
+            if not category.strip() or len(category.strip()) > MAX_CATEGORY_LENGTH:
+                return problem("No category selected" if not category.strip()
+                               else f"Category is too long (max {MAX_CATEGORY_LENGTH} characters)")
             # A bulk human override is now the reason for each row's category.
             conn.execute(
                 f"UPDATE transactions SET category = ?, category_source = 'manual', "
@@ -649,6 +687,7 @@ def bulk_action(
                 f"WHERE id IN ({placeholders}) AND user_id = ? AND deleted_at IS NULL",
                 (*id_list, acting.id),
             )
+            relink(conn, acting.id)
             conn.commit()
         elif action == "unexclude":
             conn.execute(
@@ -656,6 +695,7 @@ def bulk_action(
                 f"WHERE id IN ({placeholders}) AND user_id = ? AND deleted_at IS NULL",
                 (*id_list, acting.id),
             )
+            relink(conn, acting.id)
             conn.commit()
         elif action == "delete":
             # Phase 4 (SPEC.md section 11) — before soft-deleting,
@@ -670,13 +710,13 @@ def bulk_action(
                 f"WHERE id IN ({placeholders}) AND user_id = ? AND deleted_at IS NULL",
                 (*id_list, acting.id),
             )
+            relink(conn, acting.id)
             conn.commit()
 
     # `next` may already carry a querystring (the filtered view to return to).
     qs = _acting_qs(current, acting)
-    next = safe_next(next, "transactions")
-    separator = "&" if "?" in next else "?"
-    return RedirectResponse(url=f"{next}{separator + qs if qs else ''}", status_code=303)
+    separator = "&" if "?" in back else "?"
+    return RedirectResponse(url=f"{back}{separator + qs if qs else ''}", status_code=303)
 
 
 @router.get("/transactions-accounts")

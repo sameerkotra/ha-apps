@@ -14,6 +14,7 @@ only summary figure read; Total Tolls, Previous Balance, Adjustments and Payment
 amount is positive and above zero, so a pass line whose amount is negative or zero is treated as
 unparsed instead of being imported.
 """
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -136,8 +137,10 @@ def parse_datetime(date_text: str, time_text: str, ampm: str) -> str | None:
 
 def clean_amount(text) -> float | None:
     """'$1.25', '-$170.45', '(3.00)', 1.5 -> the signed number, or None if it is not a money amount."""
+    if isinstance(text, bool):
+        return None
     if isinstance(text, (int, float)):
-        return float(text)
+        return float(text) if math.isfinite(text) else None
     s = str(text or "").strip()
     neg = s.startswith("(") and s.endswith(")") or "-" in s
     digits = re.sub(r"[^\d.]", "", s)
@@ -181,8 +184,15 @@ def _iso_date(us: str) -> str | None:
         return None
 
 
+# A pass line is about 100 characters (one wrapped over three lines, ~300). _ROW has two lazy parts
+# that can try very many splits of a long line, so a longer one is never matched.
+MAX_ROW_CHARS = 500
+
+
 def _match_row(line: str) -> tuple[TollPass | None, str]:
     """(pass, reason). reason is '' on success, else why the line did not become a pass."""
+    if len(line) > MAX_ROW_CHARS:
+        return None, "the line is too long to be a pass"
     m = _ROW.match(line)
     if not m:
         return None, ""
@@ -237,6 +247,8 @@ def parse_toll_text(text: str) -> TollExtraction:
                     if i - 1 + extra >= len(lines) or is_boundary(lines[i - 1 + extra]):
                         break
                     joined = f"{joined} {lines[i - 1 + extra]}"
+                    if len(joined) > MAX_ROW_CHARS:
+                        break
                     parsed, reason = _match_row(joined)
                     if parsed is not None or reason:
                         consumed = extra

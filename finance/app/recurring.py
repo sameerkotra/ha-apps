@@ -40,9 +40,13 @@ merchant key (the whole family) or "<merchant key>@<amount>" (one amount
 series). A series-level override beats a merchant-level one.
 """
 import re
-from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+import threading
+from bisect import bisect_left, bisect_right
+from collections import Counter, OrderedDict, defaultdict
+from datetime import date, timedelta
+from functools import lru_cache
 
+from . import db
 from .datenorm import normalize_date
 
 _KEY_LEN = 32
@@ -90,12 +94,23 @@ def merchant_key(description: str) -> str:
     return _WHITESPACE.sub(" ", d).strip()[:_KEY_LEN]
 
 
+_ISO = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@lru_cache(maxsize=4096)
 def _parse_date(s: str) -> date | None:
     """Every stored date is supposed to be ISO already (datenorm), but this
     is the one place that parses them, so a leftover bad row is skipped
-    rather than crashing the page."""
+    rather than crashing the page. An ISO date is read directly (the same
+    dates repeat across thousands of rows, hence the cache); anything else
+    goes through datenorm as before."""
+    if s and _ISO.fullmatch(s):
+        try:
+            return date.fromisoformat(s)
+        except ValueError:
+            pass
     normalized = normalize_date(s)
-    return datetime.strptime(normalized, "%Y-%m-%d").date() if normalized else None
+    return date.fromisoformat(normalized) if normalized else None
 
 
 def _add_months(d: date, months: int) -> date:
@@ -140,18 +155,26 @@ def _project_next(last: date, frequency: str | None, avg_gap_days: float) -> dat
 
 # --- grouping -------------------------------------------------------------
 
+def _specific(root: str) -> bool:
+    return len(root.split()) >= _FAMILY_MIN_WORDS or len(root) >= _FAMILY_MIN_CHARS
+
+
 def _family_roots(keys: set[str]) -> dict[str, str]:
-    """member key -> family root key (shortest specific key it starts with)."""
-    roots: list[str] = []
+    """member key -> family root key (shortest specific key it starts with).
+
+    A root a key "starts with" (followed by a space) is one of the key's own word prefixes, so only
+    those are looked up — shortest first, which is the root an earlier, shorter key made first —
+    instead of testing every root found so far against every key."""
+    roots: set[str] = set()
     result: dict[str, str] = {}
     for key in sorted(keys, key=len):
-        root = next(
-            (r for r in roots
-             if key.startswith(r + " ") and (len(r.split()) >= _FAMILY_MIN_WORDS or len(r) >= _FAMILY_MIN_CHARS)),
-            None,
-        )
+        root = None
+        for i, ch in enumerate(key):
+            if ch == " " and key[:i] in roots and _specific(key[:i]):
+                root = key[:i]
+                break
         if root is None:
-            roots.append(key)
+            roots.add(key)
             root = key
         result[key] = root
     return result
@@ -170,12 +193,20 @@ def _cluster_by_amount(txns: list[dict]) -> list[tuple[float, list[dict]]]:
     anchors = sorted((a for a, n in exact.items() if n >= 2), key=lambda a: (-exact[a], a))
 
     clusters: dict[float, list[dict]] = {a: [] for a in anchors}
+    # The anchors near an amount, found with a binary search instead of testing every anchor: an
+    # anchor a is near x when |x - a| <= max(3, 0.2a), which keeps a between min(x - 3, x / 1.2)
+    # and max(x + 3, x / 0.8). Ties in distance go to the anchor listed first, as before.
+    rank = {a: i for i, a in enumerate(anchors)}
+    by_value = sorted(anchors)
     leftovers = []
     for t in txns:
         amount = abs(t["amount"])
-        near = [a for a in anchors if abs(amount - a) <= _tolerance(a)]
+        lo = min(amount - _AMOUNT_TOLERANCE_FLOOR, amount / (1 + _AMOUNT_TOLERANCE_RATIO)) - 0.01
+        hi = max(amount + _AMOUNT_TOLERANCE_FLOOR, amount / (1 - _AMOUNT_TOLERANCE_RATIO)) + 0.01
+        window = by_value[bisect_left(by_value, lo):bisect_right(by_value, hi)]
+        near = [a for a in window if abs(amount - a) <= _tolerance(a)]
         if near:
-            clusters[min(near, key=lambda a: abs(amount - a))].append(t)
+            clusters[min(near, key=lambda a: (abs(amount - a), rank[a]))].append(t)
         else:
             leftovers.append(t)
 
@@ -290,7 +321,35 @@ def _make_series(account: dict, root: str, member_keys: set[str], anchor: float,
     }
 
 
+# The last scans, by (user, account), kept until the database changes (db.WATCHER): the Recurring page
+# and the Household Assistant ask for the same scan again and again while nothing changes.
+_CACHE: "OrderedDict[tuple, tuple]" = OrderedDict()
+_CACHE_SIZE = 16
+_cache_lock = threading.Lock()
+
+
 def _load_series(conn, user_id: str, account_id: int | None = None) -> tuple[list[dict], int]:
+    """(every series for this user, number of candidate charges scanned). The result is shared with
+    later callers while the database is unchanged: read it, never change it."""
+    generation = db.WATCHER.generation()
+    key = (user_id, account_id)
+    if generation is not None and not conn.in_transaction:
+        with _cache_lock:
+            hit = _CACHE.get(key)
+            if hit is not None and hit[0] == generation:
+                _CACHE.move_to_end(key)
+                return hit[1]
+    result = _scan_series(conn, user_id, account_id)
+    if generation is not None and not conn.in_transaction and generation == db.WATCHER.generation():
+        with _cache_lock:
+            _CACHE[key] = (generation, result)
+            _CACHE.move_to_end(key)
+            while len(_CACHE) > _CACHE_SIZE:
+                _CACHE.popitem(last=False)
+    return result
+
+
+def _scan_series(conn, user_id: str, account_id: int | None = None) -> tuple[list[dict], int]:
     """(every series for this user, number of candidate charges scanned)."""
     params: list = [user_id]
     account_filter = ""

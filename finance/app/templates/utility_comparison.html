@@ -119,7 +119,7 @@
         <div class="trend-bar-row">
             <span class="trend-bar-label">{{ b.period_start_date }}</span>
             <span class="trend-bar-track">
-                <span class="trend-bar-fill" style="width: {{ ((b.cost / max_cost[type_name] * 100) if max_cost[type_name] else 0) | round(1) }}%;"></span>
+                <span class="trend-bar-fill" style="width: {{ (((b.cost or 0) / max_cost[type_name] * 100) if max_cost[type_name] else 0) | round(1) }}%;"></span>
             </span>
             <span class="trend-bar-value">{{ "%.2f"|format(b.cost) if b.cost is not none else "—" }}{% if b.status == "pending_review" %} &#9888;&#65039;{% endif %}</span>
         </div>

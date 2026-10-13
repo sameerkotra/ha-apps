@@ -10,8 +10,12 @@ from ..db import get_db
 from ..amounts import parse_number
 from ..datenorm import normalize_date
 from ..version import APP_VERSION
-from ..matching import auto_link_unambiguous, cascade_unlink_on_delete
-from ..parser.pipeline import RECONCILIATION_TOLERANCE, delete_pdf, finalize_if_ready
+from ..amounts import to_cents
+from ..matching import auto_link_unambiguous, cascade_unlink_on_delete, relink
+from ..parser.pipeline import RECONCILIATION_TOLERANCE_CENTS, delete_pdf, finalize_if_ready
+from .. import notices
+
+MAX_DESCRIPTION_LENGTH = 500
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
@@ -107,18 +111,22 @@ def resolve_transaction(
     value to pick between (see this module's docstring); the workflow is
     confirm-or-correct against the source PDF, not choose-between-two-
     values."""
+    def problem(message: str):
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), message, "review")
+
     amount_value = parse_number(amount)
     if amount_value is None:
-        return JSONResponse({"error": "Amount must be a number"}, status_code=400)
+        return problem("Amount must be a number")
     amount_value = round(amount_value, 2)
     if amount_value == 0:
-        return JSONResponse({"error": "Amount can't be zero"}, status_code=400)
+        return problem("Amount can't be zero")
     if not date.strip() or not description.strip():
-        return JSONResponse({"error": "Date and description are required"}, status_code=400)
+        return problem("Date and description are required")
+    if len(description.strip()) > MAX_DESCRIPTION_LENGTH:
+        return problem(f"Description is too long (max {MAX_DESCRIPTION_LENGTH} characters)")
     iso_date = normalize_date(date)
     if iso_date is None:
-        return JSONResponse({"error": f"Date \"{date.strip()}\" isn't in a recognized format "
-                                      "(expected YYYY-MM-DD or MM/DD/YYYY)"}, status_code=400)
+        return problem(f"Date \"{date.strip()[:40]}\" isn't in a recognized format (expected YYYY-MM-DD or MM/DD/YYYY)")
 
     with get_db() as conn:
         row = conn.execute(
@@ -132,6 +140,7 @@ def resolve_transaction(
             "review_status = 'clean', flag_reason = NULL WHERE id = ?",
             (iso_date, amount_value, description.strip(), id),
         )
+        relink(conn, acting.id)       # a row that is clean now can be one side of a transfer
         conn.commit()
         finalize_if_ready(conn, row["statement_id"])
         conn.commit()
@@ -210,7 +219,7 @@ def statement_remove_transaction(
             ).fetchone()[0]
             printed_delta = round(stmt["new_balance"] - stmt["previous_balance"], 2)
             actual_delta = round(remaining, 2)
-            if abs(actual_delta - printed_delta) <= RECONCILIATION_TOLERANCE:
+            if abs(to_cents(actual_delta) - to_cents(printed_delta)) <= RECONCILIATION_TOLERANCE_CENTS:
                 conn.execute("UPDATE statements SET balance_mismatch = NULL WHERE id = ?", (statement_id,))
             else:
                 conn.execute(
@@ -223,6 +232,7 @@ def statement_remove_transaction(
                         statement_id,
                     ),
                 )
+        relink(conn, acting.id)
         conn.commit()
         completed = finalize_if_ready(conn, statement_id)
         conn.commit()

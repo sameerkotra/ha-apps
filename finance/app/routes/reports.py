@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import escape
 
 from ..auth import User, get_acting_user, get_current_user, require_admin
+from ..common import web_security
 from ..db import get_db
 from ..version import APP_VERSION
 from .. import long_runs, query_engine as qe, report_charts, report_core as rc, report_vars as rv, saved_reports
@@ -119,7 +120,8 @@ async def report_page(request: Request, id: str = "", run: str = "", page: str =
             return render()
         kept = qe.recall(rid, current.id, acting.id, _key(report, params))
         if kept is None:
-            if run == "1" and request.headers.get("sec-fetch-site") != "cross-site":
+            # same-site counts as another site too (web_security.CROSS_SITE), as for every POST
+            if run == "1" and (request.headers.get("sec-fetch-site") or "").strip().lower() not in web_security.CROSS_SITE:
                 lr, busy = long_runs.start(current.id, acting.id, report["sql"], params, _key(report, params),
                                            report["name"], on_done=lambda: saved_reports.mark_run(report["id"]))
                 back = "report?" + _urlencode({**_link_base(report, form, acting_qs), "run": "1", "per_page": per_page})

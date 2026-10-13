@@ -22,6 +22,7 @@ longer (more specific) pattern, then the most recently saved rule.
 """
 import json
 import logging
+from dataclasses import dataclass, field
 
 from . import ai_client, settings
 
@@ -77,18 +78,31 @@ _BUILTIN_RULES = [
     ("VERIZON", "substring", "Utilities"),
 ]
 
+# The descriptions are numbered and the answer is keyed by number: a description the model echoes
+# back slightly changed (spacing, case, a quote) would otherwise match nothing, and two rows with the
+# same description are still each answered.
 _LLM_PROMPT_TEMPLATE = """Categorize each of these bank/credit-card transaction
 descriptions into a short spending category (examples: Groceries, Dining,
 Transportation, Shopping, Subscriptions, Utilities, Gas, Health,
 Entertainment, Travel, Housing, Income, Other). Respond with ONLY a JSON
-object, no other text, in this exact shape:
-{{"categories": {{"<description>": "<category>", ...}}}}
+object, no other text, in this exact shape, keyed by each description's number:
+{{"categories": {{"1": "<category>", "2": "<category>", ...}}}}
 Descriptions:
 {descriptions}"""
 
+MAX_CATEGORY_CHARS = 60          # the same limit as a category typed on the Categories page
+MAX_PROMPT_DESCRIPTION_CHARS = 200
+
 
 def _matches(pattern: str, match_type: str, description: str) -> bool:
-    p, d = pattern.upper(), description.upper()
+    return _matches_upper(pattern.upper(), match_type, description.upper())
+
+
+def _matches_upper(p: str, match_type: str, d: str) -> bool:
+    """Both already upper-cased. An empty pattern matches nothing (it would otherwise match every
+    description as a substring or prefix)."""
+    if not p:
+        return False
     if match_type == "exact":
         return d == p
     if match_type == "prefix":
@@ -104,8 +118,9 @@ def _best_match(rules: list[tuple[str, str, str]], description: str) -> tuple[st
     best_key = None
     best_category = None
     best_pattern = None
+    d = (description or "").upper()
     for pattern, match_type, category in rules:
-        if not _matches(pattern, match_type, description):
+        if not _matches_upper(pattern.upper(), match_type, d):
             continue
         key = (_SPECIFICITY[match_type], len(pattern))
         if best_key is None or key > best_key:
@@ -123,7 +138,10 @@ def save_rule(conn, user_id: str, pattern: str, match_type: str, category: str) 
     """Upserts on (user_id, pattern, match_type) — correcting the same
     merchant's category again updates the existing rule rather than
     piling up near-duplicate rows that would just tie against each other
-    on the next match."""
+    on the next match. A blank pattern is refused (it would match every
+    transaction)."""
+    if not (pattern or "").strip():
+        raise ValueError("A rule needs a pattern to match")
     existing = conn.execute(
         "SELECT id FROM category_rules WHERE user_id = ? AND pattern = ? AND match_type = ?",
         (user_id, pattern, match_type),
@@ -207,7 +225,8 @@ def categorize_via_llm(
     if not ollama_url or not ollama_model or not descriptions:
         return {}, "", None, None
 
-    prompt = _LLM_PROMPT_TEMPLATE.format(descriptions="\n".join(f"- {d}" for d in descriptions))
+    prompt = _LLM_PROMPT_TEMPLATE.format(descriptions="\n".join(
+        f"{i}. {' '.join(str(d).split())[:MAX_PROMPT_DESCRIPTION_CHARS]}" for i, d in enumerate(descriptions, start=1)))
     # A cheaper "text model" can be set for this on App settings; otherwise the vision model.
     model = settings.ai_text_model() or ollama_model
     try:
@@ -227,8 +246,31 @@ def categorize_via_llm(
     categories = data.get("categories", {}) if isinstance(data, dict) else {}
     if not isinstance(categories, dict):
         return {}, prompt, raw_body, "Response had no categories object"
-    parsed = {k: str(v) for k, v in categories.items() if isinstance(v, (str, int, float))}
-    return parsed, prompt, raw_body, None
+    return _by_description(categories, descriptions), prompt, raw_body, None
+
+
+def _clean_category(value) -> str | None:
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        return None
+    text = " ".join(str(value).split())[:MAX_CATEGORY_CHARS]
+    return text or None
+
+
+def _by_description(categories: dict, descriptions: list[str]) -> dict[str, str]:
+    """The answer, keyed by number ("1", "2", …), as {description: category}. A model that keyed it by
+    the description itself instead (the old prompt's shape) still counts."""
+    out: dict[str, str] = {}
+    known = set(descriptions)
+    for key, value in categories.items():
+        category = _clean_category(value)
+        if category is None:
+            continue
+        k = str(key).strip().rstrip(".")
+        if k.isdigit() and 1 <= int(k) <= len(descriptions):
+            out.setdefault(descriptions[int(k) - 1], category)
+        elif key in known:
+            out.setdefault(key, category)
+    return out
 
 
 def recategorize_transactions(conn, user_id: str) -> int:
@@ -258,11 +300,8 @@ def recategorize_transactions(conn, user_id: str) -> int:
     than blindly applying whichever rule triggered this call. Returns
     the number of transactions updated, for the caller to report back
     to the user."""
-    user_rules = conn.execute(
-        "SELECT pattern, match_type, category FROM category_rules WHERE user_id = ? ORDER BY created_at DESC",
-        (user_id,),
-    ).fetchall()
-    user_rule_tuples = [(r["pattern"], r["match_type"], r["category"]) for r in user_rules]
+    user_rule_tuples = _user_rules(conn, user_id)
+    rules_upper = [(p.upper(), mt, c, p) for p, mt, c in user_rule_tuples]
 
     rows = conn.execute(
         "SELECT id, description, category FROM transactions "
@@ -270,63 +309,116 @@ def recategorize_transactions(conn, user_id: str) -> int:
         (user_id,),
     ).fetchall()
 
-    count = 0
+    updates = []
     for row in rows:
-        match = _best_match(user_rule_tuples, row["description"])
+        match = _best_match_upper(rules_upper, (row["description"] or "").upper())
         if match and match[0] != row["category"]:
-            category, pattern = match
-            conn.execute(
-                "UPDATE transactions SET category = ?, category_source = 'user_rule', "
-                "category_matched_pattern = ? WHERE id = ?",
-                (category, pattern, row["id"]),
-            )
-            count += 1
-    return count
+            updates.append((match[0], match[1], row["id"]))
+    conn.executemany(
+        "UPDATE transactions SET category = ?, category_source = 'user_rule', category_matched_pattern = ? WHERE id = ?",
+        updates,
+    )
+    return len(updates)
 
 
-def categorize_transactions(
-    conn, user_id: str, ollama_url: str, ollama_model: str, rows: list[tuple[int, str]],
-    *, statement_id: int | None = None, csv_import_id: int | None = None,
-) -> None:
-    """Categorize rows (transaction_id, description) just inserted for one
-    statement or one CSV import's blank-category rows: always writes a
-    category (explicit "Uncategorized" as the last resort) plus
-    category_source / category_matched_pattern. Rules are loaded once per
-    batch. Pass statement_id or csv_import_id so an LLM call's prompt and
-    response are stored on that row."""
-    user_rules = conn.execute(
-        "SELECT pattern, match_type, category FROM category_rules WHERE user_id = ? ORDER BY created_at DESC",
+def recategorize_for_rule(conn, user_id: str, pattern: str, match_type: str) -> int:
+    """"Also apply to all existing transactions" after one rule was saved (Categories page): the
+    transactions the saved rule matches get the category the user's whole rule set gives them (the
+    same specificity order an import uses, so a more specific older rule still wins), overwriting
+    whatever they had. Only those rows are looked at — the rule is tested once per transaction
+    inside SQLite, instead of every rule on every transaction in Python — and only those can be
+    changed; other transactions keep their category. Returns how many were updated."""
+    p = (pattern or "").upper()
+    if not p:
+        return 0
+    conn.create_function("finance_rule_matches", 1,
+                         lambda d: _matches_upper(p, match_type, (d or "").upper()), deterministic=True)
+    rows = conn.execute(
+        "SELECT id, description, category FROM transactions "
+        "WHERE user_id = ? AND deleted_at IS NULL AND finance_rule_matches(description)",
         (user_id,),
     ).fetchall()
-    user_rule_tuples = [(r["pattern"], r["match_type"], r["category"]) for r in user_rules]
+    rules_upper = [(rp.upper(), mt, c, rp) for rp, mt, c in _user_rules(conn, user_id)]
+    updates = []
+    for row in rows:
+        match = _best_match_upper(rules_upper, (row["description"] or "").upper())
+        if match and match[0] != row["category"]:
+            updates.append((match[0], match[1], row["id"]))
+    conn.executemany(
+        "UPDATE transactions SET category = ?, category_source = 'user_rule', category_matched_pattern = ? WHERE id = ?",
+        updates,
+    )
+    return len(updates)
 
-    unmatched: list[tuple[int, str]] = []
-    for txn_id, description in rows:
-        user_match = _best_match(user_rule_tuples, description)
+
+def _user_rules(conn, user_id: str) -> list[tuple[str, str, str]]:
+    return [(r["pattern"], r["match_type"], r["category"]) for r in conn.execute(
+        "SELECT pattern, match_type, category FROM category_rules WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()]
+
+
+def _best_match_upper(rules_upper, d: str) -> tuple[str, str] | None:
+    """_best_match with the patterns (p_upper, match_type, category, pattern) and the description
+    upper-cased once by the caller."""
+    best_key = best = None
+    for p, match_type, category, pattern in rules_upper:
+        if not _matches_upper(p, match_type, d):
+            continue
+        key = (_SPECIFICITY[match_type], len(pattern))
+        if best_key is None or key > best_key:
+            best_key, best = key, (category, pattern)
+    return best
+
+
+@dataclass
+class CategoryPlan:
+    """What categorization decided, before anything is written: {row key: (category, source, pattern)},
+    plus the LLM call's prompt / raw answer / error for the debug view (None when no call was made)."""
+    assignments: dict = field(default_factory=dict)
+    llm: tuple[str, str | None, str | None] | None = None
+
+
+def plan_categories(conn, user_id: str, ollama_url: str, ollama_model: str, rows: list[tuple]) -> CategoryPlan:
+    """The cascade for rows (key, description), without writing anything: the user's rules, the
+    built-in ones, then ONE batched LLM call for the rest, and "Uncategorized" last. `conn` is only
+    read (the rules). The LLM call can take minutes, so the caller must not hold a write transaction
+    while this runs (it would block every other write in the app meanwhile)."""
+    rules_upper = [(p.upper(), mt, c, p) for p, mt, c in _user_rules(conn, user_id)]
+    plan = CategoryPlan()
+    unmatched: list[tuple] = []
+    for key, description in rows:
+        d = (description or "").upper()
+        user_match = _best_match_upper(rules_upper, d)
         if user_match:
-            category, pattern = user_match
-            conn.execute(
-                "UPDATE transactions SET category = ?, category_source = 'user_rule', "
-                "category_matched_pattern = ? WHERE id = ?",
-                (category, pattern, txn_id),
-            )
+            plan.assignments[key] = (user_match[0], "user_rule", user_match[1])
             continue
-        builtin_match = match_builtin_rules(description)
+        builtin_match = match_builtin_rules(description or "")
         if builtin_match:
-            category, pattern = builtin_match
-            conn.execute(
-                "UPDATE transactions SET category = ?, category_source = 'builtin_rule', "
-                "category_matched_pattern = ? WHERE id = ?",
-                (category, pattern, txn_id),
-            )
+            plan.assignments[key] = (builtin_match[0], "builtin_rule", builtin_match[1])
             continue
-        unmatched.append((txn_id, description))
+        unmatched.append((key, description))
 
     if unmatched:
         llm_categories, prompt, raw_response, error = categorize_via_llm(
             ollama_url, ollama_model, [d for _, d in unmatched],
         )
+        plan.llm = (prompt, raw_response, error)
+        for key, description in unmatched:
+            category = llm_categories.get(description)
+            plan.assignments[key] = (category, "llm", None) if category else (UNCATEGORIZED, "uncategorized_fallback", None)
+    return plan
 
+
+def apply_categories(conn, plan: CategoryPlan, ids: dict | None = None, *,
+                     statement_id: int | None = None, csv_import_id: int | None = None) -> None:
+    """Write a plan: each row key's transaction id is ids[key] (or the key itself)."""
+    conn.executemany(
+        "UPDATE transactions SET category = ?, category_source = ?, category_matched_pattern = ? WHERE id = ?",
+        [(c, src, pattern, ids[key] if ids is not None else key) for key, (c, src, pattern) in plan.assignments.items()],
+    )
+    if plan.llm is not None:
+        prompt, raw_response, error = plan.llm
         if statement_id is not None:
             conn.execute(
                 "UPDATE statements SET categorization_llm_prompt = ?, "
@@ -340,16 +432,14 @@ def categorize_transactions(
                 (prompt, raw_response, error, csv_import_id),
             )
 
-        for txn_id, description in unmatched:
-            category = llm_categories.get(description)
-            if category:
-                conn.execute(
-                    "UPDATE transactions SET category = ?, category_source = 'llm' WHERE id = ?",
-                    (category, txn_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE transactions SET category = ?, category_source = 'uncategorized_fallback' "
-                    "WHERE id = ?",
-                    (UNCATEGORIZED, txn_id),
-                )
+
+def categorize_transactions(
+    conn, user_id: str, ollama_url: str, ollama_model: str, rows: list[tuple[int, str]],
+    *, statement_id: int | None = None, csv_import_id: int | None = None,
+) -> None:
+    """Categorize rows (transaction_id, description) already inserted: always writes a
+    category (explicit "Uncategorized" as the last resort) plus category_source /
+    category_matched_pattern. With an AI address this may call the LLM — use plan_categories
+    first and apply_categories in a short transaction instead when that matters."""
+    apply_categories(conn, plan_categories(conn, user_id, ollama_url, ollama_model, rows),
+                     statement_id=statement_id, csv_import_id=csv_import_id)

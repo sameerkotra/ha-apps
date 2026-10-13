@@ -28,7 +28,8 @@ from ..parser.utility_pipeline import check_duplicate_utility, delete_pdf_utilit
 from ..parser.utility_vision import debug_call_utility
 from ..parser.documents import prepare_restart
 from ..parser.vision import MAX_NOTES_CHARS, VisionExtractionError
-from .accounts import _acting_banner, _acting_qs, htmx_fragment_requested
+from .accounts import _acting_banner, _acting_qs, _sanitize_last4, htmx_fragment_requested
+from .. import notices
 from .. import ai_usage, jobs, settings, storage
 
 router = APIRouter(dependencies=[Depends(_features.required("utilities"))])
@@ -41,6 +42,7 @@ templates.env.globals["ai_usage_view"] = ai_usage.view
 PROVIDERS = ["Xcel Energy", "Aurora Water"]    # read with a tuned prompt; any other name is "Other" (section 23)
 OTHER = "Other"
 MAX_PROVIDER_NAME = 60
+MAX_UNIT_LENGTH = 20
 
 
 def _all_providers(user_id: str) -> list[str]:
@@ -67,6 +69,12 @@ def _provider_name(provider: str, other_name: str) -> tuple[str | None, str | No
     return name, None
 
 
+
+def _name(filename: str | None) -> str | None:
+    """The uploaded file's own name, as shown in the history (cut to a sane length)."""
+    return filename[:255] if filename else None
+
+
 @router.post("/utility-upload")
 async def upload_utility_bill(
     request: Request,
@@ -86,20 +94,26 @@ async def upload_utility_bill(
     provider, problem = _provider_name(provider, provider_other)
     if problem:
         return JSONResponse({"error": problem}, status_code=400)
+    if len(files) > storage.MAX_FILES_PER_REQUEST:
+        return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
+    results = await asyncio.to_thread(_store_bills, acting.id, provider, files, 0 if skip_confirmation else 1)
+    return JSONResponse({"results": results})
 
+
+def _store_bills(user_id: str, provider: str, files: list, needs_confirmation: int) -> list[dict]:
+    """The files and database part of /utility-upload, in a worker thread (not on the event loop)."""
     results = []
     conn = get_db()
     try:
         for file in files:
             try:
-                content = await storage.read_upload(file, storage.MAX_PDF_BYTES, pdf=True)
+                tmp_path, hash_ = storage.save_upload(file, storage.user_dir(user_id, "utility-bills"), "utility",
+                                                      ".pdf", storage.MAX_PDF_BYTES, pdf=True)
             except storage.UploadRejected as e:
                 results.append({"filename": file.filename, "error": str(e)})
                 continue
-            tmp_path, hash_ = await asyncio.to_thread(
-                storage.save_file, storage.user_dir(acting.id, "utility-bills"), "utility", ".pdf", content)
 
-            dup = check_duplicate_utility(conn, acting.id, hash_)
+            dup = check_duplicate_utility(conn, user_id, hash_)
             if dup is not None:
                 storage.remove_stored_file(tmp_path)
                 if dup["status"] == "error":
@@ -117,17 +131,16 @@ async def upload_utility_bill(
             cur = conn.execute(
                 "INSERT INTO utility_bills (user_id, provider, original_filename, pdf_path, file_hash, status, "
                 "needs_confirmation) VALUES (?, ?, ?, ?, ?, 'processing', ?)",
-                (acting.id, provider, file.filename, tmp_path, hash_, 0 if skip_confirmation else 1),
+                (user_id, provider, _name(file.filename), tmp_path, hash_, needs_confirmation),
             )
             conn.commit()
             utility_bill_id = cur.lastrowid
 
-            jobs.start_job("utility_bill", utility_bill_id, acting.id)
+            jobs.start_job("utility_bill", utility_bill_id, user_id)
             results.append({"filename": file.filename, "utility_bill_id": utility_bill_id, "status": "processing"})
     finally:
         conn.close()
-
-    return JSONResponse({"results": results})
+    return results
 
 
 @router.get("/utility-status")
@@ -201,6 +214,12 @@ def utility_delete(
     The PDF and meter details are kept so Restore brings back the same bill."""
     conn = get_db()
     try:
+        row = conn.execute("SELECT status FROM utility_bills WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+                           (id, acting.id)).fetchone()
+        if row is not None and row["status"] == "processing":
+            # Its job would still save the bill (and a second one from the same PDF): wait for it first.
+            return notices.form_error(request, templates, acting, _acting_qs(current, acting),
+                                      notices.text("processing"), "utilities?tab=upload")
         conn.execute(
             "UPDATE utility_bills SET deleted_at = datetime('now') "
             "WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
@@ -359,6 +378,32 @@ def utilities_page(
     if htmx_fragment_requested(request):
         return templates.TemplateResponse(request, "_utility_bills_by_type.html", context)
     return templates.TemplateResponse(request, "utilities_list.html", context)
+
+
+@router.get("/utility-dashboard-poll")
+def utility_dashboard_poll(
+    request: Request,
+    provider: str = "",
+    utility_type: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    current: User = Depends(get_current_user),
+    acting: User = Depends(get_acting_user),
+):
+    """The Dashboard tab's poller while a bill is processing: a one-row check, answered with the
+    poller itself while something is still processing, and with the refreshed tables (swapped in
+    for the whole wrapper) once nothing is."""
+    with get_db() as conn:
+        busy = conn.execute(
+            "SELECT 1 FROM utility_bills WHERE user_id = ? AND deleted_at IS NULL AND status = 'processing' LIMIT 1",
+            (acting.id,)).fetchone() is not None
+    if busy:
+        return templates.TemplateResponse(request, "_utility_dashboard_poll.html",
+                                          {"acting_qs": _acting_qs(current, acting)})
+    response = utilities_page(request, "dashboard", provider, utility_type, start_date, end_date, current, acting)
+    response.headers["HX-Retarget"] = "#utility-bills-table-wrap"
+    response.headers["HX-Reswap"] = "outerHTML"
+    return response
 
 
 @router.get("/utility-debug")
@@ -564,17 +609,23 @@ async def utility_resolve(
     signature from ballooning to 24 parameters most calls don't use. Any
     field left blank on the form is stored as NULL, same as an
     unrecognized one during original extraction."""
+    def problem(message: str):
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), message,
+                                  f"utility-review?id={id}")
+
     cost_value = parse_number(cost)
     if cost_value is None:
-        return JSONResponse({"error": "Cost must be a number"}, status_code=400)
+        return problem("Cost must be a number")
     cost_value = round(cost_value, 2)
     usage_value = None
     if usage_amount.strip():
         usage_value = parse_number(usage_amount)
         if usage_value is None:
-            return JSONResponse({"error": "Usage must be a number"}, status_code=400)
+            return problem("Usage must be a number")
     if not period_start_date.strip() or not period_end_date.strip():
-        return JSONResponse({"error": "Period start/end dates are required"}, status_code=400)
+        return problem("Period start/end dates are required")
+    if len(usage_unit.strip()) > MAX_UNIT_LENGTH:
+        return problem(f"Unit is too long (max {MAX_UNIT_LENGTH} characters)")
     dates = {}
     for label, raw in (("Period start", period_start_date), ("Period end", period_end_date), ("Due date", due_date)):
         if label == "Due date" and not raw.strip():
@@ -582,8 +633,7 @@ async def utility_resolve(
             continue
         dates[label] = normalize_date(raw)
         if dates[label] is None:
-            return JSONResponse({"error": f"{label} \"{raw.strip()}\" isn't in a recognized format "
-                                          "(expected YYYY-MM-DD or MM/DD/YYYY)"}, status_code=400)
+            return problem(f"{label} \"{raw.strip()[:40]}\" isn't in a recognized format (expected YYYY-MM-DD or MM/DD/YYYY)")
 
     form = await request.form()
     meter_values: dict[str, float | None] = {}
@@ -594,8 +644,16 @@ async def utility_resolve(
             continue
         meter_values[col] = parse_number(raw)
         if meter_values[col] is None:
-            return JSONResponse({"error": f"{col.replace('_', ' ')} must be a number"}, status_code=400)
+            return problem(f"{col.replace('_', ' ')} must be a number")
 
+    return await asyncio.to_thread(
+        _resolve_bill, request, current, acting, id, dates, usage_value, usage_unit, cost_value,
+        account_number_last4, meter_values)
+
+
+def _resolve_bill(request, current, acting, id, dates, usage_value, usage_unit, cost_value, account_number_last4,
+                  meter_values):
+    """The database part of /utility-resolve, in a worker thread (not on the event loop)."""
     conn = get_db()
     try:
         row = conn.execute(
@@ -613,7 +671,7 @@ async def utility_resolve(
             (
                 dates["Period start"], dates["Period end"], usage_value,
                 (usage_unit.strip() or None), cost_value, dates["Due date"],
-                (account_number_last4.strip() or None), id,
+                _sanitize_last4(account_number_last4), id,
             ),
         )
 

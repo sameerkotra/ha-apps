@@ -74,6 +74,7 @@ def _validate_looks_like_bill(raw_text: str, amount_counts, provider: str) -> st
 
 check_duplicate_utility = partial(documents.find_duplicate, "utility_bills")
 _set_step = partial(documents.set_step, "utility_bills")
+DELETED_WHILE_READING = "Deleted while it was being read — nothing was saved. Restore it, then Restart to read it again."
 _fail = partial(documents.fail, "utility_bills")
 # Several rows can share one PDF (a dual-fuel statement's electric + gas bills).
 delete_pdf_utility = partial(forget_pdf, "utility_bills")
@@ -272,8 +273,15 @@ def process_utility_bill(utility_bill_id: int, user_id: str, ollama_url: str, ol
             return
 
         _set_step(conn, utility_bill_id, "Saving bill(s)")
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
         try:
+            gone = conn.execute("SELECT deleted_at FROM utility_bills WHERE id = ?", (utility_bill_id,)).fetchone()
+            if gone is None or gone["deleted_at"] is not None:
+                # Deleted while it was being read: nothing is saved (a second bill from the PDF would
+                # otherwise appear as a new, live row next to the deleted one).
+                conn.rollback()
+                _fail(conn, utility_bill_id, DELETED_WHILE_READING)
+                return
             _clear_previous_run(conn, utility_bill_id)
             saved: list[tuple[int, str | None]] = []  # (id, flag)
             for i, (bill, flag) in enumerate(zip(bills, bill_flags)):

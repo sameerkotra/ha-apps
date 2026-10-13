@@ -38,6 +38,16 @@ def users_tab(request: Request, current: User, acting: User, message: str = "", 
         u["can_add"] = [o for o in known if o["id"] != u["id"] and o["id"] not in taken]
     # Grants whose viewer isn't in known_users any more still show, so they can be removed.
     orphans = [g for g in grants if g["viewer_id"] not in names]
+    # The address carries codes and user ids, never the sentences (a link someone made can't put its
+    # own text on this page); the names come from known_users.
+    params = request.query_params
+    viewer_name = names.get(params.get("viewer", ""), "")
+    owner_name = names.get(params.get("owner", ""), "")
+    message = {"granted": f"{viewer_name} can now use {owner_name}'s data." if viewer_name and owner_name else "",
+               "removed": "Access removed."}.get(message, "")
+    error = {"pick_two": "Pick two different users from the list.",
+             "viewer_admin": f"{viewer_name} is an admin and uses the user switch instead." if viewer_name else ""
+             }.get(error, "")
     return templates.TemplateResponse(request, "storage_users.html", {
         "user": acting, "acting_qs": _acting_qs(current, acting), "acting_as_banner": _acting_banner(current, acting),
         "active_page": "admin_storage", "tab": "users", "users": known, "orphans": orphans,
@@ -59,12 +69,12 @@ def user_access_grant(viewer: str = Form(""), owner: str = Form(""),
         found = {r["id"]: r["name"] for r in conn.execute(
             "SELECT id, name FROM known_users WHERE id IN (?, ?)", (viewer, owner))}
         if viewer not in found or owner not in found or viewer == owner:
-            return _back(current, acting, error="Pick two different users from the list.")
+            return _back(current, acting, error="pick_two")
         if is_admin_identity(viewer, found[viewer]):
-            return _back(current, acting, error=f"{found[viewer]} is an admin and uses the user switch instead.")
+            return _back(current, acting, error="viewer_admin", viewer=viewer)
         conn.execute("INSERT OR IGNORE INTO user_access (viewer_id, owner_id, granted_by) VALUES (?, ?, ?)",
                      (viewer, owner, current.id))
-    return _back(current, acting, message=f"{found[viewer]} can now use {found[owner]}'s data.")
+    return _back(current, acting, message="granted", viewer=viewer, owner=owner)
 
 
 @router.post("/user-access-remove")
@@ -72,4 +82,4 @@ def user_access_remove(viewer: str = Form(""), owner: str = Form(""),
                        current: User = Depends(require_admin), acting: User = Depends(get_acting_user)):
     with get_db() as conn:
         conn.execute("DELETE FROM user_access WHERE viewer_id = ? AND owner_id = ?", (viewer, owner))
-    return _back(current, acting, message="Access removed.")
+    return _back(current, acting, message="removed")

@@ -7,7 +7,7 @@ thread; without a Supervisor token (the tests) it stays off.
 """
 import os
 
-from . import tools
+from . import settings, tools
 from .common import app_bus as bus
 from .common import assist_tools
 from .db import get_db
@@ -28,7 +28,8 @@ def start() -> None:
                                                      supervisor_api=os.environ.get("SUPERVISOR_API", "http://supervisor"))
     bus.start(SLUG, TITLE, APP_VERSION, db=get_db, outbox_thread=bool(token), token=token,
               api_base=os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api"),
-              ws_url=os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket"))
+              ws_url=os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket"),
+              signing_key=lambda: settings.get("bus_signing_key"))
 
 
 def stop() -> None:

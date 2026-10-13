@@ -1,12 +1,12 @@
 {# Dashboard fragment: one table per utility type (see routes/utilities.py).
    No status, actions or file names here — those are on the Upload tab. #}
 {% import "_utility_table_macros.html" as m %}
-{# While any bill is still processing, the wrapper re-fetches itself every 3s (carrying the current filters), so the
-   Dashboard fills in as bills finish instead of staying stale until a manual refresh. Once nothing is processing the
-   re-rendered wrapper has no trigger and polling stops by itself. #}
-<div id="utility-bills-table-wrap"{% if processing %}
-     hx-get="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}"
-     hx-trigger="every 3s" hx-include="#utility-filters" hx-target="this" hx-swap="outerHTML"{% endif %}>
+{# While any bill is still processing, a small poller asks every 3s whether anything is still processing (a tiny
+   answer); once nothing is, it answers with this whole wrapper (carrying the current filters), so the Dashboard
+   fills in as bills finish instead of staying stale until a manual refresh. The re-rendered wrapper has no
+   poller, so polling stops by itself. #}
+<div id="utility-bills-table-wrap">
+{% if processing %}{% include "_utility_dashboard_poll.html" %}{% endif %}
 {% if grouped.untyped %}
 <div class="card">
     <h3>Processing / needs attention</h3>

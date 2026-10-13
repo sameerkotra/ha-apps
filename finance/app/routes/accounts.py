@@ -8,6 +8,7 @@ from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
 from .. import settings
 from ..db import get_db
+from .. import notices
 from ..version import APP_VERSION
 
 router = APIRouter()
@@ -26,6 +27,17 @@ def _sanitize_last4(value: str) -> str | None:
 
 
 _UPLOAD_METHODS = ("both", "pdf", "csv")
+ACCOUNT_TYPES = ("checking", "savings", "credit_card")
+MAX_ACCOUNT_NAME = 100
+
+
+def _account_problem(name: str, bank_name: str) -> str | None:
+    """Why an account's name / bank can't be saved, or None."""
+    if not name.strip():
+        return "Give the account a name."
+    if len(name.strip()) > MAX_ACCOUNT_NAME or len(bank_name.strip()) > MAX_ACCOUNT_NAME:
+        return f"The name and bank can be at most {MAX_ACCOUNT_NAME} characters."
+    return None
 
 
 def _sanitize_url(value: str) -> str | None:
@@ -165,6 +177,9 @@ def create_account(
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
+    problem = _account_problem(name, bank_name) or (None if type in ACCOUNT_TYPES else "Choose the account's type.")
+    if problem:
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, "accounts")
     with get_db() as conn:
         cur = conn.execute(
             """
@@ -216,6 +231,9 @@ def update_account(
     which decides the sign convention everywhere. Names are always read live
     through a JOIN, so nothing needs re-importing; only a multi-account CSV's
     Account column (matched by today's name) is affected by a rename."""
+    problem = _account_problem(name, bank_name)
+    if problem:
+        return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, f"account?id={id}")
     with get_db() as conn:
         row = conn.execute(
             "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL",

@@ -26,6 +26,7 @@ from ..tolls import vehicle_label
 from ..version import APP_VERSION
 from .tolls import _int_or_none, _redirect
 from .accounts import _acting_banner, _acting_qs
+from .. import notices
 from .. import ai_usage, jobs, settings, storage
 
 router = APIRouter(dependencies=[Depends(_features.required("tolls"))])
@@ -38,6 +39,12 @@ templates.env.globals["clock_value"] = clock_value
 templates.env.globals["pretty_signature"] = pretty_signature
 
 
+
+def _name(filename: str | None) -> str | None:
+    """The uploaded file's own name, as shown in the history (cut to a sane length)."""
+    return filename[:255] if filename else None
+
+
 @router.post("/toll-upload")
 async def upload_toll_statement(
     request: Request,
@@ -45,20 +52,26 @@ async def upload_toll_statement(
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Several PDFs per request; one placeholder row each, then the shared worker parses them one at a time."""
+    """Several PDFs per request; one placeholder row each, then the shared worker parses them one at a time.
+    The files and the database are handled in a worker thread, never on the event loop."""
+    if len(files) > storage.MAX_FILES_PER_REQUEST:
+        return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
+    return JSONResponse({"results": await asyncio.to_thread(_store_toll_statements, acting.id, files)})
+
+
+def _store_toll_statements(user_id: str, files: list) -> list[dict]:
     results = []
     conn = get_db()
     try:
         for file in files:
             try:
-                content = await storage.read_upload(file, storage.MAX_PDF_BYTES, pdf=True)
+                tmp_path, hash_ = storage.save_upload(file, storage.user_dir(user_id, "toll-statements"), "toll",
+                                                      ".pdf", storage.MAX_PDF_BYTES, pdf=True)
             except storage.UploadRejected as e:
                 results.append({"filename": file.filename, "error": str(e)})
                 continue
-            tmp_path, hash_ = await asyncio.to_thread(
-                storage.save_file, storage.user_dir(acting.id, "toll-statements"), "toll", ".pdf", content)
 
-            dup = check_duplicate_toll(conn, acting.id, hash_)
+            dup = check_duplicate_toll(conn, user_id, hash_)
             if dup is not None:
                 storage.remove_stored_file(tmp_path)
                 message = ("Already uploaded and failed to process — restart it instead of uploading again."
@@ -68,13 +81,18 @@ async def upload_toll_statement(
 
             cur = conn.execute(
                 "INSERT INTO toll_statements (user_id, original_filename, pdf_path, file_hash, status) "
-                "VALUES (?, ?, ?, ?, 'processing')", (acting.id, file.filename, tmp_path, hash_))
+                "VALUES (?, ?, ?, ?, 'processing')", (user_id, _name(file.filename), tmp_path, hash_))
             conn.commit()
-            jobs.start_job("toll", cur.lastrowid, acting.id)
+            jobs.start_job("toll", cur.lastrowid, user_id)
             results.append({"filename": file.filename, "toll_statement_id": cur.lastrowid, "status": "processing"})
     finally:
         conn.close()
-    return JSONResponse({"results": results})
+    return results
+
+
+def _short(text, limit: int) -> str:
+    """A typed value on one line, cut to the field's length (the form's own maxlength is only a hint)."""
+    return " ".join(str(text or "").split())[:limit]
 
 
 def _status_context(request: Request, row, current: User, acting: User) -> dict:
@@ -134,8 +152,12 @@ def toll_delete(
     together from Recently deleted. Trips are rebuilt without them."""
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM toll_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+        row = conn.execute("SELECT id, status FROM toll_statements WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
                            (id, acting.id)).fetchone()
+        if row is not None and row["status"] == "processing":
+            # Its job would still save the passes: wait for it to finish (or fail) first.
+            return notices.form_error(request, templates, acting, _acting_qs(current, acting),
+                                      notices.text("processing"), "tolls?tab=upload")
         if row is not None:
             stamp = conn.execute("SELECT datetime('now') AS now").fetchone()["now"]
             conn.execute("UPDATE toll_statements SET deleted_at = ? WHERE id = ?", (stamp, id))
@@ -262,6 +284,11 @@ async def toll_resolve(
     the AI's, an edited version, or leave it out), plus any passes typed in. The printed Grand Totals can
     be corrected too. A remaining mismatch is recorded as acknowledged."""
     form = await request.form()
+    return await asyncio.to_thread(_toll_resolve, request, form, current, acting)
+
+
+def _toll_resolve(request: Request, form, current: User, acting: User):
+    """The database part of /toll-resolve, in a worker thread (not on the event loop)."""
     statement_id = _int_or_none(form.get("id"))
     conn = get_db()
     try:
@@ -292,9 +319,9 @@ async def toll_resolve(
                 if when is None or amount is None or amount <= 0:
                     errors.append(f"Row {i + 1}: enter a valid date and time and a positive amount.")
                     continue
-                rows.append({**base, "datetime": when, "plaza": (form.get(f"edit_plaza_{i}") or base["plaza"]).strip(),
-                             "lane": (form.get(f"edit_lane_{i}") or base["lane"]).strip(),
-                             "direction": normalize_direction(form.get(f"edit_direction_{i}") or base["direction"]),
+                rows.append({**base, "datetime": when, "plaza": _short(form.get(f"edit_plaza_{i}") or base["plaza"], 200),
+                             "lane": _short(form.get(f"edit_lane_{i}") or base["lane"], 20),
+                             "direction": normalize_direction(_short(form.get(f"edit_direction_{i}") or base["direction"], 20)),
                              "amount": round(amount, 2)})
 
         for j in range(3):                                # passes typed in
@@ -303,14 +330,15 @@ async def toll_resolve(
                 continue
             when = _form_datetime(form.get(f"add_datetime_{j}", ""))
             amount = clean_amount(amount_text)
-            car_text = form.get(f"add_car_{j}") or ""
-            car = tuple((car_text.split("|") + ["", "", ""])[:3])
+            car_text = str(form.get(f"add_car_{j}") or "")[:200]
+            car = tuple(_short(part, 60) for part in (car_text.split("|") + ["", "", ""])[:3])
             if when is None or amount is None or amount <= 0 or not car_text:
                 errors.append(f"Added pass {j + 1}: choose a car and enter a valid date and time and a positive amount.")
                 continue
-            rows.append({"car": car, "mk": car[0] or car[1], "datetime": when, "agency": (form.get(f"add_agency_{j}") or "").strip().upper(),
-                         "road": (form.get(f"add_road_{j}") or "").strip().upper(), "plaza": (form.get(f"add_plaza_{j}") or "").strip(),
-                         "lane": (form.get(f"add_lane_{j}") or "").strip(), "direction": normalize_direction(form.get(f"add_direction_{j}") or ""),
+            rows.append({"car": car, "mk": car[0] or car[1], "datetime": when, "agency": _short(form.get(f"add_agency_{j}"), 20).upper(),
+                         "road": _short(form.get(f"add_road_{j}"), 60).upper(), "plaza": _short(form.get(f"add_plaza_{j}"), 200),
+                         "lane": _short(form.get(f"add_lane_{j}"), 20),
+                         "direction": normalize_direction(_short(form.get(f"add_direction_{j}"), 20)),
                          "amount": round(amount, 2), "raw_line": ""})
 
         printed_text = (form.get("printed_total") or "").strip()

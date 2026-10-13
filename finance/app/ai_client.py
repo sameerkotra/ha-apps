@@ -72,17 +72,32 @@ CLIENT = core.Client(post=lambda *a: _post(*a), sleep=lambda s: _sleep(s), log=l
 
 # ---- the three providers ---------------------------------------------------------------------------
 
+# The shared client stops all tries of one request after `deadline` seconds (300 by default), which would
+# cut a vision request that is allowed 15 minutes short. Each request here gets its own timeout plus
+# room for the retries' waits; a request without a timeout still gets an end.
+RETRY_ROOM_SECONDS = 180
+NO_TIMEOUT_DEADLINE = 30 * 60
+
+
+def deadline_for(timeout: float | None) -> float:
+    if timeout is None:
+        return NO_TIMEOUT_DEADLINE
+    return max(core.DEFAULT_DEADLINE, timeout + RETRY_ROOM_SECONDS)
+
+
 def _ollama(cfg, prompt, images, want_json, timeout, max_tokens) -> Reply:
-    return CLIENT.ollama(cfg, prompt, images=images, want_json=want_json, max_tokens=max_tokens, timeout=timeout)
+    return CLIENT.ollama(cfg, prompt, images=images, want_json=want_json, max_tokens=max_tokens, timeout=timeout,
+                         deadline=deadline_for(timeout))
 
 
 def _openai(cfg, prompt, images, want_json, timeout, max_tokens) -> Reply:
-    return CLIENT.openai(cfg, prompt, images=images, want_json=want_json, max_tokens=max_tokens, timeout=timeout)
+    return CLIENT.openai(cfg, prompt, images=images, want_json=want_json, max_tokens=max_tokens, timeout=timeout,
+                         deadline=deadline_for(timeout))
 
 
 def _anthropic(cfg, prompt, images, want_json, timeout, max_tokens) -> Reply:
     return CLIENT.anthropic(cfg, prompt, images=images, want_json=want_json, timeout=timeout,
-                            limit=max_tokens or cfg.max_output_tokens or 16000)
+                            limit=max_tokens or cfg.max_output_tokens or 16000, deadline=deadline_for(timeout))
 
 
 _CALLS = {"ollama": _ollama, "openai": _openai, "anthropic": _anthropic}
