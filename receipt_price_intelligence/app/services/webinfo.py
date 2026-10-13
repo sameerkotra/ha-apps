@@ -14,6 +14,7 @@ the page to show. All answers pass ``webparse`` validation. A price already chec
 
 import json
 import re
+import functools
 import threading
 import time
 import uuid
@@ -28,6 +29,7 @@ from app.config import get_settings
 from app.db import get_db_session
 from app.db.models import CommonItemAlias, PriceTarget, StoreChain, StoreLocation, WebDeal, WebHours
 from app.logging_config import get_logger
+from app.services import maintenance
 from app.services import analytics, itemquery, priceextract, textllm, trips, webdebug, webparse, websearch, reqcache
 from app.services.analysis_data import load_observations
 
@@ -52,6 +54,18 @@ NOT_SET_UP = ("No web search is set up. Choose a provider in Admin → App setti
 
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
+# Starting a lookup: the check for one already running and the start happen together (two clicks, or a click and
+# the daily job, would otherwise start the same lookup twice)
+_start_lock = threading.RLock()
+
+
+def _one_at_a_time(fn: Callable) -> Callable:
+    """``fn`` (a start_*_job) runs under _start_lock: its running_job() check and its _new_job() go together."""
+    @functools.wraps(fn)
+    def start(*args, **kwargs):
+        with _start_lock:
+            return fn(*args, **kwargs)
+    return start
 
 
 class _Budget:
@@ -151,7 +165,9 @@ def running_job(kind: str, home_id: str) -> dict[str, Any] | None:
 def _run_in_thread(job: dict[str, Any], work: Callable[[dict[str, Any]], None]) -> None:
     def target() -> None:
         try:
-            with reqcache.scope():  # the job's own reads are made once (see reqcache)
+            # the job's own reads are made once, for a couple of minutes at a time (see reqcache); the job runs inside
+            # the maintenance gate, so a backup restore waits for it
+            with maintenance.GATE.work(), reqcache.scope(ttl=reqcache.JOB_TTL_SECONDS):
                 work(job)
         except (websearch.WebSearchError, textllm.TextLLMError, WebInfoError) as e:
             job["error"] = str(e)
@@ -446,6 +462,7 @@ def find_hours(loc: dict[str, Any], budget: "_Budget | None" = None) -> dict[str
     """
     chain = loc["chain_name"]
     best: dict[str, Any] | None = None
+    seen: list[tuple[str, str]] = []          # (hours as JSON, site) of every answer the model gave
 
     def ask(text: str, url: str) -> None:
         nonlocal best
@@ -454,8 +471,19 @@ def find_hours(loc: dict[str, Any], budget: "_Budget | None" = None) -> dict[str
         excerpt = webparse.hours_excerpt(text, PAGE_CHARS_FOR_MODEL, webparse.address_anchors(_street(loc), _city(loc), _postal(loc)))
         answer = textllm.complete_json(webparse.HOURS_SYSTEM, webparse.hours_prompt(chain, loc.get("address"), excerpt))
         cleaned = webparse.clean_hours_answer(answer, text, chain)
-        if cleaned and (best is None or cleaned["confidence"] > best["confidence"]):
-            best = {**cleaned, "source_url": url}
+        if not cleaned:
+            return
+        # The model's own confidence is only its say-so (a page can tell it anything): hours count as confirmed
+        # when two different websites give the same ones
+        key, site_name = json.dumps(cleaned["hours"], sort_keys=True), (urlparse(url).hostname or "").removeprefix("www.")
+        agreed = any(k == key and s != site_name for k, s in seen)
+        seen.append((key, site_name))
+        if agreed:
+            cleaned = {**cleaned, "evidence": "agreed"}
+            if best is None or best.get("evidence") != "agreed" or cleaned["confidence"] > best["confidence"]:
+                best = {**cleaned, "source_url": url}
+        elif best is None or (best.get("evidence") != "agreed" and cleaned["confidence"] > best["confidence"]):
+            best = {**cleaned, "evidence": "model", "source_url": url}
 
     def sure() -> bool:
         return best is not None and best["confidence"] >= 0.85
@@ -467,7 +495,8 @@ def find_hours(loc: dict[str, Any], budget: "_Budget | None" = None) -> dict[str
         if page:
             hours = priceextract.extract_hours(page["raw"])
             if hours:
-                return {"hours": hours, "confidence": 0.95, "note": "From the store's own page", "source_url": loc["page_url"]}
+                return {"hours": hours, "confidence": 0.95, "note": "From the store's own page", "source_url": loc["page_url"],
+                        "evidence": "structured"}
             full = _full_text(page)
             if webparse.has_clock_times(full):
                 ask(full, loc["page_url"])
@@ -499,7 +528,8 @@ def find_hours(loc: dict[str, Any], budget: "_Budget | None" = None) -> dict[str
                         opened_on_site = True
                     hours = priceextract.extract_hours(page["raw"]) if site and websearch._on_site(hit["url"], site) else None
                     if hours:
-                        return {"hours": hours, "confidence": 0.9, "note": "From the store's website", "source_url": hit["url"]}
+                        return {"hours": hours, "confidence": 0.9, "note": "From the store's website", "source_url": hit["url"],
+                                "evidence": "structured"}
                     full = _full_text(page)
                     if webparse.has_clock_times(full):
                         ask(full, hit["url"])
@@ -523,7 +553,10 @@ def _save_hours(db: Session, location_id: str, found: dict[str, Any], has_hours:
     row.fetched_at = datetime.utcnow()
     if not unchanged:
         row.status = "SUGGESTED"
-    if settings.web_auto_hours and not has_hours and found["confidence"] >= 0.8:
+    # Applied by itself only on evidence: structured data (the store's own page, OpenStreetMap) or two websites giving
+    # the same hours; never on the model's own confidence alone
+    if (settings.web_auto_hours and not has_hours and found["confidence"] >= 0.8
+            and found.get("evidence") in ("structured", "agreed")):
         location = db.get(StoreLocation, location_id)
         if location is not None and not location.opening_hours:
             location.opening_hours = text
@@ -532,7 +565,7 @@ def _save_hours(db: Session, location_id: str, found: dict[str, Any], has_hours:
     return row.status
 
 
-def start_hours_job(home_id: str, location_ids: list[str] | None = None, force: bool = False) -> dict[str, Any]:
+def _start_hours_job(home_id: str, location_ids: list[str] | None = None, force: bool = False) -> dict[str, Any]:
     """Look up opening hours for a home's store locations in the background."""
     if not websearch.configured():
         raise WebInfoError(NOT_SET_UP)
@@ -751,7 +784,7 @@ def _deal_sources(chain: dict[str, Any], target_items: list[str]):
                 yield found
 
 
-def start_deals_job(home_id: str) -> dict[str, Any]:
+def _start_deals_job(home_id: str) -> dict[str, Any]:
     """Look for promotions on your items at the stores you shop at, in the background."""
     if not websearch.configured():
         raise WebInfoError(NOT_SET_UP)
@@ -850,7 +883,7 @@ def _price_pages(item: dict[str, Any], chain: dict[str, Any]):
     yield from _price_sources(q["web_query"], chain["name"])
 
 
-def start_prices_job(
+def _start_prices_job(
     home_id: str, item_ids: list[str] | None = None, chain_ids: list[str] | None = None, force: bool = False,
     all_stores: bool = False,
 ) -> dict[str, Any]:
@@ -1030,8 +1063,28 @@ def _save_deals(db: Session, home_id: str, chain_id: str, found: list[dict[str, 
     return min(len(rows), 80)
 
 
+def _current(d, today: str, deal_cutoff: datetime, price_cutoff: datetime) -> bool:
+    """Whether a row would survive purge_old_deals (the pages read them without deleting anything)."""
+    if (d.kind or "DEAL") == "DEAL":
+        if d.valid_to is not None:
+            return d.valid_to >= today
+        return d.fetched_at is None or d.fetched_at >= deal_cutoff
+    if d.kind == "PRICE":
+        return d.fetched_at is None or d.fetched_at >= price_cutoff
+    return True
+
+
+def _current_filter():
+    now = datetime.utcnow()
+    today = date.today().isoformat()
+    deal_cutoff = now - timedelta(days=DEAL_MAX_AGE_DAYS)
+    price_cutoff = now - timedelta(days=PRICE_HISTORY_DAYS)
+    return lambda d: _current(d, today, deal_cutoff, price_cutoff)
+
+
 def purge_old_deals(db: Session) -> int:
-    """Drop deals that have ended, deals with no end date that are old, and shelf prices older than a week."""
+    """Drop deals that have ended, deals with no end date that are old, and shelf prices older than a month (the daily
+    job; the pages leave such rows out without deleting them)."""
     today = date.today().isoformat()
     cutoff = datetime.utcnow() - timedelta(days=DEAL_MAX_AGE_DAYS)
     n = db.query(WebDeal).filter(WebDeal.kind == "DEAL", WebDeal.valid_to.isnot(None), WebDeal.valid_to < today).delete(synchronize_session=False)
@@ -1043,8 +1096,8 @@ def purge_old_deals(db: Session) -> int:
 
 def deal_rows(db: Session, home_id: str) -> list[dict[str, Any]]:
     """Current deals, each compared with what you usually pay at that store."""
-    purge_old_deals(db)
-    rows = db.query(WebDeal).filter(WebDeal.home_id == home_id).all()
+    current = _current_filter()
+    rows = [d for d in db.query(WebDeal).filter(WebDeal.home_id == home_id).all() if current(d)]
     # Shelf prices: only the latest check of each item at each store counts, and only while fresh.
     trust_after = datetime.utcnow() - timedelta(days=PRICE_MAX_AGE_DAYS)
     latest_price: dict[tuple[str, str], WebDeal] = {}
@@ -1123,9 +1176,10 @@ def price_history(db: Session, home_id: str, days: int = PRICE_HISTORY_DAYS) -> 
     Returns [{date, checks: [{item_name, chain, product, price, unit, method, source, source_url, time, latest}]}].
     ``latest`` marks the check that is currently used for that item at that store.
     """
-    purge_old_deals(db)
+    current = _current_filter()
     since = datetime.utcnow() - timedelta(days=days)
-    rows = db.query(WebDeal).filter(WebDeal.home_id == home_id, WebDeal.kind == "PRICE", WebDeal.fetched_at > since).all()
+    rows = [r for r in db.query(WebDeal).filter(WebDeal.home_id == home_id, WebDeal.kind == "PRICE",
+                                                 WebDeal.fetched_at > since).all() if current(r)]
     if not rows:
         return []
     from app.db.models import CommonItem  # local: keeps this module's import list short
@@ -1153,6 +1207,7 @@ def price_history(db: Session, home_id: str, days: int = PRICE_HISTORY_DAYS) -> 
 # --------------------------------------------------------------------------- #
 
 _last_deals_run: dict[str, datetime] = {}
+_last_prices_run: dict[str, datetime] = {}
 # The daily job runs at the same hour each day, so "every 3 days" must count a run a few minutes short
 # of exactly 3 days ago as due, or it would only happen every 4th day.
 _SLACK = timedelta(hours=2)
@@ -1195,8 +1250,10 @@ def run_scheduled() -> None:
                 _last_deals_run[home_id] = datetime.utcnow()
                 step(home_id, lambda: start_deals_job(home_id))
         if settings.web_prices_days > 0:
-            last = newest(home_id, "PRICE")
+            # as for deals: a check that found no price saves no row, so when it ran is remembered too
+            last = max((t for t in (newest(home_id, "PRICE"), _last_prices_run.get(home_id)) if t), default=None)
             if last is None or datetime.utcnow() - last > timedelta(days=settings.web_prices_days) - _SLACK:
+                _last_prices_run[home_id] = datetime.utcnow()
                 step(home_id, lambda: start_prices_job(home_id))
         step(home_id, lambda: start_hours_job(home_id))
 
@@ -1208,3 +1265,8 @@ def _wait(job_id: str, timeout: float = 3600.0) -> None:
         if job is None or job["finished"]:
             return
         time.sleep(2)
+
+
+start_hours_job = _one_at_a_time(_start_hours_job)
+start_deals_job = _one_at_a_time(_start_deals_job)
+start_prices_job = _one_at_a_time(_start_prices_job)

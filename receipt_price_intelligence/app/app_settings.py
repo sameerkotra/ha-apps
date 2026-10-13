@@ -87,6 +87,15 @@ def _email(v: str) -> str:
     return v
 
 
+def _senders(v: str) -> str:
+    """E-mail addresses and "@domain" entries, separated by commas or spaces."""
+    v = (v or "").strip()
+    for entry in re.split(r"[,;\s]+", v):
+        if entry and not re.fullmatch(r"([^@\s,;]+)?@[^@\s,;]+\.[^@\s,;]+", entry):
+            raise ValueError(f"has {entry!r}, which is not an e-mail address or @domain")
+    return v
+
+
 def _field_name(v: str) -> str:
     v = (v or "").strip()
     if not _FIELD_NAME.match(v):
@@ -123,11 +132,13 @@ _SPEC: dict[str, tuple[Any, dict]] = {
     "model_max_output_tokens": (8192, {"min": 256, "max": 65536}),
     "model_think": (False, {}),
     "extraction_concurrency": (1, {"min": 1, "max": 8}),
+    "model_monthly_limit": (0, {"min": 0, "max": 1000000}),
     # Receipts
     "default_currency": ("USD", {"validators": [_currency]}),
     "receipt_date_order": ("auto", {}),
     "receipt_archive_path": ("", {"validators": [_folder]}),
     "draft_retention_hours": (72, {"min": 1, "max": 8760}),
+    "max_waiting_receipts": (200, {"min": 10, "max": 5000}),
     # Importing receipts
     "import_folder": ("", {"validators": [_folder]}),
     "import_home": ("", {"max_length": 255, "validators": [_home]}),
@@ -137,6 +148,8 @@ _SPEC: dict[str, tuple[Any, dict]] = {
     "imap_password": ("", {"max_length": 1024}),
     "imap_folder": ("INBOX", {"max_length": 255, "validators": [_trimmed]}),
     "imap_ssl": (True, {}),
+    "imap_allow_plaintext": (False, {}),
+    "imap_allowed_senders": ("", {"max_length": 2000, "validators": [_senders]}),
     # Maps and trips
     "unit_system": ("imperial", {}),
     "geocoder_url": ("https://nominatim.openstreetmap.org", {"kind": "text", "validators": [_urls]}),
@@ -159,6 +172,7 @@ _SPEC: dict[str, tuple[Any, dict]] = {
     "web_deals_days": (3, {"min": 0, "max": 60}),
     "web_price_freshness_hours": (6, {"min": 1, "max": 72}),
     "web_prices_days": (0, {"min": 0, "max": 60}),
+    "web_search_monthly_limit": (0, {"min": 0, "max": 1000000}),
     # Best prices
     "recommendation_window_days": (90, {"min": 7, "max": 365}),
     "minimum_savings_percent": (5.0, {"min": 0, "max": 100}),
@@ -180,9 +194,10 @@ _SPEC: dict[str, tuple[Any, dict]] = {
     "assistant_answers": (False, {}),
     # Advanced
     "log_level": ("INFO", {}),
+    "bus_signing_key": ("", {"max_length": 200}),
 }
 
-_SECRET_KEYS = frozenset({"model_api_key", "imap_password", "web_search_api_key", "web_search_token"})
+_SECRET_KEYS = frozenset({"model_api_key", "imap_password", "web_search_api_key", "web_search_token", "bus_signing_key"})
 
 # The page is drawn from this: groups in order, each field's label, help and kind. "choices" fields are
 # a drop-down, "secret" fields are write-only. Every setting applies straight away (no restart).
@@ -227,6 +242,10 @@ FIELDS: dict[str, tuple[str, str, str]] = {
     "model_think": ("model", "Let the model think first", "For reasoning models on Ollama. Slower, occasionally more accurate."),
     "extraction_concurrency": ("model", "Receipts read at the same time",
                                "How many receipts the model reads in parallel. Keep at 1 unless your model server has capacity to spare."),
+    "model_monthly_limit": ("model", "Model questions a month at most",
+                            "For a paid model service: once this many questions (receipt readings, web page readings) "
+                            "have been asked in a calendar month, background checks stop asking until the next month. "
+                            "The count is on the Web debug page. 0: no limit."),
     "default_currency": ("receipts", "Default currency", "Used when a receipt does not show one, for example USD."),
     "receipt_date_order": ("receipts", "Date order on receipts",
                            "How to read a date like 03/04/25. Automatic uses the receipt's currency (USD and CAD month "
@@ -236,7 +255,11 @@ FIELDS: dict[str, tuple[str, str, str]] = {
                              "or /media/receipts. Approved receipts are filed under <year>/<date> <store> <total>; rejected "
                              "scans are removed. Empty: no copies are kept."),
     "draft_retention_hours": ("receipts", "Keep unsaved receipts (hours)",
-                              "How long receipts waiting for review, and their photos, are kept before being deleted."),
+                              "How long receipts waiting for review, and their photos, are kept before being deleted. "
+                              "A receipt the model hasn't read yet is never deleted."),
+    "max_waiting_receipts": ("receipts", "Receipts waiting at most (per home)",
+                             "Receipts being read or waiting for review in one home. Over this, new scans are refused, "
+                             "and the import folder and mailbox wait (emails stay unread) until some are reviewed."),
     "import_folder": ("import", "Folder to import receipts from",
                       "A folder under /share or /media watched for photos and PDFs. Files become receipts to review, then "
                       "move to a processed folder. Empty: off."),
@@ -249,7 +272,15 @@ FIELDS: dict[str, tuple[str, str, str]] = {
     "imap_user": ("import", "Mail user name", "The mailbox to read."),
     "imap_password": ("import", "Mail password", "For most webmail services, use an app password."),
     "imap_folder": ("import", "Mail folder", "Which folder to read, for example INBOX or Receipts."),
-    "imap_ssl": ("import", "Use SSL for mail", "Leave on unless your mail server does not support it."),
+    "imap_ssl": ("import", "Use SSL for mail",
+                 "Leave on unless your mail server does not support it. When off, the connection is encrypted with "
+                 "STARTTLS if the server offers it."),
+    "imap_allow_plaintext": ("import", "Allow mail login without encryption",
+                             "Only for a mail server on your own network that offers neither SSL nor STARTTLS: the "
+                             "password is then sent unencrypted. Off: such a server is not used."),
+    "imap_allowed_senders": ("import", "Only import mail from",
+                             "E-mail addresses or whole domains (@example.com), separated by commas. Emails from anyone "
+                             "else are marked as read and skipped. Empty: every sender."),
     "unit_system": ("maps", "Units for the trip planner", ""),
     "geocoder_url": ("maps", "Address search server",
                      "A Nominatim server that finds map coordinates for addresses. The default is the free OpenStreetMap "
@@ -295,6 +326,10 @@ FIELDS: dict[str, tuple[str, str, str]] = {
     "web_prices_days": ("web", "Check online prices every (days)",
                         "How often the online price of your most bought items is checked. This asks the model many "
                         "questions, so it is off (0) by default."),
+    "web_search_monthly_limit": ("web", "Web searches a month at most",
+                                 "For a paid search service: once this many searches and page fetches have been made "
+                                 "in a calendar month, no more are made until the next month. The count is on the "
+                                 "Web debug page. 0: no limit."),
     "recommendation_window_days": ("prices", "Price history window (days)", "How far back the daily best-price check looks."),
     "minimum_savings_percent": ("prices", "Minimum saving to suggest (%)",
                                 "A cheaper store is only suggested if it saves at least this much."),
@@ -331,6 +366,9 @@ FIELDS: dict[str, tuple[str, str, str]] = {
                           "and where it's cheapest, an item's prices by store, and spending by store or category — and add "
                           "to the shopping list when someone taps to confirm. Off until you turn it on."),
     "log_level": ("advanced", "Log level", "Use Debug only while troubleshooting."),
+    "bus_signing_key": ("advanced", "App-messages signing key",
+                        "The same key in every household app (Admin → App settings there). Without one, any app on "
+                        "Home Assistant's network can send messages as any other."),
 }
 
 assert set(FIELDS) == set(_SPEC), set(FIELDS) ^ set(_SPEC)

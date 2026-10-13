@@ -56,17 +56,30 @@ def watchers(states: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def position() -> tuple[float, float] | None:
-    """Where the first watched phone (or person) is: for the List page's test notification."""
+def position(owner: str | None = None) -> tuple[float, float] | None:
+    """Where the first watched phone (or person) is: for the List page's test notification.
+
+    With ``owner`` (a Home Assistant user id), only a watched ``person.`` entity that belongs to that user counts:
+    where someone else is stays theirs."""
     if not ha.available():
         return None
     states = ha.all_states()
     by_id = {s.get("entity_id"): s for s in states}
     for w in watchers(states):
-        where = position_of(by_id.get(w["tracker"]))
+        state = by_id.get(w["tracker"])
+        if owner is not None and not _belongs_to(state, owner):
+            continue
+        where = position_of(state)
         if where:
             return where
     return None
+
+
+def _belongs_to(state: dict[str, Any] | None, user_id: str) -> bool:
+    """A Home Assistant person entity linked to that user (device trackers say nothing about whose they are)."""
+    if not state or not str(state.get("entity_id", "")).startswith("person."):
+        return False
+    return bool(user_id) and (state.get("attributes") or {}).get("user_id") == user_id
 
 
 def cheapest_here(home_id: str) -> dict[str, dict[str, Any]]:

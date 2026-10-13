@@ -306,14 +306,14 @@ def parse_model_json(text: str) -> dict[str, Any]:
     for candidate in candidates:
         try:
             return _as_receipt_dict(json.loads(candidate))
-        except (json.JSONDecodeError, ReceiptParseError):
+        except (json.JSONDecodeError, ReceiptParseError, RecursionError, ValueError):
             pass
 
         # Look for a JSON object embedded in surrounding prose
         for match in re.finditer(r"\{", candidate):
             try:
                 obj, _ = decoder.raw_decode(candidate[match.start():])
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError, ValueError):   # deeply nested or huge numbers
                 continue
             try:
                 return _as_receipt_dict(obj)
@@ -353,12 +353,18 @@ def _clean_str(value: Any, max_len: int = 500) -> str | None:
     return text[:max_len]
 
 
+MAX_NUMBER = 1e9
+
+
 def to_number(value: Any) -> float | None:
     """Best-effort conversion of model output to a finite float, else None."""
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:            # an int too big for a float
+            return None
     elif isinstance(value, str):
         text = value.strip()
         if not text:
@@ -375,15 +381,20 @@ def to_number(value: Any) -> float | None:
             text = f"{head.replace(',', '')}.{tail}" if len(tail) in (1, 2) else text.replace(",", "")
         try:
             number = float(text)
-        except ValueError:
+        except (ValueError, OverflowError):
             return None
         if negative:
             number = -number
     else:
         return None
 
-    if math.isnan(number) or math.isinf(number):
+    try:
+        if isinstance(value, int) and abs(value) > MAX_NUMBER:
+            return None
+    except OverflowError:
         return None
+    if math.isnan(number) or math.isinf(number) or abs(number) > MAX_NUMBER:
+        return None   # nothing on a receipt is anywhere near this: a misread, or a hostile answer
     return round(number, 4)
 
 
@@ -596,6 +607,11 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
 
     if discount is not None:
         discount = abs(discount)  # convention: discounts are positive
+    # a count or a weight is never negative (a returned item shows as a negative amount, not a negative count)
+    if quantity is not None and quantity < 0:
+        quantity = None
+    if weight_value is not None and weight_value < 0:
+        weight_value = None
 
     has_amounts = any(v is not None for v in (line_total, line_subtotal, unit_price))
     if description is None and not has_amounts:

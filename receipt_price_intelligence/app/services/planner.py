@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from datetime import date, datetime, timedelta
 from itertools import combinations, permutations
 from typing import Any
 
+from app.logging_config import get_logger
 from app.services import analytics
 
 KM_PER_MILE = 1.609344
@@ -32,11 +34,15 @@ KINDS = FUEL_KINDS + ("EV",)
 STALE_DAYS = 180          # a price older than this is flagged
 ROAD_FACTOR = 1.3         # straight line -> road distance when routing is unavailable
 FALLBACK_KMH = 40.0       # average speed used for that estimate
+logger = get_logger("planner")
+
 MAX_CANDIDATE_STORES = 14
 K_AUTO = 5                # most stores tried exhaustively (every visiting order); beyond that a heuristic is used
 MAX_PREFERRED_STOPS = 6
 MAX_STORES_IN_PLAN = 40   # stores kept before distances are worked out
 EPS = 1e-9
+USE_DRIVING_BOUND = True  # skip trips whose least possible driving already makes them dearer (same answer, faster)
+EXACT_SECONDS = 5.0       # the exhaustive search stops after this long (the quick search finishes the plan)
 
 
 # --------------------------------------------------------------------------- #
@@ -719,12 +725,33 @@ def plan_trip(
         covering = sorted(range(n), key=lambda s: -sum(1 for i in buyable if item_cost[i][s] is not None))[:6]
         candidates = list(dict.fromkeys(sorted(essential) + nearest + covering))[:max(MAX_CANDIDATE_STORES, len(essential))]
 
+    def entry_bounds(t: Trip) -> tuple[list[float], float] | None:
+        """The least driving cost of reaching each store (from anywhere), and of getting home: any trip through a
+        set of stores costs at least the sum of those (no shortcut can avoid entering each store once). None when a
+        cost per km or minute is negative (then there is no such bound)."""
+        if t.per_km < 0 or t.per_min < 0:
+            return None
+        nodes = range(n + 1)
+        enter = [min(t.dist[a][s + 1] * t.per_km + t.dur[a][s + 1] * t.per_min for a in nodes if a != s + 1)
+                 + t.stop_minutes * t.per_min for s in range(n)]
+        home = min(t.dist[s + 1][0] * t.per_km + t.dur[s + 1][0] * t.per_min for s in range(n)) if t.round_trip else 0.0
+        return enter, home
+
     def exact(t: Trip) -> dict[int, tuple[float, tuple[int, ...], dict[int, int]]]:
         found: dict[int, tuple[float, tuple[int, ...], dict[int, int]]] = {}
         if not candidates:
             return found
+        bounds = entry_bounds(t) if USE_DRIVING_BOUND else None
+        deadline = time.monotonic() + EXACT_SECONDS
         for k in range(1, min(K_AUTO, len(candidates)) + 1):
             for combo in combinations(candidates, k):
+                if time.monotonic() > deadline:
+                    # very many stores: what was found so far, and the quick search, whichever is cheaper
+                    logger.info("Trip search stopped after %s s; finishing with the quick search", EXACT_SECONDS)
+                    for stops, plan in heuristic(t).items():
+                        if stops not in found or plan[0] < found[stops][0] - EPS:
+                            found[stops] = plan
+                    return found
                 assignment = assign(combo)
                 if assignment is None or len(set(assignment.values())) < k:
                     continue  # a shorter trip covers this one
@@ -732,6 +759,9 @@ def plan_trip(
                 current = found.get(k)
                 if current is not None and items_sum >= current[0] - EPS:
                     continue  # driving and time only add cost, so this cannot win
+                if current is not None and bounds is not None and (
+                        items_sum + sum(bounds[0][s] for s in combo) + bounds[1] >= current[0] - EPS):
+                    continue  # even the least driving this trip could need makes it dearer
                 order = t.best_order(combo)
                 if order is None:
                     continue  # no visiting order fits the opening hours

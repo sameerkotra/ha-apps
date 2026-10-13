@@ -17,7 +17,7 @@ DB_MEDIA_TYPE = "application/vnd.sqlite3"
 
 
 @router.get("/info")
-async def backup_info(_: CurrentUser = Depends(require_admin)):
+def backup_info(_: CurrentUser = Depends(require_admin)):
     """What the database holds now, and the safety copies kept from earlier imports."""
     path = backup_service.db_path()
     return {

@@ -38,11 +38,14 @@ from urllib.parse import urlencode, urlparse
 
 from app.config import get_settings
 from app.logging_config import get_logger
+from app.services import htmlscan, httpread
 from app.services import webcache, webdebug
 
 logger = get_logger("websearch")
 
 MAX_PAGE_CHARS = 14000
+MAX_ANSWER_BYTES = 5 * 1024 * 1024     # an answer from the search service (results with page text) at most
+FETCH_DEADLINE = 30                    # seconds a page may take to arrive, in all
 
 _sema_lock = threading.Lock()
 _semaphore: threading.Semaphore | None = None
@@ -113,9 +116,13 @@ def _post(path: str, body: dict[str, Any]) -> Any:
     action = "search" if path == "/search" else "fetch"
     try:
         with urllib.request.urlopen(request, timeout=settings.web_search_timeout_seconds) as response:
-            raw = response.read().decode("utf-8", errors="replace")
+            raw = httpread.read_capped(response, MAX_ANSWER_BYTES, settings.web_search_timeout_seconds,
+                                       truncate=action == "fetch").decode("utf-8", errors="replace")
             content_type = response.headers.get("Content-Type", "")
             webdebug.record("custom", action, status=response.status, received=raw, content_type=content_type, **trace)
+    except httpread.TooLarge as e:
+        webdebug.record("custom", action, error="answer too large", **trace)
+        raise WebSearchError(f"The search server's answer to {path} is too large") from e
     except urllib.error.HTTPError as e:
         webdebug.record("custom", action, status=e.code, received=_error_body(e), error=f"HTTP {e.code}", **trace)
         raise WebSearchError(f"The search server answered {path} with an error ({e.code})") from e
@@ -190,7 +197,6 @@ def as_hits(data: Any) -> list[dict[str, str]]:
     return [h for h in hits if h["url"] or h["snippet"]]
 
 
-_TAG = re.compile(r"<(script|style|noscript)\b.*?</\1>|<[^>]+>", re.S | re.I)
 
 
 def clean_page_text(value: Any, limit: int = MAX_PAGE_CHARS) -> str:
@@ -200,8 +206,10 @@ def clean_page_text(value: Any, limit: int = MAX_PAGE_CHARS) -> str:
     elif isinstance(value, list):
         value = "\n".join(str(v) for v in value)
     text = value if isinstance(value, str) else ""
+    text = text[:max(limit * 4, htmlscan.MAX_SCAN_CHARS)]   # tags take room: read a few times the limit, no more
     if "<" in text and re.search(r"</?(html|body|div|p|span|table|li|ul|h\d)\b", text, re.I):
-        text = html.unescape(_TAG.sub(" ", text))
+        # one pass over the tags (htmlscan): a regular expression took minutes on a hostile page
+        text = htmlscan.strip(text, drop=("script", "style", "noscript"))
     text = re.sub(r"[ \t\r\f\v]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n", text).strip()
     return text[:limit]
@@ -274,6 +282,10 @@ def _search(query: str, limit: int = 5, site: str | None = None) -> list[dict[st
     pause = paused()
     if pause:
         raise SearchBlocked(f"Web searches are paused for {pause['minutes_left']} more minute(s) because {pause['reason']}.")
+    limit_month = settings.web_search_monthly_limit
+    if limit_month and webcache.uses("search") >= limit_month:
+        raise SearchBlocked(f"this month's {limit_month} web searches (Admin → App settings) have been made")
+    webcache.count_use("search")
     if site and kind not in HOSTED:
         query = f"{query} site:{site}"
     if kind == "tavily":
@@ -386,10 +398,14 @@ def _request_json(request: urllib.request.Request, who: str) -> Any:
     trace = {"method": request.get_method(), "url": request.full_url, "sent": sent, "started": started}
     service = who.lower()
     try:
-        with urllib.request.urlopen(request, timeout=get_settings().web_search_timeout_seconds) as response:
-            raw = response.read().decode("utf-8", errors="replace")
+        timeout = get_settings().web_search_timeout_seconds
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = httpread.read_capped(response, MAX_ANSWER_BYTES, timeout).decode("utf-8", errors="replace")
             webdebug.record(service, "search", status=response.status, received=raw, content_type=response.headers.get("Content-Type"), **trace)
             return json.loads(raw)
+    except httpread.TooLarge as e:
+        webdebug.record(service, "search", error="answer too large", **trace)
+        raise WebSearchError(f"{who} sent an answer that is too large") from e
     except urllib.error.HTTPError as e:
         webdebug.record(service, "search", status=e.code, received=_error_body(e), error=f"HTTP {e.code}", **trace)
         if e.code in (401, 403):
@@ -544,9 +560,19 @@ def _public_address(host: str) -> str | None:
         address = ipaddress.ip_address(info[4][0].split("%")[0])
         if getattr(address, "ipv4_mapped", None):
             address = address.ipv4_mapped
-        if not address.is_global or address.is_multicast:
+        if not address.is_global or address.is_multicast or _translated(address):
             return None
     return infos[0][4][0].split("%")[0]
+
+
+# IPv6 prefixes that lead to an IPv4 address (NAT64, 6to4): Python counts them as global, but the IPv4 address inside
+# can be one in the home network
+_TRANSLATED = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48"),
+               ipaddress.ip_network("2002::/16"))
+
+
+def _translated(address) -> bool:
+    return address.version == 6 and any(address in net for net in _TRANSLATED)
 
 
 def _public_host(host: str) -> bool:
@@ -670,7 +696,7 @@ def _fetch_direct(url: str, headers: dict[str, str]) -> tuple[str, int, str, str
             kind = response.headers.get("Content-Type", "")
             if kind and not re.search(r"text/|html|json|xml", kind, re.I):
                 raise WebSearchError("it is not a web page")
-            data = response.read(MAX_FETCH_BYTES + 1)[:MAX_FETCH_BYTES]
+            data = httpread.read_capped(response, MAX_FETCH_BYTES, FETCH_DEADLINE, truncate=True)
             charset = response.headers.get_content_charset() or "utf-8"
             encoding = (response.headers.get("Content-Encoding") or "").lower()
             status, final_url = response.status, response.geturl()

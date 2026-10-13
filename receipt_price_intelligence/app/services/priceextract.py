@@ -18,6 +18,8 @@ import json
 import re
 from typing import Any
 
+from app.services import htmlscan
+
 MAX_LISTINGS = 200
 MAX_PRICE = 1000.0
 
@@ -30,10 +32,9 @@ _UNIT_WORDS = {
     "h87": "each", "c62": "each",
 }
 
-_JSONLD = re.compile(r"<script[^>]*type\s*=\s*[\"']application/ld\+json[\"'][^>]*>(.*?)</script>", re.S | re.I)
-_SCRIPT_STYLE = re.compile(r"<(script|style|noscript|svg)\b.*?</\1>", re.S | re.I)
-_BLOCK_TAG = re.compile(r"</?(?:div|p|li|tr|td|th|h\d|section|article|br|ul|ol|table|header|footer|span)\b[^>]*>", re.I)
-_TAG = re.compile(r"<[^>]+>")
+# Tags are read by htmlscan in one pass (the regular expressions used before took minutes on hostile pages)
+_BLOCK_TAGS = ("div", "p", "li", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "br", "ul",
+               "ol", "table", "header", "footer", "span")
 
 
 def _price(value: Any) -> float | None:
@@ -128,7 +129,7 @@ def _offer_prices(offers: Any) -> list[tuple[float, bool, str | None, str]]:
 
 def from_jsonld(raw: str) -> list[dict[str, Any]]:
     listings = []
-    for block in _JSONLD.findall(raw or ""):
+    for block in htmlscan.jsonld(raw or ""):
         data = None
         # Raw first: unescaping could break a valid document (a name like 12&quot; pizza inside a string);
         # some sites do HTML-escape the whole block, so that is the fallback.
@@ -162,29 +163,55 @@ def from_jsonld(raw: str) -> list[dict[str, Any]]:
 # 2. Microdata and meta tags (single-product pages)
 # --------------------------------------------------------------------------- #
 
+_ATTR_RX: dict[str, re.Pattern] = {}
+
+
 def _attr(tag: str, name: str) -> str | None:
-    m = re.search(name + r"\s*=\s*[\"']([^\"']*)[\"']", tag, re.I)
+    """An attribute's value in one tag (a tag from htmlscan is at most a few thousand characters)."""
+    rx = _ATTR_RX.get(name) or _ATTR_RX.setdefault(name, re.compile(name + r"\s*=\s*[\"']([^\"']*)[\"']", re.I))
+    m = rx.search(tag[:htmlscan.MAX_TAG_CHARS])
     return m.group(1) if m else None
+
+
+_PRICE_FIRST = re.compile(r"itemprop\s*=\s*[\"']price[\"'][^>]*content\s*=\s*[\"']([^\"']+)[\"']", re.I)
+_CONTENT_FIRST = re.compile(r"content\s*=\s*[\"']([^\"']+)[\"'][^>]*itemprop\s*=\s*[\"']price[\"']", re.I)
 
 
 def from_meta(raw: str) -> list[dict[str, Any]]:
     metas = {}
-    for tag in re.findall(r"<meta\b[^>]*>", raw or "", re.I):
-        key = (_attr(tag, "property") or _attr(tag, "name") or _attr(tag, "itemprop") or "").lower()
-        if key:
-            metas.setdefault(key, _attr(tag, "content"))
+    price_first = content_first = name_text = title = None
+    raw = (raw or "")[:htmlscan.MAX_SCAN_CHARS]
+    for tag_name, tag, body, _start, end in htmlscan.tags(raw):
+        if tag_name == "meta":
+            key = (_attr(tag, "property") or _attr(tag, "name") or _attr(tag, "itemprop") or "").lower()
+            if key:
+                metas.setdefault(key, _attr(tag, "content"))
+        if tag_name.startswith(("/", "!")):
+            continue
+        prop = (_attr(tag, "itemprop") or "").lower()
+        # microdata: <span itemprop="price" content="3.79"> and <... itemprop="name">Milk</...>
+        if prop == "price":
+            m = price_first is None and _PRICE_FIRST.search(tag)
+            if m:
+                price_first = m.group(1)
+            m = content_first is None and _CONTENT_FIRST.search(tag)
+            if m:
+                content_first = m.group(1)
+        elif prop == "name" and name_text is None:
+            after = body if body is not None else htmlscan.text_after(raw, end, 161)
+            if 3 <= len(after) <= 160 and "<" not in after:
+                name_text = after
+        if tag_name == "title" and title is None and body is not None and 3 <= len(body) <= 160 and "<" not in body:
+            title = body
     price = _price(metas.get("product:price:amount") or metas.get("og:price:amount") or metas.get("price"))
     if price is None:
-        # microdata: <span itemprop="price" content="3.79"> and <... itemprop="name">Milk</...>
-        m = re.search(r"itemprop\s*=\s*[\"']price[\"'][^>]*content\s*=\s*[\"']([^\"']+)[\"']", raw or "", re.I) or \
-            re.search(r"content\s*=\s*[\"']([^\"']+)[\"'][^>]*itemprop\s*=\s*[\"']price[\"']", raw or "", re.I)
-        price = _price(m.group(1)) if m else None
+        found = price_first or content_first
+        price = _price(found) if found else None
     if price is None:
         return []
     name = metas.get("og:title") or metas.get("twitter:title")
     if not name:
-        m = re.search(r"itemprop\s*=\s*[\"']name[\"'][^>]*>([^<]{3,160})<", raw or "", re.I) or re.search(r"<title[^>]*>([^<]{3,160})</title>", raw or "", re.I)
-        name = m.group(1) if m else None
+        name = name_text or title
     item = _listing(name, price, "each", False, "structured")
     return [item] if item else []
 
@@ -207,11 +234,9 @@ _LEAD_WORDS = re.compile(r"\s*\b(was|now|reg\.?|regular(?: price)?|sale(?: price
 
 def page_text(raw: str) -> str:
     """Readable lines from HTML (or the text unchanged when it is not HTML)."""
-    text = raw or ""
+    text = (raw or "")[:htmlscan.MAX_SCAN_CHARS]
     if re.search(r"</?(html|body|div|span|p|li|td)\b", text, re.I):
-        text = _SCRIPT_STYLE.sub(" ", text)
-        text = _BLOCK_TAG.sub("\n", text)
-        text = htmllib.unescape(_TAG.sub(" ", text))
+        text = htmlscan.strip(text, drop=("script", "style", "noscript", "svg"), block=_BLOCK_TAGS)
     text = re.sub(r"[ \t\r\f\v]+", " ", text)
     return re.sub(r"\n\s*\n+", "\n", text).strip()
 
@@ -242,7 +267,7 @@ def from_text(text: str) -> list[dict[str, Any]]:
     """Listings from page text: a product name and its price on one line, or a price on a line of its own with the
     product named on the line(s) just above it ("Kroger 2% Milk" / "1 gal" / "$3.29") or, when the price comes
     first, on the line below. A line that named one product is never used for another."""
-    lines = [c for c in (_clean_line(l) for l in (text or "").split("\n")) if c][:4000]
+    lines = [c for c in (_clean_line(l[:2000]) for l in (text or "").split("\n")) if c][:4000]
     listings, used = [], set()
     for i, line in enumerate(lines):
         if _NOISE_LINE.search(line):
@@ -318,11 +343,13 @@ def extract(raw: str) -> list[dict[str, Any]]:
 
 _DAY_CODES = {"monday": "Mo", "tuesday": "Tu", "wednesday": "We", "thursday": "Th", "friday": "Fr",
               "saturday": "Sa", "sunday": "Su", "publicholidays": "PH"}
-_ITEMPROP_HOURS = re.compile(r"<[^>]*itemprop\s*=\s*[\"']openingHours[\"'][^>]*>", re.I)
+def _itemprop_hours_tags(raw: str) -> list[str]:
+    return [tag for name, tag, _b, _s, _e in htmlscan.tags(raw or "")
+            if not name.startswith(("/", "!")) and (htmlscan.attr(tag, "itemprop") or "").lower() == "openinghours"]
 
 
 def _jsonld_documents(raw: str):
-    for block in _JSONLD.findall(raw or ""):
+    for block in htmlscan.jsonld(raw or ""):
         for candidate in (block.strip(), htmllib.unescape(block.strip())):
             try:
                 yield json.loads(candidate)
@@ -383,7 +410,7 @@ def extract_hours(raw: str) -> dict[str, Any] | None:
                 hours = osm.parse_opening_hours("; ".join(text) if isinstance(text, list) else str(text))
                 if hours:
                     return hours
-    tags = [_attr(t, "content") or _attr(t, "datetime") for t in _ITEMPROP_HOURS.findall(raw or "")]
+    tags = [_attr(t, "content") or _attr(t, "datetime") for t in _itemprop_hours_tags(raw)]
     tags = [t for t in tags if t]
     if tags:
         return osm.parse_opening_hours("; ".join(tags))

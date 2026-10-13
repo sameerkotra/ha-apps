@@ -93,10 +93,13 @@
             'to', h('input', { class: 'input', type: 'time', value: (s.quiet || {}).end || '07:00', onchange: (e) => change(() => { s.quiet = { ...(s.quiet || {}), end: e.target.value }; }) })))));
     }
     function saveBar() {
+      // The settings are the whole household's: only an administrator saves them (the server checks too)
+      const canEdit = info.can_edit !== false;
       return h('div', { class: 'savebar', id: 'saveBar' },
-        h('span', { class: 'note' }, dirty ? 'Unsaved changes' : (s.saved ? 'Saved' : 'Using the App settings until you save here')),
+        h('span', { class: 'note' }, !canEdit ? (dirty ? 'Only an administrator can save these settings' : 'Only an administrator can change these settings')
+          : dirty ? 'Unsaved changes' : (s.saved ? 'Saved' : 'Using the App settings until you save here')),
         h('button', { class: 'btn btn-sm', type: 'button', onclick: () => test(null), disabled: !info.ha.available }, icon('bell'), 'Test'),
-        h('button', { class: 'btn btn-primary', type: 'button', disabled: !dirty || saving, onclick: save }, saving ? 'Saving…' : 'Save'));
+        canEdit ? h('button', { class: 'btn btn-primary', type: 'button', disabled: !dirty || saving, onclick: save }, saving ? 'Saving…' : 'Save') : null);
     }
     function paintSave() { const bar = $('saveBar'); if (bar) bar.replaceWith(saveBar()); }
     function render() {
@@ -104,5 +107,5 @@
         h('p', { class: 'note' }, 'These settings take precedence over the notification defaults in Admin → App settings, which are used until you save here.'),
         saveBar());
     }
-    window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+    window.addEventListener('beforeunload', (e) => { if (dirty && info && info.can_edit !== false) { e.preventDefault(); e.returnValue = ''; } });
     load();

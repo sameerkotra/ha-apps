@@ -1,9 +1,11 @@
 """Main FastAPI application entry point."""
 
 import os
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -14,7 +16,7 @@ from app.common import ha_time, sandbox_run, web_security
 from app.auth import ingress_gate, sync_roles
 from app.config import APP_VERSION, get_settings
 from app.db import get_db_session, init_models
-from app.services import reqcache
+from app.services import maintenance, reqcache
 from app.logging_config import get_logger, setup_logging
 from app.services import ha as ha_service
 from app.services import homes as homes_service
@@ -90,6 +92,10 @@ app = FastAPI(
     version=APP_VERSION,
     description="Home Assistant app for receipt capture, AI extraction, and price intelligence",
     lifespan=lifespan,
+    # The API description pages (/docs, /redoc, /openapi.json) are not served: docs/API.md describes the API
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 # Setup logging
@@ -115,12 +121,33 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
        "media-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; "
        "form-action 'self'; frame-ancestors 'self'")
 
-# Pages and static files are never cached: "no-cache" (the previous setting) only requires a cache to
-# check back with the server before reusing a copy; some webviews, including the Home Assistant
-# companion app's on some platforms, have been seen to skip that check and just reuse whatever they
-# already have. "no-store" is a stronger instruction that a compliant cache cannot reuse at all, only
-# serve fresh each time. (A route's own Cache-Control is kept; the API's answers are left alone.)
-HEADERS = web_security.SecurityHeaders(CSP, csp_skip=web_security.is_pdf, pages_no_cache=False, other_no_store=True)
+# Request bodies: 1 MB of JSON at most; a receipt photo or PDF 25 MB; a bulk upload (up to 30 files) 256 MB; a backup
+# import streams to disk and counts its own limit (backup_service.MAX_IMPORT_BYTES), so only its Content-Length is
+# checked here. A body sent without a Content-Length is counted as it arrives.
+JSON_MAX = 1 << 20
+PHOTO_MAX = 25 << 20
+_PHOTO_ROUTE = re.compile(r"^/api/v1/receipt-drafts/[^/]+/images/?$")
+
+
+class BodyLimit(web_security.BodyLimit):
+    """The shared limit, with the photo upload route (``/receipt-drafts/<id>/images``) at the photo size."""
+
+    def limit_for(self, path: str) -> int:
+        return PHOTO_MAX if _PHOTO_ROUTE.match(path) else super().limit_for(path)
+
+
+app.add_middleware(BodyLimit, default_max=JSON_MAX,
+                   routes={"/api/v1/import/upload": 256 << 20, "/api/v1/admin/backup/import": 520 << 20},
+                   streamed_prefixes=("/api/v1/admin/backup/import",))
+app.add_middleware(GZipMiddleware, minimum_size=2048)
+
+# Pages are never cached: "no-cache" only requires a cache to check back with the server before reusing a copy; some
+# webviews, including the Home Assistant companion app's on some platforms, have been seen to skip that check and
+# just reuse whatever they already have. "no-store" is a stronger instruction that a compliant cache cannot reuse at
+# all. Scripts and stylesheets are linked with ?v=<app version> (see _page), a new address with every release, so
+# those are kept for good ("immutable"); anything else static is not stored. The API's answers are not stored either.
+HEADERS = web_security.SecurityHeaders(CSP, csp_skip=web_security.is_pdf, pages_no_cache=False, other_no_store=True,
+                                       static_immutable=True)
 HEADERS.install(app)
 
 
@@ -147,11 +174,25 @@ app.include_router(extraction.router)
 app.include_router(images.router)
 
 
+# The restore itself is the one request that runs while everything else waits (services/maintenance.py)
+_RESTORE_PATH = "/api/v1/admin/backup/import"
+
+
 @app.middleware("http")
 async def read_once_per_request(request, call_next):
-    """Expensive reads (the home's stores, its receipt history) are made once per request; see reqcache."""
-    with reqcache.scope():
-        return await call_next(request)
+    """Expensive reads (the home's stores, its receipt history) are made once per request; see reqcache. While a
+    backup is being restored, other API requests are turned away (503) instead of writing to the old database."""
+    path = request.url.path
+    counted = path.startswith("/api/") and path != _RESTORE_PATH
+    if counted and not maintenance.GATE.try_enter():
+        return JSONResponse(status_code=503, content={"detail": "A backup is being restored. Try again in a moment."},
+                            headers={"Retry-After": "5", "Cache-Control": "no-store"})
+    try:
+        with reqcache.scope():
+            return await call_next(request)
+    finally:
+        if counted:
+            maintenance.GATE.leave()
 
 
 # Outermost: only requests through Home Assistant's ingress get in, and the API knows who is asking.
@@ -161,6 +202,8 @@ app.middleware("http")(ingress_gate)
 def _apply_log_level(changed, values):
     if "log_level" in changed:
         import logging
+        from app.db.database import apply_log_level
+        apply_log_level(values["log_level"])
         level = getattr(logging, values["log_level"], logging.INFO)
         logging.getLogger().setLevel(level)
         for handler in logging.getLogger().handlers:
@@ -212,11 +255,15 @@ async def serve_index():
 
 
 @app.get("/api/v1/archive")
-async def archive_status():
-    """Whether scanned receipts are also kept in a folder (the *Receipt archive folder* option), where, and whether
-    that folder can be written to."""
+def archive_status():
+    """Whether scanned receipts are also kept in a folder (the *Receipt archive folder* option), and whether that
+    folder can be written to; where it is, only to an administrator."""
+    from app.auth import get_current_user
     from app.services import archive
-    return archive.status()
+    found = archive.status()
+    if not get_current_user().is_admin:
+        found["path"] = None
+    return found
 
 
 @app.get("/api/info")

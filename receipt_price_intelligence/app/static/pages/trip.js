@@ -68,8 +68,21 @@
       } }, 'Save and find');
       address.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save.click(); } });
 
-      const cars = setup.vehicles.map((v) => h('div', { class: 'car', role: 'radio', tabindex: '0', 'aria-checked': String(v.id === carId),
-        onclick: () => { carId = v.id; localStorage.setItem(store('car'), carId); render(); } },
+      const pickCar = (id) => { carId = id; try { localStorage.setItem(store('car'), carId); } catch (_) { /* not kept */ } render(); };
+      const cars = setup.vehicles.map((v, i) => h('div', { class: 'car', role: 'radio', tabindex: v.id === carId || (!carId && i === 0) ? '0' : '-1',
+        'aria-checked': String(v.id === carId),
+        onclick: () => pickCar(v.id),
+        // a radio group by keyboard: Space or Enter picks, the arrow keys move to the next or previous car
+        onkeydown: (e) => {
+          const n = setup.vehicles.length;
+          if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); pickCar(v.id); }
+          else if (['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key) && n > 1) {
+            e.preventDefault();
+            const next = setup.vehicles[(i + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : n - 1)) % n];
+            pickCar(next.id);
+            const el = document.querySelector(`.car[data-car="${CSS.escape(next.id)}"]`); if (el) el.focus();
+          }
+        }, 'data-car': v.id },
         icon('car'), h('div', { class: 'grow' }, h('b', {}, v.name), h('span', { class: 'meta' }, `${kindLabel(v.kind)} · ${v.economy} ${v.kind === 'EV' ? setup.config.ev_consumption_unit : setup.config.fuel_economy_unit} · ${m(v.cost_per_distance)}/${setup.config.distance_unit} to drive`)),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': `Edit ${v.name}`, onclick: (e) => { e.stopPropagation(); carDialog(v); } }, icon('edit'))));
 
@@ -168,8 +181,9 @@
         haAvailable && available.length ? h('div', {}, h('button', { class: 'btn btn-sm', type: 'button', onclick: importList }, icon('receipt'), 'Import from a Home Assistant list')) : null,
         popular.length ? h('div', { class: 'chips' }, popular.map((a) => h('button', { class: 'chip-btn', type: 'button', onclick: () => add(a.id) }, '+ ' + a.name))) : null,
         picked.length ? h('div', { class: 'picked' }, ...list,
-          picked.length > 1 ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', style: 'justify-self:start', onclick: () => {
-            if (!confirm(`Remove all ${picked.length} items from the list?`)) return;
+          picked.length > 1 ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', style: 'justify-self:start', onclick: async () => {
+            const ok = await confirmDialog({ title: 'Clear the list?', body: `Remove all ${picked.length} items from the list?`, confirmLabel: 'Clear list', danger: true });
+            if (!ok) return;
             picked = []; savePicked(); render();
           } }, icon('trash'), 'Clear list') : null) : h('p', { class: 'note' }, available.length ? 'Add the items you need. Each item appears once; set how many of it you want.' : 'Items appear here once you have approved receipts with prices.'));
     }

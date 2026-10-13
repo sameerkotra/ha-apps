@@ -14,12 +14,13 @@ from typing import Any
 
 from app.config import get_settings
 from app.logging_config import get_logger
-from app.services import webdebug
+from app.services import httpread, webcache, webdebug
 
 logger = get_logger("textllm")
 
 _lock = threading.Lock()
 SEED = 7  # with temperature 0, a fixed seed makes the same question give the same answer
+MAX_ANSWER_BYTES = 5 * 1024 * 1024
 
 
 class TextLLMError(RuntimeError):
@@ -35,6 +36,10 @@ def _post(path: str, payload: dict[str, Any], optional: tuple[str, ...]) -> dict
     if settings.model_api_key:
         headers["Authorization"] = f"Bearer {settings.model_api_key}"
     url = settings.model_url.rstrip("/") + path
+    limit_month = settings.model_monthly_limit
+    if limit_month and webcache.uses("model") >= limit_month:
+        raise TextLLMError(f"This month's {limit_month} model questions (Admin → App settings) have been asked")
+    webcache.count_use("model")
     body = dict(payload)
     for attempt in (1, 2):
         request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers=headers, method="POST")
@@ -42,7 +47,8 @@ def _post(path: str, payload: dict[str, Any], optional: tuple[str, ...]) -> dict
         trace = {"method": "POST", "url": url, "sent": {"headers": headers, "body": body}, "started": started}
         try:
             with urllib.request.urlopen(request, timeout=settings.model_timeout_seconds) as response:
-                raw = response.read().decode("utf-8", errors="replace")
+                raw = httpread.read_capped(response, MAX_ANSWER_BYTES,
+                                           settings.model_timeout_seconds).decode("utf-8", errors="replace")
                 webdebug.record("model", "ask", status=response.status, received=raw, content_type=response.headers.get("Content-Type"), **trace)
                 return json.loads(raw)
         except urllib.error.HTTPError as e:
@@ -54,6 +60,8 @@ def _post(path: str, payload: dict[str, Any], optional: tuple[str, ...]) -> dict
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             webdebug.record("model", "ask", error=f"{type(e).__name__}: {e}", **trace)
             raise TextLLMError("The model server could not be reached") from e
+        except httpread.TooLarge as e:
+            raise TextLLMError("The model server's answer is too large") from e
         except ValueError as e:
             raise TextLLMError("The model server sent an unreadable answer") from e
     raise TextLLMError("The model server refused the request")
@@ -77,12 +85,12 @@ def parse_json_object(text: str) -> dict[str, Any]:
             value = json.loads(candidate)
             if isinstance(value, dict):
                 return value
-        except ValueError:
+        except (ValueError, RecursionError):
             pass
         for match in re.finditer(r"\{", candidate):
             try:
                 value, _ = decoder.raw_decode(candidate[match.start():])
-            except ValueError:
+            except (ValueError, RecursionError):   # not JSON, or nested too deep
                 continue
             if isinstance(value, dict) and value:
                 return value

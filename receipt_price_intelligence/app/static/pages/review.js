@@ -62,10 +62,11 @@
           api('api/v1/homes'), api('api/v1/stores/chains'),
           draft.home_id ? api(`api/v1/homes/${encodeURIComponent(draft.home_id)}/common-items?limit=1000`) : Promise.resolve([]),
         ]);
-        commonItems = commons.filter((c) => c.name_confirmed).concat(commons.filter((c) => !c.name_confirmed));
+        const list = Array.isArray(commons) ? commons : [];
+        commonItems = list.filter((c) => c.name_confirmed).concat(list.filter((c) => !c.name_confirmed));
         const home = homes.find((x) => x.id === draft.home_id);
         if (home) { homeName = home.name; renderTopbar(); }
-        $('chains').replaceChildren(...chains.map((c) => h('option', { value: c })));
+        $('chains').replaceChildren(...(Array.isArray(chains) ? chains : []).map((c) => h('option', { value: c })));
       } catch (_) { /* optional */ }
     }
 
@@ -74,9 +75,9 @@
       header = {}; for (const k of HEADER_KEYS) header[k] = extraction[k] ?? null;
       header.tags = Array.isArray(extraction.tags) ? extraction.tags : [];
       baseHeader = JSON.stringify(header);
-      items = (draft.items || []).map((i) => ({ ...i, _k: ++keySeq, _touched: false }));
+      items = (Array.isArray(draft.items) ? draft.items : []).map((i) => ({ ...i, _k: ++keySeq, _touched: false }));
       baseItems = snapshotItems();
-      taxes = draft.taxes || [];
+      taxes = Array.isArray(draft.taxes) ? draft.taxes : [];
       editable = draft.status === 'NEEDS_REVIEW';
       dirty = false;
     }
@@ -136,7 +137,7 @@
         h('button', { type: 'button', 'aria-label': `Page ${i + 1}`, 'aria-current': String(i === 0), onclick: (e) => {
           current = i; main.src = imgUrl(im);
           thumbs.querySelectorAll('button').forEach((b, j) => b.setAttribute('aria-current', String(j === i)));
-        } }, h('img', { src: imgUrl(im), alt: '' })))) : null;
+        } }, h('img', { src: imgUrl(im) + '?size=thumb', alt: '', loading: 'lazy' })))) : null;
       return h('div', { class: 'card' }, main, thumbs,
         h('div', { class: 'viewer-cap' }, h('span', {}, (imgs.length > 1 ? `${imgs.length} pages` : 'Original photo') + (editable ? ' · deleted when you save' : '')), h('span', {}, 'Tap to enlarge')));
     }
@@ -470,11 +471,11 @@
 
       // Extraction details
       const meta = extraction.meta || {};
-      const warns = extraction.validation_warnings || [];
+      const warns = Array.isArray(extraction.validation_warnings) ? extraction.validation_warnings : [];
       const detailRows = [
         ['Model', draft.extraction_model || meta.model], ['Prompt version', draft.extraction_prompt_version || meta.prompt_version],
         ['Images read', meta.image_count], ['Your note to the reader', meta.correction], ['Entry', meta.manual ? 'Typed in by hand' : null], ['Took', meta.duration_seconds != null ? meta.duration_seconds + ' s' : null],
-        ['Edited by you', (extraction.user_edited_fields || []).join(', ') || null],
+        ['Edited by you', (Array.isArray(extraction.user_edited_fields) ? extraction.user_edited_fields : []).join(', ') || null],
       ].filter((r) => r[1] != null && r[1] !== '');
       const detailsCard = h('details', { class: 'card' },
         h('summary', { class: 'card-body', style: 'cursor:pointer;font-weight:600' }, 'How this was read'),
@@ -598,7 +599,15 @@
     }
 
     // Recompute everything that depends on the working data.
+    // Each line's repaint asks for this; drawing all N lines would run it N times over N lines. It runs once, right
+    // after the current batch of changes (a microtask), with the same result.
+    let derivedQueued = false;
     function refreshDerived() {
+      if (derivedQueued) return;
+      derivedQueued = true;
+      queueMicrotask(() => { derivedQueued = false; refreshDerivedNow(); });
+    }
+    function refreshDerivedNow() {
       if (!editable && !reconEl) return;
       const { checks, itemsSum } = reconcile(header, items, taxes);
       const flagged = items.filter((i) => flagFor(i)).length;

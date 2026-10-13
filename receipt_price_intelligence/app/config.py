@@ -22,7 +22,7 @@ from typing import Any
 from app import app_settings
 
 # Set from config.yaml's version by the release; the tests check the two match.
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 
 
 def _infra() -> dict[str, Any]:
@@ -66,18 +66,40 @@ class Settings:
 
 _lock = threading.Lock()
 _snapshot: tuple[tuple, Settings] | None = None
+_fast: tuple[tuple, Settings] | None = None
+
+
+def _registry_state() -> tuple | None:
+    """Which cached copy of the App settings is current, without copying or comparing them (None: not cached)."""
+    reg = app_settings.REGISTRY
+    cache = getattr(reg, "_cache", None)
+    if cache is None:
+        return None
+    return getattr(reg, "_version", None), id(cache)
 
 
 def get_settings() -> Settings:
-    """The current settings (the same object until something changes)."""
-    global _snapshot
+    """The current settings (the same object until something changes). Called in loops: when neither the
+    environment nor the cached App settings changed since the last call, nothing is copied or compared."""
+    global _snapshot, _fast
     infra = _infra()
     app_settings.configure(infra["database_path"])
+    state = _registry_state()
+    quick = (tuple(infra.items()), state) if state is not None else None
+    if quick is not None:
+        with _lock:
+            if _fast is not None and _fast[0] == quick:
+                return _fast[1]
+    before = state
     values = app_settings.values()
     key = (tuple(sorted(infra.items())), tuple(sorted((k, repr(v)) for k, v in values.items())))
     with _lock:
         if _snapshot is not None and _snapshot[0] == key:
-            return _snapshot[1]
-        settings = Settings({**values, **infra})
-        _snapshot = (key, settings)
+            settings = _snapshot[1]
+        else:
+            settings = Settings({**values, **infra})
+            _snapshot = (key, settings)
+        # only when the values used are the cached copy seen before reading them (no change raced this call)
+        state = _registry_state()
+        _fast = ((tuple(infra.items()), state), settings) if state is not None and state == before else None
         return settings

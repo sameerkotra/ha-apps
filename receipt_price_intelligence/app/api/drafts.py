@@ -1,10 +1,14 @@
-"""Receipt drafts API endpoints."""
+"""Receipt drafts API endpoints.
+
+The routes are plain functions (FastAPI runs them on its thread pool): they use the database, which would otherwise
+hold up the event loop and every other request with it.
+"""
 
 from datetime import datetime
-import asyncio
+from typing import Literal
 
 from fastapi.responses import JSONResponse
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -12,43 +16,48 @@ from sqlalchemy.orm import Session
 from app.auth import get_current_user_id
 from app.db import get_db
 from app.db.models import ReceiptDraft, ReceiptImage
+from app.services import background
 from app.services import deals as deals_service
 from app.services import drafts as drafts_service
 from app.services import homes as homes_service
+from app.services import importer
 
 router = APIRouter(prefix="/api/v1/receipt-drafts", tags=["receipt drafts"])
 
 
 # Request/Response models
 
+# A draft's own contents can be changed only while it is being read or reviewed
+EDITABLE_STATUSES = ("NEEDS_REVIEW", "PROCESSING", "EXTRACTION_FAILED")
+MONEY = 1e9                       # no receipt amount is anywhere near this
+
 class DraftCreateRequest(BaseModel):
     """Request to create a new draft."""
 
-    source: str = Field(default="camera", description="Source of the draft")
+    source: Literal["camera", "upload"] = Field(default="camera", description="Where the receipt came from")
     home_id: str | None = Field(
-        None, description="Home the receipt belongs to (optional when exactly one home exists)"
+        None, max_length=36, description="Home the receipt belongs to (optional when exactly one home exists)"
     )
 
 
 class DraftUpdateRequest(BaseModel):
-    """Request to update a draft. Only the fields that are sent are changed."""
+    """Request to update a draft. Only the fields that are sent are changed. (The model's own output is never
+    sent back: it is the app's record of what was read.)"""
 
-    raw_ocr_text: str | None = Field(None, description="Raw OCR text output")
-    raw_llm_output: str | None = Field(None, description="Raw LLM extraction output")
     # Receipt header corrections made during review. An empty string clears the field.
-    store_name: str | None = Field(None, description="Store name")
-    store_address: str | None = Field(None, description="Physical store address")
-    store_number: str | None = Field(None, description="Store / branch number")
-    receipt_number: str | None = Field(None, description="Receipt or transaction number")
-    purchase_date: str | None = Field(None, description="Purchase date, YYYY-MM-DD")
-    purchase_time: str | None = Field(None, description="Purchase time, HH:MM")
-    currency: str | None = Field(None, description="3-letter currency code")
-    subtotal: float | None = Field(None, description="Subtotal amount")
-    discount_total: float | None = Field(None, description="Receipt-level discount total")
-    tax_total: float | None = Field(None, description="Tax total")
-    fee_total: float | None = Field(None, description="Fees, deposits, and surcharges")
-    grand_total: float | None = Field(None, description="Grand total")
-    tags: list[str] | None = Field(None, description="Tags such as business or warranty (replaces the list)")
+    store_name: str | None = Field(None, max_length=255, description="Store name")
+    store_address: str | None = Field(None, max_length=500, description="Physical store address")
+    store_number: str | None = Field(None, max_length=50, description="Store / branch number")
+    receipt_number: str | None = Field(None, max_length=100, description="Receipt or transaction number")
+    purchase_date: str | None = Field(None, max_length=20, description="Purchase date, YYYY-MM-DD")
+    purchase_time: str | None = Field(None, max_length=20, description="Purchase time, HH:MM")
+    currency: str | None = Field(None, max_length=3, description="3-letter currency code")
+    subtotal: float | None = Field(None, ge=-MONEY, le=MONEY, description="Subtotal amount")
+    discount_total: float | None = Field(None, ge=-MONEY, le=MONEY, description="Receipt-level discount total")
+    tax_total: float | None = Field(None, ge=-MONEY, le=MONEY, description="Tax total")
+    fee_total: float | None = Field(None, ge=-MONEY, le=MONEY, description="Fees, deposits, and surcharges")
+    grand_total: float | None = Field(None, ge=-MONEY, le=MONEY, description="Grand total")
+    tags: list[str] | None = Field(None, max_length=30, description="Tags such as business or warranty (replaces the list)")
 
 
 class DraftItemInput(BaseModel):
@@ -56,15 +65,15 @@ class DraftItemInput(BaseModel):
 
     receipt_description: str = Field(..., min_length=1, max_length=500)
     item_type: str | None = Field(None, max_length=50)
-    quantity: float | None = None
-    weight_value: float | None = None
+    quantity: float | None = Field(None, ge=-MONEY, le=MONEY)
+    weight_value: float | None = Field(None, ge=-MONEY, le=MONEY)
     weight_unit: str | None = Field(None, max_length=50)
-    unit_price: float | None = None
+    unit_price: float | None = Field(None, ge=-MONEY, le=MONEY)
     unit_price_unit: str | None = Field(None, max_length=50)
-    line_subtotal: float | None = None
-    discount_amount: float | None = None
-    line_total: float | None = None
-    tax_amount: float | None = None
+    line_subtotal: float | None = Field(None, ge=-MONEY, le=MONEY)
+    discount_amount: float | None = Field(None, ge=-MONEY, le=MONEY)
+    line_total: float | None = Field(None, ge=-MONEY, le=MONEY)
+    tax_amount: float | None = Field(None, ge=-MONEY, le=MONEY)
     extraction_confidence: float | None = Field(None, ge=0, le=1)
     suggested_common_item_id: str | None = Field(None, max_length=36)
     suggested_common_item_name: str | None = Field(None, max_length=255)
@@ -122,7 +131,6 @@ class ImageResponse(BaseModel):
 
     id: str
     image_type: str
-    file_path: str
     mime_type: str | None
     file_size: int | None
     width: int | None
@@ -179,17 +187,34 @@ class DraftApproveRequest(BaseModel):
     """Request to approve a draft."""
 
     allow_duplicate: bool = Field(False, description="Save even if a matching saved receipt exists")
-
-    # Optional overrides before approval
-    store_chain_id: str | None = Field(None, description="Override store chain")
-    store_location_id: str | None = Field(None, description="Override store location")
-    purchase_date: str | None = Field(None, description="Override purchase date")
+    purchase_date: str | None = Field(None, max_length=20, description="Override purchase date")
 
 
 class DraftRejectRequest(BaseModel):
     """Request to reject a draft."""
 
-    reason: str | None = Field(None, description="Optional rejection reason")
+    reason: str | None = Field(None, max_length=500, description="Optional rejection reason")
+
+
+class DraftSummary(BaseModel):
+    """One line of the Receipts page: what the card shows, without the items, taxes and photos."""
+
+    id: str
+    status: str
+    editing_saved: bool = False
+    created_at: datetime | None
+    store_name: str | None = None
+    purchase_date: str | None = None
+    currency: str | None = None
+    grand_total: float | None = None
+    items_total: float | None = None
+    item_count: int = 0
+    tags: list[str] = []
+
+
+class DraftSummaryPage(BaseModel):
+    drafts: list[DraftSummary]
+    more: bool = Field(False, description="There are older ones: ask again with before=<the last created_at>")
 
 
 # Helper functions
@@ -225,6 +250,31 @@ def _build_draft_response(db: Session, draft: ReceiptDraft) -> DraftResponse:
     )
 
 
+def _build_draft_responses(db: Session, drafts: list[ReceiptDraft]) -> list[DraftResponse]:
+    """Full responses for many drafts with three queries in all (not three per draft)."""
+    ids = [d.id for d in drafts]
+    items = drafts_service.items_by_draft(db, ids)
+    taxes = drafts_service.taxes_by_draft(db, ids)
+    images = drafts_service.images_by_draft(db, ids)
+    return [DraftResponse(
+        id=d.id, user_id=d.user_id, home_id=d.home_id, status=d.status, source=d.source,
+        raw_ocr_text=d.raw_ocr_text, raw_llm_output=d.raw_llm_output, extraction_model=d.extraction_model,
+        extraction_prompt_version=d.extraction_prompt_version, extraction_schema_version=d.extraction_schema_version,
+        created_at=d.created_at, expires_at=d.expires_at,
+        items=[DraftItemResponse.model_validate(i) for i in items.get(d.id, [])],
+        taxes=[DraftTaxResponse.model_validate(t) for t in taxes.get(d.id, [])],
+        images=[ImageResponse.model_validate(img) for img in images.get(d.id, [])],
+        editing_saved=bool(d.approved_receipt_id) and d.status == "NEEDS_REVIEW",
+    ) for d in drafts]
+
+
+def _require_editable(draft: ReceiptDraft) -> None:
+    """409 unless the draft is still being read or reviewed (a saved receipt is reopened first)."""
+    if draft.status not in EDITABLE_STATUSES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="This receipt is already saved or discarded; reopen it to change it")
+
+
 def _require_draft(db: Session, draft_id: str) -> ReceiptDraft:
     """Load a draft or raise 404. Drafts are shared: any signed-in user may open them."""
     draft = drafts_service.get_draft(db, draft_id)
@@ -234,7 +284,7 @@ def _require_draft(db: Session, draft_id: str) -> ReceiptDraft:
 
 
 @router.post("", response_model=DraftResponse, status_code=status.HTTP_201_CREATED)
-async def create_draft(
+def create_draft(
     request: DraftCreateRequest,
     db: Session = Depends(get_db),
 ):
@@ -248,6 +298,9 @@ async def create_draft(
         home_id = homes_service.resolve_home_id(db, request.home_id)
     except homes_service.HomeError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    if home_id and importer.room_for_drafts(db, home_id) <= 0:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Too many receipts are waiting for review in this home; review some first")
 
     draft = drafts_service.create_draft(
         db=db,
@@ -259,23 +312,41 @@ async def create_draft(
 
 
 @router.get("", response_model=list[DraftResponse])
-async def list_drafts(
-    status_filter: str | None = None,
-    home_id: str | None = None,
+def list_drafts(
+    status_filter: str | None = Query(None, max_length=50),
+    home_id: str | None = Query(None, max_length=36),
+    limit: int = Query(200, ge=1, le=500),
+    before: datetime | None = Query(None, description="Only drafts created before this (the next page)"),
     db: Session = Depends(get_db),
 ):
     """
-    List drafts (shared by all users), newest first.
+    List drafts (shared by all users), newest first, in full (items, taxes and photos), at most ``limit``.
 
     Optionally filter by home and/or status (PROCESSING, NEEDS_REVIEW, EXTRACTION_FAILED,
-    APPROVED, REJECTED).
+    APPROVED, REJECTED). The Receipts page uses the lighter ``/summaries``.
     """
-    drafts = drafts_service.get_drafts(db=db, home_id=home_id, status=status_filter)
-    return [_build_draft_response(db, draft) for draft in drafts]
+    drafts = drafts_service.get_drafts(db=db, home_id=home_id, status=status_filter, limit=limit, before=before)
+    return _build_draft_responses(db, drafts)
+
+
+@router.get("/summaries", response_model=DraftSummaryPage)
+def list_draft_summaries(
+    home_id: str = Query(..., max_length=36),
+    group: Literal["review", "saved"] = Query("review", description="review: being read or waiting for review; "
+                                                                   "saved: approved receipts"),
+    limit: int = Query(100, ge=1, le=500),
+    before: datetime | None = Query(None, description="The next page: the last line's created_at …"),
+    before_id: str | None = Query(None, max_length=36, description="… and its id"),
+    db: Session = Depends(get_db),
+):
+    """The Receipts page's list: one line per receipt (store, date, total, tags, item count), newest first."""
+    statuses = EDITABLE_STATUSES if group == "review" else ("APPROVED",)
+    rows, more = drafts_service.draft_summaries(db, home_id, statuses, limit, before, before_id)
+    return DraftSummaryPage(drafts=[DraftSummary(**r) for r in rows], more=more)
 
 
 @router.get("/{draft_id}", response_model=DraftResponse)
-async def get_draft(
+def get_draft(
     draft_id: str,
     db: Session = Depends(get_db),
 ):
@@ -285,7 +356,7 @@ async def get_draft(
 
 
 @router.patch("/{draft_id}", response_model=DraftResponse)
-async def update_draft(
+def update_draft(
     draft_id: str,
     request: DraftUpdateRequest,
     db: Session = Depends(get_db),
@@ -296,12 +367,11 @@ async def update_draft(
     Allows correcting the receipt header (store, date, totals) before approval.
     Only fields present in the request body are changed.
     """
-    _require_draft(db, draft_id)
+    _require_editable(_require_draft(db, draft_id))
     sent = request.model_dump(exclude_unset=True)
-
-    raw_updates = {k: sent[k] for k in ("raw_ocr_text", "raw_llm_output") if sent.get(k) is not None}
-    if raw_updates:
-        drafts_service.update_draft(db, draft_id, raw_updates)
+    for tag in sent.get("tags") or []:
+        if len(tag) > 50:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A tag can have up to 50 characters")
 
     header_updates = {k: v for k, v in sent.items() if k in drafts_service.HEADER_FIELDS}
     if header_updates:
@@ -318,7 +388,7 @@ class PurchaseDateRequest(BaseModel):
 
 
 @router.patch("/{draft_id}/purchase-date", response_model=DraftResponse)
-async def change_saved_receipt_date(
+def change_saved_receipt_date(
     draft_id: str,
     request: PurchaseDateRequest,
     db: Session = Depends(get_db),
@@ -337,12 +407,12 @@ async def change_saved_receipt_date(
         raise HTTPException(status_code=code, detail=str(e))
 
     # Keep the stored best-price results and sensors in step with the new date (best effort)
-    _spawn(_refresh_home_later(draft.home_id))
+    _refresh_home_later(draft.home_id)
     return _build_draft_response(db, draft)
 
 
 @router.get("/{draft_id}/duplicates")
-async def draft_duplicates(draft_id: str, db: Session = Depends(get_db)):
+def draft_duplicates(draft_id: str, db: Session = Depends(get_db)):
     """Saved receipts that look like this draft (same home, store and day, and the same total or
     receipt number). Empty when nothing matches. Saving anyway needs ``allow_duplicate``."""
     draft = _require_draft(db, draft_id)
@@ -350,7 +420,7 @@ async def draft_duplicates(draft_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{draft_id}/reopen", response_model=DraftResponse)
-async def reopen_saved_receipt(draft_id: str, db: Session = Depends(get_db)):
+def reopen_saved_receipt(draft_id: str, db: Session = Depends(get_db)):
     """Open a saved receipt for full editing. It stays in the history until the edited version is
     saved (which replaces it); ``POST /{id}/discard-edit`` abandons the edit."""
     _require_draft(db, draft_id)
@@ -362,7 +432,7 @@ async def reopen_saved_receipt(draft_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/{draft_id}/discard-edit", response_model=DraftResponse)
-async def discard_saved_edit(draft_id: str, db: Session = Depends(get_db)):
+def discard_saved_edit(draft_id: str, db: Session = Depends(get_db)):
     """Abandon an edit of a saved receipt: it goes back to exactly what was saved."""
     _require_draft(db, draft_id)
     try:
@@ -373,7 +443,7 @@ async def discard_saved_edit(draft_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/{draft_id}/saved")
-async def delete_saved_receipt(draft_id: str, db: Session = Depends(get_db)):
+def delete_saved_receipt(draft_id: str, db: Session = Depends(get_db)):
     """Delete a saved receipt completely, including the prices and tax records recorded from it."""
     draft = _require_draft(db, draft_id)
     home_id = draft.home_id
@@ -381,28 +451,15 @@ async def delete_saved_receipt(draft_id: str, db: Session = Depends(get_db)):
         drafts_service.delete_saved_receipt(db, draft_id)
     except drafts_service.SavedReceiptError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    _spawn(_refresh_home_later(home_id))
+    _refresh_home_later(home_id)
     return {"status": "deleted", "draft_id": draft_id}
 
 
-_background: set = set()
-
-
-def _spawn(coro) -> None:
-    """Run a coroutine after the response without holding it up (and keep a reference so it finishes)."""
-    task = asyncio.create_task(coro)
-    _background.add(task)
-    task.add_done_callback(_background.discard)
-
-
-async def _refresh_home_later(home_id: str | None) -> None:
-    """Bring the stored best-price results and Home Assistant sensors up to date (best effort)."""
-    if not home_id:
-        return
-    try:
-        await asyncio.to_thread(deals_service.refresh_home_id, home_id)
-    except Exception:  # noqa: BLE001
-        pass
+def _refresh_home_later(home_id: str | None) -> None:
+    """Bring the stored best-price results and Home Assistant sensors up to date, after the answer (best effort; many
+    changes in a row make one refresh, and one more after it)."""
+    if home_id:
+        background.coalesce(("refresh-home", home_id), deals_service.refresh_home_id, home_id)
 
 
 class TagsRequest(BaseModel):
@@ -410,7 +467,7 @@ class TagsRequest(BaseModel):
 
 
 @router.patch("/{draft_id}/tags", response_model=DraftResponse)
-async def set_saved_tags(draft_id: str, request: TagsRequest, db: Session = Depends(get_db)):
+def set_saved_tags(draft_id: str, request: TagsRequest, db: Session = Depends(get_db)):
     """Change the tags of a saved receipt (for example ``business``, ``reimbursable``, ``warranty``).
     Tags on a receipt still in review are sent with the header update instead."""
     _require_draft(db, draft_id)
@@ -422,7 +479,7 @@ async def set_saved_tags(draft_id: str, request: TagsRequest, db: Session = Depe
 
 
 @router.post("/{draft_id}/manual", response_model=DraftResponse)
-async def start_manual_entry(
+def start_manual_entry(
     draft_id: str,
     db: Session = Depends(get_db),
 ):
@@ -440,18 +497,13 @@ async def start_manual_entry(
 
 
 @router.put("/{draft_id}/items", response_model=DraftResponse)
-async def replace_draft_items(
+def replace_draft_items(
     draft_id: str,
     request: DraftItemsReplaceRequest,
     db: Session = Depends(get_db),
 ):
     """Replace every item on a draft with the supplied list (used by the review screen)."""
-    draft = _require_draft(db, draft_id)
-    if draft.status not in ("NEEDS_REVIEW", "PROCESSING", "EXTRACTION_FAILED"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot edit items on a draft in status: {draft.status}",
-        )
+    _require_editable(_require_draft(db, draft_id))
 
     drafts_service.update_draft_items(
         db, draft_id, [item.model_dump() for item in request.items]
@@ -459,32 +511,8 @@ async def replace_draft_items(
     return _build_draft_response(db, drafts_service.get_draft(db, draft_id))
 
 
-@router.post("/{draft_id}/items", response_model=DraftItemResponse)
-async def add_draft_item(
-    draft_id: str,
-    request: dict,
-    db: Session = Depends(get_db),
-):
-    """Add an item to a draft."""
-    _require_draft(db, draft_id)
-    item = drafts_service.add_draft_item(db, draft_id, request)
-    return DraftItemResponse.model_validate(item)
-
-
-@router.post("/{draft_id}/taxes", response_model=DraftTaxResponse)
-async def add_draft_tax(
-    draft_id: str,
-    request: dict,
-    db: Session = Depends(get_db),
-):
-    """Add a tax record to a draft."""
-    _require_draft(db, draft_id)
-    tax = drafts_service.add_draft_tax(db, draft_id, request)
-    return DraftTaxResponse.model_validate(tax)
-
-
 @router.post("/{draft_id}/approve", response_model=ApproveResponse)
-async def approve_draft(
+def approve_draft(
     draft_id: str,
     request: DraftApproveRequest,
     db: Session = Depends(get_db),
@@ -539,14 +567,14 @@ async def approve_draft(
     lookout.check_receipt_soon(draft.home_id, receipt.id)
 
     # Keep the best-price results, sensors and alerts in step with the new receipt (best effort)
-    _spawn(_refresh_home_later(draft.home_id))
+    _refresh_home_later(draft.home_id)
 
     base = _build_draft_response(db, drafts_service.get_draft(db, draft_id))
     return ApproveResponse(**base.model_dump(), approval=ApprovalSummary(**summary))
 
 
 @router.post("/{draft_id}/reject", response_model=dict)
-async def reject_draft(
+def reject_draft(
     draft_id: str,
     request: DraftRejectRequest,
     db: Session = Depends(get_db),
@@ -569,7 +597,7 @@ async def reject_draft(
 
 
 @router.delete("/{draft_id}", response_model=dict)
-async def delete_draft(
+def delete_draft(
     draft_id: str,
     db: Session = Depends(get_db),
 ):

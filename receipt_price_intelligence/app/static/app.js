@@ -464,8 +464,15 @@
       list.style.top = (r.bottom + 4) + 'px';
       list.style.width = Math.max(r.width, 220) + 'px';
     }
+    // Scrolling and resizing move the open list with its field; listened to only while it is open, so a page that
+    // makes many fields (each review line) doesn't pile up window listeners.
+    function listen(on) {
+      const fn = on ? window.addEventListener : window.removeEventListener;
+      fn.call(window, 'scroll', position, true);
+      fn.call(window, 'resize', position);
+    }
     function close() {
-      if (list) { list.remove(); list = null; }
+      if (list) { list.remove(); list = null; listen(false); }
       active = -1;
       input.setAttribute('aria-expanded', 'false');
       input.removeAttribute('aria-activedescendant');
@@ -486,6 +493,7 @@
         (input.closest('dialog') || document.body).append(list);  // inside a modal dialog it must live in the dialog to be visible
         input.setAttribute('aria-expanded', 'true');
         input.setAttribute('aria-controls', listId);
+        listen(true);
       }
       list.replaceChildren(...shown.map((o, i) => h('div', {
         class: 'combo-opt' + (o.create ? ' create' : ''), role: 'option', id: `${listId}-${i}`,
@@ -505,8 +513,6 @@
       else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); pick(active); }
       else if (e.key === 'Escape') { close(); }
     });
-    window.addEventListener('scroll', position, true);
-    window.addEventListener('resize', position);
     return { close };
   }
 

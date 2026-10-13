@@ -26,6 +26,21 @@
     }
     const act = async (fn, okText) => { try { await fn(); if (okText) toast(okText, 'success'); await load(); } catch (e) { toast(e.message, 'error'); } };
 
+    // Ticking, quantities and removing: the change shows at once, the server is told, and only the list itself is
+    // fetched again, once, a moment after the last change (not the four lists of the page after every tap).
+    let refreshTimer = null;
+    async function refreshList() {
+      try { data = await api(base() + (useOnline ? '' : '?online=false')); render(); }
+      catch (e) { toast(e.message, 'error'); }
+    }
+    function quick(change, fn) {
+      change(); render();
+      clearTimeout(refreshTimer);
+      fn().then(() => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshList, 600); })
+        .catch((e) => { toast(e.message, 'error'); clearTimeout(refreshTimer); refreshList(); });
+    }
+    const findItem = (id) => data.items.find((x) => x.id === id);
+
     // ---------------------------------------------------------------- adding
     // Your items whose name contains what is typed (any case), those starting with it first; then "add as a new item"
     // unless an item has exactly that name.
@@ -118,10 +133,12 @@
       ];
     }
     function itemRow(it) {
-      const setQty = (q) => act(() => api(`${base()}/${it.id}`, { method: 'PATCH', body: { qty: Math.max(1, q) } }));
+      const setQty = (q) => quick(() => { const x = findItem(it.id); if (x) x.qty = Math.max(1, q); },
+        () => api(`${base()}/${it.id}`, { method: 'PATCH', body: { qty: Math.max(1, q) } }));
       return h('div', { class: 'litem' + (it.checked ? ' done' : '') },
         h('input', { type: 'checkbox', checked: it.checked ? true : null, 'aria-label': `Bought ${it.text}`,
-          onchange: (e) => act(() => api(`${base()}/${it.id}`, { method: 'PATCH', body: { checked: e.target.checked } })) }),
+          onchange: (e) => { const on = e.target.checked; quick(() => { const x = findItem(it.id); if (x) x.checked = on; },
+            () => api(`${base()}/${it.id}`, { method: 'PATCH', body: { checked: on } })); } }),
         h('div', { class: 'body' }, h('div', { class: 'nm' }, it.text), ...(it.checked ? [] : [].concat(whereLine(it)))),
         h('div', { class: 'ctl' },
           it.checked ? null : h('div', { class: 'qty' },
@@ -129,7 +146,8 @@
             h('span', {}, String(+(it.qty || 1).toFixed(2))),
             h('button', { type: 'button', 'aria-label': 'One more', onclick: () => setQty((it.qty || 1) + 1) }, '+')),
           h('button', { class: 'rm', type: 'button', title: 'Remove', 'aria-label': `Remove ${it.text}`,
-            onclick: () => act(() => api(`${base()}/${it.id}`, { method: 'DELETE' })) }, icon('x'))));
+            onclick: () => quick(() => { data.items = data.items.filter((x) => x.id !== it.id); },
+              () => api(`${base()}/${it.id}`, { method: 'DELETE' })) }, icon('x'))));
     }
     function listCard() {
       const open = data.items.filter((i) => !i.checked), done = data.items.filter((i) => i.checked);
@@ -140,7 +158,7 @@
         for (const g of data.by_store) {
           body.push(h('div', { class: 'grp-h' }, h('h3', {}, g.store ? `Cheapest at ${g.store}` : 'No price yet'),
             h('span', { class: 'note' }, `${g.items.length} item${g.items.length === 1 ? '' : 's'}${g.total ? ' · about ' + money(g.total) : ''}`)));
-          body.push(h('div', {}, ...g.items.map((id) => itemRow(byId[id]))));
+          body.push(h('div', {}, ...g.items.map((id) => byId[id]).filter((it) => it && !it.checked).map(itemRow)));
         }
       } else body.push(h('div', {}, ...open.map(itemRow)));
       return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },

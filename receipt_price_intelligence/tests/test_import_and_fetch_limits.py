@@ -95,12 +95,14 @@ class ImportTests(DbCase):
         from app.db import get_db_session
         from app.services import importer
         with get_db_session()() as db:
+            # a photo is known by what it is, whatever it is called or claims to be (13 Oct 2026 review, R13)
+            self.assertTrue(importer.import_bytes(db, "h1", "Receipt", self.png(), "EMAIL"))
             with self.assertRaises(importer.ImportFailed):
-                importer.import_bytes(db, "h1", "Receipt", self.png(), "EMAIL")
-            draft_id = importer.import_bytes(db, "h1", "Receipt", self.png(), "EMAIL", content_type="image/png")
+                importer.import_bytes(db, "h1", "Receipt", b"not a photo" * 100, "EMAIL", content_type="image/png")
+            draft_id = importer.import_bytes(db, "h1", "Receipt", self.png((41, 30)), "EMAIL", content_type="image/png")
             self.assertTrue(draft_id)
             # a name with a known type keeps it
-            self.assertTrue(importer.import_bytes(db, "h1", "scan.png", self.png(), "EMAIL",
+            self.assertTrue(importer.import_bytes(db, "h1", "scan.png", self.png((42, 30)), "EMAIL",
                                                   content_type="application/octet-stream"))
 
     def test_poll_passes_the_attachment_type(self):
@@ -138,7 +140,8 @@ class ImportTests(DbCase):
     def mailbox(self, client):
         from app.services import importer
         settings = SimpleNamespace(imap_host="mail.example", imap_user="u", imap_password="p", imap_port=993,
-                                   imap_ssl=True, imap_folder="INBOX", import_home="")
+                                   imap_ssl=True, imap_folder="INBOX", import_home="", imap_allow_plaintext=False,
+                                   imap_allowed_senders=getattr(self, "allowed_senders", ""), max_waiting_receipts=200)
         stack = [mock.patch.object(importer, "get_settings", return_value=settings),
                  mock.patch.object(importer.imaplib, "IMAP4_SSL", return_value=client)]
 
@@ -220,7 +223,7 @@ class ImageRouteTests(DbCase):
             db.add(image)
             db.commit()
             with self.assertRaises(HTTPException) as caught:
-                asyncio.run(images_api.get_draft_image(draft.id, image.id, db))
+                images_api.get_draft_image(draft.id, image.id, db)
             self.assertEqual(caught.exception.status_code, 404)
 
     def test_upload_answer_has_no_server_path_or_error_detail(self):
@@ -231,7 +234,7 @@ class ImageRouteTests(DbCase):
         with get_db_session()() as db:
             draft = drafts_service.create_draft(db, "u_pat", home_id="h1")
             upload = SimpleNamespace(file=BytesIO(self.png()), content_type="image/png", filename="r.png")
-            answer = asyncio.run(images_api.upload_draft_image(draft.id, upload, db))
+            answer = images_api.upload_draft_image(draft.id, upload, db)
             self.assertNotIn("file_path", answer)
             self.assertNotIn("file_path", answer["images"][0])
             self.assertNotIn(self.dir, str(answer))
@@ -239,7 +242,7 @@ class ImageRouteTests(DbCase):
                                    side_effect=RuntimeError("disk full at /data/receipts/secret")), \
                     self.assertLogs(level="ERROR"), self.assertRaises(HTTPException) as caught:
                 upload.file.seek(0)
-                asyncio.run(images_api.upload_draft_image(draft.id, upload, db))
+                images_api.upload_draft_image(draft.id, upload, db)
             self.assertEqual(caught.exception.status_code, 500)
             self.assertEqual(caught.exception.detail, "Failed to store image")
 

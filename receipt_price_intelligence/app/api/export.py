@@ -5,10 +5,10 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
+from app.api.common import require_home
 from app.auth import CurrentUser, get_current_user
 from app.db import get_db
 from app.services import exporter
-from app.services import homes as homes_service
 
 router = APIRouter(prefix="/api/v1/homes/{home_id}/export", tags=["export"])
 
@@ -19,8 +19,7 @@ def _csv(text: str, name: str) -> Response:
 
 
 def _prepare(db: Session, home_id: str, start: str | None, end: str | None) -> tuple[str | None, str | None]:
-    if homes_service.get_home(db, home_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home not found")
+    require_home(db, home_id)
     try:
         return exporter.parse_range(start, end)
     except exporter.ExportError as e:
@@ -28,7 +27,7 @@ def _prepare(db: Session, home_id: str, start: str | None, end: str | None) -> t
 
 
 @router.get("/receipts.csv")
-async def export_receipts(
+def export_receipts(
     home_id: str, start: str | None = None, end: str | None = None, tag: str | None = None,
     _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db),
 ):
@@ -39,7 +38,7 @@ async def export_receipts(
 
 
 @router.get("/items.csv")
-async def export_items(
+def export_items(
     home_id: str, start: str | None = None, end: str | None = None, tag: str | None = None,
     _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db),
 ):

@@ -28,7 +28,7 @@ def setup() -> dict[str, Any]:
         "concurrency": s.web_search_concurrency, "model": s.model_name, "model_format": s.model_api_format,
         "pages_opened_by": "your search server (/fetch)" if websearch.provider() == "custom" else "the app itself",
         "paused": websearch.paused(),
-        "cache": webcache.stats(), "min_interval_seconds": s.web_search_min_interval_seconds,
+        "cache": webcache.stats(), "usage": webcache.usage(), "min_interval_seconds": s.web_search_min_interval_seconds,
     }
 
 

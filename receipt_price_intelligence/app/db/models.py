@@ -395,6 +395,9 @@ class ReceiptDraft(Base):
     extraction_schema_version = Column(String(50))
     created_at = Column(DateTime, server_default=func.current_timestamp())
     expires_at = Column(DateTime)
+    # sha256 of the file a draft was imported from (folder, e-mail, bulk upload): the same e-mail attachment twice is
+    # not imported twice
+    source_hash = Column(String(64))
 
     # Relationships
     user = relationship("User", back_populates="receipt_drafts")
@@ -687,6 +690,12 @@ class ItemPurchaseStats(Base):
     )
 
 
+# Recommendation, ItemPurchaseStats and ExtractionRun are no longer written (the best prices are worked out on request,
+# RecommendationSnapshot keeps the daily results; a reading's details are on its draft). Their tables stay in databases
+# made by older versions, where merging stores or items, and deleting receipts, still keeps their old rows in step.
+# The jobs, audit_logs and recommendation_evidence tables of those versions were never used and are left alone.
+
+
 class Recommendation(Base):
     """Price-based recommendations for users."""
 
@@ -725,60 +734,6 @@ class RecommendationSnapshot(Base):
     payload = Column(Text)  # JSON: see app/services/deals.py
 
 
-class RecommendationEvidence(Base):
-    """Evidence supporting a recommendation."""
-
-    __tablename__ = "recommendation_evidence"
-
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    recommendation_id = Column(String(36), ForeignKey("recommendations.id", ondelete="CASCADE"), nullable=False)
-    price_observation_id = Column(String(36))
-    receipt_id = Column(String(36))
-    evidence_type = Column(String(50), nullable=False)
-    evidence_value = Column(Text)
-    created_at = Column(DateTime, server_default=func.current_timestamp())
-
-    # Relationships
-    recommendation = relationship("Recommendation")
-
-
-class Job(Base):
-    """Background job queue."""
-
-    __tablename__ = "jobs"
-
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    job_type = Column(String(50), nullable=False)
-    payload = Column(Text, nullable=False)  # JSON payload
-    status = Column(String(50), nullable=False, default="PENDING")
-    attempts = Column(Integer, nullable=False, default=0)
-    max_attempts = Column(Integer, nullable=False, default=3)
-    available_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
-    started_at = Column(DateTime)
-    completed_at = Column(DateTime)
-    error_message = Column(Text)
-    created_at = Column(DateTime, server_default=func.current_timestamp())
-
-    __table_args__ = (
-        Index("idx_jobs_status_available", "status", "available_at"),
-    )
-
-
-class AuditLog(Base):
-    """Audit trail for all significant operations."""
-
-    __tablename__ = "audit_logs"
-
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    user_id = Column(String(36), ForeignKey("users.id"))
-    action = Column(String(100), nullable=False)
-    entity_type = Column(String(50), nullable=False)
-    entity_id = Column(String(36), nullable=False)
-    old_value = Column(Text)
-    new_value = Column(Text)
-    created_at = Column(DateTime, server_default=func.current_timestamp())
-
-
 class ExtractionRun(Base):
     """Records of model extraction attempts.
 
@@ -806,7 +761,7 @@ class ExtractionRun(Base):
 # Columns added after the first release. ``create_all`` only creates missing tables, so
 # existing databases get these through ALTER TABLE (additive and idempotent).
 _ADDED_COLUMNS = {
-    "receipt_drafts": [("home_id", "TEXT REFERENCES homes(id)"), ("approved_receipt_id", "TEXT")],
+    "receipt_drafts": [("home_id", "TEXT REFERENCES homes(id)"), ("approved_receipt_id", "TEXT"), ("source_hash", "TEXT")],
     "common_items": [("home_id", "TEXT REFERENCES homes(id)"), ("name_confirmed", "INTEGER NOT NULL DEFAULT 0")],
     "price_observations": [("home_id", "TEXT REFERENCES homes(id)")],
     "homes": [("address", "TEXT"), ("latitude", "REAL"), ("longitude", "REAL")],
@@ -819,13 +774,13 @@ _ADDED_COLUMNS = {
     "users": [("assistant_ok", "INTEGER NOT NULL DEFAULT 1")],
 }
 _ADDED_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_drafts_home ON receipt_drafts(home_id, status)",
-    "CREATE INDEX IF NOT EXISTS idx_receipts_home ON receipts(home_id)",
     "CREATE INDEX IF NOT EXISTS idx_common_items_home ON common_items(home_id)",
-    "CREATE INDEX IF NOT EXISTS idx_price_home_item ON price_observations(home_id, common_item_id)",
-    "CREATE INDEX IF NOT EXISTS idx_price_home_date ON price_observations(home_id, purchase_date)",
     "CREATE INDEX IF NOT EXISTS idx_receipts_home_date ON receipts(home_id, purchase_date)",
 ]
+# Indexes older versions made that another index already covers (the same columns, or the first columns of another;
+# web_hours_suggestions is looked up by its primary key): each only slowed down writes
+_DROPPED_INDEXES = ("idx_drafts_home", "idx_receipts_home", "idx_price_home_item", "idx_price_home_date",
+                    "idx_web_hours_location")
 
 
 def ensure_columns(engine) -> None:
@@ -842,6 +797,8 @@ def ensure_columns(engine) -> None:
                     logger.info("Added column %s.%s", table, name)
         for statement in _ADDED_INDEXES:
             conn.execute(text(statement))
+        for name in _DROPPED_INDEXES:
+            conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
 
 
 # Indexes for the lookups the app makes most (by home, item, store and date). Created at start-up if missing, so
@@ -860,12 +817,24 @@ _INDEXES = {
     "idx_chain_aliases_chain": ("store_chain_aliases", "store_chain_id"),
     "idx_web_deals_home_pair": ("web_deals", "home_id, common_item_id, store_chain_id"),
     "idx_web_deals_home_fetched": ("web_deals", "home_id, fetched_at"),
-    "idx_web_hours_location": ("web_hours_suggestions", "store_location_id"),
     "idx_nearby_home": ("nearby_stores", "home_id"),
     "idx_drafts_home_status": ("receipt_drafts", "home_id, status"),
     "idx_images_draft": ("receipt_images", "receipt_draft_id"),
     "idx_images_receipt": ("receipt_images", "receipt_id"),
     "idx_alerts_home": ("alerts", "home_id"),
+    # foreign keys that deletes and joins look up (13 Oct 2026 review)
+    "idx_draft_items_draft": ("receipt_draft_items", "receipt_draft_id"),
+    "idx_draft_taxes_draft": ("receipt_draft_taxes", "receipt_draft_id"),
+    "idx_tax_records_receipt": ("tax_records", "receipt_id"),
+    "idx_tax_records_item": ("tax_records", "receipt_item_id"),
+    "idx_store_tax_obs_receipt": ("store_tax_observations", "receipt_id"),
+    "idx_line_corrections_chain_key": ("line_corrections", "store_chain_id, original_key"),
+    "idx_item_aliases_normalized": ("common_item_aliases", "normalized_alias"),
+    "idx_prices_location": ("price_observations", "store_location_id"),
+    "idx_extraction_runs_draft": ("extraction_runs", "receipt_draft_id"),
+    "idx_extraction_runs_receipt": ("extraction_runs", "receipt_id"),
+    "idx_locations_address": ("store_locations", "address_id"),
+    "idx_drafts_home_hash": ("receipt_drafts", "home_id, source_hash"),
 }
 
 

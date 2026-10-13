@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -53,13 +54,37 @@ def defaults() -> dict[str, Any]:
     }
 
 
+_saved_cache: dict[str, Any] = {}       # {"generation": restore count, "value": what the page saved}
+_saved_lock = threading.Lock()
+
+
+def _saved() -> dict[str, Any]:
+    """What the Notifications page saved: read once, then kept until it is saved again (or a backup is restored)."""
+    from app.services import maintenance
+    generation = (maintenance.GATE.generation, get_settings().database_path)
+    with _saved_lock:
+        if _saved_cache.get("generation") == generation and "value" in _saved_cache:
+            return json.loads(json.dumps(_saved_cache["value"]))
+    with get_db_session()() as db:
+        row = db.get(AppSetting, KEY)
+        saved = json.loads(row.value) if row is not None else {}
+    if not isinstance(saved, dict):
+        saved = {}
+    with _saved_lock:
+        _saved_cache.update(generation=generation, value=saved)
+    return json.loads(json.dumps(saved))
+
+
+def forget_saved() -> None:
+    with _saved_lock:
+        _saved_cache.clear()
+
+
 def settings() -> dict[str, Any]:
     """The settings in use: what the page saved, over the App settings."""
     merged = defaults()
     try:
-        with get_db_session()() as db:
-            row = db.get(AppSetting, KEY)
-            saved = json.loads(row.value) if row is not None else {}
+        saved = _saved()
     except Exception:  # noqa: BLE001 - notifications must never break because settings could not be read
         logger.warning("Could not read the notification settings; using the App settings", exc_info=True)
         saved = {}
@@ -104,6 +129,7 @@ def save(new: dict[str, Any]) -> dict[str, Any]:
         else:
             row.value, row.updated_at = json.dumps(value), datetime.utcnow()
         db.commit()
+    forget_saved()
     return settings()
 
 

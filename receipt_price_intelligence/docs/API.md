@@ -50,7 +50,6 @@ See `spec/SPEC.md` §3 for the fields of `meta`.
 | `GET /api/v1/users` | admin | Users who have opened the app, with `is_admin` |
 | `GET /api/v1/stores/chains` | any | Known chain names (autocomplete) |
 | `GET /api/v1/homes/{id}/stores` | any | Stores this home has bought from |
-| `GET /api/v1/homes/{id}/prices?q=` | any | Latest price per item per store (the Insights page uses `/analysis/prices`, which adds trends) |
 
 Creating a draft (`POST /api/v1/receipt-drafts`) takes an optional `home_id`. It may be omitted only when exactly one home exists (`409` otherwise). `GET /api/v1/receipt-drafts` accepts `home_id` and `status_filter`.
 
@@ -192,9 +191,9 @@ The trip planner's `plan` request accepts `include_web_deals` (default true); li
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/v1/notifications` | `{settings, kinds, ha: {available, devices: [{service, name, kind (phone/other)}], trackers, error}}` |
-| `PUT /api/v1/notifications` `{devices, bell, kinds, price_drop_percent, restock_auto_add, tracker, nearby_meters, quiet}` | Save; `kinds` has `alerts`, `price_drop`, `restock`, `overcharge`, `nearby`; `quiet` `{start, end}` or null |
-| `POST /api/v1/notifications/test` `{service?}` | Send a test now, to one service or every device chosen |
+| `GET /api/v1/notifications` | `{settings, can_edit, kinds, ha: {available, devices: [{service, name, kind (phone/other)}], trackers, error}}` |
+| `PUT /api/v1/notifications` `{devices, bell, kinds, price_drop_percent, restock_auto_add, tracker, nearby_meters, quiet}` | Administrators only. Save; `kinds` has `alerts`, `price_drop`, `restock`, `overcharge`, `nearby`; `quiet` `{start, end}` or null |
+| `POST /api/v1/notifications/test` `{service?}` | Send a test now, to one `notify.…` service Home Assistant offers (`400` otherwise) or every device chosen |
 
 Every notification goes through `app/services/notifier.py`, which applies these settings (saved in the `app_settings` table, key `notifications`; the App settings are the defaults).
 
@@ -334,10 +333,11 @@ Create a new receipt draft.
 ```
 
 #### GET /api/v1/receipt-drafts
-List all drafts for the current user.
+List drafts in full (items, taxes, photos), newest first, at most `limit` (default 200, up to 500).
 
 **Query Parameters:**
-- `status` (optional): Filter by status (PROCESSING, NEEDS_REVIEW, APPROVED, REJECTED)
+- `home_id`, `status_filter` (optional): Filter by home and status (PROCESSING, NEEDS_REVIEW, EXTRACTION_FAILED, APPROVED, REJECTED)
+- `limit`, `before` (optional): page size, and only drafts created before this time
 
 **Response:** `200 OK`
 ```json
@@ -349,6 +349,15 @@ List all drafts for the current user.
   }
 ]
 ```
+
+#### GET /api/v1/receipt-drafts/summaries
+The Receipts page's list: one line per receipt, without items, taxes or photos.
+
+**Query Parameters:** `home_id` (required); `group` `review` (being read or waiting for review) or `saved`; `limit`
+(default 100, up to 500); `before` and `before_id` (the last line's `created_at` and `id`) for the next page.
+
+**Response:** `{"drafts": [{id, status, editing_saved, created_at, store_name, purchase_date, currency, grand_total,
+items_total, item_count, tags}], "more": true}`
 
 #### GET /api/v1/receipt-drafts/{id}
 Get a specific draft by ID.
@@ -397,10 +406,12 @@ Correct the receipt header before approval. Only the fields sent are changed; `n
   "grand_total": 54.25
 }
 ```
-Returns `422` for an unparseable date, time, currency, or amount.
+Returns `422` for an unparseable date, time, currency, or amount, or a field over its length (store name 255,
+address 500, store number 50, receipt number 100, 30 tags of 50 characters), and `409` once the receipt is saved or
+discarded (reopen it first). The model's own output (`raw_llm_output`, `raw_ocr_text`) can't be sent.
 
 #### PUT /api/v1/receipt-drafts/{id}/items
-Replace every item on the draft. Used by the review screen to save its edited list. Each item requires `receipt_description`; the other fields (`item_type`, `quantity`, `weight_value`, `weight_unit`, `unit_price`, `unit_price_unit`, `line_subtotal`, `discount_amount`, `line_total`, `tax_amount`, `extraction_confidence`) are optional. Returns the full draft.
+Replace every item on the draft (`409` once it is saved or discarded). Used by the review screen to save its edited list. Each item requires `receipt_description`; the other fields (`item_type`, `quantity`, `weight_value`, `weight_unit`, `unit_price`, `unit_price_unit`, `line_subtotal`, `discount_amount`, `line_total`, `tax_amount`, `extraction_confidence`) are optional. Returns the full draft.
 
 #### PATCH /api/v1/receipt-drafts/{id}/purchase-date
 Correct the date of a receipt that is already saved (`APPROVED`).
@@ -417,7 +428,7 @@ Add a photo or a PDF to a draft (`409` once the receipt is saved).
 **Content-Type:** `multipart/form-data`
 
 **Form Data:**
-- `file`: a photo (JPEG, PNG, GIF, WebP, max 10 MB) or a PDF (max 20 MB). PDFs are recognised by their signature as well as their content type.
+- `file`: a photo (JPEG, PNG, GIF, WebP, max 10 MB and 40 million pixels; the type is read from the file itself, not from its name or content type) or a PDF (max 20 MB). PDFs are recognised by their signature as well as their content type.
 
 A PDF is converted on the server with poppler: each page becomes a JPEG (longest side 2200 px) stored on the draft, and the PDF itself is not kept. A receipt holds at most 8 pages in total; pages beyond that are left out and `truncated` is true. `400` if the file is not a photo or PDF, is too large, is password protected, cannot be read, or the receipt already has 8 pages.
 
@@ -439,33 +450,6 @@ A PDF is converted on the server with poppler: each page becomes a JPEG (longest
 ```
 
 Photos are only kept while a receipt is being reviewed. They are deleted when the receipt is approved, rejected or deleted, and when an unsaved receipt expires (`DRAFT_RETENTION_HOURS`). An approved receipt keeps its details, not its photos.
-
-#### POST /api/v1/receipt-drafts/{id}/items
-Add an item to a draft.
-
-**Request Body:**
-```json
-{
-  "receipt_description": "Milk 2% gallon",
-  "item_type": "UNIT",
-  "quantity": 1,
-  "line_total": 4.99
-}
-```
-
-#### POST /api/v1/receipt-drafts/{id}/taxes
-Add a tax record to a draft.
-
-**Request Body:**
-```json
-{
-  "tax_type": "SALES",
-  "tax_name": "State Sales Tax",
-  "tax_rate": 0.0625,
-  "taxable_amount": 80.00,
-  "tax_amount": 5.00
-}
-```
 
 #### POST /api/v1/receipt-drafts/{id}/approve
 Approve a draft. This is the only path that creates permanent records, all in one transaction:
@@ -549,8 +533,9 @@ Optional `correction` (string, up to 1000 characters): a note from the reviewer 
 #### GET /api/v1/extraction/status/{draft_id}
 Progress for polling: `status`, `is_extracting`, `active` (running in this server process), `elapsed_seconds`, `last_event`, and `error` when the draft is `EXTRACTION_FAILED` (or when the last re-read failed and the earlier result was kept).
 
-#### GET /api/v1/extraction/stream/{draft_id}
-Server-Sent Events progress. Observes the running extraction; it never starts a second one.
+#### GET /api/v1/extraction/status?ids=a,b,c
+The status of several drafts at once (up to 100): `[{draft_id, status, active, item_count}]`. The Receipts page polls
+the ones being read this way.
 
 Draft statuses: `PROCESSING`, `NEEDS_REVIEW`, `EXTRACTION_FAILED`, `APPROVED`, `REJECTED`.
 

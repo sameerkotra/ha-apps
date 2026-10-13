@@ -36,12 +36,44 @@ def _last_time(db: Session, home_id: str, chain_id: str | None, description: str
             .filter(Receipt.home_id == home_id, StoreLocation.store_chain_id == chain_id))
     for condition in ([func.lower(ReceiptItem.receipt_description) == description.strip().lower()]
                       + ([ReceiptItem.common_item_id == item_id] if item_id else [])):
-        row = base.filter(condition).order_by(Receipt.purchase_date.desc()).first()
+        row = base.filter(condition).order_by(Receipt.purchase_date.desc(), ReceiptItem.id.desc()).first()
         if row is not None:
             prev, when = row
             prev._bought_on = when
             return prev
     return None
+
+
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+class LastTimes:
+    """``_last_time`` for every line of one receipt with a single query: the home's lines at that store, newest
+    first (the same order as ``_last_time``), indexed by printed description and by item."""
+
+    def __init__(self, db: Session, home_id: str, chain_id: str | None):
+        self.by_text: dict[str, Any] = {}
+        self.by_item: dict[str, Any] = {}
+        if not chain_id:
+            return
+        rows = (db.query(ReceiptItem, Receipt.purchase_date)
+                .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
+                .join(StoreLocation, Receipt.store_location_id == StoreLocation.id)
+                .filter(Receipt.home_id == home_id, StoreLocation.store_chain_id == chain_id)
+                .order_by(Receipt.purchase_date.desc(), ReceiptItem.id.desc()).all())
+        for prev, when in rows:
+            prev._bought_on = when
+            if prev.receipt_description is not None:
+                # SQLite's lower() (what _last_time compares with) changes A-Z only
+                self.by_text.setdefault(prev.receipt_description.translate(_ASCII_LOWER), prev)
+            if prev.common_item_id:
+                self.by_item.setdefault(prev.common_item_id, prev)
+
+    def get(self, description: str, item_id: str | None) -> Any:
+        found = self.by_text.get((description or "").strip().lower())
+        if found is None and item_id:
+            found = self.by_item.get(item_id)
+        return found
 
 
 def _date_text(value: Any) -> str:
@@ -91,12 +123,17 @@ def plan(line: dict[str, Any], prev: Any) -> dict[str, Any]:
     return changes
 
 
-def fill(db: Session, home_id: str, chain_id: str | None, item: Any, item_id: str | None = None) -> str | None:
-    """Fill in the draft line ``item`` from last time at this store (see ``plan``). Returns the note, or None."""
+def fill(db: Session, home_id: str, chain_id: str | None, item: Any, item_id: str | None = None,
+         last: LastTimes | None = None) -> str | None:
+    """Fill in the draft line ``item`` from last time at this store (see ``plan``). Returns the note, or None.
+    ``last``: the receipt's lines at this store loaded once (``LastTimes``), instead of a query per line."""
     line = {"weight_value": item.weight_value, "quantity": item.quantity, "line_total": item.line_total}
     if line["weight_value"] is not None and line["quantity"] not in (None, 1):
         return None  # everything is printed
-    prev = _last_time(db, home_id, chain_id, item.receipt_description, item_id)
+    if last is not None:
+        prev = last.get(item.receipt_description, item_id) if chain_id else None
+    else:
+        prev = _last_time(db, home_id, chain_id, item.receipt_description, item_id)
     if prev is None:
         return None
     changes = plan(line, prev)

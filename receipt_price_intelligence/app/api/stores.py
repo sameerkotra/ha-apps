@@ -12,10 +12,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.common import require_home
 from app.auth import CurrentUser, get_current_user, require_admin
 from app.db import get_db
 from app.db.models import StoreChain, StoreLocation
-from app.services import homes as homes_service
 from app.services import stores as stores_service
 
 router = APIRouter(prefix="/api/v1", tags=["stores"])
@@ -89,20 +89,19 @@ def _location_json(location: StoreLocation) -> dict[str, Any]:
 
 
 @router.get("/homes/{home_id}/store-directory")
-async def store_directory(
+def store_directory(
     home_id: str,
     _: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Chains with their locations, addresses, receipt counts and spend for this home,
     plus suggested duplicates (similar chain names, locations at the same address)."""
-    if homes_service.get_home(db, home_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home not found")
+    require_home(db, home_id)
     return stores_service.list_chains(db, home_id)
 
 
 @router.patch("/store-chains/{chain_id}")
-async def rename_chain(
+def rename_chain(
     chain_id: str,
     request: ChainRename,
     _: CurrentUser = Depends(get_current_user),
@@ -120,19 +119,21 @@ async def rename_chain(
 
 
 @router.get("/homes/{home_id}/store-discounts")
-async def list_discounts(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_discounts(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """This home's store discounts (cards, memberships): ``{chain id: [{id, name, percent, cents_per_unit, applies_to, active}]}``."""
     from app.services import discounts
+    require_home(db, home_id)
     return discounts.list_for_home(db, home_id)
 
 
 @router.put("/homes/{home_id}/store-chains/{chain_id}/discounts")
-async def set_discounts(home_id: str, chain_id: str, request: DiscountsIn, _: CurrentUser = Depends(get_current_user),
+def set_discounts(home_id: str, chain_id: str, request: DiscountsIn, _: CurrentUser = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     """Replace this home's discounts at a store. They are taken off prices wherever the app works out where something
     is cheapest (trip planner, shopping list): ``percent`` off prices it applies to (everything, fuel only, or everything
     but fuel), and for fuel ``cents_per_unit`` off per gallon. An empty list removes them."""
     from app.services import discounts
+    require_home(db, home_id)
     try:
         return discounts.set_for_chain(db, home_id, chain_id, [d.model_dump() for d in request.discounts])
     except discounts.DiscountError as e:
@@ -140,7 +141,7 @@ async def set_discounts(home_id: str, chain_id: str, request: DiscountsIn, _: Cu
 
 
 @router.put("/store-chains/{chain_id}/web")
-async def set_chain_web(
+def set_chain_web(
     chain_id: str,
     request: ChainWeb,
     _: CurrentUser = Depends(get_current_user),
@@ -158,7 +159,7 @@ async def set_chain_web(
 
 
 @router.post("/store-chains/{chain_id}/merge")
-async def merge_chain(
+def merge_chain(
     chain_id: str,
     request: ChainMerge,
     _: CurrentUser = Depends(require_admin),
@@ -176,7 +177,7 @@ async def merge_chain(
 
 
 @router.delete("/store-chains/{chain_id}")
-async def delete_chain(
+def delete_chain(
     chain_id: str,
     _: CurrentUser = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -192,7 +193,7 @@ async def delete_chain(
 
 
 @router.post("/store-chains/{chain_id}/locations", status_code=status.HTTP_201_CREATED)
-async def add_location(
+def add_location(
     chain_id: str,
     request: LocationData,
     _: CurrentUser = Depends(get_current_user),
@@ -209,7 +210,7 @@ async def add_location(
 
 
 @router.patch("/store-locations/{location_id}")
-async def update_location(
+def update_location(
     location_id: str,
     request: LocationData,
     _: CurrentUser = Depends(get_current_user),
@@ -226,7 +227,7 @@ async def update_location(
 
 
 @router.post("/store-locations/{location_id}/merge")
-async def merge_location(
+def merge_location(
     location_id: str,
     request: LocationMerge,
     _: CurrentUser = Depends(require_admin),
@@ -241,7 +242,7 @@ async def merge_location(
 
 
 @router.delete("/store-locations/{location_id}")
-async def delete_location(
+def delete_location(
     location_id: str,
     _: CurrentUser = Depends(require_admin),
     db: Session = Depends(get_db),

@@ -52,15 +52,15 @@ kept in the app's database (so they are part of its backups), apply as soon as t
 
 | Group | What is in it |
 | --- | --- |
-| Reading receipts | Model server URL, name, API format and key; timeout; temperature; context window (Ollama); maximum reply length; let the model think first; receipts read at the same time |
-| Receipts | Default currency; date order on receipts (`auto` uses the currency); receipt archive folder; how long unsaved receipts are kept |
-| Importing receipts | Folder to import from (under `/share` or `/media`); home for imported receipts; mail server (IMAP) settings |
+| Reading receipts | Model server URL, name, API format and key; timeout; temperature; context window (Ollama); maximum reply length; let the model think first; receipts read at the same time; model questions a month at most (0: no limit) |
+| Receipts | Default currency; date order on receipts (`auto` uses the currency); receipt archive folder; how long unsaved receipts are kept; receipts waiting at most per home (200) |
+| Importing receipts | Folder to import from (under `/share` or `/media`); home for imported receipts; mail server (IMAP) settings, including whether a server without encryption may be used (off) and which senders to import from (empty: everyone) |
 | Maps and trips | Units (miles or kilometres); address search, routing and nearby-store servers (empty turns the nearby search off); contact email for map requests; how long trip plans are kept |
-| Web search | Provider, address, API key or token, timeout, requests at once, how long results are kept, seconds between searches, field names, and how often hours, deals and online prices are looked up |
+| Web search | Provider, address, API key or token, timeout, requests at once, how long results are kept, seconds between searches, field names, how often hours, deals and online prices are looked up, and web searches a month at most (0: no limit) |
 | Best prices | Price history window, minimum saving to suggest, smallest saving worth an alert, daily check hour |
 | Home Assistant and notifications | Sensors, alerts, notification services, restock and price-drop notifications, overcharge notices, the to-do list to sync, the person or phone for "cheapest here" and its distance |
 | Household Assistant | Answer the Household Assistant (off) |
-| Advanced | Log level |
+| Advanced | Log level; the app-messages signing key (the same key in every household app; empty: messages are not signed) |
 
 Each group is a card, with a line under each setting saying what it does, its range and its default. Changes are
 kept until you select **Save** at the bottom (it shows how many unsaved changes there are); **Discard changes** puts
@@ -87,6 +87,9 @@ made, which the page says.
 ## Notifications
 
 The **Notify** page has every notification setting in one place:
+
+These settings are the whole household's, so only an administrator can save them; everyone can see them and send a
+test.
 
 - **Where to send**: tick the phones and tablets to get **push notifications** on. Every device signed in to the Home
   Assistant companion app appears here (its `notify.mobile_app_…` service), and other notify services (Telegram,
@@ -339,9 +342,12 @@ A **custom** server is set with **Search server address** (an address Home Assis
 - `POST /search` with `{"query": "..."}` returns a list of results (each with a title, address and text; they may be under `results`, `items`, `data` or `hits`, and use `url`/`link`/`href`, `snippet`/`content`/`text`).
 - `POST /fetch` with `{"url": "..."}` returns the page as text (in `text`, `content` or `markdown`, or as plain text).
 
+A custom server opens the pages the app asks for, so it must itself refuse addresses in your home network (the app
+only passes on public web addresses, but a page can redirect); answers over 5 MB are refused.
+
 If your server calls those fields something else, change **Search request field name** and **Fetch request field name**. On the Stores page an administrator can press **Test connection**: it searches, fetches the first result, asks the model one question, and shows what came back, so you can see exactly where a mismatch is.
 
-- **Opening hours** (Stores page): *Find hours for all stores* (or ⋯ → *Find hours online* for one). For each store the server is searched, the best pages are read by your model, and the answer is offered as a **suggestion** with its source and how sure it is: *Use these hours* or *No thanks*. Nothing changes until you accept, unless you turn on *Apply store hours found online automatically* (only for stores with no hours, and only for confident matches). Accepted hours are used by the trip planner.
+- **Opening hours** (Stores page): *Find hours for all stores* (or ⋯ → *Find hours online* for one). For each store the server is searched, the best pages are read by your model, and the answer is offered as a **suggestion** with its source and how sure it is: *Use these hours* or *No thanks*. Nothing changes until you accept, unless you turn on *Apply store hours found online automatically* (only for stores with no hours, and only on evidence: the store's own structured page data, OpenStreetMap, or two different websites giving the same hours; the model's own confidence is never enough). Accepted hours are used by the trip planner.
 - **Deals** (Best prices page): *Look for deals* searches each store's weekly ad and sale pages, has the model list what is on sale, and keeps the products that are items you buy. Each shows the sale price against what you usually pay at that store, when it ends, and where it was found. Deals well below your usual price raise an alert, and the trip planner uses them ("Use deals found online" in its options). They are looked up in the background every few days (an App setting).
 
 - **Current prices** (Best prices page → *Latest prices online*): *Check prices online* looks up what your most bought items cost now on the websites of the stores you bought them at (through the search server, several item-at-a-store checks at once — see *Requests at once* below). A price is only kept when a listing clearly is that item and its price can be compared in the item's own unit (a 1 gal listing against a per-gallon history, a per-lb price against per-lb receipts). Each shows the price against what you last paid there. Prices are read from the page itself where possible: first the product data store sites publish for search engines, then a price printed next to the product's name; the model reads the page only when neither works, and each price is labelled with how it was read. Every check is listed on the Best prices page under *Online price checks by date* (kept 30 days; the last 7 days count). An item-at-store pair checked within **Reuse an online price for** (default 6 hours) is left as it was rather than checked again; if everything you asked for was already fresh, a *Check again anyway* option appears. The trip planner can use them: a current online price replaces the price from your last receipt when it is newer, unless it is wildly different from what you paid (then it is assumed to be misread). The trip result has an *Online prices behind this plan* card listing each online price found for the trip's items, by the day it was checked, with which ones decided the route and why any were not used. **Ignoring online prices.** In the trip planner's options, *Prices to use* can be *My receipt prices only*: online
@@ -435,7 +441,7 @@ recorder:
 
 ## Importing receipts from a folder or email
 
-Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used, at most 10 per email, and emails over 30 MB are skipped). If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page has a *Check now* button.
+Set **Folder to import receipts from** (a folder under `/share`, for example `/share/receipts`) and photos and PDFs dropped there become drafts to review; handled files move to a `processed` folder (or `failed`) and are deleted after two weeks. Set the **Mail server (IMAP)** settings and PDF and image attachments of unread emails are imported the same way (the emails are marked as read; only attachments are used, at most 10 per email, and emails over 30 MB are skipped). The mail server's certificate is checked. With *Use SSL for mail* off, the connection is encrypted with STARTTLS; a server that offers neither is only used when *Allow mail login without encryption* is on. *Only import mail from* limits imports to some addresses or domains (`@example.com`); other emails are marked as read and skipped. An attachment already imported is not imported again. When a home already has *Receipts waiting at most* receipts being read or reviewed (200 by default), the folder and the mailbox wait: emails stay unread until some receipts are reviewed. Files in the folder are read only when they are ordinary files (links are left alone), and only real photos (JPEG, PNG, GIF, WebP, up to 40 million pixels) or PDFs are kept, whatever their names say. If you have more than one home, name the home imported receipts go to. Imported receipts are read by the model in the background and wait under *To review*. Nothing reaches your price history until you approve it. The receipts page has a *Check now* button.
 
 ## Trip planner
 
@@ -462,6 +468,9 @@ Administrators open **Admin → Backup**.
   data is kept (the newest three are listed on the page and can be downloaded, also without access keys and passwords)
   and put back automatically if the restore fails. Exports from older versions are upgraded. App settings come from
   the file when it has them; otherwise the current ones are kept. Administrators always come from admin_users.
+  While a restore runs, everything else waits: it starts once the requests and background checks already running
+  have finished (if they take more than a minute, it says the app is busy and changes nothing), and other pages get
+  "try again in a moment" until it is done.
 
 Home Assistant's own backups of the app also include this data. Use export/restore to move data between installs or
 to keep a copy outside Home Assistant.

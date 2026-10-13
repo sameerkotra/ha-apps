@@ -103,6 +103,7 @@ def hours_for_location(db: Session, location_id: str) -> dict[str, Any] | None:
     if row is None:
         return None
     return {"hours": json.loads(row.opening_hours), "source_url": _osm_url(row.osm_id), "confidence": OSM_HOURS_CONFIDENCE,
+            "evidence": "structured",
             "note": "From OpenStreetMap"}
 
 

@@ -51,13 +51,14 @@ def load_receipts(db: Session, home_id: str, start: str | None = None, end: str 
     if end:
         query = query.filter(Receipt.purchase_date < end)
 
-    line_sums = dict(
-        db.query(ReceiptItem.receipt_id, func.sum(ReceiptItem.line_total))
-        .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
-        .filter(Receipt.home_id == home_id)
-        .group_by(ReceiptItem.receipt_id)
-        .all()
-    )
+    sums = (db.query(ReceiptItem.receipt_id, func.sum(ReceiptItem.line_total))
+            .join(Receipt, ReceiptItem.receipt_id == Receipt.id)
+            .filter(Receipt.home_id == home_id))
+    if start:   # only the receipts asked for (a month's view summed every line ever bought)
+        sums = sums.filter(Receipt.purchase_date >= start)
+    if end:
+        sums = sums.filter(Receipt.purchase_date < end)
+    line_sums = dict(sums.group_by(ReceiptItem.receipt_id).all())
 
     rows = []
     for receipt, location, chain, address in query.all():

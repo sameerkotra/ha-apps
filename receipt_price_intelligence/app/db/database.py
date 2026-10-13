@@ -29,10 +29,10 @@ def get_engine():
             os.makedirs(db_dir, exist_ok=True)
 
         # Create engine with SQLite-specific settings
+        # No pool_pre_ping: a SQLite file has no connection to go stale, and the ping cost a query per checkout.
         _engine = create_engine(
             f"sqlite:///{db_path}",
             connect_args={"check_same_thread": False},
-            pool_pre_ping=True,
             echo=settings.log_level == "DEBUG",
         )
 
@@ -58,6 +58,12 @@ def get_engine():
     return _engine
 
 
+def apply_log_level(level: str) -> None:
+    """SQL statements are logged at the Debug log level; a change in App settings applies straight away."""
+    if _engine is not None:
+        _engine.echo = level == "DEBUG"
+
+
 def dispose_engine() -> None:
     """Close all pooled connections and forget the engine (the next use opens a fresh one).
 
@@ -76,9 +82,10 @@ def get_db_session():
     return _session_factory
 
 
-async def get_db():
+def get_db():
     """
-    Database session dependency for FastAPI.
+    Database session dependency for FastAPI (a plain generator: FastAPI opens and closes it on its thread pool, never
+    on the event loop).
 
     Note: The caller is responsible for commit/rollback.
 

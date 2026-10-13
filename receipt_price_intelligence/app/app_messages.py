@@ -42,7 +42,14 @@ def start() -> None:
                                                      supervisor_api=os.environ.get("SUPERVISOR_API", "http://supervisor"))
     bus.start(SLUG, TITLE, APP_VERSION, db=_connect, outbox_thread=bool(token), token=token,
               api_base=os.environ.get("SUPERVISOR_CORE_API", "http://supervisor/core/api"),
-              ws_url=os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket"))
+              ws_url=os.environ.get("SUPERVISOR_CORE_WS", "ws://supervisor/core/websocket"),
+              signing_key=_signing_key)
+
+
+def _signing_key() -> str:
+    """Admin → App settings → App-messages signing key ("" : unsigned, as before)."""
+    from app import app_settings
+    return app_settings.REGISTRY.get("bus_signing_key") or ""
 
 
 def stop() -> None:

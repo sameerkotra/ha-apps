@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -48,6 +49,28 @@ def _safe(text: str, limit: int = 60) -> str:
     return re.sub(r"\s+", " ", text).strip(" .")[:limit] or "receipt"
 
 
+def _no_links(path: str) -> bool:
+    """True when no part of ``path`` from the archive root down is a symbolic link (a link placed in the shared
+    folder could otherwise send the app's writes, moves or deletes anywhere it may write)."""
+    base = root()
+    if base is None:
+        return False
+    path = os.path.normpath(path)
+    if not (path == base or path.startswith(base + os.sep)):
+        return False
+    parts = [base] + [p for p in os.path.relpath(path, base).split(os.sep) if p not in ("", ".")]
+    current = ""
+    for part in parts:
+        current = os.path.join(current, part) if current else part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                logger.warning("The receipt archive folder holds a link at %s: not followed", current)
+                return False
+        except FileNotFoundError:
+            return True        # the rest is still to be made (makedirs never follows into a link it made itself)
+    return True
+
+
 def _pending_folder(draft_id: str) -> str | None:
     base = root()
     return os.path.join(base, PENDING, _safe(draft_id, 40)) if base else None
@@ -59,16 +82,22 @@ def save_original(draft_id: str, content: bytes, filename: str | None, is_pdf: b
     if folder is None:
         return None
     try:
+        if not _no_links(folder):
+            return None
         os.makedirs(folder, exist_ok=True)
+        if not _no_links(folder):
+            return None
         name = _safe(os.path.basename(filename or ""), 80)
         if "." not in name:
             name += ".pdf" if is_pdf else ".jpg"
         stem, ext = os.path.splitext(name)
         path, n = os.path.join(folder, name), 1
-        while os.path.exists(path):  # several pages uploaded with the same name
+        while os.path.lexists(path):  # several pages uploaded with the same name
             n += 1
             path = os.path.join(folder, f"{stem} ({n}){ext}")
-        with open(path, "wb") as f:
+        # O_EXCL | O_NOFOLLOW: a new file, never written through a link
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+        with os.fdopen(fd, "wb") as f:
             f.write(content)
         return path
     except OSError as e:
@@ -96,14 +125,16 @@ def _approved_name(db: Session, receipt: Any) -> tuple[str, str]:
 def on_approved(db: Session, draft_id: str, receipt: Any) -> str | None:
     """Move the scan's archived file(s) to their place by date and store. Returns the folder, or None."""
     source = _pending_folder(draft_id)
-    if source is None or not os.path.isdir(source):
+    if source is None or not os.path.isdir(source) or not _no_links(source):
         return None
     try:
         year, name = _approved_name(db, receipt)
         target_dir = os.path.join(root(), year)
+        if not _no_links(target_dir):
+            return None
         os.makedirs(target_dir, exist_ok=True)
         target, n = os.path.join(target_dir, name), 1
-        while os.path.exists(target):  # two receipts from one store on one day with the same total
+        while os.path.lexists(target):  # two receipts from one store on one day with the same total
             n += 1
             target = os.path.join(target_dir, f"{name} ({n})")
         shutil.move(source, target)
@@ -117,7 +148,7 @@ def on_approved(db: Session, draft_id: str, receipt: Any) -> str | None:
 def on_discarded(draft_id: str) -> None:
     """A scan rejected or deleted before approval: its archived file(s) go too."""
     folder = _pending_folder(draft_id)
-    if folder and os.path.isdir(folder):
+    if folder and os.path.isdir(folder) and _no_links(folder):
         try:
             shutil.rmtree(folder)
         except OSError as e:

@@ -11,12 +11,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.common import require_home as _require_home
 from app.auth import CurrentUser, get_current_user
 from app.config import get_settings
 from app.db import get_db
-from app.db.models import CommonItem, CommonItemAlias
+from app.db.models import CommonItem, CommonItemAlias, PriceObservation
 from app.services import analytics, insights
-from app.services import homes as homes_service
 from app.services.analysis_data import iso as _iso
 from app.services.analysis_data import load_discount_lines, load_observations, load_receipts
 
@@ -34,13 +34,10 @@ def _parse_range(range_key: str) -> int | None:
     return RANGES[range_key]
 
 
-def _require_home(db: Session, home_id: str) -> None:
-    if homes_service.get_home(db, home_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home not found")
 
 
 @router.get("/overview")
-async def overview(
+def overview(
     home_id: str,
     range: str = "90d",
     _: CurrentUser = Depends(get_current_user),
@@ -77,7 +74,7 @@ async def overview(
 
 
 @router.get("/stores")
-async def spend_by_store(
+def spend_by_store(
     home_id: str,
     range: str = "90d",
     _: CurrentUser = Depends(get_current_user),
@@ -92,7 +89,7 @@ async def spend_by_store(
 
 
 @router.get("/items")
-async def spend_by_item(
+def spend_by_item(
     home_id: str,
     range: str = "90d",
     q: str | None = None,
@@ -128,7 +125,7 @@ async def spend_by_item(
 
 
 @router.get("/prices")
-async def item_prices(
+def item_prices(
     home_id: str,
     range: str = "12m",
     q: str | None = None,
@@ -171,7 +168,7 @@ async def item_prices(
 
 
 @router.get("/items/{item_id}")
-async def item_detail(
+def item_detail(
     home_id: str,
     item_id: str,
     range: str = "all",
@@ -228,7 +225,7 @@ async def item_detail(
 
 
 @router.get("/recommendations")
-async def recommendations(
+def recommendations(
     home_id: str,
     days: int | None = None,
     _: CurrentUser = Depends(get_current_user),
@@ -255,7 +252,7 @@ async def recommendations(
 
 
 @router.get("/categories")
-async def spend_by_category(
+def spend_by_category(
     home_id: str,
     range: str = "90d",
     _: CurrentUser = Depends(get_current_user),
@@ -278,7 +275,7 @@ async def spend_by_category(
 
 
 @router.get("/discounts")
-async def discounts(
+def discounts(
     home_id: str,
     range: str = "90d",
     _: CurrentUser = Depends(get_current_user),
@@ -293,7 +290,7 @@ async def discounts(
 
 
 @router.get("/inflation")
-async def inflation(
+def inflation(
     home_id: str,
     months: int = 12,
     _: CurrentUser = Depends(get_current_user),
@@ -305,4 +302,11 @@ async def inflation(
     """
     _require_home(db, home_id)
     months = max(3, min(months, 60))
-    return {"months": months, **insights.basket_index(load_observations(db, home_id), date.today(), months)}
+    # Only items bought in the months shown count, so only their history is read (all of it: an item's unit is
+    # worked out from every purchase of it)
+    today = date.today()
+    since = f"{insights._shift_month(today, -(months - 1))}-01"
+    item_ids = [r[0] for r in db.query(PriceObservation.common_item_id).filter(
+        PriceObservation.home_id == home_id, PriceObservation.purchase_date >= since).distinct().all()]
+    observations = load_observations(db, home_id, item_ids=item_ids) if item_ids else []
+    return {"months": months, **insights.basket_index(observations, today, months)}

@@ -15,9 +15,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncGenerator
 
+from urllib.parse import urlparse
+
 import httpx
 from PIL import Image, ImageOps
 
+from app.common import image_guard
 from app.config import get_settings
 from app.db.models import ReceiptDraft, ReceiptDraftItem, ReceiptDraftTax
 from app.logging_config import get_logger
@@ -81,8 +84,8 @@ class ExtractionService:
     def __init__(self):
         settings = self.settings
         self.key = (settings.model_url, settings.model_timeout_seconds)
-        # Large vision models can take minutes per receipt on modest hardware.
-        self.timeout_seconds = max(settings.model_timeout_seconds, 300)
+        # Large vision models can take minutes per receipt on modest hardware: the setting's default is 300 s
+        self.timeout_seconds = settings.model_timeout_seconds
         self.client = httpx.AsyncClient(
             timeout=self.timeout_seconds,
             base_url=settings.model_url.rstrip("/"),
@@ -104,37 +107,56 @@ class ExtractionService:
 
         Phone photos usually carry an EXIF rotation flag instead of rotated pixels.
         A model that never sees that flag reads the receipt sideways.
+
+        The photo's size is checked from its header before anything is decoded (a few kilobytes can claim billions
+        of pixels), a JPEG is decoded straight at a smaller scale, and at most two photos are decoded at once.
         """
-        with Image.open(image_path) as source:
-            image = ImageOps.exif_transpose(source)
-            if image.mode in ("RGBA", "LA", "P"):
-                image = image.convert("RGBA")
-                background = Image.new("RGB", image.size, (255, 255, 255))
-                background.paste(image, mask=image.split()[-1])
-                image = background
-            elif image.mode != "RGB":
-                image = image.convert("RGB")
-
-            longest = max(image.size)
-            if longest > MAX_IMAGE_SIDE:
-                scale = MAX_IMAGE_SIDE / longest
-                image = image.resize(
-                    (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
-                    Image.LANCZOS,
-                )
-
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-
+        with open(image_path, "rb") as f, image_guard.decode_slot(timeout=600):
+            try:
+                source = image_guard.open_for_decode(f, draft=("RGB", (MAX_IMAGE_SIDE, MAX_IMAGE_SIDE)))
+            except image_guard.ImageError as e:
+                raise ValueError(str(e)) from e
+            with source:
+                buffer = ExtractionService._to_jpeg(source)
         return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    @staticmethod
+    def _to_jpeg(source) -> io.BytesIO:
+        """Upright, RGB on white, at most MAX_IMAGE_SIDE on its longest side, as a JPEG."""
+        image = ImageOps.exif_transpose(source)
+        if image.mode in ("RGBA", "LA", "P"):
+            image = image.convert("RGBA")
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[-1])
+            image = background
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+
+        longest = max(image.size)
+        if longest > MAX_IMAGE_SIDE:
+            scale = MAX_IMAGE_SIDE / longest
+            image = image.resize(
+                (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+                Image.LANCZOS,
+            )
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+        return buffer
 
     # ------------------------------------------------------------------ #
     # Model calls
     # ------------------------------------------------------------------ #
 
     def _effective_format(self) -> str:
-        """Ollama's native API is used when configured, or when the URL is the Ollama port."""
-        if self.settings.model_api_format.lower() == "ollama" or "11434" in self.settings.model_url:
+        """Ollama's native API is used when configured, or when the URL is Ollama's port without the /v1 path of
+        Ollama's own OpenAI-compatible API."""
+        settings = self.settings
+        if settings.model_api_format.lower() == "ollama":
+            return "ollama"
+        parsed = urlparse(settings.model_url or "")
+        path = (parsed.path or "").rstrip("/")
+        if parsed.port == 11434 and not (path == "/v1" or path.startswith("/v1/")):
             return "ollama"
         return "openai_compatible"
 
@@ -171,7 +193,8 @@ class ExtractionService:
                     continue
 
             logger.error("Model API error: %d - %s", response.status_code, detail)
-            raise ExtractionError(f"The model server returned HTTP {response.status_code}: {detail[:200]}")
+            # what the server said goes to the log; the person sees the status only
+            raise ExtractionError(f"The model server returned HTTP {response.status_code}. See the app's Log tab for details.")
 
         raise ExtractionError("The model server rejected the request")
 
@@ -179,10 +202,12 @@ class ExtractionService:
         """Send the receipt image(s) to the model. Returns (reply text, was_truncated)."""
         if not self.settings.model_ready:
             raise ExtractionError(NOT_SET_UP)
+        from app.services import webcache
+        webcache.count_use("model")   # counted for the Web debug page (reading receipts is never held back)
         api_format = self._effective_format()
         logger.info(
             "Calling model %s via %s at %s with %d image(s)",
-            self.settings.model_name, api_format, self.settings.model_url, len(images_b64),
+            self.settings.model_name, api_format, redact_url(self.settings.model_url), len(images_b64),
         )
 
         if api_format == "ollama":
@@ -296,8 +321,11 @@ class ExtractionService:
                 images = [
                     await asyncio.to_thread(self.prepare_image_base64, path) for path in image_paths
                 ]
+            except image_guard.DecodeBusy as e:
+                raise ExtractionError("Too many photos are being prepared right now. Read it again in a moment.") from e
             except (OSError, ValueError) as e:
-                raise ExtractionError(f"Could not read the receipt image: {e}") from e
+                logger.warning("Could not prepare a photo of draft %s: %s", draft.id, e)
+                raise ExtractionError("Could not read the receipt photo. Try another photo, or read it again.") from e
 
             parsed: dict[str, Any] | None = None
             for attempt in (1, 2):
@@ -371,8 +399,8 @@ class ExtractionService:
             )
         except httpx.ConnectError:
             message = (
-                f"Could not connect to the model server at {self.settings.model_url}. "
-                "Check that it is running and that the URL is correct."
+                "Could not connect to the model server. "
+                "Check that it is running and that its address in App settings is correct."
             )
             logger.error("Extraction failed for draft %s: %s", draft.id, message)
             yield ExtractionEvent(stage=ExtractionProgress.ERROR, message="Extraction failed", error=message)
@@ -388,7 +416,7 @@ class ExtractionService:
             yield ExtractionEvent(
                 stage=ExtractionProgress.ERROR,
                 message="Extraction failed",
-                error=f"Unexpected error: {e}",
+                error="Something went wrong while reading the receipt. See the app's Log tab for details.",
                 result={"raw": raw_text},
             )
 
@@ -396,13 +424,14 @@ class ExtractionService:
     # Persistence
     # ------------------------------------------------------------------ #
 
-    async def save_extraction_to_draft(
+    def save_extraction_to_draft(
         self,
         db,
         draft: ReceiptDraft,
         extracted_data: dict,
     ) -> tuple[list[ReceiptDraftItem], list[ReceiptDraftTax]]:
-        """Store a normalized extraction on the draft and mark it ready for review."""
+        """Store a normalized extraction on the draft and mark it ready for review (call it in a thread: it reads the
+        corrections, named items and last purchases at the store once each, for all lines together)."""
         draft.raw_llm_output = json.dumps(extracted_data, indent=2)
         draft.raw_ocr_text = None  # no separate OCR pass exists
         draft.extraction_model = self.settings.model_name
@@ -413,13 +442,17 @@ class ExtractionService:
         db.query(ReceiptDraftTax).filter(ReceiptDraftTax.receipt_draft_id == draft.id).delete()
 
         items = []
+        lines = extracted_data.get("items", [])
         chain_id = corrections.chain_for_store_name(db, extracted_data.get("store_name"))
-        for item_data in extracted_data.get("items", []):
+        # A fix made before to how this store's line was read is applied again.
+        fixes = corrections.lookup_many(db, chain_id, [line["receipt_description"] for line in lines])
+        descriptions = [fixes.get(line["receipt_description"]) or line["receipt_description"] for line in lines]
+        # If a person already named this printed description, fill the common name in.
+        named = receipt_records.find_confirmed_common_items(db, draft.home_id, descriptions)
+        last_times = fill_in.LastTimes(db, draft.home_id, chain_id)
+        for item_data, description in zip(lines, descriptions):
             read_as = item_data["receipt_description"]
-            # A fix made before to how this store's line was read is applied again.
-            description = corrections.lookup(db, chain_id, read_as) or read_as
-            # If a person already named this printed description, fill the common name in.
-            known = receipt_records.find_confirmed_common_item(db, draft.home_id, description)
+            known = named.get(description)
             item = ReceiptDraftItem(
                 receipt_draft_id=draft.id,
                 receipt_description=description,
@@ -441,7 +474,7 @@ class ExtractionService:
                 raw_text=json.dumps(item_data),
             )
             # weight, pack size or quantity not printed: from the last time it was bought at this store
-            fill_in.fill(db, draft.home_id, chain_id, item, known.id if known else None)
+            fill_in.fill(db, draft.home_id, chain_id, item, known.id if known else None, last=last_times)
             db.add(item)
             items.append(item)
 
@@ -494,10 +527,42 @@ class ExtractionService:
 _extraction_service = None
 
 
+def redact_url(url: str | None) -> str:
+    """A model or server address for the log: without a user name, password or query (they can hold keys)."""
+    parsed = urlparse(url or "")
+    if not parsed.scheme or not parsed.hostname:
+        return "(not set)" if not url else "(an address)"
+    host = parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+    return f"{parsed.scheme}://{host}{parsed.path or ''}"
+
+
 def get_extraction_service() -> ExtractionService:
     """Get or create the extraction service singleton."""
     global _extraction_service
     settings = get_settings()
     if _extraction_service is None or _extraction_service.key != (settings.model_url, settings.model_timeout_seconds):
+        old = _extraction_service
         _extraction_service = ExtractionService()   # the model server or timeout changed in App settings
+        if old is not None:
+            _close_later(old.client)
     return _extraction_service
+
+
+def _close_later(client: "httpx.AsyncClient") -> None:
+    """Close a replaced model client (a reading still using it finishes first: closing waits for nothing in flight
+    in httpx, so it is closed a few minutes later, on the event loop when there is one)."""
+    async def close() -> None:
+        await asyncio.sleep(get_settings().model_timeout_seconds + 30)
+        await client.aclose()
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        task = loop.create_task(close())
+        _closing.add(task)
+        task.add_done_callback(_closing.discard)
+
+
+_closing: set = set()

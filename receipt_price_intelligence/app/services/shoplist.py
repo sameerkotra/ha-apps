@@ -119,9 +119,11 @@ def _cheapest(db: Session, home_id: str, item_ids: list[str], online: bool = Tru
 # --------------------------------------------------------------------------- #
 
 def _known_items(db: Session, home_id: str) -> list[dict[str, Any]]:
-    """Every item of the home, bought or not (items typed on the list are items too), most bought first."""
+    """Every item of the home, bought or not (items typed on the list are items too), most bought first. Read once
+    per request or sync (reqcache; a new item flushed in between makes it read again), not once per typed line."""
     from app.services import items as items_service
-    return [{"id": i["id"], "name": i["name"], "purchases": i["purchase_count"]} for i in items_service.list_items(db, home_id, None, 2000)]
+    return reqcache.remember(("shoplist-known-items", home_id), lambda: [
+        {"id": i["id"], "name": i["name"], "purchases": i["purchase_count"]} for i in items_service.list_items(db, home_id, None, 2000)])
 
 
 def _user_for(db: Session, home_id: str, user_id: str | None) -> str | None:
@@ -481,13 +483,16 @@ def _sync_todo(db: Session, home_id: str, entity: str) -> None:
 
 
 def sync_soon(home_id: str) -> None:
-    """Sync in the background, so the page does not wait for Home Assistant."""
-    threading.Thread(target=_safe_sync, args=(home_id,), daemon=True).start()
+    """Sync in the background, so the page does not wait for Home Assistant. Many changes in a row make one sync
+    (and one more after it, for the changes made while it ran), not a thread each."""
+    from app.services import background
+    background.coalesce(("shoplist-sync", home_id), _safe_sync, home_id)
 
 
 def _safe_sync(home_id: str) -> None:
     try:
-        sync(home_id)
+        with reqcache.scope():
+            sync(home_id)
     except Exception:  # noqa: BLE001 - best effort
         logger.exception("Shopping list sync failed")
 

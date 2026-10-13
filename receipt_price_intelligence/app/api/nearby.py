@@ -1,6 +1,5 @@
 """Grocery stores near a home from OpenStreetMap, including ones it has never bought from."""
 
-import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -28,7 +27,7 @@ def _call(fn, *args):
 
 
 @router.get("/homes/{home_id}/nearby-stores")
-async def list_nearby(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_nearby(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """What the last search found around this home, nearest first. ``status``: NEW, ADDED, KNOWN (you already
     shop there) or HIDDEN. ``enabled`` is false when no search server is set."""
     _home(db, home_id)
@@ -36,7 +35,7 @@ async def list_nearby(home_id: str, _: CurrentUser = Depends(get_current_user), 
 
 
 @router.post("/homes/{home_id}/nearby-stores/search")
-async def search_nearby(home_id: str, request: SearchRequest, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def search_nearby(home_id: str, request: SearchRequest, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Search OpenStreetMap for grocery stores around the home (takes a few seconds) and return them.
 
     Stores you already shop at are recognised; their opening hours, when OpenStreetMap has them, are offered
@@ -48,7 +47,7 @@ async def search_nearby(home_id: str, request: SearchRequest, _: CurrentUser = D
         with get_db_session()() as session:  # its own session: this runs in a worker thread
             return _call(nearby.search, session, home_id, km, request.force)
 
-    return await asyncio.to_thread(work)
+    return work()
 
 
 def _action(fn, home_id: str, nearby_id: str, db: Session, *extra):
@@ -57,24 +56,24 @@ def _action(fn, home_id: str, nearby_id: str, db: Session, *extra):
 
 
 @router.post("/homes/{home_id}/nearby-stores/{nearby_id}/add")
-async def add_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Make this store one of the home's stores: online price checks, deals and the trip planner include it."""
     return _action(nearby.add, home_id, nearby_id, db)
 
 
 @router.post("/homes/{home_id}/nearby-stores/{nearby_id}/remove")
-async def remove_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def remove_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Undo *add*. The store's location is deleted too, unless a receipt or another home uses it."""
     return _action(nearby.remove, home_id, nearby_id, db)
 
 
 @router.post("/homes/{home_id}/nearby-stores/{nearby_id}/hide")
-async def hide_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def hide_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Hide a store you are not interested in (it stays hidden when you search again)."""
     return _action(nearby.set_hidden, home_id, nearby_id, db, True)
 
 
 @router.post("/homes/{home_id}/nearby-stores/{nearby_id}/unhide")
-async def unhide_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def unhide_nearby(home_id: str, nearby_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Show a hidden store again."""
     return _action(nearby.set_hidden, home_id, nearby_id, db, False)

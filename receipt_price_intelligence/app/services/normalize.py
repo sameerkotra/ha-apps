@@ -321,21 +321,6 @@ def derive_line_total(item: dict[str, Any], unit_price: float | None = None) -> 
     return round(price * (quantity if quantity and quantity > 0 else 1), 2)
 
 
-def _edit_distance(a: str, b: str, limit: int) -> int:
-    """Levenshtein distance, giving up (returning limit + 1) once it must exceed ``limit``."""
-    if abs(len(a) - len(b)) > limit:
-        return limit + 1
-    previous = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        current = [i]
-        for j, cb in enumerate(b, 1):
-            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ca != cb)))
-        if min(current) > limit:
-            return limit + 1
-        previous = current
-    return previous[-1]
-
-
 def similar_chains(chains: list[tuple[str, str]]) -> list[dict[str, str]]:
     """Pairs of chains that are probably the same store printed differently.
 
@@ -354,7 +339,7 @@ def similar_chains(chains: list[tuple[str, str]]) -> list[dict[str, str]]:
                 reason = "One name is the other plus extra words"
             else:
                 limit = 1 if min(len(key_a), len(key_b)) < 9 else 2
-                if min(len(key_a), len(key_b)) >= 5 and _edit_distance(key_a, key_b, limit) <= limit:
+                if min(len(key_a), len(key_b)) >= 5 and edit_distance(key_a, key_b, limit) <= limit:
                     reason = "The names differ by only a letter or two"
             if reason:
                 pairs.append({"a": id_a, "b": id_b, "reason": reason})

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.2
+
+### Security
+
+- **Notifications go to notify services only**: *Send test* on the Notify page now accepts only a notify service Home Assistant offers; before, it could be made to call any Home Assistant service.
+- **Notify page settings are the household's**: only an administrator can save them now (everyone can still see them and send a test). The List page's test of "cheapest here" says how far away the tracked phone is only to an administrator or to the person being tracked.
+- **Size limits on everything sent to the app**: 1 MB for a change, 25 MB for a photo or PDF, 256 MB for a bulk upload, also when the size isn't announced. Uploads are measured before they are read.
+- **Saved receipts stay as saved**: a saved receipt can no longer be changed (store, lines, photos) without *Edit* first, and the model's own reading can no longer be overwritten from the page.
+- **Web pages built to stall the app are read quickly**: the price and hours reader now reads a page in one pass; a hostile page used to keep it busy for about a minute.
+- **Oversized photos are refused before they are opened**: a photo may have up to 40 million pixels (a tiny file can claim billions, which used gigabytes of memory), at most two are decoded at once, and only real JPEG, PNG, GIF or WebP photos are kept, whatever the file says it is.
+- **Safer mail**: the mail server's certificate is now checked. With *Use SSL for mail* off, the connection is encrypted with STARTTLS; a server that offers no encryption at all is only used when the new *Allow mail login without encryption* is turned on (off by default — if your mail server is on your own network without encryption, turn it on).
+- **Mail import limits**: the new *Only import mail from* (empty: everyone, as before) skips emails from other senders; an attachment already imported is not imported again; and once a home has *Receipts waiting at most* (new, 200 by default) receipts being read or reviewed, new scans are refused and the folder and mailbox wait (emails stay unread) until some are reviewed.
+- **The import folder and the receipt archive never follow links**: a link placed in the shared folder is left alone instead of being read, written through or moved.
+- **Paid services can have a monthly limit**: *Web searches a month at most* and *Model questions a month at most* (App settings; 0, no limit, by default). This month's counts are on the Web debug page. Answers from the search service and the model are capped at 5 MB, and a page must arrive within 30 seconds.
+- Web addresses that lead back into the home network through IPv6 (NAT64, 6to4) are no longer opened.
+- Store hours found online are applied by themselves only on evidence (the store's own page data, OpenStreetMap, or two websites giving the same hours), never on the model's say-so.
+- Members no longer see where files are kept on the server, the import folder, the mail server or the map servers; error messages no longer repeat what the model server said; the log no longer shows a model address's password; the Web debug page hides keys and tokens in addresses.
+- The API description pages (/docs, /openapi.json) are no longer served.
+
+### Fixed
+
+- Receipts that were being read when the app stopped are read again at start-up (before, they stayed at "Reading…" and were deleted after a few days). A receipt the model hasn't read yet is never deleted for being old.
+- **Restoring a backup waits for everything else**: requests and background checks already running finish first, and the rest wait until the restore is done; before, a check running at the time could write to the replaced database and its changes were lost.
+- *Model timeout* is used as set (it could not be lower than 300 seconds); an Ollama server's OpenAI-compatible address (`…:11434/v1`) is now used as such.
+- The daily check keeps its hour after a daylight-saving change.
+- Two clicks (or a click and the daily check) no longer start the same web lookup twice; a check of online prices that found nothing is not repeated every day.
+- Mail folders with spaces in their names work; an odd answer from the routing service no longer causes an error; huge or deeply nested numbers from the model are ignored; negative quantities and weights are not kept.
+- Left-over export and upload files are deleted after six hours; discarded scans are deleted once their time is up.
+- Keyboard: the car choice in the trip planner works with the arrow keys; clearing the trip list asks in the app's own dialog. HEIC photos are no longer offered for bulk import (they can't be read).
+
+### Changed
+
+- **Faster Receipts page**: it loads one line per receipt (saved ones 100 at a time, with *Show older receipts*) instead of every receipt in full, and while a receipt is being read only its status is checked.
+- **Faster everywhere**: pages no longer hold up each other while the database works; scripts and styles are kept by the browser until the next update; answers are compressed; the shopping list updates at once when you tick an item and fetches only the list again; saving a model's reading looks up past purchases once instead of once per line; the trip planner skips trips that can't win; new database indexes and fewer duplicate ones; page thumbnails are small copies.
+- **Shared code**: an optional *App-messages signing key* (Admin → App settings → Advanced: put the same key in every household app); API answers are never stored by the browser; scripts and styles load faster.
+
 ## 1.3.1
 
 - **Safer web pages**: a page fetched for prices that arrives packed (gzip) can no longer unpack to more than the 3 MB a page may have; a bigger one is skipped instead of filling the memory.

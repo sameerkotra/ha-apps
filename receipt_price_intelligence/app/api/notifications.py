@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, get_current_user, require_admin
 from app.services import ha, notifier
 
 router = APIRouter(prefix="/api/v1/notifications", tags=["notifications"])
@@ -29,11 +29,12 @@ class SettingsIn(BaseModel):
 
 
 class TestIn(BaseModel):
-    service: str | None = Field(None, description="One notify service to test; empty tests every device chosen")
+    service: str | None = Field(None, max_length=255, pattern=r"^notify\.[a-z0-9_]+$",
+                                description="One notify service to test; empty tests every device chosen")
 
 
 @router.get("")
-async def get_notifications(_: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+async def get_notifications(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """The settings in use, the kinds with their names, and what Home Assistant offers to send to and to track."""
     def work():
         found: dict[str, Any] = {"available": ha.available(), "devices": [], "trackers": [], "error": None}
@@ -45,12 +46,13 @@ async def get_notifications(_: CurrentUser = Depends(get_current_user)) -> dict[
                 found["locations"] = {d["service"]: ha.tracker_for(d["service"], states) for d in found["devices"] if d["kind"] == "phone"}
             except ha.HAError as e:
                 found["error"] = str(e)
-        return {"settings": notifier.settings(), "kinds": [{"key": k, "name": notifier.KIND_NAMES[k]} for k in notifier.KINDS], "ha": found}
+        return {"settings": notifier.settings(), "can_edit": user.is_admin, "kinds": [{"key": k, "name": notifier.KIND_NAMES[k]} for k in notifier.KINDS], "ha": found}
     return await asyncio.to_thread(work)
 
 
 @router.put("")
-async def save_notifications(request: SettingsIn, _: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+async def save_notifications(request: SettingsIn, _: CurrentUser = Depends(require_admin)) -> dict[str, Any]:
+    """The settings are the whole household's (where everyone's notifications go): administrators only."""
     try:
         return await asyncio.to_thread(notifier.save, request.model_dump())
     except notifier.SettingsError as e:
@@ -62,7 +64,16 @@ async def test_notification(request: TestIn, _: CurrentUser = Depends(get_curren
     """Send a test notification now (quiet hours and switches do not apply)."""
     if not ha.available():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Home Assistant is not available to the app")
-    devices = [request.service] if request.service else None
+    devices = None
+    if request.service:
+        # Only a notify service Home Assistant offers now: never any other service, whatever the request says
+        try:
+            offered = {d["service"] for d in await asyncio.to_thread(ha.list_notify_services)}
+        except ha.HAError:
+            offered = set()
+        if request.service not in offered:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Home Assistant does not offer that notify service")
+        devices = [request.service]
     sent = await asyncio.to_thread(notifier.send, "alerts", "Receipt prices: test", "Notifications from the app arrive here.",
                                    test=True, devices=devices)
     if not sent:

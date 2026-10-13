@@ -14,11 +14,16 @@ usual. Nothing is saved to the price history without approval.
 
 import email
 import email.policy
+import email.utils
+import hashlib
 import imaplib
 import mimetypes
 import os
 import re
 import shutil
+import ssl
+import stat
+import threading
 import time
 from datetime import datetime
 from io import BytesIO
@@ -28,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db_session
-from app.db.models import Home
+from app.db.models import Home, ReceiptDraft
 from app.logging_config import get_logger
 from app.services import drafts as drafts_service
 from app.services import archive
@@ -45,6 +50,12 @@ MAX_MAILS_PER_POLL = 20
 MIN_EMAIL_IMAGE_BYTES = 20 * 1024   # smaller pictures are logos and signatures
 MAX_MAIL_BYTES = 30 * 1024 * 1024   # bigger emails are skipped (never downloaded)
 MAX_ATTACHMENTS_PER_MAIL = 10
+WAITING_STATUSES = ("PROCESSING", "NEEDS_REVIEW", "EXTRACTION_FAILED")
+
+# One folder scan and one mailbox check at a time (the background check and "Check now" could otherwise import the
+# same file or email twice)
+_folder_lock = threading.Lock()
+_mail_lock = threading.Lock()
 
 
 class ImportFailed(ValueError):
@@ -72,13 +83,34 @@ def resolve_home(db: Session) -> str | None:
     return None
 
 
+def waiting_drafts(db: Session, home_id: str) -> int:
+    """Receipts of a home waiting to be read or reviewed."""
+    return db.query(ReceiptDraft).filter(ReceiptDraft.home_id == home_id,
+                                         ReceiptDraft.status.in_(WAITING_STATUSES)).count()
+
+
+def room_for_drafts(db: Session, home_id: str) -> int:
+    """How many more receipts may wait in this home (Admin → App settings → Receipts waiting at most)."""
+    return max(0, get_settings().max_waiting_receipts - waiting_drafts(db, home_id))
+
+
+def content_hash(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
+def seen_before(db: Session, home_id: str, digest: str) -> bool:
+    """A file with exactly these bytes was already imported into this home (and not discarded)."""
+    return db.query(ReceiptDraft.id).filter(ReceiptDraft.home_id == home_id, ReceiptDraft.source_hash == digest,
+                                            ReceiptDraft.status != "REJECTED").first() is not None
+
+
 def import_bytes(db: Session, home_id: str, filename: str, content: bytes, source: str, user_id: str | None = None,
                  content_type: str | None = None) -> str:
     """Create a draft from one file. Returns the draft id. Raises ImportFailed if it cannot be used.
-    ``content_type`` (an email attachment's type) is used when the file name says nothing (no or an odd
-    extension, such as "Receipt" or ".jfif")."""
+    A photo's type is taken from the file itself; ``content_type`` (an email attachment's type) only helps
+    recognise a PDF whose name says nothing (no or an odd extension)."""
     guessed = mimetypes.guess_type(filename)[0] or ""
-    if content_type and not images_service.validate_mime_type(guessed) and not guessed.endswith("/pdf"):
+    if content_type and not guessed.endswith("/pdf"):
         guessed = content_type
     file = BytesIO(content)
     try:
@@ -96,7 +128,7 @@ def import_bytes(db: Session, home_id: str, filename: str, content: bytes, sourc
         stored = [(data, guessed, filename)]
 
     owner = user_id or IMPORT_USER_ID
-    draft = drafts_service.create_draft(db, owner, source=source, home_id=home_id)
+    draft = drafts_service.create_draft(db, owner, source=source, home_id=home_id, source_hash=content_hash(content))
     try:
         for content_bytes, content_type, name in stored:
             images_service.store_image_bytes(db, draft.id, content_bytes, content_type, name)
@@ -126,6 +158,8 @@ async def start_reading(draft_ids: list[str]) -> None:
 
 def _move(path: str, folder: str, sub: str) -> None:
     target_dir = os.path.join(folder, sub)
+    if os.path.islink(target_dir):
+        raise OSError(f"{target_dir} is a link")
     os.makedirs(target_dir, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     shutil.move(path, os.path.join(target_dir, f"{stamp}_{os.path.basename(path)}"))
@@ -135,38 +169,80 @@ def _prune(folder: str) -> None:
     cutoff = time.time() - KEEP_DAYS * 86400
     for sub in ("processed", "failed"):
         directory = os.path.join(folder, sub)
-        if not os.path.isdir(directory):
+        if not os.path.isdir(directory) or os.path.islink(directory):
             continue
         for name in os.listdir(directory):
             path = os.path.join(directory, name)
             try:
-                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                info = os.lstat(path)
+                if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
                     os.remove(path)
             except OSError:
                 pass
 
 
+def _read_regular_file(path: str, limit: int) -> bytes | None:
+    """The file's bytes, if it is a regular file (never a link, a pipe or a device) no bigger than ``limit``."""
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return None
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        info = os.fstat(f.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        if info.st_size > limit:
+            raise ImportFailed(f"That file is too large (at most {limit // (1024 * 1024)} MB)")
+        return f.read(limit + 1)[:limit + 1]
+
+
 def scan_folder() -> list[str]:
     """Import every settled file in the watched folder. Returns the new draft ids."""
+    if not _folder_lock.acquire(blocking=False):
+        logger.info("The import folder is being checked already")
+        return []
+    try:
+        return _scan_folder()
+    finally:
+        _folder_lock.release()
+
+
+def _scan_folder() -> list[str]:
     folder = get_settings().import_folder.strip()
-    if not folder or not os.path.isdir(folder):
+    if not folder or not os.path.isdir(folder) or os.path.islink(folder):
         return []
 
     created: list[str] = []
+    limit = max(pdf_service.MAX_PDF_SIZE, images_service.MAX_FILE_SIZE)
     with get_db_session()() as db:
         home_id = resolve_home(db)
         if home_id is None:
             return []
+        room = room_for_drafts(db, home_id)
         for name in sorted(os.listdir(folder)):
             path = os.path.join(folder, name)
-            if name.startswith(".") or not os.path.isfile(path) or os.path.splitext(name)[1].lower() not in EXTENSIONS:
+            if name.startswith(".") or os.path.splitext(name)[1].lower() not in EXTENSIONS:
                 continue
-            if time.time() - os.path.getmtime(path) < SETTLE_SECONDS:
-                continue  # still being written
             try:
-                with open(path, "rb") as f:
-                    content = f.read()
+                info = os.lstat(path)
+            except OSError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                continue  # links, folders, pipes: never followed or read
+            if time.time() - info.st_mtime < SETTLE_SECONDS:
+                continue  # still being written
+            if room <= 0:
+                logger.warning("%d receipts are already waiting in this home; the rest of the import folder waits too",
+                               get_settings().max_waiting_receipts)
+                break
+            try:
+                content = _read_regular_file(path, limit)
+                if content is None:
+                    continue
                 created.append(import_bytes(db, home_id, name, content, "IMPORT_FOLDER"))
+                room -= 1
                 _move(path, folder, "processed")
             except Exception as e:  # noqa: BLE001 - one bad file must not stop the rest
                 logger.warning("Could not import %s: %s", name, e)
@@ -204,7 +280,7 @@ def extract_attachments(message: email.message.EmailMessage) -> list[tuple[str, 
         payload = part.get_payload(decode=True)
         if not payload or (is_image and len(payload) < MIN_EMAIL_IMAGE_BYTES):
             continue
-        key = hash(payload)
+        key = hashlib.sha256(payload).digest()
         if key in seen:
             continue
         seen.add(key)
@@ -232,22 +308,101 @@ def _message_size(client: Any, number: bytes) -> int | None:
     return None
 
 
+# what a failed mail connection raises (read once: tests replace imaplib's classes with stand-ins)
+_MAIL_ERRORS = (OSError, imaplib.IMAP4.error, ssl.SSLError)
+
+
+class MailSecurityError(OSError):
+    """The mail server can't be reached safely (the message is safe to show)."""
+
+
+def allowed_senders() -> list[str]:
+    """The App setting, as lowercase addresses and "@domain" entries ([] allows everyone)."""
+    raw = get_settings().imap_allowed_senders or ""
+    return [x.strip().lower() for x in re.split(r"[,;\s]+", raw) if x.strip()]
+
+
+def sender_allowed(message: email.message.Message, allowed: list[str]) -> bool:
+    """Whether the email's From address is on the list (an exact address, or "@domain" for a whole domain). An
+    empty list allows everyone. (From can be forged by a sender; this keeps out everyone who doesn't bother.)"""
+    if not allowed:
+        return True
+    address = email.utils.parseaddr(str(message.get("From", "")))[1].strip().lower()
+    if "@" not in address:
+        return False
+    domain = "@" + address.rsplit("@", 1)[1]
+    return address in allowed or domain in allowed
+
+
+def quote_mailbox(name: str) -> str:
+    """An IMAP folder name as a quoted string ("My Receipts" has a space; quotes and backslashes are escaped)."""
+    name = name or "INBOX"
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def connect_mailbox() -> Any:
+    """A logged-in IMAP connection: SSL with the certificate checked, or, with SSL off, STARTTLS (also checked).
+    A server that offers no STARTTLS gets the password in plain text only when an administrator allows it
+    (Admin → App settings → Allow mail login without encryption)."""
+    s = get_settings()
+    host = s.imap_host.strip()
+    context = ssl.create_default_context()
+    if s.imap_ssl:
+        client = imaplib.IMAP4_SSL(host, s.imap_port, timeout=30, ssl_context=context)
+    else:
+        client = imaplib.IMAP4(host, s.imap_port, timeout=30)
+        if "STARTTLS" in getattr(client, "capabilities", ()):
+            try:
+                client.starttls(ssl_context=context)
+            except Exception:
+                _logout(client)
+                raise
+        elif not s.imap_allow_plaintext:
+            _logout(client)
+            raise MailSecurityError("The mail server offers no encryption (no STARTTLS), so the password was not sent. "
+                                    "Turn on SSL, or allow mail login without encryption in App settings.")
+        else:
+            logger.warning("Logging in to the mail server without encryption (allowed in App settings)")
+    try:
+        client.login(s.imap_user, s.imap_password)
+    except Exception:
+        _logout(client)
+        raise
+    return client
+
+
+def _logout(client: Any) -> None:
+    try:
+        client.logout()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def poll_mailbox() -> list[str]:
     """Import attachments of unread emails. Returns the new draft ids."""
     if not mailbox_configured():
         return []
+    if not _mail_lock.acquire(blocking=False):
+        logger.info("The mailbox is being checked already")
+        return []
+    try:
+        return _poll_mailbox()
+    finally:
+        _mail_lock.release()
+
+
+def _poll_mailbox() -> list[str]:
     s = get_settings()
     created: list[str] = []
     try:
-        client = (imaplib.IMAP4_SSL(s.imap_host.strip(), s.imap_port, timeout=30) if s.imap_ssl
-                  else imaplib.IMAP4(s.imap_host.strip(), s.imap_port, timeout=30))
-    except (OSError, imaplib.IMAP4.error) as e:
+        client = connect_mailbox()
+    except _MAIL_ERRORS as e:
         logger.warning("Could not connect to the mail server: %s", e)
         return []
 
+    allowed = allowed_senders()
     try:
-        client.login(s.imap_user, s.imap_password)
-        client.select(s.imap_folder or "INBOX")
+        client.select(quote_mailbox(s.imap_folder or "INBOX"))
         status, data = client.search(None, "UNSEEN")
         if status != "OK":
             return []
@@ -255,7 +410,13 @@ def poll_mailbox() -> list[str]:
             home_id = resolve_home(db)
             if home_id is None:
                 return []
+            room = room_for_drafts(db, home_id)
             for number in data[0].split()[:MAX_MAILS_PER_POLL]:
+                if room <= 0:
+                    # the rest stay unread, for when the receipts waiting have been reviewed
+                    logger.warning("%d receipts are already waiting in this home; the other emails stay unread",
+                                   s.max_waiting_receipts)
+                    break
                 size = _message_size(client, number)
                 if size is None or size > MAX_MAIL_BYTES:
                     logger.warning("Email %s is too big to import (%s bytes, at most %d); skipped and marked as read",
@@ -267,22 +428,35 @@ def poll_mailbox() -> list[str]:
                 if status != "OK" or not parts or not isinstance(parts[0], tuple):
                     continue
                 message = email.message_from_bytes(parts[0][1], policy=email.policy.default)
+                if not sender_allowed(message, allowed):
+                    logger.info("Email from %r is not from an allowed sender; skipped and marked as read",
+                                email.utils.parseaddr(str(message.get("From", "")))[1])
+                    client.store(number, "+FLAGS", "\\Seen")
+                    continue
                 attachments = extract_attachments(message)
                 if not attachments:
                     logger.info("Email %r has no PDF or image attachment; skipped", message.get("Subject", ""))
+                fresh = []
                 for filename, ctype, content in attachments:
+                    if seen_before(db, home_id, content_hash(content)):
+                        logger.info("Attachment %s was imported before; skipped", filename)
+                    else:
+                        fresh.append((filename, ctype, content))
+                if len(fresh) > room:
+                    logger.warning("Not enough room for the %d receipts of this email (%d receipts may wait); it stays "
+                                   "unread", len(fresh), s.max_waiting_receipts)
+                    break
+                for filename, ctype, content in fresh:
                     try:
                         created.append(import_bytes(db, home_id, filename, content, "EMAIL", content_type=ctype))
+                        room -= 1
                     except Exception as e:  # noqa: BLE001
                         logger.warning("Could not import attachment %s: %s", filename, e)
                 client.store(number, "+FLAGS", "\\Seen")
-    except (OSError, imaplib.IMAP4.error) as e:
+    except _MAIL_ERRORS as e:
         logger.warning("Mailbox check failed: %s", e)
     finally:
-        try:
-            client.logout()
-        except Exception:  # noqa: BLE001
-            pass
+        _logout(client)
     return created
 
 

@@ -78,7 +78,19 @@ def post_sensor(entity_id: str, state: Any, attributes: dict[str, Any] | None = 
     return True
 
 
+_NAME = re.compile(r"^[a-z0-9_]+$")
+_NOTIFY_SERVICE = re.compile(r"^notify\.[a-z0-9_]+$")
+
+
+def is_notify_service(service: str | None) -> bool:
+    """``notify.<name>``, lowercase letters, digits and underscores only."""
+    return bool(service) and bool(_NOTIFY_SERVICE.fullmatch(service))
+
+
 def call_service(domain: str, service: str, data: dict[str, Any] | None = None, response: bool = False) -> Any:
+    # Both parts end up in the URL path: anything but a plain name (a slash, "..", "?") is refused
+    if not (isinstance(domain, str) and isinstance(service, str) and _NAME.fullmatch(domain) and _NAME.fullmatch(service)):
+        raise HAError("Not a Home Assistant service name")
     suffix = "?return_response" if response else ""
     return _request("POST", f"/services/{domain}/{service}{suffix}", data or {})
 
@@ -90,7 +102,9 @@ def fire_event(event_type: str, data: dict[str, Any] | None = None) -> None:
 def notify(title: str, message: str, service: str = "", data: dict[str, Any] | None = None) -> None:
     """Send a notification: through ``service`` (like ``notify.mobile_app_pixel``, a push to that phone) or, without
     one, as a persistent notification in Home Assistant. ``data`` is passed to push notifications (tap action, tag)."""
-    if service and "." in service:
+    if service:
+        if not is_notify_service(service):
+            raise HAError("Only notify services can be used for notifications")
         domain, name = service.split(".", 1)
         call_service(domain, name, {"title": title, "message": message, **({"data": data} if data else {})})
     else:

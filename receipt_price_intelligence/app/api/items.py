@@ -5,9 +5,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.common import require_home
 from app.auth import CurrentUser, get_current_user
 from app.db import get_db
-from app.services import homes as homes_service
 from app.services import items as items_service
 
 router = APIRouter(prefix="/api/v1", tags=["items"])
@@ -30,7 +30,7 @@ def _conflict(error: items_service.ItemError) -> JSONResponse:
 
 
 @router.get("/homes/{home_id}/common-items")
-async def list_common_items(
+def list_common_items(
     home_id: str,
     q: str | None = None,
     limit: int = 500,
@@ -38,13 +38,12 @@ async def list_common_items(
     db: Session = Depends(get_db),
 ):
     """Common items in a home, most used first. Feeds the common-name autocomplete."""
-    if homes_service.get_home(db, home_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home not found")
+    require_home(db, home_id)
     return items_service.list_items(db, home_id, q, limit)
 
 
 @router.get("/common-items/{item_id}")
-async def get_common_item(item_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_common_item(item_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """A common item and the printed descriptions that map to it."""
     item = items_service.get_item(db, item_id)
     if item is None:
@@ -53,7 +52,7 @@ async def get_common_item(item_id: str, _: CurrentUser = Depends(get_current_use
 
 
 @router.patch("/common-items/{item_id}")
-async def update_common_item(
+def update_common_item(
     item_id: str,
     request: ItemRename,
     _: CurrentUser = Depends(get_current_user),
@@ -78,23 +77,21 @@ async def update_common_item(
 
 
 @router.get("/homes/{home_id}/categories")
-async def item_categories(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def item_categories(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Categories to choose from: the standard ones plus any you added."""
-    if homes_service.get_home(db, home_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home not found")
+    require_home(db, home_id)
     return items_service.list_categories(db, home_id)
 
 
 @router.post("/homes/{home_id}/common-items/categorize")
-async def categorize_items(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
+def categorize_items(home_id: str, _: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     """Fill in the category of every uncategorized item from its name, where it can be recognised."""
-    if homes_service.get_home(db, home_id) is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Home not found")
+    require_home(db, home_id)
     return items_service.categorize_uncategorized(db, home_id)
 
 
 @router.post("/common-items/{item_id}/merge")
-async def merge_common_item(
+def merge_common_item(
     item_id: str,
     request: ItemMerge,
     _: CurrentUser = Depends(get_current_user),

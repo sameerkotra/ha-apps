@@ -6,7 +6,8 @@
     const MAX_FILES = 30, BATCH = 6;
     let ctx = null, files = [], busy = false, results = new Map();
     const size = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
-    const okType = (f) => f.type.startsWith('image/') || f.type === 'application/pdf' || /\.(pdf|jpe?g|png|webp|gif|heic)$/i.test(f.name);
+    // the types the app reads (HEIC photos are not: the server would turn them away)
+    const okType = (f) => ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'].includes(f.type) || (!f.type && /\.(pdf|jpe?g|png|webp|gif)$/i.test(f.name));
 
     function add(list) {
       for (const f of list) {

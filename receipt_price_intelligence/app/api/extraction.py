@@ -4,24 +4,22 @@ import asyncio
 import json
 import os
 import time
-from datetime import datetime
-from typing import AsyncGenerator
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db, get_db_session
-from app.db.models import ReceiptDraft, ReceiptImage
+from app.db.models import ReceiptDraft, ReceiptDraftItem, ReceiptImage
 from app.logging_config import get_logger
-from app.services import receipt_llm
+from app.services import maintenance, receipt_llm
 from app.services.drafts import get_draft as drafts_get_draft, update_draft as drafts_update_draft
 from app.services.extraction import (
     FAILED_STATUS,
-    ExtractionEvent,
     ExtractionProgress,
     get_extraction_service,
 )
@@ -56,8 +54,8 @@ def _model_slots() -> asyncio.Semaphore:
 class ExtractionRequest(BaseModel):
     """Request to trigger extraction on a draft."""
 
-    draft_id: str = Field(..., description="Draft ID to extract")
-    image_id: str | None = Field(None, description="Extract from only this image (default: all images)")
+    draft_id: str = Field(..., max_length=36, description="Draft ID to extract")
+    image_id: str | None = Field(None, max_length=36, description="Extract from only this image (default: all images)")
     correction: str | None = Field(
         None,
         max_length=receipt_llm.MAX_CORRECTION_LENGTH,
@@ -79,20 +77,6 @@ class ExtractionStatusResponse(BaseModel):
     item_count: int = 0
 
 
-class SSEEvent:
-    """Server-Sent Events event formatter."""
-
-    @staticmethod
-    def format(event: ExtractionEvent) -> str:
-        """Format an extraction event as SSE."""
-        data = {"stage": event.stage.value, "message": event.message}
-        if event.data:
-            data["data"] = event.data
-        if event.error:
-            data["error"] = event.error
-        return f"event: extraction\ndata: {json.dumps(data)}\n\n"
-
-
 def get_image_paths_for_draft(db: Session, draft_id: str, image_id: str | None = None) -> list[str]:
     """Paths of a draft's images in upload order (rowid preserves insertion order)."""
     query = db.query(ReceiptImage).filter(ReceiptImage.receipt_draft_id == draft_id)
@@ -109,49 +93,74 @@ def _require_draft(db: Session, draft_id: str) -> ReceiptDraft:
     return draft
 
 
+def _load_draft(draft_id: str) -> ReceiptDraft | None:
+    """The draft, read in a session of its own and closed again (nothing is held during the model's reading)."""
+    with get_db_session()() as db:
+        draft = db.query(ReceiptDraft).filter(ReceiptDraft.id == draft_id).first()
+        if draft is not None:
+            db.expunge(draft)
+        return draft
+
+
+def _save(draft_id: str, what) -> None:
+    """``what(db, draft)`` in a fresh session, inside the maintenance gate (a backup restore never swaps the database
+    under it). A draft deleted meanwhile (or not in the restored database) is left alone."""
+    with maintenance.GATE.work(), get_db_session()() as db:
+        draft = db.query(ReceiptDraft).filter(ReceiptDraft.id == draft_id).first()
+        if draft is None:
+            logger.info("Draft %s is gone; its reading is not saved", draft_id)
+            return
+        try:
+            what(db, draft)
+        except Exception as e:  # noqa: BLE001 - never leave a draft stuck in PROCESSING
+            logger.error("Could not save the reading of draft %s: %s", draft_id, e, exc_info=True)
+            db.rollback()
+            draft = db.query(ReceiptDraft).filter(ReceiptDraft.id == draft_id).first()
+            if draft is not None:
+                get_extraction_service().mark_failed(db, draft, "Could not save what was read. Read it again.")
+
+
 async def _run_extraction(
     draft_id: str, image_paths: list[str], correction: str | None = None, keep_previous: bool = False
 ) -> None:
     """Background task: run the model and persist either the result or the failure.
 
     With ``keep_previous`` (a re-read of a draft that already had a result) a failure leaves the
-    earlier result in place instead of replacing it with an error.
+    earlier result in place instead of replacing it with an error. The database work runs in threads (it would
+    otherwise hold up every request while it reads past purchases).
     """
     service = get_extraction_service()
-    session_factory = get_db_session()
 
     try:
         if draft_id in _active:
             _active[draft_id]["message"] = "Waiting for the model"
         async with _model_slots():
-            with session_factory() as db:
-                draft = db.query(ReceiptDraft).filter(ReceiptDraft.id == draft_id).first()
-                if not draft:
-                    logger.error("Draft vanished before extraction: %s", draft_id)
-                    return
+            draft = await asyncio.to_thread(_load_draft, draft_id)
+            if not draft:
+                logger.error("Draft vanished before extraction: %s", draft_id)
+                return
+            try:
+                async for event in service.extract_receipt(draft, image_paths, correction):
+                    logger.info("Extraction [%s] %s: %s", draft_id[:8], event.stage.value, event.message)
+                    if draft_id in _active:
+                        _active[draft_id]["message"] = event.message
 
-                try:
-                    async for event in service.extract_receipt(draft, image_paths, correction):
-                        logger.info("Extraction [%s] %s: %s", draft_id[:8], event.stage.value, event.message)
-                        if draft_id in _active:
-                            _active[draft_id]["message"] = event.message
-
-                        if event.stage == ExtractionProgress.COMPLETE and event.result is not None:
-                            await service.save_extraction_to_draft(db, draft, event.result)
-                        elif event.stage == ExtractionProgress.ERROR:
-                            if keep_previous:
-                                service.keep_previous_after_failed_reread(db, draft, event.error or event.message)
-                            else:
-                                service.mark_failed(
-                                    db, draft, event.error or event.message, (event.result or {}).get("raw")
-                                )
-                except Exception as e:  # noqa: BLE001 - never leave a draft stuck in PROCESSING
-                    logger.error("Extraction task failed for %s: %s", draft_id, e, exc_info=True)
-                    db.rollback()
-                    if keep_previous:
-                        service.keep_previous_after_failed_reread(db, draft, f"Could not save extraction: {e}")
-                    else:
-                        service.mark_failed(db, draft, f"Could not save extraction: {e}")
+                    if event.stage == ExtractionProgress.COMPLETE and event.result is not None:
+                        result = event.result
+                        await asyncio.to_thread(_save, draft_id, lambda db, d: service.save_extraction_to_draft(db, d, result))
+                    elif event.stage == ExtractionProgress.ERROR:
+                        message, raw = event.error or event.message, (event.result or {}).get("raw")
+                        if keep_previous:
+                            await asyncio.to_thread(_save, draft_id, lambda db, d: service.keep_previous_after_failed_reread(db, d, message))
+                        else:
+                            await asyncio.to_thread(_save, draft_id, lambda db, d: service.mark_failed(db, d, message, raw))
+            except Exception as e:  # noqa: BLE001 - never leave a draft stuck in PROCESSING
+                logger.error("Extraction task failed for %s: %s", draft_id, e, exc_info=True)
+                failure = "Could not save what was read. Read it again."
+                if keep_previous:
+                    await asyncio.to_thread(_save, draft_id, lambda db, d: service.keep_previous_after_failed_reread(db, d, failure))
+                else:
+                    await asyncio.to_thread(_save, draft_id, lambda db, d: service.mark_failed(db, d, failure))
     finally:
         _active.pop(draft_id, None)
 
@@ -164,38 +173,38 @@ def start_extraction(draft_id: str, image_paths: list[str], correction: str | No
     task.add_done_callback(_tasks.discard)
 
 
+def _prepare_extraction(request: ExtractionRequest) -> tuple[list[str], bool]:
+    """Check the draft and mark it PROCESSING (in a thread: it uses the database). Returns (photos, keep_previous)."""
+    with get_db_session()() as db:
+        draft = _require_draft(db, request.draft_id)
+        if draft.status not in EXTRACTABLE_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot extract draft in status: {draft.status}",
+            )
+        image_paths = get_image_paths_for_draft(db, request.draft_id, request.image_id)
+        if not image_paths:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No images found for this draft")
+        # A draft that already holds a reading keeps it if the re-read fails.
+        keep_previous = draft.status == "NEEDS_REVIEW" and bool(draft.raw_llm_output)
+        if draft.status != "PROCESSING":
+            drafts_update_draft(db, request.draft_id, {"status": "PROCESSING"})
+        return image_paths, keep_previous
+
+
 @router.post("/extract")
-async def trigger_extraction(
-    request: ExtractionRequest,
-    db: Session = Depends(get_db),
-):
+async def trigger_extraction(request: ExtractionRequest):
     """
     Start AI extraction on a draft.
 
-    Returns immediately; extraction runs in the background. Poll
-    /status/{draft_id} (or tail /stream/{draft_id}) for progress.
+    Returns immediately; extraction runs in the background. Poll /status/{draft_id} (or /status?ids=…) for progress.
     """
-    draft = _require_draft(db, request.draft_id)
-
     if request.draft_id in _active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Extraction is already running")
-
-    if draft.status not in EXTRACTABLE_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot extract draft in status: {draft.status}",
-        )
-
-    image_paths = get_image_paths_for_draft(db, request.draft_id, request.image_id)
-    if not image_paths:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No images found for this draft")
-
     correction = receipt_llm.clean_correction(request.correction)
-    # A draft that already holds a reading keeps it if the re-read fails.
-    keep_previous = draft.status == "NEEDS_REVIEW" and bool(draft.raw_llm_output)
-
-    if draft.status != "PROCESSING":
-        drafts_update_draft(db, request.draft_id, {"status": "PROCESSING"})
+    image_paths, keep_previous = await run_in_threadpool(_prepare_extraction, request)
+    if request.draft_id in _active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Extraction is already running")
 
     start_extraction(request.draft_id, image_paths, correction, keep_previous)
 
@@ -207,8 +216,31 @@ async def trigger_extraction(
     }
 
 
+class DraftState(BaseModel):
+    """Where one receipt is (the Receipts page polls the ones being read)."""
+
+    draft_id: str
+    status: str
+    active: bool = False
+    item_count: int = 0
+
+
+@router.get("/status", response_model=list[DraftState])
+def get_extraction_states(ids: str = Query(..., max_length=4000, description="Draft ids, separated by commas (100 at most)"),
+                          db: Session = Depends(get_db)):
+    """The status of several drafts in one go (unknown ids are left out)."""
+    from sqlalchemy import func
+    wanted = [i for i in dict.fromkeys(x.strip() for x in ids.split(",")) if i][:100]
+    if not wanted:
+        return []
+    rows = db.query(ReceiptDraft.id, ReceiptDraft.status).filter(ReceiptDraft.id.in_(wanted)).all()
+    counts = dict(db.query(ReceiptDraftItem.receipt_draft_id, func.count(ReceiptDraftItem.id)).filter(
+        ReceiptDraftItem.receipt_draft_id.in_(wanted)).group_by(ReceiptDraftItem.receipt_draft_id).all())
+    return [DraftState(draft_id=r.id, status=r.status, active=r.id in _active, item_count=counts.get(r.id, 0)) for r in rows]
+
+
 @router.get("/status/{draft_id}", response_model=ExtractionStatusResponse)
-async def get_extraction_status(
+def get_extraction_status(
     draft_id: str,
     db: Session = Depends(get_db),
 ):
@@ -224,59 +256,15 @@ async def get_extraction_status(
         except (json.JSONDecodeError, AttributeError):
             error = "Extraction failed" if draft.status == FAILED_STATUS else None
 
+    started = datetime.fromtimestamp(active["started"], tz=timezone.utc).replace(tzinfo=None) if active else None
     return ExtractionStatusResponse(
         draft_id=draft_id,
         status=draft.status,
         is_extracting=draft.status == "PROCESSING",
         active=active is not None,
-        extraction_started_at=datetime.utcfromtimestamp(active["started"]) if active else None,
+        extraction_started_at=started,
         elapsed_seconds=round(time.time() - active["started"], 1) if active else None,
         last_event=active["message"] if active else None,
         error=error,
         item_count=len(draft.items) if draft.items else 0,
-    )
-
-
-@router.get("/stream/{draft_id}")
-async def stream_extraction(
-    draft_id: str,
-    db: Session = Depends(get_db),
-):
-    """
-    Stream extraction progress as Server-Sent Events.
-
-    Observes the extraction started by POST /extract; it never starts a second
-    model run. The stream ends with a COMPLETE or ERROR event.
-    """
-    _require_draft(db, draft_id)
-
-    async def event_generator() -> AsyncGenerator[str, None]:
-        last_message = None
-        deadline = time.time() + 900
-
-        while time.time() < deadline:
-            active = _active.get(draft_id)
-            if active is None:
-                break
-            if active["message"] != last_message:
-                last_message = active["message"]
-                yield SSEEvent.format(ExtractionEvent(stage=ExtractionProgress.CALLING_MODEL, message=last_message))
-            await asyncio.sleep(0.5)
-
-        db.expire_all()
-        final = drafts_get_draft(db, draft_id)
-        if final is not None and final.status == FAILED_STATUS:
-            yield SSEEvent.format(ExtractionEvent(
-                stage=ExtractionProgress.ERROR, message="Extraction failed", error="See draft status for details",
-            ))
-        else:
-            yield SSEEvent.format(ExtractionEvent(
-                stage=ExtractionProgress.COMPLETE, message="Extraction finished",
-                data={"status": final.status if final else None},
-            ))
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

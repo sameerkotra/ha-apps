@@ -65,6 +65,8 @@
         !s.hosted ? ['Between searches', `${s.min_interval_seconds} s`] : null,
         ['Saved results', s.cache && s.cache.available ? (s.cache.days ? `${s.cache.searches} searches, ${s.cache.pages} pages (searches kept ${s.cache.days} days, pages 1 day)` : 'off') : 'not available'],
         ['Model', `${s.model} (${s.model_format})`],
+        s.usage ? ['This month', `${s.usage.search.used} searches${s.usage.search.limit ? ` of ${s.usage.search.limit}` : ''}, `
+          + `${s.usage.model.used} model questions${s.usage.model.limit ? ` of ${s.usage.model.limit}` : ''}`] : null,
       ].filter(Boolean);
       return h('div', { class: 'card' }, h('div', { class: 'card-body stack' },
         s.paused ? h('div', { class: 'banner warn' }, icon('alert'), h('div', { class: 'banner-body' },
@@ -296,7 +298,10 @@
       c.replaceChildren(
         setupCard(),
         h('div', { class: 'tabs' }, ...[['try', 'Try it'], ['log', 'Recent requests']].map(([k, label]) =>
-          h('button', { class: 'btn', type: 'button', 'aria-pressed': String(tab === k), onclick: () => { tab = k; render(); if (k === 'log') loadLog(); } }, label))),
+          h('button', { class: 'btn', type: 'button', 'aria-pressed': String(tab === k), onclick: () => {
+            // the automatic refresh belongs to the Recent requests tab: it stops when you leave it
+            if (k !== 'log' && autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+            tab = k; render(); if (k === 'log') loadLog(); } }, label))),
         ...(tab === 'try' ? [presetCard(), presetView(), toolForm(), resultView()] : [logView()]));
     }
 
@@ -314,3 +319,6 @@
       }
     }
     init();
+
+    // nor does it go on in a tab nobody is looking at
+    document.addEventListener('visibilitychange', () => { if (document.hidden && autoTimer) { clearInterval(autoTimer); autoTimer = null; if (tab === 'log') render(); } });

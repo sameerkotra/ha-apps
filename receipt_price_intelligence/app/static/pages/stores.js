@@ -12,13 +12,19 @@
       const c = $('content');
       c.replaceChildren(...[0, 1].map(() => h('div', { class: 'skeleton', style: 'height:140px' })));
       try {
-        dir = await api(`api/v1/homes/${encodeURIComponent(ctx.homeId)}/store-directory`);
-        web = await api('api/v1/webinfo/status').catch(() => ({ configured: false }));
+        // the five reads at once, not one after another
+        const home = `api/v1/homes/${encodeURIComponent(ctx.homeId)}`;
+        let hours;
+        [dir, web, hours, near, storeDiscounts] = await Promise.all([
+          api(`${home}/store-directory`),
+          api('api/v1/webinfo/status').catch(() => ({ configured: false })),
+          api(`${home}/webinfo/hours`).catch(() => []),
+          api(`${home}/nearby-stores`).catch(() => null),
+          api(`${home}/store-discounts`).catch(() => ({})),
+        ]);
         suggestions = {};
         // hours suggestions also come from the nearby-store search (OpenStreetMap), with no search server
-        for (const x of await api(`api/v1/homes/${encodeURIComponent(ctx.homeId)}/webinfo/hours`).catch(() => [])) suggestions[x.location_id] = x;
-        near = await api(`api/v1/homes/${encodeURIComponent(ctx.homeId)}/nearby-stores`).catch(() => null);
-        storeDiscounts = await api(`api/v1/homes/${encodeURIComponent(ctx.homeId)}/store-discounts`).catch(() => ({}));
+        for (const x of (Array.isArray(hours) ? hours : [])) suggestions[x.location_id] = x;
       } catch (e) {
         return c.replaceChildren(h('div', { class: 'banner danger' }, icon('alert'), h('div', { class: 'banner-body' }, e.message),
           h('button', { class: 'btn btn-sm', onclick: load }, 'Retry')));

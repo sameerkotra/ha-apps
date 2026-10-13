@@ -6,7 +6,11 @@
       { id: 'review', label: 'To review', match: (d) => ['PROCESSING', 'NEEDS_REVIEW', 'EXTRACTION_FAILED'].includes(d.status) },
       { id: 'saved', label: 'Saved', match: (d) => d.status === 'APPROVED' },
     ];
+    // The list holds one line per receipt (api/v1/receipt-drafts/summaries): the ones to review all, saved ones a page
+    // at a time ("Show more"). While some are being read, only their status is asked for every few seconds.
     let me = null, homes = [], homeId = null, drafts = [], tab = 'review', timer = null, tagFilter = '';
+    let review = [], saved = [], savedMore = false, loadingMore = false;
+    const SAVED_PAGE = 100;
 
     for (const id of ['scanTop', 'scanFab']) $(id).append(icon('camera'), 'Scan receipt');
     $('bulkBtn').append(icon('upload'));
@@ -32,16 +36,18 @@
       }));
     }
 
+    const tagsOf = (d) => (Array.isArray(d.tags) ? d.tags : []);
+    const totalOf = (d) => (d.grand_total != null ? d.grand_total : (d.items_total || 0));
+
     function card(d) {
-      const x = parseExtraction(d);
-      const cur = x.currency || 'USD';
+      const cur = d.currency || 'USD';
       const processing = d.status === 'PROCESSING';
       const failed = d.status === 'EXTRACTION_FAILED';
-      const name = processing ? 'Reading receipt…' : failed ? 'Couldn’t read receipt' : (x.store_name || 'Unnamed store');
-      const total = x.grand_total != null ? x.grand_total : (d.items || []).reduce((s, i) => s + (i.line_total || 0), 0);
-      const bits = [x.purchase_date ? fmtDate(x.purchase_date) : relTime(d.created_at)];
-      if (!processing && !failed) bits.push(`${(d.items || []).length} items`);
-      if (!processing && !failed && x.tags && x.tags.length) bits.push(x.tags.map((t) => '#' + t).join(' '));
+      const name = processing ? 'Reading receipt…' : failed ? 'Couldn’t read receipt' : (d.store_name || 'Unnamed store');
+      const total = totalOf(d);
+      const bits = [d.purchase_date ? fmtDate(d.purchase_date) : relTime(d.created_at)];
+      if (!processing && !failed) bits.push(`${d.item_count || 0} items`);
+      if (!processing && !failed && tagsOf(d).length) bits.push(tagsOf(d).map((t) => '#' + t).join(' '));
       return h('a', { class: 'receipt', href: 'review.html?id=' + encodeURIComponent(d.id) },
         h('div', { class: 'avatar' }, processing ? h('div', { class: 'spinner sm' }) : (name[0] || '?').toUpperCase()),
         h('div', { class: 'main' }, h('div', { class: 'name' }, name), h('div', { class: 'meta' }, bits.join(' · '))),
@@ -59,20 +65,51 @@
       const t = TABS.find((x) => x.id === tab);
       let shown = drafts.filter(t.match);
       // Saved receipts can be narrowed to one tag (business, warranty, ...)
-      const tagsInUse = [...new Set(drafts.filter((d) => d.status === 'APPROVED').flatMap((d) => parseExtraction(d).tags || []))].sort();
+      const tagsInUse = [...new Set(drafts.filter((d) => d.status === 'APPROVED').flatMap(tagsOf))].sort();
       $('tagFilters').replaceChildren(...(tab === 'saved' && tagsInUse.length ? [h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(!tagFilter), onclick: () => { tagFilter = ''; render(); } }, 'All'),
         ...tagsInUse.map((tg) => h('button', { type: 'button', class: 'chip-btn', 'aria-pressed': String(tagFilter === tg), onclick: () => { tagFilter = tagFilter === tg ? '' : tg; render(); } }, '#' + tg))] : []));
-      if (tab === 'saved' && tagFilter) shown = shown.filter((d) => (parseExtraction(d).tags || []).includes(tagFilter));
+      if (tab === 'saved' && tagFilter) shown = shown.filter((d) => tagsOf(d).includes(tagFilter));
       if (tab === 'saved' && shown.length) {
-        const sum = shown.reduce((s, d) => s + (parseExtraction(d).grand_total || 0), 0);
-        stat.textContent = `${shown.length} receipts · ${money(sum)}`;
+        const sum = shown.reduce((s, d) => s + (d.grand_total || 0), 0);
+        stat.textContent = `${shown.length}${savedMore ? '+' : ''} receipts · ${money(sum)}${savedMore ? ' (shown so far)' : ''}`;
       }
       if (!shown.length) {
         const msg = tab === 'review' ? ['Nothing to review', 'Scan a receipt and it will show up here for a quick check.']
           : ['No saved receipts yet', 'Approved receipts appear here.'];
         return c.replaceChildren(empty(msg[0], msg[1], h('a', { class: 'btn btn-primary', href: 'capture.html' }, icon('camera'), 'Scan a receipt')));
       }
-      c.replaceChildren(...shown.map(card));
+      const more = tab === 'saved' && savedMore
+        ? h('button', { class: 'btn btn-sm', type: 'button', disabled: loadingMore ? true : null, onclick: loadMoreSaved }, loadingMore ? 'Loading…' : 'Show older receipts')
+        : null;
+      c.replaceChildren(...shown.map(card), ...(more ? [h('div', { style: 'text-align:center;margin:12px 0' }, more)] : []));
+    }
+
+    const summaries = (group, after) => api(`api/v1/receipt-drafts/summaries?home_id=${encodeURIComponent(homeId)}&group=${group}`
+      + `&limit=${group === 'saved' ? SAVED_PAGE : 500}`
+      + (after ? `&before=${encodeURIComponent(after.created_at)}&before_id=${encodeURIComponent(after.id)}` : ''));
+
+    async function loadMoreSaved() {
+      if (!saved.length) return;
+      loadingMore = true; render();
+      try {
+        const page = await summaries('saved', saved[saved.length - 1]);
+        saved = saved.concat(page.drafts); savedMore = page.more; drafts = review.concat(saved);
+      } catch (e) { toast(e.message, 'error'); }
+      loadingMore = false; render();
+    }
+
+    // Only the receipts being read are asked about; the list is fetched again once one of them is done.
+    function pollReading() {
+      clearTimeout(timer);
+      const reading = review.filter((d) => d.status === 'PROCESSING').map((d) => d.id);
+      if (!reading.length) return;
+      timer = setTimeout(async () => {
+        try {
+          const states = await api('api/v1/extraction/status?ids=' + encodeURIComponent(reading.slice(0, 100).join(',')));
+          if (states.some((x) => x.status !== 'PROCESSING') || states.length < Math.min(reading.length, 100)) return load(false);
+        } catch (_) { /* try again next time */ }
+        pollReading();
+      }, 4000);
     }
 
     // ---------- loading ----------
@@ -100,10 +137,11 @@
       const c = $('content');
       if (first) c.replaceChildren(...[0, 1, 2].map(() => h('div', { class: 'skeleton', style: 'height:72px' })));
       try {
-        drafts = await api('api/v1/receipt-drafts?home_id=' + encodeURIComponent(homeId));
+        const [r, s] = await Promise.all([summaries('review'), summaries('saved')]);
+        review = r.drafts; saved = s.drafts; savedMore = s.more;
+        drafts = review.concat(saved);
         render();
-        clearTimeout(timer);
-        if (drafts.some((d) => d.status === 'PROCESSING')) timer = setTimeout(() => load(false), 4000);
+        pollReading();
       } catch (e) {
         if (!first) return;
         c.replaceChildren(h('div', { class: 'banner danger' }, icon('alert'),
@@ -132,7 +170,9 @@
       const box = $('importBox');
       let st;
       try { st = await api('api/v1/import/status'); } catch (_) { return box.replaceChildren(); }
-      const sources = [st.folder_ready ? `folder ${st.folder}` : null, st.mailbox_ready ? `mailbox ${st.mailbox}` : null].filter(Boolean);
+      // which folder and mail server: administrators only (members see "folder" / "mailbox")
+      const sources = [st.folder_ready ? (st.folder ? `folder ${st.folder}` : 'folder') : null,
+        st.mailbox_ready ? (st.mailbox ? `mailbox ${st.mailbox}` : 'mailbox') : null].filter(Boolean);
       if (!sources.length) return box.replaceChildren();
       const btn = h('button', { class: 'btn btn-sm', type: 'button' }, icon('refresh'), 'Check now');
       btn.addEventListener('click', async () => {

@@ -16,9 +16,12 @@ Admin routes require ADMIN or SUPER_ADMIN.
 
 ## Upload security
 
-- Limit image size.
-- Limit image dimensions.
-- Verify MIME/content.
+- Limit request bodies: 1 MB for JSON, 25 MB for a photo or PDF, 256 MB for a bulk upload (also for bodies sent
+  without a Content-Length); uploads are measured before they are read.
+- Limit image size (10 MB) and pixels (40 million, checked from the header before anything is decoded; at most two
+  images are decoded at once; JPEGs are decoded at a reduced scale).
+- Verify content: a photo is kept only when Pillow reads it as JPEG, PNG, GIF or WebP, and its type and file name
+  come from that, never from the name or content type sent.
 - Generate server-side filenames.
 - Never use user filename directly as a filesystem path.
 - Prevent `../` traversal.
@@ -57,7 +60,7 @@ The nearby-store search (Stores page) sends an Overpass server the home's coordi
 
 ## Home Assistant access, mail and folders
 
-The app asks for Home Assistant API access (`homeassistant_api`) to publish sensors and events, send notifications and read to-do lists. It uses the Supervisor's token, which is never stored or shown, and only calls the Core API paths for states, events and the notify, persistent notification and to-do services. The mailbox password is an App setting (write-only) used only to read the chosen mail folder over IMAP; attachments are treated like any upload (type, size and page limits) and nothing is saved until a person approves it. The import folder is under `/share`, which other apps can also read and write, so only put a folder there that you trust. Imported files are processed like uploads and never executed.
+The app asks for Home Assistant API access (`homeassistant_api`) to publish sensors and events, send notifications and read to-do lists. It uses the Supervisor's token, which is never stored or shown, and only calls the Core API paths for states, events and the notify, persistent notification and to-do services. The mailbox password is an App setting (write-only) used only to read the chosen mail folder over IMAP; attachments are treated like any upload (type, size and page limits) and nothing is saved until a person approves it. The mail server's certificate is checked (SSL, or STARTTLS when SSL is off); a server with no encryption gets the password only when an administrator allows it. *Only import mail from* limits which senders' attachments are imported (the From address can be forged, so it keeps out casual mail, not a determined sender), repeated attachments are skipped, and a home with *Receipts waiting at most* receipts waiting stops importing until some are reviewed. Notifications only ever call `notify.*` services (a service name is checked before it becomes part of an address), and the household's notification settings can only be saved by an administrator. The import folder is under `/share`, which other apps can also read and write, so only put a folder there that you trust. Only regular files are read from it (links, pipes and devices are skipped, opened with `O_NOFOLLOW`), and the receipt archive never writes, moves or deletes through a link. Imported files are processed like uploads and never executed.
 
 ## CSV export
 
@@ -65,11 +68,11 @@ Any signed-in user can export their home's receipts and lines as CSV (the same d
 
 ## Web lookups
 
-The search server (yours, on your network) receives search words: store names, streets and towns, and product names, and the web addresses of pages chosen from its own results. It never receives receipts, prices, totals or people. The bearer token, if set, is an App setting (write-only) and is only sent to that server. Page text is passed to your model as untrusted data (the prompts tell it to ignore instructions inside pages), and everything the model returns is validated before use: times must be real times, prices real numbers under a limit, dates real dates, and a deal only counts if it matches an item you buy. Store hours are only ever applied after you accept them, unless you turn on automatic application, which requires a confident match and only fills stores with no hours. Fetching is limited to http and https addresses.
+The search server (yours, on your network) receives search words: store names, streets and towns, and product names, and the web addresses of pages chosen from its own results. It never receives receipts, prices, totals or people. The bearer token, if set, is an App setting (write-only) and is only sent to that server. Page text is passed to your model as untrusted data (the prompts tell it to ignore instructions inside pages), and everything the model returns is validated before use: times must be real times, prices real numbers under a limit, dates real dates, and a deal only counts if it matches an item you buy. Store hours are only ever applied after you accept them, unless you turn on automatic application, which requires evidence (the store's structured page data, OpenStreetMap, or two different websites agreeing; never the model's own confidence) and only fills stores with no hours. Fetching is limited to http and https addresses on public hosts (IPv6 addresses that translate to IPv4, NAT64 and 6to4, are refused); pages are read up to 3 MB within 30 seconds, and the HTML is read in one pass (linear time) after being cut to 600 KB, so a page built to make a regular expression backtrack can't hold the app up. Answers from the search service and the model are capped at 5 MB. A custom search server opens the pages the app asks for, so it must refuse home-network addresses itself. Optional monthly limits stop web searches and model questions for web lookups once reached.
 
 ## Export and import
 
-Export and import of the whole database are administrator-only. An export contains every home's data and every person, so it is as sensitive as the database itself. Imports are limited to 500 MB, must be a SQLite file that passes an integrity check and contains this app's tables, and are never trusted beyond that: the file is only ever opened by SQLite, never executed. The current database is copied aside before an import and restored if it fails.
+Export and import of the whole database are administrator-only. An export contains every home's data and every person, so it is as sensitive as the database itself. Imports are limited to 500 MB, must be a SQLite file that passes an integrity check and contains this app's tables, and are never trusted beyond that: the file is only ever opened by SQLite, never executed. The current database is copied aside before an import and restored if it fails. The swap runs alone: running requests and background jobs are waited for (a minute at most, else nothing is changed), new ones are held back or answered 503 until it is done.
 
 ## Backups
 

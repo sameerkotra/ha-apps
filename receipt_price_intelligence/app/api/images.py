@@ -1,11 +1,12 @@
 """Image upload API endpoints."""
 
-import asyncio
 import os
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
+
+from app.common import image_guard
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -32,8 +33,11 @@ def _image_json(image) -> dict:
     }
 
 
+EDITABLE = ("PROCESSING", "NEEDS_REVIEW", "EXTRACTION_FAILED")
+
+
 @router.post("/{draft_id}/images")
-async def upload_draft_image(
+def upload_draft_image(
     draft_id: str,
     file: Annotated[UploadFile, ...],
     db: Session = Depends(get_db),
@@ -41,7 +45,8 @@ async def upload_draft_image(
     """
     Add a photo or a PDF to a receipt draft.
 
-    Photos: JPEG, PNG, GIF or WebP, up to 10 MB. A PDF (up to 20 MB) is converted here: each
+    Photos: JPEG, PNG, GIF or WebP (by what the file is, not what it is called), up to 10 MB and 40 million pixels.
+    A PDF (up to 20 MB) is converted here: each
     page becomes a JPEG image on the draft, and the PDF itself is not kept. A receipt can have
     up to 8 pages in total; pages of a longer PDF beyond that are left out (``truncated``).
 
@@ -50,7 +55,7 @@ async def upload_draft_image(
     draft = drafts_service.get_draft(db, draft_id)
     if not draft:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Draft not found")
-    if draft.status not in ("PROCESSING", "NEEDS_REVIEW", "EXTRACTION_FAILED"):
+    if draft.status not in EDITABLE:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This receipt is already saved")
 
     try:
@@ -62,7 +67,7 @@ async def upload_draft_image(
         total_pages = None
         if is_pdf:
             # Rendering can take a while: keep it off the event loop
-            pages, total_pages = await asyncio.to_thread(pdf_service.render_pdf, content, room)
+            pages, total_pages = pdf_service.render_pdf(content, room)
             stored = [
                 images_service.store_image_bytes(db, draft_id, page, "image/jpeg", f"page_{i + 1}.jpg")
                 for i, page in enumerate(pages)
@@ -71,7 +76,7 @@ async def upload_draft_image(
             stored = [images_service.store_image_bytes(
                 db, draft_id, content, file.content_type, file.filename)]
         # the file as uploaded (the photo, or the whole PDF) into the receipt archive folder, if one is set
-        await asyncio.to_thread(archive.save_original, draft_id, content, file.filename, is_pdf)
+        archive.save_original(draft_id, content, file.filename, is_pdf)
     except ValueError as e:  # includes PdfError
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception:  # noqa: BLE001 - the detail goes to the log, not to the browser
@@ -88,15 +93,14 @@ async def upload_draft_image(
 
 
 @router.get("/{draft_id}/images/{image_id}")
-async def get_draft_image(
+def get_draft_image(
     draft_id: str,
     image_id: str,
     db: Session = Depends(get_db),
+    size: Literal["full", "thumb"] = Query("full", description="thumb: a small copy for the page thumbnails"),
 ):
     """
-    Get a draft image by ID.
-
-    Returns the image file or metadata.
+    Get a draft image by ID: the photo as stored, or (``size=thumb``) a small JPEG copy made once and kept beside it.
     """
     # Verify the draft exists (drafts are shared by all users)
     draft = drafts_service.get_draft(db, draft_id)
@@ -126,6 +130,11 @@ async def get_draft_image(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Image file not found on disk",
         )
+    if size == "thumb":
+        try:
+            return FileResponse(images_service.thumbnail(image.file_path), media_type="image/jpeg")
+        except (ValueError, OSError, image_guard.DecodeBusy) as e:
+            logger.info("No thumbnail for image %s (%s); sending the photo", image_id, e)
     return FileResponse(
         image.file_path,
         media_type=image.mime_type or "image/jpeg",
@@ -133,7 +142,7 @@ async def get_draft_image(
 
 
 @router.delete("/{draft_id}/images/{image_id}")
-async def delete_draft_image(
+def delete_draft_image(
     draft_id: str,
     image_id: str,
     db: Session = Depends(get_db),
@@ -162,6 +171,8 @@ async def delete_draft_image(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Image not found",
         )
+    if draft.status not in EDITABLE:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This receipt is already saved or discarded")
 
     success = images_service.delete_draft_image(image_id)
     if not success:

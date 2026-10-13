@@ -4,7 +4,8 @@
 call ``record`` for each request: what was sent and what came back. Entries are kept in memory only (the
 last ``KEEP`` of them, gone on restart) and shown to administrators.
 
-Secrets never go in: authorization headers and API keys are replaced by "(hidden)". Bodies are cut to
+Secrets never go in: authorization headers, API keys, and keys or tokens in an address's query are replaced by
+"(hidden)". Bodies are cut to
 ``MAX_CHARS`` so a large page cannot fill memory.
 
 ``capture()`` additionally collects the entries of one debug run (the *Try it* tools), even when the
@@ -47,13 +48,37 @@ def redact(value: Any) -> Any:
     return _cut(value)
 
 
+_SECRET_PARAMS = _SECRET_KEYS | {"access_token", "auth", "sig", "signature", "secret", "client_secret",
+                                 "session", "sessionid", "code", "pass", "pwd", "x-amz-signature", "x-amz-credential"}
+
+
+def redact_url(url: str) -> str:
+    """The address with a user name or password, and query values that look like keys or tokens, replaced."""
+    if not url or ("?" not in url and "@" not in url):
+        return url
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "(an address that could not be read)"
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = "(hidden)@" + netloc.rsplit("@", 1)[1]
+    query = parts.query
+    if query:
+        pairs = parse_qsl(query, keep_blank_values=True)
+        query = urlencode([(k, "(hidden)" if k.lower() in _SECRET_PARAMS or "token" in k.lower() or "key" in k.lower()
+                            else v) for k, v in pairs], safe="()")
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+
+
 def record(service: str, action: str, *, method: str = "GET", url: str = "", sent: Any = None, status: int | None = None,
            received: Any = None, content_type: str | None = None, error: str | None = None, started: float | None = None,
            note: str | None = None) -> dict[str, Any]:
     """Keep one request. ``service``: tavily, searxng, custom, page or model. ``action``: search, fetch, ask..."""
     size = len(received) if isinstance(received, (str, bytes)) else None
     entry = {
-        "id": next(_ids), "time": time.time(), "service": service, "action": action, "method": method, "url": url,
+        "id": next(_ids), "time": time.time(), "service": service, "action": action, "method": method, "url": redact_url(url),
         "step": _current_step.get(), "sent": redact(sent), "status": status, "content_type": content_type,
         "received": _cut(received.decode("utf-8", "replace") if isinstance(received, bytes) else received),
         "received_chars": size, "error": error, "ms": round((time.time() - started) * 1000) if started else None, "note": note,

@@ -228,6 +228,23 @@ def find_confirmed_common_item(db: Session, home_id: str, description: str) -> C
     return item if item is not None and item.name_confirmed else None
 
 
+def find_confirmed_common_items(db: Session, home_id: str, descriptions: list[str]) -> dict[str, CommonItem]:
+    """``find_confirmed_common_item`` for many descriptions with one query: {description: item} for those named."""
+    keys = {d: normalize.item_key(d) for d in descriptions}
+    wanted = sorted({k for k in keys.values() if k is not None})
+    if not wanted or not home_id:
+        return {}
+    by_key: dict[str, CommonItem] = {}
+    for i in range(0, len(wanted), 500):
+        rows = (db.query(CommonItemAlias.normalized_alias, CommonItem)
+                .join(CommonItem, CommonItemAlias.common_item_id == CommonItem.id)
+                .filter(CommonItem.home_id == home_id, CommonItem.status == "ACTIVE",
+                        CommonItemAlias.normalized_alias.in_(wanted[i:i + 500])).all())
+        for key, item in rows:
+            by_key.setdefault(key, item)
+    return {d: by_key[k] for d, k in keys.items() if k in by_key and by_key[k].name_confirmed}
+
+
 def _link_alias(db: Session, home_id: str, user_id: str, item: CommonItem, description: str, key: str, source: str) -> None:
     """Make ``description`` resolve to ``item`` from now on (latest choice wins)."""
     alias = (

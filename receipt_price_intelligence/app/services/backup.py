@@ -22,11 +22,13 @@ from app.config import get_settings
 from app.db import dispose_engine, get_db_session, init_models
 from app.db.models import ReceiptImage, User
 from app.logging_config import get_logger
+from app.services import maintenance
 
 logger = get_logger("backup")
 
 MAX_IMPORT_BYTES = 500 * 1024 * 1024
 KEEP_SAFETY_COPIES = 3
+RESTORE_WAIT_SECONDS = 60      # how long an import waits for requests and jobs already running
 SQLITE_HEADER = b"SQLite format 3\x00"
 # Tables every backup of this app has. Older backups may lack newer tables; those are added on import.
 REQUIRED_TABLES = {"users", "receipts", "receipt_items", "receipt_drafts", "store_chains", "store_locations"}
@@ -128,6 +130,16 @@ def safety_copy_download(path: str) -> str:
     return dest
 
 
+def sweep_temp_files(max_age: float = 6 * 3600) -> int:
+    """Exports (``export-*.db``) and uploaded backups (``import-*.db``) left in the data folder by a download or an
+    upload that never finished (a crash, a restart), once older than six hours. Returns how many were deleted."""
+    folder = os.path.dirname(os.path.abspath(db_path())) or "."
+    removed = sum(backup_core.remove_stale(folder, prefix, max_age) for prefix in ("export-", "import-"))
+    if removed:
+        logger.info("Removed %d left-over temporary file(s)", removed)
+    return removed
+
+
 def list_safety_copies() -> list[dict[str, Any]]:
     """Copies of the database kept from before each import, newest first."""
     folder = backups_dir()
@@ -222,42 +234,51 @@ def _prepare_imported_database(admin_id: str, admin_name: str) -> dict[str, int]
 
 
 def import_backup(upload_path: str, admin_id: str, admin_name: str) -> dict[str, Any]:
-    """Replace the database with the uploaded backup. ``upload_path`` is consumed."""
-    with _lock:
-        counts = validate_backup(upload_path)
+    """Replace the database with the uploaded backup. ``upload_path`` is consumed.
 
-        os.makedirs(backups_dir(), exist_ok=True)
-        safety = os.path.join(backups_dir(), f"before-import-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db")
-        make_snapshot(safety)
+    The file is checked first; then the swap runs alone (``maintenance.GATE.pause``): requests and background jobs
+    already running are waited for (a minute at most), and new ones wait or are turned away until it is done."""
+    counts = validate_backup(upload_path)
+    try:
+        with maintenance.GATE.pause(timeout=RESTORE_WAIT_SECONDS), _lock:
+            return _import_checked(upload_path, admin_id, admin_name, counts)
+    except maintenance.Busy as e:
+        raise BackupError(f"{e}. Nothing was changed.") from e
 
-        current_settings = app_settings.export_rows(db_path())
-        current_secrets = app_settings.REGISTRY.saved_secrets()
+
+def _import_checked(upload_path: str, admin_id: str, admin_name: str, counts: dict[str, int]) -> dict[str, Any]:
+    os.makedirs(backups_dir(), exist_ok=True)
+    safety = os.path.join(backups_dir(), f"before-import-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db")
+    make_snapshot(safety)
+
+    current_settings = app_settings.export_rows(db_path())
+    current_secrets = app_settings.REGISTRY.saved_secrets()
+    dispose_engine()
+    try:
+        _swap_in(upload_path, keep_source=False)
+        # App settings come from the backup if it has them, else the current ones are kept.
+        settings_kept = app_settings.adopt_rows(db_path(), current_settings)
+        # An export has no access keys or passwords: this install keeps its own.
+        app_settings.REGISTRY.keep_secrets(current_secrets)
+        extra = _prepare_imported_database(admin_id, admin_name)
+        extra["settings_from_backup"] = not settings_kept and bool(app_settings.export_rows(db_path()))
+    except Exception as e:  # put the previous database back
+        logger.exception("Import failed; restoring the previous database")
         dispose_engine()
+        _swap_in(safety, keep_source=True)
+        app_settings.invalidate()
         try:
-            _swap_in(upload_path, keep_source=False)
-            # App settings come from the backup if it has them, else the current ones are kept.
-            settings_kept = app_settings.adopt_rows(db_path(), current_settings)
-            # An export has no access keys or passwords: this install keeps its own.
-            app_settings.REGISTRY.keep_secrets(current_secrets)
-            extra = _prepare_imported_database(admin_id, admin_name)
-            extra["settings_from_backup"] = not settings_kept and bool(app_settings.export_rows(db_path()))
-        except Exception as e:  # put the previous database back
-            logger.exception("Import failed; restoring the previous database")
-            dispose_engine()
-            _swap_in(safety, keep_source=True)
-            app_settings.invalidate()
-            try:
-                _prepare_imported_database(admin_id, admin_name)
-            except Exception:  # noqa: BLE001
-                logger.exception("Could not re-open the restored database")
-            raise BackupError("The import failed and nothing was changed") from e
+            _prepare_imported_database(admin_id, admin_name)
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not re-open the restored database")
+        raise BackupError("The import failed and nothing was changed") from e
 
-        # keep only the newest few safety copies
-        for old in list_safety_copies()[KEEP_SAFETY_COPIES:]:
-            try:
-                os.remove(os.path.join(backups_dir(), old["name"]))
-            except OSError:
-                pass
+    # keep only the newest few safety copies
+    for old in list_safety_copies()[KEEP_SAFETY_COPIES:]:
+        try:
+            os.remove(os.path.join(backups_dir(), old["name"]))
+        except OSError:
+            pass
 
     logger.info("Imported a backup: %s", counts)
     return {"imported": counts, "safety_copy": os.path.basename(safety), **extra}

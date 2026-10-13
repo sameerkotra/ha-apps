@@ -75,14 +75,14 @@ def geocode(address: str) -> dict[str, Any] | None:
 
     if not results:
         return None
-    top = results[0]
     try:
+        top = results[0]
         return {
             "lat": float(top["lat"]), "lng": float(top["lon"]),
             "confidence": float(top.get("importance") or 0.5) or 0.1,
             "label": top.get("display_name"),
         }
-    except (KeyError, TypeError, ValueError) as e:
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
         raise GeoError("The map service sent an unexpected answer") from e
 
 
@@ -99,18 +99,21 @@ def route_matrix(points: list[tuple[float, float]]) -> tuple[list[list[float]], 
         raise GeoError("Too many places for the routing service")
     url = f"{get_settings().routing_url.rstrip('/')}/table/v1/driving/{_coords(points)}?annotations=distance,duration"
     data = _get_json(url)
-    if data.get("code") != "Ok" or not data.get("distances") or not data.get("durations"):
+    if not isinstance(data, dict) or data.get("code") != "Ok" or not data.get("distances") or not data.get("durations"):
         raise GeoError("The routing service could not calculate distances")
 
     n = len(points)
     km = [[0.0] * n for _ in range(n)]
     minutes = [[0.0] * n for _ in range(n)]
-    for i in range(n):
-        for j in range(n):
-            d, t = data["distances"][i][j], data["durations"][i][j]
-            if d is None or t is None:
-                raise GeoError("Some places cannot be reached by road")
-            km[i][j], minutes[i][j] = d / 1000.0, t / 60.0
+    try:
+        for i in range(n):
+            for j in range(n):
+                d, t = data["distances"][i][j], data["durations"][i][j]
+                if d is None or t is None:
+                    raise GeoError("Some places cannot be reached by road")
+                km[i][j], minutes[i][j] = float(d) / 1000.0, float(t) / 60.0
+    except (KeyError, TypeError, ValueError, IndexError) as e:   # an answer of the wrong shape
+        raise GeoError("The routing service sent an unexpected answer") from e
     return km, minutes
 
 
@@ -119,12 +122,15 @@ def route_geometry(points: list[tuple[float, float]]) -> dict[str, Any]:
     url = (f"{get_settings().routing_url.rstrip('/')}/route/v1/driving/{_coords(points)}"
            "?overview=simplified&geometries=geojson&steps=false")
     data = _get_json(url)
-    routes = data.get("routes") or []
-    if data.get("code") != "Ok" or not routes:
+    routes = (data.get("routes") if isinstance(data, dict) else None) or []
+    if not isinstance(data, dict) or data.get("code") != "Ok" or not routes:
         raise GeoError("The routing service could not calculate the route")
-    route = routes[0]
-    return {
-        "km": route["distance"] / 1000.0,
-        "minutes": route["duration"] / 60.0,
-        "line": [[lat, lng] for lng, lat in route["geometry"]["coordinates"]],
-    }
+    try:
+        route = routes[0]
+        return {
+            "km": float(route["distance"]) / 1000.0,
+            "minutes": float(route["duration"]) / 60.0,
+            "line": [[float(lat), float(lng)] for lng, lat in route["geometry"]["coordinates"]],
+        }
+    except (KeyError, TypeError, ValueError, IndexError) as e:   # an answer of the wrong shape
+        raise GeoError("The routing service sent an unexpected answer") from e

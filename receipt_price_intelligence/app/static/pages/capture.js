@@ -249,8 +249,9 @@
     // Where the original photo or PDF is also kept (the app's Receipt archive folder option)
     RPI.api('api/v1/archive').then((a) => {
       const note = document.getElementById('archiveNote');
-      if (!a || !a.path) return;
+      if (!a || !(a.path || a.enabled || a.problem)) return;
       note.hidden = false;
-      note.textContent = a.enabled && a.writable ? `Each scan is also kept in ${a.path} (the photo, or the whole PDF).`
-        : `The receipt archive folder ${a.path} cannot be used: ${a.problem}. Scans still work; fix it in Admin → App settings.`;
+      const where = a.path ? ` ${a.path}` : '';   // the folder itself is shown to administrators only
+      note.textContent = a.enabled && a.writable ? `Each scan is also kept in the receipt archive folder${where} (the photo, or the whole PDF).`
+        : `The receipt archive folder${where} cannot be used: ${a.problem}. Scans still work; an administrator can fix it in Admin → App settings.`;
     }).catch(() => {});

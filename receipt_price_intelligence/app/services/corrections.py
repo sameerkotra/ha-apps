@@ -44,6 +44,21 @@ def lookup(db: Session, chain_id: str | None, text: str | None) -> str | None:
     return found.corrected_text if found else None
 
 
+def lookup_many(db: Session, chain_id: str | None, texts: list[str]) -> dict[str, str]:
+    """``lookup`` for many lines with one query: {text as read: corrected text} for those with a correction."""
+    keys = {t: normalize.item_key(t) for t in texts}
+    wanted = {k for k in keys.values() if k is not None}
+    if not chain_id or not wanted:
+        return {}
+    found: dict[str, str] = {}
+    wanted_list = sorted(wanted)
+    for i in range(0, len(wanted_list), 500):
+        for row in db.query(LineCorrection).filter(LineCorrection.store_chain_id == chain_id,
+                                                   LineCorrection.original_key.in_(wanted_list[i:i + 500])):
+            found.setdefault(row.original_key, row.corrected_text)
+    return {t: found[k] for t, k in keys.items() if k is not None and k in found}
+
+
 def record(db: Session, chain_id: str | None, draft_items: list[ReceiptDraftItem]) -> int:
     """Remember the fixes made to a saved receipt's lines (and forget ones that were undone).
 

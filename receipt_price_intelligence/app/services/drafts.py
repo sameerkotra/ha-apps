@@ -328,7 +328,6 @@ def update_saved_receipt_date(db: Session, draft_id: str, purchase_date: str) ->
         draft.raw_llm_output = text
         receipt.raw_llm_output = text  # keep the two copies identical
 
-        draft.updated_at = datetime.utcnow()
         db.commit()
     except Exception:
         db.rollback()
@@ -355,7 +354,6 @@ def set_saved_tags(db: Session, draft_id: str, tags) -> ReceiptDraft | None:
         if receipt is not None:
             receipt.tags = json.dumps(cleaned) if cleaned else None
             receipt.raw_llm_output = text  # keeps the two copies identical
-        draft.updated_at = datetime.utcnow()
         db.commit()
     except Exception:
         db.rollback()
@@ -437,6 +435,7 @@ def create_draft(
     source: str = "camera",
     extras: dict[str, Any] | None = None,
     home_id: str | None = None,
+    source_hash: str | None = None,
 ) -> ReceiptDraft:
     """
     Create a new receipt draft.
@@ -460,6 +459,7 @@ def create_draft(
         status="PROCESSING",
         source=source,
         expires_at=datetime.utcnow() + timedelta(hours=settings.draft_retention_hours),
+        source_hash=source_hash,
     )
 
     if extras:
@@ -490,14 +490,116 @@ def get_drafts(
     db: Session,
     home_id: str | None = None,
     status: str | None = None,
+    limit: int | None = None,
+    before: datetime | None = None,
 ) -> list[ReceiptDraft]:
-    """Drafts visible to every user, newest first. Optionally limited to one home and/or status."""
+    """Drafts visible to every user, newest first. Optionally limited to one home and/or status, to those created
+    before ``before``, and to ``limit`` of them."""
     query = db.query(ReceiptDraft)
     if home_id:
         query = query.filter(ReceiptDraft.home_id == home_id)
     if status:
         query = query.filter(ReceiptDraft.status == status)
-    return query.order_by(ReceiptDraft.created_at.desc()).all()
+    if before is not None:
+        from sqlalchemy import func
+        query = query.filter(func.datetime(ReceiptDraft.created_at) < func.datetime(_sql_time(before)))
+    query = query.order_by(ReceiptDraft.created_at.desc(), ReceiptDraft.id.desc())
+    return query.limit(limit).all() if limit else query.all()
+
+
+def _sql_time(value: datetime) -> str:
+    """A datetime as SQLite writes CURRENT_TIMESTAMP (UTC, to the second)."""
+    if value.tzinfo is not None:
+        from datetime import timezone
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _grouped(rows, key) -> dict[str, list]:
+    out: dict[str, list] = {}
+    for row in rows:
+        out.setdefault(getattr(row, key), []).append(row)
+    return out
+
+
+def _chunks(ids: list[str], size: int = 500):
+    for i in range(0, len(ids), size):
+        yield ids[i:i + size]
+
+
+def items_by_draft(db: Session, draft_ids: list[str]) -> dict[str, list[ReceiptDraftItem]]:
+    """Each draft's items in receipt order (one query per 500 drafts)."""
+    rows = []
+    for chunk in _chunks(draft_ids):
+        rows += db.query(ReceiptDraftItem).filter(ReceiptDraftItem.receipt_draft_id.in_(chunk)).order_by(
+            text("receipt_draft_items.rowid")).all()
+    return _grouped(rows, "receipt_draft_id")
+
+
+def taxes_by_draft(db: Session, draft_ids: list[str]) -> dict[str, list[ReceiptDraftTax]]:
+    rows = []
+    for chunk in _chunks(draft_ids):
+        rows += db.query(ReceiptDraftTax).filter(ReceiptDraftTax.receipt_draft_id.in_(chunk)).order_by(
+            text("receipt_draft_taxes.rowid")).all()
+    return _grouped(rows, "receipt_draft_id")
+
+
+def images_by_draft(db: Session, draft_ids: list[str]) -> dict[str, list[ReceiptImage]]:
+    rows = []
+    for chunk in _chunks(draft_ids):
+        rows += db.query(ReceiptImage).filter(ReceiptImage.receipt_draft_id.in_(chunk)).order_by(
+            text("receipt_images.rowid")).all()
+    return _grouped(rows, "receipt_draft_id")
+
+
+def draft_summaries(db: Session, home_id: str, statuses, limit: int, before: datetime | None = None,
+                    before_id: str | None = None) -> tuple[list[dict[str, Any]], bool]:
+    """One line per draft for the Receipts page (newest first), and whether there are more: two queries in all.
+    The next page starts after (``before``, ``before_id``): the last line's created_at and id."""
+    from sqlalchemy import and_, func, or_
+    query = db.query(ReceiptDraft.id, ReceiptDraft.status, ReceiptDraft.approved_receipt_id, ReceiptDraft.created_at,
+                     ReceiptDraft.raw_llm_output).filter(ReceiptDraft.home_id == home_id,
+                                                         ReceiptDraft.status.in_(list(statuses)))
+    if before is not None:
+        # compared as SQLite datetimes (the column holds "YYYY-MM-DD HH:MM:SS" text; a bound datetime has microseconds)
+        created, cursor = func.datetime(ReceiptDraft.created_at), func.datetime(_sql_time(before))
+        if before_id:
+            query = query.filter(or_(created < cursor, and_(created == cursor, ReceiptDraft.id < before_id)))
+        else:
+            query = query.filter(created < cursor)
+    rows = query.order_by(ReceiptDraft.created_at.desc(), ReceiptDraft.id.desc()).limit(limit + 1).all()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    counts: dict[str, tuple[int, float | None]] = {}
+    ids = [r.id for r in rows]
+    for chunk in _chunks(ids):
+        for draft_id, n, total in db.query(ReceiptDraftItem.receipt_draft_id, func.count(ReceiptDraftItem.id),
+                                           func.sum(ReceiptDraftItem.line_total)).filter(
+                ReceiptDraftItem.receipt_draft_id.in_(chunk)).group_by(ReceiptDraftItem.receipt_draft_id):
+            counts[draft_id] = (n, total)
+    out = []
+    for r in rows:
+        try:
+            data = json.loads(r.raw_llm_output or "{}")
+        except ValueError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        n, total = counts.get(r.id, (0, None))
+        grand = data.get("grand_total")
+        tags = data.get("tags") if isinstance(data.get("tags"), list) else []
+        out.append({
+            "id": r.id, "status": r.status, "created_at": r.created_at,
+            "editing_saved": bool(r.approved_receipt_id) and r.status == "NEEDS_REVIEW",
+            "store_name": data.get("store_name") if isinstance(data.get("store_name"), str) else None,
+            "purchase_date": data.get("purchase_date") if isinstance(data.get("purchase_date"), str) else None,
+            "currency": data.get("currency") if isinstance(data.get("currency"), str) else None,
+            "grand_total": float(grand) if isinstance(grand, (int, float)) and not isinstance(grand, bool) else None,
+            "items_total": round(total, 2) if total is not None else None,
+            "item_count": n,
+            "tags": [str(t) for t in tags if isinstance(t, str)][:30],
+        })
+    return out, more
 
 
 def update_draft(
@@ -534,51 +636,12 @@ def update_draft(
         if field in allowed_fields:
             setattr(draft, field, value)
 
-    draft.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(draft)
 
     logger.info("Updated draft %s", draft_id)
 
     return draft
-
-
-def add_draft_item(
-    db: Session,
-    draft_id: str,
-    item_data: dict[str, Any],
-) -> ReceiptDraftItem:
-    """Add an item to a draft."""
-    item = ReceiptDraftItem(
-        id=str(uuid.uuid4()),
-        receipt_draft_id=draft_id,
-        **item_data,
-    )
-
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-
-    return item
-
-
-def add_draft_tax(
-    db: Session,
-    draft_id: str,
-    tax_data: dict[str, Any],
-) -> ReceiptDraftTax:
-    """Add a tax record to a draft."""
-    tax = ReceiptDraftTax(
-        id=str(uuid.uuid4()),
-        receipt_draft_id=draft_id,
-        **tax_data,
-    )
-
-    db.add(tax)
-    db.commit()
-    db.refresh(tax)
-
-    return tax
 
 
 def update_draft_items(
@@ -760,7 +823,6 @@ def approve_draft(db: Session, draft_id: str, user_id: str) -> tuple[Receipt, di
         # Mark draft as approved
         draft.status = "APPROVED"
         draft.approved_receipt_id = receipt.id
-        draft.updated_at = datetime.utcnow()
 
         db.commit()
 
@@ -803,7 +865,6 @@ def reject_draft(db: Session, draft_id: str, user_id: str) -> bool:
         return False  # a saved receipt (even one reopened for editing) is part of the price history
 
     draft.status = "REJECTED"
-    draft.updated_at = datetime.utcnow()
     db.commit()
 
     # Best-effort: the draft is already rejected either way, so a problem removing its photos
@@ -843,6 +904,7 @@ def delete_draft(db: Session, draft_id: str, user_id: str) -> bool:
 
     images_service.purge_draft_images(db, draft_id)
     _detach_extraction_runs(db, draft_id=draft_id)
+    _delete_lines(db, draft_id)
 
     db.delete(draft)
     db.commit()
@@ -851,6 +913,34 @@ def delete_draft(db: Session, draft_id: str, user_id: str) -> bool:
     logger.info("Deleted draft %s", draft_id)
 
     return True
+
+
+def _delete_lines(db: Session, draft_id: str) -> None:
+    db.query(ReceiptDraftItem).filter(ReceiptDraftItem.receipt_draft_id == draft_id).delete(synchronize_session=False)
+    db.query(ReceiptDraftTax).filter(ReceiptDraftTax.receipt_draft_id == draft_id).delete(synchronize_session=False)
+    db.expire_all()
+
+
+def purge_rejected_drafts(db: Session, limit: int = 500) -> int:
+    """Discarded scans are kept only until their retention time is up (as unsaved ones are), then deleted (the daily
+    clean-up). Returns how many."""
+    now = datetime.utcnow()
+    ids = [r[0] for r in db.query(ReceiptDraft.id).filter(
+        ReceiptDraft.status == "REJECTED", ReceiptDraft.approved_receipt_id.is_(None),
+        ReceiptDraft.expires_at < now).limit(limit).all()]
+    for draft_id in ids:
+        try:
+            images_service.purge_draft_images(db, draft_id)
+            _detach_extraction_runs(db, draft_id=draft_id)
+            _delete_lines(db, draft_id)
+            db.query(ReceiptDraft).filter(ReceiptDraft.id == draft_id).delete(synchronize_session=False)
+            db.commit()
+        except Exception:  # noqa: BLE001 - the next one still goes
+            db.rollback()
+            logger.exception("Could not delete discarded scan %s", draft_id)
+    if ids:
+        logger.info("Deleted %d discarded scan(s)", len(ids))
+    return len(ids)
 
 
 def purge_finished_draft_images(db: Session) -> int:
@@ -872,7 +962,8 @@ def get_expired_drafts(db: Session) -> list[ReceiptDraft]:
     now = datetime.utcnow()
     return db.query(ReceiptDraft).filter(
         ReceiptDraft.expires_at < now,
-        ReceiptDraft.status.notin_(["APPROVED", "REJECTED"]),
+        # a receipt still waiting to be read was never seen by anyone: it waits for the model, however long that takes
+        ReceiptDraft.status.notin_(["APPROVED", "REJECTED", "PROCESSING"]),
         ReceiptDraft.approved_receipt_id.is_(None),  # never expire a saved receipt being edited
     ).all()
 
