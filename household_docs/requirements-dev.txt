@@ -1,5 +1,7 @@
 -r requirements.txt
 httpx2==2.13.1
-# tests only: the end-to-end test with Chat and Todo (httpx), picture fixtures (pillow)
+# tests only: the end-to-end test with Chat and Todo (httpx; python-multipart, which Todo's uploads need —
+# Docs itself doesn't, so it isn't in requirements.txt), picture fixtures (pillow)
 httpx==0.28.1
 pillow==12.3.0
+python-multipart==0.0.32
