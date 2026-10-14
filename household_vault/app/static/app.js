@@ -1076,7 +1076,14 @@ function itemEditor(d, tplKey) {
   const expiryBox = h("div", { class: "form-row" }, h("label", { class: "field" }, expLbl, expires), field("Remind me", remind));
   const pw = pwInput({ autocomplete: "new-password", label: "Password", placeholder: d && d.password.set ? "(unchanged)" : "" });
   const gen = h("button", { class: "btn small", type: "button", onclick: () => generatorDialog((p) => { pw.input.value = p; pw.input.type = "text"; pw.input.dispatchEvent(new Event("input")); }) }, "🎲 Generate");
-  const url = h("input", { type: "text", value: d ? d.url : "", placeholder: "https://…", "aria-label": "Website" });
+  const url = h("input", { type: "text", value: d ? d.url : "", placeholder: "https://…", "aria-label": "Website", inputmode: "url", spellcheck: "false" });
+  const openUrl = h("button", { class: "btn small", type: "button", title: "Open site", "aria-label": "Open site", onclick: () => {
+    const u = safeUrl(url.value); if (url.value.trim() && u !== "#") window.open(u, "_blank", "noopener,noreferrer");
+  } }, "↗ Open");
+  const syncOpen = () => { openUrl.disabled = !url.value.trim() || safeUrl(url.value) === "#"; };
+  url.addEventListener("input", syncOpen); syncOpen();
+  // One element can only live in one place: the Website field is its own box, shared by every kind.
+  const urlBox = field("Website", h("div", { class: "input-with" }, url, openUrl));
   const totpIn = h("input", { type: "text", placeholder: d && d.totp ? "(set — paste a new one to replace)" : "otpauth://… or the setup key", autocomplete: "off", spellcheck: "false", "aria-label": "2FA setup key" });
   let removeTotp = false;
   const totpRemove = d && d.totp ? h("button", { class: "btn small", type: "button", onclick: () => { removeTotp = true; totpIn.value = ""; totpIn.placeholder = "(will be removed)"; } }, "Remove 2FA") : null;
@@ -1117,8 +1124,8 @@ function itemEditor(d, tplKey) {
     toast("2FA code added — Save to keep it");
   }) }, "📷 Scan QR code");
   const loginBox = h("div", null, h("label", { class: "field" }, userLbl, username), field("Password", pw.el), h("div", { class: "row" }, gen), strengthMeter(pw.input), breachHint(pw.input),
-    field("Website", url), field("2FA (time-based code)", h("div", { class: "input-with totp-row" }, totpIn, scanBtn), "Scan the QR code, or paste the otpauth:// link or the setup key your site shows."), totpRemove);
-  const cardBox = h("div", null, field("Name on card", holder), field("Card number", number), h("div", { class: "form-row" }, field("Expiry", expiry), field("CVV", cvv), field("PIN", pin)), field("Website", url));
+    field("2FA (time-based code)", h("div", { class: "input-with totp-row" }, totpIn, scanBtn), "Scan the QR code, or paste the otpauth:// link or the setup key your site shows."), totpRemove);
+  const cardBox = h("div", null, field("Name on card", holder), field("Card number", number), h("div", { class: "form-row" }, field("Expiry", expiry), field("CVV", cvv), field("PIN", pin)));
   const sync = () => {
     const t = TEMPLATES[kind.value];
     loginBox.hidden = t.type !== "login"; cardBox.hidden = t.type !== "card";
@@ -1170,7 +1177,7 @@ function itemEditor(d, tplKey) {
     }
   } },
   h("div", { class: "form-row" }, field("Kind", kind), field("Vault", vaultSel)),
-  field("Name", title), folderBox, loginBox, cardBox, expiryBox,
+  field("Name", title), folderBox, loginBox, cardBox, urlBox, expiryBox,
   field("Notes", notes), field("Tags", tags, "Separate with commas."),
   h("label", { class: "check" }, fav, "⭐ Favourite"),
   h("div", { class: "nav-sec" }, "More fields"), extraBox, addField,

@@ -1,5 +1,5 @@
 name: "Household Vault"
-version: "2.1.6"
+version: "2.1.7"
 slug: household_vault
 description: >-
   A household password manager inside Home Assistant: personal, household and

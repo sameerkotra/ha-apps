@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.7
+
+- **Fixed**: the *Website* box in the item editor had a label but no field to type in. It's back, for every kind of item, with an **↗ Open** button next to it.
+
 ## 2.1.6
 
 - The image is built on one fixed Alpine release, so a rebuild can't quietly move to the next one.
