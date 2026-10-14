@@ -9,6 +9,7 @@ import _env  # noqa: F401  (must be first)
 
 import asyncio
 import os
+import re
 import socket
 import tempfile
 import threading
@@ -130,6 +131,25 @@ class PublishedPortWithoutKeys(Base):
         self.assertTrue(gateway.outsider_refused("not an address"))
 
 
+def read_response(s: socket.socket) -> bytes:
+    """The whole HTTP response: headers, then the body up to its Content-Length (or until the server closes).
+    One recv() isn't enough: on a slow machine the headers and the body can arrive in separate packets."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = s.recv(4096)
+        if not chunk:
+            return data
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    m = re.search(rb"(?im)^content-length:\s*(\d+)\s*$", head)
+    while m and len(body) < int(m.group(1)):
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        body += chunk
+    return head + b"\r\n\r\n" + body
+
+
 class SlowBody(Base):
     """AI-S2: a body that stalls frees its reading place after READ_TIMEOUT (408)."""
 
@@ -142,7 +162,7 @@ class SlowBody(Base):
                       b"Content-Length: 100\r\n\r\n{\"model\": ")
             wait_for(lambda: gateway.READING["n"] == 1, 3)
             started = time.monotonic()
-            data = s.recv(4096)
+            data = read_response(s)
             s.close()
             self.assertIn(b" 408 ", data.split(b"\r\n")[0])
             self.assertIn(b"didn't arrive", data)
