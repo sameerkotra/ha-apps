@@ -442,6 +442,16 @@ CREATE TABLE IF NOT EXISTS maint_hidden (
     created_at TEXT NOT NULL
 );
 
+-- Quick tasks (the Calendar tab's second view): each person's own simple list — add, remove. Nothing else
+-- reads it: no dates, reminders, sensors or assistant tools.
+CREATE TABLE IF NOT EXISTS quick_tasks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_quick_tasks_user ON quick_tasks(user_id, created_at);
+
 -- What was sent, so nothing repeats after a restart: kind soon|today|overdue|job|season.
 CREATE TABLE IF NOT EXISTS maint_notify_log (
     id TEXT PRIMARY KEY,

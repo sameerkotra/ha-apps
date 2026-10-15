@@ -1320,6 +1320,40 @@ class TestCalendarDashboard(ApiBase):
         self.assertNotIn("Bob", names)
 
 
+class TestQuickTasks(ApiBase):
+    """The Calendar tab's Quick tasks: one's own simple list — add and remove, nobody else's."""
+
+    def test_add_and_remove(self):
+        self.assertEqual(self.get("/api/quick-tasks").json(), {"items": []})
+        r = self.post("/api/quick-tasks", {"text": "  buy   stamps "})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.post("/api/quick-tasks", {"text": "call the vet"})
+        items = self.get("/api/quick-tasks").json()["items"]
+        self.assertEqual([i["text"] for i in items], ["buy stamps", "call the vet"])     # oldest first, spaces folded
+        r = self.delete(f"/api/quick-tasks/{items[0]['id']}")
+        self.assertEqual([i["text"] for i in r.json()["items"]], ["call the vet"])
+        self.assertEqual(self.delete(f"/api/quick-tasks/{items[0]['id']}").status_code, 404)
+        for bad in ({"text": ""}, {"text": "   "}, {"text": "x" * 201}, {}):
+            self.assertEqual(self.post("/api/quick-tasks", bad).status_code, 422, bad)
+
+    def test_only_ones_own(self):
+        mine = self.post("/api/quick-tasks", {"text": "alice's"}).json()["items"][0]
+        self.assertEqual(self.get("/api/quick-tasks", BOB).json(), {"items": []})
+        self.assertEqual(self.delete(f"/api/quick-tasks/{mine['id']}", BOB).status_code, 404)
+        alice = self.uid("Alice")
+        as_alice = self.get(f"/api/quick-tasks?as_user={alice}", ADMIN).json()["items"]   # an admin acting as her
+        self.assertEqual([i["text"] for i in as_alice], ["alice's"])
+        self.assertEqual(self.get("/api/quick-tasks", ADMIN).json(), {"items": []})
+
+    def test_at_most_200(self):
+        from app.routers import quick_tasks
+        with db.get_conn() as conn:
+            uid = self.uid("Alice")
+            conn.executemany("INSERT INTO quick_tasks (id, user_id, text, created_at) VALUES (?, ?, 'x', ?)",
+                             [(f"q{i}", uid, config.now_iso()) for i in range(quick_tasks.MAX_ITEMS)])
+        self.assertEqual(self.post("/api/quick-tasks", {"text": "one more"}).status_code, 409)
+
+
 class TestPrefs(ApiBase):
     def test_defaults_and_cannot_enable_without_mapping(self):
         p = self.get("/api/prefs").json()

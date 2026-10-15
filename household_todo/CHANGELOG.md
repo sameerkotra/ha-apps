@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.4
+
+- **Quick tasks**: the Calendar tab has a second view, **⚡ Quick tasks** — a simple list of your own to add items to and remove them from, with no dates or reminders. The tab still opens on the calendar.
+
 ## 2.7.3
 
 - **The Household Assistant's quick answers know Todo's words for the schedule** ("bin day", "recycling day", "boiler service", …), so "when is bin day?" is answered in a second without the AI (Household Assistant 1.4.0).

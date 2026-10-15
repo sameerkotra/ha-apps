@@ -1096,7 +1096,58 @@ const cal = {
   selected: null,                  // selected day (ISO)
   type: "", assignee: "", showCompleted: false,
   raw: null, data: null, overdue: 0,
+  sub: "calendar",                 // "calendar" | "quick" (Quick tasks); the Calendar opens on the calendar
 };
+
+// The Calendar tab's two views: the calendar itself and Quick tasks (a simple list of one's own)
+function calSubTabs() {
+  return segmented([["calendar", "📅 Calendar"], ["quick", "⚡ Quick tasks"]], cal.sub, (v) => {
+    cal.sub = v;
+    renderCalendar();
+  }).el;
+}
+
+async function renderQuickTasks() {
+  const root = $("#tab-calendar");
+  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), spinner());
+  let items;
+  try { items = (await api("/api/quick-tasks")).items; }
+  catch (e) { mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), errorCard(e, renderQuickTasks)); return; }
+  paintQuickTasks(items);
+}
+
+function paintQuickTasks(items) {
+  const root = $("#tab-calendar");
+  const input = h("input", { type: "text", maxlength: "200", placeholder: "Add a quick task…", "aria-label": "Add a quick task" });
+  const add = h("button", { class: "btn-primary btn-small", type: "button" }, "Add");
+  const go = async () => {
+    const text = input.value.trim();
+    if (!text) { input.focus(); return; }
+    add.disabled = true;
+    try {
+      const r = await api("/api/quick-tasks", { method: "POST", body: { text } });
+      paintQuickTasks(r.items);
+      const again = $("#tab-calendar input[aria-label='Add a quick task']");
+      if (again) again.focus();                     // ready for the next one
+    } catch (e) { fail(e); add.disabled = false; }
+  };
+  add.addEventListener("click", go);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  const rows = items.map((it) => {
+    const del = h("button", { class: "btn-ghost btn-small quick-remove", type: "button", title: "Remove", "aria-label": `Remove ${it.text}` }, "✕");
+    del.addEventListener("click", async () => {
+      del.disabled = true;
+      try { paintQuickTasks((await api(`/api/quick-tasks/${encodeURIComponent(it.id)}`, { method: "DELETE" })).items); }
+      catch (e) { fail(e); del.disabled = false; }
+    });
+    return h("li", { class: "quick-row" }, h("span", { class: "grow" }, it.text), del);
+  });
+  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()),
+    h("div", { class: "card quick-tasks" },
+      h("div", { class: "quick-add", style: "margin-bottom:10px" }, input, add),
+      rows.length ? h("ul", { class: "quick-list" }, rows)
+        : h("div", { class: "hint" }, "Nothing here yet. A quick list of your own — no dates or reminders; remove an item when it's done.")));
+}
 
 // Which schedule items the calendar shows — remembered per person in this browser. Recurring items can
 // crowd out the one appointment you're looking for, so any of them (or all) can be hidden here.
@@ -1122,11 +1173,12 @@ function calRange() {
 }
 
 async function renderCalendar() {
+  if (cal.sub === "quick") return renderQuickTasks();
   const root = $("#tab-calendar");
   if (!cal.view) cal.view = window.matchMedia("(max-width: 760px)").matches ? "agenda" : "month";
   if (!cal.cursor) cal.cursor = todayIso().slice(0, 8) + "01";
   if (!cal.selected) cal.selected = todayIso();
-  mount(root, pageHead("Calendar"), spinner());
+  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), spinner());
   await loadCalendar();
 }
 
@@ -1144,7 +1196,7 @@ async function loadCalendar() {
     applyScheduleFilter();
     cal.overdue = data.overdueCount || 0;
     paintCalendar();
-  } catch (e) { mount(root, pageHead("Calendar"), errorCard(e, loadCalendar)); }
+  } catch (e) { mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), errorCard(e, loadCalendar)); }
 }
 
 function groupByDate(data) {
@@ -1306,7 +1358,8 @@ function paintCalendar() {
     }
     body = days.length ? h("div", { class: "card" }, days) : h("div", { class: "card empty" }, "Nothing dated in the next 30 days.");
   }
-  mount(root, pageHead("Calendar"), banner, nav, filters, body, undated);
+  if (cal.sub !== "calendar") return;               // switched to Quick tasks while this was loading
+  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), banner, nav, filters, body, undated);
 }
 
 function dayContent(date, slot, again) {
@@ -2364,6 +2417,7 @@ function showTab(tab, opts = {}) {
   if (!TABS.includes(tab)) tab = "calendar";
   if (tab === "admin" && opts.sub) state.adminTab = opts.sub;
   if (tab === "lists" && opts.sub) listUI.openId = opts.sub;      // renderLists falls back to the first list
+  if (tab === "calendar" && state.tab !== "calendar") cal.sub = "calendar";   // opening the tab: the calendar first
   state.tab = tab;
   const want = routeHash(tab, state.adminTab);
   if (location.hash !== want) {

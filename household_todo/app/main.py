@@ -12,7 +12,7 @@ from . import (app_messages, config, db, drive_time, ha_client, ha_sensors, hous
 from .common import auth_core, deeplinks, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import (admin, calendar, dashboard, lists, maintenance, me, places, prefs, schedule, task_files as task_files_router,
-                      task_types, tasks, users)
+                      quick_tasks, task_types, tasks, users)
 
 jobs_core.setup_logging()
 logger = logging.getLogger("main")
@@ -72,6 +72,7 @@ app.include_router(task_types.router)
 app.include_router(places.router)
 app.include_router(schedule.router)
 app.include_router(calendar.router)
+app.include_router(quick_tasks.router)
 app.include_router(dashboard.router)
 app.include_router(prefs.router)
 app.include_router(maintenance.router)

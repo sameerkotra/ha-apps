@@ -115,6 +115,11 @@ schedule items, and **Skip**, **Move…** or **Undo** a schedule date. An "N
 overdue" banner links to the Dashboard, and a footer counts tasks with no
 date.
 
+**⚡ Quick tasks**, next to **📅 Calendar** at the top of the tab, is a plain
+list of your own: type an item and press Enter (or **Add**), and tap ✕ to
+remove it when it's done. No dates or reminders — just a scratch list. Only
+you see yours. The tab always opens on the calendar.
+
 ## Dashboard
 
 Quick add to My Tasks; tiles for **Overdue**, **Due today**, **Next 7 days**

@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.3"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.4"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -184,6 +184,10 @@ CREATE TABLE user_reminder_offsets (                  -- per-task "N minutes bef
   minutes_before INTEGER NOT NULL CHECK (minutes_before > 0 AND minutes_before <= 10080),
   created_at TEXT NOT NULL, UNIQUE (user_id, minutes_before));
 CREATE INDEX idx_reminder_offsets_user ON user_reminder_offsets(user_id);
+CREATE TABLE quick_tasks (                            -- the Calendar tab's Quick tasks: one's own simple list
+  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text TEXT NOT NULL, created_at TEXT NOT NULL);       -- no dates, reminders, sensors or assistant tools
+CREATE INDEX idx_quick_tasks_user ON quick_tasks(user_id, created_at);
 CREATE TABLE user_weekly_prefs (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   enabled INTEGER NOT NULL DEFAULT 0,
@@ -386,6 +390,7 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 | POST | `/api/schedule/{id}/exceptions` | acting (private: assignee only) | `{kind, date, to_date?, reason?}`. Returns the item (201) and re-pushes the sensor. |
 | DELETE | `/api/schedule/{id}/exceptions/{eid}` | acting (private: assignee only) | Returns the item (**200**), or 404. Re-pushes the sensor. |
 | GET | `/api/calendar` | acting | `from`, `to` (inclusive, `to−from` ≤ 92 days), `type`, `assignee` (`me`, `unassigned`, `anyone` or an id), `show=open\|all`, `schedule=0\|1`. Returns `{today, tasks, schedule, undatedCount}`. |
+| GET · POST · DELETE | `/api/quick-tasks` · `/api/quick-tasks` `{text}` · `/api/quick-tasks/{id}` | acting | The acting person's Quick tasks, oldest first: `{items: [{id, text, createdAt}]}` — also what add and remove return (**200**). Text 1–200 characters (spaces folded), at most 200 items (409); someone else's or a removed one is a 404. |
 | GET | `/api/dashboard` | acting | Visible open tasks split into `overdue` (required only), `dueToday` and `upcoming` (tomorrow to +7). Also `counts{…,open}` and `schedule` ("Coming up"): visible items whose sensor is on, plus the acting user's own items occurring today or tomorrow, as `{itemId,name,icon,nextDate,daysUntil,occursToday,startTime,endTime,sensorOn,private}`. |
 | GET | `/api/workload` | acting | `people[{userId,name,disabled,isMe,open,overdue,dueSoon,doneThisWeek}]` (you first, then by name) and `unassigned{open,overdue,dueSoon}`. |
 | GET | `/api/prefs` | real | `{notificationsEnabled, leadDays, notifyOnAssign, digestTime (stored; 08:00 if never set), reminderOffsets (desc), weeklySummary{enabled,dayOfWeek,time}, canNotify, canNotifyReason}` |
@@ -543,6 +548,7 @@ The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through t
   - Dragging works only in Upcoming, with Manual sort and no filters; otherwise a hint explains why. The Completed view notes the 60-day clean-up.
   - Drag and drop uses Pointer Events, with no re-parenting mid-drag and an insertion line. Alt+↑/↓ (and Alt+←/→ in grids) do the same from the keyboard. If a reorder fails, a toast appears and the view reloads.
 - **Calendar tab.**
+  - Two views, **📅 Calendar | ⚡ Quick tasks** (a segmented switch under the heading). Opening the tab always shows the calendar; the page's own redraws (coming back to it, every 5 minutes) keep the view that's open. **Quick tasks** is a plain list of one's own: an *Add a quick task…* box (Enter or Add; focus stays for the next) and each item with ✕ to remove it. No dates, reminders or sensors, and the Household Assistant doesn't read it.
   - Month view is a 42-day grid from the week start. Agenda view shows the next 30 days and is the default at ≤760 px.
   - Toolbar: ‹ ›, Today, and week start (`localStorage.calendarWeekStart`, Sunday by default). Filters: Type, and Assignee (Anyone, Me, Unassigned or a person). Toggle "Show completed", and a **🗓 Schedule items: all / N hidden / hidden ▾** button opening a dialog: a master *Show schedule items* switch (off → `schedule=0`), *Show all* / *Hide all*, and a tick per visible item (`GET /api/schedule`). Hidden items are filtered in the browser (`itemId`) in Month and Agenda, remembered per acting person in `localStorage["calendarSchedule:<user id>"]`; items, reminders and sensors are unaffected. With maintenance on, the dialog can hide maintenance too.
   - Each cell shows up to 3 chips, then "+N more", all-day first, then tasks and schedule entries merged by time. Task chips show the time, type icon and title. Schedule chips show the glyph (all-day only), the assignee's initial and the name, with a timed item's start–end (and 🔒 if private) on a second line. Skipped and moved-away schedule chips are struck through.
