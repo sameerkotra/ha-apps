@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS questions (
     rounds INTEGER NOT NULL DEFAULT 0,
     input_tokens INTEGER,
     output_tokens INTEGER,
-    seconds REAL
+    seconds REAL,
+    mode TEXT NOT NULL DEFAULT 'ai',  -- 'quick': answered by the rules (§17), 'ai': by the model
+    quick TEXT,                     -- JSON: what the rules understood ({intents, template, phrase, choices, chosen})
+    understood TEXT                 -- the line shown above a quick answer ("Your tasks · today · Household Todo")
 );
 CREATE INDEX IF NOT EXISTS questions_user ON questions (user_id, asked_at);
 
@@ -131,6 +134,28 @@ CREATE TABLE IF NOT EXISTS briefings (
     speaker TEXT                    -- a media_player the briefings are read aloud on, or NULL
 );
 
+-- Quick answers (app/quick/learn.py, HOUSEHOLD_ASSISTANT_SPEC.md §17.8): the household's own ways of asking, by
+-- template (the normalised question with its slots and names as placeholders), and the questions it couldn't place
+-- (normalised words and a count only: never who asked).
+CREATE TABLE IF NOT EXISTS quick_phrases (
+    id TEXT PRIMARY KEY,
+    phrase TEXT NOT NULL,
+    intent TEXT NOT NULL,
+    args TEXT NOT NULL DEFAULT '{}',
+    slot_args TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL CHECK (source IN ('admin', 'tapped', 'ai')),
+    seen INTEGER NOT NULL DEFAULT 1,
+    hits INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_used TEXT,
+    UNIQUE (phrase, intent)
+);
+CREATE TABLE IF NOT EXISTS quick_misses (
+    phrase TEXT PRIMARY KEY,
+    count INTEGER NOT NULL,
+    last_seen TEXT NOT NULL
+);
+
 -- Admin → App settings (app/settings.py). value is JSON; the ai_api_key row is blanked in downloaded backups.
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
@@ -142,6 +167,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 # Columns added after their table was first made (older databases and restored backups get them at start-up).
 MIGRATIONS = {"users": [("reviewed", "INTEGER NOT NULL DEFAULT 1")],
+              "questions": [("mode", "TEXT NOT NULL DEFAULT 'ai'"), ("quick", "TEXT"), ("understood", "TEXT")],
               "briefings": [("evening_on", "INTEGER NOT NULL DEFAULT 0"), ("evening_at", "TEXT NOT NULL DEFAULT '20:00'"),
                             ("evening_last_sent", "TEXT"), ("speaker", "TEXT")]}
 

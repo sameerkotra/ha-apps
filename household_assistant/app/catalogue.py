@@ -91,13 +91,36 @@ def clean_tool(raw) -> dict | None:
         args[name] = arg
         if len(args) > MAX_ARGS:
             return None
-    return {"name": raw["name"], "what": _text(raw.get("what"), 400), "args": args,
+    out = {"name": raw["name"], "what": _text(raw.get("what"), 400), "args": args,
             "returns": _text(raw.get("returns"), 200), "acts": raw.get("acts") is True,
             # only a tool that says it is about the person is one: anything else is household-wide (children
             # and voice satellites never get those)
             "scope": "person" if raw.get("scope") == "person" else "household",
             "examples": [_text(e, 120) for e in (raw.get("examples") or [])[:3] if isinstance(e, str)]
             if isinstance(raw.get("examples"), list) else []}
+    quick = clean_quick(raw.get("quick"), args)
+    if quick:
+        out["quick"] = quick
+    return out
+
+
+_CONCEPT_RE = re.compile(r"^[A-Z][A-Z_]{0,23}$")
+_QUICK_WORD_RE = re.compile(r"^[a-z0-9][a-z0-9 ]{0,39}$")
+
+
+def clean_quick(raw, args: dict) -> dict | None:
+    """A tool's `quick` block (§17.4), reduced to what the rules may use: concepts by name, the app's words (lower
+    case, short), default arguments of the tool's own (checked again before a call). Anything else is dropped."""
+    if not isinstance(raw, dict):
+        return None
+    concepts = [c for c in (raw.get("concepts") or [])[:4] if isinstance(c, str) and _CONCEPT_RE.match(c)] \
+        if isinstance(raw.get("concepts"), list) else []
+    words = [" ".join(w.split()) for w in (raw.get("words") or [])[:12] if isinstance(w, str)
+             and _QUICK_WORD_RE.match(" ".join(w.split()))] if isinstance(raw.get("words"), list) else []
+    defaults = {k: v for k, v in list((raw.get("args") or {}).items())[:4] if k in args and isinstance(v, (
+        str, int, float, bool))} if isinstance(raw.get("args"), dict) else {}
+    out = {k: v for k, v in (("concepts", concepts), ("words", words), ("args", defaults)) if v}
+    return out or None
 
 
 # --------------------------------------------------------------------------------------------- asking

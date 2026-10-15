@@ -1,0 +1,840 @@
+{
+ "arcade.mine": {
+  "app": "household_arcade",
+  "appName": "Household Arcade",
+  "spec": {
+   "acts": false,
+   "args": {},
+   "examples": [],
+   "name": "arcade.mine",
+   "returns": "",
+   "scope": "person",
+   "what": "arcade.mine"
+  }
+ },
+ "arcade.scores": {
+  "app": "household_arcade",
+  "appName": "Household Arcade",
+  "spec": {
+   "acts": false,
+   "args": {
+    "game": {
+     "type": "string"
+    },
+    "period": {
+     "type": "enum",
+     "values": [
+      "all",
+      "month"
+     ]
+    }
+   },
+   "examples": [],
+   "name": "arcade.scores",
+   "returns": "",
+   "scope": "person",
+   "what": "arcade.scores"
+  }
+ },
+ "calorie.food.log": {
+  "app": "calorie_tracker",
+  "appName": "Calorie Tracker",
+  "spec": {
+   "acts": true,
+   "args": {
+    "calories": {
+     "type": "number"
+    },
+    "carbs": {
+     "type": "number"
+    },
+    "date": {
+     "type": "date"
+    },
+    "fat": {
+     "type": "number"
+    },
+    "food": {
+     "type": "string"
+    },
+    "meal": {
+     "type": "enum",
+     "values": [
+      "breakfast",
+      "lunch",
+      "dinner",
+      "snack"
+     ]
+    },
+    "protein": {
+     "type": "number"
+    },
+    "servings": {
+     "type": "number"
+    }
+   },
+   "examples": [],
+   "name": "calorie.food.log",
+   "returns": "",
+   "scope": "person",
+   "what": "calorie.food.log"
+  }
+ },
+ "calorie.today": {
+  "app": "calorie_tracker",
+  "appName": "Calorie Tracker",
+  "spec": {
+   "acts": false,
+   "args": {
+    "date": {
+     "type": "date"
+    }
+   },
+   "examples": [],
+   "name": "calorie.today",
+   "returns": "",
+   "scope": "person",
+   "what": "calorie.today"
+  }
+ },
+ "calorie.week": {
+  "app": "calorie_tracker",
+  "appName": "Calorie Tracker",
+  "spec": {
+   "acts": false,
+   "args": {
+    "date": {
+     "type": "date"
+    }
+   },
+   "examples": [],
+   "name": "calorie.week",
+   "returns": "",
+   "scope": "person",
+   "what": "calorie.week"
+  }
+ },
+ "chat.unread": {
+  "app": "household_chat",
+  "appName": "Household Chat",
+  "spec": {
+   "acts": false,
+   "args": {},
+   "examples": [],
+   "name": "chat.unread",
+   "returns": "",
+   "scope": "person",
+   "what": "chat.unread"
+  }
+ },
+ "docs.checklist": {
+  "app": "household_docs",
+  "appName": "Household Docs",
+  "spec": {
+   "acts": false,
+   "args": {
+    "id": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "docs.checklist",
+   "returns": "",
+   "scope": "person",
+   "what": "docs.checklist"
+  }
+ },
+ "docs.checklist.add": {
+  "app": "household_docs",
+  "appName": "Household Docs",
+  "spec": {
+   "acts": true,
+   "args": {
+    "id": {
+     "type": "string"
+    },
+    "item": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "docs.checklist.add",
+   "returns": "",
+   "scope": "person",
+   "what": "docs.checklist.add"
+  }
+ },
+ "docs.checklist.tick": {
+  "app": "household_docs",
+  "appName": "Household Docs",
+  "spec": {
+   "acts": true,
+   "args": {
+    "done": {
+     "type": "boolean"
+    },
+    "id": {
+     "type": "string"
+    },
+    "item": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "docs.checklist.tick",
+   "returns": "",
+   "scope": "person",
+   "what": "docs.checklist.tick"
+  }
+ },
+ "docs.note.create": {
+  "app": "household_docs",
+  "appName": "Household Docs",
+  "spec": {
+   "acts": true,
+   "args": {
+    "name": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "docs.note.create",
+   "returns": "",
+   "scope": "person",
+   "what": "docs.note.create"
+  }
+ },
+ "docs.read": {
+  "app": "household_docs",
+  "appName": "Household Docs",
+  "spec": {
+   "acts": false,
+   "args": {
+    "id": {
+     "type": "string"
+    },
+    "offset": {
+     "type": "number"
+    }
+   },
+   "examples": [],
+   "name": "docs.read",
+   "returns": "",
+   "scope": "person",
+   "what": "docs.read"
+  }
+ },
+ "docs.search": {
+  "app": "household_docs",
+  "appName": "Household Docs",
+  "spec": {
+   "acts": false,
+   "args": {
+    "kind": {
+     "type": "enum",
+     "values": [
+      "note",
+      "markdown",
+      "checklist",
+      "sheet",
+      "folder",
+      "pdf",
+      "image",
+      "spreadsheet",
+      "document"
+     ]
+    },
+    "query": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "docs.search",
+   "returns": "",
+   "scope": "person",
+   "what": "docs.search"
+  }
+ },
+ "finance.balances": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": false,
+   "args": {
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.balances",
+   "quick": {
+    "concepts": [
+     "BALANCE"
+    ],
+    "words": [
+     "bank balance",
+     "money in the bank",
+     "credit card balance",
+     "savings account",
+     "current account"
+    ]
+   },
+   "returns": "",
+   "scope": "person",
+   "what": "finance.balances"
+  }
+ },
+ "finance.bills": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": false,
+   "args": {
+    "days": {
+     "type": "number"
+    },
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.bills",
+   "returns": "",
+   "scope": "person",
+   "what": "finance.bills"
+  }
+ },
+ "finance.merchant": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": false,
+   "args": {
+    "merchant": {
+     "type": "string"
+    },
+    "months": {
+     "type": "number"
+    },
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.merchant",
+   "returns": "",
+   "scope": "person",
+   "what": "finance.merchant"
+  }
+ },
+ "finance.recurring": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": false,
+   "args": {
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.recurring",
+   "quick": {
+    "concepts": [
+     "RECURRING"
+    ],
+    "words": [
+     "standing orders",
+     "direct debits",
+     "regular payments",
+     "monthly payments",
+     "insurance payments"
+    ]
+   },
+   "returns": "",
+   "scope": "person",
+   "what": "finance.recurring"
+  }
+ },
+ "finance.spending": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": false,
+   "args": {
+    "category": {
+     "type": "string"
+    },
+    "month": {
+     "type": "month"
+    },
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.spending",
+   "returns": "",
+   "scope": "person",
+   "what": "finance.spending"
+  }
+ },
+ "finance.summary": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": false,
+   "args": {
+    "month": {
+     "type": "month"
+    },
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.summary",
+   "returns": "",
+   "scope": "person",
+   "what": "finance.summary"
+  }
+ },
+ "receipt.budgets": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": false,
+   "args": {
+    "home": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "receipt.budgets",
+   "quick": {
+    "concepts": [
+     "BUDGET"
+    ],
+    "words": [
+     "spending limit",
+     "grocery budget",
+     "food budget",
+     "shopping budget"
+    ]
+   },
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.budgets"
+  }
+ },
+ "receipt.deals": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": false,
+   "args": {
+    "home": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "receipt.deals",
+   "quick": {
+    "concepts": [
+     "DEAL"
+    ],
+    "words": [
+     "special offer",
+     "on offer",
+     "price drops",
+     "cheaper pack",
+     "better price"
+    ]
+   },
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.deals"
+  }
+ },
+ "receipt.price": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": false,
+   "args": {
+    "home": {
+     "type": "string"
+    },
+    "item": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "receipt.price",
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.price"
+  }
+ },
+ "receipt.shopping_list": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": false,
+   "args": {
+    "home": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "receipt.shopping_list",
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.shopping_list"
+  }
+ },
+ "receipt.shopping_list.add": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": true,
+   "args": {
+    "home": {
+     "type": "string"
+    },
+    "item": {
+     "type": "string"
+    },
+    "qty": {
+     "type": "number"
+    }
+   },
+   "examples": [],
+   "name": "receipt.shopping_list.add",
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.shopping_list.add"
+  }
+ },
+ "receipt.spending": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": false,
+   "args": {
+    "home": {
+     "type": "string"
+    },
+    "month": {
+     "type": "month"
+    },
+    "store": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "receipt.spending",
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.spending"
+  }
+ },
+ "splitpot.balances": {
+  "app": "splitpot",
+  "appName": "Splitpot",
+  "spec": {
+   "acts": false,
+   "args": {
+    "group": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "splitpot.balances",
+   "returns": "",
+   "scope": "person",
+   "what": "splitpot.balances"
+  }
+ },
+ "splitpot.expense.add": {
+  "app": "splitpot",
+  "appName": "Splitpot",
+  "spec": {
+   "acts": true,
+   "args": {
+    "amount": {
+     "type": "number"
+    },
+    "date": {
+     "type": "date"
+    },
+    "description": {
+     "type": "string"
+    },
+    "group": {
+     "type": "string"
+    },
+    "paid_by": {
+     "type": "string"
+    },
+    "split_with": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "splitpot.expense.add",
+   "returns": "",
+   "scope": "person",
+   "what": "splitpot.expense.add"
+  }
+ },
+ "splitpot.recent": {
+  "app": "splitpot",
+  "appName": "Splitpot",
+  "spec": {
+   "acts": false,
+   "args": {
+    "days": {
+     "type": "number"
+    },
+    "group": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "splitpot.recent",
+   "returns": "",
+   "scope": "person",
+   "what": "splitpot.recent"
+  }
+ },
+ "todo.items.add": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": true,
+   "args": {
+    "due": {
+     "type": "date"
+    },
+    "list": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "todo.items.add",
+   "returns": "",
+   "scope": "person",
+   "what": "todo.items.add"
+  }
+ },
+ "todo.items.done": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": true,
+   "args": {
+    "list": {
+     "type": "string"
+    },
+    "task": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "todo.items.done",
+   "returns": "",
+   "scope": "person",
+   "what": "todo.items.done"
+  }
+ },
+ "todo.items.due": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": true,
+   "args": {
+    "due": {
+     "type": "date"
+    },
+    "list": {
+     "type": "string"
+    },
+    "task": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "todo.items.due",
+   "returns": "",
+   "scope": "person",
+   "what": "todo.items.due"
+  }
+ },
+ "todo.lists": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": false,
+   "args": {},
+   "examples": [],
+   "name": "todo.lists",
+   "returns": "",
+   "scope": "person",
+   "what": "todo.lists"
+  }
+ },
+ "todo.reminder.add": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": true,
+   "args": {
+    "date": {
+     "type": "date"
+    },
+    "list": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    },
+    "time": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "todo.reminder.add",
+   "returns": "",
+   "scope": "person",
+   "what": "todo.reminder.add"
+  }
+ },
+ "todo.schedule": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": false,
+   "args": {
+    "days": {
+     "type": "number"
+    }
+   },
+   "examples": [],
+   "name": "todo.schedule",
+   "quick": {
+    "args": {
+     "days": 7
+    },
+    "concepts": [
+     "SCHEDULE"
+    ],
+    "words": [
+     "bin day",
+     "bins out",
+     "recycling day",
+     "garden waste",
+     "collection day",
+     "boiler service",
+     "filter change"
+    ]
+   },
+   "returns": "",
+   "scope": "person",
+   "what": "todo.schedule"
+  }
+ },
+ "todo.tasks": {
+  "app": "household_todo",
+  "appName": "Household Todo",
+  "spec": {
+   "acts": false,
+   "args": {
+    "list": {
+     "type": "string"
+    },
+    "person": {
+     "type": "string"
+    },
+    "when": {
+     "type": "enum",
+     "values": [
+      "today",
+      "tomorrow",
+      "week",
+      "overdue",
+      "all"
+     ]
+    }
+   },
+   "examples": [],
+   "name": "todo.tasks",
+   "returns": "",
+   "scope": "person",
+   "what": "todo.tasks"
+  }
+ },
+ "tree.birthdays": {
+  "app": "family_tree",
+  "appName": "Family Tree",
+  "spec": {
+   "acts": false,
+   "args": {
+    "days": {
+     "type": "number"
+    },
+    "everyone": {
+     "type": "boolean"
+    }
+   },
+   "examples": [],
+   "name": "tree.birthdays",
+   "returns": "",
+   "scope": "person",
+   "what": "tree.birthdays"
+  }
+ },
+ "tree.person": {
+  "app": "family_tree",
+  "appName": "Family Tree",
+  "spec": {
+   "acts": false,
+   "args": {
+    "person": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "tree.person",
+   "returns": "",
+   "scope": "person",
+   "what": "tree.person"
+  }
+ },
+ "tree.relation": {
+  "app": "family_tree",
+  "appName": "Family Tree",
+  "spec": {
+   "acts": false,
+   "args": {
+    "person": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "tree.relation",
+   "returns": "",
+   "scope": "person",
+   "what": "tree.relation"
+  }
+ }
+}

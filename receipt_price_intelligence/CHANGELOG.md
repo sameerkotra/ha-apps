@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.3
+
+- **The Household Assistant's quick answers know the Best prices and Budgets words** ("special offer", "price drops", "grocery budget", "spending limit", …), so those questions are answered in a second without the AI (Household Assistant 1.4.0).
+
 ## 1.3.2
 
 ### Security

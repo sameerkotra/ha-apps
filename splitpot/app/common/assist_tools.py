@@ -1,4 +1,4 @@
-# Shared file: edit common/python/assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=333a13ba69a3c1973153f9f248b5a30396a45c49f669dea0d5b35933192add8d
+# Shared file: edit common/python/assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=9558fd49cd5debc9e64113c2dcc9fabc6ccb4b3f07b4d3e1ccf1ddb5350bfaff
 """Answering the Household Assistant: an app's tools, like tools on an MCP server, over the app bus
 (HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6).
 
@@ -28,8 +28,11 @@ app_bus.py by tools/sync_common.py). Standard library only. The app writes its c
 
 What the bus carries (APP_MESSAGES_SPEC §6.6):
 
-- `assist.tools.list` `{}` → `ack {result: {tools: [{name, what, args, returns, acts, scope, examples}], on}}`;
-  `on` is the admin switch, so the assistant can say why an app doesn't answer.
+- `assist.tools.list` `{}` → `ack {result: {tools: [{name, what, args, returns, acts, scope, examples, quick?}], on}}`;
+  `on` is the admin switch, so the assistant can say why an app doesn't answer. `quick` (optional,
+  HOUSEHOLD_ASSISTANT_SPEC.md §17.4) teaches the assistant's rules, which answer without a model, the app's own
+  words for the tool: `{concepts: ["SCHEDULE"], words: ["bin day", "recycling"], args: {"days": 7}}` — the
+  assistant's concepts it answers, extra words and phrases, and the default arguments of a quick call.
 - `assist.tool.call` `{tool, args, requested_by, question, confirm?, confirmed_at?}` →
   `ack {result: {question, tool, text, items, links, more}}`, at most 6 KB. Refusals: an unknown tool
   `nack not_found` (detail `tool`); a bad argument `nack invalid` (the argument's name); a tool that changes
@@ -168,17 +171,60 @@ class Arg:
 
 
 class Tool:
-    def __init__(self, name, what, fn, args, returns, acts, scope, examples, children):
+    def __init__(self, name, what, fn, args, returns, acts, scope, examples, children, quick=None):
         self.name, self.what, self.fn, self.args = name, what, fn, args
         self.returns, self.acts, self.scope = returns, acts, scope
         self.examples, self.children = tuple(examples), children
+        self.quick = quick
 
     def spec(self) -> dict:
         out = {"name": self.name, "what": self.what, "args": {k: a.spec() for k, a in self.args.items()},
                "returns": self.returns, "acts": self.acts, "scope": self.scope}
         if self.examples:
             out["examples"] = list(self.examples)
+        if self.quick:
+            out["quick"] = self.quick
         return out
+
+
+MAX_QUICK_CONCEPTS = 4
+MAX_QUICK_WORDS = 12
+MAX_QUICK_ARGS = 4
+_CONCEPT_RE = re.compile(r"^[A-Z][A-Z_]{0,23}$")
+_QUICK_WORD_RE = re.compile(r"^[a-z0-9][a-z0-9 ]{0,39}$")
+
+
+def _quick(name: str, quick, args: dict) -> dict | None:
+    """A tool's `quick` block, checked: concepts (the assistant's names), words (lower case, short), default
+    arguments (the tool's own, each checked as a call's would be)."""
+    if quick is None:
+        return None
+    if not isinstance(quick, dict) or set(quick) - {"concepts", "words", "args"}:
+        raise ValueError(f"{name}: quick is {{concepts, words, args}}")
+    concepts = list(quick.get("concepts") or [])
+    words = list(quick.get("words") or [])
+    defaults = dict(quick.get("args") or {})
+    if len(concepts) > MAX_QUICK_CONCEPTS or not all(isinstance(c, str) and _CONCEPT_RE.match(c) for c in concepts):
+        raise ValueError(f"{name}: quick concepts are at most {MAX_QUICK_CONCEPTS} names like SCHEDULE")
+    if len(words) > MAX_QUICK_WORDS or not all(isinstance(w, str) and _QUICK_WORD_RE.match(w) for w in words):
+        raise ValueError(f"{name}: quick words are at most {MAX_QUICK_WORDS} lower-case phrases of up to 40 letters")
+    if len(defaults) > MAX_QUICK_ARGS:
+        raise ValueError(f"{name}: at most {MAX_QUICK_ARGS} quick arguments")
+    for k, v in defaults.items():
+        if k not in args:
+            raise ValueError(f"{name}: quick argument {k!r} isn't one of the tool's")
+        try:
+            defaults[k] = args[k].clean(k, v)
+        except app_bus.Nack:
+            raise ValueError(f"{name}: quick argument {k!r} doesn't fit the tool's argument") from None
+    out = {}
+    if concepts:
+        out["concepts"] = concepts
+    if words:
+        out["words"] = words
+    if defaults:
+        out["args"] = defaults
+    return out or None
 
 
 class Context:
@@ -248,8 +294,9 @@ class Catalogue:
 
     # -- writing the catalogue -------------------------------------------------------------------
     def tool(self, name: str, what: str, *, args=None, returns: str = "", acts: bool = False,
-             scope: str = "person", examples=(), children: bool = False):
-        """Decorator: `fn(ctx) -> Result | dict | Nack` answers the tool `name`."""
+             scope: str = "person", examples=(), children: bool = False, quick=None):
+        """Decorator: `fn(ctx) -> Result | dict | Nack` answers the tool `name`. `quick`: the app's own words for
+        the assistant's quick answers (see the module's notes)."""
         if not re.fullmatch(rf"{_NAME_PART}(\.{_NAME_PART}){{1,2}}", name or ""):
             raise ValueError(f"bad tool name {name!r}")
         if name.split(".", 1)[0] not in self.areas:
@@ -270,9 +317,10 @@ class Catalogue:
             raise ValueError(f"{name}: `what` is one or two sentences")
         if len(examples) > 3:
             raise ValueError(f"{name}: at most 3 examples")
+        quick = _quick(name, quick, args)
 
         def deco(fn):
-            self.tools[name] = Tool(name, what, fn, args, returns, acts, scope, examples, children)
+            self.tools[name] = Tool(name, what, fn, args, returns, acts, scope, examples, children, quick)
             return fn
         return deco
 

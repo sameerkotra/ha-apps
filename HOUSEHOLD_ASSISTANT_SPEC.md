@@ -2,7 +2,7 @@
 
 Status: **draft (2026-10-06); the apps' side and the assistant app (phase 1, `household_assistant` 1.0.0) are built
 (2026-10-07); its own `spec/SPEC.md` says how.** A local model on the CPU for it and the other apps is
-its own app, Household AI (`household_ai/spec/SPEC.md`; §15 here). Every app in
+its own app, Household AI (`household_ai/spec/SPEC.md`; §15 here). Quick answers without a model, for the common questions in under 5 seconds, are §17 (built in 1.4.0, 2026-10-14). Every app in
 §4.2 answers both kinds through the shared `common/python/assist_tools.py` (§13 says what changed from this draft on
 the way). A new app, `household_assistant`, that answers questions about the
 household from what the other household apps know ("How much did we spend on food in September?", "What's on my
@@ -342,8 +342,9 @@ person), so clearing questions doesn't change them.
 
 ### 8.2 Settings (Admin → App settings, the shared `settings_core` registry)
 
-- **AI**: provider, address, model, access key (secret: scrubbed from backups, kept on restore, as Docs 1.0.1 does),
-  output limit, *Test* — the same block every AI app has (`common/static/settings.js`).
+- **AI**: **Use AI** (on/off, §17.10), then provider, address, model, access key (secret: scrubbed from backups,
+  kept on restore, as Docs 1.0.1 does), output limit, *Test* — the same block every AI app has
+  (`common/static/settings.js`).
 - **Apps**: one row per app that offered a catalogue: on/off, its tools in words, *Refresh*. (The app-side switch
   "Answer the Household Assistant" lives in each app, §7.2; both must be on.)
 - **People**: the shared people admin; *Children may ask* (off).
@@ -525,3 +526,370 @@ had asked — and sends a summary to their phone. `household_assistant/app/brief
   message}` — the same lines without emoji, starting "Good morning/evening, <first name>." A failed speak doesn't
   stop the phone message.
 
+## 17. Quick answers, without a model (built: Household Assistant 1.4.0, 2026-10-14)
+
+Status: **built** (Household Assistant 1.4.0; the apps' `quick` words in Household Todo 2.7.3, Receipt Price
+Intelligence 1.3.3, Finance Dashboard 1.4.3). How it was built, and where it differs from the text below, is §17.14
+and the app's own `spec/SPEC.md`. The common questions answered in **under 5 seconds (aim: under 2)** with no model at all:
+the question is matched to one app tool by rules, the tool is called over the bus as today (§6), and the app's own
+words are the answer. The morning briefing (§16) already works this way; this makes it the first path for every
+question. A model, when one is set and the admin has **Use AI** on (§17.10), is only used for what the rules can't
+place; with **Use AI** off, the assistant never calls a model at all.
+
+### 17.1 Why it's fast, and what stays the same
+
+- **Time:** matching < 20 ms; the tool calls run in parallel over the bus (usually < 500 ms each); no model call at
+  all. Against today's two model calls (plan + answer), which take 30–60 s on a CPU-only Household AI.
+- **Same trust:** the tool is called with `requested_by` = the asking person, so the app answers exactly what that
+  person may see (§7.2); Vault never answers (§7); actions (`acts: true`) are still only proposed as a button and
+  sent when tapped (§6.4). The rules can't do anything a tool call from the model couldn't.
+- **Same page:** the answer shows with its Sources chips and *What was shared*, and is stored as a question (§8.1)
+  with `mode = 'quick'`.
+- **The answer is the app's own `text`**, unchanged (each result already carries one, ≤ 2000 characters, as the
+  briefing uses). Several results (§17.5) are shown one after another under each app's name. Nothing is reworded,
+  so nothing can be invented.
+- **Every quick answer says what it understood**, above the answer: *"Today's tasks · Household Todo"*. Under it,
+  **Not what I asked** — which hands the question to the model (§17.7) when AI is in use, and is remembered (§17.8).
+  With **Use AI** off it shows the *Did you mean* choices and the suggestion buttons instead.
+
+### 17.2 The many ways one question is asked
+
+The heart of this section. People ask the same thing in very different words, short or long, typed or spoken, with
+typos, without punctuation, and sometimes with no keyword from the tool's name at all. All of these mean
+`todo.tasks {when: today}`:
+
+> what's on my list today · whats on my list today · what do I have today · what do I need to do today · anything
+> I need to do today? · do I have anything today · today's tasks · tasks for today · my todos today · todo · to do
+> list · what's on today · what's my day look like · what have I got going on today · what am I doing today · any
+> chores today · what's due today · what's pending · what's left for today · show me today · today ·
+> tday · todays list · wat do i hav 2day · hey what do I got today · tell me my tasks please · can you check my
+> to-do list for today
+
+The design takes that as the requirement and handles it in layers, cheapest first:
+
+1. **Normalise** (§17.3): case, accents, punctuation, contractions, filler words, number words, common
+   misspellings and text-speak, plural and verb endings — so *"Whats on my lists 2day?"* and *"what is on my list
+   today"* become the same words before any matching.
+2. **Concepts, not words** (§17.4): words are grouped into concepts (TASK, SHOPPING, BIRTHDAY, OWE, …), each with
+   its synonyms, so a question matches on meaning-bearing words, not on a fixed sentence. *"chores"*, *"jobs"*,
+   *"things to do"*, *"need to do"* and *"pending"* are all TASK.
+3. **Slots** (§17.5): times (*today, tonight, tomorrow, this week, next 3 days, in September, last month*),
+   amounts, and names known to the household (lists, people, groups, stores, categories, shopping items), so the
+   tool gets the right arguments whatever the wording.
+4. **Scoring, not first-match** (§17.6): every quick intent is scored against the question; the best one wins
+   only when it is clearly ahead. Close calls show *Did you mean* choices instead of guessing.
+5. **Learning** (§17.8): a phrasing the rules missed is learned from the person's own tap on a choice, from the
+   model's answer when there is one, or from a phrase the admin adds — so the household's own way of asking works
+   from then on.
+6. **A phrase corpus as the test** (§17.12): hundreds of real phrasings per intent, and as many near-misses that
+   must *not* match, checked on every build.
+
+### 17.3 Normalising
+
+In order, all in plain Python (no dependencies):
+
+- Unicode NFKC, lower case, accents removed (`café` → `cafe`), curly quotes and dashes straightened.
+- Contractions and text-speak: `what's/whats → what is`, `i've → i have`, `don't/dont → do not`, `gonna → going
+  to`, `wanna → want to`, `u → you`, `ur → your`, `r → are`, `pls/plz → please`, `2day/tday → today`,
+  `2moro/tmrw/tmr/tomoz → tomorrow`, `bday/b'day → birthday`, `info → information`, `&` → `and`, `w/` → `with`.
+- Numbers: number words to digits (`one`–`twenty`, `thirty`…`ninety`, `hundred`, `a couple` → 2, `a few` → 3,
+  `half` → 0.5), so voice transcripts (*"in the next two weeks"*) read like typed text; currency signs and amounts
+  kept as one token (`₹500`, `$12.50`, `500 rupees`).
+- Filler removed at the start and end: `hey, hi, ok, so, please, can you, could you, would you, tell me, show me, let
+  me know, i want to know, i would like to know, do you know, check, quickly, for me, thanks`.
+- Word forms from a small table (not a stemmer, which breaks names): `lists → list`, `owes/owed/owing → owe`,
+  `spent/spending/spends → spend`, `paid/paying → pay`, `birthdays → birthday`, `bought → buy`, `ate/eaten/eating →
+  eat`, `cheaper/cheapest → cheap`, `reminded/reminding → remind`, British and American spellings (`colour/color`,
+  `cheque/check` stays apart).
+- **Typos:** a word that isn't in the lexicon is compared with the lexicon's words (and the household's names,
+  §17.5) by Damerau–Levenshtein distance: 1 for words of 4–7 letters, 2 for 8 or more, never for 3 letters or fewer
+  or for numbers. *"birthdya"* → birthday, *"shoping"* → shopping, *"calries"* → calories. A corrected word scores a
+  little less than an exact one (§17.6).
+- Punctuation dropped except inside times, dates, amounts and decimals (`5:30`, `14/10`, `2.5`).
+
+### 17.4 The lexicon: concepts and their words
+
+`household_assistant/app/quick/lexicon.yaml`, shipped with the app; each concept is a list of words and short
+phrases (matched as whole words after normalising; phrases first, longest first). The first release:
+
+| Concept | Words and phrases (excerpt) |
+|---|---|
+| TASK | task, todo, to do, to-do, chore, job, errand, thing to do, need to do, have to do, got to do, pending, left to do, due, agenda, plan, my day, going on, on my plate |
+| LIST | list, lists (alone it leans to TASK; with a SHOPPING word or a shopping item, to SHOPPING — §17.6) |
+| SCHEDULE | schedule, trash, bin, garbage, recycling, collection, maintenance, service due, filter, routine |
+| REMIND | remind, reminder, alert me, ping me, notify me, don't let me forget |
+| DONE | done, finished, completed, tick off, cross off, mark done, did |
+| SHOPPING | shopping, groceries, grocery, buy, pick up, get from the store, need from the shop, run out of, out of, market, kirana |
+| PRICE | price, cost, how much is, how much does, cheap, best place, where to buy, rate, going for |
+| DEAL | deal, offer, discount, saving, cheaper elsewhere, price drop |
+| BUDGET | budget, on track, overspent, over budget, how much is left |
+| BIRTHDAY | birthday, born, turning, anniversary, wedding day, celebrate |
+| RELATION | related, relation, relative, who is … to me, how is … related, cousin, uncle, aunt, in-law, nephew, niece |
+| PERSON_INFO | how old is, age of, where does … live, who are … children, when was … born |
+| SPEND | spend, expense, outgoing, cost us, splurge, blow, used |
+| INCOME | income, earned, salary, came in |
+| BILL | bill, payment due, pay, emi, renewal, subscription, direct debit, autopay, recurring |
+| BALANCE | balance, how much in, how much do we have, account, card, credit card owe, statement |
+| OWE | owe, owe me, i owe, debt, settle, settle up, square up, even, pay back, who paid |
+| SPLIT_ADD | split, add an expense, i paid, we paid, paid for |
+| CALORIE | calorie, kcal, cal, macro, protein, carbs, fat, eaten today, food today, intake, goal |
+| FOOD_LOG | log, had, ate, eat (with a food and a meal word) |
+| UNREAD | unread, new message, missed message, anyone message, any messages, chat |
+| DOC | note, doc, document, file, manual, warranty, receipt pdf, checklist, find, where is the, look up, search |
+| SCORE | score, high score, leaderboard, winning, top, best at, record |
+| QUESTION_WORDS | why, should, could, would it, compare, versus, vs, better, worse, more than, less than, average, predict, explain, summarise (§17.9) |
+
+Time words are their own small grammar (§17.5), not concepts. The lexicon is data: adding a word is one line, with a
+corpus line (§17.12) to prove it.
+
+**From the apps:** a tool's `examples` (§4.1) are added to the corpus the matcher is tuned on, and a new optional
+`quick` block in the tool's catalogue entry lets an app teach its own words without an assistant release:
+`quick: {concepts: ["BIRTHDAY"], words: ["anniversary", "turning"], args: {days: 7}}` — the concepts it answers,
+extra words, and the default arguments for a quick call. Unknown concept names are ignored; an app can only add
+words to its own tools, never to another app's (§7).
+
+### 17.5 Slots: when, how many, and the household's own names
+
+- **When** (in the household's time zone, as the briefing uses):
+  - `today, tonight, this morning, this afternoon, this evening, now, right now, so far, currently` → today;
+    `tomorrow, tomorrow morning, tomorrow night` → tomorrow; `yesterday` → the date;
+  - `this week, the week, coming days, upcoming, soon, next few days, next 7 days` → week (`days: 7` where the tool
+    takes days); `this weekend` → week (and the understood line says *"this week"*); `next week` → `days: 14`;
+  - `in N days, next N days, within N days, N weeks` → `days: N` (clamped to the tool's range, §4.2);
+  - weekday names (`on friday, this friday, next friday`) → that date;
+  - `overdue, late, behind, missed, forgot` → overdue;
+  - months: `this month, last month, previous month, in september, sept, sep, september 2025, 09/2026, 2026-09` →
+    `month: YYYY-MM` (a month name with no year: the latest one that isn't in the future).
+- **How many / how much:** amounts with or without currency (`₹500`, `500`, `12.50`), quantities with units for the
+  shopping list (`2 litres of milk`, `a dozen eggs`, `3 x bread`).
+- **Names the household uses** — the part that makes *"what's on the Costco list"* or *"how much does Ravi owe"* work:
+  - **lists** (Todo), **groups** (Splitpot), **categories** (Finance), **stores and items** (Receipt), **people**
+    (Home Assistant's people; Family Tree's names are matched by `tree.*` itself, which already accepts misspelt
+    and partial names);
+  - fetched with the existing tools, per person (they differ per person): `todo.lists`, `receipt.shopping_list`,
+    `splitpot.balances`, `finance.summary` — at most once every 10 minutes per person and app, in the background
+    after a question, never blocking one; kept in memory only, never stored;
+  - matched as whole words with the same typo rules (§17.3), longest name first; a name match is strong evidence for
+    that app (*"Costco"* → Receipt or a Todo list called Costco — the one the person has wins, both: choices).
+- **The rest of the question as text** for tools that take free text: `docs.search {query}` gets the words left
+  after removing the concept and filler words (*"find the note about the boiler"* → `boiler`); `receipt.price
+  {item}` the item (*"how much is basmati rice at the moment"* → `basmati rice`); `tree.relation {person}` the
+  name (*"how is Meera related to me"* → `Meera`).
+- **Pronouns and follow-ups** (with the conversation's last turn, as §3 step 2 keeps it): *"and tomorrow?"*, *"what
+  about next week"*, *"and for Ravi?"*, *"same for September"* — a question with only a slot and no concept reuses
+  the last quick intent with that slot changed.
+
+### 17.6 Scoring and choosing
+
+Each quick intent is a small rule: the tool, the concepts that must be there, those that help, those that rule it
+out, and how slots become arguments. The first release, one per read-only tool and the common actions:
+
+| Intent (understood line) | Tool and args | Must have | Helps | Ruled out by |
+|---|---|---|---|---|
+| Your tasks · today / tomorrow / this week / overdue | `todo.tasks {when}` (default today) | TASK, or LIST + a time, or only a time word (*"today"*) | a Todo list name → `list` | SHOPPING, a shopping item, SCHEDULE alone |
+| Someone's tasks | `todo.tasks {person, when}` | TASK + a person | | |
+| Coming up on the schedule | `todo.schedule {days}` | SCHEDULE | a time | |
+| Your lists | `todo.lists` | LIST + `which, what, all, my lists` and no time | | SHOPPING |
+| Remind you … | `todo.reminder.add {text, time, date}` (button) | REMIND + a time | | |
+| Add a task … | `todo.items.add {list, text, due}` (button) | `add`/`put` + TASK or a Todo list name | | SHOPPING, a shopping item |
+| Tick off … | `todo.items.done {task}` (button) | DONE + text | | |
+| Shopping list | `receipt.shopping_list` | SHOPPING, or LIST + a shopping item (*"is milk on the list"*: the answer is the list, the item marked) | | TASK |
+| Add to the shopping list | `receipt.shopping_list.add {item, qty}` (button; several items: one button each) | `add/put/need/we are out of/get` + SHOPPING or a shopping item | | TASK |
+| Price of … | `receipt.price {item}` | PRICE + text, or a shopping item alone | a store | SPEND |
+| Best prices | `receipt.deals` | DEAL | | |
+| Budgets | `receipt.budgets` | BUDGET | | |
+| Spending at a store | `receipt.spending {month, store}` | SPEND + a store | a month | |
+| Spending | `finance.spending {month, category}` (default this month) | SPEND | a category, a month | a store (→ Receipt) |
+| Spending at a merchant | `finance.merchant {merchant}` | SPEND + `at/on/with` + a name that isn't a category or store | | |
+| Month summary | `finance.summary {month}` | INCOME, or `summary/overview/how did we do` + a month | | |
+| Bills due | `finance.bills {days}` (default 7) | BILL | a time | SPLIT_ADD |
+| Recurring charges | `finance.recurring` | `recurring, subscriptions, every month, regular` | | |
+| Account balances | `finance.balances` | BALANCE | | OWE + a person |
+| Who owes whom | `splitpot.balances {group}` | OWE | a group | BALANCE + `card/account` |
+| Recent shared expenses | `splitpot.recent {group, days}` | `recent, latest, last` + SPLIT_ADD or OWE | | |
+| Add a shared expense | `splitpot.expense.add {description, amount, …}` (button) | SPLIT_ADD + an amount | a group, a person | |
+| Coming birthdays | `tree.birthdays {days}` (default 30) | BIRTHDAY | a time | a person (→ next row) |
+| About someone | `tree.person {person}` | PERSON_INFO, or BIRTHDAY + a person (*"when is Meera's birthday"*) | | |
+| How you're related | `tree.relation {person, to}` | RELATION + a person | | |
+| Calories today / this week | `calorie.today {date}` · `calorie.week` | CALORIE | a time | |
+| Log food … | `calorie.food.log {food, meal, servings}` (button) | FOOD_LOG + a food (+ a meal word or `for`) | | |
+| Unread messages | `chat.unread` | UNREAD | | |
+| Find a document | `docs.search {query}` | DOC + text | | |
+| A checklist | `docs.checklist` (after `docs.search` finds one) | `checklist` + text | | |
+| Scores | `arcade.scores {game}` | SCORE | a game name | |
+
+**How the score is worked out:** each matched concept, slot or name adds its weight (concept words 3, a household
+name 3, a time 1, a "helps" item 1; a typo-corrected word scores 0.7 of its weight); a "must have" missing makes the
+intent 0; a "ruled out by" makes it 0. Then:
+
+- **One clear winner** (score ≥ 3, and ≥ 1.5 × the next intent's): answered at once.
+- **A close call** (two or three intents within that margin): **Did you mean** — up to 3 buttons with their
+  understood lines (*"Your tasks today"*, *"Shopping list"*); a tap answers it, and is learned (§17.8).
+- **Nothing scores 3:** to the model when AI is in use (§17.7, §17.10), otherwise *"I can answer these
+  quickly:"* with the page's suggestion buttons and the closest intent as the first one.
+
+Short questions are the commonest and the most ambiguous: a lone word follows a fixed table — *"today"* → tasks today,
+*"tomorrow"* → tasks tomorrow, *"shopping"/"groceries"* → shopping list, *"bills"* → bills, *"birthdays"* →
+birthdays, *"messages"* → unread, *"calories"* → today's calories, *"balances"* → Choices (who owes whom · account
+balances), a shopping item (*"milk"*) → its price and whether it's on the list.
+
+### 17.7 When a question needs the model
+
+- **Never guessed quickly:** questions with QUESTION_WORDS (*why, should, compare, more than, average*), with
+  two different apps' facts in one sentence that has no `and` to split on (*"can we afford the TV after this month's
+  bills"*), or asking for a summary in words. These go to the model, or with no model: *"That needs the AI, which
+  isn't set up — try one of these"*.
+- **Several questions in one** (*"what's on my list today and any birthdays this week"*, *"bills and balances"*):
+  split on `and`, `also`, `plus`, `then`, `,` when each part matches on its own (the second part may borrow the first
+  part's time: *"tasks and birthdays this week"*); at most 4 tool calls, in parallel, answers stacked. A part that
+  doesn't match sends the whole question to the model.
+- **Not what I asked** (§17.1) and the model path give the model the question and, as a hint, the quick intent it
+  wasn't; the model's own plan then answers as today (§3).
+- **Setting:** *Quick answers* → **When a question isn't understood**: *Ask the AI* (default when AI is in use)
+  or *Show what I can answer* (the only choice while **Use AI** is off or no model is set).
+
+### 17.8 Learning the household's own words
+
+All three are stored in `quick_phrases` (§17.10), keyed by the **normalised** question, and checked before scoring
+(an exact learned phrase wins at once):
+
+- **From a tap:** choosing a *Did you mean* button, or an intent from the suggestions after *"I can answer these
+  quickly"*, stores that phrase → that intent and its slots (`source = 'tapped'`). The person's next *"what's
+  cooking this week"* gets tasks for the week without asking again.
+- **From the model** (only while **Use AI** is on): when a model-path question is answered in one round by exactly one read-only tool whose
+  arguments map onto a quick intent's slots, the phrase is stored as a candidate (`source = 'ai'`); it is used once
+  the same phrase has been answered that way twice (so one odd plan doesn't teach a wrong habit), or at once if the
+  admin turns on *Use what the AI learned straight away*.
+- **From the admin:** Admin → **Quick answers** → *Add a phrase*: words → an intent (from a list of the intents above,
+  with fixed arguments where wanted: *"trash day"* → schedule, *"Ravi's tab"* → who owes whom, group Ravi). Also
+  where **wrong** learned phrases are removed.
+- **Not what I asked** on a learned phrase deletes it (`'tapped'` and `'ai'`; an admin's phrase only on the admin
+  page).
+- **Scope:** learned phrases apply to the whole household, but slot values that are names stay names (a phrase
+  learned with *"Ravi"* matches *"Meera"* in the same place). Children's taps (when *Children may ask*, §8.2) are
+  not learned. Housekeeping deletes `'tapped'` and `'ai'` phrases not used for 180 days.
+- **Questions it couldn't place:** the normalised text of questions that went to the model or to *Show what I can
+  answer*, counted (`quick_misses`, top 50, 90 days), shown to the admin as *Asked but not answered quickly*, each
+  with *Add as a phrase*. Never shown with who asked. This is how the lexicon grows: misses from real households
+  become lexicon and corpus lines in the next release.
+
+### 17.9 Spoken questions (Assist)
+
+The companion integration (`household_assistant/spec/SPEC.md`, *Assist*) sends the transcript to `POST /api/ask`
+as now; quick answers make voice usable, since a spoken answer can't wait a minute. Speech-specific: no punctuation
+and number words (§17.3 covers both), wake-word leftovers (*"okay so"*, *"um"*, *"uh"*) as filler, and homophones
+in the lexicon (`to do / two do / todo`, `bill / bills / bil`, `owe / oh`). A *Did you mean* is spoken as *"Did you
+mean today's tasks, or the shopping list?"* and the next utterance (*"tasks"*, *"the first one"*, *"shopping"*) answers
+it. Actions are confirmed by voice as Assist does today (*"Add milk to the shopping list?"* → *"yes"*).
+
+### 17.10 Data and settings
+
+```sql
+CREATE TABLE quick_phrases (id TEXT PRIMARY KEY, phrase TEXT NOT NULL,      -- normalised, slot values replaced by
+  intent TEXT NOT NULL, args TEXT NOT NULL DEFAULT '{}',                    -- placeholders: "what is {time} for {person}"
+  source TEXT NOT NULL CHECK (source IN ('admin','tapped','ai')), seen INTEGER NOT NULL DEFAULT 1,
+  hits INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_used TEXT, UNIQUE (phrase, intent));
+CREATE TABLE quick_misses (phrase TEXT PRIMARY KEY, count INTEGER NOT NULL, last_seen TEXT NOT NULL);
+-- questions gains: mode TEXT NOT NULL DEFAULT 'ai' CHECK (mode IN ('quick','ai')), intent TEXT
+```
+
+Settings (Admin → App settings, the shared registry):
+
+- **AI → Use AI** (`ai_on`, on; turned on or off by an admin only). The one switch for every model call the
+  assistant makes:
+  - **On:** as today, with quick answers first; questions the rules can't place, *Not what I asked* and the
+    "needs the AI" questions (§17.7) go to the model.
+  - **Off:** **no model is ever called** — not for planning, answering, *Not what I asked*, learning (§17.8) or a
+    connection *Test*. Every question is a quick answer, a *Did you mean*, or *"I can answer these quickly:"* with
+    the suggestion buttons; a "needs the AI" question says *"That needs the AI, which an admin has turned off"*.
+    The provider, address, model and key stay saved and are shown greyed out, so turning it back on needs nothing
+    re-entered. The briefings (§16) don't use a model, so they're unchanged. *Quick answers* can't be off while
+    *Use AI* is off (the switch says so), or nothing could answer.
+  - **No model set:** *Use AI* can be on but does nothing, and the AI block says *"No model set — only quick
+    answers"*. A fresh install with no model therefore answers quick questions from the start; the app's old
+    🤖 *Needed* (§1) no longer holds.
+  - The page shows which: no badge with AI in use, *"Quick answers only"* under the question box while it is off.
+    Turning it off doesn't stop a question already with the model; it finishes.
+  - Household AI (§15) isn't affected: it keeps running for the other apps that use it. Turning *Use AI* off is a
+    way to stop the assistant's slow answers without changing the other apps.
+- **Quick answers:** *Quick answers* (on), *When a question isn't understood* (§17.7), *Learn from choices* (on),
+  *Learn from the AI* (on; *Use what the AI learned straight away*, off; both greyed out while *Use AI* is off),
+  *Quick call timeout* (5 s, 2–20: past it the page says *"Household Todo is slow to answer"* and waits up to the
+  usual 20 s, §3 step 3).
+
+Each person's own page: nothing new.
+
+### 17.11 API
+
+| Route | Who | What |
+|---|---|---|
+| `GET /api/me` | user | gains `ai: {on, model}` (`on` false while *Use AI* is off or no model is set), so the page can say *Quick answers only* |
+| `POST /api/ask` `{text}` | user | unchanged; the answer (`GET /api/ask/{id}` and its events) gains `mode`, `understood`, `choices[]` (`{intent, args, label}`) |
+| `POST /api/ask/{id}/choose` `{choice}` | owner | answers with that choice and learns it (§17.8) |
+| `POST /api/ask/{id}/not-this` | owner | *Not what I asked*: forgets a learned phrase, asks the model (§17.7); with *Use AI* off, answers with the choices |
+| `GET /api/quick/suggestions` | user | the one-tap buttons for the page (the intents the person may use, most used first) |
+| `POST /api/admin/quick/test` `{text}` | admin | how a question would be understood: normalised words, concepts, slots, every intent's score — for tuning, calls nothing |
+| `GET / POST / DELETE /api/admin/quick/phrases` · `GET /api/admin/quick/misses` | admin | §17.8 |
+
+### 17.12 Tests
+
+- **The phrase corpus** `household_assistant/tests/data/quick_corpus.tsv`: `question → intent + args`, at least 25
+  phrasings per intent (short, long, typed, spoken-style, typos, text-speak, with and without punctuation, follow-ups
+  with a previous turn), **and the near-misses**: questions that look alike but must go elsewhere or to the model
+  (*"how much did we spend at Costco"* → Receipt not Finance; *"how much do I owe on the card"* → balances not
+  Splitpot; *"should I pay the bill now"* → model; *"what's for dinner"* → no intent; *"add milk"* → shopping, not
+  a task; *"remind me about the bills"* without a time → model). Every line must pass; a new lexicon word comes with
+  its lines. Fixed "today" and the household's names come from a fake vocabulary.
+- **Speed:** matching 1,000 corpus questions in under 1 s in total; a quick question end to end (fake bus, fake
+  apps answering at once) under 200 ms.
+- **Trust:** a quick call is sent with `requested_by` and respects the app's and the admin's switches and the
+  children rule exactly as a model-planned one (the same `catalogue.for_user`); an `acts` tool is never sent without
+  `choose`/`act`; Vault never appears.
+- **Use AI off:** with a fake model server that fails the test if it's called, every corpus question, *Not what I
+  asked*, a "needs the AI" question and a connection *Test* make no model request; turning it off mid-question lets
+  that question finish; *Quick answers* can't be turned off with it.
+- **Learning:** a tap is learned and wins next time; *Not what I asked* removes it; an `'ai'` candidate needs two
+  sightings; children's taps aren't kept; misses are counted without who asked.
+
+### 17.13 Build plan
+
+1. **Q1 — the matcher:** normalising, lexicon, slots (times, amounts, free text), scoring, the intents above for
+   the read-only tools, the understood line, *Not what I asked*, the corpus tests, and **Use AI** (§17.10).
+   Quick answers on for every question; the model only for the rest, and never while *Use AI* is off.
+2. **Q2 — names and choices:** the household's own names (§17.5), *Did you mean*, follow-ups, several questions in
+   one, the one-tap suggestions, Assist's spoken choices.
+3. **Q3 — actions:** the `acts` intents as buttons (shopping list add with several items, reminders, tasks,
+   expenses, food log).
+4. **Q4 — learning:** `quick_phrases`, `quick_misses`, the admin's Quick answers page with *Test* and *Add a phrase*.
+5. **Q5 — the apps' words:** the optional `quick` block in each app's catalogue (§17.4), first in Todo, Receipt and
+   Finance.
+6. **Later, if wanted:** another language as its own lexicon file (e.g. Hindi written in Latin letters — *"aaj kya
+   karna hai"*, *"kal"*, *"kitna kharch hua"*), chosen per person.
+
+### 17.14 As built (2026-10-14)
+
+- **Where:** `household_assistant/app/quick/` (normalise, lexicon, slots, match, intents, understand, vocab, learn);
+  `engine.quick_answer()` before the model. The lexicon is Python (`lexicon.py`), not YAML: no new dependency.
+- **Two readings:** a question is read as typed first, and again with its typos put right only when the first isn't
+  understood or the corrected reading rules the first one out — so "tick off water the plants" never becomes
+  "plans", while "shoping list tmrw" is the shopping list. A word of 4 letters is corrected only for two swapped
+  neighbours ("lsit").
+- **Scores:** a corrected concept counts 2.7 (not 0.7 of 3); the threshold is 2.5, so one concept word is enough,
+  typo or not. Lexicon phrases are normalised like questions ("cheaper elsewhere" matches "cheap elsewhere").
+- **More concepts** than §17.4's table: NEED ("we're out of", "running low on" — the shopping list), KIN (family
+  titles; "is Nisha my cousin"), HOWMUCH, RECENT, CHECKLIST, RECURRING, MEAL, LISTS. Concept phrases may include time
+  words for TASK, BILL and CALORIE ("eat today").
+- **More intents** than §17.6's table: `item_alone`, `merchant` ("at Amazon"), `recent_split` (also "the last 7
+  days"), `food_log`, `task_done`, `checklist`, `scores`/`arcade.mine`, and the apps' own tools with a `quick` block.
+  A Todo list the person has ("the Costco list") wins over the shopping list; an app's own word for one tool rules
+  out the others' read-only intents.
+- **Admin phrases** also match inside a longer question when they have two words or more; a tap replaces other
+  learned meanings of the same words; `Not what I asked` makes a new question (the model gets the rejected meaning as
+  a hint) rather than changing the old one; a choice answers the same question.
+- **Assist** needed no change to the integration: a *Did you mean* ends in "?", so Assist keeps listening, and the
+  reply ("the first one", "tasks") answers the pending choices on the server.
+- **Found on the way:** after an answer the person was released a moment after it showed, so a second quick question
+  asked at once could get "Still answering the last question"; now the person is released when the answer is
+  written.
+- **Corpus:** `tests/data/quick_corpus.tsv`, 890 lines (≥ 25 per intent, near-misses, model-only and unplaceable
+  questions, several-in-one, spoken style); reading 1,000 questions takes about 0.6 s of CPU.

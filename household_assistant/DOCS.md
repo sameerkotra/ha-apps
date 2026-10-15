@@ -8,7 +8,8 @@ Source and issues: https://github.com/sameerkotra/ha-apps
 1. Install the app, then on its **Configuration** tab add your Home Assistant user name to **admin_users**
    and start it. Until someone is listed, every page shows **No admin yet** with the exact name to add (select
    your name at the top right: "How the app sees you").
-2. Open **Assistant** in the sidebar, then **🛡️ Admin → App settings** and set up the AI (below).
+2. Open **Assistant** in the sidebar, then **🛡️ Admin → App settings** and set up the AI (below). It's optional:
+   without it the common questions are still answered (**Quick answers**, below).
 3. Keep the apps' answers out of Home Assistant's history (below), then tick **I have excluded household_apps
    from Home Assistant's recorder** in **App settings → Privacy**.
 4. In each household app you want the assistant to ask, an admin turns on **Answer the Household Assistant**
@@ -21,6 +22,12 @@ Source and issues: https://github.com/sameerkotra/ha-apps
 ## Setting up the AI
 
 **Admin → App settings → AI**: choose the provider, its address and the model, then **Test connection**.
+
+**Use AI** (on unless you turn it off): off, the assistant never calls a model — not for questions, learning or a
+connection test — and answers only what it can answer quickly; everything else gets *That needs the AI, which an
+admin has turned off* and the questions it can answer. The model's settings stay saved for when you turn it back on.
+The page says *Quick answers only* under the ask box while it's off (or no model is set up). Turning it off doesn't
+change Household AI or the other apps.
 
 - **Ollama** (your own computer or server): the address, e.g. `http://192.168.1.10:11434`, and a model such as
   `llama3.1:8b` or `qwen2.5:7b`. Nothing leaves your network.
@@ -85,6 +92,34 @@ Each app answers only what you could see in it yourself, and only while both its
 Assistant** and your own **Let the Household Assistant answer for me** (that app's settings, on unless you turn
 it off) are on. Household Vault is never asked: passwords stay there.
 
+## Quick answers
+
+The common questions are answered in a second or two by rules, without the AI: the question is matched to one
+app's tool, that app answers as it would for you, and its own words are the answer (with Sources, as always).
+
+- **What it answers quickly**: your tasks (today, tomorrow, this week, overdue, a list, someone's), the schedule
+  (bin day), your lists; the shopping list, prices, best prices, budgets, spending at a store; spending, a month's
+  summary, bills due, recurring charges, account balances, spending at a shop or company; who owes whom, recent
+  shared expenses; birthdays, someone's details, how two people are related; calories; unread messages; a document
+  or checklist; Arcade scores. Changes become buttons as always: add to the shopping list, add or tick off a task,
+  a reminder, a shared expense, a food to log.
+- **However it's asked**: "what's on my list today", "wat do i hav 2day", "anything I need to do today?", "today"
+  and dozens of other ways mean the same; typos are put right, number words read as numbers ("in the next two
+  weeks"), and your household's own names are known — your Todo lists ("the Costco list"), Splitpot groups, the
+  shopping list's items, Finance's categories, Arcade's games, the people.
+- **What it understood** is shown above the answer (*Your tasks · today · Household Todo*). **Not what I asked**
+  asks the AI instead, or, without the AI, shows the other meanings.
+- **Did you mean**: when two meanings are close ("balances": who owes whom, or the bank accounts?), you get the
+  choices. The one you tap answers, and that way of asking is remembered for the household. By voice, say "the
+  first one" or the words of a choice.
+- **Several at once**: "tasks and birthdays this week", "bills and balances" answer each part. **Follow-ups**:
+  "and tomorrow?", "what about next week?" change only the time of the last quick answer.
+- Questions that need thinking — *why*, *should I*, comparisons, averages — go to the AI (App settings → Quick
+  answers → *When a question isn't understood*: *Ask the AI*, or *Show what I can answer*).
+- **The household teaches it**: a choice you tap (not a child's), and a question the AI answered with one app's
+  answer twice, become phrases that are answered quickly from then on. Admins can add their own (**Admin → Quick
+  answers**). Phrases nobody has used for 180 days are dropped.
+
 ## Morning and evening briefings
 
 **🌅 Briefings** (under the ask box) sends you a short summary on your phone:
@@ -142,7 +177,10 @@ Anyone in the room can talk to a satellite, so:
   limited.
 
 The answer is spoken without its links; **Sources** and **What was shared** are on this page. When the answer is a
-question back ("Which month?"), Assist keeps listening for your reply. Questions and answers travel over Home
+question back ("Which month?"), Assist keeps listening for your reply. Quick answers make voice quick too: the
+common questions come back in a second or two, and a *Did you mean* is asked aloud ("Did you mean your tasks today,
+or the shopping list?") — answer "the first one", "tasks" or "the shopping list". A change ("add milk to the
+shopping list") still needs a tap on this page. Questions and answers travel over Home
 Assistant's event bus like the apps' answers (keep `household_apps` out of the recorder, above; with an
 app-messages signing key, enter it in the integration's **Configure** too). Assist waits up to 5 minutes for an
 answer (the integration's **Configure**); if the app says it is busy, it asks once more a moment later.
@@ -154,7 +192,8 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
   apps start switched on; any other app that offers tools starts **off** until you turn it on. A tool named for one
   of the household's apps (`todo.…` is Household Todo's) is taken only from that app, and a tool name two apps
   offer is offered by neither (the Apps tab says so).
-- **App settings**: AI; **People → Children may ask** (off: people marked as children on the People tab can't
+- **App settings**: AI (with **Use AI**); **Quick answers** (on; *When a question isn't understood*; learn from
+  choices and from the AI; *Quick call timeout*, after which the page says which app is slow); **People → Children may ask** (off: people marked as children on the People tab can't
   ask; on: they ask only about their own things, from apps that let children ask); **Limits** (30 questions per
   person per hour, 200 per day for the household, keep questions 30 days — clearing questions doesn't reset the
   hourly limit); **Privacy** (the recorder tick; *Show "What was shared" open*); **Briefings** (the speakers they
@@ -163,6 +202,11 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
 - **People**: everyone who has opened the assistant, **May ask** and **Child**. Someone new — they opened the app,
   or Assist asked for them — is marked **New** (everyone new may ask and counts as an adult): check them, then tap
   **Looks right**.
+- **Quick answers**: **Test** a question to see how it's understood — its words after clean-up, what they mean,
+  the household names in it, and which answer wins (nothing is asked). **Phrases**: your household's own ways of
+  asking ("trash day" → the schedule; times and names in a phrase work for any time or name), with where each came
+  from; add or remove them. **Asked but not answered quickly**: the questions it couldn't place, in their cleaned-up
+  words and how often — never who asked — each with **Test** and **Add as a phrase**.
 - **Usage**: questions, tool calls and tokens per day for the last 30 days — counts only, never who asked what.
 - **Storage**: backups (below).
 

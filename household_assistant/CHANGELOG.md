@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0
+
+### New
+
+- **Quick answers, in a second or two, without the AI**: the common questions — today's tasks, the shopping list, prices, bills, spending, balances, who owes whom, birthdays, calories, unread messages, a document, scores — are matched by rules and answered with the app's own words and links, no model involved. A question it can't place goes to the AI as before (App settings → Quick answers → *When a question isn't understood*).
+- **Many ways of asking the same thing**: typos, text-speak ("wat do i hav 2day"), no punctuation, number words ("in the next two weeks"), filler ("hey, can you tell me…") and the household's own names — Todo lists, Splitpot groups, the shopping list's items, Finance's categories, Arcade's games, the people — are understood. Over 850 real phrasings are checked on every build.
+- **What it understood** shows above a quick answer (*Your tasks · today · Household Todo*), with **Not what I asked**, which asks the AI instead (or shows the other meanings without it).
+- **Did you mean**: a close call shows two or three choices; the one you tap answers, and that way of asking is remembered for the household. By voice (Assist), answer "the first one" or "tasks".
+- **Follow-ups and several questions at once**: "and tomorrow?", "what about next week" change only the time; "tasks and birthdays this week" answers both.
+- **Changes are still buttons**: "add milk and bread to the shopping list", "remind me to call mum at 5pm", "I paid 40 for dinner", "log 2 rotis for lunch" become buttons — nothing changes until you tap.
+- **Use AI** (Admin → App settings → AI): off, the assistant never calls a model — not for questions, learning or a connection test — and answers what it can quickly. Its settings stay saved. The assistant now also works with no model at all.
+- **Admin → Quick answers**: *Test* how a question is understood, add your own phrases ("trash day" → the schedule), and see the questions that weren't answered quickly (words and counts only, never who asked).
+- **Learning**: phrases are also learned from the AI's answers (used once seen twice; *Use what the AI learned straight away* to change that). Children's choices aren't learned; unused phrases go after 180 days.
+- The household apps can teach their own words for their tools (Household Todo 2.7.3, Receipt Price Intelligence 1.3.3 and Finance Dashboard 1.4.3 do).
+
+### Fixed
+
+- Asking again straight after an answer could say "Still answering the last question" for a moment.
+
 ## 1.3.2
 
 ### Security

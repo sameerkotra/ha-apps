@@ -160,19 +160,22 @@ class NativeModel:
                                calls=[{"name": n, "args": a} for n, a in calls])
 
 
-def set_up_ai(tool_calls="json"):
-    """The AI set up (a scripted model stands in); the JSON plan unless `tool_calls` is "auto"."""
+def set_up_ai(tool_calls="json", quick=False):
+    """The AI set up (a scripted model stands in); the JSON plan unless `tool_calls` is "auto". Quick answers
+    (§17) are off unless `quick`: these tests are about the model's path (test_quick_flow.py has the rules')."""
     settings.update({"ai_provider": "ollama", "ai_url": "http://192.0.2.1:11434", "ai_model": "tiny",
-                     "ai_tool_calls": tool_calls}, None)
+                     "ai_tool_calls": tool_calls, "ai_on": True, "quick_on": bool(quick)}, None)
 
 
 def wait_done(qid: str, timeout: float = 10.0) -> dict:
     from app import engine
     end = time.monotonic() + timeout
     while True:
+        with engine._lock:
+            working = qid in engine._stops             # its thread hasn't finished (it may still write the end)
         with db.get_conn() as conn:
             q = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
-            if q["state"] not in engine.RUNNING or time.monotonic() > end:
+            if (q["state"] not in engine.RUNNING and not working) or time.monotonic() > end:
                 return engine.view(conn, q)
         time.sleep(0.02)
 

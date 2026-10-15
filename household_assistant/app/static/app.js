@@ -157,6 +157,51 @@
     return t ? h("div", { class: "took dim", title: "From asking to the answer" }, `⏱ Took ${t}`) : null;
   }
 
+  // ---------- quick answers (§17): what was understood, Not what I asked, Did you mean ----------
+  function understoodLine(q) {
+    const line = h("div", { class: "understood dim" }, "⚡ ", q.understood);
+    if (q.notThis) {
+      const b = h("button", { type: "button", class: "link-btn" }, "Not what I asked");
+      b.addEventListener("click", async () => {
+        b.disabled = true;
+        try {
+          const { id } = await api(`api/ask/${q.id}/not-this`, { method: "POST" });
+          const nq = await api(`api/ask/${id}`);
+          $("#conversation").prepend(questionNode(nq));
+          poll(id);
+        } catch (e) { b.disabled = false; toast(e.message, true); }
+      });
+      line.append(" · ", b);
+    }
+    return line;
+  }
+
+  function choicesBlock(q) {
+    const choices = q.choices || [], suggest = q.suggest || [];
+    if (!choices.length && !suggest.length) return null;
+    const box = h("div", { class: "choices" });
+    choices.forEach((c) => {
+      const b = h("button", { type: "button", class: "chip" }, c.label);
+      b.addEventListener("click", async () => {
+        $$("button", box).forEach((x) => { x.disabled = true; });
+        try {
+          const nq = await api(`api/ask/${q.id}/choose`, { method: "POST", body: { choice: c.index } });
+          update(q.id, nq);
+          poll(q.id);
+        } catch (e) { $$("button", box).forEach((x) => { x.disabled = false; }); toast(e.message, true); }
+      });
+      box.append(b);
+    });
+    if (!choices.length) {
+      suggest.forEach((text) => {
+        const b = h("button", { type: "button", class: "chip plain-chip" }, text);
+        b.addEventListener("click", () => ask(text));
+        box.append(b);
+      });
+    }
+    return box;
+  }
+
   function questionNode(q) {
     const node = h("article", { class: "turn", dataset: { id: q.id } });
     fillQuestion(node, q);
@@ -171,7 +216,9 @@
       stop.addEventListener("click", () => api(`api/ask/${q.id}/stop`, { method: "POST" }).then(() => poll(q.id)).catch((e) => toast(e.message, true)));
       parts.push(h("div", { class: "progress" }, h("span", { class: "spinner" }), " ", q.progress || "Working…", " ", stop));
     } else if (q.state === "done") {
+      if (q.understood) parts.push(understoodLine(q));
       parts.push(h("div", { class: "answer" }, readAloudBtn(q), markdown(q.answer)));
+      parts.push(choicesBlock(q));
     } else if (q.state === "stopped") {
       parts.push(h("div", { class: "answer dim" }, "Stopped."));
     } else {
@@ -412,7 +459,7 @@
     currentTab = tab;
     $$("#adminTabs .tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     $$(".tab-body").forEach((s) => { s.hidden = s.id !== `tab-${tab}`; });
-    ({ apps: loadApps, settings: loadSettings, people: loadPeople, usage: loadUsage, storage: () => {} })[tab]();
+    ({ apps: loadApps, settings: loadSettings, quick: loadQuick, people: loadPeople, usage: loadUsage, storage: () => {} })[tab]();
   }
 
   async function loadApps() {
@@ -476,6 +523,100 @@
         afterSave: () => loadMe(),
       });
     } catch (e) { mount(clear(box), h("p", { class: "error" }, e.message)); }
+  }
+
+  // ---------- Admin → Quick answers (§17.8, §17.11): Test, your phrases, what wasn't answered quickly ----------
+  const SOURCE_WORDS = { admin: "added here", tapped: "from a choice", ai: "taught by the AI" };
+
+  async function loadQuick() {
+    const box = $("#tab-quick");
+    let ph, ms, its;
+    try {
+      [ph, ms, its] = await Promise.all([api("api/admin/quick/phrases"), api("api/admin/quick/misses"), api("api/admin/quick/intents")]);
+    } catch (e) { mount(clear(box), h("p", { class: "error" }, e.message)); return; }
+    const intentName = Object.fromEntries(its.intents.map((i) => [i.intent, i.question]));
+
+    // Test: how a question is understood (calls nothing)
+    const testIn = h("input", { type: "text", maxlength: "1000", placeholder: "e.g. whats on the costco list tmrw", "aria-label": "A question to test" });
+    const testOut = h("div", { class: "quick-test" });
+    const testBtn = h("button", { type: "button", class: "btn-secondary" }, "Test");
+    const runTest = async () => {
+      if (!testIn.value.trim()) return;
+      try {
+        const r = await api("api/admin/quick/test", { method: "POST", body: { text: testIn.value } });
+        const verdict = { answer: "Answered quickly", choices: "Did you mean (a close call)", none: "Not placed", model: "Needs the AI" }[r.result] || r.result;
+        mount(clear(testOut),
+          h("p", null, h("strong", null, verdict), r.understood.length ? ": " + r.understood.map((u) => u.label).join(" · ") : ""),
+          r.learned ? h("p", { class: "dim" }, `A learned phrase decides it (${SOURCE_WORDS[r.learned.source] || r.learned.source}).`) : null,
+          h("pre", null, [
+            `words: ${r.words.join(" ")}`,
+            `pattern: ${r.template}`,
+            `concepts: ${Object.entries(r.concepts).map(([k, v]) => `${k} (${v.join(", ")})`).join("; ") || "—"}`,
+            `names: ${Object.entries(r.names).map(([k, v]) => `${k}: ${v.join(", ")}`).join("; ") || "—"}`,
+            `when: ${Object.entries(r.slots).map(([k, v]) => `${k} ${v}`).join(", ") || "—"}`,
+            `scores: ${r.scores.slice(0, 6).map((x) => `${x.intent} ${x.score}`).join(", ") || "—"}`,
+            ...r.understood.map((u) => `calls: ${u.calls.map((c) => `${c.tool} ${JSON.stringify(c.args)}`).join("; ")}`),
+          ].join("\n")));
+      } catch (e) { mount(clear(testOut), h("p", { class: "error" }, e.message)); }
+    };
+    testBtn.addEventListener("click", runTest);
+    testIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runTest(); } });
+
+    // Add a phrase
+    const words = h("input", { type: "text", maxlength: "200", placeholder: "e.g. trash day", "aria-label": "The words" });
+    const intent = h("select", { "aria-label": "What they mean" }, its.intents.filter((i) => !i.acts).map((i) =>
+      h("option", { value: i.intent, disabled: !i.available }, i.question + (i.available ? "" : " (no app answers it now)"))));
+    const fixed = h("input", { type: "text", maxlength: "200", placeholder: "optional: group=Flat, days=14", "aria-label": "Fixed values" });
+    const add = h("button", { type: "button", class: "btn-primary" }, "Add phrase");
+    add.addEventListener("click", async () => {
+      const args = {};
+      for (const part of fixed.value.split(",").map((x) => x.trim()).filter(Boolean)) {
+        const [k, ...v] = part.split("=");
+        const val = v.join("=").trim();
+        args[k.trim()] = /^-?\d+(\.\d+)?$/.test(val) ? Number(val) : val;
+      }
+      try {
+        const r = await api("api/admin/quick/phrases", { method: "POST", body: { words: words.value, intent: intent.value, args } });
+        toast(`Added: “${r.phrase}”.`);
+        loadQuick();
+      } catch (e) { toast(e.message, true); }
+    });
+
+    const phraseRows = ph.phrases.map((p) => {
+      const del = h("button", { type: "button", class: "btn-ghost", title: "Remove" }, "✕");
+      del.addEventListener("click", async () => {
+        try { await api(`api/admin/quick/phrases/${encodeURIComponent(p.id)}`, { method: "DELETE" }); loadQuick(); }
+        catch (e) { toast(e.message, true); }
+      });
+      const fixedArgs = Object.entries(p.args).filter(([k]) => !p.slot_args.includes(k)).map(([k, v]) => `${k}=${v}`).join(", ");
+      return h("tr", null, h("td", null, `“${p.phrase}”`), h("td", null, intentName[p.intent] || p.intent, fixedArgs ? h("span", { class: "dim" }, ` (${fixedArgs})`) : null),
+        h("td", { class: "dim" }, `${SOURCE_WORDS[p.source] || p.source}${p.source === "ai" && p.seen < 2 ? " — not used until seen twice" : ""}`),
+        h("td", { class: "dim" }, `${p.hits} used`), h("td", null, del));
+    });
+
+    const missRows = ms.misses.map((m) => {
+      const use = h("button", { type: "button", class: "btn-ghost" }, "Add as a phrase");
+      use.addEventListener("click", () => { words.value = m.phrase; words.focus(); words.scrollIntoView({ block: "center" }); });
+      const test = h("button", { type: "button", class: "btn-ghost" }, "Test");
+      test.addEventListener("click", () => { testIn.value = m.phrase; runTest(); testIn.scrollIntoView({ block: "center" }); });
+      return h("tr", null, h("td", null, `“${m.phrase}”`), h("td", { class: "dim" }, `${m.count}×`), h("td", null, test, " ", use));
+    });
+    const clearMisses = h("button", { type: "button", class: "btn-ghost" }, "Clear the list");
+    clearMisses.addEventListener("click", async () => {
+      try { await api("api/admin/quick/misses", { method: "DELETE" }); loadQuick(); } catch (e) { toast(e.message, true); }
+    });
+
+    mount(clear(box),
+      h("div", { class: "card" }, h("h3", null, "Test a question"),
+        h("p", { class: "hint" }, "How a question is understood — its words after clean-up, what they mean, and which answer wins. Nothing is asked."),
+        h("div", { class: "row" }, testIn, " ", testBtn), testOut),
+      h("div", { class: "card" }, h("h3", null, "Phrases"),
+        h("p", { class: "hint" }, "Your household's own ways of asking. Times and names in a phrase work for any time or name (“trash day” also answers “when is trash day”). Phrases learned from choices or from the AI are dropped when nobody has used them for 180 days."),
+        h("div", { class: "row wrap" }, words, " ", intent, " ", fixed, " ", add),
+        phraseRows.length ? h("table", { class: "quick-table" }, h("tbody", null, phraseRows)) : h("p", { class: "dim" }, "No phrases yet.")),
+      h("div", { class: "card" }, h("h3", null, "Asked but not answered quickly"),
+        h("p", { class: "hint" }, "Questions the rules couldn't place, in their cleaned-up words, with how often — never who asked. Add a phrase for the ones that should be quick."),
+        missRows.length ? [h("table", { class: "quick-table" }, h("tbody", null, missRows)), h("p", null, clearMisses)] : h("p", { class: "dim" }, "Nothing yet.")));
   }
 
   async function loadPeople() {
@@ -549,6 +690,8 @@
     const cant = $("#cantAsk");
     cant.hidden = me.canAsk;
     cant.textContent = me.why || "";
+    const qo = $("#quickOnly");
+    qo.hidden = !(me.canAsk && me.quickOnly);
     $("#askInput").disabled = !me.canAsk;
     $("#askBtn").disabled = !me.canAsk;
     showSuggestions(me.suggestions);

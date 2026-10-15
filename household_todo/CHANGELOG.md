@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.3
+
+- **The Household Assistant's quick answers know Todo's words for the schedule** ("bin day", "recycling day", "boiler service", …), so "when is bin day?" is answered in a second without the AI (Household Assistant 1.4.0).
+
 ## 2.7.2
 
 ### Security

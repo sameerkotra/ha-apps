@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.3
+
+- **The Household Assistant's quick answers know Finance's words for recurring charges and balances** ("standing orders", "direct debits", "bank balance", "credit card balance", …), so those questions are answered in a second without the AI (Household Assistant 1.4.0).
+
 ## 1.4.2
 
 - **Transfers link when your data changes, and fast**: matching now runs whenever a statement or CSV is imported or a transaction is added, reviewed, included, deleted or restored — opening the Dashboard or Transfers no longer changes anything — and it takes moments on a long history instead of minutes. Amounts a cent apart now always match.

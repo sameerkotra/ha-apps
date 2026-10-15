@@ -13,8 +13,13 @@ only once its admin has turned on **Answer the Household Assistant**. Anything t
 add to the shopping list, make a note) is only proposed: nothing happens until the person taps the exact change.
 Under every answer, **What was shared** shows word for word what each app returned.
 
-🤖 **Needed**: the assistant uses the AI model you choose — your own Ollama on your network, an
-OpenAI-compatible service, or Anthropic Claude. Nothing is sent to an outside service unless you choose one.
+⚡ **Quick answers, without AI**: the common questions — today's tasks, the shopping list, bills, birthdays, who
+owes whom — are answered in a second or two by rules, with the app's own words. They're understood however they're
+asked: typos, text-speak, no punctuation, the household's own names.
+
+🤖 **Optional**: for everything else, the assistant uses the AI model you choose — your own Ollama on your network,
+an OpenAI-compatible service, or Anthropic Claude. Nothing is sent to an outside service unless you choose one, and
+**Use AI** turns the model off altogether.
 
 It talks to the other apps over Home Assistant's own event bus, so it needs no extra permissions. See the
 [documentation](DOCS.md) to set it up, including the one line that keeps the apps' answers out of Home

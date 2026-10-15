@@ -2,9 +2,14 @@
 
 Admins change them inside the app, without a restart. Only `admin_users` stays on the app's Configuration tab.
 
-- AI: `ai_provider` ("" | "ollama" | "openai" | "anthropic"), `ai_url`, `ai_model`, `ai_api_key` (SECRET: never
+- AI: `ai_on` (Use AI: off = no model is ever called, every question is a quick answer — §17.10), `ai_provider`
+  ("" | "ollama" | "openai" | "anthropic"), `ai_url`, `ai_model`, `ai_api_key` (SECRET: never
   returned or shown, only sent to the provider in a header; blanked in backups, kept on restore), `ai_max_tokens`,
   `ai_tool_calls` ("auto": the model's native tool calling where it has it; "json": always the JSON plan).
+- Quick answers (§17): `quick_on` (questions answered by rules, without a model, first), `quick_unsure` ("ai": a
+  question the rules can't place goes to the model; "choices": the page shows what it can answer), `quick_learn_taps`,
+  `quick_learn_ai`, `quick_ai_now` (use what the model taught at once), `quick_timeout` (seconds before "… is slow").
+  `quick_on` and `ai_on` can't both be off.
 - People: `assist_answers` (off: questions from Home Assistant's Assist, via the companion integration),
   `children_may_ask` (off).
 - Limits: `questions_per_hour` (per person, 30), `questions_per_day` (the household, 200),
@@ -35,6 +40,8 @@ PROVIDERS = {"ollama": "Ollama", "openai": "OpenAI-compatible", "anthropic": "An
 DEFAULT_URLS = {"ollama": "", "openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com"}
 
 NOT_SET_UP = "The assistant's AI isn't set up — an admin can set it up in Admin → App settings."
+AI_OFF = "That needs the AI, which an admin has turned off."
+NOTHING_ON = ("quick_on: Quick answers can't be off while Use AI is off — nothing could answer. Turn one of them on.")
 
 _KEY_CHARS = re.compile(r"^[\x21-\x7e]+$")     # printable ASCII, no spaces: safe in a header
 _SPEAKER_RE = re.compile(r"^media_player\.[a-z0-9_]{1,100}$")
@@ -90,8 +97,12 @@ def allowed_speakers() -> set[str]:
 
 
 GROUPS = [
-    Group("ai", "🤖 AI", "The model that plans which apps to ask and writes the answers. The assistant does nothing "
-          "until it is set up. Nothing is sent to an outside service unless you choose one."),
+    Group("ai", "🤖 AI", "The model that answers what Quick answers can't: it plans which apps to ask and writes the "
+          "answer. Without one (or with Use AI off) the assistant answers the common questions only. Nothing is sent "
+          "to an outside service unless you choose one."),
+    Group("quick", "⚡ Quick answers", "The common questions — today's tasks, the shopping list, bills, birthdays, "
+          "who owes whom — answered in a second or two by rules, without a model: the app's own words, with links. "
+          "Admin → Quick answers shows how a question is understood and lets you add your own phrases."),
     Group("people", "👥 People"),
     Group("limits", "⏱️ Limits"),
     Group("privacy", "🔒 Privacy"),
@@ -101,35 +112,59 @@ GROUPS = [
 
 # Every key applies live (read at the moment it's used); none needs a restart.
 SETTINGS = [
-    Setting("ai_provider", "", "Provider", group="ai", type=StrictStr, validators=[_check_provider],
+    Setting("ai_on", True, "Use AI", group="ai", strict=True,
+            help="Off: the assistant never calls a model — not for questions, learning or a connection test. Every "
+                 "question gets a quick answer, a Did you mean, or the questions it can answer. The model's settings "
+                 "below stay saved. The briefings don't use a model either way."),
+    Setting("ai_provider", "", "Provider", group="ai", enabled_if="ai_on", type=StrictStr, validators=[_check_provider],
             choices=[("", "Not set up (no AI)"), ("ollama", "Ollama (your own computer or server)"),
                      ("openai", "OpenAI-compatible (OpenAI, OpenRouter, Groq, LM Studio, …)"),
                      ("anthropic", "Anthropic Claude")],
             help="Ollama runs models on your own hardware, so nothing leaves your network. OpenAI-compatible covers "
                  "OpenAI and any service or local server that speaks its API. Claude is Anthropic's API."),
-    Setting("ai_url", "", "Address", group="ai", kind="url", strict=True, max_length=500, validators=[_check_url],
+    Setting("ai_url", "", "Address", group="ai", enabled_if="ai_on",
+            kind="url", strict=True, max_length=500, validators=[_check_url],
             placeholder="http://192.168.1.10:11434",
             help="Ollama: its address, e.g. http://192.168.1.10:11434 (required). OpenAI-compatible: the API base — "
                  "blank = https://api.openai.com/v1 (LM Studio: e.g. http://192.168.1.10:1234/v1). Claude: blank = "
                  "https://api.anthropic.com."),
-    Setting("ai_model", "", "Model", group="ai", strict=True, max_length=200, validators=[_check_model],
+    Setting("ai_model", "", "Model", group="ai", enabled_if="ai_on",
+            strict=True, max_length=200, validators=[_check_model],
             placeholder="e.g. llama3.1:8b, gpt-4o-mini, claude-sonnet-4-5",
             help="The model's exact name. Test connection lists the models the provider offers."),
     # SECRET: never returned by the API or shown on a page; only ever sent to the provider in a request
     # header. Blanked in the database download; a restore keeps this install's key.
-    Setting("ai_api_key", "", "Access key", group="ai", secret=True, strict=True, max_length=500,
+    Setting("ai_api_key", "", "Access key", group="ai", enabled_if="ai_on", secret=True, strict=True, max_length=500,
             validators=[_check_key], placeholder="Paste the key", page={"clearFlag": "clear_ai_api_key"},
             help="Needed for Claude and for OpenAI and most cloud services; not for Ollama or LM Studio. Stored in "
                  "the app's database, never shown again, never logged, and left out of database downloads. Leave the "
                  "box empty to keep the saved key."),
-    Setting("ai_max_tokens", 4096, "Longest answer (tokens)", group="ai", min=256, max=200000, strict=True,
+    Setting("ai_max_tokens", 4096, "Longest answer (tokens)", group="ai", enabled_if="ai_on",
+            min=256, max=200000, strict=True,
             help="The most the model may write in one answer. Claude requires a limit; the other providers ignore it."),
-    Setting("ai_tool_calls", "auto", "Tool calls", group="ai",
+    Setting("ai_tool_calls", "auto", "Tool calls", group="ai", enabled_if="ai_on",
             choices=[("auto", "The model's own tool calling where it has it (recommended)"),
                      ("json", "Always ask the model for a JSON plan")],
             help="Most current models (Claude, GPT, Qwen 2.5, Llama 3.1 and newer) choose tools natively, which is "
                  "more reliable. A model without it is noticed on its first question and asked for a JSON plan "
                  "from then on. Choose the JSON plan if a model calls tools badly."),
+    Setting("quick_on", True, "Quick answers", group="quick", strict=True,
+            help="Common questions are answered by rules first, in a second or two, without the model."),
+    Setting("quick_unsure", "ai", "When a question isn't understood", group="quick", enabled_if="quick_on",
+            choices=[("ai", "Ask the AI"), ("choices", "Show what I can answer")],
+            help="Ask the AI needs Use AI on and a model set up; otherwise the questions it can answer are shown."),
+    Setting("quick_learn_taps", True, "Learn from choices", group="quick", enabled_if="quick_on", strict=True,
+            help="When someone picks one of the Did you mean choices, the household's way of asking is remembered "
+                 "(not children's)."),
+    Setting("quick_learn_ai", True, "Learn from the AI", group="quick", enabled_if="ai_on", strict=True,
+            help="When the AI answers a question with one app's answer, that way of asking is remembered — used once "
+                 "it has been seen twice."),
+    Setting("quick_ai_now", False, "Use what the AI learned straight away", group="quick", enabled_if="ai_on",
+            strict=True,
+            help="Use a phrase the AI taught after the first time instead of the second."),
+    Setting("quick_timeout", 5, "Quick call timeout (seconds)", group="quick", enabled_if="quick_on",
+            min=2, max=20, strict=True,
+            help="After this long, the page says which app is slow to answer, and waits up to 20 seconds."),
     Setting("assist_answers", False, "Answer Assist (Home Assistant's voice assistant)", group="people",
             strict=True,
             help="With the Household Assistant integration installed in Home Assistant, Assist can pass questions "
@@ -240,6 +275,8 @@ def key_target_changed(current: dict, new: dict) -> bool:
 
 
 def _check(merged: dict, partial: dict, current: dict) -> None:
+    if not merged["quick_on"] and not merged["ai_on"]:
+        raise SettingsError(NOTHING_ON)
     if merged["ai_provider"] == "ollama" and not merged["ai_url"]:
         raise SettingsError("ai_url: Ollama needs its address, e.g. http://192.168.1.10:11434")
 
@@ -302,6 +339,15 @@ def ai_configured() -> bool:
     return provider != "anthropic" or bool(get("ai_api_key"))
 
 
+def ai_in_use() -> bool:
+    """A model may be called: Use AI is on and one is set up (§17.10)."""
+    return bool(get("ai_on")) and ai_configured()
+
+
+def quick_on() -> bool:
+    return bool(get("quick_on"))
+
+
 def ai_host() -> str:
     return urlsplit(ai_url()).hostname or ""
 
@@ -325,7 +371,7 @@ def is_external_host(host: str) -> bool:
 
 
 def ai_is_external() -> bool:
-    return ai_provider() in PROVIDERS and is_external_host(ai_host())
+    return bool(get("ai_on")) and ai_provider() in PROVIDERS and is_external_host(ai_host())
 
 
 # ---------- API payload & writes ----------

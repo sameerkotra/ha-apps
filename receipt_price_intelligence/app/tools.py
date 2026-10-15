@@ -214,7 +214,10 @@ def add(ctx):
             "Cheaper ways to buy what the household buys regularly: another store or pack size at least 10% cheaper "
             "per unit than usual (receipts and online deals), and shopping-list items whose price is down now.",
             args={"home": _HOME}, returns="items with where they're usually bought, the cheaper option and the saving",
-            scope="household", examples=("What's on sale that we usually buy?",))
+            scope="household", examples=("What's on sale that we usually buy?",),
+            # the assistant's quick answers (HOUSEHOLD_ASSISTANT_SPEC.md §17.4)
+            quick={"concepts": ["DEAL"], "words": ["special offer", "on offer", "price drops", "cheaper pack",
+                                                   "better price"]})
 def deals(ctx):
     from app.services import lookout, reqcache
     with _session() as db, reqcache.scope():
@@ -255,7 +258,9 @@ def deals(ctx):
             "The household's monthly shopping budgets (overall and per category): spent so far this month, what's "
             "left, the days left and where the month is heading at this pace.",
             args={"home": _HOME}, returns="budgets with amount, spent, left, percent used, projected and status",
-            scope="household", examples=("How's the grocery budget?",))
+            scope="household", examples=("How's the grocery budget?",),
+            quick={"concepts": ["BUDGET"], "words": ["spending limit", "grocery budget", "food budget",
+                                                     "shopping budget"]})
 def budgets_status(ctx):
     from app.services import budgets, reqcache
     with _session() as db, reqcache.scope():

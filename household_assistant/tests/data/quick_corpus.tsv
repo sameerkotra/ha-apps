@@ -1,0 +1,926 @@
+# ---- tasks (todo.tasks)
+what's on my list today	tasks	{"when": "today"}
+whats on my list today	tasks	{"when": "today"}
+What do I have today?	tasks	{"when": "today"}
+what do I need to do today	tasks	{"when": "today"}
+anything I need to do today?	tasks	{"when": "today"}
+do I have anything today	tasks	{"when": "today"}
+today's tasks	tasks	{"when": "today"}
+tasks for today	tasks	{"when": "today"}
+my todos today	tasks	{"when": "today"}
+todo	tasks	{"when": "today"}
+to do list	tasks	{"when": "today"}
+what's on today	tasks	{"when": "today"}
+what's my day look like	tasks	{"when": "today"}
+what have I got going on today	tasks	{"when": "today"}
+what am I doing today	tasks	{"when": "today"}
+any chores today	tasks	{"when": "today"}
+what's due today	tasks	{"when": "today"}
+what's pending	tasks	{"when": "today"}
+what's left for today	tasks	{"when": "today"}
+show me today	tasks	{"when": "today"}
+today	tasks	{"when": "today"}
+tday	tasks	{"when": "today"}
+todays list	tasks	{"when": "today"}
+wat do i hav 2day	tasks	{"when": "today"}
+hey what do I got today	tasks	{"when": "today"}
+tell me my tasks please	tasks	{"when": "today"}
+can you check my to-do list for today	tasks	{"when": "today"}
+Whats on my lists 2day??	tasks	{"when": "today"}
+what's on my plate today	tasks	{"when": "today"}
+any jobs for me today	tasks	{"when": "today"}
+what do i have tomorrow	tasks	{"when": "tomorrow"}
+tasks tomorrow	tasks	{"when": "tomorrow"}
+tomorrow	tasks	{"when": "tomorrow"}
+whats on tmrw	tasks	{"when": "tomorrow"}
+what's on the list for tomorrow?	tasks	{"when": "tomorrow"}
+what's my week looking like	tasks	{"when": "week"}
+tasks this week	tasks	{"when": "week"}
+what's coming up this week	tasks	{"when": "week"}
+anything on this weekend	tasks	{"when": "week"}
+what's overdue	tasks	{"when": "overdue"}
+overdue tasks	tasks	{"when": "overdue"}
+what have I missed	tasks	{"when": "overdue"}
+which tasks am I behind on	tasks	{"when": "overdue"}
+what's on the costco list	tasks	{"list": "Costco", "when": "all"}
+what's on the costco list tomorrow	tasks	{"list": "Costco", "when": "tomorrow"}
+home jobs list	tasks	{"list": "Home jobs"}
+show the work list	tasks	{"list": "Work"}
+what does ravi have today	tasks	{"person": "Ravi", "when": "today"}
+ravi's tasks this week	tasks	{"person": "Ravi", "when": "week"}
+what's on friday	tasks	{"when": "week"}
+um what do i have to do today	tasks	{"when": "today"}
+what is on my to do list	tasks	{"when": "today"}
+my to-do list	tasks	
+# ---- schedule (todo.schedule)
+what's on the schedule	schedule	{"days": 7}
+when is trash day	schedule	
+bin day	schedule	
+when do the bins go out	schedule	
+is it bin day tomorrow	schedule	{"days": 2}
+recycling this week	schedule	{"days": 7}
+when is the garbage collection	schedule	
+what's coming up on the schedule	schedule	
+schedule for the next 3 days	schedule	{"days": 3}
+anything on the household schedule this week	schedule	{"days": 7}
+when is the boiler service	schedule	
+any maintenance due	schedule	
+when's the next filter change	schedule	
+schedule today	schedule	{"days": 1}
+whats the schedule tmrw	schedule	{"days": 2}
+is it recycling day	schedule	
+when is rubbish day	schedule	
+garden waste collection	schedule	
+schedule next week	schedule	{"days": 14}
+what routines are due	schedule	
+when do I put the bins out	schedule	
+trash day this week?	schedule	{"days": 7}
+household schedule	schedule	
+what's on the schedule for the weekend	schedule	{"days": 7}
+any collections tomorrow	schedule	{"days": 2}
+# ---- lists (todo.lists)
+which lists do I have	lists	
+my lists	lists	
+show my lists	lists	
+what lists do I have	lists	
+all my lists	lists	
+how many lists do I have	lists	
+list of lists	lists	
+what lists are there	lists	
+our lists	lists	
+show all lists	lists	
+which lists	lists	
+can you show me all my lists	lists	
+tell me my lists	lists	
+what are my lists	lists	
+lists do I have	lists	
+all lists please	lists	
+which lists have I got	lists	
+show lists	lists	
+my lists please	lists	
+list my lists	lists	
+what are all my lists	lists	
+what lists have we got	lists	
+show our lists	lists	
+which lists are mine	lists	
+how many lists	lists	
+# ---- reminder (todo.reminder.add)
+remind me to call mom at 5pm	reminder	{"text": "call mom", "time": "17:00"}
+remind me to take the bins out at 7	reminder	{"text": "take the bins out", "time": "19:00"}
+remind me tomorrow at 9am to call the bank	reminder	{"time": "09:00", "date": "2026-10-15"}
+set a reminder to water the plants at 6:30 pm	reminder	{"time": "18:30"}
+remind me at noon to eat lunch	reminder	{"time": "12:00"}
+remind me to pick up the kids at 3	reminder	{"text": "pick up the kids", "time": "15:00"}
+reminder: pay rent at 10am	reminder	{"time": "10:00"}
+ping me at 8pm to lock the door	reminder	{"time": "20:00"}
+remind me on friday at 5pm to book the car service	reminder	{"time": "17:00", "date": "2026-10-16"}
+remind me at 17:30 to leave for the station	reminder	{"time": "17:30"}
+remind me to ring dad at 4 pm	reminder	{"time": "16:00"}
+alert me at 9 to take my tablets	reminder	{"time": "09:00"}
+remind me to take the chicken out of the freezer at 2pm	reminder	{"time": "14:00"}
+please remind me to call the plumber at 11am	reminder	{"text": "call the plumber", "time": "11:00"}
+remind me to feed the cat at 6	reminder	{"time": "18:00"}
+remind me tomorrow at 7am to go running	reminder	{"time": "07:00", "date": "2026-10-15"}
+nudge me at 1pm to send the email	reminder	{"time": "13:00"}
+remind me at midnight to switch off the heater	reminder	{"time": "00:00"}
+remind me to buy a birthday card at 5pm	reminder	{"time": "17:00"}
+can you remind me to move the car at 8:15am	reminder	{"time": "08:15"}
+remind me at 10 to check the oven	reminder	{"time": "10:00"}
+remind me to pay the electricity bill at 6pm	reminder	{"time": "18:00"}
+remind me to call meera at 7:45 pm	reminder	{"time": "19:45"}
+don't let me forget to post the parcel at 3pm	reminder	{"time": "15:00"}
+remind me at 4pm to pick up the dry cleaning	reminder	{"time": "16:00"}
+remind me about the bills	none	
+remind me to call mom	none	
+# ---- task_add (todo.items.add)
+add call the plumber to my list	task_add	{"list": "Personal", "text": "call the plumber"}
+put fix the tap on the home jobs list	task_add	{"list": "Home jobs", "text": "fix the tap"}
+add buy stamps to the costco list	task_add	{"list": "Costco", "text": "buy stamps"}
+add pay the gas bill to my todo list for friday	task_add	{"text": "pay the gas bill", "due": "2026-10-16"}
+add renew passport to my tasks	task_add	{"text": "renew passport"}
+add a task to clean the gutters	task_add	{"text": "clean the gutters"}
+put mow the lawn on my to do list	task_add	{"text": "mow the lawn"}
+add book dentist to the work list	task_add	{"list": "Work", "text": "book dentist"}
+add email the landlord to my list tomorrow	task_add	{"text": "email the landlord", "due": "2026-10-15"}
+add a todo: return the library books	task_add	{"text": "return the library books"}
+add wash the car to home jobs	task_add	{"list": "Home jobs", "text": "wash the car"}
+add order printer ink to my list	task_add	{"text": "order printer ink"}
+add call the school to my tasks for today	task_add	{"text": "call the school", "due": "2026-10-14"}
+put sort the garage on the home jobs list	task_add	{"list": "Home jobs"}
+add new task fix the shed door	task_add	{"text": "fix the shed door"}
+add cancel the gym to my todo	task_add	{"text": "cancel the gym"}
+add pick up parcel to the personal list	task_add	{"list": "Personal", "text": "pick up parcel"}
+add file taxes to my list	task_add	{"text": "file taxes"}
+add hang the pictures to home jobs list	task_add	{"list": "Home jobs"}
+put prepare slides on the work list	task_add	{"list": "Work", "text": "prepare slides"}
+add bleed the radiators to my task list	task_add	{"text": "bleed the radiators"}
+add a job to paint the fence	task_add	{"text": "paint the fence"}
+add buy a gift for sam to my list	task_add	{"text": "buy a gift for sam"}
+jot down fix the bike on my list	task_add	{"text": "fix the bike"}
+add service the boiler to home jobs	task_add	{"list": "Home jobs"}
+# ---- task_done (todo.items.done)
+tick off the bins	task_done	{"task": "bins"}
+mark call plumber as done	task_done	{"task": "call plumber"}
+I finished the laundry	task_done	{"task": "laundry"}
+done with fix the tap	task_done	{"task": "fix the tap"}
+cross off pay rent	task_done	{"task": "pay rent"}
+mark the gutters done	task_done	{"task": "gutters"}
+tick off call mom	task_done	{"task": "call mom"}
+I've completed the tax return	task_done	{"task": "tax return"}
+mark wash the car as done	task_done	{"task": "wash the car"}
+check off mow the lawn	task_done	{"task": "mow the lawn"}
+tick call the bank off	task_done	{"task": "call the bank"}
+mark renew passport done	task_done	{"task": "renew passport"}
+I finished painting the fence	task_done	{"task": "painting the fence"}
+done: return the library books	task_done	{"task": "return the library books"}
+tick off book dentist on the work list	task_done	{"list": "Work"}
+mark it done fix the shed door	task_done	{"task": "fix the shed door"}
+cross off email the landlord	task_done	{"task": "email the landlord"}
+I've finished the ironing	task_done	{"task": "ironing"}
+mark order printer ink as done	task_done	{"task": "order printer ink"}
+tick off clean the gutters	task_done	{"task": "clean the gutters"}
+complete the bike repair task	task_done	
+I'm done with the dishes	task_done	{"task": "dishes"}
+tick off water the plants	task_done	{"task": "water the plants"}
+mark cancel the gym done	task_done	{"task": "cancel the gym"}
+finished sorting the garage	task_done	{"task": "sorting the garage"}
+# ---- shopping (receipt.shopping_list)
+what's on the shopping list	shopping	
+whats on the shopping list	shopping	
+shopping list	shopping	
+shopping	shopping	
+groceries	shopping	
+grocery list	shopping	
+what do we need from the shop	shopping	
+what do we need from the store	shopping	
+what's on the grocery list?	shopping	
+show me the shopping list	shopping	
+is milk on the list	shopping	
+is milk on the shopping list	shopping	
+are eggs on the list?	shopping	
+what do we need to buy	shopping	
+what's on the shoping list	shopping	
+what groceries do we need	shopping	
+anything on the shopping list	shopping	
+shopping list please	shopping	
+read me the shopping list	shopping	
+what should I pick up at the supermarket	shopping	
+what do i need to get from the market	shopping	
+the shopping list	shopping	
+what's left on the shopping list	shopping	
+our grocery list	shopping	
+what is on the list to buy	shopping	
+is dish soap on the list	shopping	
+# ---- shopping_add (receipt.shopping_list.add)
+add milk to the shopping list	shopping_add	{"item": "milk"}
+we need milk	shopping_add	{"item": "milk"}
+add 2 litres of milk and a loaf of bread to the shopping list	shopping_add	{"item": "milk", "qty": 2.0}
+we're out of eggs	shopping_add	{"item": "eggs"}
+we're running low on rice	shopping_add	{"item": "rice"}
+add bread	shopping_add	{"item": "bread"}
+put onions on the shopping list	shopping_add	{"item": "onions"}
+add a dozen eggs	shopping_add	{"item": "eggs", "qty": 12.0}
+we need more coffee	shopping_add	{"item": "coffee"}
+add toothpaste to groceries	shopping_add	{"item": "toothpaste"}
+add 3 x bread to the list	shopping_add	{"item": "bread", "qty": 3.0}
+we ran out of sugar	shopping_add	{"item": "sugar"}
+add paneer and curd to the shopping list	shopping_add	{"item": "paneer"}
+add atta to the grocery list	shopping_add	{"item": "atta"}
+put bananas on the list	shopping_add	{"item": "bananas"}
+add washing up liquid to the shopping list	shopping_add	{"item": "washing up liquid"}
+we are almost out of ghee	shopping_add	{"item": "ghee"}
+add 5 kg basmati rice	shopping_add	{"item": "basmati rice", "qty": 5.0}
+add tomatoes	shopping_add	{"item": "tomatoes"}
+i need butter	shopping_add	{"item": "butter"}
+add oil and salt to groceries	shopping_add	{"item": "oil"}
+stick milk on the shopping list	shopping_add	{"item": "milk"}
+add 2 packets of biscuits to the shopping list	shopping_add	{"item": "biscuits", "qty": 2.0}
+we're low on detergent	shopping_add	{"item": "detergent"}
+add yogurt to the list	shopping_add	{"item": "yogurt"}
+add cat food to the shopping list	shopping_add	{"item": "cat food"}
+# ---- price (receipt.price)
+how much is basmati rice at the moment	price	{"item": "basmati rice"}
+price of milk	price	{"item": "milk"}
+where is milk cheapest	price	{"item": "milk"}
+how much does milk cost	price	{"item": "milk"}
+what's the price of eggs	price	{"item": "eggs"}
+how much are eggs	price	{"item": "eggs"}
+where can i buy ghee cheapest	price	{"item": "ghee"}
+best price for coffee	price	{"item": "coffee"}
+cheapest place for paneer	price	{"item": "paneer"}
+what does atta cost	price	{"item": "atta"}
+how much is a pack of butter	price	{"item": "butter"}
+where should I buy rice	price	{"item": "rice"}
+price of dish soap	price	{"item": "dish soap"}
+what's the going rate for onions	price	{"item": "onions"}
+how much is olive oil	price	
+what do we usually pay for milk	price	{"item": "milk"}
+milk price	price	{"item": "milk"}
+how much did we pay for eggs last time	price	{"item": "eggs"}
+whats the cheapest place to buy sugar	price	{"item": "sugar"}
+cost of bananas	price	{"item": "bananas"}
+how much are tomatoes now	price	{"item": "tomatoes"}
+price check on detergent	price	{"item": "detergent"}
+how much is shampoo	price	{"item": "shampoo"}
+where is coffee cheapest	price	{"item": "coffee"}
+what's the price of basmati rice at costco	price	{"item": "basmati rice"}
+# ---- item_alone (receipt.price + receipt.shopping_list)
+milk	item_alone	{"item": "milk"}
+eggs	item_alone	{"item": "eggs"}
+bread?	item_alone	{"item": "bread"}
+basmati rice	item_alone	{"item": "basmati rice"}
+coffee	item_alone	{"item": "coffee"}
+paneer	item_alone	{"item": "paneer"}
+ghee	item_alone	{"item": "ghee"}
+onions	item_alone	{"item": "onions"}
+butter	item_alone	{"item": "butter"}
+sugar	item_alone	{"item": "sugar"}
+atta	item_alone	{"item": "atta"}
+dish soap	item_alone	{"item": "dish soap"}
+tomatoes	item_alone	{"item": "tomatoes"}
+bananas	item_alone	{"item": "bananas"}
+toothpaste	item_alone	{"item": "toothpaste"}
+curd	item_alone	{"item": "curd"}
+dal	item_alone	{"item": "dal"}
+yogurt	item_alone	{"item": "yogurt"}
+cheese	item_alone	{"item": "cheese"}
+tea	item_alone	{"item": "tea"}
+oil	item_alone	{"item": "oil"}
+detergent	item_alone	{"item": "detergent"}
+shampoo	item_alone	{"item": "shampoo"}
+rice	item_alone	{"item": "rice"}
+the milk	item_alone	{"item": "milk"}
+# ---- deals (receipt.deals)
+any deals	deals	
+any good deals?	deals	
+what's on sale	deals	
+what's on sale that we usually buy	deals	
+any discounts	deals	
+best prices	deals	
+any savings this week	deals	
+what's cheaper elsewhere	deals	
+any price drops	deals	
+show me the deals	deals	
+bargains	deals	
+any offers	deals	
+what's on offer	deals	
+special offers	deals	
+anything on sale	deals	
+where can we save money on groceries	deals	
+any good offers today	deals	
+deals please	deals	
+what's discounted	deals	
+any cheaper pack sizes	deals	
+deals this week	deals	
+what's a better price elsewhere	deals	
+any bargains at the shops	deals	
+savings	deals	
+show me offers	deals	
+# ---- budgets (receipt.budgets)
+are we on track with the budget	budgets	
+how's the grocery budget	budgets	
+budget	budgets	
+how much is left in the budget	budgets	
+are we over budget	budgets	
+have we overspent	budgets	
+how much is left to spend this month	budgets	
+food budget	budgets	
+shopping budget status	budgets	
+are we on track this month	budgets	
+budgets	budgets	
+how are the budgets looking	budgets	
+whats left in the grocery budget	budgets	
+did we go over budget	budgets	
+spending limit	budgets	
+how much budget is left	budgets	
+grocery budget this month	budgets	
+are we within budget	budgets	
+show the budgets	budgets	
+how's our budget	budgets	
+budget check	budgets	
+how close are we to the budget	budgets	
+are we over the food budget	budgets	
+what's left of the shopping budget	budgets	
+monthly budget	budgets	
+# ---- store_spend (receipt.spending)
+how much did we spend at costco	store_spend	{"store": "Costco"}
+spending at dmart this month	store_spend	{"store": "Dmart", "month": "2026-10"}
+how much have we spent at costco this month	store_spend	{"store": "Costco"}
+what did we spend at dmart in september	store_spend	{"store": "Dmart", "month": "2026-09"}
+costco spending	store_spend	{"store": "Costco"}
+how much did we spend at tesco last month	store_spend	{"store": "Tesco", "month": "2026-09"}
+how much at aldi	store_spend	
+spent at walmart	store_spend	{"store": "Walmart"}
+how much do we spend at lidl	store_spend	{"store": "Lidl"}
+total spend at costco	store_spend	{"store": "Costco"}
+what have we spent at dmart	store_spend	{"store": "Dmart"}
+how much did we blow at costco	store_spend	{"store": "Costco"}
+dmart spending last month	store_spend	{"store": "Dmart", "month": "2026-09"}
+how much was spent at costco in august	store_spend	{"store": "Costco", "month": "2026-08"}
+spend at sainsburys	store_spend	
+how much went on costco this month	store_spend	{"store": "Costco"}
+costco expenses this month	store_spend	{"store": "Costco"}
+how much did I spend at target	store_spend	{"store": "Target"}
+what did we spend at bigbasket	store_spend	
+how much have we spent at the costco	store_spend	{"store": "Costco"}
+spending at dmart	store_spend	{"store": "Dmart"}
+how much at costco last month	store_spend	{"store": "Costco", "month": "2026-09"}
+our spending at aldi	store_spend	
+how much do we spend at costco each month	store_spend	{"store": "Costco"}
+amount spent at costco	store_spend	{"store": "Costco"}
+# ---- spend (finance.spending)
+how much did we spend on food in september	spend	{"month": "2026-09", "category": "Food & Dining"}
+spending this month	spend	{"month": "2026-10"}
+what did we spend last month	spend	{"month": "2026-09"}
+how much have we spent this month	spend	{"month": "2026-10"}
+how much did we spend on groceries	spend	{"category": "Groceries"}
+spending on fuel last month	spend	{"category": "Fuel", "month": "2026-09"}
+what's our spending looking like	spend	
+how much went on eating out this month	spend	
+how much did we spend in august	spend	{"month": "2026-08"}
+spending	spend	
+total spending this month	spend	{"month": "2026-10"}
+how much have we spent on utilities	spend	{"category": "Utilities"}
+what did we spend on entertainment in september	spend	{"category": "Entertainment", "month": "2026-09"}
+our expenses this month	spend	{"month": "2026-10"}
+how much money did we spend last month	spend	{"month": "2026-09"}
+expenses last month	spend	{"month": "2026-09"}
+how much did I spend this month	spend	{"month": "2026-10"}
+spending on restaurants	spend	
+how much have we spent on petrol	spend	{"category": "Fuel"}
+what were our outgoings in july	spend	{"month": "2026-07"}
+how much did we spend on food	spend	{"category": "Food & Dining"}
+spend so far this month	spend	{"month": "2026-10"}
+how much did we spend on groceries in sept 2025	spend	{"category": "Groceries", "month": "2025-09"}
+what's the spending for 2026-09	spend	{"month": "2026-09"}
+grocery spending last month	spend	
+# ---- merchant (finance.merchant)
+how much have we spent at amazon	merchant	{"merchant": "Amazon"}
+spending at netflix	merchant	{"merchant": "Netflix"}
+how much did we spend with uber	merchant	{"merchant": "Uber"}
+what have we spent at starbucks	merchant	{"merchant": "Starbucks"}
+how much do we spend on spotify	merchant	{"merchant": "Spotify"}
+how much have we spent at ikea this year	merchant	
+total spent at amazon	merchant	{"merchant": "Amazon"}
+how much did we spend at apple	merchant	{"merchant": "Apple"}
+money spent at zara	merchant	{"merchant": "Zara"}
+how much went to amazon	merchant	
+spending with airtel	merchant	{"merchant": "Airtel"}
+how much did we spend at decathlon	merchant	{"merchant": "Decathlon"}
+how much have we spent at boots	merchant	{"merchant": "Boots"}
+how much have I spent on audible	merchant	{"merchant": "Audible"}
+how much did we spend at shell	merchant	{"merchant": "Shell"}
+amount spent at flipkart	merchant	{"merchant": "Flipkart"}
+how much have we spent at home depot	merchant	{"merchant": "Home Depot"}
+spent at myntra	merchant	{"merchant": "Myntra"}
+how much did we spend at mcdonalds	merchant	{"merchant": "Mcdonalds"}
+what have we spent with vodafone	merchant	{"merchant": "Vodafone"}
+how much did we spend at swiggy	store_spend	
+how much do we spend at nykaa	merchant	{"merchant": "Nykaa"}
+spending at ola	merchant	{"merchant": "Ola"}
+how much did we spend at dominos	merchant	{"merchant": "Dominos"}
+how much have we spent at google	merchant	{"merchant": "Google"}
+expenses at amazon this month	merchant	{"merchant": "Amazon"}
+# ---- summary (finance.summary)
+how did we do this month	summary	{"month": "2026-10"}
+monthly summary	summary	
+income this month	summary	{"month": "2026-10"}
+how much did we earn last month	summary	{"month": "2026-09"}
+what was our income in september	summary	{"month": "2026-09"}
+month summary	summary	
+how did we do last month	summary	{"month": "2026-09"}
+financial overview	summary	
+money in this month	summary	{"month": "2026-10"}
+what came in this month	summary	{"month": "2026-10"}
+our salary this month	summary	{"month": "2026-10"}
+give me the summary for august	summary	{"month": "2026-08"}
+net this month	summary	{"month": "2026-10"}
+how much did we save this month	summary	
+overview of september	summary	{"month": "2026-09"}
+summary	summary	
+income	summary	
+how much income did we get last month	summary	{"month": "2026-09"}
+whats our net for the month	summary	
+how are we doing this month	summary	
+finance summary	summary	
+summary for last month	summary	{"month": "2026-09"}
+income and spending this month	summary+spend	{"month": "2026-10"}
+summary for september	summary	{"month": "2026-09"}
+earnings this month	summary	
+# ---- bills (finance.bills)
+bills due	bills	{"days": 7}
+any bills this week	bills	{"days": 7}
+bills	bills	{"days": 7}
+what bills are coming up in the next 10 days	bills	{"days": 10}
+any bills due today	bills	{"days": 1}
+bills tomorrow	bills	{"days": 2}
+what bills are due	bills	
+upcoming bills	bills	
+what payments are due this week	bills	{"days": 7}
+any payments coming up	bills	
+what do we have to pay soon	bills	
+bills for the rest of the month	bills	
+which bills are due next week	bills	{"days": 14}
+any emi due	bills	
+bills in the next 3 days	bills	{"days": 3}
+when is the electricity bill due	bills	
+what bills do we have this month	bills	{"days": 18}
+any direct debits coming out	recurring	
+bills due soon	bills	
+payments due	bills	
+what's due to pay	bills	
+any renewals coming up	bills	
+next bills	bills	
+any bills on friday	bills	
+bill due dates	bills	
+any bills before the weekend	bills	
+# ---- recurring (finance.recurring)
+subscriptions	recurring	
+what subscriptions do we pay for	recurring	
+recurring charges	recurring	
+what do we pay every month	recurring	
+monthly charges	recurring	
+our regular payments	recurring	
+show recurring payments	recurring	
+what are our subscriptions	recurring	
+standing orders	recurring	
+direct debits	recurring	
+monthly payments	recurring	
+what repeating payments do we have	recurring	
+list subscriptions	recurring	
+insurance payments	recurring	
+what do we pay for regularly	recurring	
+recurring	recurring	
+how many subscriptions do we have	recurring	
+subscriptions we pay	recurring	
+monthly subscriptions	recurring	
+what regular charges are there	recurring	
+which subscriptions renew	recurring	
+show me our direct debits	recurring	
+regular payments	recurring	
+my subscriptions	recurring	
+recurring bills	recurring	
+# ---- balances (finance.balances)
+what are our account balances	balances	
+how much do I owe on the card	balances	
+bank balance	balances	
+how much money do we have	balances	
+how much is in the bank	balances	
+account balances	balances	
+whats the balance on my accounts	balances	
+credit card balance	balances	
+how much do we owe on the credit card	balances	
+balance of the savings account	balances	
+how much in the current account	balances	
+card balance	balances	
+how much money is in the bank	balances	
+show balances of my accounts	balances	
+what's my bank balance	balances	
+money in the bank	balances	
+latest statement balance	balances	
+how much do we have in savings account	balances	
+account balance	balances	
+what does the credit card say	balances	
+how much is on the card	balances	
+balances on our accounts	balances	
+what's in the current account	balances	
+our accounts	balances	
+how much money is left in the account	balances	
+balances	choices:owe,balances
+balance	choices:owe,balances
+# ---- owe (splitpot.balances)
+who owes who	owe	
+how much does ravi owe	owe	
+who owes what in the goa trip	owe	{"group": "Goa trip"}
+do I owe anyone money	owe	
+how much do I owe ravi	owe	
+does anyone owe me	owe	
+who owes me money	owe	
+are we settled up	owe	
+what's the balance in the flat group	owe	{"group": "Flat"}
+splitpot	owe	
+how much does meera owe me	owe	
+who needs to pay who	owe	
+are we even	owe	
+how do we settle up	owe	
+what do I owe in the flat	owe	{"group": "Flat"}
+the goa trip balances	owe	{"group": "Goa trip"}
+does sam owe me anything	owe	
+iou	owe	
+who owes money	owe	
+what's ravi's tab	owe	
+who has to pay back	owe	
+how much am i owed	owe	
+square up with ravi	owe	
+debts in the flat	owe	{"group": "Flat"}
+who owes in goa trip	owe	{"group": "Goa trip"}
+# ---- recent_split (splitpot.recent)
+what did we split lately	recent_split	
+recent shared expenses	recent_split	
+latest expenses in the flat	recent_split	{"group": "Flat"}
+what have we split recently	recent_split	
+recent splitpot expenses	recent_split	
+what were the last few shared expenses	recent_split	
+latest splits	recent_split	
+who paid for what recently	recent_split	
+recent expenses in goa trip	recent_split	{"group": "Goa trip"}
+what got split lately	recent_split	
+latest shared expense	recent_split	
+show recent splits	recent_split	
+recent splitpot	recent_split	
+what did we split in the last 7 days	recent_split	
+recent shared costs	recent_split	
+latest in splitpot	recent_split	
+whats been split recently	recent_split	
+recent group expenses	recent_split	
+latest expenses	spend	
+what was split lately in the flat	recent_split	{"group": "Flat"}
+recent ious	recent_split	
+latest debts	recent_split	
+recent settle ups	recent_split	
+who paid recently	recent_split	
+the latest splits in goa trip	recent_split	{"group": "Goa trip"}
+who paid what in the last 2 weeks	recent_split	{"days": 14}
+# ---- expense_add (splitpot.expense.add)
+I paid 40 for dinner	expense_add	{"amount": 40.0, "description": "dinner"}
+split 60 for petrol with ravi	expense_add	{"amount": 60.0, "description": "petrol", "split_with": "Ravi"}
+i paid ₹500 for groceries	expense_add	{"amount": 500.0}
+split 1200 for the hotel in goa trip	expense_add	{"amount": 1200.0, "group": "Goa trip"}
+add an expense of 30 for pizza	expense_add	{"amount": 30.0, "description": "pizza"}
+we paid 90 for the electricity	expense_add	{"amount": 90.0}
+I covered 25 for coffee	expense_add	{"amount": 25.0}
+split $45 for the taxi with meera	expense_add	{"amount": 45.0, "split_with": "Meera"}
+i paid 300 rupees for the cylinder	expense_add	{"amount": 300.0}
+shared expense 80 for movie tickets	expense_add	{"amount": 80.0}
+split 15.50 for lunch	expense_add	{"amount": 15.5}
+I paid 200 for internet in the flat	expense_add	{"amount": 200.0, "group": "Flat"}
+add expense 50 for cleaning	expense_add	{"amount": 50.0}
+i paid 120 for the cab	expense_add	{"amount": 120.0}
+split 75 for drinks with sam and ravi	expense_add	{"amount": 75.0}
+we paid 3000 for rent	expense_add	{"amount": 3000.0}
+i paid 18 for parking	expense_add	{"amount": 18.0}
+split 64 for groceries in the flat	expense_add	{"amount": 64.0, "group": "Flat"}
+I paid 22 for snacks	expense_add	{"amount": 22.0}
+split 400 for the boat trip in goa trip	expense_add	{"amount": 400.0, "group": "Goa trip"}
+i paid 35 for the gas bill	expense_add	{"amount": 35.0}
+add a shared expense 60 for dinner	expense_add	{"amount": 60.0}
+split 10 for ice cream with meera	expense_add	{"amount": 10.0}
+i paid 99 for the router	expense_add	{"amount": 99.0}
+we paid 250 for the plumber	expense_add	{"amount": 250.0}
+# ---- birthdays (tree.birthdays)
+any birthdays coming up	birthdays	
+birthdays this week	birthdays	{"days": 7}
+whose birthday is next	birthdays	
+any birthdays this month	birthdays	{"days": 18}
+upcoming birthdays	birthdays	
+birthdays	birthdays	{"days": 30}
+bdays this week	birthdays	{"days": 7}
+any anniversaries coming up	birthdays	
+is it anyone's birthday today	birthdays	{"days": 1}
+birthdays tomorrow	birthdays	{"days": 2}
+who's birthday is it this week	birthdays	{"days": 7}
+any birthdays in the next 2 weeks	birthdays	{"days": 14}
+birthdays next week	birthdays	{"days": 14}
+any birthdays soon	birthdays	
+who has a birthday this month	birthdays	
+any wedding anniversaries this month	birthdays	
+birthdays and anniversaries	birthdays	
+whose birthday is coming up	birthdays	
+next birthday	birthdays	
+any birthdays on friday	birthdays	
+anyone turning a year older this week	birthdays	
+birthdays in the family this week	birthdays	
+whos celebrating this week	birthdays	
+any birthdays to remember	birthdays	
+any birthdays in the next 10 days	birthdays	{"days": 10}
+# ---- about_person (tree.person)
+when is meera's birthday	about_person	{"person": "Meera"}
+how old is meera	about_person	{"person": "Meera"}
+when is ravi's birthday	about_person	{"person": "Ravi"}
+how old is grandpa joe	about_person	
+where does aunt priya live	about_person	
+who are meera's children	about_person	{"person": "Meera"}
+when was sam born	about_person	{"person": "Sam"}
+how old will ravi be	about_person	{"person": "Ravi"}
+when is kavya's birthday	about_person	{"person": "Kavya"}
+tell me about meera	about_person	{"person": "Meera"}
+age of ravi	about_person	{"person": "Ravi"}
+when was priya born	about_person	{"person": "Priya"}
+where does sam live	about_person	{"person": "Sam"}
+when is arjun's birthday	about_person	{"person": "Arjun"}
+how old is kavya	about_person	{"person": "Kavya"}
+who is meera married to	about_person	{"person": "Meera"}
+who are ravi's parents	about_person	{"person": "Ravi"}
+when is nisha's anniversary	about_person	{"person": "Nisha"}
+ravi's birthday	about_person	{"person": "Ravi"}
+meera's birthday	about_person	{"person": "Meera"}
+how old is sam now	about_person	{"person": "Sam"}
+where was meera born	about_person	{"person": "Meera"}
+who is arjun's wife	about_person	{"person": "Arjun"}
+when is the birthday of priya	about_person	{"person": "Priya"}
+birthday of kavya	about_person	{"person": "Kavya"}
+# ---- relation (tree.relation)
+how is meera related to me	relation	{"person": "Meera"}
+who is ravi to me	relation	{"person": "Ravi"}
+how is meera related to ravi	relation	{"person": "Meera", "to": "Ravi"}
+what is priya to me	relation	{"person": "Priya"}
+how am I related to arjun	relation	{"person": "Arjun"}
+what relation is kavya to me	relation	{"person": "Kavya"}
+how are sam and meera related	relation	
+is nisha my cousin	relation	{"person": "Nisha"}
+what's my relationship to priya	relation	{"person": "Priya"}
+how is arjun related to kavya	relation	{"person": "Arjun", "to": "Kavya"}
+who is meera to ravi	relation	{"person": "Meera", "to": "Ravi"}
+how is grandpa joe related to me	relation	
+relation between ravi and priya	relation	
+what is my relation to sam	relation	{"person": "Sam"}
+how is nisha related to me	relation	{"person": "Nisha"}
+is arjun my uncle	relation	{"person": "Arjun"}
+who's priya to me	relation	{"person": "Priya"}
+what is kavya to meera	relation	{"person": "Kavya", "to": "Meera"}
+how are we related to nisha	relation	{"person": "Nisha"}
+family tree relation of ravi	relation	{"person": "Ravi"}
+is meera my niece	relation	{"person": "Meera"}
+how is sam related to ravi	relation	{"person": "Sam", "to": "Ravi"}
+what's priya's relation to me	relation	{"person": "Priya"}
+how is kavya related	relation	{"person": "Kavya"}
+is ravi my brother in law	relation	{"person": "Ravi"}
+# ---- calories (calorie.today / calorie.week)
+calories today	calories	
+how many calories have I had	calories	
+calories this week	calories	
+how many calories today	calories	
+what's my calorie count	calories	
+how much protein have I had today	calories	
+my calories	calories	
+calories yesterday	calories	{"date": "2026-10-13"}
+how am I doing on calories	calories	
+calorie intake today	calories	
+am I over my calorie goal	calories	
+how many kcal so far	calories	
+macros today	calories	
+how much have I eaten today	calories	
+what did I eat today	calories	
+calories for the week	calories	
+how many carbs today	calories	
+my intake this week	calories	
+how's my diet this week	calories	
+calories so far	calories	
+how much fat today	calories	
+nutrition today	calories	
+food today	calories	
+cals today	calories	
+how many calories did I have yesterday	calories	{"date": "2026-10-13"}
+# ---- food_log (calorie.food.log)
+log 2 rotis for lunch	food_log	{"food": "rotis", "meal": "lunch", "servings": 2.0}
+I had a banana for breakfast	food_log	{"food": "banana", "meal": "breakfast"}
+log a coffee	food_log	{"food": "coffee"}
+I ate dal and rice for dinner	food_log	{"meal": "dinner"}
+track an apple as a snack	food_log	{"food": "apple", "meal": "snack"}
+log oats for breakfast	food_log	{"food": "oats", "meal": "breakfast"}
+I had 2 eggs for breakfast	food_log	{"food": "eggs", "servings": 2.0}
+log a samosa	food_log	{"food": "samosa"}
+record a sandwich for lunch	food_log	{"food": "sandwich", "meal": "lunch"}
+log 3 idlis for breakfast	food_log	{"food": "idlis", "servings": 3.0}
+I had pizza for dinner	food_log	{"food": "pizza", "meal": "dinner"}
+log a bowl of soup for lunch	food_log	{"meal": "lunch"}
+I ate an orange for a snack	food_log	{"food": "orange"}
+log paneer curry for dinner	food_log	{"food": "paneer curry", "meal": "dinner"}
+I had a salad for lunch	food_log	{"food": "salad", "meal": "lunch"}
+log 2 chapatis and sabzi for dinner	food_log	{"meal": "dinner"}
+log a glass of milk	food_log	
+I had upma for breakfast	food_log	{"food": "upma"}
+log biryani for lunch	food_log	{"food": "biryani"}
+track a smoothie for breakfast	food_log	{"food": "smoothie"}
+log 1 dosa for breakfast	food_log	{"food": "dosa", "servings": 1.0}
+I had khichdi for dinner	food_log	{"food": "khichdi"}
+log tea	food_log	{"food": "tea"}
+I ate poha for breakfast	food_log	{"food": "poha"}
+log a burger for dinner	food_log	{"food": "burger", "meal": "dinner"}
+# ---- unread (chat.unread)
+any new messages	unread	
+unread messages	unread	
+do I have any messages	unread	
+any unread chats	unread	
+has anyone messaged me	unread	
+new messages	unread	
+check my messages	unread	
+anything in my inbox	unread	
+did I miss any messages	unread	
+messages	unread	
+any msgs	unread	
+how many unread messages	unread	
+anyone message me	unread	
+unread chat	unread	
+what's new in chat	unread	
+any new chat messages	unread	
+missed messages	unread	
+have I got messages	unread	
+any dms	unread	
+did anyone message	unread	
+show unread	unread	
+chats	unread	
+new chats	unread	
+any texts	unread	
+inbox	unread	
+# ---- docs (docs.search)
+find the note about the boiler	docs	{"query": "boiler"}
+where is the washing machine manual	docs	{"query": "washing machine"}
+find the warranty for the fridge	docs	{"query": "fridge"}
+search for insurance documents	docs	{"query": "insurance"}
+where did I put the passport scan	docs	
+look up the wifi note	docs	{"query": "wifi"}
+find my notes on the car	docs	{"query": "car"}
+where is the dishwasher manual	docs	{"query": "dishwasher"}
+find the tv warranty	docs	{"query": "tv"}
+search documents for lease	docs	{"query": "lease"}
+find the boiler instructions	docs	{"query": "boiler"}
+note about the alarm code	docs	
+find the recipe note	docs	{"query": "recipe"}
+where's the oven manual	docs	{"query": "oven"}
+find the school letter	docs	{"query": "school letter"}
+search for tax documents	docs	{"query": "tax"}
+find the pdf about the mortgage	docs	
+look up the guide for the heater	docs	{"query": "heater"}
+find the note called holiday plans	docs	
+where is the car insurance file	docs	
+find documents about the house	docs	{"query": "house"}
+find the receipt pdf for the sofa	docs	
+search notes for plumber	docs	{"query": "plumber"}
+find the manual for the microwave	docs	{"query": "microwave"}
+where did i put the warranty for the vacuum	docs	{"query": "vacuum"}
+# ---- checklist (docs.search -> docs.checklist)
+show the packing checklist	checklist	{"query": "packing", "kind": "checklist"}
+holiday checklist	checklist	{"query": "holiday", "kind": "checklist"}
+what's on the moving checklist	checklist	{"query": "moving"}
+open the cleaning checklist	checklist	{"query": "cleaning"}
+the camping checklist	checklist	{"query": "camping"}
+show me the party checklist	checklist	{"query": "party"}
+baby checklist	checklist	{"query": "baby"}
+whats left on the travel checklist	checklist	{"query": "travel"}
+school checklist	checklist	{"query": "school"}
+the packing list for goa	checklist	
+checklist for the trip	checklist	{"query": "trip"}
+spring cleaning checklist	checklist	
+what's on the wedding checklist	checklist	{"query": "wedding"}
+show the move out checklist	checklist	
+diwali checklist	checklist	{"query": "diwali"}
+the new house checklist	checklist	
+morning routine checklist	checklist	
+car checklist	checklist	{"query": "car"}
+open the holiday packing list	checklist	
+the checklist for christmas	checklist	{"query": "christmas"}
+the hospital bag checklist	checklist	
+whats on the shopping checklist	checklist	
+the trip check list	checklist	{"query": "trip"}
+renovation checklist	checklist	{"query": "renovation"}
+show the camping packing list	checklist	
+# ---- scores (arcade.scores / arcade.mine)
+who has the high score	scores	
+my scores	scores	
+snake leaderboard	scores	{"game": "Snake"}
+who is winning at sudoku	scores	{"game": "Sudoku"}
+high scores	scores	
+arcade leaderboard	scores	
+what's the top score in brick breaker	scores	{"game": "Brick Breaker"}
+who's best at snake	scores	{"game": "Snake"}
+leaderboard	scores	
+my best scores	scores	
+who holds the record in snake	scores	{"game": "Snake"}
+arcade scores this month	scores	
+high score in sudoku	scores	{"game": "Sudoku"}
+who is top of the leaderboard	scores	
+my high score	scores	
+show the arcade rankings	scores	
+who's winning	scores	
+records in the arcade	scores	
+brick breaker high score	scores	{"game": "Brick Breaker"}
+snake scores	scores	{"game": "Snake"}
+who has the best score	scores	
+leaderboard this month	scores	
+what's my score in snake	scores	
+top scores	scores	
+arcade	scores	
+# ---- near misses: look alike, must go elsewhere (§17.12)
+how much did we spend at Costco	store_spend	{"store": "Costco"}
+how much do I owe on the card	balances	
+how much does ravi owe me	owe	
+add milk	shopping_add	{"item": "milk"}
+add call mum	none	
+what's on the costco list	tasks	{"list": "Costco"}
+is milk on the costco list	tasks	{"list": "Costco"}
+bills due today	bills	{"days": 1}
+what's due today	tasks	{"when": "today"}
+what bills are due today	bills	{"days": 1}
+whats the balance in the goa trip	owe	{"group": "Goa trip"}
+my balance	choices:owe,balances
+how much is milk	price	{"item": "milk"}
+how much is left in the budget	budgets	
+how much did milk cost last week	price	{"item": "milk"}
+spending at costco	store_spend	
+spending on groceries	spend	{"category": "Groceries"}
+recent expenses in the flat	recent_split	{"group": "Flat"}
+when is trash day	schedule	
+when is meera's birthday	about_person	{"person": "Meera"}
+when are the bills due	bills	
+add milk and eggs to the shopping list	shopping_add	{"item": "milk"}
+add fix the fence to home jobs	task_add	{"list": "Home jobs"}
+put milk on the costco list	task_add	{"list": "Costco", "text": "milk"}
+i paid the electricity bill	none	
+did i pay the electricity bill	none	
+tick off milk	task_done	{"task": "milk"}
+# ---- needs the model (or, with AI off: what it can answer)
+should I pay the bill now	model	
+why did we spend so much	model	
+compare this month's spending with last month	model	
+is it worth switching electricity supplier	model	
+what should we cook tonight	model	
+can we afford a new tv after this month's bills	model	
+explain the bills	model	
+which is better, costco or dmart	model	
+what's the average grocery spend	model	
+should I buy milk at costco or dmart	model	
+recommend a birthday present for meera	model	
+predict next month's spending	model	
+why is the electricity bill so high	model	
+what if we cancel netflix	model	
+tell me about the difference between the two accounts	model	
+how come we spent more than last month	model	
+summarize my week	model	
+should we split the rent differently	model	
+# ---- not placed
+what's for dinner	none	
+hello	none	
+what's the weather like	none	
+tell me a joke	none	
+who are you	none	
+what time is it	none	
+good morning	none	
+thanks	none	
+how do i use this	none	
+turn on the lights	none	
+play some music	none	
+what's the capital of france	none	
+# ---- several in one
+tasks and birthdays this week	tasks+birthdays	{"when": "week"}
+bills and balances	bills+balances	
+what's on my list today and any birthdays this week	tasks+birthdays	{"when": "today"}
+shopping list and deals	shopping+deals	
+any bills this week and who owes who	bills+owe	
+calories today and any new messages	calories+unread	
+what's on today, any bills and any birthdays	tasks+bills+birthdays	
+the shopping list plus the budget	shopping+budgets	
+unread messages and the leaderboard	unread+scores	
+tasks tomorrow and the schedule	tasks+schedule	{"when": "tomorrow"}
+# ---- spoken style (no punctuation, number words, filler)
+um whats on my list for tomorrow	tasks	{"when": "tomorrow"}
+okay so any bills in the next three days	bills	{"days": 3}
+hey assistant what do i have today	tasks	{"when": "today"}
+uh whos got the high score in snake	scores	{"game": "Snake"}
+remind me to call mom at five pm	reminder	{"time": "17:00"}
+add two litres of milk to the shopping list	shopping_add	{"item": "milk", "qty": 2.0}
+any birthdays in the next two weeks	birthdays	{"days": 14}
+log two rotis for dinner	food_log	{"servings": 2.0, "meal": "dinner"}
+i paid forty for dinner	expense_add	{"amount": 40.0}
+whats the schedule for the next five days	schedule	{"days": 5}
+how much did we spend in september please	spend	{"month": "2026-09"}

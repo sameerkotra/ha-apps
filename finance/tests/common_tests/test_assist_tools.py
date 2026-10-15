@@ -1,4 +1,4 @@
-# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=0a5608780635f62c6e031761ecf22db74cd68f75ebc7dc5b1cc3276d974cf85f
+# Shared file: edit common/tests/test_assist_tools.py and run tools/sync_common.py; don't edit this copy. sha256=49ea00fd1c354bb0a5b2330ea7c079534e623594c5cba7482cf369d8453b7580
 """Answering the Household Assistant (common/python/assist_tools.py): the catalogue, argument checks, the
 switches, result fitting and links, and both kinds through two real app buses in this process.
 HOUSEHOLD_ASSISTANT_SPEC.md §4–7; APP_MESSAGES_SPEC.md §6.6.
@@ -220,6 +220,25 @@ class CatalogueTests(unittest.TestCase):
             Arg("list")
         with self.assertRaises(ValueError):
             Arg("enum")
+
+    def test_quick_words_are_offered_and_checked(self):
+        """§17.4: a tool's `quick` block (the assistant's concepts, the app's own words, default arguments) is in the
+        list as given; anything outside the rules is refused when the app starts."""
+        cat = assist_tools.Catalogue("demo", actor=lambda c, u: None, enabled=lambda c: True)
+        days = {"days": Arg("number", "how many days", min=1, max=14)}
+        cat.tool("demo.bins", "Bin day.", args=days,
+                 quick={"concepts": ["SCHEDULE"], "words": ["bin day", "recycling"], "args": {"days": 7}})(lambda ctx: None)
+        cat.tool("demo.plain", "No quick words.")(lambda ctx: None)
+        spec = {t["name"]: t for t in cat.spec()}
+        self.assertEqual(spec["demo.bins"]["quick"], {"concepts": ["SCHEDULE"], "words": ["bin day", "recycling"],
+                                                      "args": {"days": 7}})
+        self.assertNotIn("quick", spec["demo.plain"])
+        bad = ({"concepts": ["schedule"]}, {"words": ["Bin Day"]}, {"words": ["x" * 41]}, {"words": ["a"] * 13},
+               {"args": {"weeks": 2}}, {"args": {"days": 99}}, {"other": 1}, ["bin day"],
+               {"concepts": ["A", "B", "C", "D", "E"]})
+        for i, q in enumerate(bad):
+            with self.subTest(quick=q), self.assertRaises(ValueError):
+                cat.tool(f"demo.bad{i}", "x", args=days, quick=q)
 
     def test_enum_and_number_are_strict(self):
         levels = Arg("enum", values=(1, 2, 3))

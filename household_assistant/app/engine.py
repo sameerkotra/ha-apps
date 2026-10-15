@@ -27,6 +27,11 @@ from datetime import date, datetime, timedelta, timezone
 
 from . import ai_client, catalogue, config, db, settings
 from .common import app_bus as bus
+from .quick import intents as qi
+from .quick import learn as ql
+from .quick import match as qm
+from .quick import understand as qu
+from .quick import vocab as qv
 
 logger = logging.getLogger("engine")
 
@@ -144,8 +149,8 @@ def can_ask(user: dict) -> str | None:
         return "An admin has turned the assistant off for you (Admin → People)."
     if user["is_child"] and not settings.get("children_may_ask"):
         return "The assistant isn't open to children here (an admin can change that in App settings)."
-    if not settings.ai_configured():
-        return settings.NOT_SET_UP
+    if not settings.quick_on() and not settings.ai_in_use():
+        return settings.NOT_SET_UP if settings.get("ai_on") else settings.AI_OFF
     return None
 
 
@@ -165,9 +170,12 @@ def _thread_running_for(user_id: str) -> bool:
         return user_id in _owners.values()
 
 
-def ask(user: dict, text: str, *, person_only: bool = False) -> str:
+def ask(user: dict, text: str, *, person_only: bool = False, force_ai: bool = False, exclude=(),
+        hint: str | None = None) -> str:
     """Store the question and start answering it; returns its id. Raises LimitError. `person_only`: only the
-    tools about the person themselves (`scope: person`), e.g. for a voice satellite (Assist)."""
+    tools about the person themselves (`scope: person`), e.g. for a voice satellite (Assist). `force_ai`: straight
+    to the model (Not what I asked); `exclude`: quick intents it isn't (Not what I asked, without the AI);
+    `hint`: what it isn't, for the model."""
     text = str(text or "").strip()
     if not text:
         raise ValueError("Type a question first.")
@@ -208,7 +216,8 @@ def ask(user: dict, text: str, *, person_only: bool = False) -> str:
             _stops.pop(qid, None)
             _owners.pop(qid, None)
         raise
-    who = {**user, "person_only": bool(person_only or user.get("person_only"))}
+    who = {**user, "person_only": bool(person_only or user.get("person_only")), "_force_ai": force_ai,
+           "_exclude": tuple(exclude), "_hint": hint}
     threading.Thread(target=run, args=(qid, who, stop), name=f"ask-{qid[-6:]}", daemon=True).start()
     return qid
 
@@ -273,6 +282,11 @@ class _Run:
     def state(self, state: str, **cols) -> None:
         if state not in RUNNING:
             cols["seconds"] = round(time.monotonic() - self.started, 2)     # how long it took, shown under the answer
+            with _lock:
+                # the person may ask again as soon as the answer shows (a quick answer is back in well under a
+                # second); the rest of _finish only counts usage
+                if _owners.get(self.qid) == self.user["id"]:
+                    _owners.pop(self.qid, None)
         sets = ", ".join(f"{k} = ?" for k in ("state", *cols))
         with db.get_conn() as conn:
             conn.execute(f"UPDATE questions SET {sets} WHERE id = ? AND state != 'stopped'",
@@ -305,8 +319,17 @@ class _Run:
 def run(qid: str, user: dict, stop_event: threading.Event) -> None:
     r = _Run(qid, user, stop_event)
     try:
-        r.warm_up()
-        answer = _answer_question(r)
+        answer = None
+        if settings.quick_on() and not user.get("_force_ai"):
+            answer = quick_answer(r)               # None: the rules couldn't place it, and the model may try
+        if answer is None:
+            if not settings.ai_in_use():
+                answer = AI_OFF_ANSWER if settings.ai_configured() or not settings.get("ai_on") else settings.NOT_SET_UP
+                _set_mode(r.qid, "quick")
+            else:
+                r.warm_up()
+                answer = _answer_question(r)
+                _learn_from_model(r)
         r.state("done", answer=answer[:MAX_ANSWER], rounds=_rounds(qid), error=None)
     except Stopped:
         pass
@@ -320,6 +343,7 @@ def run(qid: str, user: dict, stop_event: threading.Event) -> None:
         r.state("failed", error="Something went wrong while answering. Try again.")
     finally:
         _finish(r)
+        qv.refresh_later(user)                     # the household's names, for the next question
 
 
 def _failed(r: _Run, error: str, lead: str) -> None:
@@ -378,6 +402,8 @@ def _answer_question(r: _Run) -> str:
     if not tools:
         return NO_TOOLS
     system = system_prompt(r.user)
+    if r.user.get("_hint"):
+        q = f"{q}\n(The person said this is NOT about: {r.user['_hint']}.)"
     # each earlier turn with the tools it used, so a follow-up ("and last month?") can reuse them
     turns = [(h["text"], h["answer"] or "", asked[h["id"]]) for h in reversed(history)]
     done = r.done                      # results so far: {call, app, appName, tool, args, state, result, reason}
@@ -413,6 +439,363 @@ def _answer_question(r: _Run) -> str:
     r.state("answering")
     return r.model(answer_prompt(q, turns, done, proposals), system=system, want_json=False,
                    purpose="Answer").strip() or "The apps answered, but the model wrote nothing. Try again."
+
+
+# --------------------------------------------------------------------------------------------- quick answers
+
+# HOUSEHOLD_ASSISTANT_SPEC.md §17: the common questions matched to one app tool by rules (app/quick/), called over
+# the bus as the person, and answered with the app's own words — no model. What the rules understood is kept with the
+# question (questions.quick, JSON) for the understood line, *Did you mean*, *Not what I asked*, follow-ups and learning.
+
+AI_OFF_ANSWER = settings.AI_OFF + " Try one of the questions below."
+FOLLOW_UP_WINDOW = timedelta(minutes=30)
+CHOICE_WINDOW = timedelta(minutes=10)
+MAX_QUICK_CALLS = 6
+MAX_CHOICES = 3
+
+
+def _set_mode(qid: str, mode: str, quick: dict | None = None, understood: str | None = None) -> None:
+    with db.get_conn() as conn:
+        if quick is None:
+            conn.execute("UPDATE questions SET mode = ? WHERE id = ?", (mode, qid))
+        else:
+            conn.execute("UPDATE questions SET mode = ?, quick = ?, understood = ? WHERE id = ?",
+                         (mode, json.dumps(quick, separators=(",", ":"), ensure_ascii=False), understood, qid))
+    touch(qid)
+
+
+def _match_json(m: qi.Match) -> dict:
+    return {"intent": m.intent, "label": m.label, "acts": m.acts, "source": m.source, "phrase": m.phrase_id,
+            "note": m.note, "calls": [{"tool": c.tool, "args": c.args} for c in m.calls]}
+
+
+def _match_from(d: dict) -> qi.Match:
+    return qi.Match(intent=d["intent"], calls=[qi.Call(c["tool"], dict(c.get("args") or {})) for c in d["calls"]],
+                    label=d.get("label") or "", acts=bool(d.get("acts")), source=d.get("source") or "rules",
+                    phrase_id=d.get("phrase"), note=d.get("note"))
+
+
+def quick_ctx(conn, user: dict, tools: dict) -> qi.Ctx:
+    return qi.Ctx(tools=tools, today=config.today(), vocab=qv.vocab_for(conn, user, tools), me=user.get("name") or "")
+
+
+def _previous(conn, user_id: str, qid: str) -> tuple[dict | None, list | None]:
+    """The person's last quick question (for a follow-up) and its unanswered choices (for "the first one")."""
+    row = conn.execute("SELECT asked_at, quick FROM questions WHERE user_id = ? AND id != ? AND state = 'done' "
+                       "AND quick IS NOT NULL ORDER BY asked_at DESC LIMIT 1", (user_id, qid)).fetchone()
+    if row is None:
+        return None, None
+    try:
+        data = json.loads(row["quick"])
+        asked = datetime.fromisoformat(row["asked_at"])
+    except (ValueError, TypeError):
+        return None, None
+    age = config.utcnow() - asked
+    prev = data if data.get("intents") and age <= FOLLOW_UP_WINDOW else None
+    pending = None
+    if data.get("choices") and data.get("chosen") is None and age <= CHOICE_WINDOW:
+        pending = [_match_from(c) for c in data["choices"] if c.get("calls")]
+    return prev, pending
+
+
+def _learned_lookup(conn):
+    ai_now = bool(settings.get("quick_ai_now"))
+    return lambda tpl: ql.lookup(conn, tpl, ai_now=ai_now)
+
+
+def quick_answer(r: _Run) -> str | None:
+    """Answer question r.qid by the rules; None when they can't place it and the model may try (§17.7)."""
+    with db.get_conn() as conn:
+        tools = catalogue.for_user(conn, r.user)
+        q = conn.execute("SELECT text FROM questions WHERE id = ?", (r.qid,)).fetchone()["text"]
+        if not tools:
+            _set_mode(r.qid, "quick")
+            return NO_TOOLS
+        ctx = quick_ctx(conn, r.user, tools)
+        prev, pending = _previous(conn, r.user["id"], r.qid)
+        res = qu.understand(q, ctx, previous=prev, pending=pending, learned=_learned_lookup(conn),
+                            exclude=r.user.get("_exclude") or ())
+        if res.kind == "answer" and any(m.source == "choice" for m in res.parts) and pending:
+            _learn_choice(conn, r.user, prev_template=_last_template(conn, r.user["id"], r.qid), m=res.parts[0])
+    data = {"kind": res.kind, "template": res.template, "norm": res.norm}
+    if res.kind == "answer":
+        data["intents"] = [_match_json(m) for m in res.parts]
+        with db.get_conn() as conn:
+            for m in res.parts:
+                ql.used(conn, m.phrase_id)
+        return _quick_calls(r, tools, res.parts, data)
+    unsure_to_ai = settings.ai_in_use() and settings.get("quick_unsure") == "ai"
+    if res.kind == "model" or (res.kind == "none" and unsure_to_ai):
+        with db.get_conn() as conn:
+            ql.miss(conn, res.norm)
+        if settings.ai_in_use():
+            data["kind"] = "model"
+            _set_mode(r.qid, "ai", data, None)
+            return None
+    if res.kind == "none":
+        with db.get_conn() as conn:
+            ql.miss(conn, res.norm)
+    choices = res.choices[:MAX_CHOICES] if res.kind in ("choices", "none") else []
+    data["choices"] = [_match_json(m) for m in choices]
+    data["chosen"] = None
+    data["suggest"] = [x["text"] for x in suggestions(r.user, tools=tools)[:4]]
+    if res.kind == "choices":
+        words = [_spoken(m.label) for m in choices]
+        answer = "Did you mean " + ", or ".join(words) + "?"
+        _set_mode(r.qid, "quick", data, None)
+        return answer
+    lead = AI_OFF_ANSWER if res.kind == "model" else "I couldn't place that without the AI."
+    if res.kind != "model" and settings.ai_in_use():
+        lead = "I couldn't place that."
+    names = [_spoken(m.label) for m in choices] or [x.rstrip("?") for x in data["suggest"]]
+    answer = lead + (" I can answer things like: " + "; ".join(names[:4]) + "." if names else "")
+    _set_mode(r.qid, "quick", data, None)
+    return answer
+
+
+def _spoken(label: str) -> str:
+    """"Your tasks · today" -> "your tasks today" (a choice said in words, for the page and for Assist)."""
+    text = label.replace(" · ", " ")
+    return text[:1].lower() + text[1:] if text[:2] != text[:2].upper() else text
+
+
+def _last_template(conn, user_id: str, qid: str) -> str | None:
+    row = conn.execute("SELECT quick FROM questions WHERE user_id = ? AND id != ? AND quick IS NOT NULL "
+                       "ORDER BY asked_at DESC LIMIT 1", (user_id, qid)).fetchone()
+    try:
+        return json.loads(row["quick"]).get("template") if row else None
+    except ValueError:
+        return None
+
+
+def _slot_args(u: qm.Utterance, intent: qi.Intent, ctx: qi.Ctx, args: dict) -> list[str]:
+    """Which of `args` came from this question's slots (and are worked out again next time)."""
+    built = intent.build(u, ctx) or []
+    mine = built[0].args if built else {}
+    return [k for k in args if k in mine and mine[k] == args[k] and k in ("when", "days", "month", "date", "time")]
+
+
+def _learn_choice(conn, user: dict, *, prev_template: str | None, m: qi.Match) -> None:
+    """A choice was picked: that way of asking means that intent from now on (§17.8)."""
+    if not prev_template or user.get("is_child") or not settings.get("quick_learn_taps"):
+        return
+    intent = qi.BY_KEY.get(m.intent)
+    if intent is None or not m.calls:
+        return
+    ql.remember(conn, prev_template, m.intent, m.calls[0].args, [k for k in m.calls[0].args
+                                                                 if k in ("when", "days", "month", "date")], "tapped")
+
+
+def _quick_calls(r: _Run, tools: dict, parts: list, data: dict) -> str:
+    """Make the calls the rules chose (actions only as buttons), then the apps' own words are the answer."""
+    understood = " · ".join(f"{m.label} · {tools[m.calls[0].tool]['appName']}" if m.calls and m.calls[0].tool in tools
+                            else m.label for m in parts)
+    _set_mode(r.qid, "quick", data, understood)
+    reads, proposals = [], []
+    for m in parts:
+        for c in m.calls:
+            t = tools.get(c.tool)
+            if t is None:
+                continue
+            if t["spec"].get("acts"):
+                p = _propose(r, tools, {"tool": c.tool, "args": c.args, "say": m.label}, 1, proposals)
+                if p:
+                    proposals.append(p)
+            elif len(reads) < MAX_QUICK_CALLS:
+                reads.append((m, c.tool, _clean_args(t["spec"], c.args)))
+    done = []
+    if reads:
+        r.state("calling")
+        done = _run_calls(r, tools, [(name, args) for _m, name, args in reads], 1)
+        # a checklist is found by its name first, then read (docs.search -> docs.checklist)
+        for (m, name, _a), d in zip(reads, list(done)):
+            if m.intent == "checklist" and d["state"] == "ok" and "docs.checklist" in tools:
+                found = [i for i in (d.get("result") or {}).get("items") or [] if isinstance(i, dict) and i.get("id")]
+                if len(found) == 1:
+                    done += _run_calls(r, tools, [("docs.checklist", {"id": str(found[0]["id"])[:64]})], 2)
+        r.done += done
+    return compose(parts, reads, done, proposals)
+
+
+def _said(d: dict) -> str:
+    if d["state"] == "ok":
+        return str((d.get("result") or {}).get("text") or "").strip() or f"{d['appName']} had nothing to say."
+    return refusal_words(d["appName"], d["state"], d.get("reason"))
+
+
+def _on_list(item: str, d: dict) -> str | None:
+    """"Milk is on the shopping list." from a shopping list result, or None when it can't tell."""
+    if d["state"] != "ok":
+        return None
+    items = [str(i.get("item") or "") for i in (d.get("result") or {}).get("items") or [] if isinstance(i, dict)]
+    key = item.casefold()
+    hit = any(key in x.casefold() or x.casefold() in key for x in items if x)
+    return f"**{item.capitalize()}** is on the shopping list." if hit else f"{item.capitalize()} isn't on the shopping list."
+
+
+def compose(parts: list, reads: list, done: list, proposals: list) -> str:
+    """The answer: each part's app words as they came (several parts: each under its understood line)."""
+    by_part: dict[int, list] = {}
+    for (m, _name, _args), d in zip(reads, done[:len(reads)]):
+        by_part.setdefault(id(m), []).append(d)
+    extra = done[len(reads):]                       # a checklist read after its search
+    blocks = []
+    for m in parts:
+        ds = by_part.get(id(m), [])
+        if m.intent == "checklist" and extra:
+            ds = extra
+        if m.intent == "item_alone" and len(ds) == 2:
+            item = m.calls[0].args.get("item", "")
+            line = _on_list(item, ds[1])
+            text = _said(ds[0]) + (("\n\n" + line) if line else "")
+        elif m.intent == "shopping" and ds and m.note:
+            line = _on_list(m.note, ds[0])
+            text = (line + "\n\n" if line else "") + _said(ds[0])
+        else:
+            text = "\n\n".join(_said(d) for d in ds)
+        if m.acts and not ds:
+            continue
+        blocks.append((m.label, text))
+    if proposals and not blocks:
+        return "Tap the button to confirm — nothing changes until you do."
+    if len(blocks) == 1 and not proposals:
+        return blocks[0][1]
+    out = [f"**{label}**\n{text}" if len(blocks) > 1 else text for label, text in blocks]
+    if proposals:
+        out.append("Tap the button to confirm the change.")
+    return "\n\n".join(out)
+
+
+def _learn_from_model(r: _Run) -> None:
+    """A question the model answered with exactly one read-only tool call, in one round: a candidate phrase for that
+    tool's quick intent, used once it has been seen twice (§17.8)."""
+    if not settings.quick_on() or not settings.get("quick_learn_ai") or r.user.get("is_child"):
+        return
+    oks = [d for d in r.done if d["state"] == "ok"]
+    if len(r.done) != 1 or len(oks) != 1:
+        return
+    d = oks[0]
+    candidates = [i for i in qi.INTENTS if i.tool == d["tool"] and not i.acts]
+    if not candidates:
+        return
+    intent = candidates[0]
+    with db.get_conn() as conn:
+        tools = catalogue.for_user(conn, r.user)
+        q = conn.execute("SELECT text FROM questions WHERE id = ?", (r.qid,)).fetchone()["text"]
+        ctx = quick_ctx(conn, r.user, tools)
+        u = qm.read(q, ctx.today, ctx.vocab)
+        tpl = qm.template(u)
+        if r.user.get("_force_ai"):
+            return                                   # asked again after Not what I asked: not a pattern to learn
+        ql.remember(conn, tpl, intent.key, d["args"], _slot_args(u, intent, ctx, d["args"]), "ai")
+
+
+def _register(qid: str, user_id: str) -> threading.Event:
+    stop_ev = threading.Event()
+    with _lock:
+        _stops[qid] = stop_ev
+        _owners[qid] = user_id
+    return stop_ev
+
+
+def choose(qid: str, idx: int, user: dict) -> dict:
+    """A *Did you mean* choice tapped: answer the same question with it, and learn that way of asking (§17.8)."""
+    why = can_ask(user)
+    if why:
+        raise PermissionError(why)
+    if _thread_running_for(user["id"]):
+        raise LimitError("Still answering the last question.")
+    with db.get_conn() as conn:
+        q = conn.execute("SELECT * FROM questions WHERE id = ? AND user_id = ?", (qid, user["id"])).fetchone()
+        if q is None:
+            raise LookupError("No such question.")
+        try:
+            data = json.loads(q["quick"] or "{}")
+        except ValueError:
+            data = {}
+        choices = data.get("choices") or []
+        if q["state"] != "done" or data.get("chosen") is not None or not 0 <= idx < len(choices):
+            raise ValueError("That choice isn't open any more.")
+        m = _match_from(choices[idx])
+        tools = catalogue.for_user(conn, user)
+        if not all(c.tool in tools for c in m.calls):
+            raise PermissionError("That app doesn't answer the assistant for you any more.")
+        data["chosen"], data["kind"] = idx, "answer"
+        data["intents"] = [choices[idx]]
+        n = conn.execute("UPDATE questions SET state = 'calling', answer = NULL, quick = ? WHERE id = ? AND "
+                         "state = 'done'", (json.dumps(data, separators=(",", ":"), ensure_ascii=False), qid)).rowcount
+        if n != 1:
+            raise ValueError("That choice isn't open any more.")
+        if not user.get("is_child") and settings.get("quick_learn_taps") and data.get("template"):
+            ql.remember(conn, data["template"], m.intent, m.calls[0].args if m.calls else {},
+                        [k for k in (m.calls[0].args if m.calls else {}) if k in ("when", "days", "month", "date")],
+                        "tapped")
+    stop_ev = _register(qid, user["id"])
+    who = {**user, "person_only": bool(user.get("person_only"))}
+
+    def go():
+        r = _Run(qid, who, stop_ev)
+        try:
+            answer = _quick_calls(r, tools, [m], data)
+            r.state("done", answer=answer[:MAX_ANSWER], rounds=_rounds(qid), error=None)
+        except Stopped:
+            pass
+        except Exception:
+            logger.exception("Answering a choice failed")
+            r.state("failed", error="Something went wrong while answering. Try again.")
+        finally:
+            _finish(r)
+    threading.Thread(target=go, name=f"choose-{qid[-6:]}", daemon=True).start()
+    with db.get_conn() as conn:
+        return view(conn, conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone())
+
+
+def not_this(qid: str, user: dict) -> str:
+    """*Not what I asked* (§17.7): a learned phrase behind it is forgotten, and the question is asked again — of the
+    model when AI is in use, else with that meaning left out (so the choices show). Returns the new question's id."""
+    with db.get_conn() as conn:
+        q = conn.execute("SELECT * FROM questions WHERE id = ? AND user_id = ?", (qid, user["id"])).fetchone()
+        if q is None:
+            raise LookupError("No such question.")
+        try:
+            data = json.loads(q["quick"] or "{}")
+        except ValueError:
+            data = {}
+        intents = data.get("intents") or []
+        if q["mode"] != "quick" or not intents:
+            raise ValueError("That wasn't a quick answer.")
+        for m in intents:
+            if m.get("source") in ("tapped", "ai", "learned"):
+                ql.forget(conn, m.get("phrase"))
+        ql.miss(conn, data.get("norm") or "")
+    labels = "; ".join(m.get("label") or m["intent"] for m in intents)
+    if settings.ai_in_use():
+        return ask(user, q["text"], force_ai=True, hint=labels)
+    return ask(user, q["text"], exclude=[m["intent"] for m in intents])
+
+
+DEFAULT_ORDER = ("tasks", "shopping", "bills", "birthdays", "owe", "spend", "calories", "unread", "schedule",
+                 "summary", "deals", "budgets", "balances", "scores")
+
+
+def suggestions(user: dict, *, tools: dict | None = None, limit: int = 6) -> list[dict]:
+    """The one-tap questions (§17.11): the quick intents the person may use, those they use most first."""
+    with db.get_conn() as conn:
+        if tools is None:
+            tools = catalogue.for_user(conn, user)
+        rows = conn.execute("SELECT quick FROM questions WHERE user_id = ? AND mode = 'quick' AND quick IS NOT NULL "
+                            "ORDER BY asked_at DESC LIMIT 200", (user["id"],)).fetchall()
+    used: dict[str, int] = {}
+    for r in rows:
+        try:
+            for m in json.loads(r["quick"]).get("intents") or []:
+                used[m["intent"]] = used.get(m["intent"], 0) + 1
+        except (ValueError, KeyError, TypeError):
+            continue
+    ctx = qi.Ctx(tools=tools, today=config.today())
+    have = [i for i in qi.INTENTS if i.available(ctx) and not i.acts and i.key in DEFAULT_ORDER]
+    have.sort(key=lambda i: (-used.get(i.key, 0), DEFAULT_ORDER.index(i.key)))
+    return [{"intent": i.key, "text": i.question} for i in have[:limit]]
 
 
 # --------------------------------------------------------------------------------------------- the plan
@@ -908,9 +1291,17 @@ def safe_link(app: str, link) -> dict | None:
 
 # --------------------------------------------------------------------------------------------- the page
 
-def _progress(qid: str, state: str, calls: list) -> str | None:
+def _progress(qid: str, state: str, calls: list, q=None) -> str | None:
     with _lock:
         warming = qid in _warming
+    if q is not None and state == "calling" and q["mode"] == "quick":
+        asking = sorted({c["appName"] for c in calls if c["state"] == "sent"})
+        try:
+            waited = (config.utcnow() - datetime.fromisoformat(q["asked_at"])).total_seconds()
+        except (TypeError, ValueError):
+            waited = 0
+        if asking and waited > settings.get("quick_timeout"):
+            return f"{', '.join(asking)} {'is' if len(asking) == 1 else 'are'} slow to answer…"
     if state == "planning" and warming:
         return "Waking up the model…"
     if state == "planning":
@@ -954,9 +1345,23 @@ def view(conn, q, *, names: dict | None = None, rows: list | None = None) -> dic
                 if k not in seen:
                     seen.add(k)
                     sources.append({"app": c["app"], "appName": app_name, **link})
+    quick = {}
+    if q["quick"]:
+        try:
+            quick = json.loads(q["quick"])
+        except ValueError:
+            quick = {}
+    choices = []
+    if quick.get("chosen") is None and q["state"] == "done":
+        choices = [{"index": i, "label": c.get("label") or "", "intent": c.get("intent")}
+                   for i, c in enumerate(quick.get("choices") or [])]
     return {"id": q["id"], "text": q["text"], "askedAt": q["asked_at"], "state": q["state"], "answer": q["answer"],
-            "error": q["error"], "seconds": q["seconds"], "progress": _progress(q["id"], q["state"], shared),
-            "sources": sources[:8], "shared": shared, "actions": actions}
+            "error": q["error"], "seconds": q["seconds"], "progress": _progress(q["id"], q["state"], shared, q),
+            "sources": sources[:8], "shared": shared, "actions": actions,
+            "mode": q["mode"], "understood": q["understood"] if q["mode"] == "quick" else None,
+            "choices": choices, "suggest": quick.get("suggest") or [] if quick.get("kind") in ("none", "model", "choices")
+            and q["state"] == "done" else [],
+            "notThis": q["mode"] == "quick" and bool(quick.get("intents")) and q["state"] == "done"}
 
 
 def views(conn, questions) -> list[dict]:
@@ -1027,5 +1432,6 @@ def housekeeping() -> None:
                      (_iso(now - timedelta(minutes=2)),))
         conn.execute("DELETE FROM usage_days WHERE day < ?", ((config.today() - timedelta(days=400)).isoformat(),))
         conn.execute("DELETE FROM rate_events WHERE at < ?", (_iso(now - timedelta(days=1)),))
+        ql.housekeeping(conn)
     for qid in ended:
         touch(qid)

@@ -17,6 +17,7 @@ from app import ai_client
 from app.main import app
 from fakes import Model
 from test_assistant import ALICE, Household
+from test_quick_flow import ADMIN, QuickHousehold
 
 try:
     from playwright.sync_api import sync_playwright
@@ -49,8 +50,9 @@ def chromium(pw):
             raise unittest.SkipTest("the browser for Playwright won't start: " + (str(e).splitlines() or [""])[0])
 
 
-@unittest.skipUnless(sync_playwright, "playwright not installed")
-class PageInBrowser(Household):
+class InBrowser:
+    """Mixin: the real app served by uvicorn in this process and a headless Chromium, for a test household class."""
+
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -102,6 +104,9 @@ class PageInBrowser(Household):
                 self.fail(f"never true: {js}")
             time.sleep(0.05)
 
+
+@unittest.skipUnless(sync_playwright, "playwright not installed")
+class PageInBrowser(InBrowser, Household):
     def test_read_aloud(self):
         model = Model('{"answer": "x"}', '{"answer": "Two tasks: **Bins** and the plumber."}')
         with mock.patch.object(ai_client, "generate", model):
@@ -162,6 +167,66 @@ class PageInBrowser(Household):
             p.wait_for_selector(".turn .question")
             self.assertEqual(p.inner_text(".turn .question"), "Morning briefing")
         self.assertEqual(sent, ["📋 2 tasks today: Bins, Call plumber."])
+
+
+@unittest.skipUnless(sync_playwright, "playwright not installed")
+class QuickPageInBrowser(InBrowser, QuickHousehold):
+    """Quick answers on the page (HOUSEHOLD_ASSISTANT_SPEC §17): the understood line, Not what I asked, the Did you
+    mean buttons, and Admin → Quick answers. No model is called (QuickHousehold fails the test if one is)."""
+
+    def test_understood_choices_and_not_this(self):
+        p = self.open_page()
+        p.fill("#askInput", "whats on my list 2day")
+        p.click("#askBtn")
+        p.wait_for_selector(".turn .understood")
+        self.assertIn("Your tasks · today · Household Todo", p.inner_text(".turn .understood"))
+        self.assertEqual(p.inner_text(".turn .answer .md"), "2 tasks today: Bins, Call plumber.")
+        p.fill("#askInput", "balances")
+        p.click("#askBtn")
+        p.wait_for_selector(".turn .choices .chip")
+        self.assertEqual(p.evaluate("[...document.querySelectorAll('.turn:first-child .choices .chip')]"
+                                    ".map((b) => b.textContent)"), ["Who owes whom", "Account balances"])
+        if os.environ.get("SHOT"):
+            p.screenshot(path=os.environ["SHOT"].replace(".png", "-choices.png"), full_page=True)
+        p.click(".turn:first-child .choices .chip >> nth=1")
+        self.until(p, "(document.querySelector('.turn:first-child .answer .md') || {}).textContent"
+                      " === 'Current account 1,200.00; card owes 300.00.'")
+        self.assertEqual(p.evaluate("document.querySelectorAll('.turn:first-child .choices .chip').length"), 0)
+        self.allow_model('{"answer": "Bob owes you 12.00."}')
+        p.click(".turn:first-child .understood .link-btn")             # Not what I asked: asks the model
+        self.until(p, "document.querySelectorAll('.turn').length === 3")
+        self.until(p, "(document.querySelector('.turn:first-child .answer .md') || {}).textContent"
+                      " === 'Bob owes you 12.00.'")
+        self.assertEqual(p.evaluate("document.querySelectorAll('.turn:first-child .understood').length"), 0)
+
+    def test_quick_only_note_and_admin_tab(self):
+        from app import settings
+        settings.update({"ai_on": False}, None)
+        ctx = self.browser.new_context(extra_http_headers=ADMIN)
+        self.addCleanup(ctx.close)
+        p = ctx.new_page()
+        errors = []
+        p.on("pageerror", lambda e: errors.append(str(e)))
+        p.goto(self.base)
+        p.wait_for_selector("#askInput")
+        self.until(p, "!document.querySelector('#quickOnly').hidden")
+        p.click("#adminBtn")
+        p.click("#adminTabs .tab[data-tab=quick]")
+        p.wait_for_selector("#tab-quick input[aria-label='A question to test']")
+        p.fill("#tab-quick input[aria-label='A question to test']", "whats on the shoping list tmrw")
+        p.click("#tab-quick .btn-secondary")
+        p.wait_for_selector("#tab-quick .quick-test pre")
+        self.assertIn("Answered quickly", p.inner_text("#tab-quick .quick-test"))
+        self.assertIn("shopping*", p.inner_text("#tab-quick .quick-test pre"))
+        p.fill("#tab-quick input[aria-label='The words']", "how are we fixed")
+        p.select_option("#tab-quick select[aria-label='What they mean']", "balances")
+        p.click("#tab-quick .btn-primary")
+        p.wait_for_selector("#tab-quick .quick-table td")
+        self.assertIn("“how are we fixed”", p.inner_text("#tab-quick .quick-table"))
+        if os.environ.get("SHOT"):
+            p.screenshot(path=os.environ["SHOT"].replace(".png", "-admin.png"), full_page=True)
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

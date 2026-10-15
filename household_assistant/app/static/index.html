@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Assistant</title>
-<script src="common/theme-boot.js?v=1.3.2"></script>
-<link rel="stylesheet" href="common/themes.css?v=1.3.2">
-<link rel="stylesheet" href="common/settings.css?v=1.3.2">
-<link rel="stylesheet" href="style.css?v=1.3.2">
+<script src="common/theme-boot.js?v=1.4.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.4.0">
+<link rel="stylesheet" href="common/settings.css?v=1.4.0">
+<link rel="stylesheet" href="style.css?v=1.4.0">
 </head>
 <body>
 <header class="topbar">
@@ -29,6 +29,7 @@
     <button type="button" id="micBtn" class="btn-ghost" title="Speak" aria-label="Speak" hidden>🎤</button>
     <button type="submit" id="askBtn" class="btn-primary">Ask</button>
   </form>
+  <div id="quickOnly" class="dim quick-only" hidden>⚡ Quick answers only — the common questions, answered without AI.</div>
   <div class="ask-foot">
     <button type="button" id="whatBtn" class="link-btn">What can I ask?</button>
     <button type="button" id="briefingBtn" class="link-btn">🌅 Briefings</button>
@@ -42,12 +43,14 @@
   <nav class="tabs" id="adminTabs">
     <button type="button" class="tab active" data-tab="apps">Apps</button>
     <button type="button" class="tab" data-tab="settings">App settings</button>
+    <button type="button" class="tab" data-tab="quick">Quick answers</button>
     <button type="button" class="tab" data-tab="people">People</button>
     <button type="button" class="tab" data-tab="usage">Usage</button>
     <button type="button" class="tab" data-tab="storage">Storage</button>
   </nav>
   <section id="tab-apps" class="tab-body"></section>
   <section id="tab-settings" class="tab-body" hidden></section>
+  <section id="tab-quick" class="tab-body" hidden></section>
   <section id="tab-people" class="tab-body" hidden></section>
   <section id="tab-usage" class="tab-body" hidden></section>
   <section id="tab-storage" class="tab-body" hidden>
@@ -63,11 +66,11 @@
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=1.3.2"></script>
-<script src="common/settings.js?v=1.3.2"></script>
-<script src="common/backnav.js?v=1.3.2"></script>
-<script src="common/whoami.js?v=1.3.2"></script>
-<script src="common/connected-apps.js?v=1.3.2"></script>
-<script src="app.js?v=1.3.2"></script>
+<script src="common/ui.js?v=1.4.0"></script>
+<script src="common/settings.js?v=1.4.0"></script>
+<script src="common/backnav.js?v=1.4.0"></script>
+<script src="common/whoami.js?v=1.4.0"></script>
+<script src="common/connected-apps.js?v=1.4.0"></script>
+<script src="app.js?v=1.4.0"></script>
 </body>
 </html>

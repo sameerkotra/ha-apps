@@ -171,6 +171,8 @@ _CALLS = {"ollama": _ollama, "openai": _openai, "anthropic": _anthropic}
 
 
 def check_configured(cfg: Config) -> None:
+    if not settings.get("ai_on"):                    # Use AI off (§17.10): no model is ever called
+        raise AIError(settings.AI_OFF, "off")
     if cfg.provider not in PROVIDERS or not cfg.url or not cfg.model:
         raise AIError(settings.NOT_SET_UP, "not_configured")
     if cfg.provider == "anthropic" and not cfg.api_key:
@@ -260,7 +262,7 @@ def test_connection(cfg: Config) -> dict:
 
 def needs_warmup() -> bool:
     """An Ollama model that hasn't answered anything for a few minutes may have been unloaded."""
-    return settings.ai_provider() == "ollama" and settings.ai_configured() and not is_warm()
+    return settings.ai_provider() == "ollama" and settings.ai_in_use() and not is_warm()
 
 
 def warmup_sync() -> bool:
@@ -299,7 +301,7 @@ def extract_json(text: str) -> dict:
 
 def privacy() -> dict | None:
     """For the privacy notice: None while the AI is on the home network (or not set up)."""
-    if not settings.ai_is_external():
+    if not settings.ai_is_external() or not settings.ai_in_use():
         return None
     return {"label": PROVIDERS.get(settings.ai_provider(), "AI"), "host": settings.ai_host()}
 

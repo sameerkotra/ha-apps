@@ -10,17 +10,22 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 - `app/auth.py` — the ingress identity (a plain dependency, run in the threadpool): the `users` row is read on every
   request and written only when it is new (`reviewed` 0) or the name changed; admins from `admin_users` (id or
   login name). No "act as".
-- `app/settings.py` — App settings (`settings_core` registry): AI (`ai_provider`, `ai_url`, `ai_model`,
+- `app/settings.py` — App settings (`settings_core` registry): AI (`ai_on` — Use AI, `ai_provider`, `ai_url`, `ai_model`,
   `ai_api_key` secret, `ai_max_tokens`), `children_may_ask` (off), `questions_per_hour` (30), `questions_per_day`
   (200), `question_timeout` (300 s, 60–900), `keep_days` (30, 1–365), `recorder_excluded` (off), `shared_open` (off),
   `briefing_speakers` ("" = all; media players, comma-separated), `quiet_from` / `quiet_until` (HH:MM, "" = never
   quiet), `bus_signing_key` (secret, "" = unsigned; `clear_bus_signing_key`). A saved `ai_api_key` is kept only
   while the provider and the address's scheme, host and port stay the same: changing them without a new key (or
   `clear_ai_api_key`) is a 422, and Test connection answers "Type the access key again" instead of sending it.
+  Quick answers: `quick_on` (on), `quick_unsure` (`ai` | `choices`), `quick_learn_taps` (on), `quick_learn_ai`
+  (on), `quick_ai_now` (off), `quick_timeout` (5 s, 2–20). `quick_on` and `ai_on` can't both be off (422). The
+  model's fields and the AI-learning ones are greyed out while `ai_on` is off (`enabled_if`).
 - `app/ai_client.py` — the shared `common/ai_client.py` with this app's wording; `generate()` is the only way to the
   model (tests replace it). Each call's `deadline` (retries included) is what is left of the question (the engine
   passes it); by default the larger of its timeout and the shared 300 s.
-- `app/catalogue.py` — the tools the apps offer (`assist.tools.list`), per person.
+- `app/catalogue.py` — the tools the apps offer (`assist.tools.list`), per person; a tool's `quick` block (the app's
+  own words, §17.4) is kept, checked (`clean_quick`).
+- `app/quick/` — quick answers without a model (HOUSEHOLD_ASSISTANT_SPEC.md §17, below).
 - `app/engine.py` — plan → call → answer; actions; the page's view of a question; housekeeping.
 - `app/app_messages.py` — starts the bus with `signing_key` (App settings → `bus_signing_key`, read at most every
   5 s); it answers `assist.ask`.
@@ -34,7 +39,11 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 - `rate_events (user_id, kind question|briefing, at)` — what the hourly limits count; not deleted with the
   questions; pruned after a day.
 - `questions (id, user_id, asked_at, text, answer, state planning|calling|answering|done|failed|stopped, error,
-  rounds, input_tokens, output_tokens, seconds)`.
+  rounds, input_tokens, output_tokens, seconds, mode quick|ai, quick, understood)` — `quick` (JSON) is what the
+  rules understood: `{kind, template, norm, intents: [{intent, label, calls, source, phrase, acts, note}], choices,
+  chosen, suggest}`; `understood` the line above a quick answer.
+- `quick_phrases (id, phrase, intent, args, slot_args, source admin|tapped|ai, seen, hits, created_at, last_used)` —
+  learned phrases by template; `quick_misses (phrase, count, last_seen)` — normalised words and a count only.
 - `calls (id, question_id → questions ON DELETE CASCADE, app, tool, args, say, bus_id, round, confirmed_at,
   sent_at, answered_at, state proposed|sent|ok|nack|timeout, result, reason)` — a proposed action is a `calls`
   row with `say` and state `proposed` until tapped. `reason` is `<nack reason>[:<detail>]`, or `not_available` /
@@ -116,7 +125,9 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 
 | Route | Who | |
 |---|---|---|
-| `GET /api/me` | user | `user`, `canAsk`, `why`, `noAdmin`, `suggestions` (one example per app, else four defaults), `apps`, `privacy` (a cloud provider), `sharedOpen`, `recorderWarning` (admins, until ticked), `version` |
+| `GET /api/me` | user | `user`, `canAsk`, `why`, `noAdmin`, `suggestions` (the quick questions the person may use, most used first; else one example per app, else four defaults), `apps`, `privacy` (a cloud provider, only while AI is in use), `sharedOpen`, `recorderWarning` (admins, until ticked), `ai {on, model}`, `quick`, `quickOnly`, `version` |
+| `POST /api/ask/{id}/choose` `{choice}` · `POST /api/ask/{id}/not-this` · `GET /api/quick/suggestions` | owner · owner · user | Did you mean (the same question answered; learned) · Not what I asked (a new question: the model with a hint, or without AI the other meanings) · the one-tap questions |
+| `POST /api/admin/quick/test` `{text}` · `GET /api/admin/quick/intents` · `GET/POST/DELETE /api/admin/quick/phrases[/{id}]` · `GET/DELETE /api/admin/quick/misses` | admin | Admin → Quick answers: how a question is read (calls nothing); the intents; phrases (never to an action; fixed values checked against the tool); misses |
 | `GET /api/whoami` | user | the shared whoami contract |
 | `GET /api/tools` | user | the person's tools in words |
 | `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
@@ -174,6 +185,37 @@ recorder doesn't exclude `household_apps`:
 `integration_tests/` runs it in a real Home Assistant core (pytest-homeassistant-custom-component);
 `tests/test_assistant.py` runs `protocol.py` against this app.
 
+## Quick answers (`app/quick/`, HOUSEHOLD_ASSISTANT_SPEC.md §17)
+
+- `normalise.py` — tokens (amounts, times, dates as one token), contractions, text-speak, number words, filler, word
+  forms (a table; each token keeps `orig`, the word as typed, for a task's or an item's text); `correct()` puts typos
+  right against the lexicon and the household's names (4 letters: two neighbours swapped; 5–7: one edit; 8+: two;
+  never a known word, a name or a tie).
+- `lexicon.py` — the concepts and their words (in Python, not YAML: no new dependency), everyday words the typo
+  correction leaves alone, groceries, well-known stores, categories, meals, stop words, ordinals.
+- `slots.py` — when (today/tomorrow/week/next week/overdue/all, a weekday, a date), days ahead (or back: "the last 7
+  days"), a month (with or without a year; "may"/"march" only after in/for/…), a time of day ("at 5" is 17:00 up to
+  7), amounts, other numbers.
+- `match.py` — `read()`: concepts (phrases indexed by their first word; a hit inside a longer hit of another concept
+  dropped), the household's names (`Vocab`), everyday items and stores; `template()` for learned phrases.
+- `intents.py` — one rule per kind of question (the table in §17.6, plus `item_alone`, `checklist`, `scores`,
+  `recent_split`, `merchant`, `food_log`, `task_done`, `reminder`…), each with must / helps / out and a builder; an
+  app's own tool with a `quick` block and no rule gets a generic one.
+- `understand.py` — learned phrase → an answer to the last Did you mean → the one-word table → a follow-up → scoring
+  (threshold 2.5, margin 1.5×) → several questions in one. The question is read as typed first; with its typos
+  put right only when that isn't understood, or when the corrected reading rules the first one out.
+- `vocab.py` — the household's names per person, fetched in the background with the apps' own tools
+  (`todo.lists`, `receipt.shopping_list`, `splitpot.balances`, `finance.summary`, `arcade.scores`) as the person, at
+  most every 10 minutes per tool, in memory only.
+- `learn.py` — `quick_phrases`, `quick_misses`, housekeeping (180 / 90 days).
+- `engine.quick_answer()` runs first unless *Not what I asked* forced the model; `compose()` puts the apps' own
+  texts together (several parts under their understood lines; "milk" adds whether it's on the list); actions become
+  `proposed` calls. `engine.choose()` answers the same question with a choice; `engine.not_this()` asks again.
+  `_learn_from_model()` stores a candidate after a model answer with exactly one read-only call.
+- **Use AI off** (`ai_on`): `engine.run` never reaches the model; `ai_client.check_configured` raises too, and
+  `needs_warmup()` is false, so no path can call a model; Test connection answers without asking anything.
+- The person is released (`_owners`) as soon as the answer is written, so the next question can follow at once.
+
 ## Jobs
 
 - Every minute: `catalogue.check()`, `briefing.check()` (the morning and evening briefings that are due).
@@ -191,4 +233,8 @@ recorder doesn't exclude `household_apps`:
 `tests/test_assistant.py` runs the real app against a fake household (`tests/fakes.py`): fake Todo, Finance and
 Vault apps, each a real `AppBus` with a real `assist_tools.Catalogue`, on one in-process bus, and a scripted
 model. `tests/test_review_oct13.py` the October 13 review's regressions. `tests/test_briefing.py` the morning briefing on the same household (with Finance's `finance.bills`);
-`tests/test_page_browser.py` the page, its dialog included, in headless Chromium. `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.
+`tests/test_page_browser.py` the page, its dialog included, in headless Chromium. `tests/test_quick.py` the rules
+alone: the phrase corpus `tests/data/quick_corpus.tsv` (every line, at least 25 per intent, near-misses, speed;
+`python3 tests/quick_corpus.py` lists every miss) against every household tool (`tests/data/quick_tools.json`);
+`tests/test_quick_flow.py` quick answers end to end on a fake household with a model that fails the test if it is
+called. The model-path tests run with `quick_on` off (`fakes.set_up_ai`). `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.

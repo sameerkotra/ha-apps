@@ -177,7 +177,10 @@ def _series(ctx, uid: str) -> list[dict]:
             "The person's recurring charges (subscriptions, insurance, utilities): typical amount, how often, and when "
             "the next one is expected.",
             args={"person": _PERSON}, returns="charges with amount, frequency, next expected date",
-            examples=("What subscriptions do we pay for?",))
+            examples=("What subscriptions do we pay for?",),
+            # the assistant's quick answers (HOUSEHOLD_ASSISTANT_SPEC.md §17.4)
+            quick={"concepts": ["RECURRING"], "words": ["standing orders", "direct debits", "regular payments",
+                                                        "monthly payments", "insurance payments"]})
 def recurring_charges(ctx):
     uid, owner = _owner(ctx)
     rows = sorted(_series(ctx, uid), key=lambda s: (s["next"] or "9999", -s["amount"]))
@@ -260,7 +263,9 @@ def merchant(ctx):
             "Each of the person's bank and card accounts with the balance its latest statement printed (for a card, "
             "what was owed) and that statement's month.",
             args={"person": _PERSON}, returns="accounts with type, last 4 digits, balance and statement month",
-            examples=("What's the balance on my accounts?",))
+            examples=("What's the balance on my accounts?",),
+            quick={"concepts": ["BALANCE"], "words": ["bank balance", "money in the bank", "credit card balance",
+                                                      "savings account", "current account"]})
 def balances(ctx):
     uid, owner = _owner(ctx)
     accounts = ctx.conn.execute("SELECT id, name, type, account_number_last4 FROM accounts WHERE user_id = ? AND "

@@ -12,6 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .. import ai_client, app_messages, auth, briefing, catalogue, config, db, engine, settings
+from ..quick import intents as quick_intents
+from ..quick import learn as quick_learn
+from ..quick import match as quick_match
+from ..quick import understand as quick_understand
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -20,7 +24,7 @@ router = APIRouter(prefix="/api")
 PING_SECONDS = 20                     # a comment line on a quiet stream, so proxies keep it open
 MAX_STREAMS_PER_PERSON = 6            # live question streams one person may have open at once (tabs, retries)
 
-_AI_KEYS = {"ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens", "ai_tool_calls"}
+_AI_KEYS = {"ai_on", "ai_provider", "ai_url", "ai_model", "ai_api_key", "ai_max_tokens", "ai_tool_calls"}
 DEFAULT_SUGGESTIONS = ["What's on my list today?", "Spending this month", "What's on the shopping list?",
                        "Find a document"]
 
@@ -35,10 +39,14 @@ def me(user: dict = Depends(get_current_user)):
         apps = conn.execute("SELECT app, enabled, app_on FROM assist_apps ORDER BY app").fetchall()
     why = engine.can_ask(user)
     st = ai_client.status()
+    quick = settings.quick_on()
+    suggestions = [x["text"] for x in engine.suggestions(user, tools=tools)[:4]] if quick else []
     return {
         "user": {"id": user["id"], "name": user["name"], "isAdmin": user["is_admin"]},
         "canAsk": why is None, "why": why, "noAdmin": auth.no_admins(),
-        "suggestions": catalogue.suggestions(tools) or DEFAULT_SUGGESTIONS,
+        "suggestions": suggestions or catalogue.suggestions(tools) or DEFAULT_SUGGESTIONS,
+        "ai": {"on": settings.ai_in_use(), "model": settings.get("ai_model") if settings.ai_in_use() else None},
+        "quick": quick, "quickOnly": quick and not settings.ai_in_use(),
         "apps": [{"slug": a["app"], "name": names.get(a["app"], a["app"]), "on": bool(a["enabled"] and a["app_on"])}
                  for a in apps],
         "privacy": st["privacy"], "sharedOpen": bool(settings.get("shared_open")),
@@ -179,6 +187,47 @@ def stop_question(qid: str, user: dict = Depends(get_current_user)):
     return {"stopped": engine.stop(qid, user["id"])}
 
 
+class ChooseIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    choice: int = Field(ge=0, le=10)
+
+
+@router.post("/ask/{qid}/choose")
+def choose(qid: str, body: ChooseIn, user: dict = Depends(get_current_user)):
+    """A *Did you mean* choice: the same question answered with it, and that way of asking learned (§17.8)."""
+    try:
+        return engine.choose(qid, body.choice, user)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except engine.LimitError as e:
+        raise HTTPException(429, str(e))
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.post("/ask/{qid}/not-this")
+def not_this(qid: str, user: dict = Depends(get_current_user)):
+    """*Not what I asked*: forgets a learned phrase and asks again — the model when AI is in use, else the choices."""
+    try:
+        return {"id": engine.not_this(qid, user)}
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except engine.LimitError as e:
+        raise HTTPException(429, str(e))
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/quick/suggestions")
+def quick_suggestions(user: dict = Depends(get_current_user)):
+    """The one-tap questions: the quick intents the person may use, most used first."""
+    return {"suggestions": engine.suggestions(user) if settings.quick_on() else []}
+
+
 @router.post("/ask/{qid}/act/{cid}")
 def act(qid: str, cid: str, user: dict = Depends(get_current_user)):
     """The tap on a proposed action: sends it with confirm, as the person; the app checks it again."""
@@ -313,6 +362,9 @@ async def test_ai(payload: AIProbe | None = None, admin: dict = Depends(require_
     """Test connection: which models the provider offers, with the values typed on the page (unsaved)."""
     p = payload or AIProbe()
     current = await asyncio.to_thread(settings.all)
+    if not current["ai_on"]:                          # Use AI off: no request to any model server (§17.10)
+        return {"provider": current["ai_provider"], "label": settings.PROVIDERS.get(current["ai_provider"], "AI"),
+                "ok": False, "message": "Use AI is off — turn it on (and save) to test the connection."}
     probe = {k: v for k, v in p.model_dump().items() if k != "clear_ai_api_key" and v is not None}
     if p.clear_ai_api_key:
         probe["ai_api_key"] = ""
@@ -356,6 +408,97 @@ def admin_tools_switch(app: str, body: AppSwitch, admin: dict = Depends(require_
         if not catalogue.set_enabled(conn, app, body.enabled):
             raise HTTPException(404, "No such app.")
         return {"apps": catalogue.admin_rows(conn)}
+
+
+# --------------------------------------------------------------------------------------------- admin: quick answers
+
+class QuickTestIn(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    text: str = Field(min_length=1, max_length=engine.MAX_QUESTION)
+
+
+@router.post("/admin/quick/test")
+def admin_quick_test(body: QuickTestIn, admin: dict = Depends(require_admin)):
+    """How a question would be understood (as the admin, with the admin's names): calls nothing (§17.11)."""
+    with db.get_conn() as conn:
+        tools = catalogue.for_user(conn, admin)
+        ctx = engine.quick_ctx(conn, admin, tools)
+        out = quick_understand.explain(body.text, ctx)
+        tpl = out["template"]
+        hit = quick_learn.lookup(conn, tpl, ai_now=bool(settings.get("quick_ai_now")))
+    out["learned"] = hit
+    return out
+
+
+@router.get("/admin/quick/intents")
+def admin_quick_intents(admin: dict = Depends(require_admin)):
+    """What a phrase may mean (Add a phrase): every quick intent, with whether its app answers now."""
+    with db.get_conn() as conn:
+        tools = catalogue.for_user(conn, admin)
+    ctx = quick_intents.Ctx(tools=tools, today=config.today())
+    return {"intents": [{"intent": i.key, "question": i.question, "tool": i.tool, "acts": i.acts,
+                         "available": i.available(ctx),
+                         "args": sorted((tools.get(i.tool) or {}).get("spec", {}).get("args", {}).keys())}
+                        for i in quick_intents.INTENTS]}
+
+
+@router.get("/admin/quick/phrases")
+def admin_quick_phrases(admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        return {"phrases": quick_learn.phrases(conn)}
+
+
+class PhraseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    words: str = Field(min_length=1, max_length=200)
+    intent: str = Field(min_length=1, max_length=40)
+    args: dict = Field(default_factory=dict)
+
+
+@router.post("/admin/quick/phrases")
+def admin_quick_add_phrase(body: PhraseIn, admin: dict = Depends(require_admin)):
+    """Add a phrase: these words (their template) mean this intent, with these fixed arguments."""
+    intent = quick_intents.BY_KEY.get(body.intent)
+    if intent is None:
+        raise HTTPException(422, "No such quick answer.")
+    if intent.acts:
+        raise HTTPException(422, "A phrase can only lead to an answer, not to a change.")
+    with db.get_conn() as conn:
+        tools = catalogue.for_user(conn, admin)
+        spec = (tools.get(intent.tool) or {}).get("spec") or {"args": {}}
+        args = engine._clean_args(spec, body.args)
+        if len(args) != len({k: v for k, v in body.args.items() if v not in (None, "")}):
+            raise HTTPException(422, "One of the fixed values doesn't fit that answer.")
+        ctx = engine.quick_ctx(conn, admin, tools)
+        u = quick_match.read(body.words, ctx.today, ctx.vocab)
+        tpl = quick_match.template(u)
+        if not tpl or tpl in ("{when}", "{name}", "{month}"):
+            raise HTTPException(422, "Use a few words, not only a time or a name.")
+        slot_args = [k for k in ("when", "days", "month", "date") if k not in args]
+        pid = quick_learn.remember(conn, tpl, intent.key, args, slot_args, "admin")
+        return {"id": pid, "phrase": tpl, "phrases": quick_learn.phrases(conn)}
+
+
+@router.delete("/admin/quick/phrases/{pid}")
+def admin_quick_delete_phrase(pid: str, admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        if not quick_learn.delete(conn, pid):
+            raise HTTPException(404, "No such phrase.")
+        return {"phrases": quick_learn.phrases(conn)}
+
+
+@router.get("/admin/quick/misses")
+def admin_quick_misses(admin: dict = Depends(require_admin)):
+    """Asked but not answered quickly: normalised words and how often, never who asked."""
+    with db.get_conn() as conn:
+        return {"misses": quick_learn.misses(conn)}
+
+
+@router.delete("/admin/quick/misses")
+def admin_quick_clear_misses(admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        n = conn.execute("DELETE FROM quick_misses").rowcount
+    return {"deleted": n}
 
 
 @router.get("/admin/usage")

@@ -228,7 +228,11 @@ def lists(ctx):
 @tools.tool("todo.schedule",
             "What's coming up on the household schedule (trash day, recurring chores, appointments) in the next days.",
             args={"days": Arg("number", "how many days ahead, 1 to 14 (default 7)", min=1, max=14)},
-            returns="dates with what's on and who it's for", children=True)
+            returns="dates with what's on and who it's for", children=True,
+            # the assistant's quick answers (HOUSEHOLD_ASSISTANT_SPEC.md §17.4): the words households use for these
+            quick={"concepts": ["SCHEDULE"], "words": ["bin day", "bins out", "recycling day", "garden waste",
+                                                       "collection day", "boiler service", "filter change"],
+                   "args": {"days": 7}})
 def schedule(ctx):
     today = config.now().date()
     days = int(ctx.args.get("days", 7))
