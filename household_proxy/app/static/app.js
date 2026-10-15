@@ -455,10 +455,24 @@
     const events = h("div", { class: "people-picks" }, EVENTS.map(([v, l]) =>
       h("label", { class: "check" }, h("input", { type: "checkbox", value: v, checked: al.events.includes(v) }), l)));
     const service = h("input", { class: "input", value: al.service, placeholder: "notify.living_room_speaker", maxlength: 110 });
+    const alertResult = h("p", { class: "hint small", role: "status" });
+    const alertTest = site ? h("button", { type: "button", class: "btn-secondary", onclick: async () => {
+      alertTest.disabled = true;
+      alertResult.textContent = "Sending…";
+      try {
+        const r = await api(`api/admin/sites/${site.id}/alert-test`, { method: "POST", body: {} });
+        const { list, text } = PeoplePage.resultsText(r.results);
+        alertResult.textContent = text;
+        const bad = list.filter((y) => !y.ok).map((y) => y.service);
+        toast(bad.length ? `Sent, but Home Assistant refused ${bad.join(", ")}` : "Test alert sent", !!bad.length);
+      } catch (e) { alertResult.textContent = e.message; toast(e.message, true); }
+      setTimeout(() => { alertTest.disabled = false; }, 1500);
+    } }, "🔔 Send a test alert") : null;
     const alertSection = h("fieldset", { class: "section" }, h("legend", null, "🔔 Alerts"),
-      field("Tell", alertPeople, "Their phones from Home Assistant. Any people — being told gives no access to the site."),
+      field("Tell", alertPeople, "Their phones from Home Assistant, plus any extra services set under Admin → People → 🔔. Any people — being told gives no access to the site."),
       field("Also send to", service, "An extra notify service (optional)."),
-      field("About", events));
+      field("About", events),
+      site ? h("div", { class: "field" }, alertTest, h("span", { class: "hint small" }, " To everyone above, as saved."), alertResult) : null);
 
     const rs = s.restart;
     const rf = {
@@ -596,22 +610,35 @@
   }
 
   // Admin → People
-  async function loadPeople() {
+  // the shared people page (common/people.js): access switch, then 🔔 phones, extra services and Send a test
+  async function loadPeople(refresh) {
     const box = $("#tab-people");
     let r;
-    try { r = await api("api/admin/people"); } catch (e) { mount(clear(box), h("p", { class: "error" }, e.message)); return; }
-    const row = (p) => {
-      const on = h("input", { type: "checkbox", checked: p.enabled });
-      on.addEventListener("change", async () => {
-        try { await api(`api/admin/people/${encodeURIComponent(p.id)}`, { method: "PUT", body: { enabled: on.checked } }); }
-        catch (e) { on.checked = !on.checked; toast(e.message, true); }
-      });
-      return h("tr", null, h("td", null, p.name, p.username ? h("span", { class: "dim" }, `  ${p.username}`) : null),
-        h("td", null, h("label", null, on, " May open sites")));
-    };
-    mount(clear(box), h("div", { class: "card" },
-      h("p", { class: "hint" }, "Everyone who has opened this app. Someone turned off opens no site, whatever each site allows."),
-      h("table", { class: "people" }, h("tbody", null, r.people.map(row)))));
+    try { r = await api("api/admin/people" + (refresh ? "?refresh=1" : "")); } catch (e) { mount(clear(box), h("p", { class: "error" }, e.message)); return; }
+    PeoplePage.render(box, {
+      people: r.people,
+      intro: ["Everyone who has opened this app. Someone turned off opens no site, whatever each site allows.",
+        "📱 Site alerts go to each person's phone from Home Assistant: Settings → People → (the person) → Track device, with the Companion app on the phone. 🔔 shows their phones, lets you add an extra notify service and send a test."],
+      checkAgain: async () => { await loadPeople(true); toast("Read from Home Assistant"); },
+      person: (p) => ({
+        badges: [p.you ? ["you"] : null, p.isAdmin ? ["admin", "accent"] : null],
+        sub: p.username || null,
+        controls: h("label", { class: "pp-toggle" }, "May open sites ", PeoplePage.accessSwitch(p.enabled, async (on, t) => {
+          try { await api(`api/admin/people/${encodeURIComponent(p.id)}`, { method: "PUT", body: { enabled: on } }); p.enabled = on; }
+          catch (e) { t.checked = !on; toast(e.message, true); }
+        }, { label: `May ${p.name} open sites`, disabled: p.you })),
+      }),
+      notify: {
+        mode: "dialog", buttonClass: "btn-secondary", ghostClass: "btn-ghost", openModal, api,
+        toast: (m, err) => toast(m, err), fail: (e) => toast(e.message, true),
+        loadServices: () => api("api/admin/notify-services"),
+        path: (p) => `api/admin/people/${encodeURIComponent(p.id)}/notify`,
+        testPath: (p) => `api/admin/people/${encodeURIComponent(p.id)}/notify/test`,
+        texts: { intro: (p) => `Where ${p.name}'s site alerts go (for the sites that tell them).` },
+        onClose: () => loadPeople(),
+      },
+      empty: "Nobody has opened the app yet.",
+    });
   }
 
   // Admin → Storage

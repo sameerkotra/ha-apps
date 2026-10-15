@@ -751,7 +751,8 @@
           "backup_core.py",
           "sensor_publisher.py",
           "deeplinks.py",
-          "wildcard.py"
+          "wildcard.py",
+          "people_admin.py"
         ],
         "static": [
           "backnav.js",
@@ -761,7 +762,8 @@
           "ui.js",
           "settings.js",
           "settings.css",
-          "deeplink.js"
+          "deeplink.js",
+          "people.js"
         ],
         "tests": [
           "__init__.py",
@@ -780,7 +782,8 @@
           "test_fake_ha.py",
           "test_deeplinks.py",
           "test_ha_time.py",
-          "test_wildcard.py"
+          "test_wildcard.py",
+          "test_people_admin.py"
         ]
       }
     },

@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 from app import db, sites, watchdog
-from app.common import ha_people
+from app.common import ha_notify, ha_people
 from helpers import ADMIN, BOB, CAROL, ProxyCase
 
 
@@ -213,6 +213,39 @@ class Alerts(MonitorCase):
         self.port_.up()
         self.tick()
         self.assertEqual(len(self.sent), 3)                                  # "back up" isn't chosen
+
+    def test_extra_services_from_admin_people_reach_alerts(self):
+        self.c.get("/api/me", headers=BOB)                                   # Bob is known once he has opened the app
+        r = self.c.post("/api/admin/people/u-bob/notify", json={"service": "kitchen_speaker"}, headers=ADMIN)
+        self.assertEqual(r.status_code, 201, r.text)
+        self.assertEqual(r.json()["notify"], ["notify.kitchen_speaker"])
+        self.add_checked(alerts={"people": ["u-bob"], "events": ["down"]})
+        self.go_down()
+        self.assertEqual(sorted(s[0] for s in self.sent), ["kitchen_speaker", "mobile_app_bob"])
+
+    def test_send_a_test_alert_goes_where_a_real_one_would(self):
+        site = self.add_checked(alerts={"people": ["u-bob", "u-carol"], "service": "notify.speaker", "events": ["down"]})
+        sid = site["site"]["id"] if "site" in site else site["id"]
+        self.c.get("/api/me", headers=CAROL)
+        self.c.post("/api/monitor/box/mute", json={"muted": True}, headers=CAROL)
+        with db.get_conn() as conn:                                          # Carol muted it (as the Monitor page would)
+            conn.execute("INSERT OR IGNORE INTO alert_mutes (site_id, user_id) VALUES (?, 'u-carol')", (sid,))
+        calls = []
+        with mock.patch.object(ha_notify, "send_notify",
+                               lambda svc, title, text, data=None: calls.append((svc, title)) or svc != "speaker"):
+            r = self.c.post(f"/api/admin/sites/{sid}/alert-test", headers=ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(sorted(c[0] for c in calls), ["mobile_app_bob", "speaker"])
+        self.assertEqual(calls[0][1], "Box: test alert")
+        res = {x["service"]: x["ok"] for x in r.json()["results"]}
+        self.assertEqual(res, {"notify.mobile_app_bob": True, "notify.speaker": False})
+        self.assertEqual(self.c.post(f"/api/admin/sites/{sid}/alert-test", headers=BOB).status_code, 403)
+        self.assertEqual(self.c.post("/api/admin/sites/9999/alert-test", headers=ADMIN).status_code, 404)
+
+    def test_send_a_test_alert_with_nobody_to_tell(self):
+        site = self.add_checked(alerts={"people": ["u-nobody"], "events": ["down"]})
+        sid = site["site"]["id"] if "site" in site else site["id"]
+        self.assertEqual(self.c.post(f"/api/admin/sites/{sid}/alert-test", headers=ADMIN).status_code, 409)
 
     def test_alerted_person_gets_no_access(self):
         self.add_checked(alerts={"people": ["u-bob"]})

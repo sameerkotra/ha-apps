@@ -1,9 +1,9 @@
 # Household Proxy — spec
 
-Status: **built; 0.6.4 current** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built
+Status: **built; 0.6.5 current** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built
 and tested 2026-10-11, 0.6.0 listed in the repository; 0.6.3 fixed Komodo's terminal; 0.6.4 (2026-10-13) the fixes of
 the 13 Oct review — §14). Step 6's real-hardware run — two or three sites besides Komodo, a smart plug — is still to
-do. This spec describes 0.6.4 as built. Decided: the
+do. This spec describes 0.6.5 as built (0.6.5: the shared Admin → People notify editor and test alerts, §13.4). Decided: the
 name *Household Proxy*; everyone sees the panel, each person only the sites they may open; Isolated sites come in a
 later version (§14).
 
@@ -261,7 +261,7 @@ history kept (default 30 days).
 
 | | |
 |---|---|
-| App | `slug: household_proxy`, `version: "0.6.4"`, amd64 and aarch64, `startup: application`, `boot: auto` |
+| App | `slug: household_proxy`, `version: "0.6.5"`, amd64 and aarch64, `startup: application`, `boot: auto` |
 | Ingress | `ingress: true`, `ingress_port: 8099`, `ingress_stream: true`, `panel_icon: mdi:web-box`, `panel_title: Proxy`, `panel_admin: false`; no `ports` |
 | APIs | `hassio_api: false` (its own sidebar page for deep links comes from `GET /addons/self/info`, which every app may ask with its own token — as the other apps do); `homeassistant_api: true` (§13: the list of switches, `switch.turn_off`/`turn_on` on the switches an admin chose, the sites' binary sensors, notifications) |
 | Network | `host_network: false`: the LAN is reached through the Supervisor's network as any app reaches it. A `.local` name Home Assistant's DNS can't resolve needs the IP instead (the Test says so). |
@@ -304,7 +304,8 @@ household_proxy/app/
   …the monitoring columns of §13.7)`
 - `site_people(site_id, user_id)`, `site_headers(site_id, name, value)` (secret), `site_rules(site_id, position,
   where_, types, match, replace)`, `access_log(site_id, at, user_id, method, path, status, bytes)`.
-- `users` as the other apps (people from Home Assistant, enabled switch).
+- `users` as the other apps (people from Home Assistant, enabled switch); `user_notify(user_id, service, created_at,
+  created_by)` — extra notify services per person (0.6.5).
 
 ## 9. API (sketch)
 `GET /api/sites` (the viewer's sites); admin: `GET/POST /api/admin/sites`, `PUT/DELETE /api/admin/sites/{id}`
@@ -440,6 +441,10 @@ Safety rules:
 - Being alerted doesn't give access: the message names the site and the event; tapping it opens the Monitor page
   at that site (deep link `/monitor/<site>`), which shows the site only to people allowed to see it (§4.2).
 - Each person can mute a site's alerts for themselves (Monitor page → 🔕), without changing the site.
+- (0.6.5) Each person's alerts go to their phones **and** the extra notify services an admin adds under Admin →
+  People → 🔔 (`user_notify`; the shared `people_admin.py` / `people.js`, with **Send a test**, as the other apps).
+  A saved site's form has **Send a test alert** (`POST /api/admin/sites/{id}/alert-test`): to exactly the services a
+  real alert would use, the results shown per service.
 
 ### 13.5 Home Assistant entities (per site, on by default when checks are on)
 `binary_sensor.household_proxy_<slug>` (`device_class: connectivity`): on while up. Attributes: `status` (the state

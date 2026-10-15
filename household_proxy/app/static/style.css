@@ -49,6 +49,7 @@ a { color: var(--accent); }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-secondary { background: var(--panel-alt); color: var(--text); border-color: var(--border); }
 .btn-ghost { background: transparent; color: var(--text); }
+.pp-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: .88rem; color: var(--text-dim); }
 .btn-ghost:hover, .btn-secondary:hover { background: var(--panel-hover); }
 .danger { color: var(--danger); }
 .btn-primary.danger { background: var(--danger); color: #fff; }

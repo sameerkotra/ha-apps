@@ -20,7 +20,7 @@ import zlib
 import httpx
 
 from . import config, db, netguard, probe, sidebar, sites
-from .common import ha_notify, ha_people, sensor_publisher
+from .common import ha_notify, sensor_publisher
 
 logger = logging.getLogger("watchdog")
 
@@ -430,7 +430,7 @@ def recipients(conn, site_id: int) -> list[str]:
         "(SELECT user_id FROM alert_mutes WHERE site_id = ?)", (site_id, site_id))]
     out = []
     for uid in people:
-        out += ha_people.phones_for(uid)
+        out += ha_notify.services_for({"id": uid}, conn)       # their phones from Home Assistant + extra services
     if row and row["alert_service"]:
         out.append(ha_notify.bare(row["alert_service"]))
     return list(dict.fromkeys(out))

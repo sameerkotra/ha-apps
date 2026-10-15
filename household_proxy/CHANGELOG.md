@@ -2,6 +2,21 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.5
+
+### Added
+
+- **Admin → People** is now the same page as the other household apps: each person's **🔔 Notifications** shows the
+  phones Home Assistant links to them (or why there are none), lets you add an extra notify service, and has
+  **Send a test**.
+- **🔔 Send a test alert** under a site's Alerts: a test to everyone that site's alerts go to, as saved, with what
+  Home Assistant said for each.
+
+### Fixed
+
+- Site alerts (and the "a switch may be off" note to admins) now also go to each person's extra notify services, not
+  only to the phones Home Assistant links to them — so someone with no tracked phone can still be alerted.
+
 ## 0.6.4
 
 ### Security

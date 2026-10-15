@@ -243,3 +243,53 @@ class Pages(ProxyCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PeopleNotify(ProxyCase):
+    """Admin → People: the shared notify editor (common/people_admin.py), as in the other household apps."""
+
+    def setUp(self):
+        super().setUp()
+        from unittest import mock
+        from app.common import ha_people
+        p = mock.patch.object(ha_people, "phones_for", lambda uid: {"u-admin": ["mobile_app_ann"]}.get(uid, []))
+        p.start()
+        self.addCleanup(p.stop)
+        self.c.get("/api/me", headers=BOB)
+
+    def test_people_list_has_phones_and_services(self):
+        r = self.c.get("/api/admin/people", headers=ADMIN)
+        self.assertEqual(r.status_code, 200)
+        bob = next(p for p in r.json()["people"] if p["id"] == "u-bob")
+        self.assertEqual(bob["notify"], [])
+        self.assertIn("phones", bob["ha"])
+        self.assertFalse(bob["isAdmin"])
+
+    def test_add_remove_and_limits(self):
+        r = self.c.post("/api/admin/people/u-bob/notify", json={"service": "notify.speaker"}, headers=ADMIN)
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(self.c.post("/api/admin/people/u-bob/notify", json={"service": "Bad Name"},
+                                     headers=ADMIN).status_code, 422)
+        self.assertEqual(self.c.post("/api/admin/people/nobody/notify", json={"service": "x"},
+                                     headers=ADMIN).status_code, 404)
+        self.assertEqual(self.c.post("/api/admin/people/u-bob/notify", json={"service": "x"}, headers=BOB).status_code, 403)
+        r = self.c.delete("/api/admin/people/u-bob/notify/notify.speaker", headers=ADMIN)
+        self.assertEqual(r.json()["notify"], [])
+        self.assertEqual(self.c.delete("/api/admin/people/u-bob/notify/notify.speaker", headers=ADMIN).status_code, 404)
+
+    def test_send_a_test(self):
+        from unittest import mock
+        from app.common import ha_client, ha_notify
+        self.assertEqual(self.c.post("/api/admin/people/u-bob/notify/test", headers=ADMIN).status_code, 409)
+        self.c.post("/api/admin/people/u-bob/notify", json={"service": "speaker"}, headers=ADMIN)
+        calls = []
+        with mock.patch.object(ha_notify, "send_notify", lambda svc, t, m, d=None: calls.append(svc) or True):
+            r = self.c.post("/api/admin/people/u-bob/notify/test", headers=ADMIN)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["results"], [{"service": "notify.speaker", "ok": True, "hint": ""}])
+            self.assertEqual(self.c.post("/api/admin/people/u-bob/notify/test", headers=ADMIN).status_code, 429)
+        self.assertEqual(calls, ["speaker"])
+        with mock.patch.object(ha_notify, "send_notify", lambda *a, **k: False), \
+                mock.patch.object(ha_client, "has_token", lambda: False):
+            r = self.c.post("/api/admin/people/u-admin/notify/test", headers=ADMIN)
+        self.assertEqual(r.status_code, 502)

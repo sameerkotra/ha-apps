@@ -9,7 +9,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import auth, config, db, probe, proxy, restarts, settings, sidebar, sites, watchdog
 from ..auth import get_current_user, require_admin
-from ..common import auth_core, backup_core
+from ..common import auth_core, backup_core, ha_client, ha_notify, people_admin
 from ..common import whoami as whoami_core
 
 router = APIRouter(prefix="/api")
@@ -142,6 +142,28 @@ def monitor_mute(slug: str, body: MuteIn, user: dict = Depends(get_current_user)
         else:
             conn.execute("DELETE FROM alert_mutes WHERE site_id = ? AND user_id = ?", (site.id, user["id"]))
     return {"muted": body.muted}
+
+
+_alert_tests = people_admin.TestLimiter(5)
+
+
+@router.post("/admin/sites/{site_id}/alert-test")
+def admin_alert_test(site_id: int, admin: dict = Depends(require_admin)):
+    """A test alert to everyone this site's alerts go to (as saved: the people chosen, minus those who muted it, each
+    with their phones and extra services, plus the site's extra service) — sent now, so the result can be shown."""
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT name, check_kind FROM sites WHERE id = ?", (site_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, "No such site.")
+        services = watchdog.recipients(conn, site_id)
+    # the DB connection is closed before Home Assistant is called
+    if not services:
+        raise HTTPException(409, "Nobody would be told: choose people under Alerts and save, and check each has a "
+                                 "phone in Home Assistant or an extra notify service (Admin → People → 🔔).")
+    _alert_tests.check(f"site:{site_id}")
+    results = ha_notify.send_to_services(services, f"{row['name']}: test alert",
+                                         "Test from Household Proxy — alerts about this site will arrive like this.")
+    return {"results": people_admin.test_results(results, as_list=True)}
 
 
 @router.get("/admin/sites/{site_id}/history")
@@ -329,11 +351,71 @@ def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
 # --------------------------------------------------------------------------------------------- admin: people
 
 @router.get("/admin/people")
-def admin_people(admin: dict = Depends(require_admin)):
+def admin_people(refresh: bool = False, admin: dict = Depends(require_admin)):
+    """Everyone known, with their phones from Home Assistant and any extra notify services (the shared people page,
+    common/people.js). `refresh=1` reads Home Assistant's people again first (no DB connection held meanwhile)."""
+    people_admin.refresh_people(refresh)
     with db.get_conn() as conn:
         rows = conn.execute("SELECT id, name, username, enabled FROM users ORDER BY name COLLATE NOCASE").fetchall()
-    return {"people": [{"id": r["id"], "name": r["name"], "username": r["username"], "enabled": bool(r["enabled"])}
+        notify = {r["id"]: ha_notify.assigned_services(conn, {"id": r["id"]}) for r in rows}
+    return {"people": [{"id": r["id"], "name": r["name"], "username": r["username"], "enabled": bool(r["enabled"]),
+                        "you": r["id"] == admin["id"], "isAdmin": auth.is_admin(r["id"], r["name"], r["username"]),
+                        "notify": notify[r["id"]],                       # extra services added here
+                        "ha": people_admin.ha_person_json(r["id"])}      # phones from Home Assistant
                        for r in rows]}
+
+
+# Notify services per person (as in the other household apps: common/people_admin.py)
+MAX_SERVICES_PER_USER = 5
+_tests = people_admin.TestLimiter(5)
+
+
+@router.get("/admin/notify-services")
+def notify_services(refresh: bool = False, admin: dict = Depends(require_admin)):
+    """Notify actions and entities Home Assistant has, for the picker."""
+    return people_admin.notify_services(refresh)
+
+
+def _known_person(conn, uid: str):
+    row = conn.execute("SELECT id, name, username FROM users WHERE id = ?", (uid,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "No such person.")
+    return row
+
+
+@router.post("/admin/people/{uid}/notify", status_code=201)
+def add_notify(uid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
+    svc = people_admin.clean_service(body.get("service"))
+    with db.get_conn() as conn:
+        _known_person(conn, uid)
+        return {"notify": people_admin.add_service(conn, uid, svc, admin.get("username") or admin["id"], config.iso(),
+                                                   limit=MAX_SERVICES_PER_USER)}
+
+
+@router.delete("/admin/people/{uid}/notify/{svc}")
+def remove_notify(uid: str, svc: str, admin: dict = Depends(require_admin)):
+    svc = people_admin.clean_service(svc)
+    with db.get_conn() as conn:
+        _known_person(conn, uid)
+        return {"notify": people_admin.remove_service(conn, uid, svc, "That service isn't assigned to them.")}
+
+
+@router.post("/admin/people/{uid}/notify/test")
+def test_notify(uid: str, admin: dict = Depends(require_admin)):
+    """A short test message to their phones (from Home Assistant) and every extra service — sent now, so the result
+    can be shown."""
+    with db.get_conn() as conn:
+        row = _known_person(conn, uid)
+        services = ha_notify.services_for({"id": uid}, conn)
+    # the DB connection is closed before Home Assistant is called
+    if not services:
+        raise HTTPException(409, f"{row['name']} has no phone linked in Home Assistant (Settings → People → "
+                                 f"{row['name']} → Track device) and no extra notify service here.")
+    _tests.check(uid)
+    results = ha_notify.send_to_services(services, "Household Proxy", f"Test for {row['name']} — site alerts will "
+                                         "arrive like this.")
+    people_admin.require_one_sent(results, services[0], ha_client.has_token)
+    return {"results": people_admin.test_results(results, as_list=True)}
 
 
 class PersonIn(BaseModel):
@@ -349,7 +431,7 @@ def admin_person(user_id: str, body: PersonIn, admin: dict = Depends(require_adm
         if not conn.execute("UPDATE users SET enabled = ? WHERE id = ?", (int(body.enabled), user_id)).rowcount:
             raise HTTPException(404, "No such person.")
     auth.forget_cached()
-    return admin_people(admin)
+    return admin_people(admin=admin)
 
 
 # --------------------------------------------------------------------------------------------- admin: storage

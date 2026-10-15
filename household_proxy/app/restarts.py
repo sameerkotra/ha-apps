@@ -514,11 +514,11 @@ async def _turn_on(entity: str, site_ids: list[int] | None = None) -> bool:
 async def _tell_admins(entity: str) -> None:
     """Admins hear about a switch left off even if they chose not to hear about the site."""
     from . import watchdog
-    from .common import ha_people
+    from .common import ha_notify
     with db.get_conn() as conn:
         services = []
         for uid in sites.admin_ids(conn):
-            services += ha_people.phones_for(uid)
+            services += ha_notify.services_for({"id": uid}, conn)
     for svc in dict.fromkeys(services):
         await asyncio.to_thread(watchdog.send, svc, "Household Proxy: a switch may be off",
                                 f"{entity} was turned off for a restart and couldn't be turned back on.", {})

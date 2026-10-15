@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS users (
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
+-- Extra notify services an admin adds for a person under Admin → People (a speaker, a second service), on top of
+-- their phones from Home Assistant — the same table and editor as the other household apps (common/people_admin.py).
+CREATE TABLE IF NOT EXISTS user_notify (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    service TEXT NOT NULL,                -- "notify.<name>"
+    created_at TEXT NOT NULL,
+    created_by TEXT,
+    PRIMARY KEY (user_id, service)
+);
 
 -- A site: a target on the home network, opened through the proxy at /s/<slug>/ (spec §2–§5).
 CREATE TABLE IF NOT EXISTS sites (

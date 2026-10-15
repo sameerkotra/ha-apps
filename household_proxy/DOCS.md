@@ -231,6 +231,8 @@ Under **🔔 Alerts** in the site's form:
   site. Every admin by default. Their phones come from Home Assistant (**Settings → People**, the Companion app
   devices tracked for each person).
 - **Also send to** — an extra notify service for this site (a speaker, a group), e.g. `notify.living_room_speaker`.
+- **🔔 Send a test alert** (a saved site) — sends a test now to everyone above, as saved, and shows what Home
+  Assistant said for each phone or service. Nobody gets it? Open **Admin → People → 🔔** for the person.
 - **About** — which events: **Down**, **Restarting** (each restart), **Back up** (with how long it was down and how
   many restarts), **Gave up**, **Couldn't restart**. All but **Restarting** by default.
 
@@ -242,6 +244,11 @@ people allowed to see it.
 
 Everyone who has opened the app. Someone turned off opens no site, whatever each site allows — and an admin turned
 off by another admin has no admin pages either. You can't turn yourself off.
+
+**🔔 Notifications** (as in the other household apps): the person's phones from Home Assistant (**Settings → People →
+the person → Track device**, with the Companion app; "No person linked" means **Allow person to login** isn't set for
+them), any extra notify services you add (a speaker, a second service — they get the site alerts too), and **Send a
+test**. **Check Home Assistant again** re-reads the people after you change them there.
 
 ## Settings
 
