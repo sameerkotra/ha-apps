@@ -280,9 +280,9 @@ dish soap	item_alone	{"item": "dish soap"}
 tomatoes	item_alone	{"item": "tomatoes"}
 bananas	item_alone	{"item": "bananas"}
 toothpaste	item_alone	{"item": "toothpaste"}
-curd	item_alone	{"item": "curd"}
+curd	item_alone	{"item": "Curd"}
 dal	item_alone	{"item": "dal"}
-yogurt	item_alone	{"item": "yogurt"}
+yogurt	item_alone	{"item": "Curd"}
 cheese	item_alone	{"item": "cheese"}
 tea	item_alone	{"item": "tea"}
 oil	item_alone	{"item": "oil"}
@@ -656,7 +656,7 @@ ravi's birthday	about_person	{"person": "Ravi"}
 meera's birthday	about_person	{"person": "Meera"}
 how old is sam now	about_person	{"person": "Sam"}
 where was meera born	about_person	{"person": "Meera"}
-who is arjun's wife	about_person	{"person": "Arjun"}
+who is arjun's wife	about_person	{"person": "Arjun's wife"}
 when is the birthday of priya	about_person	{"person": "Priya"}
 birthday of kavya	about_person	{"person": "Kavya"}
 # ---- relation (tree.relation)
@@ -868,11 +868,11 @@ add fix the fence to home jobs	task_add	{"list": "Home jobs"}
 put milk on the costco list	task_add	{"list": "Costco", "text": "milk"}
 i paid the electricity bill	none	
 did i pay the electricity bill	none	
-tick off milk	task_done	{"task": "milk"}
+tick off milk	shop_tick	{"item": "milk"}
 # ---- needs the model (or, with AI off: what it can answer)
 should I pay the bill now	model	
 why did we spend so much	model	
-compare this month's spending with last month	model	
+compare this month's spending with last month	compare	{"month": "2026-10"}	
 is it worth switching electricity supplier	model	
 what should we cook tonight	model	
 can we afford a new tv after this month's bills	model	
@@ -924,3 +924,242 @@ log two rotis for dinner	food_log	{"servings": 2.0, "meal": "dinner"}
 i paid forty for dinner	expense_add	{"amount": 40.0}
 whats the schedule for the next five days	schedule	{"days": 5}
 how much did we spend in september please	spend	{"month": "2026-09"}
+
+# ---- 1.5: ticking items off the shopping list
+bought the milk	shop_tick	{"item": "milk"}
+I bought eggs	shop_tick	{"item": "eggs"}
+just bought dish soap	shop_tick	{"item": "dish soap"}
+got the milk	shop_tick	{"item": "milk"}
+mark milk bought	shop_tick	{"item": "milk"}
+mark eggs as bought	shop_tick	{"item": "eggs"}
+tick milk off the shopping list	shop_tick	{"item": "milk"}
+cross eggs off the shopping list	shop_tick	{"item": "eggs"}
+tick off the eggs	shop_tick	{"item": "eggs"}
+we have bought milk	shop_tick	{"item": "milk"}
+picked up the milk	shop_tick	{"item": "milk"}
+picked up eggs	shop_tick	{"item": "eggs"}
+grabbed the dish soap	shop_tick	{"item": "dish soap"}
+purchased basmati rice	shop_tick	{"item": "basmati rice"}
+got eggs	shop_tick	{"item": "eggs"}
+i got the milk	shop_tick	{"item": "milk"}
+bought dahi	shop_tick	{"item": "Curd"}
+bought doodh	shop_tick	{"item": "milk"}
+milk bought	shop_tick	{"item": "milk"}
+eggs bought today	shop_tick	{"item": "eggs"}
+tick milk off	shop_tick	{"item": "milk"}
+mark the milk as bought	shop_tick	{"item": "milk"}
+bought milk and eggs	shop_tick	{"item": "milk"}
+already bought eggs	shop_tick	{"item": "eggs"}
+check off milk from the shopping list	shop_tick	{"item": "milk"}
+
+# ---- moving a task to another day
+move the dentist to friday	task_move	{"task": "dentist", "due": "2026-10-16"}
+snooze bins to tomorrow	task_move	{"task": "bins", "due": "2026-10-15"}
+push call the plumber to monday	task_move	{"task": "call the plumber", "due": "2026-10-19"}
+postpone the car wash till next week	task_move	{"task": "car wash", "due": "2026-10-21"}
+reschedule dentist to 2026-10-20	task_move	{"task": "dentist", "due": "2026-10-20"}
+move water the plants to tomorrow	task_move	{"task": "water the plants", "due": "2026-10-15"}
+delay pay the electricity bill to friday	task_move	{"task": "pay the electricity bill"}
+shift the meeting to thursday	task_move	{"task": "meeting", "due": "2026-10-15"}
+bump laundry to saturday	task_move	{"task": "laundry", "due": "2026-10-17"}
+put off the gutters until next week	task_move	{"task": "gutters", "due": "2026-10-21"}
+defer tax return to monday	task_move	{"task": "tax return"}
+push back gym to tomorrow	task_move	{"task": "gym"}
+move my haircut to friday	task_move	{"task": "haircut"}
+can you move the dentist appointment to next friday	task_move	{"task": "dentist appointment", "due": "2026-10-16"}
+snooze the bins until tomorrow	task_move	{"task": "bins"}
+postpone call mum to monday	task_move	{"task": "call mum"}
+reschedule the vet to next week	task_move	{"task": "vet"}
+move the boiler service to friday	task_move	{"task": "boiler service"}
+snooze watering to tomorrow	task_move	{"task": "watering"}
+push the car service back to monday	task_move	{"task": "car service"}
+move dentist to tmrw	task_move	{"due": "2026-10-15"}
+postpone cleaning the garage to saturday	task_move	{"task": "cleaning the garage"}
+shift laundry to sunday	task_move	{"due": "2026-10-18"}
+push oil change to next monday	task_move	{"task": "oil change", "due": "2026-10-19"}
+move the bins to friday	task_move	{"task": "bins"}
+
+# ---- a spend added to Finance by hand
+I spent 200 on fuel at Shell	expense_log	{"amount": 200.0, "description": "Shell", "category": "Fuel"}
+i spent ₹450 at dmart	expense_log	{"amount": 450.0, "description": "Dmart"}
+we spent $35 on dinner at Pizza Hut	expense_log	{"amount": 35.0, "description": "Pizza Hut"}
+log 120 spent on groceries	expense_log	{"amount": 120.0, "category": "Groceries"}
+I spent 60 rupees on petrol	expense_log	{"amount": 60.0, "category": "Fuel"}
+i spent 300 at hp on petrol	expense_log	{"description": "Hp", "category": "Fuel"}
+we spent 1200 on electricity	expense_log	{"category": "Utilities"}
+I spent 15 at Starbucks yesterday	expense_log	{"description": "Starbucks", "date": "2026-10-13"}
+i spent 40 on a taxi	expense_log	{"description": "Taxi"}
+spent ₹250 at the chemist	expense_log	{"amount": 250.0, "description": "Chemist"}
+i spent 99 on netflix	expense_log	{"description": "Netflix"}
+I spent 500 on my visa at Amazon	expense_log	{"description": "Amazon", "account": "Visa"}
+we spent 80 on takeaway	expense_log	{"category": "Takeaway"}
+log a 30 dollar spend at Uber	expense_log	{"amount": 30.0, "description": "Uber"}
+i spent 12.50 on coffee	expense_log	{"amount": 12.5, "description": "Coffee"}
+spent $20 at Shell this morning	expense_log	{"description": "Shell"}
+I spent 2000 on rent	expense_log	{"category": "Rent"}
+we spent 75 at Costco	expense_log	{"description": "Costco"}
+i spent 18 at the bakery	expense_log	{"description": "Bakery"}
+i spent 300 on gifts	expense_log	{"category": "Gifts"}
+spent rs 150 on auto	expense_log	{"amount": 150.0, "description": "Auto"}
+I spent 9 on parking	expense_log	{"description": "Parking"}
+we spent 140 at ikea	expense_log	{"description": "Ikea"}
+i spent 22 on lunch	expense_log	{"description": "Lunch"}
+maine kal petrol pe 500 kharch kiye	expense_log	{"amount": 500.0, "category": "Fuel", "date": "2026-10-13"}
+i spent 70 on the checking account at Target	expense_log	{"description": "Target", "account": "Checking"}
+
+# ---- a new note
+make a note the plumber comes tuesday	note_add	{"text": "the plumber comes tuesday"}
+take a note: wifi password is on the router	note_add	{"text": "wifi password is on the router"}
+new note gate code 4521	note_add	{"text": "gate code 4521"}
+note that the boiler was serviced in october	note_add	{"text": "the boiler was serviced in october"}
+make a note to call the bank	note_add	{"text": "call the bank"}
+write a note about the car insurance renewal	note_add	{"text": "the car insurance renewal"}
+save a note: kids school starts at 8:30	note_add
+create a note grocery budget ideas	note_add	{"text": "grocery budget ideas"}
+add a note: buy a new filter	note_add	{"text": "buy a new filter"}
+take a note the dentist said to floss more	note_add
+make a note that ravi owes me 200	note_add	{"text": "ravi owes me 200"}
+new note: passport renewal due in march	note_add
+make note of the meter reading 4512	note_add	{"text": "the meter reading 4512"}
+take a note wifi name is HomeNet	note_add
+write a note: the spare key is under the mat	note_add
+make a note about the dog's vet visit	note_add
+new note shopping ideas for diwali	note_add
+make a note: tv licence expires next year	note_add
+save a note recipe for dal makhani	note_add	{"text": "recipe for dal makhani"}
+note that the gas meter is in the garage	note_add
+create a note: plumber number 98450 12345	note_add
+make a note the car is due for service	note_add
+take a note meera likes blue	note_add	{"name": "Meera likes blue"}
+write a note: buy curtains for the bedroom	note_add
+make a note that we need more printer ink	note_add	{"text": "we need more printer ink"}
+
+# ---- checklists: ticking and adding
+tick passport on the packing checklist	checklist_tick	{"query": "packing"}
+mark sunscreen done on the packing list	checklist_tick	{"query": "packing"}
+cross off chargers from the travel checklist	checklist_tick	{"query": "travel"}
+check off milk on the party checklist	checklist_tick	{"query": "party"}
+tick off tickets on the holiday checklist	checklist_tick	{"query": "holiday"}
+mark the passport done on the packing checklist	checklist_tick
+tick visa documents on the travel checklist	checklist_tick	{"query": "travel"}
+tick off the umbrella on the packing checklist	checklist_tick
+done: phone charger on the travel checklist	checklist_tick
+tick snacks on the road trip checklist	checklist_tick	{"query": "road trip"}
+on the packing checklist tick passport	checklist_tick	{"query": "packing"}
+tick sunscreen on my packing checklist	checklist_tick	{"query": "packing"}
+check off the tent on the camping checklist	checklist_tick	{"query": "camping"}
+mark towels as done on the beach checklist	checklist_tick	{"query": "beach"}
+tick off insurance papers on the move checklist	checklist_tick
+cross off the bread on the party checklist	checklist_tick	{"query": "party"}
+tick the first aid kit on the packing checklist	checklist_tick
+mark keys as done on the packing list	checklist_tick	{"query": "packing"}
+tick off adapters on the travel checklist	checklist_tick
+done with hotel booking on the trip checklist	checklist_tick	{"query": "trip"}
+check off sunscreen from the packing list	checklist_tick	{"query": "packing"}
+tick off gifts on the diwali checklist	checklist_tick	{"query": "diwali"}
+mark the charger done on the travel checklist	checklist_tick
+tick torch on the camping checklist	checklist_tick
+cross off water bottles on the hiking checklist	checklist_tick	{"query": "hiking"}
+add sunscreen to the packing checklist	checklist_add	{"query": "packing"}
+put chargers on the travel checklist	checklist_add	{"query": "travel"}
+add passport to my packing list	checklist_add	{"query": "packing"}
+add umbrella to the packing checklist	checklist_add
+include snacks in the road trip checklist	checklist_add	{"query": "road trip"}
+add a torch to the camping checklist	checklist_add	{"query": "camping"}
+stick tickets on the holiday checklist	checklist_add
+add milk to the party checklist	checklist_add	{"query": "party"}
+add the tent to the camping checklist	checklist_add
+put towels on the beach checklist	checklist_add
+add first aid kit to the packing list	checklist_add
+add hotel booking to the trip checklist	checklist_add
+add gifts to the diwali checklist	checklist_add
+put adapters on the travel checklist	checklist_add
+add phone charger to my travel checklist	checklist_add	{"query": "travel"}
+add sleeping bag to the camping checklist	checklist_add
+add the spare key to the moving checklist	checklist_add	{"query": "moving"}
+add water bottles to the hiking checklist	checklist_add
+add swimsuit to the beach checklist	checklist_add
+add plates to the party checklist	checklist_add
+add visa copy to the travel checklist	checklist_add
+add medicines to the packing checklist	checklist_add
+include the map in the road trip checklist	checklist_add
+add a jacket to the packing list	checklist_add
+add baby wipes to the travel checklist	checklist_add
+
+# ---- two months side by side
+did we spend more than last month	compare	{"month": "2026-10"}
+spending this month vs last month	compare	{"month": "2026-10"}
+how does this month's spending compare to last month	compare	{"month": "2026-10"}
+did we spend less than last month	compare	{"month": "2026-10"}
+spending in september vs august	compare	{"month": "2026-09"}
+compare spending september and august	compare	{"month": "2026-09"}
+how much more did we spend this month than last month	compare	{"month": "2026-10"}
+are we spending more than last month	compare
+did spending go up this month	compare	{"month": "2026-10"}
+has our spending gone down	compare	{"month": "2026-10"}
+food spending this month vs last month	compare	{"month": "2026-10"}
+did we spend more on groceries than last month	compare	{"month": "2026-10"}
+compare grocery spending with last month	compare
+did we spend more at costco than last month	compare	{"store": "Costco", "month": "2026-10"}
+costco spending this month vs last month	compare	{"store": "Costco"}
+did fuel spending go up	compare
+spending october vs september	compare	{"month": "2026-10"}
+how did our spending in august compare to july	compare	{"month": "2026-08"}
+is spending higher than last month	compare
+compare september spending against august	compare	{"month": "2026-09"}
+did we spend more in september than in august	compare	{"month": "2026-09"}
+spending up or down this month	compare
+how much did we spend compared to last month	compare	{"month": "2026-10"}
+spending vs last month	compare	{"month": "2026-10"}
+dmart spending vs last month	compare	{"store": "Dmart"}
+our spending compared with last month	compare
+monthly spending comparison	compare
+is the electricity bill more than last month	model
+compare our tasks with last week	model
+
+# ---- Hindi and Hinglish
+aaj kya kaam hai	tasks	{"when": "today"}
+kal ka kaam	tasks	{"when": "tomorrow"}
+is hafte ke bills	bills	{"days": 7}
+kal kitna kharcha hua	spend
+is mahine kitna kharcha hua	spend	{"month": "2026-10"}
+pichle mahine ka kharcha	spend	{"month": "2026-09"}
+doodh khatam ho gaya	shopping_add	{"item": "milk"}
+shopping list mein kya hai	shopping
+kisko kitna dena hai	owe
+mummy ka janamdin kab hai	about_person	{"person": "my mother"}
+koi naya message	unread
+bijli ka bill kab hai	bills
+meri list mein kya hai	tasks
+pyaz ka bhav	price	{"item": "onions"}
+milk add karo	shopping_add	{"item": "milk"}
+2 kilo aloo daal do	shopping_add	{"item": "potatoes", "qty": 2.0}
+aaj kitni calorie	calories
+kitne kaam baaki hai	tasks
+agle hafte ke birthday	birthdays	{"days": 14}
+meera ka janamdin kab hai	about_person	{"person": "Meera"}
+
+# ---- family by what you call them
+when is mum's birthday	about_person	{"person": "my mother"}
+how old is my wife	about_person	{"person": "my wife"}
+when is my sister's birthday	about_person	{"person": "my sister"}
+who is ravi's wife	about_person	{"person": "Ravi's wife"}
+when is dad's birthday	about_person	{"person": "my father"}
+how old is grandma	about_person	{"person": "my grandmother"}
+mom's birthday	about_person	{"person": "my mother"}
+when is my mother in law's birthday	about_person	{"person": "my mother-in-law"}
+how old is papa	about_person	{"person": "my father"}
+ravi's son birthday	about_person	{"person": "Ravi's son"}
+when is my nani's birthday	about_person	{"person": "my nani"}
+who is my cousin	about_person	{"person": "my cousin"}
+how is my wife related to ravi	relation	{"person": "my wife", "to": "Ravi"}
+when is mums birthday	about_person	{"person": "my mother"}
+is nisha my cousin	relation	{"person": "Nisha"}
+
+# ---- the same thing by other names
+is dahi on the list	shopping
+price of yogurt	price	{"item": "Curd"}
+how much did we spend at d mart	store_spend	{"store": "Dmart"}
+spending at d-mart	store_spend	{"store": "Dmart"}
+is curd on the list	shopping
+where is dahi cheapest	price	{"item": "Curd"}

@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.0
+
+### New
+
+- **The short answer first**: "any bills due?" starts with **Yes — 2 bills due**, "how many tasks today?" with **3 tasks · today**, and a long answer from an app gets a one-line count above it.
+- **Two months side by side**: "did we spend more than last month?", "groceries this month vs last month", "Costco spending September vs August" are answered quickly — both months, the difference and the percentage. Other comparisons still go to the AI.
+- **More changes in plain words, still only as buttons**: "bought the milk" (ticks it off the shopping list), "move the dentist to Friday", "I spent 200 on fuel at Shell" (a hand-entered spend in Finance Dashboard), "make a note: the plumber comes Tuesday", "tick passport on the packing checklist" and "add sunscreen to the packing checklist".
+- **Family by what you call them**: "when is mum's birthday", "how old is my wife", "Ravi's sister's birthday" — Family Tree works out who.
+- **Hindi and Hinglish**: "aaj kya kaam hai", "kal kitna kharcha hua", "doodh khatam ho gaya", "kisko kitna dena hai", "is mahine ka bijli bill" and more.
+- **Other names for the same thing**: dahi or yogurt finds the list's Curd, washing up liquid its Dish soap, "d mart" and "D-Mart" are Dmart, and the names people gave an item in Receipt Price Intelligence work too.
+- **The same question again is instant**: asked again within a minute, the last answer is reused (marked *as of … ago*); any change made through the assistant starts afresh. App settings → *Reuse an answer for*.
+- **Learning from rephrasing**: when a question isn't understood and you ask again in other words that are, the first way of asking is remembered — used once that has happened twice (App settings → *Learn from rephrasing*).
+- **Suggestions that know your habits**: what you usually ask on this weekday or at this time of day comes first (⏰), for you only.
+- **Admin → Quick answers** has more:
+  - **Words**: teach a word for a kind of question ("rota" → tasks) or another name for something ("thayir" → Curd). Words from the questions that weren't answered are suggested, with how many they would answer.
+  - **How fast the apps answer**: each app's calls, typical and slow times, refusals and timeouts over the last 7 days.
+  - **Who asks**: how many questions each person asked and how many had a quick answer — counts only, never what anyone asked — and the household's most asked kinds of question.
+  - **Replay**: the last 100 quick answers read again with today's rules, listing the ones now understood differently (as patterns, never with who asked).
+  - **Move to another install**: download your phrases and words as a file and import them elsewhere.
+- Needs Receipt Price Intelligence 1.3.4 (ticking items off) and Finance Dashboard 1.4.4 (a spend added by hand) for those two changes.
+
 ## 1.4.0
 
 ### New

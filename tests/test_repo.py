@@ -16,19 +16,19 @@ VERSIONS = {"calorie_tracker": "2.3.2", "family_tree": "2.6.2", "household_chat"
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
-FINANCE_VERSION = "1.4.3"
+FINANCE_VERSION = "1.4.4"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
 ARCADE_VERSION = "1.12.4"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.3.3"
+RECEIPTS_VERSION = "1.3.4"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
 DOCS_VERSION = "1.6.2"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.4.0"
+ASSISTANT_VERSION = "1.5.0"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
 PROXY_VERSION = "0.6.5"

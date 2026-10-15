@@ -28,7 +28,8 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
               "cheapest place", "best price"),
     "DEAL": ("deal", "offer", "discount", "discounted", "saving", "savings", "cheaper elsewhere", "price drop",
              "on sale", "bargain", "best prices", "save money", "save on", "cheaper pack", "cheaper option"),
-    "BUDGET": ("budget", "on track", "overspent", "over budget", "how much is left", "left to spend"),
+    "BUDGET": ("budget", "on track", "overspent", "over budget", "how much is left", "left to spend", "under budget",
+               "within budget", "within the budget", "under the budget", "over the budget"),
     "BIRTHDAY": ("birthday", "born", "turning", "anniversary", "wedding day", "celebrate", "celebrating"),
     "RELATION": ("related", "relation", "relative", "relationship", "family tree", "relation between"),
     "KIN": ("cousin", "uncle", "aunt", "auntie", "in law", "nephew", "niece", "grandfather", "grandmother",
@@ -74,10 +75,76 @@ CONCEPTS: dict[str, tuple[str, ...]] = {
     "NEED": ("we need", "i need", "need more", "we need more", "we are out of", "out of", "ran out of",
              "run out of", "running out of", "running low on", "low on", "get some", "buy some", "pick up some",
              "grab some", "we are low on", "almost out of", "used up"),
-    "QUESTION_WORDS": ("why", "should", "should i", "should we", "would it", "compare", "versus", "vs",
-                       "which is better", "more than", "less than", "average", "predict", "explain", "summarize",
-                       "afford", "recommend", "is it worth", "difference between", "what if", "tell me about",
+    # two months side by side: answered for spending and the month summary, else left to the model
+    "COMPARE": ("compare", "compared to", "compared with", "comparison", "versus", "vs", "more than", "less than",
+                "than", "difference between", "up or down", "gone up", "go up", "went up", "gone down", "go down",
+                "went down", "higher than", "lower than", "against"),
+    # a shopping list item bought ("got the milk", "bought eggs", "mark bread bought")
+    "BOUGHT": ("bought", "have bought", "just bought", "mark bought", "mark as bought", "got the", "picked up",
+               "purchased", "grabbed"),
+    # a task moved to another day
+    "MOVE": ("move", "push", "postpone", "snooze", "reschedule", "shift", "delay", "put off", "bump", "defer",
+             "push back", "move it"),
+    # a new note in Household Docs
+    "NOTE_ADD": ("make a note", "take a note", "new note", "save a note", "write a note", "create a note",
+                 "add a note", "note that", "make note"),
+    "QUESTION_WORDS": ("why", "should", "should i", "should we", "would it", "which is better", "average", "predict",
+                       "explain", "summarize", "afford", "recommend", "is it worth", "what if", "tell me about",
                        "how come"),
+}
+
+# what someone calls their family (§17.5): "my mum", "Ravi's wife" are passed to Family Tree in its own words
+KIN_SPOKEN = {
+    "mum": "mother", "mom": "mother", "mummy": "mother", "mommy": "mother", "mam": "mother", "ma": "mother",
+    "maa": "mother", "amma": "mother", "ammi": "mother", "mother": "mother",
+    "dad": "father", "daddy": "father", "papa": "father", "pappa": "father", "appa": "father", "abba": "father",
+    "baba": "father", "pa": "father", "pop": "father", "father": "father",
+    "hubby": "husband", "husband": "husband", "pati": "husband", "wife": "wife", "wifey": "wife", "missus": "wife",
+    "biwi": "wife", "patni": "wife", "bro": "brother", "bhai": "brother", "bhaiya": "brother", "brother": "brother",
+    "sis": "sister", "didi": "sister", "behen": "sister", "bahen": "sister", "sister": "sister", "son": "son",
+    "beta": "son", "daughter": "daughter", "beti": "daughter", "grandma": "grandmother", "granny": "grandmother",
+    "gran": "grandmother", "grandmother": "grandmother", "grandpa": "grandfather", "grandad": "grandfather",
+    "granddad": "grandfather", "grandfather": "grandfather", "uncle": "uncle", "aunt": "aunt", "auntie": "aunt",
+    "aunty": "aunt", "cousin": "cousin", "nephew": "nephew", "niece": "niece", "grandson": "grandson",
+    "granddaughter": "granddaughter", "father in law": "father-in-law", "mother in law": "mother-in-law",
+    "brother in law": "brother-in-law", "sister in law": "sister-in-law", "son in law": "son-in-law",
+    "daughter in law": "daughter-in-law",
+    "mums": "mother", "moms": "mother", "mummys": "mother", "dads": "father", "papas": "father",
+    # the family's own words, as Family Tree knows them in its languages
+    "nana": "nana", "nani": "nani", "dada": "dada", "dadi": "dadi", "chacha": "chacha", "chachi": "chachi",
+    "mama": "mama", "mami": "mami", "bua": "bua", "mausi": "mausi", "bhabhi": "bhabhi", "jiju": "jiju",
+}
+# words that alone mean "my …" ("when is mum's birthday")
+KIN_ALONE = {"mum", "mom", "mummy", "mommy", "mam", "maa", "amma", "ammi", "dad", "daddy", "papa", "pappa", "appa",
+             "abba", "hubby", "wifey", "missus", "grandma", "granny", "gran", "grandpa", "grandad", "granddad", "nana",
+             "nani", "dada", "dadi", "mums", "moms", "mummys", "dads", "papas"}
+
+# the same thing by other names (§17.5): a word in a group finds a list item called by another word of it
+ALIAS_GROUPS = (
+    ("curd", "dahi", "yogurt", "yoghurt"), ("atta", "wheat flour", "chapati flour"),
+    ("coriander", "dhania", "cilantro"), ("brinjal", "aubergine", "eggplant", "baingan"),
+    ("okra", "bhindi", "lady finger"), ("chickpeas", "chana", "chole", "garbanzo"), ("spinach", "palak"),
+    ("potato", "potatoes", "aloo"), ("onion", "onions", "pyaz"), ("tomato", "tomatoes", "tamatar"),
+    ("milk", "doodh"), ("capsicum", "bell pepper", "shimla mirch"), ("paneer", "cottage cheese"),
+    ("dal", "daal", "lentils"), ("maida", "plain flour", "all purpose flour"), ("sooji", "rava", "semolina"),
+    ("jaggery", "gur"), ("turmeric", "haldi"), ("cumin", "jeera"), ("cardamom", "elaichi"), ("peas", "matar"),
+    ("cauliflower", "gobi"), ("garlic", "lahsun"), ("ginger", "adrak"), ("sugar", "cheeni"), ("rice", "chawal"),
+    ("eggs", "egg", "anda"), ("diapers", "nappies"), ("chips", "crisps"), ("cookies", "biscuits"),
+    ("dish soap", "washing up liquid", "dishwashing liquid"), ("toilet paper", "toilet roll", "loo roll"),
+    ("cling film", "plastic wrap"), ("aluminium foil", "foil", "tin foil"), ("soda", "fizzy drink", "soft drink"),
+)
+
+# what each concept is, in words, for the admin's Words ("Treat “chores” as tasks?")
+CONCEPT_LABELS = {
+    "TASK": "tasks", "LIST": "a list", "SCHEDULE": "the schedule (bins, routines)", "REMIND": "a reminder",
+    "DONE": "ticking something off", "SHOPPING": "the shopping list", "PRICE": "a price", "DEAL": "deals",
+    "BUDGET": "budgets", "BIRTHDAY": "birthdays", "RELATION": "how people are related", "KIN": "a family word",
+    "PERSON_INFO": "about a person", "SPEND": "spending", "INCOME": "the month's income and summary",
+    "BILL": "bills", "RECURRING": "recurring charges", "BALANCE": "account balances", "OWE": "who owes whom",
+    "SPLIT_ADD": "splitting an expense", "RECENT": "recent", "CALORIE": "calories", "FOOD_LOG": "logging food",
+    "MEAL": "a meal", "UNREAD": "messages", "DOC": "documents", "CHECKLIST": "a checklist", "SCORE": "game scores",
+    "LISTS": "which lists there are", "ADD": "adding", "NEED": "running out of something", "COMPARE": "comparing",
+    "BOUGHT": "bought", "MOVE": "moving to another day", "NOTE_ADD": "a new note",
 }
 
 # concepts whose words stay in the left-over text (a search or an item may contain them)
@@ -127,7 +194,8 @@ paneer curd dahi yogurt yoghurt cream chicken fish pasta noodles cereal oats bis
 detergent tissues napkins foil batteries nappies diapers wipes toothpaste bleach vinegar honey jam ketchup pickle
 achar papad namkeen cornflakes muesli bananas strawberries blueberries avocado broccoli lettuce mushrooms
 tofu almonds cashews raisins dates walnuts peanuts jaggery gur turmeric haldi cumin jeera mustard masala garam
-cardamom elaichi cinnamon cloves bay salt sugar water
+cardamom elaichi cinnamon cloves bay salt sugar water dhania cilantro aubergine eggplant baingan chickpeas
+garbanzo aloo pyaz tamatar doodh daal matar gobi lahsun adrak cheeni chawal anda nappies crisps
 """.split())
 
 # well-known stores and supermarkets: "how much did we spend at <store>" goes to Receipts, not the bank

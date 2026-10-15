@@ -450,8 +450,24 @@ def _answer_question(r: _Run) -> str:
 AI_OFF_ANSWER = settings.AI_OFF + " Try one of the questions below."
 FOLLOW_UP_WINDOW = timedelta(minutes=30)
 CHOICE_WINDOW = timedelta(minutes=10)
+REPHRASE_WINDOW = timedelta(minutes=2)      # a question asked again in other words this soon after it wasn't placed
 MAX_QUICK_CALLS = 6
 MAX_CHOICES = 3
+HEADLINE_AFTER = 120                        # an app's answer longer than this gets a one-line count first
+
+# what a quick answer counts, for "how many …", "any …?" and the short line first (§17.7)
+NOUNS = {"tasks": ("task", "tasks"), "shopping": ("item on the shopping list", "items on the shopping list"),
+         "bills": ("bill due", "bills due"), "birthdays": ("birthday coming up", "birthdays coming up"),
+         "unread": ("unread message", "unread messages"), "deals": ("better price", "better prices"),
+         "schedule": ("thing on the schedule", "things on the schedule"),
+         "recurring": ("recurring charge", "recurring charges"), "lists": ("list", "lists"),
+         "docs": ("document", "documents"), "recent_split": ("shared expense", "shared expenses"),
+         "owe": ("open balance", "open balances")}
+
+# the answers of the last minute, per person and call, so the same question again is instant (§17.12); emptied by any
+# change made through the assistant
+_recent: dict[tuple, tuple[float, dict]] = {}
+MAX_RECENT = 500
 
 
 def _set_mode(qid: str, mode: str, quick: dict | None = None, understood: str | None = None) -> None:
@@ -517,6 +533,8 @@ def quick_answer(r: _Run) -> str | None:
                             exclude=r.user.get("_exclude") or ())
         if res.kind == "answer" and any(m.source == "choice" for m in res.parts) and pending:
             _learn_choice(conn, r.user, prev_template=_last_template(conn, r.user["id"], r.qid), m=res.parts[0])
+        elif res.kind == "answer":
+            _learn_rephrasing(conn, r.user, r.qid, res)
     data = {"kind": res.kind, "template": res.template, "norm": res.norm}
     if res.kind == "answer":
         data["intents"] = [_match_json(m) for m in res.parts]
@@ -568,6 +586,32 @@ def _last_template(conn, user_id: str, qid: str) -> str | None:
         return None
 
 
+def _learn_rephrasing(conn, user: dict, qid: str, res) -> None:
+    """The person's last question wasn't placed and this one, asked soon after in other words, was: the first way of
+    asking may mean this (§17.8). Kept as 'rephrased', used once it has happened twice."""
+    if user.get("is_child") or not settings.get("quick_learn_rephrase") or len(res.parts) != 1:
+        return
+    m = res.parts[0]
+    if m.source not in ("rules", "learned", "admin") or not m.calls or m.intent.startswith("app:"):
+        return
+    row = conn.execute("SELECT asked_at, quick FROM questions WHERE user_id = ? AND id != ? AND quick IS NOT NULL "
+                       "ORDER BY asked_at DESC LIMIT 1", (user["id"], qid)).fetchone()
+    if row is None:
+        return
+    try:
+        before = json.loads(row["quick"])
+        age = config.utcnow() - datetime.fromisoformat(row["asked_at"])
+    except (ValueError, TypeError):
+        return
+    if age > REPHRASE_WINDOW or before.get("kind") not in ("none", "choices") or before.get("chosen") is not None:
+        return
+    tpl = before.get("template") or ""
+    if not tpl or tpl == res.template or len(tpl.split()) < 2:
+        return
+    args = m.calls[0].args
+    ql.remember(conn, tpl, m.intent, args, [k for k in args if k in ("when", "days", "month", "date")], "rephrased")
+
+
 def _slot_args(u: qm.Utterance, intent: qi.Intent, ctx: qi.Ctx, args: dict) -> list[str]:
     """Which of `args` came from this question's slots (and are worked out again next time)."""
     built = intent.build(u, ctx) or []
@@ -586,13 +630,101 @@ def _learn_choice(conn, user: dict, *, prev_template: str | None, m: qi.Match) -
                                                                  if k in ("when", "days", "month", "date")], "tapped")
 
 
+CHAINED = ("checklist_tick", "checklist_add")      # an action on a checklist found by its name first
+
+
+def _recent_key(user: dict, tool: str, args: dict) -> tuple:
+    return (user["id"], tool, json.dumps(args, sort_keys=True))
+
+
+def forget_recent(user_id: str | None = None) -> None:
+    with _lock:
+        if user_id is None:
+            _recent.clear()
+        else:
+            for k in [k for k in _recent if k[0] == user_id]:
+                _recent.pop(k, None)
+
+
+def _cached(r: _Run, tools: dict, reads: list) -> tuple[list, list, float]:
+    """The reads answered in the last `quick_recent` seconds: their stored answers, each as a calls row of this
+    question (so What was shared shows them); the rest to ask. Returns (cached, to ask, oldest age in seconds)."""
+    keep = settings.get("quick_recent")
+    if not keep or r.user.get("_force_ai"):
+        return [], reads, 0.0
+    now, hits, ask, oldest = time.monotonic(), [], [], 0.0
+    with _lock:
+        found = {i: _recent.get(_recent_key(r.user, name, args)) for i, (_m, name, args) in enumerate(reads)}
+    for i, read in enumerate(reads):
+        f = found[i]
+        if f and now - f[0] <= keep:
+            hits.append((i, read, f[1]))
+            oldest = max(oldest, now - f[0])
+        else:
+            ask.append(read)
+    if not hits:
+        return [], reads, 0.0
+    rows = []
+    with db.get_conn() as conn:
+        for _i, (_m, name, args), a in hits:
+            cid = bus.new_ulid()
+            conn.execute("INSERT INTO calls (id, question_id, app, tool, args, round, state, sent_at, answered_at, "
+                         "result) VALUES (?, ?, ?, ?, ?, 1, 'ok', ?, ?, ?)",
+                         (cid, r.qid, tools[name]["app"], name, json.dumps(args, sort_keys=True), _iso(), _iso(),
+                          json.dumps(a["result"], separators=(",", ":"))))
+            rows.append({"call": cid, "app": tools[name]["app"], "appName": tools[name]["appName"], "tool": name,
+                         "args": args, "state": "ok", "result": a["result"], "reason": None})
+    return list(zip([h[0] for h in hits], rows)), ask, oldest
+
+
+def _remember_recent(r: _Run, done: list) -> None:
+    if not settings.get("quick_recent"):
+        return
+    now = time.monotonic()
+    with _lock:
+        for d in done:
+            if d["state"] == "ok" and isinstance(d.get("result"), dict):
+                _recent[_recent_key(r.user, d["tool"], d["args"])] = (now, {"result": d["result"]})
+        if len(_recent) > MAX_RECENT:
+            for k, _v in sorted(_recent.items(), key=lambda kv: kv[1][0])[:len(_recent) - MAX_RECENT]:
+                _recent.pop(k, None)
+
+
+def _chained(r: _Run, tools: dict, m: qi.Match, proposals: list) -> str | None:
+    """"tick passport on the packing checklist": find the checklist by its name, then propose the change on it."""
+    search, change = m.calls[0], m.calls[1]
+    if "docs.search" not in tools or change.tool not in tools:
+        return None
+    r.state("calling")
+    done = _run_calls(r, tools, [("docs.search", _clean_args(tools["docs.search"]["spec"], search.args))], 1)
+    r.done += done
+    d = done[0]
+    if d["state"] != "ok":
+        return _said(d)
+    found = [i for i in (d.get("result") or {}).get("items") or [] if isinstance(i, dict) and i.get("id")]
+    if len(found) != 1:
+        names = ", ".join(str(i.get("name") or i.get("title") or "") for i in found[:5] if isinstance(i, dict))
+        return (f"No checklist called “{search.args['query']}”." if not found else
+                f"Several checklists could be “{search.args['query']}”: {names}. Say which one.")
+    act = {"tool": change.tool, "args": {**change.args, "id": str(found[0]["id"])[:64]}, "say": m.label}
+    p = _propose(r, tools, act, 1, proposals)
+    if p:
+        proposals.append(p)
+    return None
+
+
 def _quick_calls(r: _Run, tools: dict, parts: list, data: dict) -> str:
     """Make the calls the rules chose (actions only as buttons), then the apps' own words are the answer."""
     understood = " · ".join(f"{m.label} · {tools[m.calls[0].tool]['appName']}" if m.calls and m.calls[0].tool in tools
                             else m.label for m in parts)
     _set_mode(r.qid, "quick", data, understood)
-    reads, proposals = [], []
+    reads, proposals, notes = [], [], {}
     for m in parts:
+        if m.intent in CHAINED and len(m.calls) == 2:
+            said = _chained(r, tools, m, proposals)
+            if said:
+                notes[id(m)] = said
+            continue
         for c in m.calls:
             t = tools.get(c.tool)
             if t is None:
@@ -605,8 +737,17 @@ def _quick_calls(r: _Run, tools: dict, parts: list, data: dict) -> str:
                 reads.append((m, c.tool, _clean_args(t["spec"], c.args)))
     done = []
     if reads:
-        r.state("calling")
-        done = _run_calls(r, tools, [(name, args) for _m, name, args in reads], 1)
+        cached, ask, age = _cached(r, tools, reads)
+        fresh = []
+        if ask:
+            r.state("calling")
+            fresh = _run_calls(r, tools, [(name, args) for _m, name, args in ask], 1)
+            _remember_recent(r, fresh)
+        by_index = dict(cached)
+        it = iter(fresh)
+        done = [by_index[i] if i in by_index else next(it) for i in range(len(reads))]
+        if age >= 1:
+            _set_mode(r.qid, "quick", data, f"{understood} · as of {int(age)} s ago")
         # a checklist is found by its name first, then read (docs.search -> docs.checklist)
         for (m, name, _a), d in zip(reads, list(done)):
             if m.intent == "checklist" and d["state"] == "ok" and "docs.checklist" in tools:
@@ -614,7 +755,7 @@ def _quick_calls(r: _Run, tools: dict, parts: list, data: dict) -> str:
                 if len(found) == 1:
                     done += _run_calls(r, tools, [("docs.checklist", {"id": str(found[0]["id"])[:64]})], 2)
         r.done += done
-    return compose(parts, reads, done, proposals)
+    return compose(parts, reads, done, proposals, notes)
 
 
 def _said(d: dict) -> str:
@@ -633,8 +774,75 @@ def _on_list(item: str, d: dict) -> str | None:
     return f"**{item.capitalize()}** is on the shopping list." if hit else f"{item.capitalize()} isn't on the shopping list."
 
 
-def compose(parts: list, reads: list, done: list, proposals: list) -> str:
-    """The answer: each part's app words as they came (several parts: each under its understood line)."""
+def _count(d: dict) -> tuple[int, bool] | None:
+    """(how many items an app answered with, whether there were more than it sent), or None when it didn't list."""
+    if d["state"] != "ok" or not isinstance((d.get("result") or {}).get("items"), list):
+        return None
+    return len(d["result"]["items"]), bool(d["result"].get("more"))
+
+
+def _headline(m: qi.Match, ds: list, text: str) -> str | None:
+    """The short answer first (§17.7): "Yes — 2 bills due · next 7 days.", "3 tasks · today.", or for a long answer
+    "**3 tasks** · today". None when there is nothing to count."""
+    noun = NOUNS.get(m.intent)
+    counts = [c for c in (_count(d) for d in ds) if c is not None]
+    if not noun or len(counts) != 1:
+        return None
+    n, more = counts[0]
+    when = m.label.split(" · ", 1)[1] if " · " in m.label else ""
+    tail = f" · {when}" if when else ""
+    many = f"{'at least ' if more else ''}{n} {noun[0] if n == 1 and not more else noun[1]}"
+    if m.ask == "yesno":
+        return (f"**Yes** — {many}{tail}." if n else f"**No** — no {noun[1]}{tail}.")
+    if m.ask == "count":
+        return f"**{many}**{tail}."
+    if n and len(text) > HEADLINE_AFTER:
+        return f"**{many}**{tail}."
+    return None
+
+
+def _money_words(x: float) -> str:
+    return f"{x:,.2f}"
+
+
+def _month_total(d: dict, args: dict) -> float | None:
+    """A month's spending from finance.spending's categories (one category's, with `_category`) or receipt.spending's
+    stores."""
+    if d["state"] != "ok":
+        return None
+    items = [i for i in (d.get("result") or {}).get("items") or [] if isinstance(i, dict)]
+    want = (args.get("_category") or "").casefold()
+    total = 0.0
+    for i in items:
+        if want and want not in str(i.get("category") or "").casefold():
+            continue
+        v = i.get("spend")
+        if isinstance(v, (int, float)):
+            total += v
+    return round(total, 2)
+
+
+def _compared(m: qi.Match, ds: list) -> str:
+    a_args, b_args = m.calls[0].args, m.calls[1].args
+    a, b = (_month_total(d, x) for d, x in zip(ds, (a_args, b_args)))
+    first, second = qi.month_words(a_args.get("month")), qi.month_words(b_args.get("month"))
+    if a is None or b is None:
+        return "\n\n".join(_said(d) for d in ds)
+    what = m.label.split(" · ")[0]
+    diff = round(a - b, 2)
+    if diff == 0:
+        line = f"**{what}: {_money_words(a)} in {first}, the same as {second}.**"
+    else:
+        pct = f" ({'+' if diff > 0 else '−'}{abs(diff) / b * 100:.0f}%)" if b else ""
+        line = (f"**{what}: {_money_words(a)} in {first}, {_money_words(b)} in {second} — {_money_words(abs(diff))} "
+                f"{'more' if diff > 0 else 'less'}{pct}.**")
+    return line + "\n\n" + "\n\n".join(f"*{w}:* {_said(d)}" for w, d in zip((first, second), ds))
+
+
+def compose(parts: list, reads: list, done: list, proposals: list, notes: dict | None = None) -> str:
+    """The answer: each part's app words as they came (several parts: each under its understood line), a count or a
+    yes/no first when there is one, two months side by side for a comparison."""
+    notes = notes or {}
     by_part: dict[int, list] = {}
     for (m, _name, _args), d in zip(reads, done[:len(reads)]):
         by_part.setdefault(id(m), []).append(d)
@@ -644,6 +852,12 @@ def compose(parts: list, reads: list, done: list, proposals: list) -> str:
         ds = by_part.get(id(m), [])
         if m.intent == "checklist" and extra:
             ds = extra
+        if id(m) in notes:
+            blocks.append((m.label, notes[id(m)]))
+            continue
+        if m.intent == "compare" and len(ds) == 2:
+            blocks.append((m.label, _compared(m, ds)))
+            continue
         if m.intent == "item_alone" and len(ds) == 2:
             item = m.calls[0].args.get("item", "")
             line = _on_list(item, ds[1])
@@ -653,11 +867,16 @@ def compose(parts: list, reads: list, done: list, proposals: list) -> str:
             text = (line + "\n\n" if line else "") + _said(ds[0])
         else:
             text = "\n\n".join(_said(d) for d in ds)
+            head = _headline(m, ds, text)
+            if head:
+                text = head + "\n\n" + text
         if m.acts and not ds:
             continue
         blocks.append((m.label, text))
     if proposals and not blocks:
         return "Tap the button to confirm — nothing changes until you do."
+    if not blocks:
+        return "The app that answers that isn't answering the assistant for you right now."
     if len(blocks) == 1 and not proposals:
         return blocks[0][1]
     out = [f"**{label}**\n{text}" if len(blocks) > 1 else text for label, text in blocks]
@@ -765,7 +984,7 @@ def not_this(qid: str, user: dict) -> str:
         if q["mode"] != "quick" or not intents:
             raise ValueError("That wasn't a quick answer.")
         for m in intents:
-            if m.get("source") in ("tapped", "ai", "learned"):
+            if m.get("source") in ("tapped", "rephrased", "ai", "learned"):
                 ql.forget(conn, m.get("phrase"))
         ql.miss(conn, data.get("norm") or "")
     labels = "; ".join(m.get("label") or m["intent"] for m in intents)
@@ -778,24 +997,163 @@ DEFAULT_ORDER = ("tasks", "shopping", "bills", "birthdays", "owe", "spend", "cal
                  "summary", "deals", "budgets", "balances", "scores")
 
 
+PART_OF_DAY = ((5, 12, "in the mornings"), (12, 17, "in the afternoons"), (17, 23, "in the evenings"))
+HABIT = 3                                  # asked this many times on this weekday (or part of the day): a habit
+
+
+def _part_of_day(hour: int) -> str | None:
+    return next((w for a, b, w in PART_OF_DAY if a <= hour < b), None)
+
+
 def suggestions(user: dict, *, tools: dict | None = None, limit: int = 6) -> list[dict]:
-    """The one-tap questions (§17.11): the quick intents the person may use, those they use most first."""
+    """The one-tap questions (§17.11): the quick intents the person may use, those they use most first — and first of
+    all what they usually ask on this weekday or at this time of day ("You often ask this on Mondays"). Only the
+    person's own questions, for the person: never shown to anyone else."""
     with db.get_conn() as conn:
         if tools is None:
             tools = catalogue.for_user(conn, user)
-        rows = conn.execute("SELECT quick FROM questions WHERE user_id = ? AND mode = 'quick' AND quick IS NOT NULL "
-                            "ORDER BY asked_at DESC LIMIT 200", (user["id"],)).fetchall()
+        rows = conn.execute("SELECT asked_at, quick FROM questions WHERE user_id = ? AND mode = 'quick' AND quick IS "
+                            "NOT NULL ORDER BY asked_at DESC LIMIT 300", (user["id"],)).fetchall()
+    now = config.now()
+    today, part = now.weekday(), _part_of_day(now.hour)
     used: dict[str, int] = {}
+    on_day: dict[str, int] = {}
+    at_time: dict[str, int] = {}
     for r in rows:
         try:
-            for m in json.loads(r["quick"]).get("intents") or []:
-                used[m["intent"]] = used.get(m["intent"], 0) + 1
+            intents = [m["intent"] for m in json.loads(r["quick"]).get("intents") or []]
+            when = datetime.fromisoformat(r["asked_at"]).astimezone(now.tzinfo)
         except (ValueError, KeyError, TypeError):
             continue
+        for k in intents:
+            used[k] = used.get(k, 0) + 1
+            if when.weekday() == today:
+                on_day[k] = on_day.get(k, 0) + 1
+            if part and _part_of_day(when.hour) == part:
+                at_time[k] = at_time.get(k, 0) + 1
     ctx = qi.Ctx(tools=tools, today=config.today())
     have = [i for i in qi.INTENTS if i.available(ctx) and not i.acts and i.key in DEFAULT_ORDER]
-    have.sort(key=lambda i: (-used.get(i.key, 0), DEFAULT_ORDER.index(i.key)))
-    return [{"intent": i.key, "text": i.question} for i in have[:limit]]
+
+    def why(k: str) -> str | None:
+        if on_day.get(k, 0) >= HABIT:
+            return f"You often ask this on {now.strftime('%A')}s"
+        if at_time.get(k, 0) >= HABIT:
+            return f"You often ask this {part}"
+        return None
+    have.sort(key=lambda i: (why(i.key) is None, -max(on_day.get(i.key, 0), at_time.get(i.key, 0)) if why(i.key)
+                             else 0, -used.get(i.key, 0), DEFAULT_ORDER.index(i.key)))
+    out = []
+    for i in have[:limit]:
+        s = {"intent": i.key, "text": i.question}
+        if why(i.key):
+            s["why"] = why(i.key)
+        out.append(s)
+    return out
+
+
+# --------------------------------------------------------------------------------------------- the admin's view
+
+def app_speeds(days: int = 7) -> list[dict]:
+    """Admin → Quick answers (§17.11): how each app answered the assistant lately — calls, how many answered, refused
+    or timed out, the typical and the slow time. Counts and times only."""
+    since = _iso(config.utcnow() - timedelta(days=days))
+    per: dict[str, dict] = {}
+    with db.get_conn() as conn:
+        names = catalogue.app_names(conn)
+        for c in conn.execute("SELECT app, state, sent_at, answered_at FROM calls WHERE sent_at >= ? AND state != "
+                              "'proposed'", (since,)):
+            a = per.setdefault(c["app"], {"app": c["app"], "appName": names.get(c["app"], c["app"]), "calls": 0,
+                                          "ok": 0, "refused": 0, "timeouts": 0, "times": []})
+            a["calls"] += 1
+            if c["state"] == "ok":
+                a["ok"] += 1
+            elif c["state"] == "nack":
+                a["refused"] += 1
+            elif c["state"] == "timeout":
+                a["timeouts"] += 1
+            try:
+                if c["answered_at"] and c["state"] == "ok":
+                    a["times"].append((datetime.fromisoformat(c["answered_at"])
+                                       - datetime.fromisoformat(c["sent_at"])).total_seconds())
+            except (TypeError, ValueError):
+                pass
+    out = []
+    for a in sorted(per.values(), key=lambda x: x["appName"].casefold()):
+        t = sorted(a.pop("times"))
+        a["typical"] = round(t[len(t) // 2], 2) if t else None
+        a["slow"] = round(t[min(len(t) - 1, int(len(t) * 0.9))], 2) if t else None
+        out.append(a)
+    return out
+
+
+def usage_by_person(days: int = 30) -> list[dict]:
+    """How many questions each person asked lately and how many had a quick answer: counts only, never what they
+    asked (Admins never see other people's questions)."""
+    since = _iso(config.utcnow() - timedelta(days=days))
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT u.id, u.name, COUNT(q.id) AS asked, SUM(CASE WHEN q.mode = 'quick' AND q.quick IS "
+                            "NOT NULL AND json_extract(q.quick, '$.kind') = 'answer' THEN 1 ELSE 0 END) AS quick "
+                            "FROM users u LEFT JOIN questions q ON q.user_id = u.id AND q.asked_at >= ? "
+                            "GROUP BY u.id ORDER BY asked DESC, u.name", (since,)).fetchall()
+    return [{"id": r["id"], "name": r["name"], "asked": r["asked"], "quick": r["quick"] or 0} for r in rows]
+
+
+def kinds_asked(days: int = 30) -> list[dict]:
+    """The kinds of question the household asked lately, for everyone together (never per person)."""
+    since = _iso(config.utcnow() - timedelta(days=days))
+    counts: dict[str, int] = {}
+    with db.get_conn() as conn:
+        for r in conn.execute("SELECT quick FROM questions WHERE asked_at >= ? AND mode = 'quick' AND quick IS NOT NULL",
+                              (since,)):
+            try:
+                for m in json.loads(r["quick"]).get("intents") or []:
+                    counts[m["intent"]] = counts.get(m["intent"], 0) + 1
+            except (ValueError, KeyError, TypeError):
+                continue
+    labels = {i.key: i.question for i in qi.INTENTS}
+    return [{"intent": k, "example": labels.get(k, k), "count": n}
+            for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+
+REPLAY = 100
+
+
+def replay(limit: int = REPLAY) -> dict:
+    """The household's last quick answers, understood again by today's rules and phrases (§17.12): which would now be
+    read differently. Each is shown by its template (names and dates as placeholders), never with who asked."""
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT q.text, q.quick, q.user_id FROM questions q WHERE q.mode = 'quick' AND q.state = "
+                            "'done' AND q.quick IS NOT NULL ORDER BY q.asked_at DESC LIMIT ?", (limit,)).fetchall()
+        users = {u["id"]: dict(u) for u in conn.execute("SELECT * FROM users")}
+        ctxs: dict[str, qi.Ctx] = {}
+        lookup = _learned_lookup(conn)
+        checked, same, changed = 0, 0, []
+        for r in rows:
+            try:
+                before = json.loads(r["quick"])
+            except ValueError:
+                continue
+            was = [m["intent"] for m in before.get("intents") or []]
+            if before.get("kind") != "answer" or not was or any(
+                    m.get("source") in ("follow-up", "choice") for m in before.get("intents") or []):
+                continue                                  # a follow-up or a tap only makes sense where it was asked
+            user = users.get(r["user_id"])
+            if user is None:
+                continue
+            if user["id"] not in ctxs:
+                ctxs[user["id"]] = quick_ctx(conn, user, catalogue.for_user(conn, user))
+            res = qu.understand(r["text"], ctxs[user["id"]], learned=lookup)
+            now = [m.intent for m in res.parts] if res.kind == "answer" else []
+            checked += 1
+            if now == was:
+                same += 1
+                continue
+            labels = {i.key: i.question for i in qi.INTENTS}
+            changed.append({"template": before.get("template") or res.template, "was": was,
+                            "wasExample": [labels.get(k, k) for k in was], "now": now or [res.kind],
+                            "nowExample": [labels.get(k, k) for k in now] or [
+                                {"choices": "Did you mean …", "none": "not placed", "model": "the AI"}[res.kind]]})
+    return {"checked": checked, "same": same, "changed": changed[:50]}
 
 
 # --------------------------------------------------------------------------------------------- the plan
@@ -1401,6 +1759,7 @@ def act(qid: str, cid: str, user: dict) -> dict:
         if n != 1:
             raise ValueError("That was already done.")
     call(cid, qid, user, c["app"], c["tool"], json.loads(c["args"]), confirm=True)
+    forget_recent()                                # the household's data changed: answer the next question afresh
     with db.get_conn() as conn:
         conn.execute("INSERT INTO usage_days (day, calls) VALUES (?, 1) ON CONFLICT(day) DO UPDATE SET "
                      "calls = calls + 1", (config.today().isoformat(),))

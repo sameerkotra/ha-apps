@@ -16,6 +16,7 @@ from ..quick import intents as quick_intents
 from ..quick import learn as quick_learn
 from ..quick import match as quick_match
 from ..quick import understand as quick_understand
+from ..quick import vocab as quick_vocab
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core
 from ..common import whoami as whoami_core
@@ -40,11 +41,13 @@ def me(user: dict = Depends(get_current_user)):
     why = engine.can_ask(user)
     st = ai_client.status()
     quick = settings.quick_on()
-    suggestions = [x["text"] for x in engine.suggestions(user, tools=tools)[:4]] if quick else []
+    mine = engine.suggestions(user, tools=tools)[:4] if quick else []
+    suggestions = [x["text"] for x in mine]
     return {
         "user": {"id": user["id"], "name": user["name"], "isAdmin": user["is_admin"]},
         "canAsk": why is None, "why": why, "noAdmin": auth.no_admins(),
         "suggestions": suggestions or catalogue.suggestions(tools) or DEFAULT_SUGGESTIONS,
+        "suggestionWhy": {x["text"]: x["why"] for x in mine if x.get("why")},   # "You often ask this on Mondays"
         "ai": {"on": settings.ai_in_use(), "model": settings.get("ai_model") if settings.ai_in_use() else None},
         "quick": quick, "quickOnly": quick and not settings.ai_in_use(),
         "apps": [{"slug": a["app"], "name": names.get(a["app"], a["app"]), "on": bool(a["enabled"] and a["app_on"])}
@@ -501,6 +504,96 @@ def admin_quick_clear_misses(admin: dict = Depends(require_admin)):
     return {"deleted": n}
 
 
+class WordIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    word: str = Field(min_length=1, max_length=60)
+    means: str = Field(min_length=1, max_length=100)
+
+
+@router.get("/admin/quick/words")
+def admin_quick_words(admin: dict = Depends(require_admin)):
+    """The admin's own words, and the ones the misses suggest ("Treat chores as tasks?")."""
+    with db.get_conn() as conn:
+        tools = catalogue.for_user(conn, admin)
+        ctx = engine.quick_ctx(conn, admin, tools)
+        return {"words": quick_learn.words(conn), "suggestions": quick_learn.word_suggestions(conn, ctx),
+                "concepts": [{"concept": c, "label": quick_intents.lexicon.CONCEPT_LABELS.get(c, c.lower())}
+                             for c in WORD_CONCEPTS],
+                "kinds": sorted(quick_learn.NAME_KINDS)}
+
+
+WORD_CONCEPTS = [c for c in quick_intents.lexicon.CONCEPTS if c not in quick_intents.lexicon.HELPERS
+                 and c not in ("QUESTION_WORDS",)]
+
+
+@router.post("/admin/quick/words")
+def admin_quick_add_word(body: WordIn, admin: dict = Depends(require_admin)):
+    try:
+        with db.get_conn() as conn:
+            quick_learn.add_word(conn, body.word, body.means)
+            return {"words": quick_learn.words(conn)}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.delete("/admin/quick/words/{word}")
+def admin_quick_delete_word(word: str, admin: dict = Depends(require_admin)):
+    with db.get_conn() as conn:
+        if not quick_learn.delete_word(conn, word[:60]):
+            raise HTTPException(404, "No such word.")
+        return {"words": quick_learn.words(conn)}
+
+
+@router.get("/admin/quick/export")
+def admin_quick_export(admin: dict = Depends(require_admin)):
+    """The household's phrases and words as a file, for another install (templates only: never who asked)."""
+    from fastapi.responses import JSONResponse
+    with db.get_conn() as conn:
+        data = quick_learn.export(conn)
+    name = f"quick-answers-{config.now():%Y-%m-%d}.json"
+    return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.post("/admin/quick/import")
+def admin_quick_import(body: dict = Body(...), admin: dict = Depends(require_admin)):
+    """Merge a Quick answers export in: phrases to answers (never to changes) and words; anything that doesn't fit
+    is skipped."""
+    if len(json.dumps(body)) > 1_000_000:
+        raise HTTPException(413, "That file is too big.")
+
+    def check(intent_key, args):
+        intent = quick_intents.BY_KEY.get(intent_key)
+        if intent is None or intent.acts or not isinstance(args, dict) or len(args) > 6:
+            raise ValueError(intent_key)
+        for v in args.values():
+            if not isinstance(v, (str, int, float, bool)) or (isinstance(v, str) and len(v) > 200):
+                raise ValueError(intent_key)
+    try:
+        with db.get_conn() as conn:
+            got = quick_learn.import_(conn, body, check)
+            return {**got, "phrases_now": len(quick_learn.phrases(conn)), "words_now": len(quick_learn.words(conn))}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get("/admin/quick/apps")
+def admin_quick_apps(admin: dict = Depends(require_admin)):
+    """How fast each app has answered lately (counts and times only)."""
+    return {"apps": engine.app_speeds(), "days": 7}
+
+
+@router.get("/admin/quick/usage")
+def admin_quick_usage(admin: dict = Depends(require_admin)):
+    """Questions per person (counts only, never what they asked) and the household's kinds of question."""
+    return {"people": engine.usage_by_person(), "kinds": engine.kinds_asked(), "days": 30}
+
+
+@router.post("/admin/quick/replay")
+def admin_quick_replay(admin: dict = Depends(require_admin)):
+    """The last quick answers understood again by today's rules: which would now be read differently."""
+    return engine.replay()
+
+
 @router.get("/admin/usage")
 def admin_usage(admin: dict = Depends(require_admin)):
     """30 days of questions, tool calls and tokens (counts only: never who asked what)."""
@@ -568,6 +661,8 @@ async def import_db(file: UploadFile = File(...), admin: dict = Depends(require_
         db.import_from_tempfile(tmp_path)
         settings.REGISTRY.keep_secrets(saved)
         ai_client.forget_state()
+        engine.forget_recent()                      # another household's answers aren't this one's
+        quick_vocab.forget()
     try:
         await run_in_threadpool(swap)
     except ValueError as e:

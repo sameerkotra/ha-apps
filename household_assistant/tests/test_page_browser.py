@@ -223,6 +223,14 @@ class QuickPageInBrowser(InBrowser, QuickHousehold):
         p.click("#tab-quick .btn-primary")
         p.wait_for_selector("#tab-quick .quick-table td")
         self.assertIn("“how are we fixed”", p.inner_text("#tab-quick .quick-table"))
+        heads = p.evaluate("[...document.querySelectorAll('#tab-quick h3')].map((x) => x.textContent)")
+        for head in ("Words", "How fast the apps answer", "Who asks", "Replay", "Move to another install"):
+            self.assertIn(head, heads)
+        p.click("#tab-quick button:has-text('Replay the last 100')")
+        p.wait_for_selector("#tab-quick p:has-text('checked:')")
+        p.fill("#tab-quick input[aria-label='The word']", "rota")
+        p.click("#tab-quick button:has-text('Add word')")
+        p.wait_for_selector("#tab-quick td:has-text('“rota”')")
         if os.environ.get("SHOT"):
             p.screenshot(path=os.environ["SHOT"].replace(".png", "-admin.png"), full_page=True)
         self.assertEqual(errors, [])

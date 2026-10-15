@@ -526,11 +526,12 @@ had asked — and sends a summary to their phone. `household_assistant/app/brief
   message}` — the same lines without emoji, starting "Good morning/evening, <first name>." A failed speak doesn't
   stop the phone message.
 
-## 17. Quick answers, without a model (built: Household Assistant 1.4.0, 2026-10-14)
+## 17. Quick answers, without a model (built: Household Assistant 1.4.0, 2026-10-14; more in 1.5.0, 2026-10-15)
 
 Status: **built** (Household Assistant 1.4.0; the apps' `quick` words in Household Todo 2.7.3, Receipt Price
 Intelligence 1.3.3, Finance Dashboard 1.4.3). How it was built, and where it differs from the text below, is §17.14
-and the app's own `spec/SPEC.md`. The common questions answered in **under 5 seconds (aim: under 2)** with no model at all:
+and the app's own `spec/SPEC.md`; what 1.5.0 added (with Receipt Price Intelligence 1.3.4 and Finance Dashboard
+1.4.4) is §17.15. The common questions answered in **under 5 seconds (aim: under 2)** with no model at all:
 the question is matched to one app tool by rules, the tool is called over the bus as today (§6), and the app's own
 words are the answer. The morning briefing (§16) already works this way; this makes it the first path for every
 question. A model, when one is set and the admin has **Use AI** on (§17.10), is only used for what the rules can't
@@ -893,3 +894,74 @@ Each person's own page: nothing new.
   written.
 - **Corpus:** `tests/data/quick_corpus.tsv`, 890 lines (≥ 25 per intent, near-misses, model-only and unplaceable
   questions, several-in-one, spoken style); reading 1,000 questions takes about 0.6 s of CPU.
+
+### 17.15 More quick answers (Household Assistant 1.5.0, 2026-10-15)
+
+Understanding more ways of asking:
+
+- **Learning from rephrasing:** a question not placed (no answer, or a *Did you mean* nobody answered) followed
+  within 2 minutes by the same person's question that is, in other words, stores the first template as source
+  `rephrased` (between `tapped` and `ai`), used once seen twice. Children's aren't kept; *Learn from rephrasing*
+  (App settings, on) turns it off; *Not what I asked* forgets one. `quick_phrases.source` gains `rephrased`: an older
+  table is rebuilt once at start-up, in one transaction.
+- **The admin's words** (`quick_words`: `word`, `means`): a word or phrase of up to 3 words that means a concept
+  ("rota" → TASK; any concept but the helpers and QUESTION_WORDS) or another name for a household name
+  (`item:Curd`, also store, list, person, group, category, account, game). Normalised like the questions at match
+  time. **Suggested from the misses:** each unknown word in at least two misses (counting repeats) is tried in place
+  as each concept's own word; the concept that would answer most of its misses is offered ("Treat “rota” as
+  tasks? answers 3 of 4 misses"), never with who asked.
+- **Hindi and Hinglish** (normalise.py): a table of phrases first ("is mahine" → this month, "kitna dena hai" → who
+  do I owe, "khatam ho gaya" → we need, "daal do" → add), then words (aaj, kal, kaam, kharcha, doodh, sabzi,
+  janamdin, mera/meri, kya, kab …); words with no meaning here (hai, ka, ki, ko …) are dropped. "kal" is tomorrow,
+  or yesterday when the question has a past marker (tha, hua, kiya, gaya, liya, kiye …). A question with none of
+  these words is left exactly as it was.
+- **Family by what you call them** (`Utterance.kin`): "my <family word>", a known person or a name-like word before
+  one ("Ravi's sister", "Nisha's husband" — the 's is dropped in normalising), and words that alone mean mine (mum,
+  dad, papa, grandma, nani …) become Family Tree's own phrase ("my mother", "Ravi's sister", "my mother-in-law"),
+  which `tree.person` and `tree.relation` already resolve. *about_person* and *relation* take it; *birthdays* is
+  ruled out by it.
+- **Other names:** fixed alias groups (curd/dahi/yogurt, aubergine/brinjal/eggplant, dish soap/washing up liquid …)
+  find a list item called by another member — never when the list already uses the word itself ("rice" stays rice
+  when the list has Basmati rice); a household name also matches written together or apart ("dmart", "d mart",
+  "D-Mart", 4 letters or more); `aliases` the apps give with their items (Receipt Price Intelligence: the names
+  people added, never a receipt's printed text) and the admin's `item:` words.
+- **Account names** come from `finance.balances` (without the "••1234").
+
+Answering more:
+
+- **The short answer first** (engine `NOUNS`, `_headline`): for intents whose tool lists what it counts (tasks,
+  shopping list, bills, birthdays, unread, deals, schedule, recurring, lists, documents, recent and open balances),
+  a question starting like a yes/no one (is, are, do, did, have, any, anything …) begins **Yes — 2 bills due · next
+  7 days.** or **No — no bills due …**; "how many" begins **3 tasks · today.** (*at least* when the app had more than
+  it sent); any other answer over 120 characters gets the count line first. Not for changes.
+- **Two months side by side** (*compare*: COMPARE and SPEND, or COMPARE, HOWMUCH and a time): `finance.spending` (or
+  `receipt.spending` with a store) for both months — two months named in the order said; one named against this
+  month; none: this month against last. The answer: both totals (one category's when one is named, read from each
+  month's categories — not sent to the app), the difference and the percentage, then each app's own words. Any
+  other comparison (COMPARE with another winner) goes to the model.
+- **More changes, still only buttons:** *shop_tick* ("bought the milk", "tick milk off the shopping list"; a
+  `receipt.shopping_list.tick` per item, up to 3), *task_move* ("move the dentist to Friday"; `todo.items.due` — a
+  date, tomorrow, a weekday, next week = 7 days on), *expense_log* ("I spent 200 on fuel at Shell"; the new
+  `finance.expense.add`, the asker's own accounts only; the shop after at/from, a store, or the category), *note_add*
+  ("make a note …" at the start always wins; `docs.note.create`, its name the first 6 words), *checklist_tick* and
+  *checklist_add* ("tick passport on the packing checklist": `docs.search` for the checklist by its name first; one
+  found → the change proposed with its id; none or several → said, nothing proposed).
+- **The same question again** within `quick_recent` seconds (60; 0–600; 0 = off) is answered from the last answer
+  of that person to that exact call (memory only, at most 500), recorded as a calls row of the new question so *What
+  was shared* shows it, with "as of N s ago" on the understood line. Any confirmed change, and a restore, empties it.
+- **Suggestions by habit:** an intent the person asked at least 3 times on this weekday (or this part of the day)
+  comes first, with "You often ask this on Mondays" (⏰ on the page). The person's own questions, for them only.
+
+Admin → Quick answers (all admin-only; counts and templates, never who asked what):
+
+- **Words** (add, remove, the misses' suggestions); **How fast the apps answer** (`/admin/quick/apps`: per app over 7
+  days — calls, answered, refused, timed out, the median and the 90th percentile of answered calls); **Who asks**
+  (`/admin/quick/usage`: per person, questions in 30 days and how many had a quick answer; the household's kinds of
+  question together — never per person); **Replay** (`POST /admin/quick/replay`: the last 100 quick answers that
+  weren't follow-ups or taps, understood again as their asker with today's rules and phrases; the changed ones by
+  template); **Move to another install** (`GET /admin/quick/export`: phrases — the admin's, taps, and rephrasings and
+  AI phrases seen twice — and words, as JSON; `POST /admin/quick/import`: merged, a phrase to a change or one that
+  doesn't fit skipped, imported phrases count as taps unless they were the admin's).
+
+Corpus: 1,111 lines; reading 1,000 questions takes about 0.9 s of CPU (the typo correction now looks only at words
+of a reachable length and with nearly the same letters).

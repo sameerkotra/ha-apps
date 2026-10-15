@@ -22,7 +22,12 @@ THRESHOLD = 2.5             # one concept word is enough (3), also when a typo w
 MARGIN = 1.5
 MAX_PARTS = 4
 SPLITTERS = ("and", "also", "plus", "then", "as well as")
-ACTION_WORDS = {"add", "put", "remind", "log", "tick", "split", "pay", "mark", "track", "record", "stick", "include"}
+ACTION_WORDS = {"add", "put", "remind", "log", "tick", "split", "pay", "mark", "track", "record", "stick", "include",
+                "bought", "purchased", "grabbed", "snooze", "postpone", "reschedule", "note", "cross"}
+# "any bills due?", "do I have anything overdue?" are answered yes or no first; "how many tasks today?" with the
+# number (§17.7)
+YESNO_LEADS = {"is", "are", "do", "does", "did", "have", "has", "any", "anything", "am", "was", "were", "got", "will"}
+COMPARABLE = {"compare"}
 FOLLOW_UP_LEADS = ("and", "what about", "how about", "and for", "and what about", "same for", "now", "also", "ok and",
                    "and on", "and in", "for", "what about for")
 
@@ -135,8 +140,8 @@ def _has_splitter(text: str) -> bool:
 
 
 def _compound(text: str, u: Utterance, ctx: Ctx, exclude) -> Result | None:
-    if set(u.words) & ACTION_WORDS:
-        return None                                      # "add milk and bread": one action, several items
+    if set(u.words) & ACTION_WORDS or u.has("COMPARE"):
+        return None                                      # (and "september and august" are one comparison)                                      # "add milk and bread": one action, several items
     pieces = _split(normalise_for_split(text))
     if len(pieces) < 2:
         return None
@@ -196,6 +201,23 @@ def _follow_up(u: Utterance, ctx: Ctx, previous: dict | None) -> Result | None:
         merged.append(Call(new.tool, args))
     return Result("answer", parts=[Match(intent=intent.key, calls=merged, label=intent.label(u, merged),
                                          score=THRESHOLD, source="follow-up", acts=intent.acts)])
+
+
+def ask_form(u: Utterance) -> str | None:
+    """"count" for "how many …", "yesno" for a question that starts like one, else None."""
+    w = u.words
+    if any(w[i:i + 2] == ["how", "many"] for i in range(len(w))):
+        return "count"
+    if w and w[0] in YESNO_LEADS:
+        return "yesno"
+    return None
+
+
+def _with_form(res: Result, u: Utterance) -> Result:
+    form = ask_form(u)
+    if res.kind == "answer" and form and len(res.parts) == 1 and not res.parts[0].acts:
+        res.parts[0].ask = form
+    return res
 
 
 def _choice_answer(u: Utterance, ctx: Ctx, pending: list | None) -> Match | None:
@@ -289,9 +311,12 @@ def _understand(text: str, ctx: Ctx, *, previous: dict | None, pending: list | N
     fu = _follow_up(u, ctx, previous)
     if fu:
         fu.template, fu.norm = tpl, res.norm
-        return fu
+        return _with_form(fu, u)
     kind, ms, ranked = _one(u, ctx, exclude)
     res.scores = [(i.key, round(s, 2)) for s, i in ranked]
+    if u.has("COMPARE") and not (kind == "answer" and ms[0].intent in COMPARABLE):
+        res.kind, res.why = "model", "a comparison the rules don't make"     # "the difference between the accounts"
+        return res
     if kind == "answer" or kind == "choices":
         # "tasks and birthdays this week": several questions win over one guess
         if kind == "choices" or _has_splitter(text):
@@ -301,8 +326,8 @@ def _understand(text: str, ctx: Ctx, *, previous: dict | None, pending: list | N
                 return comp
         if kind == "answer":
             res.kind, res.parts = "answer", ms
-        else:
-            res.kind, res.choices = "choices", ms
+            return _with_form(res, u)
+        res.kind, res.choices = "choices", ms
         return res
     comp = _compound(text, u, ctx, exclude)
     if comp:

@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS quick_phrases (
     intent TEXT NOT NULL,
     args TEXT NOT NULL DEFAULT '{}',
     slot_args TEXT NOT NULL DEFAULT '[]',
-    source TEXT NOT NULL CHECK (source IN ('admin', 'tapped', 'ai')),
+    source TEXT NOT NULL CHECK (source IN ('admin', 'tapped', 'rephrased', 'ai')),
     seen INTEGER NOT NULL DEFAULT 1,
     hits INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -154,6 +154,13 @@ CREATE TABLE IF NOT EXISTS quick_misses (
     phrase TEXT PRIMARY KEY,
     count INTEGER NOT NULL,
     last_seen TEXT NOT NULL
+);
+-- Words the admin taught (§17.8): a word or phrase that means a concept ("chores" -> TASK), or another name for a
+-- household name ("dahi" -> item Curd: means = 'item:Curd').
+CREATE TABLE IF NOT EXISTS quick_words (
+    word TEXT PRIMARY KEY,
+    means TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 -- Admin → App settings (app/settings.py). value is JSON; the ai_api_key row is blanked in downloaded backups.
@@ -175,10 +182,23 @@ MIGRATIONS = {"users": [("reviewed", "INTEGER NOT NULL DEFAULT 1")],
 generation = 0
 
 
+def _widen_phrase_sources(conn) -> None:
+    """quick_phrases made before 'rephrased' was a source: rebuilt once with the wider CHECK (SQLite can't alter it)."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'quick_phrases'").fetchone()
+    if not row or "'rephrased'" in (row[0] or ""):
+        return
+    create = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS quick_phrases"):SCHEMA.index("CREATE TABLE IF NOT EXISTS "
+                                                                                          "quick_misses")]
+    conn.executescript("BEGIN; ALTER TABLE quick_phrases RENAME TO quick_phrases_old; " + create
+                       + " INSERT INTO quick_phrases SELECT * FROM quick_phrases_old; DROP TABLE quick_phrases_old; "
+                       "COMMIT;")                     # all at once: never half done
+
+
 def init_db():
     global generation
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _widen_phrase_sources(conn)
         db_core.add_missing_columns(conn, MIGRATIONS)
         app_bus.migrate(conn)
     generation += 1

@@ -47,6 +47,7 @@ class Slots:
     date: str | None = None                 # YYYY-MM-DD (a weekday, yesterday, a date)
     days: int | None = None                 # "next 3 days", "this week" (7), "next week" (14)
     month: str | None = None                # YYYY-MM
+    months: list = field(default_factory=list)    # every month named, in the order said ("this month vs august")
     time: str | None = None                 # HH:MM
     amount: float | None = None             # 40, ₹500, $12.50
     numbers: list = field(default_factory=list)   # other numbers, in order (quantities, servings)
@@ -145,13 +146,20 @@ def read(toks: list[Token], today: date) -> Slots:
                 _take(s, (i, i + 1), "date")
             except ValueError:
                 pass
-    # "this month", "last month", "next month"
+    named = [(a, s.month)] if s.month and (a := next((x for x, _b, k in s.words if k == "month"), None)) is not None \
+        else []
+    # "this month", "last month", "next month" (all of them: a comparison names two)
     span = _find(toks, MONTH_WORDS, s.used)
-    if span and not s.month:
+    while span:
         phrase = " ".join(t.text for t in toks[span[0]:span[1]])
-        s.month = month_back(today, MONTH_WORDS[phrase])
+        value = month_back(today, MONTH_WORDS[phrase])
+        if not s.month:
+            s.month = value
+        named.append((span[0], value))
         _take(s, span, "month")
+        span = _find(toks, MONTH_WORDS, s.used)
     # a month by name: "in september", "sept 2025", "september"
+    by_name: list[str] = []
     for i, t in enumerate(toks):
         if i in s.used or t.kind != WORD or t.text not in MONTHS:
             continue
@@ -165,10 +173,14 @@ def read(toks: list[Token], today: date) -> Slots:
         m = MONTHS[t.text]
         if year is None:
             year = today.year if m <= today.month else today.year - 1     # the latest one not in the future
-        s.month = f"{year:04d}-{m:02d}"
+        value = f"{year:04d}-{m:02d}"
+        if not by_name:
+            s.month = value                                  # the first month by name is the month asked about
+        by_name.append(value)
+        named.append((i, value))
         _take(s, (i, i + 2) if year and i + 1 < len(toks) and toks[i + 1].kind == NUM and toks[i + 1].value == year
               else (i, i + 1), "month")
-        break
+    s.months = [v for _i, v in sorted(named)]
     # yesterday / today / tomorrow / weeks / overdue
     for words, when in ((YESTERDAY_WORDS, "yesterday"), (NEXT_WEEK_WORDS, "next_week"), (TOMORROW_WORDS, "tomorrow"),
                         (TODAY_WORDS, "today"), (WEEK_WORDS, "week"), (OVERDUE_WORDS, "overdue"),

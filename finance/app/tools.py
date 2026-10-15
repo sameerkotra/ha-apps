@@ -7,7 +7,10 @@ app/common/assist_tools.py).
 - `finance.bills`: the recurring charges expected in the next N days;
 - `finance.merchant`: what was spent at one shop or company (matched in the bank's description, any case, spaces
   ignored) over the last N months: the total, each month's, and the latest charges;
-- `finance.balances`: each account's balance as its latest statement printed it (cards: what's owed).
+- `finance.balances`: each account's balance as its latest statement printed it (cards: what's owed);
+- `finance.expense.add` (acts): a hand-entered spend on one of the person's own accounts ("I spent 200 on fuel at
+  Shell"), the same row the Uploads page's *Add one by hand* makes — only after the person taps the proposed change,
+  and never on someone else's accounts.
 
 Whose data: the asking person's own, or — with `person` — one whose data an admin shared with them here (the same
 user_access grants the pages use; an admin's "view as anyone" never applies to the assistant). Only clean rows,
@@ -297,3 +300,58 @@ def balances(ctx):
         parts.append(f"{name}: {words} ({st['statement_period']} statement)")
     return ctx.result(f"Balances{_whose(owner, ctx)} from the latest statements: " + "; ".join(parts) + ".",
                       items=items, links=[link])
+
+
+def _account_for(ctx, uid: str):
+    """The account a hand-entered spend goes on: the one named (its name or last 4 digits), else the person's only
+    live account, else the one called Cash. None with the names to choose from when it can't tell."""
+    rows = ctx.conn.execute("SELECT id, name, type, account_number_last4 FROM accounts WHERE user_id = ? AND "
+                            "deleted_at IS NULL AND is_archived = 0 ORDER BY name", (uid,)).fetchall()
+    want = (ctx.args.get("account") or "").casefold().strip()
+    if want:
+        hits = [r for r in rows if r["name"].casefold() == want] or \
+            [r for r in rows if want in r["name"].casefold() or (r["account_number_last4"] or "") == want]
+    else:
+        hits = rows if len(rows) == 1 else [r for r in rows if "cash" in r["name"].casefold()]
+    return (hits[0], rows) if len(hits) == 1 else (None, rows)
+
+
+@tools.tool("finance.expense.add",
+            "Adds a spend the person made by hand to one of their own accounts (cash, or a card whose statement "
+            "hasn't arrived yet), after they confirm it. With more than one account, name it.",
+            args={"amount": Arg("number", "how much was spent", required=True, min=0.01, max=10_000_000),
+                  "description": Arg("string", "the shop or what it was for", required=True, max_length=200),
+                  "category": Arg("string", "a spending category, e.g. Fuel", max_length=60),
+                  "date": Arg("date", "when (default today)"),
+                  "account": Arg("string", "which of the person's accounts (its name or last 4 digits)",
+                                 max_length=100)},
+            acts=True, returns="the spend as added, or the person's accounts to choose from",
+            examples=("I spent 200 on fuel at Shell",))
+def expense_add(ctx):
+    from .categorize import UNCATEGORIZED
+    from .matching import relink
+    from .routes.transactions import _insert_manual_transaction
+    uid = ctx.user["id"]                                   # always the asker's own accounts
+    account, rows = _account_for(ctx, uid)
+    if not rows:
+        return ctx.result("There are no accounts here to add it to yet — add one in Finance Dashboard first.")
+    if account is None:
+        names = ", ".join(r["name"] for r in rows[:8])
+        return ctx.result(f"Which account was it on? Yours are: {names}. Say it again with the account's name.",
+                          items=[{"account": r["name"], "type": r["type"]} for r in rows[:8]])
+    amount = round(float(ctx.args["amount"]), 2)
+    signed = amount if account["type"] == "credit_card" else -amount   # a card's spend is positive, a bank's negative
+    day = ctx.args.get("date") or date.today().isoformat()
+    category = (ctx.args.get("category") or "").strip()
+    ok, result = _insert_manual_transaction(ctx.conn, uid, account["id"], day, str(signed),
+                                            " ".join(ctx.args["description"].split()), category or UNCATEGORIZED,
+                                            category_source="manual" if category else None)
+    if not ok:
+        raise bus.Nack("invalid", "expense")
+    relink(ctx.conn, uid)
+    month = day[:7]
+    return ctx.result(f"Added {_money(amount)} at {ctx.args['description']}" + (f" ({category})" if category else "")
+                      + f" on {day} to {account['name']}.",
+                      items=[{"account": account["name"], "date": day, "amount": amount,
+                              "description": ctx.args["description"], "category": category or None}],
+                      links=[_link(ctx, f"/month/{month}")])

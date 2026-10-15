@@ -18,7 +18,8 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   while the provider and the address's scheme, host and port stay the same: changing them without a new key (or
   `clear_ai_api_key`) is a 422, and Test connection answers "Type the access key again" instead of sending it.
   Quick answers: `quick_on` (on), `quick_unsure` (`ai` | `choices`), `quick_learn_taps` (on), `quick_learn_ai`
-  (on), `quick_ai_now` (off), `quick_timeout` (5 s, 2–20). `quick_on` and `ai_on` can't both be off (422). The
+  (on), `quick_ai_now` (off), `quick_learn_rephrase` (on), `quick_recent` (60 s, 0–600; 0 = never reuse),
+  `quick_timeout` (5 s, 2–20). `quick_on` and `ai_on` can't both be off (422). The
   model's fields and the AI-learning ones are greyed out while `ai_on` is off (`enabled_if`).
 - `app/ai_client.py` — the shared `common/ai_client.py` with this app's wording; `generate()` is the only way to the
   model (tests replace it). Each call's `deadline` (retries included) is what is left of the question (the engine
@@ -42,8 +43,10 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
   rounds, input_tokens, output_tokens, seconds, mode quick|ai, quick, understood)` — `quick` (JSON) is what the
   rules understood: `{kind, template, norm, intents: [{intent, label, calls, source, phrase, acts, note}], choices,
   chosen, suggest}`; `understood` the line above a quick answer.
-- `quick_phrases (id, phrase, intent, args, slot_args, source admin|tapped|ai, seen, hits, created_at, last_used)` —
-  learned phrases by template; `quick_misses (phrase, count, last_seen)` — normalised words and a count only.
+- `quick_phrases (id, phrase, intent, args, slot_args, source admin|tapped|rephrased|ai, seen, hits, created_at,
+  last_used)` — learned phrases by template (a table from before `rephrased` is rebuilt once, in one transaction);
+  `quick_misses (phrase, count, last_seen)` — normalised words and a count only; `quick_words (word, means,
+  created_at)` — the admin's words: a concept, or `<kind>:<name>` another name.
 - `calls (id, question_id → questions ON DELETE CASCADE, app, tool, args, say, bus_id, round, confirmed_at,
   sent_at, answered_at, state proposed|sent|ok|nack|timeout, result, reason)` — a proposed action is a `calls`
   row with `say` and state `proposed` until tapped. `reason` is `<nack reason>[:<detail>]`, or `not_available` /
@@ -128,6 +131,7 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/me` | user | `user`, `canAsk`, `why`, `noAdmin`, `suggestions` (the quick questions the person may use, most used first; else one example per app, else four defaults), `apps`, `privacy` (a cloud provider, only while AI is in use), `sharedOpen`, `recorderWarning` (admins, until ticked), `ai {on, model}`, `quick`, `quickOnly`, `version` |
 | `POST /api/ask/{id}/choose` `{choice}` · `POST /api/ask/{id}/not-this` · `GET /api/quick/suggestions` | owner · owner · user | Did you mean (the same question answered; learned) · Not what I asked (a new question: the model with a hint, or without AI the other meanings) · the one-tap questions |
 | `POST /api/admin/quick/test` `{text}` · `GET /api/admin/quick/intents` · `GET/POST/DELETE /api/admin/quick/phrases[/{id}]` · `GET/DELETE /api/admin/quick/misses` | admin | Admin → Quick answers: how a question is read (calls nothing); the intents; phrases (never to an action; fixed values checked against the tool); misses |
+| `GET/POST /api/admin/quick/words` `{word, means}` · `DELETE /api/admin/quick/words/{word}` · `GET /api/admin/quick/export` · `POST /api/admin/quick/import` · `GET /api/admin/quick/apps` · `GET /api/admin/quick/usage` · `POST /api/admin/quick/replay` | admin | the admin's words and the misses' suggestions; phrases and words as a JSON file, and merging one in; each app's speed (7 days); questions per person and the household's kinds (counts only); the last 100 quick answers read again |
 | `GET /api/whoami` | user | the shared whoami contract |
 | `GET /api/tools` | user | the person's tools in words |
 | `POST /api/ask` · `GET /api/ask/{id}` · `GET /api/ask/{id}/events` · `POST /api/ask/{id}/stop` · `POST /api/ask/{id}/act/{cid}` | owner | above |
@@ -212,6 +216,15 @@ recorder doesn't exclude `household_apps`:
   texts together (several parts under their understood lines; "milk" adds whether it's on the list); actions become
   `proposed` calls. `engine.choose()` answers the same question with a choice; `engine.not_this()` asks again.
   `_learn_from_model()` stores a candidate after a model answer with exactly one read-only call.
+- More (HOUSEHOLD_ASSISTANT_SPEC.md §17.15): Hindi/Hinglish in `normalise.py`; `slots.months`; `Utterance.kin`
+  ("my mother", "Ravi's wife"); alias groups, names written together or apart, the apps' `aliases` and the admin's
+  words (`Vocab.aliases`, `Vocab.words`); accounts from `finance.balances`; the intents `compare`, `shop_tick`,
+  `task_move`, `expense_log`, `note_add`, `checklist_tick`, `checklist_add`; `Match.ask` (yes/no, count) and
+  `engine._headline`; `engine._compared`; `engine._chained` (a checklist found by its name, then the change
+  proposed); the reused answers `engine._recent` (`forget_recent` on any confirmed change and on a restore);
+  `_learn_rephrasing`; habits in `engine.suggestions` (`why`, `/api/me` `suggestionWhy`); `engine.app_speeds`,
+  `usage_by_person`, `kinds_asked`, `replay`; `learn.words` / `add_word` / `word_suggestions` / `export` /
+  `import_`.
 - **Use AI off** (`ai_on`): `engine.run` never reaches the model; `ai_client.check_configured` raises too, and
   `needs_warmup()` is false, so no path can call a model; Test connection answers without asking anything.
 - The person is released (`_owners`) as soon as the answer is written, so the next question can follow at once.

@@ -26,10 +26,10 @@ from app.quick.match import Vocab  # noqa: E402
 from app.quick.understand import understand  # noqa: E402
 
 TODAY = date(2026, 10, 14)            # a Wednesday
-VOCAB = Vocab(lists=["Personal", "Home jobs", "Costco", "Work"], items=["milk", "basmati rice", "eggs", "dish soap"],
+VOCAB = Vocab(lists=["Personal", "Home jobs", "Costco", "Work"], items=["milk", "basmati rice", "eggs", "dish soap", "Curd"],
               stores=["Costco", "Dmart"], groups=["Flat", "Goa trip"], people=["Alice", "Ravi", "Meera", "Sam"],
               categories=["Groceries", "Food & Dining", "Fuel", "Utilities", "Entertainment"],
-              games=["Snake", "Brick Breaker", "Sudoku"])
+              games=["Snake", "Brick Breaker", "Sudoku"], accounts=["Visa", "Checking"])
 
 
 def tools() -> dict:

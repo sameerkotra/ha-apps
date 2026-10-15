@@ -2,7 +2,7 @@
 
 - off until an admin turns it on; the asking person must have opened the app and not turned off their own switch;
 - receipt.shopping_list, receipt.price, receipt.spending from receipts made here; one home, or `home` with several;
-- receipt.shopping_list.add only with the tap;
+- receipt.shopping_list.add and .tick only with the tap;
 - the bus keeps its tables in its own database file, never in the app's.
 
 Needs the full requirements. All stores, items and amounts here are invented."""
@@ -162,6 +162,26 @@ class ToolTests(unittest.TestCase):
         self.assertIn("Added 2% Milk to the shopping list for Maple Street — cheapest at Valuco", res["text"])
         res = self.call("receipt.shopping_list")
         self.assertEqual(res["items"], [{"item": "2% Milk", "qty": 2.0, "cheapest_at": "Valuco #1", "price": 2.99}])
+
+    def test_ticking_an_item_off_with_the_tap(self):
+        from app.db import get_db_session
+        from app.db.models import CommonItemAlias
+        self.call("receipt.shopping_list.add", confirm=True, item="milk", qty=2)
+        self.call("receipt.shopping_list.add", confirm=True, item="bread")
+        with get_db_session()() as db:                        # a name someone gave the milk here, and a printed one
+            db.add(CommonItemAlias(user_id="u_pat", common_item_id="i_milk", alias="doodh", normalized_alias="doodh",
+                                   source="USER_ADDED"))
+            db.add(CommonItemAlias(user_id="u_pat", common_item_id="i_milk", alias="MILK 2% 1GAL",
+                                   normalized_alias="milk 2% 1gal", source="EXTRACTION"))
+            db.commit()
+        items = self.call("receipt.shopping_list")["items"]
+        self.assertEqual([i.get("aliases") for i in items], ["doodh", None])
+        self.assertNack(self.call("receipt.shopping_list.tick", item="milk"), "not_allowed", "confirm")
+        self.assertIn("isn't on the shopping list", self.call("receipt.shopping_list.tick", confirm=True,
+                                                               item="caviar")["text"])
+        res = self.call("receipt.shopping_list.tick", confirm=True, item="milk")
+        self.assertEqual(res["text"], "Ticked 2% Milk off the shopping list for Maple Street.")
+        self.assertEqual([i["item"] for i in self.call("receipt.shopping_list")["items"]], ["Bread"])
 
     def test_deals(self):
         from app.db import get_db_session

@@ -8,7 +8,11 @@ fails the test whenever it is called unless a test allows it.
 - Not what I asked: a learned phrase forgotten; asked again of the model, or without that meaning;
 - follow-ups, several questions in one, actions only as buttons, the household's names fetched from the apps;
 - learning from the model (twice before it's used), the admin's phrases, misses without who asked;
-- children and voice satellites get only the tools about themselves, and Vault never answers.
+- children and voice satellites get only the tools about themselves, and Vault never answers;
+- 1.5: yes/no and counts said first, two months side by side, ticking the shopping list, moving a task, a spend and a
+  note and a checklist change (all only as buttons), "my mum", an answer reused for the same question, learning from
+  rephrasing, the admin's words (and the ones the misses suggest), export/import, the apps' speeds, who asks (counts
+  only), replay, and the suggestions a person's habits put first.
 All people, lists and amounts here are invented.
 """
 import _env  # noqa: F401  (must be first)
@@ -53,6 +57,7 @@ def household(router: Router) -> dict:
     split = FakeApp(router, "splitpot", "Splitpot", "splitpot", people=people)
     tree = FakeApp(router, "family_tree", "Family Tree", "tree", people=people)
     vault = FakeApp(router, "household_vault", "Household Vault", "vault", people=people)
+    docs = FakeApp(router, "household_docs", "Household Docs", "docs", people=people)
 
     def rec_call(a, ctx):
         a.calls.append({"tool": ctx.tool.name, "by": ctx.user["id"], "args": dict(ctx.args), "confirm": ctx.confirmed})
@@ -82,6 +87,75 @@ def household(router: Router) -> dict:
         rec_call(todo, ctx)
         return ctx.result(f"Added “{ctx.args['text']}” to {ctx.args['list']}.")
 
+    @todo.tools.tool("todo.items.due", "Moves a task to another day (after the person confirms it).",
+                     args={"task": Arg("string", "the task", required=True), "due": Arg("date", "the day", required=True),
+                           "list": Arg("string", "the list")}, acts=True, returns="the task")
+    def due(ctx):
+        rec_call(todo, ctx)
+        return ctx.result(f"“{ctx.args['task']}” is now due {ctx.args['due']}.")
+
+    @rec.tools.tool("receipt.shopping_list.tick", "Ticks an item off the shopping list (after the person confirms it).",
+                    args={"item": Arg("string", "the item", required=True)}, acts=True, scope="household",
+                    returns="the item")
+    def shop_tick(ctx):
+        rec_call(rec, ctx)
+        return ctx.result(f"Ticked {ctx.args['item']} off the shopping list.")
+
+    @fin.tools.tool("finance.spending", "A month's spending by category.",
+                    args={"month": Arg("month", "the month"), "category": Arg("string", "a category")},
+                    returns="spending per category")
+    def spending(ctx):
+        rec_call(fin, ctx)
+        this = config.today().strftime("%Y-%m")
+        rows = ([("Groceries", 200.0), ("Fuel", 100.0)] if ctx.args.get("month", this) == this
+                else [("Groceries", 150.0), ("Fuel", 50.0)])
+        return ctx.result(f"{ctx.args.get('month', this)}: {sum(v for _c, v in rows):.2f} spent.",
+                          items=[{"category": c, "spend": v} for c, v in rows])
+
+    @fin.tools.tool("finance.expense.add", "Adds a spend by hand (after the person confirms it).",
+                    args={"amount": Arg("number", "how much", required=True, min=0.01, max=1e7),
+                          "description": Arg("string", "where", required=True), "category": Arg("string", "category"),
+                          "date": Arg("date", "when"), "account": Arg("string", "which account")},
+                    acts=True, returns="the spend")
+    def spend_add(ctx):
+        rec_call(fin, ctx)
+        return ctx.result(f"Added {ctx.args['amount']} at {ctx.args['description']}.")
+
+    @tree.tools.tool("tree.person", "One person.", args={"person": Arg("string", "who", required=True)},
+                     returns="the person", scope="household")
+    def person(ctx):
+        rec_call(tree, ctx)
+        return ctx.result(f"{ctx.args['person']}: born 12 March 1960.")
+
+    @docs.tools.tool("docs.search", "Finds documents.", args={"query": Arg("string", "words", required=True),
+                                                              "kind": Arg("string", "kind")}, returns="documents")
+    def search(ctx):
+        rec_call(docs, ctx)
+        if ctx.args["query"] == "packing":
+            return ctx.result("1 checklist: Packing.", items=[{"id": "d_pack", "name": "Packing", "kind": "checklist"}])
+        return ctx.result(f"Nothing matches “{ctx.args['query']}”.")
+
+    @docs.tools.tool("docs.checklist", "A checklist's items.", args={"id": Arg("string", "its id", required=True)},
+                     returns="items")
+    def checklist(ctx):
+        rec_call(docs, ctx)
+        return ctx.result("Packing: passport (open).", items=[{"item": "passport", "done": False}])
+
+    @docs.tools.tool("docs.checklist.tick", "Ticks a checklist item (after the person confirms it).",
+                     args={"id": Arg("string", "its id", required=True), "item": Arg("string", "the item", required=True),
+                           "done": Arg("boolean", "ticked")}, acts=True, returns="the item")
+    def tick(ctx):
+        rec_call(docs, ctx)
+        return ctx.result(f"Ticked “{ctx.args['item']}”.")
+
+    @docs.tools.tool("docs.note.create", "Makes a note (after the person confirms it).",
+                     args={"name": Arg("string", "its name", required=True), "text": Arg("string", "what it says",
+                                                                                          required=True)},
+                     acts=True, returns="the note")
+    def note(ctx):
+        rec_call(docs, ctx)
+        return ctx.result(f"Made the note “{ctx.args['name']}”.")
+
     @rec.tools.tool("receipt.shopping_list", "The shopping list.", scope="household", returns="items")
     def shopping(ctx):
         rec_call(rec, ctx)
@@ -106,7 +180,8 @@ def household(router: Router) -> dict:
                     returns="bills")
     def bills(ctx):
         rec_call(fin, ctx)
-        return ctx.result(f"1 bill in the next {int(ctx.args.get('days', 7))} days: Electricity 54.20 on Friday.")
+        return ctx.result(f"1 bill in the next {int(ctx.args.get('days', 7))} days: Electricity 54.20 on Friday.",
+                          items=[{"merchant": "Electricity", "amount": 54.2}])
 
     @fin.tools.tool("finance.balances", "Account balances.", returns="accounts")
     def balances(ctx):
@@ -124,13 +199,15 @@ def household(router: Router) -> dict:
                      returns="birthdays", scope="household")
     def birthdays(ctx):
         rec_call(tree, ctx)
-        return ctx.result(f"Meera turns 30 on Saturday (next {int(ctx.args.get('days', 30))} days).")
+        return ctx.result(f"Meera turns 30 on Saturday (next {int(ctx.args.get('days', 30))} days).",
+                          items=[{"name": "Meera", "turns": 30}])
 
     @vault.tools.tool("vault.list", "Every password.", returns="passwords")
     def secrets(ctx):
         raise AssertionError("the assistant must never call Vault")
 
-    apps = {"todo": todo, "receipt": rec, "finance": fin, "splitpot": split, "tree": tree, "vault": vault}
+    apps = {"todo": todo, "receipt": rec, "finance": fin, "splitpot": split, "tree": tree, "vault": vault,
+            "docs": docs}
     for a in apps.values():
         a.start()
     return apps
@@ -152,10 +229,14 @@ class QuickHousehold(unittest.TestCase):
     def setUp(self):
         bus.stop()
         for f in glob.glob(config.DB_PATH + "*"):
-            os.remove(f)
+            try:
+                os.remove(f)
+            except FileNotFoundError:                  # SQLite removed its own -shm/-wal meanwhile
+                pass
         db.init_db()
         settings.invalidate()
         quick_vocab.forget()
+        engine.forget_recent()
         self.router = Router()
         bus.default.configure(post=self.router.post, outbox_interval=0.02, send_limit=100000, receive_limit=100000,
                               receive_limit_total=100000)
@@ -169,7 +250,7 @@ class QuickHousehold(unittest.TestCase):
         end = time.monotonic() + 5
         while time.monotonic() < end:
             with db.get_conn() as conn:
-                if conn.execute("SELECT COUNT(*) FROM assist_apps WHERE learned_at IS NOT NULL").fetchone()[0] >= 5:
+                if conn.execute("SELECT COUNT(*) FROM assist_apps WHERE learned_at IS NOT NULL").fetchone()[0] >= 6:
                     break
             time.sleep(0.02)
         if self.AI:
@@ -342,7 +423,8 @@ class UseAIOff(QuickHousehold):
 
     def test_no_model_is_ever_called(self):
         q = self.ask("any birthdays this week")
-        self.assertEqual(q["answer"], "Meera turns 30 on Saturday (next 7 days).")
+        self.assertEqual(q["answer"], "**Yes** — 1 birthday coming up · this week.\n\n"
+                                      "Meera turns 30 on Saturday (next 7 days).")
         q = self.ask("why did we spend so much")                  # needs the AI
         self.assertTrue(q["answer"].startswith(settings.AI_OFF))
         self.assertTrue(q["suggest"])
@@ -418,7 +500,7 @@ class AdminQuick(QuickHousehold):
         q = self.ask("how are we fixed")
         self.assertEqual(q["understood"], "Account balances · Finance Dashboard")
         q = self.ask("so how are we fixed for money")             # an admin's phrase inside a longer question
-        self.assertEqual(q["understood"], "Account balances · Finance Dashboard")
+        self.assertTrue(q["understood"].startswith("Account balances · Finance Dashboard"))   # (maybe "as of 1 s ago")
         self.assertEqual(self.c.post("/api/admin/quick/phrases", json={"words": "x", "intent": "task_add"},
                                      headers=ADMIN).status_code, 422)      # never to a change
         self.assertEqual(self.c.post("/api/admin/quick/phrases", json={"words": "x", "intent": "nope"},
@@ -453,3 +535,180 @@ class ChildrenAndVoice(QuickHousehold):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MoreQuickAnswers(QuickHousehold):
+    """1.5 (HOUSEHOLD_ASSISTANT_SPEC.md §17.15)."""
+
+    def test_yes_no_and_how_many_are_said_first(self):
+        q = self.ask("any bills due this week?")
+        self.assertTrue(q["answer"].startswith("**Yes** — 1 bill due · this week.\n\n1 bill in the next 7 days"), q)
+        q = self.ask("how many tasks today")
+        self.assertTrue(q["answer"].startswith("**2 tasks** · today.\n\n2 tasks today"), q["answer"])
+        q = self.ask("do i owe anyone")
+        self.assertTrue(q["answer"].startswith("**Yes** — 1 open balance"), q["answer"])
+
+    def test_two_months_side_by_side(self):
+        q = self.ask("did we spend more than last month")
+        self.assertEqual(q["mode"], "quick")
+        months = [c["args"].get("month") for c in self.calls("finance", "finance.spending")]
+        self.assertEqual(len(months), 2, q)
+        self.assertTrue(q["answer"].startswith("**Spending: 300.00 in "), q["answer"])
+        self.assertIn("200.00 in ", q["answer"])
+        self.assertIn("100.00 more (+50%).**", q["answer"])
+        q = self.ask("did we spend less on groceries than last month")
+        self.assertIn("**Spending on Groceries: 200.00 in ", q["answer"])
+        self.assertIn("50.00 more (+33%)", q["answer"])
+        self.assertNotIn("_category", json.dumps(self.calls("finance", "finance.spending")))   # never sent to the app
+
+    def test_changes_are_buttons(self):
+        cases = (("bought the milk", "receipt.shopping_list.tick", {"item": "milk"}),
+                 ("move the dentist to tomorrow", "todo.items.due", {"task": "dentist"}),
+                 ("I spent 200 on fuel at Shell", "finance.expense.add",
+                  {"amount": 200, "description": "Shell", "category": "Fuel"}),
+                 ("make a note gate code 4521", "docs.note.create", {"name": "Gate code 4521", "text": "gate code 4521"}))
+        for text, tool, args in cases:
+            with self.subTest(text=text):
+                q = self.ask(text)
+                self.assertEqual([(a["tool"], a["state"]) for a in q["actions"]], [(tool, "proposed")], q)
+                for k, v in args.items():
+                    self.assertEqual(q["actions"][0]["args"][k], v)
+        self.assertFalse([c for app in self.apps.values() for c in app.calls if c["confirm"]])   # nothing changed
+
+    def test_a_checklist_is_found_by_its_name_then_the_change_is_a_button(self):
+        q = self.ask("tick passport on the packing checklist")
+        self.assertEqual(self.calls("docs", "docs.search")[-1]["args"], {"query": "packing", "kind": "checklist"})
+        self.assertEqual([(a["tool"], a["args"]) for a in q["actions"]],
+                         [("docs.checklist.tick", {"id": "d_pack", "item": "passport", "done": True})])
+        q = self.ask("tick sunscreen on the beach checklist")         # no such checklist: said, nothing proposed
+        self.assertEqual(q["actions"], [])
+        self.assertIn("No checklist called “beach”", q["answer"])
+
+    def test_family_by_what_you_call_them(self):
+        self.ask("when is mum's birthday")
+        self.assertEqual(self.calls("tree", "tree.person")[-1]["args"], {"person": "my mother"})
+        self.ask("how old is ravi's wife")
+        self.assertEqual(self.calls("tree", "tree.person")[-1]["args"], {"person": "Ravi's wife"})
+
+    def test_the_same_question_again_is_answered_from_the_last_answer(self):
+        q1 = self.ask("bills this week")
+        q2 = self.ask("bills this week")
+        self.assertEqual(len(self.calls("finance", "finance.bills")), 1)          # asked once
+        self.assertEqual(q2["answer"], q1["answer"])
+        self.assertEqual([s["tool"] for s in q2["shared"]], ["finance.bills"])   # What was shared still shows it
+        q = self.ask("add bread to the shopping list")                           # a change: the next is asked afresh
+        self.c.post(f"/api/ask/{q['id']}/act/{q['actions'][0]['id']}", headers=ALICE)
+        self.ask("bills this week")
+        self.assertEqual(len(self.calls("finance", "finance.bills")), 2)
+        settings.update({"quick_recent": 0}, None)
+        self.ask("bills this week")
+        self.assertEqual(len(self.calls("finance", "finance.bills")), 3)
+
+    def test_a_rephrased_question_is_learned_once_it_happens_twice(self):
+        settings.update({"quick_unsure": "choices"}, None)
+        for _ in range(2):
+            q = self.ask("whats the damage")
+            self.assertEqual(q["understood"], None)                # not placed
+            self.ask("any bills")                                   # the same person, in other words, soon after
+        with db.get_conn() as conn:
+            row = conn.execute("SELECT intent, source, seen FROM quick_phrases WHERE source = 'rephrased'").fetchone()
+        self.assertEqual(tuple(row), ("bills", "rephrased", 2))
+        q = self.ask("whats the damage")
+        self.assertTrue(q["understood"].startswith("Bills due"), q)
+        q2 = self.ask("whats the damage", who=KID)    # children's rephrasings aren't learned, but used
+        self.assertEqual(q2["mode"], "quick")
+
+    def test_the_admins_words_and_the_ones_the_misses_suggest(self):
+        settings.update({"quick_unsure": "choices"}, None)
+        for _ in range(2):
+            self.ask("any rota today")
+        r = self.c.get("/api/admin/quick/words", headers=ADMIN).json()
+        self.assertIn({"word": "rota", "means": "TASK"}, [{k: g[k] for k in ("word", "means")} for g in r["suggestions"]])
+        self.assertEqual(self.c.get("/api/admin/quick/words", headers=ALICE).status_code, 403)
+        self.assertEqual(self.c.post("/api/admin/quick/words", json={"word": "Rota", "means": "TASK"},
+                                     headers=ADMIN).status_code, 200)
+        q = self.ask("any rota today")
+        self.assertEqual(q["understood"], "Your tasks · today · Household Todo")
+        self.assertEqual(self.c.post("/api/admin/quick/words", json={"word": "dahi", "means": "item:Curd"},
+                                     headers=ADMIN).status_code, 200)
+        q = self.ask("is dahi on the list")
+        self.assertIn("Curd isn't on the shopping list.", q["answer"])
+        for bad in ({"word": "x y z w", "means": "TASK"}, {"word": "chores", "means": "QUESTION_WORDS"},
+                    {"word": "chores", "means": "nope:Curd"}):
+            self.assertEqual(self.c.post("/api/admin/quick/words", json=bad, headers=ADMIN).status_code, 422, bad)
+        self.assertEqual(self.c.delete("/api/admin/quick/words/rota", headers=ADMIN).status_code, 200)
+        words = self.c.get("/api/admin/quick/words", headers=ADMIN).json()["words"]
+        self.assertEqual([w["word"] for w in words], ["dahi"])
+
+    def test_export_and_import(self):
+        self.c.post("/api/admin/quick/phrases", json={"words": "how are we fixed", "intent": "balances"}, headers=ADMIN)
+        self.c.post("/api/admin/quick/words", json={"word": "chores", "means": "TASK"}, headers=ADMIN)
+        r = self.c.get("/api/admin/quick/export", headers=ADMIN)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("attachment", r.headers["content-disposition"])
+        data = r.json()
+        self.assertEqual((data["kind"], len(data["phrases"]), data["words"]),
+                         ("quick-answers", 1, [{"word": "chores", "means": "TASK"}]))
+        self.assertNotIn("u_alice", json.dumps(data))
+        with db.get_conn() as conn:
+            conn.execute("DELETE FROM quick_phrases")
+            conn.execute("DELETE FROM quick_words")
+        data["phrases"].append({"phrase": "add it", "intent": "task_add", "args": {}, "source": "admin"})   # a change
+        r = self.c.post("/api/admin/quick/import", json=data, headers=ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual({k: r.json()[k] for k in ("phrases", "words", "skipped")}, {"phrases": 1, "words": 1,
+                                                                                     "skipped": 1})
+        self.assertEqual(self.c.post("/api/admin/quick/import", json={"kind": "other"}, headers=ADMIN).status_code, 422)
+        self.assertEqual(self.c.post("/api/admin/quick/import", json=data, headers=ALICE).status_code, 403)
+
+    def test_app_speeds_who_asks_and_replay(self):
+        self.ask("bills this week")
+        self.ask("whats on my list today")
+        self.ask("whats on my list today", who=KID)
+        apps = self.c.get("/api/admin/quick/apps", headers=ADMIN).json()["apps"]
+        fin = next(a for a in apps if a["app"] == "finance")
+        self.assertEqual((fin["calls"], fin["ok"], fin["timeouts"]), (1, 1, 0))
+        self.assertIsNotNone(fin["typical"])
+        usage = self.c.get("/api/admin/quick/usage", headers=ADMIN).json()
+        people = {p["name"]: (p["asked"], p["quick"]) for p in usage["people"]}
+        self.assertEqual(people["Alice"], (2, 2))
+        self.assertNotIn("text", json.dumps(usage["people"]))                      # counts only
+        self.assertEqual(usage["kinds"][0]["intent"], "tasks")
+        r = self.c.post("/api/admin/quick/replay", headers=ADMIN).json()
+        self.assertEqual((r["checked"], r["same"], r["changed"]), (3, 3, []))
+        self.c.post("/api/admin/quick/phrases", json={"words": "whats on my list today", "intent": "bills"},
+                    headers=ADMIN)
+        r = self.c.post("/api/admin/quick/replay", headers=ADMIN).json()
+        self.assertEqual(len(r["changed"]), 2)
+        self.assertEqual((r["changed"][0]["was"], r["changed"][0]["now"]), (["tasks"], ["bills"]))
+        self.assertNotIn("Alice", json.dumps(r))
+        self.assertEqual(self.c.post("/api/admin/quick/replay", headers=ALICE).status_code, 403)
+
+    def test_a_persons_habits_come_first_in_their_suggestions(self):
+        now = config.utcnow()
+        with db.get_conn() as conn:
+            for weeks in (1, 2, 3):
+                asked = (now - __import__("datetime").timedelta(days=7 * weeks)).isoformat(timespec="seconds")
+                conn.execute("INSERT INTO questions (id, user_id, asked_at, text, state, mode, quick) VALUES "
+                             "(?, 'u_alice', ?, 'birthdays', 'done', 'quick', ?)",
+                             (bus.new_ulid(), asked, json.dumps({"kind": "answer", "intents": [{"intent": "birthdays"}]})))
+        me = self.c.get("/api/me", headers=ALICE).json()
+        self.assertEqual(me["suggestions"][0], "Any birthdays coming up?")
+        self.assertEqual(me["suggestionWhy"]["Any birthdays coming up?"],
+                         f"You often ask this on {config.now().strftime('%A')}s")
+        self.assertEqual(self.c.get("/api/me", headers=KID).json()["suggestionWhy"], {})   # only their own
+
+    def test_old_phrase_tables_are_widened_for_rephrasings(self):
+        with db.get_conn() as conn:
+            conn.execute("DROP TABLE quick_phrases")
+            conn.execute("CREATE TABLE quick_phrases (id TEXT PRIMARY KEY, phrase TEXT NOT NULL, intent TEXT NOT NULL, "
+                         "args TEXT NOT NULL DEFAULT '{}', slot_args TEXT NOT NULL DEFAULT '[]', source TEXT NOT NULL "
+                         "CHECK (source IN ('admin', 'tapped', 'ai')), seen INTEGER NOT NULL DEFAULT 1, hits INTEGER "
+                         "NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_used TEXT, UNIQUE (phrase, intent))")
+            conn.execute("INSERT INTO quick_phrases (id, phrase, intent, source, created_at) VALUES ('p1', 'trash day', "
+                         "'schedule', 'admin', '2026-01-01T00:00:00+00:00')")
+        db.init_db()
+        with db.get_conn() as conn:
+            conn.execute("INSERT INTO quick_phrases (id, phrase, intent, source, created_at) VALUES ('p2', 'x y', "
+                         "'bills', 'rephrased', '2026-01-01T00:00:00+00:00')")
+            self.assertEqual([r[0] for r in conn.execute("SELECT id FROM quick_phrases ORDER BY id")], ["p1", "p2"])

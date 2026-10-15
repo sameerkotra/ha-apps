@@ -809,12 +809,18 @@ re-run of the AI.
 
 - The shared `app_bus.py` (with `ha_ws.py`) starts in the lifespan on the app's own database (`db.get_db`); it makes
   its tables (`bus_outbox`, `bus_seen`, `bus_apps`) itself, and `query_engine.HIDDEN_TABLES` keeps them out of
-  Query and Reports. Its own WebSocket; the outbox thread only with a Supervisor token. The tools only read, inside
-  the bus's transaction.
+  Query and Reports. Its own WebSocket; the outbox thread only with a Supervisor token. The tools read (and
+  `finance.expense.add` writes one row) inside the bus's transaction.
 - It answers the **Household Assistant** (`assist.tools.list`, `assist.tool.call`; the shared `assist_tools.py`,
   APP_MESSAGES_SPEC §6.6). `requested_by` must be in `known_users` (has opened the app), else `nack not_allowed
   no_access`. Whose data: theirs, or with `person` (a name or id) an owner `user_access` lets them see; anyone else
   is `nack not_found person`. The admin's "act as" never applies.
+  - `finance.expense.add` (`acts`; `amount`, `description`, `category?`, `date?`, `account?`): only with `confirm:
+    true`, and only on the asker's own accounts (no `person`). The account: the one named (name, or a part of it, or
+    its last 4 digits), else their only live account, else the one with "cash" in its name; none fits → the text lists
+    their accounts and nothing is added. Inserted by `_insert_manual_transaction` (the Uploads page's *Add one by
+    hand*: a spend is negative on checking/savings, positive on a card), `category_source` manual (none given:
+    Uncategorized, left to the categorizer), then `relink`.
   - `finance.merchant` (`merchant`, `months?` 1–24, default 12): spend rows (the Overview's rules) whose bank
     description contains the words, compared without case, spaces or punctuation; the total, each month's, and the 10
     latest as `{date, merchant, amount, account}` (never `note`). Fewer than 2 letters → `nack invalid merchant`.

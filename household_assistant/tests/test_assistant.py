@@ -51,7 +51,10 @@ class Household(unittest.TestCase):
     def setUp(self):
         bus.stop()
         for f in glob.glob(config.DB_PATH + "*"):
-            os.remove(f)
+            try:
+                os.remove(f)
+            except FileNotFoundError:                  # SQLite removed its own -shm/-wal meanwhile
+                pass
         db.init_db()
         self.router = Router()
         # many tests a minute on one bus: its per-sender receive limit (60 a minute) would refuse the fakes' answers

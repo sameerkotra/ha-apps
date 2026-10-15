@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.4
+
+- **"Bought the milk"**: the Household Assistant can now tick an item off the shopping list — only after the person taps the proposed change (new `receipt.shopping_list.tick`).
+- **Other names for list items**: the names people gave an item here go with the shopping list to the assistant, so "dahi" finds Curd (Household Assistant 1.5.0). Names read off receipts aren't sent.
+
 ## 1.3.3
 
 - **The Household Assistant's quick answers know the Best prices and Budgets words** ("special offer", "price drops", "grocery budget", "spending limit", …), so those questions are answered in a second without the AI (Household Assistant 1.4.0).

@@ -333,9 +333,10 @@
     $("#suggestions").hidden = r.questions.length > 0;
   }
 
-  function showSuggestions(list) {
+  function showSuggestions(list, why) {
     mount(clear($("#suggestions")), list.map((s) => {
-      const b = h("button", { type: "button", class: "chip" }, s);
+      const habit = why && why[s];
+      const b = h("button", { type: "button", class: habit ? "chip habit" : "chip", title: habit || null }, s);
       b.addEventListener("click", () => { $("#askInput").value = s; ask(s); });
       return b;
     }));
@@ -526,13 +527,14 @@
   }
 
   // ---------- Admin → Quick answers (§17.8, §17.11): Test, your phrases, what wasn't answered quickly ----------
-  const SOURCE_WORDS = { admin: "added here", tapped: "from a choice", ai: "taught by the AI" };
+  const SOURCE_WORDS = { admin: "added here", tapped: "from a choice", rephrased: "asked again in other words", ai: "taught by the AI" };
 
   async function loadQuick() {
     const box = $("#tab-quick");
-    let ph, ms, its;
+    let ph, ms, its, wd, sp, us;
     try {
-      [ph, ms, its] = await Promise.all([api("api/admin/quick/phrases"), api("api/admin/quick/misses"), api("api/admin/quick/intents")]);
+      [ph, ms, its, wd, sp, us] = await Promise.all([api("api/admin/quick/phrases"), api("api/admin/quick/misses"),
+        api("api/admin/quick/intents"), api("api/admin/quick/words"), api("api/admin/quick/apps"), api("api/admin/quick/usage")]);
     } catch (e) { mount(clear(box), h("p", { class: "error" }, e.message)); return; }
     const intentName = Object.fromEntries(its.intents.map((i) => [i.intent, i.question]));
 
@@ -590,7 +592,7 @@
       });
       const fixedArgs = Object.entries(p.args).filter(([k]) => !p.slot_args.includes(k)).map(([k, v]) => `${k}=${v}`).join(", ");
       return h("tr", null, h("td", null, `“${p.phrase}”`), h("td", null, intentName[p.intent] || p.intent, fixedArgs ? h("span", { class: "dim" }, ` (${fixedArgs})`) : null),
-        h("td", { class: "dim" }, `${SOURCE_WORDS[p.source] || p.source}${p.source === "ai" && p.seen < 2 ? " — not used until seen twice" : ""}`),
+        h("td", { class: "dim" }, `${SOURCE_WORDS[p.source] || p.source}${(p.source === "ai" || p.source === "rephrased") && p.seen < 2 ? " — not used until seen twice" : ""}`),
         h("td", { class: "dim" }, `${p.hits} used`), h("td", null, del));
     });
 
@@ -606,6 +608,85 @@
       try { await api("api/admin/quick/misses", { method: "DELETE" }); loadQuick(); } catch (e) { toast(e.message, true); }
     });
 
+    // Words: a word means a kind of question, or is another name for something
+    const conceptLabel = Object.fromEntries(wd.concepts.map((c) => [c.concept, c.label]));
+    const meansWords = (m) => {
+      const [kind, ...rest] = m.split(":");
+      return rest.length ? `another name for ${kind} “${rest.join(":")}”` : conceptLabel[m] || m;
+    };
+    const wordIn = h("input", { type: "text", maxlength: "60", placeholder: "e.g. chores", "aria-label": "The word" });
+    const meansSel = h("select", { "aria-label": "What it means" },
+      h("optgroup", { label: "A kind of question" }, wd.concepts.map((c) => h("option", { value: c.concept }, c.label))),
+      h("optgroup", { label: "Another name for…" }, wd.kinds.map((k) => h("option", { value: `name:${k}` }, `a ${k}`))));
+    const nameIn = h("input", { type: "text", maxlength: "80", placeholder: "the name it stands for, e.g. Curd", "aria-label": "The name", hidden: true });
+    meansSel.addEventListener("change", () => { nameIn.hidden = !meansSel.value.startsWith("name:"); });
+    const addWord = h("button", { type: "button", class: "btn-primary" }, "Add word");
+    const sendWord = async (word, means) => {
+      try { await api("api/admin/quick/words", { method: "POST", body: { word, means } }); toast(`Added: “${word}”.`); loadQuick(); }
+      catch (e) { toast(e.message, true); }
+    };
+    addWord.addEventListener("click", () => {
+      const v = meansSel.value;
+      sendWord(wordIn.value, v.startsWith("name:") ? `${v.slice(5)}:${nameIn.value.trim()}` : v);
+    });
+    const wordRows = wd.words.map((w) => {
+      const del = h("button", { type: "button", class: "btn-ghost", title: "Remove" }, "✕");
+      del.addEventListener("click", async () => {
+        try { await api(`api/admin/quick/words/${encodeURIComponent(w.word)}`, { method: "DELETE" }); loadQuick(); }
+        catch (e) { toast(e.message, true); }
+      });
+      return h("tr", null, h("td", null, `“${w.word}”`), h("td", null, meansWords(w.means)), h("td", null, del));
+    });
+    const suggestRows = wd.suggestions.map((g) => {
+      const yes = h("button", { type: "button", class: "btn-secondary" }, "Yes");
+      yes.addEventListener("click", () => sendWord(g.word, g.means));
+      const test = h("button", { type: "button", class: "btn-ghost" }, "Test");
+      test.addEventListener("click", () => { testIn.value = g.example; runTest(); testIn.scrollIntoView({ block: "center" }); });
+      return h("tr", null, h("td", null, `Treat “${g.word}” as ${conceptLabel[g.means] || g.means}?`),
+        h("td", { class: "dim" }, `answers ${g.placed} of ${g.misses} misses`), h("td", null, yes, " ", test));
+    });
+
+    // How fast each app answers
+    const secs = (x) => (x === null || x === undefined ? "—" : `${x.toFixed(x < 10 ? 1 : 0)} s`);
+    const speedRows = sp.apps.map((a) => h("tr", { class: a.timeouts || (a.slow !== null && a.slow > 5) ? "slow-app" : "" },
+      h("td", null, a.appName), h("td", null, `${a.calls}`), h("td", null, secs(a.typical)), h("td", null, secs(a.slow)),
+      h("td", null, `${a.refused}`), h("td", null, `${a.timeouts}`)));
+
+    // Who asks, and what the household asks (counts only)
+    const peopleRows = us.people.filter((p) => p.asked).map((p) => h("tr", null, h("td", null, p.name), h("td", null, `${p.asked}`),
+      h("td", null, p.asked ? `${Math.round((p.quick / p.asked) * 100)}%` : "—")));
+    const kindRows = us.kinds.slice(0, 12).map((k) => h("tr", null, h("td", null, k.example), h("td", null, `${k.count}`)));
+
+    // Replay: the last answers understood again by today's rules
+    const replayOut = h("div");
+    const replayBtn = h("button", { type: "button", class: "btn-secondary" }, "Replay the last 100");
+    replayBtn.addEventListener("click", async () => {
+      replayBtn.disabled = true;
+      try {
+        const r = await api("api/admin/quick/replay", { method: "POST" });
+        mount(clear(replayOut),
+          h("p", null, `${r.checked} checked: ${r.same} read the same, ${r.changed.length} differently.`),
+          r.changed.length ? h("table", { class: "quick-table" }, h("tbody", null, r.changed.map((c) => h("tr", null,
+            h("td", null, `“${c.template}”`), h("td", { class: "dim" }, `was: ${c.wasExample.join(" · ")}`),
+            h("td", null, `now: ${c.nowExample.join(" · ")}`))))) : null);
+      } catch (e) { mount(clear(replayOut), h("p", { class: "error" }, e.message)); }
+      replayBtn.disabled = false;
+    });
+
+    // Export and import
+    const importIn = h("input", { type: "file", accept: ".json,application/json", hidden: true });
+    importIn.addEventListener("change", async () => {
+      const file = importIn.files[0];
+      importIn.value = "";
+      if (!file) return;
+      try {
+        const body = JSON.parse(await file.text());
+        const r = await api("api/admin/quick/import", { method: "POST", body });
+        toast(`Imported ${r.phrases} phrases and ${r.words} words${r.skipped ? `; ${r.skipped} skipped` : ""}.`);
+        loadQuick();
+      } catch (e) { toast(e.message || "That file couldn't be read.", true); }
+    });
+
     mount(clear(box),
       h("div", { class: "card" }, h("h3", null, "Test a question"),
         h("p", { class: "hint" }, "How a question is understood — its words after clean-up, what they mean, and which answer wins. Nothing is asked."),
@@ -614,9 +695,31 @@
         h("p", { class: "hint" }, "Your household's own ways of asking. Times and names in a phrase work for any time or name (“trash day” also answers “when is trash day”). Phrases learned from choices or from the AI are dropped when nobody has used them for 180 days."),
         h("div", { class: "row wrap" }, words, " ", intent, " ", fixed, " ", add),
         phraseRows.length ? h("table", { class: "quick-table" }, h("tbody", null, phraseRows)) : h("p", { class: "dim" }, "No phrases yet.")),
+      h("div", { class: "card" }, h("h3", null, "Words"),
+        h("p", { class: "hint" }, "A word your household uses for a kind of question (“chores” for tasks), or another name for something (“dahi” for the list's Curd). The words in what wasn't answered quickly are suggested here when they'd answer it."),
+        suggestRows.length ? h("table", { class: "quick-table" }, h("tbody", null, suggestRows)) : null,
+        h("div", { class: "row wrap" }, wordIn, " ", meansSel, " ", nameIn, " ", addWord),
+        wordRows.length ? h("table", { class: "quick-table" }, h("tbody", null, wordRows)) : h("p", { class: "dim" }, "No words yet.")),
       h("div", { class: "card" }, h("h3", null, "Asked but not answered quickly"),
         h("p", { class: "hint" }, "Questions the rules couldn't place, in their cleaned-up words, with how often — never who asked. Add a phrase for the ones that should be quick."),
-        missRows.length ? [h("table", { class: "quick-table" }, h("tbody", null, missRows)), h("p", null, clearMisses)] : h("p", { class: "dim" }, "Nothing yet.")));
+        missRows.length ? [h("table", { class: "quick-table" }, h("tbody", null, missRows)), h("p", null, clearMisses)] : h("p", { class: "dim" }, "Nothing yet.")),
+      h("div", { class: "card" }, h("h3", null, "How fast the apps answer"),
+        h("p", { class: "hint" }, `The last ${sp.days} days: each app's calls, its typical and its slowest answers (9 in 10 were faster), and how many it refused or didn't answer in time.`),
+        speedRows.length ? h("table", { class: "quick-table speeds" }, h("thead", null, h("tr", null, ["App", "Calls", "Typical", "Slow", "Refused", "Timed out"].map((t) => h("th", null, t)))),
+          h("tbody", null, speedRows)) : h("p", { class: "dim" }, "No calls yet.")),
+      h("div", { class: "card" }, h("h3", null, "Who asks"),
+        h("p", { class: "hint" }, `The last ${us.days} days: how many questions each person asked and how many had a quick answer — counts only, never what anyone asked. The kinds of question are the household's, all together.`),
+        peopleRows.length ? h("table", { class: "quick-table" }, h("thead", null, h("tr", null, ["Person", "Questions", "Quick"].map((t) => h("th", null, t)))),
+          h("tbody", null, peopleRows)) : h("p", { class: "dim" }, "No questions yet."),
+        kindRows.length ? h("table", { class: "quick-table" }, h("thead", null, h("tr", null, ["Asked most", "Times"].map((t) => h("th", null, t)))),
+          h("tbody", null, kindRows)) : null),
+      h("div", { class: "card" }, h("h3", null, "Replay"),
+        h("p", { class: "hint" }, "Reads the household's last 100 quick answers again with today's rules, phrases and words, and lists the ones that would now be understood differently — handy after an update. Nothing is asked; each is shown as its pattern, never with who asked."),
+        h("p", null, replayBtn), replayOut),
+      h("div", { class: "card" }, h("h3", null, "Move to another install"),
+        h("p", { class: "hint" }, "Your phrases and words as a file, to bring to another Household Assistant (or keep). Phrases are patterns: no names of who asked."),
+        h("p", null, h("a", { class: "btn-secondary", href: "api/admin/quick/export" }, "Download phrases and words"), " ",
+          h("label", { class: "btn-secondary" }, "Import a file… ", importIn))));
   }
 
   async function loadPeople() {
@@ -694,7 +797,7 @@
     qo.hidden = !(me.canAsk && me.quickOnly);
     $("#askInput").disabled = !me.canAsk;
     $("#askBtn").disabled = !me.canAsk;
-    showSuggestions(me.suggestions);
+    showSuggestions(me.suggestions, me.suggestionWhy);
     return me;
   }
 

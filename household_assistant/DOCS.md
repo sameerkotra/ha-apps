@@ -101,12 +101,21 @@ app's tool, that app answers as it would for you, and its own words are the answ
   (bin day), your lists; the shopping list, prices, best prices, budgets, spending at a store; spending, a month's
   summary, bills due, recurring charges, account balances, spending at a shop or company; who owes whom, recent
   shared expenses; birthdays, someone's details, how two people are related; calories; unread messages; a document
-  or checklist; Arcade scores. Changes become buttons as always: add to the shopping list, add or tick off a task,
-  a reminder, a shared expense, a food to log.
+  or checklist; Arcade scores; this month's spending against last month's ("did we spend more than last month?",
+  "groceries September vs August"). Changes become buttons as always: add to or tick off the shopping list ("bought
+  the milk"), add, tick off or move a task ("move the dentist to Friday"), a reminder, a shared expense, a spend
+  you made ("I spent 200 on fuel at Shell" — on your own account in Finance Dashboard), a food to log, a new note,
+  an item ticked or added on a checklist ("tick passport on the packing checklist").
+- **The short answer first**: "any bills due?" starts with **Yes — 2 bills due**, "how many tasks today?" with
+  **3 tasks · today**; a long answer from an app gets that one line above it.
 - **However it's asked**: "what's on my list today", "wat do i hav 2day", "anything I need to do today?", "today"
   and dozens of other ways mean the same; typos are put right, number words read as numbers ("in the next two
   weeks"), and your household's own names are known — your Todo lists ("the Costco list"), Splitpot groups, the
-  shopping list's items, Finance's categories, Arcade's games, the people.
+  shopping list's items, Finance's categories and your accounts, Arcade's games, the people. Family by what you call
+  them ("mum's birthday", "how old is my wife", "Ravi's sister" — Family Tree works out who), other names for the
+  same thing (dahi or yogurt for the list's Curd, "d mart" for D-Mart, the names given to an item in Receipt Price
+  Intelligence), and common Hindi and Hinglish ("aaj kya kaam hai", "kal kitna kharcha hua", "doodh khatam ho
+  gaya").
 - **What it understood** is shown above the answer (*Your tasks · today · Household Todo*). **Not what I asked**
   asks the AI instead, or, without the AI, shows the other meanings.
 - **Did you mean**: when two meanings are close ("balances": who owes whom, or the bank accounts?), you get the
@@ -114,11 +123,18 @@ app's tool, that app answers as it would for you, and its own words are the answ
   first one" or the words of a choice.
 - **Several at once**: "tasks and birthdays this week", "bills and balances" answer each part. **Follow-ups**:
   "and tomorrow?", "what about next week?" change only the time of the last quick answer.
-- Questions that need thinking — *why*, *should I*, comparisons, averages — go to the AI (App settings → Quick
-  answers → *When a question isn't understood*: *Ask the AI*, or *Show what I can answer*).
-- **The household teaches it**: a choice you tap (not a child's), and a question the AI answered with one app's
-  answer twice, become phrases that are answered quickly from then on. Admins can add their own (**Admin → Quick
-  answers**). Phrases nobody has used for 180 days are dropped.
+- **The same question again** within a minute is answered at once from the last answer (*as of … ago* on the
+  understood line); any change made through the assistant starts afresh (App settings → *Reuse an answer for*, 0 to
+  always ask the apps).
+- **Suggestions** under the ask box are what you ask most — and first, marked ⏰, what you usually ask on this day
+  of the week or at this time of day. They're yours only.
+- Questions that need thinking — *why*, *should I*, comparisons other than two months' spending, averages — go to
+  the AI (App settings → Quick answers → *When a question isn't understood*: *Ask the AI*, or *Show what I can
+  answer*).
+- **The household teaches it**: a choice you tap (not a child's), a question the AI answered with one app's answer
+  twice, and a question asked again in other words straight after it wasn't understood (twice), become phrases that
+  are answered quickly from then on. Admins can add their own phrases and words (**Admin → Quick answers**).
+  Phrases nobody has used for 180 days are dropped.
 
 ## Morning and evening briefings
 
@@ -193,7 +209,8 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
   of the household's apps (`todo.…` is Household Todo's) is taken only from that app, and a tool name two apps
   offer is offered by neither (the Apps tab says so).
 - **App settings**: AI (with **Use AI**); **Quick answers** (on; *When a question isn't understood*; learn from
-  choices and from the AI; *Quick call timeout*, after which the page says which app is slow); **People → Children may ask** (off: people marked as children on the People tab can't
+  choices, from the AI and from rephrasing; *Reuse an answer for*; *Quick call timeout*, after which the page says
+  which app is slow); **People → Children may ask** (off: people marked as children on the People tab can't
   ask; on: they ask only about their own things, from apps that let children ask); **Limits** (30 questions per
   person per hour, 200 per day for the household, keep questions 30 days — clearing questions doesn't reset the
   hourly limit); **Privacy** (the recorder tick; *Show "What was shared" open*); **Briefings** (the speakers they
@@ -206,7 +223,14 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
   the household names in it, and which answer wins (nothing is asked). **Phrases**: your household's own ways of
   asking ("trash day" → the schedule; times and names in a phrase work for any time or name), with where each came
   from; add or remove them. **Asked but not answered quickly**: the questions it couldn't place, in their cleaned-up
-  words and how often — never who asked — each with **Test** and **Add as a phrase**.
+  words and how often — never who asked — each with **Test** and **Add as a phrase**. **Words**: a word your household
+  uses for a kind of question ("rota" → tasks) or another name for something ("thayir" → Curd); words from the
+  questions that weren't answered are suggested, with how many they'd answer. **How fast the apps answer**: each
+  app's calls, its typical and slow times, refusals and timeouts over the last 7 days. **Who asks**: how many
+  questions each person asked and how many had a quick answer — counts only, never what anyone asked — and the
+  household's most asked kinds of question. **Replay**: the last 100 quick answers read again with today's rules,
+  listing those now understood differently (as patterns, never with who asked). **Move to another install**:
+  download the phrases and words as a file, and import one.
 - **Usage**: questions, tool calls and tokens per day for the last 30 days — counts only, never who asked what.
 - **Storage**: backups (below).
 

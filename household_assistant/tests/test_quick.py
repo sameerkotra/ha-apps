@@ -4,7 +4,10 @@
   question, the near-misses going elsewhere, and 1,000 questions read in under a second;
 - normalising: contractions, text-speak, number words, filler, word forms, typos (never a real word or a name);
 - slots: today/tomorrow/this week/next 3 days, months with and without a year, weekdays, times, amounts;
-- the learned phrases' templates; the apps' own words; the admin's Test.
+- the learned phrases' templates; the apps' own words; the admin's Test;
+- 1.5: Hindi/Hinglish, every month a comparison names, "my mum" and "Ravi's wife", other names (dahi for Curd,
+  D-Mart for Dmart, the admin's words), yes/no and count questions, comparisons the rules don't make, the short line
+  first, the admin's words checked, rephrasings used only once seen twice.
 """
 import _env  # noqa: F401  (must be first)
 
@@ -162,6 +165,116 @@ class Test(unittest.TestCase):
         self.assertIn("shopping*", out["words"])
         self.assertEqual(out["slots"], {"when": "tomorrow"})
         self.assertIn("SHOPPING", out["concepts"])
+
+
+class Hinglish(unittest.TestCase):
+    def test_common_words_in_english(self):
+        self.assertEqual(words("aaj kya kaam hai"), ["today", "what", "task"])
+        self.assertEqual(words("doodh khatam ho gaya"), ["milk", "we", "need"])
+        self.assertEqual(words("kisko kitna dena hai"), ["who", "do", "i", "owe"])
+        self.assertEqual(words("is mahine ka bijli bill"), ["this", "month", "electricity", "bill"])
+
+    def test_kal_is_tomorrow_unless_the_question_is_in_the_past(self):
+        self.assertEqual(words("kal ka kaam"), ["tomorrow", "task"])
+        self.assertEqual(words("kal kitna kharcha hua"), ["yesterday", "how", "much", "spend"])
+
+    def test_english_is_left_alone(self):
+        self.assertEqual(words("what is on the list"), ["what", "is", "on", "the", "list"])
+        self.assertEqual(words("money spent at zara"), ["money", "spend", "at", "zara"])
+
+
+class Months(unittest.TestCase):
+    def test_every_month_named_in_order(self):
+        def months(q):
+            s = slots.read(normalise.tokens(q), TODAY)
+            return s.month, s.months
+        self.assertEqual(months("this month vs last month"), ("2026-10", ["2026-10", "2026-09"]))
+        self.assertEqual(months("september vs august"), ("2026-09", ["2026-09", "2026-08"]))
+        self.assertEqual(months("in september"), ("2026-09", ["2026-09"]))
+
+
+class Names(unittest.TestCase):
+    V = Vocab(items=["Curd", "Dish soap", "basmati rice"], stores=["D-Mart"], people=["Ravi"],
+              aliases=[("item", "thayir", "Curd")], words={"rota": "TASK"})
+
+    def r(self, q):
+        return read(q, TODAY, self.V)
+
+    def test_family_by_what_you_call_them(self):
+        self.assertEqual(self.r("when is mums birthday").kin[0][2], "my mother")
+        self.assertEqual(self.r("how old is my wife").kin[0][2], "my wife")
+        self.assertEqual(self.r("ravis sister birthday").kin[0][2], "Ravi's sister")
+        self.assertEqual(self.r("is nisha's husband coming").kin[0][2], "Nisha's husband")   # a name not known yet
+        self.assertEqual(self.r("my mother in law").kin[0][2], "my mother-in-law")
+        self.assertEqual(self.r("call the plumber").kin, [])
+
+    def test_other_names(self):
+        self.assertEqual(self.r("is dahi on the list").names["item"], [(1, 2, "Curd")])          # the alias groups
+        self.assertEqual(self.r("washing up liquid").names["item"], [(0, 3, "Dish soap")])
+        self.assertEqual(self.r("thayir").names["item"], [(0, 1, "Curd")])                      # the app's or admin's
+        self.assertEqual(self.r("rice").names["item"][0][2], "rice")       # a word the list already uses: as it is
+        self.assertEqual(self.r("spent at dmart").names["store"], [(2, 3, "D-Mart")])           # written together
+        self.assertEqual(self.r("spent at d mart").names["store"], [(2, 4, "D-Mart")])          # or apart
+        self.assertIn("TASK", self.r("any rota today").hits)                                    # the admin's word
+
+    def test_more_than_isnt_the_store_more(self):
+        self.assertNotIn("store", read("did we spend more than last month", TODAY, Vocab()).names)
+
+
+class Forms(unittest.TestCase):
+    def test_yes_no_and_count(self):
+        c = quick_corpus.ctx()
+        self.assertEqual(understand("any bills due this week", c).parts[0].ask, "yesno")
+        self.assertEqual(understand("how many tasks today", c).parts[0].ask, "count")
+        self.assertIsNone(understand("bills this week", c).parts[0].ask)
+        self.assertIsNone(understand("is it ok to add milk to the shopping list", c).parts[0].ask)   # a change: none
+
+    def test_a_comparison_the_rules_dont_make_needs_the_ai(self):
+        c = quick_corpus.ctx()
+        self.assertEqual(understand("compare our tasks with last week", c).kind, "model")
+        self.assertEqual(understand("spending september vs august", c).parts[0].intent, "compare")
+
+    def test_the_short_line_first(self):
+        from app import engine
+        from app.quick.intents import Match
+        m = Match("tasks", [], "Your tasks · today")
+        d = {"state": "ok", "result": {"text": "x" * 200, "items": [{}, {}, {}], "more": False}}
+        self.assertEqual(engine._headline(m, [d], "x" * 200), "**3 tasks** · today.")
+        self.assertIsNone(engine._headline(m, [d], "short"))                       # a short answer says it itself
+        d["result"]["more"] = True
+        m.ask = "count"
+        self.assertEqual(engine._headline(m, [d], "short"), "**at least 3 tasks** · today.")
+        m.ask = "yesno"
+        d["result"].update(items=[], more=False)
+        self.assertEqual(engine._headline(m, [d], "short"), "**No** — no tasks · today.")
+        self.assertIsNone(engine._headline(Match("calories", [], "Calories"), [d], "x"))   # nothing to count
+
+
+class Learning(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+        from app import db
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.executescript(db.SCHEMA.replace("PRAGMA journal_mode = WAL;", ""))
+
+    def test_the_admins_words_are_checked(self):
+        from app.quick import learn
+        self.assertEqual(learn.add_word(self.conn, "  Chores ", "TASK"), {"word": "chores", "means": "TASK"})
+        self.assertEqual(learn.add_word(self.conn, "dahi", "item: Curd")["means"], "item:Curd")
+        for word, means in (("a b c d", "TASK"), ("x", "QUESTION_WORDS"), ("x", "MY"), ("x", "car:Volvo"), ("", "TASK")):
+            with self.subTest(word=word, means=means), self.assertRaises(ValueError):
+                learn.add_word(self.conn, word, means)
+        self.assertEqual(learn.taught(self.conn), ({"chores": "TASK"}, [("item", "dahi", "Curd")]))
+
+    def test_a_rephrasing_is_used_once_seen_twice(self):
+        from app.quick import learn
+        learn.remember(self.conn, "what is the damage", "bills", {}, [], "rephrased")
+        self.assertIsNone(learn.lookup(self.conn, "what is the damage"))
+        learn.remember(self.conn, "what is the damage", "bills", {}, [], "rephrased")
+        self.assertEqual(learn.lookup(self.conn, "what is the damage")["source"], "rephrased")
+        learn.remember(self.conn, "what is the damage", "spend", {}, [], "tapped")        # a tap replaces it
+        self.assertEqual(learn.lookup(self.conn, "what is the damage")["intent"], "spend")
 
 
 if __name__ == "__main__":

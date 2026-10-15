@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.4
+
+- **"I spent 200 on fuel at Shell"**: the Household Assistant can now add a spend by hand to one of your own accounts — the same row the Uploads page's *Add one by hand* makes, only after you tap the proposed change, and never on anyone else's accounts. With more than one account, name it ("on my Visa"); it asks which otherwise (new `finance.expense.add`, Household Assistant 1.5.0).
+
 ## 1.4.3
 
 - **The Household Assistant's quick answers know Finance's words for recurring charges and balances** ("standing orders", "direct debits", "bank balance", "credit card balance", …), so those questions are answered in a second without the AI (Household Assistant 1.4.0).

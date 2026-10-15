@@ -8,7 +8,9 @@ Admins change them inside the app, without a restart. Only `admin_users` stays o
   `ai_tool_calls` ("auto": the model's native tool calling where it has it; "json": always the JSON plan).
 - Quick answers (§17): `quick_on` (questions answered by rules, without a model, first), `quick_unsure` ("ai": a
   question the rules can't place goes to the model; "choices": the page shows what it can answer), `quick_learn_taps`,
-  `quick_learn_ai`, `quick_ai_now` (use what the model taught at once), `quick_timeout` (seconds before "… is slow").
+  `quick_learn_ai`, `quick_ai_now` (use what the model taught at once), `quick_learn_rephrase` (a question asked
+  again in other words), `quick_timeout` (seconds before "… is slow"), `quick_recent` (seconds an answer is reused for
+  the same question; 0 = never).
   `quick_on` and `ai_on` can't both be off.
 - People: `assist_answers` (off: questions from Home Assistant's Assist, via the companion integration),
   `children_may_ask` (off).
@@ -162,6 +164,13 @@ SETTINGS = [
     Setting("quick_ai_now", False, "Use what the AI learned straight away", group="quick", enabled_if="ai_on",
             strict=True,
             help="Use a phrase the AI taught after the first time instead of the second."),
+    Setting("quick_learn_rephrase", True, "Learn from rephrasing", group="quick", enabled_if="quick_on", strict=True,
+            help="When a question isn't understood and the same person asks again in other words that are, the first "
+                 "way of asking is remembered — used once it has happened twice (not children's)."),
+    Setting("quick_recent", 60, "Reuse an answer for (seconds)", group="quick", enabled_if="quick_on",
+            min=0, max=600, strict=True,
+            help="The same question again within this long is answered at once from the last answer (shown as "
+                 "\"as of … ago\"). Any change made through the assistant starts afresh. 0 always asks the apps."),
     Setting("quick_timeout", 5, "Quick call timeout (seconds)", group="quick", enabled_if="quick_on",
             min=2, max=20, strict=True,
             help="After this long, the page says which app is slow to answer, and waits up to 20 seconds."),

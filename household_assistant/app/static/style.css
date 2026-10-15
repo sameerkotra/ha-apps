@@ -145,3 +145,9 @@ table.people td, table.usage td, table.usage th { padding: 6px 8px; border-botto
 .quick-table td, .quick-table th { padding: 0.25em 0.5em; text-align: left; vertical-align: top; }
 #tab-quick .row input[type="text"] { flex: 1 1 16em; min-width: 12em; }
 #tab-quick .row { display: flex; flex-wrap: wrap; gap: 0.4em; align-items: center; }
+
+/* 1.5: a suggestion the person asks often at this time, and an app that's slow to answer */
+.chip.habit { border-style: dashed; }
+.chip.habit::before { content: "⏰ "; }
+.quick-table.speeds th { text-align: left; font-weight: 600; }
+.quick-table tr.slow-app td:first-child { color: var(--warn, #b35c00); }

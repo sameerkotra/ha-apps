@@ -28,7 +28,15 @@ for _c, _w in _PHRASES:
     _BY_FIRST.setdefault(_w[0], []).append((_c, _w))
 _TARGETS = lexicon.all_words() | lexicon.GROCERIES | set(normalise.FORMS.values()) | set(normalise.FORMS)
 _KNOWN = (lexicon.EVERYDAY | lexicon.STOPWORDS | lexicon.GROCERIES | lexicon.STORES
-          | set(slots_mod.MONTHS) | set(slots_mod.WEEKDAYS) | set(normalise.FORMS) | set(normalise.FORMS.values()))
+          | set(slots_mod.MONTHS) | set(slots_mod.WEEKDAYS) | set(normalise.FORMS) | set(normalise.FORMS.values())
+          | {w for k in lexicon.KIN_SPOKEN for w in k.split()} | {w for g in lexicon.ALIAS_GROUPS for m in g
+                                                                   for w in m.split()})
+# the alias groups by their words' tokens: ("dish", "soap") -> the group
+_ALIAS_INDEX = {tuple(normalise.FORMS.get(w, w) for w in m.split()): g for g in lexicon.ALIAS_GROUPS for m in g}
+_KIN_INDEX: dict[str, list] = {}
+for _k, _v in sorted(((tuple(k.split()), v) for k, v in lexicon.KIN_SPOKEN.items()), key=lambda kv: -len(kv[0])):
+    _KIN_INDEX.setdefault(_k[0], []).append((_k, _v))
+_TARGET_LENGTHS = normalise.buckets(_TARGETS)
 
 
 @dataclass
@@ -41,11 +49,15 @@ class Vocab:
     people: list = field(default_factory=list)         # people (Home Assistant's, Splitpot's)
     categories: list = field(default_factory=list)     # Finance categories
     games: list = field(default_factory=list)          # Arcade games
+    accounts: list = field(default_factory=list)       # the person's Finance accounts
     app_words: dict = field(default_factory=dict)      # tool -> [phrases] taught by the app (§17.4 "quick")
+    aliases: list = field(default_factory=list)        # (kind, other name, the name it means): the apps' and the admin's
+    words: dict = field(default_factory=dict)          # a word or phrase the admin taught -> the concept it means
 
     def kinds(self):
         return (("list_name", self.lists), ("item", self.items), ("store", self.stores), ("group", self.groups),
-                ("person", self.people), ("category", self.categories), ("game", self.games))
+                ("person", self.people), ("category", self.categories), ("game", self.games),
+                ("account", self.accounts))
 
 
 @dataclass
@@ -56,6 +68,7 @@ class Utterance:
     hits: dict = field(default_factory=dict)            # concept -> [(start, end, fixed)]
     names: dict = field(default_factory=dict)           # kind -> [(start, end, value)]
     used: set = field(default_factory=set)              # token positions taken by concepts, slots and names
+    kin: list = field(default_factory=list)             # (start, end, "my mother" | "Ravi's wife"): for Family Tree
 
     @property
     def words(self) -> list[str]:
@@ -163,8 +176,19 @@ def read(text: str, today: date, vocab: Vocab | None = None, *, fix_typos: bool 
     for phrases in vocab.app_words.values():
         for p in phrases:
             names_known.update(_name_tokens(p))
+    for _k, other, _v in vocab.aliases:
+        names_known.update(_name_tokens(other))
+    taught = [(c, _norm_phrase(" ".join(_name_tokens(w)))) for w, c in vocab.words.items()
+              if c in lexicon.CONCEPTS and _name_tokens(w)]
+    for _c, w in taught:
+        names_known.update(w)
     if fix_typos:
-        toks = normalise.correct(toks, _TARGETS | names_known, _KNOWN | names_known)
+        lengths = _TARGET_LENGTHS
+        if names_known - _TARGETS:
+            lengths = {n: list(ws) for n, ws in _TARGET_LENGTHS.items()}
+            for w in names_known - _TARGETS:
+                lengths.setdefault(len(w), []).append(w)
+        toks = normalise.correct(toks, _TARGETS | names_known, _KNOWN | names_known, lengths)
     s = slots_mod.read(toks, today)
     u = Utterance(text=text, toks=toks, slots=s)
     # concepts: every phrase occurrence, then a hit inside a longer hit of another concept is dropped
@@ -175,6 +199,9 @@ def read(text: str, today: date, vocab: Vocab | None = None, *, fix_typos: bool 
                 if any(j in s.used for j in range(i, i + len(words))) and concept not in ("TASK", "BILL", "CALORIE"):
                     continue
                 raw.append((concept, i, i + len(words), any(toks[j].fixed for j in range(i, i + len(words)))))
+        for concept, words in taught:                                  # the admin's own words (§17.8)
+            if words[0] == t.text and _seq_at(toks, i, words) and not any(j in s.used for j in range(i, i + len(words))):
+                raw.append((concept, i, i + len(words), False))
     kept = []
     for h in raw:
         c, a, b, _f = h
@@ -188,17 +215,50 @@ def read(text: str, today: date, vocab: Vocab | None = None, *, fix_typos: bool 
         if c not in lexicon.HELPERS:
             u.used.update(range(a, b))
     u.used.update(s.used)
-    # the household's names: longest first
+    # the household's names: longest first, also by another name (an alias) and written together or apart
+    # ("D-Mart", "d mart", "dmart")
     present = {t.text for t in toks}
+    joined = {}
+    for i in range(len(toks)):
+        for n in (1, 2, 3):
+            if i + n <= len(toks) and all(x.kind == WORD for x in toks[i:i + n]):
+                joined.setdefault("".join(x.text for x in toks[i:i + n]), []).append((i, i + n))
+    aliases: dict[str, list] = {}
+    for kind, other, value in vocab.aliases:
+        aliases.setdefault(kind, []).append((other, value))
     for kind, values in vocab.kinds():
-        for v in sorted(set(values), key=lambda x: -len(_name_tokens(x))):
-            words = _name_tokens(v)
-            if not words or words[0] not in present:
+        entries = [(v, v) for v in set(values)] + aliases.get(kind, [])
+        for said, v in sorted(entries, key=lambda x: -len(_name_tokens(x[0]))):
+            words = _name_tokens(said)
+            if not words:
                 continue
-            for i in range(len(toks)):
-                if _seq_at(toks, i, words):
-                    u.names.setdefault(kind, []).append((i, i + len(words), v))
-                    u.used.update(range(i, i + len(words)))
+            spans = []
+            if words[0] in present:
+                spans = [(i, i + len(words)) for i in range(len(toks)) if _seq_at(toks, i, words)]
+            if not spans and len("".join(words)) >= 4:
+                spans = joined.get("".join(words), [])
+            for a, b in spans:
+                if any(a < e and s0 < b for s0, e, _v in u.names.get(kind, [])):
+                    continue                                   # inside a longer name already found
+                u.names.setdefault(kind, []).append((a, b, v))
+                u.used.update(range(a, b))
+    # a list item by another name ("dahi" finds Curd)
+    if vocab.items:
+        item_words = [(v, set(_name_tokens(v))) for v in vocab.items]
+        for i in range(len(toks)):
+            for n in (3, 2, 1):
+                group = _ALIAS_INDEX.get(tuple(x.text for x in toks[i:i + n])) if i + n <= len(toks) else None
+                if not group or any(s0 <= i < e for s0, e, _v in u.names.get("item", [])):
+                    continue
+                said = tuple(x.text for x in toks[i:i + n])
+                if any(set(said) <= ws for _v, ws in item_words):
+                    break                                      # the list calls it that already
+                found = next((v for v, ws in item_words for m in group if _name_tokens(m) != said
+                              and set(_name_tokens(m)) <= ws), None)
+                if found:
+                    u.names.setdefault("item", []).append((i, i + n, found))
+                    u.used.update(range(i, i + n))
+                break
     for tool, phrases in vocab.app_words.items():
         for p in phrases:
             words = _name_tokens(p)
@@ -206,16 +266,51 @@ def read(text: str, today: date, vocab: Vocab | None = None, *, fix_typos: bool 
                 if words and _seq_at(toks, i, words):
                     u.names.setdefault("app_word", []).append((i, i + len(words), tool))
                     u.used.update(range(i, i + len(words)))
+    _read_kin(u)
     # everyday items and stores the household hasn't named yet
     for i, t in enumerate(toks):
         if t.kind != WORD:
             continue
         if t.text in lexicon.GROCERIES and i not in u.used and not any(s <= i < e for s, e, _v in u.names.get("item", [])):
             u.names.setdefault("item", []).append((i, i + 1, t.text))
-        if t.text in lexicon.STORES and not any(s <= i < e for s, e, _v in u.names.get("store", [])):
+        if t.text in lexicon.STORES and i not in u.used and not any(s <= i < e for s, e, _v in u.names.get("store",
+                                                                                                         [])):
             u.names.setdefault("store", []).append((i, i + 1, t.text.title()))
             u.used.add(i)
     return u
+
+
+def _name_like(t) -> bool:
+    return (t.kind == WORD and len(t.text) > 2 and t.text not in lexicon.EVERYDAY and t.text not in lexicon.STOPWORDS
+            and t.text not in _TARGETS and t.text not in lexicon.KIN_SPOKEN and t.text not in lexicon.GROCERIES)
+
+
+def _read_kin(u: Utterance) -> None:
+    """"my mum", "mum", "Ravi's wife" -> u.kin: the person as Family Tree reads it ("my mother", "Ravi's wife")."""
+    toks = u.toks
+    people = {a: (b, v) for a, b, v in u.names.get("person", [])}
+    i = 0
+    while i < len(toks):
+        hit = next(((k, v) for k, v in _KIN_INDEX.get(toks[i].text, ()) if _seq_at(toks, i, k)), None)
+        if not hit:
+            i += 1
+            continue
+        words, canon = hit
+        end = i + len(words)
+        before = next(((a, v) for a, (b, v) in people.items() if b == i), None)
+        if before:                                           # "Ravi's sister" (the 's was dropped in normalising)
+            u.kin.append((before[0], end, f"{before[1]}'s {canon}"))
+            u.used.update(range(before[0], end))
+        elif i > 0 and toks[i - 1].text in ("my", "our"):
+            u.kin.append((i - 1, end, f"my {canon}"))
+            u.used.update(range(i - 1, end))
+        elif i > 0 and _name_like(toks[i - 1]) and (i - 1) not in u.used:      # "Nisha's husband": a name it
+            u.kin.append((i - 1, end, f"{toks[i - 1].orig.title()}'s {canon}"))  # doesn't know yet
+            u.used.update(range(i - 1, end))
+        elif len(words) == 1 and words[0] in lexicon.KIN_ALONE:
+            u.kin.append((i, end, f"my {canon}"))
+            u.used.update(range(i, end))
+        i = end
 
 
 def template(u: Utterance) -> str:

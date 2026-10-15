@@ -5,6 +5,7 @@ app/common/assist_tools.py).
 - `receipt.price`: an item's latest price at each store, the cheapest, and each store's trend;
 - `receipt.spending`: spending in a month (or the last 30 days) by store, or one store's;
 - `receipt.shopping_list.add` (acts): adds an item to the list — only after the person taps the proposed change;
+- `receipt.shopping_list.tick` (acts): ticks an item on the list off as bought — also only with the tap;
 - `receipt.deals`: cheaper ways to buy what the household buys regularly — another store or pack size at least 10%
   cheaper per unit (the Best prices page's own list, online deal offers included) — and shopping-list items whose
   price is down now;
@@ -93,9 +94,27 @@ def _find_item(db, home_id: str, text: str):
             .order_by(func.length(CommonItem.name)).first())
 
 
+def _aliases(rows) -> list[list[str]]:
+    """Other names people gave each list item's product here (added by hand, never a receipt's printed text): the
+    assistant understands "dahi" for Curd with them."""
+    ids = [i.get("item_id") for i in rows]
+    if not any(ids):
+        return [[] for _ in rows]
+    from app.db.models import CommonItemAlias
+    with _session() as db:
+        found: dict[str, list[str]] = {}
+        for a in (db.query(CommonItemAlias).filter(CommonItemAlias.common_item_id.in_([i for i in ids if i]),
+                                                   CommonItemAlias.source == "USER_ADDED").all()):
+            name = " ".join(str(a.alias or "").split())[:60]
+            if name and name not in found.setdefault(a.common_item_id, []) and len(found[a.common_item_id]) < 5:
+                found[a.common_item_id].append(name)
+    return [found.get(i, []) if i else [] for i in ids]
+
+
 @tools.tool("receipt.shopping_list",
             "The household's shopping list, each item with the store where it was cheapest and its last price there.",
-            args={"home": _HOME}, returns="items with quantity, cheapest store and price; ticked-off items left out",
+            args={"home": _HOME},
+            returns="items with quantity, cheapest store, price and other names; ticked-off items left out",
             scope="household", examples=("What's on the shopping list?",))
 def shopping_list(ctx):
     from app.services import reqcache, shoplist
@@ -107,6 +126,9 @@ def shopping_list(ctx):
         return ctx.result(f"The shopping list for {home_name} is empty.", links=[_link(ctx, "/list")])
     items = [{"item": i["text"], "qty": i["qty"], "cheapest_at": (i["cheapest"] or {}).get("store"),
               "price": (i["cheapest"] or {}).get("price")} for i in rows]
+    for it, aka in zip(items, _aliases(rows)):
+        if aka:
+            it["aliases"] = ", ".join(aka)                # an item's values are plain text and numbers
     parts = []
     for g in data["by_store"]:
         names = [i["text"] for i in rows if i["id"] in g["items"]]
@@ -208,6 +230,37 @@ def add(ctx):
     return ctx.result(f"Added {row['text']} to the shopping list for {home_name}{where}.",
                       items=[{"item": row["text"], "qty": row["qty"], "cheapest_at": best["store"] if best else None}],
                       links=[_link(ctx, "/list")])
+
+
+@tools.tool("receipt.shopping_list.tick",
+            "Ticks an item on the household's shopping list off as bought (after the person confirms it).",
+            args={"item": Arg("string", "the item, as the person said it", required=True, max_length=200),
+                  "home": _HOME},
+            acts=True, returns="the item ticked off, or the items it could mean", scope="household")
+def tick(ctx):
+    from app.services import reqcache, shoplist
+    with _session() as db, reqcache.scope():
+        home_id, home_name = _home(db, ctx)
+        rows = [i for i in shoplist.get_list(db, home_id, online=False)["items"] if not i["checked"]]
+        want = " ".join(ctx.args["item"].split()).casefold()
+        same = [i for i in rows if i["text"].casefold() == want]
+        if not same:
+            same = [i for i in rows if shoplist.same_thing(ctx.args["item"], i["text"])]
+        if not same:
+            same = [i for i in rows if want in i["text"].casefold()]
+        if not same:
+            return ctx.result(f"“{ctx.args['item']}” isn't on the shopping list for {home_name}.",
+                              links=[_link(ctx, "/list")])
+        if len(same) > 1:
+            names = ", ".join(i["text"] for i in same[:5])
+            return ctx.result(f"Several items on the list could be “{ctx.args['item']}”: {names}. Say which one.",
+                              items=[{"item": i["text"]} for i in same[:5]], links=[_link(ctx, "/list")])
+        try:
+            row = shoplist.update(db, home_id, same[0]["id"], {"checked": True})
+        except shoplist.ListError:
+            raise bus.Nack("not_found", "item") from None
+    return ctx.result(f"Ticked {row['text']} off the shopping list for {home_name}.",
+                      items=[{"item": row["text"], "ticked": True}], links=[_link(ctx, "/list")])
 
 
 @tools.tool("receipt.deals",

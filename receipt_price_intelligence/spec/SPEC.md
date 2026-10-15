@@ -113,13 +113,17 @@ references are in [`docs/`](../docs): the API (`API.md`), the database (`DATABAS
   APP_MESSAGES_SPEC §6.6). Each tool opens its own SQLAlchemy session inside `reqcache.scope()`. `requested_by` must
   have a `users` row (has opened the app), else `nack not_allowed no_access`. Every home is visible to everyone here,
   so a tool takes `home?` (by name, any case); with several homes and none named, `nack invalid home`.
-  - `receipt.shopping_list`: `shoplist.get_list(online=False)` — unticked items `{item, qty, cheapest_at, price}`,
-    grouped by cheapest store in the text.
+  - `receipt.shopping_list`: `shoplist.get_list(online=False)` — unticked items `{item, qty, cheapest_at, price,
+    aliases?}`, grouped by cheapest store in the text. `aliases`: up to 5 of the item's `common_item_aliases` people
+    added (`source = 'USER_ADDED'`, never a receipt's printed text), comma-separated.
   - `receipt.price` (`item`): the item by `shoplist._match`, else a name containing it; `analytics.compare_stores`
     over a year — `{store, latest, date, lowest, unit, trend}`, cheapest first.
   - `receipt.spending` (`month?`, `store?`): `analytics.summarize_spend` of the month (or the last 30 days), by store.
   - `receipt.shopping_list.add` (`acts`; `item`, `qty?`): only with `confirm: true`; `shoplist.add` (as the person),
     then the cheapest store.
+  - `receipt.shopping_list.tick` (`acts`; `item`): only with `confirm: true`; the unticked item with that name (any
+    case), else the one `shoplist.same_thing` matches, else one containing it; ticked with `shoplist.update`. None:
+    "isn't on the shopping list"; several: their names, nothing ticked.
   - `receipt.deals`: `lookout.savings` (cheaper at another store or in another pack size) and
     `lookout.price_drops`, as items with `kind` store / size / price down; link to `/deals`.
   - `receipt.budgets`: `budgets.list_budgets` for this month — each budget's spent, limit, %, left, on track

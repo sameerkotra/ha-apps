@@ -307,6 +307,35 @@
    "what": "finance.bills"
   }
  },
+ "finance.expense.add": {
+  "app": "finance",
+  "appName": "Finance Dashboard",
+  "spec": {
+   "acts": true,
+   "args": {
+    "account": {
+     "type": "string"
+    },
+    "amount": {
+     "type": "number"
+    },
+    "category": {
+     "type": "string"
+    },
+    "date": {
+     "type": "date"
+    },
+    "description": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "finance.expense.add",
+   "returns": "",
+   "scope": "person",
+   "what": "finance.expense.add"
+  }
+ },
  "finance.merchant": {
   "app": "finance",
   "appName": "Finance Dashboard",
@@ -517,6 +546,26 @@
    "returns": "",
    "scope": "person",
    "what": "receipt.shopping_list.add"
+  }
+ },
+ "receipt.shopping_list.tick": {
+  "app": "receipt_price_intelligence",
+  "appName": "Receipt Price Intelligence",
+  "spec": {
+   "acts": true,
+   "args": {
+    "home": {
+     "type": "string"
+    },
+    "item": {
+     "type": "string"
+    }
+   },
+   "examples": [],
+   "name": "receipt.shopping_list.tick",
+   "returns": "",
+   "scope": "person",
+   "what": "receipt.shopping_list.tick"
   }
  },
  "receipt.spending": {

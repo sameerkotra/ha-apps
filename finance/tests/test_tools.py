@@ -10,7 +10,7 @@ All people, merchants and amounts here are invented."""
 from datetime import date, datetime, timedelta, timezone
 
 
-def call(tool, uid="tester", **args):
+def call(tool, uid="tester", confirm=None, **args):
     from app import db, tools
     from app.common import app_bus
     now = datetime.now(timezone.utc)
@@ -18,6 +18,8 @@ def call(tool, uid="tester", **args):
            "kind": "assist.tool.call", "kv": 1, "reply_to": None, "ref": None, "sent": now.isoformat(),
            "expires": (now + timedelta(seconds=20)).isoformat(),
            "data": {"tool": tool, "args": args, "requested_by": uid, "question": "q1"}}
+    if confirm is not None:
+        env["data"]["confirm"] = confirm
     with db.get_db() as conn:
         try:
             return tools.tools.on_call(app_bus.Message(env), conn)
@@ -161,7 +163,8 @@ def test_catalogue_and_reports_never_see_the_bus(env):
     from app import query_engine, tools
     tools.tools.check()
     assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.spending", "finance.recurring",
-                                                       "finance.bills", "finance.merchant", "finance.balances"]
+                                                       "finance.bills", "finance.merchant", "finance.balances",
+                                                       "finance.expense.add"]
     assert {"bus_outbox", "bus_seen", "bus_apps"} <= query_engine.HIDDEN_TABLES
 
 
@@ -215,3 +218,22 @@ def test_shared_owner_who_turned_answers_off_is_not_answered_for(env):
     with env.db() as c:
         c.execute("UPDATE known_users SET assistant_ok = 1 WHERE id = 'other'")
     assert call("finance.spending", person="Robin", category="Fun")["items"][0]["merchant"] == "ROBIN SHOP"
+
+
+def test_a_spend_added_by_hand_with_the_tap(env):
+    seed(env)
+    turn_on(env)
+    nack(call("finance.expense.add", amount=200, description="Shell"), "not_allowed", "confirm")
+    res = call("finance.expense.add", confirm=True, amount=200, description="Shell", category="Fuel")
+    assert res["text"].startswith("Which account was it on? Yours are: Checking, Visa.")    # two accounts: which?
+    res = call("finance.expense.add", confirm=True, amount=200, description="Shell", category="Fuel", account="visa")
+    assert res["text"] == f"Added 200.00 at Shell (Fuel) on {date.today().isoformat()} to Visa."
+    res = call("finance.expense.add", confirm=True, amount=12.5, description="Corner shop", account="checking")
+    with env.db() as c:
+        rows = c.execute("SELECT a.name, t.amount, t.description, t.category, t.user_id FROM transactions t JOIN "
+                         "accounts a ON a.id = t.account_id WHERE t.description IN ('Shell', 'Corner shop') "
+                         "ORDER BY t.id").fetchall()
+    assert [tuple(r) for r in rows] == [("Visa", 200.0, "Shell", "Fuel", "tester"),           # a card's spend: +
+                                        ("Checking", -12.5, "Corner shop", "Uncategorized", "tester")]   # a bank's: -
+    res = call("finance.expense.add", confirm=True, amount=5, description="x", account="Robin's")
+    assert res["text"].startswith("Which account")                         # never someone else's account
