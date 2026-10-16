@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1
+
+### Fixed
+
+- **Assist sometimes never heard the answer**: a question answered very quickly (a quick answer takes milliseconds) could finish before the app had noted where to send the answer, so the voice assistant waited and gave up. The answer now always goes back.
+
 ## 1.5.0
 
 ### New

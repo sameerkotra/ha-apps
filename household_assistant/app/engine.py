@@ -223,9 +223,22 @@ def ask(user: dict, text: str, *, person_only: bool = False, force_ai: bool = Fa
 
 
 def when_done(qid: str, fn) -> None:
-    """Call fn(the question as view() gives it) once question `qid` has ended (answered, failed or stopped)."""
+    """Call fn(the question as view() gives it) once question `qid` has ended (answered, failed or stopped) — at once
+    when it already has: a quick answer can be written before the caller gets here (Assist's answer was lost then)."""
     with _lock:
-        _done_hooks[qid] = fn
+        running = qid in _stops                    # _finish removes it before it looks for the hook
+        if running:
+            _done_hooks[qid] = fn
+    if running:
+        return
+    try:
+        with db.get_conn() as conn:
+            q = conn.execute("SELECT * FROM questions WHERE id = ?", (qid,)).fetchone()
+            v = view(conn, q) if q is not None else None
+        if v is not None:
+            fn(v)
+    except Exception:
+        logger.exception("Telling the asker that a question ended failed")
 
 
 def stop(qid: str, user_id: str) -> bool:

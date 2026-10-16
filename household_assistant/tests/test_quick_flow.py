@@ -698,6 +698,13 @@ class MoreQuickAnswers(QuickHousehold):
                          f"You often ask this on {config.now().strftime('%A')}s")
         self.assertEqual(self.c.get("/api/me", headers=KID).json()["suggestionWhy"], {})   # only their own
 
+    def test_told_when_done_even_if_it_already_is(self):
+        """A quick answer can be written before Assist's hook is registered: the hook then runs at once (1.5.1)."""
+        q = self.ask("bills this week")
+        got = []
+        engine.when_done(q["id"], got.append)
+        self.assertEqual([(v["id"], v["state"]) for v in got], [(q["id"], "done")])
+
     def test_old_phrase_tables_are_widened_for_rephrasings(self):
         with db.get_conn() as conn:
             conn.execute("DROP TABLE quick_phrases")
