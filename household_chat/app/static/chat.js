@@ -219,7 +219,8 @@ function chatMenu(anchor) {
     c.kind !== "personal" ? { label: "🕓 Scheduled messages", run: () => scheduledDialog(c.id) } : null,
     { label: "⬇ Download chat…", run: () => exportDialog() },
     c.kind !== "personal" ? { label: c.pinned ? "Unpin chat" : "Pin chat to the top", run: async () => { try { await api(`api/conversations/${c.id}/me`, { method: "PUT", body: { pinned: !c.pinned } }); await loadConvs(); } catch (e) { fail(e); } } } : null,
-    c.kind === "group" ? "-" : null,
+    c.kind !== "personal" ? "-" : null,
+    c.kind === "direct" ? { label: "🗑 Delete chat…", danger: true, run: () => deleteDirectDialog(c) } : null,
     c.kind === "group" ? { label: "Leave group", danger: true, run: () => leaveGroup(c) } : null,
     c.kind === "group" && mine.role === "owner" ? { label: "Delete group…", danger: true, run: () => deleteGroupDialog(c) } : null,
   ]);

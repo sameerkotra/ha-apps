@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS members (
   notify TEXT NOT NULL DEFAULT 'default' CHECK (notify IN ('default','all','mentions','off')),
   muted_until TEXT,
   pinned INTEGER NOT NULL DEFAULT 0,
+  hidden_at TEXT,                                   -- a direct chat this person deleted (for them): out of their list
   PRIMARY KEY (conversation_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_members_user ON members(user_id);
@@ -333,6 +334,7 @@ MIGRATIONS = {
               ("avatar_src", "TEXT"), ("avatar_version", "INTEGER NOT NULL DEFAULT 0"),
               ("assistant_ok", "INTEGER NOT NULL DEFAULT 1")],
     "conversations": [("disappear_seconds", "INTEGER")],
+    "members": [("hidden_at", "TEXT")],
     "messages": [("expires_at", "TEXT"), ("announcement", "INTEGER NOT NULL DEFAULT 0"),
                  ("announcement_closed_at", "TEXT"), ("announcement_reminded_at", "TEXT"),
                  ("reply_gone", "INTEGER NOT NULL DEFAULT 0")],

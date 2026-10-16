@@ -152,6 +152,56 @@ class AccessTests(ApiTestCase):
         # nobody can be added to a direct chat
         self.assertEqual(self.post(f"/api/conversations/{c}/members", {"userIds": [NISHA["id"]]}, ADMIN).status_code, 409)
 
+    def test_delete_a_direct_chat_for_me(self):
+        self.enable(ADMIN, NISHA)
+        c = self.ok(self.post("/api/conversations/direct", {"userId": NISHA["id"]}, ADMIN))["id"]
+        self.send(c, "the gate code is 4521", ADMIN)
+        up = self.ok(self.upload(c, "plan.txt", b"plan", NISHA), 201)
+        self.send(c, "", NISHA, attachmentIds=[up["id"]])
+        ids = lambda u: {x["id"] for x in self.ok(self.get("/api/conversations", u))["conversations"]}
+        r = self.ok(self.delete(f"/api/conversations/{c}/me", NISHA))
+        self.assertEqual(r, {"ok": True, "deletedForEveryone": False})
+        # gone for Nisha: out of her list, no messages, files or search hits; Adminy keeps all of it
+        self.assertNotIn(c, ids(NISHA))
+        self.assertEqual(self.ok(self.get(f"/api/conversations/{c}/messages", NISHA))["messages"], [])
+        self.assertEqual(self.get(f"/api/files/{up['id']}", NISHA).status_code, 404)
+        self.assertEqual(self.ok(self.get("/api/search?q=gate", NISHA))["messages"], [])
+        self.assertIn(c, ids(ADMIN))
+        self.assertEqual(len(self.ok(self.get(f"/api/conversations/{c}/messages", ADMIN))["messages"]), 2)
+        self.assertEqual(len(self.ok(self.get("/api/search?q=gate", ADMIN))["messages"]), 1)
+        # Adminy writes again: it's back for Nisha with only the new message
+        self.send(c, "are you coming?", ADMIN)
+        self.assertIn(c, ids(NISHA))
+        self.assertEqual([m["body"] for m in self.ok(self.get(f"/api/conversations/{c}/messages", NISHA))["messages"]],
+                         ["are you coming?"])
+        # both deleted: nothing of it is kept
+        self.ok(self.delete(f"/api/conversations/{c}/me", NISHA))
+        r = self.ok(self.delete(f"/api/conversations/{c}/me", ADMIN))
+        self.assertTrue(r["deletedForEveryone"])
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?", (c,))[0]["n"], 0)
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM conversations WHERE id = ?", (c,))[0]["n"], 0)
+        # a new chat with the same person starts fresh
+        c2 = self.ok(self.post("/api/conversations/direct", {"userId": NISHA["id"]}, ADMIN))["id"]
+        self.assertEqual(self.ok(self.get(f"/api/conversations/{c2}/messages", ADMIN))["messages"], [])
+
+    def test_opening_a_deleted_direct_chat_again_shows_it_empty(self):
+        self.enable(ADMIN, NISHA)
+        c = self.ok(self.post("/api/conversations/direct", {"userId": NISHA["id"]}, ADMIN))["id"]
+        self.send(c, "hi", ADMIN)
+        self.ok(self.delete(f"/api/conversations/{c}/me", ADMIN))
+        self.assertNotIn(c, {x["id"] for x in self.ok(self.get("/api/conversations"))["conversations"]})
+        self.assertEqual(self.ok(self.post("/api/conversations/direct", {"userId": NISHA["id"]}, ADMIN))["id"], c)
+        self.assertIn(c, {x["id"] for x in self.ok(self.get("/api/conversations"))["conversations"]})
+        self.assertEqual(self.ok(self.get(f"/api/conversations/{c}/messages"))["messages"], [])
+
+    def test_only_direct_chats_and_only_members(self):
+        self.enable(ADMIN, NISHA, TARUN)
+        self.assertEqual(self.delete(f"/api/conversations/{self.household()}/me").status_code, 409)
+        self.assertEqual(self.delete(f"/api/conversations/{self.personal(ADMIN)}/me").status_code, 409)
+        c = self.ok(self.post("/api/conversations/direct", {"userId": NISHA["id"]}, ADMIN))["id"]
+        self.send(c, "hi", ADMIN)
+        self.assertEqual(self.delete(f"/api/conversations/{c}/me", TARUN).status_code, 404)
+
     def test_group_roles(self):
         self.enable(ADMIN, NISHA, TARUN, LEELA)
         g = self.ok(self.post("/api/conversations", {"name": "Family", "icon": "👪", "memberIds": [TARUN["id"]]}, NISHA), 201)["id"]

@@ -89,7 +89,7 @@ function connectLive() {
     const d = JSON.parse(e.data);
     refreshConvsSoon();
     if (d.id === state.current) {
-      if (d.removed) { state.current = null; toast("You're no longer in that chat."); if (state.page === "chat") renderEmptyMain(); }
+      if (d.removed) { state.current = null; if (!d.deleted) toast("You're no longer in that chat."); if (state.page === "chat") renderEmptyMain(); }
       else api(`api/conversations/${d.id}`).then((x) => { if (state.current === d.id) { state.detail = x; refreshSubline(); } }).catch(() => {});
     }
   });

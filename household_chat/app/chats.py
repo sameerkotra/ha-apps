@@ -732,10 +732,12 @@ def conversations_out(conn, rows, uid: str) -> list:
 
 def list_conversations(conn, uid: str) -> list:
     rows = conn.execute("SELECT c.*, m.role, m.joined_message_id, m.last_read_id, m.notify, m.muted_until, m.pinned, "
-                        "m.user_id, m.joined_at, m.conversation_id FROM members m JOIN conversations c ON c.id = m.conversation_id "
-                        "WHERE m.user_id = ?", (uid,)).fetchall()
-    # a direct chat made on "open": the other person sees it once there's a message
-    rows = [r for r in rows if not (r["kind"] == "direct" and r["last_message_id"] is None and r["created_by"] != uid)]
+                        "m.user_id, m.joined_at, m.conversation_id, m.hidden_at FROM members m JOIN conversations c "
+                        "ON c.id = m.conversation_id WHERE m.user_id = ?", (uid,)).fetchall()
+    # a direct chat made on "open": the other person sees it once there's a message; one this person deleted comes
+    # back when there's a message after it
+    rows = [r for r in rows if not (r["kind"] == "direct" and r["last_message_id"] is None and r["created_by"] != uid)
+            and not (r["hidden_at"] and (r["last_message_id"] or 0) <= r["joined_message_id"])]
     out = conversations_out(conn, rows, uid)
     out.sort(key=lambda c: (c["kind"] != "personal", not c["pinned"], _neg(c["lastActivityAt"])))
     return out
@@ -878,7 +880,8 @@ def get_or_create_direct(conn, me: str, other_id: str) -> str:
         raise HTTPException(403, "Children can't start direct chats with each other.")
     key = "|".join(sorted([me, other_id]))
     r = conn.execute("SELECT id FROM conversations WHERE direct_key = ?", (key,)).fetchone()
-    if r:
+    if r:                                   # opened again after deleting it: back in the list, still without the old
+        conn.execute("UPDATE members SET hidden_at = NULL WHERE conversation_id = ? AND user_id = ?", (r["id"], me))
         for u in (me, other_id):
             if not member_row(conn, r["id"], u):
                 conn.execute("INSERT INTO members (conversation_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",

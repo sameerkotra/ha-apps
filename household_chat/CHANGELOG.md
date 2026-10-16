@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.5
+
+- **Delete a one-to-one chat** (⋯ → 🗑 Delete chat, or in Info): it's deleted for you — its messages and files disappear from your list, search, files and starred messages, while the other person keeps theirs. If either of you writes again, the chat comes back with only the new messages. Once you've both deleted it, nothing of it is kept.
+
 ## 2.6.4
 
 ### Security

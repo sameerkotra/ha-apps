@@ -130,6 +130,10 @@ async function chatInfoDialog() {
         h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); leaveGroup(d); } }, "Leave group"),
         me2.role === "owner" ? h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); deleteGroupDialog(d); } }, "Delete group…") : null));
     }
+    if (d.kind === "direct") {
+      parts.push(h("div", { class: "actions" },
+        h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); deleteDirectDialog(convById(cid) || d); } }, "🗑 Delete chat…")));
+    }
     mount(body, parts);
   };
   draw();
@@ -152,6 +156,17 @@ async function addMembersDialog(d, after) {
 async function leaveGroup(c) {
   if (!await confirmDialog("Leave group", `Leave ${c.name}? You won't see its messages or files any more.`, "Leave", true)) return;
   try { await api(`api/conversations/${c.id}/leave`, { method: "POST" }); state.current = null; await loadConvs(); renderEmptyMain(); } catch (e) { fail(e); }
+}
+// A one-to-one chat: deleted for me only — the other person keeps theirs; it comes back (empty) if either writes again
+async function deleteDirectDialog(c) {
+  const who = c.name || "this person";
+  if (!await confirmDialog("Delete chat", `Delete your chat with ${who}? Its messages and files disappear for you — ${who} still has theirs. If either of you writes again, the chat comes back with only the new messages. This can't be undone.`, "Delete chat", true)) return;
+  try {
+    const r = await api(`api/conversations/${c.id}/me`, { method: "DELETE" });
+    state.current = null; state.detail = null;
+    await loadConvs(); renderEmptyMain();
+    toast(r.deletedForEveryone ? "Chat deleted" : "Chat deleted for you");
+  } catch (e) { fail(e); }
 }
 function deleteGroupDialog(c) {
   const name = c.groupName || c.name;

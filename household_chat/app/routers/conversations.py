@@ -297,6 +297,34 @@ def delete_conversation(conn, out, conv, actor: str, action: str) -> None:
     out.event(uids, "conversation", {"id": conv["id"], "removed": True})
 
 
+@router.delete("/conversations/{cid}/me")
+def delete_direct_for_me(cid: str, user: dict = Depends(require_user)):
+    """Delete a one-to-one chat — for this person only: its messages and files so far are gone from their view (search,
+    files, starred, downloads too) and the chat leaves their list until someone writes again. The other person keeps
+    theirs. Once both have deleted it, nothing of it is kept: the chat goes, its files to _deleted (purged in 30 days)."""
+    out = chats.Outbox()
+    gone = False
+    with db.get_conn() as conn:
+        conv, m = chats.access(conn, cid, user)
+        if conv["kind"] != "direct":
+            raise HTTPException(409, "Only a one-to-one chat can be deleted this way (a group: Leave, or Delete for its owner).")
+        upto = conv["last_message_id"] or 0
+        conn.execute("UPDATE members SET joined_message_id = ?, last_read_id = MAX(last_read_id, ?), pinned = 0, "
+                     "hidden_at = ? WHERE conversation_id = ? AND user_id = ?",
+                     (upto, upto, config.now_iso(), cid, user["id"]))
+        conn.execute("DELETE FROM drafts WHERE conversation_id = ? AND user_id = ?", (cid, user["id"]))
+        others = conn.execute("SELECT COUNT(*) FROM members WHERE conversation_id = ? AND joined_message_id < ?",
+                              (cid, upto)).fetchone()[0]
+        if not others or not upto:
+            delete_conversation(conn, out, conv, user["id"], "direct_deleted")      # nobody sees any of it any more
+            gone = True
+        else:
+            db.audit(conn, "direct_deleted_for_me", None, cid, user["id"])
+            out.event([user["id"]], "conversation", {"id": cid, "removed": True, "deleted": True})
+    out.flush()
+    return {"ok": True, "deletedForEveryone": gone}
+
+
 # ---------- my settings for a chat ----------
 class MineIn(Strict):
     notify: str | None = Field(default=None, pattern="^(default|all|mentions|off)$")

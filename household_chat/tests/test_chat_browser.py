@@ -102,6 +102,30 @@ class ChatInBrowser(unittest.TestCase):
         self.assertEqual(p.evaluate(f"document.getElementById('m{first}').dataset.mark"), "kept")
         self.assertEqual(errors, [])
 
+    def test_delete_a_one_to_one_chat(self):
+        for who in ("admin", "nisha", "tarun"):
+            self.api("GET", "api/me", who)
+        for who in ("nisha", "tarun"):
+            self.api("PATCH", f"api/admin/people/{cb.PEOPLE[who][0]}", "admin", {"disabled": False})
+        c = self.api("POST", "api/conversations/direct", "tarun", {"userId": cb.PEOPLE["nisha"][0]})["id"]
+        self.api("POST", f"api/conversations/{c}/messages", "tarun", {"body": "see you at 6"})
+        ctx = self.browser.new_context(extra_http_headers=cb.headers("nisha"), viewport={"width": 1000, "height": 700}, bypass_csp=True)
+        self.addCleanup(ctx.close)
+        p = ctx.new_page()
+        errors = []
+        p.on("pageerror", lambda e: errors.append(str(e)))
+        p.goto(self.base)
+        row = f"#convList .conv[aria-label^='{cb.PEOPLE['tarun'][2]}']"
+        p.click(row)
+        p.wait_for_selector("#msgList .msg:has-text('see you at 6')")
+        p.click("button[aria-label='Chat menu']")
+        p.click(".menu button:has-text('Delete chat')")
+        p.click(".modal button.danger:has-text('Delete chat'), dialog button.danger:has-text('Delete chat')")
+        p.wait_for_selector(row, state="detached", timeout=10000)
+        self.assertEqual(errors, [])
+        # Tarun still has it
+        self.assertIn(c, {x["id"] for x in self.api("GET", "api/conversations", "tarun")["conversations"]})
+
 
 if __name__ == "__main__":
     unittest.main()

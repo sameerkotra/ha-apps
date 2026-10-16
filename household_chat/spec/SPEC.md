@@ -237,6 +237,7 @@ CREATE TABLE members (conversation_id TEXT NOT NULL REFERENCES conversations(id)
   last_read_id INTEGER NOT NULL DEFAULT 0,
   notify TEXT NOT NULL DEFAULT 'default' CHECK (notify IN ('default','all','mentions','off')),
   muted_until TEXT, pinned INTEGER NOT NULL DEFAULT 0,   -- pinned = chat pinned to the top of my list
+  hidden_at TEXT,                                -- a direct chat this person deleted for themselves
   PRIMARY KEY (conversation_id, user_id));
 CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT,   -- global order; paging by id
   conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -290,6 +291,14 @@ CREATE TABLE calls (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCE
 
 - **Direct chats.** Unique per pair (`direct_key`). Created when opened, but the other person doesn't see one until it has a message. They can't be renamed, and nobody can be added; to add a third person, start a group.
 - **Personal rooms** (§17). One per person, one member (its owner) for ever.
+- **Direct chats: Delete for me** (`DELETE /conversations/{id}/me`, direct chats only — 409 otherwise, 404 for a
+  non-member). The person's `members.joined_message_id` moves to the chat's last message (so every place that hides
+  messages from before someone joined — the list, unread, search, files, stars, pins, downloads, notifications — hides
+  them for this person), `last_read_id` follows, `pinned` is cleared, their draft is dropped, and `hidden_at` keeps
+  the chat out of their list until a message newer than that arrives (`list_conversations`); opening the direct chat
+  again (`POST /conversations/direct`) clears `hidden_at`. No system message (it's private); `audit_log`
+  `direct_deleted_for_me`. When no member still sees any message (both deleted, or it had none), the chat is deleted
+  outright like a group (`direct_deleted`; its files to `_deleted`, purged after 30 days) and a new one starts fresh.
 - **Groups.**
   - Owner and group admins can rename, change the emoji and description, add or remove people, make or unmake group admins, and change "new members see history".
   - Anyone can leave. The owner can hand over ownership (`/transfer`); if they leave, it passes to the oldest group admin, else the oldest member.
@@ -367,6 +376,7 @@ CREATE TABLE calls (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCE
 | PUT `/conversations/{id}/me` `{notify, mutedUntil, pinned}` | My per-chat settings |
 | POST `/conversations/{id}/read` `{upTo}` · POST `/typing` | Read marker; typing ping (≤ 1 every 3 s) |
 | DELETE `/conversations/{id}` `{confirmName}` | Owner deletes a group |
+| DELETE `/conversations/{id}/me` | Delete a direct chat for me (`{ok, deletedForEveryone}`) |
 | GET / POST `/conversations/{id}/messages` | A page (50) with reactions, reply previews, attachments, read-by; post `{body, replyTo, attachmentIds, expiresIn, announcement}` |
 | PATCH / DELETE `/messages/{id}` | Edit (author, window) / delete |
 | PUT / DELETE `/messages/{id}/reactions/{emoji}` · `/pin` · `/star` | React, pin, star |

@@ -25,6 +25,10 @@ Nobody is ever made an admin automatically, not even the first person to open th
 
 - **📌 My room** is a chat with only yourself: notes, links, reminders and documents (a passport scan, a warranty). Nobody else can see it in the app, admins included — but like every chat it isn't encrypted (see *Who can see what*). It's always first in the chat list and shows your own picture (📌 without one). It has files, pins, stars, reminders, search, voice memos, a description, disappearing notes and downloads, but no members, polls, announcements, reactions or send later, and it never notifies you.
 - **Direct messages** (＋ → 💬 Direct message): one chat per pair. The other person only sees it once it has a message.
+  - **🗑 Delete chat** (⋯ in the chat, or Info): deletes it **for you** — its messages and files so far disappear from your
+    list, search, files and starred messages; the other person keeps theirs. If either of you writes again, the chat
+    comes back with only the new messages. Once you've both deleted it, nothing of it is kept (its files go to
+    `_deleted` and are removed after 30 days).
 - **Groups** (＋ → 👥 New group): a name, an emoji and people.
   - The creator is the **owner**, who can make others **group admins** and hand over ownership (**Make owner**, to an adult). Group admins can make members group admins too; only the owner can take that back from another group admin.
   - Owners and group admins rename the group, change its emoji and description, and add or remove people.
