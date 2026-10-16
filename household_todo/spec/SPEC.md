@@ -9,7 +9,7 @@ Household Todo is an ingress Home Assistant app for household tasks. It has no l
 - **Lists.** Shared lists are visible to everyone; personal lists are private to their owner.
 - **Tasks.** Only a title is required. Optional: notes, a **link** (http/https URL), due date and time, priority, one **type**, one **place**, an assignee, a **checklist**, and a *completion required* flag.
 - **Schedule items.** Recurring things that are never completed, such as trash day or fortnightly recycling. Individual dates can be skipped, moved or added, and each item can be mirrored to HA as a `binary_sensor`. An item may also be **for one person** — e.g. a yoga class every Tue, Thu & Fri, 18:00–19:00 — with a start/end time, a place, task-style reminders, optional privacy, and a sensor that is on only during the time window (§13). Any item may carry a **link**, like a task.
-- **Calendar**, **Dashboard** (with workload cards) and a shared **Places** address book with optional estimated drive time from home.
+- **Calendar** (with its **Today** view — workload cards — and **Quick tasks**) and a shared **Places** address book with optional estimated drive time from home.
 - **Reminders** through HA notify, each opt-in per user: daily digest, weekly summary, per-task "N before due", and assignment pings — covering the user's tasks and the schedule items that are for them.
 - **Admins** can act as another user, enable or disable users, and back up or restore the database.
 - **Maintenance** (optional, §14): recurring house upkeep that is marked done, with suggestions, history, files and its own notifications.
@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.4"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.5"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -186,7 +186,8 @@ CREATE TABLE user_reminder_offsets (                  -- per-task "N minutes bef
 CREATE INDEX idx_reminder_offsets_user ON user_reminder_offsets(user_id);
 CREATE TABLE quick_tasks (                            -- the Calendar tab's Quick tasks: one's own simple list
   id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  text TEXT NOT NULL, created_at TEXT NOT NULL);       -- no dates, reminders, sensors or assistant tools
+  text TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0,   -- the person's order; new ones last
+  created_at TEXT NOT NULL);                            -- no dates, reminders, sensors or assistant tools
 CREATE INDEX idx_quick_tasks_user ON quick_tasks(user_id, created_at);
 CREATE TABLE user_weekly_prefs (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -390,7 +391,8 @@ Every route except health needs the user headers. Errors come back as `{"detail"
 | POST | `/api/schedule/{id}/exceptions` | acting (private: assignee only) | `{kind, date, to_date?, reason?}`. Returns the item (201) and re-pushes the sensor. |
 | DELETE | `/api/schedule/{id}/exceptions/{eid}` | acting (private: assignee only) | Returns the item (**200**), or 404. Re-pushes the sensor. |
 | GET | `/api/calendar` | acting | `from`, `to` (inclusive, `to−from` ≤ 92 days), `type`, `assignee` (`me`, `unassigned`, `anyone` or an id), `show=open\|all`, `schedule=0\|1`. Returns `{today, tasks, schedule, undatedCount}`. |
-| GET · POST · DELETE | `/api/quick-tasks` · `/api/quick-tasks` `{text}` · `/api/quick-tasks/{id}` | acting | The acting person's Quick tasks, oldest first: `{items: [{id, text, createdAt}]}` — also what add and remove return (**200**). Text 1–200 characters (spaces folded), at most 200 items (409); someone else's or a removed one is a 404. |
+| POST | `/api/quick-tasks/reorder` | acting | `{ordered_ids}`: every one of the person's quick tasks in the new order (200 with the list; 409 when it isn't exactly theirs, 422 when not a list). New ones go last. |
+| GET · POST · DELETE | `/api/quick-tasks` · `/api/quick-tasks` `{text}` · `/api/quick-tasks/{id}` | acting | The acting person's Quick tasks, in their order (`position`, then oldest first): `{items: [{id, text, createdAt}]}` — also what add and remove return (**200**). Text 1–200 characters (spaces folded), at most 200 items (409); someone else's or a removed one is a 404. |
 | GET | `/api/dashboard` | acting | Visible open tasks split into `overdue` (required only), `dueToday` and `upcoming` (tomorrow to +7). Also `counts{…,open}` and `schedule` ("Coming up"): visible items whose sensor is on, plus the acting user's own items occurring today or tomorrow, as `{itemId,name,icon,nextDate,daysUntil,occursToday,startTime,endTime,sensorOn,private}`. |
 | GET | `/api/workload` | acting | `people[{userId,name,disabled,isMe,open,overdue,dueSoon,doneThisWeek}]` (you first, then by name) and `unassigned{open,overdue,dueSoon}`. |
 | GET | `/api/prefs` | real | `{notificationsEnabled, leadDays, notifyOnAssign, digestTime (stored; 08:00 if never set), reminderOffsets (desc), weeklySummary{enabled,dayOfWeek,time}, canNotify, canNotifyReason}` |
@@ -524,14 +526,23 @@ The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through t
   - The sidebar holds the brand, nav, a user chip (`<display> · admin`, opening Settings → "How the app sees you") and a Theme select.
   - Themes are **Midnight** (default, dark, teal accent), **Slate**, **Daylight** and **Auto** (Daylight on a light device, else Midnight), from `common/themes.css`; `style.css` sets the teal accent and the app's own colours per theme. A saved **Ink** becomes Midnight. The select is filled by `HouseholdTheme.bindSelect()`.
   - `‹` / `›` collapse the sidebar to an icon rail.
-  - At ≤760 px the sidebar becomes a scrolling bottom icon bar, and Settings gains a mobile-only Appearance card.
+  - The nav: Calendar, Lists, Schedule, Maintenance (when on); below a line, the `secondary` tabs Places, Settings, Admin.
+  - At ≤760 px the sidebar becomes a bottom icon bar of the main tabs and **⋯ More** (`#moreBtn`, a sheet with the
+    secondary tabs; active while one of them is open), and Settings gains a mobile-only Appearance card.
+  - **＋** (`#addFab`, hidden on Settings and Admin): a sheet with **Task · Quick task · Schedule item**. Task: title,
+    list (the last used, `localStorage.addList`, else the person's own), optional due (prefilled with the selected
+    day on the month view) → `POST /api/lists/{id}/tasks`; Quick task → `POST /api/quick-tasks`; Schedule item opens
+    the schedule form. The current tab redraws after.
+  - **Swipe** (`addSwipe`, only on a coarse pointer): a task row right → complete (or reopen), left → due tomorrow
+    (open tasks only); a quick task either way → removed. 90 px to act; a touch starting on a control or the grip,
+    or a mostly vertical one, is ignored. At ≤760 px tick boxes sit in a 44 px target.
 - **"No admin yet" banner.** While `whoami.noAdmin` is true, `#noAdminBanner` (under the top bar, on every tab, for everyone; filled by `HouseholdWhoami.fillNoAdminBanner` from `common/whoami.js`) reads "No admin yet — add your Home Assistant user name (**<their user name, or id if no name was sent>**) to `admin_users` on the app's Configuration tab, save, and restart the app." with a **How the app sees you** button that opens Settings and scrolls to that card.
 - **Back gesture** (`common/backnav.js`, shared). Back closes the top modal (via its own close, so `onClose` runs); otherwise, away from the Calendar, it returns to the Calendar; only Back on the Calendar with nothing open leaves the app. Tabs and deep links add no history entries.
 - **Acting as (admins only).**
   - A top-bar select offers "Myself (name)" plus everyone else; disabled users are marked.
   - While acting, a banner reads "Acting as X — everything you add or change is recorded as them." with a **Switch back to me** button.
   - The choice is stored in `sessionStorage.actAsUserId` and restored on start if that user is still known. A 404 on switching sends you back to yourself with a toast.
-- **Tabs.** Calendar (the start tab), Dashboard, Schedule, Lists, Places, Settings, plus **🛡️ Admin** (`hidden` unless `isAdmin`). Hash routes: `#/<tab>`, and `#/admin/settings|users|maintenance|storage` (`#/admin` → settings). The current tab is written with `history.replaceState`; `hashchange` navigates. Short routes `#/users`, `#/storage`, `#/app-settings` (and `showTab("users"|"storage")`) redirect to the matching Admin tab. A non-admin on an admin route sees a card "Only admins can open this page".
+- **Tabs.** Calendar (the start tab), Lists, Schedule, Maintenance, Places, Settings, plus **🛡️ Admin** (`hidden` unless `isAdmin`). `#/dashboard` (and `#/today`, `#/ticket/…`) open the Calendar tab's Today view, `#/quick` its Quick tasks. Hash routes: `#/<tab>`, and `#/admin/settings|users|maintenance|storage` (`#/admin` → settings). The current tab is written with `history.replaceState`; `hashchange` navigates. Short routes `#/users`, `#/storage`, `#/app-settings` (and `showTab("users"|"storage")`) redirect to the matching Admin tab. A non-admin on an admin route sees a card "Only admins can open this page".
 - **Links.** `linkChip(url)` renders `<a class="chip btnlike link-chip" target="_blank" rel="noopener noreferrer" title=<url>>🔗 Link</a>` built with `h()`, and only when the value matches `^https?://` (case-insensitive); anything else renders nothing. A rejected link shows the server's 422 message in the form's error line.
 - **Task row.**
   - The checkbox completes the task; the title opens the edit modal; notes show under the title.
@@ -543,20 +554,32 @@ The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through t
 - **Lists tab.**
   - Lists appear as a grid of cards, shared first, one per row on a phone. Each card shows the name, Shared or Only me, the open count, and a drag grip.
   - "+ New list" opens a dialog for the name and Only me / Shared.
+  - In Upcoming, **Completed ▸** under the open tasks folds open the 20 most recently completed (read when opened;
+    "All N completed…" switches to the Completed view). Overdue rows have a red left edge. An empty list says so with
+    **Add a task** (focuses the quick add), or **Clear filters** when filters hide everything.
   - The detail view below has **✎ Rename** and **🗑 Delete list** (the confirmation names the open count). Quick add has a **Required** toggle that resets after each add, plus "More options".
   - The toolbar has **Upcoming | Completed**, Sort, and filters for Assignee, Priority, Type, Place and Completion, plus "Clear filters". It is saved per list in `localStorage["taskView:<id>"]`.
   - Dragging works only in Upcoming, with Manual sort and no filters; otherwise a hint explains why. The Completed view notes the 60-day clean-up.
   - Drag and drop uses Pointer Events, with no re-parenting mid-drag and an insertion line. Alt+↑/↓ (and Alt+←/→ in grids) do the same from the keyboard. If a reorder fails, a toast appears and the view reloads.
 - **Calendar tab.**
-  - Two views, **📅 Calendar | ⚡ Quick tasks** (a segmented switch under the heading). Opening the tab always shows the calendar; the page's own redraws (coming back to it, every 5 minutes) keep the view that's open. **Quick tasks** is a plain list of one's own: an *Add a quick task…* box (Enter or Add; focus stays for the next) and each item with ✕ to remove it. No dates, reminders or sensors, and the Household Assistant doesn't read it.
-  - Month view is a 42-day grid from the week start. Agenda view shows the next 30 days and is the default at ≤760 px.
-  - Toolbar: ‹ ›, Today, and week start (`localStorage.calendarWeekStart`, Sunday by default). Filters: Type, and Assignee (Anyone, Me, Unassigned or a person). Toggle "Show completed", and a **🗓 Schedule items: all / N hidden / hidden ▾** button opening a dialog: a master *Show schedule items* switch (off → `schedule=0`), *Show all* / *Hide all*, and a tick per visible item (`GET /api/schedule`). Hidden items are filtered in the browser (`itemId`) in Month and Agenda, remembered per acting person in `localStorage["calendarSchedule:<user id>"]`; items, reminders and sensors are unaffected. With maintenance on, the dialog can hide maintenance too.
+  - Three views, **📅 Calendar | ☀️ Today | ⚡ Quick tasks** (a segmented switch in the heading row; at ≤760 px the
+    heading's name is left out and the switch spans the row). Opening the tab always shows the calendar; the page's
+    own redraws (coming back to it, every 5 minutes) keep the view that's open.
+  - **Today** is what the Dashboard tab was (below). **Quick tasks** is a plain list of one's own: an *Add a quick task…* box (Enter or Add; focus stays for the next) and each item with ✕ to remove it. No dates, reminders or sensors, and the Household Assistant doesn't read it.
+  - Month view is a 42-day grid from the week start; the day panel is beside it from 1100 px up, below it otherwise.
+    Agenda view shows the next 30 days and is the default at ≤760 px; above it, the next 14 days as a strip (a dot
+    on busy days): a tap scrolls to that day, or opens its day panel in a sheet when nothing is on it. Nothing in
+    30 days → **Add a task** (the ＋ sheet).
+  - Toolbar: ‹ ›, Today, Month | Agenda, and **⚙ Filters · N ▾** (N = how many are on): a sheet with Type, Person
+    (Anyone, Me, Unassigned or a person), "Show completed", the week start (`localStorage.calendarWeekStart`, Sunday by
+    default), **Clear filters**, and a **🗓 Schedule items: all / N hidden / hidden …** button opening a dialog: a master *Show schedule items* switch (off → `schedule=0`), *Show all* / *Hide all*, and a tick per visible item (`GET /api/schedule`). Hidden items are filtered in the browser (`itemId`) in Month and Agenda, remembered per acting person in `localStorage["calendarSchedule:<user id>"]`; items, reminders and sensors are unaffected. With maintenance on, the dialog can hide maintenance too.
   - Each cell shows up to 3 chips, then "+N more", all-day first, then tasks and schedule entries merged by time. Task chips show the time, type icon and title. Schedule chips show the glyph (all-day only), the assignee's initial and the name, with a timed item's start–end (and 🔒 if private) on a second line. Skipped and moved-away schedule chips are struck through.
   - Day-panel (and agenda) schedule entries add 🕘 time, 👤 person, 🔒 and 🔗 Link chips. Month-cell chips never show the link.
   - The day panel has "Add a task on this date…" (`POST /api/tasks` with `due_date`), then the day's tasks and schedule entries. Entries from today onward offer **Skip**, **Move…** and **Undo**.
-  - An "N overdue" banner (from `/api/dashboard`) links to the Dashboard. An undated-tasks footer links to Lists.
-- **Dashboard tab.**
-  - At the top: quick add to My Tasks, then four tiles — Overdue, Due today, Next 7 days, Open tasks.
+  - An "N overdue" banner (from `/api/dashboard`) links to Today. An undated-tasks footer links to Lists.
+- **Today** (the Calendar tab's second view; the Dashboard tab before 2.7.5).
+  - At the top: quick add to My Tasks, then four tiles — Overdue, Due today, Next 7 days, Open tasks, then the task
+    groups (nothing due → **Add a task**), "Coming up" and the workload.
   - A "Coming up" strip lists the API's `schedule` entries (with time range and 🔒).
   - Workload cards, plus Unassigned. Admins can click another person's card to act as them.
   - Task groups: Overdue, Due today, and Upcoming (next 7 days).
@@ -809,7 +832,7 @@ in the folder; Keep turned off on a done task removes the file now); `DELETE /ap
 **Reminders** — a task's "N before" reminder and a "Remind me at" alarm, for a task with exactly one listed PDF, get
 an **Open ticket** notify action: `{"action": "URI", "title": "Open ticket", "uri": "<sidebar page>/ticket/<task>/<file>"}`
 (only with `config.SIDEBAR_PAGE`). `deeplinks` answers `/ticket/<a>/<b>`; the page's `#/ticket/<task>/<file>` opens
-the Dashboard with a *Ticket* dialog (name, size, the task; **Download** and **Open**), and the hash becomes
+the Calendar's Today view with a *Ticket* dialog (name, size, the task; **Download** and **Open**), and the hash becomes
 `#/dashboard`.
 
 **Household Assistant** — `todo.tasks` says "Flight (today, 2 files attached)" and its items carry `files: 2`; it

@@ -448,6 +448,7 @@ CREATE TABLE IF NOT EXISTS quick_tasks (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     text TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,  -- the person's own order (drag to reorder); new items go last
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_quick_tasks_user ON quick_tasks(user_id, created_at);
@@ -501,6 +502,7 @@ def init_db() -> None:
 
 # Columns older databases lack: (table, column, definition), added in this order.
 MIGRATIONS = [
+    ("quick_tasks", "position", "INTEGER NOT NULL DEFAULT 0"),           # 2.7.5: drag to reorder
     ("places", "phone", "TEXT"),
     ("places", "lat", "REAL"),
     ("places", "lon", "REAL"),

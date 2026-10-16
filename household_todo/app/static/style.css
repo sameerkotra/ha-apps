@@ -631,3 +631,96 @@ input[type="color"] { width: 40px; height: 32px; padding: 2px; cursor: pointer; 
 .quick-row { display: flex; align-items: center; gap: 8px; padding: 8px 4px; border-bottom: 1px solid var(--border); }
 .quick-row:last-child { border-bottom: 0; }
 .quick-row .grow { flex: 1; overflow-wrap: anywhere; }
+
+/* ---------- 2.7.5 layout ---------- */
+/* navigation: the less used tabs below a line; ⋯ More only on a phone */
+.side-nav .tab-btn.first-secondary { margin-top: 10px; position: relative; }
+.side-nav .tab-btn.first-secondary::before { content: ""; position: absolute; left: 6px; right: 6px; top: -6px; border-top: 1px solid var(--border); }
+.side-nav .tab-btn.more-btn { display: none; }
+.more-sheet { display: flex; flex-direction: column; gap: 6px; }
+.more-item { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 14px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--panel-alt); color: var(--text); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.more-item.active { border-color: var(--accent); color: var(--accent); }
+
+/* ＋ on every page */
+.add-fab { position: fixed; right: 22px; bottom: 22px; z-index: 40; width: 56px; height: 56px; border-radius: 50%; border: none;
+  background: var(--accent); color: var(--accent-contrast); font-size: 1.8rem; line-height: 1; cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+.add-fab:hover { filter: brightness(1.08); }
+body.no-fab .add-fab { display: none; }
+main { padding-bottom: 96px; }                  /* room so the ＋ never covers the last row */
+.add-dialog .form-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.add-dialog input[type="text"], .add-dialog select, .add-dialog input[type="date"] { width: 100%; }
+
+/* the Calendar tab's heading: its name and the views in one row */
+.page-head.with-tabs .cal-subtabs { margin: 0; }
+
+/* one Filters button */
+.cal-filters-btn.on { border-color: var(--accent); color: var(--accent); }
+.cal-filters { display: flex; flex-direction: column; gap: 12px; }
+.cal-filters .form-row { display: flex; flex-direction: column; gap: 4px; }
+.cal-filters select { width: 100%; }
+
+/* the agenda's two-week strip */
+.week-strip { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; margin-bottom: 4px; scrollbar-width: none; }
+.week-strip::-webkit-scrollbar { display: none; }
+.strip-day { flex: 0 0 auto; width: 46px; min-height: 58px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+.strip-day .dow { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; }
+.strip-day .num { font-weight: 700; }
+.strip-day .dot { width: 6px; height: 6px; border-radius: 50%; background: transparent; }
+.strip-day.busy .dot { background: var(--accent); }
+.strip-day.today { border-color: var(--accent); }
+.strip-day.today .num { color: var(--accent); }
+
+/* the day panel goes under the month once the screen is too narrow for both side by side */
+@media (max-width: 1100px) {
+  .cal-layout { flex-direction: column; }
+  .day-panel { width: 100%; position: static; }
+}
+
+/* tasks: a bigger tick box, overdue marked on the left edge, completed folded up */
+.task-row .check input[type="checkbox"] { width: 20px; height: 20px; }
+.task-row.overdue-row { border-left: 3px solid var(--danger); padding-left: 8px; }
+.done-fold { margin-top: 10px; }
+.done-toggle { font-weight: 600; }
+.done-list { margin-top: 6px; opacity: 0.85; }
+
+/* swipe on a touch screen */
+.swipeable { position: relative; touch-action: pan-y; transition: transform 0.15s ease-out; background: var(--panel); }
+.swipeable.swipe-right, .swipeable.swipe-left { transition: none; }
+.swipeable.swipe-right { box-shadow: inset 4px 0 0 var(--ok, #4caf50); }
+.swipeable.swipe-left { box-shadow: inset -4px 0 0 var(--warn, #e0a030); }
+.swipeable[data-swipe]:not([data-swipe=""])::after { content: attr(data-swipe); position: absolute; top: 50%; transform: translateY(-50%);
+  font-size: 0.8rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: var(--panel-alt); color: var(--text); pointer-events: none; }
+.swipeable.swipe-right[data-swipe]::after { left: -96px; }
+.swipeable.swipe-left[data-swipe]::after { right: -110px; }
+
+/* Quick tasks: drag, and move to a list */
+.quick-row .grip { flex: none; }
+.quick-move { white-space: nowrap; }
+
+@media (max-width: 760px) {
+  /* the bottom bar: the main tabs and ⋯ More (Places, Settings, Admin) */
+  .side-nav .tab-btn.secondary { display: none; }
+  .side-nav .tab-btn.more-btn { display: flex; }
+  .side-nav { justify-content: space-around; }
+  .side-nav .tab-btn { flex: 1 1 0; min-width: 0; }
+  .side-nav .tab-btn.first-secondary { margin-top: 0; }
+  .add-fab { right: 16px; bottom: 84px; width: 52px; height: 52px; }
+  /* a smaller heading; the Calendar tab shows only its views (the bottom bar names the tab) */
+  .page-head { margin-bottom: 10px; }
+  .page-head h2 { font-size: 1.05rem; }
+  .page-head.with-tabs h2 { display: none; }
+  .page-head.with-tabs .cal-subtabs, .page-head.with-tabs .segmented { width: 100%; }
+  .page-head.with-tabs .segmented button { flex: 1; padding: 8px 6px; font-size: 0.85rem; }
+  /* finger-sized targets */
+  .task-row .check { min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; padding-top: 0; }
+  .task-row .check input[type="checkbox"] { width: 24px; height: 24px; }
+  .task-row .icon-btn { min-width: 40px; min-height: 40px; }
+  .quick-row { min-height: 48px; }
+  .quick-row .btn-small { min-height: 36px; }
+  .quick-row .grip { padding: 8px 6px; }
+}
+.cal-filters .form-row, .add-dialog .form-row, .modal .form-row.stack { align-items: stretch; text-align: left; }
+.cal-filters .form-row > span, .add-dialog .form-row > span { font-size: 0.8rem; color: var(--text-dim); text-align: left; }

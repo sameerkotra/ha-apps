@@ -16,7 +16,9 @@ const state = {
   adminTab: "settings", // App settings | Users | Storage
 };
 
-const TABS = ["dashboard", "calendar", "schedule", "maintenance", "lists", "places", "settings", "admin"];
+const TABS = ["calendar", "schedule", "maintenance", "lists", "places", "settings", "admin"];
+const SECONDARY_TABS = ["places", "settings", "admin"];     // below a line in the sidebar; under ⋯ More on a phone
+const COARSE = window.matchMedia ? window.matchMedia("(pointer: coarse)") : { matches: false };
 const PRIORITY_LABEL = { high: "High", medium: "Medium", low: "Low" };
 const ICON_PRESETS = [
   ["mdi:trash-can-outline", "🗑️", "Trash"],
@@ -247,6 +249,49 @@ function driveChip(t) {
     "🚗 ", `${t.place.driveMinutes} min · leave by ${leaveByTime(t.dueTime, t.place.driveMinutes)}`);
 }
 
+// Swipe on a touch screen: right and left run an action once the row has moved far enough (it springs back
+// otherwise). A touch that starts on a control (tick box, drag grip, button, link) is left alone, and a mostly
+// vertical one is a scroll.
+const SWIPE_AT = 90;
+function addSwipe(row, { right = null, left = null, rightLabel = "", leftLabel = "" } = {}) {
+  if (!COARSE.matches || (!right && !left)) return;
+  let x0 = 0, y0 = 0, dx = 0, live = false, decided = false;
+  row.classList.add("swipeable");
+  const reset = () => {
+    row.style.transform = "";
+    row.classList.remove("swipe-right", "swipe-left");
+    row.removeAttribute("data-swipe");
+  };
+  row.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1 || e.target.closest("input, button, a, select, textarea, .grip")) { live = false; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; dx = 0; live = true; decided = false;
+  }, { passive: true });
+  row.addEventListener("touchmove", (e) => {
+    if (!live) return;
+    const mx = e.touches[0].clientX - x0, my = e.touches[0].clientY - y0;
+    if (!decided) {
+      if (Math.abs(mx) < 10 && Math.abs(my) < 10) return;
+      decided = true;
+      if (Math.abs(my) > Math.abs(mx)) { live = false; return; }        // a scroll
+    }
+    dx = mx;
+    if ((dx > 0 && !right) || (dx < 0 && !left)) dx = 0;
+    row.style.transform = `translateX(${dx}px)`;
+    row.classList.toggle("swipe-right", dx > 0);
+    row.classList.toggle("swipe-left", dx < 0);
+    row.dataset.swipe = Math.abs(dx) >= SWIPE_AT ? (dx > 0 ? rightLabel : leftLabel) : "";
+  }, { passive: true });
+  const end = () => {
+    if (!live) return;
+    live = false;
+    const go = dx >= SWIPE_AT ? right : dx <= -SWIPE_AT ? left : null;
+    reset();
+    if (go) go();
+  };
+  row.addEventListener("touchend", end);
+  row.addEventListener("touchcancel", () => { live = false; reset(); });
+}
+
 function taskRow(t, opts = {}) {
   const { onChange = () => {}, showList = false, grip = false } = opts;
   const row = h("div", { class: "task-row" + (t.completed ? " done" : "") + (t.overdue ? " overdue-row" : ""), dataset: { id: t.id } });
@@ -322,7 +367,23 @@ function taskRow(t, opts = {}) {
     : null;
   row.append(...[gripEl, h("div", { class: "check" }, cb), main,
     h("div", { class: "task-actions" }, h("button", { class: "icon-btn", type: "button", title: "Edit", "aria-label": "Edit", onclick: open }, "✎"))].filter(Boolean));
+  // a phone: swipe right to tick it off (or back on), left to move it to tomorrow
+  const patch = async (body, said) => {
+    try { await api(`/api/tasks/${t.id}`, { method: "PATCH", body }); if (said) toast(said); onChange(); } catch (e) { fail(e); }
+  };
+  addSwipe(row, {
+    right: () => patch({ completed: !t.completed }, t.completed ? "Marked not done" : "Done ✓"),
+    rightLabel: t.completed ? "↺ Not done" : "✓ Done",
+    left: t.completed ? null : () => patch({ due_date: addDays(todayIso(), 1) }, "Moved to tomorrow"),
+    leftLabel: "→ Tomorrow",
+  });
   return row;
+}
+
+// An empty card that says what to do next, with the button to do it
+function emptyCard(text, label, action) {
+  return h("div", { class: "card empty" }, h("div", null, text),
+    label ? h("button", { class: "btn-secondary btn-small", type: "button", style: "margin-top:10px", onclick: action }, label) : null);
 }
 
 // ---------------------------------------------------------------------
@@ -680,13 +741,15 @@ function scheduleGlyph(icon) {
   return p ? p[1] : "🔁";
 }
 
-async function renderDashboard() {
-  const root = $("#tab-dashboard");
-  mount(root, pageHead("Dashboard"), spinner());
+// Today: a view of the Calendar tab (was the Dashboard tab): overdue, today and the week, the workload
+async function renderToday() {
+  const root = $("#tab-calendar");
+  mount(root, calHead(), spinner());
   try {
     const [d, w] = await Promise.all([api("/api/dashboard"), api("/api/workload")]);
+    if (cal.sub !== "today") return;                 // switched view while this was loading
     state.today = d.today;
-    const again = () => renderDashboard();
+    const again = () => renderCalendar();
 
     const quick = h("input", { type: "text", maxlength: "200", placeholder: "Quick add to My Tasks…", "aria-label": "Quick add a task" });
     const quickBtn = h("button", { class: "btn-primary", type: "button" }, "Add");
@@ -724,11 +787,12 @@ async function renderDashboard() {
       : null;
     const groups = [group("Overdue", "overdue", d.overdue), group("Due today", "", d.dueToday), group("Upcoming — next 7 days", "", d.upcoming)].filter(Boolean);
 
-    mount(root, pageHead("Dashboard"),
+    mount(root, calHead(),
       h("div", { class: "card" }, h("div", { class: "quick-add" }, quick, quickBtn)),
-      tiles, coming, workload,
-      groups.length ? h("div", null, groups) : h("div", { class: "card empty" }, "Nothing due in the next week. 🎉 Add a task above, or open a list."));
-  } catch (e) { mount(root, pageHead("Dashboard"), errorCard(e, renderDashboard)); }
+      tiles,
+      groups.length ? h("div", null, groups) : emptyCard("Nothing due in the next week. 🎉", "Add a task", () => quick.focus()),
+      coming, workload);
+  } catch (e) { mount(root, calHead(), errorCard(e, renderToday)); }
 }
 
 function statTile(value, label, over = false) {
@@ -760,6 +824,7 @@ function unassignedCard(u) {
 // =====================================================================
 
 const listUI = { openId: null };
+const doneOpen = new Set();          // lists whose "Completed ▸" is open (this visit only)
 
 // One page: every list as a card across the top (stacked on a phone), and the
 // selected list's tasks right below them.
@@ -946,6 +1011,27 @@ async function renderListDetail(list, box, { onCounts = () => {}, onRenamed = ()
     } catch (e) { mount(taskArea, errorCard(e, loadTasks)); }
   }
 
+  // Upcoming: the recently completed ones fold up under the open ones ("Completed ▸"), read when opened
+  const doneBox = h("div", { class: "done-fold" });
+  async function renderDone() {
+    if (view.show !== "open") { clear(doneBox); return; }
+    const open = doneOpen.has(listId);
+    const btn = h("button", { class: "link-btn done-toggle", type: "button", "aria-expanded": open ? "true" : "false" },
+      open ? "Completed ▾" : "Completed ▸");
+    btn.addEventListener("click", () => { if (doneOpen.has(listId)) doneOpen.delete(listId); else doneOpen.add(listId); renderDone(); });
+    if (!open) { mount(doneBox, btn); return; }
+    mount(doneBox, btn, spinner());
+    try {
+      const done = await api(`/api/lists/${listId}/tasks?show=completed&sort=completed`);
+      const shown = done.slice(0, 20);
+      mount(doneBox, btn, shown.length
+        ? h("div", { class: "task-list done-list" }, shown.map((t) => taskRow(t, { onChange: loadTasks })))
+        : h("div", { class: "hint" }, "Nothing completed yet."),
+      done.length > shown.length ? h("button", { class: "link-btn", type: "button", onclick: () => seg.buttons[1].click() },
+        `All ${done.length} completed…`) : null);
+    } catch (e) { mount(doneBox, btn, errorCard(e, renderDone)); }
+  }
+
   function renderTasks(tasks) {
     const drag = dragOk();
     const box = h("div", { class: "task-list" });
@@ -955,9 +1041,13 @@ async function renderListDetail(list, box, { onCounts = () => {}, onRenamed = ()
     else if (!drag && tasks.length > 1) notes.push(h("div", { class: "hint", style: "margin-bottom:8px" }, "Dragging is available with the Manual sort and no filters."));
     if (!tasks.length) {
       const filtered = activeFilters(view).length > 0;
-      mount(taskArea, ...notes, h("div", { class: "card empty" },
-        view.show === "completed" ? (filtered ? "No completed tasks match those filters." : "Nothing completed yet.")
-          : (filtered ? "No tasks match those filters." : "No tasks yet — add one above.")));
+      const focusAdd = () => { const i = quickBox.querySelector("input[type=text]"); if (i) i.focus(); };
+      mount(taskArea, ...notes, view.show === "completed"
+        ? h("div", { class: "card empty" }, filtered ? "No completed tasks match those filters." : "Nothing completed yet.")
+        : filtered ? emptyCard("No tasks match those filters.", "Clear filters", () => {
+          ["assignee", "priority", "type", "place", "completion"].forEach((k) => { view[k] = ""; }); saveView(listId, view); renderToolbar(); loadTasks();
+        }) : emptyCard("No open tasks on this list.", "Add a task", focusAdd), doneBox);
+      renderDone();
       return;
     }
     if (drag && tasks.length > 1) {
@@ -969,15 +1059,17 @@ async function renderListDetail(list, box, { onCounts = () => {}, onRenamed = ()
         },
       });
     }
-    mount(taskArea, ...notes, box);
+    mount(taskArea, ...notes, box, doneBox);
+    renderDone();
   }
 
+  let seg = null;
   function renderToolbar() {
     const change = (key) => (e) => { view[key] = e.target.value; saveView(listId, view); renderToolbar(); loadTasks(); };
     const sel = (key, options, label) =>
       h("select", { value: view[key], "aria-label": label, title: label, onchange: change(key) }, options.map(([v, l]) => h("option", { value: v }, l)));
 
-    const seg = segmented([["open", "Upcoming"], ["completed", "Completed"]], view.show, (v) => {
+    seg = segmented([["open", "Upcoming"], ["completed", "Completed"]], view.show, (v) => {
       view.show = v;
       if (view.sort && ((v === "open" && view.sort === "completed") || (v === "completed" && view.sort === "manual"))) view.sort = null;
       saveView(listId, view);
@@ -1096,23 +1188,27 @@ const cal = {
   selected: null,                  // selected day (ISO)
   type: "", assignee: "", showCompleted: false,
   raw: null, data: null, overdue: 0,
-  sub: "calendar",                 // "calendar" | "quick" (Quick tasks); the Calendar opens on the calendar
+  sub: "calendar",                 // "calendar" | "today" | "quick"; the Calendar tab opens on the calendar
 };
 
-// The Calendar tab's two views: the calendar itself and Quick tasks (a simple list of one's own)
+// The Calendar tab's views: the calendar itself, Today (what's due, the workload) and Quick tasks (one's own list)
 function calSubTabs() {
-  return segmented([["calendar", "📅 Calendar"], ["quick", "⚡ Quick tasks"]], cal.sub, (v) => {
+  return segmented([["calendar", "📅 Calendar"], ["today", "☀️ Today"], ["quick", "⚡ Quick tasks"]], cal.sub, (v) => {
     cal.sub = v;
     renderCalendar();
   }).el;
 }
+// The tab's heading: its name and the views in one row (on a phone only the views — the bottom bar names the tab)
+function calHead() {
+  return h("div", { class: "page-head with-tabs" }, h("h2", null, "Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()));
+}
 
 async function renderQuickTasks() {
   const root = $("#tab-calendar");
-  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), spinner());
+  mount(root, calHead(), spinner());
   let items;
   try { items = (await api("/api/quick-tasks")).items; }
-  catch (e) { mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), errorCard(e, renderQuickTasks)); return; }
+  catch (e) { mount(root, calHead(), errorCard(e, renderQuickTasks)); return; }
   paintQuickTasks(items);
 }
 
@@ -1133,20 +1229,65 @@ function paintQuickTasks(items) {
   };
   add.addEventListener("click", go);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  const remove = async (it) => {
+    try { paintQuickTasks((await api(`/api/quick-tasks/${encodeURIComponent(it.id)}`, { method: "DELETE" })).items); }
+    catch (e) { fail(e); }
+  };
   const rows = items.map((it) => {
     const del = h("button", { class: "btn-ghost btn-small quick-remove", type: "button", title: "Remove", "aria-label": `Remove ${it.text}` }, "✕");
-    del.addEventListener("click", async () => {
-      del.disabled = true;
-      try { paintQuickTasks((await api(`/api/quick-tasks/${encodeURIComponent(it.id)}`, { method: "DELETE" })).items); }
-      catch (e) { fail(e); del.disabled = false; }
-    });
-    return h("li", { class: "quick-row" }, h("span", { class: "grow" }, it.text), del);
+    del.addEventListener("click", () => { del.disabled = true; remove(it); });
+    const move = h("button", { class: "btn-ghost btn-small quick-move", type: "button", title: "Move to a list (it becomes a task there)",
+      "aria-label": `Move ${it.text} to a list` }, "→ List");
+    move.addEventListener("click", () => moveQuickTask(it));
+    const grip = items.length > 1
+      ? h("button", { class: "grip", type: "button", title: "Drag to reorder (or focus and press Alt+↑ / Alt+↓)", "aria-label": `Reorder ${it.text}` }, "⠿")
+      : null;
+    const row = h("li", { class: "quick-row", dataset: { id: it.id } }, grip, h("span", { class: "grow" }, it.text), move, del);
+    addSwipe(row, { right: () => remove(it), left: () => remove(it), rightLabel: "✓ Done", leftLabel: "✕ Remove" });
+    return row;
   });
-  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()),
+  const list = h("ul", { class: "quick-list" }, rows);
+  if (items.length > 1) {
+    makeSortable(list, {
+      itemSelector: ".quick-row", handleSelector: ".grip",
+      onReorder: async (after) => {
+        try { await api("/api/quick-tasks/reorder", { method: "POST", body: { ordered_ids: after } }); }
+        catch (e) { fail(e); renderQuickTasks(); }
+      },
+    });
+  }
+  mount(root, calHead(),
     h("div", { class: "card quick-tasks" },
       h("div", { class: "quick-add", style: "margin-bottom:10px" }, input, add),
-      rows.length ? h("ul", { class: "quick-list" }, rows)
-        : h("div", { class: "hint" }, "Nothing here yet. A quick list of your own — no dates or reminders; remove an item when it's done.")));
+      rows.length ? list
+        : h("div", { class: "hint" }, "Nothing here yet. A quick list of your own — no dates or reminders; remove an item when it's done, or move it to a list when it needs one.")));
+}
+
+// A quick task that turned out to need a list (or a date): it becomes a task there, and leaves Quick tasks
+async function moveQuickTask(it) {
+  let lists;
+  try { lists = await api("/api/lists"); } catch (e) { fail(e); return; }
+  const sel = h("select", { "aria-label": "List" }, lists.map((l) => h("option", { value: l.id }, l.name + (l.kind === "personal" ? " (only me)" : ""))));
+  const date = h("input", { type: "date", "aria-label": "Due date (optional)" });
+  const err = h("div", { class: "error-text" });
+  const ok = h("button", { class: "btn-primary", type: "button" }, "Move");
+  const m = openModal("Move to a list", h("div", null,
+    h("p", { class: "hint" }, `“${it.text}” becomes a task on the list you pick, and leaves Quick tasks.`),
+    h("label", { class: "form-row" }, h("span", null, "List"), sel),
+    h("label", { class: "form-row" }, h("span", null, "Due (optional)"), date), err,
+    h("div", { class: "actions" }, ok)), { sheet: true });
+  ok.addEventListener("click", async () => {
+    ok.disabled = true;
+    try {
+      const body = { title: it.text };
+      if (date.value) body.due_date = date.value;
+      await api(`/api/lists/${encodeURIComponent(sel.value)}/tasks`, { method: "POST", body });
+      try { await api(`/api/quick-tasks/${encodeURIComponent(it.id)}`, { method: "DELETE" }); } catch (e) { /* already gone */ }
+      m.close();
+      toast(`Moved to ${(lists.find((l) => l.id === sel.value) || {}).name || "the list"}`);
+      renderQuickTasks();
+    } catch (e) { err.textContent = e.message; ok.disabled = false; }
+  });
 }
 
 // Which schedule items the calendar shows — remembered per person in this browser. Recurring items can
@@ -1174,11 +1315,12 @@ function calRange() {
 
 async function renderCalendar() {
   if (cal.sub === "quick") return renderQuickTasks();
+  if (cal.sub === "today") return renderToday();
   const root = $("#tab-calendar");
   if (!cal.view) cal.view = window.matchMedia("(max-width: 760px)").matches ? "agenda" : "month";
   if (!cal.cursor) cal.cursor = todayIso().slice(0, 8) + "01";
   if (!cal.selected) cal.selected = todayIso();
-  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), spinner());
+  mount(root, calHead(), spinner());
   await loadCalendar();
 }
 
@@ -1196,7 +1338,7 @@ async function loadCalendar() {
     applyScheduleFilter();
     cal.overdue = data.overdueCount || 0;
     paintCalendar();
-  } catch (e) { mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), errorCard(e, loadCalendar)); }
+  } catch (e) { mount(root, calHead(), errorCard(e, loadCalendar)); }
 }
 
 function groupByDate(data) {
@@ -1293,14 +1435,30 @@ function paintCalendar() {
     state.users.filter((u) => !u.disabled).map((u) => h("option", { value: u.id }, u.name)));
   const weekSel = h("select", { value: sundayFirst() ? "sunday" : "monday", "aria-label": "Week starts on", title: "Week starts on",
     onchange: (e) => { lsSet("calendarWeekStart", e.target.value); loadCalendar(); } },
-    h("option", { value: "sunday" }, "Week starts Sun"), h("option", { value: "monday" }, "Week starts Mon"));
+    h("option", { value: "sunday" }, "Sunday"), h("option", { value: "monday" }, "Monday"));
   const showDone = h("input", { type: "checkbox", checked: cal.showCompleted });
   showDone.addEventListener("change", () => { cal.showCompleted = showDone.checked; loadCalendar(); });
   const pref = schedPref();
   const schedLabel = (!pref.all ? "Schedule items: hidden" : pref.hidden.length ? `Schedule items: ${pref.hidden.length} hidden` : "Schedule items: all")
     + (maintEnabled() && !pref.maint ? " · no maintenance" : "");
-  const schedBtn = h("button", { class: "btn-ghost sched-filter" + (!pref.all || pref.hidden.length || (maintEnabled() && !pref.maint) ? " on" : ""), type: "button",
-    onclick: scheduleFilterDialog }, "🗓 " + schedLabel + " ▾");
+  const schedOff = !pref.all || pref.hidden.length || (maintEnabled() && !pref.maint);
+  // everything that narrows the calendar, behind one button with how many are on
+  const nOn = [cal.type, cal.assignee, cal.showCompleted, schedOff].filter(Boolean).length;
+  const openFilters = () => {
+    const m = openModal("Filters", h("div", { class: "cal-filters" },
+      h("label", { class: "form-row" }, h("span", null, "Type"), typeSel),
+      h("label", { class: "form-row" }, h("span", null, "Person"), asnSel),
+      h("label", { class: "mini-toggle" }, showDone, "Show completed"),
+      h("label", { class: "form-row" }, h("span", null, "Week starts on"), weekSel),
+      h("button", { class: "btn-secondary", type: "button", onclick: () => { m.close(); scheduleFilterDialog(); } }, "🗓 " + schedLabel + " …"),
+      nOn ? h("button", { class: "link-btn", type: "button", onclick: () => {
+        cal.type = ""; cal.assignee = ""; cal.showCompleted = false;
+        if (schedOff) setSchedPref({ all: true, hidden: [], maint: true });
+        m.close(); loadCalendar();
+      } }, "Clear filters") : null), { sheet: true });
+  };
+  const filtersBtn = h("button", { class: "btn-ghost cal-filters-btn" + (nOn ? " on" : ""), type: "button", onclick: openFilters },
+    "⚙ Filters", nOn ? ` · ${nOn}` : "", " ▾");
 
   const nav = cal.view === "month"
     ? h("div", { class: "cal-toolbar" },
@@ -1308,14 +1466,11 @@ function paintCalendar() {
       h("span", { class: "title" }, monthTitle),
       h("button", { class: "btn-ghost", type: "button", "aria-label": "Next month", onclick: () => shiftMonth(1) }, "›"),
       h("button", { class: "btn-ghost", type: "button", onclick: () => { cal.cursor = todayIso().slice(0, 8) + "01"; cal.selected = todayIso(); loadCalendar(); } }, "Today"),
-      viewSeg.el, weekSel)
-    : h("div", { class: "cal-toolbar" }, h("span", { class: "title", style: "text-align:left" }, "Next 30 days"), viewSeg.el);
-  const filters = h("div", { class: "cal-toolbar" }, typeSel, asnSel,
-    h("label", { class: "mini-toggle" }, showDone, "Show completed"),
-    schedBtn);
+      viewSeg.el, filtersBtn)
+    : h("div", { class: "cal-toolbar" }, h("span", { class: "title", style: "text-align:left" }, "Next 30 days"), viewSeg.el, filtersBtn);
 
   const banner = cal.overdue > 0
-    ? h("div", { class: "cal-banner" }, `${cal.overdue} overdue — `, h("button", { class: "link-btn", type: "button", onclick: () => showTab("dashboard") }, "see the Dashboard"))
+    ? h("div", { class: "cal-banner" }, `${cal.overdue} overdue — `, h("button", { class: "link-btn", type: "button", onclick: () => { cal.sub = "today"; renderCalendar(); } }, "see Today"))
     : null;
   const undated = data.undatedCount > 0
     ? h("div", { class: "hint", style: "margin-top:10px" }, `${data.undatedCount} open task${data.undatedCount === 1 ? " has" : "s have"} no date — `,
@@ -1349,17 +1504,33 @@ function paintCalendar() {
       h("div", { class: "day-panel" }, dayPanel(cal.selected, by[cal.selected] || { tasks: [], sched: [] }, again)));
   } else {
     const days = [];
+    const busy = (slot) => slot && (slot.tasks.length || slot.sched.length || (slot.maint || []).length);
     for (let i = 0; i < 30; i++) {
       const date = addDays(todayIso(), i);
       const slot = by[date];
-      if (!slot || (!slot.tasks.length && !slot.sched.length && !(slot.maint || []).length)) continue;
-      days.push(h("div", { class: "agenda-day" + (date === todayIso() ? " today" : "") },
+      if (!busy(slot)) continue;
+      days.push(h("div", { class: "agenda-day" + (date === todayIso() ? " today" : ""), id: `agenda-${date}` },
         h("h4", null, `${fmtDate(date)} · ${relLabel(date)}`), dayContent(date, slot, again)));
     }
-    body = days.length ? h("div", { class: "card" }, days) : h("div", { class: "card empty" }, "Nothing dated in the next 30 days.");
+    // the next two weeks as a strip: a dot on busy days; a tap goes to that day (or, if it's free, adds to it)
+    const strip = h("div", { class: "week-strip", role: "list" }, Array.from({ length: 14 }, (_, i) => {
+      const date = addDays(todayIso(), i);
+      const d = parseIso(date);
+      const b = h("button", { type: "button", role: "listitem", class: "strip-day" + (i === 0 ? " today" : "") + (busy(by[date]) ? " busy" : ""),
+        "aria-label": `${fmtDate(date, { year: true })}${busy(by[date]) ? "" : " — nothing yet"}` },
+        h("span", { class: "dow" }, DOW[d.getDay()].charAt(0)), h("span", { class: "num" }, d.getDate()), h("i", { class: "dot" }));
+      b.addEventListener("click", () => {
+        const el = document.getElementById(`agenda-${date}`);
+        if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+        const m = openModal(fmtDate(date, { year: true }), dayPanel(date, { tasks: [], sched: [] }, () => { m.close(); again(); }), { sheet: true });
+      });
+      return b;
+    }));
+    body = h("div", null, strip, days.length ? h("div", { class: "card" }, days)
+      : emptyCard("Nothing dated in the next 30 days.", "Add a task", () => openAddDialog()));
   }
-  if (cal.sub !== "calendar") return;               // switched to Quick tasks while this was loading
-  mount(root, pageHead("Calendar"), h("div", { class: "cal-subtabs" }, calSubTabs()), banner, nav, filters, body, undated);
+  if (cal.sub !== "calendar") return;               // switched view while this was loading
+  mount(root, calHead(), banner, nav, body, undated);
 }
 
 function dayContent(date, slot, again) {
@@ -1487,7 +1658,7 @@ async function renderSchedule() {
         : "No schedule items yet. Add “Trash pickup — every Monday” to get started.";
     const box = items.length
       ? h("div", { class: "card" }, items.map((it) => scheduleRow(it, again)))
-      : h("div", { class: "card empty" }, empty);
+      : emptyCard(empty, "+ New item", () => openScheduleForm(null, again));
     mount(root, h("div", { class: "page-head" }, h("h2", null, "Schedule"), newBtn), intro,
       h("div", { class: "toolbar" }, filter.el), box);
     const mcard = await scheduleMaintCard();            // recurring upkeep has its own group, below
@@ -2380,11 +2551,82 @@ async function setActAs(id) {
 }
 
 // =====================================================================
+// ＋ Add, on every page: a task (on a list, maybe dated), a quick task, or a schedule item
+// =====================================================================
+
+let addKind = "task";
+async function openAddDialog() {
+  let lists = [];
+  try { lists = await api("/api/lists"); } catch (e) { fail(e); return; }
+  const refresh = () => { if (state.tab !== "settings" && state.tab !== "admin") RENDERERS[state.tab](); };
+  const body = h("div", { class: "add-dialog" });
+  let m = null;
+  const kinds = segmented([["task", "Task"], ["quick", "Quick task"], ["schedule", "Schedule item"]], addKind, (v) => { addKind = v; draw(); });
+  function draw() {
+    if (addKind === "schedule") {
+      if (m) m.close();
+      openScheduleForm(null, refresh);
+      return;
+    }
+    const title = h("input", { type: "text", maxlength: "200", "aria-label": addKind === "quick" ? "Quick task" : "Task title",
+      placeholder: addKind === "quick" ? "Something to remember…" : "What needs doing?" });
+    const err = h("div", { class: "error-text" });
+    const ok = h("button", { class: "btn-primary", type: "button" }, "Add");
+    const fields = [h("div", { class: "form-row" }, title)];
+    let sel = null, date = null;
+    if (addKind === "task") {
+      const last = lsGet("addList");
+      const pick = lists.find((l) => l.id === last) || lists.find((l) => l.kind === "personal") || lists[0];
+      sel = h("select", { "aria-label": "List", value: pick ? pick.id : "" },
+        lists.map((l) => h("option", { value: l.id }, l.name + (l.kind === "personal" ? " (only me)" : ""))));
+      const onDay = state.tab === "calendar" && cal.sub === "calendar" && cal.view === "month" && cal.selected ? cal.selected : "";
+      date = h("input", { type: "date", "aria-label": "Due date (optional)", value: onDay });
+      fields.push(h("label", { class: "form-row" }, h("span", null, "List"), sel),
+        h("label", { class: "form-row" }, h("span", null, "Due (optional)"), date));
+    }
+    const go = async () => {
+      const text = title.value.trim();
+      if (!text) { title.focus(); return; }
+      ok.disabled = true;
+      try {
+        if (addKind === "quick") {
+          await api("/api/quick-tasks", { method: "POST", body: { text } });
+          toast("Added to Quick tasks");
+        } else {
+          const b = { title: text };
+          if (date.value) b.due_date = date.value;
+          await api(`/api/lists/${encodeURIComponent(sel.value)}/tasks`, { method: "POST", body: b });
+          lsSet("addList", sel.value);
+          toast(`Added to ${(lists.find((l) => l.id === sel.value) || {}).name || "the list"}`);
+        }
+        m.close();
+        refresh();
+      } catch (e) { err.textContent = e.message; ok.disabled = false; }
+    };
+    ok.addEventListener("click", go);
+    title.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+    mount(body, h("div", { style: "margin-bottom:10px" }, kinds.el), fields, err, h("div", { class: "actions" }, ok));
+    setTimeout(() => title.focus(), 0);
+  }
+  if (addKind === "schedule") addKind = "task";      // the dialog opens on a task or a quick task
+  m = openModal("Add", body, { sheet: true });
+  draw();
+}
+
+// ⋯ More (a phone): the less used tabs
+function openMoreSheet() {
+  const tabs = [["places", "📍", "Places"], ["settings", "⚙️", "Settings"]].concat(isAdmin() ? [["admin", "🛡️", "Admin"]] : []);
+  const m = openModal("More", h("div", { class: "more-sheet" }, tabs.map(([t, icon, label]) =>
+    h("button", { type: "button", class: "more-item" + (state.tab === t ? " active" : ""), onclick: () => { m.close(); showTab(t); } },
+      h("span", { class: "nav-icon" }, icon), label))), { sheet: true });
+}
+
+// =====================================================================
 // Tabs & start-up
 // =====================================================================
 
 const RENDERERS = {
-  dashboard: renderDashboard, calendar: renderCalendar, schedule: renderSchedule, lists: renderLists,
+  calendar: renderCalendar, schedule: renderSchedule, lists: renderLists,
   maintenance: () => renderMaintenance(),                    // maintenance.js
   places: renderPlaces, settings: renderSettings, admin: () => renderAdmin(state.adminTab),
 };
@@ -2401,7 +2643,9 @@ function parseHash(hash) {
   const parts = String(hash || "").replace(/^#\/?/, "").split("/").filter(Boolean);
   let [tab, sub] = parts;
   // #/ticket/<task>/<file> (a reminder's "Open ticket"): the Dashboard with that file's dialog over it
-  if (tab === "ticket") return ROUTE_ARG.test(parts[1] || "") && ROUTE_ARG.test(parts[2] || "") ? { tab: "dashboard", sub: null, ticket: [parts[1], parts[2]] } : null;
+  if (tab === "ticket") return ROUTE_ARG.test(parts[1] || "") && ROUTE_ARG.test(parts[2] || "") ? { tab: "calendar", sub: "today", ticket: [parts[1], parts[2]] } : null;
+  if (tab === "dashboard" || tab === "today") return { tab: "calendar", sub: "today" };   // the Dashboard is Today now
+  if (tab === "quick") return { tab: "calendar", sub: "quick" };
   if (LEGACY_ROUTES[tab]) [tab, sub] = LEGACY_ROUTES[tab];
   if (!TABS.includes(tab)) return null;
   if (tab === "admin") sub = ADMIN_TABS.some(([k]) => k === sub) ? sub : "settings";
@@ -2417,13 +2661,16 @@ function showTab(tab, opts = {}) {
   if (!TABS.includes(tab)) tab = "calendar";
   if (tab === "admin" && opts.sub) state.adminTab = opts.sub;
   if (tab === "lists" && opts.sub) listUI.openId = opts.sub;      // renderLists falls back to the first list
-  if (tab === "calendar" && state.tab !== "calendar") cal.sub = "calendar";   // opening the tab: the calendar first
+  if (tab === "calendar" && ["today", "quick"].includes(opts.sub)) cal.sub = opts.sub;     // #/dashboard, #/quick
+  else if (tab === "calendar" && state.tab !== "calendar") cal.sub = "calendar";    // opening the tab: the calendar first
   state.tab = tab;
   const want = routeHash(tab, state.adminTab);
   if (location.hash !== want) {
     try { history.replaceState(null, "", want); } catch (e) { /* sandboxed frame: fine without deep links */ }
   }
-  document.querySelectorAll(".side-nav .tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".side-nav .tab-btn[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  $("#moreBtn").classList.toggle("active", SECONDARY_TABS.includes(tab));
+  document.body.classList.toggle("no-fab", tab === "settings" || tab === "admin");
   TABS.forEach((t) => $("#tab-" + t).classList.toggle("active", t === tab));
   lastDrawn = Date.now();
   RENDERERS[tab]();
@@ -2456,11 +2703,14 @@ window.addEventListener("hashchange", () => {
   if (!state.me) return;
   const r = parseHash(location.hash);
   if (r && r.ticket) { showTab(r.tab); openTicket(...r.ticket); return; }
+  if (r && r.tab === "calendar" && r.sub && r.sub !== cal.sub) { showTab(r.tab, { sub: r.sub }); return; }
   if (r && routeHash(r.tab, r.sub) !== routeHash(state.tab, state.adminTab)) showTab(r.tab, { sub: r.sub });
 });
 
 function wireChrome() {
-  document.querySelectorAll(".side-nav .tab-btn").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  document.querySelectorAll(".side-nav .tab-btn[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+  $("#moreBtn").addEventListener("click", openMoreSheet);
+  $("#addFab").addEventListener("click", () => openAddDialog());
   const collapse = $("#sidebarCollapseBtn");
   const syncCollapse = () => {
     const collapsed = document.documentElement.getAttribute("data-sidebar") === "collapsed";

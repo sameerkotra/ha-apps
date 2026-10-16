@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.5
+
+- **Fewer tabs**: the Dashboard is now **☀️ Today**, a view of the Calendar tab (Calendar · Today · Quick tasks; the tab still opens on the calendar, and old Dashboard links open Today). Places, Settings and Admin sit below a line in the sidebar, and on a phone under **⋯ More** — the bottom bar is Calendar, Lists, Schedule, Maintenance (when on) and More.
+- **＋ on every page**: add a task (to the list you pick, with a date if you want), a quick task or a schedule item from anywhere.
+- **Calendar**: one **⚙ Filters** button for type, person, show completed, the week start and schedule items, with how many are on; on the agenda, the next two weeks as a strip of days; the day panel goes below the month on narrower screens.
+- **Phones**: swipe a task right to tick it off, left to move it to tomorrow (a quick task either way to remove it); bigger tick boxes; a smaller heading.
+- **Lists**: completed tasks fold up under the open ones (**Completed ▸**); overdue tasks have a red left edge.
+- **Quick tasks**: drag to reorder, and **→ List** turns one into a task on a list.
+- Empty pages say what to do next, with the button to do it.
+
 ## 2.7.4
 
 - **Quick tasks**: the Calendar tab has a second view, **⚡ Quick tasks** — a simple list of your own to add items to and remove them from, with no dates or reminders. The tab still opens on the calendar.

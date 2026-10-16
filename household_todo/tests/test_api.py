@@ -1345,6 +1345,21 @@ class TestQuickTasks(ApiBase):
         self.assertEqual([i["text"] for i in as_alice], ["alice's"])
         self.assertEqual(self.get("/api/quick-tasks", ADMIN).json(), {"items": []})
 
+    def test_reorder(self):
+        for t in ("a", "b", "c"):
+            self.post("/api/quick-tasks", {"text": t})
+        items = self.get("/api/quick-tasks").json()["items"]
+        ids = [i["id"] for i in items]
+        r = self.post("/api/quick-tasks/reorder", {"ordered_ids": [ids[2], ids[0], ids[1]]})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual([i["text"] for i in r.json()["items"]], ["c", "a", "b"])
+        self.post("/api/quick-tasks", {"text": "d"})                                  # a new one goes last
+        self.assertEqual([i["text"] for i in self.get("/api/quick-tasks").json()["items"]], ["c", "a", "b", "d"])
+        self.assertEqual(self.post("/api/quick-tasks/reorder", {"ordered_ids": ids}).status_code, 409)   # d missing
+        self.assertEqual(self.post("/api/quick-tasks/reorder", {"ordered_ids": "x"}).status_code, 422)
+        bob = self.post("/api/quick-tasks", {"text": "bob's"}, BOB).json()["items"][0]["id"]
+        self.assertEqual(self.post("/api/quick-tasks/reorder", {"ordered_ids": [bob]}).status_code, 409)  # not hers
+
     def test_at_most_200(self):
         from app.routers import quick_tasks
         with db.get_conn() as conn:

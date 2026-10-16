@@ -30,8 +30,8 @@ Home Assistant account.
    - **Admin → Users**: check everyone's phone for reminders (see
      *Reminders*). People appear here after they have opened the app once.
    - **Admin → Maintenance**: turn on house maintenance if you want it.
-   - Add a first task with the quick-add box on the **Dashboard** or in
-     **Lists**.
+   - Add a first task with **＋**, the quick-add box on the Calendar's
+     **Today** view, or in **Lists**.
 
 Only `admin_users` is set in the Configuration tab; everything else is in the
 app and changes apply straight away, without a restart.
@@ -50,6 +50,9 @@ app and changes apply straight away, without a restart.
   **date** and **time**, a **priority** (low, medium, high), a **type**
   (Appointment, Doctor appointment, Errand, Chore, Bill, or your own), a saved
   **place**, an **assignee**, and a **checklist**.
+- **Completed tasks** fold up under a list's open ones: **Completed ▸** shows
+  the most recent (and a link to all of them, the **Completed** view).
+  Overdue tasks are marked on their left edge in red.
 - **Required or optional.** Each task is *Optional* (the default) or
   *Required*. A required task shows as **overdue** once its date has passed
   and counts in the overdue numbers; an optional one is only shown as *past*
@@ -66,8 +69,8 @@ app and changes apply straight away, without a restart.
   to you; if it was assigned to someone else it becomes unassigned (the form
   warns you first). You can't move tasks into someone else's personal list.
 - **Quick add** in each list (with a **Required** toggle and **More options**
-  for all the fields), on the Dashboard (to My Tasks) and in the calendar's
-  day panel (on that date).
+  for all the fields), on the Calendar's Today view (to My Tasks), in the
+  calendar's day panel (on that date), and **＋** on every page.
 - **Sort, filter and order.** Each list has **Upcoming | Completed**, a sort
   (manual, due date, priority, assignee, newest) and filters for assignee,
   priority, type, place and completion; your choice is remembered per list on
@@ -99,34 +102,53 @@ app and changes apply straight away, without a restart.
   nobody is notified when the tasks arrive. You must have opened Household
   Todo at least once (and not be turned off in Admin → Users).
 
+## Finding your way
+
+The main tabs are **Calendar**, **Lists**, **Schedule** and, when it's on,
+**Maintenance**. **Places**, **Settings** and **Admin** sit below a line in the
+sidebar; on a phone they're under **⋯ More** in the bottom bar.
+
+**＋** (bottom right, on every page but Settings and Admin) adds a **task** (on
+the list you pick — the last one you used is remembered — with a date if you
+want one), a **quick task**, or a **schedule item**. On the calendar's month
+view, a new task is dated on the day you have selected.
+
+On a phone (a touch screen), **swipe** a task right to tick it off (or back
+on), and left to move it to tomorrow; swipe a quick task either way to remove
+it.
+
 ## Calendar
 
-The start page. **Month** view is a grid of every dated task and every
-schedule occurrence; **Agenda** lists the next 30 days (the default on a
-phone). The week can start on Sunday or Monday. Filter by type and person,
-**Show completed**, and choose which schedule items to show with the
-**🗓 Schedule items** button (all, none, or tick off the ones you don't want
-to see — remembered on that device; the items, reminders and sensors keep
-working). If maintenance is on, its due dates show with 🔧, and the 🗓 button
-can hide them.
+The start page. Its three views are at the top: **📅 Calendar**, **☀️ Today**
+and **⚡ Quick tasks**. The tab always opens on the calendar.
 
-Click a day for its panel: add a task on that date, see the day's tasks and
-schedule items, and **Skip**, **Move…** or **Undo** a schedule date. An "N
-overdue" banner links to the Dashboard, and a footer counts tasks with no
-date.
+**Month** view is a grid of every dated task and every schedule occurrence;
+**Agenda** lists the next 30 days (the default on a phone), with the next two
+weeks as a strip of days on top (a dot on busy days; tap one to go to it, or
+to add a task on a free one). **⚙ Filters** holds everything that narrows the
+calendar — type, person, **Show completed**, which day the week starts on, and
+**🗓 Schedule items** (all, none, or tick off the ones you don't want to see —
+remembered on that device; the items, reminders and sensors keep working; if
+maintenance is on, its due dates show with 🔧 and can be hidden there too).
+The button says how many filters are on.
 
-**⚡ Quick tasks**, next to **📅 Calendar** at the top of the tab, is a plain
-list of your own: type an item and press Enter (or **Add**), and tap ✕ to
-remove it when it's done. No dates or reminders — just a scratch list. Only
-you see yours. The tab always opens on the calendar.
+Click a day for its panel (beside the month on a wide screen, below it
+otherwise): add a task on that date, see the day's tasks and schedule items,
+and **Skip**, **Move…** or **Undo** a schedule date. An "N overdue" banner
+links to Today, and a footer counts tasks with no date.
 
-## Dashboard
+**☀️ Today** (it was the Dashboard): quick add to My Tasks; tiles for
+**Overdue**, **Due today**, **Next 7 days** and **Open tasks**; the overdue,
+today and upcoming task groups; **Coming up** (schedule items that are on now,
+and your own items today or tomorrow); and **workload cards** for each person
+(open, overdue, due soon, done this week) plus *Unassigned*. An admin can click
+someone's card to act as them. Old links to the Dashboard open Today.
 
-Quick add to My Tasks; tiles for **Overdue**, **Due today**, **Next 7 days**
-and **Open tasks**; **Coming up** (schedule items that are on now, and your
-own items today or tomorrow); **workload cards** for each person (open,
-overdue, due soon, done this week) plus *Unassigned*; and the overdue, today
-and upcoming task groups. An admin can click someone's card to act as them.
+**⚡ Quick tasks** is a plain list of your own: type an item and press Enter
+(or **Add**), and tap ✕ to remove it when it's done. Drag ⠿ to put them in
+your own order, and **→ List** turns one into a task on a list you pick (with a
+date if you like). No dates or reminders — just a scratch list. Only you see
+yours.
 
 ## Schedule
 

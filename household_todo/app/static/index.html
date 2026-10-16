@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Todo</title>
-<script src="common/theme-boot.js?v=2.7.4"></script>
+<script src="common/theme-boot.js?v=2.7.5"></script>
 <!-- Relative URLs on purpose: Ingress serves this app under a per-session sub-path. -->
-<link rel="stylesheet" href="common/themes.css?v=2.7.4">
-<link rel="stylesheet" href="common/settings.css?v=2.7.4">
-<link rel="stylesheet" href="style.css?v=2.7.4">
+<link rel="stylesheet" href="common/themes.css?v=2.7.5">
+<link rel="stylesheet" href="common/settings.css?v=2.7.5">
+<link rel="stylesheet" href="style.css?v=2.7.5">
 </head>
 <body>
 <div id="app">
@@ -18,13 +18,14 @@
     <div class="brand"><span class="brand-icon">🏠</span><span class="brand-text">Household Todo</span></div>
     <nav class="side-nav" id="sideNav">
       <button class="tab-btn active" data-tab="calendar" title="Calendar"><span class="nav-icon">📅</span><span class="nav-label">Calendar</span></button>
-      <button class="tab-btn" data-tab="dashboard" title="Dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></button>
+      <button class="tab-btn" data-tab="lists" title="Lists"><span class="nav-icon">✅</span><span class="nav-label">Lists</span></button>
       <button class="tab-btn" data-tab="schedule" title="Schedule"><span class="nav-icon">🔁</span><span class="nav-label">Schedule</span></button>
       <button class="tab-btn" data-tab="maintenance" title="Maintenance" hidden><span class="nav-icon">🔧</span><span class="nav-label">Maintenance</span></button>
-      <button class="tab-btn" data-tab="lists" title="Lists"><span class="nav-icon">✅</span><span class="nav-label">Lists</span></button>
-      <button class="tab-btn" data-tab="places" title="Places"><span class="nav-icon">📍</span><span class="nav-label">Places</span></button>
-      <button class="tab-btn" data-tab="settings" title="Settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
-      <button class="tab-btn admin-only" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+      <!-- less used: below a line in the sidebar, under ⋯ More on a phone -->
+      <button class="tab-btn secondary first-secondary" data-tab="places" title="Places"><span class="nav-icon">📍</span><span class="nav-label">Places</span></button>
+      <button class="tab-btn secondary" data-tab="settings" title="Settings"><span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+      <button class="tab-btn secondary admin-only" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+      <button class="tab-btn more-btn" id="moreBtn" type="button" title="More" aria-haspopup="dialog"><span class="nav-icon">⋯</span><span class="nav-label">More</span></button>
     </nav>
     <button type="button" class="sidebar-user" id="sidebarUser">—</button>
     <div class="sidebar-footer">
@@ -48,7 +49,6 @@
     </div>
     <main>
       <div id="fatal" class="card fatal" hidden></div>
-      <section id="tab-dashboard" class="tab-panel"></section>
       <section id="tab-calendar" class="tab-panel active"></section>
       <section id="tab-schedule" class="tab-panel"></section>
       <section id="tab-maintenance" class="tab-panel"></section>
@@ -60,17 +60,18 @@
   </div>
 </div>
 
+<button type="button" id="addFab" class="add-fab" title="Add a task, a quick task or a schedule item" aria-label="Add">＋</button>
 <div id="modalRoot"></div>
 <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-<script src="common/ui.js?v=2.7.4"></script>
-<script src="common/settings.js?v=2.7.4"></script>
-<script src="common/people.js?v=2.7.4"></script>
-<script src="common/backnav.js?v=2.7.4"></script>
-<script src="common/whoami.js?v=2.7.4"></script>
-<script src="common/connected-apps.js?v=2.7.4"></script>
-<script src="common/deeplink.js?v=2.7.4"></script>
-<script src="app.js?v=2.7.4"></script>
-<script src="maintenance.js?v=2.7.4"></script>
+<script src="common/ui.js?v=2.7.5"></script>
+<script src="common/settings.js?v=2.7.5"></script>
+<script src="common/people.js?v=2.7.5"></script>
+<script src="common/backnav.js?v=2.7.5"></script>
+<script src="common/whoami.js?v=2.7.5"></script>
+<script src="common/connected-apps.js?v=2.7.5"></script>
+<script src="common/deeplink.js?v=2.7.5"></script>
+<script src="app.js?v=2.7.5"></script>
+<script src="maintenance.js?v=2.7.5"></script>
 </body>
 </html>
