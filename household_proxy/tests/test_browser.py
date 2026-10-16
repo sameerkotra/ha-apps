@@ -165,6 +165,37 @@ class Browser(unittest.TestCase):
         expect(page.locator(".tile-name")).to_have_text("Stacks")
         page.close()
 
+    def test_bookmarks_open_in_a_new_tab_or_in_chrome(self):
+        import helpers
+        r = helpers.client().post("/api/bookmarks", json={"name": "Bins", "url": "example.org/bins?w=1", "icon": "🗑️"},
+                                  headers=ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        from playwright.sync_api import expect
+        page = self.browser.new_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(f"http://127.0.0.1:{self.front_port}{PREFIX}/#/bookmarks")
+        link = page.locator("#bookmarkList a.bm-link")
+        expect(link).to_have_count(1)
+        expect(link).to_have_attribute("href", "https://example.org/bins?w=1")
+        expect(link).to_have_attribute("target", "_blank")
+        expect(page.locator("#bmChromeRow")).to_be_hidden()           # the Chrome switch is for phones
+        self.assertEqual(errors, [])
+        page.close()
+        android = self.browser.new_context(viewport={"width": 390, "height": 800}, has_touch=True, user_agent=(
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/129.0 Mobile Safari/537.36"))
+        page = android.new_page()
+        page.goto(f"http://127.0.0.1:{self.front_port}{PREFIX}/#/bookmarks")
+        link = page.locator("#bookmarkList a.bm-link")
+        expect(link).to_have_attribute("href", "intent://example.org/bins?w=1#Intent;scheme=https;"
+                                       "package=com.android.chrome;S.browser_fallback_url="
+                                       "https%3A%2F%2Fexample.org%2Fbins%3Fw%3D1;end")
+        expect(page.locator("#bmChromeRow")).to_be_visible()
+        page.locator("#bmChrome").uncheck()
+        expect(page.locator("#bookmarkList a.bm-link")).to_have_attribute("href", "https://example.org/bins?w=1")
+        android.close()
+
 
 if __name__ == "__main__":
     unittest.main()

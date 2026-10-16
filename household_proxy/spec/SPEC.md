@@ -1,9 +1,9 @@
 # Household Proxy — spec
 
-Status: **built; 0.6.5 current** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built
+Status: **built; 0.6.6 current** (spec 2026-10-10; monitoring and auto-restart added 2026-10-11; §11 steps 1–5 built
 and tested 2026-10-11, 0.6.0 listed in the repository; 0.6.3 fixed Komodo's terminal; 0.6.4 (2026-10-13) the fixes of
 the 13 Oct review — §14). Step 6's real-hardware run — two or three sites besides Komodo, a smart plug — is still to
-do. This spec describes 0.6.5 as built (0.6.5: the shared Admin → People notify editor and test alerts, §13.4). Decided: the
+do. This spec describes 0.6.6 as built (0.6.6: household Bookmarks, §5.5; 0.6.5: the shared Admin → People notify editor and test alerts, §13.4). Decided: the
 name *Household Proxy*; everyone sees the panel, each person only the sites they may open; Isolated sites come in a
 later version (§14).
 
@@ -257,11 +257,28 @@ uploads without a size collected up to (default 8 MB; 0 = always stream), access
 10 min, doubling for each further restart within 24 h), the most automatic restarts per day (default 6), check
 history kept (default 30 days).
 
+### 5.5 Bookmarks (0.6.6)
+A **Bookmarks** tab (`#/bookmarks`, between the sites and Monitor): the household's links, one shared list.
+- Everyone the app lets in (enabled) sees all of them; anyone may add one. The person who added a bookmark, or an
+  admin, may edit or delete it; only admins reorder (▲▼). A row shows the icon (an emoji, optional), the name and
+  "host · added by X".
+- Table `bookmarks(id, name, url, icon, position, created_by, created_at)`; at most 300; name ≤ 80, address ≤ 2000.
+- Addresses: http(s) only (`javascript:`, `data:`, `mailto:`, `ftp:` … refused; a bare `example.com/x` gets
+  `https://`); no spaces, control characters or `user:password@` (everyone sees them). Name defaults to the host.
+- A bookmark is an ordinary link — never fetched or opened through the proxy. On a computer it opens in a new tab
+  (`target=_blank rel="noopener noreferrer"`). On a phone it opens in **Chrome**: Android an `intent://…;package=
+  com.android.chrome;S.browser_fallback_url=…;end` link (falls back to the default browser without Chrome), iOS
+  `googlechromes://` / `googlechrome://`. A phone-only tick box "Open in Chrome" (`localStorage.bookmarkChrome`,
+  on by default) turns that off for that device.
+- API (each requires an enabled person; each returns `{bookmarks: [{id, name, url, icon, addedBy, canEdit}]}`):
+  `GET /api/bookmarks`; `POST /api/bookmarks {name, url, icon}`; `PUT /api/bookmarks/{id}` (403 not yours, 404);
+  `DELETE /api/bookmarks/{id}`; `POST /api/bookmarks/reorder {ids}` (admins; 409 unless exactly every id, 422).
+
 ## 6. Manifest
 
 | | |
 |---|---|
-| App | `slug: household_proxy`, `version: "0.6.5"`, amd64 and aarch64, `startup: application`, `boot: auto` |
+| App | `slug: household_proxy`, `version: "0.6.6"`, amd64 and aarch64, `startup: application`, `boot: auto` |
 | Ingress | `ingress: true`, `ingress_port: 8099`, `ingress_stream: true`, `panel_icon: mdi:web-box`, `panel_title: Proxy`, `panel_admin: false`; no `ports` |
 | APIs | `hassio_api: false` (its own sidebar page for deep links comes from `GET /addons/self/info`, which every app may ask with its own token — as the other apps do); `homeassistant_api: true` (§13: the list of switches, `switch.turn_off`/`turn_on` on the switches an admin chose, the sites' binary sensors, notifications) |
 | Network | `host_network: false`: the LAN is reached through the Supervisor's network as any app reaches it. A `.local` name Home Assistant's DNS can't resolve needs the IP instead (the Test says so). |
@@ -280,6 +297,7 @@ household_proxy/app/
   config.py       options (admin_users), paths, the version, Home Assistant's time zone
   db.py           SQLite schema and migrations, backups
   settings.py     App settings (§5.4)
+  bookmarks.py    household bookmarks (§5.5)
   sites.py        sites, access, the saved form and its warnings, the in-memory cache
   netguard.py     target checks (§4.5): parsing, address kinds, resolve at connect time, TLS contexts
   proxy.py        one HTTP exchange: request cleaning (§3.1), bodies, streaming, response headers (§3.2), the

@@ -31,7 +31,7 @@ ASSISTANT = "household_assistant"
 ASSISTANT_VERSION = "1.5.1"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
-PROXY_VERSION = "0.6.5"
+PROXY_VERSION = "0.6.6"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION), (PROXY, PROXY_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the

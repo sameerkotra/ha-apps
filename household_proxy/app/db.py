@@ -208,6 +208,18 @@ CREATE TABLE IF NOT EXISTS access_log (
 );
 CREATE INDEX IF NOT EXISTS access_log_site ON access_log (site_id, at);
 
+-- Bookmarks (the Bookmarks tab): the household's links to anything on the web or the network, seen by everyone
+-- the app lets in and opened in the browser — never through this app's proxy. Changed by whoever added one, or admins.
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,                    -- http(s) only
+    icon TEXT,                            -- an emoji, or NULL
+    position INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT,                      -- the person who added it (users.id)
+    created_at TEXT NOT NULL
+);
+
 -- Admin → App settings (app/settings.py). value is JSON.
 CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,

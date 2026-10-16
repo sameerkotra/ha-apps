@@ -26,6 +26,7 @@
     state.view = view;
     $("#sitesView").hidden = view !== "sites";
     $("#monitorView").hidden = view !== "monitor";
+    $("#bookmarksView").hidden = view !== "bookmarks";
     if (view !== "monitor") stopMonitor();
     $("#viewerView").hidden = view !== "viewer";
     $("#adminView").hidden = view !== "admin";
@@ -43,6 +44,7 @@
     let m;
     if ((m = /^\/site\/([a-z0-9-]{1,40})(\/.*)?$/.exec(r))) return openSite(m[1], m[2] || null);
     if ((m = /^\/monitor(?:\/([a-z0-9-]{1,40}))?$/.exec(r))) return openMonitor(m[1] || null);
+    if (r === "/bookmarks") return openBookmarks();
     if ((m = /^\/admin(?:\/([a-z]+))?$/.exec(r)) && state.me && state.me.user.isAdmin) return openAdmin(m[1] || state.adminTab);
     show("sites");
     renderTiles();
@@ -63,6 +65,105 @@
         h("span", { class: "tile-name" }, s.name)));
     }
   }
+
+  // ---------- bookmarks: the household's links, opened in the browser (never through the proxy) ----------
+  // A phone opens them in Chrome: on Android with an intent: link (Chrome, or the default browser when Chrome isn't
+  // there), on an iPhone with Chrome's googlechromes:// scheme. A computer opens them in a new tab.
+  const UA = navigator.userAgent || "";
+  const IS_ANDROID = /Android/i.test(UA);
+  const IS_IOS = /iPhone|iPad|iPod/i.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const IS_PHONE = IS_ANDROID || IS_IOS;
+  function chromeOn() { try { return localStorage.getItem("bookmarkChrome") !== "off"; } catch (e) { return true; } }
+
+  function bookmarkLink(url) {
+    let u;
+    try { u = new URL(url); } catch (e) { return { href: url, target: "_blank" }; }
+    if (!/^https?:$/.test(u.protocol)) return { href: "#/bookmarks" };          // never anything but the web
+    if (IS_PHONE && chromeOn()) {
+      const rest = u.host + u.pathname + u.search;
+      if (IS_ANDROID) {
+        return { href: `intent://${rest}#Intent;scheme=${u.protocol.slice(0, -1)};package=com.android.chrome;` +
+          `S.browser_fallback_url=${encodeURIComponent(url)};end` };
+      }
+      return { href: (u.protocol === "https:" ? "googlechromes://" : "googlechrome://") + rest + u.hash };
+    }
+    return { href: url, target: "_blank" };
+  }
+
+  async function openBookmarks() {
+    show("bookmarks");
+    $("#bmChromeRow").hidden = !IS_PHONE;
+    $("#bmChrome").checked = chromeOn();
+    try { state.bookmarks = (await api("api/bookmarks")).bookmarks; }
+    catch (e) { mount(clear($("#bookmarkList")), h("p", { class: "error" }, e.message)); return; }
+    renderBookmarks();
+  }
+
+  function hostOf(url) { try { return new URL(url).host; } catch (e) { return url; } }
+
+  function renderBookmarks() {
+    const list = state.bookmarks || [];
+    $("#noBookmarks").hidden = !!list.length;
+    const box = clear($("#bookmarkList"));
+    list.forEach((b, i) => {
+      const link = bookmarkLink(b.url);
+      const move = async (d) => {
+        const ids = list.map((x) => x.id);
+        const [x] = ids.splice(i, 1);
+        ids.splice(i + d, 0, x);
+        try { state.bookmarks = (await api("api/bookmarks/reorder", { method: "POST", body: { ids } })).bookmarks; renderBookmarks(); }
+        catch (e) { toast(e.message, true); openBookmarks(); }
+      };
+      const admin = state.me && state.me.user.isAdmin;           // the order is everyone's: admins set it
+      const actions = h("div", { class: "bm-actions" },
+        admin ? h("button", { type: "button", class: "icon-btn", title: "Move up", "aria-label": `Move ${b.name} up`, disabled: i === 0, onclick: () => move(-1) }, "▲") : null,
+        admin ? h("button", { type: "button", class: "icon-btn", title: "Move down", "aria-label": `Move ${b.name} down`, disabled: i === list.length - 1, onclick: () => move(1) }, "▼") : null,
+        b.canEdit ? h("button", { type: "button", class: "icon-btn", title: "Edit", "aria-label": `Edit ${b.name}`, onclick: () => editBookmark(b) }, "✎") : null);
+      box.append(h("div", { class: "bookmark" },
+        h("a", { class: "bm-link", href: link.href, target: link.target || null, rel: "noopener noreferrer", title: b.url },
+          h("span", { class: "bm-icon", "aria-hidden": "true" }, b.icon || "🔖"),
+          h("span", { class: "bm-text" }, h("span", { class: "bm-name" }, b.name),
+            h("span", { class: "bm-host dim small" }, hostOf(b.url) + (b.addedBy ? ` · added by ${b.addedBy}` : "")))),
+        actions));
+    });
+  }
+
+  function editBookmark(b) {
+    const f = {
+      name: h("input", { class: "input", value: b ? b.name : "", maxlength: 80, placeholder: "Router" }),
+      url: h("input", { class: "input", value: b ? b.url : "", maxlength: 2000, placeholder: "https://example.com", inputmode: "url", autocapitalize: "off", spellcheck: "false" }),
+      icon: h("input", { class: "input icon-input", value: b && b.icon ? b.icon : "", maxlength: 8, placeholder: "🔖" }),
+    };
+    const err = h("p", { class: "error" });
+    const save = h("button", { type: "submit", class: "btn-primary" }, b ? "Save" : "Add");
+    const del = b ? h("button", { type: "button", class: "btn-ghost danger" }, "Delete") : h("span");
+    const form = h("form", { class: "site-form" },
+      field("Address", f.url, "A web address — http:// or https://. Everyone here sees it; it opens in each person's browser, not through this app."),
+      field("Name", f.name, "Leave empty to use the site's address."), field("Icon (an emoji, optional)", f.icon), err,
+      h("div", { class: "row-between" }, del, save));
+    const m = openModal(b ? "Edit bookmark" : "Add a bookmark", form);
+    setTimeout(() => f.url.focus(), 0);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      err.textContent = "";
+      save.disabled = true;
+      const body = { name: f.name.value, url: f.url.value, icon: f.icon.value };
+      try {
+        const r = b ? await api(`api/bookmarks/${b.id}`, { method: "PUT", body }) : await api("api/bookmarks", { method: "POST", body });
+        state.bookmarks = r.bookmarks; renderBookmarks(); m.close(); toast(b ? "Saved" : "Bookmark added");
+      } catch (x) { err.textContent = x.message; save.disabled = false; }
+    });
+    if (del) del.addEventListener("click", async () => {
+      if (!await UI.confirmDialog("Delete bookmark?", `Delete “${b.name}”?`, { okLabel: "Delete", okClass: "btn-primary danger" })) return;
+      try { state.bookmarks = (await api(`api/bookmarks/${b.id}`, { method: "DELETE" })).bookmarks; renderBookmarks(); m.close(); toast("Deleted"); }
+      catch (x) { err.textContent = x.message; }
+    });
+  }
+  $("#addBookmarkBtn").addEventListener("click", () => editBookmark(null));
+  $("#bmChrome").addEventListener("change", (e) => {
+    try { localStorage.setItem("bookmarkChrome", e.target.checked ? "on" : "off"); } catch (x) { /* this browser keeps nothing */ }
+    renderBookmarks();
+  });
 
   // ---------- viewer ----------
   function siteSrc(site, path) {

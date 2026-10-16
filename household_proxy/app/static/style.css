@@ -192,3 +192,20 @@ fieldset.section legend { font-weight: 600; padding: 0 4px; }
 @media (max-width: 600px) { .grid3, .grid2.wide-first { grid-template-columns: 1fr; } }
 .monitor-actions select.small-select { width: auto; flex: 0 0 auto; }
 .grid2.even { grid-template-columns: 1fr 1fr; }
+
+/* Bookmarks: one's own links */
+.view-title { margin: 0; font-size: 1.15rem; }
+.bookmark-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.bookmark { display: flex; align-items: center; gap: 6px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 4px 6px 4px 4px; }
+.bookmark:hover { border-color: var(--accent); }
+.bm-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 8px 8px; color: inherit; text-decoration: none; border-radius: 8px; }
+.bm-link:focus-visible { outline: 2px solid var(--accent); }
+.bm-icon { font-size: 1.6rem; line-height: 1; flex: none; width: 2rem; text-align: center; }
+.bm-text { display: flex; flex-direction: column; min-width: 0; }
+.bm-name { font-weight: 600; overflow-wrap: anywhere; }
+.bm-host { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-actions { display: flex; flex: none; }
+.bm-actions .icon-btn { min-width: 36px; min-height: 36px; }
+.bm-chrome { margin-top: 14px; }
+.bm-chrome .hint { margin: 4px 0 0; }
+@media (max-width: 760px) { .bm-host { white-space: normal; overflow-wrap: anywhere; } }

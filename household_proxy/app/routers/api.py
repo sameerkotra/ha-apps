@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, config, db, probe, proxy, restarts, settings, sidebar, sites, watchdog
+from .. import auth, bookmarks, config, db, probe, proxy, restarts, settings, sidebar, sites, watchdog
 from ..auth import get_current_user, require_admin
 from ..common import auth_core, backup_core, ha_client, ha_notify, people_admin
 from ..common import whoami as whoami_core
@@ -38,6 +38,49 @@ def whoami(request: Request, user: dict = Depends(get_current_user)):
 def my_sites(user: dict = Depends(get_current_user)):
     """The sites this person may open (the launcher)."""
     return {"sites": [sites.public(s) for s in sites.for_user(user)]}
+
+
+# --------------------------------------------------------------------------------------------- bookmarks (everyone's)
+
+def _bookmark_call(fn, *a):
+    try:
+        return {"bookmarks": fn(*a)}
+    except bookmarks.BookmarkError as e:
+        raise HTTPException(422, str(e))
+    except bookmarks.NotYours as e:
+        raise HTTPException(403, str(e))
+    except LookupError as e:
+        raise HTTPException(404 if "No such" in str(e) else 409, str(e))
+
+
+@router.get("/bookmarks")
+def all_bookmarks(user: dict = Depends(get_current_user)):
+    auth.require_enabled(user)
+    return {"bookmarks": bookmarks.list_all(user)}
+
+
+@router.post("/bookmarks")
+def add_bookmark(body: dict = Body(...), user: dict = Depends(get_current_user)):
+    auth.require_enabled(user)
+    return _bookmark_call(bookmarks.add, user, body if isinstance(body, dict) else {})
+
+
+@router.put("/bookmarks/{bid}")
+def edit_bookmark(bid: int, body: dict = Body(...), user: dict = Depends(get_current_user)):
+    auth.require_enabled(user)
+    return _bookmark_call(bookmarks.edit, user, bid, body if isinstance(body, dict) else {})
+
+
+@router.delete("/bookmarks/{bid}")
+def delete_bookmark(bid: int, user: dict = Depends(get_current_user)):
+    auth.require_enabled(user)
+    return _bookmark_call(bookmarks.delete, user, bid)
+
+
+@router.post("/bookmarks/reorder")
+def reorder_bookmarks(body: dict = Body(...), user: dict = Depends(get_current_user)):
+    auth.require_enabled(user)
+    return _bookmark_call(bookmarks.reorder, user, (body or {}).get("ids") if isinstance(body, dict) else None)
 
 
 # --------------------------------------------------------------------------------------------- admin: sites

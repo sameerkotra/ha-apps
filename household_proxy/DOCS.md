@@ -60,6 +60,20 @@ cookies. Big downloads and uploads stream through without waiting. Everything go
 and through Home Assistant Cloud when you're away — so pages, dashboards, terminals and logs are fine, while
 video streams and large downloads are slow.
 
+## Bookmarks
+
+The **Bookmarks** tab holds the household's links — school, bins, recipes, anything on the web. Everyone sees
+the same list. Select **＋ Add bookmark**, type the address (`example.com` is fine) and, if you like, a name and an
+emoji icon.
+
+Click one to open it: on a computer it opens in a new tab; on a phone it opens in Chrome (if Chrome isn't
+installed on an Android phone, the normal browser). Untick **Open in Chrome** at the bottom of the tab (phones only)
+to use your phone's normal browser instead — that's remembered on that phone.
+
+Anyone can add a bookmark; the person who added it, or an admin, can change (✎) or delete it, and admins can
+change the order (▲▼). Bookmarks are plain links: they don't go through the proxy, so a bookmark to a site on
+your network only works where that site can be reached. Don't put passwords in an address — everyone can see it.
+
 ## Admin → Sites
 
 Add, edit, delete and reorder the sites. For each site:

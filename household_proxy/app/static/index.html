@@ -4,16 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Household Proxy</title>
-<script src="common/theme-boot.js?v=0.6.5"></script>
-<link rel="stylesheet" href="common/themes.css?v=0.6.5">
-<link rel="stylesheet" href="common/settings.css?v=0.6.5">
-<link rel="stylesheet" href="style.css?v=0.6.5">
+<script src="common/theme-boot.js?v=0.6.6"></script>
+<link rel="stylesheet" href="common/themes.css?v=0.6.6">
+<link rel="stylesheet" href="common/settings.css?v=0.6.6">
+<link rel="stylesheet" href="style.css?v=0.6.6">
 </head>
 <body>
 <header class="topbar" id="topbar">
   <button type="button" id="homeBtn" class="brand" title="Sites"><span aria-hidden="true">🌐</span> Proxy</button>
   <nav class="topnav" id="topnav">
     <button type="button" class="tab active" data-view="sites">Sites</button>
+    <button type="button" class="tab" data-view="bookmarks" id="bookmarksTab">Bookmarks</button>
     <button type="button" class="tab" data-view="monitor" id="monitorTab" hidden>Monitor</button>
   </nav>
   <div class="topbar-right">
@@ -28,6 +29,22 @@
   <div id="offNote" class="note warn" hidden>An admin has turned you off in this app.</div>
   <div id="tiles" class="tiles" aria-live="polite"></div>
   <p id="noSites" class="note" hidden>No sites for you yet — ask an admin.</p>
+</main>
+
+<main id="bookmarksView" class="column" hidden>
+  <div class="row-between">
+    <h2 class="view-title">Bookmarks</h2>
+    <button type="button" id="addBookmarkBtn" class="btn-primary">＋ Add a bookmark</button>
+  </div>
+  <p class="hint">The household's links — everyone here sees them. On a phone they open in Chrome, on a computer in a
+    new tab. Anyone can add one; whoever added it (or an admin) can change it.</p>
+  <div id="bookmarkList" class="bookmark-list" aria-live="polite"></div>
+  <p id="noBookmarks" class="note" hidden>No bookmarks yet. Add the pages the household opens often — the school's
+    site, the bin calendar, a recipe.</p>
+  <div class="bm-chrome" id="bmChromeRow" hidden>
+    <label class="check"><input type="checkbox" id="bmChrome"> Open in Chrome on this phone</label>
+    <p class="hint">Off: links open in your phone's normal browser.</p>
+  </div>
 </main>
 
 <main id="monitorView" class="column wide" hidden>
@@ -73,12 +90,12 @@
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=0.6.5"></script>
-<script src="common/settings.js?v=0.6.5"></script>
-<script src="common/people.js?v=0.6.5"></script>
-<script src="common/backnav.js?v=0.6.5"></script>
-<script src="common/whoami.js?v=0.6.5"></script>
-<script src="common/deeplink.js?v=0.6.5"></script>
-<script src="app.js?v=0.6.5"></script>
+<script src="common/ui.js?v=0.6.6"></script>
+<script src="common/settings.js?v=0.6.6"></script>
+<script src="common/people.js?v=0.6.6"></script>
+<script src="common/backnav.js?v=0.6.6"></script>
+<script src="common/whoami.js?v=0.6.6"></script>
+<script src="common/deeplink.js?v=0.6.6"></script>
+<script src="app.js?v=0.6.6"></script>
 </body>
 </html>

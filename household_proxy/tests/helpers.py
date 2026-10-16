@@ -27,7 +27,7 @@ def client():
 
 def reset_db() -> None:
     with db.get_conn() as conn:
-        for t in ("restart_log", "switched_off", "alert_mutes", "site_alert_people", "check_hours", "checks", "incidents", "access_log", "site_rules", "site_headers", "site_people", "sites", "users", "app_settings"):
+        for t in ("bookmarks", "restart_log", "switched_off", "alert_mutes", "site_alert_people", "check_hours", "checks", "incidents", "access_log", "site_rules", "site_headers", "site_people", "sites", "users", "app_settings"):
             conn.execute(f"DELETE FROM {t}")
     sites.invalidate()
     auth.forget_cached()

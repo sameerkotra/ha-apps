@@ -2,6 +2,12 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.6.6
+
+### Added
+
+- **Bookmarks** tab: the household's shared links. Everyone sees them and anyone can add one; the person who added it or an admin can edit or delete it, and admins set the order. On a computer a bookmark opens in a new tab, on a phone in Chrome (a phone-only *Open in Chrome* switch turns that off). Only web (http/https) addresses, and never through the proxy.
+
 ## 0.6.5
 
 ### Added
