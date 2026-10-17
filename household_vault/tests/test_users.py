@@ -24,7 +24,7 @@ class Users(ApiTestCase):
         self.seen(NEHA)
         self.assertEqual(self.post("/api/users/u-neha/setup", user=NEHA).status_code, 403)   # not an admin
         one = self.ok(self.post("/api/users/u-neha/setup"))["oneTimePassword"]
-        self.assertEqual(len(one.split("-")), 5)
+        self.assertEqual(len(one.split("-")), 6)       # six words (security review 2026-10)
         self.assertEqual(self.post("/api/users/u-neha/setup").status_code, 409)              # only once
         users = {u["id"]: u for u in self.ok(self.get("/api/admin/users"))["users"]}
         self.assertEqual((users["u-neha"]["status"], users["u-neha"]["disabled"]), ("temporary", False))
@@ -92,9 +92,12 @@ class Users(ApiTestCase):
         self.assertEqual(fails["unlock_failures"], 5)
         self.assertTrue(fails["unlock_blocked_until"])
         self.assertEqual(self.post("/api/unlock", {"password": PW["u-admin"]}, token=False).status_code, 429)
-        # opening another vault with its password is blocked too (it used to skip the check)
-        self.ok(self.post("/api/users/u-admin/unblock"))
+        # a blocked, locked admin can't unblock themselves any more: admin routes need an unlocked session once
+        # the admin is set up (security review 2026-10) — another admin, or waiting, does it
+        self.assertEqual(self.post("/api/users/u-admin/unblock").status_code, 401)
+        sql("UPDATE users SET unlock_failures = 0, unlock_blocked_until = NULL WHERE id = 'u-admin'")
         self.unlock(ADMIN)
+        # opening another vault with its password is blocked too (it used to skip the check)
         sql("UPDATE users SET unlock_blocked_until = '2999-01-01T00:00:00.000Z'")
         hid = self.vaults()["Household"]["id"]
         with self.assertRaises(HTTPException) as cm, db.get_conn() as conn:
@@ -175,7 +178,7 @@ class Users(ApiTestCase):
         self.assertIn("Household", self.vaults(NEHA))
         # reset: Personal wiped, she must be set up again
         pid = sql("SELECT id FROM vaults WHERE kind='personal' AND owner_user_id='u-neha'")[0]["id"]
-        self.ok(self.post("/api/users/u-neha/reset"))
+        self.ok(self.admin_post("/api/users/u-neha/reset"))
         self.assertEqual(sql("SELECT status FROM users WHERE id='u-neha'")[0]["status"], "none")
         self.assertEqual(sql("SELECT * FROM vaults WHERE id = ?", (pid,)), [])
         self.assertEqual(self.post("/api/unlock", {"password": PW["u-neha"]}, NEHA, token=False).status_code, 409)

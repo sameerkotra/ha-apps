@@ -277,7 +277,24 @@ function experimentalNote() {
 }
 function adminLinks() {
   if (!state.me || !state.me.isAdmin) return null;
+  // once an admin is set up, Admin needs their unlocked session (security review 2026-10): it's in the sidebar then
+  if (state.me.status === "active" && !state.me.disabled) return h("p", { class: "hint" }, "You're an admin: unlock to manage people and settings.");
   return h("p", { class: "hint" }, "You're an admin: ", h("button", { class: "btn small", type: "button", onclick: () => showStandalone("admin") }, "🛡 Manage people"));
+}
+// The admin's master password again, for what hands out access or the data (set up, reset, backup, restore):
+// a request only carrying the admin's Home Assistant identity could come from anything on its origin
+// (security review 2026-10). Resolves with the password, or null when cancelled. Not needed before the admin is
+// set up (there is none yet).
+function askMaster(title, text) {
+  if (!state.me || state.me.status !== "active" || state.me.disabled) return Promise.resolve("");
+  return new Promise((resolve) => {
+    const pw = pwInput({ label: "Master password" });
+    let done = false;
+    const m = openModal(title, h("form", { onsubmit: (e) => { e.preventDefault(); if (!pw.input.value) return; done = true; const v = pw.input.value; pw.input.value = ""; m.close(); resolve(v); } },
+      h("p", null, text), field("Your master password", pw.el),
+      h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: () => m.close() }, "Cancel"), h("button", { class: "btn primary", type: "submit" }, "Continue"))),
+    { onClose: () => { if (!done) { done = true; resolve(null); } } });
+  });
 }
 function showNoAccess() {
   mount($("#app"), topBanners(), h("div", { class: "center" }, h("div", { class: "card" },
@@ -991,7 +1008,7 @@ async function showDetail(vaultId, id) {
     (d.sheet && d.sheet.include) || d.emergency || d.guestWifi ? h("div", { class: "row wrap meta" },
       d.sheet && d.sheet.include ? h("span", { class: "chip on" }, "🖨 On the household sheet") : null, d.sheet && d.sheet.wifi ? h("span", { class: "chip" }, "Wi-Fi QR code") : null,
       d.emergency ? h("span", { class: "chip on" }, "🆘 In emergency access") : null,
-      d.guestWifi ? h("button", { class: "chip on", type: "button", onclick: () => showPage("guest") }, "📶 Guest Wi-Fi on the dashboard") : null) : null,
+      d.guestWifi ? h("button", { class: "chip on", type: "button", onclick: () => showPage("guest") }, "📶 On the Guest Wi-Fi page") : null) : null,
     d.tags.length ? h("div", { class: "row wrap meta" }, d.tags.map((t) => h("span", { class: "chip" }, t))) : null,
     d.notes ? h("div", null, h("div", { class: "hint meta" }, "Notes"), h("div", { class: "notes-box" }, d.notes)) : null,
     h("div", { class: "meta" }, `Changed ${fmtWhen(kdbxTime(d.modified))}`, d.historyCount ? ` · ${d.historyCount} earlier version${d.historyCount > 1 ? "s" : ""}` : ""));
@@ -1017,9 +1034,9 @@ function itemMenu(anchor, d, vault) {
     !d.inTrash ? { label: "📄 Copy to…", run: () => moveDialog([d], true) } : null,
     { label: "🕘 History", run: () => historyDialog(d) },
     editable && !d.inTrash && sheetAllowed(vault) ? { label: "🖨 Household sheet…", run: () => sheetDialog(d) } : null,
-    editable && !d.inTrash && vault && vault.kind === "household" && d.template === "wifi" ? { label: d.guestWifi ? "📶 Guest Wi-Fi on the dashboard…" : "📶 Show as guest Wi-Fi on the dashboard…", run: () => guestWifiDialog(d) } : null,
+    editable && !d.inTrash && vault && vault.kind === "household" && d.template === "wifi" ? { label: d.guestWifi ? "📶 Guest Wi-Fi page…" : "📶 Show as guest Wi-Fi…", run: () => guestWifiDialog(d) } : null,
     editable && !d.inTrash && vault && vault.kind === "household" && d.type === "login" && !d.template ? { label: "📶 This is a Wi-Fi network", run: async () => {
-      try { await api(`api/vaults/${d.vaultId}/items/${d.id}`, { method: "PATCH", body: { template: "wifi" } }); toast("Marked as a Wi-Fi network — it can now go on the dashboard"); await afterChange(); } catch (e) { fail(e); } } } : null,
+      try { await api(`api/vaults/${d.vaultId}/items/${d.id}`, { method: "PATCH", body: { template: "wifi" } }); toast("Marked as a Wi-Fi network — it can now go on the Guest Wi-Fi page"); await afterChange(); } catch (e) { fail(e); } } } : null,
     !d.inTrash && vault && vault.kind === "personal" && vault.mine ? { label: d.emergency ? "🆘 Take out of emergency access" : "🆘 Include in emergency access", run: async () => {
       try {
         await api(`api/vaults/${d.vaultId}/items/${d.id}/emergency`, { method: "PUT", body: { include: !d.emergency } });
@@ -1691,31 +1708,31 @@ function wifiText(w) {
   return w.security === "nopass" ? `WIFI:T:nopass;S:${esc(w.ssid)};;` : `WIFI:T:${w.security};S:${esc(w.ssid)};P:${esc(w.password)};;`;
 }
 
-// ---------- guest Wi-Fi on the Home Assistant dashboard ----------
+// ---------- guest Wi-Fi page (nothing is sent to Home Assistant) ----------
 function guestWifiDialog(d) {
   const sec = h("select", { "aria-label": "Security" }, h("option", { value: "WPA" }, "WPA / WPA2 / WPA3"), h("option", { value: "WEP" }, "WEP"), h("option", { value: "nopass" }, "Open network (no password)"));
   const showPw = h("input", { type: "checkbox" });
   const err = h("div", { class: "error" });
-  const m = openModal("Guest Wi-Fi on the dashboard", h("form", { onsubmit: async (e) => {
+  const m = openModal("Guest Wi-Fi page", h("form", { onsubmit: async (e) => {
     e.preventDefault(); err.textContent = "";
     try {
       await api(`api/vaults/${d.vaultId}/items/${d.id}/guest-wifi`, { method: "PUT", body: { security: sec.value, showPassword: showPw.checked } });
-      m.close(); toast("On the dashboard — add a Picture entity card for sensor.household_vault_guest_wifi", { ms: 7000 });
+      m.close(); toast("Shown on the Guest Wi-Fi page", { ms: 5000 });
       await afterChange(); state.me.guestWifi = true;
     } catch (x) { err.textContent = x.message; }
   } },
-  h("p", null, `Guests scan a QR code to join “${d.username || d.title}”. It's shown on the app's Guest Wi-Fi page (no unlock needed) and on your Home Assistant dashboard, as the picture of sensor.household_vault_guest_wifi.`),
-  h("div", { class: "notice" }, "This network's password leaves the encrypted vault: the QR code contains it, it's kept readable by the app and Home Assistant (and in Home Assistant's history and backups), and anyone who can see your dashboard can join. Use it for a guest network, not your main one. The other Household members are told."),
+  h("p", null, `Guests scan a QR code to join “${d.username || d.title}”. It's shown on the app's Guest Wi-Fi page, which every set-up person can open without unlocking. Nothing is sent to Home Assistant.`),
+  h("div", { class: "notice" }, "This network's password leaves the encrypted vault: the QR code contains it and it's kept readable in the app's database (and so in backups of the app). Use it for a guest network, not your main one. The other Household members are told."),
   field("Security", sec), h("label", { class: "check" }, showPw, "Also show the password as text (for devices that can't scan)"),
-  h("p", { class: "hint" }, "It follows this item: change the password here and the dashboard updates; delete the item to remove it."), err,
+  h("p", { class: "hint" }, "It follows this item: change the password here and the page updates; delete the item to remove it."), err,
   h("div", { class: "actions" },
-    d.guestWifi ? h("button", { class: "btn danger", type: "button", onclick: async () => { try { await api("api/guest-wifi", { method: "DELETE" }); m.close(); toast("Taken off the dashboard"); state.me.guestWifi = false; await afterChange(); } catch (x) { fail(x); } } }, "Stop showing") : null,
+    d.guestWifi ? h("button", { class: "btn danger", type: "button", onclick: async () => { try { await api("api/guest-wifi", { method: "DELETE" }); m.close(); toast("Taken off the Guest Wi-Fi page"); state.me.guestWifi = false; await afterChange(); } catch (x) { fail(x); } } }, "Stop showing") : null,
     h("button", { class: "btn primary", type: "submit" }, d.guestWifi ? "Update" : "Show it"))));
 }
 async function guestPage() {
   const g = await api("api/guest-wifi");
   if (!g.published) return h("div", null, h("h2", null, "📶 Guest Wi-Fi"), h("div", { class: "card" }, h("p", null, "No guest network is shown yet."),
-    h("p", { class: "hint" }, "Someone who can edit Household opens the Wi-Fi item → ⋯ → Show as guest Wi-Fi on the dashboard.")));
+    h("p", { class: "hint" }, "Someone who can edit Household opens the Wi-Fi item → ⋯ → Show as guest Wi-Fi.")));
   const pw = h("span", { class: "mono" }, g.security === "nopass" ? "(none — open network)" : g.password ? "••••••••" : "in the code only");
   let shown = false;
   const hasText = g.security !== "nopass" && !!g.password;
@@ -1725,9 +1742,7 @@ async function guestPage() {
       h("div", { class: "kv" }, h("span", { class: "k" }, "Network"), h("strong", null, g.ssid),
         h("span", { class: "k" }, "Password"), h("span", null, pw, " ", !hasText ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Show password", onclick: () => { shown = !shown; pw.textContent = shown ? g.password : "••••••••"; } }, "👁"),
           !hasText ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Copy password", onclick: () => copyText(g.password, "plain") }, "📋"))),
-      h("p", { class: "hint" }, "Point a phone's camera at the code to join.")),
-    h("div", { class: "card" }, h("h3", null, "On your dashboard"),
-      h("p", { class: "hint" }, "Edit a dashboard → Add card → Picture entity → entity ", h("code", null, g.entity), ", then turn on “Show name” / “Show state”. It updates by itself when the Wi-Fi item changes.")));
+      h("p", { class: "hint" }, "Point a phone's camera at the code to join. Only this app shows it — nothing is sent to Home Assistant.")));
 }
 
 // ---------- household sheet (SPEC §12.3) ----------
@@ -2150,18 +2165,23 @@ async function adminPage() {
   }).catch(fail);
   const restoreFile = h("input", { type: "file", accept: ".zip", "aria-label": "Backup file" });
   return h("div", null, h("h2", null, "Admin"),
-    h("p", { class: "hint" }, "Admins manage who can use Household Vault. They can never open anyone's vaults."),
+    h("p", { class: "hint" }, "Admins manage who can use Household Vault. They can never open anyone's vaults. Setting someone up, resetting them, and backups ask for your master password again."),
     h("div", { class: "notice" }, h("strong", null, "Experimental. "), "Household Vault hasn't had an independent security review yet. Ask everyone to keep their own KeePass copy (Settings → Download all my passwords), and keep Home Assistant backups of this app."),
     h("h3", { style: "margin:18px 0 8px" }, "People"), peopleBox,
     h("h3", { style: "margin:18px 0 8px" }, "App settings"), settingsBox,
     personalCopiesCard(s.personalCopies),
     h("div", { class: "card" }, h("h3", null, "Backup and restore"),
       h("p", { class: "hint" }, "The backup holds only encrypted vault files and settings — nobody can read passwords from it without the vaults' passwords."),
-      h("button", { class: "btn", type: "button", onclick: async () => { try { const res = await api("api/admin-storage-download-db", { raw: true }); saveBlob(await res.blob(), filenameFrom(res) || "household-vault-backup.zip"); } catch (e) { fail(e); } } }, "⬇ Download backup"),
+      h("button", { class: "btn", type: "button", onclick: async () => {
+        const password = await askMaster("Download backup", "The backup holds every encrypted vault file and the app's database.");
+        if (password === null) return;
+        try { const res = await api("api/admin-storage-download-db", { method: "POST", body: { password }, raw: true }); saveBlob(await res.blob(), filenameFrom(res) || "household-vault-backup.zip"); } catch (e) { fail(e); } } }, "⬇ Download backup"),
       h("div", { class: "row wrap" }, restoreFile, h("button", { class: "btn danger", type: "button", onclick: async () => {
         if (!restoreFile.files[0]) { toast("Choose a backup .zip first.", { error: true }); return; }
         if (!await confirmDialog("Restore backup", "Replace everything with this backup? Everyone is locked, and changes made after the backup are lost — including people removed and passwords changed since.", "Restore", true)) return;
-        const fd = new FormData(); fd.append("file", restoreFile.files[0]);
+        const password = await askMaster("Restore backup", "Restoring replaces every vault and setting.");
+        if (password === null) return;
+        const fd = new FormData(); fd.append("file", restoreFile.files[0]); fd.append("password", password);
         try { const r = await api("api/admin-storage-import-db", { method: "POST", form: fd }); openModal("Backup restored", h("div", null,
           h("p", null, "Everyone must unlock again."), r.undone.length ? h("div", null, h("p", null, "These changes were undone — redo them:"), undoneList(r.undone)) : null,
           h("div", { class: "actions" }, h("button", { class: "btn primary", type: "button", onclick: () => location.reload() }, "OK")))); }
@@ -2175,10 +2195,12 @@ function setupDialog(x) {
     h("div", { class: "actions" }, go));
   const m = openModal(`Set up ${x.name}`, box, { sticky: false });
   go.addEventListener("click", async () => {
+    const password = await askMaster(`Set up ${x.name}`, "Setting someone up hands out a one-time password.");
+    if (password === null) return;
     try {
-      const r = await api(`api/users/${x.id}/setup`, { method: "POST" });
+      const r = await api(`api/users/${x.id}/setup`, { method: "POST", body: { password } });
       mount(box, h("p", null, `One-time password for ${x.name}:`), h("div", { class: "pw-big mono" }, r.oneTimePassword),
-        h("p", { class: "hint" }, "It's shown only now. If it's lost, use Reset and set them up again."),
+        h("p", { class: "hint" }, "It's shown only now, and works for 48 hours. If it's lost or expires, set them up again."),
         h("div", { class: "actions" },
           h("button", { class: "btn", type: "button", onclick: () => copyText(r.oneTimePassword, "plain") }, "📋 Copy"),
           h("button", { class: "btn", type: "button", onclick: () => { mount($("#printRoot"), h("div", { class: "kit" }, h("h1", null, "Household Vault"),
@@ -2190,12 +2212,13 @@ function setupDialog(x) {
 }
 function resetDialog(x) {
   const name = h("input", { type: "text", "aria-label": "Name" });
+  const pw = pwInput({ label: "Your master password" });
   const err = h("div", { class: "error" });
   const m = openModal(`Reset ${x.name}`, h("form", { onsubmit: async (e) => { e.preventDefault();
     if (name.value.trim() !== x.name) { err.textContent = "Type their name exactly."; return; }
-    try { await api(`api/users/${x.id}/reset`, { method: "POST" }); m.close(); toast("Reset — set them up again"); showPage("admin"); } catch (y) { err.textContent = y.message; } } },
+    try { await api(`api/users/${x.id}/reset`, { method: "POST", body: { password: pw.input.value } }); pw.input.value = ""; m.close(); toast("Reset — set them up again"); showPage("admin"); } catch (y) { err.textContent = y.message; } } },
     h("div", { class: "notice danger" }, `Only for a forgotten master password. ${x.name}'s Personal vault is wiped — every password in it is gone for good. They're removed from shared vaults (which get new passwords). Make sure they agree.`),
-    field(`Type “${x.name}” to confirm`, name), err, h("div", { class: "actions" }, h("button", { class: "btn danger", type: "submit" }, "Reset"))));
+    field(`Type “${x.name}” to confirm`, name), field("Your master password", pw.el), err, h("div", { class: "actions" }, h("button", { class: "btn danger", type: "submit" }, "Reset"))));
 }
 // Drawn by common/whoami.js: the same rows and wording as every other app. Needs no unlocked session.
 async function whoamiPage() {

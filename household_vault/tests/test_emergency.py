@@ -15,7 +15,7 @@ class Emergency(ApiTestCase):
         self.unlock(ADMIN)
         for u in (ADMIN, NEHA):
             self.ok(self.post(f"/api/admin/users/{u['id']}/notify", {"service": f"notify.mobile_app_{u['name']}"},
-                              ADMIN, token=False), 201)
+                              ADMIN), 201)
         self.pv = self.personal()["id"]
         self.will = self.add_item(self.pv, title="Will and bank details", username="kiran", password="bank-pw-123")
         self.other = self.add_item(self.pv, title="Private diary", password="diary-pw")
@@ -147,22 +147,22 @@ class Emergency(ApiTestCase):
         self.assertEqual(self.post("/api/emergency/contacts", {"userId": NEHA["id"], "waitDays": 31}).status_code, 422)
         self.grant_neha()
         # disabling a contact revokes them
-        self.ok(self.patch(f"/api/users/{NEHA['id']}", {"disabled": True}, token=False))
+        self.ok(self.patch(f"/api/users/{NEHA['id']}", {"disabled": True}))
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM emergency_contacts")[0]["n"], 0)
         # resetting the owner removes their Emergency vault
-        self.ok(self.post(f"/api/users/{ADMIN['id']}/reset", token=False))
+        self.ok(self.admin_post(f"/api/users/{ADMIN['id']}/reset"))
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM vaults WHERE kind = 'emergency'")[0]["n"], 0)
 
     def test_owner_disabled_puts_requests_on_hold(self):
         self.mark(self.will)
         self.ok(self.post("/api/emergency/contacts", {"userId": NEHA["id"], "waitDays": 1}))
-        self.ok(self.patch(f"/api/users/{ADMIN['id']}", {"disabled": True}, token=False))
+        self.ok(self.patch(f"/api/users/{ADMIN['id']}", {"disabled": True}))
         self.ok(self.post(f"/api/emergency/{ADMIN['id']}/request", user=NEHA))
         sql("UPDATE emergency_contacts SET requested_at = '2020-01-01T00:00:00.000Z'")
         r = self.ok(self.get("/api/emergency", NEHA))
         self.assertEqual((r["trustedBy"][0]["status"], r["trustedBy"][0]["onHold"]), ("requested", True))
         self.assertIsNone(self.em_vault(NEHA))                 # the owner couldn't deny it, so nothing is released
-        self.ok(self.patch(f"/api/users/{ADMIN['id']}", {"disabled": False}, token=False))
+        self.ok(self.patch(f"/api/users/{ADMIN['id']}", {"disabled": False}))
         self.ok(self.get("/api/emergency", NEHA))
         self.unlock(NEHA)
         ev = self.em_vault(NEHA)

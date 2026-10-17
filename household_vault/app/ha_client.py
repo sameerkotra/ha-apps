@@ -1,6 +1,6 @@
 """Home Assistant Core API through the Supervisor proxy: the person list and,
 through ha_notify.py, notify calls (alerts, emergency access, expiry
-reminders). Also the optional guest Wi-Fi sensor (guest_wifi.py). The client
+reminders). Also removes, once, the guest Wi-Fi sensor older versions kept (guest_wifi.py). The client
 is the shared app/common/ha_client.py, re-exported here; this module adds the
 user sync. Blocking calls are meant for a thread. Best effort."""
 from . import config, db

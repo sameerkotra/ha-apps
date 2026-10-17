@@ -8,7 +8,7 @@ import struct
 import os
 import unittest
 
-from app import db, kdbx, sessions
+from app import db, kdbx, service, sessions
 
 JOINT_PW = "saffron-lantern-meadow-violin-comet"
 
@@ -28,8 +28,12 @@ class Household(ApiTestCase):
 
     def test_joining_when_nobody_is_unlocked(self):
         self.set_up(ADMIN)
+        self.seen(NEHA)
+        one = self.ok(self.admin_post(f"/api/users/{NEHA['id']}/setup"))["oneTimePassword"]
         self.ok(self.post("/api/lock"))
-        self.set_up(NEHA)                 # Household closed: she waits
+        r = self.ok(self.post("/api/unlock", {"password": one}, NEHA, token=False))
+        self.tokens[NEHA["id"]] = r["session"]
+        self.ok(self.post("/api/me/activate", {"newPassword": PW[NEHA["id"]]}, NEHA))     # Household closed: she waits
         self.assertNotIn("Household", self.vaults(NEHA))
         self.unlock(ADMIN)                 # someone who has it unlocks → she's added and it opens for her
         self.assertTrue(self.vaults(NEHA)["Household"]["open"])
@@ -62,7 +66,10 @@ class Household(ApiTestCase):
         self.set_up(NEHA)
         self.ok(self.post("/api/lock"))
         self.ok(self.post("/api/lock", user=NEHA))
-        self.ok(self.patch("/api/users/u-neha", {"disabled": True}))
+        # Household is closed. Admin routes need the admin's unlocked session now (security review 2026-10), and
+        # an unlocked admin holds Household open — so the closed case is reached through the service directly
+        with db.get_conn() as conn:
+            service.set_disabled(conn, "u-neha", True, "u-admin")
         hid = sql("SELECT id FROM vaults WHERE kind = 'household'")[0]["id"]
         self.assertEqual(sql("SELECT rekey_pending FROM vaults WHERE id = ?", (hid,))[0]["rekey_pending"], 1)
         self.unlock(ADMIN)
@@ -277,18 +284,15 @@ class Files(ApiTestCase):
 
     def test_backup_and_restore(self):
         self.add_item(self.me["id"], title="Before")
-        r = self.get("/api/admin-storage-download-db")
-        self.assertEqual(r.status_code, 200)
-        backup = r.content
+        backup = self.backup()
         self.assertNotIn(b"Before", backup)                 # everything in it is encrypted
         self.ok(self.patch("/api/users/u-neha", {"disabled": True}))
-        r = self.ok(self.req("POST", "/api/admin-storage-import-db",
-                             files={"file": ("b.zip", io.BytesIO(backup), "application/zip")}))
+        r = self.ok(self.restore(io.BytesIO(backup)))
         self.assertTrue(any(u["action"] == "user_disabled" for u in r["undone"]))
         self.assertEqual(sessions.stats()["sessions"], 0)
         self.unlock(ADMIN)
         self.assertEqual([i["title"] for i in self.ok(self.get(f"/api/vaults/{self.me['id']}/items"))["items"]], ["Before"])
-        bad = self.req("POST", "/api/admin-storage-import-db", files={"file": ("b.zip", io.BytesIO(b"PK junk"), "application/zip")})
+        bad = self.restore(io.BytesIO(b"PK junk"))
         self.assertEqual(bad.status_code, 422)
 
     def test_import_runs_off_the_event_loop_and_refuses_heavy_settings(self):
@@ -328,13 +332,12 @@ class Files(ApiTestCase):
         self.assertIn("too heavy to open here", r.json()["detail"])
 
     def test_restore_notes_show_each_person_only_their_own(self):
-        r = self.get("/api/admin-storage-download-db")
-        backup = r.content
+        backup = self.backup()
         self.set_up(VIKRAM)
         self.ok(self.patch("/api/users/u-neha", {"disabled": True}))
         self.ok(self.patch("/api/users/u-vikram", {"disabled": True}))
-        self.ok(self.req("POST", "/api/admin-storage-import-db",
-                         files={"file": ("b.zip", io.BytesIO(backup), "application/zip")}))
+        self.ok(self.restore(io.BytesIO(backup)))
+        self.unlock(ADMIN)                            # a restore locks everyone, the admin too
         everything = self.ok(self.get("/api/restore-notes"))["notes"]["undone"]
         self.assertGreaterEqual(len(everything), 2)
         self.assertTrue(all("user_id" not in x for x in everything))

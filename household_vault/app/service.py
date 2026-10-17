@@ -30,6 +30,11 @@ EDIT_ROLES = ("owner", "manager", "editor")
 MANAGE_ROLES = ("owner", "manager")
 MAX_SHARED_VAULTS = 50
 MAX_MEMBERS = 20
+# A one-time password (an admin set someone up, they haven't unlocked yet) is good for this long: the temporary
+# vault file sits in /data (and in Home Assistant's backups) meanwhile, and the admin knows its password
+# (security review 2026-10, #4). After that the person is set up again.
+SETUP_MAX_HOURS = 48
+ONE_TIME_WORDS = 6                      # ~63 bits from the app's own list (five words were ~52)
 
 
 # ---------------------------------------------------------------------------
@@ -332,14 +337,41 @@ def admin_setup(conn, user_id: str, admin_id: str) -> str:
         raise HTTPException(404, "That person isn't known to Household Vault.")
     if personal_of(conn, user_id):
         raise HTTPException(409, "They're already set up. Use Reset first if they forgot their password.")
-    one_time = passwords.passphrase(5)
+    one_time = passwords.passphrase(ONE_TIME_WORDS)
     vid = storage.new_vault_row(conn, "personal", "chosen", "Personal", user_id)
     add_member(conn, vid, user_id, "owner", admin_id)
     create_vault_file(conn, vid, f"{u['name']} — Personal", one_time, "chosen", admin_id)
     conn.execute("UPDATE users SET disabled = 0, status = 'temporary', public_key = NULL, private_key_wrapped = NULL, "
-                 "unlock_failures = 0, unlock_blocked_until = NULL WHERE id = ?", (user_id,))
+                 "unlock_failures = 0, unlock_blocked_until = NULL, setup_at = ? WHERE id = ?", (config.now_iso(), user_id))
     db.audit(conn, "user_setup", user_id, vid, admin_id)
     return one_time
+
+
+def expire_setups(conn, max_hours: int = SETUP_MAX_HOURS) -> int:
+    """Housekeeping: a one-time password nobody used within `max_hours` is void — the temporary Personal vault is
+    deleted and the person is "not set up" again, so an admin sets them up afresh (a new one-time password).
+    Returns how many were expired."""
+    # set up before this column existed: dated from the audit log, else from now (a full period of grace)
+    for r in conn.execute("SELECT id FROM users WHERE status = 'temporary' AND setup_at IS NULL").fetchall():
+        when = conn.execute("SELECT MAX(created_at) FROM audit_log WHERE action = 'user_setup' AND user_id = ?",
+                            (r["id"],)).fetchone()[0]
+        conn.execute("UPDATE users SET setup_at = ? WHERE id = ?", (when or config.now_iso(), r["id"]))
+    cutoff = (config.utcnow() - timedelta(hours=max_hours)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    rows = conn.execute("SELECT id FROM users WHERE status = 'temporary' AND setup_at < ?", (cutoff,)).fetchall()
+    for r in rows:
+        sessions.end_user(r["id"])
+        personal = personal_of(conn, r["id"])
+        if personal:
+            sessions.close(personal["id"])
+            conn.execute("DELETE FROM vaults WHERE id = ?", (personal["id"],))
+            storage.delete_vault_files(conn, personal["id"])
+        conn.execute("DELETE FROM vault_keys WHERE user_id = ?", (r["id"],))
+        conn.execute("UPDATE users SET status = 'none', public_key = NULL, private_key_wrapped = NULL, unlock_failures = 0, "
+                     "unlock_blocked_until = NULL, setup_at = NULL WHERE id = ?", (r["id"],))
+        db.audit(conn, "setup_expired", r["id"], None, None)
+        alerts.send(conn, [r["id"]], f"Your one-time password for Household Vault wasn't used within {max_hours} hours, "
+                    "so it no longer works. Ask an admin to set you up again.", kind="admin")
+    return len(rows)
 
 
 def check_blocked(u) -> None:

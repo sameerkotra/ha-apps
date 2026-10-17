@@ -22,6 +22,6 @@ can't open anyone's vaults.
 - Password generator, password health and an opt-in breach check
 - Download everything as one KeePass file; import KeePass files and CSV exports
 - Emergency access, expiry reminders, phone alerts, quick unlock with a passkey
-- A printable household sheet and an optional guest Wi-Fi QR code for your dashboard
+- A printable household sheet and an optional guest Wi-Fi QR code page (nothing is sent to Home Assistant)
 
 See the **Documentation** tab (`DOCS.md`) for setup and the full guide.

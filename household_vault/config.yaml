@@ -1,5 +1,5 @@
 name: "Household Vault"
-version: "2.1.7"
+version: "2.2.0"
 slug: household_vault
 description: >-
   A household password manager inside Home Assistant: personal, household and
@@ -23,8 +23,8 @@ panel_title: Vault
 panel_admin: false
 # Ingress-only: no `ports:`. The Supervisor's authenticated ingress proxy is the
 # only way in, which is what makes trusting X-Remote-User-* safe (see main.py).
-# Reads person.* states (the user list); calls notify for alerts and reminders;
-# keeps the optional guest Wi-Fi sensor. No vault contents are sent otherwise.
+# Reads person.* states (the user list); calls notify for alerts and reminders.
+# No vault contents are sent to Home Assistant (the old guest Wi-Fi sensor is removed at start-up).
 homeassistant_api: true
 hassio_api: false
 auth_api: false

@@ -59,7 +59,7 @@ class Expiry(ApiTestCase):
         self.set_up(NEHA)
         self.unlock(ADMIN)
         for u in (ADMIN, NEHA):
-            self.ok(self.post(f"/api/admin/users/{u['id']}/notify", {"service": f"notify.mobile_app_{u['name']}"}, ADMIN, token=False), 201)
+            self.ok(self.post(f"/api/admin/users/{u['id']}/notify", {"service": f"notify.mobile_app_{u['name']}"}), 201)
         hh = self.vaults()["Household"]["id"]
         self.add_item(hh, title="Car insurance", template="vehicle", type="note", expires="2027-01-31", remindDays=14)
         self.add_item(self.pv, title="My passport", expires="2027-01-31")               # default 30 days
@@ -85,7 +85,7 @@ class Expiry(ApiTestCase):
         self.assertFalse(any("mobile_app_neha" in s for s, _m in self.sent))            # she turned them off
 
     def test_changing_the_date_reminds_again_and_long_expired_is_quiet(self):
-        self.ok(self.post(f"/api/admin/users/{ADMIN['id']}/notify", {"service": "notify.mobile_app_admin"}, token=False), 201)
+        self.ok(self.post(f"/api/admin/users/{ADMIN['id']}/notify", {"service": "notify.mobile_app_admin"}), 201)
         it = self.add_item(self.pv, title="Licence", expires="2027-01-31")
         self.add_item(self.pv, title="Ancient", expires="2001-01-01")
         with db.get_conn() as conn:

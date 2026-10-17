@@ -1,5 +1,12 @@
 """Admin: users (enable and set up, disable, reset), App settings, backup and restore (SPEC §4, §9.1).
-Admins can never open anyone's vault through these routes."""
+Admins can never open anyone's vault through these routes.
+
+Security review 2026-10: every page an ingress app serves shares Home Assistant's origin with every other
+app, custom card and proxied site, so a request that only needs the admin's HA identity could be sent by any
+of them. Once an admin is set up, every admin route therefore needs their **unlocked session** (the token lives
+only in the Vault tab's memory), and the ones that hand out access or the data — set up, reset, backup download,
+restore — need their **master password** again (counted like an unlock). Before the admin is set up
+(nobody has a session yet) the people routes still work, so the first admin can set up themselves and others."""
 import itertools
 import json
 import logging
@@ -10,7 +17,8 @@ import tempfile
 import threading
 import time
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, UploadFile
+from pydantic import Field
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -21,8 +29,41 @@ from ..common import backup_core, db_core, ha_notify, ha_people, people_admin
 from ..auth import require_admin, require_user
 from .common import Strict
 
+NEEDS_SETUP = "Set yourself up (Enable and set up on your own row) and unlock first."
+
+
+def _active(conn, admin: dict) -> bool:
+    u = service.user_row(conn, admin["id"])
+    return u is not None and u["status"] == "active" and not u["disabled"]
+
+
+def admin_session(x_vault_session: str | None = Header(default=None), admin: dict = Depends(require_admin)) -> dict:
+    """An admin, with their unlocked session once they are set up (401 "Locked." otherwise). Before they are set
+    up — or while their own access is off — there is no session to show, and the people routes still work."""
+    with db.get_conn() as conn:
+        active = _active(conn, admin)
+    if active:
+        s = sessions.get(x_vault_session, admin)
+        if s.must_change:
+            raise HTTPException(409, "Choose your own master password first.")
+        return dict(admin, session=s)
+    return dict(admin, session=None)
+
+
+def confirm_master(conn, admin: dict, password: str | None, bootstrap_ok: bool = False) -> None:
+    """The admin's master password, checked against their open Personal vault (counted and blocked like an
+    unlock). Before the admin is set up there is no password: allowed only where `bootstrap_ok` (setting people
+    up), 403 everywhere else."""
+    if admin.get("session") is None:
+        if bootstrap_ok and not _active(conn, admin):
+            return
+        raise HTTPException(403, NEEDS_SETUP)
+    personal = service.personal_of(conn, admin["id"])
+    ov = sessions.get_open(personal["id"]) if personal else None
+    service.check_master_password(conn, admin["id"], ov, password or "", "That isn't your master password.")
+
 router = APIRouter(prefix="/api", tags=["admin"])
-APP_VERSION = "2.1.7"
+APP_VERSION = "2.2.0"
 _last_sync = {"t": 0.0}
 
 
@@ -39,7 +80,7 @@ ha_person_json = people_admin.ha_person_json          # their person and phones 
 
 
 @router.get("/admin/users")
-def admin_users(refresh: bool = False, admin: dict = Depends(require_admin)):
+def admin_users(refresh: bool = False, admin: dict = Depends(admin_session)):
     """Everyone known, with their phones from Home Assistant and any extra notify services. `refresh=1` reads
     Home Assistant's people again first (no DB connection or vault lock is held meanwhile)."""
     _maybe_sync()
@@ -62,7 +103,7 @@ MAX_SERVICES_PER_USER = 5
 
 
 @router.get("/admin/notify-services")
-def notify_services(refresh: bool = False, admin: dict = Depends(require_admin)):
+def notify_services(refresh: bool = False, admin: dict = Depends(admin_session)):
     """Notify actions and entities Home Assistant has, for the picker."""
     return people_admin.notify_services(refresh)
 
@@ -78,16 +119,22 @@ def _known_user(conn, uid: str):
 
 
 @router.post("/admin/users/{uid}/notify", status_code=201)
-def add_notify(uid: str, body: dict = Body(...), admin: dict = Depends(require_admin)):
+def add_notify(uid: str, body: dict = Body(...), admin: dict = Depends(admin_session)):
     svc = _service(body.get("service"))
     with db.get_conn() as conn:
-        _known_user(conn, uid)
+        row = _known_user(conn, uid)
+        before = ha_notify.assigned_services(conn, {"id": uid})
+        if svc not in before and uid != admin["id"]:
+            # the person hears about it on what they already have (phones, earlier extras) — before the new one
+            # can receive anything of theirs (security review 2026-10, #6: an admin adding their own device)
+            alerts.send(conn, [uid], f"An admin added the notify service {svc} to your Household Vault alerts. "
+                        "If that isn't a device of yours, tell them.", kind="admin")
         return {"notify": people_admin.add_service(conn, uid, svc, admin.get("username") or admin["id"], config.now_iso(),
                                                    limit=MAX_SERVICES_PER_USER)}
 
 
 @router.delete("/admin/users/{uid}/notify/{svc}")
-def remove_notify(uid: str, svc: str, admin: dict = Depends(require_admin)):
+def remove_notify(uid: str, svc: str, admin: dict = Depends(admin_session)):
     svc = _service(svc)
     with db.get_conn() as conn:
         _known_user(conn, uid)
@@ -95,7 +142,7 @@ def remove_notify(uid: str, svc: str, admin: dict = Depends(require_admin)):
 
 
 @router.post("/admin/users/{uid}/notify/test")
-def test_notify(uid: str, admin: dict = Depends(require_admin)):
+def test_notify(uid: str, admin: dict = Depends(admin_session)):
     """A short test message to their phones (from Home Assistant, while they're active here) and every extra
     service — sent now, so the result can be shown."""
     with db.get_conn() as conn:
@@ -113,9 +160,14 @@ def test_notify(uid: str, admin: dict = Depends(require_admin)):
     return {"results": people_admin.test_results(results, as_list=True)}
 
 
+class ConfirmIn(Strict):
+    password: str | None = Field(default=None, max_length=1000)      # the admin's master password (once set up)
+
+
 @router.post("/users/{uid}/setup")
-def setup_user(uid: str, admin: dict = Depends(require_admin)):
+def setup_user(uid: str, body: ConfirmIn = Body(default=ConfirmIn()), admin: dict = Depends(admin_session)):
     with db.get_conn() as conn:
+        confirm_master(conn, admin, body.password, bootstrap_ok=True)
         one_time = service.admin_setup(conn, uid, admin["id"])
     return {"oneTimePassword": one_time}
 
@@ -125,23 +177,24 @@ class UserPatch(Strict):
 
 
 @router.patch("/users/{uid}")
-def patch_user(uid: str, body: UserPatch, admin: dict = Depends(require_admin)):
+def patch_user(uid: str, body: UserPatch, admin: dict = Depends(admin_session)):
     with db.get_conn() as conn:
         service.set_disabled(conn, uid, body.disabled, admin["id"])
     return {"ok": True}
 
 
 @router.post("/users/{uid}/reset")
-def reset_user(uid: str, admin: dict = Depends(require_admin)):
+def reset_user(uid: str, body: ConfirmIn = Body(default=ConfirmIn()), admin: dict = Depends(admin_session)):
     with db.get_conn() as conn:
         if service.user_row(conn, uid) is None:
             raise HTTPException(404, "That person isn't known to Household Vault.")
+        confirm_master(conn, admin, body.password)
         service.reset_user(conn, uid, admin["id"])
     return {"ok": True}
 
 
 @router.post("/users/{uid}/unblock")
-def unblock(uid: str, admin: dict = Depends(require_admin)):
+def unblock(uid: str, admin: dict = Depends(admin_session)):
     with db.get_conn() as conn:
         conn.execute("UPDATE users SET unlock_failures = 0, unlock_blocked_until = NULL WHERE id = ?", (uid,))
     return {"ok": True}
@@ -158,12 +211,12 @@ def _settings_out() -> dict:
 
 
 @router.get("/admin/settings")
-def get_settings(admin: dict = Depends(require_admin)):
+def get_settings(admin: dict = Depends(admin_session)):
     return _settings_out()
 
 
 @router.put("/admin/settings")
-def put_settings(body: dict = Body(...), admin: dict = Depends(require_admin)):
+def put_settings(body: dict = Body(...), admin: dict = Depends(admin_session)):
     unknown = [k for k in body if k not in settings.DEFAULTS]
     if unknown:
         raise HTTPException(422, f"Unknown setting: {', '.join(unknown)}")
@@ -216,9 +269,12 @@ def _build_backup() -> str:
     return path
 
 
-@router.get("/admin-storage-download-db")
-def download_backup(admin: dict = Depends(require_admin)):
-    """One zip: a consistent vault.db snapshot plus every (encrypted) vault file."""
+@router.post("/admin-storage-download-db")
+def download_backup(body: ConfirmIn, admin: dict = Depends(admin_session)):
+    """One zip: a consistent vault.db snapshot plus every (encrypted) vault file. A POST with the admin's master
+    password (security review 2026-10): a link anyone on Home Assistant's origin could follow is not enough."""
+    with db.get_conn() as conn:
+        confirm_master(conn, admin, body.password)
     path = _build_backup()
     with db.get_conn() as conn:
         db.audit(conn, "backup_downloaded", None, None, admin["id"])
@@ -235,9 +291,14 @@ def _remove_quietly(path: str) -> None:
 
 
 @router.post("/admin-storage-import-db")
-async def import_backup(file: UploadFile = File(...), admin: dict = Depends(require_admin)):
-    # streamed to a temp file (not 300 MB in memory), then checked and restored in the thread pool, so the app
-    # keeps answering meanwhile (review 2026-10)
+async def import_backup(file: UploadFile = File(...), password: str = Form(""), admin: dict = Depends(admin_session)):
+    # the master password first (the upload is read only once that's right), then streamed to a temp file (not
+    # 300 MB in memory), then checked and restored in the thread pool, so the app keeps answering meanwhile
+    # (review 2026-10)
+    def _confirm():
+        with db.get_conn() as conn:
+            confirm_master(conn, admin, password)
+    await run_in_threadpool(_confirm)
     tmp = await backup_core.receive(file, tempfile.gettempdir(), suffix=".zip", prefix=BACKUP_PREFIX,
                                     max_bytes=MAX_BACKUP_BYTES,
                                     too_big=lambda: HTTPException(413, "That backup is bigger than 300 MB."))

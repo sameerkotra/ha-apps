@@ -35,6 +35,7 @@ def _minutely() -> None:
 def _half_hourly() -> None:
     with db.get_conn() as conn:
         reminders.run(conn)
+        service.expire_setups(conn)        # one-time passwords nobody used in time
 
 
 def _daily() -> None:
@@ -50,14 +51,12 @@ def _daily() -> None:
 
 async def housekeeping(n: int) -> None:
     """Every 20 s: idle sessions; every minute: emergency access; every 30 minutes: reminders;
-    every 5 minutes: the guest Wi-Fi sensor; every day: old rows and abandoned backup downloads."""
+    every day: old rows and abandoned backup downloads."""
     await run_in_threadpool(_gated(sessions.expire_idle))
     if n % 3 == 0:
         await run_in_threadpool(_gated(_minutely))
     if n % 90 == 5:
         await run_in_threadpool(_gated(_half_hourly))
-    if n % 15 == 1:
-        await run_in_threadpool(_gated(guest_wifi.ensure_blocking))
     if n % 4320 == 7:
         await run_in_threadpool(_gated(_daily))
 
@@ -78,6 +77,10 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(ha_people.refresh_blocking, True)
     except Exception:
         logger.exception("Reading the people's phones from Home Assistant failed")
+    try:   # the guest Wi-Fi sensor older versions kept in Home Assistant goes (it's never sent again)
+        await run_in_threadpool(guest_wifi.remove_old_sensor_blocking)
+    except Exception:
+        logger.exception("Removing the old guest Wi-Fi sensor from Home Assistant failed")
     try:   # Argon2 tuned for this machine now, not inside the first admin's change (review 2026-10)
         await run_in_threadpool(service.calibrate)
     except Exception:
@@ -93,7 +96,8 @@ async def lifespan(app: FastAPI):
         sessions.end_all()
 
 
-app = FastAPI(title="Household Vault", lifespan=lifespan)
+# no /docs, /redoc or /openapi.json: every Home Assistant user could read the whole route list (review 2026-10)
+app = FastAPI(title="Household Vault", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 for r in (me, vaults, items_router, admin, health_router, sheet, emergency_router, guest_router, quick_router):
     app.include_router(r.router)
 

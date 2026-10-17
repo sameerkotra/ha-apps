@@ -233,6 +233,9 @@ def restore_version(vid: str, n: int, ctx: Ctx = Depends(unlocked)):
             raise HTTPException(404, "That version isn't kept any more.")
         if n == v["version"]:
             raise HTTPException(409, "That's the current version.")
+        if row["key_epoch"] != v["key_epoch"]:
+            # written under an earlier password: it can't be opened with the current key (a 409, not a 500)
+            raise HTTPException(409, "That version was saved under an earlier password and can't be restored.")
         with service.editing(conn, ov):
             old = kdbx.open_with_composite(storage.read_version(vid, n), ov.composite,
                                            known=(ov.db.kdf, ov.db.transformed))

@@ -11,6 +11,7 @@ router = APIRouter(prefix="/api", tags=["me"])
 
 NOTICE_TEXT = {
     "user_setup": "An admin set up your vault.",
+    "setup_expired": "Your one-time password expired before it was used. Ask an admin to set you up again.",
     "user_reset": "An admin reset your vault (your old Personal vault was wiped).",
     "user_enabled": "An admin turned your access back on.",
     "backup_restored": "An admin restored a backup. Changes made after it was taken are gone — check your vaults.",

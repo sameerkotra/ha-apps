@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.2.0
+
+Security review 2026-10 (the restore/backup trust question is documented under *Security, in short* and left as is for now).
+
+- **Security**: the guest Wi-Fi is no longer sent to Home Assistant. There is no `sensor.household_vault_guest_wifi` any more — the network's password sat in Home Assistant's history, in every integration that exports states and in Home Assistant's backups, and stayed there after *Stop showing*. The app's own **📶 Guest Wi-Fi** page (no unlock needed) is where guests scan it; a sensor left behind by an older version is removed at start-up.
+- **Security**: once an admin is set up, every Admin route needs their unlocked session, and setting someone up, resetting them, downloading a backup and restoring one ask for the admin's master password again (counted like unlock attempts). Every app, custom card and proxied site inside Home Assistant shares one origin with this app, so a request carrying only the admin's Home Assistant identity could come from any of them. Before the admin is set up, Manage people on the lock screen still works, so the first admin can set up themselves and others.
+- **Security**: one-time passwords have six words (were five) and expire after 48 hours if unused — the person shows as *Not set up* again and is told.
+- **Security**: the app runs as its own user inside its container, not as root; the automatic API documentation pages (`/docs`, `/openapi.json`) are off.
+- **Security**: when an admin adds a notify service to someone's alerts, that person is told on the services they already had.
+- **Fixed**: restoring an older version of a vault that was saved under an earlier password says so instead of failing.
+
 ## 2.1.7
 
 - **Fixed**: the *Website* box in the item editor had a label but no field to type in. It's back, for every kind of item, with an **↗ Open** button next to it.

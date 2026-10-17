@@ -1,31 +1,30 @@
-"""Guest Wi-Fi on the Home Assistant dashboard (opt-in).
+"""Guest Wi-Fi page (opt-in).
 
-An editor of Household can pick one Wi-Fi login and publish it: the app
-then keeps a sensor in Home Assistant — `sensor.household_vault_guest_wifi`,
-state = the network name, `entity_picture` = a QR code guests scan to join
-(a Picture entity card shows it). Only items made as (or marked) Wi-Fi items
-can be published; the QR code always contains the password. The same code is on the app's own
-"Guest Wi-Fi" page, which works without unlocking.
+An editor of Household can pick one Wi-Fi login and publish it to the app's
+own **📶 Guest Wi-Fi** page: a QR code guests scan to join, shown to every
+active person without unlocking. Only items made as (or marked) Wi-Fi items
+can be published; the QR code always contains the password.
 
 This is the one place where a password leaves the encrypted vault on
 purpose: the network name and password are kept unencrypted in the app's
-database (so the sensor survives restarts while everyone is locked) and are
-visible to anyone who can see the dashboard — which is the point of a guest
-network. Publishing asks first and tells the other Household members. It
-follows the item: edits update it; deleting the item or *Stop showing*
-removes it (and the sensor).
+database (so the page works while everyone is locked). Nothing is sent to
+Home Assistant: the former `sensor.household_vault_guest_wifi` was dropped
+(security review 2026-10 — a state attribute lands in the recorder, the
+history, every state-exporting integration and HA backups, and stays there
+after *Stop showing*). A sensor an older version left behind is removed once
+at start-up (`remove_old_sensor_blocking`). Publishing asks first and tells
+the other Household members. It follows the item: edits update it; deleting
+the item or *Stop showing* removes it.
 """
 import base64
-import json
 import logging
-import threading
 
 from fastapi import HTTPException
 
 from . import alerts, config, db, ha_client, items, qrcode, sessions
 
 logger = logging.getLogger("guest_wifi")
-ENTITY = "sensor.household_vault_guest_wifi"
+OLD_ENTITY = "sensor.household_vault_guest_wifi"       # kept only to remove what an older version left in HA
 
 
 def current(conn):
@@ -35,14 +34,6 @@ def current(conn):
 def picture(row) -> str:
     svg = qrcode.svg(qrcode.wifi_text(row["ssid"], row["password"], row["security"]))
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
-
-
-def payload(row) -> dict:
-    attrs = {"friendly_name": "Guest Wi-Fi", "icon": "mdi:wifi", "entity_picture": picture(row),
-             "ssid": row["ssid"], "security": row["security"]}
-    if row["show_password"] and row["security"] != "nopass":
-        attrs["password"] = row["password"]
-    return {"state": row["ssid"][:255], "attributes": attrs}
 
 
 def _from_entry(d, e, security: str) -> tuple[str, str]:
@@ -79,8 +70,7 @@ def publish(conn, user: dict, vault_id: str, item_id: str, security: str, show_p
     db.audit(conn, "guest_wifi_published", user["id"], vault_id)
     if before is None or before["item_id"] != item_id:
         alerts.send(conn, alerts.others_in(conn, vault_id, user["id"]),
-                    f"{user['name']} put the guest Wi-Fi ({ssid}) on the Home Assistant dashboard.")
-    push_after_commit(conn)
+                    f"{user['name']} put the guest Wi-Fi ({ssid}) on the Guest Wi-Fi page.")
 
 
 def unpublish(conn, actor: str | None) -> None:
@@ -88,7 +78,6 @@ def unpublish(conn, actor: str | None) -> None:
         return
     conn.execute("DELETE FROM guest_wifi WHERE id = 1")
     db.audit(conn, "guest_wifi_removed", actor, None)
-    push_after_commit(conn)
 
 
 def after_save(conn, vault_id: str, d) -> None:
@@ -112,75 +101,20 @@ def after_save(conn, vault_id: str, d) -> None:
         pw = ""
     if (ssid, pw) != (row["ssid"], row["password"]):
         conn.execute("UPDATE guest_wifi SET ssid = ?, password = ?, updated_at = ? WHERE id = 1", (ssid, pw, config.now_iso()))
-        push_after_commit(conn)
 
 
-# ---------- Home Assistant ----------
-def push_blocking() -> bool:
-    """Make Home Assistant's sensor match the table (create, update or remove)."""
+# ---------- Home Assistant (clean-up only) ----------
+def remove_old_sensor_blocking() -> bool:
+    """Once at start-up: delete the sensor an older version kept in Home Assistant (the app no longer sends the
+    guest Wi-Fi anywhere). True when it's gone (or never was)."""
     if not ha_client.has_token():
-        ha_client.warn_no_token_once("the guest Wi-Fi sensor")
         return False
-    with db.get_conn() as conn:
-        row = current(conn)
-        body = payload(row) if row else None
-    if body is None:
-        status, _ = ha_client.request("DELETE", f"/states/{ENTITY}")
-        return status in (200, 404)
-    status, _ = ha_client.request("POST", f"/states/{ENTITY}", body)
-    if status not in (200, 201):
-        logger.warning("Couldn't update %s (HTTP %s).", ENTITY, status)
-    return status in (200, 201)
-
-
-_absent = {"checked": False}         # nothing published, and Home Assistant has no sensor either (since start-up)
-
-
-def ensure_blocking() -> None:
-    """Every few minutes: Home Assistant forgets states set this way when it restarts, so put it back — the whole
-    sensor (name, picture, password shown or not), not just its state. With nothing published, a sensor left over
-    (a removal Home Assistant missed) is removed — checked once, not every time."""
-    with db.get_conn() as conn:
-        row = current(conn)
-    if not ha_client.has_token():
-        return
-    want = payload(row) if row else None
-    if want is None and _absent["checked"]:
-        return
-    status, body = ha_client.request("GET", f"/states/{ENTITY}")
-    if want is None:
-        if status == 200:
-            push_blocking()                               # deletes it
-        elif status == 404:
-            _absent["checked"] = True
-        return
-    _absent["checked"] = False
-    if status == 200:
-        try:
-            cur = json.loads(body)
-            if cur.get("state") == want["state"] and (cur.get("attributes") or {}) == want["attributes"]:
-                return
-        except ValueError:
-            pass
-    push_blocking()
-
-
-def push_after_commit(conn) -> None:
-    """Tell Home Assistant once the change is in the database (not before: a rolled-back change would have shown
-    on the dashboard anyway — review 2026-10)."""
-    _absent["checked"] = False
-    conn.after_commit(lambda c: push_async(0.2))
-
-
-def push_async(delay: float = 1.0) -> None:
-    """Soon, from a thread."""
-    t = threading.Timer(delay, lambda: _safe(push_blocking))
-    t.daemon = True
-    t.start()
-
-
-def _safe(fn):
-    try:
-        fn()
-    except Exception:
-        logger.exception("Guest Wi-Fi sensor update failed")
+    status, _ = ha_client.request("GET", f"/states/{OLD_ENTITY}")
+    if status != 200:
+        return status == 404
+    status, _ = ha_client.request("DELETE", f"/states/{OLD_ENTITY}")
+    if status in (200, 404):
+        logger.info("Removed the old %s from Home Assistant.", OLD_ENTITY)
+        return True
+    logger.warning("Couldn't remove the old %s (HTTP %s); delete it in Home Assistant yourself.", OLD_ENTITY, status)
+    return False

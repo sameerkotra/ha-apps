@@ -256,6 +256,7 @@ MIGRATIONS = [
     ("users", "hide_lock_seconds", "INTEGER NOT NULL DEFAULT -1"),
     ("users", "last_typed_unlock", "TEXT"),
     ("users", "master_epoch", "INTEGER NOT NULL DEFAULT 1"),
+    ("users", "setup_at", "TEXT"),                 # when an admin set them up; a one-time password expires after SETUP_MAX_HOURS
     ("vaults", "mirror_fp", "TEXT"),
 ]
 

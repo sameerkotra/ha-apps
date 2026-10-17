@@ -560,7 +560,7 @@ class Restore(ApiTestCase):
         self.set_up(ADMIN)
         hh = self.vaults()["Household"]["id"]
         self.add_item(hh, title="Before")
-        backup = self.get("/api/admin-storage-download-db").content
+        backup = self.backup()
         self.assertFalse([n for n in os.listdir(__import__("tempfile").gettempdir())
                           if n.startswith("household-vault-backup-") and n.endswith(".zip")])      # the temp zip went
         self.add_item(hh, title="After")
@@ -570,12 +570,12 @@ class Restore(ApiTestCase):
                 out.writestr(n, src.read(n))
             out.writestr(f"vaults/{hh}/999.kdbx", b"not a keepass file")
         files = sorted(os.listdir(storage.vault_dir(hh)))
-        r = self.req("POST", "/api/admin-storage-import-db", files={"file": ("b.zip", buf.getvalue(), "application/zip")})
+        r = self.restore(buf.getvalue())
         self.assertEqual(r.status_code, 422)
         self.assertEqual(sorted(os.listdir(storage.vault_dir(hh))), files)
         self.assertFalse(os.path.exists(os.path.join(config.DATA_DIR, ".restore-staging")))
         self.assertEqual({i["title"] for i in self.ok(self.get(f"/api/vaults/{hh}/items"))["items"]}, {"Before", "After"})
-        self.ok(self.req("POST", "/api/admin-storage-import-db", files={"file": ("b.zip", backup, "application/zip")}))
+        self.ok(self.restore(backup))
         self.assertFalse(os.path.exists(config.VAULT_DIR + ".before-restore"))
         self.unlock(ADMIN)
         self.assertEqual({i["title"] for i in self.ok(self.get(f"/api/vaults/{hh}/items"))["items"]}, {"Before"})
@@ -590,14 +590,14 @@ class People(ApiTestCase):
         s = self.ok(self.post("/api/vaults", {"name": "Trip", "passwordMode": "random"}, NEHA), 201)
         self.ok(self.post(f"/api/vaults/{s['id']}/members", {"userId": VIKRAM["id"], "role": "editor"}, NEHA))
         self.ok(self.post(f"/api/vaults/{s['id']}/members", {"userId": ADMIN["id"], "role": "manager"}, NEHA))
-        self.ok(self.post(f"/api/users/{NEHA['id']}/reset", token=False))
+        self.ok(self.admin_post(f"/api/users/{NEHA['id']}/reset"))
         roles = {r["user_id"]: r["role"] for r in sql("SELECT user_id, role FROM vault_members WHERE vault_id = ?", (s["id"],))}
         self.assertEqual(roles, {ADMIN["id"]: "owner", VIKRAM["id"]: "editor"})
         self.assertEqual(sql("SELECT owner_user_id FROM vaults WHERE id = ?", (s["id"],))[0]["owner_user_id"], ADMIN["id"])
         # no manager: the longest-standing member
         t = self.ok(self.post("/api/vaults", {"name": "Car", "passwordMode": "random"}, VIKRAM), 201)
         self.ok(self.post(f"/api/vaults/{t['id']}/members", {"userId": ADMIN["id"], "role": "viewer"}, VIKRAM))
-        self.ok(self.patch(f"/api/users/{VIKRAM['id']}", {"disabled": True}, token=False))
+        self.ok(self.patch(f"/api/users/{VIKRAM['id']}", {"disabled": True}))
         self.assertEqual(sql("SELECT role FROM vault_members WHERE vault_id = ?", (t["id"],)), [{"role": "owner"}])
 
     def test_master_password_isnt_kept_in_memory(self):
@@ -742,7 +742,7 @@ class Limits(ApiTestCase):
         self.ok(self.post("/api/strength", {"password": "x" * 900}))
 
     def test_static_files_with_a_version_are_cached(self):
-        r = self.client.get("/app.js?v=2.1.7", headers=headers(ADMIN))
+        r = self.client.get("/app.js?v=2.2.0", headers=headers(ADMIN))
         self.assertEqual(r.headers.get("cache-control"), "public, max-age=31536000, immutable")
         r = self.client.get("/", headers=headers(ADMIN))
         self.assertIn("no-store", r.headers.get("cache-control", ""))
@@ -759,56 +759,109 @@ class Limits(ApiTestCase):
             self.assertIn("watchdog: http://[HOST]:[PORT:8101]/api/health", f.read())
 
 
-class GuestWifiPush(ApiTestCase):
-    """V9: the sensor is told only after the change commits, and checked as a whole."""
+class GuestWifiStaysInTheApp(ApiTestCase):
+    """V9 (security review 2026-10): the guest Wi-Fi is never sent to Home Assistant — no sensor, no state."""
 
-    def test_after_commit_and_whole_payload(self):
+    def test_nothing_posted_to_home_assistant(self):
         from app import guest_wifi, ha_client
         self.set_up(ADMIN)
         hh = self.vaults()["Household"]["id"]
         wifi = self.add_item(hh, title="Guest", username="Guest-Net", password="sunny-day-42", template="wifi")
-        pushes, calls = [], []
-        with mock.patch.object(guest_wifi, "push_async", lambda delay=1.0: pushes.append(delay)), \
-                mock.patch.object(ha_client, "has_token", lambda: True):
-            self.ok(self.put(f"/api/vaults/{hh}/items/{wifi['id']}/guest-wifi", {"security": "WPA"}))
-            self.assertEqual(len(pushes), 1)
-            # a publish whose transaction fails is never pushed
-            pushes.clear()
-            loose = ingress_client(app, raise_server_exceptions=False)
-            h = dict(headers(ADMIN), **{"X-Vault-Session": self.tokens[ADMIN["id"]]})
-            with mock.patch.object(guest_wifi.db, "audit", side_effect=RuntimeError("boom")):
-                r = loose.put(f"/api/vaults/{hh}/items/{wifi['id']}/guest-wifi", json={"security": "nopass"}, headers=h)
-            self.assertEqual(r.status_code, 500)
-            self.assertEqual(pushes, [])
-            # ensure: the same state but other attributes (the password shown) → pushed again
-            with db.get_conn() as conn:
-                want = guest_wifi.payload(guest_wifi.current(conn))
-            stale = dict(want, attributes=dict(want["attributes"], password="old"))
-            import json as _json
-
-            def req(m, p, body=None, timeout=10):
-                calls.append((m, p))
-                return (200, _json.dumps(stale).encode()) if m == "GET" else (200, b"{}")
-            with mock.patch.object(ha_client, "request", req):
-                guest_wifi.ensure_blocking()
-            self.assertEqual(calls, [("GET", "/states/sensor.household_vault_guest_wifi"),
-                                     ("POST", "/states/sensor.household_vault_guest_wifi")])
-            # nothing published but Home Assistant still has the sensor → removed; once gone, not asked again
-            calls.clear()
+        calls = []
+        with mock.patch.object(ha_client, "has_token", lambda: True), \
+                mock.patch.object(ha_client, "request", lambda m, p, body=None, timeout=10: (calls.append((m, p)) or (200, b"{}"))):
+            self.ok(self.put(f"/api/vaults/{hh}/items/{wifi['id']}/guest-wifi", {"security": "WPA", "showPassword": True}))
+            self.ok(self.patch(f"/api/vaults/{hh}/items/{wifi['id']}", {"password": "rainy-night-7"}))
             self.ok(self.delete("/api/guest-wifi"))
-            state = {"exists": True}
+        self.assertEqual([c for c in calls if "/states/" in c[1]], [])
+        self.assertFalse(hasattr(guest_wifi, "push_blocking"))
+        self.assertFalse(hasattr(guest_wifi, "ensure_blocking"))
 
-            def req2(m, p, body=None, timeout=10):
-                calls.append((m, p))
-                if m == "DELETE":
-                    state["exists"] = False
-                    return 200, b""
-                return (200, b"{}") if state["exists"] else (404, b"")
-            with mock.patch.object(ha_client, "request", req2):
-                guest_wifi.ensure_blocking()
-                guest_wifi.ensure_blocking()
-                guest_wifi.ensure_blocking()
-            self.assertEqual([c[0] for c in calls], ["GET", "DELETE", "GET"])
+
+class AdminRoutesNeedTheAdmin(ApiTestCase):
+    """Security review 2026-10 (#2): everything on Home Assistant's origin can send requests with the admin's
+    identity, so admin routes need the admin's unlocked session once they are set up, and the ones that hand
+    out access or the data need their master password again — counted like an unlock."""
+
+    def test_before_set_up_the_people_routes_work_without_a_session(self):
+        self.seen(ADMIN)
+        self.seen(NEHA)
+        self.ok(self.get("/api/admin/users", token=False))
+        one = self.ok(self.post(f"/api/users/{NEHA['id']}/setup", token=False))["oneTimePassword"]
+        self.assertEqual(len(one.split("-")), 6)                       # six words now (#4)
+        # but nothing that needs a master password: there is none yet
+        self.assertEqual(self.post("/api/admin-storage-download-db", {}, token=False).status_code, 403)
+        self.assertEqual(self.post(f"/api/users/{NEHA['id']}/reset", {}, token=False).status_code, 403)
+        self.assertEqual(self.req("POST", "/api/admin-storage-import-db", token=False,
+                                  files={"file": ("b.zip", b"PK junk", "application/zip")}).status_code, 403)
+
+    def test_once_set_up_every_admin_route_needs_the_unlocked_session(self):
+        self.set_up(ADMIN)
+        self.seen(NEHA)
+        self.ok(self.get("/api/admin/users"))
+        for method, path in (("GET", "/api/admin/users"), ("GET", "/api/admin/settings"), ("PATCH", f"/api/users/{NEHA['id']}"),
+                             ("POST", f"/api/users/{NEHA['id']}/setup"), ("POST", f"/api/users/{NEHA['id']}/unblock"),
+                             ("POST", "/api/admin-storage-download-db")):
+            r = self.req(method, path, token=False, json={"disabled": True} if method == "PATCH" else {})
+            self.assertEqual(r.status_code, 401, (method, path, r.text))
+        self.ok(self.post("/api/lock"))
+        self.assertEqual(self.get("/api/admin/users").status_code, 401)
+        # a GET can't fetch the backup any more (a link anyone on the origin could follow)
+        self.unlock(ADMIN)
+        self.assertIn(self.get("/api/admin-storage-download-db").status_code, (404, 405))
+
+    def test_master_password_for_setup_reset_backup_and_restore(self):
+        self.set_up(ADMIN)
+        self.seen(NEHA)
+        wrong = {"password": "not-it"}
+        self.assertEqual(self.post(f"/api/users/{NEHA['id']}/setup", wrong).status_code, 403)
+        self.assertEqual(self.post(f"/api/users/{NEHA['id']}/setup").status_code, 403)      # no password at all
+        self.assertEqual(self.post("/api/admin-storage-download-db", wrong).status_code, 403)
+        self.assertEqual(self.req("POST", "/api/admin-storage-import-db", files={"file": ("b.zip", b"PK junk", "application/zip")},
+                                  data=wrong).status_code, 403)
+        # every wrong one is counted like a wrong unlock (and blocks like one)
+        self.assertEqual(sql("SELECT unlock_failures FROM users WHERE id = 'u-admin'")[0]["unlock_failures"], 4)
+        self.ok(self.admin_post(f"/api/users/{NEHA['id']}/reset"))
+        self.assertEqual(sql("SELECT unlock_failures FROM users WHERE id = 'u-admin'")[0]["unlock_failures"], 4)
+        self.assertEqual(self.post(f"/api/users/{NEHA['id']}/reset", wrong).status_code, 403)
+        self.assertEqual(self.post(f"/api/users/{NEHA['id']}/reset", wrong).status_code, 429)   # blocked now
+        self.assertEqual(self.admin_post(f"/api/users/{NEHA['id']}/setup").status_code, 429)
+        sql("UPDATE users SET unlock_failures = 0, unlock_blocked_until = NULL WHERE id = 'u-admin'")
+        self.ok(self.admin_post(f"/api/users/{NEHA['id']}/setup"))
+        self.assertTrue(self.backup().startswith(b"PK"))
+        self.assertEqual(self.restore(b"PK junk").status_code, 422)             # the right password: checked next
+
+
+class OneTimePasswordsExpire(ApiTestCase):
+    """Security review 2026-10 (#4): six words, and a one-time password nobody used within 48 hours is void."""
+
+    def test_unused_setup_expires_used_one_does_not(self):
+        from app import service
+        self.set_up(ADMIN)
+        self.seen(NEHA)
+        self.seen(VIKRAM)
+        one = self.ok(self.admin_post(f"/api/users/{NEHA['id']}/setup"))["oneTimePassword"]
+        self.ok(self.admin_post(f"/api/users/{VIKRAM['id']}/setup"))
+        with db.get_conn() as conn:
+            self.assertEqual(service.expire_setups(conn), 0)                 # fresh: nothing happens
+        # Neha uses hers in time
+        r = self.ok(self.post("/api/unlock", {"password": one}, NEHA, token=False))
+        self.tokens[NEHA["id"]] = r["session"]
+        self.ok(self.post("/api/me/activate", {"newPassword": PW[NEHA["id"]]}, NEHA))
+        sql("UPDATE users SET setup_at = '2000-01-01T00:00:00.000Z' WHERE id IN ('u-neha', 'u-vikram')")
+        with db.get_conn() as conn:
+            self.assertEqual(service.expire_setups(conn), 1)
+        self.assertEqual(sql("SELECT status FROM users WHERE id = 'u-vikram'")[0]["status"], "none")
+        self.assertEqual(sql("SELECT status FROM users WHERE id = 'u-neha'")[0]["status"], "active")
+        self.assertEqual(sql("SELECT COUNT(*) AS n FROM vaults WHERE owner_user_id = 'u-vikram'")[0]["n"], 0)
+        self.assertTrue(any(a["action"] == "setup_expired" for a in sql("SELECT action FROM audit_log WHERE user_id = 'u-vikram'")))
+        # an older database: set up before the column existed → dated from the audit log
+        self.ok(self.admin_post(f"/api/users/{VIKRAM['id']}/setup"))
+        sql("UPDATE users SET setup_at = NULL WHERE id = 'u-vikram'")
+        sql("UPDATE audit_log SET created_at = '2000-01-01T00:00:00.000Z' WHERE action = 'user_setup' AND user_id = 'u-vikram'")
+        with db.get_conn() as conn:
+            self.assertEqual(service.expire_setups(conn), 1)
+        self.assertEqual(sql("SELECT status FROM users WHERE id = 'u-vikram'")[0]["status"], "none")
 
 
 if __name__ == "__main__":

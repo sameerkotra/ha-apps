@@ -19,7 +19,7 @@ class AlertCase(ApiTestCase):
         super().tearDown()
 
     def link(self, user, service="notify.mobile_app_x"):
-        return self.ok(self.post(f"/api/admin/users/{user['id']}/notify", {"service": service}, ADMIN, token=False), 201)
+        return self.ok(self.post(f"/api/admin/users/{user['id']}/notify", {"service": service}), 201)
 
     def to(self, service="mobile_app_x"):
         return [m for s, m in self.sent if service in s]
@@ -31,16 +31,15 @@ class NotifyServices(AlertCase):
         self.seen(NEHA)
         r = self.link(NEHA, "mobile_app_neha")
         self.assertEqual(r["notify"], ["notify.mobile_app_neha"])
-        users = {u["id"]: u for u in self.ok(self.get("/api/admin/users", token=False))["users"]}
+        users = {u["id"]: u for u in self.ok(self.get("/api/admin/users"))["users"]}
         self.assertEqual(users[NEHA["id"]]["notify"], ["notify.mobile_app_neha"])
-        self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify", {"service": "notify.Bad Name"},
-                                   token=False).status_code, 422)
+        self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify", {"service": "notify.Bad Name"}).status_code, 422)
         self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify", {"service": "notify.x"}, NEHA,
                                    token=False).status_code, 403)
-        self.ok(self.delete(f"/api/admin/users/{NEHA['id']}/notify/notify.mobile_app_neha", token=False))
+        self.ok(self.delete(f"/api/admin/users/{NEHA['id']}/notify/notify.mobile_app_neha"))
         self.assertEqual(self.delete(f"/api/admin/users/{NEHA['id']}/notify/notify.mobile_app_neha",
-                                     token=False).status_code, 404)
-        self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify/test", token=False).status_code, 409)
+                                     ).status_code, 404)
+        self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify/test").status_code, 409)
 
     def test_me_shows_link_and_preferences(self):
         self.set_up(ADMIN)
@@ -109,8 +108,8 @@ class SecurityAlerts(AlertCase):
         self.set_up(ADMIN)
         self.set_up(NEHA)
         self.link(NEHA)
-        self.ok(self.patch(f"/api/users/{NEHA['id']}", {"disabled": True}, token=False))
-        self.ok(self.post(f"/api/users/{NEHA['id']}/reset", token=False))
+        self.ok(self.patch(f"/api/users/{NEHA['id']}", {"disabled": True}))
+        self.ok(self.admin_post(f"/api/users/{NEHA['id']}/reset"))
         msgs = self.to()
         self.assertTrue(any("turned off your access" in m for m in msgs))
         self.assertTrue(any("reset your Household Vault" in m for m in msgs))
@@ -164,7 +163,7 @@ class PhonesFromHomeAssistant(AlertCase):
         ha_people.refresh_blocking(True)
 
     def admin_users(self, q=""):
-        return {u["id"]: u for u in self.ok(self.get("/api/admin/users" + q, token=False))["users"]}
+        return {u["id"]: u for u in self.ok(self.get("/api/admin/users" + q))["users"]}
 
     def test_phone_linked_in_home_assistant_gets_alerts(self):
         self.set_up(ADMIN)
@@ -196,18 +195,18 @@ class PhonesFromHomeAssistant(AlertCase):
         self.assertIsNone(users[ADMIN["id"]]["ha"]["person"])
         self.link(NEHA, "notify.family_speaker")                          # an extra, added here
         self.ha.requests.clear()
-        r = self.ok(self.post(f"/api/admin/users/{NEHA['id']}/notify/test", token=False))
+        r = self.ok(self.post(f"/api/admin/users/{NEHA['id']}/notify/test"))
         self.assertEqual({x["service"] for x in r["results"]}, {"notify.mobile_app_pixel_7", "notify.family_speaker"})
         self.assertTrue(all(x["ok"] for x in r["results"]))
         self.assertEqual(sorted(n for n, _ in self.ha.notifications()), ["family_speaker", "mobile_app_pixel_7"])
         # Vikram's phone: Home Assistant had to number its action
         self.ha.requests.clear()
-        r = self.ok(self.post(f"/api/admin/users/{VIKRAM['id']}/notify/test", token=False))
+        r = self.ok(self.post(f"/api/admin/users/{VIKRAM['id']}/notify/test"))
         self.assertEqual([x["service"] for x in r["results"]], ["notify.mobile_app_vikram_s_phone_2"])
         self.assertEqual([n for n, _ in self.ha.notifications()], ["mobile_app_vikram_s_phone_2"])
         # the phone is Home Assistant's: it can't be removed here, only extras
         self.assertEqual(self.delete(f"/api/admin/users/{NEHA['id']}/notify/notify.mobile_app_pixel_7",
-                                     token=False).status_code, 404)
+                                     ).status_code, 404)
 
     def test_disabled_or_not_set_up_gets_nothing_on_their_phone(self):
         self.set_up(ADMIN)
@@ -216,22 +215,22 @@ class PhonesFromHomeAssistant(AlertCase):
         self.set_people()
         self.assertEqual(self.admin_users()[VIKRAM["id"]]["ha"]["phones"][0]["service"], "notify.mobile_app_vikram_s_phone_2")
         self.assertFalse(self.ok(self.get("/api/whoami", VIKRAM, token=False))["notifyLinked"])
-        r = self.post(f"/api/admin/users/{VIKRAM['id']}/notify/test", token=False)
+        r = self.post(f"/api/admin/users/{VIKRAM['id']}/notify/test")
         self.assertEqual(r.status_code, 409)
         self.assertIn("isn't enabled and set up", r.json()["detail"])
         with db.get_conn() as conn:
             self.assertEqual(alerts.send(conn, [VIKRAM["id"]], "hello", kind="admin"), 0)
-        self.ok(self.patch(f"/api/users/{NEHA['id']}", {"disabled": True}, token=False))
+        self.ok(self.patch(f"/api/users/{NEHA['id']}", {"disabled": True}))
         self.assertEqual(self.to("mobile_app_pixel_7"), [])               # not even "turned off your access"
         self.assertFalse(self.ok(self.get("/api/whoami", NEHA, token=False))["notifyLinked"])
         self.ha.requests.clear()
-        self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify/test", token=False).status_code, 409)
+        self.assertEqual(self.post(f"/api/admin/users/{NEHA['id']}/notify/test").status_code, 409)
         self.assertEqual(self.ha.notifications(), [])
 
     def test_no_person_or_phone_says_so_and_follows_home_assistant(self):
         self.set_up(ADMIN)
         self.set_up(NEHA)
-        r = self.post(f"/api/admin/users/{ADMIN['id']}/notify/test", token=False)
+        r = self.post(f"/api/admin/users/{ADMIN['id']}/notify/test")
         self.assertEqual(r.status_code, 409)
         self.assertIn("no phone linked in Home Assistant", r.json()["detail"])
         self.assertFalse(self.admin_users()[ADMIN["id"]]["ha"]["known"])     # never read yet

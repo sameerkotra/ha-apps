@@ -1,6 +1,4 @@
-"""Guest Wi-Fi on the Home Assistant dashboard."""
-import base64
-
+"""Guest Wi-Fi page (nothing is sent to Home Assistant)."""
 from base import ADMIN, NEHA, VIKRAM, ApiTestCase, sql
 
 from app import alerts, guest_wifi, ha_client, qrcode
@@ -16,25 +14,22 @@ class GuestWifi(ApiTestCase):
         self.sent = []
         self._orig = alerts.deliver
         alerts.deliver = lambda services, title, message: self.sent.append(message)
-        self._push = guest_wifi.push_async
-        guest_wifi.push_async = lambda delay=1.0: None           # tests call push_blocking themselves
         self.set_up(ADMIN)
         self.set_up(NEHA)
         self.unlock(ADMIN)
-        self.ok(self.post(f"/api/admin/users/{NEHA['id']}/notify", {"service": "notify.mobile_app_neha"}, token=False), 201)
+        self.ok(self.post(f"/api/admin/users/{NEHA['id']}/notify", {"service": "notify.mobile_app_neha"}), 201)
         self.hh = self.vaults()["Household"]["id"]
         self.wifi = self.add_item(self.hh, title="Guest network", username="Sharma-Guest", password="sunny-day-42", template="wifi")
 
     def tearDown(self):
         ha_client.request, ha_client.has_token = self._req, self._tok
         alerts.deliver = self._orig
-        guest_wifi.push_async = self._push
         super().tearDown()
 
     def publish(self, **body):
         return self.put(f"/api/vaults/{self.hh}/items/{self.wifi['id']}/guest-wifi", dict({"security": "WPA"}, **body))
 
-    def test_publish_sensor_page_and_follow_the_item(self):
+    def test_publish_page_and_follow_the_item(self):
         self.ok(self.publish())
         self.assertTrue(any("put the guest Wi-Fi (Sharma-Guest)" in m for m in self.sent))
         self.assertTrue(self.ok(self.get(f"/api/vaults/{self.hh}/items/{self.wifi['id']}"))["guestWifi"])
@@ -47,25 +42,17 @@ class GuestWifi(ApiTestCase):
         self.assertEqual(self.ok(self.get("/api/guest-wifi", NEHA, token=False))["password"], "sunny-day-42")
         self.ok(self.publish())
         self.assertTrue(self.ok(self.get("/api/me", NEHA, token=False))["guestWifi"])
-        # the sensor: network name as state, the QR code as its picture, no password attribute unless asked
-        guest_wifi.push_blocking()
-        m, path, body = self.calls[-1]
-        self.assertEqual((m, path, body["state"]), ("POST", "/states/sensor.household_vault_guest_wifi", "Sharma-Guest"))
-        self.assertNotIn("password", body["attributes"])
-        svg = base64.b64decode(body["attributes"]["entity_picture"].split(",", 1)[1]).decode()
-        self.assertEqual(svg, qrcode.svg(qrcode.wifi_text("Sharma-Guest", "sunny-day-42", "WPA")))
-        self.ok(self.publish(showPassword=True))
-        guest_wifi.push_blocking()
-        self.assertEqual(self.calls[-1][2]["attributes"]["password"], "sunny-day-42")
+        # nothing is ever sent to Home Assistant (security review 2026-10: no sensor any more)
+        self.assertEqual([c for c in self.calls if "/states/" in c[1]], [])
+        self.assertNotIn("entity", g)
         # changing the item's password changes the published one
         self.ok(self.patch(f"/api/vaults/{self.hh}/items/{self.wifi['id']}", {"password": "rainy-night-7"}))
         self.assertEqual(sql("SELECT password FROM guest_wifi")[0]["password"], "rainy-night-7")
-        # trashing the item takes it off the dashboard
+        # trashing the item takes it off the page
         self.ok(self.delete(f"/api/vaults/{self.hh}/items/{self.wifi['id']}"))
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM guest_wifi")[0]["n"], 0)
         self.assertFalse(self.ok(self.get("/api/guest-wifi", NEHA, token=False))["published"])
-        guest_wifi.push_blocking()
-        self.assertEqual(self.calls[-1][:2], ("DELETE", "/states/sensor.household_vault_guest_wifi"))
+        self.assertEqual([c for c in self.calls if "/states/" in c[1]], [])
 
     def test_rules(self):
         pv = self.personal()["id"]
@@ -89,8 +76,20 @@ class GuestWifi(ApiTestCase):
         self.ok(self.patch(f"/api/vaults/{self.hh}/items/{self.wifi['id']}", {"template": None}))
         self.assertEqual(sql("SELECT COUNT(*) AS n FROM guest_wifi")[0]["n"], 0)
 
-    def test_ensure_puts_it_back_after_ha_restarts(self):
-        self.ok(self.publish())
-        ha_client.request = lambda m, p, body=None, timeout=10: (self.calls.append((m, p, body)) or ((404, b"") if m == "GET" else (200, b"{}")))
-        guest_wifi.ensure_blocking()
-        self.assertEqual([c[0] for c in self.calls[-2:]], ["GET", "POST"])
+    def test_old_sensor_is_removed_once_at_start_up(self):
+        """An older version kept a sensor in Home Assistant: start-up deletes it; nothing is ever posted."""
+        state = {"exists": True}
+
+        def req(m, p, body=None, timeout=10):
+            self.calls.append((m, p, body))
+            if m == "DELETE":
+                state["exists"] = False
+                return 200, b""
+            return (200, b"{}") if state["exists"] else (404, b"")
+        ha_client.request = req
+        self.assertTrue(guest_wifi.remove_old_sensor_blocking())
+        self.assertEqual([c[:2] for c in self.calls], [("GET", "/states/sensor.household_vault_guest_wifi"),
+                                                        ("DELETE", "/states/sensor.household_vault_guest_wifi")])
+        self.calls.clear()
+        self.assertTrue(guest_wifi.remove_old_sensor_blocking())
+        self.assertEqual([c[0] for c in self.calls], ["GET"])

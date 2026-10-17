@@ -227,33 +227,28 @@ inside the Home Assistant app, use a screenshot or paste the key). Only the
 resulting text goes to Home Assistant. Codes you already have are marked
 ("you already have this code in GitHub (Personal)") and left unticked.
 
-## Guest Wi-Fi on your dashboard
+## Guest Wi-Fi page
 
-Guests scan a QR code on your Home Assistant dashboard (or on the app's
-**📶 Guest Wi-Fi** page, which works without unlocking) to join your guest
-network. Off until someone publishes one.
+Guests scan a QR code on the app's **📶 Guest Wi-Fi** page — which every
+set-up person can open without unlocking — to join your guest network. Off
+until someone publishes one. **Nothing is sent to Home Assistant**: there is no
+sensor and no dashboard card (the old `sensor.household_vault_guest_wifi` is
+removed at start-up if a previous version left it behind — a state attribute
+stayed in Home Assistant's history, exports and backups even after *Stop
+showing*).
 
 1. In **Household**, make a **Wi-Fi** item (network name + password) — or on an
    existing login: ⋯ → *This is a Wi-Fi network*.
-2. ⋯ → **Show as guest Wi-Fi on the dashboard**, pick the security, and whether
-   to show the password as text too. Without that, the password is only inside
-   the QR code (which has to contain it for phones to join): the page and the
-   sensor don't show it as text, and the page has no Show or Copy button.
-3. On a dashboard: *Add card* → **Picture entity** → `sensor.household_vault_guest_wifi`.
+2. ⋯ → **Show as guest Wi-Fi**, pick the security, and whether to show the
+   password as text too. Without that, the password is only inside the QR code
+   (which has to contain it for phones to join): the page doesn't show it as
+   text and has no Show or Copy button.
+3. Open **📶 Guest Wi-Fi** (sidebar, or on the lock screen).
 
-It follows the item: change the password and the dashboard updates; delete the
+It follows the item: change the password and the page updates; delete the
 item (or *Stop showing*) to remove it. **This password leaves the encrypted
-vault** on purpose — it's in the QR code, readable in the app's database and
-in Home Assistant (including its history and backups). Use it for a guest
-network, not your main one. To keep it out of Home Assistant's history, add to
-`configuration.yaml`:
-
-```yaml
-recorder:
-  exclude:
-    entities:
-      - sensor.household_vault_guest_wifi
-```
+vault** on purpose — it's in the QR code and readable in the app's database
+(so in backups of the app). Use it for a guest network, not your main one.
 
 ## Emergency access
 
@@ -366,11 +361,19 @@ you now get Midnight.
 ## Admin
 
 Admins are the Home Assistant users listed in the **admin_users** option. They
-open **🛡 Admin** from the sidebar (or **Manage people** on the lock screen,
-without unlocking).
+open **🛡 Admin** from the sidebar. Until an admin is set up themselves,
+**Manage people** on the lock screen works without unlocking (so the first admin
+can set up themselves and others); from then on Admin needs their unlocked
+session, and **setting someone up, resetting them, downloading a backup and
+restoring one ask for the admin's master password again** (wrong ones count
+like wrong unlocks). Why: every app, custom card and proxied site inside Home
+Assistant shares one origin with this app, so a request that only carries the
+admin's Home Assistant identity could come from any of them.
 
 - **People**: everyone with a Home Assistant login, with their status (*Not set
-  up*, *Waiting for first unlock*, *Active*). **Enable and set up**, the
+  up*, *Waiting for first unlock*, *Active*). **Enable and set up** (a
+  six-word one-time password, good for 48 hours — unused, it expires and the
+  person shows as *Not set up* again), the
   **Access** switch (turning it off signs them out and takes them out of
   Household and shared vaults, which get new passwords; their Personal vault is
   kept; turning it back on returns them to Household), **Reset…** (only for a
@@ -423,15 +426,15 @@ The app's **Configuration** tab has a single option:
 - **Readable on purpose**, each only if you use it: **vault names** and who is in
   each vault; the **names and dates of items with expiry reminders** (an admin
   can turn the names off — the names already kept go too); the **guest Wi-Fi**
-  you publish. An activity log records actions (who, what, when) but never
-  contents, for a year by default (App settings).
+  you publish (in the app's database only). An activity log records actions
+  (who, what, when) but never contents, for a year by default (App settings).
 - **Sent outside your home network**: only the breach check, if an admin allows
   it and you turn it on — the first 5 characters of password hashes go to
   `api.pwnedpasswords.com`. Nothing else leaves Home Assistant, and site icons
   are never fetched.
-- **Sent to Home Assistant**: notifications (no secrets; names, vault names and
-  network names), and the guest Wi-Fi sensor if published. The app reads the
-  people (`person.*`) and their phones from Home Assistant.
+- **Sent to Home Assistant**: notifications only (no secrets; names, vault names
+  and network names). The app reads the people (`person.*`) and their phones
+  from Home Assistant. It keeps no sensor or state there.
 
 ## Backups
 
@@ -456,6 +459,10 @@ The app's **Configuration** tab has a single option:
 - Turn on Home Assistant multi-factor authentication; use HTTPS.
 - Copied passwords can be read by clipboard-history tools; prefer 👁 on shared
   screens.
+- The app runs as its own user inside its container, not as root, and offers
+  no API documentation pages.
+- An admin who adds a notify service to someone's alerts is announced to that
+  person on the services they already had.
 - Quick unlock trusts the device: anyone who can unlock that phone or computer
   with its fingerprint or PIN can unlock your vault on it. Remove devices you no
   longer use.

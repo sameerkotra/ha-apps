@@ -36,7 +36,7 @@ Every vault is a real **KeePass KDBX 4 file**, **encrypted at rest** with its ow
   - Account recovery. **A forgotten master password can't be recovered** — the admin can only reset the person (their Personal vault is wiped). Shared vaults survive.
   - A separate vault or app for 2FA codes (a deliberate choice: the code lives with its login).
   - Copies of vault files outside the app's own `/data` (the app maps no other folder). The opt-in **personal copies** (§12.10) stay in `/data`.
-  - HA sensors, except one **opt-in** sensor: the guest Wi-Fi (§12.9). Otherwise no vault contents are sent to HA. Notifications (§12.7) never contain secrets; expiry reminders name the item unless an admin turns that off.
+  - HA sensors — none. No vault contents are ever sent to HA (the guest Wi-Fi, §12.9, lives on the app's own page only; the sensor older versions kept is removed at start-up). Notifications (§12.7) never contain secrets; expiry reminders name the item unless an admin turns that off.
 
 ## 2. Stack & file layout
 - **Backend:** FastAPI + uvicorn on `python:3.12-alpine` (+ `tzdata`), port **8101**, pinned deps as in the sibling apps (`fastapi`, `uvicorn`, `python-multipart`, plus `cryptography` and `argon2-cffi`).
@@ -66,7 +66,7 @@ household_vault/
 
 ## 3. Manifest & options
 - **Manifest:** `slug: household_vault`, `stage: experimental`, `url: https://github.com/sameerkotra/ha-apps`, `ingress: true`, `ingress_port: 8101`, **no `ports:`**, `panel_icon: mdi:shield-key`, `panel_admin: false`.
-- **Permissions:** `homeassistant_api: true`, used to list HA users through their Person entities (`GET /api/states`, `person.*` with an `attributes.user_id`), the same way Splitpot does, to read each person's phones (`POST /api/template`, `GET /api/services`), to call `notify` (§12.7), and — only when someone publishes one — to keep the guest Wi-Fi sensor (§12.9). **No `map:`** — only `/data`, which the Supervisor always maps. `hassio_api`/`auth_api`/`docker_api`/`full_access` are false and `apparmor: true`.
+- **Permissions:** `homeassistant_api: true`, used to list HA users through their Person entities (`GET /api/states`, `person.*` with an `attributes.user_id`), the same way Splitpot does, to read each person's phones (`POST /api/template`, `GET /api/services`), to call `notify` (§12.7), and once at start-up to remove the guest Wi-Fi sensor an older version kept (§12.9). **No `map:`** — only `/data`, which the Supervisor always maps. `hassio_api`/`auth_api`/`docker_api`/`full_access` are false and `apparmor: true`.
 - **Arches:** amd64, aarch64, armv7 (Argon2 on a Pi 3 is slow — see §5.1).
 
 **Settings live in the app (Admin → App settings), not on the app's Configuration tab** (`HA_ADDON_PATTERNS.md` §4). The only app option is:
@@ -102,7 +102,7 @@ App settings (Admin → App settings, admins only; `app_settings` table; validat
 - **Users.**
   - **Sync.** The user list mirrors HA: every `person.*` linked to a user account is synced (name updates, new people added) at startup, and at most every 5 minutes when the Admin pages load. Nobody is ever deleted.
   - **New people are disabled.** Until an admin enables them they see only "Ask an admin to give you access" (and the whoami page); every other API call returns 403.
-  - **Enable and set up** (Admin → Users): the server generates a **one-time master password** (a 4-word passphrase), creates the person's empty Personal vault with it, and shows it to the admin **once** (with *Copy* and *Print a slip*) to hand over in person. The person is `temporary`.
+  - **Enable and set up** (Admin → Users): the server generates a **one-time master password** (a 6-word passphrase, good for 48 hours — §4.2 #22), creates the person's empty Personal vault with it, and shows it to the admin **once** (with *Copy* and *Print a slip*) to hand over in person. The person is `temporary`.
   - **First unlock** with the one-time password: the person must choose their own master password (strength rules apply; it must differ). The server re-encrypts Personal, **purges the older versions**, creates the person's **key-ring keypair** (§5.2), and sets `status = 'active'`. From then on the admin doesn't know anything that opens it.
   - **Only active people** can join Household, be added to shared vaults, or remember vault passwords.
   - **Disabled people** get a 403 page ("An admin has turned off Household Vault for you"); their sessions end at once; they're removed from every shared vault and Household, and their remembered passwords are deleted. Random-password vaults they were in are re-keyed (§5.4); owners of same-password vaults are asked to change the password.
@@ -154,9 +154,11 @@ HA backups made *before* a change still contain the old files, locked with the o
 | 15 | **Bugs in crypto handling.** | Well-known primitives only (`cryptography`, `argon2-cffi`); the KDBX format code is in-house and covered by round-trip tests; no new cryptography is invented. **An independent security review is pending** — hence `stage: experimental` and the advice to keep an own KeePass copy. |
 | 16 | **Emergency access abused** — a contact asks while you're away. | You're told at once (banner + notify) and can deny during the waiting period; nothing is released while an admin has you disabled (you couldn't deny); the Emergency vault can't be shared or edited by hand; only marked items are in it. **Residual:** if you never look during the wait, they get the marked items — choose contacts and the wait accordingly. |
 | 17 | **Quick unlock** turns "can unlock this phone" into "can unlock your vault on this phone". A script on HA's origin (#1) could also prompt for the passkey and recover the master password. | Needs the device's fingerprint/face/PIN (user verification); master password again every 14 days (a rule the page honours — the server can't tell a passkey unlock from a typed one if a script leaves out `quickUnlockId`); 5 failures remove the device; removed on every master-password change; an alert when a device is added. Remove devices you don't use. |
-| 18 | **Guest Wi-Fi** password readable outside the vault (DB, the QR picture, HA history and backups). | Opt-in per Household *Wi-Fi item* only; the dialog says so; other members are told; follows the item and disappears with it; DOCS shows the recorder exclusion. Use a guest network. |
+| 18 | **Guest Wi-Fi** password readable outside the vault (DB, the QR picture). | Opt-in per Household *Wi-Fi item* only; the dialog says so; other members are told; follows the item and disappears with it; never sent to HA (security review 2026-10: a state attribute stayed in the recorder, exports and HA backups). Use a guest network. |
 | 19 | **Reminder titles** readable in the DB and in notifications. | Only for items with a reminder; an admin can turn titles off (`reminder_titles`). |
 | 20 | **Personal copies** in `/data/copies` (§12.10). | Only in the app's own storage and backups; off by default; each is locked with its owner's master password and holds only what they can open. **Residual:** file names show HA user names. |
+| 21 | **Same origin**: every ingress app, custom card and proxied site runs on HA's origin and can send requests carrying the admin's HA identity (`Sec-Fetch-Site: same-origin`). | Admin routes need the admin's unlocked session (the token lives in the Vault tab's memory) once the admin is set up; set up, reset, backup download (a POST) and restore need the master password again, counted like unlock attempts (§9.1). Before the admin is set up the people routes work without a session, so the first admin can set up themselves. |
+| 22 | **One-time passwords**: the temporary vault file sits in /data (and HA backups) and the admin knows its password. | Six words (~63 bits); unused after 48 h (`service.SETUP_MAX_HOURS`) the person is set back to *not set up* by housekeeping (`expire_setups`, `users.setup_at`, audit `setup_expired`). |
 
 ## 5. Crypto & KeePass compatibility
 ### 5.1 Vault files
@@ -297,10 +299,10 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
 | `/api/emergency…` · PUT `/api/vaults/{id}/items/{xid}/emergency` | 🔑 | Emergency access (§12.4) |
 | `/api/me/quick-unlock…` · GET `/api/quick-unlock/options` | 🔑 active · enabled | Passkey quick unlock (§12.5) |
 | PUT / DELETE `/api/vaults/{id}/items/{xid}/guest-wifi` · GET / DELETE `/api/guest-wifi` | 🔑 Household editor · active (GET works without unlocking) | Guest Wi-Fi (§12.9) |
-| GET `/api/admin/users[?refresh=1]` · POST `/api/users/{id}/setup` · PATCH `/api/users/{id}` · POST `/api/users/{id}/reset` · `…/unblock` | admin | List (with `status` and phones from HA) · enable and set up (returns the one-time password **once**) · `{disabled}` · reset · clear the wrong-password wait |
+| GET `/api/admin/users[?refresh=1]` · POST `/api/users/{id}/setup` · PATCH `/api/users/{id}` · POST `/api/users/{id}/reset` · `…/unblock` | admin (+ unlocked session once set up; setup and reset: `{password}`, the admin's master password) | List (with `status` and phones from HA) · enable and set up (returns the one-time password **once**) · `{disabled}` · reset · clear the wrong-password wait |
 | GET `/api/admin/notify-services` · POST / DELETE `/api/admin/users/{id}/notify[/{service}]` · POST `…/notify/test` | admin | Extra notify services (§12.7) |
 | GET / PUT `/api/admin/settings` | admin | App settings: the shared payload `{values, defaults, meta, groups, …}` (`meta` replaces the old `labels`: label, help, group, kind, range, …) plus `kdf, version, personalCopies` and the session counts; PUT now answers the same as GET |
-| GET `/api/admin-storage-download-db` · POST `/api/admin-storage-import-db` | admin | Encrypted-only backup and restore (§9.1) |
+| POST `/api/admin-storage-download-db` `{password}` · POST `/api/admin-storage-import-db` (form: `file`, `password`) | admin, unlocked, master password | Encrypted-only backup and restore (§9.1). A POST with the password: a link anyone on HA's origin could follow isn't enough (§4.2 #21) |
 | GET `/api/restore-notes` | enabled | What the last restore undid (§4.2 #11): all of it for an admin, only the rows about them for anyone else |
 
 ## 9. Frontend
@@ -368,7 +370,7 @@ CREATE TABLE quick_unlock (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES
   - packaging (`test_packaging.py`): `config.yaml`, versions, docs, icons, the "No admin yet" flag and banner, nothing personal in any text file;
   - shared (`tests/common_tests/`, copies): `test_shared_copies.py` and the shared modules' own tests (whoami, auth_core, db_core, settings_core, people_admin, web_security, backup_core); `tests/_env.py` is built on `common_tests/env.py` and the fake HA is `common_tests/fake_ha.py`.
 - **Checked by hand:** the UI in Chromium (Playwright), including quick unlock with a virtual authenticator.
-- **Still to check by hand:** downloads opened in KeePassXC/KeePassDX and a real KeePassXC file imported; the camera and passkeys inside the HA phone app; the breach check, notify and the guest Wi-Fi sensor on a real HA box.
+- **Still to check by hand:** downloads opened in KeePassXC/KeePassDX and a real KeePassXC file imported; the camera and passkeys inside the HA phone app; the breach check and notify on a real HA box; the container starting as the `vault` user (run.sh, su-exec) on a real HA box.
 
 ## 12. Features on top of the core
 All of them stay inside the model above: **SQLite only**, files always encrypted at rest, secrets in memory only while someone is unlocked.
@@ -431,10 +433,10 @@ CREATE TABLE emergency_contacts (owner_id TEXT NOT NULL REFERENCES users(id), co
 - `reminders(vault_id, item_id, title, expires_on, remind_days, stage)` is refreshed whenever a vault is opened or saved (not for Emergency vaults, not for items set to "don't remind"); a half-hourly pass sends "expires in N days" (stage 1) and "expires today / expired on …" (stage 2) to the vault's members; items long expired when first seen are silent; a new date resets the stage. `reminder_titles` (App setting, default on) decides whether the title is kept.
 - **Forms** (`HouseholdVault.Template`: wifi, bank, insurance, vehicle, identity, licence, software, utility, membership) are presets over the three types: preset custom field names (some hidden), a label for the expiry date, an icon. Empty preset fields aren't saved.
 
-### 12.9 Guest Wi-Fi on the dashboard (opt-in)
-- A Household editor publishes a **Wi-Fi item** (form `wifi`): `guest_wifi` (one row: vault, item, ssid, password, security, show_password) and `sensor.household_vault_guest_wifi` via `POST /api/states` (state = SSID; `entity_picture` = `data:image/svg+xml` QR of `WIFI:T:…;S:…;P:…;;`; `password` attribute only with *show password*). `app/qrcode.py` is a Python port of the `qr.js` encoder (tests compare module-for-module). Re-posted every 5 minutes if HA lost it (states set this way don't survive an HA restart); deleted on unpublish.
-  *(security review 2026-10)* `GET /api/guest-wifi` and the sensor's `password` attribute carry the password **as text only when `show_password` is on**; the QR code (the sensor's picture and the page's image) always encodes it, since that's how a phone joins — the page says "in the code only" and has no Show / Copy then.
-- It follows the item on every Household save (new password → update; item trashed, no longer a Wi-Fi item, no network name → unpublished). `GET /api/guest-wifi` works without unlocking for active people (the app's Guest Wi-Fi page).
+### 12.9 Guest Wi-Fi page (opt-in)
+- A Household editor publishes a **Wi-Fi item** (form `wifi`): `guest_wifi` (one row: vault, item, ssid, password, security, show_password). The app's **📶 Guest Wi-Fi** page shows a QR of `WIFI:T:…;S:…;P:…;;` (`app/qrcode.py` is a Python port of the `qr.js` encoder; tests compare module-for-module). **Nothing is sent to Home Assistant** (security review 2026-10): the former `sensor.household_vault_guest_wifi` is gone, and one left behind by an older version is deleted once at start-up (`guest_wifi.remove_old_sensor_blocking`).
+  `GET /api/guest-wifi` carries the password **as text only when `show_password` is on**; the QR code always encodes it, since that's how a phone joins — the page says "in the code only" and has no Show / Copy then.
+- It follows the item on every Household save (new password → update; item trashed, no longer a Wi-Fi item, no network name → unpublished). `GET /api/guest-wifi` works without unlocking for active people.
 
 ### 12.10 Personal copies in /data (opt-in)
 - App setting `personal_copies` (default off). When on, `copies.py` keeps **one `.kdbx` per active person** at `/data/copies/<HA user name>.kdbx` (name cleaned; the user id is added if two clash), built like *Download all my passwords*: Personal at the root, each other vault as a folder, Recycle Bins left out, TOTP in both `otp` and `TimeOtp-*`, **locked with the person's master password** (Argon2id with Personal's settings).

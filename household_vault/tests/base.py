@@ -50,6 +50,7 @@ class ApiTestCase(unittest.TestCase):
         ha_notify._targets_cache = None
         self.client = ingress_client(app)
         self.tokens = {}
+        self.passwords = dict(PW)              # a test that changes someone's master password updates it here
 
     def req(self, method, path, user=ADMIN, token=True, **kw):
         h = dict(headers(user))
@@ -87,12 +88,30 @@ class ApiTestCase(unittest.TestCase):
         self.seen(user)
         if user is not ADMIN:
             self.seen(ADMIN)
-        one = self.ok(self.post(f"/api/users/{user['id']}/setup", user=ADMIN, token=False))["oneTimePassword"]
+        one = self.ok(self.admin_post(f"/api/users/{user['id']}/setup"))["oneTimePassword"]
         r = self.ok(self.post("/api/unlock", {"password": one}, user, token=False))
         self.assertTrue(r["mustChangePassword"])
         self.tokens[user["id"]] = r["session"]
         self.ok(self.post("/api/me/activate", {"newPassword": PW[user["id"]]}, user))
         return one
+
+    def admin_post(self, path, json=None, **kw):
+        """An admin route that needs the admin's master password once they are set up (security review 2026-10):
+        with their unlocked session and password then, as before while the admin isn't set up yet."""
+        if ADMIN["id"] in self.tokens:
+            return self.post(path, dict(json or {}, password=self.passwords[ADMIN["id"]]), user=ADMIN, **kw)
+        return self.post(path, json, user=ADMIN, token=False, **kw)
+
+    def backup(self):
+        """The backup zip bytes (the admin's master password and unlocked session)."""
+        r = self.admin_post("/api/admin-storage-download-db")
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.content
+
+    def restore(self, data, name="b.zip"):
+        """POST the backup zip with the admin's master password; the response."""
+        return self.req("POST", "/api/admin-storage-import-db", files={"file": (name, data, "application/zip")},
+                        data={"password": self.passwords[ADMIN["id"]]})
 
     def unlock(self, user):
         r = self.ok(self.post("/api/unlock", {"password": PW[user["id"]]}, user, token=False))

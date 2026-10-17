@@ -84,12 +84,13 @@ class PersonalCopies(ApiTestCase):
         # a new master password: the copy opens with it (and not the old one)
         new = "cedar-violin-harbor-rocket-meadow-tulip"
         self.ok(self.post("/api/me/password", {"current": PW["u-admin"], "new": new}))
+        self.passwords["u-admin"] = new
         copies.flush()
         self.assertIn("My email", self.titles("admin.kdbx", new))
         with self.assertRaises(kdbx.WrongKey):
             self.titles("admin.kdbx", PW["u-admin"])
         # the admin backup carries the copies, and restoring brings them back
-        z = zipfile.ZipFile(io.BytesIO(self.get("/api/admin-storage-download-db").content))
+        z = zipfile.ZipFile(io.BytesIO(self.backup()))
         self.assertIn("copies/admin.kdbx", z.namelist())
         # disabling someone deletes their file; turning the setting off deletes all
         self.ok(self.patch("/api/users/u-neha", {"disabled": True}))
@@ -100,8 +101,8 @@ class PersonalCopies(ApiTestCase):
 
     def test_restore_keeps_copies(self):
         self.turn_on()
-        backup = self.get("/api/admin-storage-download-db").content
+        backup = self.backup()
         os.remove(self.path("admin.kdbx"))
-        self.ok(self.req("POST", "/api/admin-storage-import-db", files={"file": ("b.zip", backup, "application/zip")}))
+        self.ok(self.restore(backup))
         self.assertTrue(os.path.exists(self.path("admin.kdbx")))
         self.assertEqual({r["stale"] for r in sql("SELECT stale FROM user_copies")}, {1})
