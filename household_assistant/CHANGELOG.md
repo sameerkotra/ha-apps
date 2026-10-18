@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.2
+
+### Fixed
+
+- Choosing a *Did you mean* answer on someone else's question always says there's no such question (it could say "still answering the last question" while one of your own was being answered).
+
 ## 1.5.1
 
 ### Fixed

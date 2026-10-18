@@ -387,6 +387,9 @@ class DidYouMean(QuickHousehold):
         bob = identity_headers("u_bob", "bob", "Bob")
         self.assertEqual(self.c.get("/api/me", headers=bob).status_code, 200)
         self.assertEqual(self.c.post(f"/api/ask/{q['id']}/choose", json={"choice": 0}, headers=bob).status_code, 404)
+        with mock.patch.object(engine, "_thread_running_for", lambda uid: True):   # even while Bob's own is running
+            self.assertEqual(self.c.post(f"/api/ask/{q['id']}/choose", json={"choice": 0}, headers=bob).status_code,
+                             404)
 
 
 class NotWhatIAsked(QuickHousehold):

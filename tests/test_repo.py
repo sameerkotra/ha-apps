@@ -28,7 +28,7 @@ DOCS = "household_docs"
 DOCS_VERSION = "1.6.2"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.5.1"
+ASSISTANT_VERSION = "1.5.2"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
 PROXY_VERSION = "0.6.6"

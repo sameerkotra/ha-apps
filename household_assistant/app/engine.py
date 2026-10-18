@@ -935,12 +935,12 @@ def choose(qid: str, idx: int, user: dict) -> dict:
     why = can_ask(user)
     if why:
         raise PermissionError(why)
-    if _thread_running_for(user["id"]):
-        raise LimitError("Still answering the last question.")
     with db.get_conn() as conn:
         q = conn.execute("SELECT * FROM questions WHERE id = ? AND user_id = ?", (qid, user["id"])).fetchone()
-        if q is None:
+        if q is None:                                   # someone else's question: no such question, whatever else
             raise LookupError("No such question.")
+        if _thread_running_for(user["id"]):
+            raise LimitError("Still answering the last question.")
         try:
             data = json.loads(q["quick"] or "{}")
         except ValueError:
