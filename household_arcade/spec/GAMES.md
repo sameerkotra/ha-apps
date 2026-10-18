@@ -642,7 +642,7 @@ The two-phone lockstep play of Snake Duel, Paddle Duel, Tank Battle and Carrom (
 with `lockstep.js`, the kit's lockstep session (`opts.live`, `liveStatus()`), the `lockstep` / `liveModes` /
 `liveTurns` registration and the games' seat-2 views and input forwarding. The rules files' leftover two-player code
 (Tank Battle's `together` / `against`, the `phones` modes of Paddle Duel, Snake Duel and Carrom, their checksums and
-reports) was taken out in 1.12.4.
+reports) was taken out in the 2026-10-13 review fixes.
 
 ## Wave 5 additions
 

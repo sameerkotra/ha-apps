@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.12.5
+
+- **No longer experimental**: Household Arcade is now a normal release — Home Assistant no longer shows the experimental badge, and the "Under development" notes are gone from the README, the docs and the app store description.
+
 ## 1.12.4
 
 - **Children's play time can't be talked down**: a game whose page stops sending signs of life is counted up to its last one and two minutes more (it counted almost nothing before, and its score still saved); a score that comes later counts the game's time too. Pauses leave out at most 15 minutes a game and **30 minutes a day** over all a child's games, so many short games no longer add up to free time. A game that runs past midnight counts on each day for its part.

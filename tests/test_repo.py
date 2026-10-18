@@ -19,7 +19,7 @@ FINANCE = "finance"
 FINANCE_VERSION = "1.4.4"
 # Household Arcade: a newer app, built the same way as the six above, at its own version.
 ARCADE = "household_arcade"
-ARCADE_VERSION = "1.12.4"
+ARCADE_VERSION = "1.12.5"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
 RECEIPTS_VERSION = "1.3.4"
@@ -202,10 +202,11 @@ class RepositoryTests(unittest.TestCase):
         for slug in ADDONS + (FINANCE, ARCADE, RECEIPTS, DOCS, ASSISTANT, PROXY):   # no other app publishes a port
             self.assertNotRegex(read(slug, "config.yaml"), r"(?m)^ports:")
 
-    def test_arcade_is_under_development(self):
-        self.assertRegex(read(ARCADE, "config.yaml"), r"(?m)^stage: experimental")
-        self.assertIn("Under development", read(ARCADE, "README.md"))
-        self.assertIn("[Household Arcade](household_arcade) | 🤖 Optional | **Under development.**", read("README.md"))
+    def test_arcade_is_a_normal_release(self):
+        self.assertNotRegex(read(ARCADE, "config.yaml"), r"(?m)^stage:")
+        for name in ("README.md", "DOCS.md"):
+            self.assertNotIn("Under development", read(ARCADE, name))
+        self.assertIn("[Household Arcade](household_arcade) | 🤖 Optional | Classic games", read("README.md"))
 
     def test_docs_is_a_normal_release_and_says_files_are_plain(self):
         self.assertNotRegex(read(DOCS, "config.yaml"), r"(?m)^stage:")

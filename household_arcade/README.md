@@ -4,9 +4,6 @@
 > endorsed by Home Assistant or Nabu Casa. It was built with Claude, Anthropic's AI model, and is
 > provided as-is: try it out first, and keep your own backups.
 
-> 🚧 **Under development.** The games and features are still changing from one version to the next: some
-> games may need tuning, and saved games or settings may change in a later version.
-
 Classic arcade games for everyone in a Home Assistant home, played from the
 Home Assistant sidebar on a computer or in the Companion app on a phone.
 Everyone plays as themselves — recognised by their Home Assistant account,

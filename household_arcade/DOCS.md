@@ -1,8 +1,5 @@
 # Household Arcade
 
-> 🚧 **Under development.** Household Arcade is still changing from one version to the next. Some games
-> may need tuning; tell us what feels wrong.
-
 Household Arcade is a small collection of classic arcade games for everyone in
 a Home Assistant home. It opens from the Home Assistant sidebar on a computer
 and in the Companion app on a phone. There is no separate login: everyone plays

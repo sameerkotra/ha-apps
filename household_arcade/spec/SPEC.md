@@ -917,7 +917,7 @@ frames), and were taken out rather than kept half-working. A `matches` row of ki
 shown as it ended (`settle` closes a leftover one as `timeout`, no result). What remains of two-player play: the
 one-screen modes (Snake Duel's *Two players*, the board games, Carrom's *Two players* / *Doubles*) and turn by
 turn (§13.5). The rules files' leftover two-phone code paths (Tank Battle's `together` / `against`, Paddle Duel's,
-Snake Duel's and Carrom's `phones`, and their checksums and reports) were taken out in 1.12.4.
+Snake Duel's and Carrom's `phones`, and their checksums and reports) were taken out in the 2026-10-13 review fixes.
 
 ### 13.5 Step 3 — Turn by turn (built)
 
@@ -1365,7 +1365,7 @@ From the October 2026 security review (`SHARED_CODE_PLAN.md` §11):
 - **Cross-site requests**: the guard middleware runs `web_security.refuse_cross_site` right after the ingress check — any method but GET/HEAD/OPTIONS whose `Sec-Fetch-Site` is `cross-site` or `same-site` gets 403 `{"detail": "Forbidden: cross-site request"}`; `same-origin`, `none` and a missing header pass. The live WebSocket's origin check is `web_security.cross_origin_websocket`.
 - **Backups without secrets**: the download blanks the secret App settings (`ai_api_key`) in the copy (`settings.REGISTRY.scrub_secrets`); a restore keeps this install's value for each one the file leaves blank (`saved_secrets` before, `keep_secrets` after the migrations; a value the file carries is used).
 
-## Review fixes (2026-10-13, 1.12.4)
+## Review fixes (2026-10-13)
 
 - **Requests**: bodies are capped at 64 KB counted as they arrive (`web_security.BodyLimit`; the backup import
   streams with its own limit); uvicorn's WebSocket messages at 64 KB (`--ws-max-size`); a live link closes after

@@ -1,13 +1,11 @@
 name: "Household Arcade"
-version: "1.12.4"
+version: "1.12.5"
 slug: household_arcade
 description: >-
   Classic arcade games for everyone in the home, played from the Home Assistant
   sidebar or the Companion app: personal bests, a household leaderboard and
   play-time limits for children. Everyone plays as their Home Assistant account.
-  Under development — games and features are still changing.
 url: https://github.com/sameerkotra/ha-apps
-stage: experimental
 arch:
   - amd64
   - aarch64
