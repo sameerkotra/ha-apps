@@ -522,6 +522,10 @@ main.sheet-page { max-width: none; }
 .sheet-tab:hover { background: var(--panel-alt); color: var(--text); }
 .sheet-tab.active { background: var(--card); border-color: var(--border); border-top-color: var(--card); color: var(--accent); font-weight: 700; margin-top: -5px; padding-top: 10px; }
 .sheet-tab.add { font-weight: 700; color: var(--accent); }
+.sheet-tabs.reordering { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+.sheet-tab.dragging { opacity: .55; }
+.sheet-tab.drop-before { box-shadow: inset 3px 0 0 var(--accent); }
+.sheet-tab.drop-after { box-shadow: inset -3px 0 0 var(--accent); }
 .sheet-notice { margin-bottom: 8px; }
 .sheet-notice p { margin: 6px 0; }
 .feature-list { margin: 4px 0 8px 18px; padding: 0; }

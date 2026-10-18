@@ -937,14 +937,88 @@
     function drawTabs() {
       const btns = st.sheet.tabs.map((t, i) => {
         const b = h("button", { class: "sheet-tab" + (i === st.tab ? " active" : ""), type: "button", role: "tab", "aria-selected": i === st.tab ? "true" : "false", dataset: { tab: t.name },
-          onclick: () => { if (st.tab === i) { if (canEdit && !csv) tabMenu(b, i); return; } commitEdit(); st.tab = i; st.sel = { c1: 0, r1: 0, c2: 0, r2: 0 }; st.marks = null; grid.scrollTop = 0; drawTabs(); draw(); } },
+          onclick: () => { if (tabDrag.justDropped) return; if (st.tab === i) { if (canEdit && !csv) tabMenu(b, i); return; } commitEdit(); st.tab = i; st.sel = { c1: 0, r1: 0, c2: 0, r2: 0 }; st.marks = null; grid.scrollTop = 0; drawTabs(); draw(); } },
           t.kind === "chart" ? "📈 " : "", t.name);
-        b.addEventListener("contextmenu", (e) => { if (canEdit && !csv) { e.preventDefault(); tabMenu(b, i); } });
+        b.addEventListener("contextmenu", (e) => {
+          if (!canEdit || csv) return;
+          e.preventDefault();
+          if (tabDrag.active) { tabDrag.menuAsked = true; return; }   // a long press on a phone: menu if not dragged
+          tabMenu(b, i);
+        });
+        if (canEdit && !csv && st.sheet.tabs.length > 1) b.addEventListener("pointerdown", (e) => tabDrag(e, i, b));
         return b;
       });
       drawTools();
       mount(tabsBar, btns, canEdit && !csv ? h("button", { class: "sheet-tab add", type: "button", id: "sheetAddTab", title: "Add a tab", "aria-label": "Add a tab", onclick: addTab }, "+") : null);
     }
+    /** Drag a tab to another place (a mouse: press and move; a touch screen: hold, then move — a hold without moving
+     * opens the tab's menu as before). The line shows where it goes; dropping moves it (one undo step). */
+    function moveTab(from, to) {
+      if (from === to || to < 0 || to >= st.sheet.tabs.length) return;
+      setShape(() => {
+        const active = st.sheet.tabs[st.tab];
+        st.sheet.tabs.splice(to, 0, st.sheet.tabs.splice(from, 1)[0]);
+        st.tab = Math.max(0, st.sheet.tabs.indexOf(active));
+      });
+    }
+    function tabDrag(e, i, b) {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      const touch = e.pointerType !== "mouse";
+      const x0 = e.clientX, y0 = e.clientY;
+      let on = false, target = i, timer = null, scroller = null, lastX = x0, dragged = false;
+      const tabEls = () => [...tabsBar.querySelectorAll(".sheet-tab:not(.add)")];
+      const mark = () => tabEls().forEach((x, k) => {
+        x.classList.toggle("drop-before", on && k === target && target < i);
+        x.classList.toggle("drop-after", on && k === target && target > i);
+      });
+      const start = () => {
+        on = true; tabDrag.active = true; tabDrag.menuAsked = false;
+        commitEdit();
+        b.classList.add("dragging"); tabsBar.classList.add("reordering");
+        try { b.setPointerCapture(e.pointerId); } catch (err) { /* already released */ }
+        scroller = setInterval(() => {         // near an end of a long tab bar, it scrolls
+          const r = tabsBar.getBoundingClientRect();
+          if (lastX < r.left + 30) tabsBar.scrollLeft -= 12; else if (lastX > r.right - 30) tabsBar.scrollLeft += 12;
+        }, 30);
+      };
+      const place = (x) => {
+        const els = tabEls();
+        target = i;
+        els.forEach((el, k) => { const r = el.getBoundingClientRect(); if (x >= r.left && x < r.right) target = k; });
+        if (els.length && x < els[0].getBoundingClientRect().left) target = 0;
+        if (els.length && x >= els[els.length - 1].getBoundingClientRect().right) target = els.length - 1;
+        mark();
+      };
+      const move = (ev) => {
+        lastX = ev.clientX;
+        if (!on) {
+          if (Math.abs(ev.clientX - x0) < 6 && Math.abs(ev.clientY - y0) < 6) return;
+          if (touch) { finish(); return; }      // a swipe before the hold: the tab bar scrolls as usual
+          start();
+        }
+        ev.preventDefault();
+        if (Math.abs(ev.clientX - x0) >= 6) dragged = true;
+        place(ev.clientX);
+      };
+      const noScroll = (ev) => { if (on && ev.cancelable) ev.preventDefault(); };
+      const finish = (ev) => {
+        clearTimeout(timer); clearInterval(scroller);
+        document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", finish);
+        document.removeEventListener("pointercancel", finish); tabsBar.removeEventListener("touchmove", noScroll);
+        if (!on) return;
+        on = false; tabDrag.active = false;
+        b.classList.remove("dragging"); tabsBar.classList.remove("reordering"); mark();
+        tabDrag.justDropped = true; setTimeout(() => { tabDrag.justDropped = false; }, 0);   // not also a click
+        if (ev && ev.type === "pointercancel") return;
+        if (target !== i) moveTab(i, target);
+        else if (tabDrag.menuAsked || (touch && !dragged)) tabMenu(b, i);   // held and let go: the tab's menu
+      };
+      if (touch) timer = setTimeout(start, 400);
+      document.addEventListener("pointermove", move, { passive: false });
+      document.addEventListener("pointerup", finish); document.addEventListener("pointercancel", finish);
+      tabsBar.addEventListener("touchmove", noScroll, { passive: false });
+    }
+    tabDrag.active = false; tabDrag.justDropped = false; tabDrag.menuAsked = false;
     function uniqueTabName(base) {
       let n = 1, name;
       const taken = new Set(st.sheet.tabs.map((t) => t.name.toLowerCase()));
@@ -986,8 +1060,10 @@
             t.name = name;
           }, "Renamed — formulas that use it were updated");
         } },
-        { id: "tab-left", label: "Move left", run: () => { if (i > 0) setShape(() => { st.sheet.tabs.splice(i - 1, 0, st.sheet.tabs.splice(i, 1)[0]); st.tab = i - 1; }); } },
-        { id: "tab-right", label: "Move right", run: () => { if (i < st.sheet.tabs.length - 1) setShape(() => { st.sheet.tabs.splice(i + 1, 0, st.sheet.tabs.splice(i, 1)[0]); st.tab = i + 1; }); } },
+        { id: "tab-first", label: "Move to start", run: () => moveTab(i, 0) },
+        { id: "tab-left", label: "Move left", run: () => moveTab(i, i - 1) },
+        { id: "tab-right", label: "Move right", run: () => moveTab(i, i + 1) },
+        { id: "tab-last", label: "Move to end", run: () => moveTab(i, st.sheet.tabs.length - 1) },
         "-",
         { id: "tab-delete", label: "Delete tab…", danger: true, run: async () => {
           if (grids().length === 1 && t.kind === "grid") { toast("A sheet needs at least one tab with cells.", true); return; }

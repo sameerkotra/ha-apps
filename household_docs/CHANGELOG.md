@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.4
+
+- **Sheets: reorder tabs by dragging.** Drag a tab to where you want it (on a phone, hold it for a moment, then drag). The tab menu also has **Move to start** and **Move to end**, and on a phone holding a tab and letting go opens that menu.
+
 ## 1.6.3
 
 - **Sheets: dates that look like dates.** `=TODAY()`, `=DATE(…)`, `=EOMONTH(…)` and those plus a number of days now show as a date instead of a number like 46312 (and are saved as dates, so they open as dates in Excel). A date minus a date stays a number of days.

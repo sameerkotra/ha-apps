@@ -1501,7 +1501,10 @@ in `.xlsx`; `sheetcalc.test.js`; packaging (`map` exactly `share`, port, version
 ### 17.10 More for sheets
 - **Functions:** `SUMIFS`, `COUNTIFS`, `AVERAGEIFS`, `VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `IFERROR`,
   `MEDIAN`, `TEXT`, `DATE`, `YEAR`, `MONTH`, `DAY`, `EOMONTH`, `NETWORKDAYS`, `PMT`.
-- **Tabs:** up to 10 per sheet, references across tabs; renaming a tab updates formulas. `.xlsx` only (`.csv` sheets
+- **Tabs:** up to 10 per sheet, references across tabs; renaming a tab updates formulas. Reordered by dragging a
+  tab (mouse: press and move 6 px; touch: hold 400 ms, then move — a swipe before that scrolls the tab bar, a hold let
+  go without moving opens the tab's menu; a line marks where it goes, the bar scrolls near its ends) or from the tab's
+  menu (Move to start · left · right · to end); one undo step, saved as a shape change. `.xlsx` only (`.csv` sheets
   offer *Convert to .xlsx*).
 - **Charts:** bar, line and pie from a range, under the grid or on their own tab, redrawn on change (SVG in the app;
   written into the `.xlsx` as Excel charts).

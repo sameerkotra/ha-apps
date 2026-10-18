@@ -189,8 +189,9 @@ fewer / more decimals, **B**old, alignment, **−1** for red negative numbers, *
 data (SUM, AVERAGE, COUNT, MIN or MAX per column — tap a total to change it), **❄** freeze, **⇅** sort, **⏷**
 filter, **📈** chart, **🎨** conditional colours, undo / redo, **⬇** export and **🖨** print.
 
-**Tabs** (up to 10) are at the bottom: **+** adds one; tap the current tab (or right-click it) to rename, move or
-delete it. Renaming a tab updates every formula that uses it.
+**Tabs** (up to 10) are at the bottom: **+** adds one; tap the current tab (or right-click it) to rename it, move it
+(left, right, to the start or to the end) or delete it. To put a tab somewhere else, drag it there — on a phone,
+hold it for a moment, then drag (hold and let go for its menu). Renaming a tab updates every formula that uses it.
 
 **Charts**: select a range — its first row names the series, its first column holds the labels — and tap **📈**:
 bar, line or pie, with a title, under the grid or on a tab of its own. They redraw as the numbers change, and in
