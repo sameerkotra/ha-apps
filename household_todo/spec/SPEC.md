@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.7"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.8"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -720,8 +720,8 @@ Recipients per item = custom list or `maintenance_recipients` (+ assignee), filt
   when coming from another tab); the page's own redraws keep the tab that's open; adding an item switches to the tab it's on
   (`maintViewOf`: due/overdue → Needs doing, due within `upcomingDays` → Coming up, else All upkeep). At ≤760 px the
   tabs are a 2 × 2 grid.
-- Below the card, two folding sections: **History**, then **Suggestions · <season>** — folded to start with
-  (`localStorage.maintFolded`, which also keeps the Schedule tab's Maintenance group folded).
+- Below the card, two folding sections: **History**, then **Suggestions · <season>** — both folded to start with, on a phone and a computer
+  (`localStorage.maintFolded2`, which also keeps the Schedule tab's Maintenance group folded).
 
 ## 15. Checklists from Household Docs (app messages)
 

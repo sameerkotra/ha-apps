@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.8
+
+- **Maintenance:** **History** and **Suggestions** now both start folded, on a phone and a computer; open either with a tap, and it stays the way you left it.
+
 ## 2.7.7
 
 - **Maintenance: tabs.** **Needs doing**, **Coming up**, **Open jobs** and **All upkeep** are now tabs with their counts (a 2 × 2 grid on a phone); the page opens on **Coming up**, and after adding an item it shows the tab the item is on. **History** and then **Suggestions** sit below; Suggestions starts folded.

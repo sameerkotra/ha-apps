@@ -262,7 +262,7 @@ on in **Admin → Maintenance** (which also creates a shared **Maintenance**
 list and makes every admin a recipient).
 
 Four tabs across the top — the page opens on **Coming up** — and, below them,
-**History** and **Suggestions** (folded until you open it):
+**History** and **Suggestions** (both folded until you open them):
 
 - **Needs doing** — overdue items and items due within their reminder time.
   **✓ Done** records the date, a note, an optional cost and photos or a

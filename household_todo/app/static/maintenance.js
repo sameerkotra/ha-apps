@@ -41,18 +41,22 @@ async function refreshMaintFlag() {
   syncMaintNav();
 }
 
+// A new name (it was "maintFolded"), so History starts folded once more for everyone, not only on new devices
+const FOLD_KEY = "maintFolded2";
+
 function collapsedSet() {
   try {
-    const v = JSON.parse(lsGet("maintFolded") || "null");
+    const v = JSON.parse(lsGet(FOLD_KEY) || "null");
     if (Array.isArray(v)) return new Set(v);
   } catch (e) { /* ignore */ }
-  // to start with Suggestions is folded (History open), and the Schedule tab's Maintenance group
-  return new Set(["suggestions", "schedule-maint"]);
+  // to start with History and Suggestions are both folded (phone and computer alike), and the Schedule tab's
+  // Maintenance group
+  return new Set(["history", "suggestions", "schedule-maint"]);
 }
 function setCollapsed(key, collapsed) {
   const s = collapsedSet();
   if (collapsed) s.add(key); else s.delete(key);
-  lsSet("maintFolded", JSON.stringify([...s]));
+  lsSet(FOLD_KEY, JSON.stringify([...s]));
 }
 
 function section(key, title, count, body, extra) {
