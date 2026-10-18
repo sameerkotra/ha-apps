@@ -562,7 +562,7 @@ class PageHandling(unittest.TestCase):
 
     def test_form_limits_match_the_server(self):
         def attrs(el_id):
-            m = re.search(rf'<input id="{el_id}"[^>]*>', self.html)
+            m = re.search(rf'<(?:input|textarea) id="{el_id}"[^>]*>', self.html)
             self.assertIsNotNone(m, el_id)
             return dict(re.findall(r'(min|max|maxlength)="([^"]+)"', m.group(0)))
         f = schemas.FoodLogCreate.model_fields

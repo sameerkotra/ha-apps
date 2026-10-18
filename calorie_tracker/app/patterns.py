@@ -11,12 +11,17 @@ days, with H = App settings → "Look back before a symptom (hours)":
   at least 25 points more of them than of the other days' windows. Strongest difference first, at most 5 of each.
 
 Entries from before food times were kept have no time: they count at their meal's usual time.
+
+A food written as a list of ingredients ("rice, dal, ghee") counts as each of them (split at commas, semicolons, "+"
+and new lines), so ghee can stand out across different dishes; a plain name ("Paneer tikka") counts as itself.
 """
+import re
 from datetime import date, datetime, timedelta
 from statistics import median
 
 from . import foodrows
 
+_PARTS = re.compile(r"[,;+\n]")
 MIN_BEFORE = 2          # in at least this many "before" windows
 MIN_SHARE = 0.5         # … and at least this share of them
 MIN_LIFT = 0.25         # … and this much more often than on other days
@@ -28,24 +33,37 @@ def _at(day: str, hhmm: str | None, meal: str | None = None) -> datetime:
     return datetime.fromisoformat(f"{day}T{t}")
 
 
+def items_of(food_name: str) -> list[tuple[str, str]]:
+    """(folded key, as written) for each ingredient of a food — or the food itself when it isn't a list."""
+    parts = [" ".join(p.split()) for p in _PARTS.split(food_name or "")]
+    parts = [p for p in parts if p] or [" ".join((food_name or "").split())]
+    out, seen = [], set()
+    for p in parts:
+        k = p.lower()
+        if k and k not in seen:
+            seen.add(k)
+            out.append((k, p[:80]))
+    return out
+
+
 def analyse(foods: list[dict], symptoms: list[dict], *, start: date, end: date, hours: int, min_count: int) -> dict:
     """foods: {date, eaten_at, meal_type, food_name, tags}; symptoms: {date, time, symptom, severity}."""
     span = timedelta(hours=hours)
-    eaten = sorted(((_at(f["date"], f.get("eaten_at"), f.get("meal_type")),
-                     " ".join(f["food_name"].split()).lower(), f["food_name"].strip(),
+    eaten = sorted(((_at(f["date"], f.get("eaten_at"), f.get("meal_type")), items_of(f["food_name"]),
                      foodrows.tags_list(f.get("tags")) if isinstance(f.get("tags"), str) or f.get("tags") is None
                      else list(f["tags"]))
                     for f in foods), key=lambda x: x[0])
     names: dict[str, str] = {}                     # a food's shown name, by its folded name (the latest spelling)
-    for _, key, shown, _ in eaten:
-        names[key] = shown
+    for _, parts, _ in eaten:
+        for key, shown in parts:
+            names[key] = shown
     logged_days = {f["date"] for f in foods}
 
     def window(until: datetime):
         tags, items = set(), set()
-        for when, key, _, tg in eaten:
+        for when, parts, tg in eaten:
             if until - span <= when < until:
-                items.add(key)
+                items.update(k for k, _ in parts)
                 tags.update(tg)
         return tags, items
 

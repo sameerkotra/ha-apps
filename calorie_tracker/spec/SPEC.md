@@ -163,7 +163,11 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
   ≤ 5 tags and ≤ 5 foods. Entries without `eaten_at` count at their meal's usual time. The page says it shows what
   came together, not the cause.
 - Food entries and saved foods carry **tags** (`food_tag_list` offered first; any typed); the Food Log and Saved
-  Foods forms have a tag picker, and logging a saved food copies its tags.
+  Foods forms have a tags dropdown (`tagPicker`: a button naming the chosen ones, a panel of tick boxes and an *Add
+  your own tag* box; closes on a click outside or Esc; ≤12), and logging a saved food copies its tags.
+- The food name is a dish or its ingredients: a 2-line box, ≤1000 characters (`food_name`, saved `name`). Patterns
+  splits it at `,` `;` `+` and new lines (`patterns.items_of`) and compares each ingredient; a plain name is one
+  item. In the tables a long name shows 3 lines, a tap shows it all. ✨ Estimate with AI keeps a typed name.
 - Symptoms are never sent anywhere (no sensor, no AI, no Household Assistant tool).
 - Security headers (`web_security`, §4): responses for `/` and `*.html` also get `Cache-Control: no-cache, no-store, must-revalidate` and `Pragma: no-cache`.
 - Storage routes: the download is `db.backup_to_tempfile` sent by `backup_core.send_file` (deleted after the response) under `backup_core.file_name(...)`; the upload is received by `backup_core.receive` into a temp file in `DATA_DIR`, then validated and swapped in (§10).

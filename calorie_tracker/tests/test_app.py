@@ -233,7 +233,7 @@ class Bounds(ApiBase):
 
     def test_negatives_nulls_and_unknown_meals_are_refused(self):
         bad = [{"calories": -5}, {"protein": -1}, {"servings": 0}, {"meal_type": "brunch"}, {"food_name": ""},
-               {"food_name": "x" * 201}, {"calories": 10 ** 6}]
+               {"food_name": "x" * 1001}, {"calories": 10 ** 6}]
         for extra in bad:
             body = {"date": "2026-09-21", "food_name": "Toast", "calories": 100, **extra}
             self.assertEqual(self.c.post("/api/logs", json=body, headers=ALICE).status_code, 422, extra)

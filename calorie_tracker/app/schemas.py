@@ -61,7 +61,7 @@ class WeightCreate(BaseModel):
 
 class SavedFoodCreate(BaseModel):
     model_config = TRIMMED
-    name: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=1000)        # a dish, or its ingredients
     serving_size: Annotated[float, Field(gt=0, le=100_000, allow_inf_nan=False)] = 1
     serving_unit: str = Field(default="serving", min_length=1, max_length=40)
     calories: Optional[Kcal] = None          # optional: a food logged without counting
@@ -85,7 +85,7 @@ class FoodLogCreate(BaseModel):
     model_config = TRIMMED
     date: date
     meal_type: MealType = "snack"
-    food_name: str = Field(min_length=1, max_length=200)
+    food_name: str = Field(min_length=1, max_length=1000)   # a dish, or its ingredients ("rice, dal, ghee")
     servings: Servings = 1
     calories: Optional[Kcal] = None
     protein: Grams = 0

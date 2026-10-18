@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.4.0"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.4.0">
-<link rel="stylesheet" href="common/settings.css?v=2.4.0">
-<link rel="stylesheet" href="style.css?v=2.4.0">
+<script src="common/theme-boot.js?v=2.4.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.4.1">
+<link rel="stylesheet" href="common/settings.css?v=2.4.1">
+<link rel="stylesheet" href="style.css?v=2.4.1">
 </head>
 <body>
 <div id="app">
@@ -107,12 +107,13 @@
           </select>
         </div>
         <div class="form-row">
-          <input id="foodName" placeholder="Food name" maxlength="200" style="flex:2">
+          <textarea id="foodName" class="food-name" rows="2" maxlength="1000" aria-label="What you ate"
+            placeholder="What you ate — a dish, or its ingredients (e.g. rice, dal, ghee, onion, tomato)"></textarea>
+        </div>
+        <div class="form-row">
           <input id="foodServings" type="number" step="0.1" min="0.1" max="1000" value="1" placeholder="Servings" style="flex:1" aria-label="Servings">
           <input id="foodTime" type="time" style="flex:1" aria-label="Time eaten" title="When it was eaten (blank: now today, else the meal's usual time)">
-        </div>
-        <div class="form-row tag-row">
-          <div id="foodTags" class="tag-picker" aria-label="Food tags"></div>
+          <div id="foodTags" class="tag-picker" style="flex:2"></div>
         </div>
         <div class="form-row">
           <input id="foodCalories" type="number" step="1" min="0" max="50000" placeholder="Calories (optional)" title="Calories per serving — leave empty if you don't count them">
@@ -192,7 +193,10 @@
         <h3 id="sfFormTitle">Build a Repeated Food</h3>
         <p class="hint">Save foods you eat often (e.g. "Protein Shake", "Chicken & Rice Bowl") so you can add them to your log in one click.</p>
         <div class="form-row">
-          <input id="sfName" placeholder="Food name" maxlength="200" style="flex:2">
+          <textarea id="sfName" class="food-name" rows="2" maxlength="1000" aria-label="Food name"
+            placeholder="Food name, or its ingredients (e.g. dosa: rice, urad dal, oil)"></textarea>
+        </div>
+        <div class="form-row">
           <input id="sfServingSize" type="number" step="0.1" min="0.1" max="100000" value="1" placeholder="Serving size">
           <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" maxlength="40" value="serving">
         </div>
@@ -202,8 +206,8 @@
           <input id="sfCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g)">
           <input id="sfFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g)">
         </div>
-        <div class="form-row tag-row">
-          <div id="sfTags" class="tag-picker" aria-label="Food tags"></div>
+        <div class="form-row">
+          <div id="sfTags" class="tag-picker"></div>
         </div>
         <div class="form-row">
           <textarea id="sfNotes" placeholder="Additional details (optional) — recipe, brand, prep notes..." rows="2" style="flex:1"></textarea>
@@ -388,12 +392,12 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.4.0"></script>
-<script src="common/settings.js?v=2.4.0"></script>
-<script src="common/people.js?v=2.4.0"></script>
-<script src="common/backnav.js?v=2.4.0"></script>
-<script src="common/whoami.js?v=2.4.0"></script>
-<script src="common/deeplink.js?v=2.4.0"></script>
-<script src="app.js?v=2.4.0"></script>
+<script src="common/ui.js?v=2.4.1"></script>
+<script src="common/settings.js?v=2.4.1"></script>
+<script src="common/people.js?v=2.4.1"></script>
+<script src="common/backnav.js?v=2.4.1"></script>
+<script src="common/whoami.js?v=2.4.1"></script>
+<script src="common/deeplink.js?v=2.4.1"></script>
+<script src="app.js?v=2.4.1"></script>
 </body>
 </html>

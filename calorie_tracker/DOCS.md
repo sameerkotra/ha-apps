@@ -106,7 +106,8 @@ The menu starts with what you use every day — **Food Log**, **Symptoms**, **Da
 ### Food Log (the start page)
 - A **date bar** at the top: previous / next day, a date picker and **Today**. Everything on the
   Food Log follows the chosen day. "Today" follows Home Assistant's time zone, not the device's.
-- **Add Food**: meal (breakfast, lunch, dinner, snack), food name, servings, the time you ate it,
+- **Add Food**: meal (breakfast, lunch, dinner, snack), what you ate — a dish, or its whole list of
+  ingredients ("rice, dal, ghee, onion"; up to 1000 characters) —, servings, the time you ate it,
   **tags**, and the calories, protein, carbs and fat of one serving — the entry adds them up for
   all the servings (2 servings of a 150 kcal food log 300 kcal). **Pick a saved food** fills the
   form in one click, tags included.
@@ -115,13 +116,15 @@ The menu starts with what you use every day — **Food Log**, **Symptoms**, **Da
   totals; the Day Summary says how many weren't counted.
 - **Time**: leave it empty and it's now (for today) or the meal's usual time (another day:
   breakfast 08:00, lunch 12:30, dinner 19:00, snack 15:30). Patterns uses it.
-- **Tags** say what's in a food: tap the ones that fit (dairy, gluten, spicy, caffeine…) or type
-  your own in **+ tag** and press Enter. Patterns compares tags as well as foods, so "dairy" covers
+- **Tags** say what's in a food: open the **🏷️ Tags** list and tick the ones that fit (dairy, gluten,
+  spicy, caffeine…), or type your own at the bottom of it and press **Add** (or Enter). Patterns compares tags as well as foods, so "dairy" covers
   milk, paneer and yoghurt at once.
-- **✨ Estimate with AI**: type a description in the food name box (or leave it empty to be
-  asked) and the AI fills in calories and macros, with a short note about its assumptions.
+- **✨ Estimate with AI**: type a description in the food box (or leave it empty to be asked) and
+  the AI fills in calories and macros, with a short note about its assumptions. What you typed
+  stays as it is.
   Always review the numbers before adding.
-- **Log**: the day's entries as a table; ✕ deletes one.
+- **Log**: the day's entries as a table; a long ingredient list shows its first lines — tap it for
+  the rest; ✕ deletes one.
 - **Day Summary**: calories, protein, carbs and fat against your goals, plus your latest weight,
   and **Macros** progress bars.
 
@@ -141,7 +144,8 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
 - **The Day**: that day's food and symptoms together in time order; ✕ deletes a symptom.
 - **Patterns** (last 30 days, 90 days, 6 months or a year): for each symptom, how often and how
   bad (a strip of days, coloured by the worst that day), and the **tags and foods often before it**
-  — eaten in the hours before it (6 by default) on most of the times it came, and much more often
+  (a food written as a list of ingredients counts as each ingredient, so ghee can stand out across
+  different dishes) — eaten in the hours before it (6 by default) on most of the times it came, and much more often
   than in the same hours on days without it. A symptom needs to be logged at least 3 times before
   it's compared.
 - Patterns shows what came together, not what causes what. It gets better the more you log — food

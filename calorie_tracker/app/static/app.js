@@ -894,7 +894,7 @@ async function loadFoodLog() {
           <tr>
             <td class="col-time">${escapeHtml(l.eaten_at || "")}</td>
             <td><span class="tag">${escapeHtml(l.meal_type)}</span></td>
-            <td class="col-name">${escapeHtml(l.food_name)}${tagChips(l.tags)}</td>
+            <td class="col-name"><span class="fname" title="${escapeHtml(l.food_name)}">${escapeHtml(l.food_name)}</span>${tagChips(l.tags)}</td>
             <td>${fmt(l.servings)}×</td>
             <td>${kcalText(l.calories)}</td>
             <td>${fmt(l.protein)}</td>
@@ -910,6 +910,7 @@ async function loadFoodLog() {
       </tbody>
     </table>
   `;
+  list.querySelectorAll(".fname").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
   $all(".del-log-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
     const entry = logs.find(l => String(l.id) === btn.dataset.id);
     if (!confirm(`Delete "${entry ? entry.food_name : "this entry"}" from the log?`)) return;
@@ -1020,7 +1021,7 @@ async function loadSavedFoodsList() {
       <tbody>
         ${foods.map(f => `
           <tr>
-            <td class="col-name">${escapeHtml(f.name)}${tagChips(f.tags)}</td>
+            <td class="col-name"><span class="fname" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</span>${tagChips(f.tags)}</td>
             <td>${fmt(f.serving_size)} ${escapeHtml(f.serving_unit)}</td>
             <td>${kcalText(f.calories)}</td>
             <td>${fmt(f.protein)}</td>
@@ -1040,6 +1041,7 @@ async function loadSavedFoodsList() {
     </table>
   `;
   bindEnlargeButtons(list);
+  list.querySelectorAll(".fname").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
 
   $all(".del-sf-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
     if (!confirm("Delete this saved food?")) return;
@@ -1146,31 +1148,54 @@ $("#sfSaveBtn").addEventListener("click", withErrors(async () => {
 state.choices = { symptoms: [], tags: [] };
 
 function tagPicker(root) {
+  // A dropdown: the button shows what's chosen; the panel has a tick box per tag and a box to add your own.
   let chosen = [];
-  const input = UI.h("input", { class: "tag-add", placeholder: "+ tag", maxlength: "30", "aria-label": "Add a tag" });
-  const box = UI.h("div", { class: "chip-row" });
-  root.replaceChildren(box, input);
+  const label = UI.h("span", { class: "tag-dd-label" });
+  const btn = UI.h("button", { type: "button", class: "tag-dd-btn", "aria-haspopup": "true", "aria-expanded": "false" },
+    UI.h("span", { "aria-hidden": "true" }, "🏷️"), label, UI.h("span", { class: "tag-dd-caret", "aria-hidden": "true" }, "▾"));
+  const list = UI.h("div", { class: "tag-dd-list" });
+  const input = UI.h("input", { class: "tag-add", placeholder: "Add your own tag…", maxlength: "30", "aria-label": "Add your own tag" });
+  const addBtn = UI.h("button", { type: "button", class: "btn-secondary tag-add-btn" }, "Add");
+  const panel = UI.h("div", { class: "tag-dd-panel", hidden: true, role: "group", "aria-label": "Food tags" },
+    list, UI.h("div", { class: "tag-dd-add" }, input, addBtn));
+  root.replaceChildren(btn, panel);
+  root.classList.add("tag-dd");
+  const open = (on) => { panel.hidden = !on; btn.setAttribute("aria-expanded", on ? "true" : "false"); root.classList.toggle("open", on); };
+  btn.addEventListener("click", (e) => { e.stopPropagation(); open(panel.hidden); });
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => open(false));
+  root.addEventListener("keydown", (e) => { if (e.key === "Escape" && !panel.hidden) { open(false); btn.focus(); } });
+  function drawLabel() {
+    label.textContent = chosen.length ? chosen.join(", ") : "Tags (optional)";
+    label.classList.toggle("empty", !chosen.length);
+  }
   function draw() {
     const all = state.choices.tags.slice();
     for (const t of chosen) if (!all.includes(t)) all.push(t);
-    box.replaceChildren(...all.map(t => {
-      const on = chosen.includes(t);
-      const b = UI.h("button", { type: "button", class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false" }, t);
-      b.addEventListener("click", () => {
-        chosen = on ? chosen.filter(x => x !== t) : chosen.concat(t).slice(0, 12);
-        draw();
+    list.replaceChildren(...all.map(t => {
+      const cb = UI.h("input", { type: "checkbox", checked: chosen.includes(t) });
+      cb.addEventListener("change", () => {
+        if (cb.checked && chosen.length >= 12) { cb.checked = false; return alert("At most 12 tags on a food."); }
+        chosen = cb.checked ? chosen.concat(t) : chosen.filter(x => x !== t);
+        drawLabel();
       });
-      return b;
+      return UI.h("label", { class: "tag-dd-item" }, cb, UI.h("span", null, t));
     }));
+    drawLabel();
   }
-  input.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" && e.key !== ",") return;
-    e.preventDefault();
+  function addTyped() {
     const t = input.value.replace(/,/g, " ").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 30);
-    if (t && !chosen.includes(t)) chosen = chosen.concat(t).slice(0, 12);
     input.value = "";
+    if (!t) return;
+    if (!chosen.includes(t)) {
+      if (chosen.length >= 12) return alert("At most 12 tags on a food.");
+      chosen = chosen.concat(t);
+    }
     draw();
-  });
+    input.focus();
+  }
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTyped(); } });
+  addBtn.addEventListener("click", addTyped);
   draw();
   return { get: () => chosen.slice(), set: (tags) => { chosen = (tags || []).slice(); draw(); }, redraw: draw };
 }
@@ -1288,7 +1313,7 @@ async function loadPatterns() {
       ${s.tags.length || s.foods.length ? `
         <div class="pattern-cols">
           ${s.tags.length ? `<div><div class="pattern-sub">Tags often before it</div><ul class="pattern-list">${s.tags.map(x => patternLine(x, "tag")).join("")}</ul></div>` : ""}
-          ${s.foods.length ? `<div><div class="pattern-sub">Foods often before it</div><ul class="pattern-list">${s.foods.map(x => patternLine(x, "food")).join("")}</ul></div>` : ""}
+          ${s.foods.length ? `<div><div class="pattern-sub">Foods and ingredients often before it</div><ul class="pattern-list">${s.foods.map(x => patternLine(x, "food")).join("")}</ul></div>` : ""}
         </div>` : `<p class="hint">Nothing you ate stands out before it${s.otherDays ? "" : " — there are no days without it to compare with yet"}.</p>`}
     </div>`).join("") + (p.tooFew.length ? `
     <p class="hint">Logged too few times to compare (${p.minCount} needed): ${p.tooFew.map(s => `${escapeHtml(s.name)} (${s.count})`).join(", ")}.</p>` : "");
@@ -1625,7 +1650,7 @@ async function aiEstimateInto(prefix) {
   if (statusEl) statusEl.textContent = "Estimating… this can take a while on first use.";
   try {
     const est = await api("/api/ai/estimate", { method: "POST", body: JSON.stringify({ description }) });
-    $(`#${prefix}Name`).value = est.food_name;
+    if (!nameField.value.trim()) nameField.value = est.food_name;    // what was typed (an ingredient list) stays
     if (prefix === "food") {
       $("#foodServings").value = "1";
     } else {

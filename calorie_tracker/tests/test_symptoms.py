@@ -124,6 +124,28 @@ class Patterns(ApiBase):
         self.assertEqual(self.c.get("/api/patterns?days=30", headers=BOB).json()["symptoms"], [])
         self.assertEqual(self.c.get("/api/patterns?days=31", headers=ALICE).status_code, 422)
 
+    def test_an_ingredient_list_counts_each_ingredient(self):
+        self.assertEqual(patterns.items_of(" Rice, dal ,ghee\nOnion; rice + tomato "),
+                         [("rice", "Rice"), ("dal", "dal"), ("ghee", "ghee"), ("onion", "Onion"), ("tomato", "tomato")])
+        self.assertEqual(patterns.items_of("Paneer  tikka"), [("paneer tikka", "Paneer tikka")])
+        # ghee in two different dishes, both before the reflux; neither dish on the other days
+        for n, dish in ((1, "Dal, rice, ghee"), (2, "Roti, ghee, sabzi"), (3, "Roti, sabzi"), (4, "Dal, rice")):
+            self.log(ALICE, dish, date=day(n), eaten_at="13:00", calories=None)
+            if n <= 2:
+                self.c.post("/api/symptoms", json={"date": day(n), "time": "15:00", "symptom": "Reflux"}, headers=ALICE)
+        settings.update({"pattern_min": 2}, None)
+        try:
+            p = self.c.get("/api/patterns?days=30", headers=ALICE).json()
+        finally:
+            settings.update({"pattern_min": 3}, None)
+        self.assertEqual([(f["food"], f["before"], f["other"]) for f in p["symptoms"][0]["foods"]], [("ghee", 2, 0)])
+
+    def test_a_long_ingredient_list_is_kept(self):
+        long = ", ".join(f"ingredient {i}" for i in range(60))[:1000]
+        self.assertEqual(self.log(ALICE, long, date=day(0))["food_name"], long)
+        self.assertEqual(self.c.post("/api/logs", json={"date": day(0), "food_name": "x" * 1001}, headers=ALICE)
+                         .status_code, 422)
+
     def test_crosses_midnight_and_window_length(self):
         foods = [{"date": "2026-10-01", "eaten_at": "23:00", "meal_type": "snack", "food_name": "Chips",
                   "tags": "fried"}] * 1 + [

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4.1
+
+- **Tags are a dropdown**: open **🏷️ Tags**, tick the ones that fit, or add your own at the bottom.
+- **Write out the ingredients**: the food box is bigger and takes up to 1000 characters, so you can list everything
+  in a dish. Patterns counts each ingredient on its own (so ghee or onion can stand out across different dishes); a
+  long list shows its first lines in the log — tap it for the rest. ✨ Estimate with AI no longer replaces what you
+  typed.
+
 ## 2.4.0
 
 **New**

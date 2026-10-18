@@ -806,10 +806,33 @@ button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
   padding: 4px 11px; font: inherit; font-size: 0.82rem; cursor: pointer; }
 .chip:hover { color: var(--text); }
 .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
-.tag-row { align-items: flex-start; }
-.tag-picker { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 1; }
-.tag-picker .chip-row { display: contents; }
-.form-row .tag-add, .tag-add { width: 110px; flex: none; min-width: 0; padding: 4px 10px; border-radius: 20px; font-size: 0.82rem; }
+/* food name: a dish or its whole ingredient list */
+.form-row textarea.food-name { flex: 1; width: 100%; min-height: 3.2em; resize: vertical; line-height: 1.4; }
+/* the tags dropdown */
+.tag-picker { position: relative; flex: 1; min-width: 180px; }
+.tag-dd-btn { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer;
+  background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+  padding: 9px 12px; font: inherit; min-height: 40px; }
+.tag-dd-btn:hover, .tag-dd.open .tag-dd-btn { border-color: var(--accent-dim); }
+.tag-dd-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-dd-label.empty { color: var(--text-dim); }
+.tag-dd-caret { color: var(--text-dim); }
+.tag-dd-panel { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; right: 0; min-width: 240px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  padding: 6px; }
+.tag-dd-list { max-height: 260px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.tag-dd-panel label.tag-dd-item { display: flex; flex-direction: row; align-items: center; justify-content: flex-start;
+  gap: 8px; padding: 7px 8px; margin: 0; border-radius: 6px; cursor: pointer; font-size: 0.9rem; text-align: left;
+  color: var(--text); text-transform: none; letter-spacing: normal; font-weight: 500; }
+.tag-dd-panel label.tag-dd-item:hover { background: var(--panel-alt); }
+.tag-dd-panel .tag-dd-item input[type="checkbox"] { width: 16px; height: 16px; min-width: 0; margin: 0; padding: 0; flex: none; }
+.tag-dd-add { display: flex; gap: 6px; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
+.tag-dd-add .tag-add { flex: 1; min-width: 0; }
+.tag-dd-add .tag-add-btn { flex: none; }
+.data-table td.col-name { min-width: 170px; white-space: normal; overflow-wrap: break-word; }
+/* a long ingredient list: three lines, tap for the rest */
+.fname { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.fname.open { -webkit-line-clamp: unset; display: block; }
 .food-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .food-tag { font-size: 0.68rem; color: var(--text-dim); border: 1px solid var(--border); border-radius: 20px; padding: 0 7px; }
 .col-time { color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
