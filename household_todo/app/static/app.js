@@ -2663,6 +2663,7 @@ function showTab(tab, opts = {}) {
   if (tab === "lists" && opts.sub) listUI.openId = opts.sub;      // renderLists falls back to the first list
   if (tab === "calendar" && ["today", "quick"].includes(opts.sub)) cal.sub = opts.sub;     // #/dashboard, #/quick
   else if (tab === "calendar" && state.tab !== "calendar") cal.sub = "calendar";    // opening the tab: the calendar first
+  if (tab === "maintenance" && state.tab !== "maintenance" && typeof maint !== "undefined") maint.view = "coming";   // Coming up first
   state.tab = tab;
   const want = routeHash(tab, state.adminTab);
   if (location.hash !== want) {

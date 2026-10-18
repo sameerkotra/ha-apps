@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.6"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.7"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -711,6 +711,17 @@ Recipients per item = custom list or `maintenance_recipients` (+ assignee), filt
 
 ### 14.7 Sensors
 `push_maintenance_blocking` (after changes, and every `sensor_refresh_minutes`): the overdue count sensor while `maintenance_sensor` (deleted once when off), and per item with `expose_sensor` a binary_sensor on while due/overdue — only while `expose_schedule_sensors` is on too.
+
+### 14.8 The Maintenance tab
+- Page head with **+ New item**; then a card of four tabs (`.maint-tabs`, role tablist), each with its count —
+  **Needs doing** (overdue, or due within its lead days; the badge red while any is overdue) · **Coming up** (the next
+  `upcomingDays`, by month) · **Open jobs** (the Maintenance list's open tasks, with a quick add) · **All upkeep**
+  (every item by category, with Edit). Opening the tab always shows **Coming up** (`maint.view`, reset in `showTab`
+  when coming from another tab); the page's own redraws keep the tab that's open; adding an item switches to the tab it's on
+  (`maintViewOf`: due/overdue → Needs doing, due within `upcomingDays` → Coming up, else All upkeep). At ≤760 px the
+  tabs are a 2 × 2 grid.
+- Below the card, two folding sections: **History**, then **Suggestions · <season>** — folded to start with
+  (`localStorage.maintFolded`, which also keeps the Schedule tab's Maintenance group folded).
 
 ## 15. Checklists from Household Docs (app messages)
 

@@ -261,17 +261,15 @@ House upkeep in its own 🔧 **Maintenance** tab, off until an admin turns it
 on in **Admin → Maintenance** (which also creates a shared **Maintenance**
 list and makes every admin a recipient).
 
+Four tabs across the top — the page opens on **Coming up** — and, below them,
+**History** and **Suggestions** (folded until you open it):
+
 - **Needs doing** — overdue items and items due within their reminder time.
   **✓ Done** records the date, a note, an optional cost and photos or a
   receipt, and works out the next due date. **💤 Snooze** moves one due date.
 - **Coming up** — the next 90 days, by month.
 - **Open jobs** — one-off jobs, which are ordinary tasks in the Maintenance
   list (it can't be deleted while Maintenance is on). Jobs can have files.
-- **Suggestions** — about 45 common jobs (furnace filter, gutters, smoke
-  alarms, dryer vent…), filtered by the **home profile** (what the house
-  has). This season's come first; seasons follow Home Assistant's location,
-  so the southern hemisphere works too. **+ Add** pre-fills the form; **Not
-  for us** hides one. Admins can add their own suggestions.
 - **All upkeep** — every item by category, with details, files, history,
   **Pause**, **Edit**, **⧉ Copy** and **Delete**.
 - **Copying an item.** In **+ New item**, pick one under **Copy from** (or
@@ -284,6 +282,11 @@ list and makes every admin a recipient).
   that starts with `=`, `+`, `-` or `@` gets a `'` in front, so a spreadsheet
   shows it as text instead of running it as a formula. **Undo** takes back an
   item's latest Mark done.
+- **Suggestions** (folded to start with) — about 45 common jobs (furnace filter, gutters, smoke
+  alarms, dryer vent…), filtered by the **home profile** (what the house
+  has). This season's come first; seasons follow Home Assistant's location,
+  so the southern hemisphere works too. **+ Add** pre-fills the form; **Not
+  for us** hides one. Admins can add their own suggestions.
 - An item repeats either **after it's done** (e.g. 3 months after the filter
   was changed) or **on set dates** (e.g. every 1 April and 1 October).
 - **Notifications:** one message at each person's daily time listing what's

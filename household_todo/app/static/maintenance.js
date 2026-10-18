@@ -10,9 +10,10 @@ const maint = {
   histYear: "",
   histCat: "",
   showHidden: false,
+  view: "coming",          // the tab shown: opening Maintenance always starts on Coming up
 };
-const MAINT_SECTIONS = [["needs", "Needs doing"], ["coming", "Coming up"], ["jobs", "Open jobs"], ["suggestions", "Suggestions"],
-  ["all", "All upkeep"], ["history", "History"]];
+// the four views, as tabs; History and Suggestions are folding sections below them
+const MAINT_VIEWS = [["needs", "Needs doing"], ["coming", "Coming up"], ["jobs", "Open jobs"], ["all", "All upkeep"]];
 const UNIT_LABELS = [["day", "days"], ["week", "weeks"], ["month", "months"], ["year", "years"]];
 const UNIT_MAX = { day: 365, week: 52, month: 36, year: 10 };
 const LEAD_OPTIONS = [0, 1, 3, 7, 14, 30, 60];
@@ -42,17 +43,16 @@ async function refreshMaintFlag() {
 
 function collapsedSet() {
   try {
-    const v = JSON.parse(lsGet("maintCollapsed") || "null");
+    const v = JSON.parse(lsGet("maintFolded") || "null");
     if (Array.isArray(v)) return new Set(v);
   } catch (e) { /* ignore */ }
-  // first visit: on a phone only "Needs doing" is open
-  return new Set((window.matchMedia("(max-width: 760px)").matches ? MAINT_SECTIONS.map(([k]) => k).filter((k) => k !== "needs") : ["history"])
-    .concat(["schedule-maint"]));      // the Schedule tab's Maintenance group starts collapsed
+  // to start with Suggestions is folded (History open), and the Schedule tab's Maintenance group
+  return new Set(["suggestions", "schedule-maint"]);
 }
 function setCollapsed(key, collapsed) {
   const s = collapsedSet();
   if (collapsed) s.add(key); else s.delete(key);
-  lsSet("maintCollapsed", JSON.stringify([...s]));
+  lsSet("maintFolded", JSON.stringify([...s]));
 }
 
 function section(key, title, count, body, extra) {
@@ -164,15 +164,31 @@ function paintMaintenance() {
   const histBox = h("div", null, spinner());
   loadHistory(histBox, again);
 
+  // ---- the four views as tabs (Coming up when the tab opens; redraws keep the one that's open) ----
+  const counts = { needs: needs.length, coming: coming.length, jobs: d.jobs.length, all: d.items.length };
+  const bodies = { needs: needsBody, coming: comingBody, jobs: jobsBody, all: allBody };
+  if (!bodies[maint.view]) maint.view = "coming";
+  const panel = h("div", { class: "maint-view", role: "tabpanel" });
+  const tabBtns = MAINT_VIEWS.map(([k, label]) => {
+    const urgent = k === "needs" && needs.some((x) => x.status === "overdue");
+    const b = h("button", { type: "button", role: "tab", class: k === maint.view ? "active" : "", dataset: { view: k },
+      "aria-selected": k === maint.view ? "true" : "false" },
+      label, h("span", { class: "count-badge" + (urgent ? " danger" : "") }, String(counts[k])));
+    b.addEventListener("click", () => { maint.view = k; showView(); });
+    return b;
+  });
+  function showView() {
+    tabBtns.forEach((b) => { const on = b.dataset.view === maint.view; b.classList.toggle("active", on); b.setAttribute("aria-selected", on ? "true" : "false"); });
+    mount(panel, bodies[maint.view]);
+  }
+  showView();
+
   mount(root,
     h("div", { class: "page-head" }, h("h2", null, "Maintenance"), newBtn),
     filesNote,
-    section("needs", "Needs doing", needs.length, needsBody),
-    section("coming", "Coming up", coming.length, comingBody),
-    section("jobs", "Open jobs", d.jobs.length, jobsBody),
-    section("suggestions", `Suggestions · ${maint.sugg.seasonLabel}`, maint.sugg.items.length, suggBody),
-    section("all", "All upkeep", d.items.length, allBody),
-    section("history", "History", null, histBox));
+    h("section", { class: "card maint-tabs-card" }, h("div", { class: "maint-tabs", role: "tablist", "aria-label": "Maintenance" }, tabBtns), panel),
+    section("history", "History", null, histBox),
+    section("suggestions", `Suggestions · ${maint.sugg.seasonLabel}`, maint.sugg.items.length, suggBody));
 }
 
 function maintRow(it, again, opts = {}) {
@@ -386,6 +402,15 @@ function calendarState(item) {
   return s;
 }
 
+/** The tab an item shows on: Needs doing when due or overdue, Coming up within the next days, else All upkeep. */
+function maintViewOf(it) {
+  const d = maint.data;
+  if (!it || !it.status) return maint.view;
+  if (it.status === "overdue" || it.status === "due") return "needs";
+  if (it.status === "upcoming" && d && it.dueDate && it.dueDate <= addDays(d.today, d.upcomingDays)) return "coming";
+  return "all";
+}
+
 /** A new item's form filled from an existing one: everything but its history, files and when it was last done. */
 function copyOfItem(it) {
   return {
@@ -540,7 +565,10 @@ function openMaintForm(item, onSaved, prefill = null) {
     try {
       body.place_id = await place.resolve();
       if (editing) await api(`/api/maintenance/items/${item.id}`, { method: "PATCH", body });
-      else await api("/api/maintenance/items", { method: "POST", body });
+      else {
+        const made = await api("/api/maintenance/items", { method: "POST", body });
+        maint.view = maintViewOf(made);       // show the tab the new item is on
+      }
       modal.close();
       toast(editing ? "Saved" : "Added");
       onSaved();

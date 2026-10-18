@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.7
+
+- **Maintenance: tabs.** **Needs doing**, **Coming up**, **Open jobs** and **All upkeep** are now tabs with their counts (a 2 × 2 grid on a phone); the page opens on **Coming up**, and after adding an item it shows the tab the item is on. **History** and then **Suggestions** sit below; Suggestions starts folded.
+
 ## 2.7.6
 
 - **Maintenance: copy an item.** **+ New item** has a **Copy from** list, and an item's page has **⧉ Copy**: the new item starts with that one's settings (repeats, reminders, assignee, who is told, place, link, notes and how-to), ready to rename. Its history, files and last done date aren't copied.
