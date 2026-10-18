@@ -83,7 +83,7 @@ open the app.
   settle-up payments it has.
 - **Default group**: click the star (☆) next to a group, or **☆ Set as my
   default** on the group's page. Splitpot then opens straight into that group
-  for you instead of the Dashboard. Everyone chooses their own; clicking the
+  for you instead of the Summary. Everyone chooses their own; clicking the
   star on your default clears it. A group that was the household's default
   before this became a personal choice stays the default for everyone who
   hasn't picked one.
@@ -105,8 +105,7 @@ Open a group and use **Add an expense** on the left:
 - **Description** (what it was for), **Amount**, **Paid by** (starts as the
   Acting as person when they're in the group) and **Date** (today by default;
   pick an earlier day for something you forgot. Dates can't be in the
-  future). An earlier date files the expense under that day's week and month
-  on the Dashboard.
+  future). An earlier date counts on that day in the Summary.
 - **Split**: choose who shares the expense by ticking people, then how:
   - **Equal**: the amount is divided evenly to the cent; any leftover cent
     goes to the last person, so the shares always add up exactly.
@@ -132,7 +131,7 @@ Open a group and use **Add an expense** on the left:
 - **The ledger** lists the group's expenses and payments, newest first, with
   date, payer and how it was split. Each payer has their own colour (the name
   and a coloured left edge on the row), so you can see at a glance who paid
-  what. The Dashboard's transaction list uses the same colours.
+  what. The Summary's transaction list uses the same colours.
 - **Show each person's balance** (above the ledger, off by default): under
   every expense and payment, each person's balance in the group just after it
   — `+` is owed, `−` owes — worked out from every entry up to that point, in
@@ -161,29 +160,51 @@ activity log with who made it.
   moves the balances as if that money had been paid back, so a full payment
   brings both people to zero.
 - **Edit** on a payment's ledger row changes who paid whom, the amount and the
-  date. Payments are not spending: they're left out of the Dashboard's totals
+  date. Payments are not spending: they're left out of the Summary's totals
   and transaction list. An administrator can delete one to undo it.
 
-## Dashboard
+## Summary
 
-The first item in the sidebar:
+The first item in the sidebar (and the start page, unless you picked a
+default group):
 
-- **Tiles**: number of groups and users, and the total spent this week and
-  this month.
-- **Overall balance**: each person's net position summed over all their
-  groups ("is owed", "owes", "settled up"). This is not a payment suggestion,
-  because people in different groups may never have shared an expense; use
-  each group's Balances to settle up.
-- **Transactions**: switch between **Week** and **Month** and step back with
-  ← / →. You see the total and number of expenses, a bar chart (by day of the
-  week, or by group for a month) and the list of expenses with date, group
-  and payer. Weeks start on Monday. Weeks and months follow Home Assistant's
-  time zone.
-- **Activity log**: the latest 50 changes (groups created or renamed, members
-  added or taken out, expenses added/edited/deleted, payments recorded or
-  changed, users disabled or enabled, settings changed), newest first, with
-  who did it and when. Entries older than a year are removed (App settings →
-  Limits).
+- **Overall balance**, as of today: each person's net position summed over
+  all their groups ("is owed", "owes", "settled up"). This is not a payment
+  suggestion, because people in different groups may never have shared an
+  expense; use each group's Balances to settle up.
+- **Spending**: pick a **Period** — this month (shown when the page opens),
+  last month, this week, last week, this year, or **Date range…** with your
+  own From and To — and, if you like, an **Amount from / to**, who it was
+  **Paid by** and a **Group**, then **Show**. You see:
+  - the total and how many expenses;
+  - **By group**: each group's total and how many, as bars;
+  - **By person**: what each person **paid** for these expenses (and how
+    many), **their share** of them, and the difference (+ ahead, − behind) on
+    these expenses alone;
+  - **Transactions**: the expenses themselves, newest first, with date, group
+    and payer (the newest 1,000 when there are more; the totals count all).
+- Days follow Home Assistant's time zone; weeks start on Monday. Settle-up
+  payments aren't spending, so they're left out. **Clear** goes back to this
+  month with no other filters.
+
+## Activity
+
+The activity log has its own page: every change — groups created or renamed,
+members added or taken out, expenses added/edited/deleted, payments recorded
+or changed, users disabled or enabled, settings changed — with who did it and
+when. Nothing is shown until you **Search**, so it opens instantly however long
+the log is. Search by:
+
+- **Added by** — who made the change;
+- **Group**;
+- **From / To** — the days it happened;
+- **Amount from / to** — for expenses and payments (after an edit, the new
+  amount);
+- **Words** in the entry (e.g. a description).
+
+Leave everything empty and **Search** for the newest entries. Results come 50 at
+a time, newest first; **Load more** shows older ones. Entries older than a year
+are removed (App settings → Limits).
 
 ## Phone notifications
 
@@ -265,7 +286,7 @@ recorder:
   phone the sidebar becomes a tab bar at the bottom.
 - **Back in the Home Assistant app**: the back gesture first cancels an
   expense you're editing, then returns to the start page (your default group
-  or the Dashboard); only Back on the start page leaves Splitpot.
+  or the Summary); only Back on the start page leaves Splitpot.
 
 ## Balance sensors in Home Assistant
 
@@ -280,7 +301,7 @@ group:
 The sensors update right after every change and, in the background, every
 few minutes (the sync interval). Use them on dashboards or in automations,
 for example a notification when someone's balance passes a threshold. Like
-the Dashboard's overall balance, this is a net position, not a "pay this
+the Summary's overall balance, this is a net position, not a "pay this
 person" suggestion. No other entities are created.
 
 Turning sync off removes the sensors from Home Assistant. They are created

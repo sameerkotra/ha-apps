@@ -4,11 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Splitpot</title>
-<link rel="stylesheet" href="fonts/fonts.css?v=2.6.2" />
-<script src="common/theme-boot.js?v=2.6.2"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.6.2" />
-<link rel="stylesheet" href="common/settings.css?v=2.6.2" />
-<link rel="stylesheet" href="style.css?v=2.6.2" />
+<link rel="stylesheet" href="fonts/fonts.css?v=2.7.0" />
+<script src="common/theme-boot.js?v=2.7.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.7.0" />
+<link rel="stylesheet" href="common/settings.css?v=2.7.0" />
+<link rel="stylesheet" href="style.css?v=2.7.0" />
 </head>
 <body>
   <div class="app">
@@ -20,13 +20,17 @@
       </div>
 
       <nav class="tabs" id="tabs">
-        <button class="tab active" data-view="dashboard" title="Dashboard">
+        <button class="tab active" data-view="summary" title="Summary">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V11"/><path d="M12 20V4"/><path d="M20 20v-6"/></svg>
-          <span class="tab-label">Dashboard</span>
+          <span class="tab-label">Summary</span>
         </button>
         <button class="tab" data-view="groups" title="Groups">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="8" r="3.2"/><circle cx="16.5" cy="9" r="2.6"/><path d="M2.5 20c0-3.4 2.8-6 6-6s6 2.6 6 6"/><path d="M14.5 14.3c2.5.5 4.3 2.6 4.3 5.2"/></svg>
           <span class="tab-label">Groups</span>
+        </button>
+        <button class="tab" data-view="activity" title="Activity">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20.5 20.5l-4.9-4.9"/><path d="M11 8v3.2l2 1.6"/></svg>
+          <span class="tab-label">Activity</span>
         </button>
         <button class="tab" data-view="me" title="My settings">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
@@ -60,53 +64,68 @@
       </header>
       <!-- First run (admin_users empty): shown on every page, to everyone -->
       <div id="noAdminBanner" class="setup-banner" role="alert" hidden></div>
-      <!-- Dashboard view -->
-      <section id="view-dashboard" class="view active">
+      <!-- Summary: the overall balance, and spending searched by days, amounts, who paid and group -->
+      <section id="view-summary" class="view active">
         <div class="ledger-panel">
-          <h1>Dashboard</h1>
-          <p class="hint">Your overall balance, spending over time, and what's happened recently.</p>
+          <h1>Summary</h1>
+          <p class="hint">Spending by group and by person, for the days and amounts you choose. Settle-up payments aren't spending, so they're left out.</p>
 
-          <div class="stat-grid">
-            <div class="stat-card">
-              <span class="stat-value" id="statGroups">—</span>
-              <span class="stat-label">Groups</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-value" id="statPeople">—</span>
-              <span class="stat-label">Users</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-value" id="statWeek">—</span>
-              <span class="stat-label">Spent this week</span>
-            </div>
-            <div class="stat-card">
-              <span class="stat-value" id="statMonth">—</span>
-              <span class="stat-label">Spent this month</span>
-            </div>
-          </div>
-
-          <h2>Overall balance</h2>
-          <p class="hint" style="margin-bottom:12px">Net position across every group — not a payment suggestion, since people in different groups may never have shared an expense.</p>
+          <h2 class="first">Overall balance</h2>
+          <p class="hint" style="margin-bottom:12px">As of today: each person's net position across every group — not a payment suggestion, since people in different groups may never have shared an expense.</p>
           <div id="overallBalanceBox" class="balances-box"></div>
 
-          <h2>Transactions</h2>
-          <div class="period-bar">
-            <div class="split-toggle" id="periodToggle">
-              <button type="button" class="split-btn active" data-period="week">Week</button>
-              <button type="button" class="split-btn" data-period="month">Month</button>
+          <h2>Spending</h2>
+          <form id="summaryForm" class="search-form" autocomplete="off">
+            <div class="field">
+              <label for="sumPeriod">Period</label>
+              <select id="sumPeriod">
+                <option value="this-month" selected>This month</option>
+                <option value="last-month">Last month</option>
+                <option value="this-week">This week</option>
+                <option value="last-week">Last week</option>
+                <option value="this-year">This year</option>
+                <option value="custom">Date range…</option>
+              </select>
             </div>
-            <div class="period-nav">
-              <button type="button" class="btn ghost" id="periodPrev" aria-label="Previous period">←</button>
-              <span id="periodLabel" class="period-label">—</span>
-              <button type="button" class="btn ghost" id="periodNext" aria-label="Next period">→</button>
+            <div class="field"><label for="sumFrom">From</label><input type="date" id="sumFrom" required></div>
+            <div class="field"><label for="sumTo">To</label><input type="date" id="sumTo" required></div>
+            <div class="field"><label for="sumMin">Amount from</label><input type="number" id="sumMin" min="0" step="0.01" placeholder="any"></div>
+            <div class="field"><label for="sumMax">Amount to</label><input type="number" id="sumMax" min="0" step="0.01" placeholder="any"></div>
+            <div class="field"><label for="sumPaidBy">Paid by</label><select id="sumPaidBy"></select></div>
+            <div class="field"><label for="sumGroup">Group</label><select id="sumGroup"></select></div>
+            <div class="search-actions">
+              <button type="submit" class="btn primary">Show</button>
+              <button type="button" id="sumClear" class="btn ghost">Clear</button>
             </div>
-          </div>
-          <div class="period-summary" id="periodSummary"></div>
-          <div class="bar-list" id="periodBreakdown"></div>
-          <ul id="periodTransactions" class="row-list"></ul>
+          </form>
+          <div id="summaryError" class="error"></div>
+          <div id="summaryResult"></div>
+        </div>
+      </section>
 
-          <h2>Activity log</h2>
+      <!-- Activity: the activity log, searched (nothing loads until a search) -->
+      <section id="view-activity" class="view">
+        <div class="ledger-panel">
+          <h1>Activity</h1>
+          <p class="hint">Everything that happened in Splitpot — expenses, payments, edits, groups and settings. Search to see it.</p>
+          <form id="activityForm" class="search-form" autocomplete="off">
+            <div class="field"><label for="actActor">Added by</label><select id="actActor"></select></div>
+            <div class="field"><label for="actGroup">Group</label><select id="actGroup"></select></div>
+            <div class="field"><label for="actFrom">From</label><input type="date" id="actFrom"></div>
+            <div class="field"><label for="actTo">To</label><input type="date" id="actTo"></div>
+            <div class="field"><label for="actMin">Amount from</label><input type="number" id="actMin" min="0" step="0.01" placeholder="any"></div>
+            <div class="field"><label for="actMax">Amount to</label><input type="number" id="actMax" min="0" step="0.01" placeholder="any"></div>
+            <div class="field wide"><label for="actWords">Words</label><input type="text" id="actWords" maxlength="200" enterkeyhint="search" placeholder="e.g. groceries"></div>
+            <div class="search-actions">
+              <button type="submit" class="btn primary">Search</button>
+              <button type="button" id="actClear" class="btn ghost">Clear</button>
+            </div>
+          </form>
+          <p class="hint" id="activityNote">An amount search finds expenses and payments only.</p>
+          <div id="activityError" class="error"></div>
+          <div id="activityCount" class="hint" aria-live="polite"></div>
           <ul id="eventLog" class="event-list"></ul>
+          <div class="ledger-more" id="activityMore" hidden><button type="button" id="activityMoreBtn" class="btn ghost">Load more</button></div>
         </div>
       </section>
 
@@ -289,12 +308,12 @@
 
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-  <script src="common/ui.js?v=2.6.2"></script>
-  <script src="common/settings.js?v=2.6.2"></script>
-  <script src="common/people.js?v=2.6.2"></script>
-  <script src="common/backnav.js?v=2.6.2"></script>
-  <script src="common/whoami.js?v=2.6.2"></script>
-  <script src="common/deeplink.js?v=2.6.2"></script>
-  <script src="app.js?v=2.6.2"></script>
+  <script src="common/ui.js?v=2.7.0"></script>
+  <script src="common/settings.js?v=2.7.0"></script>
+  <script src="common/people.js?v=2.7.0"></script>
+  <script src="common/backnav.js?v=2.7.0"></script>
+  <script src="common/whoami.js?v=2.7.0"></script>
+  <script src="common/deeplink.js?v=2.7.0"></script>
+  <script src="app.js?v=2.7.0"></script>
 </body>
 </html>

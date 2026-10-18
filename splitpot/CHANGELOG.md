@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.0
+
+- **Summary** replaces the Dashboard: the overall balance as of today, and spending for this month, last month,
+  this or last week, this year or any date range — narrowed by amount, who paid and group — with totals **by group**,
+  **by person** (what each paid, their share, and the difference) and the transactions themselves.
+- **Activity** is its own page: search the activity log by who made the change, group, days, amount (for expenses
+  and payments) and words. Nothing loads until you search; results come 50 at a time with **Load more**.
+- Activity entries about an expense or payment now keep their amount (older ones get it from their message, once).
+
 ## 2.6.2
 
 **Security**

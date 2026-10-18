@@ -706,3 +706,25 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .group-edit select, .group-edit input[type="text"] { flex: 1; min-width: 0; }
 .payment-edit .field-row { flex-wrap: wrap; margin-top: 6px; }
 .payment-edit .field { display: flex; flex-direction: column; gap: 4px; min-width: 120px; }
+
+/* ---------- Summary and Activity: search forms and the report ---------- */
+.search-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 12px;
+  align-items: end; margin: 6px 0 14px; padding: 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--paper-dim); }
+.search-form .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.search-form .field.wide { grid-column: span 2; }
+.search-form .field input, .search-form .field select { width: 100%; min-width: 0; box-sizing: border-box; }
+.search-actions { display: flex; gap: 8px; align-items: center; }
+.sub-head { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); margin: 20px 0 8px; }
+.table-scroll { overflow-x: auto; }
+.report-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.report-table th, .report-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.report-table th { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.report-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.report-table .amt.positive { color: var(--moss-dark); }
+.report-table .amt.negative { color: var(--rust); }
+@media (max-width: 640px) {
+  .search-form { grid-template-columns: 1fr 1fr; padding: 12px; }
+  .search-form .field.wide, .search-actions { grid-column: 1 / -1; }
+  .search-actions .btn { flex: 1; }
+}

@@ -7,8 +7,6 @@ const state = {
   splitType: 'equal',
   customMode: 'amount',   // Custom split: 'amount' | 'percent'
   splitParticipants: new Set(),
-  period: 'week',
-  periodOffset: 0,
   isAdmin: false,
   sensorSyncEnabled: false,
   haConnected: false,
@@ -53,7 +51,7 @@ function money(n, currency = state.currency) {
 }
 
 // Re-read the currency (GET /config) so a change an admin made in App
-// settings shows up on the next Dashboard/group load, without reloading.
+// settings shows up on the next Summary/group load, without reloading.
 async function loadConfig() {
   try {
     const cfg = await api('/config');
@@ -122,7 +120,7 @@ function adminTabFromHash(hash) {
 function showView(name) {
   $$('.view').forEach((v) => v.classList.remove('active'));
   $$('.tab').forEach((t) => t.classList.remove('active'));
-  if (name === 'dashboard' || name === 'groups' || name === 'me' || name === 'admin') {
+  if (['summary', 'groups', 'activity', 'me', 'admin'].includes(name)) {
     $(`.tab[data-view="${name}"]`).classList.add('active');
   }
   $(`#view-${name}`).classList.add('active');
@@ -139,9 +137,10 @@ $('#tabs').addEventListener('click', (e) => {
     openAdmin(state.adminTab);
     return;
   }
+  if (btn.dataset.view === 'summary') { openSummary(); return; }
+  if (btn.dataset.view === 'activity') { openActivity(); return; }
   showView(btn.dataset.view);
   if (btn.dataset.view === 'groups') loadGroups();
-  if (btn.dataset.view === 'dashboard') loadDashboard();
   if (btn.dataset.view === 'me') loadMyPrefs();
 });
 
@@ -155,8 +154,7 @@ window.addEventListener('hashchange', () => {
   } else if (groupId && state.groups.some((g) => g.id === groupId)) {
     openGroup(groupId);
   } else if (!location.hash && $('#view-admin').classList.contains('active')) {
-    showView('dashboard');   // Back from the Admin area
-    loadDashboard();
+    openSummary();   // Back from the Admin area
   }
 });
 
@@ -429,7 +427,7 @@ function defaultPaidBy() {
 $('#actingAs').addEventListener('change', defaultPaidBy);
 
 // Each person keeps one colour for "paid by" in the ledger and on the
-// Dashboard, by when they were added — so up to 8 people never
+// Summary, by when they were added — so up to 8 people never
 // share a colour, and disabling or renaming someone doesn't reshuffle them.
 // Colours are per theme in style.css (.payer.pc0–pc7).
 const PAYER_COLOURS = 8;
@@ -487,7 +485,7 @@ function renderGroups() {
     const li = document.createElement('li');
     li.innerHTML = `
       <button type="button" class="star-btn ${g.isDefault ? 'is-default' : ''}" data-toggle-default="${g.id}" data-is-default="${g.isDefault}"
-        title="${g.isDefault ? 'Your default group — click to open the Dashboard instead' : 'Open this group when Splitpot starts (just for you)'}"
+        title="${g.isDefault ? 'Your default group — click to open the Summary instead' : 'Open this group when Splitpot starts (just for you)'}"
         aria-label="${g.isDefault ? 'Remove as my default group' : 'Set as my default group'}">${g.isDefault ? '★' : '☆'}</button>
       <button class="group-link" data-open-group="${g.id}">
         <div class="row-main">
@@ -510,7 +508,7 @@ function entryCounts(g) {
   return parts.join(' · ');
 }
 
-// Your default group (just yours): Splitpot opens straight into it instead of the Dashboard.
+// Your default group (just yours): Splitpot opens straight into it instead of the Summary.
 async function toggleGroupDefault(id, makeDefault) {
   try {
     await api(`/groups/${id}/default?limit=1`, { method: 'PUT', body: JSON.stringify({ isDefault: makeDefault }) });
@@ -696,7 +694,7 @@ function renderGroupDetail() {
   const defaultBtn = $('#groupDefaultBtn');
   defaultBtn.classList.toggle('is-default', !!g.isDefault);
   defaultBtn.innerHTML = g.isDefault ? '★ My default group' : '☆ Set as my default';
-  defaultBtn.title = g.isDefault ? 'Open the Dashboard when Splitpot starts, instead of this group (just for you)' : 'Open this group when Splitpot starts, instead of the Dashboard (just for you)';
+  defaultBtn.title = g.isDefault ? 'Open the Summary when Splitpot starts, instead of this group (just for you)' : 'Open this group when Splitpot starts, instead of the Summary (just for you)';
   // Deleting a group is admin-only (enforced server-side too).
   $('#groupDeleteBtn').hidden = !state.isAdmin;
   // The group's name and members: its members and admins (enforced server-side too).
@@ -1245,19 +1243,6 @@ function escapeHtml(str) {
   return UI.escapeHtml(String(str));
 }
 
-// ---------- dashboard ----------
-async function loadDashboard() {
-  await loadConfig();
-  const data = await api('/dashboard');
-  $('#statGroups').textContent = data.groupsCount;
-  $('#statPeople').textContent = data.peopleCount;
-  $('#statWeek').textContent = money(data.week.total);
-  $('#statMonth').textContent = money(data.month.total);
-  renderOverallBalance(data.overallNet);
-  await loadPeriod();
-  await loadEvents();
-}
-
 function renderOverallBalance(net) {
   const box = $('#overallBalanceBox');
   if (net.length === 0) {
@@ -1273,91 +1258,191 @@ function renderOverallBalance(net) {
     .join('');
 }
 
-$('#periodToggle').addEventListener('click', (e) => {
-  const btn = e.target.closest('.split-btn');
-  if (!btn) return;
-  state.period = btn.dataset.period;
-  state.periodOffset = 0;
-  $$('#periodToggle .split-btn').forEach((b) => b.classList.toggle('active', b === btn));
-  loadPeriod();
-});
-
-$('#periodPrev').addEventListener('click', () => {
-  state.periodOffset -= 1;
-  loadPeriod();
-});
-
-$('#periodNext').addEventListener('click', () => {
-  if (state.periodOffset >= 0) return;
-  state.periodOffset += 1;
-  loadPeriod();
-});
-
-async function loadPeriod() {
-  const data = await api(`/transactions?period=${state.period}&offset=${state.periodOffset}`);
-  $('#periodLabel').textContent = data.label;
-  $('#periodNext').disabled = state.periodOffset >= 0;
-  $('#periodSummary').innerHTML = `<strong>${money(data.total)}</strong> across ${data.count} transaction${data.count === 1 ? '' : 's'}`;
-  renderPeriodBreakdown(data.breakdown);
-  renderPeriodTransactions(data.expenses);
+// ---------- Summary (the overall balance, and spending searched) ----------
+function isoDay(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function renderPeriodBreakdown(breakdown) {
-  const box = $('#periodBreakdown');
-  const max = Math.max(1, ...breakdown.map((b) => b.amount));
-  box.innerHTML = breakdown
-    .map(
-      (b) => `
-    <div class="bar-row">
-      <span class="bar-label">${escapeHtml(b.label)}</span>
-      <div class="bar-track"><div class="bar-fill" style="width:${(b.amount / max) * 100}%"></div></div>
-      <span class="bar-amt">${money(b.amount)}</span>
-    </div>`
-    )
-    .join('');
-}
-
-function renderPeriodTransactions(expenses) {
-  const list = $('#periodTransactions');
-  if (expenses.length === 0) {
-    list.innerHTML = '<li class="empty-note">No transactions in this period.</li>';
-    return;
+// The preset periods, by this device's calendar (the server reads the days in Home Assistant's time zone)
+function periodDays(kind) {
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const monday = (d) => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+  switch (kind) {
+    case 'last-month': return [new Date(y, m - 1, 1), new Date(y, m, 0)];
+    case 'this-week': { const a = monday(now); return [a, now]; }
+    case 'last-week': { const a = monday(now); a.setDate(a.getDate() - 7); const b = new Date(a); b.setDate(b.getDate() + 6); return [a, b]; }
+    case 'this-year': return [new Date(y, 0, 1), now];
+    default: return [new Date(y, m, 1), now];      // this month
   }
-  list.innerHTML = expenses
-    .map((e) => {
-      const when = parseWhen(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      return `
-      <li class="payer-row ${payerRowClass(e.paidBy)}">
+}
+
+function fillPeoplePicks(select, anyLabel) {
+  const keep = select.value;
+  select.innerHTML = `<option value="">${anyLabel}</option>` +
+    state.users.filter((u) => !u.disabled).map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(u.name)}</option>`).join('');
+  select.value = keep;
+}
+
+function fillGroupPicks(select) {
+  const keep = select.value;
+  select.innerHTML = '<option value="">Any group</option>' +
+    state.groups.map((g) => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('');
+  select.value = keep;
+}
+
+function setSummaryPeriod(kind) {
+  const custom = kind === 'custom';
+  if (!custom) {
+    const [a, b] = periodDays(kind);
+    $('#sumFrom').value = isoDay(a);
+    $('#sumTo').value = isoDay(b);
+  }
+}
+
+$('#sumPeriod').addEventListener('change', (e) => setSummaryPeriod(e.target.value));
+['#sumFrom', '#sumTo'].forEach((id) => $(id).addEventListener('input', () => { $('#sumPeriod').value = 'custom'; }));
+
+function amountParams(minEl, maxEl, q) {
+  const lo = minEl.value.trim(), hi = maxEl.value.trim();
+  if (lo !== '') q.set('min', lo);
+  if (hi !== '') q.set('max', hi);
+}
+
+async function openSummary() {
+  showView('summary');
+  fillPeoplePicks($('#sumPaidBy'), 'Anyone');
+  fillGroupPicks($('#sumGroup'));
+  if (!$('#sumFrom').value) setSummaryPeriod($('#sumPeriod').value);
+  await loadConfig();
+  api('/dashboard').then((d) => renderOverallBalance(d.overallNet)).catch(() => {});
+  await runSummary();
+}
+
+async function runSummary() {
+  const err = $('#summaryError');
+  err.textContent = '';
+  const q = new URLSearchParams({ from: $('#sumFrom').value, to: $('#sumTo').value });
+  amountParams($('#sumMin'), $('#sumMax'), q);
+  if ($('#sumPaidBy').value) q.set('paidBy', $('#sumPaidBy').value);
+  if ($('#sumGroup').value) q.set('groupId', $('#sumGroup').value);
+  if (!q.get('from') || !q.get('to')) { err.textContent = 'Pick the days.'; return; }
+  let r;
+  try { r = await api('/report?' + q.toString()); } catch (e) { err.textContent = e.message; return; }
+  const box = $('#summaryResult');
+  const day = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  const head = `<div class="period-summary"><strong>${money(r.total)}</strong> across ${r.count} expense${r.count === 1 ? '' : 's'} · ${day(r.from)} – ${day(r.to)}</div>`;
+  if (!r.count) { box.innerHTML = head + '<div class="empty-note">No expenses match.</div>'; return; }
+  const max = Math.max(1, ...r.byGroup.map((g) => g.total));
+  const groups = r.byGroup.map((g) => `
+    <div class="bar-row">
+      <span class="bar-label">${escapeHtml(g.name)} <span class="hint">· ${g.count}</span></span>
+      <div class="bar-track"><div class="bar-fill" style="width:${(g.total / max) * 100}%"></div></div>
+      <span class="bar-amt">${money(g.total)}</span>
+    </div>`).join('');
+  const people = r.byPerson.map((p) => {
+    const diff = Math.round((p.paid - p.share) * 100) / 100;
+    const cls = diff > 0.004 ? 'positive' : diff < -0.004 ? 'negative' : 'zero';
+    return `<tr>
+      <td>${payerName(p.userId, p.name)}</td>
+      <td class="num">${money(p.paid)}<span class="hint"> · ${p.paidCount}</span></td>
+      <td class="num">${money(p.share)}</td>
+      <td class="num amt ${cls}">${diff > 0 ? '+' : diff < 0 ? '−' : ''}${money(Math.abs(diff))}</td>
+    </tr>`;
+  }).join('');
+  const rows = r.transactions.map((e) => {
+    const when = parseWhen(e.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return `<li class="payer-row ${payerRowClass(e.paidBy)}">
         <div class="row-main">
           <span class="row-title">${escapeHtml(e.description)}</span>
           <span class="row-sub">${when} · ${escapeHtml(e.groupName)} · paid by ${payerName(e.paidBy, e.paidByName)}</span>
         </div>
         <span class="row-amount">${money(e.amount)}</span>
       </li>`;
-    })
-    .join('');
+  }).join('');
+  box.innerHTML = head + `
+    <h3 class="sub-head">By group</h3>
+    <div class="bar-list">${groups}</div>
+    <h3 class="sub-head">By person</h3>
+    <div class="table-scroll"><table class="report-table">
+      <thead><tr><th>Person</th><th class="num">Paid</th><th class="num">Their share</th><th class="num">Paid − share</th></tr></thead>
+      <tbody>${people}</tbody>
+    </table></div>
+    <p class="hint">Paid: what they paid for these expenses (and how many). Their share: their part of them. Paid − share: ahead (+) or behind (−) on these alone.</p>
+    <h3 class="sub-head">Transactions</h3>
+    <ul class="row-list">${rows}</ul>
+    ${r.truncated ? `<p class="hint">The newest ${r.transactions.length} of ${r.count} are listed; the totals count them all.</p>` : ''}`;
 }
 
-async function loadEvents() {
-  const events = await api('/events?limit=50');
-  const list = $('#eventLog');
-  if (events.length === 0) {
-    list.innerHTML = '<li class="empty-note">Nothing has happened yet.</li>';
-    return;
-  }
-  list.innerHTML = events
-    .map(
-      (ev) => `
-    <li>
-      <span class="event-dot ${ev.type}"></span>
+$('#summaryForm').addEventListener('submit', (e) => { e.preventDefault(); runSummary(); });
+$('#sumClear').addEventListener('click', () => {
+  $('#sumPeriod').value = 'this-month';
+  setSummaryPeriod('this-month');
+  ['#sumMin', '#sumMax', '#sumPaidBy', '#sumGroup'].forEach((id) => { $(id).value = ''; });
+  runSummary();
+});
+
+// ---------- Activity (the activity log, searched; nothing loads until a search) ----------
+const activity = { query: null, next: null, shown: 0 };
+
+async function openActivity() {
+  showView('activity');
+  fillGroupPicks($('#actGroup'));
+  try {
+    const actors = await api('/events/actors');
+    const sel = $('#actActor'), keep = sel.value;
+    sel.innerHTML = '<option value="">Anyone</option>' + actors.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
+    sel.value = keep;
+  } catch (e) { /* the box still works without names */ }
+}
+
+function activityQuery() {
+  const q = new URLSearchParams();
+  const put = (k, el) => { const v = $(el).value.trim(); if (v) q.set(k, v); };
+  put('actor', '#actActor'); put('groupId', '#actGroup'); put('from', '#actFrom'); put('to', '#actTo');
+  put('min', '#actMin'); put('max', '#actMax'); put('q', '#actWords');
+  return q;
+}
+
+function eventItem(ev) {
+  const when = new Date(ev.createdAt);
+  const stamp = when.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  return `<li>
+      <span class="event-dot ${escapeHtml(ev.type)}"></span>
       <div class="event-body">
         <span class="event-message">${escapeHtml(ev.message)}</span>
-        <span class="event-time">${timeAgo(ev.createdAt)}</span>
+        <span class="event-time" title="${escapeHtml(stamp)}">${escapeHtml(stamp)} · ${timeAgo(ev.createdAt)}</span>
       </div>
-    </li>`
-    )
-    .join('');
+    </li>`;
 }
+
+async function searchActivity(more = false) {
+  const err = $('#activityError');
+  err.textContent = '';
+  if (!more) { activity.query = activityQuery(); activity.next = null; activity.shown = 0; }
+  const q = new URLSearchParams(activity.query);
+  if (more && activity.next) q.set('before', activity.next);
+  let r;
+  try { r = await api('/events/search?' + q.toString()); } catch (e) { err.textContent = e.message; return; }
+  const list = $('#eventLog');
+  const html = r.events.map(eventItem).join('');
+  if (more) list.insertAdjacentHTML('beforeend', html);
+  else list.innerHTML = html || '<li class="empty-note">Nothing matches.</li>';
+  activity.shown += r.events.length;
+  activity.next = r.next;
+  $('#activityMore').hidden = !r.more;
+  $('#activityCount').textContent = activity.shown ? `${activity.shown} shown${r.more ? ' — there are more' : ''}` : '';
+}
+
+$('#activityForm').addEventListener('submit', (e) => { e.preventDefault(); searchActivity(false); });
+$('#activityMoreBtn').addEventListener('click', () => searchActivity(true));
+$('#actClear').addEventListener('click', () => {
+  ['#actActor', '#actGroup', '#actFrom', '#actTo', '#actMin', '#actMax', '#actWords'].forEach((id) => { $(id).value = ''; });
+  $('#eventLog').innerHTML = '';
+  $('#activityCount').textContent = '';
+  $('#activityMore').hidden = true;
+  $('#activityError').textContent = '';
+});
 
 function timeAgo(iso) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -1378,7 +1463,7 @@ function timeAgo(iso) {
 // ---------- Home Assistant integration ----------
 // Home Assistant tells us who's signed in; the server matches that to a
 // Person (by HA user id, see /whoami's userId). They become "Acting as" —
-// and so "Paid by" — before the first group or Dashboard renders.
+// and so "Paid by" — before the first group or the Summary renders.
 function linkHomeAssistantUser(who) {
   if (!who) return;
   $('#sidebarUserName').textContent = who.haDisplayName || who.haUsername || 'unknown';
@@ -1464,7 +1549,7 @@ function renderNoAdminBanner(who) {
   } else if (defaultGroup) {
     await openGroup(defaultGroup.id);
   } else {
-    await loadDashboard();
+    await openSummary();
   }
 })().finally(initBackNav);   // after the first page renders (even if a load failed)
 
@@ -1474,7 +1559,7 @@ function renderNoAdminBanner(who) {
 // Back cancels an expense edit first, then returns to the start page, and
 // only Back on the start page leaves for Home Assistant.
 // Start page = what the app opens to without a deep link: the default group
-// if one is set, otherwise the Dashboard.
+// if one is set, otherwise the Summary.
 function startGroup() {
   return state.groups.find((g) => g.isDefault) || null;
 }
@@ -1482,7 +1567,7 @@ function startGroup() {
 function atStartPage() {
   const g = startGroup();
   if (g) return $('#view-group').classList.contains('active') && state.currentGroupId === g.id;
-  return $('#view-dashboard').classList.contains('active');
+  return $('#view-summary').classList.contains('active');
 }
 
 function goStartPage() {
@@ -1490,8 +1575,7 @@ function goStartPage() {
   if (g) {
     openGroup(g.id);
   } else {
-    showView('dashboard');
-    loadDashboard();
+    openSummary();
   }
 }
 

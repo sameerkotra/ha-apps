@@ -444,7 +444,7 @@ class NoAdminYet(Base):
         self.assertIn('id="noAdminBanner"', page)
         self.assertIn('src="common/whoami.js', page)
         # outside every .view, so it shows on every page
-        self.assertLess(page.index('id="noAdminBanner"'), page.index('id="view-dashboard"'))
+        self.assertLess(page.index('id="noAdminBanner"'), page.index('id="view-summary"'))
         js = (ADDON_DIR / "app" / "static" / "app.js").read_text()
         self.assertIn("who.noAdmin", js)
         self.assertIn("HouseholdWhoami.fillNoAdminBanner($('#noAdminBanner')", js)

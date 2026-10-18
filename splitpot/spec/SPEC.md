@@ -11,7 +11,7 @@ Splitwise-style household expense splitter, shipped only as a Home Assistant app
 - Optional phone notifications through Home Assistant when a charge is added (and when a settle-up payment is recorded) to the people in it, except whoever added it (§7.1); each person can opt out under **My settings**.
 - The group ledger loads a page at a time (newest 20, then **Load more**), with keyset paging (§6 "Ledger paging").
 - Groups → expenses (equal split, or custom by amount or by percentage) → per-group net balances and suggested settle-up transfers; settle-up payments can be recorded.
-- A dashboard shows overall balances, week/month spending and the activity log. Each person's balance is pushed to HA as a sensor.
+- A Summary page shows overall balances and spending searched by days, amounts, payer and group (by group, by person, the expenses); an Activity page searches the activity log. Each person's balance is pushed to HA as a sensor.
 - Deliberately absent: local login; user create/delete endpoints; any HA sensor except `sensor.splitpot_balance_<slug>`; a stored or cached `balances` table.
 
 ## 2. Stack & file layout
@@ -192,9 +192,12 @@ Routes are on `APIRouter(prefix="/api")`, registered before `app/static/` is mou
 | DELETE `/expenses/{id}` 🔒 | – | 204, or 404. Works for expenses and payments |
 | GET `/events` | `limit` 1–300, default 50 | `[{id,type,message,groupId,groupName,actor,createdAt}]`, newest first, joined to the current group name |
 | GET `/transactions` | `period=week\|month`, `offset` (int −1200…1200, 0 = current, negative = past; outside → 422) | `{period,offset,label,start,end,total,count,expenses:[{id,groupId,groupName,description,amount,paidByName,date}],breakdown:[{label,amount}]}`. Breakdown is by weekday Mon–Sun for a week, or by group name (descending) for a month. Excludes payments |
-| GET `/dashboard` | – | `{peopleCount (all users incl. disabled), groupsCount, expensesCount, overallNet:[{userId,name,amount}], week:{total,count}, month:{total,count}}` |
+| GET `/report?from&to[&min&max&paidBy&groupId]` | – | The Summary (§9): expenses only (not payments) dated in [from, to] (the household's days; both required, ≤ ~10 years, 422 otherwise), amount within [min, max], paid by, in a group → `{from, to, total, count, byGroup:[{groupId, name, total, count}] (largest first), byPerson:[{userId, name, paid, paidCount, share}] (paid desc), transactions:[{id, groupId, groupName, description, amount, paidBy, paidByName, date}] (newest first, ≤ 1000), truncated}`; sums in whole cents |
+| GET `/events/search?[actor&groupId&from&to&min&max&q&before&limit≤300 =50]` | – | The Activity page: the log newest first (`created_at`, `id`), `actor` exact (any case), the group, the household's days, `events.amount` within [min, max] (only expense/payment entries carry one), every word of `q` in the message (LIKE, `%`/`_` literal); `{events:[{…, amount}], more, next}` — `before` = the previous page's `next` (opaque; 422 if not one) |
+| GET `/events/actors` | – | Everyone in the log as `actor`, A–Z (the "Added by" list) |
+| GET `/dashboard` | – | The Summary reads `overallNet` from it: `{peopleCount (all users incl. disabled), groupsCount, expensesCount, overallNet:[{userId,name,amount}], week:{total,count}, month:{total,count}}` |
 | GET `/whoami` | – | The shared contract (`app/common/whoami.py`, `WHOAMI_PAGE_SPEC.md`) `{haUserId, haUsername, haDisplayName, nameSent, isAdmin, displayNameOnly, adminEntries, noAdmin, viaIngress, notifyLinked, extras: [notify_row]}` (the shared "Phone linked for notifications" row: a phone or service reaches the caller's linked person) plus the app's own `userId`, `sensorSyncEnabled`, `haConnected`. `sensorSyncEnabled` = `haConnected` (a `SUPERVISOR_TOKEN` exists) AND the `ha_sync_enabled` setting. `adminEntries` is a count only; the list is never sent. `noAdmin` = `admin_users` is empty. Always describes the real caller. `userId` = the enabled Splitpot user whose `ha_user_id` equals `X-Remote-User-Id` (lower-cased); else the one found via the cached Person list's `user_id` → `ha_entity_id`; else the single enabled user named like the display name; else null |
-| GET `/config` | – | `{currency}` — the current App setting (the frontend re-reads it on every Dashboard/group load) |
+| GET `/config` | – | `{currency}` — the current App setting (the frontend re-reads it on every Summary/group load) |
 | GET `/admin/settings` 🔒 | – | The shared payload: `{values:{ha_sync_enabled,sync_interval_minutes,currency}, defaults:{…}, meta:{key:{label, help, group, kind, restartRequired:false, min?, max?, enabledIf?, maxLength?, suggestions?, …}}, groups:[{id, label, help}] (money, ha)}` |
 | PUT `/admin/settings` 🔒 | any subset of the keys | Same shape as GET. 422 `{"detail": "Currency code: XQZ isn't an ISO 4217 currency code"}`-style message for a bad value, a wrong type or an unknown key (then nothing is saved). After saving (lock released, connection closed): `ha_sync_enabled` true→false → `remove_balance_sensors()`; false→true, or the currency changed while on → `push_balances_to_ha()` |
 | GET `/admin/backup-db` 🔒 | – | Consistent snapshot made with `sqlite3.Connection.backup()` (`db_core.snapshot`) under the lock, not a file copy (WAL mode). Sent by `backup_core.send_file` as `application/vnd.sqlite3`, filename `splitpot-backup-YYYYmmdd-HHMMSS.db` (local time, `backup_core.file_name`). The temp file is deleted after the response |
@@ -298,10 +301,10 @@ Shared code as in the other apps: `common/ha_notify.py` (sending: notify action,
 ## 9. Frontend
 
 Single page. Sections `.view` are toggled with `.active` by `showView(name)`.
-- The tabs are `dashboard | groups | me (My settings, bell icon, for everyone) | admin`. `#adminTabBtn` (shield icon, "Admin") is `hidden` unless `/whoami` says `isAdmin`.
+- The tabs are `summary | groups | activity | me (My settings, bell icon, for everyone) | admin`. `#adminTabBtn` (shield icon, "Admin") is `hidden` unless `/whoami` says `isAdmin`.
 - `group` (group detail) and `whoami` are reached without a tab and leave no tab highlighted.
 - Only the Admin area has URLs: `#/admin/settings`, `#/admin/users`, `#/admin/storage` (`#/admin` or an unknown tab → settings). The one other address is a notification's `#/group/<id>`: on load (instead of the default group) or on hashchange it opens that group if it exists; `showView` then drops the hash. The short forms `#/people`, `#/users`, `#/storage` and `#/settings` redirect there with `history.replaceState`. Navigation never adds history entries: `openAdmin` and `showView` (dropping the hash when leaving Admin) use `history.replaceState`; `hashchange` only handles a typed address or `BackNav.go`.
-- **Back**: `common/backnav.js` is loaded before `app.js` (same `?v=`) and `BackNav.init` runs once after the first page renders (`init().finally(initBackNav)`). Start page = the default group if one is set, else the Dashboard (computed live from `state.groups`). `atHome` = that view is active (and, for a group, `currentGroupId` matches); `goHome` = `openGroup(default)` or `showView('dashboard')` + `loadDashboard()`; the only layer is the expense form in edit mode (`state.editingExpenseId` while the group view is active), closed with `resetExpenseForm()`. So Back: cancels an edit → start page (in one step) → leaves for HA. `confirm()`/`prompt()` are native and not layers.
+- **Back**: `common/backnav.js` is loaded before `app.js` (same `?v=`) and `BackNav.init` runs once after the first page renders (`init().finally(initBackNav)`). Start page = the default group if one is set, else the Summary (computed live from `state.groups`). `atHome` = that view is active (and, for a group, `currentGroupId` matches); `goHome` = `openGroup(default)` or `openSummary()`; the only layer is the expense form in edit mode (`state.editingExpenseId` while the group view is active), closed with `resetExpenseForm()`. So Back: cancels an edit → start page (in one step) → leaves for HA. `confirm()`/`prompt()` are native and not layers.
 - All fetches are **relative** (`fetch('api' + path)`, `href="api/admin/backup-db"`) so they work under the Ingress path prefix.
 - Shared browser helpers: `common/ui.js` (`window.UI`) loads first; `api()` is `UI.makeApi({…})` with the app's own options (raw fetch options), `escapeHtml` is `UI.escapeHtml` after `String()`. `toast(msg, isError)` = `UI.toast` into `#toastRoot` (fixed, bottom centre; above the tab bar on a phone). Script order at the end of `index.html`: `common/ui.js`, `common/settings.js`, `common/people.js`, `common/backnav.js`, `common/whoami.js`, `app.js`.
 - `api()` sends JSON by default and throws `detail` on errors. For the multipart upload it is called with `headers: {}`.
@@ -316,28 +319,25 @@ Single page. Sections `.view` are toggled with `.active` by `showView(name)`.
   - Collapse button: 68 px icon rail, stored in `localStorage.sidebarCollapsed`; desktop only.
   - At ≤640 px the sidebar becomes a fixed bottom tab bar (brand, footer and collapse button hidden) and tap targets get bigger.
 - **No admin yet** banner (`#noAdminBanner.setup-banner`, `role=alert`): an empty container directly under the topbar, outside every `.view`, filled by `HouseholdWhoami.fillNoAdminBanner` (`common/whoami.js`), so it shows on every page and to everyone while `/whoami` says `noAdmin`: "No admin yet — add your Home Assistant user name (**<login name, else user id>**) to `admin_users` on the app's Configuration tab, save, and restart the app." plus a **How the app sees you** link button. The name is set with `textContent`.
-- Topbar (`.topbar-right`): a 👤 `#whoamiBtn`, plus the "Acting as" `<select>` listing enabled users. "Acting as" is client-only: it just pre-selects **Paid by**. It is auto-set (before the first group/Dashboard renders) to `/whoami`'s `userId`; if that is null, to the one enabled user whose name equals the HA display name (case-insensitive). `defaultPaidBy()` sets `#expPaidBy` to "Acting as" when it's an option there and no expense is being edited; it runs on `#actingAs` change, at the end of `resetExpenseForm`, and in `renderGroupDetail` (which keeps the current payer while editing).
+- Topbar (`.topbar-right`): a 👤 `#whoamiBtn`, plus the "Acting as" `<select>` listing enabled users. "Acting as" is client-only: it just pre-selects **Paid by**. It is auto-set (before the first group/Summary renders) to `/whoami`'s `userId`; if that is null, to the one enabled user whose name equals the HA display name (case-insensitive). `defaultPaidBy()` sets `#expPaidBy` to "Acting as" when it's an option there and no expense is being edited; it runs on `#actingAs` change, at the end of `resetExpenseForm`, and in `renderGroupDetail` (which keeps the current payer while editing).
 
 **init order:**
-1. `loadConfig()` = `GET /config` (currency; also re-run at the start of every `loadDashboard` and `openGroup`, so a currency change reaches open pages without a reload)
+1. `loadConfig()` = `GET /config` (currency; also re-run at the start of every `openSummary` and `openGroup`, so a currency change reaches open pages without a reload)
 2. `GET /whoami` (`isAdmin`, `sensorSyncEnabled`, `haConnected`, before any Delete button renders); unhide `#adminTabBtn` for admins; show the No admin yet banner if `noAdmin`
 3. `loadUsers` (`GET /users`, the picker list)
 4. `linkHomeAssistantUser(who)`: set the sidebar name, pick "Acting as" (so the first group opens with Paid by = you)
 5. `loadGroups`
-6. If the hash is an Admin route (or a short form), open it; else if a default group exists, open it; otherwise `loadDashboard`
+6. If the hash is an Admin route (or a short form), open it; else if a default group exists, open it; otherwise `openSummary`
 
-Clicking a tab reloads Groups or Dashboard; Admin opens its last tab.
+Clicking a tab reloads Groups or the Summary; Activity opens with its last search's results (or none); Admin opens its last tab.
 
-**Dashboard**
-- Stat tiles: Groups, Users, Spent this week, Spent this month (via `money()`, like every amount).
-- Overall balance: rows labelled "is owed" / "owes" / "settled up" (|x| ≤ 0.004), with a note that this is not a payment suggestion.
-- Transactions:
-  - Week/Month toggle, scoped as `#periodToggle .split-btn`.
-  - ← / → navigation; → is disabled at offset 0.
-  - Summary "X across N transactions".
-  - Bar list scaled to `max(1, …)`.
-  - Rows with date, group and payer.
-- Activity log: newest 50, a `.event-dot.<type>` colour per type, and `timeAgo()` (year/month/day/hour/minute/"just now").
+**Summary** (`#view-summary`)
+- Overall balance (`GET /dashboard`'s `overallNet`): rows labelled "is owed" / "owes" / "settled up" (|x| ≤ 0.004), with a note that this is not a payment suggestion.
+- Spending: `#summaryForm` — Period (this month (default), last month, this week, last week (Monday start), this year, Date range… — a preset fills From/To by the device's calendar; typing a date switches it to Date range…), From, To, Amount from/to, Paid by (enabled users), Group → `GET /report`. Opening the page runs it (this month). Shows the total line, **By group** (bars scaled to the largest), **By person** (a table: Paid · count, Their share, Paid − share, coloured), **Transactions** (payer-coloured rows) and a note when truncated. **Clear** = this month, no filters.
+
+**Activity** (`#view-activity`)
+- `#activityForm`: Added by (`GET /events/actors`), Group, From, To, Amount from/to, Words → `GET /events/search`. Nothing loads until Search; results are `.event-dot.<type>` rows with the local date and time and `timeAgo()`; **Load more** passes `before`. **Clear** empties the form and the list.
+- `events.amount` (added by a migration; older expense and payment entries get theirs from the message once, when it is added — `backfill_event_amounts`: the new amount of an edit that changed it, else the amount in brackets, else a payment's).
 
 **Admin** (`#view-admin`; admins only)
 - Non-admins get `#adminDenied`: "Only admins can open this page." plus a link to "How the app sees you". Admins get `#adminBody`: a `.admin-tabs` row (`role=tablist`, scrolls sideways if narrow) with **App settings | Users | Storage**, each panel `hidden` unless selected.

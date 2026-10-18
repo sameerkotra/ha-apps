@@ -466,6 +466,7 @@ MIGRATIONS = [
     ("users", "receive_notifications", "INTEGER NOT NULL DEFAULT 1"),   # the person's own opt-out (My settings)
     ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),            # "Let the Household Assistant answer for me"
     ("expenses", "sort_key", "TEXT"),          # date_sort_key(date): the ledger's order, stored (filled in below)
+    ("events", "amount", "REAL"),              # the money an expense or payment entry is about (Activity search)
 ]
 
 # Indexes older versions made that a primary key or a newer index already covers.
@@ -560,7 +561,9 @@ def init_db() -> None:
             """
         )
         # Older databases may lack columns added to the tables above (MIGRATIONS).
-        db_core.add_missing_columns(conn, MIGRATIONS)
+        added = db_core.add_missing_columns(conn, MIGRATIONS)
+        if "events.amount" in added:
+            backfill_event_amounts(conn)
         for name in OLD_INDEXES:
             conn.execute(f"DROP INDEX IF EXISTS {name}")
         # the group ledger, newest first, a page at a time (keyset on sort_key + id); the Dashboard's week/month
@@ -852,13 +855,37 @@ def ha_actor_name(request: Request) -> str:
     )
 
 
-def log_event(conn, event_type: str, message: str, group_id: Optional[str] = None, actor: Optional[str] = None) -> None:
+def log_event(conn, event_type: str, message: str, group_id: Optional[str] = None, actor: Optional[str] = None,
+              amount: Optional[float] = None) -> None:
     """Record an entry in the activity log. Call inside the same transaction
-    as the change it describes, before commit(), so the log stays in sync."""
+    as the change it describes, before commit(), so the log stays in sync. `amount`: the money an expense or
+    payment entry is about (after an edit, the new amount), for the Activity search."""
     conn.execute(
-        "INSERT INTO events (id, type, message, group_id, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (new_id(), event_type, message, group_id, actor, now_iso()),
+        "INSERT INTO events (id, type, message, group_id, actor, created_at, amount) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (new_id(), event_type, message, group_id, actor, now_iso(), amount),
     )
+
+
+_MONEY_NUM = r"([0-9][0-9,]*\.[0-9]{2})"
+_AMOUNT_PATTERNS = (
+    re.compile(r"amount [^→]*→ \D{0,6}?" + _MONEY_NUM),       # an edit that changed the amount: the new one
+    re.compile(r"\(\D{0,6}?" + _MONEY_NUM + r"\)"),             # "'Milk' ($3.00)"
+    re.compile(r" paying .+ \D{0,6}?" + _MONEY_NUM + r" in "),   # "Ann paying Ben $12.00 in House"
+)
+_MONEY_TYPES = ("expense_added", "expense_edited", "expense_deleted", "payment_recorded", "payment_edited")
+
+
+def backfill_event_amounts(conn) -> None:
+    """Once, when events.amount is added: the amount of the expense and payment entries written before it, read
+    from their message (the new amount for an edit that changed it)."""
+    rows = conn.execute("SELECT id, message FROM events WHERE type IN (%s)" % ",".join("?" * len(_MONEY_TYPES)),
+                        _MONEY_TYPES).fetchall()
+    for r in rows:
+        for pat in _AMOUNT_PATTERNS:
+            m = pat.search(r["message"] or "")
+            if m:
+                conn.execute("UPDATE events SET amount = ? WHERE id = ?", (float(m.group(1).replace(",", "")), r["id"]))
+                break
 
 
 # ---------- the group ledger, a page at a time ----------
@@ -2353,7 +2380,7 @@ def add_expense(group_id: str, payload: ExpenseCreate, request: Request, backgro
         event_message = f"{actor} added '{description}' ({money(rounded_amt)}) to {group_name}"
         if actor.lower() != paid_by_name.lower():
             event_message += f", paid by {paid_by_name}"
-        log_event(conn, "expense_added", event_message, group_id=group_id, actor=actor)
+        log_event(conn, "expense_added", event_message, group_id=group_id, actor=actor, amount=rounded_amt)
         conn.commit()
 
     # after the response is sent: adding a charge never waits for (or fails because of) Home Assistant
@@ -2386,7 +2413,7 @@ def _log_edit(conn, actor: str, kind: str, before: dict, after: dict, group_name
             f"{money(before['amount'])})" if kind == "payment_edited"
             else f"'{before['description']}' ({money(before['amount'])})")
     log_event(conn, kind, f"{actor} edited {what} in {group_name}: " + ("; ".join(parts) or "nothing changed"),
-              group_id=before["group_id"], actor=actor)
+              group_id=before["group_id"], actor=actor, amount=after["amount"])
     return parts
 
 
@@ -2469,6 +2496,7 @@ def record_payment(group_id: str, payload: PaymentCreate, request: Request, back
             f"{actor} recorded {from_name} paying {to_name} {money(amt)} in {group_name}",
             group_id=group_id,
             actor=actor,
+            amount=amt,
         )
         conn.commit()
         result = serialize_group(conn, group_id, limit, viewer=viewer_of(request), balances=balances)
@@ -2525,6 +2553,7 @@ def delete_expense(expense_id: str, request: Request, background: BackgroundTask
             f"{actor} deleted '{row['description']}' ({money(row['amount'])}) from {group_name}",
             group_id=row["group_id"],
             actor=actor,
+            amount=row["amount"],
         )
         conn.commit()
     background.add_task(push_changed_balances)
@@ -2558,6 +2587,173 @@ def list_events(limit: int = Query(50, ge=1, le=300)):
             }
             for r in rows
         ]
+
+
+# -- searches: the Activity page and the Summary page --
+MAX_RANGE_DAYS = 3700                 # about ten years
+EVENT_PAGE = 50
+REPORT_ROWS = 1000                    # transactions listed by the Summary (its totals always count every match)
+Money = Annotated[float, Field(ge=0, le=1e9, allow_inf_nan=False)]
+
+
+def day_bounds(start: Optional[str], end: Optional[str]) -> tuple:
+    """Two YYYY-MM-DD days (either may be left out) in the household's time zone → [start, day after end) as
+    aware datetimes (None for an open end). 422 for a bad date, end before start, or too long a range."""
+    def day(v, name):
+        if not v:
+            return None
+        try:
+            d = datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(422, f"{name}: a date as YYYY-MM-DD")
+        return d.replace(tzinfo=tz())
+    a, b = day(start, "from"), day(end, "to")
+    if b is not None:
+        b = (b + timedelta(days=1)).replace(tzinfo=tz())
+    if a and b and b <= a:
+        raise HTTPException(422, "to: on or after from")
+    if a and b and (b - a).days > MAX_RANGE_DAYS:
+        raise HTTPException(422, "The date range is too long (ten years at most).")
+    return a, b
+
+
+def check_amounts(lo, hi):
+    if lo is not None and hi is not None and hi < lo:
+        raise HTTPException(422, "max: at least min")
+
+
+def _event_iso(dt: datetime) -> str:
+    """A bound in the stored created_at form (now_iso: UTC, isoformat)."""
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
+@router.get("/events/actors")
+def event_actors():
+    """Everyone who appears in the activity log as having done something (the Activity page's "Added by")."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT actor, MAX(created_at) AS last FROM events WHERE actor IS NOT NULL AND actor != '' "
+                            "GROUP BY actor COLLATE NOCASE ORDER BY actor COLLATE NOCASE").fetchall()
+    return [r["actor"] for r in rows]
+
+
+@router.get("/events/search")
+def search_events(actor: Optional[str] = Query(None, max_length=200), groupId: Optional[str] = Query(None, max_length=64),
+                  start: Optional[str] = Query(None, alias="from", max_length=10),
+                  end: Optional[str] = Query(None, alias="to", max_length=10),
+                  min_amount: Optional[Money] = Query(None, alias="min"),
+                  max_amount: Optional[Money] = Query(None, alias="max"),
+                  q: Optional[str] = Query(None, max_length=200), before: Optional[str] = Query(None, max_length=400),
+                  limit: int = Query(EVENT_PAGE, ge=1, le=300)):
+    """The activity log, newest first, filtered: who did it (`actor`, exact, any case), the group, a date range
+    (the household's days), an amount range (only entries about an expense or payment carry one) and words in
+    the message. A page at a time: `before` is the `next` of the page before."""
+    a, b = day_bounds(start, end)
+    check_amounts(min_amount, max_amount)
+    where, args = [], []
+    if actor:
+        where.append("e.actor = ? COLLATE NOCASE")
+        args.append(actor.strip())
+    if groupId:
+        where.append("e.group_id = ?")
+        args.append(groupId)
+    if a:
+        where.append("e.created_at >= ?")
+        args.append(_event_iso(a))
+    if b:
+        where.append("e.created_at < ?")
+        args.append(_event_iso(b))
+    if min_amount is not None:
+        where.append("e.amount >= ?")
+        args.append(min_amount - 0.004)
+    if max_amount is not None:
+        where.append("e.amount <= ?")
+        args.append(max_amount + 0.004)
+    if q and q.strip():
+        for word in q.split()[:8]:
+            where.append("e.message LIKE ? ESCAPE '\\'")
+            args.append("%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+    if before:
+        try:
+            key, eid = json.loads(base64.urlsafe_b64decode(before + "=" * (-len(before) % 4)))
+            assert isinstance(key, str) and isinstance(eid, str)
+        except Exception:
+            raise HTTPException(422, "before: not a position this page gave")
+        where.append("(e.created_at < ? OR (e.created_at = ? AND e.id < ?))")
+        args += [key, key, eid]
+    sql = ("SELECT e.id, e.type, e.message, e.group_id, e.actor, e.created_at, e.amount, g.name AS group_name "
+           "FROM events e LEFT JOIN groups g ON g.id = e.group_id "
+           + ("WHERE " + " AND ".join(where) + " " if where else "")
+           + "ORDER BY e.created_at DESC, e.id DESC LIMIT ?")
+    with get_conn() as conn:
+        rows = conn.execute(sql, args + [limit + 1]).fetchall()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    out = [{"id": r["id"], "type": r["type"], "message": r["message"], "groupId": r["group_id"],
+            "groupName": r["group_name"], "actor": r["actor"], "createdAt": r["created_at"], "amount": r["amount"]}
+           for r in rows]
+    nxt = (base64.urlsafe_b64encode(json.dumps([rows[-1]["created_at"], rows[-1]["id"]]).encode()).decode().rstrip("=")
+           if more and rows else None)
+    return {"events": out, "more": more, "next": nxt}
+
+
+@router.get("/report")
+def report(start: str = Query(..., alias="from", max_length=10), end: str = Query(..., alias="to", max_length=10),
+           min_amount: Optional[Money] = Query(None, alias="min"), max_amount: Optional[Money] = Query(None, alias="max"),
+           paidBy: Optional[str] = Query(None, max_length=64), groupId: Optional[str] = Query(None, max_length=64)):
+    """The Summary page: the expenses (not settle-up payments) dated in a range of the household's days, within an
+    amount range, paid by someone, in a group — their total, by group (total, how many), by person (what they paid,
+    and their share of these expenses) and the expenses themselves (newest first, at most REPORT_ROWS)."""
+    a, b = day_bounds(start, end)
+    check_amounts(min_amount, max_amount)
+    where = ["e.split_type != 'payment'", "e.sort_key >= ?", "e.sort_key < ?"]
+    args = [utc_key(a), utc_key(b)]
+    if min_amount is not None:
+        where.append("e.amount >= ?")
+        args.append(min_amount - 0.004)
+    if max_amount is not None:
+        where.append("e.amount <= ?")
+        args.append(max_amount + 0.004)
+    if paidBy:
+        where.append("e.paid_by = ?")
+        args.append(paidBy)
+    if groupId:
+        where.append("e.group_id = ?")
+        args.append(groupId)
+    cond = " AND ".join(where)
+    c = "CAST(ROUND({} * 100) AS INTEGER)"
+    with get_conn() as conn:
+        names = user_names(conn)
+        tot = conn.execute(f"SELECT COUNT(*) AS n, SUM({c.format('e.amount')}) AS cents FROM expenses e WHERE {cond}",
+                           args).fetchone()
+        by_group = conn.execute(
+            f"SELECT e.group_id, g.name, COUNT(*) AS n, SUM({c.format('e.amount')}) AS cents FROM expenses e "
+            f"JOIN groups g ON g.id = e.group_id WHERE {cond} GROUP BY e.group_id ORDER BY cents DESC, g.name",
+            args).fetchall()
+        paid = {r["paid_by"]: (r["n"], r["cents"]) for r in conn.execute(
+            f"SELECT e.paid_by, COUNT(*) AS n, SUM({c.format('e.amount')}) AS cents FROM expenses e WHERE {cond} "
+            "GROUP BY e.paid_by", args)}
+        share = {r["user_id"]: r["cents"] for r in conn.execute(
+            f"SELECT s.user_id, SUM({c.format('s.amount')}) AS cents FROM expense_splits s "
+            f"JOIN expenses e ON e.id = s.expense_id WHERE {cond} GROUP BY s.user_id", args)}
+        rows = conn.execute(
+            "SELECT e.id, e.group_id, g.name AS group_name, e.description, e.amount, e.paid_by, e.date "
+            f"FROM expenses e JOIN groups g ON g.id = e.group_id WHERE {cond} "
+            "ORDER BY e.sort_key DESC, e.id DESC LIMIT ?", args + [REPORT_ROWS]).fetchall()
+    people = [{"userId": u, "name": names.get(u, "Unknown"), "paid": round((paid.get(u, (0, 0))[1] or 0) / 100, 2),
+               "paidCount": paid.get(u, (0, 0))[0], "share": round((share.get(u) or 0) / 100, 2)}
+              for u in set(paid) | set(share)]
+    people.sort(key=lambda p: (-p["paid"], -p["share"], p["name"].casefold()))
+    return {
+        "from": start, "to": end,
+        "total": round((tot["cents"] or 0) / 100, 2), "count": tot["n"],
+        "byGroup": [{"groupId": r["group_id"], "name": r["name"], "total": round((r["cents"] or 0) / 100, 2),
+                     "count": r["n"]} for r in by_group],
+        "byPerson": people,
+        "transactions": [{"id": r["id"], "groupId": r["group_id"], "groupName": r["group_name"],
+                          "description": r["description"], "amount": r["amount"], "paidBy": r["paid_by"],
+                          "paidByName": names.get(r["paid_by"], "Unknown"), "date": r["date"]} for r in rows],
+        "truncated": tot["n"] > len(rows),
+    }
 
 
 # -- weekly / monthly transactions view --
