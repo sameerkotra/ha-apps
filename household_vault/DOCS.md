@@ -214,6 +214,14 @@ Card numbers, CVVs, PINs and 2FA secrets are never printed. The choice is saved
 inside the vault file, so it travels with downloads. Other members are alerted
 when someone prints the sheet.
 
+## 2FA codes while editing
+
+**✎ Edit** on a login with a 2FA code shows **Current 2FA code** as dots: press
+**👁** to see it (it refreshes by itself with its countdown), **👁** again to hide
+it, **📋** to copy it. **👁 Show key** next to the 2FA box loads the saved setup
+key (the `otpauth://` link) so you can read or copy it, and hides it again.
+Nothing is fetched until you press a button.
+
 ## 2FA codes from an authenticator app
 
 **Settings → Import 2FA codes from an authenticator app**: in Google

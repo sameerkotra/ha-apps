@@ -1103,7 +1103,58 @@ function itemEditor(d, tplKey) {
   const urlBox = field("Website", h("div", { class: "input-with" }, url, openUrl));
   const totpIn = h("input", { type: "text", placeholder: d && d.totp ? "(set — paste a new one to replace)" : "otpauth://… or the setup key", autocomplete: "off", spellcheck: "false", "aria-label": "2FA setup key" });
   let removeTotp = false;
-  const totpRemove = d && d.totp ? h("button", { class: "btn small", type: "button", onclick: () => { removeTotp = true; totpIn.value = ""; totpIn.placeholder = "(will be removed)"; } }, "Remove 2FA") : null;
+  // An existing 2FA, in edit mode: the current code (hidden until 👁, then live with its countdown) and the saved
+  // setup key (👁 loads it into the box, hidden as dots until shown). Nothing is fetched until asked for.
+  const editTotp = { timer: null, loaded: null };
+  let totpLive = null, totpKeyEye = null;
+  if (d && d.totp) {
+    const code = h("span", { class: "totp-code mono" }, "••• •••");
+    const ringFg = svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--accent)", "stroke-width": 3, "stroke-dasharray": "56.5", "stroke-dashoffset": "0", transform: "rotate(-90 11 11)" });
+    const ring = svgEl("svg", { class: "ring", viewBox: "0 0 22 22", "aria-hidden": "true" }, svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--panel-hover)", "stroke-width": 3 }), ringFg);
+    ring.style.visibility = "hidden";
+    let cur = null, remaining = 0, period = d.totp.period || 30, shown = false;
+    const paint = () => { code.textContent = shown && cur ? cur.replace(/(\d{3})(\d+)/, "$1 $2") : "••• •••"; ring.style.visibility = shown ? "" : "hidden"; };
+    const refresh = async () => {
+      try { const r = await api(`api/vaults/${d.vaultId}/items/${d.id}/totp`, { background: true }); cur = r.code; remaining = r.remaining; period = r.period; paint(); }
+      catch (e) { stop(); }
+    };
+    const stop = () => { clearInterval(editTotp.timer); editTotp.timer = null; };
+    const start = () => {
+      stop();
+      editTotp.timer = setInterval(() => {
+        remaining -= 1;
+        if (remaining <= 0) refresh();
+        ringFg.setAttribute("stroke-dashoffset", String(56.5 * (1 - Math.max(remaining, 0) / period)));
+      }, 1000);
+    };
+    const eye = h("button", { class: "icon-btn", type: "button", title: "Show / hide the code", "aria-label": "Show 2FA code", "aria-pressed": "false" }, "👁");
+    eye.addEventListener("click", async () => {
+      shown = !shown;
+      eye.setAttribute("aria-pressed", String(shown)); eye.setAttribute("aria-label", shown ? "Hide 2FA code" : "Show 2FA code");
+      if (shown) { await refresh(); if (shown) start(); } else { stop(); cur = null; }
+      paint();
+    });
+    const copy = h("button", { class: "icon-btn", type: "button", title: "Copy code", "aria-label": "Copy 2FA code", onclick: async () => {
+      if (!cur) await refresh();
+      if (cur) copyText(cur, "code");
+    } }, "📋");
+    totpLive = field("Current 2FA code", h("div", { class: "row" }, code, ring, eye, copy), "Hidden until you press 👁. It refreshes by itself while shown.");
+    // the saved setup key: loaded on demand, shown as dots until 👁 again
+    totpKeyEye = h("button", { class: "btn small", type: "button", title: "Show / hide the saved setup key", "aria-label": "Show saved 2FA setup key" }, "👁 Show key");
+    let keyShown = false;
+    totpKeyEye.addEventListener("click", async () => {
+      if (editTotp.loaded === null) {
+        try { editTotp.loaded = (await api(`api/vaults/${d.vaultId}/items/${d.id}/secret?field=totpUri`)).value; }
+        catch (e) { fail(e); return; }
+        if (!totpIn.value.trim()) totpIn.value = editTotp.loaded;
+      }
+      keyShown = !keyShown;
+      totpIn.type = keyShown ? "text" : "password";
+      totpKeyEye.textContent = keyShown ? "🙈 Hide key" : "👁 Show key";
+      totpKeyEye.setAttribute("aria-label", keyShown ? "Hide saved 2FA setup key" : "Show saved 2FA setup key");
+    });
+  }
+  const totpRemove = d && d.totp ? h("button", { class: "btn small", type: "button", onclick: () => { removeTotp = true; totpIn.value = ""; totpIn.type = "text"; totpIn.placeholder = "(will be removed)"; } }, "Remove 2FA") : null;
   const holder = h("input", { type: "text", value: d ? d.cardholder : "", "aria-label": "Name on card" });
   const number = h("input", { type: "text", inputmode: "numeric", placeholder: d && d.card.number.set ? "(unchanged)" : "", autocomplete: "off", "aria-label": "Card number" });
   const expiry = h("input", { type: "text", value: d ? d.expiry : "", placeholder: "MM/YY", "aria-label": "Expiry" });
@@ -1141,7 +1192,8 @@ function itemEditor(d, tplKey) {
     toast("2FA code added — Save to keep it");
   }) }, "📷 Scan QR code");
   const loginBox = h("div", null, h("label", { class: "field" }, userLbl, username), field("Password", pw.el), h("div", { class: "row" }, gen), strengthMeter(pw.input), breachHint(pw.input),
-    field("2FA (time-based code)", h("div", { class: "input-with totp-row" }, totpIn, scanBtn), "Scan the QR code, or paste the otpauth:// link or the setup key your site shows."), totpRemove);
+    totpLive,
+    field("2FA (time-based code)", h("div", { class: "input-with totp-row" }, totpIn, totpKeyEye, scanBtn), "Scan the QR code, or paste the otpauth:// link or the setup key your site shows."), totpRemove);
   const cardBox = h("div", null, field("Name on card", holder), field("Card number", number), h("div", { class: "form-row" }, field("Expiry", expiry), field("CVV", cvv), field("PIN", pin)));
   const sync = () => {
     const t = TEMPLATES[kind.value];
@@ -1167,7 +1219,8 @@ function itemEditor(d, tplKey) {
     if (type.value === "login") {
       body.username = username.value;
       if (pw.input.value || creating) body.password = pw.input.value;
-      if (totpIn.value.trim()) body.totp = totpIn.value.trim(); else if (removeTotp) body.totp = "";
+      const t = totpIn.value.trim();
+      if (t && t !== editTotp.loaded) body.totp = t; else if (removeTotp) body.totp = "";
     } else if (type.value === "card") {
       body.cardholder = holder.value; body.expiry = expiry.value;
       body.card = {};
@@ -1199,7 +1252,8 @@ function itemEditor(d, tplKey) {
   h("label", { class: "check" }, fav, "⭐ Favourite"),
   h("div", { class: "nav-sec" }, "More fields"), extraBox, addField,
   err, h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: () => m.close() }, "Cancel"), save));
-  const m = openModal(creating ? `New ${TEMPLATES[kindOf].label}` : `Edit — ${d.title}`, form, { wide: true });
+  const m = openModal(creating ? `New ${TEMPLATES[kindOf].label}` : `Edit — ${d.title}`, form,
+    { wide: true, onClose: () => { clearInterval(editTotp.timer); editTotp.timer = null; editTotp.loaded = null; totpIn.value = ""; } });
   setTimeout(() => title.focus(), 40);
 }
 function generatorDialog(use) {

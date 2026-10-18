@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+
+- **New**: editing a login with a 2FA code shows the current code — hidden until you press 👁, then live with its countdown (👁 again hides it, 📋 copies it) — and a **Show key** button that loads the saved setup key into the 2FA box, hidden or shown as you choose. Saving without changing the key leaves the 2FA as it was.
+
 ## 2.2.0
 
 Security review 2026-10 (the restore/backup trust question is documented under *Security, in short* and left as is for now).
