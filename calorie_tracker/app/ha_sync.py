@@ -25,8 +25,7 @@ _removal_pending = False
 
 def exposed() -> bool:
     """Admin → App settings → "Publish daily calories to Home Assistant" (the household's master switch),
-    read live on every push. Each person also has their own "Publish my calories to Home Assistant"
-    (users.publish_sensor, Goals page): a sensor exists only for people who turned theirs on."""
+    read live on every push: while it's on, everyone's calories are published (there is no per-person switch)."""
     return bool(settings.get("expose_daily_calories_sensor"))
 
 
@@ -110,7 +109,7 @@ def _today_totals(user_id: str | None = None) -> list[dict]:
     where, args = ("WHERE u.id = ?", (today, user_id)) if user_id else ("", (today,))
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT u.id, u.name, u.publish_sensor AS publish, COALESCE(SUM(f.calories), 0) AS total FROM users u "
+            "SELECT u.id, u.name, 1 AS publish, COALESCE(SUM(f.calories), 0) AS total FROM users u "
             "LEFT JOIN food_logs f ON f.user_id = u.id AND f.date = ? "
             f"{where} GROUP BY u.id ORDER BY u.name",
             args,
@@ -139,19 +138,6 @@ def push_for_user_blocking(user_id: str) -> bool | None:
 async def push_for_user(user_id: str, user_slug: str | None = None, display_name: str | None = None):
     """push_for_user_blocking in the threadpool (the slug and name are worked out from the database)."""
     return await run_in_threadpool(push_for_user_blocking, user_id)
-
-
-def remove_for_user_blocking(user_id: str) -> None:
-    """Someone turned "Publish my calories" off: their sensor goes from Home Assistant now (best effort; the
-    periodic job removes any left over)."""
-    global _removal_pending
-    if not _has_token():
-        return
-    rows = _today_totals(user_id)
-    ids = {entity_id_for(r["slug"]) for r in rows}
-    result = SENSORS.remove(sorted(ids))
-    if result["failed"]:
-        _removal_pending = True
 
 
 def _sync_push_all() -> dict:

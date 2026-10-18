@@ -63,7 +63,7 @@ calorie_tracker/
 | `food_tag_list` | 17 common tags | the same | the tags offered on the Food Log and Saved Foods |
 | `pattern_hours` | `6` | strict int 1–48 | Patterns' look-back before a symptom |
 | `pattern_min` | `3` | strict int 2–50 | how often a symptom must be logged before Patterns compares |
-| `expose_daily_calories_sensor` | `true` | strict bool (`"yes"`, `1`, `null` → 422) | the household's master switch for every sensor push (`ha_sync.exposed()`); a change triggers publish-all / remove-all (§7). Each person also has `users.publish_sensor` |
+| `expose_daily_calories_sensor` | `true` | strict bool (`"yes"`, `1`, `null` → 422) | the household's master switch for every sensor push (`ha_sync.exposed()`); a change triggers publish-all / remove-all (§7). It decides for everyone |
 
 - `settings.py` declares the list once — `SETTINGS` (`Setting(key, default, label, help=, group=, min=, max=, choices=, secret=, …)`) and `GROUPS` ("🤖 AI", "🏠 Home Assistant") — and builds `REGISTRY = settings_core.Registry(...)` (`app/common/settings_core.py`) with its own hooks: `prepare` (the secret rules below), `check` (Ollama needs an address), the readable error format. The registry provides validation, storage, the cache and the GET/PUT payload; labels and help text come from the server.
 - Stored in the `app_settings` table (JSON `value`, `updated_at`, `updated_by` = admin's HA user id). A key without a row (or with a value of the wrong JSON type — the `isinstance` check of stored rows) uses `DEFAULTS`. Pydantic model `AppSettings` (`REGISTRY.model`: `extra="forbid"`, `str_strip_whitespace`, strict types) plus one cross-field rule (Ollama needs an address).
@@ -137,7 +137,7 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `GET /api/summary/month?month=YYYY-MM` | act | `{month, label "September 2026", is_current, is_future, days_in_month, days_elapsed, totals, avg_per_day, goal, weight{avg_kg,start_kg,end_kg,change_kg,entries}}`. `days_elapsed` counts up to today and is 0 for a future month. `avg_per_day` = total ÷ `days_elapsed` |
 | `GET /api/history?granularity=` | act | `{granularity, goal, points:[{label, date, calories, goal}]}`. Daily: last 14 days, labelled `Mon 9/21`. Weekly: eight 7-day windows ending today. Monthly: the last 6 calendar months. Weekly and monthly show the average per elapsed day, counting days with nothing logged as 0 |
 | `GET /api/ai/status` | cur | `{configured, message (null or "AI isn't set up — an admin can set it up in Admin → App settings." / the Claude-needs-a-key text), provider, providerLabel, warmup (provider is ollama), last_ok (epoch or null), privacy (null or {label, host}), admin}`; admins also get `url (resolved), model, last_error, last_request {purpose, model, input_tokens, output_tokens, seconds, error, at}`. Never the key. `/estimate` and `/chat` count against `ai_per_minute`/`ai_per_day` (429 with a sentence), wait up to 60 s for one of two slots (`MAX_CONCURRENT`; else 429 "busy"), and give non-admins a plain message instead of the provider's (which names the address) |
-| `PUT /api/me/sensor` | cur | `{publishSensor: bool}` (strict) — the signed-in person's own "Publish my calories to Home Assistant"; publishes or removes their sensor after the answer. `GET /api/me` adds `sensor` (the household switch) and `publishSensor` |
+| — | | `GET /api/me` adds `sensor` and `assistant` (the household switches). There is no per-person switch: the Goals page's "Publish my calories" and "Let the Household Assistant answer for me" (`PUT /api/me/sensor`, `/api/me/assistant`) were removed; their columns `users.publish_sensor` / `assistant_ok` stay but are no longer read |
 | `POST /api/ai/warmup` | cur | Not set up → 503 with the message. Non-Ollama → `{ok:true, model, skipped:true}` and nothing is sent. Ollama → sends "hi"; `{ok:true, model}` or 502 with the error |
 | `POST /api/ai/estimate` | cur | Body `{description}`, 1–2000 characters. Returns the parsed model JSON. Not set up → 503; provider errors and an answer without a JSON object → 502 with a readable message |
 | `POST /api/ai/chat` | cur | Body `{message}`, 1–4000 characters. Returns `{reply}`. Not set up → 503; provider errors → 502 |
@@ -174,7 +174,7 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 
 ## 7. Home Assistant & external integrations
 **Daily-calories sensor** (`ha_sync.py`)
-- Controlled by the App setting `expose_daily_calories_sensor` (§3a), read live by every push (`ha_sync.exposed()`), and by each person's `users.publish_sensor`: only people with it on get a sensor; publish-all removes sensors this process posted for anyone else. Pushes after a log change run as a background task after the answer and skip an unchanged value; the 15-minute job (also at start) re-posts everything; `midnight_loop` syncs just after each local midnight.
+- Controlled by the App setting `expose_daily_calories_sensor` (§3a), read live by every push (`ha_sync.exposed()`): while it's on, everyone gets a sensor; publish-all removes sensors this process posted for anyone else. Pushes after a log change run as a background task after the answer and skip an unchanged value; the 15-minute job (also at start) re-posts everything; `midnight_loop` syncs just after each local midnight.
 - Pushes `POST http://supervisor/core/api/states/sensor.calorie_tracker_<slug>_daily_calories` with a Bearer `SUPERVISOR_TOKEN`. Body: `{state: round(today's total, 1), attributes: {unit_of_measurement: "kcal", friendly_name: "<name> Daily Calories", icon: "mdi:food-apple"}}`.
 - Posts and removes go through `ha_sync.SENSORS`, a `sensor_publisher.Publisher` (`app/common/sensor_publisher.py`) whose post/delete hooks are the app's own `_post`/`_delete` (its HTTP calls through `app/common/ha_client.py` and its own log lines). Runs in the threadpool, 10 s timeout. A failure logs a WARNING and never fails the request. With no token, it logs one warning and skips.
 - Triggered by food-log create or delete dated today (for the acting user's sensor) and by the periodic job (§8). Nothing is pushed while the setting is off.
@@ -200,10 +200,8 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
   day. With `calories`, those values (the model's estimate, on the button the person taps); without, the saved food of
   that name (any case), else the last log of it, per serving × servings; neither → nothing logged and the answer
   says so. Today's sensor is pushed after the commit (`msg.after_commit`).
-- Only while App settings → **Answer the Household Assistant** (`assistant_answers`, default on) and the person's own
-  **Let the Household Assistant answer for me** (Goals; `users.assistant_ok`, default on; `GET /api/me` `assistantOk`,
-  `PUT /api/me/assistant` — always the signed-in person, never "acting as"); otherwise `nack not_allowed off` /
-  `person_off`. The link opens `/foodlog/<date>`.
+- Only while App settings → **Answer the Household Assistant** (`assistant_answers`, default on), for everyone;
+  otherwise `nack not_allowed off`. The link opens `/foodlog/<date>`.
 - **Sub-path links**: `/<page>/foodlog[/<date>]`, `/dashboard`, `/savedfoods`, `/weight`, `/goals` open that tab (and
   day) — `common/static/deeplink.js`, given the page by `/api/me`'s `page`; a request reaching the app itself is
   redirected to `#/…` (the shared `deeplinks.py`), which the page opens the same way.

@@ -173,8 +173,9 @@ def init_db():
 MIGRATIONS = [
     ("users", "enabled", "INTEGER NOT NULL DEFAULT 1"),
     ("saved_foods", "notes", "TEXT"),
-    ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),   # "Let the Household Assistant answer for me" (tools.py)
-    # "Publish my calories to Home Assistant" (Goals): off for people who open the app from now on; people who
+    ("users", "assistant_ok", "INTEGER NOT NULL DEFAULT 1"),   # no longer used: App settings decides for everyone
+    # (no longer used: App settings' "Publish daily calories" decides for everyone) Was "Publish my calories to Home
+    # Assistant" (Goals): off for people who open the app from now on; people who
     # were already here get the household setting's value (_migrate), so nothing changes on the upgrade.
     ("users", "publish_sensor", "INTEGER NOT NULL DEFAULT 0"),
     # Calories are optional: an entry without them stores 0 (so every sum stays a sum of the known ones) and

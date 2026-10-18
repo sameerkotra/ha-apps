@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.4.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.4.1">
-<link rel="stylesheet" href="common/settings.css?v=2.4.1">
-<link rel="stylesheet" href="style.css?v=2.4.1">
+<script src="common/theme-boot.js?v=2.4.2"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.4.2">
+<link rel="stylesheet" href="common/settings.css?v=2.4.2">
+<link rel="stylesheet" href="style.css?v=2.4.2">
 </head>
 <body>
 <div id="app">
@@ -281,21 +281,6 @@
         </div>
         <button id="saveGoalsBtn" class="btn-primary">Save Goals</button>
       </div>
-      <!-- shown while an admin lets the Household Assistant ask (App settings) -->
-      <div class="card" id="assistantCard" hidden>
-        <h3>Household Assistant</h3>
-        <label class="check-row"><input type="checkbox" id="assistantOk"> Let the Household Assistant answer for me</label>
-        <p class="hint">When you ask the Household Assistant app, it can tell you your own day: calories and macros against
-          your goals, and what you logged. Never anyone else's, and never your weight.</p>
-      </div>
-      <!-- shown while an admin publishes the calories sensors (App settings); always the signed-in person -->
-      <div class="card" id="sensorCard" hidden>
-        <h3>Home Assistant</h3>
-        <label class="check-row"><input type="checkbox" id="publishSensor"> Publish my calories to Home Assistant</label>
-        <p class="hint">Your calories logged today appear in Home Assistant as a sensor (for dashboards and
-          automations) — only the number, never what you ate, your macros or your weight. Anyone who can see Home
-          Assistant's entities can see it.</p>
-      </div>
     </section>
 
     <!-- ADMIN (admins only; the server enforces it too). Tabs: App settings | Users | Storage.
@@ -392,12 +377,12 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.4.1"></script>
-<script src="common/settings.js?v=2.4.1"></script>
-<script src="common/people.js?v=2.4.1"></script>
-<script src="common/backnav.js?v=2.4.1"></script>
-<script src="common/whoami.js?v=2.4.1"></script>
-<script src="common/deeplink.js?v=2.4.1"></script>
-<script src="app.js?v=2.4.1"></script>
+<script src="common/ui.js?v=2.4.2"></script>
+<script src="common/settings.js?v=2.4.2"></script>
+<script src="common/people.js?v=2.4.2"></script>
+<script src="common/backnav.js?v=2.4.2"></script>
+<script src="common/whoami.js?v=2.4.2"></script>
+<script src="common/deeplink.js?v=2.4.2"></script>
+<script src="app.js?v=2.4.2"></script>
 </body>
 </html>

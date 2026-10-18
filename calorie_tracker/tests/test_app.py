@@ -639,9 +639,7 @@ class DailyCaloriesSensor(ApiBase):
         self.opt_in()
 
     def opt_in(self, *who):
-        """Each person's own "Publish my calories to Home Assistant" (Goals): on for these tests' people."""
-        for h in who or (ADMIN, ALICE, BOB):
-            self.assertEqual(self.c.put("/api/me/sensor", json={"publishSensor": True}, headers=h).status_code, 200)
+        """Nothing to turn on per person any more (the household switch decides for everyone)."""
         self.ha.calls.clear()
 
     def put(self, value, h=ADMIN):

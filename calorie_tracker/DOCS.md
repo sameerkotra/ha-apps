@@ -161,8 +161,6 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
 
 ### Goals
 - Daily calorie, protein, carbohydrate and fat goals, plus starting and target weight.
-- **Publish my calories to Home Assistant** and **Let the Household Assistant answer for me**:
-  your own switches (see below), always for you, never for someone an admin is acting as.
 
 ### Dashboard
 - **Summary**: a calorie chart against your goal — daily (last 14 days), weekly (8 weeks) or
@@ -201,19 +199,15 @@ closes a popup first, then returns to the Food Log.
 
 ## Home Assistant sensor
 
-Each person chooses whether their calories appear in Home Assistant: **Goals → Publish my calories
-to Home Assistant**. It starts off for people who open the app for the first time; everyone who used
-the app before this switch existed keeps what they had (on, if the household setting below was on).
-A person who turns it on gets a sensor such as `sensor.calorie_tracker_jane_doe_daily_calories`
-whose state is today's total calories (kcal) — nothing else; turning it off removes their sensor.
+While **Publish daily calories to Home Assistant** (Admin → App settings, on by default) is on, each
+person gets a sensor such as `sensor.calorie_tracker_jane_doe_daily_calories` whose state is today's
+total calories (kcal) — nothing else. Anyone who can see Home Assistant's entities can see them.
 Use it in dashboards or automations, e.g. a notification when someone is over their goal in the
 evening. The name comes from the person's Home Assistant display name (two people whose names give
 the same sensor name each get their own, the later one with a short ending). The value updates just
 after that day's log changes, every 15 minutes and just after midnight, so a new day starts at 0.
 
-**Publish daily calories to Home Assistant** (App settings, on by default) is the household's
-master switch: off removes every sensor from Home Assistant whatever each person chose; on publishes
-the sensors of everyone who turned theirs on.
+Turning the setting off removes every sensor from Home Assistant; on publishes them right away.
 
 ## The Household Assistant
 
@@ -223,9 +217,8 @@ against your goals, and what you logged at each meal — never anyone else's, an
 It can also give **your last 7 days** ("How did I do this week?") and **log a food** for you ("I had a
 banana") — only after you tap the exact entry it proposes, with the calories on the button: the assistant's
 estimate, or for a food you saved or logged before, its own calories times the servings. Its answers link back to
-that day in Calorie Tracker. An admin can turn this off for everyone with **Answer
-the Household Assistant** in App settings, and you can turn it off for yourself on **Goals → Let the
-Household Assistant answer for me**.
+that day in Calorie Tracker. An admin can turn this on or off for everyone with **Answer
+the Household Assistant** in Admin → App settings.
 
 The answers travel through Home Assistant's event bus, which Home Assistant's recorder keeps in its
 history unless told not to. Add this to Home Assistant's `configuration.yaml` and restart Home
@@ -337,6 +330,6 @@ Everything else is set inside the app.
   faster. **Wake up model** loads it ahead of time.
 - **"Too many AI requests"** — the person reached a limit in App settings → AI limits; wait, or an
   admin can raise it. **"The AI is busy"** — two requests are already running; try again shortly.
-- **The daily-calories sensor doesn't appear** — check that the household setting is on and that
-  the person turned on **Publish my calories to Home Assistant** (Goals), and look in the
-  app's **Log** tab for messages about Home Assistant.
+- **The daily-calories sensor doesn't appear** — check that **Publish daily calories to Home
+  Assistant** is on (Admin → App settings), and look in the app's **Log** tab for messages about
+  Home Assistant.

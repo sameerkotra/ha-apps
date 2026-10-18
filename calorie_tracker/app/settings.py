@@ -151,11 +151,10 @@ SETTINGS = [
             strict=True, help="Fewer than this and the symptom is listed, but not compared — too few to say anything."),
     # Strict: true/false only (no "yes", 1, …).
     Setting("expose_daily_calories_sensor", True, "Publish daily calories to Home Assistant", group="ha", strict=True,
-            help="The household's switch for the sensor.calorie_tracker_<user>_daily_calories sensors: only each "
-                 "person's calories logged today — never macros, weight or food names — and only for people who "
-                 "turned on \"Publish my calories to Home Assistant\" on their Goals page (on for everyone who used "
-                 "the app before that switch existed, off for people new since). Turning this off removes every "
-                 "sensor from Home Assistant; on publishes them right away."),
+            help="A sensor.calorie_tracker_<user>_daily_calories sensor for everyone: only each person's calories "
+                 "logged today — never macros, weight or food names. Anyone who can see Home Assistant's entities "
+                 "can see them. Turning this off removes every sensor from Home Assistant; on publishes them right "
+                 "away."),
     Setting("assistant_answers", True, "Answer the Household Assistant", group="assistant", strict=True,
             help="Lets the Household Assistant tell each person their own day — calories, macros and meals against "
                  "their goals — never anyone else's, and never weight."),

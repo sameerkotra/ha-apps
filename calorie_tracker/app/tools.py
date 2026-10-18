@@ -45,7 +45,7 @@ def _panel():
 
 tools = assist_tools.Catalogue(
     "calorie", targets=[r"/foodlog/\d{4}-\d{2}-\d{2}"], actor=_actor,
-    enabled=lambda conn: bool(settings.get("assistant_answers")), person_enabled=lambda conn, user: user["assistant_ok"], panel=_panel, busy=_busy)
+    enabled=lambda conn: bool(settings.get("assistant_answers")), person_enabled=lambda conn, user: True, panel=_panel, busy=_busy)
 
 
 def _r(x) -> int:

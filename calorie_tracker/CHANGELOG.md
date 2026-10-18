@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.2
+
+- **Goals is just goals**: the "Publish my calories to Home Assistant" and "Let the Household Assistant answer for me"
+  switches are gone from it. The household's switches in Admin → App settings decide for everyone: **Publish daily
+  calories to Home Assistant** (everyone's sensor while it's on) and **Answer the Household Assistant**.
+
 ## 2.4.1
 
 - **Tags are a dropdown**: open **🏷️ Tags**, tick the ones that fit, or add your own at the bottom.

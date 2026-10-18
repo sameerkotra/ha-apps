@@ -1,7 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Request
-from pydantic import BaseModel, ConfigDict, StrictBool
+from fastapi import APIRouter, Depends, Request
 
-from .. import config, db, ha_sync, settings
+from .. import config, settings
 from ..auth import display_name_listed, get_current_user, no_admins
 from ..common import whoami as whoami_core
 
@@ -22,42 +21,10 @@ def me(user: dict = Depends(get_current_user)):
 
 
 def _assistant(uid: str) -> dict:
-    """Whether the admin lets the Household Assistant ask, and this person's own switch (tools.py); the same for
-    the daily-calories sensor: the household switch and "Publish my calories to Home Assistant"."""
-    with db.get_conn() as conn:
-        row = conn.execute("SELECT assistant_ok, publish_sensor FROM users WHERE id = ?", (uid,)).fetchone()
-    return {"assistant": bool(settings.get("assistant_answers")), "assistantOk": bool(row["assistant_ok"]) if row else True,
-            "sensor": bool(settings.get("expose_daily_calories_sensor")),
-            "publishSensor": bool(row["publish_sensor"]) if row else False}
-
-
-class AssistantIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    assistantOk: StrictBool
-
-
-@router.put("/assistant")
-def set_assistant(body: AssistantIn, user: dict = Depends(get_current_user)):
-    """The person's own "Let the Household Assistant answer for me" — always the signed-in person, never "acting as"."""
-    with db.get_conn() as conn:
-        conn.execute("UPDATE users SET assistant_ok = ? WHERE id = ?", (1 if body.assistantOk else 0, user["id"]))
-    return _assistant(user["id"])
-
-
-class SensorIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    publishSensor: StrictBool
-
-
-@router.put("/sensor")
-def set_sensor(body: SensorIn, background: BackgroundTasks, user: dict = Depends(get_current_user)):
-    """The person's own "Publish my calories to Home Assistant" — always the signed-in person, never "acting as".
-    On: their sensor is published now (while the household switch is on); off: it is removed from Home Assistant."""
-    with db.get_conn() as conn:
-        conn.execute("UPDATE users SET publish_sensor = ? WHERE id = ?", (1 if body.publishSensor else 0, user["id"]))
-    background.add_task(ha_sync.push_for_user_blocking if body.publishSensor else ha_sync.remove_for_user_blocking,
-                        user["id"])
-    return _assistant(user["id"])
+    """The household's switches (Admin → App settings): the Household Assistant may ask, the calories sensors are
+    published. They decide for everyone; there is no per-person switch."""
+    return {"assistant": bool(settings.get("assistant_answers")),
+            "sensor": bool(settings.get("expose_daily_calories_sensor"))}
 
 
 @whoami_router.get("/today")

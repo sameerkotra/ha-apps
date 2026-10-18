@@ -236,27 +236,19 @@ class SensorSwitchPerPerson(ApiBase):
         ha_sync._published.clear()
         self.today = str(config.today())
 
-    def test_off_for_new_people_and_on_when_they_choose(self):
-        self.assertFalse(self.c.get("/api/me", headers=ALICE).json()["publishSensor"])
+    def test_the_household_switch_publishes_everyone(self):
+        me = self.c.get("/api/me", headers=ALICE).json()
+        self.assertNotIn("publishSensor", me)                        # no per-person switch (Goals) any more
+        self.assertEqual(self.c.put("/api/me/sensor", json={"publishSensor": True}, headers=ALICE).status_code, 405)
+        with db.get_conn() as conn:                                  # even someone who had theirs off
+            conn.execute("UPDATE users SET publish_sensor = 0")
         self.log(ALICE, date=self.today, calories=300)
-        asyncio.run(ha_sync.push_all())
-        self.assertEqual(self.ha.calls, [])                          # nobody chose to publish
-        r = self.c.put("/api/me/sensor", json={"publishSensor": True}, headers=ALICE)
-        self.assertEqual((r.status_code, r.json()["publishSensor"]), (200, True))
         self.assertEqual(self.ha.of("POST"), [("sensor.calorie_tracker_alice_daily_calories", 300)])
         self.ha.calls.clear()
         asyncio.run(ha_sync.push_all())
-        self.assertEqual([e for e, _ in self.ha.of("POST")], ["sensor.calorie_tracker_alice_daily_calories"])
-        self.ha.calls.clear()
-        self.c.put("/api/me/sensor", json={"publishSensor": False}, headers=ALICE)
-        self.assertEqual(self.ha.of("DELETE"), [("sensor.calorie_tracker_alice_daily_calories", None)])
-        self.assertEqual(self.c.put("/api/me/sensor?as_user=u_bob", json={"publishSensor": True},
-                                    headers=ADMIN).json()["publishSensor"], True)
-        with db.get_conn() as conn:                                  # always the signed-in person, never "acting as"
-            self.assertEqual(conn.execute("SELECT publish_sensor FROM users WHERE id = 'u_bob'").fetchone()[0], 0)
+        self.assertIn("sensor.calorie_tracker_alice_daily_calories", [e for e, _ in self.ha.of("POST")])
 
     def test_household_switch_stays_the_master(self):
-        self.c.put("/api/me/sensor", json={"publishSensor": True}, headers=ALICE)
         self.c.put("/api/admin/settings", json={"expose_daily_calories_sensor": False}, headers=ADMIN)
         self.ha.calls.clear()
         self.log(ALICE, date=self.today)
