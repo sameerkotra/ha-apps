@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.6
+
+- **Maintenance: copy an item.** **+ New item** has a **Copy from** list, and an item's page has **⧉ Copy**: the new item starts with that one's settings (repeats, reminders, assignee, who is told, place, link, notes and how-to), ready to rename. Its history, files and last done date aren't copied.
+
 ## 2.7.5
 
 - **Fewer tabs**: the Dashboard is now **☀️ Today**, a view of the Calendar tab (Calendar · Today · Quick tasks; the tab still opens on the calendar, and old Dashboard links open Today). Places, Settings and Admin sit below a line in the sidebar, and on a phone under **⋯ More** — the bottom bar is Calendar, Lists, Schedule, Maintenance (when on) and More.

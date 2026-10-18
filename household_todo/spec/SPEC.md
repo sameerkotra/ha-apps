@@ -64,7 +64,7 @@ household_todo/
 
 | Group | Settings |
 |---|---|
-| App | `slug: household_todo`, `version: "2.7.5"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
+| App | `slug: household_todo`, `version: "2.7.6"`, arch amd64/aarch64/armv7/armhf/i386, `startup: application`, `boot: auto`, `url: https://github.com/sameerkotra/ha-apps` |
 | Ingress | `ingress: true`, `ingress_port: 8100`, **no `ports:`** |
 | Panel | `panel_icon: mdi:format-list-checks`, `panel_title: Household Todo`, `panel_admin: false` |
 | Permissions | `homeassistant_api: true`, every other API/privilege false, `apparmor: true`; `map: share:rw` (maintenance files) |
@@ -577,7 +577,7 @@ The lifespan starts the background loops (unless `BACKGROUND_LOOPS=0`) through t
   - Day-panel (and agenda) schedule entries add 🕘 time, 👤 person, 🔒 and 🔗 Link chips. Month-cell chips never show the link.
   - The day panel has "Add a task on this date…" (`POST /api/tasks` with `due_date`), then the day's tasks and schedule entries. Entries from today onward offer **Skip**, **Move…** and **Undo**.
   - An "N overdue" banner (from `/api/dashboard`) links to Today. An undated-tasks footer links to Lists.
-- **Today** (the Calendar tab's second view; the Dashboard tab before 2.7.5).
+- **Today** (the Calendar tab's second view; it used to be the Dashboard tab).
   - At the top: quick add to My Tasks, then four tiles — Overdue, Due today, Next 7 days, Open tasks, then the task
     groups (nothing due → **Add a task**), "Coming up" and the workload.
   - A "Coming up" strip lists the API's `schedule` entries (with time range and 🔒).
@@ -685,6 +685,14 @@ House upkeep. Off until an admin turns it on (`maintenance_enabled`); while off 
 - Status: overdue (< today), due (≤ `lead_days` 0–60 ahead), upcoming, paused.
 - Fields: name 1–60, icon (an emoji), category (`maint_catalog.CATEGORIES`), notes ≤1000, howto ≤2000, url (link rule), place, assignee, `recipients_mode` default|custom (+ `maint_recipients`), `overdue_every` 0/3/7/14, `expose_sensor`, `suggestion_key` (`b:<key>`/`c:<id>`). Max 200 items.
 - **Mark done** (`maint_done`): date ≤ today within 10 years, note ≤500, cost 0–10,000,000 → `cost_cents`, `due_was`, `prev_state` (JSON of last_done/start_date/cleared_through/snooze). Interval: `last_done` = max(existing, date). **Undo** (latest record by `created_at`) restores `prev_state`, deletes the record and moves its files to `_deleted` (503 while the folder is offline and it has files).
+
+- **Copy** (browser only, no API of its own): *+ New item* has a **Copy from** select (every item, by name; hidden
+  while there are none); choosing one reopens the form as *New maintenance item (copy)*, and the item dialog's
+  **⧉ Copy** does the same. Copied: name (selected, to retype), icon, category, mode, every/unit or the rule and
+  anchor (a rule the simple fields can't show is sent as it was until they're changed), lead days, overdue
+  reminders, assignee, recipients mode and people, place, url, notes, howto, sensor. Not copied: last done (the
+  copy starts as never done, first due today), history, files, snooze, pause, suggestion key. A plain `POST
+  /api/maintenance/items`.
 
 ### 14.2 Suggestions
 `maint_catalog.BUILTIN` (~45) + `maint_suggestions` (admin CRUD). Shown if `needs` is in `maintenance_profile` (or has none), not hidden (`maint_hidden`, household-wide), and no item has its key or its name (case-insensitive). Seasonal ones (`seasons`) default to calendar mode due on the first day of each season: one season → `years:1`, two six months apart → `months:6:1`, else `months:3:1`, anchored at the next start. Seasons are meteorological (N: Mar/Jun/Sep/Dec; S: +6 months, from HA's `latitude` < 0). In-season (now or starting within 31 days) first.

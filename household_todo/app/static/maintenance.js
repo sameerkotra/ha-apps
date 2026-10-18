@@ -233,7 +233,11 @@ async function openMaintItem(it, again) {
         try { await api(`/api/maintenance/items/${it.id}`, { method: "PATCH", body: { paused: it.status !== "paused" } }); toast(it.status === "paused" ? "Resumed" : "Paused"); reload(); }
         catch (e) { fail(e); }
       } }, it.status === "paused" ? "▶ Resume" : "⏸ Pause"),
-      h("button", { class: "btn-secondary", type: "button", onclick: () => openMaintForm(it, reload) }, "✎ Edit"));
+      h("button", { class: "btn-secondary", type: "button", onclick: () => openMaintForm(it, reload) }, "✎ Edit"),
+      h("button", { class: "btn-ghost", type: "button", title: "A new item with this one's settings", onclick: () => {
+        modal.close();
+        openMaintForm(null, again, copyOfItem(it));
+      } }, "⧉ Copy"));
     mount(box,
       h("div", { class: "task-meta", style: "margin-bottom:10px" }, maintStatusChip(it), h("span", { class: "chip" }, it.categoryLabel)),
       h("div", { class: "kv" },
@@ -382,10 +386,22 @@ function calendarState(item) {
   return s;
 }
 
+/** A new item's form filled from an existing one: everything but its history, files and when it was last done. */
+function copyOfItem(it) {
+  return {
+    copyOf: it.name, name: it.name, icon: it.icon, category: it.category, mode: it.mode,
+    everyN: it.everyN, everyUnit: it.everyUnit, rule: it.rule, anchorDate: it.anchorDate, repeatLabel: it.repeatLabel,
+    leadDays: it.leadDays, overdueEvery: it.overdueEvery, assignedTo: it.assignedTo,
+    recipientsMode: it.recipientsMode, recipients: it.recipients, placeId: it.placeId, place: it.place,
+    url: it.url, notes: it.notes, howto: it.howto, exposeSensor: it.exposeSensor,
+  };
+}
+
 function openMaintForm(item, onSaved, prefill = null) {
   const editing = !!item;
+  const copying = !editing && !!(prefill && prefill.copyOf);
   const src = item || prefill || {};
-  const d = maint.data || { categories: [] };
+  const d = maint.data || { categories: [], items: [] };
   const name = h("input", { type: "text", maxlength: "60", value: src.name || "", placeholder: "e.g. Replace the furnace filter" });
   const icon = h("input", { type: "text", maxlength: "8", value: src.icon || "", placeholder: "🔧", style: "width:70px", "aria-label": "Icon (emoji)" });
   const catSel = h("select", { value: src.category || "other", "aria-label": "Category" }, d.categories.map((c) => h("option", { value: c.key }, c.label)));
@@ -399,11 +415,12 @@ function openMaintForm(item, onSaved, prefill = null) {
   const never = h("input", { type: "checkbox", checked: editing ? !src.lastDone : true });
   const firstDue = h("input", { type: "date", value: editing && !src.lastDone ? (src.startDate || todayIso()) : todayIso(), "aria-label": "First due" });
   // calendar
-  const cs = calendarState(item);
+  const cs = calendarState(editing ? item : copying ? src : null);
   const calN = h("input", { type: "number", min: "1", max: "36", value: String(cs.n), style: "width:80px", "aria-label": "Every" });
   const calUnit = h("select", { value: cs.unit, "aria-label": "Unit" }, h("option", { value: "month" }, "months"), h("option", { value: "year" }, "years"));
   const anchor = h("input", { type: "date", value: src.anchorDate || src.anchor_date || todayIso(), "aria-label": "First date" });
-  let calTouched = !editing || src.mode !== "calendar";
+  // a copied calendar rule the simple fields can't show is kept as it is until they're changed
+  let calTouched = copying && src.mode === "calendar" ? cs.ok : !editing || src.mode !== "calendar";
   [calN, calUnit, anchor].forEach((el) => el.addEventListener("input", () => { calTouched = true; refresh(); }));
   const calNote = h("div", { class: "hint" });
 
@@ -412,11 +429,11 @@ function openMaintForm(item, onSaved, prefill = null) {
       .map((n) => h("option", { value: String(n) }, n === 0 ? "On the day" : `${n} day${n === 1 ? "" : "s"} before`)));
   const overdue = h("select", { value: String(src.overdueEvery !== undefined ? src.overdueEvery : 7), "aria-label": "Overdue reminders" },
     OVERDUE_OPTIONS.map(([v, l]) => h("option", { value: String(v) }, l)));
-  const people = state.users.filter((u) => !u.disabled || (editing && u.id === src.assignedTo));
+  const people = state.users.filter((u) => !u.disabled || ((editing || copying) && u.id === src.assignedTo));
   const asn = h("select", { value: src.assignedTo || "", "aria-label": "Assigned to" },
     h("option", { value: "" }, "Nobody"), people.map((u) => h("option", { value: u.id }, u.name)));
   let rmode = src.recipientsMode || "default";
-  const chosen = new Set(editing && src.recipientsMode === "custom" ? src.recipients : []);
+  const chosen = new Set((editing || copying) && src.recipientsMode === "custom" ? src.recipients : []);
   const recBoxes = state.users.filter((u) => !u.disabled).map((u) => {
     const cb = h("input", { type: "checkbox", checked: chosen.has(u.id) });
     cb.addEventListener("change", () => { if (cb.checked) chosen.add(u.id); else chosen.delete(u.id); });
@@ -424,7 +441,7 @@ function openMaintForm(item, onSaved, prefill = null) {
   });
   const recWrap = h("div", { class: "chip-row" }, recBoxes);
   const recSeg = segmented([["default", "Household default"], ["custom", "Chosen people"]], rmode, (v) => { rmode = v; refresh(); });
-  const place = placePicker(editing ? { placeId: src.placeId, place: src.place } : null);
+  const place = placePicker(editing || copying ? { placeId: src.placeId, place: src.place } : null);
   const urlIn = h("input", { type: "url", maxlength: "2000", inputmode: "url", placeholder: "https://… (a manual, a product page)", value: src.url || "", "aria-label": "Link" });
   const notes = h("textarea", { maxlength: "1000", placeholder: "Notes — filter size, model number, who to call", style: "min-height:52px" }, src.notes || "");
   const howto = h("textarea", { maxlength: "2000", placeholder: "How to (steps)", style: "min-height:70px" }, src.howto || "");
@@ -450,7 +467,7 @@ function openMaintForm(item, onSaved, prefill = null) {
     everyN.max = String(UNIT_MAX[everyUnit.value]);
     recWrap.hidden = rmode !== "custom";
     const dt = parseIso(anchor.value || todayIso());
-    calNote.textContent = !cs.ok && !calTouched ? `Currently: ${item.repeatLabel}. Change the fields to replace it.`
+    calNote.textContent = !cs.ok && !calTouched ? `${copying ? "Copied" : "Currently"}: ${src.repeatLabel}. Change the fields to replace it.`
       : calUnit.value === "year" ? `Due every ${calN.value === "1" ? "" : calN.value + " "}year${calN.value === "1" ? "" : "s"} on ${dt.getDate()} ${MONTHS[dt.getMonth()]}, starting ${fmtDate(anchor.value || todayIso(), { year: true })}.`
         : `Due every ${calN.value === "1" ? "month" : calN.value + " months"} on day ${dt.getDate()}, starting ${fmtDate(anchor.value || todayIso(), { year: true })}.`;
   }
@@ -458,8 +475,21 @@ function openMaintForm(item, onSaved, prefill = null) {
   everyUnit.addEventListener("change", refresh);
   refresh();
 
+  // a new item can start as a copy of one already there
+  const others = !editing && !prefill ? (d.items || []).slice().sort((a, b) => a.name.localeCompare(b.name)) : [];
+  const copyFrom = others.length ? h("select", { "aria-label": "Copy from an existing item", id: "maintCopyFrom" },
+    h("option", { value: "" }, "— start empty —"), others.map((x) => h("option", { value: x.id }, `${x.icon || "🔧"} ${x.name}`))) : null;
+  if (copyFrom) copyFrom.addEventListener("change", () => {
+    const it = others.find((x) => x.id === copyFrom.value);
+    if (!it) return;
+    modal.close();
+    openMaintForm(null, onSaved, copyOfItem(it));
+  });
   const form = h("div", null,
     prefill && prefill.why ? h("div", { class: "hint", style: "margin-bottom:8px" }, prefill.why) : null,
+    copyFrom ? h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Copy from", copyFrom)) : null,
+    copying ? h("div", { class: "hint", style: "margin-bottom:8px" }, `A copy of “${src.copyOf}” — change what's different. `,
+      "It starts fresh: its history, files and when it was last done aren't copied.") : null,
     h("div", { class: "form-row" }, h("label", { class: "field wide" }, "Name", name), h("label", { class: "field narrow" }, "Icon", icon)),
     h("div", { class: "form-row" }, h("label", { class: "field" }, "Category", catSel)),
     h("div", { class: "field", style: "margin-bottom:8px" }, "Repeats", modeSeg.el),
@@ -475,7 +505,8 @@ function openMaintForm(item, onSaved, prefill = null) {
     h("div", { class: "form-row" }, h("label", { class: "field wide" }, "How to", howto)),
     h("div", { class: "form-row" }, h("label", { class: "mini-toggle" }, sensor, "Publish to Home Assistant (on while it's due or overdue)")),
     err, h("div", { class: "actions" }, save));
-  const modal = openModal(editing ? "Edit maintenance item" : prefill ? "Add suggested item" : "New maintenance item", form);
+  const modal = openModal(editing ? "Edit maintenance item" : copying ? "New maintenance item (copy)" : prefill ? "Add suggested item" : "New maintenance item", form);
+  if (copying) { name.focus(); name.select(); }
 
   save.addEventListener("click", async () => {
     err.textContent = "";
@@ -500,6 +531,9 @@ function openMaintForm(item, onSaved, prefill = null) {
       const day = parseIso(anchor.value).getDate();
       body.rule = calUnit.value === "year" ? `years:${n}` : n === 1 ? `monthly:${day}` : `months:${n}:${day}`;
       body.anchor_date = anchor.value;
+    } else if (copying) {               // a copied rule the simple fields can't show, as it was
+      body.rule = src.rule;
+      body.anchor_date = src.anchorDate;
     }
     if (!editing && prefill && prefill.key) body.suggestion_key = prefill.key;
     save.disabled = true;

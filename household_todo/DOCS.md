@@ -273,7 +273,12 @@ list and makes every admin a recipient).
   so the southern hemisphere works too. **+ Add** pre-fills the form; **Not
   for us** hides one. Admins can add their own suggestions.
 - **All upkeep** — every item by category, with details, files, history,
-  **Pause**, **Edit** and **Delete**.
+  **Pause**, **Edit**, **⧉ Copy** and **Delete**.
+- **Copying an item.** In **+ New item**, pick one under **Copy from** (or
+  open an item and tap **⧉ Copy**): the form fills with its settings —
+  repeats, reminders, assignee, who is told, place, link, notes and how-to —
+  ready to rename. The copy starts fresh: its history, files and last done
+  date aren't copied.
 - **History** — every Mark done, kept for good, with a yearly cost total and
   **Export CSV**. In the CSV, an item name, category, name, note or file name
   that starts with `=`, `+`, `-` or `@` gets a `'` in front, so a spreadsheet
