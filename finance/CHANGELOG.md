@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0
+
+- **One person's data: export, import, delete** (Admin → Users → ⋯ Data on each person, and **Import a person's data…** above the list). Export downloads one file with everything they have (accounts, statements and their PDFs, transactions, CSV imports, rules, categories, utility bills, toll statements and toll setup); Import loads it into anyone — adding to what they have without doubling anything, or replacing it — with every row checked and new ids throughout; Delete removes their data for good (and, if you choose, them), unlike Wipe all data. Shared access, saved reports, App settings and the AI usage total stay out of it.
+
 ## 1.4.4
 
 - **"I spent 200 on fuel at Shell"**: the Household Assistant can now add a spend by hand to one of your own accounts — the same row the Uploads page's *Add one by hand* makes, only after you tap the proposed change, and never on anyone else's accounts. With more than one account, name it ("on my Visa"); it asks which otherwise (new `finance.expense.add`, Household Assistant 1.5.0).

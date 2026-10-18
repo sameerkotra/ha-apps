@@ -13,6 +13,7 @@ from . import app_messages, auth, config, db, ha_client, ha_sensors, housekeepin
 from .common import auth_core, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
 from .routers import admin, levels, me, play, prefs, together, users
+from .routers import people_data as people_data_router
 from .routers import daily as daily_router
 
 jobs_core.setup_logging()
@@ -63,6 +64,7 @@ app.include_router(me.router)
 app.include_router(prefs.router)
 app.include_router(play.router)
 app.include_router(users.router)
+app.include_router(people_data_router.router)
 app.include_router(admin.router)
 app.include_router(levels.router)
 app.include_router(daily_router.router)
@@ -106,13 +108,15 @@ HEADERS = web_security.SecurityHeaders(_csp_for, referrer="no-referrer", api_no_
 
 
 MAX_BODY = 64 * 1024
-STREAMED = ("/api/admin-storage-import-db",)
+STREAMED = ("/api/admin-storage-import-db", people_data_router.IMPORT_PATH)
 
 # Request bodies: 64 KB for everything (a saved game is at most 48 KB), counted as they arrive — a body sent without
-# a Content-Length can't get past it either. The backup import streams to disk and stops at its own limit. Added
-# before the guard below, so outsiders still get the guard's 403 first (Starlette runs the last added first).
+# a Content-Length can't get past it either. The backup import and a person's export file (Admin → Users → Data)
+# stream to disk and stop at their own limit. Added before the guard below, so outsiders still get the guard's 403
+# first (Starlette runs the last added first).
 app.add_middleware(web_security.BodyLimit, default_max=MAX_BODY,
-                   routes={STREAMED[0]: admin.MAX_IMPORT_BYTES}, streamed_prefixes=STREAMED)
+                   routes={STREAMED[0]: admin.MAX_IMPORT_BYTES, STREAMED[1]: people_data_router.MAX_UPLOAD_BYTES},
+                   streamed_prefixes=STREAMED)
 
 
 @app.middleware("http")

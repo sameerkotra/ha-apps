@@ -25,7 +25,8 @@
           "ha_ws.py",
           "assist_tools.py",
           "deeplinks.py",
-          "wildcard.py"
+          "wildcard.py",
+          "person_data.py"
         ],
         "static": [
           "backnav.js",
@@ -36,7 +37,9 @@
           "settings.js",
           "settings.css",
           "people.js",
-          "deeplink.js"
+          "deeplink.js",
+          "person-data.js",
+          "person-data.css"
         ],
         "tests": [
           "__init__.py",
@@ -59,7 +62,8 @@
           "test_fake_ha.py",
           "test_deeplinks.py",
           "test_ha_time.py",
-          "test_wildcard.py"
+          "test_wildcard.py",
+          "test_person_data.py"
         ]
       }
     },
@@ -150,7 +154,8 @@
           "ha_ws.py",
           "assist_tools.py",
           "deeplinks.py",
-          "wildcard.py"
+          "wildcard.py",
+          "person_data.py"
         ],
         "tests": [
           "__init__.py",
@@ -170,13 +175,16 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_deeplinks.py",
-          "test_wildcard.py"
+          "test_wildcard.py",
+          "test_person_data.py"
         ],
         "static": [
           "theme-boot.js",
           "themes.css",
           "ui.js",
-          "deeplink.js"
+          "deeplink.js",
+          "person-data.js",
+          "person-data.css"
         ]
       }
     },
@@ -206,7 +214,8 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "wildcard.py"
+          "wildcard.py",
+          "person_data.py"
         ],
         "static": [
           "backnav.js",
@@ -216,7 +225,9 @@
           "ui.js",
           "settings.js",
           "settings.css",
-          "people.js"
+          "people.js",
+          "person-data.js",
+          "person-data.css"
         ],
         "tests": [
           "__init__.py",
@@ -239,7 +250,8 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_ha_time.py",
-          "test_wildcard.py"
+          "test_wildcard.py",
+          "test_person_data.py"
         ]
       }
     },
@@ -584,7 +596,8 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "wildcard.py"
+          "wildcard.py",
+          "person_data.py"
         ],
         "static": [
           "backnav.js",
@@ -596,7 +609,9 @@
           "settings.css",
           "people.js",
           "http-warning.js",
-          "connected-apps.js"
+          "connected-apps.js",
+          "person-data.js",
+          "person-data.css"
         ],
         "tests": [
           "test_shared_copies.py",
@@ -620,7 +635,8 @@
           "test_app_bus.py",
           "test_assist_tools.py",
           "test_ha_time.py",
-          "test_wildcard.py"
+          "test_wildcard.py",
+          "test_person_data.py"
         ]
       }
     },
@@ -648,7 +664,8 @@
           "app_bus.py",
           "ha_ws.py",
           "assist_tools.py",
-          "wildcard.py"
+          "wildcard.py",
+          "person_data.py"
         ],
         "static": [
           "backnav.js",
@@ -658,7 +675,9 @@
           "ui.js",
           "settings.js",
           "settings.css",
-          "connected-apps.js"
+          "connected-apps.js",
+          "person-data.js",
+          "person-data.css"
         ],
         "tests": [
           "__init__.py",
@@ -679,7 +698,8 @@
           "fake_ha.py",
           "test_fake_ha.py",
           "test_ha_time.py",
-          "test_wildcard.py"
+          "test_wildcard.py",
+          "test_person_data.py"
         ]
       }
     },

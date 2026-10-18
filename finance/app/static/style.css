@@ -1163,3 +1163,7 @@ button.nav-item:hover { background: var(--panel-alt); color: var(--text); }
 .ai-usage-summary { display: grid; grid-template-columns: max-content max-content; gap: 0.45rem 2rem; margin: 0 0 0.75rem; }
 .ai-usage-summary dt { color: var(--text-dim); font-weight: 600; }
 .ai-usage-summary dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Admin → Users: one person's data (the shared ⋯ Data menu and Import button, common/person-data.css) */
+.u-data { display: inline-block; margin-left: 0.4rem; vertical-align: middle; }
+.u-data-import { margin: 0.5rem 0 0.9rem; }

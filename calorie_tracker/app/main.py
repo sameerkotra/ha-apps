@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from . import app_messages, db, ha_sync
 from .common import auth_core, backup_core, deeplinks, web_security
 from .common import housekeeping as jobs_core
-from .routers import admin, ai, goals, logs, me, saved_foods, symptoms, users, weight
+from .routers import admin, ai, goals, logs, me, people_data, saved_foods, symptoms, users, weight
 
 jobs_core.setup_logging()
 logger = logging.getLogger("main")
@@ -42,6 +42,9 @@ async def lifespan(app: FastAPI):
     # backup downloads a browser never finished (they are made in the temp folder)
     jobs.every("sweep", 3600, lambda: backup_core.remove_stale(tempfile.gettempdir(), db.SNAPSHOT_PREFIX, 6 * 3600),
                at_start=False, log=logger, error="Sweeping old backup downloads failed")
+    # person-data files an admin uploaded for an import and never imported (kept an hour)
+    jobs.every("sweep_person_data", 3600, people_data.UPLOADS.sweep, at_start=False, log=logger,
+               error="Sweeping old person-data uploads failed")
     jobs.start()
     try:
         yield
@@ -80,6 +83,7 @@ app.include_router(logs.router)
 app.include_router(symptoms.router)
 app.include_router(ai.router)
 app.include_router(admin.router)
+app.include_router(people_data.router)
 # "/<page>/foodlog", "/<page>/dashboard" … asked of the app itself: a redirect to the page (deeplink.js reads the path)
 deeplinks.add(app, {"foodlog": 0, "dashboard": 0, "savedfoods": 0, "weight": 0, "goals": 0, "symptoms": 0})
 app.add_api_route("/foodlog/{a}", lambda a: deeplinks.redirect(["foodlog", a]), methods=["GET"], include_in_schema=False)
@@ -95,12 +99,13 @@ app.add_api_route("/symptoms/{a}", lambda a: deeplinks.redirect(["symptoms", a])
 # The allowlist (Supervisor's ingress proxy and loopback) is app/common/auth_core.INGRESS_HOSTS.
 
 
-# Request bodies: 1 MB for the JSON routes (counted as they arrive, chunked bodies too); a database restore up to
-# RESTORE_MAX_BYTES. Added before the guard below, so an outsider still gets its 403 first and a 413 still carries
+# Request bodies: 1 MB for the JSON routes (counted as they arrive, chunked bodies too); a database restore and a
+# person's data file (Admin → Users → Import a person's data) up to RESTORE_MAX_BYTES. Added before the guard below, so an outsider still gets its 403 first and a 413 still carries
 # the security headers.
 RESTORE_MAX_BYTES = 512 << 20
 app.add_middleware(web_security.BodyLimit, default_max=1 << 20,
-                   routes={"/api/admin-storage-import-db": RESTORE_MAX_BYTES})
+                   routes={"/api/admin-storage-import-db": RESTORE_MAX_BYTES,
+                           "/api/admin/people/data/import": people_data.UPLOAD_MAX})
 
 
 @app.middleware("http")

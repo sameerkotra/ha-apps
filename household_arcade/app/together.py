@@ -322,9 +322,14 @@ def get(conn, match_id: str):
     return conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
 
 
+# A seat whose person was deleted keeps their id (Admin → Users → Data, PERSON_DATA_SPEC.md §6): shown as this.
+FORMER_PLAYER = "Former player"
+
+
 def _players(conn, match_id: str) -> list:
-    return conn.execute("SELECT p.*, u.name, u.username FROM match_players p JOIN users u ON u.id = p.user_id "
-                        "WHERE p.match_id = ? ORDER BY p.seat", (match_id,)).fetchall()
+    return conn.execute("SELECT p.*, COALESCE(u.name, ?) AS name, u.username FROM match_players p "
+                        "LEFT JOIN users u ON u.id = p.user_id WHERE p.match_id = ? ORDER BY p.seat",
+                        (FORMER_PLAYER, match_id)).fetchall()
 
 
 def is_player(conn, match_id: str, user_id: str) -> bool:
@@ -345,6 +350,8 @@ def _gone(conn, m, p) -> bool:
     was ended (left the page, another game started) or went stale without a score."""
     if p["finished_at"]:
         return False
+    if p["left_at"]:                 # their data was deleted while the race was on: the computer has their seat
+        return True
     started = config.parse_ts(m["started_at"]) if m["started_at"] else None
     if not p["session_id"]:
         return bool(started and (config.utcnow() - started).total_seconds() > GONE_AFTER)
@@ -779,11 +786,12 @@ def against(conn, user_id: str) -> list[dict]:
     Practice, where both phones played (a match one player never started doesn't count)."""
     names = names_for(conn, user_id)
     rows = conn.execute(
-        "SELECT m.game, me.result AS mine, o.user_id AS other_id, u.name AS other_name "
+        "SELECT m.game, me.result AS mine, o.user_id AS other_id, COALESCE(u.name, ?) AS other_name "
         "FROM matches m JOIN match_players me ON me.match_id = m.id AND me.user_id = ? "
         "JOIN match_players o ON o.match_id = m.id AND o.user_id != me.user_id "
-        "JOIN users u ON u.id = o.user_id "
-        "WHERE m.status = 'done' AND m.practice = 0 AND me.result IS NOT NULL ORDER BY m.ended_at", (user_id,)).fetchall()
+        "LEFT JOIN users u ON u.id = o.user_id "
+        "WHERE m.status = 'done' AND m.practice = 0 AND me.result IS NOT NULL ORDER BY m.ended_at",
+        (FORMER_PLAYER, user_id)).fetchall()
     people: dict[str, dict] = {}
     for r in rows:
         p = people.setdefault(r["other_id"], {"id": r["other_id"], "name": shown_name(r["other_name"], names), "games": 0, "wins": 0,

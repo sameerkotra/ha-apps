@@ -30,7 +30,8 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 - `app/engine.py` — plan → call → answer; actions; the page's view of a question; housekeeping.
 - `app/app_messages.py` — starts the bus with `signing_key` (App settings → `bus_signing_key`, read at most every
   5 s); it answers `assist.ask`.
-- `app/routers/api.py` — the API (below). `app/main.py` — start-up, jobs, the ingress guard, CSP.
+- `app/routers/api.py` — the API (below); `app/routers/people_data.py` — one person's data (below). `app/main.py` —
+  start-up, jobs, the ingress guard, CSP.
 - `app/static/` — `index.html`, `app.js`, `style.css` and the shared `common/` files (no inline scripts).
 
 ## Data (`/data/assistant.db`)
@@ -142,9 +143,10 @@ privacy); the apps' side is `common/python/assist_tools.py`. This file says how 
 | `GET /api/admin/people` · `PUT /api/admin/people/{id}` `{enabled?, isChild?, reviewed?}` | admin | People (not oneself off); `new` until reviewed, new ones first |
 | `GET /api/admin/usage` · `GET /api/admin/connected-apps` | admin | Usage; Connected apps |
 | `GET /api/admin-storage-download-db` · `POST /api/admin-storage-import-db` | admin | backups without the AI key; restore keeps this install's key |
+| `GET/POST /api/admin/people/{id}/data[/export\|/import/{token}\|/delete]` · `POST /api/admin/people/data/import` · `GET /api/admin/people/data/jobs/{job}[/file]` | admin | one person's data (below) |
 
 Every route is behind the ingress guard and the shared cross-site check; the page's CSP allows scripts only
-from the app. Request bodies: 1 MB (`web_security.BodyLimit`), the restore 1 GB with a Content-Length. Files
+from the app. Request bodies: 1 MB (`web_security.BodyLimit`), the restore 1 GB with a Content-Length, a person's export file 64 MB. Files
 asked for with `?v=` are cached for good (`static_immutable`); the page links every file with the app's version.
 `GET /api/history` builds its page with `engine.views` (the apps' names and the calls read once).
 
@@ -229,6 +231,46 @@ recorder doesn't exclude `household_apps`:
   `needs_warmup()` is false, so no path can call a model; Test connection answers without asking anything.
 - The person is released (`_owners`) as soon as the answer is written, so the next question can follow at once.
 
+## One person's data (`app/routers/people_data.py`, PERSON_DATA_SPEC.md §2 and §8)
+
+Admin → People: a **⋯ Data** button per row (`PeopleData.menu`) and **Import a person's data…** above the table
+(`PeopleData.importButton`; `cfg.people` = the People list, `onDone` reloads it). The file, its checks and the
+dialogs are the shared `common/person_data.py` and `common/person-data.js`.
+
+| Route (admin, the real signed-in one) | |
+|---|---|
+| `GET /api/admin/people/{id}/data` | the summary: questions kept (the oldest), the app answers behind them, briefings on (the speaker); the export option; what stays; what it can't reach; `deleteChoices: []`. Also the delete's dry run |
+| `POST /api/admin/people/{id}/data/export` `{options: {questions}}` | the `.zip` at once (`Content-Disposition: attachment`, `person_data.file_name`); never a job — there are no files |
+| `GET /api/admin/people/data/jobs/{job}[/file]` | the shared job API; always 404 here (no export is big) |
+| `POST /api/admin/people/data/import` multipart `file` | `{token, preview}`; the file kept an hour (`Uploads`, `/data/household-assistant-person-up-*.zip`, also swept hourly); every row checked already, so the preview shows a refusal |
+| `POST /api/admin/people/{id}/data/import/{token}` `{mode: add\|replace, confirm?}` | `{message, imported}`; Replace: 409 unless `confirm` is their name |
+| `POST /api/admin/people/{id}/data/delete` `{confirm, forget}` | `{message, deleted, forgot}`; 409 unless `confirm` is their name |
+
+- **Schema** (`people_data.SCHEMA`): **1** — the tables as they are now (users with `reviewed`, questions with
+  `mode`/`quick`/`understood`, briefings with the evening and the speaker). A file with a higher number is refused;
+  when a later update raises it, older files are brought up to date where the rows are read (`_rows`).
+- **In the file**: `users` (id, name, `enabled`, `is_child`, `created_at` — information only, never loaded),
+  `briefings` (every column but `user_id`), and only with **Include their questions and answers** (off) `questions`
+  (every column but `user_id`) and their `calls` (every column). Never: `rate_events`, `quick_phrases`,
+  `quick_misses`, `quick_words`, `usage_days`, the catalogue, `app_settings` (so no AI key or signing key), the bus's
+  tables. The export's log line says whether questions were included.
+- **Import**: every row through Pydantic models with the app's own limits (`MAX_QUESTION`, `MAX_ANSWER`, the
+  briefing's `TIME_RE`/`DAYS`/`SPEAKER_RE`, states, JSON columns that must read as objects, times with a zone);
+  unknown columns dropped; a row that doesn't fit refuses the file with its table and row number (400). Then, under
+  `one_at_a_time` (423 when another import or delete runs), in one `BEGIN IMMEDIATE` transaction: Replace first
+  deletes as below (without forgetting); briefings — **Add** keeps the person's row when they have one, **Replace**
+  takes the file's; questions get new ULIDs (from their `asked_at`) and their calls new ids pointing at them
+  (`IdMap`); a question with the same `asked_at` (normalised to the second, UTC) and text is a duplicate, skipped;
+  one older than *Keep questions for* is left out (the preview counts them). A question still running in the file
+  comes in `stopped`; a call `proposed` or `sent` comes in as `timeout` (a record — never a button that could send it
+  again); `bus_id` is not kept. Nothing is added to `rate_events` or `usage_days`. `enabled`, `is_child` and
+  `reviewed` are never imported. An unknown speaker is kept (the preview warns; the page says not found).
+- **Delete**: their running questions are stopped (`engine.stop`; up to 5 s for the threads to end), then in one
+  transaction their `calls`, `questions`, `briefings` and `rate_events`, and with **forget** their `users` row (the
+  next request makes them new, `reviewed` 0); then `engine.forget_recent(id)` and `quick.vocab.forget(id)`. No files,
+  no Home Assistant sensors.
+- One log line (`people_data` logger) per export, import and delete: who (name and id), whom (id), the counts.
+
 ## Jobs
 
 - Every minute: `catalogue.check()`, `briefing.check()` (the morning and evening briefings that are due).
@@ -250,4 +292,4 @@ model. `tests/test_review_oct13.py` the October 13 review's regressions. `tests/
 alone: the phrase corpus `tests/data/quick_corpus.tsv` (every line, at least 25 per intent, near-misses, speed;
 `python3 tests/quick_corpus.py` lists every miss) against every household tool (`tests/data/quick_tools.json`);
 `tests/test_quick_flow.py` quick answers end to end on a fake household with a model that fails the test if it is
-called. The model-path tests run with `quick_on` off (`fakes.set_up_ai`). `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.
+called. The model-path tests run with `quick_on` off (`fakes.set_up_ai`). `tests/test_person_data.py` one person's data (export, import, delete). `tests/test_packaging.py`, `tests/test_security_headers.py` and the shared `tests/common_tests`.

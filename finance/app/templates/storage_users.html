@@ -2,6 +2,7 @@
 {% from "_query_macros.html" import storage_tabs %}
 {% block title %}Users (admin){% endblock %}
 {% block main_class %}main-wide{% endblock %}
+{% block head_extra %}<link rel="stylesheet" href="static/common/person-data.css?v={{ app_version }}">{% endblock %}
 {% block content %}
 {% set qs = "?" + acting_qs if acting_qs else "" %}
 {{ storage_tabs("users", acting_qs) }}
@@ -12,6 +13,10 @@
 {% if message %}<p class="q-ok">{{ message }}</p>{% endif %}
 {% if error %}<p class="q-error-inline">{{ error }}</p>{% endif %}
 
+{# One person's data (SPEC.md section 20a): the Import button and each card's Data button are mounted by
+   static/pages/people-data.js; the list is fetched again after an import or delete. #}
+<div id="u-people" data-people='{{ people | tojson }}'>
+<div class="u-data-import" id="u-data-import"></div>
 {% if not users %}
 <p class="empty-state">Nobody has opened the app yet.</p>
 {% else %}
@@ -20,7 +25,8 @@
     <li class="q-report-card u-card">
         <div class="q-report-main">
             <div class="q-report-name">{{ u.name }}{% if u.is_admin %} <span class="status-badge">Admin</span>{% endif %}
-                {% if u.id == request.state.real_user_id %}<span class="hint">(you)</span>{% endif %}</div>
+                {% if u.id == request.state.real_user_id %}<span class="hint">(you)</span>{% endif %}
+                <span class="u-data" data-person-id="{{ u.id }}" data-person-name="{{ u.name }}"></span></div>
             <p class="hint"><code>{{ u.id }}</code> &middot; last seen {{ u.last_seen_at or "—" }} UTC</p>
             {% if u.is_admin %}
             <p class="hint">Admins can already use anyone's data with the user switch.</p>
@@ -59,6 +65,7 @@
     {% endfor %}
 </ul>
 {% endif %}
+</div>
 {% if orphans %}
 <h2>Access for users no longer listed</h2>
 <ul>
@@ -71,4 +78,8 @@
     {% endfor %}
 </ul>
 {% endif %}
+{% endblock %}
+{% block page_scripts %}
+<script src="static/common/person-data.js?v={{ app_version }}" defer></script>
+<script src="static/pages/people-data.js?v={{ app_version }}" defer></script>
 {% endblock %}

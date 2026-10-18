@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+
+### New
+
+- **One person's data** — Admin → People → **⋯ Data** on each person: **Export their data** (their briefing settings, and their questions and answers only when you tick it — the log records it), **Import into this person** or **Import a person's data…** above the list (Add to what they have, or Replace it after typing their name), and **Delete their data…** (a question still being answered is stopped first; keep them, empty, or forget them too). See the documentation's *Admin → People → Data*.
+
 ## 1.5.2
 
 ### Fixed

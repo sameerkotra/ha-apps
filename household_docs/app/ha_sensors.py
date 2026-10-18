@@ -207,6 +207,13 @@ def turn_off(conn, user: dict, ref: str) -> dict:
     return info(conn, user, ref)
 
 
+def forget(entity_ids) -> None:
+    """Sensors whose rows went with a person's data (people_data.py): removed from Home Assistant on the next tick."""
+    with _lock:
+        _gone.update(entity_ids)
+    _state["count"] = None
+
+
 # ---------------------------------------------------------------- changes
 def _count(conn) -> int:
     if _state["count"] is None:

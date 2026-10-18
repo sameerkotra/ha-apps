@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.7.0
+
+- **One person's data: export, import, delete.** Admin → People has **⋯ Data** on each person: **Export their data**
+  (their folder with History and, if you like, their Trash, their templates, tags, favourites, saved searches and
+  settings, as one .zip — big folders are prepared in the background), **Import into this person** (or **Import a
+  person's data…** above the list: add to what they have in a folder of its own, skipping what's already there, or
+  replace it) and **Delete their data…**.
+- **Delete their documents is now part of ⋯ Data → Delete their data…**, with three choices for their folder:
+  **Move to Trash** (as before, the default), **Give to someone** (everything moves into that person's folder as
+  "From …", with its History) or **Delete for good** — and then keep them, empty, or forget them. What they made in
+  other people's folders stays; once they're forgotten it shows as made by "Former member".
+
 ## 1.6.4
 
 - **Sheets: reorder tabs by dragging.** Drag a tab to where you want it (on a phone, hold it for a moment, then drag). The tab menu also has **Move to start** and **Move to end**, and on a phone holding a tab and letting go opens that menu.

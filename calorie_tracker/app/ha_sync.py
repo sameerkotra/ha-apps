@@ -184,6 +184,21 @@ async def remove_all() -> dict:
     return await run_in_threadpool(_sync_remove_all)
 
 
+def remove_for_user(user_slug: str) -> bool | None:
+    """After an admin deleted someone's data (Admin → Users → ⋯ Data): remove that person's daily-calories sensor
+    from Home Assistant. Blocking (a background task, after the answer). The caller works out `user_slug` before
+    the delete — once their row is gone, sensor_slugs() can't say what it was. Sent whether or not publishing is
+    on (a DELETE of a sensor that isn't there is harmless); with publishing on, a person who was kept comes back
+    at 0 on the next periodic push. None without a token; never raises."""
+    try:
+        if not _has_token():
+            return None
+        return SENSORS.delete(entity_id_for(user_slug))
+    except Exception:
+        logger.exception("Removing the calories sensor failed")
+        return False
+
+
 async def apply_exposure_change() -> dict:
     """Called right after expose_daily_calories_sensor changed in App
     settings: on → publish everyone now; off → remove the sensors now."""

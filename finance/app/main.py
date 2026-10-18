@@ -14,7 +14,7 @@ from .common import sandbox_run, web_security
 from .version import APP_VERSION
 from .db import DB_PATH, normalize_legacy_transaction_dates, run_migrations
 from .routes import (accounts, admin_storage, ai_usage_page, categories, csv_import, dashboard, deletion, pdf_view, query, recurring,
-                     reports, settings_page, review, toll_statements, tolls, transactions, transfers, upload, users, utilities)
+                     people_data, reports, settings_page, review, toll_statements, tolls, transactions, transfers, upload, users, utilities)
 
 
 # The largest backup Admin → Storage → Import accepts (a database of many years is a few hundred MB).
@@ -53,6 +53,7 @@ app.add_middleware(
         "/toll-upload": storage.MAX_UPLOAD_REQUEST_BYTES,
         "/transactions-import-csv": storage.MAX_CSV_REQUEST_BYTES,
         "/admin-storage-import-db": MAX_BACKUP_BYTES,
+        "/api/admin/people/data/import": MAX_BACKUP_BYTES,      # one person's data (routes/people_data.py)
     },
     no_chunked_prefixes=("/admin-storage-import-db",),
 )
@@ -94,7 +95,7 @@ security.install(app)  # added last, so it runs first: ingress-only + cross-site
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 for module in (accounts, transactions, csv_import, review, categories, transfers, dashboard, upload,
-               admin_storage, ai_usage_page, query, reports, users, deletion, recurring, utilities, tolls, toll_statements, pdf_view, settings_page):
+               admin_storage, ai_usage_page, query, reports, users, people_data, deletion, recurring, utilities, tolls, toll_statements, pdf_view, settings_page):
     app.include_router(module.router)
 
 

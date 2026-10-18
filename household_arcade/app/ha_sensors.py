@@ -138,6 +138,28 @@ def apply_switch_change_blocking() -> dict:
     return {"unavailable": mark_unavailable_blocking()}
 
 
+def person_entities(slug: str) -> list[str]:
+    return [f"sensor.{PREFIX}{slug}_played_today", f"binary_sensor.{PREFIX}{slug}_playing"]
+
+
+def after_person_deleted_blocking(slugs_before: dict[str, str]) -> None:
+    """After a person's data was deleted (Admin → Users → Data): their two sensors are removed from Home Assistant
+    when they were forgotten (and anyone else's whose entity name moved up, e.g. alice_2 → alice), then everything
+    is posted again — the record sensors are worked out again, so a record that was theirs passes to the next best.
+    `slugs_before`: person_slugs() read before the delete. Best effort."""
+    try:
+        if not enabled():
+            return
+        with db.get_conn() as conn:
+            after = person_slugs(conn)
+        gone = [eid for slug in sorted(set(slugs_before.values()) - set(after.values())) for eid in person_entities(slug)]
+        if gone:
+            SENSORS.remove(gone)
+        push_blocking()
+    except Exception:
+        logger.exception("Sensor update after a delete failed")
+
+
 def changed_blocking() -> None:
     """After a game starts or ends, a score is saved or deleted, or limits change."""
     try:

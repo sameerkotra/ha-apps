@@ -17,7 +17,8 @@ calorie_tracker/
 ├── config.yaml  Dockerfile  requirements.txt  requirements-dev.txt  .dockerignore
 ├── README.md (store page)  DOCS.md (user guide)  CHANGELOG.md  translations/en.yaml  icon.png  logo.png
 ├── spec/                  SPEC.md, calorie_tracker_schema.sql
-├── tests/                 _env.py, test_app.py, test_ai_providers.py, test_security_headers.py, test_packaging.py
+├── tests/                 _env.py, test_app.py, test_ai_providers.py, test_security_headers.py, test_packaging.py,
+│                          test_people_data.py (§6a)
 │   └── common_tests/      shared test helpers and shared-module tests (copies, see below)
 └── app/
     ├── main.py            lifespan (jobs), ingress gate, security headers (CSP), router registration, static mount
@@ -28,12 +29,12 @@ calorie_tracker/
     ├── ha_sync.py         daily-calories sensor push/remove (live App setting, common sensor_publisher); HA time zone fetch
     ├── ai_client.py       the app's AI layer on common ai_client: Config, current(), generate, warm-up, estimate, chat, status, privacy, WORDING
     ├── schemas.py         Pydantic request bodies
-    ├── routers/           me, users, goals, weight, saved_foods, logs, ai, admin
+    ├── routers/           me, users, goals, weight, saved_foods, logs, ai, admin, people_data (§6a)
     ├── common/            shared Python (copies): whoami, ha_client, ha_time, housekeeping, auth_core, db_core,
     │                      settings_core, web_security, backup_core, sensor_publisher, ai_client
     └── static/            index.html, app.js, style.css
         └── common/        shared browser files (copies): theme-boot.js, themes.css, ui.js, settings.js, settings.css,
-                           people.js, backnav.js, whoami.js
+                           people.js, person-data.js, person-data.css, backnav.js, whoami.js
 ```
 - `app/common/`, `app/static/common/` and `tests/common_tests/` are copies of the repository's `common/` folder, written by `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`). Never edit a copy: edit `common/` and re-sync; `tests/common_tests/test_shared_copies.py` fails if a copy was changed.
 
@@ -103,7 +104,7 @@ Seven tables (full DDL with comments in `app/db.py`): `users` (HA id, display na
 - Dates are ISO `YYYY-MM-DD` strings in HA's time zone, compared as strings.
 - A `food_logs` row is a standalone copy of the numbers. `calories`/macros are the entry's totals, and `servings` is display-only (nothing multiplies by it).
 - Every query is scoped to the acting user's id. Update and delete use `WHERE id=? AND user_id=?` and return 404 when no row matches, so ids from other users are rejected.
-- Users are never deleted, and admin status is never stored.
+- Users are deleted only by an admin's **Delete their data → Forget them too** (§6a); admin status is never stored.
 
 ## 6. API
 Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user` (accepts `as_user`), **adm** = `require_admin`. Bad input from Pydantic or a query-parameter pattern gets 422.
@@ -148,7 +149,45 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `POST /api/admin-storage-import-db` | adm | Multipart field `file`. Returns `{status:"ok"}`; 400 with a specific message if the file is not valid. The restored App settings apply at once, except the access key: if the restored file has none, this install's key is put back (`settings.restore_secrets`). Also calls `ai_client.forget_state()` |
 | `GET /…` | none | `StaticFiles(html=True)` mounted at `/`, registered last |
 
-- Router order: `me.router, me.whoami_router, users, goals, weight, saved_foods, logs, symptoms, ai, admin`, then the static mount.
+- Router order: `me.router, me.whoami_router, users, goals, weight, saved_foods, logs, symptoms, ai, admin, people_data`, then the static mount.
+
+## 6a. One person's data — export, import, delete
+`app/routers/people_data.py`, on the shared file and helpers (`app/common/person_data.py`, `static/common/person-data.js`
++ `.css`; the repository's `PERSON_DATA_SPEC.md` §2, §4, §9). All **adm** (`require_admin`: the real signed-in admin, never
+`as_user`); the ingress and cross-site guards apply as everywhere. Admin → Users (`renderUsersTab`, `PeoplePage`) gives each
+card `PeopleData.menu` (⋯ Data) as its `actions` and puts `PeopleData.importButton` in the list's `intro`; `cfg.people` =
+`/api/users` as `{id, name}`, `onDone` reloads the list and the switcher (someone forgotten stops being the acting person).
+
+| Method & path | Behavior |
+|---|---|
+| `GET /api/admin/people/{id}/data` | The dialogs' summary and the delete's dry run: counts of food entries, symptoms, weights, saved foods, days logged (food, symptom and weight dates) with the first and last day; no export options; what stays; what it can't reach (earlier backups). 404 for an unknown id |
+| `POST /api/admin/people/{id}/data/export` | `{options}` (none) → the .zip at once (`application/zip`, `Content-Disposition: attachment`, `person_data.file_name("Calorie Tracker", name)` in HA time). Never a job: there are no files |
+| `GET /api/admin/people/data/jobs/{job}` · `…/{job}/file` | The shared job routes; nothing starts a job here, so 404 |
+| `POST /api/admin/people/data/import` | Multipart `file` (≤ 512 MB, the restore's limit, also in `BodyLimit`), streamed to `DATA_DIR` (`calorie-person-data-up-*.zip`), checked (`read_package`: zip safety, checksums, `format`/`app`, `schema` ≤ 1) and every row checked (`prepare`) → `{token, preview}`; 400 for a bad file, 422 naming the table and row (`food_logs row 5 can't be imported: …`). The file is kept an hour for this admin (`Uploads`; the hourly `sweep_person_data` job) |
+| `POST /api/admin/people/{id}/data/import/{token}` | `{mode: add\|replace, confirm}` → `{message, added, skipped}`; replace needs `names_match(confirm, name)` (409). One transaction; the upload is deleted after it; the person's sensor is pushed after the answer |
+| `POST /api/admin/people/{id}/data/delete` | `{confirm, forget}` → `{message, deleted, forgotten}`; wrong name 409. One transaction: `DELETE FROM users` (every table cascades) and `DELETE FROM ai_usage`; kept → a new empty `users` row (same name and `created_at`, so no one's sensor slug moves) and a default `goals` row. After it: `ha_sync.remove_for_user(slug)` (slug worked out before the delete), and when forgotten with publishing on a full push (another person may take the slug); auth's row cache for them is dropped |
+
+- Import and delete run inside `person_data.one_at_a_time()` (another → 423). Each export, import and delete logs one line
+  (`person_data` logger: admin, person, counts — never content). The app has no audit table.
+- **The file**, `schema` = **1** (`people_data.SCHEMA`: the tables and columns below; bump it when one of them changes and add the
+  step to `_upgrade`, as `db._migrate` does for the database — a newer file is refused). Tables, as stored, without `user_id`:
+  `users` (`name`, `enabled`), `goals` (the six goal columns), `weight_logs` (`id, date, weight_kg, note`), `saved_foods`
+  (`id, name, serving_size, serving_unit, calories, no_calories, protein, carbs, fat, notes, tags`), `food_logs` (`id, date,
+  meal_type, food_name, servings, calories, no_calories, protein, carbs, fat, saved_food_id, eaten_at, tags, created_at`),
+  `symptom_logs` (`id, date, time, symptom, severity, note, created_at`). Not in it: `ai_usage`, App settings (the AI key,
+  the symptom and tag lists, the signing key), the app-message tables, anyone else's rows.
+- **Checks on import**: each row through the API's own models (`WeightCreate`, `SavedFoodCreate`, `FoodLogCreate`,
+  `SymptomCreate`, `GoalUpdate`; `no_calories = 1` read as `calories: null`); unknown columns dropped; `created_at` kept when
+  it looks like SQLite's, else now; at most one `users` / `goals` row. The day cap (100 symptoms) and "not after today" of
+  the symptom route aren't applied to an import (a file is a record of what was logged).
+- **New ids** for every row; a food entry's `saved_food_id` is mapped (`IdMap`) to the imported saved food — or to the one
+  already there with the same name — and dropped when the file hasn't it (a warning in the preview, like saved foods and
+  entries without calories). The name in the file decides nothing; the target's name stays Home Assistant's.
+- **Add** skips a food entry with the same date, `eaten_at`, meal, food (folded) and servings; a symptom with the same date,
+  time and symptom (folded); a weight on the same date; a saved food with the same name (folded) — each compared with what
+  the person had before the import, so equal rows inside one file all arrive. Goals: kept, unless theirs are still the
+  column defaults (so "delete, keep them" and then an import gives them back). **Replace** deletes their food, symptom,
+  weight and saved-food rows first (not `ai_usage`, and their `users` row stays), then takes the file's goals and `enabled`.
 
 ### 5.9 Symptoms and Patterns
 - The **Symptoms** tab (in the nav after Food Log; follows the date bar; deep links `#/symptoms`, `#/symptoms/<date>`):
@@ -180,6 +219,8 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 - Triggered by food-log create or delete dated today (for the acting user's sensor) and by the periodic job (§8). Nothing is pushed while the setting is off.
 - **Setting turned on** (`PUT /api/admin/settings` changed it; runs as a `BackgroundTask` right after the response): `push_all()` — one query for every user's total today (LEFT JOIN, so users with nothing logged get 0), the connection closed, then one POST per user.
 - **Setting turned off**: `remove_all()` — `DELETE /api/states/<entity_id>` for every current user's slug plus every entity this process pushed successfully (`_published` = the publisher's memory, which covers a user renamed since). 2xx or 404 counts as removed. If any DELETE fails, `_removal_pending` is set and the periodic job retries until all succeed. Entities published under an old name before the last restart can't be known and are left to HA (REST-created states don't survive an HA restart anyway).
+- **A person's data deleted** (§6a): `remove_for_user(slug)` — one `DELETE` for that person's sensor (the slug is worked out
+  before their row goes), whether or not publishing is on; a kept person is posted again at 0 by the next periodic push.
 - No DB connection is ever held during an HA call.
 - The slug comes from the display name: renaming a user creates a new entity, and two users with the same display name share one sensor.
 

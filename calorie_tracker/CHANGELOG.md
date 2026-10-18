@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.5.0
+
+- **One person's data — export, import, delete**: Admin → Users → **⋯ Data** on each person.
+  - **Export their data** downloads one .zip with their food log, symptoms, weights, saved foods and goals (health
+    data, not encrypted — keep it safe).
+  - **Import a person's data…** (above the list, or **Import into this person**) checks the file, shows what's in it,
+    and adds it to anyone here — **Add to what they have** (entries already there are skipped) or **Replace what they
+    have** (type their name).
+  - **Delete their data…** deletes it for good, after typing their name: keep them in the list, empty, or forget them
+    too. Their daily-calories sensor is removed from Home Assistant. A copy is downloaded first unless you untick it.
+
 ## 2.4.2
 
 - **Goals is just goals**: the "Publish my calories to Home Assistant" and "Let the Household Assistant answer for me"

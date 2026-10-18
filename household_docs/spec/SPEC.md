@@ -1104,7 +1104,8 @@ which keeps names and filters near the 300 ms target and FTS under 500 ms.
 | GET `/api/shared-folders` | access | Admin shared folders you can use `{rootId, label, mode, exists}` (missing ones only for admins) |
 | GET `/api/search?…` · GET `/api/search/export?…` | access | §10 (parameters §10.8) |
 | GET / POST `/api/searches` · PATCH / DELETE `/api/searches/{id}` · GET / POST / DELETE `/api/searches/recent` | access | Saved searches (`{name, q, filters, pinned}`; PATCH `{name?, pinned?}`) and the recent 20 |
-| GET `/api/admin/users` · PATCH `/api/admin/users/{id}` (`disabled`, `folder`) · POST `…/docs/delete` · notify routes | admin | People (counts and sizes only) |
+| GET `/api/admin/users` · PATCH `/api/admin/users/{id}` (`disabled`, `folder`) · POST `…/docs/delete` · notify routes | admin | People (counts and sizes only); `…/docs/delete` (move their folder's contents to Trash, `{confirm: <folder name>}`) is kept for compatibility — the page uses ⋯ Data (§18) |
+| GET `/api/admin/people/{id}/data` · POST `…/{id}/data/export` · GET `/api/admin/people/data/jobs/{job}` (`…/file`) · POST `/api/admin/people/data/import` · POST `…/{id}/data/import/{token}` · POST `…/{id}/data/delete` | admin | One person's data: export, import, delete (§18) |
 | GET `/api/admin/share-dirs?path=` · GET / POST `/api/admin/shared-folders` · POST `…/inspect` · PATCH / DELETE `…/{id}` · POST `…/{id}/rescan` | admin | Shared folders: `{path, label, access: {personId \| "*": none\|ro\|rw}}`; PATCH `{label?, access?}` (access replaces the list); the browser marks folders already shared; counts and sizes only |
 | GET `/api/admin/docs-folder` · POST `/api/admin/docs-folder/inspect` · POST `/api/admin/docs-folder/choose` · POST `/api/admin/rescan` | admin | Status, free space, totals · the checks for a typed path (no changes) · first-run choice (§5.6) · Rescan now |
 | POST `/api/admin/docs-folder/read-only` (`{on, target?}`) · POST `…/target` (`{path}`: checks + copy commands) · POST `…/check` (`{path, deep}`, a background job) · GET `…/check/{job}` · GET `…/check/{job}/report.csv` · POST `…/switch` (`{path, jobId, force?, confirm?}`) | admin | Moving to a new location (§5.7) |
@@ -1877,6 +1878,93 @@ with reminders on documents (Household Vault already does expiry reminders for w
   page after scrolling, Esc, no console errors and no CSP violations; the ⋯ action only for PDFs; a password; a
   broken file; a broken first page; closing and opening again (canvases let go, no resize listener left); quick
   zooms; someone without access; the size limit. `test_js.py` parses `pdfview.js`.
+
+## 18. One person's data — export, import, delete (PERSON_DATA_SPEC.md §7)
+
+*(built — `people_data.py`, `routers/people_data.py`; the file format, checks, jobs and uploads are the shared
+`common/person_data.py`, the dialogs `static/common/person-data.js`.)* Admin → People: **⋯ Data** on each card
+(Export their data / Import into this person / Delete their data…) and **Import a person's data…** above the list.
+The old **Delete their documents…** button is gone: it is the delete dialog's default choice, **Move to Trash**.
+
+**Endpoints** (admin only — `require_admin`, the signed-in admin; the cross-site guard and ingress check as
+everywhere):
+
+| Method | Path | What |
+|---|---|---|
+| GET | `/api/admin/people/{id}/data` | the summary: counts (files and size, folders, versions, Trash, templates, shares given / to them, rules on their folder, saved searches, follows, Kids' space links, things made elsewhere), the export options, what stays, the delete choices — also the delete's dry run |
+| POST | `/api/admin/people/{id}/data/export` | `{options: {versions = true, trash = false}}` → the .zip (≤ 200 files and 20 MB), else `{job, filename}` |
+| GET | `/api/admin/people/data/jobs/{job}` · `…/file` | the job's progress · the finished .zip (kept an hour; the admin who started it only) |
+| POST | `/api/admin/people/data/import` | multipart `file` (read by the app's own small streaming reader — Docs has no multipart library; ≤ 6 GB, in `/data` as `person-data-docs-up-*.zip`, an hour) → `{token, preview}` |
+| POST | `/api/admin/people/{id}/data/import/{token}` | `{mode: add\|replace, confirm?, options: {share = false}}` → `{message, counts}` |
+| POST | `/api/admin/people/{id}/data/delete` | `{confirm: <their name>, forget, choices: {folder: trash\|give:<person id>\|delete}}` → `{message, counts}` |
+
+Errors: 422 with a sentence (a bad file, a row the app's rules refuse: "nodes, row 3: …"), 409 a wrong name, 423
+another import or delete running (one at a time), 413 past the limits, 507 over the person's folder limit.
+
+**The file** (`household-docs-<person>-<YYYYMMDD-HHMM>.zip`, `schema` **1** — `people_data.SCHEMA`, the data version
+of this export, started with this feature; raise it when a table's columns change and upgrade older files in
+`people_data._upgrade`):
+
+- `data/nodes.json` — the index rows of their folder (`id, rel, parent_id, kind, color, size, sha256, mtime,
+  created_by, updated_by, trash_id`), with Include Trash also their Trash's (rel `.trash/<trash id>/…`), and
+  `data/trash.json` (`id, node_id, original_rel, deleted_by, deleted_at`);
+- per node: `node_tags`, `node_links`, `checklist_ticks`, `ocr_text` (the AI-read text and its corrections),
+  `versions` (with Include old versions), `user_state` (their own favourites, pins, last opened, seen), `shares`
+  (the shares they gave on their own items, with the person's name and login — information, see import; view-link
+  shares and view links are left out: their tokens are secrets);
+- theirs: `prefs` (the known keys), `saved_searches`, `follows` (of their own items), `filing_rules` and
+  `cleanup_rules` on their folder, `keep_imports`;
+- `data/elsewhere.json` — a record, never imported: what they made in other people's and shared folders (folder,
+  path; no content);
+- `files/<rel>` (their folder, from the index, after a scan), `files/.trash/…`, `files/.versions/<node id>/<n>.<ext>`,
+  `files/.templates/<name>`.
+
+Not in it: Activity, root access, Kids' space links, PDF text (read again), AI usage, App settings, keys.
+At most 10,000 files and 4 GB (the whole-app backup's limits), else 413 "use the whole-app backup".
+
+**Import**: `read_package` checks the zip (names, sizes, members against the manifest's checksums, app, format,
+schema not newer); every row is checked with the app's own rules (names `paths.name_problem`, tags `clean_tag`,
+colours, saved searches `saved.clean_name`, prefs `PrefsIn`, filing rules' pattern / type / placeholders, kinds,
+roles, sizes) and every file row must have its file — else 422 with the table and row number, before anything is
+written. **Add**: when they have something already, everything goes into a new folder **Imported <date>**; a
+duplicate — a document at the same path with the same SHA-256 (or the same template, saved search, follow, rule,
+Keep record; a folder that exists and would bring nothing new) — is skipped and counted; files over the upload
+limit are left out (said in the result). **Replace**: their name typed; their folder's top items go to their Trash
+and their searches, follows, Keep records and rules on their folder are deleted (one transaction), then the file is
+unpacked at the top. The quota and free space are checked first. Files are unpacked into the root's `.tmp`, the rows
+written in **one transaction** with new ids (`IdMap`; a row's folder is the one its path names; people in rows: the
+file's person → the target, someone here → as is, anyone else → `former-member`), then the files moved in
+(`fileio.place`, exclusive, mtimes kept), versions to `.versions/<new id>/`, Trash items to
+`.trash/<folder>/<new trash id>/` with their `.item.json`, templates to `.templates/`; then a scan reads them for
+search and checklist counts. Shares only with **Also share with the same people again**, only with people here
+(by id, else login; Everyone only when `everyone_shares` is on). The upload is deleted after the import.
+
+**Delete** (their name typed, `person_data.names_match`):
+
+- **Move to Trash** (default): their folder's top items to their Trash (`trash.trash_node`, as the old endpoint);
+  nothing else; *forget* is refused (422).
+- **Give to someone** (`give:<id>`, not turned off): one transaction — a folder **From <name>** in their folder,
+  every top item renamed into it and its nodes relocated (ids, versions, tags, shares, others' favourites follow;
+  the receiver's own shares on them go, as Transfer does); rules on what moved are deleted; their Trash is
+  deleted for good. A failed transaction renames the items back.
+- **Delete for good**: every node of their root (live, gone, in Trash) deleted, with their Trash rows.
+- Both: rows elsewhere naming those nodes (sensors — removed from Home Assistant on the next tick — follows,
+  rules, the filing queue and log, Activity, app-message requests, Todo sends; links to them set to none); their
+  prefs, `user_state`, saved and recent searches, follows, `user_notify`, Keep records, `ai_person_month`,
+  `bus_requests`, `todo_sends`, the shares to them, `root_access` and `kid_parents` (as child or parent).
+  **Forget**: also their root, `storage_daily` and `users` row; their id in what stays for others (nodes'
+  created / updated by, versions, Activity, ticks, tags, shares added, Trash, OCR, filing log, view links, rules,
+  sensors, AI folders, Kids' links, roots) becomes `former-member`, shown as **Former member** (file lists, Activity,
+  History); the audit log keeps the ids. Not for yourself.
+- Files after the commit: their folder emptied (kept) or removed (forgotten), their `.trash/<folder>/`, the
+  versions of every deleted node.
+
+Stays for others: what they made elsewhere, versions they saved there, shares they gave on others' items, rules and
+sensors they set on shared folders (counted in the summary; they stop once their maker can't open the folder), the
+audit log. Each export / import / delete: one line in the app's log (who, whom, counts) and an audit entry
+(`person_data_exported` / `_imported` / `_deleted` / `_forgotten`, `person_docs_given`, `person_docs_deleted`).
+
+Tests: `tests/test_person_data.py`.
 
 ## Security notes (2026-10)
 

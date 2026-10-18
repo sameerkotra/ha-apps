@@ -8,7 +8,7 @@
   const D = window.Docs;
   const { h, toast, openModal, spinner } = D;
   const { mount } = UI;
-  const V = "?v=1.6.4";                       // the app's version (cache busting, checked by the packaging tests)
+  const V = "?v=1.7.0";                       // the app's version (cache busting, checked by the packaging tests)
   const BASE = "vendor/pdfjs/";
   const MAX_BYTES = 50 * 1024 * 1024;         // bigger ones download instead
   const CSS_PER_PT = 96 / 72;                 // PDF points → CSS pixels at 100 %

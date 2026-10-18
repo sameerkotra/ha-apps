@@ -183,6 +183,7 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
 - **Users**: everyone who has opened the app. A switch hides someone from the user switcher (an
   old account, a guest); it doesn't delete their data or lock them out.
 - **Storage**: download the whole database as a backup, or restore one (see **Backups**).
+- **Users → ⋯ Data**: one person's data — see **Admin → Users → Data** below.
 - **User switcher** (top right, admins only): view and edit another household member's log,
   saved foods, weight and goals — for example to help a child or partner. Every change made this
   way is written to the app's **Log** tab (who, as whom, what).
@@ -196,6 +197,31 @@ Four themes at the bottom of the menu: Midnight (the default), Slate, Daylight a
 when your device is set to light, Midnight when it is dark); the menu collapses to icons.
 On a phone the menu becomes a bar at the bottom. In the Home Assistant app, the Back gesture
 closes a popup first, then returns to the Food Log.
+
+### Admin → Users → Data
+Each person in **Admin → Users** has a **⋯ Data** button for everything they have in this app: their food log,
+symptoms, weights, saved foods and goals. Only admins see it, and the app checks it on every request.
+
+- **Export their data** downloads it as one `.zip` file (named after the app, the person and the time). The file
+  holds health data and is not encrypted: keep it somewhere safe, and delete it when it's no longer needed. App
+  settings, the AI access key and other people's data are never in it.
+- **Import a person's data…** (above the list) or **Import into this person**: choose an export file — made here or
+  on another install. The app checks it first (a file from another app, from a newer version of this app, or one
+  that was changed afterwards is refused, and so is an entry the app itself wouldn't accept) and shows whose data it
+  is, when it was made and what's in it. Then pick who it goes to and how:
+  - **Add to what they have** (the default): what they already have is kept and the same things aren't added twice
+    — a food entry with the same day, time, meal, food and servings; a symptom with the same day, time and name; a
+    weight on the same day; a saved food with the same name. Their goals stay, unless they never set any.
+  - **Replace what they have**: their current entries are deleted first, then the file is loaded, goals included.
+    You type their name to confirm.
+- **Delete their data…** shows what will go and deletes it for good after you type their name. **Keep them, empty**
+  (the default) leaves them in the list as if new; **Forget them too** removes them as well — if they still have a
+  Home Assistant login, they come back as a new, empty person the next time they open the app. Their daily-calories
+  sensor is removed from Home Assistant. **Download a copy first** is ticked unless you untick it. Backups made
+  before (Admin → Storage, Home Assistant's own) still hold their data.
+
+One import or delete runs at a time; another one gets "try again in a minute". Each export, import and delete is
+written to the app's **Log** tab (who, whose, how many — never what was in it).
 
 ## Home Assistant sensor
 

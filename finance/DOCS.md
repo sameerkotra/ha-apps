@@ -119,7 +119,8 @@ write the SQL from a plain-English question.
 ### Admin (admins only)
 - **Storage**: stored PDFs, and database download / import for backups.
 - **Query**: read-only SQL on the data of the person you're acting as, and report editing.
-- **Users**: give a person access to another person's data (e.g. one shared household view).
+- **Users**: give a person access to another person's data (e.g. one shared household view), and
+  export, import or delete one person's data (below).
 - **Recently deleted**: anything deleted in the last 30 days can be restored; after that it is
   erased.
 - **AI usage**: the running total of every AI request since the app started counting: requests,
@@ -131,6 +132,34 @@ write the SQL from a plain-English question.
   app-messages signing key). Changes apply at once.
 
 Admins can **act as** any user (the switch at the top right) to see and fix their data.
+
+### Admin → Users → Data (one person's data)
+Each person's card on **Admin → Users** has a **⋯ Data** button, and **Import a person's data…**
+sits above the list.
+
+- **Export their data** downloads one `.zip` with everything that person has: accounts,
+  statements, transactions, CSV imports, rules and categories, recurring choices, utility bills
+  and toll statements with their cars, tags and choices. You can leave out the statement PDFs
+  still kept, include Recently deleted items, and leave out the text read from statements. The
+  file isn't encrypted: it holds their bank data, so keep it somewhere safe. Shared access, saved
+  reports, App settings and the AI usage total are never in it. With PDFs it is prepared in the
+  background and offered for an hour.
+- **Import** loads such a file (made here or on another install) into anyone in the list. First
+  it shows what's in it, then you choose **Add to what they have** (what they already have isn't
+  added twice: the same account name and last 4 digits, the same PDF, the same transaction —
+  account, date, amount and description — the same rule, category, car, tag or toll pass) or
+  **Replace what they have** (their current data is deleted first; type their name to confirm).
+  Every row is checked like the app's own forms; a file that was changed, comes from another app
+  or from a newer version of this one is refused. Transfers are paired and toll trips worked out
+  again afterwards. Give shared access again yourself if it's needed.
+- **Delete their data…** deletes everything above for good, at once, plus shared access to and
+  from them. **Keep them** leaves them in the list, empty; **Forget them** removes them too (they
+  come back as someone new if they open the app again). Type their name to confirm. Unlike
+  **Wipe all data** (Recently deleted), nothing can be restored. Backups made before, and the copy
+  kept before a database upgrade, still hold their data.
+
+Only one import or delete runs at a time, and neither runs while one of that person's uploads is
+being read.
 
 ### The Household Assistant
 

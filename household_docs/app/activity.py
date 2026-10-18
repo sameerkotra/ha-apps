@@ -19,6 +19,7 @@ from datetime import timedelta
 
 from . import config, db, settings, sharing
 from .store import nodes
+from .store.versions import FORMER_NAME     # someone forgotten (people_data.py)
 
 ACTIONS = ("created", "edited", "renamed", "moved", "deleted", "restored", "shared", "filed")   # filed: §17.18
 GROUP_MINUTES = 10
@@ -222,7 +223,7 @@ def feed(conn, user: dict, *, person: str | None = None, place: str | None = Non
                 undo = detail.get("log")
         items.append({
             "id": r["id"], "action": r["action"], "undo": undo, "actorId": r["actor_id"],
-            "actorName": ("You" if r["actor_id"] == user["id"] else r["actor_name"]) if r["actor_id"] else None,
+            "actorName": ("You" if r["actor_id"] == user["id"] else r["actor_name"] or FORMER_NAME) if r["actor_id"] else None,
             "outside": r["actor_id"] is None, "count": r["count"], "at": r["last_at"], "firstAt": r["created_at"],
             "detail": detail, "sharedWith": ("you" if r["target_user"] == user["id"] else
                                               "Everyone" if r["target_user"] == "*" else r["target_name"]),

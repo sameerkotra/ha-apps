@@ -14,6 +14,7 @@ from .. import config, settings
 from . import fileio, kinds, paths, roots
 
 EDITOR_WINDOW = timedelta(minutes=5)
+FORMER_NAME = "Former member"          # a forgotten person (people_data.py): their id is gone from users
 REPLACED_DAYS = 7
 
 
@@ -188,7 +189,7 @@ def listing(conn, node_id: str) -> list[dict]:
     rows = conn.execute("SELECT v.*, u.name AS who FROM versions v LEFT JOIN users u ON u.id = v.made_by "
                         "WHERE v.node_id = ? ORDER BY v.n DESC", (node_id,)).fetchall()
     return [{"n": r["n"], "size": r["size"], "createdAt": r["created_at"], "madeBy": r["made_by"],
-             "who": r["who"] if r["made_by"] else None, "outside": r["made_by"] is None} for r in rows]
+             "who": (r["who"] or FORMER_NAME) if r["made_by"] else None, "outside": r["made_by"] is None} for r in rows]
 
 
 def read(conn, root, node_id: str, n: int) -> bytes:

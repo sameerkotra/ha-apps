@@ -432,9 +432,13 @@ const Admin = (() => {
       catch (e) { fail(e); }
       again();
     };
+    // ⋯ Data on each card and "Import a person's data…" above the list (common/person-data.js): export, import
+    // and delete one person's data; the list is read again after an import or a delete
+    const dataCfg = { people: data.users.map((u) => ({ id: u.id, name: u.name })), onDone: again, appName: "Household Arcade" };
     PeoplePage.render(box, {
       people: data.users,
-      intro: "Everyone who has opened the app is here. People switched off can't play and don't appear on the leaderboard.",
+      intro: ["Everyone who has opened the app is here. People switched off can't play and don't appear on the leaderboard.",
+        h("p", null, PeopleData.importButton(dataCfg))],
       checkAgain: async () => {
         try { await api("api/admin/users?refresh=1"); toast("Read from Home Assistant"); again(); } catch (e) { fail(e); }
       },
@@ -444,6 +448,7 @@ const Admin = (() => {
           badges: [self ? ["you"] : null, u.isAdmin ? ["admin", "accent"] : null, u.isChild ? ["child", "accent"] : null,
             u.disabled ? ["switched off", "warn"] : null],
           sub: (u.username ? `login ${u.username} · ` : "") + `last seen ${fmtStamp(u.lastSeen)}`,
+          actions: PeopleData.menu(u, dataCfg),
           controls: [
             h("label", { class: "pp-toggle" }, "Can play", PeoplePage.accessSwitch(!u.disabled, (on) => patch(u, { disabled: !on }), { label: `${u.name} can play`, disabled: self })),
             h("label", { class: "pp-toggle", title: u.isAdmin ? "Admins can't be marked as children" : "" }, "Child",

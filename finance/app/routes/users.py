@@ -51,6 +51,7 @@ def users_tab(request: Request, current: User, acting: User, message: str = "", 
     return templates.TemplateResponse(request, "storage_users.html", {
         "user": acting, "acting_qs": _acting_qs(current, acting), "acting_as_banner": _acting_banner(current, acting),
         "active_page": "admin_storage", "tab": "users", "users": known, "orphans": orphans,
+        "people": [{"id": u["id"], "name": u["name"]} for u in known],      # the Data dialogs' import targets
         "message": message, "error": error})
 
 

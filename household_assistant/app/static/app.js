@@ -742,12 +742,16 @@
         fresh = h("span", null, h("span", { class: "badge-new", title: "New since an admin last looked: check May ask and Child" }, "New"), " ", ok);
       }
       return h("tr", { class: p.new ? "new-person" : "" }, h("td", null, p.name, fresh ? " " : null, fresh),
-        h("td", null, h("label", null, on, " May ask")), h("td", null, h("label", null, child, " Child")));
+        h("td", null, h("label", null, on, " May ask")), h("td", null, h("label", null, child, " Child")),
+        h("td", null, PeopleData.menu({ id: p.id, name: p.name }, dataCfg)));
     };
+    // Export, import or delete one person's data (the shared dialogs, common/person-data.js)
+    const dataCfg = { people: r.people.map((p) => ({ id: p.id, name: p.name })), onDone: loadPeople };
     const fresh = r.people.filter((p) => p.new).length;
     mount(clear(box), h("div", { class: "card" },
-      h("p", { class: "hint" }, "Everyone who has opened the assistant. A child asks only when App settings → Children may ask is on, and then only about their own things. Nobody, admins included, can see anyone else's questions."),
+      h("p", { class: "hint" }, "Everyone who has opened the assistant. A child asks only when App settings → Children may ask is on, and then only about their own things. Nobody, admins included, can see anyone else's questions — unless an admin exports a person's data with their questions and answers ticked, which the app's log records."),
       fresh ? h("p", { class: "note warn" }, `${fresh} new ${fresh === 1 ? "person" : "people"}: everyone new may ask and counts as an adult until you change it. Check them, then tap Looks right.`) : null,
+      h("p", null, PeopleData.importButton(dataCfg)),
       h("table", { class: "people" }, h("tbody", null, r.people.map(row)))));
   }
 

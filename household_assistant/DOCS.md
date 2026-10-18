@@ -218,7 +218,7 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
   to the provider and address it was saved for: after changing either, type the key again.
 - **People**: everyone who has opened the assistant, **May ask** and **Child**. Someone new — they opened the app,
   or Assist asked for them — is marked **New** (everyone new may ask and counts as an adult): check them, then tap
-  **Looks right**.
+  **Looks right**. Each person has a **⋯ Data** button (below).
 - **Quick answers**: **Test** a question to see how it's understood — its words after clean-up, what they mean,
   the household names in it, and which answer wins (nothing is asked). **Phrases**: your household's own ways of
   asking ("trash day" → the schedule; times and names in a phrase work for any time or name), with where each came
@@ -234,10 +234,39 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
 - **Usage**: questions, tool calls and tokens per day for the last 30 days — counts only, never who asked what.
 - **Storage**: backups (below).
 
+### Admin → People → Data
+
+One person's data, for moving them to another install, giving them a copy, or starting them afresh. Only admins
+see it.
+
+- **⋯ Data → Export their data** downloads one `.zip`: their briefing settings (morning and evening, times, days,
+  the speaker) and their name. **Include their questions and answers** (off) adds the questions they still have
+  here and what the apps answered for each. It is off because it is the one way an admin could read someone's
+  questions: leave it off to move someone's settings, tick it to give a person their own history. The app's log
+  says who exported whom and whether it was ticked. The file isn't encrypted: keep it somewhere safe.
+- **Import a person's data…** (above the list), or **⋯ Data → Import into this person**: choose the file, check
+  what's in it, pick who it goes to and how.
+  - **Add to what they have**: their own briefing settings are kept; a question asked at the same time with the
+    same words is already there and skipped.
+  - **Replace what they have**: their questions and briefings here are deleted first, then the file's come in.
+    Type their name to confirm.
+  - Questions older than **Keep questions for** aren't brought in (the preview says how many). Imported questions
+    don't count toward anyone's hourly limit or the usage totals, and a change that was proposed but never tapped
+    comes back as a record, not a button. **May ask** and **Child** are never taken from the file: you set them here.
+    A speaker this Home Assistant doesn't have is kept and shown as not found.
+- **⋯ Data → Delete their data…**: a question of theirs still being answered is stopped, then their questions,
+  answers, briefings and hourly-limit marks go for good. **Keep them, empty** leaves them in the list with the same
+  **May ask** and **Child**; **Forget them too** removes them as well — the next time they open the assistant or ask
+  through Assist they are someone new, marked **New**. Type their name to confirm. Learned phrases and words stay
+  (they store no person), and so do the usage totals. It can't reach backups made before, app messages already
+  sent to other apps (gone within 7 days), or Home Assistant's own event history (see the recorder above).
+
 ## Who can see what, and where data goes
 
 - The app has no port on your network: only Home Assistant's sidebar (ingress) reaches it, and it uses each
-  person's Home Assistant login. Admins can't ask "as" someone else.
+  person's Home Assistant login. Admins can't ask "as" someone else, and never see anyone else's questions —
+  except in a person's export (Admin → People → Data) with *Include their questions and answers* ticked, which the
+  app's log records.
 - To answer, it asks the other apps over Home Assistant's event bus, as you. Their answers come back the same
   way (see the recorder above) and go only to your own page and to the AI model.
 - The AI model gets the question, your last six questions and answers, the list of what the apps can answer and
@@ -257,7 +286,7 @@ access key. Home Assistant's own backups include the app's data too.
 At most 3 rounds of asking the apps and 8 questions to apps per question; each app has 20 seconds to answer
 (after that it "didn't answer"); one question at a time per person (after **Stop**, until the model has let go of
 it); at most 6 answers followed live at once per person (more tabs fall back to asking every second); requests up
-to 1 MB (a backup to restore up to 1 GB); and the limits in App settings.
+to 1 MB (a backup to restore up to 1 GB, a person's export file up to 64 MB); and the limits in App settings.
 
 ## Configuration (the app's Configuration tab)
 

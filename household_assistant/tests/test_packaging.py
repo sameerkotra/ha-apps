@@ -10,7 +10,7 @@ from common_tests import packaging_core as pk
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # the app folder
 REPO_URL = pk.REPO_URL
-VERSION = "1.5.2"
+VERSION = "1.6.0"
 
 NEEDLES = pk.NEEDLES + ("c:\\" + "users",)
 ALLOWED_ADDRESSES = {"192.0.2.1", "192.168.1.10", "169.254.1.2", "10.0.0.5", "10.0.0.9", "10.9.9.9", "172.30.32.2", "172.30.33.7"}
@@ -33,7 +33,7 @@ class Packaging(unittest.TestCase):
             self.assertNotIn(word, read("translations", "en.yaml"))
 
     def test_every_version_string_matches(self):
-        pk.check_cache_busting(HERE, VERSION, count=10)
+        pk.check_cache_busting(HERE, VERSION, count=12)
 
     def test_docs_and_layout(self):
         pk.check_files(HERE)

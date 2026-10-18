@@ -60,8 +60,11 @@ def players_range(game: str) -> tuple[int, int]:
 
 
 def _players(conn, match_id: str) -> list:
-    return conn.execute("SELECT p.*, u.name, u.username, u.disabled, u.receive_notifications, u.is_child "
-                        "FROM match_players p JOIN users u ON u.id = p.user_id WHERE p.match_id = ? ORDER BY p.seat",
+    # LEFT JOIN: a seat whose person was deleted stays (the computer plays it; together.FORMER_PLAYER is its name)
+    return conn.execute("SELECT p.*, COALESCE(u.name, 'Former player') AS name, u.username, "
+                        "COALESCE(u.disabled, 1) AS disabled, COALESCE(u.receive_notifications, 0) AS receive_notifications, "
+                        "COALESCE(u.is_child, 0) AS is_child "
+                        "FROM match_players p LEFT JOIN users u ON u.id = p.user_id WHERE p.match_id = ? ORDER BY p.seat",
                         (match_id,)).fetchall()
 
 

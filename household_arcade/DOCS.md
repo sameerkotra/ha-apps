@@ -1073,6 +1073,37 @@ limits, extra notify services (a phone is picked up automatically from
 progress** shows the levels the person has cleared, with **Start over** for a
 game and mode (their scores are kept).
 
+#### Data (one person's)
+
+Each person's card has a **⋯ Data** button, and **Import a person's data…** sits
+above the list:
+
+- **Export their data** downloads one `.zip` file with everything the person has
+  here: their settings, scores, saved games, level progress, play history, a
+  child's limits and extra time, their extra notify services, and a record of the
+  matches they played (who with, who won — for reading only). The file isn't
+  encrypted: keep it somewhere safe.
+- **Import** (into this person, or from **Import a person's data…**) reads such
+  a file, from this install or another one. You see what's in it first, then pick
+  who it goes to and how: **Add to what they have** (scores, games and saves
+  already there aren't added twice; a saved game they already have for that game
+  is kept; for level progress the further one wins) or **Replace what they
+  have** (their current data is deleted first; type their name to confirm). A
+  child's play-time limits come in only if you tick **Also their play-time
+  limits**. Imported scores count for records and the leaderboard like any other.
+  Matches aren't loaded (they need the other players). A file made by a newer
+  version of the app, or one that was changed, is refused.
+- **Delete their data…** deletes it for good (type their name to confirm; it
+  can download a copy first). **Keep them, empty** leaves the person in the list
+  as if new; **Forget them too** removes them as well — if they still have a Home
+  Assistant login they come back as someone new the next time they open the app.
+  Matches stay for the others: a match still going goes on with the computer in
+  their seat (in a race, the other player wins when they finish), and finished
+  matches keep their result, showing **Former player** once the person is
+  forgotten. A household record that was theirs passes to the next best score,
+  and their two Home Assistant sensors are removed. Backups made before still
+  hold their data.
+
 ### Storage
 
 **Download database** saves a complete backup (a `.db` file). **Import

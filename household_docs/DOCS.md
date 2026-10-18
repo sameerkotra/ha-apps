@@ -716,14 +716,56 @@ after changing it.
 - **People** — everyone with a Home Assistant login: **Access** on or off (turned-off people see "An admin has
   turned off Household Docs for you"; their folder stays, and stays shared), **Child** (Kids' space, with **Let
   parents view…**), their folder name (**Rename folder**), how many files and how much space, their phones and
-  extra notify services with **Send a test**, and **Delete their documents…** (moves everything in their folder to
-  their Trash; you type the folder name to confirm). Admins see counts and sizes, never anyone's documents. The
+  extra notify services with **Send a test**, and **⋯ Data** — export, import or delete everything one person has
+  (below). Admins see counts and sizes, never anyone's documents. The
   folder browser doesn't look inside the documents folder or Household Chat's files folder (no one's folder names).
 - **App settings** — above, and **Connected apps**: the other household apps Docs talks to (Household Chat,
   Household Todo), their version, when they were last heard from and what they can do. Read only.
 - **Storage** — every folder's size and counts, History, Trash, `/data`, and *Empty all Trash now* (see Storage).
 - **AI usage** — every request to the AI model (see AI).
 - **Backup** — below.
+
+### One person's data (Admin → People → ⋯ Data)
+
+Each person's card has **⋯ Data**, and **⬆ Import a person's data…** is above the list. Only admins see them.
+
+- **Export their data** — everything that is theirs as one .zip: their folder as it is (files, folders, tags,
+  colours, ticks, links, pins and favourites, text corrected from scans), their templates, their saved searches,
+  follows of their own things, their settings and the rules on their folder. **Include old versions** (on) adds
+  History; **Include Trash** (off) adds what's in their Trash. The shares they gave are listed, and a list of what
+  they made in other people's folders and in shared folders (names only — those stay with the folder's owner). A
+  big folder is prepared in the background; the file is offered for an hour, then deleted. The file isn't
+  encrypted and holds their documents — keep it somewhere safe. More than 10,000 files or 4 GB: use the whole-app
+  backup with files instead.
+- **Import** — choose an export file (from this app, here or on another install). You see whose it is, when it was
+  made and what's in it, then pick who it goes to and how:
+  - **Add to what they have** (the default): if they already have things, everything comes into a new folder
+    **Imported** *date* in their folder, so nothing they have is touched. A document already there at the same
+    place with the same contents is skipped (and counted).
+  - **Replace what they have**: their folder's contents go to their Trash first, then the file is unpacked at the
+    top. You type their name to confirm.
+  Files are checked like uploads (the upload size limit, the folder limit, names), then read for search as a scan
+  would. Everything gets new ids. Shares come back only if you tick **Also share with the same people again**, and
+  only with people who are here.
+- **Delete their data…** — the dialog shows what goes and what stays, then **What happens to their folder**:
+  - **Move to Trash** (the default): as before — everything in their folder goes to their Trash, where it can be
+    restored until Trash is emptied. Nothing else is deleted.
+  - **Give to someone**: their folder's contents move into that person's folder as **From** *name*, with History,
+    tags and shares. Their Trash and templates are deleted.
+  - **Delete for good**: their files, History, templates and Trash go.
+
+  With the last two, their settings, favourites, searches, follows, extra notify services, Kids' space links, the
+  shares to them and their shared-folder access are deleted too, and you choose **Keep them, empty** (they stay in
+  the list as if new) or **Forget them too** (they're removed from Docs and their folder name is free again).
+  Docs adds every Home Assistant person with a login every 5 minutes, so someone forgotten who is still in Home
+  Assistant comes back as a new, empty person — remove them in Home Assistant first if they shouldn't.
+  What they made in other people's folders and in shared folders stays (it belongs to that folder's owner); after
+  **Forget them**, it shows as made by **Former member**. Rules and Home Assistant sensors they set on shared
+  folders stop working once they can't open the folder. You type their name to confirm; **Download a copy first**
+  is ticked. Backups made before still hold their data.
+
+Every export, import and delete is written to the app's log and audit log (who, whom, how many — never content).
+One import or delete runs at a time; another one is told to try again in a minute.
 
 ### Moving the documents to a new location
 

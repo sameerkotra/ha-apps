@@ -737,6 +737,88 @@ re-run of the AI.
 - **Opens straight into it.** A viewer with shared access lands in the first-granted owner's data (no `?as_user=`). A switch at the top right lists those owners and "My own data"; a banner says whose data it is, with a link to their own. `?as_user=` naming anyone not granted is ignored (they get the data they open into). Removing access takes effect on their next page.
 - Reports and everything else follow the same rule, because every route works on the acting user (section 2).
 
+## 20a. One person's data: export, import, delete
+
+The household's shared design is the repository's `PERSON_DATA_SPEC.md` (§2 for every app, §5 for this one); the
+file format, its checks and the id remapping are the shared `app/common/person_data.py`, the dialogs the shared
+`static/common/person-data.js`. Finance's part: `app/people_data.py` (tables, duplicates, row checks, delete) and
+`app/routes/people_data.py` (the endpoints).
+
+- **Where.** Admin → Users (`admin-storage?tab=users`, `storage_users.html`): a **⋯ Data** menu on each person's card
+  (Export their data / Import into this person / Delete their data…) and **Import a person's data…** above the
+  list, mounted by `static/pages/people-data.js` (loaded after `common/ui.js` through base.html's `page_scripts`
+  block; `person-data.css` through `head_extra`). After an import or delete the page fetches itself again and swaps
+  the list in. **Wipe all data** (`/user-wipe`, section 11) stays the soft, undoable wipe and links here for "for
+  good".
+- **Who may.** Admin only, the real signed-in admin (`require_admin`; `?as_user=` changes nothing), behind the
+  ingress-only and cross-site guards (section 1). Every endpoint answers 403 to anyone else.
+- **Endpoints** (relative, JSON; errors are `{detail}` — 400/422 with a sentence, 404 for a person not in
+  `known_users`, 409 for a wrong typed name, 423 while another import or delete runs or a backup restore is
+  swapping the database):
+
+| Method | Path | What |
+|---|---|---|
+| GET | `api/admin/people/{id}/data` | counts for the dialogs (all rows, Recently deleted included), the export options, what stays, what a delete can't reach |
+| POST | `api/admin/people/{id}/data/export` | `{options: {pdfs, deleted, text}}` → the .zip; with PDFs going in, `{job}` |
+| GET | `api/admin/people/data/jobs/{job}` | `{state, done, total, filename, error?}` |
+| GET | `api/admin/people/data/jobs/{job}/file` | the finished .zip (kept an hour, for the admin who started it) |
+| POST | `api/admin/people/data/import` | multipart `file` (up to 2 GB, the backup import's size) → `{token, preview}`; kept an hour |
+| POST | `api/admin/people/{id}/data/import/{token}` | `{mode: add\|replace, confirm}` → `{message, added, skipped}` |
+| POST | `api/admin/people/{id}/data/delete` | `{confirm, forget}` → `{message, counts}` |
+
+- **The file.** `finance-<person>-<YYYYMMDD-HHMM>.zip`: `manifest.json` (`app: "finance"`, `schema`, counts,
+  options, checksums), `data/<table>.json` (rows by column name, as stored, without `user_id`; ids kept so
+  references can be remapped), `files/…` (the PDFs still kept, at their path inside the person's folder:
+  `x.pdf`, `utility-bills/…`, `toll-statements/…`), `README.txt`.
+- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 27 today). Newer is refused; older is
+  brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below — none yet).
+  Columns are read from the database itself (`PRAGMA table_info`), so a new column needs no change here.
+- **Tables, in load order:** `accounts`, `csv_imports`, `statements`, `transactions`, `skipped_duplicates`,
+  `category_rules`, `custom_categories`, `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
+  bill), `toll_cars`, `toll_devices`, `toll_statements`, `toll_transactions`, `toll_pattern_groups`,
+  `toll_patterns`, `toll_trip_overrides`. `toll_trips` is a cache (not exported; `trip_id` dropped; rebuilt after
+  an import). Never exported: `user_access` grants, `saved_reports`, `ai_usage_log`, `app_settings`, `known_users`
+  (the person is in the manifest), the app-message tables.
+- **Export options.** *Include statement PDFs* (on): without it a row's `pdf_path` is empty and `pdf_deleted_at`
+  set, as for a PDF already deleted. *Include Recently deleted items* (off): rows with `deleted_at`, and whatever
+  hangs on a row left out, stay out. *Include the text read from statements* (on): `llm_raw_response`,
+  `categorization_llm_*`, `deterministic_amounts` / `deterministic_value`, `llm_value`, `unparsed_json`,
+  `raw_line`. Small exports download at once; with PDFs it is a background job (`person_data.Jobs`), the file next
+  to the database as `finance-person-*.zip`, deleted after an hour (and by the purge sweep after a restart).
+- **Import checks.** The shared reader's checks (a real zip, safe member names, size and member caps, every
+  checksum, this app, schema not newer), then every row as the app's own input: types by column, the forms' length
+  limits (account name 100, description 500, category 60, note 1000, rule 200, tag route 2000, …), account type,
+  last 4 digits only, an http(s) web address, ISO dates, a non-zero amount (rounded to cents), no blank names; a
+  refusal names the table and row ("transactions, row 12: …"). Unknown columns are dropped. Every PDF is sniffed
+  as an upload is (`%PDF-`, at most the PDF size limit). A row still `processing` comes in as a failed upload.
+- **Import.** Refused while one of the person's uploads is being read (as Wipe all data). One transaction
+  (`BEGIN IMMEDIATE`, inside `GATE.work()`): **Replace** first deletes their data as below (keeping them; shared
+  access goes too, as the shared spec's delete says), then every row is inserted with a new id; references are
+  remapped (`IdMap`), transfer pairs set once both sides are in, then `relink` pairs what's newly unambiguous.
+  PDFs are copied to a staging folder first and moved into `PENDING_DIR/<new owner>/…` under a new random name
+  after the commit; then `rebuild_trips`. The uploaded file is deleted after the import.
+- **A duplicate (Add)** is skipped, counted, and its id mapped to the row already there (so what hangs on it finds
+  it): an account with the same name (any case) and last 4 digits; a statement or toll statement with the same PDF
+  hash; a utility bill with the same hash and type (a dual-fuel PDF is two bills); a transaction with the same
+  account, date, amount in cents and description (section 6); a CSV import with the same file name, time and row
+  count; a toll pass with the same dedupe key; a rule with the same pattern and match type; a category, car or tag
+  group with the same name (any case); a recurring choice with the same merchant; a toll device with the same tag
+  (or plate and state); a tag with the same route and window; a trip choice for the same trip. Live rows count
+  against live rows only (a deleted row never blocks, as with an upload); a Recently deleted row from the file
+  against any row. A skipped statement's or CSV import's skipped-duplicate lines and a skipped bill's meter
+  readings are skipped with it.
+- **Delete.** Refused while an upload is being read; one transaction: `electric_meter_details`, then
+  `skipped_duplicates`, `transactions`, `statements`, `csv_imports`, `accounts`, `utility_bills`,
+  `toll_trip_overrides`, `toll_trips`, `toll_transactions` (before `toll_devices`: that key has no `ON DELETE`),
+  `toll_statements`, `toll_devices`, `toll_cars`, `toll_patterns`, `toll_pattern_groups`, `category_rules`,
+  `custom_categories`, `recurring_overrides`, both sides of `user_access`, and with **forget them** the
+  `known_users` row. After the commit their `PENDING_DIR/<id>/` folder goes. `app_settings.updated_by` and
+  `user_access.granted_by` naming them stay (admin history); no Home Assistant sensors to remove. The dialog says
+  what it can't reach: earlier backups and `finance.db.pre-NNNN`.
+- **Log.** One line per export, import and delete in the app's log: who, whom, the counts (and the mode) — never
+  the content. (Finance has no audit table.)
+- One import or delete at a time (`person_data.one_at_a_time`; 423 otherwise). Tests: `tests/test_people_data.py`.
+
 ## 21. App settings and AI usage
 
 ### 21.1 Admin → App settings (`settings`, admin only)

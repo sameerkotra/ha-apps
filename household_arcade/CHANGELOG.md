@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.0
+
+- **One person's data** (Admin → Users → **⋯ Data**): export everything a person has in the app as one file, import such a file back (into them or someone else, here or on another install — Add to what they have, or Replace it), or delete it for good (keeping them in the list, or forgetting them too). Matches stay for the other players: a match going on carries on with the computer in their seat, and finished ones show **Former player** once the person is forgotten. Their household records pass to the next best score and their Home Assistant sensors are removed.
+
 ## 1.12.5
 
 - **No longer experimental**: Household Arcade is now a normal release — Home Assistant no longer shows the experimental badge, and the "Under development" notes are gone from the README, the docs and the app store description.

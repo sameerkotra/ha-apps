@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import app_messages, briefing, catalogue, config, db, engine
 from .common import auth_core, backup_core, ha_people, ha_time, web_security
 from .common import housekeeping as jobs_core
-from .routers import api
+from .routers import api, people_data
 
 jobs_core.setup_logging()
 logger = logging.getLogger("main")
@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
     jobs.every("housekeeping", 3600, engine.housekeeping, log=logger, error="Housekeeping failed")
     jobs.every("sweep", 3600, lambda: backup_core.remove_stale(tempfile.gettempdir(), db.SNAPSHOT_PREFIX, 6 * 3600),
                log=logger, error="Removing old download copies failed")
+    jobs.every("person_uploads", 3600, people_data.uploads.sweep, at_start=False, log=logger,
+               error="Removing old person-data uploads failed")
     jobs.add("ha_people", ha_people.loop)
     jobs.start()
     try:
@@ -45,12 +47,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Household Assistant", lifespan=lifespan)
 app.include_router(api.router)
+app.include_router(people_data.router)       # Admin → People → Data (export, import, delete)
 
-# Request bodies: 1 MB for everything (questions are 1000 characters), a restore up to 1 GB with its length given.
+# Request bodies: 1 MB for everything (questions are 1000 characters), a restore up to 1 GB with its length given,
+# a person's export file (Admin → People → Data) up to people_data.MAX_UPLOAD (plus the form's own few bytes).
 # Counted as they arrive (a chunked body can't slip past). Added before the guard below, so outsiders still get
 # its 403 first.
 RESTORE_PATH = "/api/admin-storage-import-db"
-app.add_middleware(web_security.BodyLimit, default_max=1 << 20, routes={RESTORE_PATH: 1 << 30},
+PERSON_IMPORT_PATH = "/api/admin/people/data/import"
+app.add_middleware(web_security.BodyLimit, default_max=1 << 20,
+                   routes={RESTORE_PATH: 1 << 30, PERSON_IMPORT_PATH: people_data.MAX_UPLOAD + (1 << 20)},
                    no_chunked_prefixes=(RESTORE_PATH,))
 
 

@@ -12,8 +12,8 @@ from starlette.concurrency import run_in_threadpool
 from . import app_messages, config, db, ha_client, ha_sensors, housekeeping, wiring
 from .common import auth_core, ha_notify, ha_people, web_security
 from .common import housekeeping as jobs_core
-from .routers import (activity, admin, ai, bring, connect, docs, files, me, nodes, organise, search, share_folders,
-                      shares, sheets, tidy)
+from .routers import (activity, admin, ai, bring, connect, docs, files, me, nodes, organise, people_data, search,
+                      share_folders, shares, sheets, tidy)
 from .store import paths, roots
 
 jobs_core.setup_logging()
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Household Docs", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 for r in (me, nodes, sheets, docs, shares, files, search, share_folders, organise, activity, bring, ai, admin, connect,
-          tidy):
+          tidy, people_data):
     app.include_router(r.router)
 app.include_router(shares.links_router)
 
@@ -122,7 +122,8 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 MAX_BODY = 256 * 1024
 MAX_DOC_BODY = 27 * 1024 * 1024          # a note save (max_doc_mb ≤ 25 MB, as JSON)
 STREAMED = ("/api/admin/restore", "/api/import/keep/upload", "/api/import/zip/upload",   # their own limits
-            "/api/import")                                   # a sheet file: max_doc_mb, counted while it's read
+            "/api/import",                                   # a sheet file: max_doc_mb, counted while it's read
+            people_data.IMPORT_PATH)                         # a person's data export file (Admin → People)
 MAX_AI_BODY = 12 * 1024 * 1024           # AI: a photo of a table (§17.6)
 
 
@@ -135,6 +136,8 @@ def _is_file(path: str) -> bool:
     """A file download, preview or .zip: its route sets its own CSP (sandbox) and caching."""
     if path.startswith("/api/nodes/") and path.endswith(("/file", "/preview", "/zip")):
         return True
+    if path.startswith("/api/admin/people/") and path.endswith(("/data/export", "/file")):
+        return True                                  # a person's data export (Admin → People → ⋯ Data)
     return path == "/api/zip" or (path.startswith("/api/docs/") and path.endswith("/file"))
 
 

@@ -20,6 +20,7 @@ from .storage import remove_stored_file
 
 BACKUP_PREFIX = "finance-backup-"     # a database download's temporary copy
 IMPORT_PREFIX = "finance-import-"     # an uploaded backup, before it is swapped in
+PERSON_PREFIX = "finance-person-"     # one person's export or uploaded import file (routes/people_data.py)
 
 logger = logging.getLogger(__name__)
 
@@ -208,9 +209,12 @@ def _purge_once() -> dict:
 
 
 def _sweep_temp_files() -> None:
-    for folder, prefix in ((tempfile.gettempdir(), BACKUP_PREFIX), (os.path.dirname(_db.DB_PATH) or ".", IMPORT_PREFIX)):
+    data = os.path.dirname(_db.DB_PATH) or "."
+    # A person's export or upload is kept an hour (the app sweeps them itself; this catches one left by a restart).
+    for folder, prefix, age in ((tempfile.gettempdir(), BACKUP_PREFIX, STALE_TEMP_SECONDS),
+                                (data, IMPORT_PREFIX, STALE_TEMP_SECONDS), (data, PERSON_PREFIX, 3600)):
         try:
-            backup_core.remove_stale(folder, prefix, STALE_TEMP_SECONDS)
+            backup_core.remove_stale(folder, prefix, age)
         except OSError:
             logger.warning("Couldn't sweep old temporary files in %s", folder)
 

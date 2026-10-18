@@ -167,6 +167,10 @@ Migrations are numbered, run once each, in order, and recorded in
 7. `users.game_prefs`, `daily_challenges`, `play_sessions.daily` (wave 4).
 8. `match_moves`, `matches.options / state / turn_at`, `match_players.notified_at / notify_due / left_at` (§13.5,
    §13.6).
+9. `users.assistant_ok`. 10. `level_progress`, start levels, `users.favourites` (§14). 11. fair play
+   (`play_sessions.end_reason / level_seen`, `app_meta`).
+12. `match_players` made again without its cascading key to `users` (a seat outlives its person: "Former player",
+    One person's data). A migration can be a Python step (a function of the connection) instead of SQL.
 
 The numbered migrations runner stays in `db.py` (its column check uses
 `db_core.columns`). Connections come from `db_core.connect` / `db_core.transaction`.
@@ -1356,6 +1360,66 @@ Built: `app/daily.py`, `routers/daily.py`; the pool is Snake, Falling Blocks, Mi
   turned off and on again.
 
 Not planned: a full-screen TV leaderboard, a "game of the day".
+
+## One person's data: export, import, delete (Admin → Users → ⋯ Data)
+
+Built, as `PERSON_DATA_SPEC.md` §6 (the shared rules: §2, §9). The file format, its checks, the id remapping, the
+name check and "one at a time" are the shared `app/common/person_data.py`; what is a person's here is
+`app/people_data.py`; the routes are `app/routers/people_data.py`; the dialogs are the shared
+`static/common/person-data.js` (+ `.css`), put on Admin → Users by `admin.js` (`PeopleData.menu` on each card,
+`PeopleData.importButton` in the intro).
+
+- **API** (admin only — `require_admin`, the signed-in admin; the ingress and cross-site guards as everywhere):
+
+  | Method | Path | What |
+  |---|---|---|
+  | GET | `/api/admin/people/{id}/data` | the counts and texts for the dialogs (also the delete's dry run) |
+  | POST | `/api/admin/people/{id}/data/export` | `{options: {}}` → the `.zip` (`Content-Disposition: attachment`) |
+  | GET | `/api/admin/people/data/jobs/{job}` (`/file`) | big exports' jobs: never used here (always 404) — an export has no files |
+  | POST | `/api/admin/people/data/import` | multipart `file` (streamed, at most 200 MB, as the backup import) → `{token, preview}`; kept an hour for this admin |
+  | POST | `/api/admin/people/{id}/data/import/{token}` | `{mode: add \| replace, confirm?, options: {limits}}` → `{message, added, skipped}` |
+  | POST | `/api/admin/people/{id}/data/delete` | `{confirm, forget}` → `{message, counts}` |
+
+  409 for a wrong name, 423 while another import or delete runs, 400 for a file that isn't a good export (not a
+  zip, another app, a newer schema, a checksum that doesn't match), 422 for a row this app wouldn't accept
+  ("scores, row 3: …").
+- **The file**: `manifest.json` (`app: household_arcade`, `schema`), `data/<table>.json` for `users` (their row),
+  `play_sessions`, `scores`, `saved_games`, `level_progress`, `child_limits`, `extra_time`, `user_notify` (rows as
+  stored, columns by name), and `data/matches.json`: a read-only record of each match they played (game, mode, kind,
+  status, when, the others' names, their result and score, the winner's name or "them"). Not exported: `notify_log`,
+  `ai_calls`, levels and builds, holidays, daily challenges, App settings (no secrets are on any of these rows).
+- **`schema`** is the database's migration number (`db.LATEST`, now 12). A file with a newer one is refused; an
+  older one is read with the columns it has, a later column taking the default its migration gave it.
+- **Import**: in one transaction (`BEGIN IMMEDIATE`). Every row is checked with the app's own rules — modes are the
+  game's, scores pass `games.check_score` (the level against the most any list allows), saves are at most 48 KB of
+  JSON, limits pass `limits.clean_limits`, game choices `prefs._merge_game_prefs`, notify services
+  `people_admin.clean_service`; unknown columns are dropped; rows of a game this version doesn't have are left out
+  (said in the preview). New ids everywhere: play sessions get new ids, and the scores and saves that pointed at
+  them point at the new ones (`IdMap`); `match_id` is cleared; a game that was still open ends at its last
+  heartbeat. Duplicates (skipped and counted): a play session with the same game, mode and start; a score with the
+  same game, mode, score and end; a saved game for the same game (Add keeps theirs); level progress for the same game
+  and mode (the further one wins); the same extra time (date, minutes, when) or notify service (at most 10).
+  Settings: Replace takes the file's; Add takes them only for someone with no scores, play history, saves or
+  progress yet (else theirs stay; favourites are merged). Child limits and extra time only with **Also their
+  play-time limits** (off by default), which also marks them a child (never an admin). Replace deletes their data
+  first as below (keeping them) and asks for their name.
+- **Delete**, in one transaction: first the matches — a match with no other person who is still here is deleted;
+  `matches.created_by` moves to the next person by seat (that key cascades); an invite not started loses their seat
+  (cancelled with fewer than two people left); a match going on: turn by turn, `turns.leave` (the computer takes
+  their seat; with one person left they win); a race, the seat is marked `left_at` and `computer` (`together._gone`
+  counts it as gone, so the other wins on finishing); finished seats and `winner` keep their id. Then
+  `level_progress` (no cascade), `scores`, `saved_games`, `play_sessions`, `child_limits`, `extra_time`,
+  `user_notify`, `notify_log`. **Keep them**: their settings columns go back to the defaults (a child stays marked as
+  one, without limits); **forget them**: their `users` row goes. After the commit (a background task) the sensors:
+  a forgotten person's `sensor.household_arcade_<slug>_played_today` and `binary_sensor.…_playing` are removed
+  (and anyone's whose entity name changed because of it), then everything is posted again, so the record sensors
+  pass to the next best. One log line per export, import and delete: who, whom, the counts — never the content.
+- **Former player**: migration 12 makes `match_players` again without the `ON DELETE CASCADE` key to `users`
+  (SQLite can't drop a key in place; a Python step that is safe to run again), so a seat outlives its person. The
+  match views and head to head (`together._players`, `turns._players`, `together.against`) LEFT JOIN `users` and
+  show "Former player" for an id with no person. Someone forgotten who opens the app again with the same Home
+  Assistant login gets their old id, and so sees those finished matches again.
+- **Tests**: `tests/test_people_data.py`.
 
 ## Security notes (2026-10)
 

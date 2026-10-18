@@ -22,6 +22,7 @@
     <script src="static/common/theme-boot.js?v={{ app_version }}"></script>
     <link rel="stylesheet" href="static/common/themes.css?v={{ app_version }}">
     <link rel="stylesheet" href="static/style.css?v={{ app_version }}">
+    {% block head_extra %}{% endblock %}
     <script src="static/nav-boot.js?v={{ app_version }}"></script>
     {# historyCacheSize 0: Back/Forward re-fetches the page from the server instead of restoring an htmx
        snapshot (a snapshot can hold half-swapped or stale pollers - one cause of "stuck until I refresh").
@@ -211,5 +212,7 @@
     <script src="static/base.js?v={{ app_version }}"></script>
     <script src="static/common/ui.js?v={{ app_version }}" defer></script>
     <script src="static/ui.js?v={{ app_version }}" defer></script>
+    {# A page's scripts that use common/ui.js (deferred too, so they run after it, in this order). #}
+    {% block page_scripts %}{% endblock %}
 </body>
 </html>

@@ -5,7 +5,7 @@ checked against the caller's role (sharing.py); anything they can't see is a 404
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import Field
 
-from .. import db, docops, files, kids, notify, share_folders, sharing, tags
+from .. import db, docops, files, kids, notify, people_data, share_folders, sharing, tags
 from ..auth import require_user
 from ..store import fileio, index, moving, nodes, roots, trash
 from .common import Strict
@@ -20,7 +20,9 @@ def _names(conn, ids) -> dict:
     if not ids:
         return {}
     q = ",".join("?" * len(ids))
-    return {r["id"]: r["name"] for r in conn.execute(f"SELECT id, name FROM users WHERE id IN ({q})", ids)}
+    out = {r["id"]: r["name"] for r in conn.execute(f"SELECT id, name FROM users WHERE id IN ({q})", ids)}
+    # someone whose data was deleted and who was forgotten (Admin → People → ⋯ Data): "Former member"
+    return {i: out.get(i, people_data.FORMER_NAME) for i in ids}
 
 
 def _state(conn, user_id: str, ids) -> dict:

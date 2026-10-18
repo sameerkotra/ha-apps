@@ -342,12 +342,30 @@ $("#userSelect").addEventListener("change", async (e) => {
 });
 
 // The shared people list (common/people.js): each person with their switcher on/off switch.
+// Each card's ⋯ Data menu and the Import button above the list are common/person-data.js (export, import and
+// delete one person's data; admin only, checked by the server too).
+function personDataCfg() {
+  return {
+    people: allUsers.map(u => ({ id: u.id, name: u.name })),
+    onDone: async () => {
+      await loadUsers();
+      // someone forgotten can't stay the person being viewed; an import may have added to the one shown
+      if (!allUsers.some(u => u.id === state.actingUserId)) state.actingUserId = state.selfId;
+      renderUserSelect();
+      await refreshAll();
+    },
+  };
+}
+
 function renderUsersTab() {
+  const dataCfg = personDataCfg();
   PeoplePage.render($("#usersList"), {
     people: allUsers,
     cardClass: "",
     empty: "No one else has opened this app yet.",
+    intro: h("p", null, PeopleData.importButton(dataCfg)),
     person: (u) => ({
+      actions: PeopleData.menu({ id: u.id, name: u.name }, dataCfg),
       badges: [u.id === state.selfId ? ["you"] : null],
       controls: h("label", { class: "pp-toggle", title: u.enabled ? "Enabled — visible in switcher" : "Disabled — hidden from switcher" },
         u.enabled ? "Enabled" : "Disabled",

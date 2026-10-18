@@ -15,6 +15,9 @@
         for 30 days before it's permanently purged &mdash; restore it any time before then, or leave it and it's
         gone for good after the grace period.
     </p>
+    <p class="hint">To delete someone's data for good at once (nothing kept in Recently deleted), or to export it
+        first, use <a href="admin-storage?tab=users{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">Admin &rarr; Users</a>
+        &rarr; <strong>&#8943; Data</strong> on their card.</p>
 
     {% if error %}
     <p class="empty-state">{{ error }}</p>

@@ -309,10 +309,14 @@
       again();
     };
     const services = avail || { available: false, services: [], entities: [], error: null };
+    // ⋯ Data (export, import, delete one person's data — the shared dialogs, common/person-data.js); "Delete their
+    // documents" is one of its delete choices (Move to Trash)
+    const dataCfg = { people: data.users.map((u) => ({ id: u.id, name: u.name })), onDone: again, appName: "Household Docs" };
     PeoplePage.render(box, {
       people: data.users,
       cardClass: "card",
-      intro: h("p", { class: "hint" }, "Everyone in Home Assistant with a login is here. New people get access straight away unless App settings say otherwise. Turning someone off hides the app from them; their folder and files stay, and stay shared. You see counts and sizes only — never anyone's documents."),
+      intro: [h("p", { class: "hint" }, "Everyone in Home Assistant with a login is here. New people get access straight away unless App settings say otherwise. Turning someone off hides the app from them; their folder and files stay, and stay shared. You see counts and sizes only — never anyone's documents."),
+        h("p", null, PeopleData.importButton(dataCfg))],
       checkAgain: async () => { try { await api("api/admin/users?refresh=1"); toast("Read from Home Assistant"); again(); } catch (e) { fail(e); } },
       person: (u) => ({
         badges: [u.you ? ["you"] : null, u.isAdmin ? ["admin", "accent"] : null, u.disabled ? ["turned off", "warn"] : null,
@@ -328,7 +332,7 @@
             const name = await D.askName(`Rename ${u.name}'s folder`, "Folder name", u.folder, "Rename");
             if (name && name !== u.folder) patch(u, { folder: name });
           } }, "Rename folder") : null,
-          u.folder && u.docCount ? h("button", { class: "btn-danger btn-small", type: "button", dataset: { deleteDocs: u.id }, onclick: () => deleteDocsDialog(u, again) }, "Delete their documents…") : null,
+          PeopleData.menu({ id: u.id, name: u.name }, dataCfg),
           u.isChild ? h("button", { class: "btn-ghost btn-small", type: "button", dataset: { parents: u.id }, onclick: () => parentsDialog(u, data.users, again) },
             u.parents && u.parents.length ? `Parents can view (${u.parents.length})…` : "Let parents view…") : null,
         ],
@@ -363,19 +367,6 @@
           try { await api(`api/admin/users/${encodeURIComponent(u.id)}`, { method: "PATCH", body: { parents: Array.from(chosen) } }); m.close(); toast("Saved"); again(); }
           catch (e) { err.textContent = e.message; }
         } }, "Save"))), { focus: false });
-  }
-
-  function deleteDocsDialog(u, again) {
-    const input = h("input", { type: "text", "aria-label": "Folder name", id: "confirmFolder", autocomplete: "off" });
-    const err = h("div", { class: "error-text", role: "alert" });
-    const m = openModal(`Delete ${u.name}'s documents`, h("div", null,
-      h("p", null, `${u.docCount} file${u.docCount === 1 ? "" : "s"} (${fmtSize(u.docSize)}) move to ${u.name}'s Trash, where they can still be restored until it's emptied.`),
-      h("label", { class: "field" }, `Type the folder name — ${u.folder} — to confirm`, input), err,
-      h("div", { class: "actions" }, h("button", { class: "btn-ghost", type: "button", onclick: () => m.close() }, "Cancel"),
-        h("button", { class: "btn-danger", type: "button", id: "confirmDelete", onclick: async () => {
-          try { await api(`api/admin/users/${encodeURIComponent(u.id)}/docs/delete`, { method: "POST", body: { confirm: input.value } }); m.close(); toast("Moved to their Trash"); again(); }
-          catch (e) { err.textContent = e.message; }
-        } }, "Delete"))));
   }
 
   // =====================================================================

@@ -382,7 +382,43 @@ CREATE INDEX IF NOT EXISTS idx_scores_level ON scores(game, mode, level);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON play_sessions(started_at)
 """
 
-# (number, description, SQL). Append only.
+# One person's data (PERSON_DATA_SPEC.md §6): deleting a person must leave the matches they played working for the
+# others — a finished seat keeps the person's id (pages show "Former player" for an id with no person) — so a seat no
+# longer goes when its person goes: match_players.user_id loses its ON DELETE CASCADE key to users. SQLite can't drop
+# a foreign key in place, so the table is made again with the same columns (Python, not SQL: each step checks where an
+# interrupted run stopped, so running it again is safe).
+def _m12_seats_outlive_people(conn) -> None:
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "match_players" not in tables and "match_players_v12" in tables:        # stopped after the drop
+        conn.execute("ALTER TABLE match_players_v12 RENAME TO match_players")
+    elif any(r[2] == "users" for r in conn.execute("PRAGMA foreign_key_list(match_players)")):
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(match_players)")]
+        conn.execute("DROP TABLE IF EXISTS match_players_v12")
+        conn.execute("""CREATE TABLE match_players_v12 (
+            match_id TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL,               -- a person's id; kept when the person is deleted ("Former player")
+            seat INTEGER NOT NULL,
+            invite_status TEXT NOT NULL DEFAULT 'invited' CHECK (invite_status IN ('invited', 'accepted', 'declined')),
+            computer INTEGER NOT NULL DEFAULT 0,
+            session_id TEXT,
+            score INTEGER,
+            level INTEGER,
+            seconds INTEGER,
+            won INTEGER,
+            result TEXT CHECK (result IN ('won', 'lost', 'draw')),
+            finished_at TEXT,
+            notified_at TEXT,
+            notify_due INTEGER NOT NULL DEFAULT 0,
+            left_at TEXT,
+            PRIMARY KEY (match_id, user_id))""")
+        names = ", ".join(cols)
+        conn.execute(f"INSERT INTO match_players_v12 ({names}) SELECT {names} FROM match_players")
+        conn.execute("DROP TABLE match_players")
+        conn.execute("ALTER TABLE match_players_v12 RENAME TO match_players")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_match_players_user ON match_players(user_id)")
+
+
+# (number, description, SQL — or a function of the connection). Append only.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "people, play sessions, scores, app settings", _M1_CORE),
     (2, "children: limits, extra time, holidays", _M2_CHILDREN),
@@ -395,6 +431,7 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (9, "the Household Assistant: each person's switch", _M9_ASSISTANT),
     (10, "level progress, start levels, favourite games", _M10_PROGRESS),
     (11, "fair play: how sessions ended, levels counted, app values", _M11_FAIR_PLAY),
+    (12, "one person's data: a match seat outlives its person", _m12_seats_outlive_people),
 ]
 LATEST = MIGRATIONS[-1][0]
 
@@ -432,6 +469,11 @@ def migrate(conn, upto: int | None = None) -> int:
         if number <= current or (upto is not None and number > upto):
             continue
         logger.info("Database migration %d: %s", number, desc)
+        if callable(sql):
+            sql(conn)
+            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (number,))
+            current = number
+            continue
         plain = re.sub(r"--[^\n]*", "", sql)          # comments may contain ';'
         for stmt in [s.strip() for s in plain.split(";") if s.strip()]:
             if _column_exists_already(conn, stmt):
