@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.2
+
+- **Tests only:** the tests no longer leave a question waiting on an address that, on GitHub's machines, hangs instead of refusing — which made the next tests fail with "Still answering the last question." After each test, a question still being answered is now reported.
+
 ## 1.6.1
 
 - **Fixes to one person's data**: The Data dialogs, after a check in the browser: the ⋯ Data menu stays on screen (it opens the other way near an edge or a bottom bar), a wrong name is caught before the copy is downloaded, the copy uses the export's usual choices, the red button is readable in every theme, and the name box only shows when it's needed. On a phone, the People table keeps each button on one line.

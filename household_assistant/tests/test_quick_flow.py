@@ -254,7 +254,7 @@ class QuickHousehold(unittest.TestCase):
                     break
             time.sleep(0.02)
         if self.AI:
-            settings.update({"ai_provider": "ollama", "ai_url": "http://192.0.2.1:11434", "ai_model": "tiny",
+            settings.update({"ai_provider": "ollama", "ai_url": "http://127.0.0.1:9", "ai_model": "tiny",
                              "ai_tool_calls": "json"}, None)
         for h in (ADMIN, ALICE, KID):
             self.assertEqual(self.c.get("/api/me", headers=h).status_code, 200)

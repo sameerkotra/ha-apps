@@ -163,7 +163,9 @@ class NativeModel:
 def set_up_ai(tool_calls="json", quick=False):
     """The AI set up (a scripted model stands in); the JSON plan unless `tool_calls` is "auto". Quick answers
     (§17) are off unless `quick`: these tests are about the model's path (test_quick_flow.py has the rules')."""
-    settings.update({"ai_provider": "ollama", "ai_url": "http://192.0.2.1:11434", "ai_model": "tiny",
+    # port 9 here, where nothing listens: a call that slips past the scripted model is refused at once on every
+    # machine (an unroutable address hangs for minutes on some, e.g. GitHub's, and leaves the question running)
+    settings.update({"ai_provider": "ollama", "ai_url": "http://127.0.0.1:9", "ai_model": "tiny",
                      "ai_tool_calls": tool_calls, "ai_on": True, "quick_on": bool(quick)}, None)
 
 

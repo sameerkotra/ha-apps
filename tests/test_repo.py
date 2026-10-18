@@ -11,7 +11,7 @@ REPO_URL = "https://github.com/sameerkotra/ha-apps"
 ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", "household_vault", "splitpot")
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
-VERSIONS = {"calorie_tracker": "2.5.1", "family_tree": "2.6.2", "household_chat": "2.6.5", "household_todo": "2.7.7",
+VERSIONS = {"calorie_tracker": "2.5.1", "family_tree": "2.6.2", "household_chat": "2.6.5", "household_todo": "2.7.8",
             "household_vault": "2.2.1", "splitpot": "2.7.1"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
@@ -28,7 +28,7 @@ DOCS = "household_docs"
 DOCS_VERSION = "1.7.1"
 # Household Assistant: the eleventh app, answering from what the other apps know (HOUSEHOLD_ASSISTANT_SPEC.md).
 ASSISTANT = "household_assistant"
-ASSISTANT_VERSION = "1.6.1"
+ASSISTANT_VERSION = "1.6.2"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
 PROXY_VERSION = "0.6.6"

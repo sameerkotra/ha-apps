@@ -73,8 +73,13 @@ class Household(unittest.TestCase):
 
     def tearDown(self):
         end = time.monotonic() + 5                         # questions still being answered finish first
-        while engine._stops and time.monotonic() < end:
-            time.sleep(0.02)
+        while (engine._stops or engine._owners) and time.monotonic() < end:     # _owners: also a stopped one
+            time.sleep(0.02)                                                     # whose model call hasn't returned
+        with engine._lock:
+            left = sorted(set(engine._owners.values()))
+        # a question thread outliving its test makes the next one's ask fail ("Still answering…"), and only on a
+        # slow machine; say which test left it, here rather than there
+        self.assertEqual(left, [], "a question was still being answered after the test")
         bus.stop()
         for a in self.apps.values():
             a.stop()
@@ -329,7 +334,7 @@ class AssistantTests(Household):
         with mock.patch.object(ai_client, "_post", post):
             self.assertIsNone(ai_client.generate_tools("q", [{"name": "a__b", "description": "x"}]))
             self.assertIsNone(ai_client.generate_tools("q", [{"name": "a__b", "description": "x"}]))
-        self.assertEqual(sent, ["http://192.0.2.1:11434/api/chat"])          # asked once, then remembered
+        self.assertEqual(sent, ["http://127.0.0.1:9/api/chat"])          # asked once, then remembered
         self.assertFalse(ai_client.tools_supported())
         self.c.put("/api/admin/settings", json={"ai_model": "bigger"}, headers=ADMIN)
         self.assertTrue(ai_client.tools_supported())        # another model: asked again
@@ -502,7 +507,13 @@ class AssistantTests(Household):
         settings.update({"children_may_ask": True}, None)
         names = [t["name"] for t in self.c.get("/api/tools", headers=BOB).json()["tools"]]
         self.assertEqual(names, ["todo.items.add", "todo.tasks"])          # no `household` tools for children
-        self.assertEqual(self.c.post("/api/ask", json={"text": "Hi"}, headers=BOB).status_code, 200)
+        # answered by the scripted model and waited for: left to the real client, Bob's question would sit on an
+        # unreachable address (instantly refused here, but hanging for minutes on some machines, e.g. GitHub's),
+        # and the next test that asks as Bob would get "Still answering the last question."
+        with mock.patch.object(ai_client, "generate", Model('{"answer": "Hi."}')):
+            r = self.c.post("/api/ask", json={"text": "Hi"}, headers=BOB)
+            self.assertEqual(r.status_code, 200)
+            wait_done(r.json()["id"])
 
     def test_not_set_up(self):
         settings.update({"ai_provider": ""}, None)
