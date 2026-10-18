@@ -448,7 +448,6 @@ const Admin = (() => {
           badges: [self ? ["you"] : null, u.isAdmin ? ["admin", "accent"] : null, u.isChild ? ["child", "accent"] : null,
             u.disabled ? ["switched off", "warn"] : null],
           sub: (u.username ? `login ${u.username} · ` : "") + `last seen ${fmtStamp(u.lastSeen)}`,
-          actions: PeopleData.menu(u, dataCfg),
           controls: [
             h("label", { class: "pp-toggle" }, "Can play", PeoplePage.accessSwitch(!u.disabled, (on) => patch(u, { disabled: !on }), { label: `${u.name} can play`, disabled: self })),
             h("label", { class: "pp-toggle", title: u.isAdmin ? "Admins can't be marked as children" : "" }, "Child",
@@ -456,8 +455,9 @@ const Admin = (() => {
           ],
           blocks: [u.isAdmin ? h("div", { class: "hint" }, "Admins can't be marked as children; limits never apply to them.") : null,
             u.isChild ? childBlock(u, data.games, again) : null,
+            // ⋯ Data sits at the right end, beside Level progress, so its menu (anchored right) opens inside the card
             h("div", { class: "actions" }, h("button", { class: "btn-ghost btn-small", type: "button", dataset: { progress: "1" },
-              onclick: () => progressDialog(u) }, "Level progress"))],
+              onclick: () => progressDialog(u) }, "Level progress"), PeopleData.menu(u, dataCfg))],
         };
       },
       notify: {

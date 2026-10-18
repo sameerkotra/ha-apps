@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1
+
+- **Fixes to one person's data**: The Data dialogs, after a check in the browser: the ⋯ Data menu stays on screen (it opens the other way near an edge or a bottom bar), a wrong name is caught before the copy is downloaded, the copy uses the export's usual choices, the red button is readable in every theme, and the name box only shows when it's needed. On a phone, the People table keeps each button on one line.
+
 ## 1.6.0
 
 ### New

@@ -35,13 +35,16 @@
 .pd-btn:hover { border-color: var(--accent-dim, var(--accent)); }
 .pd-btn:disabled { opacity: .5; cursor: default; }
 .pd-btn.pd-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast, #fff); }
-.pd-btn.pd-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.pd-btn.pd-danger { background: var(--danger-soft, transparent); border-color: var(--danger); color: var(--danger); }  /* readable in every theme */
 .pd-menu-wrap { position: relative; display: inline-block; }
 .pd-menu-btn, .pd-import-btn { padding: 6px 12px; font-size: 13px; }
-.pd-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 210px; display: flex;
+.pd-menu { position: absolute; left: 0; right: auto; top: calc(100% + 4px); z-index: 50; min-width: 210px;
+  max-width: calc(100vw - 32px); display: flex;
   flex-direction: column; padding: 4px; background: var(--card, var(--panel)); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
-.pd-menu[hidden] { display: none; }
+.pd-menu[hidden], .pd-modal [hidden] { display: none !important; }   /* .pd-field etc. set display, which would beat hidden */
+.pd-menu.pd-flip { left: auto; right: 0; }
+.pd-menu.pd-up { top: auto; bottom: calc(100% + 4px); }   /* no room below (bottom of the screen, a bottom bar) */   /* a button near the right edge opens its menu leftwards */
 .pd-menu-item { background: none; border: none; color: var(--text); text-align: left; font: inherit; font-size: 14px;
   padding: 9px 12px; border-radius: 6px; cursor: pointer; }
 .pd-menu-item:hover { background: var(--panel-hover, var(--panel-alt)); }

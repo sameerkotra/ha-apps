@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1
+
+- **Fixes to one person's data**: The Data dialogs, after a check in the browser: the ⋯ Data menu stays on screen (it opens the other way near an edge or a bottom bar), a wrong name is caught before the copy is downloaded, the copy uses the export's usual choices, the red button is readable in every theme, and the name box only shows when it's needed. Finance's own dialog style no longer squeezes the Data dialogs, and the Data button sits at the right of each person.
+
 ## 1.5.0
 
 - **One person's data: export, import, delete** (Admin → Users → ⋯ Data on each person, and **Import a person's data…** above the list). Export downloads one file with everything they have (accounts, statements and their PDFs, transactions, CSV imports, rules, categories, utility bills, toll statements and toll setup); Import loads it into anyone — adding to what they have without doubling anything, or replacing it — with every row checked and new ids throughout; Delete removes their data for good (and, if you choose, them), unlike Wipe all data. Shared access, saved reports, App settings and the AI usage total stay out of it.

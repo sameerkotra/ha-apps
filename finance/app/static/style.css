@@ -691,7 +691,10 @@ button.debug-link { cursor: pointer; font-family: inherit; }
 .resolve-amount { width: 90px; }
 
 /* ---------- Modal (recurring match results) ---------- */
-.modal {
+/* Here .modal is the full-screen overlay; the shared dialogs (common/ui.js openModal, used by person-data.js) put
+   .modal on the dialog box itself inside their own .modal-backdrop, so they are left out (:where keeps this at
+   one class, so .modal[hidden] below still wins). */
+.modal:not(:where(.modal-backdrop > .modal)) {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.6);
@@ -1166,4 +1169,7 @@ button.nav-item:hover { background: var(--panel-alt); color: var(--text); }
 
 /* Admin → Users: one person's data (the shared ⋯ Data menu and Import button, common/person-data.css) */
 .u-data { display: inline-block; margin-left: 0.4rem; vertical-align: middle; }
+/* At the card's right edge: the shared menu opens leftwards from the button (right: 0), so a button just after a
+   short name put the menu off the left of a phone's screen. */
+.u-card .u-data { float: right; }
 .u-data-import { margin: 0.5rem 0 0.9rem; }

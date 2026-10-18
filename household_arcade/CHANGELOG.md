@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.1
+
+- **Fixes to one person's data**: The Data dialogs, after a check in the browser: the ⋯ Data menu stays on screen (it opens the other way near an edge or a bottom bar), a wrong name is caught before the copy is downloaded, the copy uses the export's usual choices, the red button is readable in every theme, and the name box only shows when it's needed. The Data button sits with the other buttons on each person's card.
+
 ## 1.13.0
 
 - **One person's data** (Admin → Users → **⋯ Data**): export everything a person has in the app as one file, import such a file back (into them or someone else, here or on another install — Add to what they have, or Replace it), or delete it for good (keeping them in the list, or forgetting them too). Matches stay for the other players: a match going on carries on with the computer in their seat, and finished ones show **Former player** once the person is forgotten. Their household records pass to the next best score and their Home Assistant sensors are removed.

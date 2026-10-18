@@ -107,7 +107,7 @@ class PdfViewer(ApiBase):
         p.add_init_script("document.addEventListener('securitypolicyviolation', "
                           "(e) => console.error('CSP: ' + e.violatedDirective + ' ' + e.blockedURI))")
         p.goto(self.base)
-        p.wait_for_function("window.Docs && Docs.state && Docs.state.me")
+        self.until(p, "!!(window.Docs && Docs.state && Docs.state.me)")
         return p
 
     def until(self, p, js, timeout=20.0):

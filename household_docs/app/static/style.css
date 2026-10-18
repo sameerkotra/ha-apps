@@ -427,6 +427,10 @@ button.doc-title:hover { border-color: var(--border); }
   .note-text { min-height: 55vh; font-size: 1rem; }
   .check-tools .icon-btn { padding: 4px 6px; }
   .toast-root { bottom: calc(var(--bar-h) + 16px); }
+  /* Admin → People: the last person's ⋯ Data menu opens below its card — room for it above the bottom bar, and
+     drawn over the bar rather than under it */
+  .pp-list { padding-bottom: 110px; }
+  .pd-menu-wrap .pd-menu { z-index: 61; }
   .modal-backdrop { padding: 3vh 8px; }
   .save-state { min-width: 0; }
   .doc-title { font-size: 1.1rem; }

@@ -66,7 +66,8 @@
   function countsList(counts) {
     if (!counts || !counts.length) return h("p", { class: "pd-hint" }, "Nothing here yet.");
     return h("ul", { class: "pd-counts" }, counts.map((c) => h("li", null,
-      h("span", { class: "pd-count" }, String(c.count)), " ", c.label, c.detail ? h("span", { class: "pd-hint" }, " · " + c.detail) : null)));
+      h("span", { class: "pd-count" }, String(c.count)),
+      h("span", null, c.label, c.detail ? h("span", { class: "pd-hint" }, " · " + c.detail) : null))));
   }
   function checks(options, values) {
     return (options || []).map((o) => {
@@ -214,11 +215,19 @@
     keepRb.addEventListener("change", () => { forget = false; });
     forgetRb.addEventListener("change", () => { forget = true; });
     const copyFirst = h("input", { type: "checkbox", checked: true });
-    const confirm = h("input", { type: "text", autocomplete: "off", placeholder: person.name });
+    const confirm = h("input", { type: "text", autocomplete: "off", placeholder: "Type their name" });
     const st = h("div", { class: "pd-status" });
     const go = btn("Delete their data", "pd-danger", async () => {
       go.disabled = true;
       try {
+        // a wrong name is caught here first, so no safety copy is downloaded for a delete that would be refused
+        // (the same rule as the server's names_match, which still has the last word)
+        const norm = (x) => String(x || "").normalize("NFC").split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+        if (norm(confirm.value) !== norm(person.name)) {
+          status(st, `To delete, type ${person.name}'s name exactly.`, "error");
+          go.disabled = false;
+          return;
+        }
         // the safety copy uses the export's own defaults (e.g. PDFs on), so it's the same file Export would give
         if (copyFirst.checked) {
           const defaults = {};
@@ -229,9 +238,11 @@
         const res = await json(personPath(person.id) + "/delete", { method: "POST", json: { confirm: confirm.value, forget, choices } });
         status(st, res.message || "Deleted.", "ok");
         go.hidden = true;
+        cancel.textContent = "Close";      // nothing left to cancel
         if (cfg.onDone) cfg.onDone();
       } catch (e) { status(st, e.message, "error"); go.disabled = false; }
     });
+    const cancel = btn("Cancel", "", () => m.close());
     UI.mount(body,
       h("p", null, sum.deleteLead || "This deletes:"),
       countsList(sum.counts),
@@ -247,7 +258,7 @@
       sum.deleteNote ? h("p", { class: "pd-warn" }, sum.deleteNote) : null,
       h("label", { class: "pd-field" }, `To confirm, type ${person.name}`, confirm),
       st,
-      h("div", { class: "pd-actions" }, btn("Cancel", "", () => m.close()), go));
+      h("div", { class: "pd-actions" }, cancel, go));
     confirm.addEventListener("input", () => { go.disabled = !confirm.value.trim(); });
     go.disabled = true;
   }
@@ -286,6 +297,13 @@
       const opening = list.hidden;
       document.querySelectorAll(".pd-menu").forEach((x) => { x.hidden = true; });
       list.hidden = !opening;
+      if (opening) {        // opens rightwards from the button; flipped when that would run off the right edge
+        list.classList.remove("pd-flip", "pd-up");
+        const r = list.getBoundingClientRect();
+        if (r.right > document.documentElement.clientWidth - 8) list.classList.add("pd-flip");
+        // opens upwards when it would end below the screen (or under a fixed bottom bar) and there's room above
+        if (r.bottom > window.innerHeight - 72 && b.getBoundingClientRect().top > r.height + 8) list.classList.add("pd-up");
+      }
       b.setAttribute("aria-expanded", opening ? "true" : "false");
     });
     wrap.addEventListener("keydown", (e) => { if (e.key === "Escape") { close(); b.focus(); } });

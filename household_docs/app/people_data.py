@@ -674,10 +674,13 @@ def _open(path: str) -> pd.Package:
         raise HTTPException(422, str(e))
 
 
-COUNT_LABELS = (("nodes:files", "files"), ("nodes:folders", "folders"), ("versions", "old versions"),
-                ("trash", "items in Trash"), ("templates", "templates"), ("node_tags", "tags"),
-                ("shares", "shares they gave"), ("saved_searches", "saved searches"), ("follows", "follows"),
-                ("filing_rules", "filing rules"), ("cleanup_rules", "clean-up rules"), ("user_state", "favourites and pins"))
+COUNT_LABELS = (("nodes:files", "file", "files"), ("nodes:folders", "folder", "folders"),
+                ("versions", "old version", "old versions"), ("trash", "item in Trash", "items in Trash"),
+                ("templates", "template", "templates"), ("node_tags", "tag", "tags"),
+                ("shares", "share they gave", "shares they gave"), ("saved_searches", "saved search", "saved searches"),
+                ("follows", "follow", "follows"), ("filing_rules", "filing rule", "filing rules"),
+                ("cleanup_rules", "clean-up rule", "clean-up rules"),
+                ("user_state", "favourite or pin", "favourites and pins"))
 
 
 def _file_counts(rows: dict, pkg) -> dict:
@@ -726,7 +729,7 @@ def preview(admin: dict, tmp: str) -> dict:
         "exportedBy": str(m.get("exportedBy") or "")[:100],
         "person": {"id": str(person.get("id") or "")[:128], "name": str(person.get("name") or "")[:100],
                    "username": str(person.get("username") or "")[:100]},
-        "counts": pd.count_list((k, label, counts[k]) for k, label in COUNT_LABELS),
+        "counts": pd.count_list((k, _plural(counts[k], one, many), counts[k]) for k, one, many in COUNT_LABELS),
         "warnings": warnings,
         "options": [{"key": "share", "label": "Also share with the same people again", "default": False,
                      "help": "Only with people who are here; Everyone only when App settings allow it."}],
