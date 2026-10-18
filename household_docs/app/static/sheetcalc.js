@@ -355,6 +355,7 @@
     }
     const d = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
     if (d && !pct) { const v = dateSerial(+d[1], +d[2], +d[3]); return isErr(v) ? null : v; }
+    if (!pct) { const v = namedDate(t); if (v !== null) return v; }    // "Aug 8 2026" in a cell as text, as Excel reads it
     return null;
   }
   function toNum(v) {
@@ -405,6 +406,31 @@
     if (s === 60) return { y: 1900, m: 2, d: 29, wd: 3 };
     const dt = new Date(EPOCH + (s < 60 ? s + 1 : s) * DAY);
     return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate(), wd: dt.getUTCDay() };
+  }
+  // a date written with its month's name: "Aug 8 2026", "August 8, 2026", "8 Aug 2026", "8-Aug-2026" (English names)
+  const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+    "november", "december"];
+  function monthNumber(word) {
+    const w = word.toLowerCase();
+    if (w.length < 3) return 0;
+    const i = MONTH_NAMES.findIndex((m) => m === w || m.startsWith(w));
+    return i + 1;
+  }
+  function namedDate(text) {
+    const t = String(text).trim();
+    if (t.length > 40) return null;
+    let m = /^([A-Za-z]{3,9})\.?[\s-]+(\d{1,2})(?:st|nd|rd|th)?,?[\s-]+(\d{4})$/.exec(t), mo, day, y;
+    if (m) { mo = monthNumber(m[1]); day = +m[2]; y = +m[3]; }
+    else {
+      m = /^(\d{1,2})(?:st|nd|rd|th)?[\s-]+([A-Za-z]{3,9})\.?,?[\s-]+(\d{4})$/.exec(t);
+      if (!m) return null;
+      day = +m[1]; mo = monthNumber(m[2]); y = +m[3];
+    }
+    if (!mo || day < 1 || y < 1900) return null;
+    const v = dateSerial(y, mo, day);
+    if (isErr(v)) return null;
+    const p = serialParts(v);
+    return p.m === mo && p.d === day ? v : null;      // no 31 June
   }
   function todaySerial(now) {
     const d = now || new Date();
@@ -1276,7 +1302,7 @@
     if (isErr(v)) return { text: v.code, negative: false, error: true };
     if (typeof v === "boolean") return { text: v ? "TRUE" : "FALSE", negative: false };
     if (typeof v === "string") return { text: v, negative: false };
-    const f = fmt.f || "general";
+    const f = fmt.f || (typeof fmt.v === "string" && !fmt.q && fmt.v[0] === "=" ? formulaFormat(fmt.v) : null) || "general";
     const d = fmt.d === undefined || fmt.d === null ? null : Math.max(0, Math.min(10, fmt.d));
     const neg = v < 0;
     const nl = numLocale(opts);
@@ -1382,6 +1408,39 @@
     if (h > 23 || mi > 59 || se > 59) return null;
     return (h * 3600 + mi * 60 + se) / 86400;
   }
+  /** The format a formula's result has without one of its own: "date" for TODAY(), DATE(…), EOMONTH(…) and those
+   * plus or minus a number (a date minus a date is a number of days), else null. `fmtOf(ref node)` tells a
+   * referenced cell's format when it is known ("date", another, or null for unknown). */
+  const DATE_FNS = new Set(["TODAY", "DATE", "EOMONTH"]);
+  const ffCache = new Map();
+  function formulaFormat(formula, fmtOf) {
+    if (!fmtOf && ffCache.has(formula)) return ffCache.get(formula);
+    let out = null;
+    try {
+      // "date", "num" (surely not a date) or null (unknown)
+      const kind = (n) => {
+        if (!n) return null;
+        switch (n.k) {
+          case "paren": return kind(n.a);
+          case "num": return "num";
+          case "fn": return DATE_FNS.has(n.name) ? "date" : null;
+          case "ref": { const f = fmtOf ? fmtOf(n) : null; return f === "date" ? "date" : f ? "num" : null; }
+          case "un": return kind(n.a) === "num" ? "num" : null;
+          case "bin": {
+            if (n.op !== "+" && n.op !== "-") return null;
+            const a = kind(n.a), b = kind(n.b);
+            if (a === "date" && b === "num") return "date";
+            if (n.op === "+" && a === "num" && b === "date") return "date";
+            return a === "num" && b === "num" ? "num" : null;
+          }
+          default: return null;
+        }
+      };
+      out = kind(parse(formula.replace(/^=/, ""))) === "date" ? "date" : null;
+    } catch (e) { out = null; }
+    if (!fmtOf) { if (ffCache.size > 5000) ffCache.clear(); ffCache.set(formula, out); }
+    return out;
+  }
   function parseInput(text, style) {
     if (text === null || text === undefined) return { v: null };
     const s = String(text);
@@ -1408,13 +1467,15 @@
     if (m) { const v = dateSerial(+m[1], +m[2], +m[3]); if (!isErr(v) && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return { v, f: "date" }; }
     m = /^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/.exec(t);
     if (m) { const v = dateSerial(+m[3], +m[2], +m[1]); if (!isErr(v) && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) return { v, f: "date" }; }
+    const nd = namedDate(t);
+    if (nd !== null) return { v: nd, f: "date" };
     const n = styledNumber(t, style);
     if (n !== null) return { v: n };
     return { v: s };
   }
 
   const api = {
-    workbook, parse, tokenize, shiftFormula, adjustFormula, renameTab, functionsIn, format, formatCode, parseInput,
+    workbook, parse, tokenize, formulaFormat, namedDate, shiftFormula, adjustFormula, renameTab, functionsIn, format, formatCode, parseInput,
     colName, colIndex, addr, parseRef, parseRange, tabPrefix, dateSerial, serialParts, todaySerial, toText, numText,
     compare, ERR, WHY, isErr, timeOfDay, CalcError, CalcSyntax, FUNCTIONS, MAXR, MAXC, styledNumber, NUM_LOCALES, minOf, maxOf,
   };

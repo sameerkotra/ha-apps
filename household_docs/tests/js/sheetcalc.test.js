@@ -502,3 +502,38 @@ test("50 000 filled cells recalculate quickly", () => {
   assert.ok(runs[0] < 500, `full recalculation ${runs[0]} ms at best`);
   assert.ok(first < 3000, `first recalculation ${first} ms`);
 });
+
+test("dates written with the month's name are dates (typed, and as text in a cell)", () => {
+  const aug8 = S.dateSerial(2026, 8, 8);
+  for (const t of ["Aug 8 2026", "Aug 8, 2026", "August 8, 2026", "aug. 8th 2026", "8 Aug 2026", "8-Aug-2026", "8 August, 2026"])
+    assert.deepStrictEqual(S.parseInput(t), { v: aug8, f: "date" }, t);
+  assert.deepStrictEqual(S.parseInput("Sept 30 2026"), { v: S.dateSerial(2026, 9, 30), f: "date" });
+  for (const t of ["Jun 31 2026", "Ma 8 2026", "Augx 8 2026", "Aug 8", "Aug 2026", "Mayday 1 2026"])
+    assert.deepStrictEqual(S.parseInput(t), { v: t }, t);                     // stays text
+  // the reported sheet: J2 "Aug 8 2026" kept as text, J3 =TODAY(), J4 =Days(J3,J2)
+  const wb = book({ J2: "Aug 8 2026", J3: "=TODAY()", J4: "=Days(J3,J2)", J5: "=J3-J2", J6: '="Aug 8 2026"+1' });
+  assert.strictEqual(wb.value("S", "J4"), TODAY - aug8);
+  assert.strictEqual(wb.value("S", "J5"), TODAY - aug8);
+  assert.strictEqual(wb.value("S", "J6"), aug8 + 1);
+});
+
+test("TODAY, DATE and EOMONTH results show as dates without a format of their own", () => {
+  const o = { locale: "en-US" };
+  const shown = (formula, v) => S.format(v, { v: formula }, o).text;
+  assert.strictEqual(shown("=TODAY()", S.dateSerial(2026, 10, 17)), "Oct 17, 2026");
+  assert.strictEqual(shown("=TODAY()+7", S.dateSerial(2026, 10, 24)), "Oct 24, 2026");
+  assert.strictEqual(shown("=(DATE(2026,8,8))-1", S.dateSerial(2026, 8, 7)), "Aug 7, 2026");
+  assert.strictEqual(shown("=EOMONTH(TODAY(),0)", S.dateSerial(2026, 10, 31)), "Oct 31, 2026");
+  assert.strictEqual(shown("=TODAY()-DATE(2026,8,8)", 70), "70");               // a date minus a date: days
+  assert.strictEqual(shown("=DAYS(TODAY(),A1)", 70), "70");
+  assert.strictEqual(shown("=TODAY()-A1", 70), "70");                            // A1 unknown here: not guessed
+  assert.strictEqual(S.format(46312, { v: "=TODAY()", f: "number", d: 0 }, o).text, "46,312");   // its own format wins
+  assert.strictEqual(S.format(46312, { v: "=TODAY()", q: 1 }, o).text, "46312");
+  // with what the referenced cells are (when typed): a date plus days is a date, a date minus a date isn't
+  const fmtOf = (m) => (n) => m[S.addr(n.c, n.r)] ?? null;
+  assert.strictEqual(S.formulaFormat("=B2+30", fmtOf({ B2: "date" })), "date");
+  assert.strictEqual(S.formulaFormat("=B2-C2", fmtOf({ B2: "date", C2: "date" })), null);
+  assert.strictEqual(S.formulaFormat("=B2+C2", fmtOf({ B2: "date", C2: "general" })), "date");
+  assert.strictEqual(S.formulaFormat("=B2*2", fmtOf({ B2: "date" })), null);
+  assert.strictEqual(S.formulaFormat("=SUM(", null), null);                     // a broken formula: no format
+});

@@ -764,7 +764,10 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
   #VALUE! #CYCLE! #N/A` and also `#NUM!` (a number out of range: `PMT` with no periods, a date before 1900), each
   explained in the status bar and on hover. Beyond the spec's list: `CONCATENATE` (Excel's older name, common in
   files from elsewhere). Whole columns (`B:B`) and rows (`1:1`) stop at the tab's last used row. `TODAY()` is today
-  in Home Assistant's time zone and is recalculated when the day changes. Recalculation keeps an index of who reads
+  in Home Assistant's time zone and is recalculated when the day changes. A formula cell with no format of its own
+  shows a date when its result is one (`formulaFormat`: `TODAY`, `DATE`, `EOMONTH`, and those ± a number; a date
+  minus a date is a number), and typing such a formula saves the cell as `date` — also `=B2+30` when B2 is a date —
+  so it is one in Excel too. Recalculation keeps an index of who reads
   each cell (single cells, and ranges by column); a change recalculates only what depends on it, in dependency order
   (Tarjan's strongly connected components on the cells: a loop is `#CYCLE!`, and whatever reads it shows the error).
   **Benchmark** (`tests/js/sheetcalc.test.js`, Node 22 on the build machine, an x86 container): 50 000 filled cells
@@ -793,7 +796,8 @@ most 32 767 characters, a formula 8 192; 50 colour rules and 10 charts per tab; 
   / delete, sort A→Z / Z→A, filter, width, freeze, total, fill, clear. Column widths can also be dragged. The
   **filter** shows the rows whose value in that column is ticked; it is for that page only and isn't saved
   (*decision*: an Excel AutoFilter in a file from elsewhere makes it read only, see below). **Typing** `12%` gives
-  a percent, `2026-03-09` or `9/3/2026` (day first) a date, `TRUE`, numbers with `,` thousands, `'text` text as it
+  a percent, `2026-03-09`, `9/3/2026` (day first) or a month by its English name (`Aug 8 2026`, `August 8, 2026`,
+  `8 Aug 2026`, `8-Aug-2026`; also read as dates when they're text in a cell, as Excel does) a date, `TRUE`, numbers with `,` thousands, `'text` text as it
   is. The **ƒ** button lists every function with its arguments, what it does and an example; typing `=SU` suggests
   SUM, SUMIF, SUMIFS. The **totals row** is a sticky row under the grid (SUM / AVERAGE / COUNT / MIN / MAX per
   column, tap a total to change it; Σ adds a SUM under every column with numbers). The **status bar** shows Sum,

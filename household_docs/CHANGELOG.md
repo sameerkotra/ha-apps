@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.3
+
+- **Sheets: dates that look like dates.** `=TODAY()`, `=DATE(…)`, `=EOMONTH(…)` and those plus a number of days now show as a date instead of a number like 46312 (and are saved as dates, so they open as dates in Excel). A date minus a date stays a number of days.
+- **Sheets: dates with the month's name.** `Aug 8 2026`, `August 8, 2026`, `8 Aug 2026` and `8-Aug-2026` are dates when typed, and dates already in a cell as text like that now work in `DAYS` and date sums (they gave `#VALUE!`).
+
 ## 1.6.2
 
 - The image is built on one fixed Alpine release, and no longer installs python-multipart, which the app never used.

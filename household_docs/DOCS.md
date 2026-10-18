@@ -157,8 +157,8 @@ A new sheet shows 1 000 rows and columns A–Z; it grows as you go past them (up
 per tab).
 
 **Typing.** Click a cell and type (on a phone: tap the cell, then the bar at the top). **Enter** goes down,
-**Tab** goes right, **Esc** cancels. `12%` becomes a percent, `2026-03-09` or `9/3/2026` a date, `'007` stays
-text exactly as typed. The bar at the top always shows what's really in the cell (the formula, not its result);
+**Tab** goes right, **Esc** cancels. `12%` becomes a percent, `2026-03-09`, `9/3/2026` or `Aug 8 2026` (also `8 Aug 2026`, `August 8, 2026`)
+a date, `'007` stays text exactly as typed. The bar at the top always shows what's really in the cell (the formula, not its result);
 the box on its left shows where you are — type `C14` (or `Car!B4`) there to jump.
 
 **Formulas** start with `=`: `=B2*C2`, `=SUM(B2:B20)`, `=IF(B2>100,"Over","OK")`, `=VLOOKUP("Car",A2:C20,3,FALSE)`,
@@ -171,7 +171,9 @@ Functions: SUM, AVERAGE, MIN, MAX, MEDIAN, COUNT, COUNTA, ROUND, ROUNDUP, ROUNDD
 SUMIF, COUNTIF, AVERAGEIF, SUMIFS, COUNTIFS, AVERAGEIFS, VLOOKUP, HLOOKUP, XLOOKUP, INDEX, MATCH, LEN, UPPER, LOWER,
 CONCAT, CONCATENATE, TEXT, TODAY, DATE, YEAR, MONTH, DAY, DAYS, EOMONTH, NETWORKDAYS, PMT. Problems show as
 `#DIV/0!`, `#REF!`, `#NAME?`, `#VALUE!`, `#N/A`, `#NUM!` or `#CYCLE!` (a formula that depends on itself) — select
-the cell and the line under the grid says what's wrong.
+the cell and the line under the grid says what's wrong. `=TODAY()`, `=DATE(…)`, `=EOMONTH(…)` and those plus a number
+of days (`=TODAY()+30`, or `=B2+30` on a date) show as dates; a date minus a date (`=TODAY()-B2`, `=DAYS(…)`) is a number
+of days. Pick another format to show it differently.
 
 **Working with the grid.** Drag or Shift+click to select; the line under the grid then shows the **Sum, Average,
 Count, Min and Max**. Each column letter has a **▾** (on a phone: the selected column's) that opens the same

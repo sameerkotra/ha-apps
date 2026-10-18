@@ -1207,6 +1207,17 @@
         delete cell.q; delete cell.x; delete cell.c; delete cell.t;
         if (parsed.text) cell.q = 1;
         if (parsed.f && (!old || !old.f || old.f === "general")) { cell.f = parsed.f; if (parsed.d !== undefined) cell.d = parsed.d; }
+        if (!parsed.f && !parsed.text && (!old || !old.f || old.f === "general") && typeof parsed.v === "string" && parsed.v[0] === "=") {
+          // =TODAY(), =DATE(…), =B2+30 on a date: saved as a date, as Excel does (it opens as one in Excel too)
+          const own = (n) => {
+            const c = n.sheet ? null : t.cells[S.addr(n.c, n.r)];
+            if (!c) return null;
+            if (c.f) return c.f;
+            if (typeof c.v === "number") return "general";
+            return typeof c.v === "string" && c.v[0] === "=" && !c.q ? S.formulaFormat(c.v) : null;   // =TODAY() shown as a date
+          };
+          if (S.formulaFormat(parsed.v, own) === "date") cell.f = "date";
+        }
         if (old && old.f === "text" && !parsed.text && typeof parsed.v !== "string") { cell.v = text; if (text.startsWith("=")) cell.q = 1; }
       } else if (old && (old.f || old.b || old.al || old.red)) {
         cell = Object.assign({}, old); delete cell.v; delete cell.q; delete cell.c; delete cell.x;
