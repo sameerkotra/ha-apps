@@ -117,12 +117,25 @@ function adminTabFromHash(hash) {
   return ADMIN_TABS.includes(m[1]) ? m[1] : 'settings';
 }
 
+// The menu: Groups (with your groups under it on a computer), Summary (Spending and Activity), and — at the bottom
+// of the sidebar, or under ⋯ More on a phone — My settings and Admin.
+const TAB_OF_VIEW = { groups: 'groups', group: 'groups', summary: 'summary', activity: 'summary', me: 'me', admin: 'admin' };
+
 function showView(name) {
   $$('.view').forEach((v) => v.classList.remove('active'));
   $$('.tab').forEach((t) => t.classList.remove('active'));
-  if (['summary', 'groups', 'activity', 'me', 'admin'].includes(name)) {
-    $(`.tab[data-view="${name}"]`).classList.add('active');
-  }
+  const tab = TAB_OF_VIEW[name];
+  if (tab) $(`.tab[data-view="${tab}"]`).classList.add('active');
+  $('#moreBtn').classList.toggle('active', tab === 'me' || tab === 'admin');
+  closeMore();
+  $$('#navGroups .nav-group').forEach((b) => b.classList.toggle('active', name === 'group' && b.dataset.group === state.currentGroupId));
+  $$('[data-sumview]').forEach((b) => {
+    const on = b.dataset.sumview === (name === 'activity' ? 'activity' : 'spending');
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  // ＋ Add expense: not on the group page (it has the full form) or the settings pages
+  $('#quickAddBtn').hidden = ['group', 'me', 'admin', 'whoami'].includes(name);
   $(`#view-${name}`).classList.add('active');
   // Leaving the Admin area: drop its #/admin/... from the address. In place
   // (replaceState): in-app navigation adds no history entries — Back is
@@ -131,18 +144,43 @@ function showView(name) {
 }
 
 $('#tabs').addEventListener('click', (e) => {
+  const grp = e.target.closest('.nav-group');
+  if (grp) { openGroup(grp.dataset.group); return; }
   const btn = e.target.closest('.tab');
-  if (!btn) return;
+  if (!btn || btn.id === 'moreBtn') return;
   if (btn.dataset.view === 'admin') {
     openAdmin(state.adminTab);
     return;
   }
   if (btn.dataset.view === 'summary') { openSummary(); return; }
-  if (btn.dataset.view === 'activity') { openActivity(); return; }
   showView(btn.dataset.view);
   if (btn.dataset.view === 'groups') loadGroups();
   if (btn.dataset.view === 'me') loadMyPrefs();
 });
+
+// ⋯ More (phones): My settings and Admin in a small panel above the bottom bar
+function closeMore() {
+  $('#tabs').classList.remove('more-open');
+  $('#moreBtn').setAttribute('aria-expanded', 'false');
+}
+$('#moreBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = !$('#tabs').classList.contains('more-open');
+  $('#tabs').classList.toggle('more-open', open);
+  $('#moreBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#navMore')) closeMore(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#tabs').classList.contains('more-open')) { closeMore(); $('#moreBtn').focus(); } });
+
+// Summary's two views
+$$('[data-sumview]').forEach((b) => b.addEventListener('click', () => {
+  if (b.dataset.sumview === 'activity') openActivity(); else openSummary();
+}));
+
+// Your groups under Groups in the sidebar (a computer; the phone's bar has no room)
+function renderNavGroups() {
+  $('#navGroups').innerHTML = state.groups.map((g) => `<button type="button" class="nav-group${g.id === state.currentGroupId && $('#view-group').classList.contains('active') ? ' active' : ''}" data-group="${escapeHtml(g.id)}" title="${escapeHtml(g.name)}">${g.isDefault ? '<span class="nav-group-star" aria-label="your default">☆</span>' : ''}<span class="nav-group-name">${escapeHtml(g.name)}</span></button>`).join('');
+}
 
 // Hash routes: a typed/pasted #/admin/... address or BackNav.go(). Back
 // doesn't come through here — backnav.js handles it (see "Back gesture").
@@ -154,7 +192,8 @@ window.addEventListener('hashchange', () => {
   } else if (groupId && state.groups.some((g) => g.id === groupId)) {
     openGroup(groupId);
   } else if (!location.hash && $('#view-admin').classList.contains('active')) {
-    openSummary();   // Back from the Admin area
+    showView('groups');   // Back from the Admin area
+    loadGroups();
   }
 });
 
@@ -448,6 +487,7 @@ async function loadGroups() {
   state.groups = await api('/groups');
   renderGroupMemberPicker();
   renderGroups();
+  renderNavGroups();
 }
 
 function renderGroupMemberPicker() {
@@ -485,7 +525,7 @@ function renderGroups() {
     const li = document.createElement('li');
     li.innerHTML = `
       <button type="button" class="star-btn ${g.isDefault ? 'is-default' : ''}" data-toggle-default="${g.id}" data-is-default="${g.isDefault}"
-        title="${g.isDefault ? 'Your default group — click to open the Summary instead' : 'Open this group when Splitpot starts (just for you)'}"
+        title="${g.isDefault ? 'Your default group — click to open the Groups list instead' : 'Open this group when Splitpot starts (just for you)'}"
         aria-label="${g.isDefault ? 'Remove as my default group' : 'Set as my default group'}">${g.isDefault ? '★' : '☆'}</button>
       <button class="group-link" data-open-group="${g.id}">
         <div class="row-main">
@@ -508,7 +548,7 @@ function entryCounts(g) {
   return parts.join(' · ');
 }
 
-// Your default group (just yours): Splitpot opens straight into it instead of the Summary.
+// Your default group (just yours): Splitpot opens straight into it instead of the Groups list.
 async function toggleGroupDefault(id, makeDefault) {
   try {
     await api(`/groups/${id}/default?limit=1`, { method: 'PUT', body: JSON.stringify({ isDefault: makeDefault }) });
@@ -631,6 +671,7 @@ async function openGroup(id) {
   state.editingPaymentId = null;
   $('#groupEditPanel').hidden = true;
   showView('group');
+  state.lastGroupId = id;
   await loadConfig();
   await refreshGroup();
   resetExpenseForm();
@@ -694,7 +735,7 @@ function renderGroupDetail() {
   const defaultBtn = $('#groupDefaultBtn');
   defaultBtn.classList.toggle('is-default', !!g.isDefault);
   defaultBtn.innerHTML = g.isDefault ? '★ My default group' : '☆ Set as my default';
-  defaultBtn.title = g.isDefault ? 'Open the Summary when Splitpot starts, instead of this group (just for you)' : 'Open this group when Splitpot starts, instead of the Summary (just for you)';
+  defaultBtn.title = g.isDefault ? 'Open the Groups list when Splitpot starts, instead of this group (just for you)' : 'Open this group when Splitpot starts, instead of the Groups list (just for you)';
   // Deleting a group is admin-only (enforced server-side too).
   $('#groupDeleteBtn').hidden = !state.isAdmin;
   // The group's name and members: its members and admins (enforced server-side too).
@@ -1460,6 +1501,116 @@ function timeAgo(iso) {
   return 'just now';
 }
 
+// ---------- ＋ Add expense (every page but the group page and the settings pages) ----------
+// A quick equal split in any group: the group you used last (else your default, else the first), paid by the
+// Acting as person when they're in it, today, shared by every enabled member (untick to leave someone out).
+// "Custom split…" opens the group with what was typed so far.
+const QA_KEY = 'splitpotQuickGroup';
+
+function qaGroupId() {
+  let saved = null;
+  try { saved = localStorage.getItem(QA_KEY); } catch (e) { /* private mode */ }
+  const ok = (id) => id && state.groups.some((g) => g.id === id);
+  if (ok(saved)) return saved;
+  if (ok(state.lastGroupId)) return state.lastGroupId;
+  const def = state.groups.find((g) => g.isDefault);
+  return def ? def.id : (state.groups[0] || {}).id;
+}
+
+function qaMembers(gid) {
+  const g = state.groups.find((x) => x.id === gid);
+  const disabled = new Set(state.users.filter((u) => u.disabled).map((u) => u.id));
+  return g ? g.memberIds.map((id, i) => ({ id, name: g.memberNames[i] })).filter((m) => !disabled.has(m.id)) : [];
+}
+
+function qaFillGroup() {
+  const gid = $('#qaGroup').value;
+  const members = qaMembers(gid);
+  const payer = $('#qaPaidBy').value;
+  const acting = $('#actingAs').value;
+  $('#qaPaidBy').innerHTML = members.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name)}</option>`).join('');
+  const pick = [payer, acting].find((id) => members.some((m) => m.id === id));
+  if (pick) $('#qaPaidBy').value = pick;
+  $('#qaPeople').innerHTML = members.map((m) => `<label class="chip selected qa-person"><input type="checkbox" value="${escapeHtml(m.id)}" checked hidden>${escapeHtml(m.name)}</label>`).join('');
+}
+
+$('#qaPeople').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if (cb) cb.closest('label').classList.toggle('selected', cb.checked);
+});
+
+async function openQuickAdd() {
+  if (!state.groups.length) await loadGroups();
+  if (!state.groups.length) { toast('Create a group first (Groups).', true); showView('groups'); return; }
+  $('#qaGroup').innerHTML = state.groups.map((g) => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('');
+  $('#qaGroup').value = qaGroupId();
+  $('#qaPaidBy').innerHTML = '';
+  qaFillGroup();
+  $('#qaDescription').value = '';
+  $('#qaAmount').value = '';
+  $('#qaDate').value = localDateInputValue();
+  $('#qaDate').max = localDateInputValue();
+  $('#qaError').textContent = '';
+  $('#quickAddBackdrop').hidden = false;
+  $('#qaDescription').focus();
+}
+
+function closeQuickAdd() {
+  $('#quickAddBackdrop').hidden = true;
+  $('#quickAddBtn').focus();
+}
+
+$('#quickAddBtn').addEventListener('click', openQuickAdd);
+$('#qaClose').addEventListener('click', closeQuickAdd);
+$('#qaGroup').addEventListener('change', qaFillGroup);
+$('#quickAddBackdrop').addEventListener('click', (e) => { if (e.target === $('#quickAddBackdrop')) closeQuickAdd(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#quickAddBackdrop').hidden) closeQuickAdd(); });
+
+$('#quickAddForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const gid = $('#qaGroup').value;
+  const people = [...$$('#qaPeople input:checked')].map((c) => c.value);
+  const err = $('#qaError');
+  err.textContent = '';
+  if (!people.length) { err.textContent = 'Tick at least one person to share it.'; return; }
+  const btn = $('#quickAddForm button[type=submit]');
+  btn.disabled = true;
+  try {
+    await api(`/groups/${encodeURIComponent(gid)}/expenses`, {
+      method: 'POST',
+      body: JSON.stringify({
+        description: $('#qaDescription').value.trim(), amount: Number($('#qaAmount').value), paidBy: $('#qaPaidBy').value,
+        date: $('#qaDate').value, splitType: 'equal', participants: people,
+      }),
+    });
+  } catch (ex) {
+    err.textContent = ex.message;
+    btn.disabled = false;
+    return;
+  }
+  btn.disabled = false;
+  try { localStorage.setItem(QA_KEY, gid); } catch (ex) { /* private mode */ }
+  const g = state.groups.find((x) => x.id === gid);
+  closeQuickAdd();
+  toast(`Added to ${g ? g.name : 'the group'}.`);
+  if ($('#view-summary').classList.contains('active')) runSummary();
+  if ($('#view-groups').classList.contains('active')) loadGroups();
+});
+
+$('#qaMore').addEventListener('click', async () => {
+  const gid = $('#qaGroup').value;
+  const typed = { d: $('#qaDescription').value, a: $('#qaAmount').value, p: $('#qaPaidBy').value, t: $('#qaDate').value };
+  closeQuickAdd();
+  await openGroup(gid);
+  $('#expDescription').value = typed.d;
+  $('#expAmount').value = typed.a;
+  if ([...$('#expPaidBy').options].some((o) => o.value === typed.p)) $('#expPaidBy').value = typed.p;
+  if (typed.t) $('#expDate').value = typed.t;
+  const custom = $('#addExpenseForm .split-btn[data-split="custom"]');
+  if (custom) custom.click();               // the Custom split, as if tapped
+  $('#addExpenseForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
 // ---------- Home Assistant integration ----------
 // Home Assistant tells us who's signed in; the server matches that to a
 // Person (by HA user id, see /whoami's userId). They become "Acting as" —
@@ -1549,7 +1700,7 @@ function renderNoAdminBanner(who) {
   } else if (defaultGroup) {
     await openGroup(defaultGroup.id);
   } else {
-    await openSummary();
+    showView('groups');      // the start page: the Groups list (loaded above)
   }
 })().finally(initBackNav);   // after the first page renders (even if a load failed)
 
@@ -1559,7 +1710,7 @@ function renderNoAdminBanner(who) {
 // Back cancels an expense edit first, then returns to the start page, and
 // only Back on the start page leaves for Home Assistant.
 // Start page = what the app opens to without a deep link: the default group
-// if one is set, otherwise the Summary.
+// if one is set, otherwise the Groups list.
 function startGroup() {
   return state.groups.find((g) => g.isDefault) || null;
 }
@@ -1567,7 +1718,7 @@ function startGroup() {
 function atStartPage() {
   const g = startGroup();
   if (g) return $('#view-group').classList.contains('active') && state.currentGroupId === g.id;
-  return $('#view-summary').classList.contains('active');
+  return $('#view-groups').classList.contains('active');
 }
 
 function goStartPage() {
@@ -1575,7 +1726,8 @@ function goStartPage() {
   if (g) {
     openGroup(g.id);
   } else {
-    openSummary();
+    showView('groups');
+    loadGroups();
   }
 }
 

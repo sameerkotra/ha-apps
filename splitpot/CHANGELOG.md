@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.7.1
+
+- **Groups comes first** and is the start page (or your default group, as before); on a computer each group is listed
+  under it in the sidebar, ☆ marking your default, to open in one click.
+- **Summary has two views**, **Spending** and **Activity** — the activity log search is the second one.
+- **My settings and Admin** sit at the bottom of the sidebar; on a phone the bottom bar is Groups, Summary and
+  **⋯ More** (My settings, Admin).
+- **＋ Add expense** on every page but a group's own and the settings: an equal split in any group without opening
+  it (the group you used last comes first); **Custom split…** opens the group with what you typed.
+
 ## 2.7.0
 
 - **Summary** replaces the Dashboard: the overall balance as of today, and spending for this month, last month,

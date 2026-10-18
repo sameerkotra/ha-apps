@@ -4,11 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Splitpot</title>
-<link rel="stylesheet" href="fonts/fonts.css?v=2.7.0" />
-<script src="common/theme-boot.js?v=2.7.0"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.7.0" />
-<link rel="stylesheet" href="common/settings.css?v=2.7.0" />
-<link rel="stylesheet" href="style.css?v=2.7.0" />
+<link rel="stylesheet" href="fonts/fonts.css?v=2.7.1" />
+<script src="common/theme-boot.js?v=2.7.1"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.7.1" />
+<link rel="stylesheet" href="common/settings.css?v=2.7.1" />
+<link rel="stylesheet" href="style.css?v=2.7.1" />
 </head>
 <body>
   <div class="app">
@@ -20,26 +20,30 @@
       </div>
 
       <nav class="tabs" id="tabs">
-        <button class="tab active" data-view="summary" title="Summary">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V11"/><path d="M12 20V4"/><path d="M20 20v-6"/></svg>
-          <span class="tab-label">Summary</span>
-        </button>
-        <button class="tab" data-view="groups" title="Groups">
+        <button class="tab active" data-view="groups" title="Groups">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8.5" cy="8" r="3.2"/><circle cx="16.5" cy="9" r="2.6"/><path d="M2.5 20c0-3.4 2.8-6 6-6s6 2.6 6 6"/><path d="M14.5 14.3c2.5.5 4.3 2.6 4.3 5.2"/></svg>
           <span class="tab-label">Groups</span>
         </button>
-        <button class="tab" data-view="activity" title="Activity">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20.5 20.5l-4.9-4.9"/><path d="M11 8v3.2l2 1.6"/></svg>
-          <span class="tab-label">Activity</span>
+        <!-- your groups, to jump straight in (computer only) -->
+        <div class="nav-groups" id="navGroups" aria-label="Your groups"></div>
+        <button class="tab" data-view="summary" title="Summary">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V11"/><path d="M12 20V4"/><path d="M20 20v-6"/></svg>
+          <span class="tab-label">Summary</span>
         </button>
-        <button class="tab" data-view="me" title="My settings">
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
-          <span class="tab-label">My settings</span>
-        </button>
-        <!-- Admin-only (the server enforces it too): App settings | Users | Storage -->
-        <button class="tab" data-view="admin" id="adminTabBtn" title="Admin" hidden>
-          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></svg>
-          <span class="tab-label">Admin</span>
+        <!-- now and then: at the bottom of the sidebar; on a phone under ⋯ More -->
+        <div class="nav-more" id="navMore">
+          <button class="tab" data-view="me" title="My settings">
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span class="tab-label">My settings</span>
+          </button>
+          <button class="tab" data-view="admin" id="adminTabBtn" title="Admin" hidden>
+            <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></svg>
+            <span class="tab-label">Admin</span>
+          </button>
+        </div>
+        <button type="button" class="tab more-btn" id="moreBtn" title="More" aria-expanded="false" aria-controls="navMore">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          <span class="tab-label">More</span>
         </button>
       </nav>
 
@@ -65,9 +69,13 @@
       <!-- First run (admin_users empty): shown on every page, to everyone -->
       <div id="noAdminBanner" class="setup-banner" role="alert" hidden></div>
       <!-- Summary: the overall balance, and spending searched by days, amounts, who paid and group -->
-      <section id="view-summary" class="view active">
+      <section id="view-summary" class="view">
         <div class="ledger-panel">
-          <h1>Summary</h1>
+          <div class="view-head"><h1>Summary</h1>
+            <div class="split-toggle view-switch" role="tablist" aria-label="Summary views">
+              <button type="button" class="split-btn active" role="tab" aria-selected="true" data-sumview="spending">Spending</button>
+              <button type="button" class="split-btn" role="tab" aria-selected="false" data-sumview="activity">Activity</button>
+            </div></div>
           <p class="hint">Spending by group and by person, for the days and amounts you choose. Settle-up payments aren't spending, so they're left out.</p>
 
           <h2 class="first">Overall balance</h2>
@@ -106,8 +114,12 @@
       <!-- Activity: the activity log, searched (nothing loads until a search) -->
       <section id="view-activity" class="view">
         <div class="ledger-panel">
-          <h1>Activity</h1>
-          <p class="hint">Everything that happened in Splitpot — expenses, payments, edits, groups and settings. Search to see it.</p>
+          <div class="view-head"><h1>Summary</h1>
+            <div class="split-toggle view-switch" role="tablist" aria-label="Summary views">
+              <button type="button" class="split-btn" role="tab" aria-selected="false" data-sumview="spending">Spending</button>
+              <button type="button" class="split-btn active" role="tab" aria-selected="true" data-sumview="activity">Activity</button>
+            </div></div>
+          <p class="hint">The activity log: everything that happened in Splitpot — expenses, payments, edits, groups and settings. Search to see it.</p>
           <form id="activityForm" class="search-form" autocomplete="off">
             <div class="field"><label for="actActor">Added by</label><select id="actActor"></select></div>
             <div class="field"><label for="actGroup">Group</label><select id="actGroup"></select></div>
@@ -206,7 +218,7 @@
       </section>
 
       <!-- Groups list view -->
-      <section id="view-groups" class="view">
+      <section id="view-groups" class="view active">
         <div class="ledger-panel">
           <h1>Groups</h1>
           <p class="hint">Group people together — a trip, a household, a project.</p>
@@ -306,14 +318,37 @@
     </main>
   </div>
 
+  <!-- ＋ Add expense, on every page but the group page (which has the full form) and the settings pages -->
+  <button type="button" id="quickAddBtn" class="quick-add-btn" title="Add an expense" aria-label="Add an expense">＋<span class="qa-label">Add expense</span></button>
+  <div id="quickAddBackdrop" class="qa-backdrop" hidden>
+    <div class="qa-box" role="dialog" aria-modal="true" aria-labelledby="qaTitle">
+      <div class="qa-head"><h2 id="qaTitle">Add an expense</h2><button type="button" id="qaClose" class="btn ghost qa-close" aria-label="Close">✕</button></div>
+      <form id="quickAddForm" class="stack-form" autocomplete="off">
+        <div class="field"><label for="qaGroup">Group</label><select id="qaGroup" required></select></div>
+        <div class="field"><label for="qaDescription">What for</label><input type="text" id="qaDescription" placeholder="What was it for?" maxlength="80" required /></div>
+        <div class="field-row">
+          <div class="field"><label for="qaAmount">Amount</label><input type="number" id="qaAmount" step="0.01" min="0.01" placeholder="0.00" required /></div>
+          <div class="field"><label for="qaPaidBy">Paid by</label><select id="qaPaidBy" required></select></div>
+          <div class="field"><label for="qaDate">Date</label><input type="date" id="qaDate" required /></div>
+        </div>
+        <div class="field"><label>Split equally between</label><div id="qaPeople" class="chip-picker"></div></div>
+        <div id="qaError" class="error"></div>
+        <div class="form-actions">
+          <button type="submit" class="btn primary">Add expense</button>
+          <button type="button" id="qaMore" class="btn ghost" title="Open the group for a custom split">Custom split…</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-  <script src="common/ui.js?v=2.7.0"></script>
-  <script src="common/settings.js?v=2.7.0"></script>
-  <script src="common/people.js?v=2.7.0"></script>
-  <script src="common/backnav.js?v=2.7.0"></script>
-  <script src="common/whoami.js?v=2.7.0"></script>
-  <script src="common/deeplink.js?v=2.7.0"></script>
-  <script src="app.js?v=2.7.0"></script>
+  <script src="common/ui.js?v=2.7.1"></script>
+  <script src="common/settings.js?v=2.7.1"></script>
+  <script src="common/people.js?v=2.7.1"></script>
+  <script src="common/backnav.js?v=2.7.1"></script>
+  <script src="common/whoami.js?v=2.7.1"></script>
+  <script src="common/deeplink.js?v=2.7.1"></script>
+  <script src="app.js?v=2.7.1"></script>
 </body>
 </html>

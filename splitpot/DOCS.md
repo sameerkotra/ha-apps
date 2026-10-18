@@ -83,7 +83,7 @@ open the app.
   settle-up payments it has.
 - **Default group**: click the star (☆) next to a group, or **☆ Set as my
   default** on the group's page. Splitpot then opens straight into that group
-  for you instead of the Summary. Everyone chooses their own; clicking the
+  for you instead of the Groups list. Everyone chooses their own; clicking the
   star on your default clears it. A group that was the household's default
   before this became a personal choice stays the default for everyone who
   hasn't picked one.
@@ -163,10 +163,25 @@ activity log with who made it.
   date. Payments are not spending: they're left out of the Summary's totals
   and transaction list. An administrator can delete one to undo it.
 
+## Finding your way
+
+- The menu: **Groups** — with each of your groups listed under it on a
+  computer (☆ marks your default), to jump straight in — and **Summary**. **My
+  settings** and **Admin** (administrators) sit at the bottom of the sidebar; on
+  a phone the bottom bar is Groups, Summary and **⋯ More**, which holds them.
+- Splitpot opens on the **Groups** list, or straight in your default group.
+- **＋ Add expense** (bottom right, on every page but a group's own page and
+  the settings pages) adds an expense to any group without opening it: pick
+  the group (the one you used last comes first), what for, the amount, who
+  paid (Acting as, when they're in it), the day, and who shares it equally
+  (everyone, untick to leave someone out). **Custom split…** opens the group
+  with what you typed, to split by amounts or percentages.
+
 ## Summary
 
-The first item in the sidebar (and the start page, unless you picked a
-default group):
+Two views at the top: **Spending** (shown first) and **Activity**.
+
+**Spending**:
 
 - **Overall balance**, as of today: each person's net position summed over
   all their groups ("is owed", "owes", "settled up"). This is not a payment
@@ -187,9 +202,7 @@ default group):
   payments aren't spending, so they're left out. **Clear** goes back to this
   month with no other filters.
 
-## Activity
-
-The activity log has its own page: every change — groups created or renamed,
+**Activity** (the second view of the Summary) is the activity log: every change — groups created or renamed,
 members added or taken out, expenses added/edited/deleted, payments recorded
 or changed, users disabled or enabled, settings changed — with who did it and
 when. Nothing is shown until you **Search**, so it opens instantly however long
@@ -286,7 +299,7 @@ recorder:
   phone the sidebar becomes a tab bar at the bottom.
 - **Back in the Home Assistant app**: the back gesture first cancels an
   expense you're editing, then returns to the start page (your default group
-  or the Summary); only Back on the start page leaves Splitpot.
+  or the Groups list); only Back on the start page leaves Splitpot.
 
 ## Balance sensors in Home Assistant
 

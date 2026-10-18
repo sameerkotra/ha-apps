@@ -728,3 +728,57 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
   .search-form .field.wide, .search-actions { grid-column: 1 / -1; }
   .search-actions .btn { flex: 1; }
 }
+
+/* ---------- the menu: Groups (+ your groups), Summary; My settings and Admin at the bottom (⋯ More on a phone) ---------- */
+.sidebar .tabs { flex: 1; min-height: 0; }
+.nav-groups { display: flex; flex-direction: column; gap: 1px; margin: 0 0 4px 34px; max-height: 40vh; overflow-y: auto; }
+.nav-group { display: flex; align-items: center; gap: 6px; background: none; border: none; text-align: left; cursor: pointer;
+  font: 500 13px var(--font-body); color: var(--ink-soft); padding: 6px 10px; border-radius: 6px; min-width: 0; }
+.nav-group:hover { color: var(--ink); background: var(--paper-dim); }
+.nav-group.active { color: var(--moss-dark); background: var(--paper-dim); }
+.nav-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-group-star { color: var(--gold); flex: none; }
+.nav-more { margin-top: auto; padding-top: 10px; display: flex; flex-direction: column; gap: 2px; }
+.tabs .more-btn { display: none; }
+[data-sidebar="collapsed"] .nav-groups { display: none; }
+
+/* Summary: Spending | Activity */
+.view-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.view-head h1 { margin-bottom: 0; }
+.view-switch { flex: none; }
+.view-switch .split-btn { min-width: 96px; }
+
+/* ＋ Add expense */
+.quick-add-btn { position: fixed; right: 24px; bottom: 24px; z-index: 40; display: inline-flex; align-items: center; gap: 8px;
+  border: none; border-radius: 28px; padding: 14px 20px; cursor: pointer; font: 600 15px var(--font-body);
+  background: var(--moss); color: var(--paper); box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
+.quick-add-btn:hover { background: var(--moss-dark); }
+.quick-add-btn[hidden] { display: none; }
+.qa-backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-start;
+  justify-content: center; padding: 6vh 16px 16px; overflow-y: auto; }
+.qa-backdrop[hidden] { display: none; }
+.qa-box { width: 100%; max-width: 520px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
+  padding: 18px 20px 20px; box-shadow: 0 16px 48px rgba(0, 0, 0, .45); }
+.qa-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.qa-head h2 { margin: 0; }
+.qa-close { padding: 6px 10px; }
+.qa-person { cursor: pointer; }
+
+@media (max-width: 640px) {
+  .nav-groups { display: none; }
+  .sidebar .tabs { flex: 1; }
+  .tabs .more-btn { display: flex; }
+  .nav-more { display: none; position: fixed; right: 8px; bottom: calc(70px + env(safe-area-inset-bottom)); margin: 0;
+    flex-direction: column; gap: 2px; min-width: 190px; padding: 6px; background: var(--paper); border: 1px solid var(--line);
+    border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .4); z-index: 60; }
+  .tabs.more-open .nav-more { display: flex; }
+  .nav-more .tab { flex-direction: row; justify-content: flex-start; gap: 10px; font-size: 14px; padding: 11px 12px; }
+  .view-head { align-items: stretch; }
+  .view-switch { width: 100%; }
+  .view-switch .split-btn { flex: 1; }
+  .quick-add-btn { right: 14px; bottom: calc(78px + env(safe-area-inset-bottom)); padding: 14px 16px; }
+  .quick-add-btn .qa-label { display: none; }
+  .qa-backdrop { padding: 12px; }
+  main { padding-bottom: 150px; }
+}
+.view-head + .hint { margin-top: 10px; }
