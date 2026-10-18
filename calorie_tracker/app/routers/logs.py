@@ -3,7 +3,7 @@ from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 
-from .. import config, db, ha_sync, schemas
+from .. import config, db, foodrows, ha_sync, schemas
 from ..auth import get_acting_user
 
 router = APIRouter(tags=["logs"])
@@ -37,30 +37,40 @@ def list_logs(log_date: date_type = Query(..., alias="date"), user: dict = Depen
             "SELECT * FROM food_logs WHERE user_id = ? AND date = ? ORDER BY created_at ASC, id ASC",
             (user["id"], str(log_date)),
         ).fetchall()
-    return db.rows_to_list(rows)
+    return [foodrows.out(r) for r in rows]
 
 
 @router.post("/api/logs")
 def create_log(payload: schemas.FoodLogCreate, background: BackgroundTasks, user: dict = Depends(get_acting_user)):
+    tags = payload.tags
     with db.get_conn() as conn:
-        if payload.saved_food_id is not None and conn.execute(
-                "SELECT 1 FROM saved_foods WHERE id = ? AND user_id = ?",
-                (payload.saved_food_id, user["id"])).fetchone() is None:
-            raise HTTPException(422, "saved_food_id: that saved food doesn't exist (or isn't this person's)")
+        if payload.saved_food_id is not None:
+            saved = conn.execute("SELECT tags FROM saved_foods WHERE id = ? AND user_id = ?",
+                                 (payload.saved_food_id, user["id"])).fetchone()
+            if saved is None:
+                raise HTTPException(422, "saved_food_id: that saved food doesn't exist (or isn't this person's)")
+            if tags is None:                      # a saved food's tags come with it
+                tags = foodrows.tags_list(saved["tags"])
+        eaten_at = payload.eaten_at
+        if eaten_at is None:
+            eaten_at = (config.now().strftime("%H:%M") if payload.date == config.today()
+                        else foodrows.MEAL_TIMES[payload.meal_type])
         cur = conn.execute(
             """INSERT INTO food_logs
-               (user_id, date, meal_type, food_name, servings, calories, protein, carbs, fat, saved_food_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (user_id, date, meal_type, food_name, servings, calories, no_calories, protein, carbs, fat,
+                saved_food_id, eaten_at, tags)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user["id"], str(payload.date), payload.meal_type, payload.food_name,
-                payload.servings, payload.calories, payload.protein, payload.carbs,
-                payload.fat, payload.saved_food_id,
+                payload.servings, payload.calories or 0, 1 if payload.calories is None else 0,
+                payload.protein, payload.carbs, payload.fat, payload.saved_food_id, eaten_at,
+                foodrows.tags_text(tags),
             ),
         )
         new_id = cur.lastrowid
         row = conn.execute("SELECT * FROM food_logs WHERE id = ?", (new_id,)).fetchone()
     _sync_today(background, user, payload.date)
-    return db.row_to_dict(row)
+    return foodrows.out(row)
 
 
 @router.delete("/api/logs/{entry_id}")
@@ -81,7 +91,7 @@ def delete_log(entry_id: int, background: BackgroundTasks, user: dict = Depends(
 def get_summary(log_date: date_type = Query(..., alias="date"), user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         logs = conn.execute(
-            "SELECT calories, protein, carbs, fat FROM food_logs WHERE user_id = ? AND date = ?",
+            "SELECT calories, protein, carbs, fat, no_calories FROM food_logs WHERE user_id = ? AND date = ?",
             (user["id"], str(log_date)),
         ).fetchall()
         goal = conn.execute(
@@ -109,6 +119,7 @@ def get_summary(log_date: date_type = Query(..., alias="date"), user: dict = Dep
             "fat": goal_out["fat_goal"] - totals["fat"],
         },
         "latest_weight_kg": latest_weight["weight_kg"] if latest_weight else None,
+        "no_calories": sum(1 for r in logs if r["no_calories"]),      # entries logged without calories
     }
 
 

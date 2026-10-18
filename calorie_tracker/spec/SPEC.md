@@ -59,6 +59,10 @@ calorie_tracker/
 | `ai_per_minute` | `20` | strict int 0–1000 (0 = none) | AI estimates + chat per signed-in person per minute (in memory) → 429 |
 | `ai_per_day` | `200` | strict int 0–100000 (0 = none) | the same per Home Assistant day, counted in `ai_usage` (not reset by deleting entries) → 429 |
 | `bus_signing_key` | `""` | secret, ≤200 | `app_bus` signing key (read live, blanked in backups) |
+| `symptom_list` | 12 common symptoms | strict string ≤1000, a comma-separated list (each ≤60, ≤60 of them; blanks and repeats dropped, stored as "a, b") | the one-tap symptoms (after the person's own most used) |
+| `food_tag_list` | 17 common tags | the same | the tags offered on the Food Log and Saved Foods |
+| `pattern_hours` | `6` | strict int 1–48 | Patterns' look-back before a symptom |
+| `pattern_min` | `3` | strict int 2–50 | how often a symptom must be logged before Patterns compares |
 | `expose_daily_calories_sensor` | `true` | strict bool (`"yes"`, `1`, `null` → 422) | the household's master switch for every sensor push (`ha_sync.exposed()`); a change triggers publish-all / remove-all (§7). Each person also has `users.publish_sensor` |
 
 - `settings.py` declares the list once — `SETTINGS` (`Setting(key, default, label, help=, group=, min=, max=, choices=, secret=, …)`) and `GROUPS` ("🤖 AI", "🏠 Home Assistant") — and builds `REGISTRY = settings_core.Registry(...)` (`app/common/settings_core.py`) with its own hooks: `prepare` (the secret rules below), `check` (Ollama needs an address), the readable error format. The registry provides validation, storage, the cache and the GET/PUT payload; labels and help text come from the server.
@@ -92,8 +96,9 @@ calorie_tracker/
 - Enforcement is server-side. The UI hiding admin controls is only a convenience. The AI routes and `/api/me`/`/api/whoami` always use the real caller.
 
 ## 5. Data model
-Six tables (full DDL with comments in the `.sql` file): `users` (HA id, display name, `enabled`), `goals` (1:1; defaults 2000 kcal / 150 P / 200 C / 65 F; optional starting and target kg), `weight_logs`, `saved_foods` (per-user templates plus `notes`), `food_logs` (optional `saved_food_id`, `ON DELETE SET NULL`), and `app_settings` (key → JSON value, §3a). Indexes are on `(user_id, date)` for both log tables.
-- `init_db()` runs `executescript(SCHEMA)` followed by `_migrate()`, then increments `db.generation`. It runs at startup and again after every restore (so an older backup gains `app_settings` via `CREATE TABLE IF NOT EXISTS`). `validate_backup_file` still requires only the original five tables. `_migrate()` adds the columns in `db.MIGRATIONS` (`users.enabled`, `saved_foods.notes`, `users.assistant_ok`, `users.publish_sensor`) through `db_core.add_missing_columns`, and turns the older `ollama_url` / `ollama_model` rows into `ai_provider = "ollama"`, `ai_url`, `ai_model` (`INSERT OR IGNORE`, keeping their `updated_at`/`updated_by`, so an existing `ai_*` value wins), then deletes the old rows — for an install's own database and for a restored older backup alike. When it adds `users.publish_sensor` (default 0 for people new since), it sets it for every existing person to the stored `expose_daily_calories_sensor` (default true), so nobody's sensor changes on the upgrade. `ai_usage(user_id, day, requests)` counts AI requests per person per day (rows older than a month are dropped). Connections use `foreign_keys = ON, synchronous = NORMAL` (WAL). Every `db.get_conn()` runs inside `db.GATE.work()` (once per thread: nested blocks don't wait for themselves); a restore runs `restore_file` inside `GATE.pause()` with connections outside the gate (`_raw_conn`, also used by `init_db`); a request that waits `GATE_TIMEOUT` (60 s) gets 503. An older database that never stored those rows starts with AI not set up. **To add a new column, update both the CREATE statement and `db.MIGRATIONS`.**
+Seven tables (full DDL with comments in `app/db.py`): `users` (HA id, display name, `enabled`), `goals` (1:1; defaults 2000 kcal / 150 P / 200 C / 65 F; optional starting and target kg), `weight_logs`, `saved_foods` (per-user templates plus `notes`, `tags`, `no_calories`), `food_logs` (optional `saved_food_id`, `ON DELETE SET NULL`; `eaten_at` HH:MM, `tags`, `no_calories`), `symptom_logs` (`date`, `time` HH:MM, `symptom` ≤60, `severity` 1–5, `note` ≤500; §5.9) and `app_settings` (key → JSON value, §3a). Indexes are on `(user_id, date)` for the three log tables.
+- **Calories optional** (§5.9): a food or saved food without calories stores `calories = 0` and `no_calories = 1` (SQLite can't drop the old NOT NULL without rebuilding the table), so every SUM stays the sum of the known ones; the API (`foodrows.out`) gives `calories: null`, `tags` as a list. `/api/summary` adds `no_calories` (how many entries of the day have none).
+- `init_db()` runs `executescript(SCHEMA)` followed by `_migrate()`, then increments `db.generation`. It runs at startup and again after every restore (so an older backup gains `app_settings` via `CREATE TABLE IF NOT EXISTS`). `validate_backup_file` still requires only the original five tables. `_migrate()` adds the columns in `db.MIGRATIONS` (`users.enabled`, `saved_foods.notes`, `users.assistant_ok`, `users.publish_sensor`, `food_logs.no_calories`/`eaten_at`/`tags`, `saved_foods.no_calories`/`tags`) through `db_core.add_missing_columns`, and turns the older `ollama_url` / `ollama_model` rows into `ai_provider = "ollama"`, `ai_url`, `ai_model` (`INSERT OR IGNORE`, keeping their `updated_at`/`updated_by`, so an existing `ai_*` value wins), then deletes the old rows — for an install's own database and for a restored older backup alike. When it adds `users.publish_sensor` (default 0 for people new since), it sets it for every existing person to the stored `expose_daily_calories_sensor` (default true), so nobody's sensor changes on the upgrade. `ai_usage(user_id, day, requests)` counts AI requests per person per day (rows older than a month are dropped). Connections use `foreign_keys = ON, synchronous = NORMAL` (WAL). Every `db.get_conn()` runs inside `db.GATE.work()` (once per thread: nested blocks don't wait for themselves); a restore runs `restore_file` inside `GATE.pause()` with connections outside the gate (`_raw_conn`, also used by `init_db`); a request that waits `GATE_TIMEOUT` (60 s) gets 503. An older database that never stored those rows starts with AI not set up. **To add a new column, update both the CREATE statement and `db.MIGRATIONS`.**
 - `get_conn()` opens a short-lived connection for each use (`db_core.connect` + `db_core.transaction`, `app/common/db_core.py`): `timeout=10`, `sqlite3.Row` rows, `PRAGMA foreign_keys = ON` on every connection, commit on success, rollback on exception, always closed. WAL journal mode.
 - Dates are ISO `YYYY-MM-DD` strings in HA's time zone, compared as strings.
 - A `food_logs` row is a standalone copy of the numbers. `calories`/macros are the entry's totals, and `servings` is display-only (nothing multiplies by it).
@@ -118,11 +123,15 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `POST /api/weight` | act | Body `{date, weight_kg, note?}`. Returns the new row |
 | `DELETE /api/weight/{id}` | act | `{ok:true}`; 404 if not the acting user's entry |
 | `GET /api/saved-foods` | act | Sorted by name |
-| `POST /api/saved-foods` | act | Body `{name, serving_size=1, serving_unit="serving", calories, protein=0, carbs=0, fat=0, notes?}`. An empty `notes` is stored as NULL |
+| `POST /api/saved-foods` | act | Body `{name, serving_size=1, serving_unit="serving", calories?, protein=0, carbs=0, fat=0, notes?, tags=[]}`. An empty `notes` is stored as NULL; no `calories` (or null) = none. Tags: lower case, single spaces, ≤30 characters each, ≤12, no repeats (422 beyond) |
 | `PUT /api/saved-foods/{id}` | act | Full replace with the same body. 404 if not the acting user's food |
 | `DELETE /api/saved-foods/{id}` | act | `{ok:true}`; 404 if not the acting user's food |
 | `GET /api/logs?date=` | act | That day's entries, ordered by `created_at` |
-| `POST /api/logs` | act | Body `{date, meal_type="snack", food_name, servings=1, calories, protein=0, carbs=0, fat=0, saved_food_id?}`. Pushes the sensor if `date` is today |
+| `POST /api/logs` | act | Body `{date, meal_type="snack", food_name, servings=1, calories?, protein=0, carbs=0, fat=0, saved_food_id?, eaten_at? "HH:MM", tags?}`. No `eaten_at` → now (today) or the meal's usual time (`foodrows.MEAL_TIMES`); no `tags` with a `saved_food_id` → the saved food's. Pushes the sensor if `date` is today |
+| `GET /api/symptoms?date=` · `POST /api/symptoms` · `DELETE /api/symptoms/{id}` | act | The day's symptoms by time; body `{date (not after today), time "HH:MM", symptom 1–60, severity 1–5 = 3, note? ≤500}` (spaces collapsed; ≤100 a day); delete 404s for another person's |
+| `GET /api/symptoms/choices` | act | `{symptoms: the person's most used in 90 days, then App settings' symptom_list (case-insensitive, no repeats), tags: food_tag_list (lower case) then the person's own}` |
+| `GET /api/patterns?days=30\|90\|180\|365` | act | `patterns.analyse` (§5.9): `{from, to, days, hours, minCount, loggedDays, dates, symptoms:[{name, count, days, avgSeverity, last, series (worst severity per day, 0 = none), usualTime, otherDays, tags:[{tag, before, of, other, otherOf, lift}], foods:[{food, …}]}], tooFew:[…]}`; another `days` → 422 |
+| `GET /api/journal.csv?days=` | act | Food and symptoms in time order (Date, Time, Type, What, Details, Severity, Tags, Calories, Note; UTF-8 BOM; a cell starting `= + - @` tab or CR gets a leading `'`) |
 | `DELETE /api/logs/{id}` | act | `{ok:true}`; 404 if not the acting user's entry. Pushes the sensor if the entry was dated today |
 | `GET /api/summary?date=` | act | `{date, totals{calories,protein,carbs,fat}, goal{calorie_goal,protein_goal,carb_goal,fat_goal}, remaining{…}, latest_weight_kg}`. The latest weight is the most recent overall, not limited to on or before `date` |
 | `GET /api/summary/month?month=YYYY-MM` | act | `{month, label "September 2026", is_current, is_future, days_in_month, days_elapsed, totals, avg_per_day, goal, weight{avg_kg,start_kg,end_kg,change_kg,entries}}`. `days_elapsed` counts up to today and is 0 for a future month. `avg_per_day` = total ÷ `days_elapsed` |
@@ -139,7 +148,23 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `POST /api/admin-storage-import-db` | adm | Multipart field `file`. Returns `{status:"ok"}`; 400 with a specific message if the file is not valid. The restored App settings apply at once, except the access key: if the restored file has none, this install's key is put back (`settings.restore_secrets`). Also calls `ai_client.forget_state()` |
 | `GET /…` | none | `StaticFiles(html=True)` mounted at `/`, registered last |
 
-- Router order: `me.router, me.whoami_router, users, goals, weight, saved_foods, logs, ai, admin`, then the static mount.
+- Router order: `me.router, me.whoami_router, users, goals, weight, saved_foods, logs, symptoms, ai, admin`, then the static mount.
+
+### 5.9 Symptoms and Patterns
+- The **Symptoms** tab (in the nav after Food Log; follows the date bar; deep links `#/symptoms`, `#/symptoms/<date>`):
+  *Log a Symptom* (one-tap chips from `/api/symptoms/choices`, a name box with the same list, time — empty = now for
+  today —, how bad 1–5, note), *The Day* (food and symptoms merged by time; ✕ deletes a symptom) and *Patterns*
+  (range 30 / 90 / 180 / 365 days, default 90; the CSV link).
+- **Patterns** (`app/patterns.py`), per symptom S logged ≥ `pattern_min` times in the range, H = `pattern_hours`:
+  the *before* windows are the H hours before each S (crossing midnight; food from the day before the range counts);
+  the *other days* windows are, on each day with food logged and no S, the H hours before S's median time of day. A
+  tag or a food (names compared folded, shown as last spelled) is listed when it was in ≥ 2 before-windows, in ≥ half
+  of them, and its share there is ≥ 25 points above its share of the other-days windows; strongest difference first,
+  ≤ 5 tags and ≤ 5 foods. Entries without `eaten_at` count at their meal's usual time. The page says it shows what
+  came together, not the cause.
+- Food entries and saved foods carry **tags** (`food_tag_list` offered first; any typed); the Food Log and Saved
+  Foods forms have a tag picker, and logging a saved food copies its tags.
+- Symptoms are never sent anywhere (no sensor, no AI, no Household Assistant tool).
 - Security headers (`web_security`, §4): responses for `/` and `*.html` also get `Cache-Control: no-cache, no-store, must-revalidate` and `Pragma: no-cache`.
 - Storage routes: the download is `db.backup_to_tempfile` sent by `backup_core.send_file` (deleted after the response) under `backup_core.file_name(...)`; the upload is received by `backup_core.receive` into a temp file in `DATA_DIR`, then validated and swapped in (§10).
 
@@ -227,7 +252,11 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 **Layout**
 - Sidebar (220 px): 🥗 brand, nav, user chip "Logged in as <name>" (a button that opens the whoami page), and the theme `<select>`.
 - The sidebar collapses to a 68 px icon rail with the ‹/› button. The state is saved in localStorage `sidebarCollapsed` (through `HouseholdTheme.sidebarCollapsed()` / `setSidebarCollapsed()`).
-- At ≤760 px the sidebar becomes a fixed bottom icon bar, and the brand, chip, theme select and collapse button are hidden.
+- The nav: **Food Log** (the start page), **Symptoms**, **Dashboard**, **Weight**; below a line (`.nav-more`) **Saved
+  Foods**, **Goals**, **AI Assistant** and **Admin** (admins only).
+- At ≤760 px the sidebar becomes a fixed bottom bar of the four everyday pages and **⋯ More** (`#moreBtn`): a panel
+  above the bar with the rest (closes on a pick, a tap outside or Esc; More is marked active while one of them is
+  open). The brand, chip, theme select and collapse button are hidden.
 - Top bar: a 👤 button (opens the whoami page) and `#userSelect`. The select is hidden for non-admins. It lists enabled users plus yourself, marked "(you)".
 - **Date bar is shown on Food Log only** (`DATE_BAR_TABS = {"foodlog"}`; the whoami page hides it too). Controls: ‹ previous day; a pill showing e.g. "Sep 22" (", 2025" added when not the current year), a sub-label (Today / Yesterday / Tomorrow / weekday) and 📅; › next day; and Today.
   - The pill opens a hidden `<input type=date>` via `showPicker()`, falling back to `focus()`.

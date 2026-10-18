@@ -62,7 +62,7 @@ def today(ctx):
     day = ctx.args.get("date") or config.today().isoformat()
     if date.fromisoformat(day) > config.today():
         raise bus.Nack("invalid", "date")
-    logs = ctx.conn.execute("SELECT meal_type, food_name, servings, calories, protein, carbs, fat FROM food_logs "
+    logs = ctx.conn.execute("SELECT meal_type, food_name, servings, calories, protein, carbs, fat, no_calories FROM food_logs "
                             "WHERE user_id = ? AND date = ? ORDER BY created_at, id", (ctx.user["id"], day)).fetchall()
     g = ctx.conn.execute("SELECT * FROM goals WHERE user_id = ?", (ctx.user["id"],)).fetchone()
     goal = {k: (g[k] if g else v) for k, v in DEFAULT_GOALS.items()}
@@ -83,7 +83,11 @@ def today(ctx):
             per_meal.append(f"{meal}: " + ", ".join(r["food_name"] for r in rows[:6]) + ("…" if len(rows) > 6 else "")
                             + f" ({_r(sum(r['calories'] for r in rows))} kcal)")
     text += " " + "; ".join(per_meal) + "."
-    items = [{"meal": r["meal_type"], "food": r["food_name"], "servings": r["servings"], "kcal": _r(r["calories"]),
+    unknown = sum(1 for r in logs if r["no_calories"])
+    if unknown:
+        text += f" {unknown} of them {'was' if unknown == 1 else 'were'} logged without calories (not counted)."
+    items = [{"meal": r["meal_type"], "food": r["food_name"], "servings": r["servings"],
+              "kcal": None if r["no_calories"] else _r(r["calories"]),
               "protein": _r(r["protein"]), "carbs": _r(r["carbs"]), "fat": _r(r["fat"])} for r in logs]
     return ctx.result(text, items=items, links=[link])
 
@@ -132,11 +136,11 @@ def _known_food(ctx, name: str):
         return " ".join((text or "").split()).casefold() == want
     r = next((x for x in ctx.conn.execute("SELECT * FROM saved_foods WHERE user_id = ? ORDER BY id DESC",
                                           (ctx.user["id"],)) if same(x["name"])), None)
-    if r:
+    if r and not r["no_calories"]:              # saved without calories: not known
         return r["calories"], r["protein"], r["carbs"], r["fat"], r["id"]
-    r = next((x for x in ctx.conn.execute("SELECT * FROM food_logs WHERE user_id = ? AND servings > 0 "
-                                          "ORDER BY date DESC, id DESC", (ctx.user["id"],)) if same(x["food_name"])),
-             None)
+    r = next((x for x in ctx.conn.execute("SELECT * FROM food_logs WHERE user_id = ? AND servings > 0 AND "
+                                          "no_calories = 0 ORDER BY date DESC, id DESC", (ctx.user["id"],))
+              if same(x["food_name"])), None)
     if r:
         n = r["servings"]
         return r["calories"] / n, r["protein"] / n, r["carbs"] / n, r["fat"] / n, r["saved_food_id"]
@@ -184,10 +188,16 @@ def food_log(ctx):
                               "Tracker. Nothing was logged.", links=[link])
         kcal, protein, carbs, fat = (x * servings for x in known[:4])
         saved_id = known[4]
+    from . import foodrows
+    tags = None
+    if saved_id is not None:
+        s = ctx.conn.execute("SELECT tags FROM saved_foods WHERE id = ?", (saved_id,)).fetchone()
+        tags = s["tags"] if s else None
+    eaten_at = config.now().strftime("%H:%M") if day == config.today().isoformat() else foodrows.MEAL_TIMES[meal]
     ctx.conn.execute("INSERT INTO food_logs (user_id, date, meal_type, food_name, servings, calories, protein, carbs, "
-                     "fat, saved_food_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     "fat, saved_food_id, eaten_at, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      (ctx.user["id"], day, meal, food, servings, round(kcal, 1), round(protein, 1), round(carbs, 1),
-                      round(fat, 1), saved_id))
+                      round(fat, 1), saved_id, eaten_at, tags))
     total = ctx.conn.execute("SELECT SUM(calories) FROM food_logs WHERE user_id = ? AND date = ?",
                              (ctx.user["id"], day)).fetchone()[0] or 0
     g = ctx.conn.execute("SELECT calorie_goal FROM goals WHERE user_id = ?", (ctx.user["id"],)).fetchone()

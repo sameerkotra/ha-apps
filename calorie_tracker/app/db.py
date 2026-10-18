@@ -120,6 +120,19 @@ CREATE TABLE IF NOT EXISTS food_logs (
 
 CREATE INDEX IF NOT EXISTS idx_food_logs_user_date ON food_logs(user_id, date);
 
+-- Symptoms (the Symptoms tab): what someone felt, when, how bad. Their own only, like the food log.
+CREATE TABLE IF NOT EXISTS symptom_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,            -- YYYY-MM-DD, Home Assistant's time zone
+    time TEXT NOT NULL,            -- HH:MM
+    symptom TEXT NOT NULL,         -- e.g. "Bloating" (as typed, trimmed)
+    severity INTEGER NOT NULL DEFAULT 3,   -- 1 (mild) … 5 (severe)
+    note TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_symptom_logs_user_date ON symptom_logs(user_id, date);
+
 -- AI requests (estimate, chat) per signed-in person per day, for the daily limit (App settings → AI limits).
 -- Kept apart from anything a person can delete, so deleting entries never resets the count.
 CREATE TABLE IF NOT EXISTS ai_usage (
@@ -164,6 +177,13 @@ MIGRATIONS = [
     # "Publish my calories to Home Assistant" (Goals): off for people who open the app from now on; people who
     # were already here get the household setting's value (_migrate), so nothing changes on the upgrade.
     ("users", "publish_sensor", "INTEGER NOT NULL DEFAULT 0"),
+    # Calories are optional: an entry without them stores 0 (so every sum stays a sum of the known ones) and
+    # no_calories = 1, and the API gives calories: null. (SQLite can't drop a NOT NULL without rebuilding the table.)
+    ("food_logs", "no_calories", "INTEGER NOT NULL DEFAULT 0"),
+    ("saved_foods", "no_calories", "INTEGER NOT NULL DEFAULT 0"),
+    ("food_logs", "eaten_at", "TEXT"),        # HH:MM when it was eaten (Patterns); NULL on entries from before
+    ("food_logs", "tags", "TEXT"),            # food tags, lower case, comma-separated ("dairy,spicy")
+    ("saved_foods", "tags", "TEXT"),
 ]
 
 

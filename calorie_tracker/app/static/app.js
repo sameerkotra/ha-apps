@@ -41,6 +41,12 @@ function fmt(n) {
   if (n === null || n === undefined || isNaN(n)) return "0";
   return Math.round(n * 10) / 10;
 }
+// calories may be left out (null): shown as a dash, not 0
+function kcalText(n) { return n === null || n === undefined ? "—" : fmt(n); }
+function tagChips(tags) {
+  return tags && tags.length ? `<span class="food-tags">${tags.map(t => `<span class="food-tag">${escapeHtml(t)}</span>`).join("")}</span>` : "";
+}
+const MEAL_TIMES = { breakfast: "08:00", lunch: "12:30", dinner: "19:00", snack: "15:30" };
 
 const $ = (sel) => UI.$(sel);
 
@@ -136,14 +142,16 @@ HouseholdTheme.bindSelect(document.getElementById("theme-select"));
 // showing the day bar there was a leftover control that did nothing.
 // Every other tab (Saved Foods, Weight, Goals, AI Assistant, Admin, and the
 // whoami page) hides it entirely for the same reason.
-const DATE_BAR_TABS = new Set(["foodlog"]);
+const DATE_BAR_TABS = new Set(["foodlog", "symptoms"]);
 
 function updateDateBarVisibility(tab) {
   $("#dateBar").hidden = !DATE_BAR_TABS.has(tab);
 }
 
 function activateTab(tab) {
-  $all(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  $all(".tab-btn[data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  closeMore();
+  $("#moreBtn").classList.toggle("active", !!document.querySelector(`#navMore .tab-btn[data-tab="${tab}"]`));
   $all(".tab-panel").forEach(p => p.classList.remove("active"));
   $(`#tab-${tab}`).classList.add("active");
   updateDateBarVisibility(tab);
@@ -156,6 +164,7 @@ function showTab(tab) {
   activateTab(tab);
   if (tab === "ai") refreshAiStatus();
   if (tab === "weight") loadWeightHistory();
+  if (tab === "symptoms") { loadSymptomDay(); loadPatterns(); }
   // The history canvas sizes itself from its container's clientWidth,
   // which is 0 while its tab-panel is display:none — so it has to
   // re-measure once Dashboard is what's actually visible. This only
@@ -165,9 +174,24 @@ function showTab(tab) {
   if (tab === "dashboard") loadHistory();
 }
 
-$all(".tab-btn").forEach(btn => {
+$all(".tab-btn[data-tab]").forEach(btn => {
   btn.addEventListener("click", () => showTab(btn.dataset.tab));
 });
+
+// ⋯ More (phones): the pages used now and then, in a small panel above the bottom bar
+function closeMore() {
+  $(".side-nav").classList.remove("more-open");
+  $("#moreBtn").setAttribute("aria-expanded", "false");
+}
+$("#moreBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = !$(".side-nav").classList.contains("more-open");
+  $(".side-nav").classList.toggle("more-open", open);
+  $("#moreBtn").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) { const first = document.querySelector("#navMore .tab-btn:not([hidden])"); if (first) first.focus(); }
+});
+document.addEventListener("click", (e) => { if (!e.target.closest || !e.target.closest("#navMore")) closeMore(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $(".side-nav").classList.contains("more-open")) { closeMore(); $("#moreBtn").focus(); } });
 
 // ---------- Admin (admins only: App settings | Users | Storage) ----------
 // One sidebar item, hidden for non-admins (the server enforces every admin
@@ -559,6 +583,9 @@ async function loadSummary() {
       <div class="value">${summary.latest_weight_kg ? fmt(summary.latest_weight_kg) + " kg" : "—"}</div>
       <div class="label">Latest Weight</div>
     </div>`;
+  const n = summary.no_calories || 0;
+  $("#summaryNote").hidden = !n;
+  $("#summaryNote").textContent = n ? `${n} ${n === 1 ? "food" : "foods"} logged without calories ${n === 1 ? "isn't" : "aren't"} counted in these totals.` : "";
 
   const macros = [
     { name: "Protein", val: summary.totals.protein, goal: summary.goal.protein_goal, color: "var(--protein)" },
@@ -851,6 +878,7 @@ async function loadFoodLog() {
     <table class="data-table">
       <thead>
         <tr>
+          <th>Time</th>
           <th>Meal</th>
           <th>Food</th>
           <th>Servings</th>
@@ -864,10 +892,11 @@ async function loadFoodLog() {
       <tbody>
         ${logs.map(l => `
           <tr>
+            <td class="col-time">${escapeHtml(l.eaten_at || "")}</td>
             <td><span class="tag">${escapeHtml(l.meal_type)}</span></td>
-            <td class="col-name">${escapeHtml(l.food_name)}</td>
+            <td class="col-name">${escapeHtml(l.food_name)}${tagChips(l.tags)}</td>
             <td>${fmt(l.servings)}×</td>
-            <td>${fmt(l.calories)}</td>
+            <td>${kcalText(l.calories)}</td>
             <td>${fmt(l.protein)}</td>
             <td>${fmt(l.carbs)}</td>
             <td>${fmt(l.fat)}</td>
@@ -896,6 +925,8 @@ function clearFoodForm() {
   $("#foodProtein").value = "";
   $("#foodCarbs").value = "";
   $("#foodFat").value = "";
+  $("#foodTime").value = "";
+  foodTags.set([]);
   $("#savedFoodPicker").value = "";
   $("#aiFillStatus").textContent = "";
 }
@@ -907,13 +938,15 @@ function scaleByServings(perServing, servings) {
   const n = servings > 0 ? servings : 1;
   const out = {};
   for (const k of ["calories", "protein", "carbs", "fat"]) out[k] = Math.round((Number(perServing[k]) || 0) * n * 10) / 10;
+  if (perServing.calories === null || perServing.calories === undefined) out.calories = null;   // left out: stays out
   return out;
 }
 
 $("#addFoodBtn").addEventListener("click", withErrors(async () => {
   const name = $("#foodName").value.trim();
-  const calories = parseFloat($("#foodCalories").value);
-  if (!name || isNaN(calories)) return alert("Food name and calories are required.");
+  const kcalIn = parseFloat($("#foodCalories").value);
+  const calories = isNaN(kcalIn) ? null : kcalIn;          // optional
+  if (!name) return alert("Type what you ate.");
   const savedFoodId = $("#savedFoodPicker").value ? parseInt($("#savedFoodPicker").value) : null;
   const servings = parseFloat($("#foodServings").value) > 0 ? parseFloat($("#foodServings").value) : 1;
   const totals = scaleByServings({
@@ -931,17 +964,19 @@ $("#addFoodBtn").addEventListener("click", withErrors(async () => {
       servings,
       ...totals,
       saved_food_id: savedFoodId,
+      eaten_at: $("#foodTime").value || null,
+      tags: foodTags.get(),
     }),
   });
   clearFoodForm();
-  await Promise.all([loadFoodLog(), loadSummary(), loadHistory()]);
+  await Promise.all([loadFoodLog(), loadSummary(), loadHistory(), loadSymptomDay(), loadChoices()]);
 }));
 
 async function loadSavedFoodPicker() {
   state.savedFoods = await api(withUser(`/api/saved-foods`));
   const picker = $("#savedFoodPicker");
   picker.innerHTML = `<option value="">— pick a saved food —</option>` +
-    state.savedFoods.map(f => `<option value="${f.id}">${escapeHtml(f.name)} (${fmt(f.calories)} kcal / ${fmt(f.serving_size)} ${escapeHtml(f.serving_unit)})</option>`).join("");
+    state.savedFoods.map(f => `<option value="${f.id}">${escapeHtml(f.name)} (${f.calories === null ? "" : fmt(f.calories) + " kcal / "}${fmt(f.serving_size)} ${escapeHtml(f.serving_unit)})</option>`).join("");
 }
 
 $("#savedFoodPicker").addEventListener("change", (e) => {
@@ -950,10 +985,11 @@ $("#savedFoodPicker").addEventListener("change", (e) => {
   if (!food) return;
   $("#foodName").value = food.name;
   $("#foodServings").value = "1";
-  $("#foodCalories").value = food.calories;
+  $("#foodCalories").value = food.calories === null ? "" : food.calories;
   $("#foodProtein").value = food.protein;
   $("#foodCarbs").value = food.carbs;
   $("#foodFat").value = food.fat;
+  foodTags.set(food.tags || []);
 });
 
 // ---------- saved foods (repeated foods) ----------
@@ -984,9 +1020,9 @@ async function loadSavedFoodsList() {
       <tbody>
         ${foods.map(f => `
           <tr>
-            <td class="col-name">${escapeHtml(f.name)}</td>
+            <td class="col-name">${escapeHtml(f.name)}${tagChips(f.tags)}</td>
             <td>${fmt(f.serving_size)} ${escapeHtml(f.serving_unit)}</td>
-            <td>${fmt(f.calories)}</td>
+            <td>${kcalText(f.calories)}</td>
             <td>${fmt(f.protein)}</td>
             <td>${fmt(f.carbs)}</td>
             <td>${fmt(f.fat)}</td>
@@ -1035,6 +1071,7 @@ async function loadSavedFoodsList() {
         carbs: food.carbs,
         fat: food.fat,
         saved_food_id: food.id,
+        tags: food.tags || [],
       }),
     });
     alert(`Added "${food.name}" to today's log (${day}).`);
@@ -1047,7 +1084,8 @@ function startSavedFoodEdit(food) {
   $("#sfName").value = food.name;
   $("#sfServingSize").value = food.serving_size;
   $("#sfServingUnit").value = food.serving_unit;
-  $("#sfCalories").value = food.calories;
+  $("#sfCalories").value = food.calories === null ? "" : food.calories;
+  sfTags.set(food.tags || []);
   $("#sfProtein").value = food.protein;
   $("#sfCarbs").value = food.carbs;
   $("#sfFat").value = food.fat;
@@ -1061,6 +1099,7 @@ function startSavedFoodEdit(food) {
 function cancelSavedFoodEdit() {
   state.editingSavedFoodId = null;
   ["sfName", "sfCalories", "sfProtein", "sfCarbs", "sfFat", "sfNotes"].forEach(id => $("#" + id).value = "");
+  sfTags.set([]);
   $("#sfServingSize").value = "1";
   $("#sfServingUnit").value = "serving";
   $("#sfFormTitle").textContent = "Build a Repeated Food";
@@ -1072,8 +1111,9 @@ $("#sfCancelEditBtn").addEventListener("click", cancelSavedFoodEdit);
 
 $("#sfSaveBtn").addEventListener("click", withErrors(async () => {
   const name = $("#sfName").value.trim();
-  const calories = parseFloat($("#sfCalories").value);
-  if (!name || isNaN(calories)) return alert("Name and calories are required.");
+  const kcalIn = parseFloat($("#sfCalories").value);
+  const calories = isNaN(kcalIn) ? null : kcalIn;          // optional
+  if (!name) return alert("Give the food a name.");
   const body = {
     name,
     serving_size: parseFloat($("#sfServingSize").value) || 1,
@@ -1083,6 +1123,7 @@ $("#sfSaveBtn").addEventListener("click", withErrors(async () => {
     carbs: parseFloat($("#sfCarbs").value) || 0,
     fat: parseFloat($("#sfFat").value) || 0,
     notes: $("#sfNotes").value.trim() || null,
+    tags: sfTags.get(),
   };
   if (state.editingSavedFoodId) {
     await api(withUser(`/api/saved-foods/${state.editingSavedFoodId}`), {
@@ -1096,8 +1137,163 @@ $("#sfSaveBtn").addEventListener("click", withErrors(async () => {
     });
   }
   cancelSavedFoodEdit();
-  await Promise.all([loadSavedFoodsList(), loadSavedFoodPicker()]);
+  await Promise.all([loadSavedFoodsList(), loadSavedFoodPicker(), loadChoices()]);
 }));
+
+// ---------- food tags, symptoms and patterns ----------
+// Tags say what's in a food ("dairy", "spicy"): Patterns compares them as well as foods. App settings → Symptoms and
+// patterns lists the ones offered; anyone can add their own (Enter in the box).
+state.choices = { symptoms: [], tags: [] };
+
+function tagPicker(root) {
+  let chosen = [];
+  const input = UI.h("input", { class: "tag-add", placeholder: "+ tag", maxlength: "30", "aria-label": "Add a tag" });
+  const box = UI.h("div", { class: "chip-row" });
+  root.replaceChildren(box, input);
+  function draw() {
+    const all = state.choices.tags.slice();
+    for (const t of chosen) if (!all.includes(t)) all.push(t);
+    box.replaceChildren(...all.map(t => {
+      const on = chosen.includes(t);
+      const b = UI.h("button", { type: "button", class: "chip" + (on ? " on" : ""), "aria-pressed": on ? "true" : "false" }, t);
+      b.addEventListener("click", () => {
+        chosen = on ? chosen.filter(x => x !== t) : chosen.concat(t).slice(0, 12);
+        draw();
+      });
+      return b;
+    }));
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== ",") return;
+    e.preventDefault();
+    const t = input.value.replace(/,/g, " ").trim().replace(/\s+/g, " ").toLowerCase().slice(0, 30);
+    if (t && !chosen.includes(t)) chosen = chosen.concat(t).slice(0, 12);
+    input.value = "";
+    draw();
+  });
+  draw();
+  return { get: () => chosen.slice(), set: (tags) => { chosen = (tags || []).slice(); draw(); }, redraw: draw };
+}
+const foodTags = tagPicker($("#foodTags"));
+const sfTags = tagPicker($("#sfTags"));
+
+async function loadChoices() {
+  state.choices = await api(withUser(`/api/symptoms/choices`));
+  foodTags.redraw();
+  sfTags.redraw();
+  $("#symNames").replaceChildren(...state.choices.symptoms.map(s => UI.h("option", { value: s })));
+  $("#symQuick").replaceChildren(...state.choices.symptoms.map(s => {
+    const b = UI.h("button", { type: "button", class: "chip" }, s);
+    b.addEventListener("click", () => {
+      $("#symName").value = s;
+      $all("#symQuick .chip").forEach(x => x.classList.toggle("on", x === b));
+    });
+    return b;
+  }));
+}
+
+const SEVERITY = ["", "Mild", "Noticeable", "Moderate", "Bad", "Severe"];
+state.severity = 3;
+function drawSeverity() {
+  $("#symSevText").textContent = SEVERITY[state.severity];
+  $("#symSeverity").replaceChildren(...[1, 2, 3, 4, 5].map(n => {
+    const b = UI.h("button", { type: "button", role: "radio", class: "sev sev-" + n + (n === state.severity ? " on" : ""),
+      "aria-checked": n === state.severity ? "true" : "false", title: SEVERITY[n] },
+      UI.h("span", { class: "sev-n" }, String(n)), UI.h("span", { class: "sev-label" }, SEVERITY[n]));
+    b.addEventListener("click", () => { state.severity = n; drawSeverity(); });
+    return b;
+  }));
+}
+drawSeverity();
+
+function nowHHMM() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+$("#symAddBtn").addEventListener("click", withErrors(async () => {
+  const symptom = $("#symName").value.trim();
+  if (!symptom) return alert("Pick or type a symptom.");
+  const time = $("#symTime").value || (state.date === todayStr() ? nowHHMM() : "");
+  if (!time) return alert("When did it start? Pick a time.");
+  await api(withUser(`/api/symptoms`), {
+    method: "POST",
+    body: JSON.stringify({ date: state.date, time, symptom, severity: state.severity, note: $("#symNote").value.trim() || null }),
+  });
+  $("#symName").value = "";
+  $("#symNote").value = "";
+  $("#symTime").value = "";
+  $all("#symQuick .chip").forEach(x => x.classList.remove("on"));
+  await Promise.all([loadSymptomDay(), loadChoices(), loadPatterns()]);
+}));
+
+async function loadSymptomDay() {
+  const [foods, syms] = await Promise.all([
+    api(withUser(`/api/logs?date=${state.date}`)),
+    api(withUser(`/api/symptoms?date=${state.date}`)),
+  ]);
+  $("#symTime").placeholder = "";
+  const items = foods.map(f => ({ t: f.eaten_at || MEAL_TIMES[f.meal_type] || "", kind: "food", f }))
+    .concat(syms.map(s => ({ t: s.time, kind: "sym", s })))
+    .sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.kind === "food" ? -1 : 1));
+  const list = $("#dayTimeline");
+  if (!items.length) {
+    list.innerHTML = `<p class="hint">Nothing logged for this day yet.</p>`;
+    return;
+  }
+  list.innerHTML = `<ul class="timeline">${items.map(i => i.kind === "food" ? `
+    <li class="tl-food">
+      <span class="tl-time">${escapeHtml(i.t)}</span><span class="tl-icon" aria-hidden="true">🍽️</span>
+      <span class="tl-main"><span class="tl-name">${escapeHtml(i.f.food_name)}</span>
+        <span class="tl-sub">${escapeHtml(i.f.meal_type)}${i.f.servings !== 1 ? ` · ${fmt(i.f.servings)}×` : ""}${i.f.calories !== null ? ` · ${fmt(i.f.calories)} kcal` : ""}</span>${tagChips(i.f.tags)}</span>
+    </li>` : `
+    <li class="tl-sym">
+      <span class="tl-time">${escapeHtml(i.t)}</span><span class="tl-icon" aria-hidden="true">🩺</span>
+      <span class="tl-main"><span class="tl-name">${escapeHtml(i.s.symptom)}</span>
+        <span class="tl-sub"><span class="sev-dot sev-${i.s.severity}">${i.s.severity}</span> ${SEVERITY[i.s.severity]}${i.s.note ? " · " + escapeHtml(i.s.note) : ""}</span></span>
+      <button class="del-sym-btn btn-icon" data-id="${i.s.id}" title="Delete" aria-label="Delete ${escapeHtml(i.s.symptom)}">✕</button>
+    </li>`).join("")}</ul>`;
+  list.querySelectorAll(".del-sym-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
+    const s = syms.find(x => String(x.id) === btn.dataset.id);
+    if (!confirm(`Delete "${s ? s.symptom : "this symptom"}"?`)) return;
+    await api(withUser(`/api/symptoms/${btn.dataset.id}`), { method: "DELETE" });
+    await Promise.all([loadSymptomDay(), loadPatterns()]);
+  })));
+}
+
+function patternLine(x, key) {
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  return `<li><strong>${escapeHtml(x[key])}</strong>
+    <span class="hint">before ${x.before} of ${x.of} times (${pct(x.before, x.of)}%) · other days ${x.otherOf ? `${x.other} of ${x.otherOf} (${pct(x.other, x.otherOf)}%)` : "none to compare"}</span></li>`;
+}
+
+async function loadPatterns() {
+  const days = $("#patternDays").value;
+  $("#journalCsv").href = withUser(`api/journal.csv?days=${days}`);
+  const p = await api(withUser(`/api/patterns?days=${days}`));
+  $("#patternIntro").textContent = `${p.loggedDays} day${p.loggedDays === 1 ? "" : "s"} with food logged in this time. ` +
+    `For each symptom, what you ate in the ${p.hours} hours before it is compared with the same hours on days without it. ` +
+    "This shows what came together, not what causes what — talk to a doctor about symptoms that worry you.";
+  const list = $("#patternList");
+  if (!p.symptoms.length && !p.tooFew.length) {
+    list.innerHTML = `<p class="hint">No symptoms logged in this time. Log symptoms (and what you eat) for a few weeks and patterns show up here.</p>`;
+    return;
+  }
+  const strip = (series) => `<div class="sev-strip" aria-hidden="true">${series.map(v => `<span class="sev-bar sev-${v}" style="height:${v ? 20 + v * 16 : 4}%"></span>`).join("")}</div>`;
+  list.innerHTML = p.symptoms.map(s => `
+    <div class="pattern">
+      <div class="pattern-head"><h4>${escapeHtml(s.name)}</h4>
+        <span class="hint">${s.count} time${s.count === 1 ? "" : "s"} on ${s.days} day${s.days === 1 ? "" : "s"} · usually around ${escapeHtml(s.usualTime)} · average ${s.avgSeverity} of 5</span></div>
+      ${strip(s.series)}
+      ${s.tags.length || s.foods.length ? `
+        <div class="pattern-cols">
+          ${s.tags.length ? `<div><div class="pattern-sub">Tags often before it</div><ul class="pattern-list">${s.tags.map(x => patternLine(x, "tag")).join("")}</ul></div>` : ""}
+          ${s.foods.length ? `<div><div class="pattern-sub">Foods often before it</div><ul class="pattern-list">${s.foods.map(x => patternLine(x, "food")).join("")}</ul></div>` : ""}
+        </div>` : `<p class="hint">Nothing you ate stands out before it${s.otherDays ? "" : " — there are no days without it to compare with yet"}.</p>`}
+    </div>`).join("") + (p.tooFew.length ? `
+    <p class="hint">Logged too few times to compare (${p.minCount} needed): ${p.tooFew.map(s => `${escapeHtml(s.name)} (${s.count})`).join(", ")}.</p>` : "");
+}
+$("#patternDays").addEventListener("change", withErrors(loadPatterns));
 
 // ---------- weight ----------
 $("#weightDate").value = state.date;
@@ -1485,7 +1681,7 @@ async function sendChat() {
 // What depends on the day shown (the saved-food picker doesn't: it's loaded with everything else and when a saved
 // food changes).
 async function refreshDateScoped() {
-  await Promise.all([loadSummary(), loadFoodLog(), loadHistory()]);
+  await Promise.all([loadSummary(), loadFoodLog(), loadHistory(), loadSymptomDay()]);
 }
 
 // Charts are drawn at the canvas's width: draw them again when the window (or the phone's orientation) changes.
@@ -1505,6 +1701,9 @@ async function refreshAll() {
     loadGoals(),
     loadHistory(),
     loadMonthSummary(),
+    loadChoices(),
+    loadSymptomDay(),
+    $("#tab-symptoms").classList.contains("active") ? loadPatterns() : null,
   ]);
 }
 
@@ -1648,10 +1847,10 @@ BackNav.init({
 });
 
 // A link from Home Assistant (the Household Assistant) opens "/<page>/foodlog[/<date>]", "/<page>/dashboard", …
-const LINK_TABS = ["foodlog", "dashboard", "savedfoods", "weight", "goals"];
+const LINK_TABS = ["foodlog", "dashboard", "savedfoods", "weight", "goals", "symptoms"];
 function linkRoute(route) {
   const m = /^\/([a-z]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/.exec(route);
-  if (!m || !LINK_TABS.includes(m[1]) || (m[2] && m[1] !== "foodlog")) return null;
+  if (!m || !LINK_TABS.includes(m[1]) || (m[2] && m[1] !== "foodlog" && m[1] !== "symptoms")) return null;
   return { tab: m[1], date: m[2] || null };
 }
 function openLink(r) {

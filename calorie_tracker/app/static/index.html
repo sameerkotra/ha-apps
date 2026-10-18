@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.3.2"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.3.2">
-<link rel="stylesheet" href="common/settings.css?v=2.3.2">
-<link rel="stylesheet" href="style.css?v=2.3.2">
+<script src="common/theme-boot.js?v=2.4.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.4.0">
+<link rel="stylesheet" href="common/settings.css?v=2.4.0">
+<link rel="stylesheet" href="style.css?v=2.4.0">
 </head>
 <body>
 <div id="app">
@@ -16,13 +16,19 @@
     <button id="sidebarCollapseBtn" class="sidebar-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar">‹</button>
     <div class="brand"><span class="brand-icon">🥗</span><span class="brand-text">Calorie Tracker</span></div>
     <nav class="side-nav">
-      <button class="tab-btn" data-tab="dashboard" title="Dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></button>
+      <!-- every day: the bottom bar on a phone -->
       <button class="tab-btn active" data-tab="foodlog" title="Food Log"><span class="nav-icon">🍽️</span><span class="nav-label">Food Log</span></button>
-      <button class="tab-btn" data-tab="savedfoods" title="Saved Foods"><span class="nav-icon">⭐</span><span class="nav-label">Saved Foods</span></button>
+      <button class="tab-btn" data-tab="symptoms" title="Symptoms"><span class="nav-icon">🩺</span><span class="nav-label">Symptoms</span></button>
+      <button class="tab-btn" data-tab="dashboard" title="Dashboard"><span class="nav-icon">📊</span><span class="nav-label">Dashboard</span></button>
       <button class="tab-btn" data-tab="weight" title="Weight"><span class="nav-icon">⚖️</span><span class="nav-label">Weight</span></button>
-      <button class="tab-btn" data-tab="goals" title="Goals"><span class="nav-icon">🎯</span><span class="nav-label">Goals</span></button>
-      <button class="tab-btn" data-tab="ai" title="AI Assistant"><span class="nav-icon">🤖</span><span class="nav-label">AI Assistant</span></button>
-      <button class="tab-btn" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+      <!-- now and then: below a line; on a phone under ⋯ More -->
+      <div class="nav-more" id="navMore">
+        <button class="tab-btn" data-tab="savedfoods" title="Saved Foods"><span class="nav-icon">⭐</span><span class="nav-label">Saved Foods</span></button>
+        <button class="tab-btn" data-tab="goals" title="Goals"><span class="nav-icon">🎯</span><span class="nav-label">Goals</span></button>
+        <button class="tab-btn" data-tab="ai" title="AI Assistant"><span class="nav-icon">🤖</span><span class="nav-label">AI Assistant</span></button>
+        <button class="tab-btn" data-tab="admin" title="Admin" hidden><span class="nav-icon">🛡️</span><span class="nav-label">Admin</span></button>
+      </div>
+      <button type="button" class="tab-btn more-btn" id="moreBtn" title="More" aria-expanded="false" aria-controls="navMore"><span class="nav-icon">⋯</span><span class="nav-label">More</span></button>
     </nav>
     <button type="button" class="sidebar-user" id="sidebarUser" title="How the app sees you">—</button>
     <div class="sidebar-theme">
@@ -102,10 +108,14 @@
         </div>
         <div class="form-row">
           <input id="foodName" placeholder="Food name" maxlength="200" style="flex:2">
-          <input id="foodServings" type="number" step="0.1" min="0.1" max="1000" value="1" placeholder="Servings" style="flex:1">
+          <input id="foodServings" type="number" step="0.1" min="0.1" max="1000" value="1" placeholder="Servings" style="flex:1" aria-label="Servings">
+          <input id="foodTime" type="time" style="flex:1" aria-label="Time eaten" title="When it was eaten (blank: now today, else the meal's usual time)">
+        </div>
+        <div class="form-row tag-row">
+          <div id="foodTags" class="tag-picker" aria-label="Food tags"></div>
         </div>
         <div class="form-row">
-          <input id="foodCalories" type="number" step="1" min="0" max="50000" placeholder="Calories per serving">
+          <input id="foodCalories" type="number" step="1" min="0" max="50000" placeholder="Calories (optional)" title="Calories per serving — leave empty if you don't count them">
           <input id="foodProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g) per serving">
           <input id="foodCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g) per serving">
           <input id="foodFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g) per serving">
@@ -125,9 +135,54 @@
 
       <h3 class="section-heading">Day Summary</h3>
       <div class="card-grid" id="summaryCards"></div>
+      <p class="hint" id="summaryNote" hidden></p>
       <div class="card">
         <h3>Macros</h3>
         <div id="macroBars"></div>
+      </div>
+    </section>
+
+    <!-- SYMPTOMS -->
+    <section id="tab-symptoms" class="tab-panel">
+      <div class="card">
+        <h3>Log a Symptom</h3>
+        <div id="symQuick" class="chip-row" aria-label="Symptoms you use"></div>
+        <div class="form-row">
+          <input id="symName" placeholder="Symptom (e.g. Bloating)" maxlength="60" list="symNames" style="flex:2" aria-label="Symptom">
+          <datalist id="symNames"></datalist>
+          <input id="symTime" type="time" style="flex:1" aria-label="Time">
+        </div>
+        <div class="form-row sym-sev-row">
+          <span class="hint">How bad · <strong id="symSevText"></strong></span>
+          <div id="symSeverity" class="sev-picker" role="radiogroup" aria-label="How bad (1 mild – 5 severe)"></div>
+        </div>
+        <div class="form-row">
+          <input id="symNote" placeholder="Note (optional)" maxlength="500" style="flex:1" aria-label="Note">
+          <button id="symAddBtn" class="btn-primary">Add Symptom</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>The Day</h3>
+        <p class="hint">Food and symptoms in time order. Only you see these.</p>
+        <div id="dayTimeline"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head-row">
+          <h3>Patterns</h3>
+          <div class="card-head-tools">
+            <select id="patternDays" aria-label="Over the last">
+              <option value="30">Last 30 days</option>
+              <option value="90" selected>Last 90 days</option>
+              <option value="180">Last 6 months</option>
+              <option value="365">Last year</option>
+            </select>
+            <a id="journalCsv" class="btn-secondary btn-link" href="#" download>⬇ Food &amp; symptoms (CSV)</a>
+          </div>
+        </div>
+        <p class="hint" id="patternIntro"></p>
+        <div id="patternList"></div>
       </div>
     </section>
 
@@ -142,10 +197,13 @@
           <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" maxlength="40" value="serving">
         </div>
         <div class="form-row">
-          <input id="sfCalories" type="number" step="1" min="0" max="50000" placeholder="Calories">
+          <input id="sfCalories" type="number" step="1" min="0" max="50000" placeholder="Calories (optional)">
           <input id="sfProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g)">
           <input id="sfCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g)">
           <input id="sfFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g)">
+        </div>
+        <div class="form-row tag-row">
+          <div id="sfTags" class="tag-picker" aria-label="Food tags"></div>
         </div>
         <div class="form-row">
           <textarea id="sfNotes" placeholder="Additional details (optional) — recipe, brand, prep notes..." rows="2" style="flex:1"></textarea>
@@ -330,12 +388,12 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.3.2"></script>
-<script src="common/settings.js?v=2.3.2"></script>
-<script src="common/people.js?v=2.3.2"></script>
-<script src="common/backnav.js?v=2.3.2"></script>
-<script src="common/whoami.js?v=2.3.2"></script>
-<script src="common/deeplink.js?v=2.3.2"></script>
-<script src="app.js?v=2.3.2"></script>
+<script src="common/ui.js?v=2.4.0"></script>
+<script src="common/settings.js?v=2.4.0"></script>
+<script src="common/people.js?v=2.4.0"></script>
+<script src="common/backnav.js?v=2.4.0"></script>
+<script src="common/whoami.js?v=2.4.0"></script>
+<script src="common/deeplink.js?v=2.4.0"></script>
+<script src="app.js?v=2.4.0"></script>
 </body>
 </html>

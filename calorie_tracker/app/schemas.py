@@ -9,6 +9,32 @@ Grams = Annotated[float, Field(ge=0, le=5_000, allow_inf_nan=False)]
 WeightKg = Annotated[float, Field(gt=0, le=700, allow_inf_nan=False)]
 Servings = Annotated[float, Field(gt=0, le=1_000, allow_inf_nan=False)]
 MealType = Literal["breakfast", "lunch", "dinner", "snack"]
+ClockTime = Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]      # HH:MM, 24-hour
+MAX_TAGS = 12
+
+
+def clean_tags(v) -> list[str]:
+    """Food tags: lower case, single spaces, no commas, each 1–30 characters, at most MAX_TAGS, no repeats."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        v = v.split(",")
+    if not isinstance(v, list):
+        raise ValueError("tags must be a list of words")
+    out = []
+    for t in v:
+        if not isinstance(t, str):
+            raise ValueError("tags must be words")
+        t = " ".join(t.replace(",", " ").split()).lower()
+        if not t:
+            continue
+        if len(t) > 30:
+            raise ValueError("a tag can be at most 30 characters")
+        if t not in out:
+            out.append(t)
+    if len(out) > MAX_TAGS:
+        raise ValueError(f"at most {MAX_TAGS} tags")
+    return out
 
 
 class GoalUpdate(BaseModel):
@@ -38,26 +64,53 @@ class SavedFoodCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     serving_size: Annotated[float, Field(gt=0, le=100_000, allow_inf_nan=False)] = 1
     serving_unit: str = Field(default="serving", min_length=1, max_length=40)
-    calories: Kcal
+    calories: Optional[Kcal] = None          # optional: a food logged without counting
     protein: Grams = 0
     carbs: Grams = 0
     fat: Grams = 0
     notes: Optional[str] = Field(default=None, max_length=2000)
+    tags: list[str] = []
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tags(cls, v):
+        return clean_tags(v)
 
 
 class FoodLogCreate(BaseModel):
-    """calories and macros are the totals for all the servings (what the day adds up). saved_food_id, when given,
-    must be one of the acting person's own saved foods (422 otherwise)."""
+    """calories and macros are the totals for all the servings (what the day adds up); calories may be left out
+    (null). saved_food_id, when given, must be one of the acting person's own saved foods (422 otherwise); its tags
+    are used when none are given. eaten_at: when it was eaten (HH:MM); left out → now for today, else the meal's
+    usual time."""
     model_config = TRIMMED
     date: date
     meal_type: MealType = "snack"
     food_name: str = Field(min_length=1, max_length=200)
     servings: Servings = 1
-    calories: Kcal
+    calories: Optional[Kcal] = None
     protein: Grams = 0
     carbs: Grams = 0
     fat: Grams = 0
     saved_food_id: Optional[Annotated[int, Field(ge=1, le=2**62)]] = None
+    eaten_at: Optional[ClockTime] = None
+    tags: Optional[list[str]] = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tags(cls, v):
+        return None if v is None else clean_tags(v)
+
+
+Severity = Annotated[int, Field(ge=1, le=5)]
+
+
+class SymptomCreate(BaseModel):
+    model_config = TRIMMED
+    date: date
+    time: ClockTime
+    symptom: str = Field(min_length=1, max_length=60)
+    severity: Severity = 3
+    note: Optional[str] = Field(default=None, max_length=500)
 
 
 class AIEstimateRequest(BaseModel):

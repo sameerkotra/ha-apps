@@ -12,7 +12,8 @@ nutrition questions, using your own Ollama server, an OpenAI-compatible service 
 Claude. Each person's calories for today can appear as a Home Assistant sensor for dashboards
 and automations.
 
-- Food log by meal, with day summaries, macro bars and goals
+- Food log by meal, with day summaries, macro bars and goals — calories optional, food tags
+- Symptoms log beside the food, with Patterns: which foods and tags often came before a symptom
 - Saved foods for one-click logging
 - Weight log with daily, weekly and monthly charts
 - Calorie history and a monthly breakdown on the dashboard

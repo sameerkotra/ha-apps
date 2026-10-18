@@ -99,12 +99,25 @@ request, and every request is written to the app's **Log** tab with its token co
 
 ## What the app does
 
+The menu starts with what you use every day — **Food Log**, **Symptoms**, **Dashboard** and
+**Weight** — and, below a line, **Saved Foods**, **Goals**, **AI Assistant** and (for admins)
+**Admin**. On a phone the first four are the bottom bar and the rest are under **⋯ More**.
+
 ### Food Log (the start page)
 - A **date bar** at the top: previous / next day, a date picker and **Today**. Everything on the
   Food Log follows the chosen day. "Today" follows Home Assistant's time zone, not the device's.
-- **Add Food**: meal (breakfast, lunch, dinner, snack), food name, servings, and the calories,
-  protein, carbs and fat of one serving — the entry adds them up for all the servings (2 servings
-  of a 150 kcal food log 300 kcal). **Pick a saved food** fills the form in one click.
+- **Add Food**: meal (breakfast, lunch, dinner, snack), food name, servings, the time you ate it,
+  **tags**, and the calories, protein, carbs and fat of one serving — the entry adds them up for
+  all the servings (2 servings of a 150 kcal food log 300 kcal). **Pick a saved food** fills the
+  form in one click, tags included.
+- **Calories are optional.** Leave them empty to just log what you ate (handy when you're keeping a
+  food diary for symptoms rather than counting). Such an entry shows "—" and isn't counted in the
+  totals; the Day Summary says how many weren't counted.
+- **Time**: leave it empty and it's now (for today) or the meal's usual time (another day:
+  breakfast 08:00, lunch 12:30, dinner 19:00, snack 15:30). Patterns uses it.
+- **Tags** say what's in a food: tap the ones that fit (dairy, gluten, spicy, caffeine…) or type
+  your own in **+ tag** and press Enter. Patterns compares tags as well as foods, so "dairy" covers
+  milk, paneer and yoghurt at once.
 - **✨ Estimate with AI**: type a description in the food name box (or leave it empty to be
   asked) and the AI fills in calories and macros, with a short note about its assumptions.
   Always review the numbers before adding.
@@ -114,10 +127,27 @@ request, and every request is written to the app's **Log** tab with its token co
 
 ### Saved Foods
 - Build foods you eat often ("Protein shake", "Chicken and rice bowl") with serving size and
-  unit, calories, macros and optional notes (recipe, brand, preparation). ✨ Estimate with AI
+  unit, calories (optional), macros, tags and optional notes (recipe, brand, preparation). A saved
+  food's tags come with it each time you log it. ✨ Estimate with AI
   works here too and also fills in the serving size and unit.
 - Each saved food can be **＋ logged** in one click (one serving, as a snack, on today's log),
   edited (✎) or deleted (✕). Long notes open in a popup (⤢).
+
+### Symptoms
+Your own symptom diary, next to your food. It follows the date bar like the Food Log.
+- **Log a Symptom**: tap one of the buttons (the ones you use most come first) or type your own,
+  pick the time (empty = now, for today), **how bad** from 1 (mild) to 5 (severe), and an optional
+  note.
+- **The Day**: that day's food and symptoms together in time order; ✕ deletes a symptom.
+- **Patterns** (last 30 days, 90 days, 6 months or a year): for each symptom, how often and how
+  bad (a strip of days, coloured by the worst that day), and the **tags and foods often before it**
+  — eaten in the hours before it (6 by default) on most of the times it came, and much more often
+  than in the same hours on days without it. A symptom needs to be logged at least 3 times before
+  it's compared.
+- Patterns shows what came together, not what causes what. It gets better the more you log — food
+  as well as symptoms. Talk to a doctor about symptoms that worry you.
+- **⬇ Food & symptoms (CSV)**: everything in that time, in time order (date, time, food or symptom,
+  details, severity, tags, calories, note) — to keep, or to take to a doctor.
 
 ### Weight
 - Log your weight (kg) for any date, with an optional note; delete entries you don't want. The
@@ -222,6 +252,10 @@ before anything is saved.
 | AI requests per person per minute | 20 | Estimates and chat messages; 0 = no limit |
 | AI requests per person per day | 200 | The same per day (Home Assistant's day); deleting entries gives none back; 0 = no limit |
 | Publish daily calories to Home Assistant | on | The household's switch for the daily-calories sensors (each person also turns on their own) |
+| Symptoms to pick from | Bloating, Stomach pain, … | The one-tap symptom buttons, separated by commas (each person's most used come first) |
+| Food tags to pick from | dairy, gluten, wheat, … | The tags offered when logging or saving a food, separated by commas; anyone can add their own |
+| Look back before a symptom (hours) | 6 | How many hours before a symptom Patterns counts what was eaten (1–48) |
+| Times a symptom needs before Patterns compares | 3 | Fewer, and it's listed but not compared (2–50) |
 | Answer the Household Assistant | on | Lets the Household Assistant app tell each person their own day (see *The Household Assistant*) |
 | App-messages signing key | empty | The same secret in every household app: with it, messages between the apps are signed and unsigned ones refused. Never shown again, left out of backups |
 
@@ -236,8 +270,11 @@ Everything else is set inside the app.
 
 ## Who can see what, and where data goes
 
-- Everyone sees and changes only their own data. Admins can switch to another person with the
-  user switcher; this is checked by the app on every request, not just hidden in the page.
+- Everyone sees and changes only their own data — food, symptoms and patterns alike. Admins can
+  switch to another person with the user switcher (and then see that person's food and symptoms
+  too); this is checked by the app on every request, not just hidden in the page.
+- Symptoms never leave the app: not to Home Assistant, not to the AI, not to the Household
+  Assistant.
 - The app is reached only through Home Assistant (ingress). It has no port of its own, and it
   refuses requests that don't come from Home Assistant's own proxy.
 - To Home Assistant it sends only the calorie total for today of each person who chose to publish

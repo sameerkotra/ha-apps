@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.4.0
+
+**New**
+- **Symptoms**: a new page to log what you feel — pick or type a symptom, the time, how bad (1–5) and a note — with
+  the day's food and symptoms side by side in time order. Only you see your symptoms.
+- **Patterns**: for each symptom, how often and how bad, and which foods and food tags often came in the hours
+  before it (compared with days without it). It shows what came together, not what causes it. **⬇ Food & symptoms
+  (CSV)** exports the lot, for a doctor or a spreadsheet.
+- **Calories are optional**: log a food without them (a food diary without counting). Such entries show "—" and the
+  Day Summary says how many weren't counted. Saved foods can be saved without calories too.
+- **Food tags** (dairy, gluten, spicy, caffeine… or your own) on food entries and saved foods; a saved food's tags
+  come with it.
+- **When you ate it**: the Food Log keeps the time (now, or the time you pick; on another day, the meal's usual time).
+- **A shorter menu**: Food Log, Symptoms, Dashboard and Weight first; Saved Foods, Goals, AI Assistant and Admin below
+  a line — on a phone the bottom bar is the first four and **⋯ More** (it no longer scrolls sideways).
+- App settings → **Symptoms and patterns**: the symptoms and tags to pick from, how many hours Patterns looks back,
+  and how often a symptom must be logged before it's compared.
+
 ## 2.3.2
 
 **Security**

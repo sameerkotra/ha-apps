@@ -66,11 +66,40 @@ def _check_key(v: str) -> str:
     return v
 
 
+DEFAULT_SYMPTOMS = ("Bloating, Stomach pain, Heartburn, Nausea, Gas, Diarrhoea, Constipation, Headache, Fatigue, "
+                    "Brain fog, Rash, Itching")
+DEFAULT_FOOD_TAGS = ("dairy, gluten, wheat, eggs, nuts, soy, spicy, fried, sugar, caffeine, alcohol, onion, garlic, "
+                     "beans, raw veg, fruit, processed")
+
+
+def word_list(text: str) -> list[str]:
+    """A comma-separated setting as its words: trimmed, single spaces, no blanks or repeats (case-insensitive)."""
+    out, seen = [], set()
+    for w in (text or "").split(","):
+        w = " ".join(w.split())
+        if w and w.lower() not in seen:
+            seen.add(w.lower())
+            out.append(w)
+    return out
+
+
+def _check_word_list(v: str) -> str:
+    words = word_list(v)
+    if any(len(w) > 60 for w in words):
+        raise ValueError("each one can be at most 60 characters (separate them with commas)")
+    if len(words) > 60:
+        raise ValueError("at most 60 of them")
+    return ", ".join(words)
+
+
 GROUPS = [
     Group("ai", "🤖 AI", "Used by \"✨ Estimate with AI\" and the AI Assistant. Leave the provider on \"Not set up\" to "
           "run without AI — everything else works."),
     Group("limits", "🚦 AI limits", "Keep one person (or a stuck page) from running up a cloud bill or tying up your "
           "AI server. At most two AI requests run at a time for the whole household."),
+    Group("symptoms", "🩺 Symptoms and patterns", "Each person logs their own symptoms on the Symptoms page; nobody "
+          "else sees them (an admin who switches to someone sees their data, as with food). Patterns shows which foods "
+          "and food tags came before a symptom more often than on other days — together, not the cause."),
     Group("ha", "🏠 Home Assistant"),
     Group("assistant", "💬 Household Assistant", "The Household Assistant app answers questions from what the household "
           "apps know. Calorie Tracker tells a person only their own day: calories and macros against their goals."),
@@ -108,6 +137,18 @@ SETTINGS = [
     Setting("ai_per_day", 200, "AI requests per person per day", group="limits", min=0, max=100000, strict=True,
             help="Estimates and chat messages one person can ask for in a day (Home Assistant's day). Deleting "
                  "entries doesn't give any back. 0 = no limit."),
+    Setting("symptom_list", DEFAULT_SYMPTOMS, "Symptoms to pick from", group="symptoms", strict=True,
+            max_length=1000, validators=[_check_word_list],
+            help="Shown as one-tap buttons on the Symptoms page, separated by commas. Anyone can also type their "
+                 "own; the ones a person uses most are offered to them first."),
+    Setting("food_tag_list", DEFAULT_FOOD_TAGS, "Food tags to pick from", group="symptoms", strict=True,
+            max_length=1000, validators=[_check_word_list],
+            help="Offered when logging or saving a food, separated by commas. Anyone can add their own tags too. "
+                 "Patterns compares tags as well as foods, so “dairy” covers milk, paneer and yoghurt at once."),
+    Setting("pattern_hours", 6, "Look back before a symptom (hours)", group="symptoms", min=1, max=48, strict=True,
+            help="Patterns counts what was eaten in this many hours before each symptom."),
+    Setting("pattern_min", 3, "Times a symptom needs before Patterns compares", group="symptoms", min=2, max=50,
+            strict=True, help="Fewer than this and the symptom is listed, but not compared — too few to say anything."),
     # Strict: true/false only (no "yes", 1, …).
     Setting("expose_daily_calories_sensor", True, "Publish daily calories to Home Assistant", group="ha", strict=True,
             help="The household's switch for the sensor.calorie_tracker_<user>_daily_calories sensors: only each "
