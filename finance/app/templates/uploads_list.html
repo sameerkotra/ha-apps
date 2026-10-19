@@ -132,6 +132,22 @@
                 CSV file(s)
                 <input type="file" name="files" id="csv-import-file" accept=".csv,text/csv" multiple required>
             </label>
+            <details class="csv-rows" id="csv-rows">
+                <summary>Header and data rows <span class="hint">(optional)</span></summary>
+                <p class="hint">Left blank, the header is the first row that has the columns below, so lines a bank
+                    puts above it (name, card, report period) are skipped by themselves. To choose, look at the file's
+                    first rows and tap the header row, or type the numbers. They apply to every file in this import.</p>
+                <div class="csv-rows-fields">
+                    <label>Header row
+                        <input type="number" name="header_row" id="csv-header-row" min="1" step="1" inputmode="numeric" placeholder="Find it">
+                    </label>
+                    <label>Data starts on row
+                        <input type="number" name="data_row" id="csv-data-row" min="2" step="1" inputmode="numeric" placeholder="The next row">
+                    </label>
+                    <button type="button" class="btn-secondary" id="csv-rows-show">Show the file's first rows</button>
+                </div>
+                <div id="csv-rows-preview"></div>
+            </details>
             <button type="submit" class="btn-secondary" id="csv-import-btn">Import CSV</button>
         </form>
         <!-- Same round-97 nudge as the PDF form above, mirrored for the
@@ -162,7 +178,10 @@
             does have its own Account value still needs it to match one of
             your account names exactly (case-insensitive), letting one file
             mix accounts per row even with a default picked. The whole file
-            is rejected up front if a required column is missing &mdash;
+            is rejected up front if a required column is missing &mdash; unless
+            its header is a few rows down (see &ldquo;Header and data rows&rdquo;
+            above), and if it can't be found you're shown the file's first rows to
+            choose from &mdash;
             nothing is imported instead of the rows around a bad one being
             silently skipped. If a file has more than one date-like column
             (a credit card's &ldquo;Trans. Date&rdquo; and &ldquo;Post

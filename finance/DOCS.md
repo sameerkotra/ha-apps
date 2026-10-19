@@ -74,7 +74,10 @@ or two years side by side.
 
 ### Upload
 - **Statements**: PDF statements (up to 50 MB each, at most 20 files at a time, with a text layer —
-  scanned images aren't supported) and CSV exports (up to 20 MB each). Each PDF is read by the AI and checked against the balances and
+  scanned images aren't supported) and CSV exports (up to 20 MB each). A CSV whose header isn't
+  the first row (a bank's lines about the name, card and report period above it) is found by
+  itself; to choose, open **Header and data rows** on the CSV form, tap **Show the file's first
+  rows** and tap the header row (or type the header row and the row the data starts on). Each PDF is read by the AI and checked against the balances and
   amounts printed in it. Confirm it against the PDF, or **Re-extract** telling the AI what was
   wrong. Possible duplicates are skipped and can be inserted anyway.
 - **Review**: everything waiting for you.

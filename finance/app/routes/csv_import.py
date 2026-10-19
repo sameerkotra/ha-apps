@@ -78,12 +78,85 @@ def _kept_json(lines: list[str]) -> str | None:
     return json.dumps(kept)
 
 
+# How far down an export's own heading lines (account holder, card, "Time period of report") are looked through
+# for the real header row when the first row isn't it, and how many rows the row picker shows.
+HEADER_SEARCH_ROWS = 30
+PREVIEW_ROWS = 15
+PREVIEW_CELL = 60          # characters of a cell shown in the picker
+
+
+def _map_fields(fieldnames: list[str], date_column: str | None):
+    """The column matching for one header row: (field_map, fatal_error, needs_date_column, date candidates).
+    `field_map` is lower-cased header -> the header as written, plus "date" when a date column was settled."""
+    field_map = {(name or "").strip().lower(): name for name in fieldnames if (name or "").strip()}
+    fatal_error = None
+    needs_date_column = False
+    candidates: list[str] = []
+    if date_column:
+        match = next((n for n in fieldnames if n == date_column), None)
+        if match:
+            field_map["date"] = match
+        else:
+            fatal_error = f"Column “{date_column}” was not found in this file."
+    elif "date" not in field_map:
+        date_like = [name for lower, name in field_map.items() if "date" in lower]
+        if len(date_like) == 1:
+            field_map["date"] = date_like[0]
+        elif len(date_like) > 1:
+            trans_matches = [n for n in date_like if "trans" in n.lower()]
+            if len(trans_matches) == 1:
+                field_map["date"] = trans_matches[0]
+            else:
+                needs_date_column = True
+                candidates = date_like
+    return field_map, fatal_error, needs_date_column, candidates
+
+
+def _missing_columns(field_map: dict, needs_date_column: bool, default_account_id: str) -> list[str]:
+    """The required columns a header row lacks (an undecided date column counts as present: it's there)."""
+    required = (["description"] + ([] if needs_date_column else ["date"])
+                + ([] if default_account_id else ["account"]))
+    if not ("debit" in field_map and "credit" in field_map):
+        required.append("amount")
+    return [r for r in required if r not in field_map]
+
+
+def _find_header_row(records: list[list[str]], date_column: str | None, default_account_id: str) -> int | None:
+    """The 0-based index of the first of the top rows that has every required column, or None. Many bank
+    exports put a few lines about the account and the period above the real header ("Name: …", "Card: …",
+    "Time period of report: …"); those are skipped this way without the person having to say so."""
+    for idx, cells in enumerate(records[:HEADER_SEARCH_ROWS]):
+        if not any((c or "").strip() for c in cells):
+            continue
+        fm, err, needs, _ = _map_fields(cells, date_column)
+        if err is None and not _missing_columns(fm, needs, default_account_id):
+            return idx
+    return None
+
+
+def _preview(records: list[list[str]]) -> list[dict]:
+    """The first rows, numbered as the person sees them (1 = the first row), for the row picker."""
+    return [{"row": i + 1, "cells": [(c or "")[:PREVIEW_CELL] for c in cells]}
+            for i, cells in enumerate(records[:PREVIEW_ROWS])]
+
+
+def _row_number(value) -> int | None:
+    """A row number typed by the person: a whole number from 1, or None for "work it out"."""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
+
+
 def _import_csv_file(
     conn, user_id: str, filename: str | None, raw: bytes,
     accounts_by_name: dict[str, int], default_account_id: str,
     date_column: str | None = None,
     account_types: dict[int, str] | None = None,
     rejected: str | None = None,
+    header_row: int | None = None,
+    data_row: int | None = None,
 ) -> dict:
     """Imports one CSV file and records it as exactly one `csv_imports`
     row, whether it succeeded, partly failed or was rejected outright.
@@ -123,9 +196,21 @@ def _import_csv_file(
     with only one of the two (no "Amount" either) still gets the plain
     "missing column(s): amount" error, the same as before this existed —
     a lone Debit or Credit column alone doesn't unambiguously mean this
-    shape."""
+    shape.
+
+    The header is the first row unless `header_row` (1 = the first row of
+    the file) says otherwise; the data starts on the row after it unless
+    `data_row` says otherwise, and anything between the two is ignored.
+    With no `header_row` and a first row that lacks the required columns,
+    the top HEADER_SEARCH_ROWS rows are searched for one that has them (a
+    bank's own lines about the account and period above the real header).
+    When none is found the result also carries `preview` — the first rows,
+    numbered — so the page can ask which row is the header and where the
+    data starts, and call this again with both."""
     fatal_error: str | None = None
     reader = None
+    preview: list[dict] = []
+    needs_rows = False         # the header wasn't found: the page shows the first rows to choose from
     field_map: dict[str, str] = {}
     default_account_id = (default_account_id or "").strip()
     needs_date_column = False
@@ -141,42 +226,53 @@ def _import_csv_file(
     except storage.UploadRejected as e:
         fatal_error = str(e)
     else:
-        reader = csv.DictReader(io.StringIO(text))
-        if not reader.fieldnames:
+        records = list(csv.reader(io.StringIO(text)))
+        preview = _preview(records)
+        if not records or not any(any((c or "").strip() for c in r) for r in records):
             fatal_error = "That CSV file is empty or has no header row."
         else:
-            field_map = {(name or "").strip().lower(): name for name in reader.fieldnames}
+            if header_row is not None:
+                if header_row > len(records):
+                    fatal_error = f"The file has only {len(records)} rows, so row {header_row} can't be the header."
+                header_idx = header_row - 1
+            else:
+                header_idx = 0
+                fm0, err0, needs0, _ = _map_fields(records[0], date_column)
+                if err0 is None and _missing_columns(fm0, needs0, default_account_id):
+                    found = _find_header_row(records, date_column, default_account_id)
+                    if found is not None:
+                        header_idx = found
+            if fatal_error is None:
+                first_data = (data_row - 1) if data_row is not None else header_idx + 1
+                if first_data <= header_idx:
+                    fatal_error = (f"The data has to start below the header (row {header_idx + 1}), "
+                                   f"not on row {first_data + 1}.")
+            if fatal_error is None:
+                fieldnames = records[header_idx]
+                field_map, fatal_error, needs_date_column, date_column_candidates = _map_fields(
+                    fieldnames, date_column)
+                use_debit_credit = "debit" in field_map and "credit" in field_map
+                if fatal_error is None and not needs_date_column:
+                    # Account is only a required column when no default account was picked. A single Amount
+                    # column is required UNLESS both Debit and Credit are present -- a lone Debit or Credit
+                    # alone doesn't unambiguously replace it.
+                    missing = _missing_columns(field_map, False, default_account_id)
+                    if missing:
+                        fatal_error = (f"CSV is missing required column(s): {', '.join(missing)}"
+                                       + (f" (looked for them in row {header_idx + 1})." if header_row
+                                          else "."))
+                        needs_rows = True
 
-            if date_column:
-                match = next((n for n in reader.fieldnames if n == date_column), None)
-                if match:
-                    field_map["date"] = match
-                else:
-                    fatal_error = f"Column “{date_column}” was not found in this file."
-            elif "date" not in field_map:
-                date_like = [name for lower, name in field_map.items() if "date" in lower]
-                if len(date_like) == 1:
-                    field_map["date"] = date_like[0]
-                elif len(date_like) > 1:
-                    trans_matches = [n for n in date_like if "trans" in n.lower()]
-                    if len(trans_matches) == 1:
-                        field_map["date"] = trans_matches[0]
-                    else:
-                        needs_date_column = True
-                        date_column_candidates = date_like
-
-            use_debit_credit = "debit" in field_map and "credit" in field_map
-
-            if fatal_error is None and not needs_date_column:
-                # Account is only a required column when no default account was picked.
-                # A single Amount column is required UNLESS both Debit and Credit are
-                # present -- a lone Debit or Credit alone doesn't unambiguously replace it.
-                required = ["date", "description"] + ([] if default_account_id else ["account"])
-                if not use_debit_credit:
-                    required.append("amount")
-                missing = [r for r in required if r not in field_map]
-                if missing:
-                    fatal_error = f"CSV is missing required column(s): {', '.join(missing)}."
+                def _rows():
+                    """(row number as in the file, the row as {header: cell}) for every data row."""
+                    width = len(fieldnames)
+                    for idx in range(first_data, len(records)):
+                        cells = records[idx]
+                        if not any((c or "").strip() for c in cells):
+                            continue           # blank lines (csv.DictReader skipped them too)
+                        cells = list(cells) + [""] * (width - len(cells))
+                        yield idx + 1, dict(zip(fieldnames, cells))
+                reader = _rows()
 
     resolved_default: int | None = None
     if fatal_error is None and not needs_date_column and default_account_id:
@@ -193,7 +289,7 @@ def _import_csv_file(
     skipped_rows: list[tuple] = []   # (account_id, date, amount, description, category, reason, matched id)
     skipped_status: list[str] = []
 
-    for i, row in enumerate(reader, start=2) if (fatal_error is None and not needs_date_column) else []:  # row 1 is the header
+    for i, row in reader if (fatal_error is None and not needs_date_column) else []:     # i: the row in the file
         if "status" in field_map:
             # Only settled rows (posted / cleared) are imported: a pending one can
             # still change or vanish. Checked first, so a skipped row never needs
@@ -317,20 +413,23 @@ def _import_csv_file(
         "fatal_error": fatal_error, "row_errors": row_errors, "duplicates": duplicates,
         "skipped_status": skipped_status,
         "needs_date_column": needs_date_column, "date_column_candidates": date_column_candidates,
+        "needs_rows": needs_rows, "preview": preview if needs_rows else [],
     }
 
 
-def _read_and_import(user_id: str, csv_dir: str, upload, default_account_id: str, date_column: str | None) -> dict:
+def _read_and_import(user_id: str, csv_dir: str, upload, default_account_id: str, date_column: str | None,
+                     header_row: int | None = None, data_row: int | None = None) -> dict:
     try:
         raw, rejected = storage.read_upload_sync(upload, storage.MAX_CSV_BYTES), None
     except storage.UploadRejected as e:
         raw, rejected = b"", str(e)
     return _import_one(user_id, csv_dir, upload.filename[:255] if upload.filename else None, raw, default_account_id, date_column,
-                       rejected)
+                       rejected, header_row, data_row)
 
 
 def _import_one(user_id: str, csv_dir: str, filename: str | None, raw: bytes, default_account_id: str,
-                date_column: str | None, rejected: str | None) -> dict:
+                date_column: str | None, rejected: str | None, header_row: int | None = None,
+                data_row: int | None = None) -> dict:
     """One file, on its own connection (called from a worker thread). The file
     is kept in PENDING_DIR/<user>/csv-imports only while it is imported."""
     with get_db() as conn:
@@ -346,7 +445,8 @@ def _import_one(user_id: str, csv_dir: str, filename: str | None, raw: bytes, de
         saved_path, _hash = storage.save_file(csv_dir, "import", ".csv", raw)
         try:
             return _import_csv_file(conn, user_id, filename, raw, accounts_by_name, default_account_id,
-                                    date_column=date_column, account_types=account_types)
+                                    date_column=date_column, account_types=account_types,
+                                    header_row=header_row, data_row=data_row)
         finally:
             storage.remove_stored_file(saved_path)  # a leftover shows on the admin Storage page
 
@@ -357,6 +457,8 @@ async def import_transactions_csv(
     files: list[UploadFile] = File(...),
     default_account_id: str = Form(""),
     date_column: str = Form(""),
+    header_row: str = Form(""),
+    data_row: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -364,7 +466,9 @@ async def import_transactions_csv(
     imported on its own (_import_csv_file). The Uploads page posts with
     `Accept: application/json` and shows the per-file summaries inline; other
     clients get a results page. `date_column` is set when the page resubmits a
-    single file after the person picked its date column. Each file sits in
+    single file after the person picked its date column; `header_row` /
+    `data_row` (1 = the file's first row; blank = worked out) when they chose
+    where the header and the data are. Each file sits in
     PENDING_DIR/<user>/csv-imports only while it is imported."""
     wants_json = "application/json" in request.headers.get("accept", "")
     csv_dir = storage.user_dir(acting.id, "csv-imports")
@@ -377,6 +481,7 @@ async def import_transactions_csv(
         # run them in a thread so the whole app doesn't freeze meanwhile.
         results.append(await asyncio.to_thread(
             _read_and_import, acting.id, csv_dir, upload, default_account_id, date_column or None,
+            _row_number(header_row), _row_number(data_row),
         ))
 
     if wants_json:
@@ -387,6 +492,7 @@ async def import_transactions_csv(
                 "skipped_status_count": len(r["skipped_status"]),
                 "fatal_error": r["fatal_error"],
                 "needs_date_column": r["needs_date_column"], "date_column_candidates": r["date_column_candidates"],
+                "needs_rows": r["needs_rows"], "preview": r["preview"],
             }
             for r in results
         ]})

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2
+
+- **CSV import: lines above the header.** A bank export that starts with its own lines (name, card, time period of the report) before the Date / Description / … header now imports: the header is found among the top rows by itself. Under **Header and data rows** on the CSV form you can also see the file's first rows, tap the header row, or type the header row and the row the data starts on. If the header can't be found, you're shown the first rows to choose from instead of only an error. Row numbers in errors are the file's own.
+
 ## 1.5.1
 
 - **Fixes to one person's data**: The Data dialogs, after a check in the browser: the ⋯ Data menu stays on screen (it opens the other way near an edge or a bottom bar), a wrong name is caught before the copy is downloaded, the copy uses the export's usual choices, the red button is readable in every theme, and the name box only shows when it's needed. Finance's own dialog style no longer squeezes the Data dialogs, and the Data button sits at the right of each person.

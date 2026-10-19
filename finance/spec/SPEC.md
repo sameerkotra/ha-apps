@@ -311,6 +311,19 @@ Uncategorized — it never fails an import.
     **Credit**), plus Account unless an account is picked on the form. A missing
     column rejects the whole file. Unknown columns are ignored; Description is
     used, never Merchant.
+  - **Header row:** the first row, unless it lacks the required columns: then
+    the first of the top 30 rows that has them (`HEADER_SEARCH_ROWS`), which skips
+    a bank's own lines above the header ("Name:", "Card:", "Time period of
+    report:"). The form's optional **Header row** and **Data starts on row**
+    (`header_row`, `data_row`; 1 = the file's first row, blank = worked out) set
+    them; rows between the two are ignored, and blank rows anywhere are skipped.
+    "Show the file's first rows" parses the top of the chosen file in the
+    browser (quoted cells kept whole, so the numbers match) and a tap on a row
+    makes it the header. When no header is found, or the chosen row lacks the
+    columns, nothing is imported and the result carries `needs_rows` and
+    `preview` (the first 15 rows, numbered, cells cut to 60 characters): the page
+    shows them to choose from and resubmits that file with the rows. Row numbers
+    in errors are the file's own.
   - **Date column:** "Date" wins; else a single column containing "date"; else
     the one containing "trans"; else the page asks which to use and resubmits
     that file. Dates are normalised to ISO; an unreadable date fails that row.

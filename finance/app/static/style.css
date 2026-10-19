@@ -1173,3 +1173,29 @@ button.nav-item:hover { background: var(--panel-alt); color: var(--text); }
    short name put the menu off the left of a phone's screen. */
 .u-card .u-data { float: right; }
 .u-data-import { margin: 0.5rem 0 0.9rem; }
+
+/* CSV import: choosing the header row and where the data starts (Uploads → Import a CSV) */
+.csv-rows { margin: 0.25rem 0 0.75rem; min-width: 0; max-width: 100%; }   /* a flex child: never wider than the form */
+.csv-rows > summary { cursor: pointer; font-size: 0.9rem; }
+.csv-rows-fields { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: flex-end; margin: 0.5rem 0; }
+.csv-rows-fields label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+.csv-rows-fields input[type=number] { width: 8rem; }
+.csv-preview-wrap { overflow-x: auto; max-width: 100%; width: 100%; border: 1px solid var(--border); border-radius: 8px; margin: 0.5rem 0 0.25rem; }
+.csv-preview { border-collapse: collapse; font-size: 0.8rem; width: max-content; min-width: 100%; }
+.csv-preview td, .csv-preview th { padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); white-space: nowrap;
+  max-width: 16rem; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.csv-preview th[scope=row] { color: var(--text-dim); font-weight: 600; position: sticky; left: 0; background: var(--card, var(--panel)); }
+.csv-preview tr { cursor: pointer; }
+.csv-preview tr:hover td, .csv-preview tr:focus td { background: var(--panel-alt, rgba(127, 127, 127, .08)); }
+.csv-preview tr.is-header td { font-weight: 700; color: var(--accent); }
+.csv-preview tr.is-header th[scope=row]::after { content: " header"; font-weight: 400; }
+.csv-preview tr.is-skipped td { color: var(--text-dim); text-decoration: line-through; opacity: .7; }
+.csv-rows-picker { min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+/* the phone layout's stacked "card" rows would make the preview unreadable: it stays a small table that scrolls */
+@media (max-width: 767px) {
+    .csv-preview { display: table; width: max-content; min-width: 100%; }
+    .csv-preview tbody { display: table-row-group; width: auto; }
+    .csv-preview tr { display: table-row; width: auto; background: none; border: 0; border-radius: 0; margin: 0; padding: 0; }
+    .csv-preview td, .csv-preview th { display: table-cell; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
+    .csv-preview td::before { content: none; }
+}
