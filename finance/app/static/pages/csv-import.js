@@ -120,7 +120,7 @@
                     var pref = preferredMismatch(form.default_account_id.value);
                     if (pref) {
                         warningText.textContent = "This account's preferred upload method is " +
-                            (pref === "pdf" ? "PDF" : "CSV") +
+                            ({ pdf: "PDF", qfx: "QFX" }[pref] || pref.toUpperCase()) +
                             ", but you're importing a CSV. Wrong account, or import anyway?";
                         warningEl.style.display = "block";
                         return;

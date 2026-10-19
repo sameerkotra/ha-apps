@@ -118,7 +118,7 @@ def _craft(tables=None, files=(), schema=None, app="finance"):
 def test_schema_is_the_latest_migration():
     # A migration that changes a person's table needs an UPGRADES step in app/people_data.py; then move this on.
     from app import people_data as pdata
-    assert pdata.SCHEMA == 27 and pdata.UPGRADES == {}
+    assert pdata.SCHEMA == 28 and set(pdata.UPGRADES) == {27}
 
 
 def test_export_delete_import_gives_back_the_same(env):
@@ -134,7 +134,7 @@ def test_export_delete_import_gives_back_the_same(env):
         names = z.namelist()
         manifest = json.loads(z.read("manifest.json"))
         accounts = json.loads(z.read("data/accounts.json"))
-    assert manifest["app"] == "finance" and manifest["schema"] == 27 and manifest["person"]["name"] == "Tester"
+    assert manifest["app"] == "finance" and manifest["schema"] == 28 and manifest["person"]["name"] == "Tester"
     assert "files/stmt-1.pdf" in names and "data/toll_trips.json" not in names
     assert all("user_id" not in a for a in accounts)
     assert "user_access" not in str(names) and "saved_reports" not in str(names)

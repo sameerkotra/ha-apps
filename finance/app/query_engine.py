@@ -43,11 +43,12 @@ REGISTRY: dict[str, TableSpec] = {
     "accounts": TableSpec("Bank and credit-card accounts: name, type, bank, last 4, archived, preferred upload method, website_url.", _LIVE),
     "transactions": TableSpec(
         "Every bank/card transaction. amount is signed: negative is money out, positive is money in. "
-        "transfer_pair_id is set for a transfer between your own accounts; is_excluded = 1 is left out of dashboards.",
+        "transfer_pair_id is set for a transfer between your own accounts; is_excluded = 1 is left out of dashboards; "
+        "fitid is the bank's own id of a row from a QFX file.",
         _LIVE + _LIVE_ACCOUNT
         + " AND (x.statement_id IS NULL OR EXISTS (SELECT 1 FROM main.statements s WHERE s.id = x.statement_id AND s.deleted_at IS NULL))"
         + " AND (x.csv_import_id IS NULL OR EXISTS (SELECT 1 FROM main.csv_imports c WHERE c.id = x.csv_import_id AND c.deleted_at IS NULL))"),
-    "statements": TableSpec("Uploaded PDF statements: account, statement_period (month), status, previous and new balance, when confirmed.",
+    "statements": TableSpec("Uploaded statements: account, source ('pdf' or 'qfx'), statement_period (month), period_start/period_end (a QFX file's own dates), status, previous and new balance, when confirmed.",
                             _LIVE + _LIVE_ACCOUNT),
     "csv_imports": TableSpec("Each CSV import: file, rows imported, duplicates, errors, rows skipped by status. "
                              "Transactions link to it by csv_import_id.", _LIVE),

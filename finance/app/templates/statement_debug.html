@@ -5,7 +5,8 @@
     <a href="review" class="btn-secondary">Review</a></p>
 <h1>Debug: {{ statement.original_filename or "statement #" ~ statement.id }}</h1>
 <p class="hint">Admin-only troubleshooting view — not shown to regular users.</p>
-<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ statement.id }}&amp;embed=1">View PDF</button></p>
+{% set is_qfx = statement.source == "qfx" %}
+{% if not is_qfx %}<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ statement.id }}&amp;embed=1">View PDF</button></p>{% endif %}
 
 <div class="card">
     <h3>Statement details</h3>
@@ -15,13 +16,68 @@
         <tr><th>Status</th><td>{{ statement.status }}</td></tr>
         <tr><th>Current step</th><td>{{ statement.current_step or "—" }}</td></tr>
         <tr><th>Error</th><td>{{ statement.error_message or "—" }}</td></tr>
-        <tr><th>Raw text length</th><td>{{ statement.raw_text_length or "—" }}</td></tr>
+        <tr><th>Source</th><td>{{ "QFX / OFX file" if is_qfx else "PDF" }}</td></tr>
+        {% if is_qfx %}<tr><th>Period</th><td>{{ period_label(statement.period_start, statement.period_end) or "—" }} ({{ statement.statement_period or "—" }})</td></tr>
+        <tr><th>Account number</th><td>{% if statement.account_number_last4 %}····{{ statement.account_number_last4 }}{% else %}—{% endif %}</td></tr>
+        {% else %}<tr><th>Raw text length</th><td>{{ statement.raw_text_length or "—" }}</td></tr>{% endif %}
         <tr><th>File hash</th><td><code>{{ statement.file_hash or "—" }}</code></td></tr>
     </table>
 </div>
 
 {% with usage=ai_usage_view(statement.ai_usage), usage_title="AI usage — last processing run" %}{% include "_ai_usage.html" %}{% endwith %}
 
+{% if is_qfx %}
+<div class="card">
+    <h3>QFX / OFX file</h3>
+    {% if qfx %}
+    {% set file = qfx.file or {} %}
+    <p class="hint">OFX {{ file.version or "?" }}, read as {{ file.encoding or "?" }}{% if file.org %}, from {{ file.org }}{% endif %}. Account numbers are only ever kept as their last 4 digits.</p>
+    <table class="statements-table">
+        <thead><tr><th>Block</th><th>Type</th><th>Account number</th><th>Dates</th><th>Rows</th><th>Went to</th></tr></thead>
+        <tbody>
+        {% for b in file.blocks or [] %}
+        <tr>
+            <td data-label="Block">{{ b.index + 1 }}{% if b.index == qfx.block %} (this statement){% endif %}</td>
+            <td data-label="Type">{{ b.type.replace('_', ' ') }}{% if b.currency %} · {{ b.currency }}{% endif %}</td>
+            <td data-label="Account number">{% if b.last4 %}····{{ b.last4 }}{% else %}—{% endif %}</td>
+            <td data-label="Dates">{{ period_label(b.start, b.end) or "—" }}</td>
+            <td data-label="Rows">{{ b.rows }}</td>
+            <td data-label="Went to">{{ b.account }}{% if b.statement_id and b.statement_id != statement.id %} (<a href="statement-debug?id={{ b.statement_id }}">statement #{{ b.statement_id }}</a>){% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% for note in file.skipped or [] %}<p class="hint">{{ note }}</p>{% endfor %}
+    {% if qfx.created_account %}<p class="hint">The account was created from this file.</p>{% endif %}
+    <p class="hint"><strong>Sign rule:</strong> {{ qfx.sign_rule }}</p>
+    <p class="hint"><strong>Balance check:</strong> {{ qfx.continuity or "Not checked (no closing balance in the file)." }}</p>
+    {% for w in qfx.warnings or [] %}<p class="hint" style="color: var(--warn);">{{ w }}</p>{% endfor %}
+    <h3>Every row in the file</h3>
+    <table class="statements-table">
+        <thead><tr><th>Row</th><th>Date</th><th>Date from</th><th>As written</th><th>Stored</th><th>FITID</th><th>Description</th><th>Outcome</th></tr></thead>
+        <tbody>
+        {% for r in qfx.rows or [] %}
+        <tr>
+            <td data-label="Row">{{ r.line }}{% if r.type %} <span class="hint">{{ r.type }}</span>{% endif %}</td>
+            <td data-label="Date">{{ r.date or "—" }}</td>
+            <td data-label="Date from">{{ r.date_from }}{% if r.date_from == "DTUSER" and r.posted and r.posted != r.date %} <span class="hint">(posted {{ r.posted }})</span>{% endif %}</td>
+            <td data-label="As written">{{ r.raw_amount or "—" }}</td>
+            <td data-label="Stored">{% if r.amount is defined and r.amount is not none %}{{ "%.2f"|format(r.amount) }}{% else %}—{% endif %}</td>
+            <td data-label="FITID"><code>{{ r.fitid or "—" }}</code></td>
+            <td data-label="Description">{{ r.description }}</td>
+            <td data-label="Outcome">{{ r.outcome }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% if qfx.rows_total and qfx.rows_total > (qfx.rows or [])|length %}<p class="hint">… and {{ qfx.rows_total - (qfx.rows or [])|length }} more rows.</p>{% endif %}
+    {% else %}
+    <p class="hint">No reading recorded for this statement.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if not is_qfx %}
 <div class="card">
     <h3>Resend to AI <span id="resendDot" class="status-dot"></span></h3>
     <p class="hint" id="resendHint">
@@ -46,9 +102,13 @@
     {% endif %}
     {% if resend_usage is defined %}{% with usage=ai_usage_view(resend_usage), usage_title="AI usage — this re-send", usage_card=false %}{% include "_ai_usage.html" %}{% endwith %}{% endif %}
 </div>
+{% endif %}
 
 <div class="card">
     <h3>Transactions from this statement</h3>
+    {% if is_qfx %}
+    <p class="hint">Read straight from the file: there's no amount check against printed text.</p>
+    {% else %}
     <p class="hint">
         Amount check: each transaction's amount is checked against every
         money-shaped figure actually printed in the statement's extracted
@@ -57,13 +117,14 @@
         misread or fabricated (a real case this caught: $287.00 read back
         as $2187).
     </p>
+    {% endif %}
     {% if transactions %}
     {% set confirmed_count = transactions | selectattr("review_status", "equalto", "clean") | list | length %}
     {% set flagged_count = transactions | selectattr("review_status", "equalto", "pending_review") | list | length %}
     <p class="hint">{{ confirmed_count }} confirmed, {{ flagged_count }} flagged — amount not found anywhere in the statement text.</p>
     <table class="statements-table">
         <thead>
-            <tr><th>Date</th><th>Amount</th><th>Description</th><th>Amount check</th></tr>
+            <tr><th>Date</th><th>Amount</th><th>Description</th><th>{{ "FITID" if is_qfx else "Amount check" }}</th></tr>
         </thead>
         <tbody>
             {% for t in transactions %}
@@ -71,8 +132,9 @@
                 <td data-label="Date">{{ t.date }}</td>
                 <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
                 <td data-label="Description">{{ t.description }}</td>
-                <td data-label="Amount check">
-                    {% if t.review_status == "clean" %}
+                <td data-label="{{ 'FITID' if is_qfx else 'Amount check' }}">
+                    {% if is_qfx %}<code>{{ t.fitid or "—" }}</code>
+                    {% elif t.review_status == "clean" %}
                     <span class="status-badge status-complete">confirmed in statement text</span>
                     {% else %}
                     <span class="status-badge status-pending_review">not found in statement text</span>
@@ -93,6 +155,9 @@
     <p class="hint" style="white-space: pre-wrap;">{{ statement.extraction_notes }}</p>
     {% endif %}
     <h3>Balance reconciliation</h3>
+    {% if is_qfx %}
+    <p class="hint">The closing balance is the file's LEDGERBAL; OFX has no opening balance, so it is the closing balance less every row of the period (duplicates skipped included). It's checked against the previous statement that ends the day before this one starts.</p>
+    {% else %}
     <p class="hint">
         Sum of extracted transactions checked against the statement's own
         printed previous → new balance movement — catches a missing or
@@ -100,8 +165,9 @@
         (every row can individually check out and the total still be
         wrong).
     </p>
+    {% endif %}
     {% if statement.previous_balance is none or statement.new_balance is none %}
-    <p class="hint">Not checked — couldn't find both a previous/beginning and a new/ending balance in the statement text.</p>
+    <p class="hint">Not checked — {{ "the file has no closing balance." if is_qfx else "couldn't find both a previous/beginning and a new/ending balance in the statement text." }}</p>
     {% else %}
     <table class="detail-table">
         <tr><th>Previous balance</th><td>{{ "%.2f"|format(statement.previous_balance) }}</td></tr>
@@ -110,13 +176,13 @@
     {% if statement.balance_mismatch %}
     <p class="hint" style="color: var(--danger);">{{ statement.balance_mismatch }}</p>
     {% else %}
-    <p class="hint" style="color: var(--accent);">Reconciled — extracted transactions account for the statement's printed balance movement.</p>
+    <p class="hint" style="color: var(--accent);">{{ "No mismatch with the previous statement." if is_qfx else "Reconciled — extracted transactions account for the statement's printed balance movement." }}</p>
     {% endif %}
     {% endif %}
     {% if duplicate_transactions %}
     <p class="hint" style="color: var(--danger);">
         {{ duplicate_transactions|length }} line{{ "s" if duplicate_transactions|length != 1 else "" }}
-        from this extraction skipped during import (duplicate, or a $0.00 line that wasn't a real charge):
+        {{ "noted while reading the file (the sign rule, rows left out, duplicates):" if is_qfx else "from this extraction skipped during import (duplicate, or a $0.00 line that wasn't a real charge):" }}
     </p>
     <ul class="hint">
         {% for note in duplicate_transactions %}
@@ -130,6 +196,7 @@
 {% include "_categorization_breakdown.html" %}
 {% endwith %}
 
+{% if not is_qfx %}
 <div class="card">
     <h3>Extracted amounts (deterministic)</h3>
     <p class="hint">
@@ -160,4 +227,5 @@
     <p class="hint">No response captured yet — the AI call may not have run (or hasn't completed).</p>
     {% endif %}
 </div>
+{% endif %}
 {% endblock %}

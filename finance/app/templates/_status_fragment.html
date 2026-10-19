@@ -8,9 +8,9 @@
 {% elif row.status == "error" %}
 <span id="status-cell-{{ row.id }}" class="status-cell-stack">
   <span class="status-badge status-error">Error: {{ row.error_message }}</span>
-  <button hx-post="statement-restart?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
+  {% if row.source != "qfx" %}{# a QFX file isn't kept: there's nothing to read again #}<button hx-post="statement-restart?id={{ row.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}"
           hx-target="closest tr" hx-swap="outerHTML"
-          class="restart-btn">Restart</button>
+          class="restart-btn">Restart</button>{% endif %}
 </span>
 {% elif row.status == "pending_review" and row.needs_confirmation and not row.confirmed_at and not row.flagged_count %}
 <span id="status-cell-{{ row.id }}" class="status-cell-stack">

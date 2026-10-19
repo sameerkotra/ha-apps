@@ -1,7 +1,7 @@
--- Finance Dashboard: the database schema as migrations 0001-0024 leave it (generated; the
+-- Finance Dashboard: the database schema as migrations 0001-0028 leave it (generated; the
 -- migrations in finance/migrations are the source of truth). SQLite, WAL mode, foreign keys on.
 
-CREATE TABLE accounts (
+CREATE TABLE "accounts" (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id               TEXT    NOT NULL,
     name                  TEXT    NOT NULL,
@@ -10,9 +10,11 @@ CREATE TABLE accounts (
     account_number_last4  TEXT,                                  -- masked, never the full number
     is_archived           INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),   -- section 11, non-destructive
     created_at            TEXT    NOT NULL DEFAULT (datetime('now')),
-    deleted_at            TEXT                                   -- section 11: soft-delete, Scope B; NULL = active
-, preferred_upload_method TEXT NOT NULL DEFAULT 'both'
-    CHECK (preferred_upload_method IN ('both', 'pdf', 'csv')), website_url TEXT);
+    deleted_at            TEXT,                                  -- section 11: soft-delete, Scope B; NULL = active
+    preferred_upload_method TEXT NOT NULL DEFAULT 'both'
+        CHECK (preferred_upload_method IN ('both', 'pdf', 'csv', 'qfx')),
+    website_url           TEXT
+);
 
 CREATE TABLE ai_usage_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,7 +99,7 @@ CREATE TABLE known_users (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+, assistant_ok INTEGER NOT NULL DEFAULT 1);
 
 CREATE TABLE recurring_overrides (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,7 +193,7 @@ CREATE TABLE statements (
                                                                      -- of the discrepancy. Whole-statement flag, not
                                                                      -- tied to any one transaction row — see
                                                                      -- app/parser/pipeline.py's _check_reconciliation.
-, categorization_llm_prompt TEXT, categorization_llm_raw_response TEXT, categorization_llm_error TEXT, needs_confirmation INTEGER NOT NULL DEFAULT 0, confirmed_at TEXT, duplicate_transactions TEXT, extraction_notes TEXT, ai_usage TEXT);
+, categorization_llm_prompt TEXT, categorization_llm_raw_response TEXT, categorization_llm_error TEXT, needs_confirmation INTEGER NOT NULL DEFAULT 0, confirmed_at TEXT, duplicate_transactions TEXT, extraction_notes TEXT, ai_usage TEXT, source TEXT NOT NULL DEFAULT 'pdf' CHECK (source IN ('pdf', 'qfx')), period_start TEXT, period_end TEXT, import_details TEXT);
 
 CREATE TABLE toll_cars (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,7 +359,7 @@ CREATE TABLE transactions (
                                                                     -- flagged purely by balance reconciliation
                                                                     -- doesn't set this on any row — see
                                                                     -- app/routes/transactions.py's review_queue.
-, category_source TEXT, category_matched_pattern TEXT, csv_import_id INTEGER REFERENCES csv_imports(id) ON DELETE SET NULL);
+, category_source TEXT, category_matched_pattern TEXT, csv_import_id INTEGER REFERENCES csv_imports(id) ON DELETE SET NULL, fitid TEXT);
 
 CREATE TABLE user_access (
     viewer_id   TEXT NOT NULL,
@@ -421,6 +423,14 @@ CREATE INDEX idx_custom_categories_user ON custom_categories(user_id);
 
 CREATE INDEX idx_recurring_overrides_user ON recurring_overrides(user_id);
 
+CREATE INDEX idx_skipped_duplicates_csv_import ON skipped_duplicates(csv_import_id);
+
+CREATE INDEX idx_skipped_duplicates_inserted ON skipped_duplicates(inserted_transaction_id);
+
+CREATE INDEX idx_skipped_duplicates_matched ON skipped_duplicates(matched_transaction_id);
+
+CREATE INDEX idx_skipped_duplicates_statement ON skipped_duplicates(statement_id);
+
 CREATE INDEX idx_skipped_duplicates_user ON skipped_duplicates (user_id, status);
 
 CREATE INDEX idx_statements_account  ON statements(account_id);
@@ -459,6 +469,8 @@ CREATE INDEX idx_toll_transactions_device ON toll_transactions (device_ref);
 
 CREATE INDEX idx_toll_transactions_statement ON toll_transactions (statement_id);
 
+CREATE INDEX idx_toll_transactions_trip ON toll_transactions(trip_id);
+
 CREATE INDEX idx_toll_transactions_user_date ON toll_transactions (user_id, date);
 
 CREATE INDEX idx_toll_trips_user ON toll_trips (user_id, started_at);
@@ -473,11 +485,15 @@ CREATE INDEX idx_transactions_dedup      ON transactions(account_id, date, amoun
 
 CREATE INDEX idx_transactions_deleted    ON transactions(deleted_at) WHERE deleted_at IS NOT NULL;
 
+CREATE INDEX idx_transactions_fitid ON transactions(account_id, fitid) WHERE fitid IS NOT NULL;
+
 CREATE INDEX idx_transactions_review     ON transactions(review_status) WHERE review_status = 'pending_review';
 
 CREATE INDEX idx_transactions_statement  ON transactions(statement_id);
 
 CREATE INDEX idx_transactions_user       ON transactions(user_id);
+
+CREATE INDEX idx_transactions_user_date ON transactions(user_id, date) WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_utility_bills_deleted  ON utility_bills(deleted_at) WHERE deleted_at IS NOT NULL;
 
@@ -492,15 +508,3 @@ CREATE INDEX idx_utility_bills_status   ON utility_bills(status) WHERE status = 
 CREATE INDEX idx_utility_bills_type     ON utility_bills(user_id, utility_type);
 
 CREATE INDEX idx_utility_bills_user     ON utility_bills(user_id);
-
-CREATE INDEX idx_transactions_user_date ON transactions(user_id, date) WHERE deleted_at IS NULL;
-
-CREATE INDEX idx_skipped_duplicates_statement ON skipped_duplicates(statement_id);
-
-CREATE INDEX idx_skipped_duplicates_csv_import ON skipped_duplicates(csv_import_id);
-
-CREATE INDEX idx_skipped_duplicates_matched ON skipped_duplicates(matched_transaction_id);
-
-CREATE INDEX idx_skipped_duplicates_inserted ON skipped_duplicates(inserted_transaction_id);
-
-CREATE INDEX idx_toll_transactions_trip ON toll_transactions(trip_id);

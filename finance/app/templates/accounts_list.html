@@ -32,9 +32,10 @@
         <label>
             Preferred upload method
             <select name="preferred_upload_method">
-                <option value="both" selected>Either PDF or CSV</option>
+                <option value="both" selected>Any (PDF, CSV or QFX)</option>
                 <option value="pdf">PDF only</option>
                 <option value="csv">CSV only</option>
+                <option value="qfx">QFX / OFX only</option>
             </select>
         </label>
         <label>
@@ -47,7 +48,7 @@
         Preferred upload method is just a reminder &mdash; picking it doesn't stop
         you from uploading the other kind, it just warns you first (with the
         option to proceed anyway) in case the wrong account got picked. Leave it
-        on &ldquo;Either&rdquo; for an account you import both ways.
+        on &ldquo;Any&rdquo; for an account you import more than one way.
     </p>
 </details>
 
@@ -86,7 +87,8 @@
             <td data-label="Preferred upload">
                 {% if a.preferred_upload_method == "pdf" %}PDF only
                 {% elif a.preferred_upload_method == "csv" %}CSV only
-                {% else %}Either{% endif %}
+                {% elif a.preferred_upload_method == "qfx" %}QFX only
+                {% else %}Any{% endif %}
             </td>
             <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
             <td data-label="">

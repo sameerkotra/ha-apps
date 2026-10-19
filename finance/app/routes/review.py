@@ -210,9 +210,11 @@ def statement_remove_transaction(
         conn.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
 
         stmt = conn.execute(
-            "SELECT previous_balance, new_balance FROM statements WHERE id = ?", (statement_id,)
+            "SELECT previous_balance, new_balance, source FROM statements WHERE id = ?", (statement_id,)
         ).fetchone()
-        if stmt["previous_balance"] is not None and stmt["new_balance"] is not None:
+        # A QFX statement's opening balance is worked out from its own rows (section 4a): its check is against
+        # the previous statement, which removing a row doesn't settle, so it's left as it is.
+        if stmt["source"] != "qfx" and stmt["previous_balance"] is not None and stmt["new_balance"] is not None:
             remaining = conn.execute(
                 "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE statement_id = ? AND deleted_at IS NULL",
                 (statement_id,),

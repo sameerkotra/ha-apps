@@ -8,7 +8,7 @@ so keep them stable. The database schema, as the migrations leave it, is in
 `finance_schema.sql` next to this file.
 
 A self-hosted Home Assistant app for one household. It reads bank and
-credit-card statements (PDF or CSV) — PDFs with the AI model the admin chooses
+credit-card statements (PDF, QFX/OFX or CSV) — PDFs with the AI model the admin chooses
 (section 22) — and, optionally, utility bills and toll statements (section
 23), and turns them into searchable transactions, dashboards, reports and
 comparisons. Each Home Assistant user sees only their own data unless the admin
@@ -128,7 +128,12 @@ the acting user's id, and every write by id first checks ownership.
 1. **Upload** (Upload → Statements): one account, several PDFs per request, and a "Skip
    the PDF confirmation step" box (unchecked by default, section 7). Each file
    must be a PDF of at most 50 MB (`MAX_PDF_MB`), at most 20 files per request.
-   Password-protected PDFs are not supported.
+   Password-protected PDFs are not supported. The same form takes QFX/OFX files
+   (section 4a): each file goes its own way by its content (`%PDF-` in its first
+   1 KB, or OFX's markers), so one upload can mix them; anything else is refused
+   ("isn't a PDF or a QFX/OFX file"). The account menu's first option, **Match by
+   account number**, is for QFX only: a PDF sent with it is refused ("Pick an
+   account for PDF files").
 2. **One job at a time.** Statements, utility bills and toll statements share one
    in-memory FIFO queue with a single worker (`app/jobs.py`); every vision call —
    admin debug re-sends included — holds one lock, so the local model never does
@@ -176,6 +181,100 @@ the acting user's id, and every write by id first checks ownership.
 7. **Admin Debug** (`statement-debug`): steps, skipped lines, raw model response,
    categorization breakdown, and a re-send that waits up to 30 minutes.
 
+## 4a. QFX / OFX statements
+
+A bank's "Download transactions → Quicken (QFX)" or "Money (OFX)" file becomes a
+**statement** like a PDF (Statement history, a period, balances, delete as a unit,
+duplicates checked, rows categorized), but it is read in the request, with no queue and
+no AI, and there is no confirmation step (nothing to compare against a picture).
+No App setting: a household that never uses QFX sees no difference.
+
+1. **Recognising it** (`app/ofx.py`): a file is OFX when its first 1 KB has `OFXHEADER`
+   or `<OFX>` (any case); `.qfx`, `.ofx` and `.qbo` are offered by the picker. A web
+   page saved as `.qfx` is refused ("That isn't a QFX/OFX file — it looks like a web
+   page. Download it again from your bank."), as are an empty file, one with no
+   transactions, and one over 20 MB (`MAX_CSV_MB`); at most 20 files per request. The
+   file sits in `PENDING_DIR/<user>/` only while it is read.
+2. **The reader.** No dependency and no XML parser: a small tolerant tag reader for
+   OFX 1.x SGML (leaf tags often not closed, closed at the next `<`) and OFX 2.x XML,
+   any tag case. Comments, `<!DOCTYPE>` / `<!ENTITY>` declarations and `<?…?>` are
+   skipped; only `&amp; &lt; &gt; &quot; &apos;` and numeric `&#NN;` are resolved, so an
+   entity can never pull in a file or expand itself (`&xxe;` stays as written). Text is
+   Windows-1252 for `CHARSET:1252` / `ENCODING:USASCII`, UTF-8 when the header says so,
+   else UTF-8 then Windows-1252.
+3. **What is read** (everything else, Quicken's `<INTU.BID>` and `AVAILBAL` included,
+   is ignored): each `STMTRS` (bank) and `CCSTMTRS` (card) block is one statement — its
+   account type (`CHECKING` → checking; `SAVINGS`, `MONEYMRKT`, `CD` → savings; a card
+   block → credit card), the **last 4 digits** of `ACCTID` (the full number is never
+   stored, shown or logged), `CURDEF` (a currency other than USD is a warning, not a
+   refusal), `DTSTART` / `DTEND`, `LEDGERBAL/BALAMT` and every `STMTTRN`. `INVSTMTRS` and
+   loan statements are refused ("Only bank and credit card QFX files are supported."); a
+   file with both kinds imports the bank and card blocks and says what it skipped.
+4. **Rows.** Date: `DTUSER` when present, else `DTPOSTED` (as the CSV import prefers
+   "Trans. Date"); `YYYYMMDD[HHMMSS[.XXX]][±H:TZ]` → the date part, the time zone ignored
+   on purpose; when `DTUSER` was used, `DTPOSTED` goes in `post_date`. Amount: `TRNAMT`
+   to cents, comma decimals (`-4,50`, `1.234,56`) read too. Description: `NAME`, with
+   `MEMO` after " · " when it isn't already part of NAME (OFX 1.x cuts NAME at 32
+   characters; a MEMO that repeats the cut NAME in full replaces it); a check with no
+   name is "Check 1234"; cut to 500 characters. A row with no date, no amount, an amount
+   that isn't a number or 0.00 is left out and listed on the debug page; with no usable
+   row at all the statement ends as `error` (no Restart: the file isn't kept).
+5. **Signs** (section 8). Checking/savings: as written. Credit card: every sign is
+   flipped (OFX writes a purchase as negative) — unless most `TRNTYPE=DEBIT` rows are
+   already positive, a bank that uses Finance's convention: then as written, and the
+   debug page says which rule was used. The closing balance follows the same rule. A
+   card's negative rows are categorized "Payments", as for a PDF.
+6. **Which account** (`app/qfx_import.py`). One block with an account picked on the
+   form: that account — but if both last 4 are known and differ, nothing is saved and the
+   page asks first ("This file is for an account ending 1234, but Visa ends 9876. Use
+   Visa anyway, or pick another account?"). With **Match by account number** (or for a
+   file with several blocks), each block goes to the account with the same last 4 and
+   type (a bank block takes the other bank type if no account has the exact one). Several
+   matches, no number, or no match → the answer is `needs_account` with a question per
+   block (`reason`: `last4_mismatch`, `several`, `no_number`, `no_match`), the person's
+   accounts and a suggested new name (`<ORG>` or the type, plus the last 4, made unique).
+   The page shows a menu per block (its accounts and "+ Create it" with the name) and
+   sends the same file again with `block_accounts` (`{"0": 12, "1": {"new": "Chase
+   1234"}}`) and `confirm_last4=1`, like the CSV date-column picker. A created account has
+   the block's type, `bank_name` = `<ORG>`, the last 4 and preferred upload method `qfx`.
+   An account's empty last 4 is filled in from the file.
+7. **Saving**, in one `BEGIN IMMEDIATE` transaction per file (in a worker thread, like
+   the CSV import): created accounts, filled-in last 4, one `statements` row per block
+   (`source = 'qfx'`, `status = 'complete'` — `pending_review` on a balance mismatch,
+   `needs_confirmation = 0`, `statement_period` = DTEND's month, `period_start` /
+   `period_end` = DTSTART / DTEND, `original_filename`, `file_hash`, no `pdf_path`,
+   `import_details` = the debug record), their rows (`transactions.fitid`), the skipped
+   duplicates and transfer linking (section 8). Then categories (section 9: rules, then
+   one AI batch for the file) after the commit, as for a CSV. Recurring charges are
+   unchanged.
+8. **Duplicates** (section 6): the same `file_hash` as a live statement is refused
+   ("Already uploaded on Mar 3, 2026."). Rows: (1) the same account and `FITID` as a live
+   transaction → skipped (index `(account_id, fitid)`); (2) otherwise the usual
+   same-date / amount / description check — a row with a new FITID only against rows
+   with no FITID (from PDFs and CSVs: two coffees with their own FITIDs are two rows), a
+   row without one against every row; (3) the same FITID twice in one file counts once.
+   Every skipped row goes to `skipped_duplicates` (`on_file`, or `repeated` inside the
+   file), so **Insert anyway** works. Between two QFX files FITID decides; a later PDF of
+   the same month meets the QFX rows through the date / amount / description check.
+9. **Balances.** `new_balance` = LEDGERBAL. OFX has no opening balance, so
+   `previous_balance` = closing balance − the sum of the period's rows (the ones skipped
+   as already on file included: they belong to the period; a row repeated in the file
+   counted once). When the account has a live statement whose `period_end` is the day
+   before DTSTART, its `new_balance` must equal this `previous_balance` within a cent, or
+   `balance_mismatch` is set ("… a download in between may be missing") and the statement
+   waits in Review (**Acknowledge** completes it). Removing a row from a QFX statement on
+   Review doesn't recompute it (section 7's recompute is for a PDF's printed balances).
+10. **Statement history:** a "QFX" badge on the file, the period as "Mar 3 – Jun 1, 2026"
+    (`ofx.period_label`; both years when they differ) and the transaction count; no Open
+    PDF, Re-extract or Restart. Delete as a unit, Restore and purge work as for any
+    statement (there's no PDF to purge). The account page shows the same period.
+11. **Admin debug** (`statement-debug`): the file's version, encoding and `<ORG>`, every
+    block (type, last 4, currency, dates, rows, the account it went to and its statement),
+    the sign rule, the balance check, and every row with the date used (DTUSER or
+    DTPOSTED), the amount as written and as stored, its FITID and what happened to it
+    (inserted, duplicate of which transaction, left out and why). Account numbers show as
+    the last 4 only. No PDF, re-send or AI sections.
+
 ## 5. Parsing robustness
 
 - The model's JSON is cut from the first `{` to the last `}`, up to 3 attempts;
@@ -211,7 +310,8 @@ the acting user's id, and every write by id first checks ownership.
   only until the document is finished; a stored path is only ever served or
   deleted if it is inside `PENDING_DIR`.
 - Every duplicate check looks at **live rows only** (a soft-deleted statement
-  never blocks a re-upload; `file_hash` is a plain index, not UNIQUE).
+  never blocks a re-upload; `file_hash` is a plain index, not UNIQUE). A QFX
+  file's own rules (FITID first) are in section 4a.
   1. **Same file** (SHA-256): refused, or — when the earlier upload failed —
      pointed at Restart.
   2. **Already on file:** a transaction with the same account, date, *signed*
@@ -338,6 +438,8 @@ Uncategorized — it never fails an import.
   - Results show inline; the history shows account(s), first/last date and a
     result badge; admins get a read-only debug page. A CSV import can be deleted
     as a unit (section 11).
+  - A bank's QFX/OFX download goes on the Statements form instead (section 4a): it
+    becomes a statement, with the account number and closing balance from the file.
 - **CSV export** (Transactions page) exports exactly what the filter form holds,
   streamed line by line (`csv_export.stream`, shared `app/common/csv_export.py`).
   Text cells starting with `= + - @` (or tab/CR) get a leading `'` so
@@ -356,8 +458,17 @@ Uncategorized — it never fails an import.
 - **Edit details** (account page): name, bank, last 4 (sanitised server-side to at
   most four digits). Names are read live everywhere, so a rename needs no
   re-import — but a multi-account CSV's Account column matches today's name.
-- **Preferred upload method** (PDF / CSV / either) is advisory: a mismatched
-  upload shows a warning with "Upload anyway".
+- **Preferred upload method** is advisory: a mismatched upload shows a warning
+  with "Upload anyway". Stored `both` / `pdf` / `csv` / `qfx` (CHECK, migrations
+  0014 and 0028; `_sanitize_upload_method` turns anything else into `both`), shown
+  in the menus as "Any (PDF, CSV or QFX)", "PDF only", "CSV only", "QFX / OFX only"
+  and in the lists as "Any", "PDF only", "CSV only", "QFX only". Set on Add account,
+  Edit details and the Upload form's new-account fields; an account created from a
+  QFX file starts as `qfx`. The nudge (`statement-upload.js`, `csv-import.js`): a PDF
+  or a QFX file (by its name: `.qfx`, `.ofx`, `.qbo`) sent to an account whose
+  preference is another type, asked once for the whole upload, naming each type that
+  doesn't match ("…is CSV, but you're uploading a PDF and a QFX file."); `both`, "Match
+  by account number" and a new account never nudge.
 - **Website** (optional, editable on Add account and Edit details): the bank's
   login or statements page. Only `http(s)://` addresses are kept (`https://` is
   added when no scheme is typed; `javascript:`, `data:` and the like are
@@ -783,8 +894,9 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   options, checksums), `data/<table>.json` (rows by column name, as stored, without `user_id`; ids kept so
   references can be remapped), `files/…` (the PDFs still kept, at their path inside the person's folder:
   `x.pdf`, `utility-bills/…`, `toll-statements/…`), `README.txt`.
-- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 27 today). Newer is refused; older is
-  brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below — none yet).
+- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 28 today). Newer is refused; older is
+  brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below): from 27,
+  every statement gets `source = 'pdf'` (`fitid`, `period_start`/`period_end` and `import_details` start empty).
   Columns are read from the database itself (`PRAGMA table_info`), so a new column needs no change here.
 - **Tables, in load order:** `accounts`, `csv_imports`, `statements`, `transactions`, `skipped_duplicates`,
   `category_rules`, `custom_categories`, `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
@@ -795,7 +907,7 @@ file format, its checks and the id remapping are the shared `app/common/person_d
 - **Export options.** *Include statement PDFs* (on): without it a row's `pdf_path` is empty and `pdf_deleted_at`
   set, as for a PDF already deleted. *Include Recently deleted items* (off): rows with `deleted_at`, and whatever
   hangs on a row left out, stay out. *Include the text read from statements* (on): `llm_raw_response`,
-  `categorization_llm_*`, `deterministic_amounts` / `deterministic_value`, `llm_value`, `unparsed_json`,
+  `categorization_llm_*`, `deterministic_amounts` / `deterministic_value`, `import_details` (a QFX reading), `llm_value`, `unparsed_json`,
   `raw_line`. Small exports download at once; with PDFs it is a background job (`person_data.Jobs`), the file next
   to the database as `finance-person-*.zip`, deleted after an hour (and by the purge sweep after a restart).
 - **Import checks.** The shared reader's checks (a real zip, safe member names, size and member caps, every
@@ -958,7 +1070,7 @@ finance/                    the app (slug "finance")
   spec/         SPEC.md (this file)  finance_schema.sql
   app/          FastAPI app
     main.py security.py auth.py db.py storage.py jobs.py purge.py
-    settings.py ai_client.py ai_usage.py features.py ...
+    settings.py ai_client.py ai_usage.py features.py ofx.py qfx_import.py ...
     common/     shared Python (copies of the repository's common/): whoami, auth_core,
                 db_core, web_security, backup_core, ai_client, csv_export
     parser/     text readers, vision readers, the three pipelines, shared row helpers
@@ -966,7 +1078,7 @@ finance/                    the app (slug "finance")
                 upload, admin_storage, ai_usage_page, settings_page, utilities, tolls, ...)
     templates/  static/  (style.css, ui.js, base.js, nav-boot.js, query.js, htmx.min.js, pages/*.js;
                 static/common/: theme-boot.js, themes.css, ui.js — shared copies)
-  migrations/   0001-0025, applied at startup (and after a database import)
+  migrations/   0001-0028, applied at startup (and after a database import)
   tests/        pytest suite (python3 -m pytest); tests/common_tests/: shared helpers and tests (copies)
 ```
 `app/common/`, `app/static/common/` and `tests/common_tests/` are written by

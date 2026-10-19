@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..categorize import list_all_categories
 from ..db import get_db
 from ..version import APP_VERSION
-from .. import ai_usage, jobs, settings, storage
+from .. import ai_usage, jobs, ofx, qfx_import, settings, storage
 from ..jobs import start_job
 from ..parser.documents import prepare_restart
 from ..parser.pipeline import check_duplicate, finalize_if_ready
@@ -32,6 +33,7 @@ templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_privacy"] = _ai_client.privacy
 templates.env.globals["ai_configured"] = _settings.ai_configured
 templates.env.globals["ai_usage_view"] = ai_usage.view
+templates.env.globals["period_label"] = ofx.period_label
 
 
 def _name(filename: str | None) -> str | None:
@@ -39,51 +41,100 @@ def _name(filename: str | None) -> str | None:
     return filename[:255] if filename else None
 
 
+MATCH_BY_NUMBER = "match"       # the form's "Match by account number" (QFX only)
+PDF_NEEDS_ACCOUNT = "Pick an account for PDF files."
+NOT_A_STATEMENT = "That file isn't a PDF or a QFX/OFX file."
+
+
 @router.post("/upload")
 async def upload_statements(
     request: Request,
-    account_id: int = Form(...),
+    account_id: str = Form(...),
     files: list[UploadFile] = File(...),
     skip_confirmation: str = Form(""),
+    block_accounts: str = Form(""),
+    confirm_last4: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Several PDFs for one account per request. Unless `skip_confirmation`
-    is ticked, each statement waits for a human to open the PDF and confirm
-    its money in/out before it completes (finalize_if_ready). The files and
-    the database are handled in a worker thread, never on the event loop."""
+    """PDFs and QFX/OFX files for one account (or, for QFX, "Match by account number") per request; each file
+    goes its own way by its content. A PDF is queued for the AI and, unless `skip_confirmation` is ticked, waits
+    for a human to confirm its money in/out (finalize_if_ready). A QFX/OFX file is read and saved right here
+    (qfx_import, SPEC.md section 4a); when its account can't be settled the result says `needs_account` and the
+    page sends the file again with `block_accounts` (the person's answers) or `confirm_last4`. The files and the
+    database are handled in a worker thread, never on the event loop."""
     if len(files) > storage.MAX_FILES_PER_REQUEST:
         return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
     needs_confirmation = 0 if skip_confirmation else 1
-    results = await asyncio.to_thread(_store_statements, acting.id, account_id, files, needs_confirmation)
+    picked = account_id.strip()
+    if picked != MATCH_BY_NUMBER and not picked.isdigit():
+        return JSONResponse({"error": "Account not found"}, status_code=404)
+    results = await asyncio.to_thread(
+        _store_statements, acting.id, None if picked == MATCH_BY_NUMBER else int(picked), files, needs_confirmation,
+        qfx_import.parse_choices(block_accounts), confirm_last4 == "1")
     if results is None:
         return JSONResponse({"error": "Account not found"}, status_code=404)
     return JSONResponse({"results": results})
 
 
-def _store_statements(user_id: str, account_id: int, files: list, needs_confirmation: int) -> list[dict] | None:
-    """Save each PDF (streamed to disk while hashing), skip a file already uploaded, and queue the rest.
-    None when the account isn't the user's live, unarchived one."""
+def _store_statements(user_id: str, account_id: int | None, files: list, needs_confirmation: int,
+                      choices: dict | None = None, confirm_last4: bool = False) -> list[dict] | None:
+    """Save each file (streamed to disk while hashing) and tell PDFs from QFX/OFX by their content: a PDF already
+    uploaded is skipped and the rest queued; a QFX/OFX file is imported at once and deleted. None when a picked
+    account isn't the user's live, unarchived one."""
     results = []
     conn = get_db()
     try:
-        account = conn.execute(
-            "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND is_archived = 0",
-            (account_id, user_id),
-        ).fetchone()
-        if account is None:
-            return None
+        if account_id is not None:
+            account = conn.execute(
+                "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND is_archived = 0",
+                (account_id, user_id),
+            ).fetchone()
+            if account is None:
+                return None
 
+        limit = max(storage.MAX_PDF_BYTES, storage.MAX_CSV_BYTES)
         for upload in files:
             try:
-                tmp_path, hash_ = storage.save_upload(upload, storage.user_dir(user_id), "upload", ".pdf",
-                                                      storage.MAX_PDF_BYTES, pdf=True)
+                tmp_path, hash_ = storage.save_upload(upload, storage.user_dir(user_id), "upload", ".upload",
+                                                      limit, pdf=False)
             except storage.UploadRejected as e:
                 results.append({"filename": upload.filename, "error": str(e)})
                 continue
+            with open(tmp_path, "rb") as fh:
+                head = fh.read(ofx.SNIFF_BYTES)
+            size = os.path.getsize(tmp_path)
+            if b"%PDF-" not in head:
+                try:
+                    if not ofx.looks_like_ofx(head):
+                        results.append({"filename": upload.filename,
+                                        "error": ofx.HTML_REFUSED if ofx.looks_like_html(head) else NOT_A_STATEMENT})
+                    elif size > storage.MAX_CSV_BYTES:
+                        results.append({"filename": upload.filename, "kind": "qfx",
+                                        "error": f"File is larger than {storage.MAX_CSV_BYTES // (1024 * 1024)} MB."})
+                    else:
+                        with open(tmp_path, "rb") as fh:
+                            raw = fh.read()
+                        results.append(qfx_import.import_file(conn, user_id, _name(upload.filename), raw, hash_,
+                                                              account_id, choices, confirm_last4))
+                finally:
+                    storage.remove_stored_file(tmp_path)       # a QFX file is never kept
+                continue
+
+            if size > storage.MAX_PDF_BYTES:
+                storage.remove_stored_file(tmp_path)
+                results.append({"filename": upload.filename,
+                                "error": f"File is larger than {storage.MAX_PDF_BYTES // (1024 * 1024)} MB."})
+                continue
+            if account_id is None:
+                storage.remove_stored_file(tmp_path)
+                results.append({"filename": upload.filename, "error": PDF_NEEDS_ACCOUNT})
+                continue
+            pdf_path = tmp_path[:-len(".upload")] + ".pdf"
+            os.replace(tmp_path, pdf_path)
             dup = check_duplicate(conn, user_id, hash_)
             if dup is not None:
-                storage.remove_stored_file(tmp_path)
+                storage.remove_stored_file(pdf_path)
                 if dup["status"] == "error":
                     results.append({
                         "filename": upload.filename,
@@ -102,7 +153,7 @@ def _store_statements(user_id: str, account_id: int, files: list, needs_confirma
                 "INSERT INTO statements "
                 "(user_id, account_id, original_filename, pdf_path, file_hash, status, needs_confirmation) "
                 "VALUES (?, ?, ?, ?, ?, 'processing', ?)",
-                (user_id, account_id, _name(upload.filename), tmp_path, hash_, needs_confirmation),
+                (user_id, account_id, _name(upload.filename), pdf_path, hash_, needs_confirmation),
             )
             conn.commit()
             statement_id = cur.lastrowid
@@ -126,7 +177,8 @@ _STATUS_COLUMNS = """
     (SELECT COUNT(*) FROM skipped_duplicates d
      WHERE d.statement_id = s.id AND d.status = 'skipped') AS skipped_count
 """
-_HISTORY_COLUMNS = f"{_STATUS_COLUMNS}, s.uploaded_at, a.name AS account_name"
+_HISTORY_COLUMNS = f"""{_STATUS_COLUMNS}, s.uploaded_at, a.name AS account_name, s.source, s.period_start, s.period_end,
+    (SELECT COUNT(*) FROM transactions t WHERE t.statement_id = s.id AND t.deleted_at IS NULL) AS txn_count"""
 _HISTORY_FROM = "FROM statements s JOIN accounts a ON a.id = s.account_id"
 _NO_FLOW = {"money_in": 0, "money_out": 0, "first_date": None, "last_date": None}
 
@@ -324,12 +376,17 @@ def statement_debug(
 
     # JSON list of lines that weren't inserted (duplicates, $0.00 lines).
     duplicate_transactions = json.loads(row["duplicate_transactions"]) if row["duplicate_transactions"] else []
+    # A QFX statement's reading (section 4a): the file's blocks, the account each went to, every row.
+    try:
+        qfx = json.loads(row["import_details"]) if row["source"] == "qfx" and row["import_details"] else None
+    except ValueError:
+        qfx = None
 
     return templates.TemplateResponse(
         request, "statement_debug.html",
         {
             "user": admin, "statement": row, "transactions": transactions,
-            "duplicate_transactions": duplicate_transactions, "active_page": "uploads",
+            "duplicate_transactions": duplicate_transactions, "qfx": qfx, "active_page": "uploads",
         },
     )
 

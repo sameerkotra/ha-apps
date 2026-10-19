@@ -56,7 +56,7 @@ def test_transactions_accounts_tab(env):
     env.insert("accounts", user_id="tester", name="Archived one", type="checking", is_archived=1)
     html = env.get("transactions-accounts").text
     assert html.index("Empty savings") < html.index("Old card") < html.index("New checking")
-    assert "Archived one" not in html and "2026-01-02" in html and "Either" in html
+    assert "Archived one" not in html and "2026-01-02" in html and "Any" in html
     assert "HIDDEN" not in env.get("transactions-accounts", headers=WIFE).text
 
 

@@ -23,7 +23,8 @@
             <td data-label="Preferred upload">
                 {% if a.preferred_upload_method == "pdf" %}PDF only
                 {% elif a.preferred_upload_method == "csv" %}CSV only
-                {% else %}Either{% endif %}
+                {% elif a.preferred_upload_method == "qfx" %}QFX only
+                {% else %}Any{% endif %}
             </td>
             <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
             <td data-label="">

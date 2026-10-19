@@ -29,9 +29,10 @@
         <label>
             Preferred upload method
             <select name="preferred_upload_method">
-                <option value="both" {% if account.preferred_upload_method == "both" %}selected{% endif %}>Either PDF or CSV</option>
+                <option value="both" {% if account.preferred_upload_method == "both" %}selected{% endif %}>Any (PDF, CSV or QFX)</option>
                 <option value="pdf" {% if account.preferred_upload_method == "pdf" %}selected{% endif %}>PDF only</option>
                 <option value="csv" {% if account.preferred_upload_method == "csv" %}selected{% endif %}>CSV only</option>
+                <option value="qfx" {% if account.preferred_upload_method == "qfx" %}selected{% endif %}>QFX / OFX only</option>
             </select>
         </label>
         <label>
@@ -85,7 +86,7 @@
         {% for s in statements %}
         {% set flow = flow_by_statement.get(s.id) %}
         <tr>
-            <td data-label="Period">{{ s.statement_period or "—" }}</td>
+            <td data-label="Period">{% if s.source == "qfx" %}<span class="type-badge source-qfx">QFX</span> {{ period_label(s.period_start, s.period_end) or s.statement_period or "—" }}{% else %}{{ s.statement_period or "—" }}{% endif %}</td>
             <td data-label="Uploaded">{{ s.uploaded_at }}</td>
             <td data-label="Status"><span class="status-badge status-{{ s.status }}">{{ s.status.replace('_', ' ') }}</span></td>
             <td data-label="Money in">{{ "%.2f"|format(flow.money_in) if flow else "0.00" }}</td>

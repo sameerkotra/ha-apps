@@ -8,12 +8,13 @@ from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
 from .. import settings
 from ..db import get_db
-from .. import notices
+from .. import notices, ofx
 from ..version import APP_VERSION
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 templates.env.globals["app_version"] = APP_VERSION
+templates.env.globals["period_label"] = ofx.period_label
 
 
 def _sanitize_last4(value: str) -> str | None:
@@ -26,7 +27,7 @@ def _sanitize_last4(value: str) -> str | None:
     return digits[-4:] or None
 
 
-_UPLOAD_METHODS = ("both", "pdf", "csv")
+_UPLOAD_METHODS = ("both", "pdf", "csv", "qfx")   # "qfx": QFX / OFX only (migration 0028)
 ACCOUNT_TYPES = ("checking", "savings", "credit_card")
 MAX_ACCOUNT_NAME = 100
 
@@ -58,8 +59,8 @@ def _sanitize_url(value: str) -> str | None:
 
 
 def _sanitize_upload_method(value: str) -> str:
-    """Same "never trust the client" reasoning as _sanitize_last4: the form only ever offers these three
-    choices, but a raw POST could send anything — and the column's own CHECK constraint (migration 14)
+    """Same "never trust the client" reasoning as _sanitize_last4: the form only ever offers these four
+    choices, but a raw POST could send anything — and the column's own CHECK constraint (migrations 14, 28)
     would reject the whole write outright rather than degrade gracefully. Anything unrecognized falls
     back to "both", the same as never having set a preference at all, rather than erroring the request."""
     value = (value or "").strip().lower()

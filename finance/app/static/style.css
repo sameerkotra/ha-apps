@@ -312,6 +312,14 @@ td a:hover { text-decoration: underline; }
 .status-complete { background: var(--ok-bg); color: var(--ok); }
 .status-processing { background: var(--info-bg); color: var(--info); }
 .status-error { background: var(--danger-bg); color: var(--danger); }
+.source-qfx { background: var(--info-bg); color: var(--info); }
+
+/* Upload → Statements: a QFX file's "which account?" question (statement-upload.js). */
+.qfx-question { margin: 0.5rem 0; }
+.qfx-question .qfx-block { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; margin: 0.4rem 0; }
+.qfx-question .qfx-block p { flex-basis: 100%; margin: 0; }
+.qfx-question label { display: flex; flex-direction: column; font-size: 0.8rem; gap: 0.25rem; min-width: 0; }
+.qfx-question select, .qfx-question input { max-width: 100%; }
 
 .empty-state { color: var(--text-dim); font-style: italic; }
 

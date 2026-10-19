@@ -3,7 +3,8 @@
    money in-out / first-last date cells fill in the moment parsing finishes
    instead of staying stale until a page refresh. #}
 <tr id="statement-row-{{ s.id }}">
-    <td data-label="File">{{ s.original_filename or "—" }}</td>
+    <td data-label="File">{% if s.source == "qfx" %}<span class="type-badge source-qfx" title="Read from a QFX / OFX download">QFX</span> {% endif %}{{ s.original_filename or "—" }}
+        {% if s.source == "qfx" %}<br><span class="hint">{% if s.period_start or s.period_end %}{{ period_label(s.period_start, s.period_end) }} &middot; {% endif %}{{ s.txn_count }} transaction{{ "s" if s.txn_count != 1 else "" }}</span>{% endif %}</td>
     <td data-label="Account">{{ s.account_name }}</td>
     <td data-label="Uploaded">{{ s.uploaded_at }}</td>
     <td data-label="First transaction">{{ s.first_date or "—" }}</td>

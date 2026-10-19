@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0
+
+- **QFX / OFX statements.** Your bank's "Download transactions → Quicken (QFX)" or "Money (OFX)" file can now be uploaded on Upload → Statements, next to PDFs (both kinds in one go is fine). It's read in a second, with no AI and no confirmation step, and becomes a statement like a PDF: a **QFX** badge and its dates ("Mar 3 – Jun 1, 2026") in Statement history, its closing balance, duplicates checked and rows categorized. Choose **Match by account number** to send each account in the file to yours with the same last 4 digits (a file with checking and savings together becomes two statements); when nothing matches you're offered to create the account, and when the account you picked ends in different digits you're asked first. Overlapping downloads ("the last 90 days" every month) only add the new rows, using the bank's own transaction ids; the rest are listed for **Insert anyway**. Credit card files are turned the app's way round. A statement whose opening balance doesn't follow on from the previous one waits in Review. Only the last 4 digits of an account number are ever kept.
+- **Preferred upload method: QFX / OFX only.** Accounts can prefer QFX, the Upload page's reminder knows about QFX files (asked once when an upload mixes types), "Either" is now "Any", and an account created from a QFX file starts as "QFX only".
+
 ## 1.5.2
 
 - **CSV import: lines above the header.** A bank export that starts with its own lines (name, card, time period of the report) before the Date / Description / … header now imports: the header is found among the top rows by itself. Under **Header and data rows** on the CSV form you can also see the file's first rows, tap the header row, or type the header row and the row the data starts on. If the header can't be found, you're shown the first rows to choose from instead of only an error. Row numbers in errors are the file's own.

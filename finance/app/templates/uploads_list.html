@@ -11,29 +11,36 @@
     <label>
         Account
         <select name="account_id" id="account-select" required>
+            <option value="match">Match by account number (QFX)</option>
             {% for a in accounts %}
-            <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}">{{ a.name }}</option>
+            <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}"{% if loop.first %} selected{% endif %}>{{ a.name }}</option>
             {% endfor %}
             <option value="__new__">+ Create new account&hellip;</option>
         </select>
     </label>
     <label>
-        PDF(s)
-        <input type="file" name="files" accept="application/pdf" multiple required>
+        PDF or QFX / OFX file(s)
+        <input type="file" name="files" id="statement-files" accept="application/pdf,.pdf,.qfx,.ofx,.qbo" multiple required>
     </label>
     <label class="checkbox-label">
         <input type="checkbox" name="skip_confirmation" value="1">
         Skip the PDF confirmation step
+        <span class="hint" id="qfx-no-confirm" style="display:none;">(QFX files have no confirmation step)</span>
     </label>
     <button type="submit">Upload</button>
 </form>
 <p class="hint">
-    Unless skipped, each statement waits for you to open its PDF and confirm
+    Unless skipped, each PDF statement waits for you to open it and confirm
     the money in/out before it&rsquo;s marked complete and the PDF is deleted.
+    A QFX or OFX download from your bank (Quicken or Money format) is read at
+    once, with no AI and no confirmation: its rows, account number and closing
+    balance are in the file. Leave the account on &ldquo;Match by account
+    number&rdquo; to send each account in the file to yours with the same last
+    4 digits.
 </p>
 
 <!-- Shown instead of uploading when the account's preferred upload method
-     doesn't match (PDF): a nudge, never a block — "Upload anyway" resumes. -->
+     doesn't match the files' types (PDF / QFX): a nudge, never a block — "Upload anyway" resumes. -->
 <div id="upload-warning" class="hint warning-hint" style="display:none;">
     <p id="upload-warning-text"></p>
     <button type="button" id="upload-warning-proceed" class="btn-secondary">Upload anyway</button>
@@ -66,6 +73,15 @@
     <label>
         Last 4 digits
         <input type="text" id="new-acct-last4" maxlength="4" pattern="[0-9]{4}" placeholder="1234">
+    </label>
+    <label>
+        Preferred upload method
+        <select id="new-acct-upload-method">
+            <option value="both" selected>Any (PDF, CSV or QFX)</option>
+            <option value="pdf">PDF only</option>
+            <option value="csv">CSV only</option>
+            <option value="qfx">QFX / OFX only</option>
+        </select>
     </label>
 </div>
 
@@ -193,7 +209,7 @@
             itself is deleted right after import, same as a statement's PDF
             once it's no longer needed. If the account you pick above has a
             preferred upload method (set on the Accounts page) that isn't
-            CSV, you'll see a warning before the import runs &mdash; it's
+            CSV (PDF only, or QFX / OFX only), you'll see a warning before the import runs &mdash; it's
             just a check in case the wrong account got selected, and you can
             dismiss it and import anyway.
         </p>

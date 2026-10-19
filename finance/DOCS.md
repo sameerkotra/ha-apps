@@ -80,6 +80,20 @@ or two years side by side.
   rows** and tap the header row (or type the header row and the row the data starts on). Each PDF is read by the AI and checked against the balances and
   amounts printed in it. Confirm it against the PDF, or **Re-extract** telling the AI what was
   wrong. Possible duplicates are skipped and can be inserted anyway.
+- **QFX / OFX files**: most banks offer "Download transactions → Quicken (QFX)" or "Money (OFX)".
+  Upload them on the same form as PDFs (`.qfx`, `.ofx` or `.qbo`, up to 20 MB each, PDFs and QFX
+  files can be mixed). A QFX file is read in a second, with no AI and no confirmation step: it
+  already holds the exact rows, the account number and the closing balance. Leave the account on
+  **Match by account number** and each account in the file goes to yours with the same last 4
+  digits (a file with checking and savings together becomes two statements); if none matches,
+  you're offered to create it (named after the bank and the last 4, set to "QFX only"). If you pick
+  an account whose last 4 differ from the file's, you're asked first. Downloads that overlap ("the
+  last 90 days" every month) are fine: rows already in, from an earlier QFX file or from a PDF or
+  CSV, are skipped and listed for **Insert anyway**. The statement's opening balance is worked out
+  from its closing balance and rows, and when the previous statement ends the day before, a
+  difference flags it for review (usually a missing download in between). Credit card files are
+  turned the app's way round (a purchase is money out). The same file twice is refused;
+  investment and loan statements aren't supported. A QFX file isn't kept after it's read.
 - **Review**: everything waiting for you.
 - **Utility bill** and **Toll statement**: when those parts are switched on (below). Each utility
   bill waits for you like a statement: **Check & confirm** opens its figures (correct anything, then
@@ -108,7 +122,8 @@ totals, charts and CSV. The admin writes them on **Admin → Query** in SQL — 
 write the SQL from a plain-English question.
 
 ### Setup
-- **Accounts**: add, rename, archive, set the preferred upload type and a website link.
+- **Accounts**: add, rename, archive, set the preferred upload type (any, PDF, CSV or QFX — a
+  reminder on the Upload page, never a block) and a website link.
 - **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
   before the built-in ones and the AI. **Also apply to all existing transactions** gives the
   transactions the new rule matches the category your rules give them (a more specific rule

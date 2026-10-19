@@ -42,6 +42,16 @@ SCHEMA = _latest_migration()
 UPGRADES: dict = {}             # {old schema: fn(tables dict) -> None}, applied in order for older files
 
 
+def _to_28(tables: dict) -> None:
+    """Migration 0028: statements gained `source` (every earlier statement was a PDF); transactions.fitid, the
+    period columns and import_details start empty."""
+    for row in tables.get("statements", []):
+        row.setdefault("source", "pdf")
+
+
+UPGRADES[27] = _to_28
+
+
 class Refused(ValueError):
     """A file (or a row in it) that can't be imported; the message is for the admin."""
 
@@ -63,7 +73,7 @@ TABLES = [
     Table("csv_imports", "CSV imports", text=("categorization_llm_prompt", "categorization_llm_raw_response")),
     Table("statements", "bank statements", refs={"account_id": "accounts"}, pdf=True,
           text=("llm_raw_response", "categorization_llm_prompt", "categorization_llm_raw_response",
-                "deterministic_amounts")),
+                "deterministic_amounts", "import_details")),
     Table("transactions", "transactions", refs={"account_id": "accounts", "statement_id": "statements",
                                                 "csv_import_id": "csv_imports", "transfer_pair_id": "transactions"}),
     Table("skipped_duplicates", "skipped possible duplicates",
