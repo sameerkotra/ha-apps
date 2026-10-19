@@ -5,6 +5,7 @@
 {{ nav.upload_tabs("statements", acting_qs, request.state.features) }}
 {% include "_ai_missing.html" %}
 <h1>Upload</h1>
+{% include "_statements_due.html" %}
 
 <h2>Upload statement(s)</h2>
 <form id="upload-form" enctype="multipart/form-data" class="add-account-form">
@@ -13,7 +14,7 @@
         <select name="account_id" id="account-select" required>
             <option value="match">Match by account number (QFX)</option>
             {% for a in accounts %}
-            <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}"{% if loop.first %} selected{% endif %}>{{ a.name }}</option>
+            <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}"{% if (preselect and a.id == preselect) or (not preselect and loop.first) %} selected{% endif %}>{{ a.name }}</option>
             {% endfor %}
             <option value="__new__">+ Create new account&hellip;</option>
         </select>

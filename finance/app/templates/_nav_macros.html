@@ -27,7 +27,8 @@
 {%- endmacro %}
 
 {% macro setup_tabs(active, acting_qs, admin=false) -%}
-{{ _tabs([("accounts", "Accounts", "accounts"), ("categories", "Categories", "categories")], active, acting_qs) }}
+{{ _tabs([("accounts", "Accounts", "accounts"), ("categories", "Categories", "categories"),
+          ("my_settings", "Settings", "my-settings")], active, acting_qs) }}
 {%- endmacro %}
 
 {% macro admin_tabs(active, acting_qs) -%}

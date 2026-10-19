@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 
 from .. import ai_client as _ai_client
+from .. import statement_due
 
 from ..auth import User, get_current_user, get_acting_user
 from ..db import get_db
@@ -208,6 +209,8 @@ def dashboard(
         pct = (r["total"] / total_spend * 100) if total_spend else 0.0
         categories.append({"category": r["category"], "total": r["total"], "pct": pct})
 
+    with get_db() as conn:          # overdue statements (SPEC.md section 27): the notice above the charts
+        overdue = statement_due.visible_overdue(conn, current, acting)
     return templates.TemplateResponse(
         request, "dashboard.html",
         {
@@ -228,6 +231,7 @@ def dashboard(
             "drill_end_date": drill_end_date,
             "unmatched_transfer_count": unmatched_transfer_count,
             "just_matched": int(matched) if matched.isdigit() else None,
+            "overdue": overdue, "due_next": "dashboard",
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "dashboard",

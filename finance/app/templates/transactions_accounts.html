@@ -10,7 +10,7 @@
 {% if accounts %}
 <table class="accounts-table">
     <thead>
-        <tr><th>Account</th><th>Type</th><th>Latest transaction</th><th>Transactions</th><th>Preferred upload</th><th data-no-sort>Website</th><th data-no-sort></th></tr>
+        <tr><th>Account</th><th>Type</th><th>Latest transaction</th><th>Transactions</th><th>Preferred upload</th><th data-no-sort>Website</th>{% if due %}<th>Next statement</th>{% endif %}<th data-no-sort></th></tr>
     </thead>
     <tbody>
         {% for a in accounts %}
@@ -27,9 +27,10 @@
                 {% else %}Any{% endif %}
             </td>
             <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
+            {% if due %}{% set d = due.get(a.id, ("", "")) %}<td data-label="Next statement" class="next-statement {{ d[1] }}">{{ d[0] }}</td>{% endif %}
             <td data-label="">
                 <a href="transactions?searched=1&account_id={{ a.id }}{{ amp }}" class="btn-secondary">Transactions</a>
-                <a href="uploads{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">Upload</a>
+                <a href="uploads?account={{ a.id }}{{ amp }}" class="btn-secondary">Upload</a>
             </td>
         </tr>
         {% endfor %}

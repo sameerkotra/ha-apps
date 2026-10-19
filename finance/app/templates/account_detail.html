@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
+{% from "_expected_fields.html" import expected_fields %}
 {% block title %}{{ account.name }}{% endblock %}
 {% block content %}
 <p><a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">&larr; All accounts</a></p>
@@ -39,6 +40,7 @@
             Website
             <input type="url" name="website_url" value="{{ account.website_url or '' }}" placeholder="e.g. https://www.chase.com" maxlength="500" inputmode="url">
         </label>
+        {{ expected_fields(account) }}
         <button type="submit">Save changes</button>
     </form>
     <p class="hint">The account type ({{ account.type.replace('_', ' ') }}) can't be changed here &mdash; delete and re-add the account for that. Everything else updates everywhere at once: past statements and transactions already imported show the new name, bank and number immediately, nothing needs re-importing. Preferred upload method updates the same way &mdash; it only changes what the Upload page warns about, it doesn't touch anything already imported.</p>
@@ -70,6 +72,19 @@
     <tr><th>Bank</th><td>{{ account.bank_name or "—" }}</td></tr>
     <tr><th>Account</th><td>{% if account.account_number_last4 %}····{{ account.account_number_last4 }}{% else %}—{% endif %}</td></tr>
     <tr><th>Transactions</th><td>{{ txn_count }}</td></tr>
+    <tr><th>Last statement arrived</th><td id="last-statement">{{ last_upload.strftime("%Y-%m-%d %H:%M") if last_upload else "—" }}</td></tr>
+    {% if account.expected_every_months %}
+    <tr><th>Next statement</th><td id="next-statement">
+        {% if not due_enabled %}Statement reminders are off for the whole app
+        {% elif account.is_archived %}Not while archived
+        {% elif due %}
+            {% if due.status == "overdue" %}<span class="due-overdue">{{ due_label[0] }}</span> (expected {{ date_label(due.cycle_date) }}){% if due.next_date %}; then {{ date_label(due.next_date) }}{% endif %}
+            {% elif due.status == "dismissed" %}<span class="due-dismissed">Dismissed</span> (expected {{ date_label(due.cycle_date) }}){% if due.next_date %}; next {{ date_label(due.next_date) }}{% endif %}
+            {% elif due.status == "due" %}Expected today, {{ date_label(due.cycle_date) }}
+            {% else %}Expected {{ date_label(due.next_date) }}{% endif %}
+        {% else %}&mdash;{% endif %}
+    </td></tr>
+    {% endif %}
     <tr><th>Added</th><td>{{ account.created_at }}</td></tr>
 </table>
 

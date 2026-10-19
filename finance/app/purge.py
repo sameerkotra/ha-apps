@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 PURGE_GRACE_DAYS = 30
 PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 _CUTOFF_MODIFIER = f"-{PURGE_GRACE_DAYS} days"
+REMINDER_LOG_KEEP = "-1 year"
 
 
 _remove_file = remove_stored_file  # best effort; never touches a file outside PENDING_DIR
@@ -187,12 +188,16 @@ def purge_soft_deleted(conn) -> dict[str, int]:
     ).fetchall()]
     acct_count = conn.execute(f"DELETE FROM accounts WHERE {stale_accounts}", (_CUTOFF_MODIFIER,)).rowcount
 
+    # The overdue statements' send log (statement_due.py) is kept a year.
+    reminders = conn.execute("DELETE FROM statement_reminders WHERE sent_at < datetime('now', ?)",
+                             (REMINDER_LOG_KEEP,)).rowcount
+
     conn.commit()
     remove_files(files)
     return {
         "transactions": txn_count, "statements": len(stale_statements),
         "csv_imports": csv_import_count, "accounts": acct_count, "toll_statements": len(stale_tolls),
-        "utility_bills": len(stale_bills),
+        "utility_bills": len(stale_bills), "statement_reminders": reminders,
     }
 
 

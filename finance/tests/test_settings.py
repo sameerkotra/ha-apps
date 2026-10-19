@@ -44,7 +44,9 @@ def test_admin_only(env):
     assert env.post("settings-test", data={"ai_url": "http://x"}, headers=WIFE).status_code == 403
     assert 'href="settings' in env.get("accounts").text          # More panel, under Admin
     storage = env.get("admin-storage").text
-    assert ">App settings</a>" in storage and ">Settings</a>" not in env.get("accounts").text.split("section-tabs", 1)[-1][:600]
+    # Setup's own Settings tab is the person's own (my-settings), never App settings
+    setup_tabs = env.get("accounts").text.split("section-tabs", 1)[-1][:600]
+    assert ">App settings</a>" in storage and 'href="settings' not in setup_tabs and 'href="my-settings' in setup_tabs
     page = env.get("settings").text
     assert "<h1>App settings</h1>" in page and 'aria-current="page">App settings' in page
     env.get("accounts", headers=WIFE)

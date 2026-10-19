@@ -1,0 +1,24 @@
+{# Overdue statements (SPEC.md section 27): Home and Upload. `overdue` from statement_due.visible_overdue; `due_next`
+   is the page Dismiss comes back to ("dashboard" or "uploads"). #}
+{% if overdue %}
+{% set dq = "?" + acting_qs if acting_qs else "" %}
+{% set damp = "&" + acting_qs if acting_qs else "" %}
+<section class="warning-hint statements-due" role="status" aria-label="Overdue statements">
+    <h2>{% if overdue | length == 1 %}Statement overdue{% else %}{{ overdue | length }} statements overdue{% endif %}</h2>
+    <ul>
+        {% for o in overdue %}
+        <li>
+            <span class="due-name"><strong>{{ o.name }}</strong> &mdash; expected {{ o.cycle_label }}
+                ({{ o.days_overdue }} day{{ "s" if o.days_overdue != 1 }} ago)</span>
+            <a href="uploads?account={{ o.account_id }}{{ damp }}" class="btn-secondary">Upload</a>
+            <form method="post" action="statement-dismiss{{ dq }}">
+                <input type="hidden" name="account_id" value="{{ o.account_id }}">
+                <input type="hidden" name="cycle_date" value="{{ o.cycle_date.isoformat() }}">
+                <input type="hidden" name="next" value="{{ due_next }}">
+                <button type="submit" class="btn-secondary" title="No more reminders for this statement">Dismiss</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}

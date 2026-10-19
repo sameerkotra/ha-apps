@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "_nav_macros.html" as nav %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+{{ nav.setup_tabs("my_settings", acting_qs, request.state.is_real_admin) }}
+<h1>Settings</h1>
+<p class="hint">{% if own %}Your own settings &mdash; nobody else's change.{% else %}{{ whose.name }}'s own settings (you're
+    acting as them).{% endif %} App-wide settings are on Admin &rarr; App settings.</p>
+
+<section class="card settings-group" id="my-reminders">
+    <h2>My reminders</h2>
+    <p class="hint">When a statement hasn't arrived by its account's expected date (Setup &rarr; Accounts &rarr; Expected
+        statement), you can be reminded on your phone. Overdue statements always show on Home and Upload.</p>
+    {% if not enabled %}
+    <p class="warning-hint">Statement reminders are turned off for the whole app (Admin &rarr; App settings). Your choices
+        are kept for when they're back on.</p>
+    {% endif %}
+    {% if saved %}<p class="notice settings-saved">Saved.</p>{% endif %}
+    {% if error %}<p class="q-error-inline" role="alert">{{ error }}</p>{% endif %}
+    {% if prefs is none %}
+    <p class="hint" id="reminders-unset">You won't be reminded about overdue statements until you choose when.</p>
+    {% elif prefs.mode == "remind" and not has_phone %}
+    <p class="warning-hint" id="reminders-no-phone">No phone found for you in Home Assistant. Link your phone to your
+        person in Home Assistant (Settings &rarr; People &rarr; Track device), or ask an admin to add a notify service
+        for you on Admin &rarr; Users.</p>
+    {% endif %}
+    <form method="post" action="my-settings-reminders{{ '?' + acting_qs if acting_qs }}" class="settings-form"
+          id="reminders-form" data-max="{{ max_offsets }}">
+        <div class="settings-field">
+            <span class="panel-title">Reminders</span>
+            <label class="settings-check"><input type="radio" name="mode" value="off" {{ "checked" if shown.mode != "remind" }}>
+                No notifications</label>
+            <label class="settings-check"><input type="radio" name="mode" value="remind" {{ "checked" if shown.mode == "remind" }}>
+                Remind me</label>
+        </div>
+        <div class="settings-field" id="reminders-when">
+            <span class="panel-title">Remind me after the expected date</span>
+            <fieldset class="reminder-chips">
+                <legend class="hint">Pick 1 to {{ max_offsets }}.</legend>
+                {% for value, text in offset_choices %}
+                <label><input type="checkbox" name="offsets" value="{{ value }}" {{ "checked" if value in shown.offsets }}> {{ text }}</label>
+                {% endfor %}
+            </fieldset>
+            <label for="rem-repeat">Then keep reminding</label>
+            <select id="rem-repeat" name="repeat_days">
+                {% for value, text in repeat_choices %}
+                <option value="{{ value }}" {{ "selected" if value == shown.repeat_days }}>{{ text }}</option>
+                {% endfor %}
+            </select>
+            <p class="hint">Until the statement is uploaded or you dismiss it, and never past the next expected date.</p>
+            <label for="rem-at">At</label>
+            <input id="rem-at" type="time" name="at_time" value="{{ shown.at_time }}" step="60">
+            <p class="hint">Home Assistant's time zone.</p>
+        </div>
+        <p><button type="submit" class="btn-primary">Save</button></p>
+    </form>
+</section>
+{% endblock %}
+{% block page_scripts %}
+<script src="static/pages/my-settings.js?v={{ app_version }}" defer></script>
+{% endblock %}

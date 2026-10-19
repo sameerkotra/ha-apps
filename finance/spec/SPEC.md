@@ -449,12 +449,15 @@ Uncategorized — it never fails an import.
 ## 11. Account management, deleting, restoring, purging
 
 - Setup → Accounts: "+ Add account" (collapsed, at the top), then the list with
-  type, bank, last 4, preferred upload method, Archive/Unarchive and Delete.
+  type, bank, last 4, preferred upload method, Archive/Unarchive and Delete; the
+  **Expected statement** group on Add account and Edit details and the **Next
+  statement** column are section 27.
 - Transactions → **Accounts** tab (`transactions-accounts`): every live,
   unarchived account with its **latest transaction** (newest live transaction
   date, "—" when none), transaction count and preferred upload method, oldest
   first so the accounts due a new statement are at the top; links to the
-  account's transactions and to Upload.
+  account's transactions and to Upload (`uploads?account=<id>`: that account
+  picked); a **Next statement** column for the owner (section 27).
 - **Edit details** (account page): name, bank, last 4 (sanitised server-side to at
   most four digits). Names are read live everywhere, so a rename needs no
   re-import — but a multi-account CSV's Account column matches today's name.
@@ -546,7 +549,7 @@ Uncategorized — it never fails an import.
   | Upload | Statements · Review · Utility bill · toll statement | `uploads`, `review` (Back returns to Statements), `utilities?tab=upload`, `tolls?tab=upload` (each with its history) |
   | Bills | Utilities (Dashboard · Compare) · Tolls (Dashboard · Compare · Analyze) | `utilities`, `utility-comparison`, `tolls`, `toll-compare`, `toll-analyze` |
   | Reports | — | `reports`, `report` |
-  | Setup | Accounts · Categories | `accounts`, `account`, `categories` |
+  | Setup | Accounts · Categories · Settings | `accounts`, `account`, `categories`, `my-settings` (the person's own settings: My reminders, section 27) |
   | Admin | Storage · Query · Users · Recently deleted · AI usage · App settings | `admin-storage`, `recently-deleted`, `ai-usage`, `settings` |
 
   A page's section comes from its `active_page` (utilities/tolls pages count as
@@ -808,7 +811,7 @@ re-run of the AI.
 
 - Every run gets a private in-memory database. The real database is attached read-only, only the acting user's live rows of the registered tables are copied in (one snapshot), and it is detached before the SQL runs. The SQL therefore can't see anyone else's rows or the real file, whatever it says (`main.transactions` just names the copy).
 - An authorizer then allows only SELECT, reads and ordinary functions: no PRAGMA, ATTACH, writes, schema changes, `sqlite_master` or `load_extension`. The connection is also `query_only`. One statement per run; it must start with SELECT or WITH.
-- **Registry.** `REGISTRY` lists each queryable table with its short description and the rule that scopes it to one user. Hidden, never copied: `known_users`, `schema_version`, `sqlite_sequence`, `saved_reports`. A test fails if a table is in neither list, so a table added later stays hidden until registered.
+- **Registry.** `REGISTRY` lists each queryable table with its short description and the rule that scopes it to one user (`reminder_prefs` by its user, `statement_dismissals` by its account's owner). Hidden, never copied: `known_users`, `schema_version`, `sqlite_sequence`, `saved_reports`, `statement_reminders` (a send log) and `user_notify`. A test fails if a table is in neither list, so a table added later stays hidden until registered.
 - **Deleted rows never appear.** A row is left out when it or its parent is soft-deleted: statements and transactions of a deleted account; transactions of a deleted statement or CSV import; meter details of a deleted utility bill; toll transactions of a deleted toll statement. `user_id` and `deleted_at` are not copied.
 - `transactions_with_account` is a convenience view: live transactions with `account_name`, `account_bank`, `account_last4`.
 - **Limits:** 10 s per run unless "No time limit" is on (19.6); SQL up to 20 KB; at most 100,000 rows (cut with a note); a result over 64 MB is refused; single values capped at 10 MB (Python 3.11+). Runs happen in a worker thread, never on the event loop, and never in the Ollama job lock.
@@ -860,6 +863,10 @@ re-run of the AI.
 - **Full rights.** With shared access the viewer works on the owner's data exactly as the owner would: uploads, CSV imports, edits, confirmations, deletes all land in the owner's data. Nothing admin-only opens up (Storage, Query, Users, Recently deleted and restores, debug pages, report editing).
 - **Opens straight into it.** A viewer with shared access lands in the first-granted owner's data (no `?as_user=`). A switch at the top right lists those owners and "My own data"; a banner says whose data it is, with a link to their own. `?as_user=` naming anyone not granted is ignored (they get the data they open into). Removing access takes effect on their next page.
 - Reports and everything else follow the same rule, because every route works on the acting user (section 2).
+- **Notify** (per person, `user_notify`, the same shape as the other household apps): extra notify services
+  (`notify.<name>`, checked by `ha_notify.normalize_service`) an overdue statement's reminder also goes to, besides
+  the phones Home Assistant links to the person (section 27). `user-notify-add` / `user-notify-remove`, admin only;
+  the text box suggests Home Assistant's notify services when it can be asked.
 
 ## 20a. One person's data: export, import, delete
 
@@ -894,16 +901,20 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   options, checksums), `data/<table>.json` (rows by column name, as stored, without `user_id`; ids kept so
   references can be remapped), `files/…` (the PDFs still kept, at their path inside the person's folder:
   `x.pdf`, `utility-bills/…`, `toll-statements/…`), `README.txt`.
-- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 28 today). Newer is refused; older is
+- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 29 today). Newer is refused; older is
   brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below): from 27,
-  every statement gets `source = 'pdf'` (`fitid`, `period_start`/`period_end` and `import_details` start empty).
+  every statement gets `source = 'pdf'` (`fitid`, `period_start`/`period_end` and `import_details` start empty);
+  from 28, every account gets `reminders_on = 1` (its expected statement starts Off; section 27).
   Columns are read from the database itself (`PRAGMA table_info`), so a new column needs no change here.
 - **Tables, in load order:** `accounts`, `csv_imports`, `statements`, `transactions`, `skipped_duplicates`,
   `category_rules`, `custom_categories`, `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
   bill), `toll_cars`, `toll_devices`, `toll_statements`, `toll_transactions`, `toll_pattern_groups`,
-  `toll_patterns`, `toll_trip_overrides`. `toll_trips` is a cache (not exported; `trip_id` dropped; rebuilt after
-  an import). Never exported: `user_access` grants, `saved_reports`, `ai_usage_log`, `app_settings`, `known_users`
-  (the person is in the manifest), the app-message tables.
+  `toll_patterns`, `toll_trip_overrides`, `reminder_prefs` (My reminders; one per person: on Add, theirs is kept
+  when they already have one), `statement_dismissals` (by its account). The accounts' expected-statement columns
+  travel with `accounts`. `toll_trips` is a cache (not exported; `trip_id` dropped; rebuilt after an import).
+  Never exported: `user_access` grants, `saved_reports`, `ai_usage_log`, `app_settings`, `known_users` (the person
+  is in the manifest), the app-message tables, `statement_reminders` (a send log) and `user_notify` (Admin → Users'
+  setup).
 - **Export options.** *Include statement PDFs* (on): without it a row's `pdf_path` is empty and `pdf_deleted_at`
   set, as for a PDF already deleted. *Include Recently deleted items* (off): rows with `deleted_at`, and whatever
   hangs on a row left out, stay out. *Include the text read from statements* (on): `llm_raw_response`,
@@ -913,7 +924,8 @@ file format, its checks and the id remapping are the shared `app/common/person_d
 - **Import checks.** The shared reader's checks (a real zip, safe member names, size and member caps, every
   checksum, this app, schema not newer), then every row as the app's own input: types by column, the forms' length
   limits (account name 100, description 500, category 60, note 1000, rule 200, tag route 2000, …), account type,
-  last 4 digits only, an http(s) web address, ISO dates, a non-zero amount (rounded to cents), no blank names; a
+  last 4 digits only, an http(s) web address, an `expected_from` month, reminder days from the offered ones (at most
+  6) and an `HH:MM` time, ISO dates, a non-zero amount (rounded to cents), no blank names; a
   refusal names the table and row ("transactions, row 12: …"). Unknown columns are dropped. Every PDF is sniffed
   as an upload is (`%PDF-`, at most the PDF size limit). A row still `processing` comes in as a failed upload.
 - **Import.** Refused while one of the person's uploads is being read (as Wipe all data). One transaction
@@ -932,7 +944,8 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   against live rows only (a deleted row never blocks, as with an upload); a Recently deleted row from the file
   against any row. A skipped statement's or CSV import's skipped-duplicate lines and a skipped bill's meter
   readings are skipped with it.
-- **Delete.** Refused while an upload is being read; one transaction: `electric_meter_details`, then
+- **Delete.** Refused while an upload is being read; one transaction: `statement_dismissals`,
+  `statement_reminders`, `reminder_prefs` and `user_notify` (section 27), `electric_meter_details`, then
   `skipped_duplicates`, `transactions`, `statements`, `csv_imports`, `accounts`, `utility_bills`,
   `toll_trip_overrides`, `toll_trips`, `toll_transactions` (before `toll_devices`: that key has no `ON DELETE`),
   `toll_statements`, `toll_devices`, `toll_cars`, `toll_patterns`, `toll_pattern_groups`, `category_rules`,
@@ -954,6 +967,8 @@ file format, its checks and the id remapping are the shared `app/common/person_d
 - **Household Assistant:** answer the Household Assistant (section 23a) and the app-messages signing key (secret; the same key in every household app; with a key, unsigned bus messages are refused).
 - **AI usage on debug pages:** Show AI token usage (on by default) and prices per million input and output tokens (default 0; a local model costs nothing but time). The prices are also used for the cost on Admin → AI usage (section 21.3).
 - **Features:** Utilities and tolls on or off (section 23).
+- **Statement reminders:** on by default (`statement_reminders`). Off: no phone reminders, no overdue notices and no
+  Upload badge for anyone; every account's expected statement and everyone's My reminders are kept (section 27).
 - **Not app options.** The AI settings are set only on this page (keys `ai_*`; migration 0023 renamed the earlier `ollama_url` / `ollama_model`). An older install's leftover `ollama_url` / `ollama_model` in `/data/options.json` (or `OLLAMA_URL` / `OLLAMA_MODEL` in the environment, for local development) fill in the address and model once if they're still empty ("Copied from the old app options"; the stored `updated_by` marker stays `add-on options`). While the AI isn't set up (no model; Ollama without an address; Claude without a key) App settings and the Statements, Utility bill and Tolls upload pages say so (the admin gets a link to App settings), and a PDF job fails with the same message.
 - Saving checks every value first; if one is wrong (bad address, unknown provider, Ollama without an address, a longest answer outside 256–200,000, negative or non-numeric price) nothing is saved and the form keeps what was typed, with the errors listed. Each field shows when it was last changed and by whom.
 - New settings are added to `app/settings.py` (`SETTINGS` and a `GROUPS` entry) and appear on the page automatically (kinds: url, text, bool, price, int, choice, secret).
@@ -1072,21 +1087,25 @@ finance/                    the app (slug "finance")
     main.py security.py auth.py db.py storage.py jobs.py purge.py
     settings.py ai_client.py ai_usage.py features.py ofx.py qfx_import.py ...
     common/     shared Python (copies of the repository's common/): whoami, auth_core,
-                db_core, web_security, backup_core, ai_client, csv_export
+                db_core, web_security, backup_core, ai_client, csv_export, ha_client,
+                ha_people, ha_notify, …
     parser/     text readers, vision readers, the three pipelines, shared row helpers
     routes/     one module per area (accounts, transactions, csv_import, review,
                 upload, admin_storage, ai_usage_page, settings_page, utilities, tolls, ...)
     templates/  static/  (style.css, ui.js, base.js, nav-boot.js, query.js, htmx.min.js, pages/*.js;
                 static/common/: theme-boot.js, themes.css, ui.js — shared copies)
-  migrations/   0001-0028, applied at startup (and after a database import)
+  migrations/   0001-0029, applied at startup (and after a database import)
   tests/        pytest suite (python3 -m pytest); tests/common_tests/: shared helpers and tests (copies)
 ```
 `app/common/`, `app/static/common/` and `tests/common_tests/` are written by
 `tools/sync_common.py` from `common/manifest.json` (see `common/README.md`); never
 edit a copy (`tests/common_tests/test_shared_copies.py` fails if one was changed).
-Finance gets none of `ha_client`, `ha_time`, `housekeeping`, `settings_core`,
-`people_admin` or the shared settings/people pages: its time zone comes from
-`bootstrap.py` (`TZ`), and its App settings page and Users tab are its own.
+Finance gets `ha_client`, `ha_people` and `ha_notify` for the statement reminders
+(section 27; `app/config.py` gives `ha_client` the Core API address and token, and
+`db.get_conn` is `ha_notify`'s name for `get_db`), but none of `ha_time`,
+`housekeeping`, `settings_core`, `people_admin` or the shared settings/people pages:
+its time zone comes from `bootstrap.py` (`TZ`), and its App settings page and Users
+tab are its own.
 
 ### 25.2 Verified
 
@@ -1134,6 +1153,114 @@ Finance gets none of `ha_client`, `ha_time`, `housekeeping`, `settings_core`,
   local databases) with a short release message and push. The repository root holds
   `repository.yaml` (url `https://github.com/sameerkotra/ha-apps`, maintainer `sameerkotra`), `README.md`
   and `LICENSE` (MIT).
+
+## 27. Expected statement dates and overdue reminders (`app/statement_due.py`)
+
+An account can have an **expected statement date**; when it passes with nothing uploaded, the account's owner is
+reminded on their phone (through Home Assistant) and in the app. The design and its decisions are the repository's
+`FINANCE_STATEMENT_REMINDERS_SPEC.md`.
+
+### 27.1 The expected date (per account)
+
+- **Where.** The **Expected statement** group (`_expected_fields.html`) on Setup → Accounts' Add account and the
+  account page's Edit details: **Expected statement** Off · Monthly · Every 2 / 3 / 6 months · Yearly; **On day**
+  1–31 or **Last day of the month**; **Starting** (`YYYY-MM`, the month an every-N-months series counts from; not
+  used for monthly); **Remind me** (this account's phone reminders, on by default). The forms carry
+  `expected_form=1`; without it (the Upload page's new-account fields, older callers) a new account is Off and an
+  edit leaves the setting as it was. With anything but Off, saving needs a day, and a starting month when not
+  monthly (`statement_due.parse_account_form`). Finance never works the day out from past statements.
+- **Columns** (`accounts`, migration 0029): `expected_every_months` (1, 2, 3, 6, 12; NULL = Off), `expected_day`
+  (1–31, 0 = last day), `expected_from`, `reminders_on` (default 1), `expected_set_at` (UTC; set when the account is
+  created, when the period, day or starting month changes, and when it is unarchived or restored).
+- **Dates** (`expected_dates(account, start, end)`): one per month (or every N months from the starting month) on
+  the day; day 29–31 in a shorter month is its last day (Feb 30 → Feb 28/29); 0 is always the last day. Worked out in
+  code, never stored, so a changed setting leaves nothing stale.
+- **Shown** (owner only, while the App setting is on): a **Next statement** column on Setup → Accounts and
+  Transactions → Accounts — the next expected date ("Oct 12"; the expected date itself on the day), "Overdue 3
+  days" (warning colour), "Dismissed", or blank when Off; the account page says when the last statement arrived
+  and when the next is expected.
+
+### 27.2 Cycles: received, dismissed, overdue (`cycle_status(conn, account, today)`)
+
+- Cycle Eₖ runs from the day after Eₖ₋₁ to Eₖ. **Only the latest** is looked at: the newest Eₖ on or before today.
+  Once Eₖ₊₁ arrives, Eₖ is no longer reminded about or shown, received or not.
+- **Received:** the account has an upload on or after Eₖ (local date of `statements.uploaded_at` /
+  `csv_imports.imported_at`): a statement (PDF or QFX) in any status but `error` (`processing` counts, so nobody is
+  reminded while it's read), or a CSV import with at least one live row in the account. Hand-entered transactions
+  don't count; deleted statements and imports don't.
+- **Dismissed:** a `statement_dismissals` row (account, cycle date). **Dismiss** (`statement-dismiss`, Home and
+  Upload) only takes the account's latest cycle; there's no undo, uploading still works.
+- **Overdue** from the day after Eₖ when neither; **due** on Eₖ itself; **upcoming** while no cycle counts: none yet,
+  or only ones before the day of `expected_set_at` (a new or changed setting, or a restore / unarchive, never makes
+  an earlier cycle overdue). Archived and deleted accounts have no status.
+
+### 27.3 My reminders (per person)
+
+- **Where.** Setup → **Settings** (`my-settings`, `my_settings.html`; `my-settings-reminders` saves): the person's
+  own settings, never App settings. An admin acting as someone sees and changes that person's; someone using
+  another person's data through shared access edits their own.
+- `reminder_prefs` (one row per person: `user_id` UNIQUE, `mode` `off` / `remind`, `offsets` a JSON list of days,
+  `repeat_days` 0 / 7 / 14, `at_time` `HH:MM`, `updated_at`). **No row = No notifications**; rows are only written
+  when the person saves. Until then the card says "You won't be reminded about overdue statements until you choose
+  when."
+- **Remind me** needs 1 to 6 of: On the day (0), 1, 2, 3, 5 days, 1 week (7), 10 days, 2, 3, 4 weeks (14, 21, 28)
+  — toggle chips (`static/pages/my-settings.js` stops at 6; the server checks too: "Pick at least one, or choose No
+  notifications." / "Pick at most 6."). **Then keep reminding** Never / Every week / Every 2 weeks continues after
+  the last chosen day, until received or dismissed, and never on or past the next expected date. **At** is a time
+  of day (default 09:00) in Home Assistant's time zone (the process's `TZ`, bootstrap.py).
+- With Remind me and no phone or notify service found, the card says "No phone found for you in Home Assistant".
+  With the App setting off it says reminders are off for the whole app.
+
+### 27.4 Sending (`due_reminders(conn, now)`, `run_check()`, `loop()`)
+
+- A background loop, started in `main.py`'s lifespan with `ha_people.loop` only when there is a Supervisor token
+  (never in the tests), checks every 15 minutes, off the event loop and never sending while it holds a database
+  connection.
+- For each person with Remind me and each of their accounts that has an expected date, its own Remind me on, isn't
+  archived or deleted and whose latest cycle is due or overdue: the **newest** reminder (Eₖ + days, at the time)
+  that has passed. One already in `statement_reminders` (user, account, cycle date, days; UNIQUE) isn't sent again,
+  so a restart never repeats one; older missed ones are never sent, so after the app was off only the newest goes.
+- Everything due for a person in one check is **one** notification: "Statement overdue" / "Visa — expected Oct 12,
+  5 days ago. Upload it in Finance." or "2 statements overdue" / "Checking (Oct 10), Visa (Oct 12). Upload them in
+  Finance." Only the account's name, never a number (its last 4 and any run of five or more digits are masked).
+- **Where to:** every phone Home Assistant links to the owner (`ha_people`: Settings → People → Track device) plus
+  Admin → Users' **Notify** services (`user_notify`), through `ha_notify.services_for` / `send_to_services`.
+  With none, nothing is sent and the row is `no_phone`.
+- **Tap:** `data.url` / `clickAction` = `/<sidebar page>/uploads/<account id>` (with several accounts
+  `/<sidebar page>/uploads`); the page's deep-link handling (`static/base.js` with the shared `deeplink.js`) and the
+  route `GET /uploads/<id>` (a relative redirect to `../uploads?account=<id>`) open Upload with that account picked.
+  Without a known sidebar page the notification has no link.
+- **Failures:** a send that reached no service is `failed`, its `sent_at` the first try; it's retried at each check
+  for six hours from then, then given up and logged once. A later success turns it `sent`.
+- `statement_reminders` rows older than a year are purged by the daily sweep (`purge.purge_soft_deleted`).
+
+### 27.5 In the app
+
+- **Home** (above the charts) and **Upload** (above the form): an amber card (`_statements_due.html`) listing each
+  overdue statement with **Upload** (`uploads?account=<id>`) and **Dismiss**. Upload's statement form picks
+  `?account=<id>`, else the first overdue account, else the first account.
+- **Menu:** the Upload item has a count badge (`request.state.statement_badge`, set by `auth.py`, worked out only when
+  a page draws the menu).
+- **Owners only:** the notices, badge, column and reminders are for the account's owner (`statement_due.can_see`:
+  the person themself, or an admin acting as them); someone it's shared with sees none of them. They show whatever
+  the person's My reminders says — No notifications stops phone reminders only.
+- **App setting off** (section 21.1): no reminders, notices, badge or column; settings kept.
+
+### 27.6 Data
+
+- Migration **0029**: the account columns, `reminder_prefs`, `statement_dismissals` (account_id, cycle_date,
+  dismissed_by, dismissed_at; UNIQUE(account_id, cycle_date)), `statement_reminders` (user_id, account_id,
+  cycle_date, offset_days, sent_at, result `sent` / `no_phone` / `failed`), `user_notify` (user_id, service,
+  created_at, created_by). The dismissal and send-log rows go with their account (ON DELETE CASCADE).
+  `reminder_prefs` and `statement_dismissals` have an `id` column so one person's data can carry them (section 20a).
+- **One person's data** (section 20a): the account columns travel with `accounts`; `reminder_prefs` and
+  `statement_dismissals` are exported; `statement_reminders` and `user_notify` aren't. Delete takes all four, and
+  so does **Wipe all my data** (for good: they aren't restorable data).
+- **Backups / restore** carry the tables; a restored database doesn't resend old reminders (the sent rows come
+  back with it).
+- **Query tab** (section 19): `reminder_prefs` and `statement_dismissals` are described; `statement_reminders` and
+  `user_notify` hidden.
+- Tests: `tests/test_statement_reminders.py`.
 
 ## Security notes (2026-10)
 

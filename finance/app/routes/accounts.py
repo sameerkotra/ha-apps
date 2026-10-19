@@ -8,7 +8,7 @@ from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
 from .. import settings
 from ..db import get_db
-from .. import notices, ofx
+from .. import notices, ofx, statement_due
 from ..version import APP_VERSION
 
 router = APIRouter()
@@ -151,6 +151,7 @@ def list_accounts(
             """,
             (acting.id,),
         ).fetchall()
+        due = statement_due.statuses(conn, rows, current, acting)
 
     return templates.TemplateResponse(
         request,
@@ -158,6 +159,7 @@ def list_accounts(
         {
             "user": acting,
             "accounts": rows,
+            "due": due,
             "show_archived": include_archived,
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
@@ -175,22 +177,35 @@ def create_account(
     account_number_last4: str = Form(""),
     preferred_upload_method: str = Form("both"),
     website_url: str = Form(""),
+    expected_form: str = Form(""),
+    expected_every_months: str = Form(""),
+    expected_day: str = Form(""),
+    expected_from: str = Form(""),
+    reminders_on: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
     problem = _account_problem(name, bank_name) or (None if type in ACCOUNT_TYPES else "Choose the account's type.")
+    # The Expected statement group (SPEC.md section 27); a caller without it (the Upload page's new-account
+    # fields) makes an account with it Off.
+    expected, expected_problem = statement_due.parse_account_form(
+        expected_every_months, expected_day, expected_from, reminders_on if expected_form else "1")
+    problem = problem or expected_problem
     if problem:
         return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, "accounts")
     with get_db() as conn:
         cur = conn.execute(
             """
             INSERT INTO accounts (user_id, name, type, bank_name, account_number_last4, preferred_upload_method,
-                                  website_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                                  website_url, expected_every_months, expected_day, expected_from, reminders_on,
+                                  expected_set_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 acting.id, name.strip(), type, bank_name.strip() or None, _sanitize_last4(account_number_last4),
                 _sanitize_upload_method(preferred_upload_method), _sanitize_url(website_url),
+                expected["expected_every_months"], expected["expected_day"], expected["expected_from"],
+                expected["reminders_on"], statement_due.stamp(),
             ),
         )
         conn.commit()
@@ -225,23 +240,41 @@ def update_account(
     account_number_last4: str = Form(""),
     preferred_upload_method: str = Form("both"),
     website_url: str = Form(""),
+    expected_form: str = Form(""),
+    expected_every_months: str = Form(""),
+    expected_day: str = Form(""),
+    expected_from: str = Form(""),
+    reminders_on: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Edit name, bank, last 4, preferred upload method and web address — never the type,
+    """Edit name, bank, last 4, preferred upload method, web address and the expected statement — never the type,
     which decides the sign convention everywhere. Names are always read live
     through a JOIN, so nothing needs re-importing; only a multi-account CSV's
     Account column (matched by today's name) is affected by a rename."""
     problem = _account_problem(name, bank_name)
+    expected = None
+    if expected_form:          # the form's Expected statement group (a caller without it leaves it as it is)
+        expected, expected_problem = statement_due.parse_account_form(
+            expected_every_months, expected_day, expected_from, reminders_on)
+        problem = problem or expected_problem
     if problem:
         return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, f"account?id={id}")
     with get_db() as conn:
         row = conn.execute(
-            "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
+            "SELECT * FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL",
             (id, acting.id),
         ).fetchone()
         if row is None:
             return templates.TemplateResponse(request, "not_found.html", {"user": acting}, status_code=404)
+        if expected is not None:
+            # A new or changed expected date never makes a cycle before today overdue (expected_set_at).
+            conn.execute(
+                "UPDATE accounts SET expected_every_months = ?, expected_day = ?, expected_from = ?, reminders_on = ?"
+                + ", expected_set_at = ?" + " WHERE id = ?",
+                (expected["expected_every_months"], expected["expected_day"], expected["expected_from"],
+                 expected["reminders_on"],
+                 statement_due.stamp() if statement_due.changed(row, expected) else row["expected_set_at"], id))
 
         conn.execute(
             "UPDATE accounts SET name = ?, bank_name = ?, account_number_last4 = ?, preferred_upload_method = ?, "
@@ -289,6 +322,10 @@ def set_account_archived(
             "UPDATE accounts SET is_archived = ? WHERE id = ?",
             (1 if archived == "1" else 0, id),
         )
+        if archived != "1":
+            # Back from the archive: reminders start again from the next expected date, never for missed ones.
+            conn.execute("UPDATE accounts SET expected_set_at = ? WHERE id = ? AND is_archived = 0",
+                         (statement_due.stamp(), id))
         conn.commit()
 
     # next is just "accounts" or "account" (never a full URL with its own
@@ -372,12 +409,17 @@ def account_detail(
                 for r in flow_rows
             }
 
+        due = statement_due.cycle_status(conn, account) if statement_due.can_see(current, acting) else None
+        last_upload = statement_due.last_upload(conn, id)
+
     return templates.TemplateResponse(
         request,
         "account_detail.html",
         {
             "user": acting,
             "account": account,
+            "due": due, "due_label": statement_due.column_label(due), "last_upload": last_upload,
+            "due_enabled": statement_due.enabled(), "date_label": statement_due.label,
             "txn_count": txn_count_row["n"],
             "statements": statements,
             "flow_by_statement": flow_by_statement,

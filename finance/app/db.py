@@ -92,6 +92,12 @@ def get_db() -> sqlite3.Connection:
                                     "synchronous = NORMAL"))
 
 
+def get_conn() -> sqlite3.Connection:
+    """The same connection as get_db(), under the name the shared Home Assistant code uses
+    (app/common/ha_notify.py: `with db.get_conn() as conn:` commits and closes)."""
+    return get_db()
+
+
 _FK_PRAGMA = re.compile(r"^\s*PRAGMA\s+foreign_keys\s*=\s*(ON|OFF)\s*;?\s*$", re.IGNORECASE | re.MULTILINE)
 
 

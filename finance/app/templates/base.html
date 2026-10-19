@@ -74,7 +74,7 @@
         {# Six sections (SPEC.md section 13); every page says which one it belongs to via active_page. #}
         {% set section = {"dashboard": "home", "transactions": "transactions", "transfers": "transactions",
                           "recurring": "transactions", "review": "upload", "transactions_accounts": "transactions", "uploads": "upload",
-                          "reports": "reports", "accounts": "setup", "categories": "setup",
+                          "reports": "reports", "accounts": "setup", "categories": "setup", "my_settings": "setup",
                           "admin_storage": "admin", "recently_deleted": "admin", "ai_usage": "admin", "settings": "admin"}.get(active_page, "") %}
         {% if active_page in ("utilities", "tolls") %}{% set section = "upload" if tab == "upload" else "bills" %}{% endif %}
         <div class="nav-items">
@@ -89,6 +89,9 @@
         <a href="uploads{{ qs }}" data-upload-nav class="nav-item {{ 'active' if section == 'upload' }}" title="Upload">
             <span class="nav-icon" aria-hidden="true">&#128228;</span>
             <span class="nav-label">Upload</span>
+            {% set overdue_n = request.state.statement_badge() if request.state.statement_badge is defined else 0 %}
+            {% if overdue_n %}<span class="nav-badge" title="{{ overdue_n }} statement{{ 's' if overdue_n != 1 }} overdue"
+                aria-label="{{ overdue_n }} overdue">{{ overdue_n }}</span>{% endif %}
         </a>
         {% if feat.utilities or feat.tolls %}
         <a href="{{ 'utilities' if feat.utilities else 'tolls' }}?tab=dashboard{{ '&' + acting_qs if acting_qs else '' }}" class="nav-item {{ 'active' if section == 'bills' }}"
@@ -101,7 +104,7 @@
             <span class="nav-icon" aria-hidden="true">&#128202;</span>
             <span class="nav-label">Reports</span>
         </a>
-        <a href="accounts{{ qs }}" class="nav-item nav-desktop-only {{ 'active' if section == 'setup' }}" title="Setup: accounts and categories">
+        <a href="accounts{{ qs }}" class="nav-item nav-desktop-only {{ 'active' if section == 'setup' }}" title="Setup: accounts, categories and settings">
             <span class="nav-icon" aria-hidden="true">&#9881;&#65039;</span>
             <span class="nav-label">Setup</span>
         </a>
@@ -134,6 +137,7 @@
             <div class="panel-title">Setup</div>
             <a href="accounts{{ qs }}">Accounts</a>
             <a href="categories{{ qs }}">Categories</a>
+            <a href="my-settings{{ qs }}">Settings</a>
         </div>
         {% if request.state.is_real_admin %}
         <div class="nav-more-group">

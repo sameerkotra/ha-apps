@@ -9,12 +9,12 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import app_messages, features, tools, jobs, purge, security, settings, storage
-from .common import sandbox_run, web_security
+from . import app_messages, config, features, statement_due, tools, jobs, purge, security, settings, storage
+from .common import ha_people, sandbox_run, web_security
 from .version import APP_VERSION
 from .db import DB_PATH, normalize_legacy_transaction_dates, run_migrations
 from .routes import (accounts, admin_storage, ai_usage_page, categories, csv_import, dashboard, deletion, pdf_view, query, recurring,
-                     people_data, reports, settings_page, review, toll_statements, tolls, transactions, transfers, upload, users, utilities)
+                     people_data, reports, settings_page, review, statement_reminders, toll_statements, tolls, transactions, transfers, upload, users, utilities)
 
 
 # The largest backup Admin → Storage → Import accepts (a database of many years is a few hundred MB).
@@ -33,7 +33,14 @@ async def lifespan(app: FastAPI):
     jobs.resume_waiting()                 # uploads that were only waiting their turn go back in the queue
     purge.start_purge_worker()            # 30-day soft-delete purge (SPEC.md section 11)
     app_messages.start()                  # the household apps bus: the Household Assistant asks (tools.py)
+    # Overdue statement reminders (statement_due.py) and the people and phones they go to (common/ha_people.py):
+    # only inside Home Assistant — without the Supervisor's token nothing could be sent (the tests).
+    loops = []
+    if config.SUPERVISOR_TOKEN:
+        loops = [asyncio.ensure_future(ha_people.loop()), asyncio.ensure_future(statement_due.loop())]
     yield
+    for task in loops:
+        task.cancel()
     app_messages.stop()
 
 
@@ -95,7 +102,8 @@ security.install(app)  # added last, so it runs first: ingress-only + cross-site
 
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 for module in (accounts, transactions, csv_import, review, categories, transfers, dashboard, upload,
-               admin_storage, ai_usage_page, query, reports, users, people_data, deletion, recurring, utilities, tolls, toll_statements, pdf_view, settings_page):
+               admin_storage, ai_usage_page, query, reports, users, people_data, deletion, recurring, utilities, tolls, toll_statements, pdf_view, settings_page,
+               statement_reminders):
     app.include_router(module.router)
 
 
@@ -108,6 +116,15 @@ def health():
 @app.get("/")
 def root():
     return RedirectResponse(url="accounts")  # no leading slash — see SPEC.md section 1
+
+
+# "/<page>/uploads/<account id>" (an overdue statement's notification, statement_due.tap_link): Upload with that
+# account picked. The page's own deeplink handling (static/base.js) opens the same.
+@app.get("/uploads/{account_id}", include_in_schema=False)
+def upload_link(account_id: str):
+    if not re.fullmatch(r"\d{1,12}", account_id):
+        raise HTTPException(404, "Not found.")
+    return RedirectResponse(url=f"../uploads?account={account_id}", status_code=307, headers={"Cache-Control": "no-store"})
 
 
 # "/<page>/month/<YYYY-MM>" asked of the app itself (a link from Home Assistant): that month's dashboard. /dashboard

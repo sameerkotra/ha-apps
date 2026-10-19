@@ -70,6 +70,10 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "Utility bills: upload them under Upload, see them under Bills. Off hides them everywhere (nothing is deleted)."),
     Setting("feature_tolls", "Tolls", "bool", "0",
             "Toll road statements (PDF): upload them and analyze cost by car, tag and trip. Off hides them everywhere (nothing is deleted)."),
+    Setting("statement_reminders", "Statement reminders", "bool", "1",
+            "Overdue statements: the phone reminders each person sets on Setup → Settings, the notices on Home and "
+            "Upload, and the count on the Upload menu item. Off hides all of them; each account's expected date and "
+            "each person's choices are kept."),
     Setting("assistant_answers", "Answer the Household Assistant", "bool", "0",
             "Lets the Household Assistant app tell each person their own month — income, spending by category, their "
             "largest charges, recurring charges and bills coming up — and what an admin shared with them here. Never "
@@ -91,6 +95,8 @@ GROUPS: list[tuple[str, str, list[str]]] = [
      "the running total on Admin → AI usage. The prices are used for the cost on both.",
      ["show_ai_usage", "price_input_per_million", "price_output_per_million"]),
     ("Features", "Parts of the app that not everyone needs.", ["feature_utilities", "feature_tolls"]),
+    ("Statement reminders", "When an account's statement hasn't arrived by its expected date (Setup → Accounts), its "
+     "owner is reminded.", ["statement_reminders"]),
     ("Household Assistant", "The Household Assistant app answers questions from what the household apps know. Its "
      "answers travel through Home Assistant's event bus.", ["assistant_answers", "bus_signing_key"]),
 ]

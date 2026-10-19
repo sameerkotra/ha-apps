@@ -1,4 +1,4 @@
--- Finance Dashboard: the database schema as migrations 0001-0028 leave it (generated; the
+-- Finance Dashboard: the database schema as migrations 0001-0029 leave it (generated; the
 -- migrations in finance/migrations are the source of truth). SQLite, WAL mode, foreign keys on.
 
 CREATE TABLE "accounts" (
@@ -14,7 +14,7 @@ CREATE TABLE "accounts" (
     preferred_upload_method TEXT NOT NULL DEFAULT 'both'
         CHECK (preferred_upload_method IN ('both', 'pdf', 'csv', 'qfx')),
     website_url           TEXT
-);
+, expected_every_months INTEGER CHECK (expected_every_months IN (1, 2, 3, 6, 12)), expected_day INTEGER CHECK (expected_day BETWEEN 0 AND 31), expected_from TEXT, reminders_on INTEGER NOT NULL DEFAULT 1 CHECK (reminders_on IN (0, 1)), expected_set_at TEXT);
 
 CREATE TABLE ai_usage_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,6 +109,16 @@ CREATE TABLE recurring_overrides (
     created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE reminder_prefs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL UNIQUE,
+    mode        TEXT    NOT NULL DEFAULT 'off' CHECK (mode IN ('off', 'remind')),
+    offsets     TEXT    NOT NULL DEFAULT '[]',
+    repeat_days INTEGER NOT NULL DEFAULT 0 CHECK (repeat_days IN (0, 7, 14)),
+    at_time     TEXT    NOT NULL DEFAULT '09:00',
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE saved_reports (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT    NOT NULL UNIQUE COLLATE NOCASE,
@@ -141,6 +151,26 @@ CREATE TABLE skipped_duplicates (
     inserted_transaction_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL,
     created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
     resolved_at             TEXT
+);
+
+CREATE TABLE statement_dismissals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    cycle_date   TEXT    NOT NULL,
+    dismissed_by TEXT,
+    dismissed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (account_id, cycle_date)
+);
+
+CREATE TABLE statement_reminders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    account_id  INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    cycle_date  TEXT    NOT NULL,
+    offset_days INTEGER NOT NULL,
+    sent_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    result      TEXT    NOT NULL CHECK (result IN ('sent', 'no_phone', 'failed')),
+    UNIQUE (user_id, account_id, cycle_date, offset_days)
 );
 
 CREATE TABLE statements (
@@ -370,6 +400,14 @@ CREATE TABLE user_access (
     CHECK (viewer_id != owner_id)
 );
 
+CREATE TABLE user_notify (
+    user_id    TEXT NOT NULL,
+    service    TEXT NOT NULL,              -- "notify.<name>", name matching ^[a-z0-9_]+$
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    created_by TEXT,
+    PRIMARY KEY (user_id, service)
+);
+
 CREATE TABLE "utility_bills" (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id                TEXT    NOT NULL,
@@ -432,6 +470,8 @@ CREATE INDEX idx_skipped_duplicates_matched ON skipped_duplicates(matched_transa
 CREATE INDEX idx_skipped_duplicates_statement ON skipped_duplicates(statement_id);
 
 CREATE INDEX idx_skipped_duplicates_user ON skipped_duplicates (user_id, status);
+
+CREATE INDEX idx_statement_reminders_sent ON statement_reminders(sent_at);
 
 CREATE INDEX idx_statements_account  ON statements(account_id);
 

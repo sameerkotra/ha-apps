@@ -123,8 +123,15 @@ def get_current_user(request: Request) -> User:
             conn.close()
     # The banner's "your own data" link: ?as_user=<self> only when this person opens into someone else's.
     request.state.own_data_qs = f"?as_user={user.id}" if user.home_id != user.id else ""
+    _statement_badge(request, user, user)
 
     return user
+
+
+def _statement_badge(request: Request, current: User, acting: User) -> None:
+    """The Upload menu item's overdue-statement count (statement_due.py), worked out only if the page shows it."""
+    from . import statement_due
+    request.state.statement_badge = lambda: statement_due.badge_count(current, acting)
 
 
 def shared_owners(viewer_id: str) -> list[dict]:
@@ -151,6 +158,12 @@ def get_acting_user(
     request: Request,
     current: User = Depends(get_current_user),
 ) -> User:
+    acting = _acting_user(request, current)
+    _statement_badge(request, current, acting)
+    return acting
+
+
+def _acting_user(request: Request, current: User) -> User:
     """The user whose DATA this request should operate on.
 
     A regular user: their own data, or — only if the admin gave them shared

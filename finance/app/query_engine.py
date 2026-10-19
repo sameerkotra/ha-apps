@@ -40,7 +40,9 @@ _LIVE = _OWN + " AND x.deleted_at IS NULL"
 _LIVE_ACCOUNT = " AND EXISTS (SELECT 1 FROM main.accounts a WHERE a.id = x.account_id AND a.deleted_at IS NULL)"
 
 REGISTRY: dict[str, TableSpec] = {
-    "accounts": TableSpec("Bank and credit-card accounts: name, type, bank, last 4, archived, preferred upload method, website_url.", _LIVE),
+    "accounts": TableSpec("Bank and credit-card accounts: name, type, bank, last 4, archived, preferred upload method, website_url; "
+                          "the expected statement: expected_every_months (NULL = off), expected_day (0 = last day), "
+                          "expected_from (YYYY-MM), reminders_on.", _LIVE),
     "transactions": TableSpec(
         "Every bank/card transaction. amount is signed: negative is money out, positive is money in. "
         "transfer_pair_id is set for a transfer between your own accounts; is_excluded = 1 is left out of dashboards; "
@@ -69,12 +71,18 @@ REGISTRY: dict[str, TableSpec] = {
     "toll_patterns": TableSpec("Trip tags.", _OWN),
     "toll_pattern_groups": TableSpec("Groups of trip tags.", _OWN),
     "toll_trip_overrides": TableSpec("Trips you tagged by hand.", _OWN),
+    "reminder_prefs": TableSpec("Your My reminders: mode ('off' or 'remind'), offsets (JSON list of days after the "
+                                "expected date), repeat_days (0, 7 or 14), at_time (HH:MM).", _OWN),
+    "statement_dismissals": TableSpec(
+        "Overdue statements you dismissed: account_id, cycle_date (the expected date), dismissed_at.",
+        "EXISTS (SELECT 1 FROM main.accounts a WHERE a.id = x.account_id AND a.user_id = {u} AND a.deleted_at IS NULL)"),
 }
 
 # Deliberately never queryable. Every table in the database must be in REGISTRY or here (tested).
 HIDDEN_TABLES = {"known_users", "app_settings", "ai_usage_log", "schema_version", "sqlite_sequence", "saved_reports", "user_access",
                  "skipped_duplicates",
-                 "bus_outbox", "bus_seen", "bus_apps"}          # the household apps bus (app_messages.py): not anyone's data
+                 "bus_outbox", "bus_seen", "bus_apps",          # the household apps bus (app_messages.py): not anyone's data
+                 "statement_reminders", "user_notify"}          # the reminders' send log and Admin → Users' notify services
 
 # Convenience views, built on the scoped views above.
 EXTRA_VIEWS: dict[str, tuple[str, str]] = {

@@ -1207,3 +1207,31 @@ button.nav-item:hover { background: var(--panel-alt); color: var(--text); }
     .csv-preview td, .csv-preview th { display: table-cell; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--border); }
     .csv-preview td::before { content: none; }
 }
+
+/* ---------- Overdue statements (SPEC.md section 27): the Upload badge, the notice card, the Next statement
+   column and Setup → Settings → My reminders. ---------- */
+.nav-item { position: relative; }
+.nav-badge {
+    display: inline-block; min-width: 1.2rem; padding: 0 0.35rem; border-radius: 999px;
+    background: var(--warn); color: #1a1a1a; font-size: 0.7rem; font-weight: 700; line-height: 1.2rem; text-align: center;
+}
+html.nav-collapsed .nav-badge { position: absolute; top: 2px; right: 2px; }
+@media (max-width: 768px) {
+    .nav-badge { position: absolute; top: 0; right: 0; min-width: 1rem; line-height: 1rem; font-size: 0.6rem; }
+}
+.statements-due { border: 1px solid var(--warn); border-radius: 10px; padding: 0.75rem 1rem; margin: 0 0 1rem; }
+.statements-due h2 { margin: 0 0 0.5rem; font-size: 1rem; color: inherit; }
+.statements-due ul { list-style: none; margin: 0; padding: 0; }
+.statements-due li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.3rem 0; }
+.statements-due li .due-name { flex: 1 1 12rem; }
+.statements-due form { display: inline; margin: 0; }
+.due-overdue { color: var(--warn); font-weight: 600; }
+.due-dismissed { color: var(--text-dim); }
+.expected-group { border: 1px solid var(--border, var(--panel-alt)); border-radius: 8px; padding: 0.5rem 0.75rem; }
+.expected-group legend { font-weight: 600; padding: 0 0.25rem; }
+.reminder-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; border: 0; padding: 0; margin: 0.25rem 0; }
+.reminder-chips label { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.25rem 0.7rem;
+    border: 1px solid var(--text-dim); border-radius: 999px; cursor: pointer; font-size: 0.85rem; }
+.reminder-chips input { margin: 0; }
+.reminder-chips label:has(input:checked) { border-color: var(--accent); color: var(--accent); }
+.reminder-chips label:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }

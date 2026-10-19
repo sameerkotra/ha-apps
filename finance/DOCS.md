@@ -58,7 +58,8 @@ tokens on App settings to see the cost.
 ### Home
 Income and spending by category for this week, this month, last month, this or last year, all
 time or any month; drill into the transactions behind a figure. **Compare** puts two months
-or two years side by side.
+or two years side by side. When one of your statements is overdue (see **Expected statements**
+below), an amber card above the charts lists it with **Upload** and **Dismiss**.
 
 ### Transactions
 - **All**: search by notes, description, account, category, money in/out, excluded, dates and
@@ -70,7 +71,8 @@ or two years side by side.
   reviewed, included, deleted or restored — and counted as neither income nor spending; confirm
   the ambiguous ones. **Link unambiguous** runs the matching on demand.
 - **Recurring**: subscriptions and bills detected from your history, weekly to yearly.
-- **Accounts**: each account's latest transaction, so you know which statement is due.
+- **Accounts**: each account's latest transaction, so you know which statement is due, and its
+  **Next statement** ("Oct 12", "Overdue 3 days" or "Dismissed") when it has an expected date.
 
 ### Upload
 - **Statements**: PDF statements (up to 50 MB each, at most 20 files at a time, with a text layer —
@@ -94,6 +96,9 @@ or two years side by side.
   difference flags it for review (usually a missing download in between). Credit card files are
   turned the app's way round (a purchase is money out). The same file twice is refused;
   investment and loan statements aren't supported. A QFX file isn't kept after it's read.
+- **Overdue statements** are listed above the upload form too, with **Dismiss**, and the first
+  one is already picked as the account. A reminder tapped on your phone opens this page with its
+  account picked. The **Upload** menu item shows a small count while anything is overdue.
 - **Review**: everything waiting for you.
 - **Utility bill** and **Toll statement**: when those parts are switched on (below). Each utility
   bill waits for you like a statement: **Check & confirm** opens its figures (correct anything, then
@@ -123,11 +128,40 @@ write the SQL from a plain-English question.
 
 ### Setup
 - **Accounts**: add, rename, archive, set the preferred upload type (any, PDF, CSV or QFX — a
-  reminder on the Upload page, never a block) and a website link.
+  reminder on the Upload page, never a block), a website link and the **Expected statement**.
 - **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
   before the built-in ones and the AI. **Also apply to all existing transactions** gives the
   transactions the new rule matches the category your rules give them (a more specific rule
   still wins); other transactions keep theirs.
+- **Settings**: your own settings (not App settings), with **My reminders**.
+
+#### Expected statements and reminders
+- **Expected statement** (on Add account and each account's Edit details): Off, Monthly, every 2, 3
+  or 6 months, or Yearly; **On day** (1–31, or the last day of the month — the 29th, 30th and 31st
+  fall on a shorter month's last day); **Starting**, the month the series counts from (when it isn't
+  monthly); and **Remind me** for this account. You pick the day the bank has the statement ready:
+  the app never guesses it. The account's page shows when the last statement arrived and when the
+  next is expected.
+- **Received**: any statement (PDF or QFX, even one still being read, but not one that failed) or
+  CSV import with at least one row for the account, uploaded on or after the expected date.
+  Transactions added by hand don't count.
+- **Overdue**: from the day after the expected date, until it's uploaded, you **Dismiss** it (on
+  Home or Upload: that statement gets no more reminders, the next one starts fresh), or the next
+  expected date arrives — only the latest one is ever shown, so a missed month never piles up. A
+  new or changed expected date never makes an earlier statement overdue; neither does restoring
+  or unarchiving an account (archived and deleted accounts are never overdue).
+- **My reminders** (Setup → Settings): nobody is reminded until they choose. **No notifications**,
+  or **Remind me** on 1 to 6 days after the expected date (On the day, 1, 2, 3 or 5 days, 1 week,
+  10 days, 2, 3 or 4 weeks), **Then keep reminding** every week or every 2 weeks (never past the
+  next expected date) and **At** a time of day (Home Assistant's time zone). Several statements due
+  together come as one notification. A reminder goes to every phone Home Assistant links to you
+  (Settings → People → your person → Track device) plus any extra notify service an admin adds for
+  you on Admin → Users; if none is found the card says so. It names the account only, never its
+  number, and tapping it opens Upload with that account picked. If the app was off when reminders
+  were due, only the newest is sent; one Home Assistant couldn't deliver is tried again for six
+  hours. The notices on Home and Upload show whatever you choose here.
+- Only the account's owner is reminded and sees its notices — not people it's shared with. An admin
+  acting as the owner sees the owner's and can change their My reminders.
 
 ### Look and feel
 - **Theme** (bottom of the menu; **More** on a phone): Midnight (the default), Slate, Daylight,
@@ -137,8 +171,9 @@ write the SQL from a plain-English question.
 ### Admin (admins only)
 - **Storage**: stored PDFs, and database download / import for backups.
 - **Query**: read-only SQL on the data of the person you're acting as, and report editing.
-- **Users**: give a person access to another person's data (e.g. one shared household view), and
-  export, import or delete one person's data (below).
+- **Users**: give a person access to another person's data (e.g. one shared household view),
+  add extra **Notify** services for a person's statement reminders (a speaker, a second phone:
+  `notify.<name>`), and export, import or delete one person's data (below).
 - **Recently deleted**: anything deleted in the last 30 days can be restored; after that it is
   erased.
 - **AI usage**: the running total of every AI request since the app started counting: requests,
@@ -146,7 +181,9 @@ write the SQL from a plain-English question.
   (reading PDFs, categories, Write SQL) and by model. Re-processing or deleting a statement
   doesn't lower it. An install that already had statements starts the total from the AI usage
   stored on each of them (their last processing run only).
-- **App settings**: AI, AI usage display and prices, Features, and Household Assistant (with the
+- **App settings**: AI, AI usage display and prices, Features, **Statement reminders** (on by
+  default; off hides the phone reminders, the notices and the Upload count for everyone, but keeps
+  every account's expected date and everyone's choices) and Household Assistant (with the
   app-messages signing key). Changes apply at once.
 
 Admins can **act as** any user (the switch at the top right) to see and fix their data.

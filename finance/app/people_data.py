@@ -15,6 +15,7 @@ this person's data (shared access) are stored under this person's id, so they ar
 `schema` in the file is the newest migration number (migrations/NNNN_*.sql). A file with an older schema is
 brought up to date by UPGRADES (one step per migration that changed a table here); a newer one is refused.
 """
+import json
 import math
 import os
 import re
@@ -22,7 +23,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass, field
 
-from . import storage
+from . import statement_due, storage
 from .amounts import to_cents
 from .common import person_data
 from .db import MIGRATIONS_DIR
@@ -50,6 +51,16 @@ def _to_28(tables: dict) -> None:
 
 
 UPGRADES[27] = _to_28
+
+
+def _to_29(tables: dict) -> None:
+    """Migration 0029: accounts gained the expected statement (Off: NULL) and their own Remind me (on); the new
+    reminder_prefs and statement_dismissals tables start empty."""
+    for row in tables.get("accounts", []):
+        row.setdefault("reminders_on", 1)
+
+
+UPGRADES[28] = _to_29
 
 
 class Refused(ValueError):
@@ -93,6 +104,10 @@ TABLES = [
     Table("toll_pattern_groups", "toll tag groups", dedupe_in_file=True),
     Table("toll_patterns", "toll tags", refs={"group_id": "toll_pattern_groups"}, dedupe_in_file=True),
     Table("toll_trip_overrides", "toll trip choices", refs={"pattern_id": "toll_patterns"}, dedupe_in_file=True),
+    # Expected statements (SPEC.md section 27): the person's own My reminders and the cycles they dismissed. The
+    # send log (statement_reminders) isn't theirs to carry: it stays out, so does user_notify (admin setup).
+    Table("reminder_prefs", "reminder settings", dedupe_in_file=True),
+    Table("statement_dismissals", "dismissed overdue statements", parent=("account_id", "accounts")),
 ]
 BY_NAME = {t.name: t for t in TABLES}
 NEVER = {"id", "user_id", "trip_id"}     # trip_id points into the toll_trips cache, rebuilt after an import
@@ -185,6 +200,22 @@ def clean_row(table: str, row: dict, cols: dict, where: str) -> dict:
         url = out.get("website_url")
         if url is not None and _sanitize_url(url) != url:
             raise Refused(f"{where}: the account's web address isn't one the app accepts.")
+        if out.get("expected_from") is not None and statement_due.parse_month(out["expected_from"]) is None:
+            raise Refused(f"{where}: expected_from must be a month (YYYY-MM).")
+    if table == "reminder_prefs":
+        try:
+            offsets = json.loads(out.get("offsets") or "[]")
+        except ValueError:
+            offsets = None
+        mode = out.get("mode") or "off"
+        if (not isinstance(offsets, list) or len(offsets) > statement_due.MAX_OFFSETS
+                or any(o not in dict(statement_due.OFFSET_CHOICES) for o in offsets) or (mode == "remind" and not offsets)):
+            raise Refused(f"{where}: the reminder days aren't ones the app offers.")
+        if out.get("at_time") is not None and statement_due.parse_prefs_form(
+                "remind", ["0"], "0", out["at_time"])[1] is not None:
+            raise Refused(f"{where}: at_time must be HH:MM.")
+    if table == "statement_dismissals" and not _DATE.fullmatch(str(out.get("cycle_date") or "")):
+        raise Refused(f"{where}: cycle_date isn't a date the app stores.")
     if table == "transactions" and out.get("amount") is not None:
         out["amount"] = round(out["amount"], 2)          # amounts are stored in whole cents (migration 0027)
         if out["amount"] == 0:
@@ -258,6 +289,10 @@ def summary(conn, uid: str, name: str) -> dict:
         item("toll_statements", "toll statements", n("SELECT COUNT(*) FROM toll_statements WHERE user_id = ?", uid),
              f"{passes} passes" if passes else ""),
         item("rules", "category rules, categories and recurring choices", rules),
+        item("reminders", "reminder settings and dismissed overdue statements",
+             n("SELECT COUNT(*) FROM reminder_prefs WHERE user_id = ?", uid)
+             + n("SELECT COUNT(*) FROM statement_dismissals d JOIN accounts a ON a.id = d.account_id WHERE a.user_id = ?",
+                 uid)),
         item("toll_setup", "toll cars, tags and groups", toll_setup),
         item("access", "shared-access grants", sees + seen_by,
              f"uses {sees} other people's data · {seen_by} use theirs" if sees + seen_by else ""),
@@ -424,6 +459,7 @@ def _existing_keys(conn, table: str, uid: str) -> tuple[dict, dict]:
         "toll_pattern_groups": "SELECT id, lower(name) FROM toll_pattern_groups WHERE user_id = ?",
         "toll_patterns": "SELECT id, signature, window_start_min, window_end_min FROM toll_patterns WHERE user_id = ?",
         "toll_trip_overrides": "SELECT id, trip_key FROM toll_trip_overrides WHERE user_id = ?",
+        "reminder_prefs": "SELECT id, 1 FROM reminder_prefs WHERE user_id = ?",
     }.get(table)
     live, every = {}, {}
     if not q:
@@ -469,6 +505,8 @@ def _key(table: str, r: dict):
         return (r.get("signature"), r.get("window_start_min"), r.get("window_end_min"))
     if table == "toll_trip_overrides":
         return (r.get("trip_key"),)
+    if table == "reminder_prefs":
+        return (1,)                         # one per person: theirs is kept when they already have one
     return None
 
 
@@ -578,6 +616,13 @@ def delete_rows(conn, uid: str, forget: bool) -> dict:
         return conn.execute(sql, args).rowcount
 
     counts = {}
+    counts["statement_dismissals"] = gone(
+        "DELETE FROM statement_dismissals WHERE account_id IN (SELECT id FROM accounts WHERE user_id = ?)", uid)
+    counts["statement_reminders"] = gone(
+        "DELETE FROM statement_reminders WHERE user_id = ? OR account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
+        uid, uid)
+    counts["reminder_prefs"] = gone("DELETE FROM reminder_prefs WHERE user_id = ?", uid)
+    counts["user_notify"] = gone("DELETE FROM user_notify WHERE user_id = ?", uid)
     counts["electric_meter_details"] = gone(
         "DELETE FROM electric_meter_details WHERE utility_bill_id IN (SELECT id FROM utility_bills WHERE user_id = ?)", uid)
     for table in ("skipped_duplicates", "transactions", "statements", "csv_imports", "accounts", "utility_bills",

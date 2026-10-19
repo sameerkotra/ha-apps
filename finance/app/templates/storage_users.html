@@ -28,6 +28,27 @@
                 {% if u.id == request.state.real_user_id %}<span class="hint">(you)</span>{% endif %}
                 <span class="u-data" data-person-id="{{ u.id }}" data-person-name="{{ u.name }}"></span></div>
             <p class="hint"><code>{{ u.id }}</code> &middot; last seen {{ u.last_seen_at or "—" }} UTC</p>
+            <div class="u-notify">
+                <p>Notify{% if not u.notify %} <span class="hint">&mdash; only the phones Home Assistant links to them</span>{% endif %}</p>
+                {% if u.notify %}
+                <ul class="u-owners">
+                    {% for svc in u.notify %}
+                    <li><code>{{ svc }}</code>
+                        <form method="post" action="user-notify-remove{{ qs }}" class="inline-form">
+                            <input type="hidden" name="user_id" value="{{ u.id }}"><input type="hidden" name="service" value="{{ svc }}">
+                            <button type="submit" class="btn-secondary q-danger">Remove</button>
+                        </form></li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                <form method="post" action="user-notify-add{{ qs }}" class="inline-form">
+                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                    <label>Add a notify service
+                        <input type="text" name="service" placeholder="notify.mobile_app_phone" maxlength="120"
+                               spellcheck="false" autocomplete="off"{% if notify_choices %} list="notify-choices"{% endif %}></label>
+                    <button type="submit" class="btn-secondary">Add</button>
+                </form>
+            </div>
             {% if u.is_admin %}
             <p class="hint">Admins can already use anyone's data with the user switch.</p>
             {% else %}
@@ -66,6 +87,9 @@
 </ul>
 {% endif %}
 </div>
+{% if notify_choices %}<datalist id="notify-choices">{% for n in notify_choices %}<option value="{{ n }}">{% endfor %}</datalist>{% endif %}
+<p class="hint">Notify: where an overdue statement's reminder goes (Setup &rarr; Settings &rarr; My reminders), besides
+    every phone Home Assistant links to the person (Settings &rarr; People &rarr; Track device).</p>
 {% if orphans %}
 <h2>Access for users no longer listed</h2>
 <ul>

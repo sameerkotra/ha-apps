@@ -17,7 +17,7 @@ from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..categorize import list_all_categories
 from ..db import get_db
 from ..version import APP_VERSION
-from .. import ai_usage, jobs, ofx, qfx_import, settings, storage
+from .. import ai_usage, jobs, ofx, qfx_import, settings, statement_due, storage
 from ..jobs import start_job
 from ..parser.documents import prepare_restart
 from ..parser.pipeline import check_duplicate, finalize_if_ready
@@ -672,6 +672,7 @@ def _csv_import_rows(conn: sqlite3.Connection, user_id: str) -> list[dict]:
 @router.get("/uploads")
 def uploads_list(
     request: Request,
+    account: str = "",
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -693,8 +694,15 @@ def uploads_list(
         categories = list_all_categories(conn, acting.id)
         # CSV import history (its debug link is the categorization view's entry point).
         csv_imports = _csv_import_rows(conn, acting.id)
+        overdue = statement_due.visible_overdue(conn, current, acting)
     finally:
         conn.close()
+    # Which account the statement form starts on: ?account=<id> (a notification's tap, an Upload button), else
+    # the first overdue one, else the first in the list.
+    ids = {a["id"] for a in accounts}
+    preselect = int(account) if account.isdigit() and int(account) in ids else None
+    if preselect is None and overdue and overdue[0]["account_id"] in ids:
+        preselect = overdue[0]["account_id"]
 
     qs = _acting_qs(current, acting)
     statement_view = TableView(request, "uploads", "st_", statements, _STATEMENT_KEYS, "default_order", extra_qs=qs)
@@ -704,6 +712,7 @@ def uploads_list(
         request, "uploads_list.html",
         {
             "user": acting, "accounts": accounts, "categories": categories,
+            "preselect": preselect, "overdue": overdue, "due_next": "uploads",
             "statement_view": statement_view, "csv_view": csv_view,
             "statement_sort_columns": STATEMENT_SORT_COLUMNS, "csv_sort_columns": CSV_SORT_COLUMNS,
             "acting_as_banner": _acting_banner(current, acting),

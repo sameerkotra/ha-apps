@@ -22,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..db import get_db
+from .. import statement_due
 from ..toll_trips import rebuild_trips
 from ..version import APP_VERSION
 from ..matching import cascade_unlink_on_delete, relink
@@ -556,7 +557,9 @@ def account_restore(
         ).fetchone()
         if row is not None:
             deleted_at = row["deleted_at"]
-            conn.execute("UPDATE accounts SET deleted_at = NULL WHERE id = ?", (id,))
+            # Restored: reminders start again from the next expected date, never for the missed ones (section 27).
+            conn.execute("UPDATE accounts SET deleted_at = NULL, expected_set_at = ? WHERE id = ?",
+                         (statement_due.stamp(), id))
             # Only restore statements/transactions soft-deleted in the SAME
             # operation as this account (Scope B stamps accounts,
             # statements and transactions with the same deleted_at value
@@ -819,6 +822,14 @@ def user_wipe(
                 f"UPDATE {table} SET deleted_at = ? WHERE user_id = ? AND deleted_at IS NULL",
                 (stamp, acting.id),
             )
+        # Their reminder settings, dismissals, send log and extra notify services go for good (section 27): they
+        # aren't restorable data, and a restored account starts again from its next expected date anyway.
+        conn.execute("DELETE FROM statement_dismissals WHERE account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
+                     (acting.id,))
+        conn.execute("DELETE FROM statement_reminders WHERE user_id = ? "
+                     "OR account_id IN (SELECT id FROM accounts WHERE user_id = ?)", (acting.id, acting.id))
+        conn.execute("DELETE FROM reminder_prefs WHERE user_id = ?", (acting.id,))
+        conn.execute("DELETE FROM user_notify WHERE user_id = ?", (acting.id,))
         conn.commit()
         rebuild_trips(conn, acting.id)
 
