@@ -605,7 +605,10 @@ Uncategorized — it never fails an import.
 - **Upload → Statements** (`uploads_list.html`, `static/pages/uploads.js` with the pure helpers in
   `static/pages/upload-logic.js`, server parts in `app/upload_page.py`), top to bottom:
   - the overdue-statements notice (section 27, `_statements_due.html`);
-  - the **accounts strip** (`_accounts_strip.html`, also `GET uploads-strip`): a card per live, unarchived
+  - the **accounts strip**, inside a fold (`<details id="accounts-fold">`, **closed by default**; its summary is
+    "Accounts N" plus "k overdue · m with a missing month", recounted by the script after a refresh; whether it
+    was left open is remembered in this browser, `localStorage` `finance.accountsFoldOpen`, guarded; no fold at
+    all with no accounts) (`_accounts_strip.html`, also `GET uploads-strip`): a card per live, unarchived
     account — name and last 4, "up to Sep 2026" (the newest of its uploaded transactions' dates — from a
     statement or a CSV import, never typed in — and its statements' `period_end`), a gap warning
     (`missing_months`: with an expected date, each cycle Ek-1 < date ≤ Ek between the first upload and the

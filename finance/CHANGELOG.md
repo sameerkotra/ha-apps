@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.2
+
+- **Upload → Statements: the accounts list folds away**, and starts folded. Its line still shows how many accounts there are and how many are overdue or missing a month; open it once and it stays open next time (in that browser).
+
 ## 1.9.1
 
 - **Upload history: Money in and Money out are columns again**, for statements and CSV imports alike, and you can sort by either. The Uploaded column shows the date (the time is in its tooltip) so everything still fits.

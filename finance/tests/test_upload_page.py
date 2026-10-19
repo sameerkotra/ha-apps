@@ -634,3 +634,21 @@ def test_history_shows_money_in_and_out(env):
     # sorting by money in puts the statement (2000) above the CSV (30) when descending
     hist2 = env.get("uploads?h_sort=in&h_dir=desc").text
     assert hist2.index('id="statement-row-') < hist2.index('id="csv-row-')
+
+
+def test_accounts_strip_is_folded_to_start_with(env):
+    """The accounts list on Upload → Statements is a fold, closed when the page opens; its summary keeps the count
+    and anything overdue in view."""
+    env.account("Checking")
+    env.account("Visa", "credit_card")
+    page = env.get("uploads").text
+    fold = page[page.index('id="accounts-fold"') - 60:]
+    tag = fold[fold.index("<details"):fold.index(">", fold.index("<details")) + 1]
+    assert "open" not in tag.replace("accounts-fold", "")
+    head = fold[:fold.index("</summary>")]
+    assert 'id="accounts-fold-count">2<' in head
+    assert fold.index('id="accounts-strip"') > fold.index("</summary>")      # the cards are inside the fold
+
+
+def test_no_accounts_no_fold(env):
+    assert 'id="accounts-fold"' not in env.get("uploads").text

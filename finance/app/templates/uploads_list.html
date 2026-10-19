@@ -10,7 +10,19 @@
 {% include "_statements_due.html" %}
 {% if notice %}<p class="hint notice-hint" role="status">{{ notice }}</p>{% endif %}
 
-<div id="accounts-strip-wrap">{% include "_accounts_strip.html" %}</div>
+{% if strip %}
+{# Folded to start with (the drop zone is what most visits are for); the summary keeps the count and anything that
+   needs attention in view. The script remembers whether it was left open (this browser only). #}
+{% set n_due = strip | selectattr("due_class", "equalto", "due-overdue") | list | length %}
+{% set n_gap = strip | selectattr("gap_text") | list | length %}
+<details class="accounts-fold" id="accounts-fold">
+    <summary class="accounts-fold-summary">Accounts <span class="count-pill" id="accounts-fold-count">{{ strip | length }}</span>
+        <span class="hint" id="accounts-fold-note">{% if n_due %}{{ n_due }} overdue{% endif %}{% if n_due and n_gap %} &middot; {% endif %}{% if n_gap %}{{ n_gap }} with a missing month{% endif %}</span></summary>
+    <div id="accounts-strip-wrap">{% include "_accounts_strip.html" %}</div>
+</details>
+{% else %}
+<div id="accounts-strip-wrap"></div>
+{% endif %}
 
 {# The page's data for static/pages/uploads.js (no inline scripts: see the Content-Security-Policy in main.py). #}
 <div id="upload-data" hidden data-accounts='{{ upload_accounts | tojson }}' data-acting-qs='{{ (acting_qs or "") | tojson }}'

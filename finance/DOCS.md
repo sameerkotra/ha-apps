@@ -79,7 +79,8 @@ below), an amber card above the charts lists it with **Upload** and **Dismiss**.
   - **Overdue statements** (when any are), with **Upload** and **Dismiss**. A reminder tapped on
     your phone opens this page with its account picked. The **Upload** menu item shows a small
     count while anything is overdue.
-  - **Your accounts**: a small card for each account saying how far its uploads go ("up to Sep
+  - **Accounts** (folded until you open it; the line shows how many, and how many are overdue or
+    missing a month; it stays open next time once you open it): a small card for each account saying how far its uploads go ("up to Sep
     2026"), a warning when a month is missing ("Aug missing" — counted by its statement dates when
     the account has an expected statement date, otherwise by calendar months), whether its
     statement is overdue, and its preferred upload method. Its **Upload** button picks that account

@@ -885,9 +885,28 @@
     function refreshAccounts() {
         fetch(api("uploads-strip"))
             .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
-            .then(function (html) { var wrap = $("accounts-strip-wrap"); if (wrap) wrap.innerHTML = html; })
+            .then(function (html) { var wrap = $("accounts-strip-wrap"); if (wrap) wrap.innerHTML = html; foldNote(); })
             .catch(function () { /* keep the cards shown */ });
     }
+    // The accounts fold: its summary follows the cards after a refresh, and whether it's open is remembered.
+    var FOLD_KEY = "finance.accountsFoldOpen";
+    function foldNote() {
+        var wrap = $("accounts-strip-wrap"), count = $("accounts-fold-count"), note = $("accounts-fold-note");
+        if (!wrap || !count || !note) return;
+        var due = wrap.querySelectorAll(".strip-card.due-overdue").length;
+        var gap = wrap.querySelectorAll(".strip-card.has-gap").length;
+        count.textContent = String(wrap.querySelectorAll(".strip-card").length);
+        note.textContent = [due ? due + " overdue" : "", gap ? gap + " with a missing month" : ""]
+            .filter(Boolean).join(" \u00b7 ");
+    }
+    (function () {
+        var fold = $("accounts-fold");
+        if (!fold) return;
+        try { if (localStorage.getItem(FOLD_KEY) === "1") fold.open = true; } catch (e) { /* folded */ }
+        fold.addEventListener("toggle", function () {
+            try { localStorage.setItem(FOLD_KEY, fold.open ? "1" : "0"); } catch (e) { /* not remembered */ }
+        });
+    })();
     function queryOf(href) {
         var i = String(href).indexOf("?");
         return i < 0 ? "" : String(href).slice(i + 1).split("#")[0];
