@@ -41,6 +41,24 @@
             <input type="url" name="website_url" value="{{ account.website_url or '' }}" placeholder="e.g. https://www.chase.com" maxlength="500" inputmode="url">
         </label>
         {{ expected_fields(account) }}
+        <fieldset class="expected-group upload-prefs-fields" id="upload-prefs">
+            <legend>Uploads</legend>
+            <input type="hidden" name="upload_prefs_form" value="1">
+            <label class="checkbox-label">
+                <input type="checkbox" name="skip_confirmation" value="1" id="acct-skip-confirmation"{% if account.skip_confirmation %} checked{% endif %}>
+                Skip the PDF confirmation step for this account
+            </label>
+            {% if csv_layout %}
+            <p class="hint" id="acct-csv-layout">Saved CSV layout: header on row {{ csv_layout.header_row }}, data from row
+                {{ csv_layout.data_row or csv_layout.header_row + 1 }}{% if csv_layout.date_column %}, date column &ldquo;{{ csv_layout.date_column }}&rdquo;{% endif %}{% if csv_layout.debit_credit %}, Debit and Credit columns{% endif %}.</p>
+            <label class="checkbox-label">
+                <input type="checkbox" name="clear_csv_layout" value="1" id="acct-clear-csv-layout">
+                Clear the saved CSV layout
+            </label>
+            {% else %}
+            <p class="hint" id="acct-csv-layout">No saved CSV layout. After a CSV import on Upload you can choose to remember its layout for this account.</p>
+            {% endif %}
+        </fieldset>
         <button type="submit">Save changes</button>
     </form>
     <p class="hint">The account type ({{ account.type.replace('_', ' ') }}) can't be changed here &mdash; delete and re-add the account for that. Everything else updates everywhere at once: past statements and transactions already imported show the new name, bank and number immediately, nothing needs re-importing. Preferred upload method updates the same way &mdash; it only changes what the Upload page warns about, it doesn't touch anything already imported.</p>

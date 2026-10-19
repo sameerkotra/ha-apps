@@ -17,7 +17,7 @@ from ..version import APP_VERSION
 from ..datenorm import normalize_date
 from ..amounts import parse_number
 from .. import storage
-from .. import ai_usage, settings
+from .. import ai_usage, settings, upload_page
 from .transactions import _insert_manual_transaction
 from .accounts import _acting_banner, _acting_qs
 
@@ -209,6 +209,7 @@ def _import_csv_file(
     data starts, and call this again with both."""
     fatal_error: str | None = None
     reader = None
+    layout = None              # the header / data rows and date column actually used (for "Remember this layout")
     preview: list[dict] = []
     needs_rows = False         # the header wasn't found: the page shows the first rows to choose from
     field_map: dict[str, str] = {}
@@ -238,7 +239,9 @@ def _import_csv_file(
             else:
                 header_idx = 0
                 fm0, err0, needs0, _ = _map_fields(records[0], date_column)
-                if err0 is None and _missing_columns(fm0, needs0, default_account_id):
+                # Not the header: required columns missing, or (a date column picked after the header was found
+                # further down) that column isn't on the first row.
+                if err0 is not None or _missing_columns(fm0, needs0, default_account_id):
                     found = _find_header_row(records, date_column, default_account_id)
                     if found is not None:
                         header_idx = found
@@ -252,6 +255,10 @@ def _import_csv_file(
                 field_map, fatal_error, needs_date_column, date_column_candidates = _map_fields(
                     fieldnames, date_column)
                 use_debit_credit = "debit" in field_map and "credit" in field_map
+                several_dates = sum(1 for n in fieldnames if "date" in (n or "").lower()) > 1
+                layout = {"header_row": header_idx + 1, "data_row": first_data + 1,
+                          "date_column": field_map.get("date") if several_dates else None,
+                          "debit_credit": use_debit_credit}
                 if fatal_error is None and not needs_date_column:
                     # Account is only a required column when no default account was picked. A single Amount
                     # column is required UNLESS both Debit and Credit are present -- a lone Debit or Credit
@@ -414,6 +421,7 @@ def _import_csv_file(
         "skipped_status": skipped_status,
         "needs_date_column": needs_date_column, "date_column_candidates": date_column_candidates,
         "needs_rows": needs_rows, "preview": preview if needs_rows else [],
+        "layout": layout if (fatal_error is None and not needs_date_column) else None,
     }
 
 
@@ -451,6 +459,18 @@ def _import_one(user_id: str, csv_dir: str, filename: str | None, raw: bytes, de
             storage.remove_stored_file(saved_path)  # a leftover shows on the admin Storage page
 
 
+def _saved_layout(user_id: str, default_account_id: str) -> dict | None:
+    """The default account's saved CSV layout (accounts.csv_layout), or None."""
+    picked = (default_account_id or "").strip()
+    if not picked.isdigit():
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT csv_layout FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND is_archived = 0",
+            (int(picked), user_id)).fetchone()
+    return upload_page.read_layout(row["csv_layout"]) if row else None
+
+
 @router.post("/transactions-import-csv")
 async def import_transactions_csv(
     request: Request,
@@ -459,6 +479,7 @@ async def import_transactions_csv(
     date_column: str = Form(""),
     header_row: str = Form(""),
     data_row: str = Form(""),
+    saved_layout: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -469,19 +490,33 @@ async def import_transactions_csv(
     single file after the person picked its date column; `header_row` /
     `data_row` (1 = the file's first row; blank = worked out) when they chose
     where the header and the data are. Each file sits in
-    PENDING_DIR/<user>/csv-imports only while it is imported."""
+    PENDING_DIR/<user>/csv-imports only while it is imported.
+
+    With a default account that has a saved layout (accounts.csv_layout, "Remember this layout" on the Upload
+    page) whatever the request leaves blank comes from it: the header and data rows (as a pair: giving either
+    one overrides both) and the date column. `saved_layout=0` imports without it. Each result says where its
+    layout came from (`layout_source`: saved, given or auto) and, for a file that imported, the `layout` used."""
     wants_json = "application/json" in request.headers.get("accept", "")
     csv_dir = storage.user_dir(acting.id, "csv-imports")
 
     if len(files) > storage.MAX_FILES_PER_REQUEST:
         return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
+    header_n, data_n, date_col = _row_number(header_row), _row_number(data_row), date_column.strip() or None
+    source = "given" if (header_n or data_n or date_col) else "auto"
+    saved = None if saved_layout.strip() == "0" else _saved_layout(acting.id, default_account_id)
+    if saved:
+        if header_n is None and data_n is None:
+            header_n, data_n = saved["header_row"], saved["data_row"]
+            source = "saved"
+        if date_col is None and saved["date_column"]:
+            date_col = saved["date_column"]
+            source = "saved"
     results = []
     for upload in files:
         # Reading, parsing, inserts and the categorization LLM call are blocking:
         # run them in a thread so the whole app doesn't freeze meanwhile.
         results.append(await asyncio.to_thread(
-            _read_and_import, acting.id, csv_dir, upload, default_account_id, date_column or None,
-            _row_number(header_row), _row_number(data_row),
+            _read_and_import, acting.id, csv_dir, upload, default_account_id, date_col, header_n, data_n,
         ))
 
     if wants_json:
@@ -493,6 +528,7 @@ async def import_transactions_csv(
                 "fatal_error": r["fatal_error"],
                 "needs_date_column": r["needs_date_column"], "date_column_candidates": r["date_column_candidates"],
                 "needs_rows": r["needs_rows"], "preview": r["preview"],
+                "layout": r["layout"], "layout_source": source,
             }
             for r in results
         ]})

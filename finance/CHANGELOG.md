@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.8.0
+
+- **A new Upload → Statements page.** One box takes PDF statements, QFX / OFX downloads and CSV exports together — drop them on it, or choose them (on a phone, a big **Choose files** button). Each file is listed before anything is sent, with the account it will go to (a QFX file by its account number, a PDF by the last 4 digits in its name or the account you used last time, a CSV by its own Account column), which you can change; a file that isn't its account's usual type gets a small mark instead of a question. One **Upload** sends them all, each file shows how it went, and one line sums up the lot ("3 files · 2 statements, 1 CSV · 412 transactions · …") with **Review now** — the page no longer reloads.
+- **Your accounts** at the top: a card per account with how far its uploads go ("up to Sep 2026"), a missing month ("Aug missing"), whether its statement is overdue, and an **Upload** button that opens the picker on that account's usual kind of file.
+- **One Upload history** instead of two tables: statements and CSV imports together, newest first, with chips to show one type, account or status. **Waiting for you** above it lists what needs confirming, reviewing or restarting. **Add by hand** is now a tab next to **Upload files**, and the long help is behind **How this works**.
+- **Remembered per account:** after a CSV imports, **Remember this layout** keeps its header row, data row and date column for next time; **Skip the PDF confirmation step** can be remembered too. Both can be changed on the account's page under **Uploads**, and they travel with one person's data.
+- Fixes: picking the date column of a CSV whose header isn't on the first row no longer fails; the history fits the page for admins.
+
 ## 1.7.0
 
 - **Expected statement dates and overdue reminders.** Each account can now say when its statement is ready (Setup → Accounts → **Expected statement**: monthly, every 2, 3 or 6 months or yearly, on a day or the last day of the month). When nothing has been uploaded for it by then, its owner sees an amber notice on Home and Upload — with **Upload** (the account already picked) and **Dismiss** — and a count on the Upload menu item; the accounts lists get a **Next statement** column ("Oct 12", "Overdue 3 days"). Only the latest statement is ever shown, so a missed month never piles up.

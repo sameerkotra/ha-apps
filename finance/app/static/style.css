@@ -314,7 +314,7 @@ td a:hover { text-decoration: underline; }
 .status-error { background: var(--danger-bg); color: var(--danger); }
 .source-qfx { background: var(--info-bg); color: var(--info); }
 
-/* Upload → Statements: a QFX file's "which account?" question (statement-upload.js). */
+/* Upload → Statements: a QFX file's "which account?" question, in its file row (uploads.js). */
 .qfx-question { margin: 0.5rem 0; }
 .qfx-question .qfx-block { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; margin: 0.4rem 0; }
 .qfx-question .qfx-block p { flex-basis: 100%; margin: 0; }
@@ -1235,3 +1235,193 @@ html.nav-collapsed .nav-badge { position: absolute; top: 2px; right: 2px; }
 .reminder-chips input { margin: 0; }
 .reminder-chips label:has(input:checked) { border-color: var(--accent); color: var(--accent); }
 .reminder-chips label:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- Upload → Statements (SPEC.md section 13): accounts strip, drop zone and its file rows, per-type
+   options, summary, Upload files / Add by hand tabs, Waiting for you and one Upload history. Elements toggled
+   with the hidden attribute are hidden here whatever their display. ---------- */
+.visually-hidden {
+    position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.upload-panel[hidden], .upload-panel [hidden], .upload-tabs[hidden], .waiting-section[hidden],
+.accounts-strip [hidden] { display: none !important; }
+.notice-hint { border-left: 3px solid var(--accent); padding-left: 0.6rem; }
+
+/* B. Accounts strip: wraps on a wide screen, scrolls sideways on a phone. */
+.accounts-strip { margin: 0 0 1.25rem; }
+.strip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; min-width: 0; max-width: 100%; }
+.strip-card {
+    flex: 0 0 13.5rem; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.6rem 0.75rem;
+}
+.strip-card.due-overdue, .strip-card.due-today { border-color: var(--warn); }
+.strip-card.has-gap { border-left: 3px solid var(--warn); }
+.strip-name { font-weight: 700; overflow-wrap: anywhere; }
+.strip-name .hint { margin: 0; font-weight: 400; }
+.strip-latest { font-size: 0.85rem; color: var(--text-dim); }
+.strip-gap, .strip-due { font-size: 0.8rem; font-weight: 700; color: var(--warn); }
+.strip-due.due-dismissed { color: var(--text-dim); }
+.strip-foot { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-top: auto; padding-top: 0.3rem; }
+.strip-pref { font-size: 0.75rem; color: var(--text-dim); }
+.strip-upload { padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+
+/* D. Tabs and the one-line help with its "How this works". */
+.upload-tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin: 0 0 1rem; }
+.upload-tab {
+    background: none; color: var(--text-dim); border: 0; border-bottom: 3px solid transparent; border-radius: 0;
+    padding: 0.55rem 0.9rem; font-weight: 700;
+}
+.upload-tab:hover { background: var(--panel-alt); color: var(--text); }
+.upload-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.upload-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.hint.one-line { margin-bottom: 0.25rem; }
+.how-it-works { margin: 0 0 0.9rem; font-size: 0.85rem; }
+.how-it-works > summary { cursor: pointer; color: var(--accent); font-weight: 600; width: max-content; max-width: 100%; }
+.how-body { margin-top: 0.5rem; padding: 0.6rem 0.9rem; border-left: 3px solid var(--border); color: var(--text-dim); }
+.how-body p { margin: 0 0 0.6rem; }
+.manual-title { margin-top: 2rem; }
+
+/* A. The drop zone and the file rows. */
+.upload-form { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+.upload-account-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.25rem 0.75rem; }
+.upload-account-row .hint { margin: 0 0 0.45rem; }
+.upload-account-label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; color: var(--text-dim); font-weight: 600;
+    min-width: 0; max-width: 100%; }
+.upload-account-label select { min-width: 12rem; max-width: 100%; }
+.upload-form select, .upload-form input[type="text"], .upload-form input[type="number"] {
+    font-family: inherit; padding: 0.45rem 0.6rem; background: var(--panel-alt); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; font-size: 0.9rem; max-width: 100%;
+}
+.upload-form select:focus, .upload-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.drop-zone {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.3rem; text-align: center;
+    min-height: 8.5rem; padding: 1.25rem; border: 2px dashed var(--accent-dim); border-radius: var(--radius);
+    background: var(--panel); cursor: pointer; transition: background 0.1s, border-color 0.1s;
+}
+.drop-zone:hover, .drop-zone.is-dragover { background: var(--panel-alt); border-color: var(--accent); }
+.drop-zone:focus-visible, .drop-zone:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dz-icon { font-size: 1.8rem; color: var(--accent); line-height: 1; }
+.dz-title { font-weight: 700; font-size: 1rem; color: var(--text); }
+.dz-phone { display: none; }
+.dz-hint { font-size: 0.8rem; color: var(--text-dim); }
+.dz-input { margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-dim); max-width: 100%; }
+.upload-form.is-enhanced .dz-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
+.file-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.file-row {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 15rem) auto auto; align-items: center;
+    gap: 0.35rem 0.75rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem 0.75rem;
+}
+.file-row[data-state="error"] { border-color: var(--danger); }
+.file-row[data-state="question"] { border-color: var(--warn); }
+.file-main { min-width: 0; overflow-wrap: anywhere; }
+.file-name { font-weight: 600; }
+.file-size { margin: 0; font-size: 0.78rem; }
+.file-account { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.file-account select { width: 100%; }
+.file-account select.needs-pick { border-color: var(--warn); }
+.file-note { margin: 0; font-size: 0.75rem; }
+.file-mismatch { font-size: 0.75rem; font-weight: 700; color: var(--warn); }
+.file-mismatch::before { content: "\26A0\FE0E  "; }
+.file-status { white-space: normal; max-width: 16rem; border-radius: 12px; line-height: 1.3; }
+.file-remove {
+    background: transparent; color: var(--text-dim); border: 1px solid var(--border); padding: 0.15rem 0.5rem;
+    font-size: 0.8rem; border-radius: 6px; justify-self: end;
+}
+.file-remove:hover { color: var(--danger); border-color: var(--danger); background: transparent; }
+.file-extra { grid-column: 1 / -1; min-width: 0; }
+.file-extra:empty { display: none; }
+.file-extra p { margin: 0.25rem 0; }
+.source-pdf { background: var(--panel-alt); color: var(--text); }
+.source-csv { background: var(--ok-bg); color: var(--ok); }
+.source-other { background: var(--panel-alt); color: var(--text-dim); }
+.upload-options { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.opt-group { border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.75rem 0.5rem; margin: 0; min-width: 0; flex: 1 1 16rem; }
+.opt-group legend { font-weight: 700; font-size: 0.8rem; color: var(--text-dim); padding: 0 0.25rem; }
+.opt-group .checkbox-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; margin: 0.2rem 0; }
+.opt-group .hint { margin: 0.2rem 0; }
+.layout-chip {
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.25rem 0; padding: 0.2rem 0.4rem 0.2rem 0.75rem;
+    border: 1px solid var(--accent-dim); border-radius: 999px; font-size: 0.82rem; color: var(--accent); max-width: 100%;
+}
+.chip-link { background: none; border: 0; padding: 0.1rem 0.4rem; color: var(--accent); text-decoration: underline; font-size: 0.82rem; }
+.chip-link:hover { background: var(--panel-alt); color: var(--text); }
+.upload-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.5rem 0;
+    background: var(--bg); z-index: 5;
+}
+.upload-form.has-files .upload-bar { position: sticky; bottom: 0; border-top: 1px solid var(--border); }
+.upload-bar .hint { margin: 0; }
+#upload-button:disabled { background: var(--panel-alt); color: var(--text-dim); cursor: not-allowed; }
+.upload-summary { margin-top: 1rem; border-color: var(--accent-dim); }
+.upload-summary h3 { margin-bottom: 0.3rem; }
+.upload-summary p { margin: 0.3rem 0; }
+.upload-summary-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* C. Waiting for you and one Upload history. */
+.waiting-section h2, .history-section h2 { display: flex; align-items: center; gap: 0.5rem; }
+.count-pill { background: var(--warn-bg); color: var(--warn); border-radius: 999px; padding: 0 0.55rem; font-size: 0.8rem; letter-spacing: 0; }
+.waiting-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.waiting-item {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem;
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 10px; padding: 0.5rem 0.75rem;
+}
+.waiting-item.waiting-error { border-left-color: var(--danger); }
+.waiting-what { flex: 1 1 16rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 0.5rem; overflow-wrap: anywhere; }
+.waiting-what .hint { margin: 0; }
+.waiting-file { font-weight: 600; }
+.waiting-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.waiting-actions .btn-secondary { padding: 0.3rem 0.75rem; font-size: 0.82rem; }
+.history-filters { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin: 0 0 0.75rem; }
+.chip-group { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0; min-width: 0; max-width: 100%; }
+.chip {
+    background: var(--panel-alt); color: var(--text-dim); border: 1px solid var(--border); border-radius: 999px;
+    padding: 0.25rem 0.75rem; font-size: 0.8rem; font-weight: 600; white-space: nowrap;
+}
+.chip:hover { color: var(--text); background: var(--panel-hover); }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.history-table-wrap { max-width: 100%; overflow-x: auto; }
+/* Seven columns that fit the page at 1280px wide, admins' debug link included (it sits under Delete). */
+.history-table th, .history-table td { padding: 0.55rem 0.6rem; }
+.history-table td.file-cell { min-width: 9rem; overflow-wrap: anywhere; }
+.history-table td.file-cell .type-badge { margin-right: 0.3rem; }
+.history-table td[data-label="Uploaded"] { min-width: 5.5rem; }
+.history-table td[data-label="Status"] { max-width: 13rem; }
+.history-table td.count-cell { min-width: 6.5rem; }
+.history-table .money-flow { display: block; margin: 0.15rem 0 0; font-size: 0.75rem; }
+.history-table td.actions-cell { white-space: nowrap; }
+.history-table td.actions-cell .debug-link { margin-top: 0.3rem; }
+main.uploads-main { max-width: 1100px; }
+
+@media (min-width: 768px) {
+    .history-table td.actions-cell { display: table-cell; }
+    .history-table td.actions-cell a { display: block; width: max-content; }
+}
+@media (max-width: 767px) {
+    /* G. Phone: a big Choose files button (the phone's Files app), the strip scrolls sideways, the Upload button
+       stays above the menu bar while files are listed, history rows are cards. */
+    .dz-desktop { display: none; }
+    .dz-phone { display: inline; }
+    .drop-zone { min-height: 0; flex-direction: row; padding: 0.9rem 1rem; border-style: solid; background: var(--accent); border-color: var(--accent); }
+    .drop-zone .dz-title, .drop-zone .dz-icon { color: var(--accent-contrast); font-size: 1.05rem; }
+    .drop-zone .dz-hint { display: none; }
+    .drop-zone:hover { background: var(--accent-dim); }
+    .strip-list { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; padding-bottom: 0.3rem; }
+    .strip-card { flex: 0 0 72%; max-width: 15rem; scroll-snap-align: start; }
+    .file-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .file-row .file-account { grid-column: 1 / -1; }
+    .file-row .file-status { grid-column: 1 / -1; justify-self: start; max-width: 100%; }
+    .file-row .file-remove { grid-column: 3; grid-row: 1; }
+    .upload-account-row, .upload-account-label { width: 100%; }
+    .upload-account-label select { min-width: 0; width: 100%; }
+    .upload-form.has-files .upload-bar { bottom: calc(64px + env(safe-area-inset-bottom)); }
+    .upload-bar button { flex: 1 1 auto; }
+    .history-filters { flex-direction: column; gap: 0.4rem; }
+    .chip-group { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 0.2rem; }
+    .history-table td[data-label="Status"] { max-width: none; }
+    .history-table td.file-cell { min-width: 0; }
+    .history-table td.actions-cell { justify-content: flex-start; gap: 0.5rem; }
+    .history-table td.actions-cell .debug-link { margin-top: 0; }
+    .history-table th, .history-table td { padding: 0.5rem 0; }
+    .waiting-item .status-badge { order: 3; }
+}

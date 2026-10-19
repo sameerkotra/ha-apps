@@ -42,7 +42,9 @@ _LIVE_ACCOUNT = " AND EXISTS (SELECT 1 FROM main.accounts a WHERE a.id = x.accou
 REGISTRY: dict[str, TableSpec] = {
     "accounts": TableSpec("Bank and credit-card accounts: name, type, bank, last 4, archived, preferred upload method, website_url; "
                           "the expected statement: expected_every_months (NULL = off), expected_day (0 = last day), "
-                          "expected_from (YYYY-MM), reminders_on.", _LIVE),
+                          "expected_from (YYYY-MM), reminders_on; what the Upload page remembers: csv_layout (JSON: "
+                          "header_row, data_row, date_column, debit_credit; NULL = none saved) and skip_confirmation "
+                          "(1 = skip the PDF confirmation step, NULL = never chosen).", _LIVE),
     "transactions": TableSpec(
         "Every bank/card transaction. amount is signed: negative is money out, positive is money in. "
         "transfer_pair_id is set for a transfer between your own accounts; is_excluded = 1 is left out of dashboards; "

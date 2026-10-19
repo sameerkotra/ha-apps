@@ -23,7 +23,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass, field
 
-from . import statement_due, storage
+from . import statement_due, storage, upload_page
 from .amounts import to_cents
 from .common import person_data
 from .db import MIGRATIONS_DIR
@@ -61,6 +61,14 @@ def _to_29(tables: dict) -> None:
 
 
 UPGRADES[28] = _to_29
+
+
+def _to_30(tables: dict) -> None:
+    """Migration 0030: accounts gained what the Upload page remembers (csv_layout, skip_confirmation); an older
+    file has neither, which is "nothing saved" (NULL) — nothing to fill in."""
+
+
+UPGRADES[29] = _to_30
 
 
 class Refused(ValueError):
@@ -131,6 +139,7 @@ def options_from(raw) -> dict:
 MAX_TEXT = 1_000_000          # any other text column: a sanity bound (the query tab's own value limit)
 LIMITS = {                    # the same bounds the forms and the API use
     ("accounts", "name"): 100, ("accounts", "bank_name"): 100, ("accounts", "website_url"): 500,
+    ("accounts", "csv_layout"): 2000,
     ("transactions", "description"): 500, ("transactions", "category"): 60, ("transactions", "note"): 1000,
     ("skipped_duplicates", "description"): 500, ("skipped_duplicates", "category"): 60,
     ("category_rules", "pattern"): 200, ("category_rules", "category"): 60, ("custom_categories", "name"): 60,
@@ -202,6 +211,13 @@ def clean_row(table: str, row: dict, cols: dict, where: str) -> dict:
             raise Refused(f"{where}: the account's web address isn't one the app accepts.")
         if out.get("expected_from") is not None and statement_due.parse_month(out["expected_from"]) is None:
             raise Refused(f"{where}: expected_from must be a month (YYYY-MM).")
+        if out.get("csv_layout") is not None:
+            layout = upload_page.clean_layout(out["csv_layout"])
+            if layout is None:
+                raise Refused(f"{where}: csv_layout isn't a CSV layout the app keeps.")
+            out["csv_layout"] = upload_page.layout_json(layout)
+        if out.get("skip_confirmation") not in (None, 0, 1):
+            raise Refused(f"{where}: skip_confirmation must be 0 or 1.")
     if table == "reminder_prefs":
         try:
             offsets = json.loads(out.get("offsets") or "[]")

@@ -17,7 +17,7 @@ from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..categorize import list_all_categories
 from ..db import get_db
 from ..version import APP_VERSION
-from .. import ai_usage, jobs, ofx, qfx_import, settings, statement_due, storage
+from .. import ai_usage, jobs, notices, ofx, qfx_import, settings, statement_due, storage, upload_page
 from ..jobs import start_job
 from ..parser.documents import prepare_restart
 from ..parser.pipeline import check_duplicate, finalize_if_ready
@@ -51,7 +51,7 @@ async def upload_statements(
     request: Request,
     account_id: str = Form(...),
     files: list[UploadFile] = File(...),
-    skip_confirmation: str = Form(""),
+    skip_confirmation: str | None = Form(None),
     block_accounts: str = Form(""),
     confirm_last4: str = Form(""),
     current: User = Depends(get_current_user),
@@ -62,36 +62,64 @@ async def upload_statements(
     for a human to confirm its money in/out (finalize_if_ready). A QFX/OFX file is read and saved right here
     (qfx_import, SPEC.md section 4a); when its account can't be settled the result says `needs_account` and the
     page sends the file again with `block_accounts` (the person's answers) or `confirm_last4`. The files and the
-    database are handled in a worker thread, never on the event loop."""
+    database are handled in a worker thread, never on the event loop.
+
+    `skip_confirmation` left out (or blank) means the account's own saved choice (accounts.skip_confirmation,
+    remembered from the Upload page or set on the account's page; never chosen = confirm). A plain browser form
+    (the page without its script) is sent back to Upload instead of getting JSON."""
     if len(files) > storage.MAX_FILES_PER_REQUEST:
         return JSONResponse({"error": storage.TOO_MANY_FILES}, status_code=400)
-    needs_confirmation = 0 if skip_confirmation else 1
+    skip = _skip_choice(skip_confirmation)
     picked = account_id.strip()
     if picked != MATCH_BY_NUMBER and not picked.isdigit():
+        if notices.wants_page(request):
+            return notices.form_error(request, templates, acting, _acting_qs(current, acting),
+                                      PDF_NEEDS_ACCOUNT if not picked or picked == "__new__" else "Account not found",
+                                      "uploads")
         return JSONResponse({"error": "Account not found"}, status_code=404)
     results = await asyncio.to_thread(
-        _store_statements, acting.id, None if picked == MATCH_BY_NUMBER else int(picked), files, needs_confirmation,
+        _store_statements, acting.id, None if picked == MATCH_BY_NUMBER else int(picked), files, skip,
         qfx_import.parse_choices(block_accounts), confirm_last4 == "1")
     if results is None:
         return JSONResponse({"error": "Account not found"}, status_code=404)
+    if notices.wants_page(request):
+        failed = sum(1 for r in results if r.get("error") or r.get("needs_account"))
+        qs = _acting_qs(current, acting)
+        return RedirectResponse(url=f"uploads?notice={'upload_some_failed' if failed else 'upload_sent'}"
+                                    + (f"&{qs}" if qs else ""), status_code=303)
     return JSONResponse({"results": results})
 
 
-def _store_statements(user_id: str, account_id: int | None, files: list, needs_confirmation: int,
+_YES = ("1", "on", "true", "yes")
+_NO = ("0", "off", "false", "no")
+
+
+def _skip_choice(value: str | None) -> bool | None:
+    """The upload's "Skip the PDF confirmation step": True, False, or None when it doesn't say (blank or left out:
+    the account's saved choice applies)."""
+    v = (value or "").strip().lower()
+    return True if v in _YES else False if v in _NO else None
+
+
+def _store_statements(user_id: str, account_id: int | None, files: list, skip: bool | int | None,
                       choices: dict | None = None, confirm_last4: bool = False) -> list[dict] | None:
     """Save each file (streamed to disk while hashing) and tell PDFs from QFX/OFX by their content: a PDF already
     uploaded is skipped and the rest queued; a QFX/OFX file is imported at once and deleted. None when a picked
-    account isn't the user's live, unarchived one."""
+    account isn't the user's live, unarchived one. `skip` None: the account's saved skip_confirmation."""
     results = []
     conn = get_db()
     try:
+        saved_skip = 0
         if account_id is not None:
             account = conn.execute(
-                "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND is_archived = 0",
+                "SELECT id, skip_confirmation FROM accounts "
+                "WHERE id = ? AND user_id = ? AND deleted_at IS NULL AND is_archived = 0",
                 (account_id, user_id),
             ).fetchone()
             if account is None:
                 return None
+            saved_skip = account["skip_confirmation"] or 0
+        needs_confirmation = 0 if (saved_skip if skip is None else skip) else 1
 
         limit = max(storage.MAX_PDF_BYTES, storage.MAX_CSV_BYTES)
         for upload in files:
@@ -177,7 +205,7 @@ _STATUS_COLUMNS = """
     (SELECT COUNT(*) FROM skipped_duplicates d
      WHERE d.statement_id = s.id AND d.status = 'skipped') AS skipped_count
 """
-_HISTORY_COLUMNS = f"""{_STATUS_COLUMNS}, s.uploaded_at, a.name AS account_name, s.source, s.period_start, s.period_end,
+_HISTORY_COLUMNS = f"""{_STATUS_COLUMNS}, s.uploaded_at, s.account_id, a.name AS account_name, s.source, s.period_start, s.period_end,
     (SELECT COUNT(*) FROM transactions t WHERE t.statement_id = s.id AND t.deleted_at IS NULL) AS txn_count"""
 _HISTORY_FROM = "FROM statements s JOIN accounts a ON a.id = s.account_id"
 _NO_FLOW = {"money_in": 0, "money_out": 0, "first_date": None, "last_date": None}
@@ -578,56 +606,6 @@ def statement_confirm(
     return RedirectResponse(url="uploads" + (f"?{qs}" if qs else ""), status_code=303)
 
 
-def _lower(text):
-    return text.lower() if text else None
-
-
-def _awaiting_confirmation(r) -> bool:
-    """True for exactly the rows _status_fragment.html labels "Awaiting
-    confirmation" (the pending-confirm-against-PDF step) — status is
-    pending_review, needs_confirmation is set, it hasn't been confirmed yet,
-    and there are no flagged transactions still ahead of it (those show
-    "Needs review" instead, with no Confirm button, until they're resolved)."""
-    return bool(r["status"] == "pending_review" and r["needs_confirmation"] and not r["confirmed_at"]
-                and not r["flagged_count"])
-
-
-# Sort keys per history table. None sorts last whichever way the column runs.
-_STATEMENT_KEYS = {
-    "file": lambda r: _lower(r["original_filename"]),
-    "account": lambda r: _lower(r["account_name"]),
-    "uploaded": lambda r: r["uploaded_at"],
-    "first": lambda r: r["first_date"],
-    "last": lambda r: r["last_date"],
-    "status": lambda r: r["status"],
-    "in": lambda r: r["money_in"],
-    "out": lambda r: r["money_out"],
-    # Default landing order only (not a clickable column — see STATEMENT_SORT_COLUMNS):
-    # statements awaiting confirmation float to the top since they're the ones
-    # waiting on you, everything else falls in behind them; within each group,
-    # most-recently-uploaded first. Sorted "desc" (TableView's default_dir below),
-    # so reversing this (awaiting, uploaded_at) tuple puts True (1) before False (0)
-    # and, within a tie, the later uploaded_at first — both wanted, in one sort.
-    "default_order": lambda r: (_awaiting_confirmation(r), r["uploaded_at"]),
-}
-_CSV_KEYS = {
-    "file": lambda r: _lower(r["original_filename"]),
-    "account": lambda r: _lower(r["account_name"]),
-    "imported": lambda r: r["imported_at"],
-    "first": lambda r: r["first_date"],
-    "last": lambda r: r["last_date"],
-    "result": lambda r: (r["fatal_error"] is not None, r["row_count"] or 0),
-}
-STATEMENT_SORT_COLUMNS = [
-    ("file", "File"), ("account", "Account"), ("uploaded", "Uploaded"), ("first", "First transaction"),
-    ("last", "Last transaction"), ("status", "Status"), ("in", "Money in"), ("out", "Money out"),
-]
-CSV_SORT_COLUMNS = [
-    ("file", "File"), ("account", "Account"), ("imported", "Imported"), ("first", "First transaction"),
-    ("last", "Last transaction"), ("result", "Result"),
-]
-
-
 def _csv_import_rows(conn: sqlite3.Connection, user_id: str) -> list[dict]:
     """CSV import history with the date span of the transactions each import
     still holds (deleted ones don't count), and which account(s) they're in.
@@ -637,9 +615,10 @@ def _csv_import_rows(conn: sqlite3.Connection, user_id: str) -> list[dict]:
     overrides, section 10) — so, like the date span above, the account(s)
     shown are derived from the import's still-live transactions rather than
     stored anywhere: every distinct account name among them, alphabetically,
-    joined with ", " for a mixed-account import. An import with nothing live
-    left (every row failed or was a duplicate, or everything since got
-    deleted) shows no account, same as it shows no date span."""
+    joined with ", " for a mixed-account import (and their ids, for the
+    history's account filter). An import with nothing live left (every row
+    failed or was a duplicate, or everything since got deleted) shows no
+    account, same as it shows no date span."""
     spans = {
         r["csv_import_id"]: (r["first_date"], r["last_date"])
         for r in conn.execute(
@@ -648,80 +627,160 @@ def _csv_import_rows(conn: sqlite3.Connection, user_id: str) -> list[dict]:
             (user_id,),
         )
     }
-    account_names: dict[int, list[str]] = {}
+    accounts: dict[int, list] = {}
     for r in conn.execute(
-        "SELECT DISTINCT t.csv_import_id, a.name AS account_name FROM transactions t "
+        "SELECT DISTINCT t.csv_import_id, a.id AS account_id, a.name AS account_name FROM transactions t "
         "JOIN accounts a ON a.id = t.account_id "
         "WHERE t.user_id = ? AND t.deleted_at IS NULL AND t.csv_import_id IS NOT NULL "
         "ORDER BY a.name",
         (user_id,),
     ):
-        account_names.setdefault(r["csv_import_id"], []).append(r["account_name"])
+        accounts.setdefault(r["csv_import_id"], []).append((r["account_id"], r["account_name"]))
     rows = conn.execute(
         "SELECT * FROM csv_imports WHERE user_id = ? AND deleted_at IS NULL", (user_id,)
     ).fetchall()
     return [
         {
             **dict(r), "first_date": spans.get(r["id"], (None, None))[0], "last_date": spans.get(r["id"], (None, None))[1],
-            "account_name": ", ".join(account_names.get(r["id"], [])) or None,
+            "account_name": ", ".join(n for _, n in accounts.get(r["id"], [])) or None,
+            "account_ids": [i for i, _ in accounts.get(r["id"], [])],
         }
         for r in rows
     ]
+
+
+def _statement_rows(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    flows = statement_flows(conn, user_id)
+    return [
+        {**dict(r), **flows.get(r["id"], _NO_FLOW)}
+        for r in conn.execute(
+            f"SELECT {_HISTORY_COLUMNS} {_HISTORY_FROM} WHERE s.user_id = ? AND s.deleted_at IS NULL", (user_id,))
+    ]
+
+
+def _live_accounts(conn: sqlite3.Connection, user_id: str) -> list:
+    return conn.execute(
+        "SELECT id, name, type, preferred_upload_method, account_number_last4, csv_layout, skip_confirmation "
+        "FROM accounts WHERE user_id = ? AND deleted_at IS NULL AND is_archived = 0 ORDER BY name COLLATE NOCASE",
+        (user_id,),
+    ).fetchall()
+
+
+def _history_context(request: Request, conn: sqlite3.Connection, current: User, acting: User) -> dict:
+    """What _upload_history.html needs: the waiting list, the filter chips and one sorted, paged page of the
+    history (TableView, prefix h_). Its links point at the page itself (uploads?…), so they work without the
+    page's script; the script fetches the same address from uploads-history instead."""
+    qs = _acting_qs(current, acting)
+    rows = upload_page.unify(_statement_rows(conn, acting.id), _csv_import_rows(conn, acting.id))
+    filters = upload_page.parse_filters(request.query_params)
+    all_accounts = conn.execute("SELECT id, name FROM accounts WHERE user_id = ? AND deleted_at IS NULL",
+                                (acting.id,)).fetchall()
+    shown = upload_page.filtered(rows, filters)
+    view = TableView(request, "uploads", "h_", shown, upload_page.SORT_KEYS, "when", extra_qs=qs)
+    waiting = upload_page.waiting(rows)
+    keep = {k: v for k, v in request.query_params.items()
+            if k in ("h_type", "h_account", "h_status", "h_sort", "h_dir", "h_size")}
+    return {
+        "history_view": view, "history_total": len(rows), "history_filters": filters,
+        "history_sort_columns": upload_page.SORT_COLUMNS,
+        "type_filters": upload_page.TYPE_FILTERS, "status_filters": upload_page.STATUS_FILTERS,
+        "account_filters": upload_page.account_filters(rows, all_accounts),
+        "filter_keep": keep,
+        "waiting": waiting[:upload_page.WAITING_SHOWN], "waiting_more": max(0, len(waiting) - upload_page.WAITING_SHOWN),
+        "kind_label": upload_page.KIND_LABEL,
+        "acting_qs": qs, "is_admin": current.is_admin,
+    }
+
+
+@router.get("/uploads-history")
+def uploads_history(
+    request: Request,
+    current: User = Depends(get_current_user),
+    acting: User = Depends(get_acting_user),
+):
+    """The Upload page's "Waiting for you" list and upload history, as the HTML fragment the page swaps in place
+    (after an upload, a filter chip, a sort or a page link) — the same filters, sort and paging as the page's own
+    address (h_type, h_account, h_status, h_sort, h_dir, h_page, h_size)."""
+    with get_db() as conn:
+        ctx = _history_context(request, conn, current, acting)
+    return templates.TemplateResponse(request, "_upload_history.html", ctx)
+
+
+@router.get("/uploads-strip")
+def uploads_strip(
+    request: Request,
+    current: User = Depends(get_current_user),
+    acting: User = Depends(get_acting_user),
+):
+    """The accounts strip (one card per live, unarchived account), as the fragment the page swaps in after an
+    upload."""
+    with get_db() as conn:
+        cards = upload_page.strip_cards(conn, current, acting)
+    return templates.TemplateResponse(request, "_accounts_strip.html", {
+        "strip": cards, "acting_qs": _acting_qs(current, acting)})
+
+
+@router.get("/statement-progress")
+def statement_progress(
+    ids: str = "",
+    current: User = Depends(get_current_user),
+    acting: User = Depends(get_acting_user),
+):
+    """How the statements just uploaded are getting on, for the Upload page's file rows (polled every 3 s while
+    one is being read): {"statements": [{id, state, step, error, count, flagged, skipped}]}. Only the acting
+    person's statements; unknown ids are left out. At most 50 ids."""
+    wanted = [int(x) for x in ids.split(",") if x.strip().isdigit()][:50]
+    out = []
+    if wanted:
+        with get_db() as conn:
+            marks = ",".join("?" for _ in wanted)
+            for r in conn.execute(
+                    f"SELECT {_HISTORY_COLUMNS} {_HISTORY_FROM} WHERE s.user_id = ? AND s.deleted_at IS NULL "
+                    f"AND s.id IN ({marks})", (acting.id, *wanted)):
+                out.append({"id": r["id"], "state": upload_page.statement_state(r), "step": r["current_step"],
+                            "error": r["error_message"], "count": r["txn_count"], "flagged": r["flagged_count"],
+                            "skipped": r["skipped_count"]})
+    return JSONResponse({"statements": out})
 
 
 @router.get("/uploads")
 def uploads_list(
     request: Request,
     account: str = "",
+    notice: str = "",
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    conn = get_db()
-    try:
-        flows = statement_flows(conn, acting.id)
-        statements = [
-            {**dict(r), **flows.get(r["id"], _NO_FLOW)}
-            for r in conn.execute(
-                f"SELECT {_HISTORY_COLUMNS} {_HISTORY_FROM} WHERE s.user_id = ? AND s.deleted_at IS NULL",
-                (acting.id,),
-            )
-        ]
-        accounts = conn.execute(
-            "SELECT id, name, type, preferred_upload_method FROM accounts"
-            " WHERE user_id = ? AND deleted_at IS NULL AND is_archived = 0",
-            (acting.id,),
-        ).fetchall()
+    """Upload → Statements (SPEC.md sections 4 and 13): overdue notice, accounts strip, the drop zone (with
+    Add by hand as its second tab), Waiting for you and one upload history."""
+    with get_db() as conn:
+        accounts = _live_accounts(conn, acting.id)
         categories = list_all_categories(conn, acting.id)
-        # CSV import history (its debug link is the categorization view's entry point).
-        csv_imports = _csv_import_rows(conn, acting.id)
         overdue = statement_due.visible_overdue(conn, current, acting)
-    finally:
-        conn.close()
-    # Which account the statement form starts on: ?account=<id> (a notification's tap, an Upload button), else
-    # the first overdue one, else the first in the list.
+        strip = upload_page.strip_cards(conn, current, acting)
+        history = _history_context(request, conn, current, acting)
+    # Which account the drop zone starts on: ?account=<id> (a notification's tap, an Upload button), else the
+    # first overdue one, else none ("work it out for each file").
     ids = {a["id"] for a in accounts}
     preselect = int(account) if account.isdigit() and int(account) in ids else None
     if preselect is None and overdue and overdue[0]["account_id"] in ids:
         preselect = overdue[0]["account_id"]
-
-    qs = _acting_qs(current, acting)
-    statement_view = TableView(request, "uploads", "st_", statements, _STATEMENT_KEYS, "default_order", extra_qs=qs)
-    csv_view = TableView(request, "uploads", "csv_", csv_imports, _CSV_KEYS, "imported", extra_qs=qs)
+    upload_accounts = [{
+        "id": a["id"], "name": a["name"], "type": a["type"], "last4": a["account_number_last4"] or "",
+        "pref": a["preferred_upload_method"] or "both", "layout": upload_page.read_layout(a["csv_layout"]),
+        "skip": a["skip_confirmation"],
+    } for a in accounts]
 
     return templates.TemplateResponse(
         request, "uploads_list.html",
         {
-            "user": acting, "accounts": accounts, "categories": categories,
-            "preselect": preselect, "overdue": overdue, "due_next": "uploads",
-            "statement_view": statement_view, "csv_view": csv_view,
-            "statement_sort_columns": STATEMENT_SORT_COLUMNS, "csv_sort_columns": CSV_SORT_COLUMNS,
+            **history,
+            "user": acting, "accounts": accounts, "categories": categories, "upload_accounts": upload_accounts,
+            "preselect": preselect, "overdue": overdue, "due_next": "uploads", "strip": strip,
+            "all_accept": upload_page.ALL_ACCEPT, "notice": notices.text(notice),
             "acting_as_banner": _acting_banner(current, acting),
-            "acting_qs": qs,
-            "is_admin": current.is_admin,  # current, NOT acting — acting.is_admin
-                                            # is always False while acting-as someone
-                                            # else, which is exactly when an admin
-                                            # would want the debug link most
+            # is_admin (in history): current, NOT acting — acting.is_admin is always False while acting-as
+            # someone else, which is exactly when an admin would want the debug link most
             "active_page": "uploads",
         },
     )
-

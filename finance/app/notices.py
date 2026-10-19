@@ -31,6 +31,12 @@ MESSAGES = {
     "tag_invalid": "Give the tag a name and a start time that is not after its end time.",
     "tag_gone": "That tag no longer exists.",
     "too_long": "That is longer than the field allows.",
+    # Upload → Statements without its script (routes/upload.py)
+    "upload_sent": "Your files were sent — see how each one went in Upload history below.",
+    "upload_some_failed": "Your files were sent, but some couldn't be read — see Upload history below. "
+                          "A QFX file whose account couldn't be worked out needs the page with its script.",
+    # Setup → Accounts → an account's upload settings (routes/accounts.py)
+    "layout_cleared": "The saved CSV layout was cleared.",
 }
 
 

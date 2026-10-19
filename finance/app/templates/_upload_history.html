@@ -1,0 +1,119 @@
+{# Upload → Statements: "Waiting for you" and one Upload history (statements and CSV imports), SPEC.md section 13.
+   Also the whole of /uploads-history, which the page swaps into #upload-history-wrap in place (after an upload, a
+   filter chip, a sort or a page link). The chips are buttons in plain GET forms and the sort / page links are
+   plain links to the page, so all of it works without the page's script. #}
+{% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+{% set aq = acting_qs.split("=", 1) if acting_qs else none %}
+{% set view = history_view %}
+
+{% macro chip_group(key, label, choices, current, aq) -%}
+<form method="get" action="uploads" class="chip-group" role="group" aria-label="{{ label }}" data-history-filter>
+    {% if aq %}<input type="hidden" name="{{ aq[0] }}" value="{{ aq[1] }}">{% endif %}
+    {% for k, v in filter_keep.items() if k != key %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    {% for value, text in choices %}
+    <button type="submit" class="chip" name="{{ key }}" value="{{ value }}" aria-pressed="{{ 'true' if value == current else 'false' }}">{{ text }}</button>
+    {% endfor %}
+</form>
+{%- endmacro %}
+
+<div id="upload-history-wrap">
+<section id="upload-waiting" class="waiting-section" aria-labelledby="waiting-title"{% if not waiting %} hidden{% endif %}>
+    {% if waiting %}
+    <h2 id="waiting-title">Waiting for you <span class="count-pill">{{ waiting | length + waiting_more }}</span></h2>
+    <ul class="waiting-list" id="waiting-list">
+        {% for r in waiting %}
+        {% set s = r.s %}
+        <li class="waiting-item waiting-{{ r.state }}" id="waiting-{{ s.id }}" data-statement-id="{{ s.id }}">
+            <span class="waiting-what">
+                <span class="type-badge source-{{ r.kind }}">{{ kind_label[r.kind] }}</span>
+                <span class="waiting-file">{{ r.file or "—" }}</span>
+                <span class="hint">{{ r.account }}{% if r.period %} &middot; {{ r.period }}{% endif %}</span>
+            </span>
+            {% if r.state == "awaiting" %}
+            <span class="status-badge status-pending_review">Awaiting confirmation</span>
+            <span class="waiting-actions">
+                {% if s.has_pdf %}<button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ s.id }}&amp;embed=1{{ amp }}">Open PDF</button>{% endif %}
+                <a href="statement-confirm?id={{ s.id }}{{ amp }}" class="btn-secondary waiting-confirm">Confirm</a>
+            </span>
+            {% elif r.state == "review" %}
+            <span class="status-badge status-pending_review">Needs review</span>
+            <span class="waiting-actions">
+                <a href="review?statement_id={{ s.id }}{{ amp }}" class="btn-secondary waiting-review">Review</a>
+            </span>
+            {% else %}
+            <span class="status-badge status-error" title="{{ s.error_message or '' }}">Failed</span>
+            <span class="waiting-actions">
+                {% if r.kind == "pdf" %}<button type="button" class="btn-secondary waiting-restart" data-url="statement-restart?id={{ s.id }}{{ amp }}">Restart</button>{% endif %}
+                <a href="statement-delete-confirm?id={{ s.id }}{{ amp }}" class="btn-secondary">Delete</a>
+            </span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% if waiting_more %}<p class="hint"><a href="uploads?h_status=waiting{{ amp }}#upload-history" data-history-link>and {{ waiting_more }} more</a></p>{% endif %}
+    {% endif %}
+</section>
+
+<section id="upload-history" class="history-section" aria-labelledby="history-title">
+    <h2 id="history-title">Upload history</h2>
+    {% if history_total %}
+    <div class="history-filters" id="history-filters">
+        {{ chip_group("h_type", "Type", type_filters, history_filters.type, aq) }}
+        {{ chip_group("h_status", "Status", status_filters, history_filters.status, aq) }}
+        {% if account_filters | length > 2 %}{{ chip_group("h_account", "Account", account_filters, history_filters.account, aq) }}{% endif %}
+    </div>
+    {% endif %}
+    {% if view.total %}
+    {{ mobile_sort(view, history_sort_columns) }}
+    <div class="history-table-wrap">
+    <table class="statements-table history-table" id="history-table" data-no-sort>
+        <thead>
+            <tr>
+                {{ sort_th(view, "file", "File") }}
+                {{ sort_th(view, "account", "Account") }}
+                {{ sort_th(view, "when", "Uploaded") }}
+                {{ sort_th(view, "period", "Period") }}
+                {{ sort_th(view, "count", "Transactions") }}
+                {{ sort_th(view, "status", "Status") }}
+                <th data-no-sort><span class="visually-hidden">Actions</span></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in view.rows %}
+            {% if r.kind == "csv" %}
+            {% set c = r.c %}
+            <tr id="csv-row-{{ c.id }}" class="history-row" data-kind="csv">
+                <td data-label="File" class="file-cell"><span class="type-badge source-csv" title="A CSV import">CSV</span>
+                    <span class="file-name-text">{{ c.original_filename or "—" }}</span></td>
+                <td data-label="Account">{{ c.account_name or "—" }}</td>
+                <td data-label="Uploaded" class="nowrap">{{ c.imported_at }}</td>
+                <td data-label="Period">{{ r.period or "—" }}</td>
+                <td data-label="Transactions" class="count-cell">{{ c.row_count }} imported</td>
+                <td data-label="Status">
+                    {% if c.fatal_error %}
+                    <span class="status-badge status-error" title="{{ c.fatal_error }}">Failed</span>
+                    {% elif r.state == "complete" %}
+                    <span class="status-badge status-complete">Complete</span>
+                    {% else %}
+                    <span class="status-badge status-pending_review">{% if c.duplicate_count %}{{ c.duplicate_count }} duplicate{{ "s" if c.duplicate_count != 1 else "" }}{% endif %}{% if c.skipped_status_count %}{% if c.duplicate_count %}, {% endif %}{{ c.skipped_status_count }} not posted/cleared{% endif %}{% if c.error_count %}{% if c.duplicate_count or c.skipped_status_count %}, {% endif %}{{ c.error_count }} error{{ "s" if c.error_count != 1 else "" }}{% endif %}</span>
+                    {% endif %}
+                </td>
+                <td data-label="" class="actions-cell"><a href="csv-import-delete-confirm?id={{ c.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a>{% if is_admin %} <a href="csv-import-debug?id={{ c.id }}" class="debug-link">debug</a>{% endif %}</td>
+            </tr>
+            {% else %}
+            {% set s = r.s %}
+            {% include "_statement_row.html" %}
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {{ pager(view) }}
+    {% elif history_total %}
+    <p class="empty-state">Nothing matches these filters.</p>
+    {% else %}
+    <p class="empty-state">Nothing uploaded yet.</p>
+    {% endif %}
+</section>
+</div>

@@ -8,7 +8,7 @@ from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
 from .. import settings
 from ..db import get_db
-from .. import notices, ofx, statement_due
+from .. import notices, ofx, statement_due, upload_page
 from ..version import APP_VERSION
 
 router = APIRouter()
@@ -245,10 +245,14 @@ def update_account(
     expected_day: str = Form(""),
     expected_from: str = Form(""),
     reminders_on: str = Form(""),
+    upload_prefs_form: str = Form(""),
+    skip_confirmation: str = Form(""),
+    clear_csv_layout: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Edit name, bank, last 4, preferred upload method, web address and the expected statement — never the type,
+    """Edit name, bank, last 4, preferred upload method, web address, the expected statement and what the Upload
+    page remembers for the account (skip the PDF confirmation step; clear the saved CSV layout) — never the type,
     which decides the sign convention everywhere. Names are always read live
     through a JOIN, so nothing needs re-importing; only a multi-account CSV's
     Account column (matched by today's name) is affected by a rename."""
@@ -276,6 +280,11 @@ def update_account(
                  expected["reminders_on"],
                  statement_due.stamp() if statement_due.changed(row, expected) else row["expected_set_at"], id))
 
+        if upload_prefs_form:      # the form's Upload group (a caller without it leaves both as they are)
+            conn.execute("UPDATE accounts SET skip_confirmation = ? WHERE id = ?",
+                         (1 if skip_confirmation.strip() in ("1", "on") else 0, id))
+            if clear_csv_layout.strip() in ("1", "on"):
+                conn.execute("UPDATE accounts SET csv_layout = NULL WHERE id = ?", (id,))
         conn.execute(
             "UPDATE accounts SET name = ?, bank_name = ?, account_number_last4 = ?, preferred_upload_method = ?, "
             "website_url = ? WHERE id = ?",
@@ -288,6 +297,51 @@ def update_account(
 
     qs = _acting_qs(current, acting)
     return RedirectResponse(url=f"account?id={id}{'&' + qs if qs else ''}", status_code=303)
+
+
+@router.post("/account-upload-prefs")
+def account_upload_prefs(
+    request: Request,
+    id: int = Form(...),
+    csv_layout: str | None = Form(None),
+    clear_csv_layout: str = Form(""),
+    skip_confirmation: str | None = Form(None),
+    current: User = Depends(get_current_user),
+    acting: User = Depends(get_acting_user),
+):
+    """What the Upload page remembers for an account (SPEC.md section 10): `csv_layout` — the layout of a CSV
+    that imported ("Remember this layout": JSON {header_row, data_row, date_column, debit_credit};
+    `clear_csv_layout=1` forgets it) — and/or `skip_confirmation` ("1" or "0"). A field left out (or blank) is left
+    as it is. Answers
+    {"csv_layout", "skip_confirmation"} as saved; a browser form goes back to the account's page."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM accounts WHERE id = ? AND user_id = ? AND deleted_at IS NULL", (id, acting.id),
+        ).fetchone()
+        if row is None:
+            return JSONResponse({"error": "Account not found"}, status_code=404)
+        if clear_csv_layout.strip() in ("1", "on", "true"):
+            conn.execute("UPDATE accounts SET csv_layout = NULL WHERE id = ?", (id,))
+        elif csv_layout is not None and csv_layout.strip():
+            layout = upload_page.clean_layout(csv_layout)
+            if layout is None:
+                return notices.form_error(request, templates, acting, _acting_qs(current, acting),
+                                          "That isn't a CSV layout the app can keep.", f"account?id={id}")
+            conn.execute("UPDATE accounts SET csv_layout = ? WHERE id = ?", (upload_page.layout_json(layout), id))
+        if skip_confirmation is not None and skip_confirmation.strip():
+            v = skip_confirmation.strip().lower()
+            if v not in ("1", "0", "on", "off", "true", "false"):
+                return notices.form_error(request, templates, acting, _acting_qs(current, acting),
+                                          "Skip confirmation is 1 or 0.", f"account?id={id}")
+            conn.execute("UPDATE accounts SET skip_confirmation = ? WHERE id = ?",
+                         (1 if v in ("1", "on", "true") else 0, id))
+        conn.commit()
+        saved = conn.execute("SELECT csv_layout, skip_confirmation FROM accounts WHERE id = ?", (id,)).fetchone()
+    if notices.wants_page(request):
+        qs = _acting_qs(current, acting)
+        return RedirectResponse(url=f"account?id={id}{'&' + qs if qs else ''}", status_code=303)
+    return JSONResponse({"csv_layout": upload_page.read_layout(saved["csv_layout"]),
+                         "skip_confirmation": saved["skip_confirmation"]})
 
 
 @router.post("/account-archive")
@@ -420,6 +474,7 @@ def account_detail(
             "account": account,
             "due": due, "due_label": statement_due.column_label(due), "last_upload": last_upload,
             "due_enabled": statement_due.enabled(), "date_label": statement_due.label,
+            "csv_layout": upload_page.read_layout(account["csv_layout"]),
             "txn_count": txn_count_row["n"],
             "statements": statements,
             "flow_by_statement": flow_by_statement,

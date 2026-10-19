@@ -75,18 +75,48 @@ below), an amber card above the charts lists it with **Upload** and **Dismiss**.
   **Next statement** ("Oct 12", "Overdue 3 days" or "Dismissed") when it has an expected date.
 
 ### Upload
-- **Statements**: PDF statements (up to 50 MB each, at most 20 files at a time, with a text layer —
-  scanned images aren't supported) and CSV exports (up to 20 MB each). A CSV whose header isn't
-  the first row (a bank's lines about the name, card and report period above it) is found by
-  itself; to choose, open **Header and data rows** on the CSV form, tap **Show the file's first
-  rows** and tap the header row (or type the header row and the row the data starts on). Each PDF is read by the AI and checked against the balances and
-  amounts printed in it. Confirm it against the PDF, or **Re-extract** telling the AI what was
-  wrong. Possible duplicates are skipped and can be inserted anyway.
-- **QFX / OFX files**: most banks offer "Download transactions → Quicken (QFX)" or "Money (OFX)".
-  Upload them on the same form as PDFs (`.qfx`, `.ofx` or `.qbo`, up to 20 MB each, PDFs and QFX
-  files can be mixed). A QFX file is read in a second, with no AI and no confirmation step: it
-  already holds the exact rows, the account number and the closing balance. Leave the account on
-  **Match by account number** and each account in the file goes to yours with the same last 4
+- **Statements** is one page for every kind of bank file. From the top:
+  - **Overdue statements** (when any are), with **Upload** and **Dismiss**. A reminder tapped on
+    your phone opens this page with its account picked. The **Upload** menu item shows a small
+    count while anything is overdue.
+  - **Your accounts**: a small card for each account saying how far its uploads go ("up to Sep
+    2026"), a warning when a month is missing ("Aug missing" — counted by its statement dates when
+    the account has an expected statement date, otherwise by calendar months), whether its
+    statement is overdue, and its preferred upload method. Its **Upload** button picks that account
+    and opens the file picker on that kind of file. On a phone the cards scroll sideways.
+  - **Upload files**: drop PDF statements, QFX / OFX / QBO downloads and CSV exports on the box
+    together (on a phone: **Choose files**, which opens the Files app). Each file is listed before
+    anything is sent, with its type, size and the account it will go to, which you can change (or
+    **+ Create new account…**), and ✕ to take it off the list:
+    - a **QFX** file goes to the account with the same last 4 digits (**Match by account number**);
+    - a **PDF** goes to the account whose last 4 digits are in the file name, otherwise the one you
+      used last time;
+    - a **CSV** uses its own Account column when it has one, otherwise the account you pick.
+    The account picked above the box is used for every file you add after it. A file that isn't its
+    account's preferred type gets a small "not this account's usual type" mark — a reminder, never a
+    block. Options appear only for the kinds of file listed: **Skip the PDF confirmation step** for
+    PDFs, **Header and data rows** for CSVs (see below). **Upload** sends them all; each file's row
+    then shows how it went (queued, reading, done with its count, needs review, or the error), and a
+    question about a file (which account a QFX file is for, which date column or header row a CSV
+    has) is asked in its own row. At the end one line sums it up ("3 files · 2 statements, 1 CSV ·
+    412 transactions · 9 duplicates skipped · 1 needs review") with **Review now**; the page isn't
+    reloaded. Without JavaScript the box is a plain form for PDF and QFX files.
+  - **Add by hand**, the second tab: one transaction at a time.
+  - **Waiting for you**: statements to confirm against the PDF, to review, or that failed (with
+    **Restart**), kept above the history.
+  - **Upload history**: statements and CSV imports in one list, newest first, with type, account,
+    period, count and status, sorting and paging; the chips above it show only one type, account
+    or status. **Delete** removes an upload with its transactions (admins also see **debug**).
+- **PDF statements** (up to 50 MB each, at most 20 files at a time, with a text layer — scanned
+  images aren't supported) are read by the AI and checked against the balances and amounts printed
+  in them. Confirm each one against the PDF, or **Re-extract** telling the AI what was wrong; the
+  PDF is deleted once it's complete. Some banks' PDFs are always read right: tick **Skip the PDF
+  confirmation step** and **Remember this for …** (or set it on the account's page under
+  **Uploads**) and that account's PDFs skip it from then on.
+- **QFX / OFX files**: most banks offer "Download transactions → Quicken (QFX)" or "Money (OFX)"
+  (`.qfx`, `.ofx` or `.qbo`, up to 20 MB each). A QFX file is read in a second, with no AI and no
+  confirmation step: it already holds the exact rows, the account number and the closing balance.
+  With **Match by account number** each account in the file goes to yours with the same last 4
   digits (a file with checking and savings together becomes two statements); if none matches,
   you're offered to create it (named after the bank and the last 4, set to "QFX only"). If you pick
   an account whose last 4 differ from the file's, you're asked first. Downloads that overlap ("the
@@ -96,9 +126,14 @@ below), an amber card above the charts lists it with **Upload** and **Dismiss**.
   difference flags it for review (usually a missing download in between). Credit card files are
   turned the app's way round (a purchase is money out). The same file twice is refused;
   investment and loan statements aren't supported. A QFX file isn't kept after it's read.
-- **Overdue statements** are listed above the upload form too, with **Dismiss**, and the first
-  one is already picked as the account. A reminder tapped on your phone opens this page with its
-  account picked. The **Upload** menu item shows a small count while anything is overdue.
+- **CSV files** (up to 20 MB each) need Date, Description and Amount columns — or Debit and Credit
+  instead of Amount (on a credit card Debit is a purchase and Credit a payment; on checking and
+  savings Debit is money out). Category and Account are optional. A header that isn't the first row
+  (a bank's lines about the name, card and report period above it) is found by itself; to choose,
+  open **Header and data rows**, tap **Show the file's first rows** and tap the header row (or type
+  the header row and the row the data starts on). After a CSV imports you can **Remember this
+  layout for** the account: its header row, data row and date column are used by themselves next
+  time ("Using Visa's saved layout · change"); clear it on the account's page under **Uploads**.
 - **Review**: everything waiting for you.
 - **Utility bill** and **Toll statement**: when those parts are switched on (below). Each utility
   bill waits for you like a statement: **Check & confirm** opens its figures (correct anything, then

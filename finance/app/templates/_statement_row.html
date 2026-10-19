@@ -1,17 +1,17 @@
-{# One Statement-history row. Also what /statement-status and /statement-restart
-   return: the status cell polls and swaps the WHOLE row, so the period /
-   money in-out / first-last date cells fill in the moment parsing finishes
-   instead of staying stale until a page refresh. #}
-<tr id="statement-row-{{ s.id }}">
-    <td data-label="File">{% if s.source == "qfx" %}<span class="type-badge source-qfx" title="Read from a QFX / OFX download">QFX</span> {% endif %}{{ s.original_filename or "—" }}
-        {% if s.source == "qfx" %}<br><span class="hint">{% if s.period_start or s.period_end %}{{ period_label(s.period_start, s.period_end) }} &middot; {% endif %}{{ s.txn_count }} transaction{{ "s" if s.txn_count != 1 else "" }}</span>{% endif %}</td>
+{# One statement (PDF or QFX) in Upload history. Also what /statement-status, /statement-restart,
+   /statement-reextract and the history's Confirm return: the status cell polls and swaps the WHOLE row, so the
+   period / count cells fill in the moment parsing finishes instead of staying stale until a page refresh. The
+   columns match the CSV rows of _upload_history.html. #}
+{% set kind = "qfx" if s.source == "qfx" else "pdf" %}
+{% set period = (period_label(s.period_start, s.period_end) if kind == "qfx" else "") or period_label(s.first_date, s.last_date) %}
+<tr id="statement-row-{{ s.id }}" class="history-row" data-kind="{{ kind }}">
+    <td data-label="File" class="file-cell">{% if kind == "qfx" %}<span class="type-badge source-qfx" title="Read from a QFX / OFX download">QFX</span>{% else %}<span class="type-badge source-pdf" title="A PDF statement">PDF</span>{% endif %}
+        <span class="file-name-text">{{ s.original_filename or "—" }}</span></td>
     <td data-label="Account">{{ s.account_name }}</td>
-    <td data-label="Uploaded">{{ s.uploaded_at }}</td>
-    <td data-label="First transaction">{{ s.first_date or "—" }}</td>
-    <td data-label="Last transaction">{{ s.last_date or "—" }}</td>
+    <td data-label="Uploaded" class="nowrap">{{ s.uploaded_at }}</td>
+    <td data-label="Period">{{ period or "—" }}</td>
+    <td data-label="Transactions" class="count-cell"><span>{{ s.txn_count }} transaction{{ "s" if s.txn_count != 1 else "" }}</span>
+        {% if s.txn_count %}<span class="hint money-flow" title="Money in and money out, from the account's point of view">in {{ "%.2f"|format(s.money_in) }} &middot; out {{ "%.2f"|format(s.money_out) }}</span>{% endif %}</td>
     <td data-label="Status">{% with row=s %}{% include "_status_fragment.html" %}{% endwith %}</td>
-    <td data-label="Money in">{{ "%.2f"|format(s.money_in) }}</td>
-    <td data-label="Money out">{{ "%.2f"|format(s.money_out) }}</td>
-    <td data-label=""><a href="statement-delete-confirm?id={{ s.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a></td>
-    {% if is_admin %}<td data-label=""><a href="statement-debug?id={{ s.id }}" class="debug-link">debug</a></td>{% endif %}
+    <td data-label="" class="actions-cell"><a href="statement-delete-confirm?id={{ s.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a>{% if is_admin %} <a href="statement-debug?id={{ s.id }}" class="debug-link">debug</a>{% endif %}</td>
 </tr>

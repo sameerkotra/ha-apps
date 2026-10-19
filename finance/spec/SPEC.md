@@ -125,8 +125,15 @@ the acting user's id, and every write by id first checks ownership.
 
 ## 4. Bank statements — upload and processing
 
-1. **Upload** (Upload → Statements): one account, several PDFs per request, and a "Skip
-   the PDF confirmation step" box (unchecked by default, section 7). Each file
+1. **Upload** (Upload → Statements, `POST upload`): one account, several PDFs per
+   request, and `skip_confirmation` (section 7): `1` skips the confirmation step,
+   `0` keeps it, and left out or blank means the account's own saved choice
+   (`accounts.skip_confirmation`, migration 0030; never chosen = confirm). The page's
+   drop zone (section 13) lists PDF, QFX and CSV files together and sends the
+   statement files here grouped by the account chosen for each; CSVs go to the CSV
+   import (section 10). A plain browser form post (the page without its script,
+   `notices.wants_page`) is answered with a redirect to `uploads?notice=upload_sent`
+   (or `upload_some_failed`) instead of JSON. Each file
    must be a PDF of at most 50 MB (`MAX_PDF_MB`), at most 20 files per request.
    Password-protected PDFs are not supported. The same form takes QFX/OFX files
    (section 4a): each file goes its own way by its content (`%PDF-` in its first
@@ -138,7 +145,10 @@ the acting user's id, and every write by id first checks ownership.
    in-memory FIFO queue with a single worker (`app/jobs.py`); every vision call —
    admin debug re-sends included — holds one lock, so the local model never does
    two at once. A queued row says how many jobs are ahead; `current_step` shows
-   the live step; the row polls every 3 s.
+   the live step; the row polls every 3 s. The drop zone's file rows poll
+   `statement-progress?ids=…` (JSON: each of the person's statements' state —
+   processing, awaiting, review, error, complete — step, error, transaction,
+   flagged and skipped counts; at most 50 ids) every 3 s while one is being read.
 3. **Text pass** (`pdftotext -layout`): rejects a PDF with no text layer (no
    OCR), collects every printed money amount and reads the printed previous and
    new balance. It does not build transactions.
@@ -184,13 +194,17 @@ the acting user's id, and every write by id first checks ownership.
 ## 4a. QFX / OFX statements
 
 A bank's "Download transactions → Quicken (QFX)" or "Money (OFX)" file becomes a
-**statement** like a PDF (Statement history, a period, balances, delete as a unit,
+**statement** like a PDF (Upload history, a period, balances, delete as a unit,
 duplicates checked, rows categorized), but it is read in the request, with no queue and
 no AI, and there is no confirmation step (nothing to compare against a picture).
 No App setting: a household that never uses QFX sees no difference.
 
 1. **Recognising it** (`app/ofx.py`): a file is OFX when its first 1 KB has `OFXHEADER`
-   or `<OFX>` (any case); `.qfx`, `.ofx` and `.qbo` are offered by the picker. A web
+   or `<OFX>` (any case); `.qfx`, `.ofx` and `.qbo` are offered by the picker, and the
+   drop zone lists them as QFX (by name; the server still checks the content), with
+   "Match by account number" as their account unless one is picked above the zone.
+   A file whose account can't be settled (`needs_account`) gets its question in its
+   own row of the drop zone; the answers are sent again with that one file. A web
    page saved as `.qfx` is refused ("That isn't a QFX/OFX file — it looks like a web
    page. Download it again from your bank."), as are an empty file, one with no
    transactions, and one over 20 MB (`MAX_CSV_MB`); at most 20 files per request. The
@@ -264,7 +278,7 @@ No App setting: a household that never uses QFX sees no difference.
    `balance_mismatch` is set ("… a download in between may be missing") and the statement
    waits in Review (**Acknowledge** completes it). Removing a row from a QFX statement on
    Review doesn't recompute it (section 7's recompute is for a PDF's printed balances).
-10. **Statement history:** a "QFX" badge on the file, the period as "Mar 3 – Jun 1, 2026"
+10. **Upload history:** a "QFX" badge on the file, the period as "Mar 3 – Jun 1, 2026"
     (`ofx.period_label`; both years when they differ) and the transaction count; no Open
     PDF, Re-extract or Restart. Delete as a unit, Restore and purge work as for any
     statement (there's no PDF to purge). The account page shows the same period.
@@ -350,7 +364,8 @@ No App setting: a household that never uses QFX sees no difference.
   corrected against the PDF (`transaction-resolve`); bulk approve, categorize,
   delete. Review is confirm-or-correct, since only the vision pass produces
   values.
-- Statement history's default order puts "Awaiting confirmation" first.
+- Upload history is newest first; statements awaiting confirmation, needing review or failed are pinned above
+  it in **Waiting for you** (section 13) instead of being sorted to the top.
 
 ## 8. Accounts, sign convention, transfers, exclusions
 
@@ -401,9 +416,10 @@ Uncategorized — it never fails an import.
 
 ## 10. Manual entry, CSV import, CSV export
 
-- **Manual entry** (Uploads, collapsed): one transaction; blank category →
+- **Manual entry** (Upload → Statements, the **Add by hand** tab): one transaction; blank category →
   "Uncategorized" (no LLM call on an interactive form).
-- **CSV import** (Uploads, collapsed): several files per request, each at most
+- **CSV import** (CSV files in the Upload → Statements drop zone, one request per
+  account chosen in their rows; `POST transactions-import-csv`): several files per request, each at most
   20 MB (`MAX_CSV_MB`), each recorded as one `csv_imports` row whatever happens.
   The file sits in `PENDING_DIR/<user>/csv-imports/` only while importing (a
   leftover shows in Storage).
@@ -426,7 +442,23 @@ Uncategorized — it never fails an import.
     in errors are the file's own.
   - **Date column:** "Date" wins; else a single column containing "date"; else
     the one containing "trans"; else the page asks which to use and resubmits
-    that file. Dates are normalised to ISO; an unreadable date fails that row.
+    that file (the header is searched for again when a picked column isn't on
+    the first row). Dates are normalised to ISO; an unreadable date fails that row.
+  - **Saved layout** (`accounts.csv_layout`, migration 0030; JSON `header_row`,
+    `data_row`, `date_column`, `debit_credit`): after a CSV for one picked account
+    imports, the result carries the `layout` it used (the date column only when
+    the file had several date-like columns) and the drop zone offers **Remember
+    this layout for <account>** (`POST account-upload-prefs` with `csv_layout`;
+    checked by `upload_page.clean_layout`: a header row from 1, a data row below
+    it or none, a column name of at most 200 characters). A later import for that
+    account fills in what the request leaves blank from it: the header and data
+    rows as a pair (giving either overrides both) and the date column on its
+    own; `saved_layout=0` imports without it. Each result says `layout_source`
+    (`saved`, `given` or `auto`); the page shows "Using <account>'s saved layout
+    · change" before sending, and a file the saved layout doesn't fit offers
+    "Try without the saved layout". Cleared with `clear_csv_layout=1` there or on
+    the account's page (**Uploads**: also **Skip the PDF confirmation step for
+    this account**, `upload_prefs_form` marks the group).
   - **Debit/Credit:** the column gives the direction (checking/savings: debit
     out, credit in; credit card: debit = purchase, positive; credit =
     payment/refund, negative). Both or neither filled is a row error.
@@ -435,10 +467,11 @@ Uncategorized — it never fails an import.
   - Duplicates (same account, date, amount, description — earlier rows of the
     same file included) are skipped and listed.
   - Blank-category rows go through section 9 in one batch.
-  - Results show inline; the history shows account(s), first/last date and a
-    result badge; admins get a read-only debug page. A CSV import can be deleted
+  - Results show in each file's row of the drop zone; Upload history (section 13)
+    shows account(s), the period (first–last date), the count and a status chip;
+    admins get a read-only debug page. A CSV import can be deleted
     as a unit (section 11).
-  - A bank's QFX/OFX download goes on the Statements form instead (section 4a): it
+  - A bank's QFX/OFX download goes to the statement upload instead (section 4a): it
     becomes a statement, with the account number and closing balance from the file.
 - **CSV export** (Transactions page) exports exactly what the filter form holds,
   streamed line by line (`csv_export.stream`, shared `app/common/csv_export.py`).
@@ -461,17 +494,18 @@ Uncategorized — it never fails an import.
 - **Edit details** (account page): name, bank, last 4 (sanitised server-side to at
   most four digits). Names are read live everywhere, so a rename needs no
   re-import — but a multi-account CSV's Account column matches today's name.
-- **Preferred upload method** is advisory: a mismatched upload shows a warning
-  with "Upload anyway". Stored `both` / `pdf` / `csv` / `qfx` (CHECK, migrations
+- **Preferred upload method** is advisory: a mismatched file is marked in the drop
+  zone, nothing more. Stored `both` / `pdf` / `csv` / `qfx` (CHECK, migrations
   0014 and 0028; `_sanitize_upload_method` turns anything else into `both`), shown
   in the menus as "Any (PDF, CSV or QFX)", "PDF only", "CSV only", "QFX / OFX only"
   and in the lists as "Any", "PDF only", "CSV only", "QFX only". Set on Add account,
   Edit details and the Upload form's new-account fields; an account created from a
-  QFX file starts as `qfx`. The nudge (`statement-upload.js`, `csv-import.js`): a PDF
-  or a QFX file (by its name: `.qfx`, `.ofx`, `.qbo`) sent to an account whose
-  preference is another type, asked once for the whole upload, naming each type that
-  doesn't match ("…is CSV, but you're uploading a PDF and a QFX file."); `both`, "Match
-  by account number" and a new account never nudge.
+  QFX file starts as `qfx`. The nudge (`static/pages/upload-logic.js` `mismatch`): a
+  file in the drop zone (PDF, QFX by `.qfx`/`.ofx`/`.qbo`, or CSV, by its name) whose
+  chosen account prefers another type gets a small "not this account's usual type"
+  mark in its row (its title names the preferred type), never a dialog or a block;
+  `both`, "Match by account number", a CSV's own Account column and a new account
+  never do.
 - **Website** (optional, editable on Add account and Edit details): the bank's
   login or statements page. Only `http(s)://` addresses are kept (`https://` is
   added when no scheme is typed; `javascript:`, `data:` and the like are
@@ -516,6 +550,9 @@ Uncategorized — it never fails an import.
   around it), so a failure leaves the database as it was; a migration that
   leaves foreign-key violations is rolled back and not recorded. Before the
   first pending migration a copy is kept as `finance.db.pre-NNNN` (latest only).
+  The newest, **0030**, adds `accounts.csv_layout` (TEXT, JSON; NULL = none saved) and
+  `accounts.skip_confirmation` (INTEGER CHECK 0/1; NULL = never chosen): what the Upload page
+  remembers per account (sections 4, 10).
 - Dates are ISO text so string order is date order; legacy non-ISO dates are
   normalised at startup.
 - Ollama is usually plain HTTP on the LAN, so statement page images cross the
@@ -559,10 +596,54 @@ Uncategorized — it never fails an import.
   Utility bill or toll statement). Actions on an upload — upload, delete,
   resolve, restart — come back to the same upload page, never another one. The
   Upload nav item reopens the upload page used last (remembered per browser).
-- **Upload → Statements:** statement upload, manual entry and
-  CSV import; statement history (money in/out, first/last transaction, status
-  actions: Open PDF, Confirm, Review, Re-extract, Restart, Delete, admin debug)
-  and CSV import history.
+- **Upload → Statements** (`uploads_list.html`, `static/pages/uploads.js` with the pure helpers in
+  `static/pages/upload-logic.js`, server parts in `app/upload_page.py`), top to bottom:
+  - the overdue-statements notice (section 27, `_statements_due.html`);
+  - the **accounts strip** (`_accounts_strip.html`, also `GET uploads-strip`): a card per live, unarchived
+    account — name and last 4, "up to Sep 2026" (the newest of its uploaded transactions' dates — from a
+    statement or a CSV import, never typed in — and its statements' `period_end`), a gap warning
+    (`missing_months`: with an expected date, each cycle Ek-1 < date ≤ Ek between the first upload and the
+    latest cycle with no uploaded transaction, the latest cycle itself being the overdue notice's; without
+    one, each calendar month with none between the first and the newest month that has one; at most 12
+    months back; "Aug missing", "Jul, Aug missing", "3 months missing"), "Overdue N days" / "Due today" for
+    the owner (section 27), the preferred method and **Upload** (a link to `uploads?account=<id>`; the script
+    instead picks the account and opens the picker with `accept` set to its type, then puts the full list
+    back). Wraps on a wide screen, scrolls sideways on a phone;
+  - tabs **Upload files** · **Add by hand** (`role="tablist"`, arrow keys; without the script both parts show
+    one after the other), each with one line of help and a **How this works** disclosure (the CSV columns,
+    the sign rules, what happens to a PDF, QFX notes);
+  - the **drop zone** (`#drop-zone`, a label for the file input, made `role="button"` with Enter/Space by the
+    script; on phones a big **Choose files** button): PDF, QFX/OFX/QBO and CSV files together, by drag and drop
+    or the picker. Each file becomes a row (`#file-list .file-row`): type badge (by name), name, size, its
+    account (`upload-logic.guessAccount`: an account picked above the zone; else for QFX "Match by account
+    number"; for a CSV whose header (read in the browser) has an Account column "From the file's Account
+    column"; for a PDF the one account whose last 4 digits are in the file name, else the account used last
+    time (`localStorage`, per acting person, guarded), else "Pick an account"), a menu to change it (with
+    **+ Create new account…**, created first on Upload), the not-usual-type mark and ✕. Per-type options show
+    only while a file of that type is listed: **Skip the PDF confirmation step** (its starting state is the
+    PDFs' accounts' saved choice; once changed, **Remember this for …** saves it per account and the upload
+    sends it), the QFX note, and for CSVs the saved-layout chip and **Header and data rows** (the preview and
+    tap picker). **Upload** (`#upload-button`, kept at the bottom of the screen above the phone's menu bar
+    while files are listed) sends statement files per chosen account to `upload` and CSVs per chosen account
+    to `transactions-import-csv`; each row shows queued → reading → done with counts / needs review /
+    awaiting confirmation / error, and its own question (QFX account, CSV date column or rows). Status
+    changes are announced (`#upload-announcer`, `aria-live`). When every file has an outcome, one summary
+    card (`#upload-summary`: "3 files · 2 statements, 1 CSV · 412 transactions · 9 duplicates skipped · 1
+    needs review", updated as PDFs finish) with **Review now**; the history and the strip are fetched again
+    in place — no page reload. Without the script it is a plain multi-file form posting to `upload`
+    (section 4);
+  - **Waiting for you** (`#upload-waiting`): statements awaiting confirmation (Open PDF, Confirm), needing
+    review (Review) or failed (Restart for a PDF, Delete), newest first, at most 8 and "and N more"; pinned
+    above the history whatever its filters. A failed CSV import isn't listed (nothing to do but import again);
+  - **Upload history** (`_upload_history.html`, also `GET uploads-history`, the fragment the page swaps in):
+    statements (PDF and QFX) and CSV imports in one list (`upload_page.unify`), newest first, seven
+    columns — file with type badge, account, uploaded, period, transactions (money in/out under a
+    statement's count), status chip with the same actions as before (Open PDF, Confirm, Review, Re-extract,
+    Restart; a statement row still polls and swaps itself, `_statement_row.html`), Delete and the admin's
+    debug link in one cell, so it fits a 1280 px window. Filter chips (buttons with `aria-pressed` in GET
+    forms: `h_type` pdf/qfx/csv, `h_status` waiting/processing/done/error, `h_account`), sort and paging
+    (`TableView`, prefix `h_`) are all in the address and work without the script; the script fetches the
+    same address from `uploads-history` and keeps the page's address in step. Phones show the rows as cards.
 - **Themes:** midnight (default), slate, daylight and auto (Daylight on a light
   device, else Midnight), shared with the other household apps: the colours come
   from `static/common/themes.css` (`static/style.css` adds the green accent and
@@ -583,7 +664,7 @@ Uncategorized — it never fails an import.
   `select[data-click-sibling]`, `select[data-go-param]`, `[data-export]`,
   `form[data-enter-clicks]`. Page scripts are `static/pages/confirm-text.js`,
   `resend.js`, `dashboard.js`, `settings.js`, `pdf-view.js`, `toll-upload.js`,
-  `utility-upload.js`, `statement-upload.js` and `csv-import.js`, with the
+  `utility-upload.js`, `upload-logic.js` and `uploads.js`, with the
   server's values in `data-*` attributes (JSON through `tojson`). The saved-report
   id after a Query save is a hidden `data-saved-report-id` span that
   `static/query.js` applies; the Query variables box listens for the custom event
@@ -593,7 +674,7 @@ Uncategorized — it never fails an import.
   (Setup, Admin for the admin, "how the app sees you", theme, version).
 - **Tables:** every table sorts by clicking a header (dates, numbers and text
   detected per column; phones get a sort select). Long histories (statements,
-  CSV imports, utility and toll uploads) are sorted and paged on the server
+  CSV imports — one Upload history —, utility and toll uploads) are sorted and paged on the server
   (10/20/50/All, state in the URL with a per-table prefix).
 - **Nothing stays stuck:** Back/Forward loads the full page, polling refreshes
   whole rows, a failed request shows a "Reload page" banner, a bfcache-restored
@@ -901,10 +982,13 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   options, checksums), `data/<table>.json` (rows by column name, as stored, without `user_id`; ids kept so
   references can be remapped), `files/…` (the PDFs still kept, at their path inside the person's folder:
   `x.pdf`, `utility-bills/…`, `toll-statements/…`), `README.txt`.
-- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 29 today). Newer is refused; older is
+- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 30 today). Newer is refused; older is
   brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below): from 27,
   every statement gets `source = 'pdf'` (`fitid`, `period_start`/`period_end` and `import_details` start empty);
-  from 28, every account gets `reminders_on = 1` (its expected statement starts Off; section 27).
+  from 28, every account gets `reminders_on = 1` (its expected statement starts Off; section 27); from 29,
+  nothing to fill in (an account's `csv_layout` and `skip_confirmation`, migration 0030, start as nothing saved).
+  Those two travel with `accounts`; an imported `csv_layout` must be a layout `upload_page.clean_layout` accepts
+  (stored in its cleaned form) and `skip_confirmation` 0, 1 or empty, else the file is refused.
   Columns are read from the database itself (`PRAGMA table_info`), so a new column needs no change here.
 - **Tables, in load order:** `accounts`, `csv_imports`, `statements`, `transactions`, `skipped_duplicates`,
   `category_rules`, `custom_categories`, `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
@@ -1094,7 +1178,7 @@ finance/                    the app (slug "finance")
                 upload, admin_storage, ai_usage_page, settings_page, utilities, tolls, ...)
     templates/  static/  (style.css, ui.js, base.js, nav-boot.js, query.js, htmx.min.js, pages/*.js;
                 static/common/: theme-boot.js, themes.css, ui.js — shared copies)
-  migrations/   0001-0029, applied at startup (and after a database import)
+  migrations/   0001-0030, applied at startup (and after a database import)
   tests/        pytest suite (python3 -m pytest); tests/common_tests/: shared helpers and tests (copies)
 ```
 `app/common/`, `app/static/common/` and `tests/common_tests/` are written by

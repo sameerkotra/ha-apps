@@ -474,9 +474,13 @@ def test_an_admin_uploading_while_viewing_as_someone_uploads_for_them(env):
     assert r.json()["results"][0]["statement_id"]
     with env.db() as c:
         assert c.execute("SELECT user_id FROM statements").fetchone()[0] == "other"
-    js = open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "pages", "statement-upload.js")).read()
-    for call in re.findall(r'fetch\("([^"]+)"([^,]*)', js):
-        assert "qs" in call[1], call                  # every POST keeps the page's as_user
+    js = open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "pages", "uploads.js")).read()
+    calls = re.findall(r'fetch\(([^,)]*)', js)
+    assert len(calls) >= 8
+    for call in calls:
+        assert call.startswith("api("), call          # every request keeps the page's as_user …
+    api = re.search(r'function api\(path\) \{(.*?)\}\n', js).group(1)
+    assert "qs" in api                                # … which api() appends
 
 
 # ---- links and messages (FS2, FS4, FSI7, FSI8, FSI12) ---------------------------------------------------
@@ -639,7 +643,7 @@ def test_a_failing_migration_changes_nothing_and_a_copy_is_kept(env, monkeypatch
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         cols = {r[1] for r in c.execute("PRAGMA table_info(accounts)")}
         assert "half_done" not in tables and "broken" not in cols
-        assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 29
+        assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 30     # the newest migration
     assert os.path.exists(env.db_path + ".pre-0999")
 
 

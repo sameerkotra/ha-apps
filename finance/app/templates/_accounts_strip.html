@@ -1,0 +1,24 @@
+{# Upload → Statements: the accounts strip (SPEC.md section 13), one small card per live, unarchived account.
+   Also the whole of /uploads-strip, swapped into #accounts-strip-wrap after an upload. Upload is a plain link to
+   the page with the account picked; the page's script instead picks it in the drop zone and opens the file
+   picker on the account's usual type (data-accept). #}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+{% if strip %}
+<section class="accounts-strip" id="accounts-strip" aria-label="Your accounts">
+    <ul class="strip-list" id="strip-list">
+        {% for c in strip %}
+        <li class="strip-card{% if c.due_class %} {{ c.due_class }}{% endif %}{% if c.gap_text %} has-gap{% endif %}" id="strip-card-{{ c.id }}" data-account-id="{{ c.id }}">
+            <span class="strip-name">{{ c.name }}{% if c.last4 %} <span class="hint">····{{ c.last4 }}</span>{% endif %}</span>
+            <span class="strip-latest">{{ c.latest_label or "Nothing uploaded yet" }}</span>
+            {% if c.gap_text %}<span class="strip-gap" title="No transactions uploaded for {{ c.missing | join(', ') }}">{{ c.gap_text }}</span>{% endif %}
+            {% if c.due_text %}<span class="strip-due {{ c.due_class }}">{{ c.due_text }}</span>{% endif %}
+            <span class="strip-foot">
+                <span class="strip-pref" title="Preferred upload method">{{ c.pref_label }}</span>
+                <a href="uploads?account={{ c.id }}{{ amp }}#drop-zone" class="btn-secondary strip-upload" data-account-id="{{ c.id }}"
+                   data-accept="{{ c.accept }}" aria-label="Upload for {{ c.name }}">Upload</a>
+            </span>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}

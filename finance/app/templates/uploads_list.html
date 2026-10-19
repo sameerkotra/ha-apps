@@ -1,104 +1,195 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
 {% block title %}Uploads{% endblock %}
+{% block main_class %}uploads-main{% endblock %}
 {% block content %}
+{% set qs = "?" + acting_qs if acting_qs else "" %}
 {{ nav.upload_tabs("statements", acting_qs, request.state.features) }}
 {% include "_ai_missing.html" %}
 <h1>Upload</h1>
 {% include "_statements_due.html" %}
+{% if notice %}<p class="hint notice-hint" role="status">{{ notice }}</p>{% endif %}
 
-<h2>Upload statement(s)</h2>
-<form id="upload-form" enctype="multipart/form-data" class="add-account-form">
-    <label>
-        Account
-        <select name="account_id" id="account-select" required>
-            <option value="match">Match by account number (QFX)</option>
-            {% for a in accounts %}
-            <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}"{% if (preselect and a.id == preselect) or (not preselect and loop.first) %} selected{% endif %}>{{ a.name }}</option>
-            {% endfor %}
-            <option value="__new__">+ Create new account&hellip;</option>
-        </select>
-    </label>
-    <label>
-        PDF or QFX / OFX file(s)
-        <input type="file" name="files" id="statement-files" accept="application/pdf,.pdf,.qfx,.ofx,.qbo" multiple required>
-    </label>
-    <label class="checkbox-label">
-        <input type="checkbox" name="skip_confirmation" value="1">
-        Skip the PDF confirmation step
-        <span class="hint" id="qfx-no-confirm" style="display:none;">(QFX files have no confirmation step)</span>
-    </label>
-    <button type="submit">Upload</button>
-</form>
-<p class="hint">
-    Unless skipped, each PDF statement waits for you to open it and confirm
-    the money in/out before it&rsquo;s marked complete and the PDF is deleted.
-    A QFX or OFX download from your bank (Quicken or Money format) is read at
-    once, with no AI and no confirmation: its rows, account number and closing
-    balance are in the file. Leave the account on &ldquo;Match by account
-    number&rdquo; to send each account in the file to yours with the same last
-    4 digits.
-</p>
+<div id="accounts-strip-wrap">{% include "_accounts_strip.html" %}</div>
 
-<!-- Shown instead of uploading when the account's preferred upload method
-     doesn't match the files' types (PDF / QFX): a nudge, never a block — "Upload anyway" resumes. -->
-<div id="upload-warning" class="hint warning-hint" style="display:none;">
-    <p id="upload-warning-text"></p>
-    <button type="button" id="upload-warning-proceed" class="btn-secondary">Upload anyway</button>
-    <button type="button" id="upload-warning-cancel" class="btn-secondary">Cancel</button>
+{# The page's data for static/pages/uploads.js (no inline scripts: see the Content-Security-Policy in main.py). #}
+<div id="upload-data" hidden data-accounts='{{ upload_accounts | tojson }}' data-acting-qs='{{ (acting_qs or "") | tojson }}'
+     data-user='{{ user.id | tojson }}' data-all-accept="{{ all_accept }}"></div>
+
+{# Tabs (D): shown by the script; without it both parts are simply one after the other. #}
+<div class="upload-tabs" role="tablist" aria-label="Add transactions" id="upload-tabs" hidden>
+    <button type="button" role="tab" id="tab-upload-files" class="upload-tab" aria-controls="upload-files-panel" aria-selected="true">Upload files</button>
+    <button type="button" role="tab" id="tab-manual" class="upload-tab" aria-controls="manual-panel" aria-selected="false" tabindex="-1">Add by hand</button>
 </div>
 
-<!-- Hidden until "+ Create new account" is picked — no separate page needed
-     before you can upload (the whole point of this form). A plain div, not
-     <fieldset>/<legend> — legend has browser-default rendering that's
-     designed to punch through a border, which clashes with a custom
-     border-radius/flex layout and isn't something to guess at blind. -->
-<div id="new-account-fields" class="add-account-form new-account-panel" style="display:none;">
-    <p class="panel-title">New account details</p>
-    <label>
-        Name
-        <input type="text" id="new-acct-name" placeholder="e.g. Chase Checking">
-    </label>
-    <label>
-        Type
-        <select id="new-acct-type">
-            <option value="checking">Checking</option>
-            <option value="savings">Savings</option>
-            <option value="credit_card">Credit card</option>
-        </select>
-    </label>
-    <label>
-        Bank
-        <input type="text" id="new-acct-bank" placeholder="e.g. Chase">
-    </label>
-    <label>
-        Last 4 digits
-        <input type="text" id="new-acct-last4" maxlength="4" pattern="[0-9]{4}" placeholder="1234">
-    </label>
-    <label>
-        Preferred upload method
-        <select id="new-acct-upload-method">
-            <option value="both" selected>Any (PDF, CSV or QFX)</option>
-            <option value="pdf">PDF only</option>
-            <option value="csv">CSV only</option>
-            <option value="qfx">QFX / OFX only</option>
-        </select>
-    </label>
-</div>
+<section id="upload-files-panel" class="upload-panel" role="tabpanel" aria-labelledby="tab-upload-files">
+    <p class="hint one-line">PDF statements, QFX / OFX downloads and CSV exports, all in one go &mdash; each file goes its own way.</p>
+    <details class="how-it-works" id="how-upload">
+        <summary>How this works</summary>
+        <div class="how-body">
+            <p><strong>PDF statements</strong> are read by the AI in the background. Unless you skip it, each one then
+                waits for you to open it and confirm its money in and money out (<em>Waiting for you</em>, below); once
+                it completes, the PDF is deleted. A PDF needs an account: the one whose last 4 digits are in the file
+                name, else the one you used last time, else pick it.</p>
+            <p><strong>QFX / OFX / QBO downloads</strong> (Quicken or Money format) are read at once, with no AI and no
+                confirmation: their rows, account number and closing balance are in the file. &ldquo;Match by account
+                number&rdquo; sends each account in the file to yours with the same last 4 digits; when nothing matches
+                you're asked which account it is, in the file's row. Overlapping downloads only add the new rows.</p>
+            <p><strong>CSV files</strong> need the columns <strong>Date</strong>, <strong>Description</strong> and
+                <strong>Amount</strong> &mdash; or <strong>Debit</strong> and <strong>Credit</strong> instead of Amount
+                (on a credit card Debit is a purchase and Credit a payment; on checking it's the other way round).
+                <strong>Category</strong> is optional (blank rows are categorized like a statement's), and
+                <strong>Account</strong> lets one file fill several accounts (names must match yours; a row without one
+                uses the account picked for the file). A bank's own lines above the header are skipped by themselves;
+                under <em>Header and data rows</em> you can choose them yourself. With several date columns, the
+                transaction date is used, or you're asked. A file missing a required column imports nothing.
+                <a href="transactions-export">Export your transactions</a> to see the format. After an import you can
+                remember its layout for the account, and it's used by itself next time.</p>
+            <p><strong>Signs</strong>: checking and savings &mdash; negative is money out, positive is money in. Credit
+                card &mdash; positive is a purchase, negative a payment.</p>
+            <p>A file whose type isn't its account's preferred upload method (set on Setup &rarr; Accounts) gets a small
+                &ldquo;not this account's usual type&rdquo; mark &mdash; a reminder in case the wrong account is picked,
+                never a block. Rows already in the app are skipped as duplicates and listed on Review for
+                <em>Insert anyway</em>.</p>
+        </div>
+    </details>
 
-<div id="upload-result"></div>
-<script src="static/pages/statement-upload.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>
+    <form id="upload-form" class="upload-form" method="post" action="upload{{ qs }}" enctype="multipart/form-data">
+        <div class="upload-account-row">
+            <label for="upload-account" class="upload-account-label">Account
+                <select name="account_id" id="upload-account">
+                    <option value="match"{% if not preselect %} selected{% endif %}>Match by account number (QFX)</option>
+                    {% for a in accounts %}
+                    <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}"{% if preselect and a.id == preselect %} selected{% endif %}>{{ a.name }}</option>
+                    {% endfor %}
+                    <option value="__new__">+ Create new account&hellip;</option>
+                </select>
+            </label>
+            <span class="hint" id="upload-account-hint">PDFs need an account picked here.</span>
+        </div>
 
-<details class="collapsible-section">
-    <summary class="collapsible-summary">Add a transaction by hand</summary>
+        <label id="drop-zone" class="drop-zone" for="upload-files">
+            <span class="dz-icon" aria-hidden="true">&#8682;</span>
+            <span class="dz-title dz-desktop">Drop statements here, or choose files</span>
+            <span class="dz-title dz-phone">Choose files</span>
+            <span class="dz-hint">PDF, QFX / OFX / QBO or CSV</span>
+            <input type="file" id="upload-files" name="files" class="dz-input" multiple accept="{{ all_accept }}">
+        </label>
+
+        <ul id="file-list" class="file-list" aria-label="Files to upload" hidden></ul>
+
+        <div id="upload-options" class="upload-options">
+            <fieldset id="opt-pdf" class="opt-group" data-kind="pdf">
+                <legend>PDFs</legend>
+                <label class="checkbox-label">
+                    <input type="checkbox" name="skip_confirmation" value="1" id="skip-confirmation">
+                    Skip the PDF confirmation step
+                </label>
+                <label class="checkbox-label" id="skip-remember-label" hidden>
+                    <input type="checkbox" id="skip-remember">
+                    <span>Remember this for <span id="skip-remember-names"></span></span>
+                </label>
+                <span class="hint" id="skip-saved-note"></span>
+            </fieldset>
+            <fieldset id="opt-qfx" class="opt-group" data-kind="qfx" hidden>
+                <legend>QFX / OFX</legend>
+                <p class="hint">Read at once: no AI and no confirmation step.</p>
+            </fieldset>
+            <fieldset id="opt-csv" class="opt-group" data-kind="csv" hidden>
+                <legend>CSVs</legend>
+                <p class="layout-chip" id="csv-layout-chip" hidden>
+                    <span id="csv-layout-chip-text"></span>
+                    <button type="button" class="chip-link" id="csv-layout-change">change</button>
+                </p>
+                <details class="csv-rows" id="csv-rows">
+                    <summary>Header and data rows <span class="hint">(optional)</span></summary>
+                    <p class="hint">Left blank, the header is the first row with the columns above. To choose, show the
+                        file's first rows and tap the header row, or type the numbers. They apply to every CSV listed.</p>
+                    <div class="csv-rows-fields">
+                        <label>Header row
+                            <input type="number" name="header_row" id="csv-header-row" min="1" step="1" inputmode="numeric" placeholder="Find it">
+                        </label>
+                        <label>Data starts on row
+                            <input type="number" name="data_row" id="csv-data-row" min="2" step="1" inputmode="numeric" placeholder="The next row">
+                        </label>
+                        <button type="button" class="btn-secondary" id="csv-rows-show">Show the file's first rows</button>
+                    </div>
+                    <div id="csv-rows-preview"></div>
+                </details>
+            </fieldset>
+        </div>
+
+        {# Hidden until "+ Create new account…" is picked in any account menu; created first, then used. #}
+        <div id="new-account-fields" class="add-account-form new-account-panel" hidden>
+            <p class="panel-title">New account details</p>
+            <label>
+                Name
+                <input type="text" id="new-acct-name" placeholder="e.g. Chase Checking" maxlength="100">
+            </label>
+            <label>
+                Type
+                <select id="new-acct-type">
+                    <option value="checking">Checking</option>
+                    <option value="savings">Savings</option>
+                    <option value="credit_card">Credit card</option>
+                </select>
+            </label>
+            <label>
+                Bank
+                <input type="text" id="new-acct-bank" placeholder="e.g. Chase" maxlength="100">
+            </label>
+            <label>
+                Last 4 digits
+                <input type="text" id="new-acct-last4" maxlength="4" pattern="[0-9]{4}" placeholder="1234" inputmode="numeric">
+            </label>
+            <label>
+                Preferred upload method
+                <select id="new-acct-upload-method">
+                    <option value="both" selected>Any (PDF, CSV or QFX)</option>
+                    <option value="pdf">PDF only</option>
+                    <option value="csv">CSV only</option>
+                    <option value="qfx">QFX / OFX only</option>
+                </select>
+            </label>
+        </div>
+
+        <div class="upload-bar" id="upload-bar">
+            <button type="submit" id="upload-button">Upload</button>
+            <button type="button" class="btn-secondary" id="upload-clear" hidden>Clear the list</button>
+            <span class="hint" id="upload-bar-note"></span>
+        </div>
+    </form>
+    <div id="upload-announcer" class="visually-hidden" role="status" aria-live="polite"></div>
+
+    <section id="upload-summary" class="card upload-summary" hidden aria-labelledby="upload-summary-title">
+        <h3 id="upload-summary-title">Upload finished</h3>
+        <p id="upload-summary-text"></p>
+        <p class="upload-summary-actions">
+            <a href="review{{ qs }}" id="upload-summary-review" class="btn-secondary" hidden>Review now</a>
+            <button type="button" class="btn-secondary" id="upload-summary-close">Done</button>
+        </p>
+    </section>
+</section>
+
+<section id="manual-panel" class="upload-panel" role="tabpanel" aria-labelledby="tab-manual">
+    <h2 class="manual-title">Add by hand</h2>
+    <p class="hint one-line">One transaction at a time, for something no statement has.</p>
+    <details class="how-it-works" id="how-manual">
+        <summary>How this works</summary>
+        <div class="how-body">
+            <p>Checking/savings: negative = money out, positive = money in. Credit card: positive = a purchase (charged
+                to the card), negative = a payment (paid toward it). If this is one side of a transfer between your own
+                accounts, see the Transfers page.</p>
+        </div>
+    </details>
     <div class="card">
-        <form method="post" action="transaction-manual{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
+        <form method="post" action="transaction-manual{{ qs }}" class="add-account-form" id="manual-form">
             <input type="hidden" name="next" value="uploads">
             <label>
                 Account
                 <select name="account_id" required>
                     {% for a in accounts %}
-                    <option value="{{ a.id }}">{{ a.name }}{% if a.type == "credit_card" %} (card){% endif %}</option>
+                    <option value="{{ a.id }}"{% if preselect and a.id == preselect %} selected{% endif %}>{{ a.name }}{% if a.type == "credit_card" %} (card){% endif %}</option>
                     {% endfor %}
                 </select>
             </label>
@@ -122,172 +213,13 @@
             </label>
             <button type="submit">Add transaction</button>
         </form>
-        <p class="hint">
-            Checking/savings: negative = money out, positive = money in.
-            Credit card: positive = a purchase (charged to the card),
-            negative = a payment (paid toward it) &mdash; see the Transfers
-            page if this is actually one side of a transfer between your own
-            accounts.
-        </p>
     </div>
-</details>
+</section>
 
-<details class="collapsible-section">
-    <summary class="collapsible-summary">Import a CSV</summary>
-    <div class="card">
-        <form enctype="multipart/form-data" class="add-account-form" id="csv-import-form">
-            <label>
-                Account
-                <select name="default_account_id" id="csv-default-account">
-                    <option value="">Use Account column in CSV</option>
-                    {% for a in accounts %}
-                    <option value="{{ a.id }}" data-preferred-upload="{{ a.preferred_upload_method }}">{{ a.name }}{% if a.type == "credit_card" %} (card){% endif %}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <label>
-                CSV file(s)
-                <input type="file" name="files" id="csv-import-file" accept=".csv,text/csv" multiple required>
-            </label>
-            <details class="csv-rows" id="csv-rows">
-                <summary>Header and data rows <span class="hint">(optional)</span></summary>
-                <p class="hint">Left blank, the header is the first row that has the columns below, so lines a bank
-                    puts above it (name, card, report period) are skipped by themselves. To choose, look at the file's
-                    first rows and tap the header row, or type the numbers. They apply to every file in this import.</p>
-                <div class="csv-rows-fields">
-                    <label>Header row
-                        <input type="number" name="header_row" id="csv-header-row" min="1" step="1" inputmode="numeric" placeholder="Find it">
-                    </label>
-                    <label>Data starts on row
-                        <input type="number" name="data_row" id="csv-data-row" min="2" step="1" inputmode="numeric" placeholder="The next row">
-                    </label>
-                    <button type="button" class="btn-secondary" id="csv-rows-show">Show the file's first rows</button>
-                </div>
-                <div id="csv-rows-preview"></div>
-            </details>
-            <button type="submit" class="btn-secondary" id="csv-import-btn">Import CSV</button>
-        </form>
-        <!-- Same round-97 nudge as the PDF form above, mirrored for the
-             opposite direction (a specific account picked whose preference
-             is "pdf" but a CSV is being uploaded). Skipped entirely when
-             the picker is left on "Use Account column in CSV" -- there's no
-             single account to compare against yet. -->
-        <div id="csv-import-warning" class="hint warning-hint" style="display:none;">
-            <p id="csv-import-warning-text"></p>
-            <button type="button" id="csv-import-warning-proceed" class="btn-secondary">Import anyway</button>
-            <button type="button" id="csv-import-warning-cancel" class="btn-secondary">Cancel</button>
-        </div>
-        <div id="csv-import-result"></div>
-        <script src="static/pages/csv-import.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>
-        <p class="hint">
-            Required columns: Date, Description, Amount &mdash; or Debit and
-            Credit instead of Amount, if that's the shape your export uses
-            (whichever one has a value on a row supplies the amount; on a
-            credit card, Debit is a purchase and Credit is a payment, the
-            opposite of a checking account where Debit is money out and
-            Credit is money in). Category is optional &mdash; left blank,
-            each row gets categorized the same way an uploaded statement's
-            transactions do. Account is only
-            required as a column if you leave the picker above on &ldquo;Use
-            Account column in CSV&rdquo; &mdash; pick a specific account
-            instead and every row without its own Account cell filled in
-            uses that account, same as the PDF upload above. A row that
-            does have its own Account value still needs it to match one of
-            your account names exactly (case-insensitive), letting one file
-            mix accounts per row even with a default picked. The whole file
-            is rejected up front if a required column is missing &mdash; unless
-            its header is a few rows down (see &ldquo;Header and data rows&rdquo;
-            above), and if it can't be found you're shown the file's first rows to
-            choose from &mdash;
-            nothing is imported instead of the rows around a bad one being
-            silently skipped. If a file has more than one date-like column
-            (a credit card's &ldquo;Trans. Date&rdquo; and &ldquo;Post
-            Date,&rdquo; say), the one that looks like the transaction date
-            is used automatically; if it's not clear which one that is,
-            you'll be asked to pick before anything is imported.
-            <a href="transactions-export">Export your
-            current transactions</a> to see the format. The uploaded file
-            itself is deleted right after import, same as a statement's PDF
-            once it's no longer needed. If the account you pick above has a
-            preferred upload method (set on the Accounts page) that isn't
-            CSV (PDF only, or QFX / OFX only), you'll see a warning before the import runs &mdash; it's
-            just a check in case the wrong account got selected, and you can
-            dismiss it and import anyway.
-        </p>
-    </div>
-</details>
+{% include "_upload_history.html" %}
+{% endblock %}
 
-{% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
-<h2>Statement history</h2>
-{% if statement_view.total %}
-<p class="hint">&ldquo;Money in&rdquo; and &ldquo;Money out&rdquo; are from the account&rsquo;s point of view. Checking/savings: deposits and withdrawals. Credit card: payments and credits (money in) and purchases and charges (money out). First/last transaction are the earliest and latest dates among the statement&rsquo;s transactions.</p>
-{{ mobile_sort(statement_view, statement_sort_columns) }}
-<table class="statements-table" data-no-sort>
-    <thead>
-        <tr>
-            {{ sort_th(statement_view, "file", "File") }}
-            {{ sort_th(statement_view, "account", "Account") }}
-            {{ sort_th(statement_view, "uploaded", "Uploaded") }}
-            {{ sort_th(statement_view, "first", "First transaction") }}
-            {{ sort_th(statement_view, "last", "Last transaction") }}
-            {{ sort_th(statement_view, "status", "Status") }}
-            {{ sort_th(statement_view, "in", "Money in") }}
-            {{ sort_th(statement_view, "out", "Money out") }}
-            <th></th>{% if is_admin %}<th></th>{% endif %}
-        </tr>
-    </thead>
-    <tbody>
-        {% for s in statement_view.rows %}
-        {% include "_statement_row.html" %}
-        {% endfor %}
-    </tbody>
-</table>
-{{ pager(statement_view) }}
-{% else %}
-<p class="empty-state">No statements uploaded yet.</p>
-{% endif %}
-
-<h2>CSV import history</h2>
-{% if csv_view.total %}
-<p class="hint">Every import attempt gets a row here, including one that imported nothing &mdash; open &ldquo;debug&rdquo; for the full detail (row-by-row problems, duplicates skipped, or why the whole file was rejected). Account lists every account the import's rows actually landed in, comma-separated for a file that mixed more than one (its own Account column, or a default plus per-row overrides) &mdash; blank when nothing from that attempt is still around to show one.</p>
-{{ mobile_sort(csv_view, csv_sort_columns) }}
-<table class="statements-table" data-no-sort>
-    <thead>
-        <tr>
-            {{ sort_th(csv_view, "file", "File") }}
-            {{ sort_th(csv_view, "account", "Account") }}
-            {{ sort_th(csv_view, "imported", "Imported") }}
-            {{ sort_th(csv_view, "first", "First transaction") }}
-            {{ sort_th(csv_view, "last", "Last transaction") }}
-            {{ sort_th(csv_view, "result", "Result") }}
-            <th></th>{% if is_admin %}<th></th>{% endif %}
-        </tr>
-    </thead>
-    <tbody>
-        {% for c in csv_view.rows %}
-        <tr>
-            <td data-label="File">{{ c.original_filename or "—" }}</td>
-            <td data-label="Account">{{ c.account_name or "—" }}</td>
-            <td data-label="Imported">{{ c.imported_at }}</td>
-            <td data-label="First transaction">{{ c.first_date or "—" }}</td>
-            <td data-label="Last transaction">{{ c.last_date or "—" }}</td>
-            <td data-label="Result">
-                {% if c.fatal_error %}
-                <span class="status-badge status-error">Failed</span>
-                {% elif c.error_count == 0 and c.duplicate_count == 0 and c.skipped_status_count == 0 %}
-                <span class="status-badge status-complete">{{ c.row_count }} imported</span>
-                {% else %}
-                <span class="status-badge status-pending_review">{{ c.row_count }} imported{% if c.duplicate_count %}, {{ c.duplicate_count }} duplicate{{ "s" if c.duplicate_count != 1 else "" }}{% endif %}{% if c.skipped_status_count %}, {{ c.skipped_status_count }} not posted/cleared{% endif %}{% if c.error_count %}, {{ c.error_count }} error{{ "s" if c.error_count != 1 else "" }}{% endif %}</span>
-                {% endif %}
-            </td>
-            <td data-label=""><a href="csv-import-delete-confirm?id={{ c.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a></td>
-            {% if is_admin %}<td data-label=""><a href="csv-import-debug?id={{ c.id }}" class="debug-link">debug</a></td>{% endif %}
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{{ pager(csv_view) }}
-{% else %}
-<p class="empty-state">No CSV imports yet.</p>
-{% endif %}
+{% block page_scripts %}
+<script src="static/pages/upload-logic.js?v={{ app_version }}" defer></script>
+<script src="static/pages/uploads.js?v={{ app_version }}" defer></script>
 {% endblock %}
