@@ -105,14 +105,25 @@
 <h2 id="skipped">Skipped as possible duplicates</h2>
 <p class="hint">An import skips a line that has the same date, amount and description as one already stored, or as an
     earlier line of the same statement or CSV. Sometimes that's a real second charge (two identical coffees on the same
-    day): <strong>Insert anyway</strong> adds it; <strong>Keep skipped</strong> takes it off this list.</p>
+    day): <strong>Insert anyway</strong> adds it; <strong>Keep skipped</strong> takes it off this list. Tick several (or
+    <strong>Select all</strong>) to do either to all of them at once.</p>
 {% if skipped %}
+{% set qs = ("?" ~ acting_qs) if acting_qs else "" %}
+<form method="post" action="skipped-duplicates-bulk{{ qs }}" class="skipped-form">
+<input type="hidden" name="statement_filter" value="{{ statement_filter_id or '' }}">
+<div class="bulk-bar skipped-bulk-bar">
+    <label class="bulk-select-all"><input type="checkbox" class="check-all" data-check=".skipped-select"> Select all</label>
+    <button type="submit" name="action" value="insert">Insert selected</button>
+    <button type="submit" name="action" value="dismiss" class="btn-secondary">Keep selected skipped</button>
+    <span class="hint">{{ skipped|length }} on the list</span>
+</div>
 <div class="table-scroll">
 <table class="statements-table">
-    <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Account</th><th>From</th><th>Why it was skipped</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Date</th><th>Description</th><th>Amount</th><th>Account</th><th>From</th><th>Why it was skipped</th><th></th></tr></thead>
     <tbody>
     {% for d in skipped %}
     <tr>
+        <td data-label=""><input type="checkbox" name="ids" value="{{ d.id }}" class="skipped-select" aria-label="Select {{ d.description }} on {{ d.date }}"></td>
         <td data-label="Date">{{ d.date }}</td>
         <td data-label="Description">{{ d.description }}</td>
         <td data-label="Amount" class="{{ 'negative' if d.amount < 0 else '' }}">{{ "%.2f"|format(d.amount) }}</td>
@@ -123,23 +134,17 @@
             {% elif d.matched_date %}Matches <a href="transactions?searched=1&amp;account_id={{ d.account_id }}&amp;start_date={{ d.matched_date }}&amp;end_date={{ d.matched_date }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">a transaction already stored</a> ({{ d.matched_date }}, {{ "%.2f"|format(d.matched_amount) }})
             {% else %}Matched a transaction that has since been deleted{% endif %}
         </td>
-        <td data-label="">
-            <form method="post" action="skipped-duplicate-insert{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
-                <input type="hidden" name="id" value="{{ d.id }}">
-                <input type="hidden" name="statement_filter" value="{{ statement_filter_id or '' }}">
-                <button type="submit">Insert anyway</button>
-            </form>
-            <form method="post" action="skipped-duplicate-dismiss{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
-                <input type="hidden" name="id" value="{{ d.id }}">
-                <input type="hidden" name="statement_filter" value="{{ statement_filter_id or '' }}">
-                <button type="submit" class="btn-secondary">Keep skipped</button>
-            </form>
+        <td data-label="" class="skipped-actions">
+            {# one row: the same form, sent to the one-row routes with this row's id #}
+            <button type="submit" formaction="skipped-duplicate-insert{{ qs }}" name="id" value="{{ d.id }}">Insert anyway</button>
+            <button type="submit" formaction="skipped-duplicate-dismiss{{ qs }}" name="id" value="{{ d.id }}" class="btn-secondary">Keep skipped</button>
         </td>
     </tr>
     {% endfor %}
     </tbody>
 </table>
 </div>
+</form>
 {% else %}
 <p class="empty-state">{{ "Nothing skipped on this statement." if statement_filter_id else "Nothing skipped as a possible duplicate." }}</p>
 {% endif %}

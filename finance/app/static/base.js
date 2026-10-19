@@ -144,6 +144,14 @@
     // nesting forms is invalid HTML), so this reads checked boxes by
     // class/data-id instead of form-encoding them natively.
     document.addEventListener("change", function (e) {
+        // "Select all" for a list in a plain form (e.g. Review → Skipped as possible duplicates): ticks every
+        // box matching its data-check inside the same form
+        if (e.target.classList && e.target.classList.contains("check-all")) {
+            var form = e.target.closest("form") || document;
+            form.querySelectorAll(e.target.getAttribute("data-check")).forEach(function (cb) {
+                cb.checked = e.target.checked;
+            });
+        }
         if (e.target.id === "select-all") {
             var wrap = e.target.closest(".bulk-bar-wrap") || document;
             wrap.querySelectorAll(".bulk-select").forEach(function (cb) {

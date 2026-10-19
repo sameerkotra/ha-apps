@@ -109,3 +109,63 @@ def test_no_insert_into_a_deleted_statement_or_csv_import(env, fake_vision):
     assert (_txns(env, "COFFEE"), _txns(env, "TWICE")) == (1, 1)
     with env.db() as c:
         assert {r[0] for r in c.execute("SELECT status FROM skipped_duplicates")} == {"skipped"}
+
+
+def _three_skipped(env):
+    acct = env.account("Checking")
+    for d in ("2026-08-01", "2026-08-02", "2026-08-03"):
+        env.txn(acct, d, -5.0, "COFFEE " + d)
+    csv = "".join(f"{d},COFFEE {d},-5.00\n" for d in ("2026-08-01", "2026-08-02", "2026-08-03"))
+    env.post("transactions-import-csv", data={"default_account_id": str(acct)}, headers={"accept": "application/json"},
+             files={"files": ("t.csv", io.BytesIO(("Date,Description,Amount\n" + csv).encode()), "text/csv")})
+    with env.db() as c:
+        ids = [r[0] for r in c.execute("SELECT id FROM skipped_duplicates WHERE status = 'skipped' ORDER BY date")]
+    assert len(ids) == 3
+    return acct, ids
+
+
+def _status(env):
+    with env.db() as c:
+        return {r["id"]: r["status"] for r in c.execute("SELECT id, status FROM skipped_duplicates")}
+
+
+def test_bulk_insert_the_ticked_rows(env):
+    acct, ids = _three_skipped(env)
+    r = env.post("skipped-duplicates-bulk", data={"action": "insert", "ids": [str(ids[0]), str(ids[2])]})
+    assert r.status_code in (200, 303)
+    assert _status(env) == {ids[0]: "inserted", ids[1]: "skipped", ids[2]: "inserted"}
+    assert _txns(env, "COFFEE 2026-08-01") == 2 and _txns(env, "COFFEE 2026-08-02") == 1
+    # the page still lists only the one left
+    page = env.get("review").text.split('id="skipped"')[1]
+    assert "COFFEE 2026-08-02" in page and "COFFEE 2026-08-01" not in page
+
+
+def test_bulk_keep_skipped(env):
+    acct, ids = _three_skipped(env)
+    env.post("skipped-duplicates-bulk", data={"action": "dismiss", "ids": [str(i) for i in ids]})
+    assert set(_status(env).values()) == {"dismissed"}
+    assert "Nothing skipped as a possible duplicate." in env.get("review").text
+    assert _txns(env, "COFFEE 2026-08-01") == 1
+
+
+def test_bulk_passes_over_rows_not_on_the_list(env):
+    acct, ids = _three_skipped(env)
+    env.post("skipped-duplicates-bulk", data={"action": "dismiss", "ids": [str(ids[0])]})
+    # someone else can't touch these; an already-resolved one and a bad action do nothing
+    env.post("skipped-duplicates-bulk", data={"action": "insert", "ids": [str(i) for i in ids]},
+             headers={"x-remote-user-id": "other", "x-remote-user-name": "Other"})
+    assert _status(env) == {ids[0]: "dismissed", ids[1]: "skipped", ids[2]: "skipped"}
+    env.post("skipped-duplicates-bulk", data={"action": "explode", "ids": [str(ids[1])]})
+    env.post("skipped-duplicates-bulk", data={"action": "insert"})              # nothing ticked
+    assert _status(env)[ids[1]] == "skipped"
+    env.post("skipped-duplicates-bulk", data={"action": "insert", "ids": [str(i) for i in ids]})
+    assert _status(env) == {ids[0]: "dismissed", ids[1]: "inserted", ids[2]: "inserted"}
+    assert _txns(env, "COFFEE 2026-08-01") == 1                                  # the dismissed one stayed out
+
+
+def test_review_page_has_the_bulk_controls(env):
+    _three_skipped(env)
+    page = env.get("review").text.split('id="skipped"')[1]
+    for needle in ('action="skipped-duplicates-bulk', 'class="check-all"', 'name="ids"', 'value="insert"',
+                   'value="dismiss"', 'formaction="skipped-duplicate-insert', 'formaction="skipped-duplicate-dismiss'):
+        assert needle in page, needle

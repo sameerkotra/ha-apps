@@ -134,7 +134,8 @@ below), an amber card above the charts lists it with **Upload** and **Dismiss**.
   the header row and the row the data starts on). After a CSV imports you can **Remember this
   layout for** the account: its header row, data row and date column are used by themselves next
   time ("Using Visa's saved layout · change"); clear it on the account's page under **Uploads**.
-- **Review**: everything waiting for you.
+- **Review**: everything waiting for you. Under **Skipped as possible duplicates**, tick rows (or
+  **Select all**) and choose **Insert selected** or **Keep selected skipped** to handle many at once.
 - **Utility bill** and **Toll statement**: when those parts are switched on (below). Each utility
   bill waits for you like a statement: **Check & confirm** opens its figures (correct anything, then
   Confirm), **Re-extract** reads the PDF again with your notes. Tick **Skip the confirmation step**

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.0
+
+- **Review: skipped duplicates in bulk.** Under **Skipped as possible duplicates**, tick rows (or **Select all**) and choose **Insert selected** or **Keep selected skipped** to handle them all at once. Each row's own **Insert anyway** / **Keep skipped** still works.
+
 ## 1.8.0
 
 - **A new Upload → Statements page.** One box takes PDF statements, QFX / OFX downloads and CSV exports together — drop them on it, or choose them (on a phone, a big **Choose files** button). Each file is listed before anything is sent, with the account it will go to (a QFX file by its account number, a PDF by the last 4 digits in its name or the account you used last time, a CSV by its own Account column), which you can change; a file that isn't its account's usual type gets a small mark instead of a question. One **Upload** sends them all, each file shows how it went, and one line sums up the lot ("3 files · 2 statements, 1 CSV · 412 transactions · …") with **Review now** — the page no longer reloads.

@@ -343,7 +343,13 @@ No App setting: a household that never uses QFX sees no difference.
   why, and a link to the matching stored transaction). **Insert anyway** adds it
   as a clean transaction of that statement or import (category: the CSV's own,
   "Payments" for a card payment, else the rules — no model call), then runs
-  transfer auto-linking; **Keep skipped** takes it off the list. The statement's
+  transfer auto-linking; **Keep skipped** takes it off the list. Both work on many
+  rows at once: tick rows (or **Select all**) and **Insert selected** / **Keep
+  selected skipped** (`POST skipped-duplicates-bulk`, `action` = `insert` |
+  `dismiss`, `ids`; one transaction, at most 2,000 rows; a row no longer on the
+  list — someone else's, already resolved, its source deleted — is passed over).
+  The list is one form: each row's own buttons post to the one-row routes, so it
+  works without JavaScript; only Select all needs it. The statement's
   Upload row shows "N skipped as duplicates", linking there. Re-extract and
   Restart replace a statement's skipped lines; deleting the statement or import
   hides them.

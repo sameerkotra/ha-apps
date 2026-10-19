@@ -280,6 +280,49 @@ def _back_to_review(current: User, acting: User, statement_id: str = "") -> Redi
     return RedirectResponse(url="review" + ("?" + "&".join(parts) if parts else "") + "#skipped", status_code=303)
 
 
+def _insert_skipped(conn, user_id: str, skipped_id: int) -> bool:
+    """Inserts one still-skipped row as a transaction after all; False when it isn't on the list any more
+    (someone else's, already resolved, or its account / statement / CSV import deleted)."""
+    row = conn.execute(
+        "SELECT d.*, a.type AS account_type FROM skipped_duplicates d JOIN accounts a ON a.id = d.account_id "
+        "LEFT JOIN statements s ON s.id = d.statement_id LEFT JOIN csv_imports c ON c.id = d.csv_import_id "
+        "WHERE d.id = ? AND d.user_id = ? AND d.status = 'skipped' AND a.deleted_at IS NULL "
+        # the statement or CSV import it came from must still be live, as on the list (_skipped_duplicates)
+        "AND ((d.statement_id IS NOT NULL AND s.deleted_at IS NULL) "
+        "OR (d.csv_import_id IS NOT NULL AND c.deleted_at IS NULL))",
+        (skipped_id, user_id),
+    ).fetchone()
+    if row is None:
+        return False
+    cur = conn.execute(
+        "INSERT INTO transactions (user_id, account_id, statement_id, csv_import_id, date, amount, description, "
+        "category, category_source, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean')",
+        (user_id, row["account_id"], row["statement_id"], row["csv_import_id"], row["date"], row["amount"],
+         row["description"], row["category"], "csv_explicit" if row["category"] else None),
+    )
+    txn_id = cur.lastrowid
+    if not row["category"]:
+        if row["account_type"] == "credit_card" and row["amount"] < 0:
+            conn.execute("UPDATE transactions SET category = 'Payments', category_source = 'card_payment' "
+                         "WHERE id = ?", (txn_id,))
+        else:   # rules only: no model call while the page waits
+            categorize_transactions(conn, user_id, "", "", [(txn_id, row["description"])])
+    conn.execute(
+        "UPDATE skipped_duplicates SET status = 'inserted', inserted_transaction_id = ?, "
+        "resolved_at = datetime('now') WHERE id = ?", (txn_id, skipped_id))
+    return True
+
+
+def _dismiss_skipped(conn, user_id: str, ids: list[int]) -> None:
+    conn.executemany(
+        "UPDATE skipped_duplicates SET status = 'dismissed', resolved_at = datetime('now') "
+        "WHERE id = ? AND user_id = ? AND status = 'skipped'", [(i, user_id) for i in ids])
+
+
+# Bulk actions take at most this many rows at once (the list itself is never longer in practice).
+MAX_BULK_SKIPPED = 2000
+
+
 @router.post("/skipped-duplicate-insert")
 def skipped_duplicate_insert(
     id: int = Form(...),
@@ -289,33 +332,32 @@ def skipped_duplicate_insert(
 ):
     """Insert a skipped possible duplicate after all: the charge was real (SPEC.md section 7)."""
     with get_db() as conn:
-        row = conn.execute(
-            "SELECT d.*, a.type AS account_type FROM skipped_duplicates d JOIN accounts a ON a.id = d.account_id "
-            "LEFT JOIN statements s ON s.id = d.statement_id LEFT JOIN csv_imports c ON c.id = d.csv_import_id "
-            "WHERE d.id = ? AND d.user_id = ? AND d.status = 'skipped' AND a.deleted_at IS NULL "
-            # the statement or CSV import it came from must still be live, as on the list (_skipped_duplicates)
-            "AND ((d.statement_id IS NOT NULL AND s.deleted_at IS NULL) "
-            "OR (d.csv_import_id IS NOT NULL AND c.deleted_at IS NULL))",
-            (id, acting.id),
-        ).fetchone()
-        if row is not None:
-            cur = conn.execute(
-                "INSERT INTO transactions (user_id, account_id, statement_id, csv_import_id, date, amount, description, "
-                "category, category_source, review_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'clean')",
-                (acting.id, row["account_id"], row["statement_id"], row["csv_import_id"], row["date"], row["amount"],
-                 row["description"], row["category"], "csv_explicit" if row["category"] else None),
-            )
-            txn_id = cur.lastrowid
-            if not row["category"]:
-                if row["account_type"] == "credit_card" and row["amount"] < 0:
-                    conn.execute("UPDATE transactions SET category = 'Payments', category_source = 'card_payment' "
-                                 "WHERE id = ?", (txn_id,))
-                else:   # rules only: no model call while the page waits
-                    categorize_transactions(conn, acting.id, "", "", [(txn_id, row["description"])])
-            conn.execute(
-                "UPDATE skipped_duplicates SET status = 'inserted', inserted_transaction_id = ?, "
-                "resolved_at = datetime('now') WHERE id = ?", (txn_id, id))
+        if _insert_skipped(conn, acting.id, id):
             auto_link_unambiguous(conn, acting.id)
+            conn.commit()
+    return _back_to_review(current, acting, statement_filter)
+
+
+@router.post("/skipped-duplicates-bulk")
+def skipped_duplicates_bulk(
+    action: str = Form(...),
+    ids: list[int] = Form([]),
+    statement_filter: str = Form(""),
+    current: User = Depends(get_current_user),
+    acting: User = Depends(get_acting_user),
+):
+    """The ticked rows of the list, all at once: `insert` (Insert anyway) or `dismiss` (Keep skipped). Rows no
+    longer on the list are passed over, the same as for one row. One transaction."""
+    chosen = list(dict.fromkeys(ids))[:MAX_BULK_SKIPPED]
+    if action in ("insert", "dismiss") and chosen:
+        with get_db() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if action == "insert":
+                done = sum(1 for i in chosen if _insert_skipped(conn, acting.id, i))
+                if done:
+                    auto_link_unambiguous(conn, acting.id)
+            else:
+                _dismiss_skipped(conn, acting.id, chosen)
             conn.commit()
     return _back_to_review(current, acting, statement_filter)
 
@@ -329,7 +371,5 @@ def skipped_duplicate_dismiss(
 ):
     """It really was a duplicate: keep it skipped and take it off the list."""
     with get_db() as conn:
-        conn.execute(
-            "UPDATE skipped_duplicates SET status = 'dismissed', resolved_at = datetime('now') "
-            "WHERE id = ? AND user_id = ? AND status = 'skipped'", (id, acting.id))
+        _dismiss_skipped(conn, acting.id, [id])
     return _back_to_review(current, acting, statement_filter)
