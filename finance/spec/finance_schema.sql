@@ -1,4 +1,4 @@
--- Finance Dashboard: the database schema as migrations 0001-0029 leave it (generated; the
+-- Finance Dashboard: the database schema as migrations 0001-0031 leave it (generated; the
 -- migrations in finance/migrations are the source of truth). SQLite, WAL mode, foreign keys on.
 
 CREATE TABLE "accounts" (
@@ -14,7 +14,7 @@ CREATE TABLE "accounts" (
     preferred_upload_method TEXT NOT NULL DEFAULT 'both'
         CHECK (preferred_upload_method IN ('both', 'pdf', 'csv', 'qfx')),
     website_url           TEXT
-, expected_every_months INTEGER CHECK (expected_every_months IN (1, 2, 3, 6, 12)), expected_day INTEGER CHECK (expected_day BETWEEN 0 AND 31), expected_from TEXT, reminders_on INTEGER NOT NULL DEFAULT 1 CHECK (reminders_on IN (0, 1)), expected_set_at TEXT);
+, expected_every_months INTEGER CHECK (expected_every_months IN (1, 2, 3, 6, 12)), expected_day INTEGER CHECK (expected_day BETWEEN 0 AND 31), expected_from TEXT, reminders_on INTEGER NOT NULL DEFAULT 1 CHECK (reminders_on IN (0, 1)), expected_set_at TEXT, csv_layout TEXT, skip_confirmation INTEGER CHECK (skip_confirmation IN (0, 1)), payment_due_day INTEGER CHECK (payment_due_day BETWEEN 0 AND 31), payment_due_set_at TEXT);
 
 CREATE TABLE ai_usage_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,6 +100,37 @@ CREATE TABLE known_users (
     name         TEXT NOT NULL,
     last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
 , assistant_ok INTEGER NOT NULL DEFAULT 1);
+
+CREATE TABLE notify_prefs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    kind        TEXT    NOT NULL CHECK (kind IN ('card_payments', 'subscriptions')),
+    mode        TEXT    NOT NULL DEFAULT 'off' CHECK (mode IN ('off', 'on')),
+    offsets     TEXT    NOT NULL DEFAULT '[]',
+    at_time     TEXT    NOT NULL DEFAULT '09:00',
+    updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, kind)
+);
+
+CREATE TABLE payment_dismissals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    due_date     TEXT    NOT NULL,
+    dismissed_by TEXT,
+    dismissed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (account_id, due_date)
+);
+
+CREATE TABLE payment_reminders (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    account_id  INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    due_date    TEXT    NOT NULL,
+    offset_days INTEGER NOT NULL,
+    sent_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+    result      TEXT    NOT NULL CHECK (result IN ('sent', 'no_phone', 'failed')),
+    UNIQUE (user_id, account_id, due_date, offset_days)
+);
 
 CREATE TABLE recurring_overrides (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,6 +255,28 @@ CREATE TABLE statements (
                                                                      -- tied to any one transaction row — see
                                                                      -- app/parser/pipeline.py's _check_reconciliation.
 , categorization_llm_prompt TEXT, categorization_llm_raw_response TEXT, categorization_llm_error TEXT, needs_confirmation INTEGER NOT NULL DEFAULT 0, confirmed_at TEXT, duplicate_transactions TEXT, extraction_notes TEXT, ai_usage TEXT, source TEXT NOT NULL DEFAULT 'pdf' CHECK (source IN ('pdf', 'qfx')), period_start TEXT, period_end TEXT, import_details TEXT);
+
+CREATE TABLE subscription_alerts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    account_id  INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    series      TEXT    NOT NULL,
+    change_key  TEXT    NOT NULL,
+    found_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    sent_at     TEXT,
+    result      TEXT    NOT NULL DEFAULT 'pending' CHECK (result IN ('pending', 'sent', 'no_phone', 'failed')),
+    UNIQUE (user_id, account_id, series, change_key)
+);
+
+CREATE TABLE subscription_dismissals (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    series       TEXT    NOT NULL,
+    change_key   TEXT    NOT NULL,
+    dismissed_by TEXT,
+    dismissed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (account_id, series, change_key)
+);
 
 CREATE TABLE toll_cars (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -459,6 +512,8 @@ CREATE INDEX idx_csv_imports_user ON csv_imports(user_id);
 
 CREATE INDEX idx_custom_categories_user ON custom_categories(user_id);
 
+CREATE INDEX idx_payment_reminders_sent ON payment_reminders(sent_at);
+
 CREATE INDEX idx_recurring_overrides_user ON recurring_overrides(user_id);
 
 CREATE INDEX idx_skipped_duplicates_csv_import ON skipped_duplicates(csv_import_id);
@@ -484,6 +539,8 @@ CREATE INDEX idx_statements_hash     ON statements(file_hash) WHERE deleted_at I
 CREATE INDEX idx_statements_status   ON statements(status) WHERE status = 'processing';
 
 CREATE INDEX idx_statements_user     ON statements(user_id);
+
+CREATE INDEX idx_subscription_alerts_found ON subscription_alerts(found_at);
 
 CREATE INDEX idx_toll_cars_user ON toll_cars (user_id);
 

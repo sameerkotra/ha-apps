@@ -74,6 +74,14 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
             "Overdue statements: the phone reminders each person sets on Setup → Settings, the notices on Home and "
             "Upload, and the count on the Upload menu item. Off hides all of them; each account's expected date and "
             "each person's choices are kept."),
+    Setting("card_payment_reminders", "Card payment reminders", "bool", "1",
+            "Credit cards with a payment due day (Setup → Accounts): the Payment due notices on Home and Upload, the "
+            "Payment due column and the phone reminders each person sets on Setup → Settings. Off hides all of them; "
+            "each card's due day and each person's choices are kept."),
+    Setting("subscription_alerts", "Subscription change alerts", "bool", "1",
+            "Price changes and new subscriptions found in the recurring charges: the Subscription changes card on Home "
+            "and Recurring and the phone notifications each person sets on Setup → Settings. Off hides them and stops "
+            "the notifications; dismissed changes and each person's choices are kept."),
     Setting("assistant_answers", "Answer the Household Assistant", "bool", "0",
             "Lets the Household Assistant app tell each person their own month — income, spending by category, their "
             "largest charges, recurring charges and bills coming up — and what an admin shared with them here. Never "
@@ -97,6 +105,8 @@ GROUPS: list[tuple[str, str, list[str]]] = [
     ("Features", "Parts of the app that not everyone needs.", ["feature_utilities", "feature_tolls"]),
     ("Statement reminders", "When an account's statement hasn't arrived by its expected date (Setup → Accounts), its "
      "owner is reminded.", ["statement_reminders"]),
+    ("Card payments and subscriptions", "Only an account's owner sees these and is notified, on the days they choose.",
+     ["card_payment_reminders", "subscription_alerts"]),
     ("Household Assistant", "The Household Assistant app answers questions from what the household apps know. Its "
      "answers travel through Home Assistant's event bus.", ["assistant_answers", "bus_signing_key"]),
 ]

@@ -558,8 +558,9 @@ def account_restore(
         if row is not None:
             deleted_at = row["deleted_at"]
             # Restored: reminders start again from the next expected date, never for the missed ones (section 27).
-            conn.execute("UPDATE accounts SET deleted_at = NULL, expected_set_at = ? WHERE id = ?",
-                         (statement_due.stamp(), id))
+            conn.execute("UPDATE accounts SET deleted_at = NULL, expected_set_at = ?, payment_due_set_at = CASE "
+                         "WHEN payment_due_day IS NULL THEN payment_due_set_at ELSE ? END WHERE id = ?",
+                         (statement_due.stamp(), statement_due.stamp(), id))
             # Only restore statements/transactions soft-deleted in the SAME
             # operation as this account (Scope B stamps accounts,
             # statements and transactions with the same deleted_at value
@@ -830,6 +831,14 @@ def user_wipe(
                      "OR account_id IN (SELECT id FROM accounts WHERE user_id = ?)", (acting.id, acting.id))
         conn.execute("DELETE FROM reminder_prefs WHERE user_id = ?", (acting.id,))
         conn.execute("DELETE FROM user_notify WHERE user_id = ?", (acting.id,))
+        # So do the card payment and subscription notifications' settings, dismissals and send logs (sections 29–31).
+        for table in ("payment_dismissals", "subscription_dismissals"):
+            conn.execute(f"DELETE FROM {table} WHERE account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
+                         (acting.id,))
+        for table in ("payment_reminders", "subscription_alerts"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id = ? "
+                         "OR account_id IN (SELECT id FROM accounts WHERE user_id = ?)", (acting.id, acting.id))
+        conn.execute("DELETE FROM notify_prefs WHERE user_id = ?", (acting.id,))
         conn.commit()
         rebuild_trips(conn, acting.id)
 

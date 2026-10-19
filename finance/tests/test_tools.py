@@ -164,7 +164,10 @@ def test_catalogue_and_reports_never_see_the_bus(env):
     tools.tools.check()
     assert [t["name"] for t in tools.tools.spec()] == ["finance.summary", "finance.spending", "finance.recurring",
                                                        "finance.bills", "finance.merchant", "finance.balances",
-                                                       "finance.expense.add"]
+                                                       "finance.expense.add", "finance.statements",
+                                                       "finance.payments_due", "finance.balance_history",
+                                                       "finance.subscription_changes", "finance.dates",
+                                                       "finance.overview"]
     assert {"bus_outbox", "bus_seen", "bus_apps"} <= query_engine.HIDDEN_TABLES
 
 

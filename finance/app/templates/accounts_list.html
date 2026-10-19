@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
 {% from "_expected_fields.html" import expected_fields %}
+{% from "_payment_due_fields.html" import payment_due_fields %}
 {% block title %}Accounts{% endblock %}
 {% block content %}
 {{ nav.setup_tabs("accounts", acting_qs, request.state.is_real_admin) }}
@@ -44,6 +45,7 @@
             <input type="url" name="website_url" placeholder="e.g. https://www.chase.com" maxlength="500" inputmode="url">
         </label>
         {{ expected_fields() }}
+        {{ payment_due_fields() }}
         <button type="submit">Add account</button>
     </form>
     <p class="hint">
@@ -74,6 +76,7 @@
             <th>Preferred upload</th>
             <th>Website</th>
             {% if due %}<th>Next statement</th>{% endif %}
+            {% if payment_due %}<th>Payment due</th>{% endif %}
             <th></th>
         </tr>
     </thead>
@@ -95,6 +98,7 @@
             </td>
             <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
             {% if due %}{% set d = due.get(a.id, ("", "")) %}<td data-label="Next statement" class="next-statement {{ d[1] }}">{{ d[0] }}</td>{% endif %}
+            {% if payment_due %}{% set p = payment_due.get(a.id, ("", "")) %}<td data-label="Payment due" class="payment-due {{ p[1] }}">{{ p[0] }}</td>{% endif %}
             <td data-label="">
                 <form method="post" action="account-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}">
                     <input type="hidden" name="id" value="{{ a.id }}">

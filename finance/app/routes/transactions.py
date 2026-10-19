@@ -14,7 +14,7 @@ from ..common import csv_export
 from ..db import get_db
 from ..version import APP_VERSION
 from ..matching import cascade_unlink_on_delete, relink
-from .. import notices, statement_due
+from .. import card_payments, notices, statement_due
 from ..datenorm import normalize_date
 from ..amounts import parse_number
 from ..security import safe_next
@@ -733,7 +733,7 @@ def transactions_by_account(
             """
             SELECT a.id, a.name, a.type, a.bank_name, a.account_number_last4, a.preferred_upload_method, a.website_url,
                    a.is_archived, a.deleted_at, a.expected_every_months, a.expected_day, a.expected_from,
-                   a.expected_set_at,
+                   a.expected_set_at, a.payment_due_day, a.payment_due_set_at,
                    (SELECT MAX(t.date) FROM transactions t
                     WHERE t.account_id = a.id AND t.deleted_at IS NULL) AS latest_txn_date,
                    (SELECT COUNT(*) FROM transactions t
@@ -745,7 +745,8 @@ def transactions_by_account(
             (acting.id,),
         ).fetchall()
         due = statement_due.statuses(conn, rows, current, acting)
+        payment_due = card_payments.column(conn, rows, current, acting)
     return templates.TemplateResponse(request, "transactions_accounts.html", {
-        "user": acting, "accounts": rows, "due": due, "acting_as_banner": _acting_banner(current, acting),
+        "user": acting, "accounts": rows, "due": due, "payment_due": payment_due, "acting_as_banner": _acting_banner(current, acting),
         "acting_qs": _acting_qs(current, acting), "active_page": "transactions_accounts",
     })

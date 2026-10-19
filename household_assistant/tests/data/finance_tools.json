@@ -1,0 +1,408 @@
+[
+ {
+  "name": "finance.summary",
+  "what": "One month's income, spending, net and top categories (how did we do, a named month).",
+  "args": {
+   "month": {
+    "type": "month",
+    "what": "the month (default this month)"
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "income, spending, net, the top 5 categories",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "How did we do this month?"
+  ]
+ },
+ {
+  "name": "finance.spending",
+  "what": "A month's spending by category; with `category`, that category's 10 largest charges (merchant, date, amount).",
+  "args": {
+   "month": {
+    "type": "month",
+    "what": "the month (default this month)"
+   },
+   "category": {
+    "type": "string",
+    "what": "a spending category, e.g. Groceries"
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "spending per category, or a category's largest charges",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "How much did we spend on food in September?"
+  ]
+ },
+ {
+  "name": "finance.recurring",
+  "what": "Recurring charges (subscriptions, insurance, utilities): amount, how often, next date, yearly cost, price change.",
+  "args": {
+   "merchant": {
+    "type": "string",
+    "what": "one merchant"
+   },
+   "account": {
+    "type": "string",
+    "what": "one account (name or last 4)"
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "charges, totals a month and a year",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "What subscriptions do we pay for?",
+   "How much is Netflix?",
+   "How much do we spend on subscriptions a year?"
+  ],
+  "quick": {
+   "concepts": [
+    "RECURRING"
+   ],
+   "words": [
+    "standing orders",
+    "direct debits",
+    "regular payments",
+    "monthly payments",
+    "insurance payments",
+    "subscriptions a year"
+   ]
+  }
+ },
+ {
+  "name": "finance.bills",
+  "what": "Recurring charges and card payments due in the next days (default 14), soonest first.",
+  "args": {
+   "days": {
+    "type": "number",
+    "what": "how many days ahead, 1 to 60",
+    "min": 1,
+    "max": 60
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "charges with expected date and amount",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "What bills are coming up?"
+  ]
+ },
+ {
+  "name": "finance.merchant",
+  "what": "Spending at one shop or company over the last months: the total, per month, the latest charges.",
+  "args": {
+   "merchant": {
+    "type": "string",
+    "required": true,
+    "what": "the shop or company, e.g. Costco"
+   },
+   "months": {
+    "type": "number",
+    "what": "months back (default 12)",
+    "min": 1,
+    "max": 24
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "the total, per month, the 10 latest charges",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "How much did we spend at Costco this year?"
+  ]
+ },
+ {
+  "name": "finance.balances",
+  "what": "Each account's balance as its latest statement printed it (a card: what was owed).",
+  "args": {
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "accounts with type, last 4 digits, balance and statement month",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "What's the balance on my accounts?"
+  ],
+  "quick": {
+   "concepts": [
+    "BALANCE"
+   ],
+   "words": [
+    "bank balance",
+    "money in the bank",
+    "credit card balance",
+    "savings account",
+    "current account"
+   ]
+  }
+ },
+ {
+  "name": "finance.expense.add",
+  "what": "Adds a spend by hand to one of the person's own accounts, after they confirm it. With several accounts, name it.",
+  "args": {
+   "amount": {
+    "type": "number",
+    "required": true,
+    "what": "how much was spent",
+    "min": 0.01,
+    "max": 10000000
+   },
+   "description": {
+    "type": "string",
+    "required": true,
+    "what": "the shop or what it was for"
+   },
+   "category": {
+    "type": "string",
+    "what": "a spending category, e.g. Fuel"
+   },
+   "date": {
+    "type": "date",
+    "what": "when (default today)"
+   },
+   "account": {
+    "type": "string",
+    "what": "one account (name or last 4)"
+   }
+  },
+  "returns": "the spend, or the accounts to choose from",
+  "acts": true,
+  "scope": "person",
+  "examples": [
+   "I spent 200 on fuel at Shell"
+  ]
+ },
+ {
+  "name": "finance.statements",
+  "what": "Expected statement dates, overdue or not, the last upload, months missing.",
+  "args": {
+   "account": {
+    "type": "string",
+    "what": "one account (name or last 4)"
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "accounts with schedule and status",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "Which statements are overdue?"
+  ],
+  "quick": {
+   "words": [
+    "statement due",
+    "statement date",
+    "last statement",
+    "missing statement",
+    "overdue statement",
+    "statements overdue",
+    "statements are overdue",
+    "missing any statements",
+    "last upload"
+   ]
+  }
+ },
+ {
+  "name": "finance.payments_due",
+  "what": "Credit card payment due dates, paid or not, and what the statement said was owed.",
+  "args": {
+   "account": {
+    "type": "string",
+    "what": "one account (name or last 4)"
+   },
+   "days": {
+    "type": "number",
+    "what": "due within N days",
+    "min": 1,
+    "max": 60
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "cards with due date and status",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "Did I pay the Visa?"
+  ],
+  "quick": {
+   "words": [
+    "card payment",
+    "card payments",
+    "pay the card",
+    "credit card bill",
+    "paid the card"
+   ],
+   "args": {
+    "days": 60
+   }
+  }
+ },
+ {
+  "name": "finance.balance_history",
+  "what": "Balance history (an account's over time or at a month's end) or, with no account, net worth.",
+  "args": {
+   "account": {
+    "type": "string",
+    "what": "one account (name or last 4)"
+   },
+   "month": {
+    "type": "month",
+    "what": "at this month's end"
+   },
+   "months": {
+    "type": "number",
+    "what": "months back (default 12)",
+    "min": 1,
+    "max": 24
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "balances and the change",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "What's our net worth?"
+  ],
+  "quick": {
+   "words": [
+    "net worth",
+    "balance history",
+    "owe on my cards",
+    "balance changed",
+    "balance over time",
+    "balance at the end"
+   ]
+  }
+ },
+ {
+  "name": "finance.subscription_changes",
+  "what": "Subscription price changes, bills outside their usual range, new subscriptions.",
+  "args": {
+   "merchant": {
+    "type": "string",
+    "what": "one merchant"
+   },
+   "days": {
+    "type": "number",
+    "what": "days back (default 90)",
+    "min": 1,
+    "max": 365
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "changes",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "Did any subscription go up?"
+  ],
+  "quick": {
+   "words": [
+    "price change",
+    "price increase",
+    "new subscription",
+    "got more expensive",
+    "changed its price"
+   ],
+   "args": {
+    "days": 90
+   }
+  }
+ },
+ {
+  "name": "finance.dates",
+  "what": "Every finance date coming up: statements, card payments, bills; overdue first.",
+  "args": {
+   "days": {
+    "type": "number",
+    "what": "days ahead (default 14)",
+    "min": 1,
+    "max": 60
+   },
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "dates",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "What's due?"
+  ],
+  "quick": {
+   "words": [
+    "finance dates",
+    "any due dates",
+    "dates coming up",
+    "due in finance",
+    "do in finance",
+    "overdue in finance"
+   ],
+   "args": {
+    "days": 14
+   }
+  }
+ },
+ {
+  "name": "finance.overview",
+  "what": "Finance overview: net worth, what's due, this month so far, subscription changes. Not for one month.",
+  "args": {
+   "person": {
+    "type": "string",
+    "what": "a shared owner (default the asker)"
+   }
+  },
+  "returns": "the overview",
+  "acts": false,
+  "scope": "person",
+  "examples": [
+   "Give me a finance summary"
+  ],
+  "quick": {
+   "words": [
+    "finance summary",
+    "finance overview",
+    "how are my finances",
+    "money overview",
+    "where do i stand",
+    "financial summary"
+   ]
+  }
+ }
+]

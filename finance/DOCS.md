@@ -59,7 +59,15 @@ tokens on App settings to see the cost.
 Income and spending by category for this week, this month, last month, this or last year, all
 time or any month; drill into the transactions behind a figure. **Compare** puts two months
 or two years side by side. When one of your statements is overdue (see **Expected statements**
-below), an amber card above the charts lists it with **Upload** and **Dismiss**.
+below), an amber card above the charts lists it with **Upload** and **Dismiss**; a card payment due
+soon or overdue (see **Card payments** below) gets one too, with **Mark as paid**.
+- **Net worth**: what your accounts hold minus what your cards owe, from each account's latest
+  statement balance, with the date of each and a small line of the last 12 months (each month's end,
+  every account at its last known balance). An account with no statement balance yet is listed as
+  "no balance yet" and left out of the total. Archived accounts aren't in it.
+- **Subscription changes**: a recurring charge whose price changed ("Netflix 15.49 → 17.99 (+16%)
+  since Sep 12") or a new subscription (one that became recurring in the last 45 days), each with
+  **Dismiss** (see **Recurring** below).
 
 ### Transactions
 - **All**: search by notes, description, account, category, money in/out, excluded, dates and
@@ -70,9 +78,16 @@ below), an amber card above the charts lists it with **Upload** and **Dismiss**.
   automatically — when a statement or CSV is imported and whenever a transaction is added,
   reviewed, included, deleted or restored — and counted as neither income nor spending; confirm
   the ambiguous ones. **Link unambiguous** runs the matching on demand.
-- **Recurring**: subscriptions and bills detected from your history, weekly to yearly.
+- **Recurring**: subscriptions and bills detected from your history, weekly to yearly. On top,
+  **Subscription changes**: a price change is the latest charge differing from the one before it,
+  after at least two charges at the old price; a bill whose amount changes every time (electricity,
+  water) only counts when the latest is outside its usual range. A change is shown while its charge is
+  from the last 90 days. **Dismiss** keeps that change away for good; a later, different change of the
+  same charge shows again. Only the owner of the account sees these, not people it's shared with.
 - **Accounts**: each account's latest transaction, so you know which statement is due, and its
-  **Next statement** ("Oct 12", "Overdue 3 days" or "Dismissed") when it has an expected date.
+  **Next statement** ("Oct 12", "Overdue 3 days" or "Dismissed") when it has an expected date, and a
+  card's **Payment due** ("Nov 5 (in 3 days)", "Due today", "Was due 2 days ago", "Paid · due Nov 5")
+  when it has a payment due day.
 
 ### Upload
 - **Statements** is one page for every kind of bank file. From the top:
@@ -165,12 +180,18 @@ write the SQL from a plain-English question.
 
 ### Setup
 - **Accounts**: add, rename, archive, set the preferred upload type (any, PDF, CSV or QFX — a
-  reminder on the Upload page, never a block), a website link and the **Expected statement**.
+  reminder on the Upload page, never a block), a website link, the **Expected statement** and, for a
+  credit card, **Payment due**. Each account's page has **Balance over time**: the closing balance of
+  each statement (the PDF's printed new balance, a QFX file's ledger balance) at the statement's end,
+  newest last, with the latest balance and its change since a year before in words, and **Show as a
+  table**. For a card it is what was owed (below zero: a credit). Statements that failed or have no
+  balance aren't in it; with none it says "No statement balances yet".
 - **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
   before the built-in ones and the AI. **Also apply to all existing transactions** gives the
   transactions the new rule matches the category your rules give them (a more specific rule
   still wins); other transactions keep theirs.
-- **Settings**: your own settings (not App settings), with **My reminders**.
+- **Settings**: your own settings (not App settings): **My reminders**, **Card payments** and
+  **Subscription changes**.
 
 #### Expected statements and reminders
 - **Expected statement** (on Add account and each account's Edit details): Off, Monthly, every 2, 3
@@ -200,6 +221,29 @@ write the SQL from a plain-English question.
 - Only the account's owner is reminded and sees its notices — not people it's shared with. An admin
   acting as the owner sees the owner's and can change their My reminders.
 
+#### Card payments
+- **Payment due** (credit cards only, on Add account and the card's Edit details): Off, or monthly on
+  a day (1–31) or the last day of the month — the 29th, 30th and 31st fall on a shorter month's last
+  day. You set it; the app never reads it from statements. A new or changed day never makes an
+  earlier due date count, and neither does restoring or unarchiving the card.
+- **Paid**: a payment to the card recorded on or after the previous due date — any money-in row on
+  the card, a linked transfer from checking included. One payment counts for one due date: the
+  latest one up to the due date, else (paid late) the first one after it. Or tap **Mark as paid**.
+- **Shown** on Home and Upload from 7 days before the due date, and after it until the next due date
+  arrives, unless paid; the accounts lists have a **Payment due** column and the card's page a
+  **Payment due** line (with **Mark as paid**).
+- **Card payments** (Setup → Settings): nobody is reminded until they choose. **No notifications**, or
+  **Remind me** on 1 to 6 of: 7, 5, 3, 2 or 1 days before, on the day, 1 or 3 days after, **At** a
+  time of day. Several cards due together come as one notification; it names the card only, never its
+  number, and tapping it opens the card's page (several: Home). Only the newest is sent after the app
+  was off; a failed one is tried again for six hours.
+
+#### Subscription change notifications
+- **Subscription changes** (Setup → Settings): **No notifications** (until you choose) or **Notify me**
+  at a time of day: each price change or new subscription is sent once, at that time on the day it is
+  found (or the next day, when it's found later in the day); several come as one notification, and
+  tapping it opens Recurring. A dismissed change isn't sent.
+
 ### Look and feel
 - **Theme** (bottom of the menu; **More** on a phone): Midnight (the default), Slate, Daylight,
   or Auto (Daylight when your device is set to light, Midnight when it is dark). It is
@@ -209,7 +253,7 @@ write the SQL from a plain-English question.
 - **Storage**: stored PDFs, and database download / import for backups.
 - **Query**: read-only SQL on the data of the person you're acting as, and report editing.
 - **Users**: give a person access to another person's data (e.g. one shared household view),
-  add extra **Notify** services for a person's statement reminders (a speaker, a second phone:
+  add extra **Notify** services for a person's reminders and notifications (a speaker, a second phone:
   `notify.<name>`), and export, import or delete one person's data (below).
 - **Recently deleted**: anything deleted in the last 30 days can be restored; after that it is
   erased.
@@ -220,8 +264,10 @@ write the SQL from a plain-English question.
   stored on each of them (their last processing run only).
 - **App settings**: AI, AI usage display and prices, Features, **Statement reminders** (on by
   default; off hides the phone reminders, the notices and the Upload count for everyone, but keeps
-  every account's expected date and everyone's choices) and Household Assistant (with the
-  app-messages signing key). Changes apply at once.
+  every account's expected date and everyone's choices), **Card payment reminders** and
+  **Subscription change alerts** (both on by default; off hides their notices, column and cards and
+  stops their notifications, keeping every card's due day, the dismissed changes and everyone's
+  choices) and Household Assistant (with the app-messages signing key). Changes apply at once.
 
 Admins can **act as** any user (the switch at the top right) to see and fix their data.
 
@@ -230,8 +276,9 @@ Each person's card on **Admin → Users** has a **⋯ Data** button, and **Impor
 sits above the list.
 
 - **Export their data** downloads one `.zip` with everything that person has: accounts,
-  statements, transactions, CSV imports, rules and categories, recurring choices, utility bills
-  and toll statements with their cars, tags and choices. You can leave out the statement PDFs
+  statements, transactions, CSV imports, rules and categories, recurring choices, reminder and
+  notification choices (with the statements, card payments and subscription changes they dismissed),
+  utility bills and toll statements with their cars, tags and choices. You can leave out the statement PDFs
   still kept, include Recently deleted items, and leave out the text read from statements. The
   file isn't encrypted: it holds their bank data, so keep it somewhere safe. Shared access, saved
   reports, App settings and the AI usage total are never in it. With PDFs it is prepared in the
@@ -266,12 +313,35 @@ answer for me** on **Who am I**; the assistant then won't answer their questions
   exactly as the Overview counts them (transfers and excluded rows left out);
 - "How much did we spend on groceries in September?" — spending by category, or one category's
   10 largest charges: the bank's description, date, amount and account — **never your notes**;
-- "What subscriptions do we pay for?" and "What bills are coming up?" — the recurring charges,
-  with their next expected date;
+- "What subscriptions do we pay for?", "How much is Netflix?" or "What's charged to my Visa every
+  month?" — the recurring charges, with their next expected date, what each costs a year, its last
+  price change, and the total a month and a year;
+- "What bills are coming up?" — the recurring charges expected soon, and the card payments due
+  that aren't paid yet;
 - "How much did we spend at Costco this year?" — the total at one shop or company over the last
   months (12 unless you say), each month's, and the latest charges;
 - "What's the balance on my accounts?" — each account's balance as its latest statement printed it
-  (for a card, what was owed), with that statement's month.
+  (for a card, what was owed), with that statement's month;
+- "Which statements are overdue?", "When is my Visa statement due?", "Am I missing any
+  statements?" — each account's expected statement date, its last upload, the next expected date,
+  whether it's overdue, due today, received or dismissed, and the months with nothing uploaded (the
+  same as the Upload page shows);
+- "When is my credit card payment due?", "Did I pay the Visa?" — each card's due date, whether
+  it's paid (and when, and how much), marked as paid or not, the last payment, and what the latest
+  statement said was owed. A payment's description is never given;
+- "What's our net worth?", "How has my Visa balance changed?", "What was the checking balance in
+  June?" — the balances from your statements: one account's over time, or net worth (cash minus
+  what the cards owe), the same numbers as the account page and Home;
+- "Did any subscription go up?", "What new subscriptions started?" — price changes, bills outside
+  their usual range and new subscriptions, the ones you dismissed on Home too (marked so);
+- "What finance dates are coming up?", "Any due dates this week?" — statements expected, card
+  payments due and bills, in one list, anything overdue first;
+- "Give me a finance summary", "How are my finances?" — net worth and balances, what's due in the
+  next two weeks, this month so far, and any subscription change from the last month, each part
+  short. "How did we do this month?" still gives the month's figures.
+
+Only live, unarchived accounts are used, and an account number never shows beyond its last 4
+digits. Common questions like these are answered without the AI.
 
 **App-messages signing key** (same section, optional): the household apps talk over Home
 Assistant's event bus, and without a key any app on Home Assistant's network could send a message

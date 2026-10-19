@@ -1,0 +1,20 @@
+{# The Payment due group on Add account and a credit card's Edit details (SPEC.md section 30). `a`: the account, or
+   none (Add account: shown for every type, used for a credit card only; base.js hides it for the other types). #}
+{% macro payment_due_fields(a=none) -%}
+{% set day = a.payment_due_day if a else none %}
+<fieldset class="expected-group payment-due-group" id="{{ 'payment-due-edit' if a else 'payment-due-add' }}"{% if not a %} data-for-type="credit_card"{% endif %}>
+    <legend>Payment due{% if not a %} (credit cards){% endif %}</legend>
+    <input type="hidden" name="payment_form" value="1">
+    <label>
+        Payment due
+        <select name="payment_due_day">
+            <option value="" {{ "selected" if day is none }}>Off</option>
+            {% for d in range(1, 32) %}<option value="{{ d }}" {{ "selected" if day == d }}>Monthly on day {{ d }}</option>{% endfor %}
+            <option value="last" {{ "selected" if day == 0 }}>Monthly on the last day</option>
+        </select>
+    </label>
+    <p class="hint">The day the card's payment is due each month, as the bank says (Finance never reads it from
+        statements). From 7 days before, it shows on Home and Upload until a payment to the card is recorded or you
+        mark it as paid; day 29&ndash;31 falls on a shorter month's last day. Phone reminders: Setup &rarr; Settings.</p>
+</fieldset>
+{%- endmacro %}

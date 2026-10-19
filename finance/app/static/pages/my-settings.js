@@ -1,20 +1,23 @@
-// Setup → Settings → My reminders (templates/my_settings.html): at most `data-max` reminder chips can be picked
-// (the server checks it too), and the choices are greyed out while "No notifications" is chosen.
+// Setup → Settings (templates/my_settings.html): My reminders and Card payments allow at most `data-max` day chips
+// (the server checks it too), and a card's choices are greyed out while "No notifications" is chosen. Each form
+// with data-max works the same way; its "on" choice is the radio whose value is "remind" or "on".
 (function () {
-    var form = document.getElementById("reminders-form");
-    if (!form) return;
-    var max = parseInt(form.getAttribute("data-max"), 10) || 6;
-    var chips = form.querySelectorAll('input[name="offsets"]');
-    var when = document.getElementById("reminders-when");
+    var forms = document.querySelectorAll("form[data-max]");
+    forms.forEach(function (form) {
+        var max = parseInt(form.getAttribute("data-max"), 10) || 6;
+        var chips = form.querySelectorAll('input[name="offsets"]');
+        var when = form.querySelector("[data-when]");
 
-    function update() {
-        var remind = form.querySelector('input[name="mode"][value="remind"]').checked;
-        var picked = 0;
-        chips.forEach(function (c) { if (c.checked) picked++; });
-        chips.forEach(function (c) { c.disabled = !remind || (!c.checked && picked >= max); });
-        if (when) when.style.opacity = remind ? "" : "0.6";
-    }
-    form.addEventListener("change", update);
-    form.addEventListener("submit", function () { chips.forEach(function (c) { c.disabled = false; }); });
-    update();
+        function update() {
+            var on = form.querySelector('input[name="mode"][value="remind"], input[name="mode"][value="on"]');
+            var remind = !!(on && on.checked);
+            var picked = 0;
+            chips.forEach(function (c) { if (c.checked) picked++; });
+            chips.forEach(function (c) { c.disabled = !remind || (!c.checked && picked >= max); });
+            if (when) when.style.opacity = remind ? "" : "0.6";
+        }
+        form.addEventListener("change", update);
+        form.addEventListener("submit", function () { chips.forEach(function (c) { c.disabled = false; }); });
+        update();
+    });
 })();

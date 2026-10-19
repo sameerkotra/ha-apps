@@ -10,6 +10,7 @@
 </div>
 
 {% include "_statements_due.html" %}
+{% include "_payments_due.html" %}
 
 <form id="dashboard-filters" class="add-account-form">
     <label>
@@ -96,6 +97,9 @@
     <h3>Spend</h3>
     <p class="dashboard-figure">{{ "%.2f"|format(total_spend) }}</p>
 </a>
+
+{% include "_net_worth.html" %}
+{% include "_subscription_changes.html" %}
 
 <h2>By category</h2>
 {% if categories %}

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.11.0
+
+- **Ask the Household Assistant about statements, due dates, balances and subscriptions** (with **Answer the Household Assistant** on, as before): "Which statements are overdue?", "When is my credit card payment due?", "Did I pay the Visa?", "What's our net worth?", "How has my Visa balance changed?", "Did any subscription go up?", and "What finance dates are coming up?" for everything due in one list, overdue first.
+- **"Give me a finance summary"** answers with an overview: net worth and balances, what's due in the next two weeks, this month so far and any subscription change from the last month. "How did we do this month?" still gives the month's figures.
+- **Recurring charges** answers now say what each costs a year and its last price change, end with the total a month and a year, and can be about one merchant ("How much is Netflix?") or one account. **"What bills are coming up?"** also lists card payments due that aren't paid yet.
+- Answers link to the account's page or Upload where that's where they came from. Only live, unarchived accounts are used, an account number never shows beyond its last 4 digits, and a payment's description is never given.
+
+## 1.10.0
+
+- **Balance over time.** Each account's page has a chart of its closing balance at the end of every statement (the PDF's printed new balance, a QFX file's ledger balance), newest last, with the latest balance and how it changed since a year before in words, and **Show as a table**. A card shows what it owed. With no balances yet it says so.
+- **Net worth on Home**: your accounts' latest statement balances added up — cash accounts plus, cards minus what they owe — with each account's date and a small line of the last 12 months. An account without a balance yet is listed and left out of the total.
+- **Subscription changes** on Home and Recurring: a recurring charge whose price went up or down ("Netflix 15.49 → 17.99 (+16%) since Sep 12"), a bill outside its usual range, or a new subscription from the last 45 days, each with **Dismiss** (a later, different change shows again).
+- **Card payment due dates.** A credit card can have **Payment due** (monthly on a day, or the last day; on Setup → Accounts). From 7 days before, and after it until the next one, Home and Upload show it with **Mark as paid**, until a payment to the card is uploaded; the accounts lists get a **Payment due** column ("Nov 5 (in 3 days)", "Due today", "Was due 2 days ago").
+- **Your own notifications** on Setup → Settings, next to My reminders, off until you choose: **Card payments** (up to 6 of 7, 5, 3, 2, 1 days before, on the day, 1 or 3 days after, at a time) and **Subscription changes** (each change once, at a time). As with statement reminders, only the account's owner is notified, several come as one, and no account number is ever sent.
+- **Admin → App settings**: **Card payment reminders** and **Subscription change alerts**, both on by default; off hides them and stops their notifications, keeping everyone's choices.
+- One person's data carries the new settings and dismissals (export version 31; older files still import).
+
 ## 1.9.2
 
 - **Upload → Statements: the accounts list folds away**, and starts folded. Its line still shows how many accounts there are and how many are overdue or missing a month; open it once and it stays open next time (in that browser).

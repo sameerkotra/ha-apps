@@ -78,13 +78,23 @@ REGISTRY: dict[str, TableSpec] = {
     "statement_dismissals": TableSpec(
         "Overdue statements you dismissed: account_id, cycle_date (the expected date), dismissed_at.",
         "EXISTS (SELECT 1 FROM main.accounts a WHERE a.id = x.account_id AND a.user_id = {u} AND a.deleted_at IS NULL)"),
+    "notify_prefs": TableSpec("Your Card payments and Subscription changes notifications: kind ('card_payments' or "
+                              "'subscriptions'), mode ('off' or 'on'), offsets (JSON list of days from the due date: "
+                              "-7 … 3), at_time (HH:MM).", _OWN),
+    "payment_dismissals": TableSpec(
+        "Card payments you marked as paid: account_id, due_date, dismissed_at.",
+        "EXISTS (SELECT 1 FROM main.accounts a WHERE a.id = x.account_id AND a.user_id = {u} AND a.deleted_at IS NULL)"),
+    "subscription_dismissals": TableSpec(
+        "Subscription changes you dismissed: account_id, series (the merchant), change_key, dismissed_at.",
+        "EXISTS (SELECT 1 FROM main.accounts a WHERE a.id = x.account_id AND a.user_id = {u} AND a.deleted_at IS NULL)"),
 }
 
 # Deliberately never queryable. Every table in the database must be in REGISTRY or here (tested).
 HIDDEN_TABLES = {"known_users", "app_settings", "ai_usage_log", "schema_version", "sqlite_sequence", "saved_reports", "user_access",
                  "skipped_duplicates",
                  "bus_outbox", "bus_seen", "bus_apps",          # the household apps bus (app_messages.py): not anyone's data
-                 "statement_reminders", "user_notify"}          # the reminders' send log and Admin → Users' notify services
+                 "statement_reminders", "user_notify",          # the reminders' send log and Admin → Users' notify services
+                 "payment_reminders", "subscription_alerts"}    # the card payment and subscription send logs
 
 # Convenience views, built on the scoped views above.
 EXTRA_VIEWS: dict[str, tuple[str, str]] = {

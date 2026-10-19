@@ -556,8 +556,11 @@ Uncategorized — it never fails an import.
   around it), so a failure leaves the database as it was; a migration that
   leaves foreign-key violations is rolled back and not recorded. Before the
   first pending migration a copy is kept as `finance.db.pre-NNNN` (latest only).
-  The newest, **0030**, adds `accounts.csv_layout` (TEXT, JSON; NULL = none saved) and
-  `accounts.skip_confirmation` (INTEGER CHECK 0/1; NULL = never chosen): what the Upload page
+  The newest, **0031**, adds a credit card's payment due day (`accounts.payment_due_day`,
+  `payment_due_set_at`) and the tables of the card payment and subscription change notifications
+  (`notify_prefs`, `payment_dismissals`, `payment_reminders`, `subscription_dismissals`,
+  `subscription_alerts`; sections 29–31). **0030** added `accounts.csv_layout` (TEXT, JSON; NULL = none
+  saved) and `accounts.skip_confirmation` (INTEGER CHECK 0/1; NULL = never chosen): what the Upload page
   remembers per account (sections 4, 10).
 - Dates are ISO text so string order is date order; legacy non-ISO dates are
   normalised at startup.
@@ -592,7 +595,7 @@ Uncategorized — it never fails an import.
   | Upload | Statements · Review · Utility bill · toll statement | `uploads`, `review` (Back returns to Statements), `utilities?tab=upload`, `tolls?tab=upload` (each with its history) |
   | Bills | Utilities (Dashboard · Compare) · Tolls (Dashboard · Compare · Analyze) | `utilities`, `utility-comparison`, `tolls`, `toll-compare`, `toll-analyze` |
   | Reports | — | `reports`, `report` |
-  | Setup | Accounts · Categories · Settings | `accounts`, `account`, `categories`, `my-settings` (the person's own settings: My reminders, section 27) |
+  | Setup | Accounts · Categories · Settings | `accounts`, `account`, `categories`, `my-settings` (the person's own settings: My reminders, section 27; Card payments and Subscription changes, section 31) |
   | Admin | Storage · Query · Users · Recently deleted · AI usage · App settings | `admin-storage`, `recently-deleted`, `ai-usage`, `settings` |
 
   A page's section comes from its `active_page` (utilities/tolls pages count as
@@ -604,7 +607,8 @@ Uncategorized — it never fails an import.
   Upload nav item reopens the upload page used last (remembered per browser).
 - **Upload → Statements** (`uploads_list.html`, `static/pages/uploads.js` with the pure helpers in
   `static/pages/upload-logic.js`, server parts in `app/upload_page.py`), top to bottom:
-  - the overdue-statements notice (section 27, `_statements_due.html`);
+  - the overdue-statements notice (section 27, `_statements_due.html`), then the card payments due notice
+    (section 30, `_payments_due.html`);
   - the **accounts strip**, inside a fold (`<details id="accounts-fold">`, **closed by default**; its summary is
     "Accounts N" plus "k overdue · m with a missing month", recounted by the script after a refresh; whether it
     was left open is remembered in this browser, `localStorage` `finance.accountsFoldOpen`, guarded; no fold at
@@ -673,6 +677,7 @@ Uncategorized — it never fails an import.
   replacements for the old `on…` attributes: `form[data-confirm]`,
   `select[data-autosubmit="<names to disable>"]`, `select[data-go]`,
   `select[data-click-sibling]`, `select[data-go-param]`, `[data-export]`,
+  `fieldset[data-for-type]` (shown only while the form's `type` menu has that value: Add account's Payment due),
   `form[data-enter-clicks]`. Page scripts are `static/pages/confirm-text.js`,
   `resend.js`, `dashboard.js`, `settings.js`, `pdf-view.js`, `toll-upload.js`,
   `utility-upload.js`, `upload-logic.js` and `uploads.js`, with the
@@ -776,6 +781,8 @@ checking-account payment).
   card and, separately, every merchant that ever charged it.
 - A totals card groups active charges by cadence with per-month and per-week
   equivalents.
+- **Subscription changes** (price changes and new subscriptions, with Dismiss) sit above the lists for the
+  owner (section 29), narrowed to the account when one is picked.
 
 ## 16a. In-app PDF viewer
 
@@ -800,6 +807,9 @@ checking-account payment).
   excluded rows out), each by category, with drill-down into Transactions.
 - **Compare** (`dashboard-compare`): two months or two years side by side, income
   and spend by category, with change and percent change.
+- Above the filters: the overdue-statements notice (section 27) and the card payments due notice (section 30).
+  Below Income and Spend, before By category: **Net worth** (section 28; not narrowed by the period or account
+  filter) and **Subscription changes** (section 29).
 
 ## 17. Non-goals and open points
 
@@ -956,8 +966,9 @@ re-run of the AI.
 - **Opens straight into it.** A viewer with shared access lands in the first-granted owner's data (no `?as_user=`). A switch at the top right lists those owners and "My own data"; a banner says whose data it is, with a link to their own. `?as_user=` naming anyone not granted is ignored (they get the data they open into). Removing access takes effect on their next page.
 - Reports and everything else follow the same rule, because every route works on the acting user (section 2).
 - **Notify** (per person, `user_notify`, the same shape as the other household apps): extra notify services
-  (`notify.<name>`, checked by `ha_notify.normalize_service`) an overdue statement's reminder also goes to, besides
-  the phones Home Assistant links to the person (section 27). `user-notify-add` / `user-notify-remove`, admin only;
+  (`notify.<name>`, checked by `ha_notify.normalize_service`) the person's reminders and notifications also go to
+  (overdue statements, section 27; card payments and subscription changes, section 31), besides the phones Home
+  Assistant links to the person. `user-notify-add` / `user-notify-remove`, admin only;
   the text box suggests Home Assistant's notify services when it can be asked.
 
 ## 20a. One person's data: export, import, delete
@@ -993,23 +1004,26 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   options, checksums), `data/<table>.json` (rows by column name, as stored, without `user_id`; ids kept so
   references can be remapped), `files/…` (the PDFs still kept, at their path inside the person's folder:
   `x.pdf`, `utility-bills/…`, `toll-statements/…`), `README.txt`.
-- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 30 today). Newer is refused; older is
+- **`schema`** is the newest migration number (`migrations/NNNN_*.sql`; 31 today). Newer is refused; older is
   brought up to date by `people_data.UPGRADES` (one step per migration that changes a table below): from 27,
   every statement gets `source = 'pdf'` (`fitid`, `period_start`/`period_end` and `import_details` start empty);
   from 28, every account gets `reminders_on = 1` (its expected statement starts Off; section 27); from 29,
-  nothing to fill in (an account's `csv_layout` and `skip_confirmation`, migration 0030, start as nothing saved).
-  Those two travel with `accounts`; an imported `csv_layout` must be a layout `upload_page.clean_layout` accepts
+  nothing to fill in (an account's `csv_layout` and `skip_confirmation`, migration 0030, start as nothing saved);
+  from 30, nothing to fill in either (a card's `payment_due_day`, migration 0031, starts Off; the new tables start
+  empty). Those columns travel with `accounts`; a `payment_due_day` must be on a credit card and 0–31; an imported `csv_layout` must be a layout `upload_page.clean_layout` accepts
   (stored in its cleaned form) and `skip_confirmation` 0, 1 or empty, else the file is refused.
   Columns are read from the database itself (`PRAGMA table_info`), so a new column needs no change here.
 - **Tables, in load order:** `accounts`, `csv_imports`, `statements`, `transactions`, `skipped_duplicates`,
   `category_rules`, `custom_categories`, `recurring_overrides`, `utility_bills`, `electric_meter_details` (by its
   bill), `toll_cars`, `toll_devices`, `toll_statements`, `toll_transactions`, `toll_pattern_groups`,
   `toll_patterns`, `toll_trip_overrides`, `reminder_prefs` (My reminders; one per person: on Add, theirs is kept
-  when they already have one), `statement_dismissals` (by its account). The accounts' expected-statement columns
+  when they already have one), `statement_dismissals` (by its account), `notify_prefs` (Card payments and
+  Subscription changes; one per person and kind, kept the same way; its kind, mode, days and time must be ones
+  `alerts.parse_form` accepts), `payment_dismissals` and `subscription_dismissals` (by their account). The accounts' expected-statement columns
   travel with `accounts`. `toll_trips` is a cache (not exported; `trip_id` dropped; rebuilt after an import).
   Never exported: `user_access` grants, `saved_reports`, `ai_usage_log`, `app_settings`, `known_users` (the person
-  is in the manifest), the app-message tables, `statement_reminders` (a send log) and `user_notify` (Admin → Users'
-  setup).
+  is in the manifest), the app-message tables, the send logs `statement_reminders`, `payment_reminders` and
+  `subscription_alerts`, and `user_notify` (Admin → Users' setup).
 - **Export options.** *Include statement PDFs* (on): without it a row's `pdf_path` is empty and `pdf_deleted_at`
   set, as for a PDF already deleted. *Include Recently deleted items* (off): rows with `deleted_at`, and whatever
   hangs on a row left out, stay out. *Include the text read from statements* (on): `llm_raw_response`,
@@ -1040,7 +1054,8 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   against any row. A skipped statement's or CSV import's skipped-duplicate lines and a skipped bill's meter
   readings are skipped with it.
 - **Delete.** Refused while an upload is being read; one transaction: `statement_dismissals`,
-  `statement_reminders`, `reminder_prefs` and `user_notify` (section 27), `electric_meter_details`, then
+  `statement_reminders`, `reminder_prefs`, `payment_dismissals`, `subscription_dismissals`, `payment_reminders`,
+  `subscription_alerts`, `notify_prefs` and `user_notify` (sections 27, 31), `electric_meter_details`, then
   `skipped_duplicates`, `transactions`, `statements`, `csv_imports`, `accounts`, `utility_bills`,
   `toll_trip_overrides`, `toll_trips`, `toll_transactions` (before `toll_devices`: that key has no `ON DELETE`),
   `toll_statements`, `toll_devices`, `toll_cars`, `toll_patterns`, `toll_pattern_groups`, `category_rules`,
@@ -1064,6 +1079,11 @@ file format, its checks and the id remapping are the shared `app/common/person_d
 - **Features:** Utilities and tolls on or off (section 23).
 - **Statement reminders:** on by default (`statement_reminders`). Off: no phone reminders, no overdue notices and no
   Upload badge for anyone; every account's expected statement and everyone's My reminders are kept (section 27).
+- **Card payments and subscriptions:** **Card payment reminders** (`card_payment_reminders`, on by default; off: no
+  Payment due notices, column or account-page line and no phone reminders, every card's due day and everyone's
+  Card payments choice kept; section 30) and **Subscription change alerts** (`subscription_alerts`, on by default;
+  off: no Subscription changes card on Home or Recurring and no notifications, dismissals and choices kept;
+  section 29).
 - **Not app options.** The AI settings are set only on this page (keys `ai_*`; migration 0023 renamed the earlier `ollama_url` / `ollama_model`). An older install's leftover `ollama_url` / `ollama_model` in `/data/options.json` (or `OLLAMA_URL` / `OLLAMA_MODEL` in the environment, for local development) fill in the address and model once if they're still empty ("Copied from the old app options"; the stored `updated_by` marker stays `add-on options`). While the AI isn't set up (no model; Ollama without an address; Claude without a key) App settings and the Statements, Utility bill and Tolls upload pages say so (the admin gets a link to App settings), and a PDF job fails with the same message.
 - Saving checks every value first; if one is wrong (bad address, unknown provider, Ollama without an address, a longest answer outside 256–200,000, negative or non-numeric price) nothing is saved and the form keeps what was typed, with the errors listed. Each field shows when it was last changed and by whom.
 - New settings are added to `app/settings.py` (`SETTINGS` and a `GROUPS` entry) and appear on the page automatically (kinds: url, text, bool, price, int, choice, secret).
@@ -1147,15 +1167,78 @@ file format, its checks and the id remapping are the shared `app/common/person_d
     rows; no transfers or excluded rows; income only on checking/savings; a card purchase is spend).
   - `finance.spending` (`month?`, `category?`): spend by category, or a category's 10 largest charges as
     `{date, merchant (the bank's description), amount, account}` — **never `note`**.
-  - `finance.recurring`: `recurring.scan_recurring`'s recurring series as `{merchant, amount, frequency, next, last,
-    category, account}`; `finance.bills` (`days?` 1–60, default 14): those whose next date falls in the window.
+  - `finance.recurring` (`merchant?`, `account?`): `recurring.scan_recurring`'s recurring series on live, unarchived
+    accounts as `{merchant, amount, frequency, next, last, category, account, yearly, was, until}` — narrowed to one
+    merchant (matched like `finance.merchant`) or one account (name, any case, or last 4 digits). Each charge's
+    yearly cost is its amount times the charges a year (365.25 days over its cadence, as `frequency_totals`), "≈
+    215.88 a year"; its last price change "was 15.49 until Sep 12" (the change `subscriptions.changes` found, dismissed
+    or not, else the series' own last change of amount; a variable bill has none). The text ends "In all about 142.30
+    a month, 1,707.60 a year." (`frequency_totals`' monthly total, times 12); the rest of its wording is as before.
+  - `finance.bills` (`days?` 1–60, default 14): those whose next date falls in the window, plus each card payment due
+    in it that is unpaid (as `finance.payments_due` reads it; paid and marked as paid left out) as "2026-10-22 Visa ••4242 payment
+    (card payment, last statement 440.00)", sorted by date with the charges; the first sentence then adds "in
+    recurring charges, plus N card payment(s)". A card payment and a recurring charge on the same card are both listed.
+  - `finance.statements` (`account?`): per live, unarchived account (or the one named, by name or last 4 digits):
+    the expected schedule ("monthly on the 12th", "every 3 months on the last day", "not set"), the latest cycle's
+    status from `statement_due.cycle_status` (overdue N days, due today, dismissed, received, upcoming; not set), the
+    next expected date, the last upload (`statement_due.last_upload`'s rules: date, PDF / QFX / CSV, its statement
+    month or newest transaction date) and the months with nothing uploaded (`upload_page.strip_cards`' gap list).
+    Overdue first. None set: "None of your accounts has an expected statement date. You can set one on the account's
+    page." with the last uploads. Link: `/uploads` or `/uploads/<id>` for one account.
+  - `finance.payments_due` (`account?`, `days?` 1–60): per live, unarchived credit card, `card_payments.status`: the
+    due date that matters (the previous one while it's overdue, else the next), days left or "was due Oct 15, 4 days
+    ago", and its state — paid (the payment's date and amount), unpaid, marked as paid, or not set; the previous due
+    date when that one was paid or marked; the last payment (a live negative transaction on the card: date and amount)
+    and the latest statement's balance (`balances.statement_points`, what was owed) and date. **Never a payment's
+    description.** `days`: only cards due within that many days (overdue ones included), the cards with no day named.
+    No cards: "You have no credit card accounts in Finance." Links: each card's `/accounts/<id>`.
+  - `finance.balance_history` (`account?`, `month?`, `months?` 1–24, default 12): one account's latest balance
+    (`balances.statement_points` up to today; a card's is what's owed), its change since the balance carried to the
+    window's start (else its first statement in the window), and the window's statement balances, newest first; with
+    `month`, the balance carried to that month's end and which statement it came from. No account: net worth
+    (`balances.net_worth`: the total, cash, what the cards owe, each account's latest balance and date, accounts
+    without one named and left out) and its change since the window's first month-end with a value (`net_worth`'s own
+    12 month-ends; another window the same way). Nothing: "No statement balances yet — balances come from uploaded
+    statements." Link: `/accounts/<id>`, or `/dashboard` (Home) for net worth.
+  - `finance.subscription_changes` (`merchant?`, `days?` 1–365, default 90): `subscriptions.changes` with dismissed
+    ones included and marked "(dismissed)" (dismissing only hides Home's card), from the last `days` days (a new
+    subscription by the day it became one), each `subscriptions.text` and the account. Link: `/recurring`.
+  - `finance.dates` (`days?` 1–60, default 14): one list — statements (overdue, due today, or the next expected date
+    in the window), card payments (unpaid and not marked as paid: overdue or due in the window) and recurring charges
+    expected in the window; overdue first, then soonest; received, paid, marked as paid and dismissed left out. Ends
+    "2 overdue, 4 more in the next 14 days."; none: "Nothing due in the next 14 days, and nothing overdue." Link:
+    `/dashboard`.
+  - `finance.overview`: net worth with at most 10 accounts ("; and N more"), `finance.dates`' list for 14 days with at
+    most 8 lines ("; and N more — ask for the finance dates") and its count line, this month so far (the same income,
+    spending and net as `finance.summary` for this month) and subscription changes from the last 30 days, at most 3;
+    a part with nothing to say is left out. No accounts: "You have no accounts in Finance yet." Link: `/dashboard`.
+    `finance.summary` keeps one month's figures ("How did we do this month?", a named month).
+  - **All of them only read** (`acts` false), answer from live, unarchived accounts only, show an account as its name
+    and at most its last 4 digits ("Visa ••4242"; any run of five or more digits in a name or a bank description is
+    masked), never a transaction's note, and use `statement_due.today()` for today. The Card payment reminders,
+    Statement reminders and Subscription change alerts App settings and the owners-only rule of the notices don't
+    apply: those are about notifications and notices; answering follows the two switches below and `person`.
+  - **Quick answers** (HOUSEHOLD_ASSISTANT_SPEC.md §17.4): plain words only, e.g. "statement due", "card payment",
+    "net worth", "price change", "finance dates", "finance summary", with default `days` where a tool has it (cards
+    60, subscription changes 90, dates 14). No concept is given: the Assistant reads a tool's concept alone as well as
+    its built-in rule's, so `BILL`, `BALANCE`, `RECURRING` or `PRICE` would turn "Any bills due?", "What's the balance
+    on my accounts?" or "What subscriptions do we pay for?" into a choice. Words the Assistant already uses for Todo
+    or the older tools ("what's due", "overdue", "coming up", "payment due", "how much do I owe", "balance in") are
+    left out, and "went up" / "go up" are its comparison words (those questions go to the AI). "finance summary"
+    reaches `finance.overview`. The Household Assistant's tests route these with this catalogue
+    (`household_assistant/tests/data/finance_tools.json`, checked against the real one by Finance's tests).
+  - Tests: `tests/test_tools.py`, `tests/test_assistant_tools.py`.
 - **Off by default** (App settings → Household Assistant → `assistant_answers`, `nack not_allowed off`): money is
   private. Each person's own *Let the Household Assistant answer for me* (`known_users.assistant_ok`, migration 0025,
   on by default): a card on Who am I while the admin's switch is on; POST `whoami/assistant` (`assistant_ok` 1/0,
   always the signed-in person's own, never the "view as" person's; 303 back); off → `nack not_allowed person_off`.
   Links: the sidebar page from `assist_tools.sidebar_page`,
-  with `/month/<YYYY-MM>` (summary, spending) or `/recurring` (recurring, bills).
-- **Sub-path links**: `/<page>/month/<YYYY-MM>`, `/<page>/dashboard`, `/<page>/recurring`. Every page carries the
+  with `/month/<YYYY-MM>` (summary, spending), `/recurring` (recurring, bills, subscription changes), `/dashboard`
+  (Home: net worth, dates, overview), `/accounts/<id>` (an account's page) or `/uploads[/<id>]` (Upload, with that
+  account picked).
+- **Sub-path links**: `/<page>/month/<YYYY-MM>`, `/<page>/dashboard`, `/<page>/recurring`, `/<page>/accounts/<id>`,
+  `/<page>/uploads[/<id>]` (the routes `GET /accounts/<id>` and `GET /uploads/<id>` redirect to `../account?id=<id>`
+  and `../uploads?account=<id>`, sections 27 and 31). Every page carries the
   sidebar page in `<body data-page>` (set by the `_features` middleware); `static/base.js` hands it to the shared
   `common/static/deeplink.js`, which reads the rest of the path and goes to `dashboard?period=<month>`, `dashboard` or
   `recurring`. A request for `/month/<YYYY-MM>` reaching the app itself is redirected to `../dashboard?period=…`.
@@ -1180,7 +1263,8 @@ finance/                    the app (slug "finance")
   spec/         SPEC.md (this file)  finance_schema.sql
   app/          FastAPI app
     main.py security.py auth.py db.py storage.py jobs.py purge.py
-    settings.py ai_client.py ai_usage.py features.py ofx.py qfx_import.py ...
+    settings.py ai_client.py ai_usage.py features.py ofx.py qfx_import.py statement_due.py
+    balances.py card_payments.py subscriptions.py alerts.py ...
     common/     shared Python (copies of the repository's common/): whoami, auth_core,
                 db_core, web_security, backup_core, ai_client, csv_export, ha_client,
                 ha_people, ha_notify, …
@@ -1189,7 +1273,7 @@ finance/                    the app (slug "finance")
                 upload, admin_storage, ai_usage_page, settings_page, utilities, tolls, ...)
     templates/  static/  (style.css, ui.js, base.js, nav-boot.js, query.js, htmx.min.js, pages/*.js;
                 static/common/: theme-boot.js, themes.css, ui.js — shared copies)
-  migrations/   0001-0030, applied at startup (and after a database import)
+  migrations/   0001-0031, applied at startup (and after a database import)
   tests/        pytest suite (python3 -m pytest); tests/common_tests/: shared helpers and tests (copies)
 ```
 `app/common/`, `app/static/common/` and `tests/common_tests/` are written by
@@ -1310,7 +1394,9 @@ reminded on their phone (through Home Assistant) and in the app. The design and 
 
 - A background loop, started in `main.py`'s lifespan with `ha_people.loop` only when there is a Supervisor token
   (never in the tests), checks every 15 minutes, off the event loop and never sending while it holds a database
-  connection.
+  connection. It is the app's one reminders loop: each check (`run_all`) runs this `run_check`, then the card
+  payment and subscription change notifications' (`alerts.run_check`, section 31); one failing doesn't stop the
+  other.
 - For each person with Remind me and each of their accounts that has an expected date, its own Remind me on, isn't
   archived or deleted and whose latest cycle is due or overdue: the **newest** reminder (Eₖ + days, at the time)
   that has passed. One already in `statement_reminders` (user, account, cycle date, days; UNIQUE) isn't sent again,
@@ -1356,6 +1442,149 @@ reminded on their phone (through Home Assistant) and in the app. The design and 
 - **Query tab** (section 19): `reminder_prefs` and `statement_dismissals` are described; `statement_reminders` and
   `user_notify` hidden.
 - Tests: `tests/test_statement_reminders.py`.
+
+## 28. Balance over time and net worth (`app/balances.py`)
+
+Every figure is a statement's own closing balance, never a sum of transactions.
+
+- **A point** (`statement_points(conn, account_id)`): each live statement (`deleted_at` empty) whose status isn't
+  `error` (one awaiting confirmation or in Review counts) and that has `new_balance` — the PDF's printed New Balance
+  (section 4), a QFX file's `LEDGERBAL` (section 4a) — at its **end date**: `period_end` (QFX), else the date of its
+  newest live transaction, else the last day of `statement_period`; a statement with none of them is left out. Two
+  ending the same day: the newer (higher id) wins. Oldest first.
+- **Signs** (section 8): checking and savings show what is held; a credit card shows what is owed (positive = owed,
+  negative = a credit), as `new_balance` is stored and as the balance check and the Household Assistant's balances
+  read it.
+- **Account page** (`account`, `account_detail.html`, `#balance-over-time`): **Balance over time**, a line chart
+  (`charts.multi_series_chart`, kind `line`; the same inline SVG, theme colours and `data-tip` tooltips as the other
+  charts; no dependency) of the points, newest last, labelled "Balance" or "Owed"; a sentence above it
+  (`#balance-summary`, `summary_text`: "Balance 1,250.50 on Oct 14, 2026; up 350.50 since a year before (900.00 on
+  Sep 30, 2025)." — the balance a year before the latest is the one carried to that day; with less than a year,
+  "since the first statement"; with one point, just the balance) and **Show as a table** (`#balance-table`, newest
+  first, QFX badge). With no point: "No statement balances yet." (`#balance-empty`). Shown to everyone who can open
+  the account.
+- **Net worth** (Home, `_net_worth.html`, `#net-worth`; `net_worth(conn, user_id, today)`): the acting person's live,
+  unarchived accounts (the same data Home shows, section 20: a viewer with shared access sees the owner's). Each
+  account's latest point on or before today with its date ("as of"); the total (`#net-worth-total`) is the cash
+  accounts' balances minus what the cards owe; an account with no point is listed "no balance yet" and left out
+  (the card says how many). A line of the last 12 month-ends (this month's is today), each account at its last
+  known balance carried forward (`None` before any account has one), with a table of the same under **By account**.
+  No accounts: no card. Not narrowed by Home's period or account filter.
+- "Today" is `statement_due.today()` (tests replace `statement_due.now`). Tests: `tests/test_balances.py`.
+
+## 29. Subscription price changes and new subscriptions (`app/subscriptions.py`)
+
+Built on the recurring detection (section 16), at query time (its cached scan): only series whose status is
+`recurring` (money out; 3+ charges on a cadence, or marked recurring), on the person's live, unarchived accounts.
+
+- **Price change** (`price_change`): the series' latest charge differs from the one before it by more than a cent,
+  and the two or more charges before it were all at that old amount (within a cent): "NETFLIX 15.49 → 17.99 (+16%)
+  since Sep 12" (the percent rounded; the date the latest charge's).
+- **Carrying on.** A new price more than 20% / $3 away lands in a series of its own (section 16's amount clusters).
+  A later series of the same merchant family on the same account whose first charge comes one to three of the old
+  series' periods after its last (± the cadence's tolerance) is read as the old one going on: its charges are
+  appended before looking at the latest. Two series seeing the same change give it once.
+- **Variable bills**: a series whose earlier charges (the last 12 before the latest) mostly differ from one charge
+  to the next (fewer than half equal to the one before) isn't held to the rule above: only a latest charge outside
+  their range (by more than a cent) counts, "CITY ELECTRIC usually 80.12–95.40 → 140.00 (+47%) on Oct 18" (percent
+  against the end it left).
+- **New subscription**: a series that became recurring within the last 45 days — the date of its third charge (on a
+  cadence), or the day it was marked recurring (`recurring_overrides.created_at`, merchant or matching amount),
+  whichever is first — and no other series of the same merchant on the account began before it with two or more
+  charges (a merchant's earlier series at another price): "New: SPOTIFY 9.99 monthly since Aug 20" (its first
+  charge).
+- A price change is listed while its charge is from the last 90 days (so a cancelled subscription's last change
+  doesn't stay for ever); newest first.
+- **Keys**: `series` = the series' merchant key (its family), `change_key` = `price:<old>><new>:<date>` (also for a
+  variable bill) or `new:<series key>`. **Dismiss** (`POST subscription-dismiss`: account_id, series, change_key,
+  next `dashboard` | `recurring`) stores (account, series, change_key) in `subscription_dismissals` — only for a
+  change that is there now, on the acting person's account, by the owner — so it never comes back; a later,
+  different change of the series has another key and shows again.
+- **Shown** (`visible`, owner only — `statement_due.can_see` — and while **Subscription change alerts** is on,
+  section 21.1): the **Subscription changes** card (`_subscription_changes.html`, `#subscription-changes`; each
+  `li.sub-change.sub-<kind>` with the account's name and **Dismiss**) on Home and at the top of Recurring (narrowed
+  to the account picked there).
+- Tests: `tests/test_subscription_changes.py`.
+
+## 30. Credit card payment due dates (`app/card_payments.py`)
+
+- **The day** (credit cards only): **Payment due** (`_payment_due_fields.html`, next to Expected statement on Add
+  account — `#payment-due-add`, `data-for-type="credit_card"`, hidden by base.js for the other types — and on a
+  card's Edit details, `#payment-due-edit`): Off · Monthly on day 1–31 · Monthly on the last day. The forms carry
+  `payment_form=1` (without it an edit leaves the day as it was; a new account is Off); `payment_due_day` "" = Off,
+  1–31, `last` = 0; anything else is refused ("Pick the day the card's payment is due …"); for another type it is
+  ignored. Set by the person, never read from statements.
+- **Columns** (`accounts`, migration 0031): `payment_due_day` (1–31, 0 = last day, NULL = Off; CHECK 0–31) and
+  `payment_due_set_at` (UTC; set when the day is first set or changed, and when the card is unarchived or restored).
+- **Due dates** (`due_dates`): monthly on the day, clamped like the expected dates (section 27.1: 29–31 → a shorter
+  month's last day; 0 always the last day); worked out, never stored. A due date before the day of
+  `payment_due_set_at` never counts (`before_setting`).
+- **Paid** (`paid_dates`): a due date D (previous due date P, next N) is paid by a payment to the card recorded on or
+  after P: a live negative transaction on the card (a payment or credit, or the card's side of a linked transfer,
+  which is negative too, section 8). Each payment pays one due date: D takes the latest unused payment dated P … D,
+  else — a late payment, and only for a due date that counts — the first unused one after D up to N; due dates are
+  taken oldest first (the four before the latest are looked at), so a payment made on its due day doesn't pay the
+  next one too. Or **Mark as paid** (`POST card-payment-paid`: account_id, due_date, next `dashboard` | `uploads` |
+  `account`; only the date the card's notice shows, by the owner) → `payment_dismissals` (account, due date).
+- **Status** (`status(conn, account, on)`, None for Off, archived or deleted): `previous` (the latest due date
+  before today) and `next` (today or later), each `unpaid`, `paid`, `dismissed` or `before_setting`. The **notice**
+  is the previous one while unpaid and the next one hasn't arrived ("Was due 2 days ago", kind `overdue`), else the
+  next one when unpaid and at most 7 days away ("Due Oct 22 (in 3 days)", `soon`; "Due today", `today`).
+- **Shown** (owner only — `statement_due.can_see` — while **Card payment reminders** is on): the amber **Payment
+  due** notice on Home and Upload (`_payments_due.html`, `#payments-due`, soonest due date first, each with **Mark as
+  paid**; it clears by itself once a payment is uploaded); a **Payment due** column (`td.payment-due`, shown when any
+  card has a day) on Setup → Accounts and Transactions → Accounts: "Was due 2 days ago" (`due-overdue`), "Due today"
+  (`due-today`), "Oct 22 (in 3 days)" (`due-soon` within 7 days), "Paid · due Nov 5" / "Marked paid · due Nov 5"
+  (`due-paid`); and a **Payment due** line on the card's page (`#payment-due`, with Mark as paid).
+- Tests: `tests/test_card_payments.py`.
+
+## 31. Card payment and subscription change notifications (`app/alerts.py`)
+
+The overdue statement reminders' machinery (section 27; decisions in `FINANCE_STATEMENT_REMINDERS_SPEC.md`), for two
+more kinds, run by the same background loop (`statement_due.loop` → `run_all`).
+
+- **Where.** Setup → Settings (`my-settings`), next to My reminders: **Card payments** (`#notify-cards`,
+  `#cards-form`) and **Subscription changes** (`#notify-subs`, `#subs-form`), saved by `POST my-settings-notify`
+  (`kind` `card_payments` | `subscriptions`, `mode` `off` | `on`, `offsets`, `at_time`; back to
+  `my-settings?saved=cards|subs#notify-…`). Whose: as section 27.3. With the App setting off the card says so.
+- `notify_prefs` (`user_id`, `kind`, UNIQUE(user_id, kind), `mode`, `offsets` JSON, `at_time`, `updated_at`). **No row
+  = No notifications**; rows are only written when the person saves ("No card payment reminders until you choose
+  when." / "No subscription change notifications until you choose them.").
+- **Card payments: Remind me** needs 1 to 6 of 7 days before (−7), 5, 3, 2, 1 days before, On the day (0), 1 day
+  after, 3 days after — chips limited by `static/pages/my-settings.js` (each `form[data-max]`), checked by the server
+  ("Pick at least one, or choose No notifications." / "Pick at most 6.") — **At** `HH:MM` (default 09:00, Home
+  Assistant's time zone). Per card with a day, not archived or deleted, whose previous (until the next due date) or
+  next due date is unpaid and not marked as paid (section 30, `before_setting` never): the **newest** reminder (due
+  date + days, at the time) that has passed; once per (user, card, due date, days) in `payment_reminders` (UNIQUE), so
+  a restart never repeats one and after downtime only the newest goes. One notification per person per check: "Card
+  payment due" / "Visa — payment due Nov 5, in 3 days." ("payment due today (Nov 5)"; "Card payment overdue" /
+  "payment was due Nov 5, 2 days ago."), or "2 card payments due" / "Visa (Nov 5), Amex (Nov 7)." Tap: one card
+  `/<sidebar page>/accounts/<id>` (the route `GET /accounts/<id>` redirects to `../account?id=<id>`; base.js's deep
+  link opens the same), several `/<sidebar page>/dashboard`.
+- **Subscription changes: Notify me** at a time: each change (section 29, dismissed ones never) once. The check that
+  first sees it records it in `subscription_alerts` as `pending` with `found_at`; it is sent at the first check at or
+  after the person's time on or after `found_at` (found before the time: that day; after: the next day), with every
+  other change then due in one notification: "Subscription price change" / "NETFLIX 15.49 → 17.99 (+16%) since Sep
+  12.", "New subscription", or "3 subscription changes" / the first four and "and N more". Tap:
+  `/<sidebar page>/recurring`.
+- **As section 27.4:** only the account's owner (no row is ever made for someone the data is shared with: the
+  changes and cards are the person's own accounts); phones from `ha_notify.services_for` plus Admin → Users'
+  Notify; none → `no_phone`; a send that reached no service is `failed` and retried at each check for six hours from
+  its first try (`sent_at`), then given up and logged once; a later success turns it `sent`. Never an account
+  number (`statement_due.safe_name`: the account's last 4 and any run of five or more digits masked, in card names
+  and merchant descriptions alike).
+- **App settings** (section 21.1): **Card payment reminders** and **Subscription change alerts** off stop their
+  notifications (and hide their notices); every choice is kept.
+- **Data** (migration 0031): `notify_prefs`, `payment_dismissals` (account_id, due_date, dismissed_by, dismissed_at;
+  UNIQUE(account_id, due_date)), `payment_reminders` (user_id, account_id, due_date, offset_days, sent_at, result
+  `sent` / `no_phone` / `failed`), `subscription_dismissals` (account_id, series, change_key, dismissed_by,
+  dismissed_at; UNIQUE(account_id, series, change_key)), `subscription_alerts` (user_id, account_id, series,
+  change_key, found_at, sent_at, result `pending` / `sent` / `no_phone` / `failed`); the account-linked rows go with
+  their account (ON DELETE CASCADE). One person's data (section 20a) carries `notify_prefs` and the two dismissal
+  tables, not the send logs; Delete and **Wipe all my data** remove all five (for good). The send logs older than a
+  year are purged by the daily sweep (`subscription_alerts` by `found_at`). Query tab (section 19): `notify_prefs`,
+  `payment_dismissals`, `subscription_dismissals` described; `payment_reminders`, `subscription_alerts` hidden.
+- Tests: `tests/test_alerts.py`.
 
 ## Security notes (2026-10)
 

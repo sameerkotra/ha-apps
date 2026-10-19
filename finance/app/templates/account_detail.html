@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "_nav_macros.html" as nav %}
 {% from "_expected_fields.html" import expected_fields %}
+{% from "_payment_due_fields.html" import payment_due_fields %}
 {% block title %}{{ account.name }}{% endblock %}
 {% block content %}
 <p><a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">&larr; All accounts</a></p>
@@ -41,6 +42,7 @@
             <input type="url" name="website_url" value="{{ account.website_url or '' }}" placeholder="e.g. https://www.chase.com" maxlength="500" inputmode="url">
         </label>
         {{ expected_fields(account) }}
+        {% if account.type == "credit_card" %}{{ payment_due_fields(account) }}{% endif %}
         <fieldset class="expected-group upload-prefs-fields" id="upload-prefs">
             <legend>Uploads</legend>
             <input type="hidden" name="upload_prefs_form" value="1">
@@ -103,8 +105,49 @@
         {% else %}&mdash;{% endif %}
     </td></tr>
     {% endif %}
+    {% if account.type == "credit_card" and account.payment_due_day is not none %}
+    <tr><th>Payment due</th><td id="payment-due">
+        {% if not payment_enabled %}Card payment reminders are off for the whole app
+        {% elif account.is_archived %}Not while archived
+        {% elif payment %}
+            <span class="{{ payment_label[1] }}">{{ payment_label[0] }}</span>{% if payment.kind == "overdue" %} (due {{ date_label(payment.notice.due_date) }}; next {{ date_label(payment.next.due_date) }}){% endif %}
+            {% if payment.notice %}
+            <form method="post" action="card-payment-paid{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+                <input type="hidden" name="account_id" value="{{ account.id }}">
+                <input type="hidden" name="due_date" value="{{ payment.notice.due_date.isoformat() }}">
+                <input type="hidden" name="next" value="account">
+                <button type="submit" class="btn-secondary">Mark as paid</button>
+            </form>
+            {% endif %}
+        {% else %}&mdash;{% endif %}
+    </td></tr>
+    {% endif %}
     <tr><th>Added</th><td>{{ account.created_at }}</td></tr>
 </table>
+
+<section class="balance-over-time" id="balance-over-time" aria-labelledby="balance-heading">
+    <h2 id="balance-heading">Balance over time</h2>
+    {% if balance.svg %}
+    <p class="hint" id="balance-summary">{{ balance.text }}</p>
+    <figure class="chart-figure balance-chart">
+        <figcaption>{% if balance.card %}Owed{% else %}Balance{% endif %} per statement</figcaption>
+        {{ balance.svg }}
+    </figure>
+    <details class="chart-table" id="balance-table">
+        <summary>Show as a table</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>Statement end</th><th>{% if balance.card %}Owed{% else %}Balance{% endif %}</th></tr>
+            {% for p in balance.rows %}
+            <tr><td>{{ balance_date(p.date) }}{% if p.source == "qfx" %} <span class="type-badge source-qfx">QFX</span>{% endif %}</td><td>{{ money(p.balance) }}</td></tr>
+            {% endfor %}
+        </table>
+        </div>
+    </details>
+    {% else %}
+    <p class="empty-state" id="balance-empty">No statement balances yet.</p>
+    {% endif %}
+</section>
 
 <h2>Statements</h2>
 {% if account.type == "credit_card" %}

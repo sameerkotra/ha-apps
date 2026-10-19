@@ -191,6 +191,11 @@ def purge_soft_deleted(conn) -> dict[str, int]:
     # The overdue statements' send log (statement_due.py) is kept a year.
     reminders = conn.execute("DELETE FROM statement_reminders WHERE sent_at < datetime('now', ?)",
                              (REMINDER_LOG_KEEP,)).rowcount
+    # So are the card payment reminders' and subscription changes' (alerts.py).
+    alerts_purged = conn.execute("DELETE FROM payment_reminders WHERE sent_at < datetime('now', ?)",
+                                 (REMINDER_LOG_KEEP,)).rowcount
+    alerts_purged += conn.execute("DELETE FROM subscription_alerts WHERE found_at < datetime('now', ?)",
+                                  (REMINDER_LOG_KEEP,)).rowcount
 
     conn.commit()
     remove_files(files)
@@ -198,6 +203,7 @@ def purge_soft_deleted(conn) -> dict[str, int]:
         "transactions": txn_count, "statements": len(stale_statements),
         "csv_imports": csv_import_count, "accounts": acct_count, "toll_statements": len(stale_tolls),
         "utility_bills": len(stale_bills), "statement_reminders": reminders,
+        "alert_logs": alerts_purged,
     }
 
 

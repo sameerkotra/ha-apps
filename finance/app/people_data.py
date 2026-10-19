@@ -23,7 +23,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass, field
 
-from . import statement_due, storage, upload_page
+from . import alerts, statement_due, storage, upload_page
 from .amounts import to_cents
 from .common import person_data
 from .db import MIGRATIONS_DIR
@@ -71,6 +71,14 @@ def _to_30(tables: dict) -> None:
 UPGRADES[29] = _to_30
 
 
+def _to_31(tables: dict) -> None:
+    """Migration 0031: accounts gained the card's payment due day (Off: NULL); the new notify_prefs,
+    payment_dismissals and subscription_dismissals tables start empty — nothing to fill in."""
+
+
+UPGRADES[30] = _to_31
+
+
 class Refused(ValueError):
     """A file (or a row in it) that can't be imported; the message is for the admin."""
 
@@ -116,6 +124,12 @@ TABLES = [
     # send log (statement_reminders) isn't theirs to carry: it stays out, so does user_notify (admin setup).
     Table("reminder_prefs", "reminder settings", dedupe_in_file=True),
     Table("statement_dismissals", "dismissed overdue statements", parent=("account_id", "accounts")),
+    # Card payments and subscription changes (sections 29–31): the person's own notification choices (one per
+    # kind), the due dates they marked as paid and the changes they dismissed. The send logs (payment_reminders,
+    # subscription_alerts) stay out.
+    Table("notify_prefs", "notification settings", dedupe_in_file=True),
+    Table("payment_dismissals", "card payments marked as paid", parent=("account_id", "accounts")),
+    Table("subscription_dismissals", "dismissed subscription changes", parent=("account_id", "accounts")),
 ]
 BY_NAME = {t.name: t for t in TABLES}
 NEVER = {"id", "user_id", "trip_id"}     # trip_id points into the toll_trips cache, rebuilt after an import
@@ -143,7 +157,8 @@ LIMITS = {                    # the same bounds the forms and the API use
     ("transactions", "description"): 500, ("transactions", "category"): 60, ("transactions", "note"): 1000,
     ("skipped_duplicates", "description"): 500, ("skipped_duplicates", "category"): 60,
     ("category_rules", "pattern"): 200, ("category_rules", "category"): 60, ("custom_categories", "name"): 60,
-    ("recurring_overrides", "merchant_pattern"): 500, ("toll_cars", "name"): 60, ("toll_pattern_groups", "name"): 60,
+    ("recurring_overrides", "merchant_pattern"): 500,
+    ("subscription_dismissals", "series"): 200, ("subscription_dismissals", "change_key"): 600, ("toll_cars", "name"): 60, ("toll_pattern_groups", "name"): 60,
     ("toll_patterns", "signature"): 2000, ("toll_patterns", "name"): 200,
 }
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -232,6 +247,27 @@ def clean_row(table: str, row: dict, cols: dict, where: str) -> dict:
             raise Refused(f"{where}: at_time must be HH:MM.")
     if table == "statement_dismissals" and not _DATE.fullmatch(str(out.get("cycle_date") or "")):
         raise Refused(f"{where}: cycle_date isn't a date the app stores.")
+    if table == "accounts" and out.get("payment_due_day") is not None:
+        if out.get("type") != "credit_card" or not 0 <= out["payment_due_day"] <= 31:
+            raise Refused(f"{where}: payment_due_day is for a credit card, a day 0–31.")
+    if table == "notify_prefs":
+        kind, mode = out.get("kind"), out.get("mode") or "off"
+        try:
+            offsets = json.loads(out.get("offsets") or "[]")
+        except ValueError:
+            offsets = None
+        if kind not in alerts.KINDS or mode not in ("off", "on") or not isinstance(offsets, list):
+            raise Refused(f"{where}: a notification setting the app doesn't know.")
+        raw = [str(o) for o in offsets if isinstance(o, int) and not isinstance(o, bool)]
+        if len(raw) != len(offsets) or (kind == "subscriptions" and offsets) or (
+                mode == "on" and alerts.parse_form(kind, "on", raw, out.get("at_time") or alerts.DEFAULT_AT)[1]) or (
+                mode == "off" and offsets):
+            raise Refused(f"{where}: the notification days or time aren't ones the app offers.")
+    if table == "payment_dismissals" and not _DATE.fullmatch(str(out.get("due_date") or "")):
+        raise Refused(f"{where}: due_date isn't a date the app stores.")
+    if table == "subscription_dismissals":
+        if not (out.get("series") or "").strip() or not (out.get("change_key") or "").strip():
+            raise Refused(f"{where}: the dismissed change has no series or change.")
     if table == "transactions" and out.get("amount") is not None:
         out["amount"] = round(out["amount"], 2)          # amounts are stored in whole cents (migration 0027)
         if out["amount"] == 0:
@@ -309,6 +345,13 @@ def summary(conn, uid: str, name: str) -> dict:
              n("SELECT COUNT(*) FROM reminder_prefs WHERE user_id = ?", uid)
              + n("SELECT COUNT(*) FROM statement_dismissals d JOIN accounts a ON a.id = d.account_id WHERE a.user_id = ?",
                  uid)),
+        item("notifications", "card payment and subscription notification settings, payments marked as paid and "
+             "dismissed subscription changes",
+             n("SELECT COUNT(*) FROM notify_prefs WHERE user_id = ?", uid)
+             + n("SELECT COUNT(*) FROM payment_dismissals d JOIN accounts a ON a.id = d.account_id WHERE a.user_id = ?",
+                 uid)
+             + n("SELECT COUNT(*) FROM subscription_dismissals d JOIN accounts a ON a.id = d.account_id "
+                 "WHERE a.user_id = ?", uid)),
         item("toll_setup", "toll cars, tags and groups", toll_setup),
         item("access", "shared-access grants", sees + seen_by,
              f"uses {sees} other people's data · {seen_by} use theirs" if sees + seen_by else ""),
@@ -476,6 +519,7 @@ def _existing_keys(conn, table: str, uid: str) -> tuple[dict, dict]:
         "toll_patterns": "SELECT id, signature, window_start_min, window_end_min FROM toll_patterns WHERE user_id = ?",
         "toll_trip_overrides": "SELECT id, trip_key FROM toll_trip_overrides WHERE user_id = ?",
         "reminder_prefs": "SELECT id, 1 FROM reminder_prefs WHERE user_id = ?",
+        "notify_prefs": "SELECT id, kind FROM notify_prefs WHERE user_id = ?",
     }.get(table)
     live, every = {}, {}
     if not q:
@@ -523,6 +567,8 @@ def _key(table: str, r: dict):
         return (r.get("trip_key"),)
     if table == "reminder_prefs":
         return (1,)                         # one per person: theirs is kept when they already have one
+    if table == "notify_prefs":
+        return (r.get("kind"),)             # one per person and kind, the same way
     return None
 
 
@@ -638,6 +684,12 @@ def delete_rows(conn, uid: str, forget: bool) -> dict:
         "DELETE FROM statement_reminders WHERE user_id = ? OR account_id IN (SELECT id FROM accounts WHERE user_id = ?)",
         uid, uid)
     counts["reminder_prefs"] = gone("DELETE FROM reminder_prefs WHERE user_id = ?", uid)
+    for table in ("payment_dismissals", "subscription_dismissals"):
+        counts[table] = gone(f"DELETE FROM {table} WHERE account_id IN (SELECT id FROM accounts WHERE user_id = ?)", uid)
+    for table in ("payment_reminders", "subscription_alerts"):
+        counts[table] = gone(f"DELETE FROM {table} WHERE user_id = ? OR account_id IN "
+                             "(SELECT id FROM accounts WHERE user_id = ?)", uid, uid)
+    counts["notify_prefs"] = gone("DELETE FROM notify_prefs WHERE user_id = ?", uid)
     counts["user_notify"] = gone("DELETE FROM user_notify WHERE user_id = ?", uid)
     counts["electric_meter_details"] = gone(
         "DELETE FROM electric_meter_details WHERE utility_bill_id IN (SELECT id FROM utility_bills WHERE user_id = ?)", uid)

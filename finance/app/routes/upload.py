@@ -17,7 +17,7 @@ from ..auth import User, get_current_user, get_acting_user, require_admin
 from ..categorize import list_all_categories
 from ..db import get_db
 from ..version import APP_VERSION
-from .. import ai_usage, jobs, notices, ofx, qfx_import, settings, statement_due, storage, upload_page
+from .. import ai_usage, card_payments, jobs, notices, ofx, qfx_import, settings, statement_due, storage, upload_page
 from ..jobs import start_job
 from ..parser.documents import prepare_restart
 from ..parser.pipeline import check_duplicate, finalize_if_ready
@@ -774,6 +774,7 @@ def uploads_list(
         accounts = _live_accounts(conn, acting.id)
         categories = list_all_categories(conn, acting.id)
         overdue = statement_due.visible_overdue(conn, current, acting)
+        payments_due = card_payments.notices(conn, current, acting)
         strip = upload_page.strip_cards(conn, current, acting)
         history = _history_context(request, conn, current, acting)
     # Which account the drop zone starts on: ?account=<id> (a notification's tap, an Upload button), else the
@@ -794,6 +795,7 @@ def uploads_list(
             **history,
             "user": acting, "accounts": accounts, "categories": categories, "upload_accounts": upload_accounts,
             "preselect": preselect, "overdue": overdue, "due_next": "uploads", "strip": strip,
+            "payments_due": payments_due,
             "all_accept": upload_page.ALL_ACCEPT, "notice": notices.text(notice),
             "acting_as_banner": _acting_banner(current, acting),
             # is_admin (in history): current, NOT acting — acting.is_admin is always False while acting-as

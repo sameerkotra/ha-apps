@@ -482,14 +482,28 @@ def run_check(at: datetime | None = None) -> int:
     return sent
 
 
+def run_all(at: datetime | None = None) -> int:
+    """One check of everything the loop sends: overdue statements, then card payments and subscription changes
+    (alerts.py, SPEC.md section 31). One failing never stops the other."""
+    from . import alerts
+    sent = 0
+    for what, fn in (("overdue statements", run_check), ("card payments and subscription changes", alerts.run_check)):
+        try:
+            sent += fn(at)
+        except Exception:
+            logger.exception("Checking for %s failed — will try again at the next check", what)
+    return sent
+
+
 async def loop() -> None:
-    """Every 15 minutes (started by main.py's lifespan inside Home Assistant; cancelled on shutdown)."""
+    """Every 15 minutes (started by main.py's lifespan inside Home Assistant; cancelled on shutdown): the one
+    background loop for every reminder and notification (run_all)."""
     from starlette.concurrency import run_in_threadpool
     while True:
         try:
-            await run_in_threadpool(run_check)
+            await run_in_threadpool(run_all)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Checking for overdue statements failed — will try again at the next check")
+            logger.exception("Checking for reminders failed — will try again at the next check")
         await asyncio.sleep(CHECK_SECONDS)

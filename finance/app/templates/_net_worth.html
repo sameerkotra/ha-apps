@@ -1,0 +1,43 @@
+{# Home's Net worth card (SPEC.md section 28): `net_worth` from balances.net_worth. #}
+{% if net_worth and net_worth.accounts %}
+{% set nq = "&" + acting_qs if acting_qs else "" %}
+<section class="card net-worth" id="net-worth" aria-labelledby="net-worth-heading">
+    <h2 id="net-worth-heading">Net worth</h2>
+    {% if net_worth.total is not none %}
+    <p class="dashboard-figure" id="net-worth-total">{{ money(net_worth.total) }}</p>
+    <p class="hint">Cash accounts plus, cards minus what they owe, from each account's latest statement{% if net_worth.missing %};
+        {{ net_worth.missing }} account{{ "s" if net_worth.missing != 1 }} with no balance yet left out{% endif %}.</p>
+    {% else %}
+    <p class="empty-state">No statement balances yet.</p>
+    {% endif %}
+    {% if net_worth.svg %}
+    <figure class="chart-figure net-worth-chart">
+        <figcaption>The last 12 months (each month's end)</figcaption>
+        {{ net_worth.svg }}
+    </figure>
+    {% endif %}
+    <details class="chart-table" id="net-worth-accounts"{% if net_worth.total is none %} open{% endif %}>
+        <summary>By account</summary>
+        <div class="table-scroll">
+        <table class="detail-table">
+            <tr><th>Account</th><th>Balance</th><th>As of</th></tr>
+            {% for a in net_worth.accounts %}
+            <tr>
+                <td><a href="account?id={{ a.id }}{{ nq }}">{{ a.name }}</a>{% if a.type == "credit_card" %} <span class="hint">(owed)</span>{% endif %}</td>
+                {% if a.balance is none %}<td colspan="2" class="hint">no balance yet</td>
+                {% else %}<td>{{ money(a.balance) }}</td><td>{{ balance_date(a.as_of) }}</td>{% endif %}
+            </tr>
+            {% endfor %}
+        </table>
+        </div>
+        {% if net_worth.svg %}
+        <table class="detail-table net-worth-months">
+            <tr><th>Month end</th><th>Net worth</th></tr>
+            {% for m in net_worth.months | reverse %}
+            <tr><td>{{ balance_date(m.date) }}</td><td>{{ money(m.value) if m.value is not none else "—" }}</td></tr>
+            {% endfor %}
+        </table>
+        {% endif %}
+    </details>
+</section>
+{% endif %}

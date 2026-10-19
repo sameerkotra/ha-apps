@@ -643,7 +643,7 @@ def test_a_failing_migration_changes_nothing_and_a_copy_is_kept(env, monkeypatch
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         cols = {r[1] for r in c.execute("PRAGMA table_info(accounts)")}
         assert "half_done" not in tables and "broken" not in cols
-        assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 30     # the newest migration
+        assert c.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 31     # the newest migration
     assert os.path.exists(env.db_path + ".pre-0999")
 
 

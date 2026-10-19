@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.3
+
+- **Tests only:** checks that the Finance Dashboard's new questions (statements, card payments, balances over time, subscription changes, finance dates and the finance overview) reach the right answer, and that every existing quick-answer phrase still does.
+
 ## 1.6.2
 
 - **Tests only:** the tests no longer leave a question waiting on an address that, on GitHub's machines, hangs instead of refusing — which made the next tests fail with "Still answering the last question." After each test, a question still being answered is now reported.

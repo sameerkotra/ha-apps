@@ -8,7 +8,7 @@ from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
 from .. import settings
 from ..db import get_db
-from .. import notices, ofx, statement_due, upload_page
+from .. import balances, card_payments, notices, ofx, statement_due, upload_page
 from ..version import APP_VERSION
 
 router = APIRouter()
@@ -152,6 +152,7 @@ def list_accounts(
             (acting.id,),
         ).fetchall()
         due = statement_due.statuses(conn, rows, current, acting)
+        payment_due = card_payments.column(conn, rows, current, acting)
 
     return templates.TemplateResponse(
         request,
@@ -160,6 +161,7 @@ def list_accounts(
             "user": acting,
             "accounts": rows,
             "due": due,
+            "payment_due": payment_due,
             "show_archived": include_archived,
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
@@ -182,6 +184,8 @@ def create_account(
     expected_day: str = Form(""),
     expected_from: str = Form(""),
     reminders_on: str = Form(""),
+    payment_form: str = Form(""),
+    payment_due_day: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -191,6 +195,9 @@ def create_account(
     expected, expected_problem = statement_due.parse_account_form(
         expected_every_months, expected_day, expected_from, reminders_on if expected_form else "1")
     problem = problem or expected_problem
+    # Payment due (SPEC.md section 30): credit cards only; anything sent for another type is ignored.
+    pay_day, pay_problem = card_payments.parse_form(payment_due_day if payment_form and type == "credit_card" else "")
+    problem = problem or pay_problem
     if problem:
         return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, "accounts")
     with get_db() as conn:
@@ -198,14 +205,15 @@ def create_account(
             """
             INSERT INTO accounts (user_id, name, type, bank_name, account_number_last4, preferred_upload_method,
                                   website_url, expected_every_months, expected_day, expected_from, reminders_on,
-                                  expected_set_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  expected_set_at, payment_due_day, payment_due_set_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 acting.id, name.strip(), type, bank_name.strip() or None, _sanitize_last4(account_number_last4),
                 _sanitize_upload_method(preferred_upload_method), _sanitize_url(website_url),
                 expected["expected_every_months"], expected["expected_day"], expected["expected_from"],
-                expected["reminders_on"], statement_due.stamp(),
+                expected["reminders_on"], statement_due.stamp(), pay_day,
+                statement_due.stamp() if pay_day is not None else None,
             ),
         )
         conn.commit()
@@ -248,6 +256,8 @@ def update_account(
     upload_prefs_form: str = Form(""),
     skip_confirmation: str = Form(""),
     clear_csv_layout: str = Form(""),
+    payment_form: str = Form(""),
+    payment_due_day: str = Form(""),
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -262,6 +272,10 @@ def update_account(
         expected, expected_problem = statement_due.parse_account_form(
             expected_every_months, expected_day, expected_from, reminders_on)
         problem = problem or expected_problem
+    pay_day = None
+    if payment_form:           # the form's Payment due group (credit cards only; without it, left as it is)
+        pay_day, pay_problem = card_payments.parse_form(payment_due_day)
+        problem = problem or pay_problem
     if problem:
         return notices.form_error(request, templates, acting, _acting_qs(current, acting), problem, f"account?id={id}")
     with get_db() as conn:
@@ -279,6 +293,12 @@ def update_account(
                 (expected["expected_every_months"], expected["expected_day"], expected["expected_from"],
                  expected["reminders_on"],
                  statement_due.stamp() if statement_due.changed(row, expected) else row["expected_set_at"], id))
+
+        if payment_form and row["type"] == "credit_card":
+            # A new or changed due day never makes an earlier due date count (payment_due_set_at).
+            changed = pay_day != row["payment_due_day"]
+            conn.execute("UPDATE accounts SET payment_due_day = ?, payment_due_set_at = ? WHERE id = ?",
+                         (pay_day, statement_due.stamp() if changed else row["payment_due_set_at"], id))
 
         if upload_prefs_form:      # the form's Upload group (a caller without it leaves both as they are)
             conn.execute("UPDATE accounts SET skip_confirmation = ? WHERE id = ?",
@@ -378,8 +398,9 @@ def set_account_archived(
         )
         if archived != "1":
             # Back from the archive: reminders start again from the next expected date, never for missed ones.
-            conn.execute("UPDATE accounts SET expected_set_at = ? WHERE id = ? AND is_archived = 0",
-                         (statement_due.stamp(), id))
+            conn.execute("UPDATE accounts SET expected_set_at = ?, payment_due_set_at = CASE WHEN payment_due_day "
+                         "IS NULL THEN payment_due_set_at ELSE ? END WHERE id = ? AND is_archived = 0",
+                         (statement_due.stamp(), statement_due.stamp(), id))
         conn.commit()
 
     # next is just "accounts" or "account" (never a full URL with its own
@@ -465,6 +486,9 @@ def account_detail(
 
         due = statement_due.cycle_status(conn, account) if statement_due.can_see(current, acting) else None
         last_upload = statement_due.last_upload(conn, id)
+        # Balance over time (SPEC.md section 28) and the card's payment due date (section 30)
+        balance = balances.account_chart(account, balances.statement_points(conn, id))
+        payment = card_payments.status(conn, account) if card_payments.visible(current, acting) else None
 
     return templates.TemplateResponse(
         request,
@@ -474,6 +498,9 @@ def account_detail(
             "account": account,
             "due": due, "due_label": statement_due.column_label(due), "last_upload": last_upload,
             "due_enabled": statement_due.enabled(), "date_label": statement_due.label,
+            "balance": balance, "balance_date": balances.date_label, "money": balances.money,
+            "payment": payment, "payment_label": card_payments.column_label(payment),
+            "payment_enabled": card_payments.enabled(),
             "csv_layout": upload_page.read_layout(account["csv_layout"]),
             "txn_count": txn_count_row["n"],
             "statements": statements,

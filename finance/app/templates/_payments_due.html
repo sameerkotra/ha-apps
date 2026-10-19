@@ -1,0 +1,24 @@
+{# Card payments due (SPEC.md section 30): Home and Upload. `payments_due` from card_payments.notices; `due_next` is the
+   page Mark as paid comes back to ("dashboard" or "uploads"). #}
+{% if payments_due %}
+{% set pq = "?" + acting_qs if acting_qs else "" %}
+{% set pamp = "&" + acting_qs if acting_qs else "" %}
+<section class="warning-hint statements-due payments-due" id="payments-due" role="status" aria-label="Card payments due">
+    <h2>{% if payments_due | length == 1 %}Payment due{% else %}{{ payments_due | length }} card payments due{% endif %}</h2>
+    <ul>
+        {% for p in payments_due %}
+        <li class="payment-due-item payment-{{ p.kind }}">
+            <span class="due-name"><a href="account?id={{ p.account_id }}{{ pamp }}"><strong>{{ p.name }}</strong></a> &mdash;
+                {% if p.kind == "overdue" %}<span class="due-overdue">{{ p.text }}</span> ({{ p.due_label }}){% else %}{{ p.text }}{% endif %}</span>
+            <form method="post" action="card-payment-paid{{ pq }}">
+                <input type="hidden" name="account_id" value="{{ p.account_id }}">
+                <input type="hidden" name="due_date" value="{{ p.notice.due_date.isoformat() }}">
+                <input type="hidden" name="next" value="{{ due_next }}">
+                <button type="submit" class="btn-secondary" title="Paid: no more notices or reminders for this due date">Mark as paid</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    <p class="hint">Cleared by itself once a payment to the card is uploaded.</p>
+</section>
+{% endif %}

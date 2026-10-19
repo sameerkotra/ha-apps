@@ -33,7 +33,7 @@
             <label class="settings-check"><input type="radio" name="mode" value="remind" {{ "checked" if shown.mode == "remind" }}>
                 Remind me</label>
         </div>
-        <div class="settings-field" id="reminders-when">
+        <div class="settings-field" id="reminders-when" data-when>
             <span class="panel-title">Remind me after the expected date</span>
             <fieldset class="reminder-chips">
                 <legend class="hint">Pick 1 to {{ max_offsets }}.</legend>
@@ -51,6 +51,80 @@
             <label for="rem-at">At</label>
             <input id="rem-at" type="time" name="at_time" value="{{ shown.at_time }}" step="60">
             <p class="hint">Home Assistant's time zone.</p>
+        </div>
+        <p><button type="submit" class="btn-primary">Save</button></p>
+    </form>
+</section>
+
+{% set aq = '?' + acting_qs if acting_qs else '' %}
+<section class="card settings-group" id="notify-cards">
+    <h2>Card payments</h2>
+    <p class="hint">Reminders before and after a credit card's payment due date (Setup &rarr; Accounts &rarr; Payment due),
+        until a payment to the card is recorded or you mark it as paid. Due payments always show on Home and Upload.</p>
+    {% if not card_enabled %}
+    <p class="warning-hint">Card payment reminders are turned off for the whole app (Admin &rarr; App settings). Your
+        choices are kept for when they're back on.</p>
+    {% endif %}
+    {% if card_saved %}<p class="notice settings-saved">Saved.</p>{% endif %}
+    {% if card_error %}<p class="q-error-inline" role="alert">{{ card_error }}</p>{% endif %}
+    {% if card_prefs is none %}
+    <p class="hint" id="cards-unset">No card payment reminders until you choose when.</p>
+    {% elif card_prefs.mode == "on" and not has_phone %}
+    <p class="warning-hint" id="cards-no-phone">No phone found for you in Home Assistant.</p>
+    {% endif %}
+    <form method="post" action="my-settings-notify{{ aq }}" class="settings-form" id="cards-form" data-max="{{ max_offsets }}">
+        <input type="hidden" name="kind" value="card_payments">
+        <div class="settings-field">
+            <span class="panel-title">Card payments</span>
+            <label class="settings-check"><input type="radio" name="mode" value="off" {{ "checked" if card_shown.mode != "on" }}>
+                No notifications</label>
+            <label class="settings-check"><input type="radio" name="mode" value="on" {{ "checked" if card_shown.mode == "on" }}>
+                Remind me</label>
+        </div>
+        <div class="settings-field" id="cards-when" data-when>
+            <span class="panel-title">Remind me</span>
+            <fieldset class="reminder-chips">
+                <legend class="hint">Pick 1 to {{ max_offsets }}.</legend>
+                {% for value, text in card_choices %}
+                <label><input type="checkbox" name="offsets" value="{{ value }}" {{ "checked" if value in card_shown.offsets }}> {{ text }}</label>
+                {% endfor %}
+            </fieldset>
+            <label for="cards-at">At</label>
+            <input id="cards-at" type="time" name="at_time" value="{{ card_shown.at_time }}" step="60">
+            <p class="hint">Home Assistant's time zone. Several cards due together come as one notification.</p>
+        </div>
+        <p><button type="submit" class="btn-primary">Save</button></p>
+    </form>
+</section>
+
+<section class="card settings-group" id="notify-subs">
+    <h2>Subscription changes</h2>
+    <p class="hint">A notification when a recurring charge's price changes or a new subscription starts (Transactions
+        &rarr; Recurring), once per change. Changes always show on Home and Recurring.</p>
+    {% if not subs_enabled %}
+    <p class="warning-hint">Subscription change alerts are turned off for the whole app (Admin &rarr; App settings). Your
+        choice is kept for when they're back on.</p>
+    {% endif %}
+    {% if subs_saved %}<p class="notice settings-saved">Saved.</p>{% endif %}
+    {% if subs_error %}<p class="q-error-inline" role="alert">{{ subs_error }}</p>{% endif %}
+    {% if subs_prefs is none %}
+    <p class="hint" id="subs-unset">No subscription change notifications until you choose them.</p>
+    {% elif subs_prefs.mode == "on" and not has_phone %}
+    <p class="warning-hint" id="subs-no-phone">No phone found for you in Home Assistant.</p>
+    {% endif %}
+    <form method="post" action="my-settings-notify{{ aq }}" class="settings-form" id="subs-form">
+        <input type="hidden" name="kind" value="subscriptions">
+        <div class="settings-field">
+            <span class="panel-title">Subscription changes</span>
+            <label class="settings-check"><input type="radio" name="mode" value="off" {{ "checked" if subs_shown.mode != "on" }}>
+                No notifications</label>
+            <label class="settings-check"><input type="radio" name="mode" value="on" {{ "checked" if subs_shown.mode == "on" }}>
+                Notify me</label>
+        </div>
+        <div class="settings-field">
+            <label for="subs-at">At</label>
+            <input id="subs-at" type="time" name="at_time" value="{{ subs_shown.at_time }}" step="60">
+            <p class="hint">A change found after this time comes at this time the next day.</p>
         </div>
         <p><button type="submit" class="btn-primary">Save</button></p>
     </form>

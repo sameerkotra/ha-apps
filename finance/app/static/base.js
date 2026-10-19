@@ -5,7 +5,7 @@
 // Values from the server come as JSON in data-* attributes.
 (function () {
     // ---- A link from Home Assistant (the Household Assistant) opens "/<page>/month/<YYYY-MM>", "/<page>/recurring",
-    // "/<page>/dashboard" or "/<page>/uploads[/<account id>]" (common/static/deeplink.js reads the path; the page comes in <body data-page>) ----
+    // "/<page>/dashboard", "/<page>/uploads[/<account id>]" or "/<page>/accounts/<account id>" (common/static/deeplink.js reads the path; the page comes in <body data-page>) ----
     if (window.HouseholdDeepLink) {
         window.HouseholdDeepLink.start(document.body.getAttribute("data-page"), function (route) {
             var m = /^\/month\/(\d{4}-(0[1-9]|1[0-2]))$/.exec(route);
@@ -13,6 +13,8 @@
             var u = /^\/uploads\/(\d{1,12})$/.exec(route);     // an overdue statement's notification
             if (u) return "uploads?account=" + u[1];
             if (route === "/uploads") return "uploads";
+            var a = /^\/accounts\/(\d{1,12})$/.exec(route);    // a card payment reminder
+            if (a) return "account?id=" + a[1];
             return route === "/recurring" ? "recurring" : route === "/dashboard" ? "dashboard" : null;
         }, function (href) { location.href = href; });
     }
@@ -256,6 +258,16 @@
     // <button data-export="transactions-export">: download with the form's current filters.
     on("click", "[data-export]", function (btn) {
         window.location.href = btn.getAttribute("data-export") + "?" + new URLSearchParams(new FormData(btn.form)).toString();
+    });
+
+    // <fieldset data-for-type="credit_card"> inside a form with a <select name="type">: shown only for that type
+    // (Setup → Accounts → Add account's Payment due; without the script it always shows and the server ignores it).
+    document.querySelectorAll("fieldset[data-for-type]").forEach(function (box) {
+        var select = box.form ? box.form.querySelector('select[name="type"]') : null;
+        if (!select) return;
+        function sync() { box.hidden = select.value !== box.getAttribute("data-for-type"); }
+        select.addEventListener("change", sync);
+        sync();
     });
 
     // <form data-enter-clicks="button-id">: Enter in any field clicks that button instead of submitting the form.

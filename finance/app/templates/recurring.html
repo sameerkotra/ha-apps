@@ -77,6 +77,8 @@
 </p>
 {% endif %}
 
+{% include "_subscription_changes.html" %}
+
 {% if selected_account and selected_account.type == "credit_card" %}
 <p class="hint">
     Card-migration view: everything below with an active recurring charge

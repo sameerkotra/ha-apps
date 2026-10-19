@@ -1,0 +1,24 @@
+{# Subscription changes (SPEC.md section 29): Home and Recurring. `sub_changes` from subscriptions.visible; `sub_next`
+   is the page Dismiss comes back to ("dashboard" or "recurring"). #}
+{% if sub_changes %}
+{% set sq = "?" + acting_qs if acting_qs else "" %}
+<section class="card subscription-changes" id="subscription-changes" aria-labelledby="sub-changes-heading">
+    <h2 id="sub-changes-heading">Subscription changes</h2>
+    <ul>
+        {% for c in sub_changes %}
+        <li class="sub-change sub-{{ c.kind }}">
+            <span class="sub-text">{{ c.text }}
+                <span class="hint">{{ c.account_name }}</span></span>
+            <form method="post" action="subscription-dismiss{{ sq }}">
+                <input type="hidden" name="account_id" value="{{ c.account_id }}">
+                <input type="hidden" name="series" value="{{ c.series }}">
+                <input type="hidden" name="change_key" value="{{ c.change_key }}">
+                <input type="hidden" name="next" value="{{ sub_next }}">
+                <button type="submit" class="btn-secondary" title="Don't show this change again">Dismiss</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% if sub_next != "recurring" %}<p class="hint"><a href="recurring{{ sq }}">All recurring charges</a></p>{% endif %}
+</section>
+{% endif %}

@@ -127,6 +127,14 @@ def upload_link(account_id: str):
     return RedirectResponse(url=f"../uploads?account={account_id}", status_code=307, headers={"Cache-Control": "no-store"})
 
 
+# "/<page>/accounts/<account id>" (a card payment reminder, alerts.card_link): that account's page.
+@app.get("/accounts/{account_id}", include_in_schema=False)
+def account_link(account_id: str):
+    if not re.fullmatch(r"\d{1,12}", account_id):
+        raise HTTPException(404, "Not found.")
+    return RedirectResponse(url=f"../account?id={account_id}", status_code=307, headers={"Cache-Control": "no-store"})
+
+
 # "/<page>/month/<YYYY-MM>" asked of the app itself (a link from Home Assistant): that month's dashboard. /dashboard
 # and /recurring are pages already.
 @app.get("/month/{month}", include_in_schema=False)

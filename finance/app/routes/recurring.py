@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from .. import subscriptions
 from ..auth import User, get_current_user, get_acting_user
 from ..db import get_db
 from ..version import APP_VERSION
@@ -60,6 +61,9 @@ def recurring_page(
         unique_merchants = None
         if selected_account is not None and selected_account["type"] == "credit_card":
             unique_merchants = list_unique_merchants(conn, acting.id, selected_account["id"])
+        # Price changes and new subscriptions (SPEC.md section 29), for the owner
+        sub_changes = subscriptions.visible(conn, current, acting,
+                                            account_id=selected_account["id"] if selected_account else None)
 
     return templates.TemplateResponse(
         request,
@@ -74,6 +78,7 @@ def recurring_page(
             "dismissed": found["dismissed"],
             "scan_summary": found if scanned else None,
             "unique_merchants": unique_merchants,
+            "sub_changes": sub_changes, "sub_next": "recurring",
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "recurring",
