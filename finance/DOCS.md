@@ -61,10 +61,6 @@ time or any month; drill into the transactions behind a figure. **Compare** puts
 or two years side by side. When one of your statements is overdue (see **Expected statements**
 below), an amber card above the charts lists it with **Upload** and **Dismiss**; a card payment due
 soon or overdue (see **Card payments** below) gets one too, with **Mark as paid**.
-- **Net worth**: what your accounts hold minus what your cards owe, from each account's latest
-  statement balance, with the date of each and a small line of the last 12 months (each month's end,
-  every account at its last known balance). An account with no statement balance yet is listed as
-  "no balance yet" and left out of the total. Archived accounts aren't in it.
 - **Subscription changes**: a recurring charge whose price changed ("Netflix 15.49 → 17.99 (+16%)
   since Sep 12") or a new subscription (one that became recurring in the last 45 days), each with
   **Dismiss** (see **Recurring** below).
@@ -181,11 +177,7 @@ write the SQL from a plain-English question.
 ### Setup
 - **Accounts**: add, rename, archive, set the preferred upload type (any, PDF, CSV or QFX — a
   reminder on the Upload page, never a block), a website link, the **Expected statement** and, for a
-  credit card, **Payment due**. Each account's page has **Balance over time**: the closing balance of
-  each statement (the PDF's printed new balance, a QFX file's ledger balance) at the statement's end,
-  newest last, with the latest balance and its change since a year before in words, and **Show as a
-  table**. For a card it is what was owed (below zero: a credit). Statements that failed or have no
-  balance aren't in it; with none it says "No statement balances yet".
+  credit card, **Payment due**.
 - **Categories**: your own categories and rules (exact, prefix or contains); rules are tried
   before the built-in ones and the AI. **Also apply to all existing transactions** gives the
   transactions the new rule matches the category your rules give them (a more specific rule
@@ -320,8 +312,8 @@ answer for me** on **Who am I**; the assistant then won't answer their questions
   that aren't paid yet;
 - "How much did we spend at Costco this year?" — the total at one shop or company over the last
   months (12 unless you say), each month's, and the latest charges;
-- "What's the balance on my accounts?" — each account's balance as its latest statement printed it
-  (for a card, what was owed), with that statement's month;
+- "What's the balance on my accounts?", "What's our net worth?" — each account's balance as its
+  latest statement printed it (for a card, what was owed), with that statement's month;
 - "Which statements are overdue?", "When is my Visa statement due?", "Am I missing any
   statements?" — each account's expected statement date, its last upload, the next expected date,
   whether it's overdue, due today, received or dismissed, and the months with nothing uploaded (the
@@ -329,15 +321,11 @@ answer for me** on **Who am I**; the assistant then won't answer their questions
 - "When is my credit card payment due?", "Did I pay the Visa?" — each card's due date, whether
   it's paid (and when, and how much), marked as paid or not, the last payment, and what the latest
   statement said was owed. A payment's description is never given;
-- "What's our net worth?", "How has my Visa balance changed?", "What was the checking balance in
-  June?" — the balances from your statements: one account's over time, or net worth (cash minus
-  what the cards owe), the same numbers as the account page and Home;
 - "Did any subscription go up?", "What new subscriptions started?" — price changes, bills outside
   their usual range and new subscriptions, the ones you dismissed on Home too (marked so);
 - "What finance dates are coming up?", "Any due dates this week?" — statements expected, card
   payments due and bills, in one list, anything overdue first;
-- "Give me a finance summary", "How are my finances?" — net worth and balances, what's due in the
-  next two weeks, this month so far, and any subscription change from the last month, each part
+- "Give me a finance summary", "How are my finances?" — what's due in the next two weeks, this month so far, and any subscription change from the last month, each part
   short. "How did we do this month?" still gives the month's figures.
 
 Only live, unarchived accounts are used, and an account number never shows beyond its last 4

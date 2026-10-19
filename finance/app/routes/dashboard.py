@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 
 from .. import ai_client as _ai_client
-from .. import balances, card_payments, statement_due, subscriptions
+from .. import card_payments, statement_due, subscriptions
 
 from ..auth import User, get_current_user, get_acting_user
 from ..db import get_db
@@ -213,7 +213,6 @@ def dashboard(
         overdue = statement_due.visible_overdue(conn, current, acting)
         payments_due = card_payments.notices(conn, current, acting)          # section 30
         sub_changes = subscriptions.visible(conn, current, acting)           # section 29
-        net_worth = balances.net_worth(conn, acting.id)                     # section 28: the acting person's data
     return templates.TemplateResponse(
         request, "dashboard.html",
         {
@@ -235,8 +234,7 @@ def dashboard(
             "unmatched_transfer_count": unmatched_transfer_count,
             "just_matched": int(matched) if matched.isdigit() else None,
             "overdue": overdue, "due_next": "dashboard", "payments_due": payments_due,
-            "sub_changes": sub_changes, "sub_next": "dashboard", "net_worth": net_worth,
-            "money": balances.money, "balance_date": balances.date_label,
+            "sub_changes": sub_changes, "sub_next": "dashboard",
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "dashboard",

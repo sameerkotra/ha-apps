@@ -808,8 +808,7 @@ checking-account payment).
 - **Compare** (`dashboard-compare`): two months or two years side by side, income
   and spend by category, with change and percent change.
 - Above the filters: the overdue-statements notice (section 27) and the card payments due notice (section 30).
-  Below Income and Spend, before By category: **Net worth** (section 28; not narrowed by the period or account
-  filter) and **Subscription changes** (section 29).
+  Below Income and Spend, before By category: **Subscription changes** (section 29).
 
 ## 17. Non-goals and open points
 
@@ -1162,7 +1161,9 @@ file format, its checks and the id remapping are the shared `app/common/person_d
     description contains the words, compared without case, spaces or punctuation; the total, each month's, and the 10
     latest as `{date, merchant, amount, account}` (never `note`). Fewer than 2 letters → `nack invalid merchant`.
   - `finance.balances`: each active account (not deleted or archived) with its latest complete statement's
-    `new_balance` and `statement_period`; a card's balance is what's owed (negative: in credit).
+    `new_balance` and `statement_period`; a card's balance is what's owed (negative: in credit). Its quick words
+    include "net worth" (the nearest answer since 1.12.0; without it the Assistant's own INCOME word "net" would send
+    "What's our net worth?" to `finance.summary`).
   - `finance.summary` (`month?`): income, spending, net and the top 5 categories, with the Overview's rules (clean
     rows; no transfers or excluded rows; income only on checking/savings; a card purchase is spend).
   - `finance.spending` (`month?`, `category?`): spend by category, or a category's 10 largest charges as
@@ -1189,17 +1190,9 @@ file format, its checks and the id remapping are the shared `app/common/person_d
     due date that matters (the previous one while it's overdue, else the next), days left or "was due Oct 15, 4 days
     ago", and its state — paid (the payment's date and amount), unpaid, marked as paid, or not set; the previous due
     date when that one was paid or marked; the last payment (a live negative transaction on the card: date and amount)
-    and the latest statement's balance (`balances.statement_points`, what was owed) and date. **Never a payment's
+    and the latest statement's balance (`card_payments.latest_statement`, what was owed) and date. **Never a payment's
     description.** `days`: only cards due within that many days (overdue ones included), the cards with no day named.
     No cards: "You have no credit card accounts in Finance." Links: each card's `/accounts/<id>`.
-  - `finance.balance_history` (`account?`, `month?`, `months?` 1–24, default 12): one account's latest balance
-    (`balances.statement_points` up to today; a card's is what's owed), its change since the balance carried to the
-    window's start (else its first statement in the window), and the window's statement balances, newest first; with
-    `month`, the balance carried to that month's end and which statement it came from. No account: net worth
-    (`balances.net_worth`: the total, cash, what the cards owe, each account's latest balance and date, accounts
-    without one named and left out) and its change since the window's first month-end with a value (`net_worth`'s own
-    12 month-ends; another window the same way). Nothing: "No statement balances yet — balances come from uploaded
-    statements." Link: `/accounts/<id>`, or `/dashboard` (Home) for net worth.
   - `finance.subscription_changes` (`merchant?`, `days?` 1–365, default 90): `subscriptions.changes` with dismissed
     ones included and marked "(dismissed)" (dismissing only hides Home's card), from the last `days` days (a new
     subscription by the day it became one), each `subscriptions.text` and the account. Link: `/recurring`.
@@ -1208,10 +1201,12 @@ file format, its checks and the id remapping are the shared `app/common/person_d
     expected in the window; overdue first, then soonest; received, paid, marked as paid and dismissed left out. Ends
     "2 overdue, 4 more in the next 14 days."; none: "Nothing due in the next 14 days, and nothing overdue." Link:
     `/dashboard`.
-  - `finance.overview`: net worth with at most 10 accounts ("; and N more"), `finance.dates`' list for 14 days with at
-    most 8 lines ("; and N more — ask for the finance dates") and its count line, this month so far (the same income,
-    spending and net as `finance.summary` for this month) and subscription changes from the last 30 days, at most 3;
-    a part with nothing to say is left out. No accounts: "You have no accounts in Finance yet." Link: `/dashboard`.
+  - `finance.overview`: three parts, in order: (1) `finance.dates`' list for 14 days with at most 8 lines ("; and N
+    more — ask for the finance dates") and its count line, (2) this month so far (the same income, spending and net
+    as `finance.summary` for this month), (3) subscription changes from the last 30 days, at most 3; a part with
+    nothing to say is left out (none: "Nothing to report yet: nothing due in the next 14 days and no transactions in
+    October 2026."). Someone else's (`person`): it starts "Finance overview (Robin's): ". No accounts: "You have no
+    accounts in Finance yet." Link: `/dashboard`. (Net worth, its first part in 1.11.0, was removed in 1.12.0.)
     `finance.summary` keeps one month's figures ("How did we do this month?", a named month).
   - **All of them only read** (`acts` false), answer from live, unarchived accounts only, show an account as its name
     and at most its last 4 digits ("Visa ••4242"; any run of five or more digits in a name or a bank description is
@@ -1219,7 +1214,7 @@ file format, its checks and the id remapping are the shared `app/common/person_d
     Statement reminders and Subscription change alerts App settings and the owners-only rule of the notices don't
     apply: those are about notifications and notices; answering follows the two switches below and `person`.
   - **Quick answers** (HOUSEHOLD_ASSISTANT_SPEC.md §17.4): plain words only, e.g. "statement due", "card payment",
-    "net worth", "price change", "finance dates", "finance summary", with default `days` where a tool has it (cards
+    "price change", "finance dates", "finance summary", with default `days` where a tool has it (cards
     60, subscription changes 90, dates 14). No concept is given: the Assistant reads a tool's concept alone as well as
     its built-in rule's, so `BILL`, `BALANCE`, `RECURRING` or `PRICE` would turn "Any bills due?", "What's the balance
     on my accounts?" or "What subscriptions do we pay for?" into a choice. Words the Assistant already uses for Todo
@@ -1234,7 +1229,7 @@ file format, its checks and the id remapping are the shared `app/common/person_d
   always the signed-in person's own, never the "view as" person's; 303 back); off → `nack not_allowed person_off`.
   Links: the sidebar page from `assist_tools.sidebar_page`,
   with `/month/<YYYY-MM>` (summary, spending), `/recurring` (recurring, bills, subscription changes), `/dashboard`
-  (Home: net worth, dates, overview), `/accounts/<id>` (an account's page) or `/uploads[/<id>]` (Upload, with that
+  (Home: dates, overview), `/accounts/<id>` (an account's page) or `/uploads[/<id>]` (Upload, with that
   account picked).
 - **Sub-path links**: `/<page>/month/<YYYY-MM>`, `/<page>/dashboard`, `/<page>/recurring`, `/<page>/accounts/<id>`,
   `/<page>/uploads[/<id>]` (the routes `GET /accounts/<id>` and `GET /uploads/<id>` redirect to `../account?id=<id>`
@@ -1264,7 +1259,7 @@ finance/                    the app (slug "finance")
   app/          FastAPI app
     main.py security.py auth.py db.py storage.py jobs.py purge.py
     settings.py ai_client.py ai_usage.py features.py ofx.py qfx_import.py statement_due.py
-    balances.py card_payments.py subscriptions.py alerts.py ...
+    card_payments.py subscriptions.py alerts.py ...
     common/     shared Python (copies of the repository's common/): whoami, auth_core,
                 db_core, web_security, backup_core, ai_client, csv_export, ha_client,
                 ha_people, ha_notify, …
@@ -1443,34 +1438,12 @@ reminded on their phone (through Home Assistant) and in the app. The design and 
   `user_notify` hidden.
 - Tests: `tests/test_statement_reminders.py`.
 
-## 28. Balance over time and net worth (`app/balances.py`)
+## 28. (Removed) Balance over time and net worth
 
-Every figure is a statement's own closing balance, never a sum of transactions.
-
-- **A point** (`statement_points(conn, account_id)`): each live statement (`deleted_at` empty) whose status isn't
-  `error` (one awaiting confirmation or in Review counts) and that has `new_balance` — the PDF's printed New Balance
-  (section 4), a QFX file's `LEDGERBAL` (section 4a) — at its **end date**: `period_end` (QFX), else the date of its
-  newest live transaction, else the last day of `statement_period`; a statement with none of them is left out. Two
-  ending the same day: the newer (higher id) wins. Oldest first.
-- **Signs** (section 8): checking and savings show what is held; a credit card shows what is owed (positive = owed,
-  negative = a credit), as `new_balance` is stored and as the balance check and the Household Assistant's balances
-  read it.
-- **Account page** (`account`, `account_detail.html`, `#balance-over-time`): **Balance over time**, a line chart
-  (`charts.multi_series_chart`, kind `line`; the same inline SVG, theme colours and `data-tip` tooltips as the other
-  charts; no dependency) of the points, newest last, labelled "Balance" or "Owed"; a sentence above it
-  (`#balance-summary`, `summary_text`: "Balance 1,250.50 on Oct 14, 2026; up 350.50 since a year before (900.00 on
-  Sep 30, 2025)." — the balance a year before the latest is the one carried to that day; with less than a year,
-  "since the first statement"; with one point, just the balance) and **Show as a table** (`#balance-table`, newest
-  first, QFX badge). With no point: "No statement balances yet." (`#balance-empty`). Shown to everyone who can open
-  the account.
-- **Net worth** (Home, `_net_worth.html`, `#net-worth`; `net_worth(conn, user_id, today)`): the acting person's live,
-  unarchived accounts (the same data Home shows, section 20: a viewer with shared access sees the owner's). Each
-  account's latest point on or before today with its date ("as of"); the total (`#net-worth-total`) is the cash
-  accounts' balances minus what the cards owe; an account with no point is listed "no balance yet" and left out
-  (the card says how many). A line of the last 12 month-ends (this month's is today), each account at its last
-  known balance carried forward (`None` before any account has one), with a table of the same under **By account**.
-  No accounts: no card. Not narrowed by Home's period or account filter.
-- "Today" is `statement_due.today()` (tests replace `statement_due.now`). Tests: `tests/test_balances.py`.
+Added in 1.10.0, removed in 1.12.0: the account page's **Balance over time** chart, Home's **Net worth** card,
+`app/balances.py` and the Household Assistant's `finance.balance_history` (and the overview's net worth part). Nothing
+was stored for them, so no migration. The latest statement's balance a card payment answer quotes is now
+`card_payments.latest_statement` (section 30); `finance.balances` (each account's latest printed balance) stays.
 
 ## 29. Subscription price changes and new subscriptions (`app/subscriptions.py`)
 
@@ -1536,7 +1509,12 @@ Built on the recurring detection (section 16), at query time (its cached scan): 
   card has a day) on Setup → Accounts and Transactions → Accounts: "Was due 2 days ago" (`due-overdue`), "Due today"
   (`due-today`), "Oct 22 (in 3 days)" (`due-soon` within 7 days), "Paid · due Nov 5" / "Marked paid · due Nov 5"
   (`due-paid`); and a **Payment due** line on the card's page (`#payment-due`, with Mark as paid).
-- Tests: `tests/test_card_payments.py`.
+- **What was owed** (`latest_statement(conn, account_id, on)`, for the Household Assistant's card payment answers,
+  section 23a): the `new_balance` of the account's live statement whose status isn't `error` (one awaiting
+  confirmation or in Review counts) with the latest **end date** on or before `on` — `period_end` (QFX), else its
+  newest live transaction's date, else the last day of `statement_period`; two ending the same day: the newer
+  (higher id). A card's balance is what is owed (negative: a credit). Nothing: no figure.
+- Tests: `tests/test_card_payments.py`, `tests/test_assistant_tools.py`.
 
 ## 31. Card payment and subscription change notifications (`app/alerts.py`)
 

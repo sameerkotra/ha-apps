@@ -155,7 +155,8 @@
     "money in the bank",
     "credit card balance",
     "savings account",
-    "current account"
+    "current account",
+    "net worth"
    ]
   }
  },
@@ -267,46 +268,6 @@
   }
  },
  {
-  "name": "finance.balance_history",
-  "what": "Balance history (an account's over time or at a month's end) or, with no account, net worth.",
-  "args": {
-   "account": {
-    "type": "string",
-    "what": "one account (name or last 4)"
-   },
-   "month": {
-    "type": "month",
-    "what": "at this month's end"
-   },
-   "months": {
-    "type": "number",
-    "what": "months back (default 12)",
-    "min": 1,
-    "max": 24
-   },
-   "person": {
-    "type": "string",
-    "what": "a shared owner (default the asker)"
-   }
-  },
-  "returns": "balances and the change",
-  "acts": false,
-  "scope": "person",
-  "examples": [
-   "What's our net worth?"
-  ],
-  "quick": {
-   "words": [
-    "net worth",
-    "balance history",
-    "owe on my cards",
-    "balance changed",
-    "balance over time",
-    "balance at the end"
-   ]
-  }
- },
- {
   "name": "finance.subscription_changes",
   "what": "Subscription price changes, bills outside their usual range, new subscriptions.",
   "args": {
@@ -381,7 +342,7 @@
  },
  {
   "name": "finance.overview",
-  "what": "Finance overview: net worth, what's due, this month so far, subscription changes. Not for one month.",
+  "what": "Finance overview: what's due, this month so far, subscription changes. Not for one month.",
   "args": {
    "person": {
     "type": "string",

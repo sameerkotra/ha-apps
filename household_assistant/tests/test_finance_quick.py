@@ -5,6 +5,8 @@ in place of the fixture's Finance tools in the phrase corpus's household (quick_
 - each Finance tool's own quick words reach that tool, by the rules alone;
 - the spec's example questions the rules answer go to the right tool, the others to the AI or elsewhere as before;
 - "Give me a finance summary" reaches finance.overview, "How did we do this month?" finance.summary;
+- "What's our net worth?" and balance questions reach finance.balances (Finance 1.12.0 removed
+  finance.balance_history), never the month's finance.summary;
 - the whole phrase corpus still reads as it did, but for "finance summary" (now the overview, as decided).
 """
 import _env  # noqa: F401  (must be first)
@@ -63,9 +65,11 @@ class FinanceQuick(unittest.TestCase):
             "Am I missing any statements?": "finance.statements",
             "When is my credit card payment due?": "finance.payments_due",
             "Which card payments are due this week?": "finance.payments_due",
-            "How has my Visa balance changed?": "finance.balance_history",
-            "What's our net worth?": "finance.balance_history",
-            "How much do I owe on my cards?": "finance.balance_history",
+            # finance.balance_history was removed (Finance 1.12.0): these go to the latest balances
+            "How has my Visa balance changed?": "finance.balances",
+            "What's our net worth?": "finance.balances",
+            "What's my net worth?": "finance.balances",
+            "How much do I owe on my cards?": "finance.balances",
             "What new subscriptions started?": "finance.subscription_changes",
             "Has Netflix changed its price?": "finance.subscription_changes",
             "How much do we spend on subscriptions a year?": "finance.recurring",

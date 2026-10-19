@@ -19,9 +19,11 @@ card restored / unarchived (`payment_due_set_at`) never count. "Today" is statem
     status(conn, account, on)          {overdue, upcoming, ...}: the card's cycles today
     notices(conn, current, acting)     Home's and Upload's Payment due notices
     column(conn, rows, current, acting) {account id: (text, css class)} for the accounts lists
+    latest_statement(conn, account_id, on)  {date, balance}: the latest statement's printed balance (what was owed)
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date, timedelta
 
 from . import settings, statement_due
@@ -263,3 +265,40 @@ def parse_form(value: str) -> tuple[int | None, str | None]:
     if value.isdigit() and 1 <= int(value) <= 31:
         return int(value), None
     return None, "Pick the day the card's payment is due (1–31, or the last day of the month)."
+
+
+# ------------------------------------------------------------------ the latest statement's balance (what was owed)
+
+def iso_date(value) -> date | None:
+    try:
+        return date.fromisoformat(str(value or "")[:10])
+    except ValueError:
+        return None
+
+
+def statement_end(row) -> date | None:
+    """A statement's end date: period_end (QFX), else its last transaction's date, else its month's last day."""
+    d = iso_date(row["period_end"]) or iso_date(row["last_txn"])
+    if d is not None:
+        return d
+    ym = statement_due.parse_month(row["statement_period"])
+    return date(ym[0], ym[1], calendar.monthrange(*ym)[1]) if ym else None
+
+
+def latest_statement(conn, account_id: int, on: date) -> dict | None:
+    """{date, balance}: the closing balance (statements.new_balance) of the account's statement with the latest end
+    date on or before `on` (the newest statement wins a tie). Only live statements that didn't fail and have a
+    balance count. A card's balance is what it owed (negative: a credit)."""
+    rows = conn.execute(
+        "SELECT s.id, s.period_end, s.statement_period, s.new_balance, "
+        "(SELECT MAX(t.date) FROM transactions t WHERE t.statement_id = s.id AND t.deleted_at IS NULL) AS last_txn "
+        "FROM statements s WHERE s.account_id = ? AND s.deleted_at IS NULL AND s.status != 'error' "
+        "AND s.new_balance IS NOT NULL ORDER BY s.id", (account_id,)).fetchall()
+    found = None
+    for r in rows:
+        d = statement_end(r)
+        if d is None or d > on:
+            continue
+        if found is None or d >= found["date"]:
+            found = {"date": d, "balance": round(float(r["new_balance"]), 2)}
+    return found

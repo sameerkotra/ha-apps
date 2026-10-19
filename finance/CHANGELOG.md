@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.12.0
+
+- **Removed: balance over time and net worth.** Each account's page no longer has **Balance over time** (its chart and table), Home no longer has the **Net worth** card, and the Household Assistant no longer answers balance history or net worth: "Give me a finance summary" now gives what's due, this month so far and subscription changes, and "What's our net worth?" or "How has my Visa balance changed?" get each account's latest statement balance, as "What's the balance on my accounts?" does.
+- Kept: statements' printed balances and the balance check, card payment due dates with what the latest statement said was owed, subscription changes, statement reminders and all notifications. Nothing stored changes.
+
 ## 1.11.0
 
 - **Ask the Household Assistant about statements, due dates, balances and subscriptions** (with **Answer the Household Assistant** on, as before): "Which statements are overdue?", "When is my credit card payment due?", "Did I pay the Visa?", "What's our net worth?", "How has my Visa balance changed?", "Did any subscription go up?", and "What finance dates are coming up?" for everything due in one list, overdue first.

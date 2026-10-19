@@ -8,7 +8,7 @@ from ..auth import ADMIN_USERS, User, get_current_user, get_acting_user
 from ..common import whoami as whoami_core
 from .. import settings
 from ..db import get_db
-from .. import balances, card_payments, notices, ofx, statement_due, upload_page
+from .. import card_payments, notices, ofx, statement_due, upload_page
 from ..version import APP_VERSION
 
 router = APIRouter()
@@ -486,8 +486,7 @@ def account_detail(
 
         due = statement_due.cycle_status(conn, account) if statement_due.can_see(current, acting) else None
         last_upload = statement_due.last_upload(conn, id)
-        # Balance over time (SPEC.md section 28) and the card's payment due date (section 30)
-        balance = balances.account_chart(account, balances.statement_points(conn, id))
+        # The card's payment due date (section 30)
         payment = card_payments.status(conn, account) if card_payments.visible(current, acting) else None
 
     return templates.TemplateResponse(
@@ -498,7 +497,6 @@ def account_detail(
             "account": account,
             "due": due, "due_label": statement_due.column_label(due), "last_upload": last_upload,
             "due_enabled": statement_due.enabled(), "date_label": statement_due.label,
-            "balance": balance, "balance_date": balances.date_label, "money": balances.money,
             "payment": payment, "payment_label": card_payments.column_label(payment),
             "payment_enabled": card_payments.enabled(),
             "csv_layout": upload_page.read_layout(account["csv_layout"]),

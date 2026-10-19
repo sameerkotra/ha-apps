@@ -125,30 +125,6 @@
     <tr><th>Added</th><td>{{ account.created_at }}</td></tr>
 </table>
 
-<section class="balance-over-time" id="balance-over-time" aria-labelledby="balance-heading">
-    <h2 id="balance-heading">Balance over time</h2>
-    {% if balance.svg %}
-    <p class="hint" id="balance-summary">{{ balance.text }}</p>
-    <figure class="chart-figure balance-chart">
-        <figcaption>{% if balance.card %}Owed{% else %}Balance{% endif %} per statement</figcaption>
-        {{ balance.svg }}
-    </figure>
-    <details class="chart-table" id="balance-table">
-        <summary>Show as a table</summary>
-        <div class="table-scroll">
-        <table class="detail-table">
-            <tr><th>Statement end</th><th>{% if balance.card %}Owed{% else %}Balance{% endif %}</th></tr>
-            {% for p in balance.rows %}
-            <tr><td>{{ balance_date(p.date) }}{% if p.source == "qfx" %} <span class="type-badge source-qfx">QFX</span>{% endif %}</td><td>{{ money(p.balance) }}</td></tr>
-            {% endfor %}
-        </table>
-        </div>
-    </details>
-    {% else %}
-    <p class="empty-state" id="balance-empty">No statement balances yet.</p>
-    {% endif %}
-</section>
-
 <h2>Statements</h2>
 {% if account.type == "credit_card" %}
 <p class="hint">For a credit card, &ldquo;Money in&rdquo; is the payments and credits on the statement and &ldquo;Money out&rdquo; is the purchases and charges &mdash; the same direction as checking/savings.</p>

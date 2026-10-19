@@ -1,6 +1,7 @@
 """The Household Assistant's questions about statements, due dates, balances and subscriptions (app/tools.py;
-FINANCE_ASSISTANT_TOOLS_SPEC.md §7): finance.statements, finance.payments_due, finance.balance_history,
-finance.subscription_changes, finance.dates, finance.overview, and what finance.recurring and finance.bills add.
+FINANCE_ASSISTANT_TOOLS_SPEC.md §7): finance.statements, finance.payments_due, finance.subscription_changes,
+finance.dates, finance.overview, and what finance.recurring and finance.bills add. (finance.balance_history and the
+overview's net worth were removed in 1.12.0.)
 
 "Today" is frozen by replacing app.statement_due.now (the clock every one of them reads), Monday 19 October 2026.
 All people, merchants, numbers and amounts here are invented."""
@@ -13,8 +14,8 @@ import pytest
 
 from test_tools import call, nack, turn_on
 
-NEW = ("finance.statements", "finance.payments_due", "finance.balance_history", "finance.subscription_changes",
-       "finance.dates", "finance.overview")
+NEW = ("finance.statements", "finance.payments_due", "finance.subscription_changes", "finance.dates",
+       "finance.overview")
 FULL_NUMBER = "5500005555555559"
 
 
@@ -67,7 +68,6 @@ def test_the_new_tools_are_listed_read_only_with_their_args_and_quick_words(env)
     tools.tools.check()                                                  # still fits on the bus
     spec = {t["name"]: t for t in tools.tools.spec()}
     want = {"finance.statements": {"account", "person"}, "finance.payments_due": {"account", "days", "person"},
-            "finance.balance_history": {"account", "month", "months", "person"},
             "finance.subscription_changes": {"merchant", "days", "person"}, "finance.dates": {"days", "person"},
             "finance.overview": {"person"}}
     for name, args in want.items():
@@ -76,7 +76,6 @@ def test_the_new_tools_are_listed_read_only_with_their_args_and_quick_words(env)
         assert all(not a.get("required") for a in spec[name]["args"].values())
     assert spec["finance.payments_due"]["args"]["days"] == {"type": "number", "what": "due within N days", "min": 1,
                                                             "max": 60}
-    assert spec["finance.balance_history"]["args"]["month"]["type"] == "month"
     assert spec["finance.subscription_changes"]["args"]["days"]["max"] == 365
     assert set(spec["finance.recurring"]["args"]) == {"merchant", "account", "person"}
     assert all(t["acts"] is False for n, t in spec.items() if n != "finance.expense.add")
@@ -86,7 +85,10 @@ def test_the_new_tools_are_listed_read_only_with_their_args_and_quick_words(env)
         for c in (t.get("quick") or {}).get("concepts", []):
             assert c in ("BILL", "BALANCE", "RECURRING", "PRICE")
     assert "finance summary" in spec["finance.overview"]["quick"]["words"]
-    assert "net worth" in spec["finance.balance_history"]["quick"]["words"]
+    assert "finance.balance_history" not in spec                          # removed in 1.12.0
+    assert not any("balance history" in w or "balance over time" in w for t in spec.values()
+                   for w in (t.get("quick") or {}).get("words", []))
+    assert "net worth" in spec["finance.balances"]["quick"]["words"]   # its nearest answer, not the month's summary
 
 
 def test_link_targets_accept_accounts_and_uploads_and_those_paths_redirect(env):
@@ -286,9 +288,19 @@ def test_payments_no_cards(env, clock):
     assert call("finance.payments_due")["text"] == "You have no credit card accounts in Finance."
 
 
-# ------------------------------------------------------------------ finance.balance_history
+def test_payments_the_owed_amount_ignores_a_statement_ending_after_today_and_the_newest_wins_a_tie(env, clock):
+    visa = card(env, "Visa", 22)
+    statement(env, visa, "2026-09-03 09:00:00", "2026-08", period_end="2026-10-01", balance=200.0)
+    statement(env, visa, "2026-10-03 09:00:00", "2026-09", period_end="2026-10-01", balance=250.0)   # same end: newest
+    statement(env, visa, "2026-10-04 09:00:00", "2026-10", period_end="2026-10-30", balance=999.0)   # after today
+    statement(env, visa, "2026-10-05 09:00:00", "2026-09", period_end="2026-09-30", balance=7.0,
+              status="error")                                                                     # failed: left out
+    assert (call("finance.payments_due")["items"][0]["statement_balance"],
+            call("finance.payments_due")["items"][0]["statement_date"]) == (250.0, "2026-10-01")
+
 
 def balances_household(env):
+    """Accounts with statement balances (for the rules for every tool)."""
     chk = account(env, "Checking", account_number_last4="1234")
     for end, bal in (("2025-12-31", 900.0), ("2026-03-31", 1000.0), ("2026-06-30", 1200.0), ("2026-09-30", 1500.0)):
         statement(env, chk, end + " 12:00:00", end[:7], period_end=end, balance=bal, source="qfx")
@@ -298,63 +310,6 @@ def balances_household(env):
     old = account(env, "Old", is_archived=1)
     statement(env, old, "2026-10-02 09:00:00", "2026-09", period_end="2026-09-30", balance=99999.0)
     return {"chk": chk, "visa": visa, "sav": sav}
-
-
-def test_one_accounts_history_and_change(env, clock):
-    ids = balances_household(env)
-    res = call("finance.balance_history", account="checking")
-    assert res["text"] == ("Checking ••1234: 1,500.00 on Sep 30, 2026, up 600.00 since Dec 31, 2025 (900.00). "
-                           "Statements in the last 12 months: Sep 30, 2026 1,500.00; Jun 30, 2026 1,200.00; "
-                           "Mar 31, 2026 1,000.00; Dec 31, 2025 900.00.")
-    assert [i["balance"] for i in res["items"]] == [1500.0, 1200.0, 1000.0, 900.0]
-    assert res["links"][0]["target"] == f"/accounts/{ids['chk']}"
-    res = call("finance.balance_history", account="checking", months=6)      # since Apr 30: carried from Mar 31
-    assert "up 500.00 since Mar 31, 2026 (1,000.00)" in res["text"]
-    assert [i["balance"] for i in res["items"]] == [1500.0, 1200.0]
-    assert "440.00 owed on Oct 1, 2026" in call("finance.balance_history", account="visa")["text"]
-    assert call("finance.balance_history", account="savings")["text"] == (
-        "Savings: No statement balances yet — balances come from uploaded statements.")
-
-
-def test_month_picks_the_statement_ending_on_or_before_its_end(env, clock):
-    balances_household(env)
-    res = call("finance.balance_history", account="1234", month="2026-07")
-    assert res["text"] == ("Checking ••1234 at the end of July 2026: 1,200.00, from the statement ending Jun 30, 2026 "
-                           "(QFX).")
-    assert res["items"][0]["date"] == "2026-06-30"
-    assert "1,000.00, from the statement ending Mar 31" in call("finance.balance_history", account="checking",
-                                                                month="2026-03")["text"]
-    assert "had no statement balance by the end of November 2025" in call(
-        "finance.balance_history", account="checking", month="2025-11")["text"]
-
-
-def test_net_worth_subtracts_cards_leaves_out_accounts_without_a_balance_and_matches_balances_py(env, clock):
-    from app import balances, db
-    balances_household(env)
-    res = call("finance.balance_history")
-    with db.get_db() as c:
-        nw = balances.net_worth(c, "tester", date(2026, 10, 19))
-    assert nw["total"] == 1060.0
-    assert res["text"].startswith(f"Net worth {nw['total']:,.2f} (cash 1,500.00, cards 440.00 owed), up 160.00 since "
-                                  "Dec 31, 2025.")
-    first = next(m for m in nw["months"] if m["value"] is not None)
-    assert first["value"] == 900.0 and 1060.0 - first["value"] == 160.0
-    assert "Checking ••1234 1,500.00 (Sep 30, 2026); Savings no balance yet (left out); Visa ••4242 440.00 owed " \
-           "(Oct 1, 2026)." in res["text"]
-    assert [(i["account"], i["balance"], i["counts"]) for i in res["items"]] == [
-        (f"{r['name']}" + {"Checking": " ••1234", "Visa": " ••4242"}.get(r["name"], ""), r["balance"], r["signed"])
-        for r in nw["accounts"]]
-    assert "Old" not in res["text"] and "99,999" not in res["text"]
-    assert res["links"][0]["target"] == "/dashboard"
-    # another window: the same arithmetic, carried forward from the month-end 24 months back
-    assert "since Dec 31, 2025" in call("finance.balance_history", months=24)["text"]
-    assert "Net worth 900.00" in call("finance.balance_history", month="2026-02")["text"]
-
-
-def test_balance_history_nothing_to_show(env, clock):
-    account(env, "Checking")
-    assert call("finance.balance_history")["text"] == (
-        "No statement balances yet — balances come from uploaded statements.")
 
 
 # ------------------------------------------------------------------ finance.subscription_changes
@@ -552,12 +507,11 @@ def test_overview_parts_in_order_with_the_same_numbers(env, clock):
     charges(env, chk, "SPOTIFY", [("2026-08-20", 9.99), ("2026-09-20", 9.99), ("2026-10-18", 9.99)])
     res = call("finance.overview")
     text = res["text"]
-    parts = [text.index(p) for p in ("Net worth", "Due:", "October 2026 so far:", "Subscription changes:")]
+    parts = [text.index(p) for p in ("Due:", "October 2026 so far:", "Subscription changes:")]
     assert parts == sorted(parts)
-    assert text.startswith("Net worth 1,560.00 (cash 2,000.00, cards 440.00 owed), down 440.00 since Sep 30, 2026. "
-                           "Amex no balance yet (left out); Checking 2,000.00 (Sep 30, 2026);")
-    hist = call("finance.balance_history")
-    assert hist["text"].split(".")[0].split(",")[0] == text.split(".")[0].split(",")[0]
+    assert text.startswith("Due: ")
+    assert "Net worth" not in text and "no balance yet" not in text            # removed in 1.12.0
+    assert {i["part"] for i in res["items"]} == {"due", "this month", "subscription change"}
     dates = call("finance.dates")
     assert [i["what"] for i in res["items"] if i.get("part") == "due"] == [i["what"] for i in dates["items"]]
     assert dates["text"].split(". ")[-1] in text                                 # the same count line
@@ -574,13 +528,10 @@ def test_overview_leaves_out_empty_parts_and_says_when_there_are_no_accounts(env
     assert call("finance.overview")["text"] == "You have no accounts in Finance yet."
     a = account(env, "Checking")
     assert call("finance.overview")["text"] == (
-        "Nothing to report yet: no statement balances, nothing due in the next 14 days and no transactions in "
-        "October 2026.")
+        "Nothing to report yet: nothing due in the next 14 days and no transactions in October 2026.")
     statement(env, a, "2026-10-01 09:00:00", "2026-09", period_end="2026-09-30", balance=50.0)
-    text = call("finance.overview")["text"]
-    assert text == ("Net worth 50.00 (cash 50.00, cards nothing owed), no change since Sep 30, 2026. "
-                    "Checking 50.00 (Sep 30, 2026).")
-    assert "Due:" not in text and "so far" not in text and "Subscription" not in text
+    assert call("finance.overview")["text"] == (                       # a statement balance alone isn't reported
+        "Nothing to report yet: nothing due in the next 14 days and no transactions in October 2026.")
 
 
 def test_overview_limits_and_n_more(env, clock):
@@ -592,8 +543,6 @@ def test_overview_limits_and_n_more(env, clock):
         charges(env, chk, name, [("2026-07-01", start), ("2026-08-01", start), ("2026-09-01", start),
                                  ("2026-10-01", start + 1)])
     text = call("finance.overview")["text"]
-    assert "Acct 09 19.00 (Aug 31, 2026); and 3 more." in text                 # 10 of 13 accounts
-    assert "Acct 10 20.00" not in text
     assert text.count(" statement — expected") == 8
     assert "and 10 more — ask for the finance dates." in text         # 12 overdue, 2 next statements, 4 bills
     sub = text.split("Subscription changes: ")[1]
@@ -614,8 +563,7 @@ def everything(env):
 
 
 ALL = [("finance.statements", {}), ("finance.statements", {"account": "visa"}), ("finance.payments_due", {}),
-       ("finance.payments_due", {"days": 30}), ("finance.balance_history", {}),
-       ("finance.balance_history", {"account": "checking"}), ("finance.subscription_changes", {}),
+       ("finance.payments_due", {"days": 30}), ("finance.subscription_changes", {}),
        ("finance.dates", {"days": 60}), ("finance.overview", {}), ("finance.recurring", {}), ("finance.bills", {})]
 
 
@@ -645,10 +593,10 @@ def test_someone_elses_data_needs_a_share_and_person_works_with_one(env, clock):
         "Statements (Robin's), 1 overdue: Robin Checking: monthly on the 12th; overdue 7 days")
     assert call("finance.payments_due", person="Robin")["text"].startswith(
         "Card payments (Robin's): Robin Visa (due the 22nd): Oct 22 (in 3 days), unpaid")
-    assert call("finance.balance_history", person="Robin")["text"].startswith("Net worth (Robin's) 321.00")
     assert "ROBIN GYM 20.00 → 25.00" in call("finance.subscription_changes", person="Robin")["text"]
     assert call("finance.dates", person="Robin")["text"].startswith("Coming up (Robin's): Robin Checking statement")
-    assert call("finance.overview", person="Robin")["text"].startswith("Net worth (Robin's) 321.00")
+    assert call("finance.overview", person="Robin")["text"].startswith(
+        "Finance overview (Robin's): Due: Robin Checking statement")
     assert call("finance.payments_due", person="Robin")["links"][0]["target"] == f"/accounts/{rcard}"
 
 

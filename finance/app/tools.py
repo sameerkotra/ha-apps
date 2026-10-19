@@ -12,10 +12,9 @@ app/common/assist_tools.py).
   latest cycle's status (statement_due.cycle_status) and the Upload strip's missing months;
 - `finance.payments_due`: each credit card's payment due date and whether it's paid (card_payments.status), the last
   payment (date and amount, never its description) and what the latest statement said was owed;
-- `finance.balance_history`: one account's statement balances over time, or net worth (balances.py);
 - `finance.subscription_changes`: price changes and new subscriptions (subscriptions.py), dismissed ones marked;
 - `finance.dates`: every statement, card payment and recurring charge coming up, overdue first;
-- `finance.overview`: net worth, what's due, this month so far and subscription changes, each part short;
+- `finance.overview`: what's due, this month so far and subscription changes, each part short;
 - `finance.expense.add` (acts): a hand-entered spend on one of the person's own accounts ("I spent 200 on fuel at
   Shell"), the same row the Uploads page's *Add one by hand* makes — only after the person taps the proposed change,
   and never on someone else's accounts.
@@ -43,7 +42,6 @@ import re
 from datetime import date, timedelta
 from types import SimpleNamespace
 
-from . import balances as balances_mod
 from . import card_payments, recurring, settings, statement_due, subscriptions, upload_page
 from .common import app_bus as bus
 from .common import assist_tools
@@ -278,11 +276,6 @@ def _owed(v: float) -> str:
     return f"{_money(v)} owed" if v > 0 else ("nothing owed" if v == 0 else f"{_money(-v)} in credit")
 
 
-def _points(ctx, a, on: date) -> list[dict]:
-    """The account's statement balances up to today (balances.py: the account page's and Home's)."""
-    return [p for p in balances_mod.statement_points(ctx.conn, a["id"]) if p["date"] <= on]
-
-
 # ------------------------------------------------------------------ recurring charges
 
 def _raw_series(ctx, uid: str, account_id: int | None = None) -> list[dict]:
@@ -390,9 +383,9 @@ def _card(ctx, a, on: date) -> dict:
         "AND date <= ? ORDER BY date DESC, id DESC LIMIT 1", (a["id"], on.isoformat())).fetchone()
     if last is not None:
         out["last_payment"], out["last_payment_amount"] = str(last["date"])[:10], round(-last["amount"], 2)
-    points = _points(ctx, a, on)
-    if points:
-        out["statement_balance"], out["statement_date"] = points[-1]["balance"], points[-1]["date"].isoformat()
+    latest = card_payments.latest_statement(ctx.conn, a["id"], on)
+    if latest is not None:
+        out["statement_balance"], out["statement_date"] = latest["balance"], latest["date"].isoformat()
     st = card_payments.status(ctx.conn, a, on)
     if st is None:
         return out
@@ -524,8 +517,9 @@ def merchant(ctx):
             "Each account's balance as its latest statement printed it (a card: what was owed).",
             args={"person": _PERSON}, returns="accounts with type, last 4 digits, balance and statement month",
             examples=("What's the balance on my accounts?",),
+            # ("net worth": since 1.12.0 its nearest answer; without it the Assistant's INCOME "net" takes it)
             quick={"concepts": ["BALANCE"], "words": ["bank balance", "money in the bank", "credit card balance",
-                                                      "savings account", "current account"]})
+                                                      "savings account", "current account", "net worth"]})
 def balances(ctx):
     uid, owner = _owner(ctx)
     accounts = ctx.conn.execute("SELECT id, name, type, account_number_last4 FROM accounts WHERE user_id = ? AND "
@@ -642,12 +636,12 @@ def _last_statement(ctx, a) -> dict | None:
     found = []
     if s is not None:
         ym = statement_due.parse_month(s["statement_period"])
-        end = balances_mod._iso(s["period_end"]) or balances_mod._iso(s["last_txn"])
+        end = card_payments.iso_date(s["period_end"]) or card_payments.iso_date(s["last_txn"])
         period = (f"{calendar.month_abbr[ym[1]]} {ym[0]}" if ym else
                   f"to {statement_due.label(end)}" if end else "")
         found.append((statement_due.local_from_utc(s["at"]), "QFX" if s["source"] == "qfx" else "PDF", period))
     if c is not None:
-        end = balances_mod._iso(c["last_txn"])
+        end = card_payments.iso_date(c["last_txn"])
         found.append((statement_due.local_from_utc(c["at"]), "CSV", f"to {statement_due.label(end)}" if end else ""))
     found = [f for f in found if f[0] is not None]
     if not found:
@@ -758,135 +752,6 @@ def payments_due(ctx):
     text = f"Card payments{_whose(owner, ctx)}: " + ". ".join(_card_text(c) for _a, c in cards) + "." + unset
     return ctx.result(text, items=[{k: v for k, v in c.items() if k != "account_id"} for _a, c in cards],
                       links=[_account_link(ctx, a) for a, _c in cards[:5]])
-
-
-# ------------------------------------------------------------------ balances over time and net worth (section 28)
-
-def _months_back(on: date, months: int) -> date:
-    y, m = on.year, on.month - months
-    while m < 1:
-        y, m = y - 1, m + 12
-    return min(on, date(y, m, calendar.monthrange(y, m)[1]))
-
-
-def _net_series(ctx, uid: str, on: date, months: int) -> list[dict]:
-    """Net worth at the last `months` month-ends, as balances.net_worth works out its line (the same accounts, each
-    one's balance carried forward)."""
-    histories = []
-    for a in _accounts(ctx, uid):
-        points = _points(ctx, a, on)
-        if points:
-            histories.append((-1 if balances_mod.is_card(a) else 1, points))
-    out = []
-    for d in balances_mod._month_ends(on, months):
-        known = [sign * p["balance"] for sign, p in ((s, balances_mod.balance_at(ps, d)) for s, ps in histories)
-                 if p is not None]
-        out.append({"date": d, "value": round(sum(known), 2) if known else None})
-    return out
-
-
-def _move(change: float) -> str:
-    return "no change" if change == 0 else f"{'up' if change > 0 else 'down'} {_money(abs(change))}"
-
-
-def _net_worth(ctx, uid: str, on: date, months: int = balances_mod.MONTHS, limit: int | None = None,
-               whose: str = "") -> dict | None:
-    """{text, items, total}: net worth and each account's latest balance (balances.net_worth), or None when no
-    account has a balance yet."""
-    nw = balances_mod.net_worth(ctx.conn, uid, on)
-    if nw["total"] is None:
-        return None
-    series = nw["months"] if months == balances_mod.MONTHS else _net_series(ctx, uid, on, months)
-    start = next((m for m in series if m["value"] is not None), None)
-    cash = round(sum(r["signed"] for r in nw["accounts"] if r["signed"] is not None and r["type"] != "credit_card"), 2)
-    owed = round(sum(r["balance"] for r in nw["accounts"] if r["balance"] is not None and r["type"] == "credit_card"), 2)
-    names = {a["id"]: _acct(a) for a in _accounts(ctx, uid)}
-    text = f"Net worth{whose} {_money(nw['total'])} (cash {_money(cash)}, cards {_owed(owed)})"
-    if start is not None and start["date"] != series[-1]["date"]:
-        text += f", {_move(round(nw['total'] - start['value'], 2))} since {balances_mod.date_label(start['date'])}"
-    shown = nw["accounts"] if limit is None else nw["accounts"][:limit]
-    parts = []
-    for r in shown:
-        if r["balance"] is None:
-            parts.append(f"{names[r['id']]} no balance yet (left out)")
-        elif r["type"] == "credit_card":
-            parts.append(f"{names[r['id']]} {_owed(r['balance'])} ({balances_mod.date_label(r['as_of'])})")
-        else:
-            parts.append(f"{names[r['id']]} {_money(r['balance'])} ({balances_mod.date_label(r['as_of'])})")
-    more = len(nw["accounts"]) - len(shown)
-    text += ". " + "; ".join(parts) + (f"; and {more} more" if more > 0 else "") + "."
-    items = [{"account": names[r["id"]], "type": r["type"], "balance": r["balance"],
-              "as_of": r["as_of"].isoformat() if r["as_of"] else None, "counts": r["signed"]} for r in nw["accounts"]]
-    return {"text": text, "items": items, "total": nw["total"],
-            "change": round(nw["total"] - start["value"], 2) if start is not None else None}
-
-
-NO_BALANCES = "No statement balances yet — balances come from uploaded statements."
-
-
-@tools.tool("finance.balance_history",
-            "Balance history (an account's over time or at a month's end) or, with no account, net worth.",
-            args={"account": _ACCOUNT, "month": Arg("month", "at this month's end"),
-                  "months": Arg("number", "months back (default 12)", min=1, max=24), "person": _PERSON},
-            returns="balances and the change", examples=("What's our net worth?",),
-            quick={"words": ["net worth", "balance history", "owe on my cards", "balance changed",
-                             "balance over time", "balance at the end"]})
-def balance_history(ctx):
-    uid, owner = _owner(ctx)
-    on = _today()
-    months = int(ctx.args.get("months", balances_mod.MONTHS))
-    rows = _accounts(ctx, uid)
-    if not rows:
-        return ctx.result(_none_yet(ctx, owner), links=[_home(ctx)])
-    if not ctx.args.get("account"):
-        if ctx.args.get("month"):
-            m = ctx.args["month"]
-            end = min(on, date(int(m[:4]), int(m[5:7]), calendar.monthrange(int(m[:4]), int(m[5:7]))[1]))
-            nw = _net_worth(ctx, uid, end, months, whose=_whose(owner, ctx))
-            if nw is None:
-                return ctx.result(NO_BALANCES, links=[_home(ctx)])
-            return ctx.result(f"At the end of {_label(m)}: " + nw["text"], items=nw["items"], links=[_home(ctx)])
-        nw = _net_worth(ctx, uid, on, months, whose=_whose(owner, ctx))
-        if nw is None:
-            return ctx.result(NO_BALANCES, links=[_home(ctx)])
-        return ctx.result(nw["text"], items=nw["items"], links=[_home(ctx)])
-    a = _pick(rows, ctx.args["account"])
-    if a is None:
-        return _no_such(ctx, rows, owner, [_home(ctx)])
-    name, card = _acct(a), balances_mod.is_card(a)
-    words = _owed if card else _money
-    points = _points(ctx, a, on)
-    if not points:
-        return ctx.result(f"{name}: " + NO_BALANCES, links=[_account_link(ctx, a)])
-    if ctx.args.get("month"):
-        m = ctx.args["month"]
-        end = date(int(m[:4]), int(m[5:7]), calendar.monthrange(int(m[:4]), int(m[5:7]))[1])
-        p = balances_mod.balance_at(points, end)
-        if p is None:
-            return ctx.result(f"{name}{_whose(owner, ctx)} had no statement balance by the end of {_label(m)}.",
-                              links=[_account_link(ctx, a)])
-        st = ctx.conn.execute("SELECT statement_period, source FROM statements WHERE id = ?",
-                              (p["statement_id"],)).fetchone()
-        text = (f"{name}{_whose(owner, ctx)} at the end of {_label(m)}: {words(p['balance'])}, from the statement "
-                f"ending {balances_mod.date_label(p['date'])} ({'QFX' if st['source'] == 'qfx' else 'PDF'}).")
-        return ctx.result(text, items=[{"account": name, "date": p["date"].isoformat(), "balance": p["balance"],
-                                        "statement": st["statement_period"]}], links=[_account_link(ctx, a)])
-    start = _months_back(on, months)
-    window = [p for p in points if p["date"] > start][-24:]
-    base = balances_mod.balance_at(points, start) or (window[0] if window else None)
-    latest = points[-1]
-    text = f"{name}{_whose(owner, ctx)}: {words(latest['balance'])} on {balances_mod.date_label(latest['date'])}"
-    change = None
-    if base is not None and base is not latest:
-        change = round(latest["balance"] - base["balance"], 2)
-        text += (f", {_move(change)} since {balances_mod.date_label(base['date'])} "
-                 f"({words(base['balance'])})")
-    if window:
-        text += (f". Statements in the last {months} months: "
-                 + "; ".join(f"{balances_mod.date_label(p['date'])} {_money(p['balance'])}"
-                             for p in reversed(window[-12:])) + ("…" if len(window) > 12 else ""))
-    items = [{"account": name, "date": p["date"].isoformat(), "balance": p["balance"]} for p in reversed(window)]
-    return ctx.result(text + ".", items=items, links=[_account_link(ctx, a)])
 
 
 # ------------------------------------------------------------------ subscription changes (section 29)
@@ -1021,11 +886,11 @@ def dates(ctx):
     return ctx.result(text, items=[_date_item(x) for x in found], links=[_home(ctx)])
 
 
-OVERVIEW_ACCOUNTS, OVERVIEW_DATES, OVERVIEW_CHANGES, OVERVIEW_CHANGE_DAYS = 10, 8, 3, 30
+OVERVIEW_DATES, OVERVIEW_CHANGES, OVERVIEW_CHANGE_DAYS = 8, 3, 30
 
 
 @tools.tool("finance.overview",
-            "Finance overview: net worth, what's due, this month so far, subscription changes. Not for one month.",
+            "Finance overview: what's due, this month so far, subscription changes. Not for one month.",
             args={"person": _PERSON}, returns="the overview", examples=("Give me a finance summary",),
             quick={"words": ["finance summary", "finance overview", "how are my finances", "money overview",
                              "where do i stand", "financial summary"]})
@@ -1035,10 +900,6 @@ def overview(ctx):
     if not _accounts(ctx, uid):
         return ctx.result(_none_yet(ctx, owner), links=[_home(ctx)])
     parts, items = [], []
-    nw = _net_worth(ctx, uid, on, limit=OVERVIEW_ACCOUNTS, whose=_whose(owner, ctx))
-    if nw is not None:
-        parts.append(nw["text"])
-        items += [dict(i, part="net worth") for i in nw["items"]]
     found = _dates(ctx, uid, on, DATES_DAYS)
     if found:
         more = len(found) - OVERVIEW_DATES
@@ -1060,6 +921,8 @@ def overview(ctx):
                      + (f"; and {more} more" if more > 0 else "") + ".")
         items += [dict(_change_item(c), part="subscription change") for c in changes]
     if not parts:
-        return ctx.result(f"Nothing to report yet{_whose(owner, ctx)}: no statement balances, nothing due in the next "
-                          f"{DATES_DAYS} days and no transactions in {_label(m)}.", links=[_home(ctx)])
-    return ctx.result(" ".join(parts), items=items, links=[_home(ctx)])
+        return ctx.result(f"Nothing to report yet{_whose(owner, ctx)}: nothing due in the next {DATES_DAYS} days"
+                          f" and no transactions in {_label(m)}.", links=[_home(ctx)])
+    whose = _whose(owner, ctx)                 # someone else's: said up front (the net worth part used to say it)
+    return ctx.result((f"Finance overview{whose}: " if whose else "") + " ".join(parts), items=items,
+                      links=[_home(ctx)])

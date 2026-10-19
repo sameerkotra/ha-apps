@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.4
+
+- **Tests only:** the Finance Dashboard no longer answers balance history or net worth (Finance 1.12.0); the tests now check that "What's our net worth?" and the balance questions reach Finance's latest balances instead.
+
 ## 1.6.3
 
 - **Tests only:** checks that the Finance Dashboard's new questions (statements, card payments, balances over time, subscription changes, finance dates and the finance overview) reach the right answer, and that every existing quick-answer phrase still does.

@@ -86,6 +86,10 @@ A payment's description isn't shown, only its date and amount.
 
 ## 4. `finance.balance_history` — balances over time and net worth (new)
 
+> **Removed in Finance 1.12.0** (with the account page's Balance over time and Home's Net worth). "What's our net
+> worth?" and the balance questions now reach the older `finance.balances` (each account's latest printed balance).
+> Kept below for the record.
+
 **Answers:** "How has my Visa balance changed?", "What was the checking balance in June?", "What's our net
 worth?", "How much do I owe on my cards?"
 
@@ -205,8 +209,9 @@ short status. It combines:
 | `person` | string, ≤ 100 | as today |
 
 **Returns**, in this order, each part short:
-1. **Net worth** and each account's latest balance, with its as-of date (cards: what's owed). This is §4 with no
-   account, at most 10 accounts, then "and N more".
+1. ~~**Net worth** and each account's latest balance, with its as-of date (cards: what's owed). This is §4 with no
+   account, at most 10 accounts, then "and N more".~~ **Removed in Finance 1.12.0:** the overview is now parts 2–4
+   below (due and overdue, this month so far, subscription changes).
 2. **Due and overdue:** §6a's list for the next 14 days, at most 8 lines, then "and N more — ask for the finance
    dates".
 3. **This month so far:** income, spending and net, the same numbers as `finance.summary` for this month, in one
@@ -246,7 +251,7 @@ descriptions say the same.
 - the amount owed from the latest statement;
 - no payment description in the answer.
 
-**`finance.balance_history`:**
+**`finance.balance_history`** (removed in 1.12.0, with these tests):
 - one account's history and its change;
 - `month` picks the right statement;
 - net worth with a card subtracted and an account with no balance left out;
@@ -289,7 +294,7 @@ existing test helper with a Finance catalogue).
 
 1. **Dismissed price changes** come up in answers, marked "(dismissed)" (§5).
 2. **Net worth** is part of `finance.balance_history` with no account (§4) and of `finance.overview` (§6b); there's
-   no separate tool.
+   no separate tool. (Both removed in Finance 1.12.0.)
 3. **No voice actions for now:** "Mark the Visa as paid" and "Dismiss the Netflix change" are not in this spec.
    They could come later as acting tools, only after the person taps the proposed change, like
    `finance.expense.add`.
