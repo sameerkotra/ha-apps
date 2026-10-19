@@ -642,9 +642,11 @@ Uncategorized — it never fails an import.
     review (Review) or failed (Restart for a PDF, Delete), newest first, at most 8 and "and N more"; pinned
     above the history whatever its filters. A failed CSV import isn't listed (nothing to do but import again);
   - **Upload history** (`_upload_history.html`, also `GET uploads-history`, the fragment the page swaps in):
-    statements (PDF and QFX) and CSV imports in one list (`upload_page.unify`), newest first, seven
-    columns — file with type badge, account, uploaded, period, transactions (money in/out under a
-    statement's count), status chip with the same actions as before (Open PDF, Confirm, Review, Re-extract,
+    statements (PDF and QFX) and CSV imports in one list (`upload_page.unify`), newest first, nine
+    columns — file with type badge, account, uploaded (the date; the time in its tooltip), period,
+    transactions, **money in** and **money out** (both sortable, `h_sort=in|out`; for statements and CSV
+    imports alike, from the account's point of view: a card's payments are money in and its purchases money
+    out, a mixed-account CSV adds each account up its own way; "—" with no transactions), status chip with the same actions as before (Open PDF, Confirm, Review, Re-extract,
     Restart; a statement row still polls and swaps itself, `_statement_row.html`), Delete and the admin's
     debug link in one cell, so it fits a 1280 px window. Filter chips (buttons with `aria-pressed` in GET
     forms: `h_type` pdf/qfx/csv, `h_status` waiting/processing/done/error, `h_account`), sort and paging

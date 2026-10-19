@@ -75,6 +75,8 @@
                 {{ sort_th(view, "when", "Uploaded") }}
                 {{ sort_th(view, "period", "Period") }}
                 {{ sort_th(view, "count", "Transactions") }}
+                {{ sort_th(view, "in", "Money in") }}
+                {{ sort_th(view, "out", "Money out") }}
                 {{ sort_th(view, "status", "Status") }}
                 <th data-no-sort><span class="visually-hidden">Actions</span></th>
             </tr>
@@ -87,9 +89,11 @@
                 <td data-label="File" class="file-cell"><span class="type-badge source-csv" title="A CSV import">CSV</span>
                     <span class="file-name-text">{{ c.original_filename or "—" }}</span></td>
                 <td data-label="Account">{{ c.account_name or "—" }}</td>
-                <td data-label="Uploaded" class="nowrap">{{ c.imported_at }}</td>
+                <td data-label="Uploaded" class="nowrap" title="{{ c.imported_at }}">{{ (c.imported_at or "")[:10] }}</td>
                 <td data-label="Period">{{ r.period or "—" }}</td>
                 <td data-label="Transactions" class="count-cell">{{ c.row_count }} imported</td>
+                <td data-label="Money in" class="money-cell">{{ "%.2f"|format(r.money_in) if c.row_count else "—" }}</td>
+                <td data-label="Money out" class="money-cell">{{ "%.2f"|format(r.money_out) if c.row_count else "—" }}</td>
                 <td data-label="Status">
                     {% if c.fatal_error %}
                     <span class="status-badge status-error" title="{{ c.fatal_error }}">Failed</span>

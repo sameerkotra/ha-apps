@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.1
+
+- **Upload history: Money in and Money out are columns again**, for statements and CSV imports alike, and you can sort by either. The Uploaded column shows the date (the time is in its tooltip) so everything still fits.
+
 ## 1.9.0
 
 - **Review: skipped duplicates in bulk.** Under **Skipped as possible duplicates**, tick rows (or **Select all**) and choose **Insert selected** or **Keep selected skipped** to handle them all at once. Each row's own **Insert anyway** / **Keep skipped** still works.

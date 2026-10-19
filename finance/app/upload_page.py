@@ -155,12 +155,14 @@ def unify(statements: list[dict], csv_imports: list[dict]) -> list[dict]:
         out.append({"kind": kind, "id": s["id"], "when": s["uploaded_at"], "file": s.get("original_filename"),
                     "account": s.get("account_name"), "account_ids": [s.get("account_id")],
                     "period": period, "first": s.get("first_date"), "count": s.get("txn_count") or 0,
+                    "money_in": s.get("money_in") or 0, "money_out": s.get("money_out") or 0,
                     "state": statement_state(s), "s": s})
     for c in csv_imports:
         out.append({"kind": "csv", "id": c["id"], "when": c["imported_at"], "file": c.get("original_filename"),
                     "account": c.get("account_name"), "account_ids": c.get("account_ids") or [],
                     "period": ofx.period_label(c.get("first_date"), c.get("last_date")), "first": c.get("first_date"),
-                    "count": c.get("row_count") or 0, "state": csv_state(c), "c": c})
+                    "count": c.get("row_count") or 0, "state": csv_state(c), "c": c,
+                    "money_in": c.get("money_in") or 0, "money_out": c.get("money_out") or 0})
     return out
 
 
@@ -170,7 +172,8 @@ STATUS_FILTERS = [("", "Any status"), ("waiting", "Waiting for you"), ("processi
 _STATUS_OF = {"waiting": {"awaiting", "review"}, "processing": {"processing"}, "done": {"complete", "partial"},
               "error": {"error"}}
 SORT_COLUMNS = [("when", "Uploaded"), ("file", "File"), ("account", "Account"), ("period", "Period"),
-                ("count", "Transactions"), ("status", "Status"), ("type", "Type")]
+                ("count", "Transactions"), ("in", "Money in"), ("out", "Money out"), ("status", "Status"),
+                ("type", "Type")]
 
 
 def _lower(text):
@@ -183,6 +186,8 @@ SORT_KEYS = {
     "account": lambda r: _lower(r["account"]),
     "period": lambda r: r["first"],
     "count": lambda r: r["count"],
+    "in": lambda r: r["money_in"],
+    "out": lambda r: r["money_out"],
     "status": lambda r: r["state"],
     "type": lambda r: r["kind"],
 }

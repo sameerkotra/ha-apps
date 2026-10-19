@@ -1425,3 +1425,9 @@ main.uploads-main { max-width: 1100px; }
     .history-table th, .history-table td { padding: 0.5rem 0; }
     .waiting-item .status-badge { order: 3; }
 }
+
+/* Upload history: money in / out, right-aligned figures */
+.history-table .money-cell { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) { .history-table .money-cell { text-align: right; } }
+.history-table td.nowrap { white-space: nowrap; }
+@media (max-width: 767px) { .history-table td::before { white-space: nowrap; margin-right: 0.5rem; } }

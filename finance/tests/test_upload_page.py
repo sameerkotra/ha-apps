@@ -363,20 +363,20 @@ def test_history_sort_and_paging(env):
     assert 'aria-sort="ascending"' in env.get("uploads-history?h_sort=file&h_dir=asc").text
 
 
-def test_history_actions_and_admin_debug_fit_in_seven_columns(env):
+def test_history_actions_and_admin_debug_fit_in_nine_columns(env):
     a = env.account("Alpha")
     sid = env.insert("statements", user_id="tester", account_id=a, original_filename="s.pdf", status="complete")
     cid = env.insert("csv_imports", user_id="tester", original_filename="c.csv", row_count=0)
     html = env.get("uploads-history").text
     head = html.split('id="history-table"')[1].split("</thead>")[0]
-    assert len(re.findall(r"<th[ >]", head)) == 7
+    assert len(re.findall(r"<th[ >]", head)) == 9
     row = html.split(f'id="statement-row-{sid}"')[1].split("</tr>")[0]
-    assert row.count("<td") == 7 and f'statement-delete-confirm?id={sid}' in row and f'statement-debug?id={sid}' in row
+    assert row.count("<td") == 9 and f'statement-delete-confirm?id={sid}' in row and f'statement-debug?id={sid}' in row
     crow = html.split(f'id="csv-row-{cid}"')[1].split("</tr>")[0]
-    assert crow.count("<td") == 7 and f'csv-import-debug?id={cid}' in crow
-    # the polled row has the same seven cells
+    assert crow.count("<td") == 9 and f'csv-import-debug?id={cid}' in crow
+    # the polled row has the same nine cells
     polled = env.get(f"statement-status?id={sid}").text
-    assert polled.count("<td") == 7 and f'id="statement-row-{sid}"' in polled
+    assert polled.count("<td") == 9 and f'id="statement-row-{sid}"' in polled
     # someone who isn't an admin has no debug link
     env.insert("known_users", id="wife", name="Wife")
     mine = env.insert("statements", user_id="wife", account_id=env.account("Hers", user="wife"),
@@ -605,3 +605,32 @@ def test_the_page_script_keeps_its_promises():
     assert 'e.key === "Enter" || e.key === " "' in js
     assert "announcer.textContent" in js
     assert "uploads-history" in js and "uploads-strip" in js and "statement-progress" in js
+
+
+def test_history_shows_money_in_and_out(env):
+    """Upload history has Money in / Money out for statements and CSV imports, from the account's point of view
+    (a card's payments are money in, its purchases money out), and sorts by them."""
+    import io
+    chk = env.account("Checking")
+    card = env.account("Visa", "credit_card")
+    sid = env.insert("statements", user_id="tester", account_id=chk, status="complete", original_filename="march.pdf",
+                     file_hash="hm1")
+    env.txn(chk, "2026-03-02", 2000.0, "PAYROLL", statement_id=sid)
+    env.txn(chk, "2026-03-05", -60.25, "GROCERY", statement_id=sid)
+    csv = "Date,Description,Amount\n2026-04-01,BOOKS,30.00\n2026-04-02,PAYMENT THANK YOU,-100.00\n"
+    env.post("transactions-import-csv", data={"default_account_id": str(card)}, headers={"accept": "application/json"},
+             files={"files": ("visa.csv", io.BytesIO(csv.encode()), "text/csv")})
+    page = env.get("uploads").text
+    hist = page[page.index('id="history-table"'):]
+    assert ">Money in<" in hist and ">Money out<" in hist
+    row = hist[hist.index('id="statement-row-'):]
+    row = row[:row.index("</tr>")]
+    assert "2000.00" in row and "60.25" in row
+    crow = hist[hist.index('id="csv-row-'):]
+    crow = crow[:crow.index("</tr>")]
+    assert "100.00" in crow and "30.00" in crow
+    # card: the payment (100) is money in, the purchase (30) money out — the page's own rule — in that order
+    assert crow.index("100.00") < crow.index("30.00")
+    # sorting by money in puts the statement (2000) above the CSV (30) when descending
+    hist2 = env.get("uploads?h_sort=in&h_dir=desc").text
+    assert hist2.index('id="statement-row-') < hist2.index('id="csv-row-')

@@ -636,12 +636,29 @@ def _csv_import_rows(conn: sqlite3.Connection, user_id: str) -> list[dict]:
         (user_id,),
     ):
         accounts.setdefault(r["csv_import_id"], []).append((r["account_id"], r["account_name"]))
+    # money in / out of what each import still holds, from each account's point of view (the same swap for a
+    # credit card as statement_flows; a mixed-account import adds up each account its own way)
+    flows: dict[int, dict] = {}
+    for r in conn.execute(
+        "SELECT t.csv_import_id, a.type AS account_type, "
+        "COALESCE(SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END), 0) AS positive_total, "
+        "COALESCE(SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END), 0) AS negative_total "
+        "FROM transactions t JOIN accounts a ON a.id = t.account_id "
+        "WHERE t.user_id = ? AND t.deleted_at IS NULL AND t.csv_import_id IS NOT NULL "
+        "GROUP BY t.csv_import_id, a.type",
+        (user_id,),
+    ):
+        card = r["account_type"] == "credit_card"
+        f = flows.setdefault(r["csv_import_id"], {"money_in": 0, "money_out": 0})
+        f["money_in"] += r["negative_total"] if card else r["positive_total"]
+        f["money_out"] += r["positive_total"] if card else r["negative_total"]
     rows = conn.execute(
         "SELECT * FROM csv_imports WHERE user_id = ? AND deleted_at IS NULL", (user_id,)
     ).fetchall()
     return [
         {
-            **dict(r), "first_date": spans.get(r["id"], (None, None))[0], "last_date": spans.get(r["id"], (None, None))[1],
+            **dict(r), **flows.get(r["id"], {"money_in": 0, "money_out": 0}),
+            "first_date": spans.get(r["id"], (None, None))[0], "last_date": spans.get(r["id"], (None, None))[1],
             "account_name": ", ".join(n for _, n in accounts.get(r["id"], [])) or None,
             "account_ids": [i for i, _ in accounts.get(r["id"], [])],
         }
