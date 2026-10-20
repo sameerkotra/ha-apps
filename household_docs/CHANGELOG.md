@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.2
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 1.7.1
 
 - **Fixes to one person's data**: The Data dialogs, after a check in the browser: the ⋯ Data menu stays on screen (it opens the other way near an edge or a bottom bar), a wrong name is caught before the copy is downloaded, the copy uses the export's usual choices, the red button is readable in every theme, and the name box only shows when it's needed. On a phone, the last person's menu opens clear of the bottom bar, and the import preview says "1 folder", not "1 folders".

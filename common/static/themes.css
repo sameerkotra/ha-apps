@@ -11,6 +11,17 @@
  *   text      --text  --text-dim
  *   states    --danger --danger-soft  --warn --warn-soft  --ok --ok-soft  --info --info-soft
  *   accent    --accent --accent-dim --accent-hover --accent-contrast --accent-soft (a neutral default)
+ *   layout    --safe-bottom (the phone's home-indicator inset)  --bottombar-h (an app with a bottom bar sets it)
+ *
+ * Shared utilities (after the themes; class names chosen not to collide with any app's style.css):
+ *   .ui-loading > .ui-spinner + text, .ui-empty, .ui-error   (UI.loading / UI.empty / UI.errorBox)
+ *   .summary-strip > .kpi > .kpi-label + .kpi-value           a responsive row of small figure tiles
+ *   .ui-group-head [> .ui-group-total]                        a sticky date/month header, subtotal right
+ *                                                             (not ".group-head": Todo and Splitpot use that)
+ *   .danger-zone (> h2/h3/.danger-zone-title), .btn-danger-outline   restore / import / delete actions
+ *   details.about > summary                                   long intro text folded away
+ *   .tap44, .touch-target                                     at least 44×44px on touch screens (opt-in: a
+ *                                                             global .icon-btn rule would break dense chips)
  */
 :root, [data-theme="midnight"] {
   --bg: #10151c;
@@ -85,4 +96,69 @@
   --accent-contrast: #ffffff;
   --accent-soft: #e4ecff;
   color-scheme: light;
+}
+
+/* ---------- shared utilities ---------- */
+:root {
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --bottombar-h: 0px;
+}
+
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+.ui-spinner {
+  display: inline-block; width: 1.1em; height: 1.1em; flex: none; box-sizing: border-box;
+  border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%;
+  animation: ui-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .ui-spinner { animation-duration: 2.4s; } }
+.ui-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 24px 12px; color: var(--text-dim); }
+
+.ui-empty, .ui-error {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  padding: 24px 16px; margin: 12px 0; border-radius: 12px; background: var(--card); border: 1px dashed var(--border);
+}
+.ui-empty p, .ui-error p { margin: 0; }
+.ui-empty-title { font-weight: 650; color: var(--text); }
+.ui-empty-text { color: var(--text-dim); font-size: 0.92rem; max-width: 42ch; }
+.ui-empty-action { margin-top: 8px; }
+.ui-error { border: 1px solid var(--danger); background: var(--danger-soft); }
+.ui-error-text { color: var(--text); overflow-wrap: anywhere; }
+.ui-error button { margin-top: 6px; }
+
+.summary-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 0 0 12px; }
+.summary-strip > .kpi {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 12px;
+  border-radius: 10px; background: var(--card); border: 1px solid var(--border);
+}
+.summary-strip .kpi-label { font-size: 0.75rem; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.summary-strip .kpi-value { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.summary-strip .kpi-value.neg { color: var(--danger); }
+.summary-strip .kpi-value.pos { color: var(--ok); }
+
+.ui-group-head {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 6px 4px; margin: 14px 0 6px; background: var(--bg); color: var(--text-dim);
+  font-size: 0.78rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.ui-group-head .ui-group-total { margin-left: auto; font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0; }
+
+.danger-zone { margin: 18px 0; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--danger); background: var(--card); }
+.danger-zone > h2, .danger-zone > h3, .danger-zone .danger-zone-title { margin: 0 0 8px; color: var(--danger); font-size: 1rem; }
+.btn-danger-outline {
+  background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 8px;
+  padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer;
+}
+.btn-danger-outline:hover:not(:disabled) { background: var(--danger-soft); }
+.btn-danger-outline:disabled { opacity: 0.55; cursor: not-allowed; }
+
+details.about { margin: 0 0 12px; color: var(--text-dim); font-size: 0.92rem; }
+details.about > summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 600; }
+details.about > summary::-webkit-details-marker { display: none; }
+details.about > summary::before { content: "▸"; transition: transform 0.15s; }
+details.about[open] > summary::before { transform: rotate(90deg); }
+details.about > :not(summary) { margin: 8px 0 0; }
+
+@media (pointer: coarse) {
+  .tap44, .touch-target { min-width: 44px; min-height: 44px; }
+  .tap44 { display: inline-flex; align-items: center; justify-content: center; }
 }

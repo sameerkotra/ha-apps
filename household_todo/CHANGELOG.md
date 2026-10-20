@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.9
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 2.7.8
 
 - **Maintenance:** **History** and **Suggestions** now both start folded, on a phone and a computer; open either with a tap, and it stays the way you left it.

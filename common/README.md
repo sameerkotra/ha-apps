@@ -90,6 +90,33 @@ In `<head>`, before the app's own stylesheet: `<script src="common/theme-boot.js
 variables. Theme menus: `HouseholdTheme.bindSelect(select)` (fills the options and keeps every menu in step).
 `common/ui.js` loads before the app's scripts; its header lists every helper and option.
 
+## Back navigation (backnav.js)
+
+`BackNav.init({atHome, goHome, openLayers, closeLayer, isTab?, parentOf?})`. Back (the HA app's gesture or the
+browser's) closes the top dialog, else returns to the previous in-app address, else to `parentOf(hash)` (when
+given and not at home, e.g. a deep link to a person → `"#/people"`), else to the start page; only at home with
+nothing left does it leave the app. One guard history entry as before; the trail of previous addresses lives in
+memory and sessionStorage (`backnav.trail:<app folder>`, at most 20, consecutive duplicates collapsed).
+
+- `BackNav.go("#/x")` remembers the current address; `BackNav.go(h, {replace: true})` / `BackNav.replace(h)`
+  doesn't — use it for filter, sort, search and in-page tab changes.
+- `isTab(hash)` → true for top-level tab addresses: going to one starts a new trail (Back retraces the tab, then home).
+- `BackNav.back()` for an in-app ← button (previous → parent → home; dialogs are not closed first; → true if it moved).
+- `BackNav.goPage(url)` for apps with separate HTML pages (Receipt): remembers path + search + hash and does
+  `location.replace(url)`; Back to an entry on another page uses `location.replace`. A page that loads with a
+  non-empty trail arms the guard. Apps that pass none of the new options get previous-page Back as they are.
+
+## Page states and shared CSS utilities
+
+ui.js: `UI.loading(box, text = "Loading…")`, `UI.empty(title, text, action)` (action `{label, onclick, class}` or an
+element), `UI.errorBox(err, retry)` (role=alert, a Retry button when `retry` is a function), `UI.money(n, {symbol:
+"$", decimals: 2, plus, blank})`. themes.css (after the themes; additive only): `--safe-bottom`, `--bottombar-h`;
+`.ui-spinner`, `.ui-loading`, `.ui-empty`, `.ui-error`; `.summary-strip > .kpi > .kpi-label + .kpi-value`;
+`.ui-group-head` with `.ui-group-total` (sticky group header; not `.group-head`, which Todo and Splitpot use for
+other things); `.danger-zone`, `.btn-danger-outline`; `details.about > summary` (folded intro text); `.tap44` /
+`.touch-target` (44×44px minimum on touch screens — opt-in, because a global `.icon-btn` rule would break the
+dense chip buttons in Family Tree, Arcade and Chat).
+
 ## Admin pages: App settings and People
 
 App settings: the app's `settings.py` builds a `settings_core.Registry` from a list of `Setting(key, default,

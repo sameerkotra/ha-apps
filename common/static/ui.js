@@ -51,6 +51,16 @@
  *   dialogs()                               the open escape: "stack" dialogs ({ close, el }), oldest first
  *   confirmDialog(title, message, opts)     → Promise<boolean>; opts: okLabel ("OK"), cancelLabel ("Cancel"),
  *                                           okClass, cancelClass, focusOk, okFirst, modal (openModal options)
+ *
+ * States and numbers (styled by themes.css)
+ *   loading(box, text = "Loading…")         a spinner and text (.ui-loading, role=status) mounted into box (when
+ *                                           given, replacing its content); returns the element
+ *   empty(title, text, action)              an empty-state card (.ui-empty); action: { label, onclick, class }
+ *                                           (a button, class default "btn-primary") or an element; returns it
+ *   errorBox(err, retry)                    an error card (.ui-error, role=alert) with err's message (an Error or
+ *                                           text) and, when retry is a function, a Retry button calling it
+ *   money(n, opts)                          1234.5 → "$1,234.50", -3 → "-$3.00". opts: symbol ("$"; "" for none),
+ *                                           decimals (2), plus (true: "+" on positives), blank (for null/NaN, "")
  */
 (function () {
   "use strict";
@@ -233,10 +243,47 @@
     });
   }
 
+  // ---------- states and numbers ----------
+  function loading(box, text) {
+    const el = h("div", { class: "ui-loading", role: "status", "aria-live": "polite" },
+      h("span", { class: "ui-spinner", "aria-hidden": "true" }), h("span", null, text === undefined ? "Loading…" : text));
+    if (box) mount(box, el);
+    return el;
+  }
+  function empty(title, text, action) {
+    let act = null;
+    if (action && typeof action === "object" && typeof action.label === "string") {
+      act = h("button", { type: "button", class: action.class || "btn-primary", onclick: action.onclick || null }, action.label);
+    } else if (action) act = action;
+    return h("div", { class: "ui-empty" },
+      title ? h("p", { class: "ui-empty-title" }, title) : null,
+      text ? h("p", { class: "ui-empty-text" }, text) : null,
+      act ? h("div", { class: "ui-empty-action" }, act) : null);
+  }
+  function errorBox(err, retry) {
+    const msg = (err && err.message) || (typeof err === "string" && err) || "Something went wrong.";
+    return h("div", { class: "ui-error", role: "alert" },
+      h("p", { class: "ui-error-text" }, msg),
+      typeof retry === "function" ? h("button", { type: "button", class: "btn-ghost", onclick: () => retry() }, "Retry") : null);
+  }
+  function money(n, opts = {}) {
+    const v = typeof n === "string" ? Number(n) : n;
+    if (v === null || v === undefined || typeof v !== "number" || !isFinite(v)) return opts.blank === undefined ? "" : opts.blank;
+    const decimals = opts.decimals === undefined ? 2 : opts.decimals;
+    const symbol = opts.symbol === undefined ? "$" : opts.symbol;
+    const fixed = Math.abs(v).toFixed(decimals);
+    const [int, frac] = fixed.split(".");
+    const body = int.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + (frac ? "." + frac : "");
+    const zero = Number(fixed) === 0;
+    const sign = v < 0 && !zero ? "-" : opts.plus && v > 0 && !zero ? "+" : "";
+    return sign + symbol + body;
+  }
+
   window.UI = {
     h, makeH, $, $$, clear, mount, debounce, lsGet, lsSet, escapeHtml,
     errorMessage, makeApi, NETWORK_ERROR,
     toast, openModal, confirmDialog,
+    loading, empty, errorBox, money,
     dialogs: () => stack.slice(),      // the open escape: "stack" dialogs, oldest first
   };
 })();

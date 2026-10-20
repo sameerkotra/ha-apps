@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.1
+
+- Shared code updated (back navigation and page states) ahead of the navigation changes in the next version; nothing visible changes yet.
+
 ## 1.13.0
 
 - **Income categories.** Every category is now **Spending** or **Income**. New built-in income categories: **Salary**, **Interest**, **Dividends**, **Refunds**, **Reimbursements**, **Gifts received** and **Other income** — the old "Income" category is now **Other income**, with its transactions and rules, so no total changes. Your own categories start as Spending; a new one can be either. Whether a transaction counts as income is still its direction (money in on checking or savings), whatever its category.

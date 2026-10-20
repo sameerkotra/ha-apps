@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.5
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 1.3.4
 
 - **"Bought the milk"**: the Household Assistant can now tick an item off the shopping list — only after the person taps the proposed change (new `receipt.shopping_list.tick`).

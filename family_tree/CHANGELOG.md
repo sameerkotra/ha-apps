@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.3
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 2.6.2
 
 - **Emptying the trash works again**: the daily clean-up (and **Empty trash**) failed as a whole when someone in the trash had told a source's story, had other people merged into them, or a trashed photo was a source's scan. Those links are now cleared first, each item is removed on its own (one that still can't be is left in the trash and logged, the rest go), and deleted sources show in **Admin → Trash** and are cleaned up too.

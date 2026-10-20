@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.6
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 1.6.5
 
 - **Tests only:** the Finance Dashboard can now say how income breaks down by category (Finance 1.13.0); the tests check that its own phrases ("income breakdown", "sources of income", "interest earned", …) reach that answer, that "How much did I earn in September?" still gets the month's figures, and that every existing quick-answer phrase still reads as before.

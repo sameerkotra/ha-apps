@@ -100,6 +100,34 @@ class UiHelpers(unittest.TestCase):
         """)
         self.assertEqual(r, {"attrs": {"title": "ok"}, "listeners": ["focus"]})
 
+    def test_money(self):
+        r = self.ui("process.stdout.write(JSON.stringify([UI.money(1234.5), UI.money(-3), UI.money(1234567.891, { symbol: '' }), "
+                    "UI.money(-0.001), UI.money(5, { plus: true, symbol: '€' }), UI.money(null), UI.money('x', { blank: '—' }), "
+                    "UI.money(999.999), UI.money(12, { decimals: 0 })]));")
+        self.assertEqual(r, ["$1,234.50", "-$3.00", "1,234,567.89", "$0.00", "+€5.00", "", "—", "$1,000.00", "$12"])
+
+    def test_states(self):
+        r = self.ui(r"""
+          const mk = (tag) => ({ tag, attrs: {}, listeners: {}, kids: [], dataset: {}, style: {}, className: "", firstChild: null,
+            setAttribute(k, v) { this.attrs[k] = String(v); }, addEventListener(t, fn) { this.listeners[t] = fn; },
+            appendChild(c) { this.kids.push(c); this.firstChild = this.kids[0]; return c; },
+            removeChild(c) { this.kids.splice(this.kids.indexOf(c), 1); this.firstChild = this.kids[0] || null; } });
+          globalThis.Node = function () {};
+          document.createElement = (t) => Object.setPrototypeOf(mk(t), Node.prototype);
+          document.createTextNode = (t) => Object.setPrototypeOf({ text: t }, Node.prototype);
+          const text = (el) => el.text !== undefined ? el.text : el.kids.map(text).join("|");
+          const box = mk("div"); box.appendChild(document.createTextNode("old"));
+          const l = UI.loading(box);
+          let tries = 0;
+          const e = UI.errorBox(new Error("Nope"), () => tries++);
+          e.kids[1].listeners.click();
+          const em = UI.empty("Nothing yet", "Add one", { label: "Add", onclick: () => tries++ });
+          process.stdout.write(JSON.stringify({ l: [l.className, l.attrs.role, text(l), box.kids.length], e: [e.className, e.attrs.role, text(e)],
+            tries, em: [em.className, text(em), UI.empty("T").kids.length, UI.errorBox("plain").kids.length] }));
+        """)
+        self.assertEqual(r, {"l": ["ui-loading", "status", "|Loading…", 1], "e": ["ui-error", "alert", "Nope|Retry"],
+                             "tries": 1, "em": ["ui-empty", "Nothing yet|Add one|Add", 1, 1]})
+
     def test_error_message(self):
         r = self.ui("process.stdout.write(JSON.stringify([UI.errorMessage('Nope', 400), "
                     "UI.errorMessage([{ msg: 'a' }, { msg: 'b' }], 422), UI.errorMessage(null, 500)]));")
@@ -257,15 +285,20 @@ class BackNavJs(unittest.TestCase):
     HARNESS = r"""
 const vm = require("node:vm");
 const SRC = %s;
-function browser(startHash) {
+function browser(startHash, store, page) {
   const base = "http://h/app/";
   const listeners = {};
-  const entries = [{ href: base + startHash, state: null }];
+  const entries = [{ href: base + (page || "") + startHash, state: null }];
+  const replaced = [];
+  store = store || {};
   let idx = 0;
   const timers = [];
   const location = {
     get href() { return entries[idx].href; },
     get hash() { const h = entries[idx].href; const i = h.indexOf("#"); return i < 0 ? "" : h.slice(i); },
+    get pathname() { return entries[idx].href.replace(/^http:\/\/h/, "").split(/[?#]/)[0]; },
+    get search() { const m = /\?[^#]*/.exec(entries[idx].href); return m ? m[0] : ""; },
+    replace(url) { replaced.push(url); entries[idx] = { href: abs(url), state: null }; },
   };
   const fire = (type, ev) => { for (const fn of (listeners[type] || []).slice()) fn(Object.assign({ type }, ev || {})); };
   const history = {
@@ -275,7 +308,7 @@ function browser(startHash) {
     replaceState(state, _t, url) { entries[idx] = { href: abs(url), state }; },
     back() { if (idx > 0) { const old = location.href; idx--; timers.push(() => { fire("popstate"); if (old.split("#")[1] !== location.href.split("#")[1]) fire("hashchange", { newURL: location.href, oldURL: old }); }); } },
   };
-  function abs(url) { return url.startsWith("#") ? base + url : url; }
+  function abs(url) { const cur = entries[idx].href.split("#")[0]; return url.startsWith("#") ? cur + url : url.startsWith("/") ? "http://h" + url : url; }
   const win = {
     location, history,
     addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
@@ -286,12 +319,13 @@ function browser(startHash) {
     MutationObserver: class { observe() {} },
     HashChangeEvent: class { constructor(type, o) { this.type = type; Object.assign(this, o || {}); } },
     document: { body: {}, addEventListener() {} },
+    sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
   };
   win.window = win;
   vm.createContext(win);
   vm.runInContext(SRC, win);
   return {
-    win, location, history, entries,
+    win, location, history, entries, replaced, store,
     /** Let the queued timers and animation frames run. */
     run() { for (let k = 0; k < 20 && timers.length; k++) timers.splice(0).forEach((fn) => fn()); },
     /** What setting location.hash does: a new entry, then popstate and hashchange. */
@@ -300,9 +334,9 @@ function browser(startHash) {
   };
 }
 
-function app(b, startTab) {
+function app(b, startTab, extra) {
   const A = { tab: startTab, home: 0, closed: 0, layers: [], seen: [] };
-  b.win.BackNav.init({
+  b.win.BackNav.init({ ...(extra || {}),
     atHome: () => A.tab === "home",
     goHome: () => { A.home++; A.tab = "home"; b.history.replaceState(b.history.state, "", "#/home"); },
     openLayers: () => A.layers.slice(),
@@ -346,3 +380,75 @@ function app(b, startTab) {
           c.history.back(); c.run();
           process.stdout.write(JSON.stringify({ home: A.home, hash: b.location.hash, guard, closed: B.closed, home2: B.home }));""")
         self.assertEqual(r, {"home": 1, "hash": "#/home", "guard": 2, "closed": 1, "home2": 0})
+
+    # ---- the back trail ----
+    def test_back_retraces_the_trail_then_leaves(self):
+        r = self.run_js(r"""
+          const b = browser("#/home"); const A = app(b, "home");
+          const N = b.win.BackNav;
+          N.go("#/people"); b.run(); N.go("#/people/p1"); b.run(); N.go("#/people/p1/edit"); b.run();
+          const trail = N._trail.get(); const hashes = [];
+          for (let k = 0; k < 3; k++) { b.history.back(); b.run(); hashes.push(b.location.hash); }
+          process.stdout.write(JSON.stringify({ trail, hashes, left: N._trail.get(), home: A.home, saved: JSON.parse(b.store[N._trail.key]) }));""")
+        self.assertEqual(r["trail"], ["#/home", "#/people", "#/people/p1"])
+        self.assertEqual(r["hashes"], ["#/people/p1", "#/people", "#/home"])
+        self.assertEqual(r["left"], [])
+        self.assertEqual(r["saved"], [])
+        self.assertEqual(r["home"], 0)
+
+    def test_replace_is_not_remembered_and_duplicates_collapse(self):
+        r = self.run_js(r"""
+          const b = browser("#/x"); const A = app(b, "x");
+          const N = b.win.BackNav;
+          N.go("#/y"); N.replace("#/x"); N.go("#/z"); b.run();
+          const one = N._trail.get();
+          N.go("#/list"); N.go("#/list?sort=date", { replace: true }); b.run();
+          const two = N._trail.get();
+          b.history.back(); b.run(); const after = b.location.hash;
+          for (let k = 0; k < 30; k++) N.go("#/p/" + k);
+          process.stdout.write(JSON.stringify({ one, two, after, capped: N._trail.get().length }));""")
+        self.assertEqual(r, {"one": ["#/x"], "two": ["#/x", "#/z"], "after": "#/z", "capped": 20})
+
+    def test_tabs_start_a_new_trail_then_home(self):
+        r = self.run_js(r"""
+          const b = browser("#/home"); const A = app(b, "home", { isTab: (h) => /^#\/[a-z]+$/.test(h) });
+          const N = b.win.BackNav;
+          N.go("#/people"); N.go("#/people/p1"); N.go("#/money"); N.go("#/money/tx/5"); b.run();
+          const trail = N._trail.get();
+          b.history.back(); b.run(); const first = b.location.hash;
+          b.history.back(); b.run();
+          process.stdout.write(JSON.stringify({ trail, first, home: A.home, hash: b.location.hash }));""")
+        self.assertEqual(r, {"trail": ["#/money"], "first": "#/money", "home": 1, "hash": "#/home"})
+
+    def test_parent_of_a_deep_link(self):
+        r = self.run_js(r"""
+          const b = browser("#/people/p9"); const A = app(b, "people",
+            { parentOf: (h) => (h.startsWith("#/people/") ? "#/people" : null) });
+          b.history.back(); b.run(); const first = b.location.hash;
+          b.history.back(); b.run();
+          process.stdout.write(JSON.stringify({ first, home: A.home }));""")
+        self.assertEqual(r, {"first": "#/people", "home": 1})
+
+    def test_back_button(self):
+        r = self.run_js(r"""
+          const b = browser("#/home"); const A = app(b, "home");
+          const N = b.win.BackNav;
+          N.go("#/a"); N.go("#/b"); b.run();
+          A.layers.push("dialog");
+          const w1 = N.back(); const h1 = b.location.hash;
+          const w2 = N.back(); const h2 = b.location.hash;
+          const w3 = N.back();
+          process.stdout.write(JSON.stringify({ w1, h1, w2, h2, w3, closed: A.closed }));""")
+        self.assertEqual(r, {"w1": True, "h1": "#/a", "w2": True, "h2": "#/home", "w3": False, "closed": 0})
+
+    def test_pages_of_a_multi_page_app(self):
+        r = self.run_js(r"""
+          const store = {};
+          const b = browser("#/home", store); const A = app(b, "home");
+          b.win.BackNav.goPage("/app/deals.html?w=1");
+          // the new page loads with the same sessionStorage: its trail arms the guard even on its start page
+          const c = browser("", store, "deals.html?w=1"); const B = app(c, "home");
+          const guard = c.entries.length;
+          c.history.back(); c.run();
+          process.stdout.write(JSON.stringify({ first: b.replaced, trail: JSON.parse(store["backnav.trail:/app/"]), guard, back: c.replaced }));""")
+        self.assertEqual(r, {"first": ["/app/deals.html?w=1"], "trail": [], "guard": 2, "back": ["/app/#/home"]})

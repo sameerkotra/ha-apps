@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.2
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 2.7.1
 
 - **Groups comes first** and is the start page (or your default group, as before); on a computer each group is listed

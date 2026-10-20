@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.2
+
+- **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
+
 ## 2.2.1
 
 - **New**: editing a login with a 2FA code shows the current code — hidden until you press 👁, then live with its countdown (👁 again hides it, 📋 copies it) — and a **Show key** button that loads the saved setup key into the 2FA box, hidden or shown as you choose. Saving without changing the key leaves the 2FA as it was.
