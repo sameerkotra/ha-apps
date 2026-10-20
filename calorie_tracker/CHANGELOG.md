@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.6.0
+
+- **Every page has a title and an address**: the page's name is at the top, a reload keeps your place, and Back goes to the page you came from. On a phone, **👤** opens How the app sees you, the theme and Admin.
+- **Day Summary at the top of the Food Log**: calories and macros as bars against your goals, right under the date. Reaching your protein goal now shows as good, not "over" (here and in the Monthly Breakdown).
+- **Faster logging**: type in the food box to find a saved food, or tap one of your most-logged foods to log it at once. Calories and macros are folded under **Nutrition (optional)**.
+- **Edit a logged food**: tap an entry (or ⋯ → Edit) to fix its meal, time, servings or numbers. On a phone the log is grouped by meal, with each meal's calories.
+- **Dashboard and Weight at a glance**: today's calories, your 7-day average and latest weight on the Dashboard; latest weight and 7- and 30-day change on Weight, which lists the last 10 weigh-ins (**Show all** for the rest). Both have **Edit goals**.
+- **Saved Foods list first**: search, sort by A–Z or most used, and **+ New food** to add one; cards on a phone.
+- **Tidier pages**: each symptom's pattern opens on tap; the AI chat fills the page, shows its status in one line and suggests questions; Admin's restore sits in its own red box; a sign-in problem shows inside the app; lists show "Loading…" while they load; the phone's bottom bar has bigger buttons and labels and clears the home bar.
+
 ## 2.5.2
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

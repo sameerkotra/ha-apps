@@ -253,6 +253,53 @@ class Bounds(ApiBase):
         self.log(ALICE, meal_type="breakfast", servings=2.5, calories=250)
 
 
+class EditLogEntry(ApiBase):
+    """PUT /api/logs/{id}: Food Log → ⋯ → Edit."""
+
+    def test_edit_replaces_and_keeps_tags_and_time(self):
+        entry = self.log(ALICE, name="Toast", meal_type="breakfast", eaten_at="08:15", tags=["gluten"])
+        body = {"date": "2026-09-21", "meal_type": "lunch", "food_name": "Toast with jam", "servings": 2,
+                "calories": None, "protein": 4, "carbs": 30, "fat": 2}
+        r = self.c.put(f"/api/logs/{entry['id']}", json=body, headers=ALICE)
+        self.assertEqual(r.status_code, 200, r.text)
+        got = r.json()
+        self.assertEqual((got["meal_type"], got["food_name"], got["servings"], got["calories"], got["carbs"]),
+                         ("lunch", "Toast with jam", 2, None, 30))
+        self.assertEqual(got["tags"], ["gluten"])          # no tags sent: kept
+        self.assertEqual(got["eaten_at"], "08:15")         # no time sent: kept
+        listed = self.c.get("/api/logs?date=2026-09-21", headers=ALICE).json()
+        self.assertEqual([e["food_name"] for e in listed], ["Toast with jam"])
+        s = self.c.get("/api/summary?date=2026-09-21", headers=ALICE).json()
+        self.assertEqual((s["totals"]["calories"], s["no_calories"]), (0, 1))
+
+    def test_only_the_owner_and_valid_bodies(self):
+        entry = self.log(ALICE)
+        body = {"date": "2026-09-21", "food_name": "Mine now", "calories": 5}
+        self.assertEqual(self.c.put(f"/api/logs/{entry['id']}", json=body, headers=BOB).status_code, 404)
+        self.assertEqual(self.c.put("/api/logs/999999", json=body, headers=ALICE).status_code, 404)
+        self.assertEqual(self.c.put(f"/api/logs/{entry['id']}", json={**body, "calories": -1},
+                                    headers=ALICE).status_code, 422)
+        self.assertEqual(self.c.put(f"/api/logs/{entry['id']}", json={**body, "food_name": ""},
+                                    headers=ALICE).status_code, 422)
+        bobs = self.c.post("/api/saved-foods", json={"name": "Oats", "calories": 150}, headers=BOB).json()
+        self.assertEqual(self.c.put(f"/api/logs/{entry['id']}", json={**body, "saved_food_id": bobs["id"]},
+                                    headers=ALICE).status_code, 422)
+        # an admin edits through as_user, like every other change
+        r = self.c.put(f"/api/logs/{entry['id']}?as_user=u_alice", json=body, headers=ADMIN)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.c.get("/api/logs?date=2026-09-21", headers=ALICE).json()[0]["food_name"], "Mine now")
+
+    def test_saved_foods_count_their_uses(self):
+        food = self.c.post("/api/saved-foods", json={"name": "Oats", "calories": 150}, headers=ALICE).json()
+        other = self.c.post("/api/saved-foods", json={"name": "Apple", "calories": 80}, headers=ALICE).json()
+        self.log(ALICE, name="Oats", saved_food_id=food["id"], date="2026-09-20")
+        self.log(ALICE, name="Oats", saved_food_id=food["id"], date="2026-09-22")
+        foods = {f["name"]: f for f in self.c.get("/api/saved-foods", headers=ALICE).json()}
+        self.assertEqual((foods["Oats"]["uses"], foods["Oats"]["last_used"]), (2, "2026-09-22"))
+        self.assertEqual((foods["Apple"]["uses"], foods["Apple"]["last_used"]), (0, None))
+        self.assertEqual(other["name"], "Apple")
+
+
 class LatestWeight(ApiBase):
     def test_a_past_day_shows_the_weight_as_of_that_day(self):
         for d, kg in (("2026-09-01", 80), ("2026-09-10", 79), ("2026-09-10", 78.5), ("2026-09-20", 77)):

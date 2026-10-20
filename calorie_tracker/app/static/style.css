@@ -208,13 +208,33 @@ main { max-width: 900px; margin: 0 auto; padding: 0 16px 48px; }
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  padding: 18px 4px 10px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 18px 16px 10px;
   gap: 10px;
+  max-width: 900px;
+  margin: 0 auto;
 }
+.page-title { margin: 0; font-size: 1.3rem; font-weight: 700; letter-spacing: -0.01em; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.topbar-right { display: flex; gap: 8px; align-items: center; }
+.topbar-right { display: flex; gap: 8px; align-items: center; position: relative; min-width: 0; }
+.topbar-right select { max-width: 46vw; }
+/* on a computer the sidebar's user chip and theme do what 👤 does on a phone */
+@media (min-width: 761px) { .whoami-btn, .me-menu { display: none !important; } }
+.me-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 70; min-width: 230px; padding: 6px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .35);
+  display: flex; flex-direction: column; gap: 2px; }
+.me-item { display: flex; align-items: center; gap: 10px; justify-content: space-between; width: 100%; text-align: left;
+  background: none; border: none; color: var(--text); padding: 10px 12px; min-height: 44px; border-radius: 8px;
+  font-size: 0.92rem; cursor: pointer; }
+button.me-item { justify-content: flex-start; }
+.me-item:hover { background: var(--panel-alt); }
+.me-theme select { flex: 0 1 auto; }
+
+.signin-error { max-width: 640px; margin: 24px auto; }
+.goals-link { color: var(--accent); font-size: 0.85rem; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.goals-link:hover { text-decoration: underline; }
+.stat-card.met .value { color: var(--ok, var(--accent)); }
 
 /* Day selector: its own row, always visible above the tabs, since Food Log
    and the Dashboard are both scoped to whichever date is selected here. */
@@ -316,6 +336,92 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); }
 }
 
 .card h3 { margin-top: 0; font-size: 1rem; color: var(--text); }
+
+/* ---------- Food Log: Day Summary strip ---------- */
+.day-strip { padding: 12px 16px; }
+.ds-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.ds-head h3 { margin: 0; font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.ds-row { margin: 6px 0; }
+.ds-label { display: flex; align-items: baseline; gap: 8px; font-size: 0.82rem; margin-bottom: 4px; color: var(--text-dim); }
+.ds-name { font-weight: 650; color: var(--text); }
+.ds-val { font-variant-numeric: tabular-nums; }
+.ds-left { margin-left: auto; white-space: nowrap; }
+.ds-row.over .ds-left { color: var(--danger); font-weight: 600; }
+.ds-row.met .ds-left { color: var(--ok, var(--accent)); font-weight: 600; }
+.ds-row .macro-bar-track { height: 8px; }
+.ds-macros { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+.ds-macros .ds-label { flex-wrap: wrap; gap: 0 6px; }
+.ds-macros .ds-left { margin-left: 0; width: 100%; }
+.ds-note { margin: 6px 0 0; }
+
+/* ---------- Food Log: Add Food ---------- */
+.food-search-row { position: relative; }
+.food-suggest { position: absolute; left: 0; right: 0; top: calc(100% - 4px); z-index: 45; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35); padding: 4px;
+  max-height: 300px; overflow-y: auto; }
+.suggest-item { display: flex; justify-content: space-between; gap: 12px; padding: 10px; min-height: 44px; align-items: center;
+  border-radius: 8px; cursor: pointer; }
+.suggest-item:hover, .suggest-item[aria-selected="true"] { background: var(--panel-alt); }
+.suggest-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suggest-meta { color: var(--text-dim); font-size: 0.8rem; white-space: nowrap; }
+.quick-foods { margin: -2px 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.quick-chip { min-height: 36px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.nutrition { margin: 0 0 10px; }
+details.nutrition > summary { cursor: pointer; color: var(--accent); font-weight: 600; font-size: 0.9rem; padding: 6px 0;
+  list-style: none; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; }
+details.nutrition > summary::-webkit-details-marker { display: none; }
+details.nutrition > summary::before { content: "▸"; transition: transform 0.15s; }
+details.nutrition[open] > summary::before { transform: rotate(90deg); }
+details.nutrition > .form-row { margin-top: 6px; }
+.nutrition-hint { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
+.form-actions { justify-content: flex-end; }
+
+/* ---------- Food Log: entries (cards on phones), ⋯ menus, edit in place ---------- */
+.log-card, .sf-card { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--border);
+  cursor: pointer; }
+.log-card:last-child, .sf-card:last-child { border-bottom: none; }
+.log-card:hover, .sf-card:hover { background: var(--panel-alt); }
+.log-card:focus-visible, .sf-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.log-card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.log-card-main .fname { font-weight: 600; overflow-wrap: anywhere; }
+.log-card-main .meta { font-size: 0.8rem; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.meal-chip { flex: none; }
+.kebab { flex: none; background: none; border: none; color: var(--text-dim); font-size: 1.2rem; line-height: 1;
+  min-width: 40px; min-height: 40px; border-radius: 8px; cursor: pointer; padding: 0; }
+.kebab:hover, .kebab[aria-expanded="true"] { background: var(--panel-alt); color: var(--text); }
+.sf-card .use-btn { flex: none; padding: 6px 10px; font-size: 0.85rem; }
+.row-menu { position: fixed; z-index: 90; min-width: 160px; padding: 4px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35); display: flex; flex-direction: column; }
+.row-menu-item { background: none; border: none; text-align: left; padding: 10px 12px; min-height: 44px; border-radius: 8px;
+  color: var(--text); cursor: pointer; font-size: 0.92rem; }
+.row-menu-item:hover, .row-menu-item:focus-visible { background: var(--panel-alt); }
+.row-menu-item.danger { color: var(--danger); }
+.log-edit { padding: 12px; margin: 8px 0; border: 1px solid var(--accent-dim); border-radius: 10px; background: var(--panel-alt); white-space: normal; }
+.log-edit .form-row:last-child { margin-bottom: 0; }
+.log-edit input, .log-edit select, .log-edit textarea { background: var(--panel); }
+.data-table tr.edit-row:hover { background: none; }
+.data-table tr.edit-row td { padding: 0; }
+#foodLogList .ui-group-head:first-child { margin-top: 0; }
+
+/* ---------- Saved Foods: search and sort ---------- */
+.list-tools { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+.list-tools input[type="search"] { flex: 1; min-width: 160px; }
+.list-tools select { flex: 0 0 auto; }
+
+/* ---------- AI Assistant: one card, status chip in the header, chat fills the height ---------- */
+.chat-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.chat-head h3 { margin: 0; flex: none; }
+.ai-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 160px; max-width: 100%;
+  padding: 4px 10px; border-radius: 999px; background: var(--panel-alt); border: 1px solid var(--border);
+  font-size: 0.8rem; color: var(--text-dim); }
+.ai-chip .status-dot { margin-left: 0; flex: none; }
+#aiStatusText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ai-warmup-btn { padding: 4px 10px; font-size: 0.82rem; }
+#aiUsageText { margin: 0 0 6px; font-size: 0.78rem; }
+#tab-ai.active .chat-card { display: flex; flex-direction: column; height: calc(100dvh - 110px); min-height: 380px; margin-bottom: 0; }
+#tab-ai.active .chat-card .chat-history { flex: 1 1 auto; max-height: none; min-height: 120px; }
+.chat-suggest { margin: 0 0 10px; }
+.chat-input-row { margin: 0; }
 
 /* A heading that introduces a group of cards without being a card itself
    (e.g. "Day Summary" above the stat-card grid at the bottom of Food Log). */
@@ -573,7 +679,7 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); }
 .status-dot.err { background: var(--danger); }
 
 .chat-history {
-  max-height: 320px;
+  max-height: 320px;              /* the AI page's card overrides this: the chat fills the height there */
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -678,6 +784,7 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); }
 @media (max-width: 760px) {
   #app { flex-direction: column; }
 
+  :root { --bottombar-h: 62px; }
   .sidebar {
     width: 100%;
     height: auto;
@@ -687,7 +794,7 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); }
     right: 0;
     top: auto;
     flex-direction: row;
-    padding: 6px 4px;
+    padding: 4px 4px calc(4px + var(--safe-bottom));
     border-right: none;
     border-top: 1px solid var(--border);
     z-index: 50;
@@ -705,28 +812,37 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); }
   }
   /* the bottom bar: the four everyday pages and ⋯ More; More opens the rest in a panel above it */
   .side-nav .more-btn { display: flex; }
-  .nav-more { display: none; position: fixed; right: 8px; bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+  .nav-more { display: none; position: fixed; right: 8px; bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 4px);
     flex-direction: column; gap: 2px; min-width: 190px; margin: 0; padding: 6px; border: 1px solid var(--border);
     border-top: 1px solid var(--border); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 28px rgba(0, 0, 0, .35);
     z-index: 60; }
   .side-nav.more-open .nav-more { display: flex; }
-  .nav-more .tab-btn { flex-direction: row !important; gap: 10px !important; font-size: 0.92rem !important; padding: 10px 12px !important; }
+  .nav-more .tab-btn { flex-direction: row !important; gap: 10px !important; font-size: 0.92rem !important; padding: 10px 12px !important; min-height: 44px; }
   .side-nav .tab-btn {
     flex-direction: column;
+    justify-content: center;
     gap: 3px;
     padding: 6px 8px;
+    min-height: 52px;
+    min-width: 44px;
+    flex: 1 1 0;
     border-left: none;
     border-radius: 10px;
-    font-size: 0.65rem;
+    font-size: 0.72rem;
     white-space: nowrap;
   }
+  .side-nav .tab-btn .nav-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   .side-nav .tab-btn.active { border-left: none; background: var(--panel-alt); }
   .nav-icon { font-size: 1.15rem; }
 
-  .main-col { padding-bottom: 78px; }
+  .main-col { padding-bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 16px); }
 
-  .topbar { flex-direction: column; align-items: stretch; padding-top: 14px; }
-  .topbar-right { justify-content: space-between; }
+  .topbar { padding: 12px 12px 8px; }
+  .page-title { font-size: 1.15rem; }
+  .ds-macros { grid-template-columns: 1fr; }
+  .ds-macros .ds-label { flex-wrap: nowrap; gap: 8px; }
+  .ds-macros .ds-left { margin-left: auto; width: auto; }
+  #tab-ai.active .chat-card { height: calc(100dvh - 96px - var(--bottombar-h) - var(--safe-bottom)); min-height: 320px; }
 
   .date-bar { padding-bottom: 14px; gap: 6px; }
   .date-picker-wrap { min-width: 120px; padding: 6px 30px; }
@@ -764,10 +880,9 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); }
 .setting-toggle-label { font-size: 0.9rem; }
 .settings-footnote { margin-top: 18px; }
 
-/* Phones: tighter bottom-bar buttons so all items (incl. Admin for admins)
-   fit at ~390 px; narrower screens still scroll the bar sideways. */
+/* Narrow phones: tighter sides, still at least 44px wide and tall with readable labels. */
 @media (max-width: 420px) {
-  .side-nav .tab-btn { padding: 6px 3px; }
+  .side-nav .tab-btn { padding: 6px 2px; min-width: 44px; min-height: 52px; font-size: 0.72rem; }
 }
 
 /* ---------- "No admin yet" banner, AI notices ---------- */
@@ -865,8 +980,14 @@ button:disabled, input:disabled { opacity: 0.55; cursor: not-allowed; }
 .card-head-row h3 { margin: 0; }
 .card-head-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .btn-link { text-decoration: none; display: inline-flex; align-items: center; }
-.pattern { border-top: 1px solid var(--border); padding: 12px 0; }
+.pattern { border-top: 1px solid var(--border); padding: 10px 0; }
 .pattern:first-child { border-top: none; }
+.pattern > summary { list-style: none; cursor: pointer; border-radius: 8px; }
+.pattern > summary::-webkit-details-marker { display: none; }
+.pattern > summary .pattern-head h4::before { content: "▸"; display: inline-block; margin-right: 6px; color: var(--text-dim);
+  transition: transform 0.15s; }
+.pattern[open] > summary .pattern-head h4::before { transform: rotate(90deg); }
+.pattern > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pattern-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
 .pattern-head h4 { margin: 0; font-size: 1rem; }
 .sev-strip { display: flex; align-items: flex-end; gap: 1px; height: 34px; margin: 8px 0; background: var(--panel-alt);

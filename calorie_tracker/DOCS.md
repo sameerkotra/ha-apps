@@ -101,16 +101,24 @@ request, and every request is written to the app's **Log** tab with its token co
 
 The menu starts with what you use every day — **Food Log**, **Symptoms**, **Dashboard** and
 **Weight** — and, below a line, **Saved Foods**, **Goals**, **AI Assistant** and (for admins)
-**Admin**. On a phone the first four are the bottom bar and the rest are under **⋯ More**.
+**Admin**. On a phone the first four are the bottom bar and the rest are under **⋯ More**; the
+**👤** button at the top opens **How the app sees you**, the theme and (for admins) **Admin**. The
+page's name is at the top left, and every page has its own address, so a reload keeps your place
+and the phone's Back goes to the page you came from.
 
 ### Food Log (the start page)
 - A **date bar** at the top: previous / next day, a date picker and **Today**. Everything on the
   Food Log follows the chosen day. "Today" follows Home Assistant's time zone, not the device's.
+- **Day Summary**, right under the date bar: calories, protein, carbs and fat against your goals as
+  bars, with what's left (or over). Protein is a minimum, so reaching it shows "goal reached";
+  calories, carbs and fat turn red when you go over. **Edit goals** opens Goals.
 - **Add Food**: meal (breakfast, lunch, dinner, snack), what you ate — a dish, or its whole list of
-  ingredients ("rice, dal, ghee, onion"; up to 1000 characters) —, servings, the time you ate it,
-  **tags**, and the calories, protein, carbs and fat of one serving — the entry adds them up for
-  all the servings (2 servings of a 150 kcal food log 300 kcal). **Pick a saved food** fills the
-  form in one click, tags included.
+  ingredients ("rice, dal, ghee, onion"; up to 1000 characters) —, servings, the time you ate it and
+  **tags**. **Nutrition (optional)** holds the calories, protein, carbs and fat of one serving — the
+  entry adds them up for all the servings (2 servings of a 150 kcal food log 300 kcal).
+- Typing in the food box lists matching **saved foods**: pick one to fill the form, tags included.
+  **Recent & frequent** chips (your most-logged saved foods) log one serving in one tap, to the
+  meal chosen above.
 - **Calories are optional.** Leave them empty to just log what you ate (handy when you're keeping a
   food diary for symptoms rather than counting). Such an entry shows "—" and isn't counted in the
   totals; the Day Summary says how many weren't counted.
@@ -119,22 +127,24 @@ The menu starts with what you use every day — **Food Log**, **Symptoms**, **Da
 - **Tags** say what's in a food: open the **🏷️ Tags** list and tick the ones that fit (dairy, gluten,
   spicy, caffeine…), or type your own at the bottom of it and press **Add** (or Enter). Patterns compares tags as well as foods, so "dairy" covers
   milk, paneer and yoghurt at once.
-- **✨ Estimate with AI**: type a description in the food box (or leave it empty to be asked) and
+- **✨ Estimate with AI** (under Nutrition): type a description in the food box (or leave it empty to be asked) and
   the AI fills in calories and macros, with a short note about its assumptions. What you typed
   stays as it is.
   Always review the numbers before adding.
-- **Log**: the day's entries as a table; a long ingredient list shows its first lines — tap it for
-  the rest; ✕ deletes one.
-- **Day Summary**: calories, protein, carbs and fat against your goals, plus your latest weight,
-  and **Macros** progress bars.
+- **Log**: the day's entries. On a phone they're grouped by meal with each meal's calories; tap an
+  entry (or **⋯ → Edit**) to change it in place, **⋯ → Delete** removes it. On a wider screen
+  they're a table with ✎ (edit) and ✕ (delete); a long ingredient list shows its first lines — tap
+  it for the rest.
 
 ### Saved Foods
+- The list comes first, with a search box and **A–Z** / **Most used** sorting. **+ New food**
+  opens the form above it; tapping a food (or ✎ / **⋯ → Edit**) opens it for editing.
 - Build foods you eat often ("Protein shake", "Chicken and rice bowl") with serving size and
   unit, calories (optional), macros, tags and optional notes (recipe, brand, preparation). A saved
   food's tags come with it each time you log it. ✨ Estimate with AI
   works here too and also fills in the serving size and unit.
 - Each saved food can be **＋ logged** in one click (one serving, as a snack, on today's log),
-  edited (✎) or deleted (✕). Long notes open in a popup (⤢).
+  edited or deleted (✕, or **⋯** on a phone). Long notes open in a popup (⤢, or **⋯ → Details**).
 
 ### Symptoms
 Your own symptom diary, next to your food. It follows the date bar like the Food Log.
@@ -143,7 +153,7 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
   note.
 - **The Day**: that day's food and symptoms together in time order; ✕ deletes a symptom.
 - **Patterns** (last 30 days, 90 days, 6 months or a year): for each symptom, how often and how
-  bad (a strip of days, coloured by the worst that day), and the **tags and foods often before it**
+  bad (a strip of days, coloured by the worst that day); tap it for the **tags and foods often before it**
   (a food written as a list of ingredients counts as each ingredient, so ghee can stand out across
   different dishes) — eaten in the hours before it (6 by default) on most of the times it came, and much more often
   than in the same hours on days without it. A symptom needs to be logged at least 3 times before
@@ -154,8 +164,9 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
   details, severity, tags, calories, note) — to keep, or to take to a doctor.
 
 ### Weight
+- At the top: your **latest** weight and its **7-day** and **30-day change**.
 - Log your weight (kg) for any date, with an optional note; delete entries you don't want. The
-  list shows your newest 100 weigh-ins; **Show all** shows the rest.
+  list shows your newest 10 weigh-ins; **Show all** shows the rest. **Edit goals** sets your target.
 - **Weight History** chart: daily (last 30 days), weekly (12 weeks) or monthly (12 months)
   averages, with a dashed line at your target weight when one is set.
 
@@ -163,16 +174,19 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
 - Daily calorie, protein, carbohydrate and fat goals, plus starting and target weight.
 
 ### Dashboard
-- **Summary**: a calorie chart against your goal — daily (last 14 days), weekly (8 weeks) or
+- At the top: today's calories against your goal, your **7-day average** and your **latest weight**.
+- **Summary** (with **Edit goals**): a calorie chart against your goal — daily (last 14 days), weekly (8 weeks) or
   monthly (6 months) averages; bars above the goal turn red. Hover or use the arrow keys for
   exact values.
 - **Monthly Breakdown**: for any month, the average calories and macros per day against your
-  goals, and your average weight and change over the month.
+  goals (protein shows as met when reached; calories, carbs and fat in red when over), and your
+  average weight and change over the month.
 
 ### AI Assistant
-- Ask nutrition and fitness questions in a simple chat. Each question is answered on its own
-  (the AI doesn't see your log or earlier questions).
-- Shows which provider is in use; admins also see the address, the model, the last error if any,
+- Ask nutrition and fitness questions in a simple chat that fills the page; an empty chat offers a
+  few questions to start with. Each question is answered on its own (the AI doesn't see your log or
+  earlier questions).
+- A one-line status beside the title shows which provider is in use (hover for all of it); admins also see the address, the model, the last error if any,
   and the tokens and time of the last request. With Ollama, **Wake up model** loads the model in
   advance. When something goes wrong, admins get the provider's own message; everyone else a plain
   one without the server's address.
@@ -182,7 +196,8 @@ Your own symptom diary, next to your food. It follows the date bar like the Food
   **Answer the Household Assistant** and the **App-messages signing key**. Changes apply immediately.
 - **Users**: everyone who has opened the app. A switch hides someone from the user switcher (an
   old account, a guest); it doesn't delete their data or lock them out.
-- **Storage**: download the whole database as a backup, or restore one (see **Backups**).
+- **Storage**: download the whole database as a backup; restoring one is in the red **Restore from
+  Backup** box below it (see **Backups**).
 - **Users → ⋯ Data**: one person's data — see **Admin → Users → Data** below.
 - **User switcher** (top right, admins only): view and edit another household member's log,
   saved foods, weight and goals — for example to help a child or partner. Every change made this

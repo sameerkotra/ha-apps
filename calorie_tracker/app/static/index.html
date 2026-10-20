@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calorie Tracker</title>
-<script src="common/theme-boot.js?v=2.5.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.5.1">
-<link rel="stylesheet" href="common/settings.css?v=2.5.1">
-<link rel="stylesheet" href="common/person-data.css?v=2.5.1">
-<link rel="stylesheet" href="style.css?v=2.5.1">
+<script src="common/theme-boot.js?v=2.6.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.6.0">
+<link rel="stylesheet" href="common/settings.css?v=2.6.0">
+<link rel="stylesheet" href="common/person-data.css?v=2.6.0">
+<link rel="stylesheet" href="style.css?v=2.6.0">
 </head>
 <body>
 <div id="app">
@@ -39,9 +39,16 @@
 
   <div class="main-col">
     <header class="topbar">
+      <h1 id="pageTitle" class="page-title">Food Log</h1>
       <div class="topbar-right">
-        <button type="button" id="whoamiBtn" class="btn-secondary whoami-btn" title="How the app sees you" aria-label="How the app sees you">👤</button>
-        <select id="userSelect" title="Viewing data for"></select>
+        <!-- phones: 👤 opens Me / Theme / Admin (on a computer the sidebar has them) -->
+        <button type="button" id="whoamiBtn" class="btn-secondary whoami-btn tap44" title="You, theme and admin" aria-label="You, theme and admin" aria-haspopup="true" aria-expanded="false" aria-controls="meMenu">👤</button>
+        <select id="userSelect" title="Viewing data for" aria-label="Viewing data for"></select>
+        <div id="meMenu" class="me-menu" role="menu" hidden>
+          <button type="button" id="meWhoamiBtn" class="me-item" role="menuitem">👤 How the app sees you</button>
+          <label class="me-item me-theme">Theme <select id="meThemeSelect" aria-label="Theme"></select></label>
+          <button type="button" id="meAdminBtn" class="me-item" role="menuitem" hidden>🛡️ Admin</button>
+        </div>
       </div>
     </header>
 
@@ -61,10 +68,16 @@
     </div>
 
     <main>
+    <div id="signinError" class="card signin-error" hidden></div>
+
     <!-- DASHBOARD -->
     <section id="tab-dashboard" class="tab-panel">
+      <div class="summary-strip" id="dashTop"></div>
       <div class="card">
-        <h3>Summary</h3>
+        <div class="card-head-row">
+          <h3>Summary</h3>
+          <a href="#/goals" class="goals-link">Edit goals</a>
+        </div>
         <div class="history-toggle">
           <button class="hist-btn cal-hist-btn active" data-granularity="daily">Daily</button>
           <button class="hist-btn cal-hist-btn" data-granularity="weekly">Weekly</button>
@@ -94,53 +107,56 @@
 
     <!-- FOOD LOG -->
     <section id="tab-foodlog" class="tab-panel active">
+      <!-- Day Summary: kcal and macros against the goals, right under the date bar -->
+      <div class="card day-strip" id="daySummary" aria-label="Day summary">
+        <div class="ui-loading" role="status"><span class="ui-spinner" aria-hidden="true"></span><span>Loading…</span></div>
+      </div>
+
       <div class="card">
         <h3>Add Food</h3>
         <div class="form-row">
-          <select id="mealType">
+          <select id="mealType" aria-label="Meal" style="flex:0 1 140px">
             <option value="breakfast">Breakfast</option>
             <option value="lunch">Lunch</option>
             <option value="dinner">Dinner</option>
             <option value="snack" selected>Snack</option>
           </select>
-          <select id="savedFoodPicker">
-            <option value="">— pick a saved food —</option>
-          </select>
         </div>
-        <div class="form-row">
+        <div class="form-row food-search-row">
           <textarea id="foodName" class="food-name" rows="2" maxlength="1000" aria-label="What you ate"
-            placeholder="What you ate — a dish, or its ingredients (e.g. rice, dal, ghee, onion, tomato)"></textarea>
+            aria-autocomplete="list" aria-controls="foodSuggest" autocomplete="off"
+            placeholder="What you ate — type to find a saved food, or a dish / its ingredients (e.g. rice, dal, ghee)"></textarea>
+          <div id="foodSuggest" class="food-suggest" role="listbox" aria-label="Saved foods" hidden></div>
+        </div>
+        <div id="quickFoods" class="quick-foods" hidden>
+          <span class="hint">Recent &amp; frequent — tap to log one serving:</span>
+          <div id="quickFoodChips" class="chip-row"></div>
         </div>
         <div class="form-row">
-          <input id="foodServings" type="number" step="0.1" min="0.1" max="1000" value="1" placeholder="Servings" style="flex:1" aria-label="Servings">
+          <input id="foodServings" type="number" step="0.1" min="0.1" max="1000" value="1" placeholder="Servings" style="flex:1" aria-label="Servings" title="Servings">
           <input id="foodTime" type="time" style="flex:1" aria-label="Time eaten" title="When it was eaten (blank: now today, else the meal's usual time)">
           <div id="foodTags" class="tag-picker" style="flex:2"></div>
         </div>
-        <div class="form-row">
-          <input id="foodCalories" type="number" step="1" min="0" max="50000" placeholder="Calories (optional)" title="Calories per serving — leave empty if you don't count them">
-          <input id="foodProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g) per serving">
-          <input id="foodCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g) per serving">
-          <input id="foodFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g) per serving">
-        </div>
-        <div class="form-row">
-          <button id="aiFillBtn" class="btn-secondary">✨ Estimate with AI</button>
+        <details class="nutrition" id="foodNutrition">
+          <summary>Nutrition (optional)</summary>
+          <div class="form-row">
+            <input id="foodCalories" type="number" step="1" min="0" max="50000" placeholder="Calories" aria-label="Calories per serving" title="Calories per serving — leave empty if you don't count them">
+            <input id="foodProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g)" aria-label="Protein (g) per serving">
+            <input id="foodCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g)" aria-label="Carbs (g) per serving">
+            <input id="foodFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g)" aria-label="Fat (g) per serving">
+          </div>
+          <p class="hint nutrition-hint">Per serving. <button id="aiFillBtn" type="button" class="btn-secondary">✨ Estimate with AI</button></p>
+        </details>
+        <div class="form-row form-actions">
           <button id="addFoodBtn" class="btn-primary">Add Food</button>
         </div>
-        <div id="aiFillStatus" class="hint"></div>
+        <div id="aiFillStatus" class="hint" role="status"></div>
         <div class="ai-notice" hidden></div>
       </div>
 
       <div class="card">
         <h3>Log</h3>
         <div id="foodLogList" class="table-wrap"></div>
-      </div>
-
-      <h3 class="section-heading">Day Summary</h3>
-      <div class="card-grid" id="summaryCards"></div>
-      <p class="hint" id="summaryNote" hidden></p>
-      <div class="card">
-        <h3>Macros</h3>
-        <div id="macroBars"></div>
       </div>
     </section>
 
@@ -184,47 +200,63 @@
           </div>
         </div>
         <p class="hint" id="patternIntro"></p>
+        <details class="about"><summary>How Patterns works</summary>
+          <p id="patternAbout"></p>
+        </details>
         <div id="patternList"></div>
       </div>
     </section>
 
-    <!-- SAVED FOODS -->
+    <!-- SAVED FOODS: the list first; "+ New food" (or Edit) opens the form above it -->
     <section id="tab-savedfoods" class="tab-panel">
-      <div class="card">
-        <h3 id="sfFormTitle">Build a Repeated Food</h3>
-        <p class="hint">Save foods you eat often (e.g. "Protein Shake", "Chicken & Rice Bowl") so you can add them to your log in one click.</p>
+      <div class="card" id="sfFormCard" hidden>
+        <h3 id="sfFormTitle">New saved food</h3>
+        <p class="hint">Foods you eat often (e.g. "Protein Shake", "Chicken &amp; Rice Bowl") — log them in one tap.</p>
         <div class="form-row">
           <textarea id="sfName" class="food-name" rows="2" maxlength="1000" aria-label="Food name"
             placeholder="Food name, or its ingredients (e.g. dosa: rice, urad dal, oil)"></textarea>
         </div>
         <div class="form-row">
-          <input id="sfServingSize" type="number" step="0.1" min="0.1" max="100000" value="1" placeholder="Serving size">
-          <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" maxlength="40" value="serving">
+          <input id="sfServingSize" type="number" step="0.1" min="0.1" max="100000" value="1" placeholder="Serving size" aria-label="Serving size">
+          <input id="sfServingUnit" placeholder="Unit (g, cup, serving...)" maxlength="40" value="serving" aria-label="Serving unit">
         </div>
         <div class="form-row">
-          <input id="sfCalories" type="number" step="1" min="0" max="50000" placeholder="Calories (optional)">
-          <input id="sfProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g)">
-          <input id="sfCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g)">
-          <input id="sfFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g)">
+          <input id="sfCalories" type="number" step="1" min="0" max="50000" placeholder="Calories (optional)" aria-label="Calories">
+          <input id="sfProtein" type="number" step="0.1" min="0" max="5000" placeholder="Protein (g)" aria-label="Protein (g)">
+          <input id="sfCarbs" type="number" step="0.1" min="0" max="5000" placeholder="Carbs (g)" aria-label="Carbs (g)">
+          <input id="sfFat" type="number" step="0.1" min="0" max="5000" placeholder="Fat (g)" aria-label="Fat (g)">
         </div>
         <div class="form-row">
           <div id="sfTags" class="tag-picker"></div>
         </div>
         <div class="form-row">
-          <textarea id="sfNotes" placeholder="Additional details (optional) — recipe, brand, prep notes..." rows="2" style="flex:1"></textarea>
+          <textarea id="sfNotes" placeholder="Additional details (optional) — recipe, brand, prep notes..." rows="2" style="flex:1" aria-label="Notes"></textarea>
         </div>
         <div class="form-row">
           <button id="sfAiFillBtn" class="btn-secondary">✨ Estimate with AI</button>
-          <button id="sfCancelEditBtn" class="btn-secondary" hidden>Cancel</button>
+          <button id="sfCancelEditBtn" class="btn-secondary">Cancel</button>
           <button id="sfSaveBtn" class="btn-primary">Save Food</button>
         </div>
         <div class="ai-notice" hidden></div>
       </div>
       <div class="card">
-        <h3>Your Saved Foods</h3>
+        <div class="card-head-row">
+          <h3>Your Saved Foods</h3>
+          <button type="button" id="sfNewBtn" class="btn-primary">+ New food</button>
+        </div>
+        <div class="list-tools">
+          <input id="sfSearch" type="search" placeholder="Search saved foods" aria-label="Search saved foods">
+          <select id="sfSort" aria-label="Sort">
+            <option value="az">A–Z</option>
+            <option value="used">Most used</option>
+          </select>
+        </div>
         <div id="savedFoodsList" class="table-wrap"></div>
       </div>
     </section>
+
+    <!-- the ⋯ menu of a row (Edit / Delete …), filled by openRowMenu() -->
+    <div id="rowMenu" class="row-menu" role="menu" hidden></div>
 
     <!-- Shared "enlarge details" popup -->
     <div id="detailsModal" class="modal-overlay" hidden>
@@ -239,12 +271,16 @@
 
     <!-- WEIGHT -->
     <section id="tab-weight" class="tab-panel">
+      <div class="summary-strip" id="weightStats"></div>
       <div class="card">
-        <h3>Log Weight</h3>
+        <div class="card-head-row">
+          <h3>Log Weight</h3>
+          <a href="#/goals" class="goals-link">Edit goals</a>
+        </div>
         <div class="form-row">
-          <input id="weightDate" type="date">
-          <input id="weightValue" type="number" step="0.1" min="0.1" max="700" placeholder="Weight (kg)">
-          <input id="weightNote" placeholder="Note (optional)" maxlength="500" style="flex:2">
+          <input id="weightValue" type="number" step="0.1" min="0.1" max="700" placeholder="Weight (kg)" aria-label="Weight (kg)">
+          <input id="weightDate" type="date" aria-label="Date">
+          <input id="weightNote" placeholder="Note (optional)" maxlength="500" style="flex:2" aria-label="Note">
           <button id="addWeightBtn" class="btn-primary">Log Weight</button>
         </div>
       </div>
@@ -307,13 +343,13 @@
         <div id="admin-users" class="admin-panel" role="tabpanel" hidden>
           <div class="card">
             <h3>Household Users</h3>
-            <p class="hint">
-              Everyone listed here has opened this app through their own Home Assistant
-              login at least once — there's no way to add a user manually. Use the dropdown
-              at the top to switch which person's data you're viewing or editing. Disabling
-              a user just hides them from that dropdown for everyone else; it doesn't lock
-              them out of their own data or delete anything.
-            </p>
+            <p class="hint">Everyone who has opened this app with their Home Assistant login.</p>
+            <details class="about"><summary>More about users</summary>
+              <p>There's no way to add a user by hand — a person appears here the first time they open the app.
+              Use the dropdown at the top to switch which person's data you're viewing or editing. Disabling
+              a user just hides them from that dropdown for everyone else; it doesn't lock them out of their
+              own data or delete anything.</p>
+            </details>
             <div id="usersList"></div>
           </div>
         </div>
@@ -330,17 +366,17 @@
             <a href="api/admin-storage-download-db" class="btn-secondary storage-download-btn">⬇️ Download database (.db)</a>
           </div>
 
-          <div class="card">
+          <div class="danger-zone">
             <h3>Restore from Backup</h3>
-            <p class="hint" style="color:var(--danger)">
+            <p class="hint">
               ⚠️ Restoring replaces every household member's data with the contents
               of the file you upload. There is no merge and no undo — use this
               only to recover onto a fresh install (e.g. after a reinstall or a
               lost /data volume), not as routine use.
             </p>
             <div class="form-row">
-              <input id="restoreDbFile" type="file" accept=".db">
-              <button id="restoreDbBtn" class="btn-secondary">⬆️ Import database (.db)</button>
+              <input id="restoreDbFile" type="file" accept=".db" aria-label="Backup file (.db)">
+              <button id="restoreDbBtn" class="btn-danger-outline">⬆️ Import database (.db)</button>
             </div>
             <div id="restoreDbStatus" class="hint"></div>
           </div>
@@ -358,18 +394,18 @@
 
     <!-- AI -->
     <section id="tab-ai" class="tab-panel">
-      <div class="card">
-        <h3>AI Assistant <span id="aiStatusDot" class="status-dot"></span></h3>
-        <p class="hint" id="aiStatusText">Checking the AI setup…</p>
+      <div class="card chat-card">
+        <div class="chat-head">
+          <h3>Ask a nutrition question</h3>
+          <span class="ai-chip" id="aiStatusChip" role="status"><span id="aiStatusDot" class="status-dot"></span><span id="aiStatusText">Checking the AI setup…</span></span>
+          <button id="aiWarmupBtn" class="btn-secondary ai-warmup-btn" hidden>Wake up model</button>
+        </div>
         <p class="hint" id="aiUsageText" hidden></p>
-        <button id="aiWarmupBtn" class="btn-secondary" hidden>Wake up model</button>
         <div class="ai-notice" hidden></div>
-      </div>
-      <div class="card">
-        <h3>Ask a nutrition question</h3>
-        <div id="chatHistory" class="chat-history"></div>
-        <div class="form-row">
-          <input id="chatInput" placeholder="e.g. Is 150g protein a day too much?" maxlength="4000" style="flex:3">
+        <div id="chatHistory" class="chat-history" aria-live="polite"></div>
+        <div id="chatSuggest" class="chip-row chat-suggest" aria-label="Suggested questions"></div>
+        <div class="form-row chat-input-row">
+          <input id="chatInput" placeholder="e.g. Is 150g protein a day too much?" maxlength="4000" style="flex:3" aria-label="Your question">
           <button id="chatSendBtn" class="btn-primary">Send</button>
         </div>
       </div>
@@ -378,13 +414,13 @@
   </div>
 </div>
 
-<script src="common/ui.js?v=2.5.1"></script>
-<script src="common/settings.js?v=2.5.1"></script>
-<script src="common/people.js?v=2.5.1"></script>
-<script src="common/person-data.js?v=2.5.1"></script>
-<script src="common/backnav.js?v=2.5.1"></script>
-<script src="common/whoami.js?v=2.5.1"></script>
-<script src="common/deeplink.js?v=2.5.1"></script>
-<script src="app.js?v=2.5.1"></script>
+<script src="common/ui.js?v=2.6.0"></script>
+<script src="common/settings.js?v=2.6.0"></script>
+<script src="common/people.js?v=2.6.0"></script>
+<script src="common/person-data.js?v=2.6.0"></script>
+<script src="common/backnav.js?v=2.6.0"></script>
+<script src="common/whoami.js?v=2.6.0"></script>
+<script src="common/deeplink.js?v=2.6.0"></script>
+<script src="app.js?v=2.6.0"></script>
 </body>
 </html>

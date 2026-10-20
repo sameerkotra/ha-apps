@@ -541,10 +541,15 @@ class PageHandling(unittest.TestCase):
         self.assertIn("loadFoodLog()", use)
 
     def test_delete_asks_and_redraws_the_chart(self):
+        # ✕ (table) and ⋯ → Delete (phone cards) both go through deleteLogEntry
         dele = self.js[self.js.index('$all(".del-log-btn")'):]
         dele = dele[:dele.index("})));")]
-        self.assertIn("confirm(", dele)
-        self.assertIn("loadHistory()", dele)
+        self.assertIn("deleteLogEntry(", dele)
+        self.assertIn("deleteLogEntry(l)", self.js)
+        body = self.js[self.js.index("async function deleteLogEntry"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn("confirm(", body)
+        self.assertIn("loadHistory()", body)
 
     def test_date_change_skips_the_picker_and_charts_redraw(self):
         body = self.js[self.js.index("async function refreshDateScoped"):]

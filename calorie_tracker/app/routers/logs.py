@@ -73,6 +73,44 @@ def create_log(payload: schemas.FoodLogCreate, background: BackgroundTasks, user
     return foodrows.out(row)
 
 
+@router.put("/api/logs/{entry_id}")
+def update_log(entry_id: int, payload: schemas.FoodLogCreate, background: BackgroundTasks,
+               user: dict = Depends(get_acting_user)):
+    """Edit one entry (Food Log → ⋯ → Edit): a full replace with POST's body. No `tags` keeps the entry's tags;
+    no `eaten_at` keeps its time. A `saved_food_id` other than the entry's own must be one of the acting person's
+    saved foods (422). 404 if it isn't the acting person's entry."""
+    with db.get_conn() as conn:
+        old = conn.execute(
+            "SELECT date, saved_food_id, eaten_at, tags FROM food_logs WHERE id = ? AND user_id = ?",
+            (entry_id, user["id"]),
+        ).fetchone()
+        if not old:
+            raise HTTPException(404, "Entry not found")
+        if payload.saved_food_id is not None and payload.saved_food_id != old["saved_food_id"]:
+            saved = conn.execute("SELECT id FROM saved_foods WHERE id = ? AND user_id = ?",
+                                 (payload.saved_food_id, user["id"])).fetchone()
+            if saved is None:
+                raise HTTPException(422, "saved_food_id: that saved food doesn't exist (or isn't this person's)")
+        tags = payload.tags if payload.tags is not None else foodrows.tags_list(old["tags"])
+        eaten_at = payload.eaten_at or old["eaten_at"] or foodrows.MEAL_TIMES[payload.meal_type]
+        conn.execute(
+            """UPDATE food_logs SET date=?, meal_type=?, food_name=?, servings=?, calories=?, no_calories=?,
+               protein=?, carbs=?, fat=?, saved_food_id=?, eaten_at=?, tags=? WHERE id=? AND user_id=?""",
+            (
+                str(payload.date), payload.meal_type, payload.food_name, payload.servings,
+                payload.calories or 0, 1 if payload.calories is None else 0,
+                payload.protein, payload.carbs, payload.fat, payload.saved_food_id, eaten_at,
+                foodrows.tags_text(tags), entry_id, user["id"],
+            ),
+        )
+        row = conn.execute("SELECT * FROM food_logs WHERE id = ?", (entry_id,)).fetchone()
+    old_date = date_type.fromisoformat(old["date"])
+    _sync_today(background, user, old_date)
+    if payload.date != old_date:
+        _sync_today(background, user, payload.date)
+    return foodrows.out(row)
+
+
 @router.delete("/api/logs/{entry_id}")
 def delete_log(entry_id: int, background: BackgroundTasks, user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:

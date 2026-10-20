@@ -123,7 +123,7 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `GET /api/weight/history?granularity=daily\|weekly\|monthly` | act | `{granularity, target, points:[{label, date, weight}]}`. Daily: every entry from the last 30 days, labelled `M/D`. Weekly: mean per 7-day bucket starting at today−83 days (12 buckets). Monthly: mean per calendar month over the last 12 months. Empty buckets are skipped, not zero-filled. Values rounded to 1 decimal |
 | `POST /api/weight` | act | Body `{date, weight_kg, note?}`. Returns the new row |
 | `DELETE /api/weight/{id}` | act | `{ok:true}`; 404 if not the acting user's entry |
-| `GET /api/saved-foods` | act | Sorted by name |
+| `GET /api/saved-foods` | act | Sorted by name. Each also has `uses` (how many food-log entries point at it) and `last_used` (the latest such entry's date, or null) |
 | `POST /api/saved-foods` | act | Body `{name, serving_size=1, serving_unit="serving", calories?, protein=0, carbs=0, fat=0, notes?, tags=[]}`. An empty `notes` is stored as NULL; no `calories` (or null) = none. Tags: lower case, single spaces, ≤30 characters each, ≤12, no repeats (422 beyond) |
 | `PUT /api/saved-foods/{id}` | act | Full replace with the same body. 404 if not the acting user's food |
 | `DELETE /api/saved-foods/{id}` | act | `{ok:true}`; 404 if not the acting user's food |
@@ -133,6 +133,7 @@ Auth column: **none**, **cur** = `get_current_user`, **act** = `get_acting_user`
 | `GET /api/symptoms/choices` | act | `{symptoms: the person's most used in 90 days, then App settings' symptom_list (case-insensitive, no repeats), tags: food_tag_list (lower case) then the person's own}` |
 | `GET /api/patterns?days=30\|90\|180\|365` | act | `patterns.analyse` (§5.9): `{from, to, days, hours, minCount, loggedDays, dates, symptoms:[{name, count, days, avgSeverity, last, series (worst severity per day, 0 = none), usualTime, otherDays, tags:[{tag, before, of, other, otherOf, lift}], foods:[{food, …}]}], tooFew:[…]}`; another `days` → 422 |
 | `GET /api/journal.csv?days=` | act | Food and symptoms in time order (Date, Time, Type, What, Details, Severity, Tags, Calories, Note; UTF-8 BOM; a cell starting `= + - @` tab or CR gets a leading `'`) |
+| `PUT /api/logs/{id}` | act | Edit an entry: POST's body, full replace. No `tags` → keeps the entry's; no `eaten_at` → keeps its time. A `saved_food_id` other than the entry's own must be the acting user's (422). 404 if not the acting user's entry. Pushes the sensor if the old or new date is today |
 | `DELETE /api/logs/{id}` | act | `{ok:true}`; 404 if not the acting user's entry. Pushes the sensor if the entry was dated today |
 | `GET /api/summary?date=` | act | `{date, totals{calories,protein,carbs,fat}, goal{calorie_goal,protein_goal,carb_goal,fat_goal}, remaining{…}, latest_weight_kg}`. The latest weight is the most recent overall, not limited to on or before `date` |
 | `GET /api/summary/month?month=YYYY-MM` | act | `{month, label "September 2026", is_current, is_future, days_in_month, days_elapsed, totals, avg_per_day, goal, weight{avg_kg,start_kg,end_kg,change_kg,entries}}`. `days_elapsed` counts up to today and is 0 for a future month. `avg_per_day` = total ÷ `days_elapsed` |

@@ -9,7 +9,12 @@ router = APIRouter(prefix="/api/saved-foods", tags=["saved-foods"])
 def list_saved_foods(user: dict = Depends(get_acting_user)):
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM saved_foods WHERE user_id = ? ORDER BY name ASC",
+            # uses / last_used: how often (and when last) it was logged — the Food Log's quick chips and the
+            # "Most used" sort
+            "SELECT s.*, "
+            "(SELECT COUNT(*) FROM food_logs l WHERE l.user_id = s.user_id AND l.saved_food_id = s.id) AS uses, "
+            "(SELECT MAX(l.date) FROM food_logs l WHERE l.user_id = s.user_id AND l.saved_food_id = s.id) AS last_used "
+            "FROM saved_foods s WHERE s.user_id = ? ORDER BY s.name ASC",
             (user["id"],),
         ).fetchall()
     return [foodrows.out(r) for r in rows]

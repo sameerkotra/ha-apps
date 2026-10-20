@@ -148,30 +148,49 @@ function updateDateBarVisibility(tab) {
   $("#dateBar").hidden = !DATE_BAR_TABS.has(tab);
 }
 
+// Every page has an address: #/foodlog, #/symptoms, #/dashboard, #/weight, #/savedfoods, #/goals, #/ai, #/whoami,
+// #/admin/<settings|users|storage> (#/users, #/storage and #/settings open the matching Admin tab). Navigation goes
+// through BackNav (common/backnav.js), so the phone's Back retraces it and a reload keeps your place.
+const TABS = ["foodlog", "symptoms", "dashboard", "weight", "savedfoods", "goals", "ai", "admin", "whoami"];
+const TAB_TITLES = {
+  foodlog: "Food Log", symptoms: "Symptoms", dashboard: "Dashboard", weight: "Weight", savedfoods: "Saved Foods",
+  goals: "Goals", ai: "AI Assistant", admin: "Admin", whoami: "How the app sees you",
+};
+
 function activateTab(tab) {
-  $all(".tab-btn[data-tab]").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  $all(".tab-btn[data-tab]").forEach(b => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("active", on);
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
   closeMore();
-  $("#moreBtn").classList.toggle("active", !!document.querySelector(`#navMore .tab-btn[data-tab="${tab}"]`));
+  closeMeMenu();
+  const inMore = !!document.querySelector(`#navMore .tab-btn[data-tab="${tab}"]`);
+  $("#moreBtn").classList.toggle("active", inMore);
   $all(".tab-panel").forEach(p => p.classList.remove("active"));
   $(`#tab-${tab}`).classList.add("active");
+  $("#pageTitle").textContent = TAB_TITLES[tab] || "Calorie Tracker";
+  document.title = `${TAB_TITLES[tab] || ""} · Calorie Tracker`.replace(/^ · /, "");
   updateDateBarVisibility(tab);
 }
 
-function showTab(tab) {
-  if (tab === "admin") { navigateAdmin(adminSubtab); return; }
-  if (LEGACY_ADMIN_TABS[tab]) { navigateAdmin(LEGACY_ADMIN_TABS[tab]); return; }
-  clearRouteHash();
+// Opens a tab's page and loads what it needs (no navigation: routeFromHash calls this for the address shown).
+function openTab(tab) {
+  if (tab === "whoami") { activateTab("whoami"); loadWhoami(); return; }
   activateTab(tab);
   if (tab === "ai") refreshAiStatus();
   if (tab === "weight") loadWeightHistory();
   if (tab === "symptoms") { loadSymptomDay(); loadPatterns(); }
-  // The history canvas sizes itself from its container's clientWidth,
-  // which is 0 while its tab-panel is display:none — so it has to
-  // re-measure once Dashboard is what's actually visible. This only
-  // started mattering once Food Log (not Dashboard) became the tab that
-  // opens by default; before that, Dashboard was always visible at the
-  // one moment loadHistory() ran automatically (page load).
-  if (tab === "dashboard") loadHistory();
+  // The history canvas sizes itself from its container's clientWidth, which is 0 while its tab-panel is
+  // display:none — so it has to re-measure once Dashboard is what's actually visible.
+  if (tab === "dashboard") { loadHistory(); loadDashTop(); }
+}
+
+// Nav buttons and links: go to a tab's address (a new trail starts, see BackNav's isTab).
+function showTab(tab) {
+  if (tab === "admin") { navigateAdmin(adminSubtab); return; }
+  if (LEGACY_ADMIN_TABS[tab]) { navigateAdmin(LEGACY_ADMIN_TABS[tab]); return; }
+  BackNav.go(`#/${tab}`);
 }
 
 $all(".tab-btn[data-tab]").forEach(btn => {
@@ -186,6 +205,7 @@ function closeMore() {
 $("#moreBtn").addEventListener("click", (e) => {
   e.stopPropagation();
   const open = !$(".side-nav").classList.contains("more-open");
+  closeMeMenu();
   $(".side-nav").classList.toggle("more-open", open);
   $("#moreBtn").setAttribute("aria-expanded", open ? "true" : "false");
   if (open) { const first = document.querySelector("#navMore .tab-btn:not([hidden])"); if (first) first.focus(); }
@@ -193,36 +213,60 @@ $("#moreBtn").addEventListener("click", (e) => {
 document.addEventListener("click", (e) => { if (!e.target.closest || !e.target.closest("#navMore")) closeMore(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $(".side-nav").classList.contains("more-open")) { closeMore(); $("#moreBtn").focus(); } });
 
+// 👤 in the top bar (phones; on a computer the sidebar has the user chip and the theme): How the app sees you,
+// Theme and Admin.
+function closeMeMenu() {
+  $("#meMenu").hidden = true;
+  $("#whoamiBtn").setAttribute("aria-expanded", "false");
+}
+$("#whoamiBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = $("#meMenu").hidden;
+  closeMore();
+  $("#meMenu").hidden = !open;
+  $("#whoamiBtn").setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) $("#meWhoamiBtn").focus();
+});
+$("#meMenu").addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", closeMeMenu);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#meMenu").hidden) { closeMeMenu(); $("#whoamiBtn").focus(); } });
+HouseholdTheme.bindSelect($("#meThemeSelect"));
+$("#meWhoamiBtn").addEventListener("click", () => { closeMeMenu(); openWhoami(); });
+$("#meAdminBtn").addEventListener("click", () => { closeMeMenu(); showTab("admin"); });
+
 // ---------- Admin (admins only: App settings | Users | Storage) ----------
-// One sidebar item, hidden for non-admins (the server enforces every admin
-// API on its own anyway). Deep-linkable as #/admin/settings, #/admin/users,
-// #/admin/storage; #/users and #/storage open the matching Admin tab too.
+// One sidebar item, hidden for non-admins (the server enforces every admin API on its own anyway).
 const ADMIN_SUBTABS = ["settings", "users", "storage"];
 const LEGACY_ADMIN_TABS = { users: "users", storage: "storage", settings: "settings" };
 let adminSubtab = "settings";
 
-function navigateAdmin(sub) {
+// From elsewhere: a new trail (isTab). Between Admin's own tabs: replace, so Back leaves Admin in one step.
+function navigateAdmin(sub, opts) {
   const hash = `#/admin/${sub}`;
-  // BackNav.go: no history entry of its own (backnav.js), still → hashchange → routeFromHash()
-  if (location.hash !== hash) BackNav.go(hash);
-  else routeFromHash();
+  if (location.hash === hash) { routeFromHash(); return; }
+  if (opts && opts.replace) BackNav.replace(hash); else BackNav.go(hash);
 }
 
 function clearRouteHash() {
-  if (location.hash.startsWith("#/")) history.replaceState(null, "", location.pathname + location.search);
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
 }
 
-// Returns true if the hash named a page (and it was opened).
+// Opens the page the address names. Returns false for an address that isn't a page (e.g. "#/foodlog/<date>",
+// which init() hands to openLink).
 function routeFromHash() {
-  const m = location.hash.match(/^#\/([a-z]+)(?:\/([a-z]+))?\/?$/);
+  const hash = location.hash;
+  if (!hash || hash === "#" || hash === "#/") { openTab("foodlog"); return true; }
+  const m = hash.match(/^#\/([a-z]+)(?:\/([a-z]+))?\/?$/);
   if (!m) return false;
   let top = m[1], sub = m[2];
-  if (top !== "admin") {
-    if (!LEGACY_ADMIN_TABS[top]) return false;
+  if (top !== "admin" && LEGACY_ADMIN_TABS[top]) {
     sub = LEGACY_ADMIN_TABS[top];
+    top = "admin";
     history.replaceState(null, "", `#/admin/${sub}`);
   }
-  openAdmin(ADMIN_SUBTABS.includes(sub) ? sub : "settings");
+  if (top === "admin") { openAdmin(ADMIN_SUBTABS.includes(sub) ? sub : "settings"); return true; }
+  if (!TABS.includes(top) || sub) return false;
+  openTab(top);
   return true;
 }
 
@@ -244,12 +288,16 @@ function openAdmin(sub) {
 }
 
 $all(".admin-tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => navigateAdmin(btn.dataset.adminTab));
+  btn.addEventListener("click", () => navigateAdmin(btn.dataset.adminTab, { replace: true }));
 });
 
 window.addEventListener("hashchange", () => {
-  // Back button from #/admin/... to the plain page: leave the Admin page.
-  if (!routeFromHash() && $("#tab-admin").classList.contains("active")) showTab("foodlog");
+  if (!state.selfId) return;                 // not signed in (yet): init() routes once it knows who's here
+  if (!routeFromHash()) {
+    const link = linkRoute(location.hash.replace(/^#/, ""));   // "#/foodlog/<date>"
+    if (link) { BackNav.replace(`#/${link.tab}`); if (link.date && link.date <= todayStr()) setDate(link.date); }
+    else openTab("foodlog");
+  }
 });
 
 // Matches whichever tab-panel loaded with "active" in index.html (Food Log
@@ -261,20 +309,14 @@ updateDateBarVisibility(document.querySelector(".tab-btn.active")?.dataset.tab);
 // Read-only diagnostic: exactly which user name / id Home Assistant sent, and
 // whether they match the admin_users list. Reached from the user chip in the
 // sidebar and the 👤 button in the top bar (phones have no sidebar chip).
-function openWhoami() {
-  clearRouteHash();
-  $all(".tab-btn").forEach(b => b.classList.remove("active"));
-  $all(".tab-panel").forEach(p => p.classList.remove("active"));
-  $("#tab-whoami").classList.add("active");
-  updateDateBarVisibility("whoami");
-  loadWhoami();
-}
+function openWhoami() { BackNav.go("#/whoami"); }
 
 async function loadWhoami() {
   const body = $("#whoamiBody");
   let w;
+  UI.loading(body);
   try { w = await api("/api/whoami"); }
-  catch (e) { body.replaceChildren(Object.assign(document.createElement("p"), { className: "hint", textContent: e.message })); return; }
+  catch (e) { body.replaceChildren(UI.errorBox(e, loadWhoami)); return; }
   // common/whoami.js: the same rows and wording as every other app
   body.replaceChildren(HouseholdWhoami.panel(w, {
     appName: "Calorie Tracker",
@@ -283,7 +325,6 @@ async function loadWhoami() {
 }
 
 $("#sidebarUser").addEventListener("click", openWhoami);
-$("#whoamiBtn").addEventListener("click", openWhoami);
 
 // ---------- current user (from Home Assistant, read-only) ----------
 async function loadMe() {
@@ -300,17 +341,23 @@ async function loadMe() {
     // server-side too; the Admin nav item starts out hidden in index.html).
     if (!state.isAdmin) $("#userSelect").style.display = "none";
     $('.tab-btn[data-tab="admin"]').hidden = !state.isAdmin;
+    $("#meAdminBtn").hidden = !state.isAdmin;
     // First run: nobody is an admin yet, so nobody could open App settings.
     // Everyone sees how to fix it (never auto-promoted).
     HouseholdWhoami.fillNoAdminBanner($("#noAdminBanner"), me.noAdmin, me.username || me.id,
       { onOpen: openWhoami, linkId: "noAdminWhoamiLink" });
   } catch (e) {
+    // A themed card in the page (the nav stays; every page needs a signed-in user, so none is shown).
     $("#sidebarUser").textContent = "Not signed in";
-    document.body.innerHTML = `<div style="padding:40px;font-family:sans-serif;color:#e7ecf5;background:#10151c;min-height:100vh;">
-      <h2>Can't identify a Home Assistant user</h2>
-      <p>${escapeHtml(e.message)}</p>
-      <p>Open Calorie Tracker from its panel in the Home Assistant sidebar.</p>
-    </div>`;
+    $all(".tab-panel").forEach(p => p.classList.remove("active"));
+    $("#dateBar").hidden = true;
+    $("#pageTitle").textContent = "Not signed in";
+    const box = $("#signinError");
+    box.replaceChildren(
+      UI.h("h3", null, "Can't identify a Home Assistant user"),
+      UI.errorBox(e, () => location.reload()),
+      UI.h("p", { class: "hint" }, "Open Calorie Tracker from its panel in the Home Assistant sidebar."));
+    box.hidden = false;
     throw e;
   }
 }
@@ -320,7 +367,8 @@ let allUsers = [];
 
 async function loadUsers() {
   if (!state.isAdmin) return;
-  allUsers = await api("/api/users");
+  try { allUsers = await api("/api/users"); }
+  catch (e) { $("#usersList").replaceChildren(UI.errorBox(e, loadUsers)); return; }
   renderUserSelect();
   renderUsersTab();
 }
@@ -463,7 +511,9 @@ function renderDateBar() {
 async function setDate(newDate) {
   if (newDate === state.date) return;
   state.date = newDate;
+  state.editingLogId = null;
   renderDateBar();
+  UI.loading($("#foodLogList"));
   await refreshDateScoped();
 }
 
@@ -513,19 +563,20 @@ function renderMonthSummary(data) {
   $("#monthNextBtn").disabled = data.is_current || data.is_future;
 
   const tiles = [
-    { label: "Calories / day", value: fmt(data.avg_per_day.calories), goal: data.goal.calorie_goal },
-    { label: "Protein (g) / day", value: fmt(data.avg_per_day.protein), goal: data.goal.protein_goal },
-    { label: "Carbs (g) / day", value: fmt(data.avg_per_day.carbs), goal: data.goal.carb_goal },
-    { label: "Fat (g) / day", value: fmt(data.avg_per_day.fat), goal: data.goal.fat_goal },
+    { kind: "calories", label: "Calories / day", value: fmt(data.avg_per_day.calories), goal: data.goal.calorie_goal },
+    { kind: "protein", label: "Protein (g) / day", value: fmt(data.avg_per_day.protein), goal: data.goal.protein_goal },
+    { kind: "carbs", label: "Carbs (g) / day", value: fmt(data.avg_per_day.carbs), goal: data.goal.carb_goal },
+    { kind: "fat", label: "Fat (g) / day", value: fmt(data.avg_per_day.fat), goal: data.goal.fat_goal },
   ];
   const weightChange = data.weight.change_kg;
   const weightSub = weightChange == null
     ? ""
     : ` (${weightChange > 0 ? "+" : ""}${fmt(weightChange)} kg)`;
 
+  // protein is a minimum: reaching it is good ("met"); only calories, carbs and fat are flagged "over"
   $("#monthSummaryGrid").innerHTML = tiles.map(t => {
-    const over = t.value > t.goal;
-    return `<div class="stat-card ${over ? "over" : ""}">
+    const st = data.days_elapsed > 0 ? goalState(t.kind, t.value, t.goal) : "";
+    return `<div class="stat-card ${st}">
       <div class="value">${t.value}</div>
       <div class="label">${t.label} / ${fmt(t.goal)}</div>
     </div>`;
@@ -540,7 +591,9 @@ function renderMonthSummary(data) {
 }
 
 async function loadMonthSummary() {
-  const data = await api(withUser(`/api/summary/month?month=${state.summaryMonth}`));
+  let data;
+  try { data = await api(withUser(`/api/summary/month?month=${state.summaryMonth}`)); }
+  catch (e) { $("#monthSummaryGrid").replaceChildren(UI.errorBox(e, loadMonthSummary)); return; }
   renderMonthSummary(data);
 }
 
@@ -560,41 +613,70 @@ $("#monthInput").addEventListener("change", (e) => {
 });
 $("#monthPickerBtn").addEventListener("click", () => openPicker($("#monthInput")));
 
-// ---------- dashboard ----------
-async function loadSummary() {
-  const summary = await api(withUser(`/api/summary?date=${state.date}`));
-  const cards = [
-    { label: "Calories", value: fmt(summary.totals.calories), goal: summary.goal.calorie_goal },
-    { label: "Protein (g)", value: fmt(summary.totals.protein), goal: summary.goal.protein_goal },
-    { label: "Carbs (g)", value: fmt(summary.totals.carbs), goal: summary.goal.carb_goal },
-    { label: "Fat (g)", value: fmt(summary.totals.fat), goal: summary.goal.fat_goal },
-  ];
-  $("#summaryCards").innerHTML = cards.map(c => {
-    const over = c.value > c.goal;
-    return `<div class="stat-card ${over ? "over" : ""}">
-      <div class="value">${c.value}</div>
-      <div class="label">${c.label} / ${fmt(c.goal)}</div>
-    </div>`;
-  }).join("") + `<div class="stat-card">
-      <div class="value">${summary.latest_weight_kg ? fmt(summary.latest_weight_kg) + " kg" : "—"}</div>
-      <div class="label">Latest Weight</div>
-    </div>`;
-  const n = summary.no_calories || 0;
-  $("#summaryNote").hidden = !n;
-  $("#summaryNote").textContent = n ? `${n} ${n === 1 ? "food" : "foods"} logged without calories ${n === 1 ? "isn't" : "aren't"} counted in these totals.` : "";
+// ---------- Day Summary (Food Log, under the date bar) ----------
+// Protein is a minimum (reaching it is good); calories, carbs and fat are limits (going over is flagged).
+const GOAL_KIND = { calories: "limit", protein: "min", carbs: "limit", fat: "limit" };
+function goalState(kind, value, goal) {
+  if (!(goal > 0)) return "";
+  if (GOAL_KIND[kind] === "min") return value >= goal ? "met" : "";
+  return value > goal ? "over" : "";
+}
 
-  const macros = [
-    { name: "Protein", val: summary.totals.protein, goal: summary.goal.protein_goal, color: "var(--protein)" },
-    { name: "Carbs", val: summary.totals.carbs, goal: summary.goal.carb_goal, color: "var(--carbs)" },
-    { name: "Fat", val: summary.totals.fat, goal: summary.goal.fat_goal, color: "var(--fat)" },
-  ];
-  $("#macroBars").innerHTML = macros.map(m => {
-    const pct = Math.min(100, (m.val / (m.goal || 1)) * 100);
-    return `<div class="macro-bar-row">
-      <div class="macro-bar-label"><span>${m.name}</span><span>${fmt(m.val)} / ${fmt(m.goal)} g</span></div>
-      <div class="macro-bar-track"><div class="macro-bar-fill" style="width:${pct}%; background:${m.color}"></div></div>
+function dayBar(kind, label, value, goal, unit, color) {
+  const st = goalState(kind, value, goal);
+  const pct = Math.min(100, (value / (goal || 1)) * 100);
+  const left = goal > 0 ? (GOAL_KIND[kind] === "min"
+    ? (value >= goal ? "goal reached" : `${fmt(goal - value)} ${unit} to go`)
+    : (value > goal ? `${fmt(value - goal)} ${unit} over` : `${fmt(goal - value)} ${unit} left`)) : "";
+  return `<div class="ds-row ${st}">
+      <div class="ds-label"><span class="ds-name">${label}</span><span class="ds-val">${fmt(value)} / ${fmt(goal)} ${unit}</span><span class="ds-left">${left}</span></div>
+      <div class="macro-bar-track"><div class="macro-bar-fill" style="width:${pct}%; background:${st === "over" ? "var(--danger)" : color}"></div></div>
     </div>`;
-  }).join("");
+}
+
+async function loadSummary() {
+  const box = $("#daySummary");
+  let summary;
+  try {
+    summary = await api(withUser(`/api/summary?date=${state.date}`));
+  } catch (e) {
+    box.replaceChildren(UI.errorBox(e, loadSummary));
+    return;
+  }
+  const t = summary.totals, g = summary.goal;
+  const n = summary.no_calories || 0;
+  box.innerHTML = `
+    <div class="ds-head"><h3>Day Summary</h3><a href="#/goals" class="goals-link">Edit goals</a></div>
+    ${dayBar("calories", "Calories", t.calories, g.calorie_goal, "kcal", "var(--accent)")}
+    <div class="ds-macros">
+      ${dayBar("protein", "Protein", t.protein, g.protein_goal, "g", "var(--protein)")}
+      ${dayBar("carbs", "Carbs", t.carbs, g.carb_goal, "g", "var(--carbs)")}
+      ${dayBar("fat", "Fat", t.fat, g.fat_goal, "g", "var(--fat)")}
+    </div>
+    ${n ? `<p class="hint ds-note">${n} ${n === 1 ? "food" : "foods"} logged without calories ${n === 1 ? "isn't" : "aren't"} counted in these totals.</p>` : ""}`;
+}
+
+// ---------- Dashboard: top row (today, 7-day average, latest weight) ----------
+async function loadDashTop() {
+  const box = $("#dashTop");
+  try {
+    const [today, hist] = await Promise.all([
+      api(withUser(`/api/summary?date=${todayStr()}`)),
+      api(withUser(`/api/history?granularity=daily`)),
+    ]);
+    const last7 = hist.points.slice(-7);
+    const avg7 = last7.length ? last7.reduce((a, p) => a + p.calories, 0) / last7.length : 0;
+    const kcal = today.totals.calories, goal = today.goal.calorie_goal;
+    const kpi = (label, value, cls, title) => `<div class="kpi"${title ? ` title="${escapeHtml(title)}"` : ""}>
+        <div class="kpi-label">${label}</div><div class="kpi-value ${cls || ""}">${value}</div></div>`;
+    box.innerHTML =
+      kpi("Today", `${Math.round(kcal).toLocaleString()} / ${Math.round(goal).toLocaleString()} kcal`, kcal > goal ? "neg" : "") +
+      kpi("7-day average", `${Math.round(avg7).toLocaleString()} kcal`, avg7 > goal ? "neg" : "",
+        "Average calories per day over the last 7 days (days with nothing logged count as 0)") +
+      kpi("Latest weight", today.latest_weight_kg ? `${fmt(today.latest_weight_kg)} kg` : "—");
+  } catch (e) {
+    box.replaceChildren(UI.errorBox(e, loadDashTop));
+  }
 }
 
 // ---------- chart helpers (shared by the history + weight canvas charts) ----------
@@ -862,31 +944,134 @@ attachChartHover(
   }
 );
 
+// ---------- row ⋯ menus ----------
+// One small menu at a time, next to the ⋯ button that opened it: items [{label, onclick, danger}].
+let rowMenuAnchor = null;
+let rowMenuOpenedAt = 0;
+function closeRowMenu() {
+  const menu = $("#rowMenu");
+  if (menu.hidden) return;
+  menu.hidden = true;
+  menu.replaceChildren();
+  if (rowMenuAnchor) { rowMenuAnchor.setAttribute("aria-expanded", "false"); rowMenuAnchor = null; }
+}
+function openRowMenu(anchor, items) {
+  const same = rowMenuAnchor === anchor;
+  closeRowMenu();
+  if (same) return;
+  const menu = $("#rowMenu");
+  menu.replaceChildren(...items.map(it => {
+    const b = UI.h("button", { type: "button", role: "menuitem", class: "row-menu-item" + (it.danger ? " danger" : "") }, it.label);
+    b.addEventListener("click", (e) => { e.stopPropagation(); closeRowMenu(); it.onclick(); });
+    return b;
+  }));
+  menu.hidden = false;
+  rowMenuOpenedAt = Date.now();
+  rowMenuAnchor = anchor;
+  anchor.setAttribute("aria-expanded", "true");
+  // fixed, under the button (above it near the bottom of the screen), kept on screen
+  const r = anchor.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let left = Math.min(r.right - mw, window.innerWidth - mw - 8);
+  left = Math.max(8, left);
+  let top = r.bottom + 4;
+  if (top + mh > window.innerHeight - 70) top = Math.max(8, r.top - mh - 4);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  const first = menu.querySelector("button");
+  if (first) first.focus();
+}
+$("#rowMenu").addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("click", closeRowMenu);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#rowMenu").hidden) { const a = rowMenuAnchor; closeRowMenu(); if (a) a.focus(); }
+});
+// scrolling the page moves the button away from the menu (but not the scroll that brought the button into view)
+window.addEventListener("scroll", () => { if (Date.now() - rowMenuOpenedAt > 400) closeRowMenu(); }, { passive: true });
+
 // ---------- food log ----------
+// Phones (below 760px): cards grouped by meal with a subtotal; wider: a table. Tapping an entry (or ⋯ → Edit / ✎)
+// edits it in place (PUT /api/logs/{id}).
+const PHONE = window.matchMedia("(max-width: 760px)");
+const MEALS = ["breakfast", "lunch", "dinner", "snack"];
+const MEAL_LABEL = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack" };
+state.logs = [];
+state.editingLogId = null;
+
 async function loadFoodLog() {
-  const logs = await api(withUser(`/api/logs?date=${state.date}`));
   const list = $("#foodLogList");
-  if (logs.length === 0) {
-    list.innerHTML = `<p class="hint">Nothing logged yet for this day.</p>`;
+  try {
+    state.logs = await api(withUser(`/api/logs?date=${state.date}`));
+  } catch (e) {
+    list.replaceChildren(UI.errorBox(e, loadFoodLog));
     return;
   }
-  list.innerHTML = `
+  if (!state.logs.some(l => l.id === state.editingLogId)) state.editingLogId = null;
+  renderFoodLog();
+}
+
+function macroText(l) {
+  return `${l.calories === null ? "— kcal" : `${fmt(l.calories)} kcal`} · P ${fmt(l.protein)} / C ${fmt(l.carbs)} / F ${fmt(l.fat)} g`;
+}
+
+function logEditForm(l) {
+  const opt = (m) => `<option value="${m}"${m === l.meal_type ? " selected" : ""}>${MEAL_LABEL[m]}</option>`;
+  const num = (id, v, label, max, step) => `<label>${label}<input class="le-${id}" type="number" step="${step}" min="0" max="${max}" value="${v === null ? "" : v}"></label>`;
+  return `<div class="log-edit" data-id="${l.id}">
+      <div class="form-row">
+        <select class="le-meal" aria-label="Meal">${MEALS.map(opt).join("")}</select>
+        <input class="le-time" type="time" value="${escapeHtml(l.eaten_at || "")}" aria-label="Time eaten">
+        <label class="le-serv-label">Servings<input class="le-servings" type="number" step="0.1" min="0.1" max="1000" value="${l.servings}"></label>
+      </div>
+      <div class="form-row"><textarea class="le-name food-name" rows="2" maxlength="1000" aria-label="What you ate">${escapeHtml(l.food_name)}</textarea></div>
+      <div class="form-row">
+        ${num("calories", l.calories, "Calories (all servings)", 50000, 1)}
+        ${num("protein", l.protein, "Protein (g)", 5000, 0.1)}
+        ${num("carbs", l.carbs, "Carbs (g)", 5000, 0.1)}
+        ${num("fat", l.fat, "Fat (g)", 5000, 0.1)}
+      </div>
+      <div class="form-row form-actions">
+        <button type="button" class="btn-secondary le-cancel">Cancel</button>
+        <button type="button" class="btn-primary le-save">Save</button>
+      </div>
+    </div>`;
+}
+
+function renderFoodLog() {
+  const list = $("#foodLogList");
+  const logs = state.logs;
+  closeRowMenu();
+  if (logs.length === 0) {
+    list.replaceChildren(UI.empty("Nothing logged for this day", "Add what you ate above.",
+      { label: "Add food", class: "btn-secondary", onclick: () => $("#foodName").focus() }));
+    return;
+  }
+  if (PHONE.matches) {
+    list.innerHTML = MEALS.filter(m => logs.some(l => l.meal_type === m)).map(m => {
+      const items = logs.filter(l => l.meal_type === m);
+      const kcal = items.reduce((a, l) => a + (l.calories || 0), 0);
+      return `<div class="ui-group-head">${MEAL_LABEL[m]}<span class="ui-group-total">${fmt(kcal)} kcal</span></div>` +
+        items.map(l => l.id === state.editingLogId ? logEditForm(l) : `
+        <div class="log-card" data-id="${l.id}" tabindex="0" role="button" aria-label="Edit ${escapeHtml(l.food_name)}">
+          <span class="tag meal-chip">${escapeHtml(l.meal_type)}</span>
+          <div class="log-card-main">
+            <span class="fname">${escapeHtml(l.food_name)}</span>
+            <span class="meta">${macroText(l)}${l.servings !== 1 ? ` · ${fmt(l.servings)}×` : ""}${l.eaten_at ? ` · ${escapeHtml(l.eaten_at)}` : ""}</span>
+            ${tagChips(l.tags)}
+          </div>
+          <button type="button" class="kebab tap44 log-menu-btn" data-id="${l.id}" aria-haspopup="menu" aria-expanded="false" aria-label="More for ${escapeHtml(l.food_name)}">⋯</button>
+        </div>`).join("");
+    }).join("");
+  } else {
+    list.innerHTML = `
     <table class="data-table">
       <thead>
         <tr>
-          <th>Time</th>
-          <th>Meal</th>
-          <th>Food</th>
-          <th>Servings</th>
-          <th>Calories</th>
-          <th>P</th>
-          <th>C</th>
-          <th>F</th>
-          <th></th>
+          <th>Time</th><th>Meal</th><th>Food</th><th>Servings</th><th>Calories</th><th>P</th><th>C</th><th>F</th><th></th>
         </tr>
       </thead>
       <tbody>
-        ${logs.map(l => `
+        ${logs.map(l => l.id === state.editingLogId ? `<tr class="edit-row"><td colspan="9">${logEditForm(l)}</td></tr>` : `
           <tr>
             <td class="col-time">${escapeHtml(l.eaten_at || "")}</td>
             <td><span class="tag">${escapeHtml(l.meal_type)}</span></td>
@@ -898,7 +1083,8 @@ async function loadFoodLog() {
             <td>${fmt(l.fat)}</td>
             <td class="col-actions">
               <div class="item-actions">
-                <button data-id="${l.id}" class="del-log-btn" title="Delete">✕</button>
+                <button data-id="${l.id}" class="edit-log-btn" title="Edit" aria-label="Edit ${escapeHtml(l.food_name)}">✎</button>
+                <button data-id="${l.id}" class="del-log-btn" title="Delete" aria-label="Delete ${escapeHtml(l.food_name)}">✕</button>
               </div>
             </td>
           </tr>
@@ -906,13 +1092,85 @@ async function loadFoodLog() {
       </tbody>
     </table>
   `;
-  list.querySelectorAll(".fname").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
+    list.querySelectorAll(".fname").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
+  }
+  const entry = (id) => logs.find(l => String(l.id) === String(id));
+  list.querySelectorAll(".edit-log-btn").forEach(btn => btn.addEventListener("click", () => startLogEdit(btn.dataset.id)));
   $all(".del-log-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
-    const entry = logs.find(l => String(l.id) === btn.dataset.id);
-    if (!confirm(`Delete "${entry ? entry.food_name : "this entry"}" from the log?`)) return;
-    await api(withUser(`/api/logs/${btn.dataset.id}`), { method: "DELETE" });
-    await Promise.all([loadFoodLog(), loadSummary(), loadHistory()]);
+    await deleteLogEntry(entry(btn.dataset.id));
   })));
+  list.querySelectorAll(".log-menu-btn").forEach(btn => btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const l = entry(btn.dataset.id);
+    openRowMenu(btn, [
+      { label: "✎ Edit", onclick: () => startLogEdit(l.id) },
+      { label: "✕ Delete", danger: true, onclick: withErrors(() => deleteLogEntry(l)) },
+    ]);
+  }));
+  list.querySelectorAll(".log-card").forEach(card => {
+    card.addEventListener("click", () => startLogEdit(card.dataset.id));
+    card.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === card) { e.preventDefault(); startLogEdit(card.dataset.id); } });
+  });
+  list.querySelectorAll(".log-edit").forEach(bindLogEdit);
+}
+PHONE.addEventListener("change", () => { renderFoodLog(); if (state.savedFoods) renderSavedFoods(); });
+
+async function deleteLogEntry(entry) {
+  if (!entry) return;
+  if (!confirm(`Delete "${entry.food_name}" from the log?`)) return;
+  await api(withUser(`/api/logs/${entry.id}`), { method: "DELETE" });
+  if (state.editingLogId === entry.id) state.editingLogId = null;
+  await Promise.all([loadFoodLog(), loadSummary(), loadHistory(), loadSymptomDay()]);
+}
+
+function startLogEdit(id) {
+  state.editingLogId = Number(id);
+  renderFoodLog();
+  const name = document.querySelector(`.log-edit[data-id="${id}"] .le-name`);
+  if (name) { name.focus(); name.scrollIntoView({ block: "center", behavior: "smooth" }); }
+}
+
+function bindLogEdit(box) {
+  const l = state.logs.find(x => String(x.id) === box.dataset.id);
+  if (!l) return;
+  const q = (c) => box.querySelector(c);
+  // Changing the servings scales the totals with it (they're for all the servings).
+  let lastServings = Number(l.servings) || 1;
+  q(".le-servings").addEventListener("change", () => {
+    const n = parseFloat(q(".le-servings").value);
+    if (!(n > 0)) return;
+    const k = n / lastServings;
+    for (const f of ["calories", "protein", "carbs", "fat"]) {
+      const inp = q(`.le-${f}`);
+      if (inp.value !== "") inp.value = Math.round(parseFloat(inp.value) * k * 10) / 10;
+    }
+    lastServings = n;
+  });
+  q(".le-cancel").addEventListener("click", () => { state.editingLogId = null; renderFoodLog(); });
+  q(".le-save").addEventListener("click", withErrors(async () => {
+    const name = q(".le-name").value.trim();
+    if (!name) return alert("Type what you ate.");
+    const kcal = parseFloat(q(".le-calories").value);
+    const servings = parseFloat(q(".le-servings").value);
+    await api(withUser(`/api/logs/${l.id}`), {
+      method: "PUT",
+      body: JSON.stringify({
+        date: l.date,
+        meal_type: q(".le-meal").value,
+        food_name: name,
+        servings: servings > 0 ? servings : 1,
+        calories: isNaN(kcal) ? null : kcal,
+        protein: parseFloat(q(".le-protein").value) || 0,
+        carbs: parseFloat(q(".le-carbs").value) || 0,
+        fat: parseFloat(q(".le-fat").value) || 0,
+        saved_food_id: l.saved_food_id ?? null,
+        eaten_at: q(".le-time").value || null,
+        tags: l.tags || [],
+      }),
+    });
+    state.editingLogId = null;
+    await Promise.all([loadFoodLog(), loadSummary(), loadHistory(), loadSymptomDay()]);
+  }));
 }
 
 function clearFoodForm() {
@@ -924,7 +1182,9 @@ function clearFoodForm() {
   $("#foodFat").value = "";
   $("#foodTime").value = "";
   foodTags.set([]);
-  $("#savedFoodPicker").value = "";
+  state.pickedFood = null;
+  $("#foodNutrition").open = false;
+  hideFoodSuggest();
   $("#aiFillStatus").textContent = "";
 }
 
@@ -944,7 +1204,8 @@ $("#addFoodBtn").addEventListener("click", withErrors(async () => {
   const kcalIn = parseFloat($("#foodCalories").value);
   const calories = isNaN(kcalIn) ? null : kcalIn;          // optional
   if (!name) return alert("Type what you ate.");
-  const savedFoodId = $("#savedFoodPicker").value ? parseInt($("#savedFoodPicker").value) : null;
+  // a saved food picked from the suggestions counts only while its name is still what's in the box
+  const savedFoodId = state.pickedFood && state.pickedFood.name === name ? state.pickedFood.id : null;
   const servings = parseFloat($("#foodServings").value) > 0 ? parseFloat($("#foodServings").value) : 1;
   const totals = scaleByServings({
     calories,
@@ -966,20 +1227,19 @@ $("#addFoodBtn").addEventListener("click", withErrors(async () => {
     }),
   });
   clearFoodForm();
-  await Promise.all([loadFoodLog(), loadSummary(), loadHistory(), loadSymptomDay(), loadChoices()]);
+  await Promise.all([loadFoodLog(), loadSummary(), loadHistory(), loadSymptomDay(), loadChoices(), loadSavedFoodPicker()]);
 }));
 
-async function loadSavedFoodPicker() {
-  state.savedFoods = await api(withUser(`/api/saved-foods`));
-  const picker = $("#savedFoodPicker");
-  picker.innerHTML = `<option value="">— pick a saved food —</option>` +
-    state.savedFoods.map(f => `<option value="${f.id}">${escapeHtml(f.name)} (${f.calories === null ? "" : fmt(f.calories) + " kcal / "}${fmt(f.serving_size)} ${escapeHtml(f.serving_unit)})</option>`).join("");
+// ---------- Add Food: type-ahead over saved foods, and recent / frequent chips ----------
+state.pickedFood = null;
+let suggestIndex = -1;
+
+function savedFoodLabel(f) {
+  return `${f.calories === null ? "" : fmt(f.calories) + " kcal / "}${fmt(f.serving_size)} ${f.serving_unit}`;
 }
 
-$("#savedFoodPicker").addEventListener("change", (e) => {
-  const id = parseInt(e.target.value);
-  const food = state.savedFoods.find(f => f.id === id);
-  if (!food) return;
+function pickSavedFood(food) {
+  state.pickedFood = food;
   $("#foodName").value = food.name;
   $("#foodServings").value = "1";
   $("#foodCalories").value = food.calories === null ? "" : food.calories;
@@ -987,31 +1247,153 @@ $("#savedFoodPicker").addEventListener("change", (e) => {
   $("#foodCarbs").value = food.carbs;
   $("#foodFat").value = food.fat;
   foodTags.set(food.tags || []);
+  $("#foodNutrition").open = true;        // show what it filled in
+  hideFoodSuggest();
+}
+
+function hideFoodSuggest() {
+  $("#foodSuggest").hidden = true;
+  $("#foodSuggest").replaceChildren();
+  $("#foodName").removeAttribute("aria-activedescendant");
+  suggestIndex = -1;
+}
+
+function drawFoodSuggest() {
+  const q = $("#foodName").value.trim().toLowerCase();
+  const box = $("#foodSuggest");
+  if (!q || (state.pickedFood && state.pickedFood.name.toLowerCase() === q)) { hideFoodSuggest(); return; }
+  const foods = (state.savedFoods || []).filter(f => f.name.toLowerCase().includes(q))
+    .sort((a, b) => (b.name.toLowerCase().startsWith(q) - a.name.toLowerCase().startsWith(q)) || (b.uses || 0) - (a.uses || 0))
+    .slice(0, 6);
+  if (!foods.length) { hideFoodSuggest(); return; }
+  suggestIndex = -1;
+  box.replaceChildren(...foods.map((f, i) => {
+    const opt = UI.h("div", { class: "suggest-item", role: "option", id: `foodSuggest-${i}`, "aria-selected": "false" },
+      UI.h("span", { class: "suggest-name" }, f.name), UI.h("span", { class: "suggest-meta" }, savedFoodLabel(f)));
+    opt.addEventListener("mousedown", (e) => e.preventDefault());     // keep the focus in the box
+    opt.addEventListener("click", () => pickSavedFood(f));
+    opt._food = f;
+    return opt;
+  }));
+  box.hidden = false;
+}
+
+$("#foodName").addEventListener("input", () => {
+  if (state.pickedFood && $("#foodName").value.trim() !== state.pickedFood.name) state.pickedFood = null;
+  drawFoodSuggest();
+});
+$("#foodName").addEventListener("blur", () => setTimeout(hideFoodSuggest, 150));
+$("#foodName").addEventListener("keydown", (e) => {
+  const box = $("#foodSuggest");
+  if (box.hidden) return;
+  const items = [...box.children];
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    suggestIndex = (suggestIndex + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+    items.forEach((it, i) => it.setAttribute("aria-selected", i === suggestIndex ? "true" : "false"));
+    $("#foodName").setAttribute("aria-activedescendant", items[suggestIndex].id);
+  } else if (e.key === "Enter" && suggestIndex >= 0) {
+    e.preventDefault();
+    pickSavedFood(items[suggestIndex]._food);
+  } else if (e.key === "Escape") {
+    e.stopPropagation();
+    hideFoodSuggest();
+  }
 });
 
+// Up to six saved foods: the most used first, then the most recently used.
+function drawQuickFoods() {
+  const foods = (state.savedFoods || []).filter(f => f.uses > 0)
+    .sort((a, b) => (b.uses - a.uses) || String(b.last_used || "").localeCompare(String(a.last_used || "")))
+    .slice(0, 6);
+  $("#quickFoods").hidden = !foods.length;
+  $("#quickFoodChips").replaceChildren(...foods.map(f => {
+    const b = UI.h("button", { type: "button", class: "chip quick-chip", title: `Log one serving of ${f.name} (${savedFoodLabel(f)})` },
+      "+ " + (f.name.length > 28 ? f.name.slice(0, 27) + "…" : f.name));
+    b.addEventListener("click", withErrors(async () => {
+      b.disabled = true;
+      try {
+        await api(withUser(`/api/logs`), {
+          method: "POST",
+          body: JSON.stringify({
+            date: state.date, meal_type: $("#mealType").value, food_name: f.name, servings: 1,
+            calories: f.calories, protein: f.protein, carbs: f.carbs, fat: f.fat,
+            saved_food_id: f.id, tags: f.tags || [],
+          }),
+        });
+        $("#aiFillStatus").textContent = `Added "${f.name}" (${MEAL_LABEL[$("#mealType").value].toLowerCase()}).`;
+        await Promise.all([loadFoodLog(), loadSummary(), loadHistory(), loadSymptomDay(), loadSavedFoodPicker()]);
+      } finally {
+        b.disabled = false;
+      }
+    }));
+    return b;
+  }));
+}
+
+// After logging: the use counts changed (quick chips, Saved Foods' "Most used").
+async function loadSavedFoodPicker() {
+  await loadSavedFoodsList();
+}
+
 // ---------- saved foods (repeated foods) ----------
+// The list first (search, sort A–Z / most used); "+ New food" or Edit opens the form above it. Phones: cards
+// (name, kcal per serving, "+ log", ⋯ with Edit / Details / Delete); wider: a table.
 state.editingSavedFoodId = null;
 
 async function loadSavedFoodsList() {
-  const foods = await api(withUser(`/api/saved-foods`));
-  state.savedFoods = foods;
   const list = $("#savedFoodsList");
-  if (foods.length === 0) {
-    list.innerHTML = `<p class="hint">No saved foods yet. Build one above.</p>`;
+  try {
+    state.savedFoods = await api(withUser(`/api/saved-foods`));
+  } catch (e) {
+    list.replaceChildren(UI.errorBox(e, loadSavedFoodsList));
     return;
   }
-  list.innerHTML = `
+  renderSavedFoods();
+  drawQuickFoods();
+}
+
+$("#sfSearch").addEventListener("input", UI.debounce(() => renderSavedFoods(), 120));
+$("#sfSort").addEventListener("change", () => { UI.lsSet("calorie.sfSort", $("#sfSort").value); renderSavedFoods(); });
+if (UI.lsGet("calorie.sfSort") === "used") $("#sfSort").value = "used";
+$("#sfNewBtn").addEventListener("click", () => { cancelSavedFoodEdit(); openSavedFoodForm(); });
+
+function renderSavedFoods() {
+  const all = state.savedFoods || [];
+  const list = $("#savedFoodsList");
+  closeRowMenu();
+  if (all.length === 0) {
+    list.replaceChildren(UI.empty("No saved foods yet",
+      "Save foods you eat often (a protein shake, your usual breakfast) and log them in one tap.",
+      { label: "+ New food", onclick: () => { cancelSavedFoodEdit(); openSavedFoodForm(); } }));
+    return;
+  }
+  const q = $("#sfSearch").value.trim().toLowerCase();
+  let foods = q ? all.filter(f => f.name.toLowerCase().includes(q) || (f.tags || []).some(t => t.includes(q))) : all.slice();
+  if ($("#sfSort").value === "used") foods.sort((a, b) => (b.uses || 0) - (a.uses || 0) || a.name.localeCompare(b.name));
+  else foods.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  if (!foods.length) {
+    list.replaceChildren(UI.empty("No saved food matches", `Nothing called "${$("#sfSearch").value.trim()}".`));
+    return;
+  }
+  const usesText = (f) => f.uses ? `logged ${f.uses}×` : "not logged yet";
+  if (PHONE.matches) {
+    list.innerHTML = foods.map(f => `
+      <div class="sf-card" data-id="${f.id}" tabindex="0" role="button" aria-label="Edit ${escapeHtml(f.name)}">
+        <div class="log-card-main">
+          <span class="fname">${escapeHtml(f.name)}</span>
+          <span class="meta">${kcalText(f.calories)} kcal / ${fmt(f.serving_size)} ${escapeHtml(f.serving_unit)} · ${usesText(f)}</span>
+          ${tagChips(f.tags)}
+        </div>
+        <button class="btn-secondary use-btn tap44" data-id="${f.id}" title="Add one serving to today's log">＋ log</button>
+        <button type="button" class="kebab tap44 sf-menu-btn" data-id="${f.id}" aria-haspopup="menu" aria-expanded="false" aria-label="More for ${escapeHtml(f.name)}">⋯</button>
+      </div>`).join("");
+  } else {
+    list.innerHTML = `
     <table class="data-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Serving</th>
-          <th>Calories</th>
-          <th>P</th>
-          <th>C</th>
-          <th>F</th>
-          <th>Details</th>
-          <th></th>
+          <th>Name</th><th>Serving</th><th>Calories</th><th>P</th><th>C</th><th>F</th><th>Used</th><th>Details</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -1023,12 +1405,13 @@ async function loadSavedFoodsList() {
             <td>${fmt(f.protein)}</td>
             <td>${fmt(f.carbs)}</td>
             <td>${fmt(f.fat)}</td>
+            <td>${f.uses || 0}×</td>
             <td class="col-details">${detailsSnippetHtml(f.notes, f.name, `sf-${f.id}`)}</td>
             <td class="col-actions">
               <div class="item-actions">
                 <button class="use-btn" data-id="${f.id}" title="Add to today's log">＋ log</button>
-                <button class="edit-sf-btn" data-id="${f.id}" title="Edit">✎</button>
-                <button class="del-sf-btn" data-id="${f.id}" title="Delete">✕</button>
+                <button class="edit-sf-btn" data-id="${f.id}" title="Edit" aria-label="Edit ${escapeHtml(f.name)}">✎</button>
+                <button class="del-sf-btn" data-id="${f.id}" title="Delete" aria-label="Delete ${escapeHtml(f.name)}">✕</button>
               </div>
             </td>
           </tr>
@@ -1036,25 +1419,37 @@ async function loadSavedFoodsList() {
       </tbody>
     </table>
   `;
-  bindEnlargeButtons(list);
-  list.querySelectorAll(".fname").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
+    bindEnlargeButtons(list);
+    list.querySelectorAll(".fname").forEach(el => el.addEventListener("click", () => el.classList.toggle("open")));
+  }
+  const byId = (id) => foods.find(f => f.id === parseInt(id));
 
   $all(".del-sf-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
-    if (!confirm("Delete this saved food?")) return;
-    await api(withUser(`/api/saved-foods/${btn.dataset.id}`), { method: "DELETE" });
-    if (state.editingSavedFoodId === parseInt(btn.dataset.id)) cancelSavedFoodEdit();
-    await loadSavedFoodsList();
-    await loadSavedFoodPicker();
+    await deleteSavedFood(byId(btn.dataset.id));
   })));
 
   $all(".edit-sf-btn").forEach(btn => btn.addEventListener("click", () => {
-    const food = foods.find(f => f.id === parseInt(btn.dataset.id));
+    const food = byId(btn.dataset.id);
     if (food) startSavedFoodEdit(food);
   }));
 
+  list.querySelectorAll(".sf-card").forEach(card => {
+    card.addEventListener("click", () => { const f = byId(card.dataset.id); if (f) startSavedFoodEdit(f); });
+    card.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target === card) { e.preventDefault(); const f = byId(card.dataset.id); if (f) startSavedFoodEdit(f); } });
+  });
+  list.querySelectorAll(".sf-menu-btn").forEach(btn => btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const f = byId(btn.dataset.id);
+    const items = [{ label: "✎ Edit", onclick: () => startSavedFoodEdit(f) }];
+    if (f.notes) items.push({ label: "⤢ Details", onclick: () => openDetailsModal(f.name, f.notes) });
+    items.push({ label: "✕ Delete", danger: true, onclick: withErrors(() => deleteSavedFood(f)) });
+    openRowMenu(btn, items);
+  }));
+
   // "＋ log": one serving on TODAY's log (what the button says), whatever day the Food Log is showing.
-  $all(".use-btn").forEach(btn => btn.addEventListener("click", withErrors(async () => {
-    const food = foods.find(f => f.id === parseInt(btn.dataset.id));
+  $all(".use-btn").forEach(btn => btn.addEventListener("click", withErrors(async (e) => {
+    if (e) e.stopPropagation();
+    const food = byId(btn.dataset.id);
     if (!food) return;
     const day = todayStr();
     await api(withUser(`/api/logs`), {
@@ -1073,8 +1468,22 @@ async function loadSavedFoodsList() {
       }),
     });
     alert(`Added "${food.name}" to today's log (${day}).`);
-    await Promise.all([loadSummary(), loadHistory(), state.date === day ? loadFoodLog() : null]);
+    await Promise.all([loadSummary(), loadHistory(), loadSavedFoodsList(), state.date === day ? loadFoodLog() : null]);
   })));
+}
+
+async function deleteSavedFood(food) {
+  if (!food) return;
+  if (!confirm(`Delete the saved food "${food.name}"?`)) return;
+  await api(withUser(`/api/saved-foods/${food.id}`), { method: "DELETE" });
+  if (state.editingSavedFoodId === food.id) cancelSavedFoodEdit();
+  await loadSavedFoodsList();
+}
+
+function openSavedFoodForm() {
+  $("#sfFormCard").hidden = false;
+  $("#sfFormCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#sfName").focus({ preventScroll: true });
 }
 
 function startSavedFoodEdit(food) {
@@ -1090,19 +1499,19 @@ function startSavedFoodEdit(food) {
   $("#sfNotes").value = food.notes || "";
   $("#sfFormTitle").textContent = `Editing "${food.name}"`;
   $("#sfSaveBtn").textContent = "Update Food";
-  $("#sfCancelEditBtn").hidden = false;
-  $("#sfName").scrollIntoView({ behavior: "smooth", block: "center" });
+  openSavedFoodForm();
 }
 
+// Cancel (and after saving): empty the form and fold it away.
 function cancelSavedFoodEdit() {
   state.editingSavedFoodId = null;
   ["sfName", "sfCalories", "sfProtein", "sfCarbs", "sfFat", "sfNotes"].forEach(id => $("#" + id).value = "");
   sfTags.set([]);
   $("#sfServingSize").value = "1";
   $("#sfServingUnit").value = "serving";
-  $("#sfFormTitle").textContent = "Build a Repeated Food";
+  $("#sfFormTitle").textContent = "New saved food";
   $("#sfSaveBtn").textContent = "Save Food";
-  $("#sfCancelEditBtn").hidden = true;
+  $("#sfFormCard").hidden = true;
 }
 
 $("#sfCancelEditBtn").addEventListener("click", cancelSavedFoodEdit);
@@ -1135,7 +1544,7 @@ $("#sfSaveBtn").addEventListener("click", withErrors(async () => {
     });
   }
   cancelSavedFoodEdit();
-  await Promise.all([loadSavedFoodsList(), loadSavedFoodPicker(), loadChoices()]);
+  await Promise.all([loadSavedFoodsList(), loadChoices()]);
 }));
 
 // ---------- food tags, symptoms and patterns ----------
@@ -1249,10 +1658,16 @@ $("#symAddBtn").addEventListener("click", withErrors(async () => {
 }));
 
 async function loadSymptomDay() {
-  const [foods, syms] = await Promise.all([
-    api(withUser(`/api/logs?date=${state.date}`)),
-    api(withUser(`/api/symptoms?date=${state.date}`)),
-  ]);
+  let foods, syms;
+  try {
+    [foods, syms] = await Promise.all([
+      api(withUser(`/api/logs?date=${state.date}`)),
+      api(withUser(`/api/symptoms?date=${state.date}`)),
+    ]);
+  } catch (e) {
+    $("#dayTimeline").replaceChildren(UI.errorBox(e, loadSymptomDay));
+    return;
+  }
   $("#symTime").placeholder = "";
   const items = foods.map(f => ({ t: f.eaten_at || MEAL_TIMES[f.meal_type] || "", kind: "food", f }))
     .concat(syms.map(s => ({ t: s.time, kind: "sym", s })))
@@ -1291,27 +1706,32 @@ function patternLine(x, key) {
 async function loadPatterns() {
   const days = $("#patternDays").value;
   $("#journalCsv").href = withUser(`api/journal.csv?days=${days}`);
-  const p = await api(withUser(`/api/patterns?days=${days}`));
-  $("#patternIntro").textContent = `${p.loggedDays} day${p.loggedDays === 1 ? "" : "s"} with food logged in this time. ` +
-    `For each symptom, what you ate in the ${p.hours} hours before it is compared with the same hours on days without it. ` +
-    "This shows what came together, not what causes what — talk to a doctor about symptoms that worry you.";
   const list = $("#patternList");
+  let p;
+  try { p = await api(withUser(`/api/patterns?days=${days}`)); }
+  catch (e) { list.replaceChildren(UI.errorBox(e, loadPatterns)); return; }
+  $("#patternIntro").textContent = `${p.loggedDays} day${p.loggedDays === 1 ? "" : "s"} with food logged in this time. Tap a symptom for what came before it.`;
+  $("#patternAbout").textContent = `For each symptom, what you ate in the ${p.hours} hours before it is compared with the same hours on days without it. ` +
+    "This shows what came together, not what causes what — talk to a doctor about symptoms that worry you.";
   if (!p.symptoms.length && !p.tooFew.length) {
     list.innerHTML = `<p class="hint">No symptoms logged in this time. Log symptoms (and what you eat) for a few weeks and patterns show up here.</p>`;
     return;
   }
   const strip = (series) => `<div class="sev-strip" aria-hidden="true">${series.map(v => `<span class="sev-bar sev-${v}" style="height:${v ? 20 + v * 16 : 4}%"></span>`).join("")}</div>`;
+  // one line and the severity strip per symptom; tap it for what came before it
   list.innerHTML = p.symptoms.map(s => `
-    <div class="pattern">
-      <div class="pattern-head"><h4>${escapeHtml(s.name)}</h4>
-        <span class="hint">${s.count} time${s.count === 1 ? "" : "s"} on ${s.days} day${s.days === 1 ? "" : "s"} · usually around ${escapeHtml(s.usualTime)} · average ${s.avgSeverity} of 5</span></div>
-      ${strip(s.series)}
+    <details class="pattern">
+      <summary>
+        <div class="pattern-head"><h4>${escapeHtml(s.name)}</h4>
+          <span class="hint">${s.count} time${s.count === 1 ? "" : "s"} on ${s.days} day${s.days === 1 ? "" : "s"} · usually around ${escapeHtml(s.usualTime)} · average ${s.avgSeverity} of 5</span></div>
+        ${strip(s.series)}
+      </summary>
       ${s.tags.length || s.foods.length ? `
         <div class="pattern-cols">
           ${s.tags.length ? `<div><div class="pattern-sub">Tags often before it</div><ul class="pattern-list">${s.tags.map(x => patternLine(x, "tag")).join("")}</ul></div>` : ""}
           ${s.foods.length ? `<div><div class="pattern-sub">Foods and ingredients often before it</div><ul class="pattern-list">${s.foods.map(x => patternLine(x, "food")).join("")}</ul></div>` : ""}
         </div>` : `<p class="hint">Nothing you ate stands out before it${s.otherDays ? "" : " — there are no days without it to compare with yet"}.</p>`}
-    </div>`).join("") + (p.tooFew.length ? `
+    </details>`).join("") + (p.tooFew.length ? `
     <p class="hint">Logged too few times to compare (${p.minCount} needed): ${p.tooFew.map(s => `${escapeHtml(s.name)} (${s.count})`).join(", ")}.</p>` : "");
 }
 $("#patternDays").addEventListener("change", withErrors(loadPatterns));
@@ -1319,26 +1739,62 @@ $("#patternDays").addEventListener("change", withErrors(loadPatterns));
 // ---------- weight ----------
 $("#weightDate").value = state.date;
 
-// The newest WEIGHT_SHOWN weigh-ins; "Show all" loads the rest.
-const WEIGHT_SHOWN = 100;
+// The stat strip (latest, 7-day and 30-day change) uses the newest WEIGHT_FETCHED weigh-ins; the list shows the
+// newest WEIGHT_SHOWN, and "Show all" loads and lists every one.
+const WEIGHT_FETCHED = 100;
+const WEIGHT_SHOWN = 10;
 state.weightAll = false;
 $("#weightShowAllBtn").addEventListener("click", withErrors(async () => { state.weightAll = true; await loadWeight(); }));
 
+// latest weight minus the newest weigh-in on or before `days` days before the latest one's date
+function weightChange(entries, days) {
+  if (entries.length < 2) return null;
+  const last = entries[entries.length - 1];
+  const cutoff = shiftDate(last.date, -days);
+  for (let i = entries.length - 2; i >= 0; i--) {
+    if (entries[i].date <= cutoff) return last.weight_kg - entries[i].weight_kg;
+  }
+  return null;
+}
+
+function drawWeightStats(entries) {
+  const last = entries[entries.length - 1];
+  const change = (d) => {
+    const c = weightChange(entries, d);
+    if (c === null) return { text: "—", cls: "" };
+    return { text: `${c > 0 ? "+" : ""}${fmt(c)} kg`, cls: "" };
+  };
+  const c7 = change(7), c30 = change(30);
+  const kpi = (label, v, cls, title) => `<div class="kpi"${title ? ` title="${escapeHtml(title)}"` : ""}><div class="kpi-label">${label}</div><div class="kpi-value ${cls}">${v}</div></div>`;
+  $("#weightStats").innerHTML =
+    kpi("Latest", last ? `${fmt(last.weight_kg)} kg` : "—", "", last ? last.date : "") +
+    kpi("7-day change", c7.text, c7.cls, "Since the weigh-in a week or more before the latest") +
+    kpi("30-day change", c30.text, c30.cls, "Since the weigh-in 30 days or more before the latest");
+}
+
 async function loadWeight() {
-  const entries = await api(withUser(state.weightAll ? `/api/weight` : `/api/weight?limit=${WEIGHT_SHOWN}`));
-  $("#weightShowAllBtn").hidden = state.weightAll || entries.length < WEIGHT_SHOWN;
   const list = $("#weightList");
+  let entries;
+  try {
+    entries = await api(withUser(state.weightAll ? `/api/weight` : `/api/weight?limit=${WEIGHT_FETCHED}`));
+  } catch (e) {
+    list.replaceChildren(UI.errorBox(e, loadWeight));
+    return;
+  }
+  drawWeightStats(entries);
+  const shown = state.weightAll ? entries : entries.slice(-WEIGHT_SHOWN);
+  $("#weightShowAllBtn").hidden = state.weightAll || entries.length <= WEIGHT_SHOWN;
   if (entries.length === 0) {
-    list.innerHTML = `<p class="hint">No weight entries yet.</p>`;
+    list.replaceChildren(UI.empty("No weigh-ins yet", "Log your weight above to see your trend."));
   } else {
-    list.innerHTML = entries.slice().reverse().map(w => `
+    list.innerHTML = shown.slice().reverse().map(w => `
       <div class="weight-item">
         <div class="log-item-main">
           <span class="name">${fmt(w.weight_kg)} kg</span>
           <span class="meta">${w.date}${w.note ? " · " + escapeHtml(w.note) : ""}</span>
         </div>
         <div class="item-actions">
-          <button class="del-w-btn" data-id="${w.id}" title="Delete">✕</button>
+          <button class="del-w-btn tap44" data-id="${w.id}" title="Delete" aria-label="Delete the weigh-in of ${w.date}">✕</button>
         </div>
       </div>
     `).join("");
@@ -1533,7 +1989,7 @@ $("#saveGoalsBtn").addEventListener("click", withErrors(async () => {
     }),
   });
   alert("Goals saved.");
-  await Promise.all([loadSummary(), loadHistory()]);
+  await Promise.all([loadSummary(), loadHistory(), loadMonthSummary(), loadWeightHistory(), loadDashTop()]);
 }));
 
 // ---------- AI ----------
@@ -1624,6 +2080,7 @@ async function refreshAiStatus() {
     dot.className = "status-dot err";
     text.textContent = "Could not reach the backend.";
   }
+  $("#aiStatusChip").title = text.textContent;     // the chip is one line: the whole text on hover
 }
 
 $("#aiWarmupBtn").addEventListener("click", async () => {
@@ -1668,12 +2125,37 @@ async function aiEstimateInto(prefix) {
 $("#aiFillBtn").addEventListener("click", () => aiEstimateInto("food"));
 $("#sfAiFillBtn").addEventListener("click", () => aiEstimateInto("sf"));
 
+// An empty chat offers a few questions to start with.
+const CHAT_SUGGESTIONS = [
+  "How much protein should I eat a day?",
+  "Ideas for a high-protein vegetarian breakfast",
+  "Is it OK to eat late at night?",
+  "What's a healthy snack under 200 kcal?",
+];
+function drawChatSuggest() {
+  const box = $("#chatSuggest");
+  const empty = !$("#chatHistory").children.length;
+  box.hidden = !empty;
+  if (!empty) return;
+  box.replaceChildren(...CHAT_SUGGESTIONS.map(q => {
+    const b = UI.h("button", { type: "button", class: "chip" }, q);
+    b.addEventListener("click", () => {
+      if ($("#chatSendBtn").disabled) { $("#chatInput").value = q; return; }
+      $("#chatInput").value = q;
+      sendChat();
+    });
+    return b;
+  }));
+}
+drawChatSuggest();
+
 function appendChat(role, text) {
   const div = document.createElement("div");
   div.className = `chat-msg ${role}`;
   div.textContent = text;
   $("#chatHistory").appendChild(div);
   $("#chatHistory").scrollTop = $("#chatHistory").scrollHeight;
+  drawChatSuggest();
   return div;
 }
 
@@ -1716,12 +2198,12 @@ async function refreshAll() {
     loadSummary(),
     loadFoodLog(),
     loadSavedFoodsList(),
-    loadSavedFoodPicker(),
     loadWeight(),
     loadWeightHistory(),
     loadGoals(),
     loadHistory(),
     loadMonthSummary(),
+    $("#tab-dashboard").classList.contains("active") ? loadDashTop() : null,
     loadChoices(),
     loadSymptomDay(),
     $("#tab-symptoms").classList.contains("active") ? loadPatterns() : null,
@@ -1856,15 +2338,26 @@ async function loadAppSettings() {
 })();
 
 // ---------- Back gesture in Home Assistant (backnav.js) ----------
-// Start page = Food Log with no #/ route (what the app opens on). Back closes
-// the details popup first, then returns to Food Log; only Back on Food Log
-// with nothing open leaves the app. Deep links (#/admin/...) open later in
-// init() and are noticed by BackNav's DOM observer.
+// Start page = Food Log (no address, or #/foodlog). Back closes the open menu / popup first, then retraces the
+// pages opened from a tab, then goes to the page's parent (an Admin tab → #/admin), then to Food Log; only Back on
+// Food Log with nothing open leaves the app.
 BackNav.init({
-  atHome: () => $("#tab-foodlog").classList.contains("active") && !location.hash.startsWith("#/"),
-  goHome: () => showTab("foodlog"),
-  openLayers: () => ($("#detailsModal").hidden ? [] : [$("#detailsModal")]),
-  closeLayer: () => closeDetailsModal(),
+  atHome: () => $("#tab-foodlog").classList.contains("active") && ["", "#", "#/", "#/foodlog"].includes(location.hash),
+  goHome: () => { clearRouteHash(); openTab("foodlog"); },
+  openLayers: () => [
+    $("#navMore").closest(".side-nav").classList.contains("more-open") ? $("#navMore") : null,
+    $("#meMenu").hidden ? null : $("#meMenu"),
+    $("#rowMenu").hidden ? null : $("#rowMenu"),
+    $("#detailsModal").hidden ? null : $("#detailsModal"),
+  ].filter(Boolean),
+  closeLayer: (layer) => {
+    if (layer === $("#detailsModal")) closeDetailsModal();
+    else if (layer === $("#rowMenu")) closeRowMenu();
+    else if (layer === $("#meMenu")) closeMeMenu();
+    else closeMore();
+  },
+  isTab: (hash) => /^#\/(foodlog|symptoms|dashboard|weight|savedfoods|goals|ai|whoami|admin(\/[a-z]+)?)$/.test(hash),
+  parentOf: (hash) => (/^#\/admin\/[a-z]+$/.test(hash) ? "#/admin" : null),
 });
 
 // A link from Home Assistant (the Household Assistant) opens "/<page>/foodlog[/<date>]", "/<page>/dashboard", …
@@ -1879,13 +2372,17 @@ function openLink(r) {
   if (r.date && r.date <= todayStr()) setDate(r.date);
 }
 
+// First paint: a loading hint in every list until its data is in.
+["#foodLogList", "#savedFoodsList", "#weightList", "#dayTimeline", "#patternList", "#usersList", "#monthSummaryGrid"]
+  .forEach(sel => UI.loading($(sel)));
+
 (async function init() {
   await loadToday();
   await loadMe();
-  routeFromHash();   // deep links: #/admin/settings, #/storage, …
-  HouseholdDeepLink.start(state.page, linkRoute, openLink);
   const hashLink = linkRoute(location.hash.replace(/^#/, ""));   // "#/foodlog/<date>": the server's redirect of a link
-  if (hashLink) { clearRouteHash(); openLink(hashLink); }
+  if (!hashLink) routeFromHash();   // the address shown: #/weight, #/admin/settings, #/storage, …
+  HouseholdDeepLink.start(state.page, linkRoute, openLink);
+  if (hashLink) { BackNav.replace(`#/${hashLink.tab}`); if (hashLink.date && hashLink.date <= todayStr()) setDate(hashLink.date); }
   await loadUsers();
   await refreshAll();
   refreshAiStatus();
