@@ -45,7 +45,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Finance Dashboard", lifespan=lifespan)
+from .template_filters import install as _install_filters
 _templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+_install_filters(_templates.env)
 _templates.env.globals["app_version"] = APP_VERSION
 
 # Request bodies are counted as they arrive (a chunked upload has no Content-Length to check first), and

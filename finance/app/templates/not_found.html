@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% set acting_qs = acting_qs or request_acting_qs(request) %}
 {% block title %}Not found{% endblock %}
 {% block content %}
 <h1>Not found</h1>
 <p>That item doesn't exist (any more), or isn't yours to view.</p>
-<p><a href="accounts">&larr; Back to accounts</a></p>
+<p><a href="{{ 'dashboard' | with_qs(acting_qs) }}" class="btn-secondary">&larr; Home</a>
+    <a href="{{ 'accounts' | with_qs(acting_qs) }}" class="btn-secondary">Accounts</a></p>
 {% endblock %}

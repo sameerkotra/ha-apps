@@ -1,18 +1,15 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% import "_toll_macros.html" as m %}
 {% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
 {% block title %}Tolls{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {% if tab == "upload" %}
-{{ nav.upload_tabs("toll", acting_qs, request.state.features) }}
+{{ nav.page_header("Upload toll statement", tabs=nav.upload_tabs("toll", acting_qs, request.state.features)) }}
 {% include "_ai_missing.html" %}
-<h1>Upload</h1>
 {% else %}
-{{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
-<h1>Tolls</h1>
-{{ m.subtabs(tab, acting_qs) }}
+{{ nav.page_header("Tolls", tabs=nav.bills_tabs("tolls", acting_qs, request.state.features)) }}
 {% endif %}
 
 {% if tab == "upload" %}
@@ -21,6 +18,24 @@
 {% set archived_cars = cars|selectattr("archived_at")|list %}
 {% set unassigned = devices|selectattr("car_id", "none")|list %}
 
+<h2 id="toll-upload">Upload toll statement(s)</h2>
+<form id="toll-upload-form" enctype="multipart/form-data" class="add-account-form">
+    <label>
+        PDF(s)
+        <input type="file" name="files" id="toll-file-input" accept="application/pdf" multiple required>
+    </label>
+    <button type="submit" id="toll-upload-btn" class="btn-primary">Upload</button>
+</form>
+<p class="hint">
+    One statement can hold several devices &mdash; each one is added automatically the first time it appears; you then assign it to a car in the Devices list below.
+    The passes on the statement are read twice (text and AI) and their total is checked against the statement&rsquo;s
+    <strong>Grand Totals</strong>; anything that doesn&rsquo;t agree is held for review.
+</p>
+<div id="toll-upload-result"></div>
+<script src="static/pages/toll-upload.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>
+
+
+<h2>Cars and devices</h2>
 <details class="fold" id="toll-cars"{% if open_cars %} open{% endif %}>
 <summary><span class="fold-title">Cars</span> <span class="fold-count">{{ active_cars|length }}{% if archived_cars %} + {{ archived_cars|length }} archived{% endif %}</span></summary>
 <p class="hint">Create a car for each vehicle you want to track, then give it its devices in the Devices list below. A car can have several devices over time, and its plate can change: the plate is kept on the device and is updated automatically when a newer statement shows a different one. Archive a car you no longer use &mdash; it leaves this list and the pickers&rsquo; main list, but its past tolls still count in every total. Deleting a car keeps its devices and tolls; they just become &ldquo;not assigned&rdquo;.</p>
@@ -56,7 +71,7 @@
                 <td data-label="First toll">{{ c.first_date or "—" }}</td>
                 <td data-label="Last toll">{{ c.last_date or "—" }}</td>
                 <td data-label="Passes">{{ c.pass_count }}</td>
-                <td data-label="Total">{{ "%.2f"|format(c.total) }}</td>
+                <td data-label="Total">{{ (c.total)|money }}</td>
                 <td data-label="">
                     <form method="post" action="toll-car-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
                         <input type="hidden" name="id" value="{{ c.id }}">
@@ -66,7 +81,7 @@
                     <form method="post" action="toll-car-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form"
                           data-confirm="Delete this car? Its devices and tolls are kept and become not assigned.">
                         <input type="hidden" name="id" value="{{ c.id }}">
-                        <button type="submit" class="restart-btn">Delete</button>
+                        <button type="submit" class="btn-danger">Delete</button>
                     </form>
                 </td>
             </tr>
@@ -126,13 +141,13 @@
                 <td data-label="First toll">{{ d.first_date or "—" }}</td>
                 <td data-label="Last toll">{{ d.last_date or "—" }}</td>
                 <td data-label="Passes">{{ d.pass_count }}</td>
-                <td data-label="Total">{{ "%.2f"|format(d.total) }}</td>
+                <td data-label="Total">{{ (d.total)|money }}</td>
                 <td data-label="">
                     {% if not d.any_rows %}
                     <form method="post" action="toll-device-delete{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form"
                           data-confirm="Remove this device? It has no toll passes.">
                         <input type="hidden" name="id" value="{{ d.id }}">
-                        <button type="submit" class="restart-btn">Remove</button>
+                        <button type="submit" class="btn-danger">Remove</button>
                     </form>
                     {% endif %}
                 </td>
@@ -146,22 +161,6 @@
 <p class="empty-state">No devices yet &mdash; they appear when the first statement is read.</p>
 {% endif %}
 </details>
-
-<h2 id="toll-upload">Upload toll statement(s)</h2>
-<form id="toll-upload-form" enctype="multipart/form-data" class="add-account-form">
-    <label>
-        PDF(s)
-        <input type="file" name="files" id="toll-file-input" accept="application/pdf" multiple required>
-    </label>
-    <button type="submit" id="toll-upload-btn">Upload</button>
-</form>
-<p class="hint">
-    One statement can hold several devices &mdash; each one is added automatically the first time it appears; you then assign it to a car in the Devices list above.
-    The passes on the statement are read twice (text and AI) and their total is checked against the statement&rsquo;s
-    <strong>Grand Totals</strong>; anything that doesn&rsquo;t agree is held for review.
-</p>
-<div id="toll-upload-result"></div>
-<script src="static/pages/toll-upload.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>
 
 <h2>Upload history</h2>
 <p class="hint">Every statement you&rsquo;ve uploaded, newest first.</p>
@@ -186,16 +185,16 @@
             <td data-label="Devices">{{ s.car_count or "—" }}{% if s.notes %}<div class="hint">{{ s.notes }}</div>{% endif %}</td>
             <td data-label="Passes">{{ s.pass_count if s.pass_count else "—" }}{% if s.skipped_duplicates %}<div class="hint">{{ s.skipped_duplicates }} already imported</div>{% endif %}</td>
             <td data-label="Total tolls">
-                {% if s.pass_count %}{{ "%.2f"|format(s.passes_total) }}{% else %}—{% endif %}
+                {% if s.pass_count %}{{ (s.passes_total)|money }}{% else %}—{% endif %}
                 {% if s.status in ("complete", "pending_review") %}
                     {% if s.total_tolls_printed is none %}<div class="hint">No printed total to check</div>
-                    {% elif s.printed_matches %}<div class="hint">Statement says {{ "%.2f"|format(s.total_tolls_printed) }} &#10003;</div>
-                    {% else %}<div class="hint">Statement says {{ "%.2f"|format(s.total_tolls_printed) }}, passes add up to {{ "%.2f"|format(s.passes_total) }}</div>{% endif %}
+                    {% elif s.printed_matches %}<div class="hint">Statement says {{ (s.total_tolls_printed)|money }} &#10003;</div>
+                    {% else %}<div class="hint">Statement says {{ (s.total_tolls_printed)|money }}, passes add up to {{ (s.passes_total)|money }}</div>{% endif %}
                 {% endif %}
                 {% if s.review_note %}<div class="hint">{{ s.review_note }}</div>{% endif %}
             </td>
             <td data-label="Status">{% with row=s, acting_qs=acting_qs, is_admin=is_admin %}{% include "_toll_status_fragment.html" %}{% endwith %}</td>
-            {% if is_admin %}<td data-label=""><a href="toll-debug?id={{ s.id }}" class="debug-link">debug</a></td>{% endif %}
+            {% if is_admin %}<td data-label=""><a href="{{ ("toll-debug?id=" ~ s.id) | with_qs(acting_qs) }}" class="debug-link">debug</a></td>{% endif %}
         </tr>
         {% endfor %}
     </tbody>
@@ -237,7 +236,7 @@
 {% if figures.passes %}
 <div class="card">
     <h3>Total tolls{% if selected_car %} &mdash; {{ selected_car }}{% endif %}</h3>
-    <p class="dashboard-figure">{{ "%.2f"|format(figures.cost) }}</p>
+    <p class="dashboard-figure">{{ (figures.cost)|money }}</p>
     <p class="hint">{{ figures.trips }} trip{{ "s" if figures.trips != 1 else "" }} &middot; {{ figures.passes }} toll pass{{ "es" if figures.passes != 1 else "" }}</p>
 </div>
 
@@ -255,8 +254,8 @@
                 <td data-label=""><a href="{{ tag_link_base }}&tag={{ 'g' if t.kind == 'group' else '' }}{{ t.id }}#toll-list">{{ t.name }}</a></td>
                 <td data-label="Trips" class="num">{{ t.trips }}</td>
                 <td data-label="Passes" class="num">{{ t.passes }}</td>
-                <td data-label="Cost" class="num">{{ "%.2f"|format(t.cost) }}</td>
-                <td data-label="Average per trip" class="num">{{ "%.2f"|format(t.average) }}</td>
+                <td data-label="Cost" class="num">{{ (t.cost)|money }}</td>
+                <td data-label="Average per trip" class="num">{{ (t.average)|money }}</td>
             </tr>
             {% endfor %}
             {% if figures.tag_display_rows|length > 1 %}
@@ -264,25 +263,25 @@
                 <td data-label=""><em>All tagged</em></td>
                 <td data-label="Trips" class="num">{{ figures.tag_display_rows|sum(attribute="trips") }}</td>
                 <td data-label="Passes" class="num">{{ figures.tag_display_rows|sum(attribute="passes") }}</td>
-                <td data-label="Cost" class="num">{{ "%.2f"|format(figures.tag_display_rows|sum(attribute="cost")) }}</td>
-                <td data-label="Average per trip" class="num">{{ "%.2f"|format(figures.tag_display_rows|sum(attribute="cost") / figures.tag_display_rows|sum(attribute="trips")) }}</td>
+                <td data-label="Cost" class="num">{{ (figures.tag_display_rows|sum(attribute="cost"))|money }}</td>
+                <td data-label="Average per trip" class="num">{{ (figures.tag_display_rows|sum(attribute="cost") / figures.tag_display_rows|sum(attribute="trips"))|money }}</td>
             </tr>
             {% endif %}
             <tr>
                 <td data-label=""><a href="{{ tag_link_base }}&tag=untagged#toll-list">Not tagged</a></td>
                 <td data-label="Trips" class="num">{{ figures.untagged.trips }}</td>
                 <td data-label="Passes" class="num">{{ figures.untagged.passes }}</td>
-                <td data-label="Cost" class="num">{{ "%.2f"|format(figures.untagged.cost) }}</td>
-                <td data-label="Average per trip" class="num">{% if figures.untagged.trips %}{{ "%.2f"|format(figures.untagged.cost / figures.untagged.trips) }}{% else %}—{% endif %}</td>
+                <td data-label="Cost" class="num">{{ (figures.untagged.cost)|money }}</td>
+                <td data-label="Average per trip" class="num">{% if figures.untagged.trips %}{{ (figures.untagged.cost / figures.untagged.trips)|money }}{% else %}—{% endif %}</td>
             </tr>
         </tbody>
         <tfoot>
-            <tr>
-                <td>Total</td>
-                <td class="num">{{ figures.trips }}</td>
-                <td class="num">{{ figures.passes }}</td>
-                <td class="num">{{ "%.2f"|format(figures.cost) }}</td>
-                <td class="num">{% if figures.trips %}{{ "%.2f"|format(figures.cost / figures.trips) }}{% else %}—{% endif %}</td>
+            <tr class="totals-row">
+                <td data-label=""><strong>Total</strong></td>
+                <td data-label="Trips" class="num">{{ figures.trips }}</td>
+                <td data-label="Passes" class="num">{{ figures.passes }}</td>
+                <td data-label="Cost" class="num">{{ (figures.cost)|money }}</td>
+                <td data-label="Average per trip" class="num">{% if figures.trips %}{{ (figures.cost / figures.trips)|money }}{% else %}—{% endif %}</td>
             </tr>
         </tfoot>
     </table>
@@ -301,7 +300,7 @@
             <tr>
                 <td data-label="Car"><a href="tolls?tab=dashboard&period={{ period | urlencode }}&car_id={{ c.filter }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">{{ c.label }}</a></td>
                 <td data-label="Passes" class="num">{{ c.passes }}</td>
-                <td data-label="Cost" class="num">{{ "%.2f"|format(c.cost) }}</td>
+                <td data-label="Cost" class="num">{{ (c.cost)|money }}</td>
                 <td data-label="Share" class="num">{{ "%.1f"|format(c.cost / figures.cost * 100 if figures.cost else 0) }}%</td>
             </tr>
             {% endfor %}
@@ -325,7 +324,7 @@
         <table class="detail-table">
             <tr><th>Month</th><th>Passes</th><th>Cost</th></tr>
             {% for r in chart_rows|reverse %}
-            <tr><td>{{ r.month }}</td><td>{{ r.passes }}</td><td>{{ "%.2f"|format(r.cost) }}</td></tr>
+            <tr><td>{{ r.month }}</td><td>{{ r.passes }}</td><td>{{ (r.cost)|money }}</td></tr>
             {% endfor %}
         </table>
         </div>
@@ -356,7 +355,7 @@
             <td data-label="Car">{{ r.car_name }}</td>
             <td data-label="Plaza">{{ r.plaza or "—" }}{% if r.road %} <span class="hint">({{ r.road }})</span>{% endif %}</td>
             <td data-label="Lane">{{ r.lane or "—" }} {{ r.direction or "" }}</td>
-            <td data-label="Amount" class="num">{{ "%.2f"|format(r.amount) }}</td>
+            <td data-label="Amount" class="num">{{ (r.amount)|money }}</td>
             <td data-label="Tag">{{ r.tag_name or "—" }}</td>
         </tr>
         {% endfor %}

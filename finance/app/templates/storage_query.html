@@ -1,11 +1,14 @@
 {% extends "base.html" %}
-{% from "_query_macros.html" import storage_tabs %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Query (admin){% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {% set qs = "?" + acting_qs if acting_qs else "" %}
-{{ storage_tabs("query", acting_qs) }}
-<h1>Query</h1>
+{% if in_reports %}
+{{ nav.page_header(("Edit report" if report else "New report"), tabs=nav.reports_tabs("saved" if report else "new", acting_qs, true)) }}
+{% else %}
+{{ nav.page_header("Query", tabs=nav.admin_tabs("query", acting_qs)) }}
+{% endif %}
 
 <div class="q-layout">
 <div class="q-main">
@@ -14,7 +17,7 @@
     {% if report %}
     <p class="q-editing">Editing report <strong>{{ report.name }}</strong>
         &middot; <a href="report?id={{ report.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">Open report</a>
-        &middot; <a href="admin-storage?tab=query{% if acting_qs %}&{{ acting_qs }}{% endif %}">New query</a></p>
+        &middot; <a href="{{ ('report-new' if in_reports else 'admin-storage?tab=query') | with_qs(acting_qs) }}">{{ "New report" if in_reports else "New query" }}</a></p>
     {% endif %}
 
     <form id="query-form" class="q-form" hx-post="query-run{{ qs }}" hx-target="#query-results" hx-indicator="#q-running"

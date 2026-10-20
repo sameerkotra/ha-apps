@@ -625,10 +625,10 @@ def test_history_shows_money_in_and_out(env):
     assert ">Money in<" in hist and ">Money out<" in hist
     row = hist[hist.index('id="statement-row-'):]
     row = row[:row.index("</tr>")]
-    assert "2000.00" in row and "60.25" in row
+    assert "$2,000.00" in row and "$60.25" in row
     crow = hist[hist.index('id="csv-row-'):]
     crow = crow[:crow.index("</tr>")]
-    assert "100.00" in crow and "30.00" in crow
+    assert "$100.00" in crow and "$30.00" in crow
     # card: the payment (100) is money in, the purchase (30) money out — the page's own rule — in that order
     assert crow.index("100.00") < crow.index("30.00")
     # sorting by money in puts the statement (2000) above the CSV (30) when descending

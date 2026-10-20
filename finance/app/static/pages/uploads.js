@@ -870,6 +870,14 @@
                 holder.innerHTML = html;
                 var fresh = holder.querySelector("#upload-history-wrap"), old = $("upload-history-wrap");
                 if (!fresh || !old) return;
+                // "Waiting for you" lives above the drop zone: the fresh copy goes there
+                var freshWaiting = fresh.querySelector("#upload-waiting"), slot = $("waiting-slot");
+                if (freshWaiting && slot) {
+                    freshWaiting.remove();
+                    slot.innerHTML = "";
+                    slot.appendChild(freshWaiting);
+                    if (window.htmx) window.htmx.process(freshWaiting);
+                }
                 old.replaceWith(fresh);
                 if (window.htmx) window.htmx.process(fresh);
                 if (q !== undefined) {
@@ -920,7 +928,7 @@
     // Sort and page links, the filter chips and the rows-per-page / phone sort menus: the same addresses, fetched
     // into the list instead of loading the page.
     document.addEventListener("click", function (e) {
-        var a = e.target.closest && e.target.closest("#upload-history-wrap a[href]");
+        var a = e.target.closest && e.target.closest("#upload-history-wrap a[href], #waiting-slot a[data-history-link]");
         if (a && (a.hasAttribute("data-history-link") || a.closest(".pager, th.sortable, .sort-bar"))) {
             e.preventDefault();
             refreshHistory(queryOf(a.getAttribute("href"))).then(function () {
@@ -935,7 +943,7 @@
             if (link) { e.preventDefault(); e.stopPropagation(); refreshHistory(queryOf(link.getAttribute("href"))); }
             return;
         }
-        var restart = e.target.closest && e.target.closest("#upload-history-wrap .waiting-restart");
+        var restart = e.target.closest && e.target.closest("#upload-history-wrap .waiting-restart, #waiting-slot .waiting-restart");
         if (restart) {
             restart.disabled = true;
             restart.textContent = "Restarting…";

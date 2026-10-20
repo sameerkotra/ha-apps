@@ -1,12 +1,8 @@
 {% extends "base.html" %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Compare{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
-
-<div class="subtabs">
-    <a href="dashboard{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab">Overview</a>
-    <a href="dashboard-compare{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab active">Compare</a>
-</div>
+{{ nav.page_header("Compare", tabs=nav.home_tabs("compare", acting_qs)) }}
 
 <form id="compare-filters" method="get" action="dashboard-compare" class="add-account-form">
     {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
@@ -43,15 +39,15 @@
 
 {# change: signed number; good_when_up says whether an increase is good (income) or bad (spend). #}
 {% macro delta(change, good_when_up) -%}
-{%- if change == 0 -%}<span class="delta">0.00</span>
-{%- else -%}<span class="delta {{ 'delta-good' if (change > 0) == good_when_up else 'delta-bad' }}">{{ "%+.2f"|format(change) }}</span>{%- endif -%}
+{%- if change == 0 -%}<span class="delta">{{ 0|money_text }}</span>
+{%- else -%}<span class="delta {{ 'delta-good' if (change > 0) == good_when_up else 'delta-bad' }}">{{ change|money_text(plus=true) }}</span>{%- endif -%}
 {%- endmacro %}
 {% macro pct(value) -%}{%- if value is none -%}&mdash;{%- else -%}{{ "%+.1f"|format(value) }}%{%- endif -%}{%- endmacro %}
 
 {% set account_qs = ("&account_id=" + (selected_account_id | string)) if selected_account_id else "" %}
 {% set acting_part = ("&" + acting_qs) if acting_qs else "" %}
 {% macro drill(value, category, flow, range) -%}
-<a href="transactions?{% if category %}category={{ category | urlencode }}&{% endif %}flow={{ flow }}&start_date={{ range[0] | urlencode }}&end_date={{ range[1] | urlencode }}{{ account_qs }}{{ acting_part }}">{{ "%.2f"|format(value) }}</a>
+<a href="transactions?{% if category %}category={{ category | urlencode }}&{% endif %}flow={{ flow }}&start_date={{ range[0] | urlencode }}&end_date={{ range[1] | urlencode }}{{ account_qs }}{{ acting_part }}">{{ (value)|money }}</a>
 {%- endmacro %}
 
 <h2>{{ label_a }} vs {{ label_b }}</h2>
@@ -78,8 +74,8 @@
             </tr>
             <tr class="totals-row">
                 <td data-label="">Left over (income &minus; spend)</td>
-                <td data-label="{{ label_a }}" class="num">{{ "%.2f"|format(net.a) }}</td>
-                <td data-label="{{ label_b }}" class="num">{{ "%.2f"|format(net.b) }}</td>
+                <td data-label="{{ label_a }}" class="num">{{ (net.a)|money }}</td>
+                <td data-label="{{ label_b }}" class="num">{{ (net.b)|money }}</td>
                 <td data-label="Change" class="num">{{ delta(net.change, true) }}</td>
                 <td data-label="Change %" class="num">&mdash;</td>
             </tr>

@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% set acting_qs = acting_qs or request_acting_qs(request) %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Debug: {{ statement.original_filename }}{% endblock %}
 {% block content %}
-<p><a href="uploads" class="btn-secondary">&larr; Upload &middot; Statements</a>
-    <a href="review" class="btn-secondary">Review</a></p>
-<h1>Debug: {{ statement.original_filename or "statement #" ~ statement.id }}</h1>
+{% call nav.page_header("Debug: " ~ (statement.original_filename or "statement #" ~ statement.id), back=("Upload · Statements", "uploads")) %}
+    <a href="{{ 'review' | with_qs(acting_qs) }}" class="btn-secondary">Review</a>
+{% endcall %}
 <p class="hint">Admin-only troubleshooting view — not shown to regular users.</p>
 {% set is_qfx = statement.source == "qfx" %}
 {% if not is_qfx %}<p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ statement.id }}&amp;embed=1">View PDF</button></p>{% endif %}
@@ -42,7 +44,7 @@
             <td data-label="Account number">{% if b.last4 %}····{{ b.last4 }}{% else %}—{% endif %}</td>
             <td data-label="Dates">{{ period_label(b.start, b.end) or "—" }}</td>
             <td data-label="Rows">{{ b.rows }}</td>
-            <td data-label="Went to">{{ b.account }}{% if b.statement_id and b.statement_id != statement.id %} (<a href="statement-debug?id={{ b.statement_id }}">statement #{{ b.statement_id }}</a>){% endif %}</td>
+            <td data-label="Went to">{{ b.account }}{% if b.statement_id and b.statement_id != statement.id %} (<a href="{{ ("statement-debug?id=" ~ b.statement_id) | with_qs(acting_qs) }}">statement #{{ b.statement_id }}</a>){% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -62,7 +64,7 @@
             <td data-label="Date">{{ r.date or "—" }}</td>
             <td data-label="Date from">{{ r.date_from }}{% if r.date_from == "DTUSER" and r.posted and r.posted != r.date %} <span class="hint">(posted {{ r.posted }})</span>{% endif %}</td>
             <td data-label="As written">{{ r.raw_amount or "—" }}</td>
-            <td data-label="Stored">{% if r.amount is defined and r.amount is not none %}{{ "%.2f"|format(r.amount) }}{% else %}—{% endif %}</td>
+            <td data-label="Stored">{% if r.amount is defined and r.amount is not none %}{{ (r.amount)|money }}{% else %}—{% endif %}</td>
             <td data-label="FITID"><code>{{ r.fitid or "—" }}</code></td>
             <td data-label="Description">{{ r.description }}</td>
             <td data-label="Outcome">{{ r.outcome }}</td>
@@ -130,7 +132,7 @@
             {% for t in transactions %}
             <tr>
                 <td data-label="Date">{{ t.date }}</td>
-                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ (t.amount)|money }}</td>
                 <td data-label="Description">{{ t.description }}</td>
                 <td data-label="{{ 'FITID' if is_qfx else 'Amount check' }}">
                     {% if is_qfx %}<code>{{ t.fitid or "—" }}</code>
@@ -170,8 +172,8 @@
     <p class="hint">Not checked — {{ "the file has no closing balance." if is_qfx else "couldn't find both a previous/beginning and a new/ending balance in the statement text." }}</p>
     {% else %}
     <table class="detail-table">
-        <tr><th>Previous balance</th><td>{{ "%.2f"|format(statement.previous_balance) }}</td></tr>
-        <tr><th>New balance</th><td>{{ "%.2f"|format(statement.new_balance) }}</td></tr>
+        <tr><th>Previous balance</th><td>{{ (statement.previous_balance)|money }}</td></tr>
+        <tr><th>New balance</th><td>{{ (statement.new_balance)|money }}</td></tr>
     </table>
     {% if statement.balance_mismatch %}
     <p class="hint" style="color: var(--danger);">{{ statement.balance_mismatch }}</p>

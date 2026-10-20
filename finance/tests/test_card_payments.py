@@ -148,11 +148,11 @@ def test_notice_kinds_and_texts(env, cp, clock):
     assert "3 card payments due" in box and "Mark as paid" in box and box.index("Over") < box.index("Today") < box.index("Soon")
     assert 'id="payments-due"' in env.get("uploads").text
     labels = {}
-    for url in ("accounts", "transactions-accounts"):
+    for url in ("accounts",):
         text = env.get(url).text
         assert "<th>Payment due</th>" in text
         for name, aid in (("Soon", soon), ("Today", today), ("Over", over), ("Far", far)):
-            labels[name] = re.search(r'class="payment-due ([^"]*)">([^<]*)<', text.split(f">{name}<")[1]).groups()
+            labels[name] = re.search(r'class="(?:col-full )?payment-due ([^"]*)">([^<]*)<', text.split(f">{name}<")[1]).groups()
     assert labels == {"Soon": ("due-soon", "Oct 22 (in 3 days)"), "Today": ("due-today", "Due today"),
                       "Over": ("due-overdue", "Was due 2 days ago"), "Far": ("", "Oct 30 (in 11 days)")}
     assert "Was due 2 days ago" in env.get(f"account?id={over}").text

@@ -1,13 +1,11 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% import "_toll_macros.html" as m %}
 {% from "_paging_macros.html" import sort_th, mobile_sort, pager %}
 {% block title %}Tolls analyze{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
-{{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
-<h1>Tolls</h1>
-{{ m.subtabs("analyze", acting_qs) }}
+{{ nav.page_header("Analyze tolls", tabs=nav.bills_tabs("toll_analyze", acting_qs, request.state.features)) }}
 
 <p class="hint">
     A <strong>trip</strong> is one journey: the passes of one car, in order, each within 45 minutes of the previous one and
@@ -63,7 +61,7 @@
                           data-confirm="Delete this group? Its tags are kept and become ungrouped.">
                         {{ hidden_common() }}
                         <input type="hidden" name="id" value="{{ g.id }}">
-                        <button type="submit" class="restart-btn">Delete</button>
+                        <button type="submit" class="btn-danger">Delete</button>
                     </form>
                 </td>
             </tr>
@@ -84,7 +82,7 @@
     <h3>{{ s.name }}</h3>
     <p>{{ s.route }}</p>
     <p class="hint">{{ s.trip_count }} trips, up to {{ s.days_per_week }} days in one week &middot; usual start {{ format_minutes(s.window_start_min) }} to {{ format_minutes(s.window_end_min) }}
-        &middot; average {{ "%.2f"|format(s.average) }}, total {{ "%.2f"|format(s.total) }}{% if s.cars %} &middot; seen on {{ s.cars }}{% endif %}</p>
+        &middot; average {{ (s.average)|money }}, total {{ (s.total)|money }}{% if s.cars %} &middot; seen on {{ s.cars }}{% endif %}</p>
     <form method="post" action="toll-pattern-save{{ post_qs }}" class="add-account-form">
         {{ hidden_common() }}
         <input type="hidden" name="signature" value="{{ s.signature }}">
@@ -98,7 +96,7 @@
         <input type="hidden" name="signature" value="{{ s.signature }}">
         <input type="hidden" name="start" value="{{ clock_value(s.window_start_min) }}">
         <input type="hidden" name="end" value="{{ clock_value(s.window_end_min) }}">
-        <button type="submit" class="restart-btn">Ignore this suggestion</button>
+        <button type="submit" class="btn-secondary btn-small">Ignore this suggestion</button>
     </form>
 </div>
 {% endfor %}
@@ -112,7 +110,7 @@
 <div class="card">
     <h3>{{ p.name }}</h3>
     <p>{{ p.route }}</p>
-    <p class="hint">{{ p.trip_count }} matching trip{{ "s" if p.trip_count != 1 else "" }}, {{ "%.2f"|format(p.cost) }} in the period</p>
+    <p class="hint">{{ p.trip_count }} matching trip{{ "s" if p.trip_count != 1 else "" }}, {{ (p.cost)|money }} in the period</p>
     {% if groups %}
     <form method="post" action="toll-pattern-group-assign{{ post_qs }}" class="inline-form">
         {{ hidden_common() }}
@@ -138,7 +136,7 @@
           data-confirm="Delete this tag? Its trips become untagged.">
         {{ hidden_common() }}
         <input type="hidden" name="id" value="{{ p.id }}">
-        <button type="submit" class="restart-btn">Delete tag</button>
+        <button type="submit" class="btn-danger">Delete tag</button>
     </form>
 </div>
 {% endfor %}
@@ -165,7 +163,7 @@
             <td data-label="Car">{{ t.car_name }}</td>
             <td data-label="Route">{{ t.route }}{% if t.state %}<div class="hint">{{ t.state }}</div>{% endif %}</td>
             <td data-label="Passes" class="num">{{ t.pass_count }}</td>
-            <td data-label="Cost" class="num">{{ "%.2f"|format(t.amount) }}</td>
+            <td data-label="Cost" class="num">{{ (t.amount)|money }}</td>
             <td data-label="Tag it">
                 <form method="post" action="toll-trip-tag{{ post_qs }}" class="inline-form">
                     {{ hidden_common() }}

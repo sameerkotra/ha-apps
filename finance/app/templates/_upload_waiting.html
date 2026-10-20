@@ -1,0 +1,40 @@
+{# Upload → Statements: "Waiting for you" (statements to confirm, review or restart). On the page it sits under the
+   title, above the drop zone; /uploads-history sends it again inside #upload-history-wrap and the page's script moves
+   it back up (static/pages/uploads.js). #}
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+<section id="upload-waiting" class="waiting-section" aria-labelledby="waiting-title"{% if not waiting %} hidden{% endif %}>
+    {% if waiting %}
+    <h2 id="waiting-title">Waiting for you <span class="count-pill">{{ waiting | length + waiting_more }}</span></h2>
+    <ul class="waiting-list" id="waiting-list">
+        {% for r in waiting %}
+        {% set s = r.s %}
+        <li class="waiting-item waiting-{{ r.state }}" id="waiting-{{ s.id }}" data-statement-id="{{ s.id }}">
+            <span class="waiting-what">
+                <span class="type-badge source-{{ r.kind }}">{{ kind_label[r.kind] }}</span>
+                <span class="waiting-file">{{ r.file or "—" }}</span>
+                <span class="hint">{{ r.account }}{% if r.period %} &middot; {{ r.period }}{% endif %}</span>
+            </span>
+            {% if r.state == "awaiting" %}
+            <span class="status-badge status-pending_review">Awaiting confirmation</span>
+            <span class="waiting-actions">
+                {% if s.has_pdf %}<button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ s.id }}&amp;embed=1{{ amp }}">Open PDF</button>{% endif %}
+                <a href="statement-confirm?id={{ s.id }}{{ amp }}" class="btn-secondary waiting-confirm">Confirm</a>
+            </span>
+            {% elif r.state == "review" %}
+            <span class="status-badge status-pending_review">Needs review</span>
+            <span class="waiting-actions">
+                <a href="review?statement_id={{ s.id }}{{ amp }}" class="btn-secondary waiting-review">Review</a>
+            </span>
+            {% else %}
+            <span class="status-badge status-error" title="{{ s.error_message or '' }}">Failed</span>
+            <span class="waiting-actions">
+                {% if r.kind == "pdf" %}<button type="button" class="btn-secondary waiting-restart" data-url="statement-restart?id={{ s.id }}{{ amp }}">Restart</button>{% endif %}
+                <a href="statement-delete-confirm?id={{ s.id }}{{ amp }}" class="btn-secondary">Delete</a>
+            </span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% if waiting_more %}<p class="hint"><a href="uploads?h_status=waiting{{ amp }}#upload-history" data-history-link>and {{ waiting_more }} more</a></p>{% endif %}
+    {% endif %}
+</section>

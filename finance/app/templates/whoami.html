@@ -1,12 +1,13 @@
 {% extends "base.html" %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Who am I{% endblock %}
 {% block content %}
 {# The shared whoami contract (common/whoami.py) with the same rows and wording as every other app's page
    (common/static/whoami.js); this app draws it on the server. #}
 {% set name = w.haUsername if w.nameSent else none %}
-<h1>How the app sees you</h1>
+{{ nav.page_header("How the app sees you", tabs=nav.settings_tabs("whoami", acting_qs)) }}
 <div class="card">
-    <table class="statements-table" data-no-sort>
+    <table class="detail-table detail-wrap" data-no-sort>
         <tbody>
             <tr><th>User name (sent by Home Assistant)</th><td>{{ name or "not sent" }}</td></tr>
             <tr><th>User id (sent by Home Assistant)</th><td><code>{{ w.haUserId }}</code></td></tr>

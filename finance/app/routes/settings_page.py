@@ -18,7 +18,9 @@ from .. import ai_client, settings
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_privacy"] = _ai_client.privacy
 

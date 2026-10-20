@@ -11,8 +11,8 @@
     <td data-label="Uploaded" class="nowrap" title="{{ s.uploaded_at }}">{{ (s.uploaded_at or "")[:10] }}</td>
     <td data-label="Period">{{ period or "—" }}</td>
     <td data-label="Transactions" class="count-cell">{{ s.txn_count }} transaction{{ "s" if s.txn_count != 1 else "" }}</td>
-    <td data-label="Money in" class="money-cell">{{ "%.2f"|format(s.money_in or 0) if s.txn_count else "—" }}</td>
-    <td data-label="Money out" class="money-cell">{{ "%.2f"|format(s.money_out or 0) if s.txn_count else "—" }}</td>
+    <td data-label="Money in" class="money-cell">{{ (s.money_in or 0)|money if s.txn_count else "—" }}</td>
+    <td data-label="Money out" class="money-cell">{{ (s.money_out or 0)|money if s.txn_count else "—" }}</td>
     <td data-label="Status">{% with row=s %}{% include "_status_fragment.html" %}{% endwith %}</td>
-    <td data-label="" class="actions-cell"><a href="statement-delete-confirm?id={{ s.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a>{% if is_admin %} <a href="statement-debug?id={{ s.id }}" class="debug-link">debug</a>{% endif %}</td>
+    <td data-label="" class="actions-cell">{% if is_admin %}<a href="{{ ('statement-debug?id=' ~ s.id) | with_qs(acting_qs) }}" class="debug-link">debug</a> {% endif %}<a href="statement-delete-confirm?id={{ s.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="btn-danger">Delete</a></td>
 </tr>

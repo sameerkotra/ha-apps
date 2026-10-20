@@ -1,16 +1,17 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% import "_category_options.html" as catopt %}
 {% block title %}Uploads{% endblock %}
 {% block main_class %}uploads-main{% endblock %}
 {% block content %}
 {% set qs = "?" + acting_qs if acting_qs else "" %}
-{{ nav.upload_tabs("statements", acting_qs, request.state.features) }}
+{{ nav.page_header("Upload statements", tabs=nav.upload_tabs("statements", acting_qs, request.state.features)) }}
 {% include "_ai_missing.html" %}
-<h1>Upload</h1>
+{% if notice %}<p class="hint notice-hint" role="status">{{ notice }}</p>{% endif %}
+<div id="waiting-slot">{% include "_upload_waiting.html" %}</div>
+{% set waiting_above = true %}
 {% include "_statements_due.html" %}
 {% include "_payments_due.html" %}
-{% if notice %}<p class="hint notice-hint" role="status">{{ notice }}</p>{% endif %}
 
 {% if strip %}
 {# Folded to start with (the drop zone is what most visits are for); the summary keeps the count and anything that
@@ -57,11 +58,11 @@
                 uses the account picked for the file). A bank's own lines above the header are skipped by themselves;
                 under <em>Header and data rows</em> you can choose them yourself. With several date columns, the
                 transaction date is used, or you're asked. A file missing a required column imports nothing.
-                <a href="transactions-export">Export your transactions</a> to see the format. After an import you can
+                <a href="{{ "transactions-export" | with_qs(acting_qs) }}">Export your transactions</a> to see the format. After an import you can
                 remember its layout for the account, and it's used by itself next time.</p>
             <p><strong>Signs</strong>: checking and savings &mdash; negative is money out, positive is money in. Credit
                 card &mdash; positive is a purchase, negative a payment.</p>
-            <p>A file whose type isn't its account's preferred upload method (set on Setup &rarr; Accounts) gets a small
+            <p>A file whose type isn't its account's preferred upload method (set on Accounts) gets a small
                 &ldquo;not this account's usual type&rdquo; mark &mdash; a reminder in case the wrong account is picked,
                 never a block. Rows already in the app are skipped as duplicates and listed on Review for
                 <em>Insert anyway</em>.</p>

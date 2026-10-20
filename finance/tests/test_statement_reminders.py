@@ -720,7 +720,7 @@ def test_the_next_statement_column_and_account_page(env, sd, clock):
     gone = acct(env, "Dismissed one", day=1)
     env.insert("statement_dismissals", account_id=gone, cycle_date="2026-10-01", dismissed_by="tester")
     acct(env, "Off", every=None, day=None)
-    for url in ("accounts", "transactions-accounts"):
+    for url in ("accounts",):
         page = env.get(url).text
         assert "Next statement" in page and "Overdue 3 days" in page and ">Oct 20<" in page and ">Dismissed<" in page
     stmt(env, soon, "2026-10-10 09:00:00")

@@ -1,17 +1,96 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% from "_expected_fields.html" import expected_fields %}
 {% from "_payment_due_fields.html" import payment_due_fields %}
 {% block title %}{{ account.name }}{% endblock %}
 {% block content %}
-<p><a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">&larr; All accounts</a></p>
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+{% call nav.page_header(account.name, back=("Accounts", "accounts")) %}
+    {% if not account.is_archived %}<a href="uploads?account={{ account.id }}{{ amp }}" class="btn-primary">Upload</a>{% endif %}
+    <a href="transactions?searched=1&account_id={{ account.id }}{{ amp }}" class="btn-secondary">Transactions</a>
+    {% if account.website_url %}<a href="{{ account.website_url }}" target="_blank" rel="noopener noreferrer" class="btn-secondary acct-link">Website &#8599;</a>{% endif %}
+{% endcall %}
+<p class="acct-badges">
+    <span class="type-badge type-{{ account.type }}">{{ account.type.replace('_', ' ') }}</span>
+    {% if account.is_archived %}<span class="status-badge">archived</span>{% endif %}
+    {% if account.bank_name or account.account_number_last4 %}<span class="hint">{{ account.bank_name or "" }}{% if account.account_number_last4 %} ····{{ account.account_number_last4 }}{% endif %}</span>{% endif %}
+</p>
 
-{{ nav.setup_tabs("accounts", acting_qs, request.state.is_real_admin) }}
-<h1>{{ account.name }}</h1>
-<span class="type-badge type-{{ account.type }}">{{ account.type.replace('_', ' ') }}</span>
-{% if account.is_archived %}<span class="status-badge">archived</span>{% endif %}
-{% if account.website_url %}<a href="{{ account.website_url }}" target="_blank" rel="noopener noreferrer" class="btn-secondary acct-link">Open website &#8599;</a>{% endif %}
+<div class="card">
+<table class="detail-table detail-wrap">
+    <tr><th>Bank</th><td>{{ account.bank_name or "—" }}</td></tr>
+    <tr><th>Account</th><td>{% if account.account_number_last4 %}····{{ account.account_number_last4 }}{% else %}—{% endif %}</td></tr>
+    <tr><th>Transactions</th><td>{{ txn_count }}</td></tr>
+    <tr><th>Last statement arrived</th><td id="last-statement">{{ last_upload.strftime("%Y-%m-%d %H:%M") if last_upload else "—" }}</td></tr>
+    {% if account.expected_every_months %}
+    <tr><th>Next statement</th><td id="next-statement">
+        {% if not due_enabled %}Statement reminders are off for the whole app
+        {% elif account.is_archived %}Not while archived
+        {% elif due %}
+            {% if due.status == "overdue" %}<span class="due-overdue">{{ due_label[0] }}</span> (expected {{ date_label(due.cycle_date) }}){% if due.next_date %}; then {{ date_label(due.next_date) }}{% endif %}
+            {% elif due.status == "dismissed" %}<span class="due-dismissed">Dismissed</span> (expected {{ date_label(due.cycle_date) }}){% if due.next_date %}; next {{ date_label(due.next_date) }}{% endif %}
+            {% elif due.status == "due" %}Expected today, {{ date_label(due.cycle_date) }}
+            {% else %}Expected {{ date_label(due.next_date) }}{% endif %}
+        {% else %}&mdash;{% endif %}
+    </td></tr>
+    {% endif %}
+    {% if account.type == "credit_card" and account.payment_due_day is not none %}
+    <tr><th>Payment due</th><td id="payment-due">
+        {% if not payment_enabled %}Card payment reminders are off for the whole app
+        {% elif account.is_archived %}Not while archived
+        {% elif payment %}
+            <span class="{{ payment_label[1] }}">{{ payment_label[0] }}</span>{% if payment.kind == "overdue" %} (due {{ date_label(payment.notice.due_date) }}; next {{ date_label(payment.next.due_date) }}){% endif %}
+            {% if payment.notice %}
+            <form method="post" action="card-payment-paid{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+                <input type="hidden" name="account_id" value="{{ account.id }}">
+                <input type="hidden" name="due_date" value="{{ payment.notice.due_date.isoformat() }}">
+                <input type="hidden" name="next" value="account">
+                <button type="submit" class="btn-secondary">Mark as paid</button>
+            </form>
+            {% endif %}
+        {% else %}&mdash;{% endif %}
+    </td></tr>
+    {% endif %}
+    <tr><th>Added</th><td>{{ account.created_at }}</td></tr>
+</table>
+</div>
 
+<h2>Statements</h2>
+{% if account.type == "credit_card" %}
+<p class="hint">For a credit card, &ldquo;Money in&rdquo; is the payments and credits on the statement and &ldquo;Money out&rdquo; is the purchases and charges &mdash; the same direction as checking/savings.</p>
+{% endif %}
+{% if statements %}
+<div class="table-scroll">
+<table class="statements-table money-list">
+    <thead>
+        <tr><th>Period</th><th class="col-secondary">Uploaded</th><th>Status</th><th class="num">Money in</th><th class="num">Money out</th></tr>
+    </thead>
+    <tbody>
+        {% for y in statement_years %}
+        <tr class="group-row"><td colspan="5"><div class="ui-group-head"><span>{{ y.year }}</span>
+            <span class="ui-group-total">in {{ y.money_in|money }} &middot; out {{ y.money_out|money }}</span></div></td></tr>
+        {% for r in y.rows %}{% set s = r.s %}{% set flow = r.flow %}
+        <tr>
+            <td data-label="Period" class="col-desc">
+                {% set label %}{% if s.source == "qfx" %}{{ period_label(s.period_start, s.period_end) or s.statement_period or "—" }}{% else %}{{ s.statement_period or "—" }}{% endif %}{% endset %}
+                {% if s.source == "qfx" %}<span class="type-badge source-qfx">QFX</span> {% endif %}
+                {% if r.start and r.end %}<a href="transactions?account_id={{ account.id }}&start_date={{ r.start }}&end_date={{ r.end }}{{ amp }}" title="This statement's transactions">{{ label }}</a>{% else %}{{ label }}{% endif %}
+            </td>
+            <td data-label="Uploaded" class="col-secondary">{{ s.uploaded_at }}</td>
+            <td data-label="Status" class="col-full"><span class="status-badge status-{{ s.status }}">{{ s.status.replace('_', ' ') }}</span></td>
+            <td data-label="Money in" class="num">{{ (flow.money_in if flow else 0)|money }}</td>
+            <td data-label="Money out" class="num">{{ (flow.money_out if flow else 0)|money }}</td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty-state">No statements uploaded yet for this account.</p>
+{% endif %}
+
+<h2>Manage</h2>
 <details class="inline-toggle" id="account-edit">
     <summary>Edit details</summary>
     <form method="post" action="account-update{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="add-account-form">
@@ -66,7 +145,8 @@
     <p class="hint">The account type ({{ account.type.replace('_', ' ') }}) can't be changed here &mdash; delete and re-add the account for that. Everything else updates everywhere at once: past statements and transactions already imported show the new name, bank and number immediately, nothing needs re-importing. Preferred upload method updates the same way &mdash; it only changes what the Upload page warns about, it doesn't touch anything already imported.</p>
 </details>
 
-<form method="post" action="account-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}" style="display:inline-block; margin: 0.5rem 0;">
+<div class="manage-row">
+<form method="post" action="account-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
     <input type="hidden" name="id" value="{{ account.id }}">
     <input type="hidden" name="next" value="account">
     {% if account.is_archived %}
@@ -77,77 +157,12 @@
     <button type="submit" class="btn-secondary">Archive this account</button>
     {% endif %}
 </form>
-<p class="hint">
-    Archiving hides this account from the default accounts list and
-    current-period dashboard, but everything about it &mdash; statements,
-    transactions, this page &mdash; stays exactly as it is. Reversible
-    any time, no data is touched.
-</p>
+<span class="hint">Archiving hides it from the accounts list and the current-period dashboard; nothing is touched and you can undo it any time.</span>
+</div>
 
-<p>
-    <a href="account-delete-confirm?id={{ account.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-danger">Delete this account&hellip;</a>
-</p>
-
-<table class="detail-table">
-    <tr><th>Bank</th><td>{{ account.bank_name or "—" }}</td></tr>
-    <tr><th>Account</th><td>{% if account.account_number_last4 %}····{{ account.account_number_last4 }}{% else %}—{% endif %}</td></tr>
-    <tr><th>Transactions</th><td>{{ txn_count }}</td></tr>
-    <tr><th>Last statement arrived</th><td id="last-statement">{{ last_upload.strftime("%Y-%m-%d %H:%M") if last_upload else "—" }}</td></tr>
-    {% if account.expected_every_months %}
-    <tr><th>Next statement</th><td id="next-statement">
-        {% if not due_enabled %}Statement reminders are off for the whole app
-        {% elif account.is_archived %}Not while archived
-        {% elif due %}
-            {% if due.status == "overdue" %}<span class="due-overdue">{{ due_label[0] }}</span> (expected {{ date_label(due.cycle_date) }}){% if due.next_date %}; then {{ date_label(due.next_date) }}{% endif %}
-            {% elif due.status == "dismissed" %}<span class="due-dismissed">Dismissed</span> (expected {{ date_label(due.cycle_date) }}){% if due.next_date %}; next {{ date_label(due.next_date) }}{% endif %}
-            {% elif due.status == "due" %}Expected today, {{ date_label(due.cycle_date) }}
-            {% else %}Expected {{ date_label(due.next_date) }}{% endif %}
-        {% else %}&mdash;{% endif %}
-    </td></tr>
-    {% endif %}
-    {% if account.type == "credit_card" and account.payment_due_day is not none %}
-    <tr><th>Payment due</th><td id="payment-due">
-        {% if not payment_enabled %}Card payment reminders are off for the whole app
-        {% elif account.is_archived %}Not while archived
-        {% elif payment %}
-            <span class="{{ payment_label[1] }}">{{ payment_label[0] }}</span>{% if payment.kind == "overdue" %} (due {{ date_label(payment.notice.due_date) }}; next {{ date_label(payment.next.due_date) }}){% endif %}
-            {% if payment.notice %}
-            <form method="post" action="card-payment-paid{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
-                <input type="hidden" name="account_id" value="{{ account.id }}">
-                <input type="hidden" name="due_date" value="{{ payment.notice.due_date.isoformat() }}">
-                <input type="hidden" name="next" value="account">
-                <button type="submit" class="btn-secondary">Mark as paid</button>
-            </form>
-            {% endif %}
-        {% else %}&mdash;{% endif %}
-    </td></tr>
-    {% endif %}
-    <tr><th>Added</th><td>{{ account.created_at }}</td></tr>
-</table>
-
-<h2>Statements</h2>
-{% if account.type == "credit_card" %}
-<p class="hint">For a credit card, &ldquo;Money in&rdquo; is the payments and credits on the statement and &ldquo;Money out&rdquo; is the purchases and charges &mdash; the same direction as checking/savings.</p>
-{% endif %}
-{% if statements %}
-<table class="statements-table">
-    <thead>
-        <tr><th>Period</th><th>Uploaded</th><th>Status</th><th>Money in</th><th>Money out</th></tr>
-    </thead>
-    <tbody>
-        {% for s in statements %}
-        {% set flow = flow_by_statement.get(s.id) %}
-        <tr>
-            <td data-label="Period">{% if s.source == "qfx" %}<span class="type-badge source-qfx">QFX</span> {{ period_label(s.period_start, s.period_end) or s.statement_period or "—" }}{% else %}{{ s.statement_period or "—" }}{% endif %}</td>
-            <td data-label="Uploaded">{{ s.uploaded_at }}</td>
-            <td data-label="Status"><span class="status-badge status-{{ s.status }}">{{ s.status.replace('_', ' ') }}</span></td>
-            <td data-label="Money in">{{ "%.2f"|format(flow.money_in) if flow else "0.00" }}</td>
-            <td data-label="Money out">{{ "%.2f"|format(flow.money_out) if flow else "0.00" }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p class="empty-state">No statements uploaded yet for this account.</p>
-{% endif %}
+<div class="danger-zone">
+    <h3>Delete</h3>
+    <p class="hint">Moves the account, its statements and transactions to Recently deleted for 30 days.</p>
+    <a href="account-delete-confirm?id={{ account.id }}{{ amp }}" class="btn-danger">Delete this account&hellip;</a>
+</div>
 {% endblock %}

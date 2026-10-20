@@ -9,7 +9,7 @@
         var qs = "period=" + encodeURIComponent(period);
         if (accountId) qs += "&account_id=" + encodeURIComponent(accountId);
         qs += suffix;
-        window.location.href = "dashboard?" + qs;
+        window.location.replace("dashboard?" + qs);   // a filter change: no new history entry
     }
     window.updateDashboardFilters = updateDashboardFilters;
     ["dashboard-period-select", "dashboard-account-select"].forEach(function (id) {

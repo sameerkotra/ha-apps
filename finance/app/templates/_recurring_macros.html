@@ -12,6 +12,6 @@
 {%- endmacro %}
 
 {% macro amount_range(s) -%}
-{%- if s.amount_min == s.amount_max -%}{{ "%.2f"|format(s.amount_min) }}
-{%- else -%}{{ "%.2f"|format(s.amount_min) }} &ndash; {{ "%.2f"|format(s.amount_max) }}{%- endif -%}
+{%- if s.amount_min == s.amount_max -%}{{ (s.amount_min)|money }}
+{%- else -%}{{ (s.amount_min)|money }} &ndash; {{ (s.amount_max)|money }}{%- endif -%}
 {%- endmacro %}

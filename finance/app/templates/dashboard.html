@@ -1,14 +1,32 @@
 {% extends "base.html" %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Dashboard{% endblock %}
 {% block content %}
-<h1>Dashboard</h1>
-{% include "_ai_privacy.html" %}
-
-<div class="subtabs">
-    <a href="dashboard{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab active">Overview</a>
-    <a href="dashboard-compare{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab">Compare</a>
+{{ nav.page_header("Dashboard", tabs=nav.home_tabs("overview", acting_qs)) }}
+{% set amp = ("&" + acting_qs) if acting_qs else "" %}
+{% set account_qs = ("&account_id=" + (selected_account_id | string)) if selected_account_id else "" %}
+{% set income_qs = "flow=income&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + amp %}
+{% set spend_qs = "flow=expense&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + amp %}
+{# One line of the period's figures under the title. #}
+<div class="summary-strip home-strip" aria-label="This period">
+    <a class="kpi" href="transactions?{{ income_qs }}"><span class="kpi-label">Income</span><span class="kpi-value pos">{{ total_income|money }}</span></a>
+    <a class="kpi" href="transactions?{{ spend_qs }}"><span class="kpi-label">Spend</span><span class="kpi-value neg">{{ total_spend|money }}</span></a>
+    <div class="kpi"><span class="kpi-label">Net</span><span class="kpi-value {{ 'neg' if total_income - total_spend < 0 else 'pos' }}">{{ (total_income - total_spend)|money(plus=true) }}</span></div>
+    <a class="kpi" href="review{{ '?' + acting_qs if acting_qs else '' }}"><span class="kpi-label">To review</span><span class="kpi-value">{{ review_count }}</span></a>
 </div>
-
+{% set p = ai_privacy() %}
+{% if p %}
+<div class="dismissible-line" id="privacy-line">
+    <p class="hint privacy-line"><strong>Your documents go to {{ p.label }}</strong> (<code>{{ p.host }}</code>) to be read.
+        {% if request.state.is_real_admin %}<a href="{{ 'settings' | with_qs(acting_qs) }}">App settings</a>{% endif %}</p>
+    <button type="button" class="dismiss-btn" data-dismiss="privacy:{{ p.host }}" data-dismiss-target="#privacy-line" aria-label="Hide this note">&times;</button>
+</div>
+{% endif %}
+{% if review_count %}
+<a class="card review-card" href="review{{ '?' + acting_qs if acting_qs else '' }}">
+    <strong>{{ review_count }} to review</strong> <span class="hint">flagged on import &mdash; check them against the statement</span> &rarr;
+</a>
+{% endif %}
 {% include "_statements_due.html" %}
 {% include "_payments_due.html" %}
 
@@ -56,47 +74,31 @@
 </form>
 <script src="static/pages/dashboard.js?v={{ app_version }}" data-suffix='{{ (("&" + acting_qs) if acting_qs else "") | tojson }}'></script>
 
-<div class="card">
-    <form method="post" action="transfer-run-sweep{% if acting_qs %}?{{ acting_qs }}{% endif %}">
-        <input type="hidden" name="next" value="dashboard">
-        <input type="hidden" name="period" value="{{ period }}">
-        <input type="hidden" name="account_id" value="{{ selected_account_id or '' }}">
-        <button type="submit" class="btn-secondary">Check for transfer matches</button>
-    </form>
-    {% if just_matched is not none %}
-    <p class="hint">
-        {% if just_matched > 0 %}
-        Linked {{ just_matched }} transfer{{ "s" if just_matched != 1 else "" }} just now &mdash; totals below are updated.
-        {% else %}
-        No new transfers matched &mdash; nothing unambiguous was waiting.
-        {% endif %}
-    </p>
-    {% endif %}
-    {% if unmatched_transfer_count %}
-    <p class="hint">
-        {{ unmatched_transfer_count }} transaction{{ "s" if unmatched_transfer_count != 1 else "" }}
-        still look{{ "s" if unmatched_transfer_count == 1 else "" }} like
-        {{ "a possible transfer" if unmatched_transfer_count == 1 else "possible transfers" }}
-        between your own accounts, but more than one candidate exists so it can't be linked
-        automatically &mdash; until resolved, that money may be counted as both spend and income
-        above. <a href="transfers{% if acting_qs %}?{{ acting_qs }}{% endif %}">Resolve on the Transfers page</a>.
-    </p>
-    {% else %}
-    <p class="hint">No unresolved possible transfers right now.</p>
-    {% endif %}
-</div>
+{% if unmatched_transfer_count %}
+<p class="hint transfer-hint">
+    {{ unmatched_transfer_count }} transaction{{ "s" if unmatched_transfer_count != 1 else "" }} may be
+    {{ "a transfer" if unmatched_transfer_count == 1 else "transfers" }} between your own accounts (and counted as both spend and income until linked) &mdash;
+    <a href="transfers{{ '?' + acting_qs if acting_qs else '' }}">resolve on Transfers</a>.
+</p>
+{% endif %}
 
-{% set account_qs = ("&account_id=" + (selected_account_id | string)) if selected_account_id else "" %}
-{% set income_qs = "flow=income&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
+{% macro change(now, before, label, good_up) -%}
+{% if previous %}{% set d = now - before %}
+<p class="hint fig-change">{% if before == 0 and now == 0 %}Same as {{ label }}{% else %}{{ d|money(plus=true) }} vs {{ label }}{% if before %} ({{ "%+.0f"|format(d / before * 100) }}%){% endif %}{% endif %}</p>
+{% endif %}
+{%- endmacro %}
+<div class="fig-pair">
 <a class="card dashboard-card-link" href="transactions?{{ income_qs }}">
     <h3>Income</h3>
-    <p class="dashboard-figure">{{ "%.2f"|format(total_income) }}</p>
+    <p class="dashboard-figure">{{ total_income|money }}</p>
+    {% if previous %}{{ change(total_income, previous.income, previous.label, true) }}{% endif %}
 </a>
-{% set spend_qs = "flow=expense&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
 <a class="card dashboard-card-link" href="transactions?{{ spend_qs }}">
     <h3>Spend</h3>
-    <p class="dashboard-figure">{{ "%.2f"|format(total_spend) }}</p>
+    <p class="dashboard-figure">{{ total_spend|money }}</p>
+    {% if previous %}{{ change(total_spend, previous.spend, previous.label, false) }}{% endif %}
 </a>
+</div>
 
 {% include "_subscription_changes.html" %}
 
@@ -123,7 +125,7 @@
             {% set cat_qs = "category=" + (c.category | urlencode) + "&flow=expense&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
             <tr>
                 <td data-label="Category"><span class="cat-label"><span class="cat-dot" style="background: {{ c.colour }}" aria-hidden="true"></span><a href="transactions?{{ cat_qs }}">{{ c.category }}</a></span></td>
-                <td data-label="Amount">{{ "%.2f"|format(c.total) }}</td>
+                <td data-label="Amount">{{ (c.total)|money }}</td>
                 <td data-label="% of spend">{{ "%.1f"|format(c.pct) }}%</td>
             </tr>
             {% endfor %}
@@ -149,7 +151,7 @@
             {% set cat_qs = "category=" + (c.category | urlencode) + "&flow=income&start_date=" + (drill_start_date | urlencode) + "&end_date=" + (drill_end_date | urlencode) + account_qs + (("&" + acting_qs) if acting_qs else "") %}
             <tr>
                 <td data-label="Category"><span class="cat-label"><span class="cat-dot" style="background: {{ c.colour }}" aria-hidden="true"></span><a href="transactions?{{ cat_qs }}">{{ c.category }}</a></span></td>
-                <td data-label="Amount">{{ "%.2f"|format(c.total) }}</td>
+                <td data-label="Amount">{{ (c.total)|money }}</td>
                 <td data-label="% of income">{{ "%.1f"|format(c.pct) }}%</td>
             </tr>
             {% endfor %}
@@ -164,7 +166,7 @@
 
 {% if excluded_count %}
 <p class="hint">
-    Excludes {{ "%.2f"|format(excluded_total) }} across {{ excluded_count }}
+    Excludes {{ (excluded_total)|money }} across {{ excluded_count }}
     transaction{{ "s" if excluded_count != 1 else "" }} (transfer
     payments and anything marked &ldquo;Exclude&rdquo;).
 </p>

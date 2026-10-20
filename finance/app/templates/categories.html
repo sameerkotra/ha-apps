@@ -1,12 +1,11 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% import "_category_options.html" as catopt %}
 {% block title %}Categories{% endblock %}
 {% block content %}
 {# Setup → Categories (SPEC.md section 9): tabs Spending · Income · Rules. Without the script (static/pages/categories.js)
    the tabs are links and every action is a plain form that comes back to the same tab. #}
-{{ nav.setup_tabs("categories", acting_qs, request.state.is_real_admin) }}
-<h1>Categories &amp; rules</h1>
+{{ nav.page_header("Categories & rules", tabs=nav.settings_tabs("categories", acting_qs)) }}
 <p class="hint one-line">Each transaction gets one category — from your rules, then the built-in ones, then the AI.</p>
 <details class="how-it-works" id="how-categories">
     <summary>How this works</summary>
@@ -196,7 +195,7 @@
                                 <input type="hidden" name="type_{{ p.id }}" value="{{ p.match_type }}"></td>
                             <td data-label="Date">{{ p.date }}</td>
                             <td data-label="Description" class="wrap-cell">{{ p.description }}</td>
-                            <td data-label="Amount" class="num">{{ "%.2f"|format(p.amount) }}</td>
+                            <td data-label="Amount" class="num">{{ (p.amount)|money }}</td>
                             <td data-label="Now">{{ p.category }}</td>
                             <td data-label="Becomes"><strong>{{ p.to }}</strong> <span class="hint">({{ {"user_rule": "your rule", "builtin_rule": "built-in rule", "llm": "AI"}[p.source] }})</span></td>
                         </tr>
@@ -253,7 +252,7 @@
             {% for c in lst.shown %}
             <tr class="cat-row" data-category="{{ c.name }}" data-href="transactions?category={{ c.name | urlencode }}{{ aq }}">
                 <td data-label="Category" class="cat-name-cell"><span class="cat-dot" style="background: {{ c.hex }}" aria-hidden="true"></span><a class="cat-link" href="transactions?category={{ c.name | urlencode }}{{ aq }}">{{ c.name }}</a>{% if c.builtin %} <span class="badge-builtin">Built in</span>{% endif %}</td>
-                <td data-label="This month" class="num">{{ "%.2f"|format(c.month_total) }}</td>
+                <td data-label="This month" class="num">{{ (c.month_total)|money }}</td>
                 <td data-label="Last 12 months" class="num">{{ c.used_12m }}</td>
                 <td data-label="Rules" class="num">{{ c.rules }}</td>
                 <td data-label="" class="cat-menu-cell">{{ menu(c) }}</td>
@@ -318,7 +317,7 @@
         {% if t.matches %}
         <ul class="rule-test-list">
             {% for m in t.matches %}
-            <li><span class="rt-date">{{ m.date }}</span> <span class="rt-desc">{{ m.description }}</span> <span class="rt-amount">{{ "%.2f"|format(m.amount) }}</span>
+            <li><span class="rt-date">{{ m.date }}</span> <span class="rt-desc">{{ m.description }}</span> <span class="rt-amount">{{ (m.amount)|money }}</span>
                 <span class="rt-cat">{{ m.category or "Uncategorized" }}{% if m.to != m.category %} &rarr; <strong>{{ m.to }}</strong>{% endif %}</span></li>
             {% endfor %}
         </ul>
@@ -354,6 +353,9 @@
         </form>
     </div>
 
+    {% set n_filters = (1 if who else 0) + (1 if kind_filter else 0) + (1 if rule_category else 0) %}
+    <details class="rule-filters-fold" data-desktop-open{% if n_filters %} open{% endif %}>
+    <summary>Filters{% if n_filters %} <span class="count-pill">{{ n_filters }}</span>{% endif %}</summary>
     <div class="rule-chips" aria-label="Filter rules">
         <div class="chip-group">
             <a class="chip" href="{{ rule_url(who_='') }}" {% if not who %}aria-pressed="true"{% endif %}>All</a>
@@ -378,6 +380,7 @@
             <noscript><button type="submit" class="btn-secondary">Show</button></noscript>
         </form>
     </div>
+    </details>
 
     {% if rules %}
     <div class="table-wrap">

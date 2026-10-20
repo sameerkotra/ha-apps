@@ -1,12 +1,10 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% import "_toll_macros.html" as m %}
 {% block title %}Tolls compare{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
-{{ nav.bills_tabs("tolls", acting_qs, request.state.features) }}
-<h1>Tolls</h1>
-{{ m.subtabs("compare", acting_qs) }}
+{{ nav.page_header("Compare tolls", tabs=nav.bills_tabs("toll_compare", acting_qs, request.state.features)) }}
 
 <form id="toll-compare-filters" method="get" action="toll-compare" class="add-account-form">
     {% if acting_qs %}<input type="hidden" name="as_user" value="{{ acting_qs.split('=', 1)[1] }}">{% endif %}
@@ -56,7 +54,7 @@
             {% for r in trend_rows %}
             <tr>
                 <td>{{ r.tip_label }}</td>
-                {% for s in trend_series %}<td class="num">{{ "%.2f"|format(r['values'].get(s.key, 0.0)) }}</td>{% endfor %}
+                {% for s in trend_series %}<td class="num">{{ (r['values'].get(s.key, 0.0))|money }}</td>{% endfor %}
             </tr>
             {% endfor %}
         </table>
@@ -82,7 +80,7 @@
             {% for r in car_rows %}
             <tr>
                 <td>{{ r.tip_label }}</td>
-                {% for s in car_series %}<td class="num">{{ "%.2f"|format(r['values'].get(s.key, 0.0)) }}</td>{% endfor %}
+                {% for s in car_series %}<td class="num">{{ (r['values'].get(s.key, 0.0))|money }}</td>{% endfor %}
             </tr>
             {% endfor %}
         </table>

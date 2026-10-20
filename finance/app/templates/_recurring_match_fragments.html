@@ -30,7 +30,7 @@
             <tr>
                 <td data-label="Date">{{ t.date }}</td>
                 <td data-label="Description">{{ t.description }}</td>
-                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
+                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ (t.amount)|money }}</td>
             </tr>
             {% endfor %}
         </tbody>

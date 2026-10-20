@@ -1,20 +1,30 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Transfers{% endblock %}
 {% block content %}
-{{ nav.transactions_tabs("transfers", acting_qs) }}
-<h1>Transfers</h1>
-<p class="hint">
-    Money moving between two of your own accounts &mdash; a payment to a
-    credit card, or a transfer between checking/savings accounts &mdash;
-    isn't real spending or income (SPEC.md section 8). Matches
-    are by amount and date proximity, not merchant text &mdash; the two
-    sides of a transfer almost never describe it the same way. An
-    unambiguous match links automatically on import; anything with more
-    than one possible match needs a human to pick below, and any single
-    transaction can be force-checked from its own "Find match" button on
-    the Transactions page.
-</p>
+{{ nav.page_header("Transfers", tabs=nav.money_tabs("transfers", acting_qs)) }}
+<p class="hint one-line">Money moving between two of your own accounts isn't spending or income.</p>
+<details class="about how-it-works">
+    <summary>How matching works</summary>
+    <p>A payment to a credit card, or a transfer between checking and savings, is matched by amount and how close the
+        dates are, not by the description &mdash; the two sides of a transfer almost never describe it the same way. An
+        unambiguous match links automatically on import; anything with more than one possible match waits for you to pick
+        below, and any single transaction can be checked from its own &ldquo;Find match&rdquo; (Transactions, the row's &#8943;).</p>
+</details>
+<div class="card sweep-card">
+    <form method="post" action="transfer-run-sweep{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="inline-form">
+        <input type="hidden" name="next" value="transfers">
+        <button type="submit" class="btn-secondary" data-busy="Checking…">Check for transfer matches</button>
+    </form>
+    {% if just_matched is not none %}
+    <span class="hint" role="status">
+        {% if just_matched > 0 %}Linked {{ just_matched }} transfer{{ "s" if just_matched != 1 else "" }} just now.
+        {% else %}No new transfers matched &mdash; nothing unambiguous was waiting.{% endif %}
+    </span>
+    {% else %}
+    <span class="hint">Links every pair that has exactly one match (this also runs after each import).</span>
+    {% endif %}
+</div>
 
 {% set from_acc = (accounts | selectattr('id', 'equalto', filter_from_account) | first) if filter_from_account else None %}
 {% set to_acc = (accounts | selectattr('id', 'equalto', filter_to_account) | first) if filter_to_account else None %}
@@ -76,7 +86,7 @@
 
 {% if just_linked %}
 <p class="notice transfer-notice" role="status">Linked: {{ just_linked.out_account_name }} {{ just_linked.out_date }}
-    ({{ "%.2f"|format(-just_linked.out_amount) }}) &rarr; {{ just_linked.in_account_name }} {{ just_linked.in_date }}.
+    ({{ (-just_linked.out_amount)|money }}) &rarr; {{ just_linked.in_account_name }} {{ just_linked.in_date }}.
     It's now in Linked pairs below.</p>
 {% endif %}
 {% if link_error %}
@@ -87,18 +97,21 @@
 {% if ambiguous %}
 {% for group in ambiguous %}
 <div class="card">
-    <h3>{{ group.outflow.account_name }} &mdash; {{ "%.2f"|format(group.outflow.amount) }} on {{ group.outflow.date }}</h3>
-    <table class="statements-table">
+    <h3>{{ group.outflow.account_name }} &mdash; {{ group.outflow.amount|money }} on {{ group.outflow.date }}</h3>
+    <p class="hint outflow-desc">{{ group.outflow.description }}</p>
+    <div class="table-scroll">
+    <table class="statements-table money-list">
         <thead>
-            <tr><th>Date</th><th>Account</th><th>Amount</th><th></th></tr>
+            <tr><th>Date</th><th>Description</th><th>Account</th><th class="num">Amount</th><th></th></tr>
         </thead>
         <tbody>
             {% for c in group.candidates %}
             <tr>
-                <td data-label="Date">{{ c.date }}</td>
-                <td data-label="Account">{{ c.account_name }}</td>
-                <td data-label="Amount">{{ "%.2f"|format(c.amount) }}</td>
-                <td data-label="">
+                <td data-label="Date" class="col-date">{{ c.date }}</td>
+                <td data-label="Description" class="col-desc">{{ c.description }} <span class="phone-only hint">{{ c.account_name }}</span></td>
+                <td data-label="Account" class="col-secondary">{{ c.account_name }}</td>
+                <td data-label="Amount" class="num col-amount">{{ c.amount|money }}</td>
+                <td data-label="" class="col-full">
                     <form method="post" action="transfer-link{% if acting_qs %}?{{ acting_qs }}{% endif %}">
                         <input type="hidden" name="outflow_id" value="{{ group.outflow.id }}">
                         <input type="hidden" name="inflow_id" value="{{ c.id }}">
@@ -114,6 +127,7 @@
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
 {% endfor %}
 {% else %}
@@ -135,14 +149,14 @@
             <tr>
                 <td data-label="From">{{ l.out_account_name }}</td>
                 <td data-label="Date">{{ l.out_date }}</td>
-                <td data-label="Amount">{{ "%.2f"|format(-l.out_amount) }}</td>
+                <td data-label="Amount">{{ (-l.out_amount)|money }}</td>
                 <td data-label="To">{{ l.in_account_name }}{% if l.in_account_type == "credit_card" %} (card){% endif %}</td>
                 <td data-label="Date">{{ l.in_date }}</td>
                 <td data-label="">
                     <form method="post" action="transfer-unlink{% if acting_qs %}?{{ acting_qs }}{% endif %}"
                           data-confirm="Undo this link? Both sides revert to plain transactions, and the receiving side also becomes excluded from dashboard totals so an undo cannot quietly inflate your income.">
                         <input type="hidden" name="id" value="{{ l.out_id }}">
-                        <button type="submit" class="restart-btn">Undo</button>
+                        <button type="submit" class="btn-secondary btn-small">Undo</button>
                     </form>
                 </td>
             </tr>

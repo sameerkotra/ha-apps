@@ -18,7 +18,7 @@ outside Home Assistant unless you choose a cloud AI provider (see **AI and priva
    app (Information tab → **Restart**). Several people can be admins.
 3. In the app, go to **Admin → App settings** and set up the AI (below). **Test connection**
    checks it without costing anything.
-4. **Setup → Accounts**: add your checking, savings and credit-card accounts.
+4. **Accounts**: add your checking, savings and credit-card accounts.
 5. **Upload → Statements**: pick the account and upload its statement PDFs.
 
 Everyone in your Home Assistant can open the app. Each person sees only their own data; the
@@ -55,8 +55,18 @@ tokens on App settings to see the cost.
 
 ## What the app does
 
+The menu: **Home** (Overview, Compare), **Money** (Transactions, Transfers, Recurring), **Upload**
+(Statements, Utility bill, Toll statement, Review), **Bills** (Utilities, Tolls), **Reports** (Saved,
+New, Check), **Accounts**, **Settings** (My settings, Categories & rules, How the app sees you) and,
+for the admin, **Admin** (App settings, Users, Storage, Query, Recently deleted, AI usage). On a phone
+the bar at the bottom holds Home, Money, Upload and Reports; **More** has Accounts, Bills, Settings,
+Admin, who you are and the theme. The phone's Back closes an open dialog or menu first. **Upload**
+shows a count of overdue statements and, in blue, how many things wait on **Review**.
+
 ### Home
-Income and spending by category for this week, this month, last month, this or last year, all
+A line of the period's **Income**, **Spend**, **Net** and what's waiting **To review**, then
+Income and Spend side by side with the change against the period before, and
+income and spending by category for this week, this month, last month, this or last year, all
 time or any month; drill into the transactions behind a figure. **By category** splits spending, and
 **Income by category** splits the Income total the same way (each category's amount and share,
 largest first; tap one for its transactions). Income is money in on a checking or savings account
@@ -69,28 +79,43 @@ soon or overdue (see **Card payments** below) gets one too, with **Mark as paid*
   since Sep 12") or a new subscription (one that became recurring in the last 45 days), each with
   **Dismiss** (see **Recurring** below).
 
-### Transactions
-- **All**: search by notes, description, account, category (grouped Spending / Income), money
-  in/out, excluded, dates and amounts — **All income** shows money in on checking and savings; edit categories (and save a rule), notes and Exclude; select several at once;
-  export to CSV. A long result shows 100 rows a page (250 or 1000 if you choose); the count and
-  total are for every matching row, and the export has them all.
+### Money
+- **Transactions**: opens on this month; **This month**, **Last month**, **Uncategorized** and
+  **All income** are one tap. Search the description, pick an account (applies at once) and dates;
+  **More filters** has notes, category (grouped Spending / Income), money in/out, excluded and
+  amounts. Above the list: the count, money in, money out and net for everything that matches; the
+  list is grouped by month. Edit a row's category (and save a rule) and note in place; its **⋯** has
+  Exclude, the transfer match and "Is this recurring?". Select several at once; export to CSV. A
+  long result shows 100 rows a page (250 or 1000 if you choose). The page remembers your last search
+  (in this browser tab) when you come back from the menu; **Clear all** shows everything.
 - **Transfers**: money between your own accounts (card payments, checking ↔ savings) is linked
   automatically — when a statement or CSV is imported and whenever a transaction is added,
   reviewed, included, deleted or restored — and counted as neither income nor spending; confirm
-  the ambiguous ones. **Link unambiguous** runs the matching on demand.
-- **Recurring**: subscriptions and bills detected from your history, weekly to yearly. On top,
+  the ambiguous ones (each with its description). **Check for transfer matches** runs the matching
+  on demand; Home shows a line when something is waiting here.
+- **Recurring**: subscriptions and bills detected from your history, weekly to yearly, with what
+  they come to a month and a week (the split by how often they repeat is folded). On top,
   **Subscription changes**: a price change is the latest charge differing from the one before it,
   after at least two charges at the old price; a bill whose amount changes every time (electricity,
   water) only counts when the latest is outside its usual range. A change is shown while its charge is
   from the last 90 days. **Dismiss** keeps that change away for good; a later, different change of the
   same charge shows again. Only the owner of the account sees these, not people it's shared with.
-- **Accounts**: each account's latest transaction, so you know which statement is due, and its
-  **Next statement** ("Oct 12", "Overdue 3 days" or "Dismissed") when it has an expected date, and a
-  card's **Payment due** ("Nov 5 (in 3 days)", "Due today", "Was due 2 days ago", "Paid · due Nov 5")
-  when it has a payment due day.
+
+### Accounts
+One page for every account: name (bank and last 4 under it), type, latest transaction — oldest first,
+so the ones at the top are due a statement — its **Next statement** ("Oct 12", "Overdue 3 days" or
+"Dismissed") when it has an expected date, a card's **Payment due** ("Nov 5 (in 3 days)", "Due today",
+"Was due 2 days ago", "Paid · due Nov 5") when it has a payment due day, and **Transactions** /
+**Upload** buttons. **+ Add account** sits above the list; **Show archived accounts** lists archived ones
+too. Tap a name for the account's page: **Upload** and **Transactions**, its details, its statements by
+year (a period opens that statement's transactions), then **Manage**: edit (name, bank, last 4, the
+preferred upload type — any, PDF, CSV or QFX, a reminder on the Upload page, never a block — website,
+**Expected statement** and, for a credit card, **Payment due**), **Archive** and **Delete**.
 
 ### Upload
 - **Statements** is one page for every kind of bank file. From the top:
+  - **Waiting for you**: statements to confirm against the PDF, to review, or that failed (with
+    **Restart**), right under the title.
   - **Overdue statements** (when any are), with **Upload** and **Dismiss**. A reminder tapped on
     your phone opens this page with its account picked. The **Upload** menu item shows a small
     count while anything is overdue.
@@ -118,8 +143,6 @@ soon or overdue (see **Card payments** below) gets one too, with **Mark as paid*
     412 transactions · 9 duplicates skipped · 1 needs review") with **Review now**; the page isn't
     reloaded. Without JavaScript the box is a plain form for PDF and QFX files.
   - **Add by hand**, the second tab: one transaction at a time.
-  - **Waiting for you**: statements to confirm against the PDF, to review, or that failed (with
-    **Restart**), kept above the history.
   - **Upload history**: statements and CSV imports in one list, newest first, with type, account,
     period, count and status, sorting and paging; the chips above it show only one type, account
     or status. **Delete** removes an upload with its transactions (admins also see **debug**).
@@ -150,7 +173,8 @@ soon or overdue (see **Card payments** below) gets one too, with **Mark as paid*
   the header row and the row the data starts on). After a CSV imports you can **Remember this
   layout for** the account: its header row, data row and date column are used by themselves next
   time ("Using Visa's saved layout · change"); clear it on the account's page under **Uploads**.
-- **Review**: everything waiting for you. Under **Skipped as possible duplicates**, tick rows (or
+- **Review**: everything waiting for you, counted at the top (or **All clear**). A flagged
+  transaction is **Approve**d in one tap, or **Edit & confirm** to correct it first. Under **Skipped as possible duplicates**, tick rows (or
   **Select all**) and choose **Insert selected** or **Keep selected skipped** to handle many at once.
 - **Utility bill** and **Toll statement**: when those parts are switched on (below). Each utility
   bill waits for you like a statement: **Check & confirm** opens its figures (correct anything, then
@@ -175,16 +199,14 @@ install that already had utility bills or toll statements before keeps those par
 
 ### Reports
 Saved reports anyone can run on their own data, with filters (account, period, category),
-totals, charts and CSV. The admin writes them on **Admin → Query** in SQL — or asks the AI to
+totals, charts and CSV. The admin writes them on **Reports → New** (or **Admin → Query**) in SQL — or asks the AI to
 write the SQL from a plain-English question.
 
-### Setup
-- **Accounts**: add, rename, archive, set the preferred upload type (any, PDF, CSV or QFX — a
-  reminder on the Upload page, never a block), a website link, the **Expected statement** and, for a
-  credit card, **Payment due**.
-- **Categories** — three tabs, **Spending**, **Income** and **Rules** (see **Categories** below).
-- **Settings**: your own settings (not App settings): **My reminders**, **Card payments** and
-  **Subscription changes**.
+### Settings
+- **My settings**: your own settings (not App settings): **My reminders**, **Card payments**,
+  **Subscription changes** and the **Theme**.
+- **Categories & rules** — three tabs, **Spending**, **Income** and **Rules** (see **Categories** below).
+- **How the app sees you**: the name and id Home Assistant sends, and whether you're an admin.
 
 #### Categories
 Every category is **Spending** or **Income**. The built-in spending ones are Groceries, Dining,
@@ -240,7 +262,7 @@ income is broken down: whether a transaction is income or spending is still its 
   expected date arrives — only the latest one is ever shown, so a missed month never piles up. A
   new or changed expected date never makes an earlier statement overdue; neither does restoring
   or unarchiving an account (archived and deleted accounts are never overdue).
-- **My reminders** (Setup → Settings): nobody is reminded until they choose. **No notifications**,
+- **My reminders** (Settings → My settings): nobody is reminded until they choose. **No notifications**,
   or **Remind me** on 1 to 6 days after the expected date (On the day, 1, 2, 3 or 5 days, 1 week,
   10 days, 2, 3 or 4 weeks), **Then keep reminding** every week or every 2 weeks (never past the
   next expected date) and **At** a time of day (Home Assistant's time zone). Several statements due
@@ -264,20 +286,20 @@ income is broken down: whether a transaction is income or spending is still its 
 - **Shown** on Home and Upload from 7 days before the due date, and after it until the next due date
   arrives, unless paid; the accounts lists have a **Payment due** column and the card's page a
   **Payment due** line (with **Mark as paid**).
-- **Card payments** (Setup → Settings): nobody is reminded until they choose. **No notifications**, or
+- **Card payments** (Settings → My settings): nobody is reminded until they choose. **No notifications**, or
   **Remind me** on 1 to 6 of: 7, 5, 3, 2 or 1 days before, on the day, 1 or 3 days after, **At** a
   time of day. Several cards due together come as one notification; it names the card only, never its
   number, and tapping it opens the card's page (several: Home). Only the newest is sent after the app
   was off; a failed one is tried again for six hours.
 
 #### Subscription change notifications
-- **Subscription changes** (Setup → Settings): **No notifications** (until you choose) or **Notify me**
+- **Subscription changes** (Settings → My settings): **No notifications** (until you choose) or **Notify me**
   at a time of day: each price change or new subscription is sent once, at that time on the day it is
   found (or the next day, when it's found later in the day); several come as one notification, and
   tapping it opens Recurring. A dismissed change isn't sent.
 
 ### Look and feel
-- **Theme** (bottom of the menu; **More** on a phone): Midnight (the default), Slate, Daylight,
+- **Theme** (bottom of the menu, Settings → My settings; **More** on a phone): Midnight (the default), Slate, Daylight,
   or Auto (Daylight when your device is set to light, Midnight when it is dark). It is
   remembered by your browser; if you had picked Sandstone before, you now get Daylight.
 

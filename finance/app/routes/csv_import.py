@@ -23,7 +23,9 @@ from .accounts import _acting_banner, _acting_qs
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 
 
@@ -538,7 +540,7 @@ async def import_transactions_csv(
     return templates.TemplateResponse(
         request, "import_results.html",
         {
-            "user": acting, "results": results,
+            "user": acting, "results": results, "account_id": default_account_id,
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "uploads",

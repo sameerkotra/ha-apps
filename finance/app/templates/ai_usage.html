@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}AI usage{% endblock %}
 {% macro n(v) %}{{ "{:,}".format(v) }}{% endmacro %}
-{% macro money(v) %}{% if v is none %}—{% elif v < 1 %}{{ "$%.4f"|format(v) }}{% else %}{{ "${:,.2f}".format(v) }}{% endif %}{% endmacro %}
+{% macro money(v) %}{% if v is none %}—{% else %}{{ v|money(decimals=4 if v < 1 else 2) }}{% endif %}{% endmacro %}
 {% macro duration(s) %}{% if s >= 3600 %}{{ (s // 3600)|int }} h {{ ((s % 3600) // 60)|int }} min{% elif s >= 60 %}{{ (s // 60)|int }} min {{ (s % 60)|int }} s{% else %}{{ "%.1f"|format(s) }} s{% endif %}{% endmacro %}
 {% macro usage_table(title, first_col, rows) %}
 <section class="card">
@@ -31,10 +31,10 @@
 </section>
 {% endmacro %}
 {% block content %}
-{{ nav.admin_tabs("ai_usage", acting_qs) }}
-<h1>AI usage</h1>
-<p class="hint">Every request the app has made to the AI, added up for the whole household: reading PDFs, suggesting
-    categories, debug re-sends and Write SQL. Re-running or deleting a document doesn't lower the total. Admin only.</p>
+{{ nav.page_header("AI usage", tabs=nav.admin_tabs("ai_usage", acting_qs)) }}
+<p class="hint one-line">Every request the app has made to the AI, for the whole household.</p>
+<details class="about how-it-works"><summary>What's counted</summary>
+    <p>Reading PDFs, suggesting categories, debug re-sends and Write SQL. Re-running or deleting a document doesn't lower the total.</p></details>
 
 {% if totals is none %}
 <div class="warning-hint" role="alert"><p>The running total isn't available in this database yet. Restart the app to
@@ -43,6 +43,13 @@
 <p class="notice">No AI requests yet. The total starts with the first PDF the AI reads.</p>
 {% else %}
 {% set o = totals.overall %}
+<div class="summary-strip ai-usage-recent">
+    {% for label, key, m in recent %}
+    <div class="kpi"><span class="kpi-label">{{ label }} &middot; {{ period_month(key) }}</span>
+        <span class="kpi-value">{{ money(m.cost) if m and m.cost is not none else (n(m.requests) ~ " requests" if m else "—") }}</span>
+        <span class="hint">{% if m %}{{ n(m.requests) }} request{{ "s" if m.requests != 1 }} &middot; {{ n(m.total_tokens) }} tokens{% else %}no requests{% endif %}</span></div>
+    {% endfor %}
+</div>
 <section class="card ai-usage-overall">
     <h3>All time</h3>
     <dl class="ai-usage-summary">

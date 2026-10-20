@@ -1,21 +1,31 @@
 {% extends "base.html" %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Import results{% endblock %}
 {% block content %}
-<h1>Import results</h1>
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+{% call nav.page_header("Import results", back=("Upload · Statements", "uploads")) %}
+    {% if results | sum(attribute="imported") %}<a href="transactions?searched=1{% if account_id %}&account_id={{ account_id }}{% endif %}{{ amp }}" class="btn-primary">View imported transactions</a>{% endif %}
+{% endcall %}
 
 {% for r in results %}
 <div class="card">
     <h3>{{ r.filename or "CSV file" }}</h3>
     {% if r.needs_date_column %}
-    <p class="empty-state">
+    <p class="alert" role="alert">
         This file has more than one date column ({{ r.date_column_candidates|join(", ") }}) and none is
         clearly the transaction date &mdash; nothing was imported. Rename the column you want used to
         &ldquo;Date&rdquo; and re-upload, or use the Upload page with JavaScript enabled, which lets you
         pick the column directly.
     </p>
     {% elif r.fatal_error %}
-    <p class="empty-state">{{ r.fatal_error }}</p>
+    <p class="alert" role="alert">{{ r.fatal_error }}</p>
     {% else %}
+    <p class="count-badges">
+        <span class="count-badge ok">{{ r.imported }} imported</span>
+        {% if r.duplicates %}<span class="count-badge warn">{{ r.duplicates|length }} duplicate{{ "s" if r.duplicates|length != 1 }}</span>{% endif %}
+        {% if r.skipped_status %}<span class="count-badge">{{ r.skipped_status|length }} not posted</span>{% endif %}
+        {% if r.row_errors %}<span class="count-badge bad">{{ r.row_errors|length }} error{{ "s" if r.row_errors|length != 1 }}</span>{% endif %}
+    </p>
     <p class="hint">
         Imported {{ r.imported }} transaction{{ "s" if r.imported != 1 else "" }}.
         {% if r.duplicates %}{{ r.duplicates|length }} row{{ "s" if r.duplicates|length != 1 else "" }} already existed and {{ "was" if r.duplicates|length == 1 else "were" }} skipped.{% endif %}
@@ -41,5 +51,4 @@
 </div>
 {% endfor %}
 
-<p><a href="uploads{% if acting_qs %}?{{ acting_qs }}{% endif %}">&larr; Back to Upload &middot; Statements</a></p>
 {% endblock %}

@@ -19,7 +19,9 @@ from ..recurring import frequency_totals, clear_override, list_unique_merchants,
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 
 

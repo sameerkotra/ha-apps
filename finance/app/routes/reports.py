@@ -20,7 +20,9 @@ from .query import input_choices, long_run_fragment
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 
 FAILED_FOR_USERS = "This report couldn't run — ask the admin to check it."
@@ -179,7 +181,7 @@ def report_duplicate(id: str = "", current: User = Depends(require_admin), actin
     qs = _acting_qs(current, acting)
     if new_id is None:
         return _back(current, acting)
-    return RedirectResponse(f"admin-storage?tab=query&report={new_id}" + (f"&{qs}" if qs else ""), status_code=303)
+    return RedirectResponse(f"report-new?report={new_id}" + (f"&{qs}" if qs else ""), status_code=303)
 
 
 @router.post("/report-delete")
@@ -187,6 +189,12 @@ def report_delete(id: str = "", current: User = Depends(require_admin), acting: 
     if id.isdigit():
         saved_reports.delete(int(id))
     return _back(current, acting, deleted="1")
+
+
+@router.get("/reports-check")
+def reports_check_page(request: Request, current: User = Depends(require_admin), acting: User = Depends(get_acting_user)):
+    """Reports → Check: the button that runs them all (nothing runs until it is pressed)."""
+    return templates.TemplateResponse(request, "reports_check.html", _ctx(current, acting, rows=None))
 
 
 @router.post("/reports-check")

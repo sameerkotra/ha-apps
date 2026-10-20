@@ -132,6 +132,35 @@ def _statement_badge(request: Request, current: User, acting: User) -> None:
     """The Upload menu item's overdue-statement count (statement_due.py), worked out only if the page shows it."""
     from . import statement_due
     request.state.statement_badge = lambda: statement_due.badge_count(current, acting)
+    request.state.review_badge = _memo(lambda: review_count(acting.id))
+
+
+def _memo(fn):
+    """A page asks for the count in the nav and again in the Upload tabs: one query."""
+    box = []
+
+    def get():
+        if not box:
+            box.append(fn())
+        return box[0]
+    return get
+
+
+def review_count(user_id: str) -> int:
+    """What waits on Upload → Review: flagged transactions plus statements flagged only for a balance mismatch.
+    Never breaks a page."""
+    try:
+        with get_db() as conn:
+            n = conn.execute("SELECT COUNT(*) FROM transactions WHERE user_id = ? AND deleted_at IS NULL "
+                             "AND review_status = 'pending_review'", (user_id,)).fetchone()[0]
+            n += conn.execute(
+                "SELECT COUNT(*) FROM statements s WHERE s.user_id = ? AND s.deleted_at IS NULL "
+                "AND s.status = 'pending_review' AND s.balance_mismatch IS NOT NULL AND NOT EXISTS ("
+                "SELECT 1 FROM transactions t WHERE t.statement_id = s.id AND t.deleted_at IS NULL "
+                "AND t.review_status = 'pending_review')", (user_id,)).fetchone()[0]
+            return int(n)
+    except Exception:
+        return 0
 
 
 def shared_owners(viewer_id: str) -> list[dict]:

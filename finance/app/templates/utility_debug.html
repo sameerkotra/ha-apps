@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% set acting_qs = acting_qs or request_acting_qs(request) %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Debug: {{ bill.original_filename }}{% endblock %}
 {% block content %}
-<p><a href="utilities?tab=upload" class="btn-secondary">&larr; Upload &middot; Utility bill</a></p>
-<h1>Debug: {{ bill.original_filename or "utility bill #" ~ bill.id }}</h1>
+{{ nav.page_header("Debug: " ~ (bill.original_filename or "utility bill #" ~ bill.id), back=("Upload · Utility bill", "utilities?tab=upload")) }}
 <p class="hint">Admin-only troubleshooting view — not shown to regular users.</p>
 <p><button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=utility&amp;id={{ bill.id }}&amp;embed=1">View PDF</button></p>
 
@@ -14,7 +15,7 @@
         <tr><th>User</th><td>{{ bill.user_id }}</td></tr>
         <tr><th>Period</th><td>{% if bill.period_start_date %}{{ bill.period_start_date }} &ndash; {{ bill.period_end_date }}{% else %}—{% endif %}</td></tr>
         <tr><th>Usage</th><td>{% if bill.usage_amount is not none %}{{ bill.usage_amount }} {{ bill.usage_unit }}{% else %}—{% endif %}</td></tr>
-        <tr><th>Cost</th><td>{% if bill.cost is not none %}{{ "%.2f"|format(bill.cost) }}{% else %}—{% endif %}</td></tr>
+        <tr><th>Cost</th><td>{% if bill.cost is not none %}{{ (bill.cost)|money }}{% else %}—{% endif %}</td></tr>
         <tr><th>Due date</th><td>{{ bill.due_date or "—" }}</td></tr>
         <tr><th>Account (last 4)</th><td>{{ bill.account_number_last4 or "—" }}</td></tr>
         <tr><th>Status</th><td>{{ bill.status }}</td></tr>
@@ -49,7 +50,7 @@
 <div class="card">
     <h3>Electric meter details</h3>
     <p class="hint">
-        SPEC.md section 15: grid import, solar export, and net
+        Grid import, solar export, and net
         delivered are genuinely different numbers — the on/off-peak
         dollar rate below is applied to the NET figures, not the gross
         import ones.
@@ -61,7 +62,7 @@
         <tr><th>Net delivered (kWh)</th><td>{{ meter.net_on_peak_kwh if meter.net_on_peak_kwh is not none else "—" }}</td><td>{{ meter.net_off_peak_kwh if meter.net_off_peak_kwh is not none else "—" }}</td><td>{{ meter.net_total_kwh if meter.net_total_kwh is not none else "—" }}</td></tr>
         <tr><th>Net generated (kWh)</th><td>{{ meter.net_generated_on_peak_kwh if meter.net_generated_on_peak_kwh is not none else "—" }}</td><td>{{ meter.net_generated_off_peak_kwh if meter.net_generated_off_peak_kwh is not none else "—" }}</td><td>{{ meter.net_generated_total_kwh if meter.net_generated_total_kwh is not none else "—" }}</td></tr>
         <tr><th>Rate ($/kWh)</th><td>{{ meter.on_peak_rate if meter.on_peak_rate is not none else "—" }}</td><td>{{ meter.off_peak_rate if meter.off_peak_rate is not none else "—" }}</td><td></td></tr>
-        <tr><th>Charge ($)</th><td>{{ "%.2f"|format(meter.on_peak_charge) if meter.on_peak_charge is not none else "—" }}</td><td>{{ "%.2f"|format(meter.off_peak_charge) if meter.off_peak_charge is not none else "—" }}</td><td></td></tr>
+        <tr><th>Charge ($)</th><td>{{ (meter.on_peak_charge)|money if meter.on_peak_charge is not none else "—" }}</td><td>{{ (meter.off_peak_charge)|money if meter.off_peak_charge is not none else "—" }}</td><td></td></tr>
     </table>
 </div>
 {% endif %}

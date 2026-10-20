@@ -30,7 +30,9 @@ from .. import notices
 from .. import ai_usage, jobs, settings, storage
 
 router = APIRouter(dependencies=[Depends(_features.required("tolls"))])
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_usage_view"] = ai_usage.view
 templates.env.globals["vehicle_label"] = vehicle_label

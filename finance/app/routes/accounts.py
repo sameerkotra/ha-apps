@@ -12,7 +12,9 @@ from .. import card_payments, notices, ofx, statement_due, upload_page
 from ..version import APP_VERSION
 
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["period_label"] = ofx.period_label
 
@@ -133,26 +135,32 @@ def list_accounts(
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """show_archived=1 (SPEC.md section 11) reveals archived
-    accounts on this list too, each tagged with an "(archived)" badge —
-    archiving hides an account from the default view but keeps it fully
-    reachable with one click, never a confirmation dance, since nothing
-    is actually at risk (unlike delete)."""
+    """The one Accounts page (SPEC.md section 13): every live account with its newest transaction, oldest first
+    (the ones at the top are the ones due a new statement; accounts with nothing yet come first), plus Add account.
+    show_archived=1 (section 11) lists archived accounts too, at the bottom with an "(archived)" badge —
+    archiving hides an account from the default view but keeps it reachable with one click."""
     include_archived = show_archived == "1"
     with get_db() as conn:
         rows = conn.execute(
             f"""
-            SELECT a.*
+            SELECT a.*,
+                   (SELECT MAX(t.date) FROM transactions t
+                    WHERE t.account_id = a.id AND t.deleted_at IS NULL) AS latest_txn_date,
+                   (SELECT COUNT(*) FROM transactions t
+                    WHERE t.account_id = a.id AND t.deleted_at IS NULL) AS txn_count
             FROM accounts a
             WHERE a.user_id = ?
               AND a.deleted_at IS NULL
               {"" if include_archived else "AND a.is_archived = 0"}
-            ORDER BY a.is_archived ASC, a.created_at DESC
+            ORDER BY a.is_archived ASC, latest_txn_date IS NOT NULL, latest_txn_date, a.name COLLATE NOCASE
             """,
             (acting.id,),
         ).fetchall()
         due = statement_due.statuses(conn, rows, current, acting)
         payment_due = card_payments.column(conn, rows, current, acting)
+        archived_count = conn.execute(
+            "SELECT COUNT(*) FROM accounts WHERE user_id = ? AND deleted_at IS NULL AND is_archived = 1",
+            (acting.id,)).fetchone()[0]
 
     return templates.TemplateResponse(
         request,
@@ -163,6 +171,7 @@ def list_accounts(
             "due": due,
             "payment_due": payment_due,
             "show_archived": include_archived,
+            "archived_count": archived_count,
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),
             "active_page": "accounts",
@@ -414,6 +423,28 @@ def set_account_archived(
     return RedirectResponse(url=f"{target}{sep + qs if qs else ''}", status_code=303)
 
 
+def _statement_years(statements, flows: dict) -> list[dict]:
+    rows = []
+    for st in statements:
+        flow = flows.get(st["id"]) or {}
+        keys = st.keys()
+        start = (st["period_start"] if "period_start" in keys else None) or flow.get("first")
+        end = (st["period_end"] if "period_end" in keys else None) or flow.get("last")
+        when = end or (str(st["uploaded_at"] or "")[:10])
+        rows.append({"s": st, "flow": flow or None, "start": start, "end": end, "when": when or ""})
+    rows.sort(key=lambda r: r["when"], reverse=True)
+    years: list[dict] = []
+    for r in rows:
+        y = r["when"][:4] or "—"
+        if not years or years[-1]["year"] != y:
+            years.append({"year": y, "rows": [], "money_in": 0.0, "money_out": 0.0})
+        years[-1]["rows"].append(r)
+        if r["flow"]:
+            years[-1]["money_in"] += r["flow"]["money_in"] or 0
+            years[-1]["money_out"] += r["flow"]["money_out"] or 0
+    return years
+
+
 @router.get("/account")
 def account_detail(
     request: Request,
@@ -466,7 +497,8 @@ def account_detail(
             """
             SELECT statement_id,
                    COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS positive_total,
-                   COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) AS negative_total
+                   COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0) AS negative_total,
+                   MIN(date) AS first_date, MAX(date) AS last_date
             FROM transactions
             WHERE account_id = ? AND deleted_at IS NULL
             GROUP BY statement_id
@@ -475,14 +507,19 @@ def account_detail(
         ).fetchall()
         if account["type"] == "credit_card":
             flow_by_statement = {
-                r["statement_id"]: {"money_in": r["negative_total"], "money_out": r["positive_total"]}
+                r["statement_id"]: {"money_in": r["negative_total"], "money_out": r["positive_total"],
+                                    "first": r["first_date"], "last": r["last_date"]}
                 for r in flow_rows
             }
         else:
             flow_by_statement = {
-                r["statement_id"]: {"money_in": r["positive_total"], "money_out": r["negative_total"]}
+                r["statement_id"]: {"money_in": r["positive_total"], "money_out": r["negative_total"],
+                                    "first": r["first_date"], "last": r["last_date"]}
                 for r in flow_rows
             }
+        # Statements by year (the period's end, else the newest transaction on it, else when it was uploaded),
+        # each year with its money in and out
+        statement_years = _statement_years(statements, flow_by_statement)
 
         due = statement_due.cycle_status(conn, account) if statement_due.can_see(current, acting) else None
         last_upload = statement_due.last_upload(conn, id)
@@ -502,6 +539,7 @@ def account_detail(
             "csv_layout": upload_page.read_layout(account["csv_layout"]),
             "txn_count": txn_count_row["n"],
             "statements": statements,
+            "statement_years": statement_years,
             "flow_by_statement": flow_by_statement,
             "acting_as_banner": _acting_banner(current, acting),
             "acting_qs": _acting_qs(current, acting),

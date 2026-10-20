@@ -1,8 +1,9 @@
 {% extends "base.html" %}
+{% set acting_qs = acting_qs or request_acting_qs(request) %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Debug: {{ csv_import.original_filename or "CSV import #" ~ csv_import.id }}{% endblock %}
 {% block content %}
-<p><a href="uploads" class="btn-secondary">&larr; Upload &middot; Statements</a></p>
-<h1>Debug: {{ csv_import.original_filename or "CSV import #" ~ csv_import.id }}</h1>
+{{ nav.page_header("Debug: " ~ (csv_import.original_filename or "CSV import #" ~ csv_import.id), back=("Upload · Statements", "uploads")) }}
 <p class="hint">
     Admin-only troubleshooting view — not shown to regular users.
     Read-only: the CSV file itself was deleted right after this import

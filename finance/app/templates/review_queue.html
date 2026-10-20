@@ -1,45 +1,63 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% import "_category_options.html" as catopt %}
 {% block title %}Review{% endblock %}
 {% block content %}
-{{ nav.upload_tabs("review", acting_qs, request.state.features) }}
-<p><a href="uploads{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Upload &middot; Statements</a></p>
-<h1>Review</h1>
-
-<p class="hint">Statements and transactions flagged during import for a human to check against the source PDF — see SPEC.md section 7.</p>
+{% set q1 = "?" ~ acting_qs if acting_qs else "" %}
+{% set n_m, n_t, n_s = mismatched_statements|length, transactions|length, skipped|length %}
+{{ nav.page_header("Review", tabs=nav.upload_tabs("review", acting_qs, request.state.features, review_count=none if statement_filter_id else n_m + n_t)) }}
+<details class="about how-it-works">
+    <summary>What's here</summary>
+    <p>Statements and transactions an import flagged for a person to check against the source PDF, and lines it skipped
+        as possible duplicates.</p>
+</details>
 
 {% if statement_filter_id %}
-<p class="empty-state">
-    Showing only the flagged item{{ "s" if (transactions|length + mismatched_statements|length) != 1 else "" }} for this statement.
-    <a href="review{% if acting_qs %}?{{ acting_qs }}{% endif %}">Show everything needing review</a>.
+<p class="hint" role="status">
+    Showing only the flagged item{{ "s" if (n_t + n_m) != 1 else "" }} for this statement.
+    <a href="review{{ q1 }}">Show everything needing review</a>.
 </p>
 {% endif %}
 
-<h2>Statements with a balance mismatch</h2>
+{% if not (n_m or n_t or n_s) %}
+<div class="ui-empty">
+    <p class="ui-empty-title">All clear</p>
+    <p class="ui-empty-text">{{ "Nothing on this statement needs you." if statement_filter_id else "Nothing is waiting for review." }}</p>
+    <p class="ui-empty-action"><a href="uploads{{ q1 }}" class="btn-secondary">Upload statements</a></p>
+</div>
+{% else %}
+<div class="summary-strip review-strip">
+    {% if n_t %}<a class="kpi" href="#flagged"><span class="kpi-label">Flagged transactions</span><span class="kpi-value">{{ n_t }}</span></a>{% endif %}
+    {% if n_m %}<a class="kpi" href="#mismatches"><span class="kpi-label">Balance mismatches</span><span class="kpi-value">{{ n_m }}</span></a>{% endif %}
+    {% if n_s %}<a class="kpi" href="#skipped"><span class="kpi-label">Skipped duplicates</span><span class="kpi-value">{{ n_s }}</span></a>{% endif %}
+</div>
+{% endif %}
+
 {% if mismatched_statements %}
-<table class="statements-table">
+<h2 id="mismatches">Statements with a balance mismatch</h2>
+<div class="table-scroll">
+<table class="statements-table money-list">
     <thead>
-        <tr><th>Account</th><th>File</th><th>Reconciliation</th><th>Source</th><th></th></tr>
+        <tr><th>Account</th><th class="col-secondary">File</th><th>Reconciliation</th><th>Source</th><th><span class="visually-hidden">Actions</span></th></tr>
     </thead>
     <tbody>
         {% for s in mismatched_statements %}
         <tr>
-            <td data-label="Account">{{ s.account_name }}</td>
-            <td data-label="File">{{ s.original_filename }}</td>
-            <td data-label="Reconciliation">{{ s.balance_mismatch }}</td>
-            <td data-label="Source">
+            <td data-label="Account" class="col-desc">{{ s.account_name }} <span class="phone-only hint">{{ s.original_filename }}</span></td>
+            <td data-label="File" class="col-secondary">{{ s.original_filename }}</td>
+            <td data-label="Reconciliation" class="col-full">{{ s.balance_mismatch }}</td>
+            <td data-label="Source" class="col-full">
                 {% if s.pdf_path %}
                 <button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ s.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">View PDF</button>
                 {% else %}
-                <span class="hint">not available</span>
+                <span class="hint">PDF not available</span>
                 {% endif %}
             </td>
-            <td data-label="">
+            <td data-label="" class="col-full row-actions">
                 {% if s.needs_confirmation %}
                 <a href="statement-confirm?id={{ s.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="btn-secondary">Open PDF &amp; confirm</a>
                 {% else %}
-                <form method="post" action="statement-acknowledge-mismatch{% if acting_qs %}?{{ acting_qs }}{% endif %}">
+                <form method="post" action="statement-acknowledge-mismatch{{ q1 }}">
                     <input type="hidden" name="id" value="{{ s.id }}">
                     <button type="submit" class="btn-secondary">Acknowledge</button>
                 </form>
@@ -49,14 +67,13 @@
         {% endfor %}
     </tbody>
 </table>
-{% else %}
-<p class="empty-state">{{ "No balance mismatch on this statement." if statement_filter_id else "No balance mismatches to review." }}</p>
+</div>
 {% endif %}
 
-<h2>Flagged transactions</h2>
 {% set next_page = "review" %}
 {% if transactions %}
-<div class="bulk-bar-wrap" data-action-url="transactions-bulk{% if acting_qs %}?{{ acting_qs }}{% endif %}" data-next="review">
+<h2 id="flagged">Flagged transactions</h2>
+<div class="bulk-bar-wrap" data-action-url="transactions-bulk{{ q1 }}" data-next="review">
     <div class="bulk-bar">
         <label class="bulk-select-all"><input type="checkbox" id="select-all"> Select all</label>
         <button type="button" class="btn-secondary bulk-action-btn" data-action="approve">Approve selected</button>
@@ -66,49 +83,58 @@
             </select>
             <button type="button" class="btn-secondary bulk-action-btn" data-action="categorize">Categorize selected</button>
         </span>
-        <button type="button" class="btn-secondary bulk-action-btn bulk-delete" data-action="delete">Delete selected</button>
+        <button type="button" class="btn-danger bulk-action-btn" data-action="delete">Delete selected</button>
     </div>
-    <table class="statements-table">
+    <div class="table-scroll">
+    <table class="statements-table money-list review-table">
         <thead>
-            <tr><th></th><th>Date</th><th>Account</th><th>Description</th><th>Amount</th><th>Flag reason</th><th>Category</th><th>Source</th><th>Resolve</th></tr>
+            <tr><th></th><th>Date</th><th>Description</th><th class="col-secondary">Account</th><th class="num">Amount</th><th>Flag reason</th><th>Category</th><th>Resolve</th></tr>
         </thead>
         <tbody>
             {% for t in transactions %}
             <tr>
-                <td data-label=""><input type="checkbox" class="bulk-select" data-id="{{ t.id }}"></td>
-                <td data-label="Date">{{ t.date }}</td>
-                <td data-label="Account">{{ t.account_name }}</td>
-                <td data-label="Description">{{ t.description }}</td>
-                <td data-label="Amount" class="{{ 'negative' if t.amount < 0 else '' }}">{{ "%.2f"|format(t.amount) }}</td>
-                <td data-label="Flag reason"><span class="hint">{{ t.flag_reason or "flagged for review" }}</span></td>
-                <td data-label="Category">{% include "_category_field.html" %}</td>
-                <td data-label="Source">
-                    <button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ t.statement_id }}&amp;amount={{ '%.2f'|format(t.amount|abs) }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">View PDF</button>
-                </td>
-                <td data-label="Resolve">
-                    <form method="post" action="transaction-resolve{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="resolve-form">
-                        <input type="hidden" name="id" value="{{ t.id }}">
-                        <input type="date" name="date" value="{{ t.date }}" required>
-                        <input type="text" name="description" value="{{ t.description }}" required class="resolve-desc">
-                        <input type="number" step="0.01" name="amount" value="{{ t.amount }}" required class="resolve-amount">
-                        <button type="submit" class="btn-primary">Confirm</button>
-                    </form>
+                <td data-label="" class="bulk-col"><input type="checkbox" class="bulk-select" data-id="{{ t.id }}" aria-label="Select {{ t.description }}"></td>
+                <td data-label="Date" class="col-date">{{ t.date }}</td>
+                <td data-label="Description" class="col-desc">{{ t.description }} <span class="phone-only hint">{{ t.account_name }}</span></td>
+                <td data-label="Account" class="col-secondary">{{ t.account_name }}</td>
+                <td data-label="Amount" class="num col-amount">{{ t.amount|money }}</td>
+                <td data-label="Flag reason" class="col-full"><span class="hint">{{ t.flag_reason or "flagged for review" }}</span>
+                    <button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ t.statement_id }}&amp;amount={{ '%.2f'|format(t.amount|abs) }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">View PDF</button></td>
+                <td data-label="Category" class="col-full">{% include "_category_field.html" %}</td>
+                <td data-label="Resolve" class="col-full">
+                    <div class="resolve-actions">
+                        <form method="post" action="transactions-bulk{{ q1 }}" class="inline-form">
+                            <input type="hidden" name="ids" value="{{ t.id }}">
+                            <input type="hidden" name="action" value="approve">
+                            <input type="hidden" name="next" value="review">
+                            <button type="submit" class="confirm-btn" title="The amounts are right as read">Approve</button>
+                        </form>
+                        <details class="inline-toggle resolve-edit">
+                            <summary>Edit &amp; confirm</summary>
+                            <form method="post" action="transaction-resolve{{ q1 }}" class="resolve-form">
+                                <input type="hidden" name="id" value="{{ t.id }}">
+                                <label>Date <input type="date" name="date" value="{{ t.date }}" required></label>
+                                <label>Description <input type="text" name="description" value="{{ t.description }}" required class="resolve-desc"></label>
+                                <label>Amount <input type="number" step="0.01" name="amount" value="{{ t.amount }}" required class="resolve-amount"></label>
+                                <button type="submit" class="btn-secondary">Confirm</button>
+                            </form>
+                        </details>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </div>
 </div>
-{% else %}
-<p class="empty-state">{{ "No flagged transactions on this statement." if statement_filter_id else "No flagged transactions to review." }}</p>
 {% endif %}
 
+{% if skipped %}
 <h2 id="skipped">Skipped as possible duplicates</h2>
-<p class="hint">An import skips a line that has the same date, amount and description as one already stored, or as an
+<details class="about how-it-works"><summary>Why lines are skipped</summary><p>An import skips a line that has the same date, amount and description as one already stored, or as an
     earlier line of the same statement or CSV. Sometimes that's a real second charge (two identical coffees on the same
     day): <strong>Insert anyway</strong> adds it; <strong>Keep skipped</strong> takes it off this list. Tick several (or
-    <strong>Select all</strong>) to do either to all of them at once.</p>
-{% if skipped %}
+    <strong>Select all</strong>) to do either to all of them at once.</p></details>
 {% set qs = ("?" ~ acting_qs) if acting_qs else "" %}
 <form method="post" action="skipped-duplicates-bulk{{ qs }}" class="skipped-form">
 <input type="hidden" name="statement_filter" value="{{ statement_filter_id or '' }}">
@@ -127,17 +153,17 @@
         <td data-label=""><input type="checkbox" name="ids" value="{{ d.id }}" class="skipped-select" aria-label="Select {{ d.description }} on {{ d.date }}"></td>
         <td data-label="Date">{{ d.date }}</td>
         <td data-label="Description">{{ d.description }}</td>
-        <td data-label="Amount" class="{{ 'negative' if d.amount < 0 else '' }}">{{ "%.2f"|format(d.amount) }}</td>
+        <td data-label="Amount" class="num">{{ d.amount|money }}</td>
         <td data-label="Account">{{ d.account_name }}</td>
         <td data-label="From">{{ d.statement_file or d.csv_file or "—" }}{% if d.csv_import_id %} <span class="hint">(CSV)</span>{% endif %}</td>
         <td data-label="Why">
             {% if d.reason == "repeated" %}Appeared twice in the same {{ "CSV" if d.csv_import_id else "statement" }}
-            {% elif d.matched_date %}Matches <a href="transactions?searched=1&amp;account_id={{ d.account_id }}&amp;start_date={{ d.matched_date }}&amp;end_date={{ d.matched_date }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">a transaction already stored</a> ({{ d.matched_date }}, {{ "%.2f"|format(d.matched_amount) }})
+            {% elif d.matched_date %}Matches <a href="transactions?searched=1&amp;account_id={{ d.account_id }}&amp;start_date={{ d.matched_date }}&amp;end_date={{ d.matched_date }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">a transaction already stored</a> ({{ d.matched_date }}, {{ d.matched_amount|money }})
             {% else %}Matched a transaction that has since been deleted{% endif %}
         </td>
         <td data-label="" class="skipped-actions">
             {# one row: the same form, sent to the one-row routes with this row's id #}
-            <button type="submit" formaction="skipped-duplicate-insert{{ qs }}" name="id" value="{{ d.id }}">Insert anyway</button>
+            <button type="submit" formaction="skipped-duplicate-insert{{ qs }}" name="id" value="{{ d.id }}" class="btn-secondary">Insert anyway</button>
             <button type="submit" formaction="skipped-duplicate-dismiss{{ qs }}" name="id" value="{{ d.id }}" class="btn-secondary">Keep skipped</button>
         </td>
     </tr>
@@ -146,7 +172,5 @@
 </table>
 </div>
 </form>
-{% else %}
-<p class="empty-state">{{ "Nothing skipped on this statement." if statement_filter_id else "Nothing skipped as a possible duplicate." }}</p>
 {% endif %}
 {% endblock %}

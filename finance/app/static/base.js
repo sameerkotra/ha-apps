@@ -69,21 +69,103 @@
         document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
     })();
 
-    // ---- The Upload nav item opens the upload page you used last (Statements, Utility bill or Toll statement) ----
+    // ---- Transactions remembers its last search: the Money menu item and the Transactions tab reopen it ----
+    // Kept per browser tab (sessionStorage) and per person whose data is shown (an admin's "view as" has its own).
     (function () {
         var nav = document.querySelector("nav.sidenav");
         if (!nav) return;
-        var here = json(nav, "data-upload-here", ""), last = null, qs = json(nav, "data-acting-qs", "");
-        var pages = json(nav, "data-upload-pages", ["uploads"]);
-        try {
-            if (here) localStorage.setItem("lastUploadPage", here);
-            last = localStorage.getItem("lastUploadPage");
-        } catch (e) { /* storage unavailable: always Statements */ }
-        if (pages.indexOf(last) === -1) return;
-        document.querySelectorAll("a[data-upload-nav]").forEach(function (a) {
-            a.href = last + (qs ? (last.indexOf("?") === -1 ? "?" : "&") + qs : "");
-        });
+        var qs = json(nav, "data-acting-qs", ""), who = json(nav, "data-acting-user", "");
+        var KEY = "finance.txnQuery:" + (who || "self");
+        var plain = "transactions" + (qs ? "?" + qs : "");
+        function onTransactions() { return /\/transactions$/.test(location.pathname); }
+        function remember() {
+            if (!onTransactions()) return;
+            var p = new URLSearchParams(location.search);
+            p.delete("as_user");
+            var s = p.toString();
+            try { if (s) sessionStorage.setItem(KEY, s); else sessionStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+        }
+        function rewrite() {
+            var saved = null;
+            try { saved = sessionStorage.getItem(KEY); } catch (e) { /* storage unavailable: plain links */ }
+            if (!saved) return;
+            document.querySelectorAll("a[href]").forEach(function (a) {
+                if (a.getAttribute("href") === plain) a.setAttribute("href", "transactions?" + saved + (qs ? "&" + qs : ""));
+            });
+        }
+        remember();
+        rewrite();
+        // a select or Search swaps the list and replaces the address (hx-replace-url)
+        document.addEventListener("htmx:afterSettle", function () { remember(); });
+        // Clear all (and "show everything") forgets it
+        document.addEventListener("click", function (e) {
+            if (e.target.closest && e.target.closest("[data-txn-clear]")) {
+                try { sessionStorage.removeItem(KEY); } catch (err) { /* ignore */ }
+            }
+        }, true);
     })();
+
+    // ---- Sort, direction and pager links replace the address instead of adding a history entry ----
+    document.addEventListener("click", function (e) {
+        if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        var a = e.target.closest && e.target.closest("a[data-replace]");
+        if (!a) return;
+        e.preventDefault();
+        location.replace(a.href);
+    });
+
+    // ---- A link to a place on this page (#id) just scrolls there (common/backnav.js would treat it as an address) ----
+    document.addEventListener("click", function (e) {
+        var a = e.target.closest && e.target.closest('a[href^="#"]');
+        if (!a || a.getAttribute("href").length < 2) return;
+        var target = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)));
+        if (!target) return;
+        e.preventDefault();
+        if (target.tagName === "DETAILS") target.open = true;
+        target.scrollIntoView({behavior: "smooth", block: "start"});
+    }, true);
+
+    // ---- Row ⋯ menus: one open at a time, closed by a click elsewhere ----
+    document.addEventListener("click", function (e) {
+        var inside = e.target.closest && e.target.closest("details.row-menu");
+        document.querySelectorAll("details.row-menu[open]").forEach(function (d) { if (d !== inside) d.open = false; });
+    });
+
+    // ---- Busy states: a button with data-busy="Working…" says so and stays disabled until the page or swap answers ----
+    function setBusy(btn, on) {
+        if (!btn) return;
+        if (on) {
+            if (btn.dataset.idleText === undefined) btn.dataset.idleText = btn.textContent;
+            btn.textContent = btn.getAttribute("data-busy") || "Working…";
+            btn.setAttribute("aria-busy", "true");
+            // disabled after the submit has picked up the button's own name/value
+            setTimeout(function () { btn.disabled = true; }, 0);
+        } else {
+            if (btn.dataset.idleText !== undefined) btn.textContent = btn.dataset.idleText;
+            btn.removeAttribute("aria-busy");
+            btn.disabled = false;
+        }
+    }
+    document.addEventListener("submit", function (e) {
+        if (e.defaultPrevented || e.target.hasAttribute("hx-post") || e.target.hasAttribute("hx-get")) return;
+        var btn = e.submitter && e.submitter.hasAttribute("data-busy") ? e.submitter : null;
+        if (!btn && !e.submitter) btn = e.target.querySelector("button[data-busy]");
+        setBusy(btn, true);
+    });
+    document.addEventListener("htmx:beforeRequest", function (e) {
+        var el = e.detail && e.detail.elt;
+        var btn = el && el.matches && el.matches("[data-busy]") ? el : (el && el.querySelector ? el.querySelector("button[data-busy]") : null);
+        if (btn) setBusy(btn, true);
+    });
+    document.addEventListener("htmx:afterRequest", function (e) {
+        var el = e.detail && e.detail.elt;
+        var btn = el && el.matches && el.matches("[data-busy]") ? el : (el && el.querySelector ? el.querySelector("button[data-busy]") : null);
+        if (btn) setBusy(btn, false);
+    });
+    // Back/Forward restores a page from the cache with its buttons still "Working…"
+    window.addEventListener("pageshow", function (e) {
+        if (e.persisted) document.querySelectorAll("[aria-busy=true]").forEach(function (b) { setBusy(b, false); });
+    });
 
     // ---- Collapse the sidenav (static/nav-boot.js re-applies it on the next page) ----
     (function () {
@@ -233,11 +315,21 @@
         (select.getAttribute("data-autosubmit") || "").split(" ").forEach(function (name) {
             if (name) select.form[name].disabled = true;
         });
-        select.form.submit();
+        var form = select.form;
+        // a filter (a GET form) replaces the address instead of adding a history entry for each change
+        if ((form.getAttribute("method") || "get").toLowerCase() === "get") {
+            var action = form.getAttribute("action") || location.pathname.split("/").pop();
+            window.location.replace(action + "?" + new URLSearchParams(new FormData(form)).toString());
+            return;
+        }
+        form.submit();
     });
 
-    // <select data-go>: each option's value is a URL to open.
-    on("change", "select[data-go]", function (select) { window.location.href = select.value; });
+    // <select data-go>: each option's value is a URL to open (data-replace: without a history entry — sort, page size).
+    on("change", "select[data-go]", function (select) {
+        if (select.hasAttribute("data-replace")) window.location.replace(select.value);
+        else window.location.href = select.value;
+    });
 
     // <select data-click-sibling="size">: click the hidden link [data-size=<value>] in the next element (htmx link).
     on("change", "select[data-click-sibling]", function (select) {
@@ -252,7 +344,7 @@
         if (select.value) p.push(select.getAttribute("data-go-param") + "=" + select.value);
         var qs = json(select, "data-go-qs", "");
         if (qs) p.push(qs);
-        window.location.href = select.getAttribute("data-go-base") + (p.length ? "?" + p.join("&") : "");
+        window.location.replace(select.getAttribute("data-go-base") + (p.length ? "?" + p.join("&") : ""));   // a filter: no history entry
     });
 
     // <button data-export="transactions-export">: download with the form's current filters.
@@ -270,6 +362,28 @@
         sync();
     });
 
+    // <button data-dismiss="key" data-dismiss-target="#id">: hides that box now and on later visits (this browser).
+    document.querySelectorAll("[data-dismiss]").forEach(function (btn) {
+        var box = document.querySelector(btn.getAttribute("data-dismiss-target"));
+        var key = "finance.dismissed:" + btn.getAttribute("data-dismiss");
+        try { if (box && localStorage.getItem(key) === "1") box.hidden = true; } catch (e) { /* ignore */ }
+        btn.addEventListener("click", function () {
+            if (box) box.hidden = true;
+            try { localStorage.setItem(key, "1"); } catch (e) { /* ignore */ }
+        });
+    });
+
+    // <details data-desktop-open>: a fold only on phones (Categories → Rules' filters); open on wider screens.
+    (function () {
+        var wide = window.matchMedia ? window.matchMedia("(min-width: 768px)") : null;
+        function sync() {
+            if (!wide || !wide.matches) return;
+            document.querySelectorAll("details[data-desktop-open]").forEach(function (d) { d.open = true; });
+        }
+        sync();
+        if (wide && wide.addEventListener) wide.addEventListener("change", sync);
+    })();
+
     // <form data-enter-clicks="button-id">: Enter in any field clicks that button instead of submitting the form.
     document.querySelectorAll("form[data-enter-clicks]").forEach(function (form) {
         form.addEventListener("keydown", function (event) {
@@ -279,4 +393,32 @@
             }
         });
     });
+
+    // ---- Back (phones: the Home Assistant app's back gesture) closes what is open on the page first ----
+    // Every page is a full page load, so the browser's own history handles pages; common/backnav.js only adds the
+    // dialogs, the More panel, ⋯ menus and sheets as layers that Back closes.
+    if (window.BackNav) {
+        var morePanel = document.getElementById("nav-more"), moreBtn = document.querySelector(".nav-more-btn");
+        window.BackNav.init({
+            atHome: function () { return true; },
+            goHome: function () { /* never needed: atHome is always true */ },
+            openLayers: function () {
+                var open = [];
+                document.querySelectorAll("details.row-menu[open], details[data-sheet][open]").forEach(function (d) { open.push(d); });
+                if (morePanel && !morePanel.hidden) open.push(morePanel);
+                document.querySelectorAll(".modal:not([hidden])").forEach(function (m) { open.push(m); });
+                return open;
+            },
+            closeLayer: function (el) {
+                if (el.tagName === "DETAILS") { el.open = false; return; }
+                if (el === morePanel) {
+                    morePanel.hidden = true;
+                    if (moreBtn) moreBtn.setAttribute("aria-expanded", "false");
+                    return;
+                }
+                var close = el.querySelector("[data-pdf-close], [data-reextract-close], [data-modal-close]");
+                if (close) close.click(); else el.hidden = true;
+            },
+        });
+    }
 })();

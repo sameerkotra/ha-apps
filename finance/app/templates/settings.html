@@ -1,9 +1,8 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}App settings{% endblock %}
 {% block content %}
-{{ nav.admin_tabs("settings", acting_qs) }}
-<h1>App settings</h1>
+{{ nav.page_header("App settings", tabs=nav.admin_tabs("settings", acting_qs)) }}
 <p class="hint">App-wide settings, admin only. A change applies straight away &mdash; no need to restart the app.</p>
 
 {% if not ai_ready %}
@@ -75,7 +74,10 @@
         {% endif %}
     </section>
     {% endfor %}
-    <p><button type="submit" class="btn-primary">Save settings</button></p>
+    <div class="sticky-save-bar">
+        <span class="unsaved-note" id="settings-unsaved" hidden role="status">Unsaved changes</span>
+        <button type="submit" class="btn-primary">Save settings</button>
+    </div>
 </form>
 <script src="static/pages/settings.js?v={{ app_version }}"></script>
 {% endblock %}

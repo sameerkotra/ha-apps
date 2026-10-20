@@ -24,7 +24,8 @@ WIFE = {"x-remote-user-id": "wife", "x-remote-user-name": "Wife"}
 
 def figures(page: str) -> list[float]:
     """Home's Income and Spend figures, in that order."""
-    return [float(x.replace(",", "")) for x in re.findall(r'<p class="dashboard-figure">([-\d.,]+)</p>', page)]
+    return [float(sign + x.replace(",", "")) for sign, x in
+            re.findall(r'<p class="dashboard-figure"><span class="money[^"]*">(-?)\$([\d.,]+)</span></p>', page)]
 
 
 def section(page: str, start: str, end: str) -> str:
@@ -37,8 +38,8 @@ def table_rows(html: str) -> list[tuple[str, float]]:
     out = []
     for row in re.findall(r"<tr>\s*<td data-label=\"Category\">(.*?)</tr>", html, re.S):
         name = re.sub(r"<[^>]+>", "", row.split("</td>")[0]).strip()
-        amount = re.search(r'<td data-label="Amount">([-\d.,]+)</td>', row).group(1)
-        out.append((name, float(amount.replace(",", ""))))
+        sign, amount = re.search(r'<td data-label="Amount"><span class="money[^"]*">(-?)\$([\d.,]+)</span></td>', row).groups()
+        out.append((name, float(sign + amount.replace(",", ""))))
     return out
 
 
@@ -160,7 +161,7 @@ def test_every_menu_is_grouped_and_income_comes_first_for_money_in_on_checking(e
     assert groups_in(bulk) == ["Spending", "Income"]                  # a mixed selection: Spending first
     assert groups_in(section(env.get("transactions?flow=income").text, '<select class="bulk-category-select"',
                              "</select>")) == ["Income", "Spending"]  # only money in on the page
-    filt = section(page, '<select name="category">', "</select>")
+    filt = section(page, '<select name="category"', "</select>")
     assert groups_in(filt) == ["Spending", "Income"] and "All categories" in filt
     review = env.get("review").text
     assert groups_in(section(review, '<select class="bulk-category-select"', "</select>")) == ["Spending", "Income"]
@@ -266,7 +267,7 @@ def test_card_refunds_get_refunds_and_count_as_negative_spend(env):
     spending = table_rows(section(page, "<h2>By category</h2>", "Income by category"))
     assert ("Refunds", -40.0) in spending
     r = env.get("transactions?flow=expense&category=Refunds")
-    assert "SHOE SHOP REFUND" in r.text and "-40.00" in r.text          # the drill-down agrees
+    assert "SHOE SHOP REFUND" in r.text and "-$40.00" in r.text          # the drill-down agrees
 
 
 def test_sort_my_income_lists_first_and_changes_only_what_is_confirmed(env, monkeypatch):
@@ -345,8 +346,8 @@ def test_compare_shows_income_by_category(env):
     env.txn(chk, "2026-09-10", 30.0, "REFUND", category="Refunds")
     page = env.get("dashboard-compare?mode=month&a=2026-08&b=2026-09").text
     income = section(page, "<h2>Income by category</h2>", "</table>")
-    assert "Salary" in income and "4000.00" in income and "4200.00" in income and "Refunds" in income
-    assert "+200.00" in income
+    assert "Salary" in income and "$4,000.00" in income and "$4,200.00" in income and "Refunds" in income
+    assert "+$200.00" in income
 
 
 # ------------------------------------------------------------------ the Household Assistant

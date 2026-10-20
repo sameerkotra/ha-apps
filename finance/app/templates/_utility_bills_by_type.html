@@ -14,18 +14,39 @@
 </div>
 {% endif %}
 
+{% if strip and strip.latest %}
+<div class="summary-strip utility-strip">
+    {% for l in strip.latest %}
+    <div class="kpi"><span class="kpi-label">{{ l.kind | capitalize }} &middot; {{ period_month(l.month) }}</span>
+        <span class="kpi-value">{{ l.bill.cost|money }}</span>
+        <span class="hint">{% if l.change is not none %}{{ l.change|money(plus=true) }} vs a year before{% else %}nothing a year before{% endif %}</span></div>
+    {% endfor %}
+    <div class="kpi"><span class="kpi-label">{{ strip.year }} so far</span><span class="kpi-value">{{ strip.ytd|money }}</span></div>
+</div>
+{% endif %}
+{% set any_typed = grouped.electric or grouped.gas or grouped.water %}
+{% if grouped.electric or filter_utility_type == "electric" %}
 <div class="card">
     <h3>Electric</h3>
-    {{ m.electric_bill_table(grouped.electric, acting_qs, is_admin, show_actions=False) }}
+    {{ m.electric_bill_table(grouped.electric, acting_qs, is_admin, show_actions=False, years=True) }}
 </div>
-
+{% endif %}
+{% if grouped.gas or filter_utility_type == "gas" %}
 <div class="card">
     <h3>Gas</h3>
-    {{ m.simple_type_bill_table(grouped.gas, acting_qs, is_admin, "No gas bills match the current filters.", show_actions=False) }}
+    {{ m.simple_type_bill_table(grouped.gas, acting_qs, is_admin, "No gas bills match the current filters.", show_actions=False, years=True) }}
 </div>
-
+{% endif %}
+{% if grouped.water or filter_utility_type == "water" %}
 <div class="card">
     <h3>Water</h3>
-    {{ m.simple_type_bill_table(grouped.water, acting_qs, is_admin, "No water bills match the current filters.", show_actions=False) }}
+    {{ m.simple_type_bill_table(grouped.water, acting_qs, is_admin, "No water bills match the current filters.", show_actions=False, years=True) }}
 </div>
+{% endif %}
+{% if not any_typed and not filter_utility_type and not grouped.untyped %}
+<div class="ui-empty">
+    <p class="ui-empty-title">{{ "No bills match these filters" if filter_provider or filter_start_date or filter_end_date else "No utility bills yet" }}</p>
+    <p class="ui-empty-action"><a href="{{ 'utilities?tab=upload' | with_qs(acting_qs) }}" class="btn-primary">Upload a utility bill</a></p>
+</div>
+{% endif %}
 </div>

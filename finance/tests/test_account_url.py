@@ -12,7 +12,7 @@ def test_add_edit_and_show_account_website(env):
     with env.db() as c:
         aid = c.execute("SELECT id FROM accounts WHERE name = 'Card'").fetchone()[0]
     assert _url(env, aid) == "https://www.example-bank.com/login"
-    for page in ("accounts", f"account?id={aid}", "transactions-accounts"):
+    for page in ("accounts", f"account?id={aid}"):
         html = env.get(page).text
         assert 'href="https://www.example-bank.com/login" target="_blank" rel="noopener noreferrer"' in html, page
     env.post("account-update", data={"id": str(aid), "name": "Card", "website_url": "http://bank.test/x"})

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Review: {{ bill.original_filename }}{% endblock %}
 {% block content %}
-<p><a href="utilities?tab=upload{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-secondary">&larr; Upload &middot; Utility bill</a></p>
 {% set awaiting = bill.needs_confirmation and not bill.error_message %}
-<h1>{{ "Confirm" if awaiting else "Review" }}: {{ bill.provider }} {{ bill.utility_type or "" }} bill</h1>
+{{ nav.page_header(("Confirm" if awaiting else "Review") ~ ": " ~ bill.provider ~ " " ~ (bill.utility_type or "") ~ " bill", back=("Upload · Utility bill", "utilities?tab=upload")) }}
 <p class="hint">
     {{ "Check these figures against the bill, correct anything wrong, then Confirm." if awaiting else (bill.error_message or "Flagged for review.") }}
     {% if bill.pdf_path %}<button type="button" class="debug-link pdf-open-btn" data-pdf-url="pdf-view?kind=utility&amp;id={{ bill.id }}&amp;embed=1{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}">View the source PDF</button> to check.{% endif %}
@@ -55,7 +55,7 @@
     {% if bill.utility_type == "electric" %}
     <p class="panel-title" style="margin-top: 1rem;">Electric meter details</p>
     <p class="hint">
-        SPEC.md section 15: the on/off-peak dollar rate is applied
+        The on/off-peak dollar rate is applied
         to the NET figures (import minus export), not the gross import ones.
     </p>
     <div class="card" style="width: 100%;">
@@ -101,7 +101,11 @@
     </div>
     {% endif %}
 
-    <button type="submit">{{ "Confirm" if awaiting else "Confirm & resolve" }}</button>
+    <div class="sticky-bar confirm-bar">
+        <span class="confirm-figures">{% if bill.cost is not none %}<span>Cost <strong>{{ bill.cost|money }}</strong></span>{% endif %}
+            {% if bill.period_start_date %}<span class="hint">{{ bill.period_start_date }} &ndash; {{ bill.period_end_date }}</span>{% endif %}</span>
+        <button type="submit" class="btn-primary">{{ "Confirm" if awaiting else "Confirm & resolve" }}</button>
+    </div>
 </form>
 
 {% if can_reextract %}

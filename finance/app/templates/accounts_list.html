@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% from "_expected_fields.html" import expected_fields %}
 {% from "_payment_due_fields.html" import payment_due_fields %}
 {% block title %}Accounts{% endblock %}
 {% block content %}
-{{ nav.setup_tabs("accounts", acting_qs, request.state.is_real_admin) }}
-<h1>Accounts</h1>
+{% set amp = "&" + acting_qs if acting_qs else "" %}
+{{ nav.page_header("Accounts", sub="Each account's newest transaction, oldest first — the ones at the top are due a new statement.") }}
 
 {# "+ Add account" sits above the list, collapsed (same pattern as "+ New car"). #}
 <details class="new-car" id="account-add">
@@ -56,68 +56,65 @@
     </p>
 </details>
 
-<p class="hint">
-    {% if show_archived %}
-    Showing archived accounts too &mdash;
-    <a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">hide archived</a>
-    {% else %}
-    <a href="accounts?show_archived=1{% if acting_qs %}&{{ acting_qs }}{% endif %}">Show archived accounts</a>
-    {% endif %}
-</p>
-
 {% if accounts %}
-<table class="accounts-table">
+<div class="table-scroll">
+<table class="accounts-table money-list">
     <thead>
         <tr>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Bank</th>
             <th>Account</th>
-            <th>Preferred upload</th>
-            <th>Website</th>
+            <th class="col-secondary">Type</th>
+            <th class="col-secondary">Latest transaction</th>
+            <th class="col-secondary num">Transactions</th>
+            <th class="col-secondary">Preferred upload</th>
+            <th class="col-secondary" data-no-sort>Website</th>
             {% if due %}<th>Next statement</th>{% endif %}
             {% if payment_due %}<th>Payment due</th>{% endif %}
-            <th></th>
+            <th data-no-sort><span class="visually-hidden">Actions</span></th>
         </tr>
     </thead>
     <tbody>
         {% for a in accounts %}
         <tr>
-            <td data-label="Name">
-                <a href="account?id={{ a.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}">{{ a.name }}</a>
+            <td class="col-desc" data-label="Account">
+                <a href="account?id={{ a.id }}{{ amp }}" class="acct-name">{{ a.name }}</a>
                 {% if a.is_archived %}<span class="status-badge">archived</span>{% endif %}
+                {% if a.bank_name or a.account_number_last4 %}<span class="hint acct-sub">{{ a.bank_name or "" }}{% if a.account_number_last4 %} ····{{ a.account_number_last4 }}{% endif %}</span>{% endif %}
+                <span class="phone-only hint">{{ a.type.replace('_', ' ') }} &middot; latest {{ a.latest_txn_date or "—" }}</span>
             </td>
-            <td data-label="Type"><span class="type-badge type-{{ a.type }}">{{ a.type.replace('_', ' ') }}</span></td>
-            <td data-label="Bank">{{ a.bank_name or "—" }}</td>
-            <td data-label="Account">{% if a.account_number_last4 %}····{{ a.account_number_last4 }}{% else %}—{% endif %}</td>
-            <td data-label="Preferred upload">
+            <td class="col-secondary" data-label="Type"><span class="type-badge type-{{ a.type }}">{{ a.type.replace('_', ' ') }}</span></td>
+            <td class="col-secondary" data-label="Latest transaction">{{ a.latest_txn_date or "—" }}</td>
+            <td class="col-secondary num" data-label="Transactions">{{ a.txn_count }}</td>
+            <td class="col-secondary" data-label="Preferred upload">
                 {% if a.preferred_upload_method == "pdf" %}PDF only
                 {% elif a.preferred_upload_method == "csv" %}CSV only
                 {% elif a.preferred_upload_method == "qfx" %}QFX only
                 {% else %}Any{% endif %}
             </td>
-            <td data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
-            {% if due %}{% set d = due.get(a.id, ("", "")) %}<td data-label="Next statement" class="next-statement {{ d[1] }}">{{ d[0] }}</td>{% endif %}
-            {% if payment_due %}{% set p = payment_due.get(a.id, ("", "")) %}<td data-label="Payment due" class="payment-due {{ p[1] }}">{{ p[0] }}</td>{% endif %}
-            <td data-label="">
-                <form method="post" action="account-archive{% if acting_qs %}?{{ acting_qs }}{% endif %}">
-                    <input type="hidden" name="id" value="{{ a.id }}">
-                    <input type="hidden" name="next" value="accounts">
-                    {% if a.is_archived %}
-                    <input type="hidden" name="archived" value="0">
-                    <button type="submit" class="btn-secondary">Unarchive</button>
-                    {% else %}
-                    <input type="hidden" name="archived" value="1">
-                    <button type="submit" class="btn-secondary">Archive</button>
-                    {% endif %}
-                </form>
-                <a href="account-delete-confirm?id={{ a.id }}{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="btn-danger">Delete</a>
+            <td class="col-secondary" data-label="Website">{% if a.website_url %}<a href="{{ a.website_url }}" target="_blank" rel="noopener noreferrer" class="acct-link">Open &#8599;</a>{% else %}&mdash;{% endif %}</td>
+            {% if due %}{% set d = due.get(a.id, ("", "")) %}<td data-label="Next statement" class="col-full next-statement {{ d[1] }}">{{ d[0] }}</td>{% endif %}
+            {% if payment_due %}{% set p = payment_due.get(a.id, ("", "")) %}<td data-label="Payment due" class="col-full payment-due {{ p[1] }}">{{ p[0] }}</td>{% endif %}
+            <td class="col-full row-actions" data-label="">
+                <a href="transactions?searched=1&account_id={{ a.id }}{{ amp }}" class="btn-secondary">Transactions</a>
+                {% if not a.is_archived %}<a href="uploads?account={{ a.id }}{{ amp }}" class="btn-secondary">Upload</a>{% endif %}
             </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="empty-state">No accounts yet — add one above.</p>
+<p class="empty-state">No accounts yet &mdash; add one above.</p>
 {% endif %}
+
+<p class="hint">
+    {% if show_archived %}
+    Showing archived accounts too &mdash;
+    <a href="accounts{% if acting_qs %}?{{ acting_qs }}{% endif %}">hide archived</a>
+    {% elif archived_count %}
+    <a href="accounts?show_archived=1{{ amp }}">Show archived accounts ({{ archived_count }})</a>
+    {% else %}
+    <a href="accounts?show_archived=1{{ amp }}">Show archived accounts</a>
+    {% endif %}
+    &middot; Archive or delete an account from its own page.
+</p>
 {% endblock %}

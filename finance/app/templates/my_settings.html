@@ -1,15 +1,20 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
-{% block title %}Settings{% endblock %}
+{% import "_nav_macros.html" as nav with context %}
+{% block title %}My settings{% endblock %}
 {% block content %}
-{{ nav.setup_tabs("my_settings", acting_qs, request.state.is_real_admin) }}
-<h1>Settings</h1>
+{{ nav.page_header("My settings", tabs=nav.settings_tabs("my_settings", acting_qs)) }}
 <p class="hint">{% if own %}Your own settings &mdash; nobody else's change.{% else %}{{ whose.name }}'s own settings (you're
     acting as them).{% endif %} App-wide settings are on Admin &rarr; App settings.</p>
 
+<section class="card settings-group" id="my-theme">
+    <h2>Theme</h2>
+    <label class="settings-field">Colours for this device
+        <select class="theme-select" aria-label="Theme"></select></label>
+</section>
+
 <section class="card settings-group" id="my-reminders">
     <h2>My reminders</h2>
-    <p class="hint">When a statement hasn't arrived by its account's expected date (Setup &rarr; Accounts &rarr; Expected
+    <p class="hint">When a statement hasn't arrived by its account's expected date (Accounts &rarr; an account &rarr; Expected
         statement), you can be reminded on your phone. Overdue statements always show on Home and Upload.</p>
     {% if not enabled %}
     <p class="warning-hint">Statement reminders are turned off for the whole app (Admin &rarr; App settings). Your choices
@@ -59,7 +64,7 @@
 {% set aq = '?' + acting_qs if acting_qs else '' %}
 <section class="card settings-group" id="notify-cards">
     <h2>Card payments</h2>
-    <p class="hint">Reminders before and after a credit card's payment due date (Setup &rarr; Accounts &rarr; Payment due),
+    <p class="hint">Reminders before and after a credit card's payment due date (Accounts &rarr; an account &rarr; Payment due),
         until a payment to the card is recorded or you mark it as paid. Due payments always show on Home and Upload.</p>
     {% if not card_enabled %}
     <p class="warning-hint">Card payment reminders are turned off for the whole app (Admin &rarr; App settings). Your

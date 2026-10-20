@@ -1,19 +1,16 @@
 {% extends "base.html" %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Reports{% endblock %}
 {% block content %}
 {% set qs = "?" + acting_qs if acting_qs else "" %}
 {% set amp = "&" + acting_qs if acting_qs else "" %}
-<h1>Reports</h1>
+{{ nav.page_header("Reports", tabs=nav.reports_tabs("saved", acting_qs, is_admin)) }}
 <p class="hint">Each report runs on {{ "your" if not acting_as_banner else user.name ~ "'s" }} own data.</p>
-{% if is_admin %}
-<div class="q-actions">
-    <a href="admin-storage?tab=query{{ amp }}" class="btn-secondary">New report</a>
-    <form method="post" action="reports-check{{ qs }}" class="inline-form"><button type="submit" class="btn-secondary">Check reports</button></form>
-</div>
-{% if request.query_params.get("deleted") %}<p class="hint">Report deleted.</p>{% endif %}
-{% endif %}
+{% if is_admin and request.query_params.get("deleted") %}<p class="hint" role="status">Report deleted.</p>{% endif %}
 {% if not reports %}
-<p class="empty-state">No reports yet.{% if is_admin %} Write a query on Storage &rarr; Query and save it as a report.{% endif %}</p>
+<div class="ui-empty"><p class="ui-empty-title">No reports yet</p>
+    {% if is_admin %}<p class="ui-empty-text">Write a query and save it as a report.</p>
+    <p class="ui-empty-action"><a href="{{ 'report-new' | with_qs(acting_qs) }}" class="btn-primary">New report</a></p>{% endif %}</div>
 {% else %}
 <ul class="q-report-list">
     {% for r in reports %}
@@ -26,12 +23,17 @@
                 {% if is_admin %} &middot; Last run: {{ r.last_run_at or "never" }}{% endif %}</p>
         </div>
         <div class="q-report-actions">
-            <a href="report?id={{ r.id }}{{ amp }}" class="btn-secondary">Run</a>
+            <a href="report?id={{ r.id }}{{ amp }}" class="btn-primary">Run</a>
             {% if is_admin %}
-            <a href="admin-storage?tab=query&report={{ r.id }}{{ amp }}" class="btn-secondary">Edit</a>
-            <form method="post" action="report-duplicate?id={{ r.id }}{{ amp }}" class="inline-form"><button type="submit" class="btn-secondary">Duplicate</button></form>
-            <form method="post" action="report-delete?id={{ r.id }}{{ amp }}" class="inline-form"
-                  data-confirm="{{ ("Delete the report “" ~ r.name ~ "”? This cannot be undone.") }}"><button type="submit" class="btn-secondary q-danger">Delete</button></form>
+            <details class="row-menu">
+                <summary aria-label="More for {{ r.name }}">&#8943;</summary>
+                <div class="row-menu-body">
+                    <a href="report-new?report={{ r.id }}{{ amp }}" class="btn-secondary">Edit</a>
+                    <form method="post" action="report-duplicate?id={{ r.id }}{{ amp }}" class="inline-form"><button type="submit" class="btn-secondary">Duplicate</button></form>
+                    <form method="post" action="report-delete?id={{ r.id }}{{ amp }}" class="inline-form"
+                          data-confirm="{{ ("Delete the report “" ~ r.name ~ "”? This cannot be undone.") }}"><button type="submit" class="btn-danger">Delete</button></form>
+                </div>
+            </details>
             {% endif %}
         </div>
     </li>

@@ -33,7 +33,9 @@ router = APIRouter()
 MAX_PATTERN_LENGTH = 200     # the form's own maxlength
 MAX_CATEGORY_LENGTH = 60
 TABS = ("spending", "income", "rules")
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 
 

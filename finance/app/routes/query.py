@@ -15,7 +15,9 @@ from .. import ai_usage, long_runs, query_engine as qe, sql_assist, report_chart
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_usage_view"] = ai_usage.view
 
@@ -50,16 +52,25 @@ def _context(request, current: User, acting: User, **extra) -> dict:
             "acting_as_banner": _acting_banner(current, acting), "active_page": "admin_storage", **extra}
 
 
-def query_tab(request: Request, current: User, acting: User, report_id: str = ""):
+@router.get("/report-new")
+def report_editor(request: Request, report: str = "", current: User = Depends(require_admin),
+                  acting: User = Depends(get_acting_user)):
+    """Reports → New (and a report's Edit): the same query editor as Admin → Query, shown under Reports."""
+    return query_tab(request, current, acting, report, in_reports=True)
+
+
+def query_tab(request: Request, current: User, acting: User, report_id: str = "", in_reports: bool = False):
     """GET admin-storage?tab=query[&report=N] (admin only; wired from routes/admin_storage.py)."""
     report = saved_reports.get(int(report_id)) if report_id.isdigit() else None
     overview = qe.table_overview(acting.id)
     sql = report["sql"] if report else ""
     variables = report["variables"] if report else []
-    ctx = _context(request, current, acting, tab="query", overview=overview, report=report, sql=sql,
+    ctx = _context(request, current, acting, tab="query", in_reports=in_reports, overview=overview, report=report, sql=sql,
                    variables=variables, values={}, choices=input_choices(acting), var_types=rv.TYPES,
                    type_labels=rv.TYPE_LABELS, presets=rv.PERIOD_PRESETS, page_sizes=rc.PAGE_SIZES,
                    unused=[], chart_types=saved_reports.CHART_TYPES)
+    if in_reports:
+        ctx["active_page"] = "reports"
     return templates.TemplateResponse(request, "storage_query.html", ctx)
 
 

@@ -1,15 +1,10 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Utilities{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {% import "_utility_table_macros.html" as m %}
-{{ nav.bills_tabs("utilities", acting_qs, request.state.features) }}
-<h1>Utilities</h1>
-<div class="subtabs">
-    <a href="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="subtab">Dashboard</a>
-    <a href="utility-comparison{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab active">Compare</a>
-</div>
+{{ nav.page_header("Compare utilities", tabs=nav.bills_tabs("utility_compare", acting_qs, request.state.features)) }}
 
 <h2>Cost trends &amp; compare months</h2>
 
@@ -56,8 +51,8 @@
         </tr>
         <tr>
             <td>Cost</td>
-            <td>{% if a and a.cost is not none %}${{ "%.2f"|format(a.cost) }}{% else %}—{% endif %}</td>
-            <td>{% if b and b.cost is not none %}${{ "%.2f"|format(b.cost) }}{% else %}—{% endif %}</td>
+            <td>{% if a and a.cost is not none %}{{ a.cost|money }}{% else %}—{% endif %}</td>
+            <td>{% if b and b.cost is not none %}{{ b.cost|money }}{% else %}—{% endif %}</td>
             <td>
                 {% if a and b and a.cost is not none and b.cost is not none %}
                 {{ "%+.2f"|format(b.cost - a.cost) }}
@@ -121,7 +116,7 @@
             <span class="trend-bar-track">
                 <span class="trend-bar-fill" style="width: {{ (((b.cost or 0) / max_cost[type_name] * 100) if max_cost[type_name] else 0) | round(1) }}%;"></span>
             </span>
-            <span class="trend-bar-value">{{ "%.2f"|format(b.cost) if b.cost is not none else "—" }}{% if b.status == "pending_review" %} &#9888;&#65039;{% endif %}</span>
+            <span class="trend-bar-value">{{ (b.cost)|money if b.cost is not none else "—" }}{% if b.status == "pending_review" %} &#9888;&#65039;{% endif %}</span>
         </div>
         {% endfor %}
     </div>
@@ -151,7 +146,7 @@
             <tr>
                 <td>{{ b.period_start_date }} &ndash; {{ b.period_end_date }}{% if b.status == "pending_review" %} &#9888;&#65039;{% endif %}</td>
                 <td>{% if b.usage_amount is not none %}{{ b.usage_amount }} {{ b.usage_unit }}{% else %}—{% endif %}</td>
-                <td>{{ "%.2f"|format(b.cost) if b.cost is not none else "—" }}</td>
+                <td>{{ (b.cost)|money if b.cost is not none else "—" }}</td>
             </tr>
             {% endfor %}
         </table>

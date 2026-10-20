@@ -2,6 +2,7 @@
 (SPEC.md sections 8, 9, 10, 13). The Review queue lives in
 routes/review.py and CSV import in routes/csv_import.py.
 """
+from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
@@ -23,7 +24,9 @@ from ..paging import SqlPager
 from .accounts import _acting_banner, _acting_qs, htmx_fragment_requested
 
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 
 MAX_NOTE_LENGTH = 1000  # generous for a short note; just a sanity bound, not a design constraint
@@ -213,8 +216,9 @@ def _build_transaction_conditions(user_id: str, f: dict) -> tuple[list[str], lis
         params.append(f"%{f['desc']}%")
 
     if f["category"]:
-        conditions.append("t.category = ?")
-        params.append(f["category"])
+        # "Uncategorized" (the dashboard's name for no category) also finds rows with none stored
+        conditions.append("COALESCE(t.category, ?) = ?")
+        params.extend([UNCATEGORIZED, f["category"]])
 
     if f["flow"] == "income":
         # Restricted to checking/savings, matching the dashboard's own
@@ -298,6 +302,20 @@ def _transactions_filter_qs(f: dict, searched: bool = False) -> str:
     return urlencode(qs)
 
 
+# Money in / out from the account's point of view (section 5): checking and savings deposits and a card's
+# payments or credits are money in; checking withdrawals and card purchases are money out.
+_IN_SQL = ("CASE WHEN (a.type = 'credit_card' AND t.amount < 0) OR (a.type != 'credit_card' AND t.amount > 0) "
+           "THEN ABS(t.amount) ELSE 0 END")
+_OUT_SQL = ("CASE WHEN (a.type = 'credit_card' AND t.amount > 0) OR (a.type != 'credit_card' AND t.amount < 0) "
+            "THEN ABS(t.amount) ELSE 0 END")
+
+
+def _last_month() -> tuple[str, str]:
+    first = date.today().replace(day=1)
+    end = first - timedelta(days=1)
+    return end.replace(day=1).isoformat(), end.isoformat()
+
+
 @router.get("/transactions")
 def list_transactions(
     request: Request,
@@ -319,6 +337,11 @@ def list_transactions(
     """See _build_transaction_conditions for what each filter means.
     account_id is a string, not int: "All accounts" submits "" and FastAPI
     would reject that with a 422. searched: see _transactions_filter_qs."""
+    # A plain visit (the menu, nothing chosen yet) shows this month; Clear all asks for everything (searched=1).
+    default_month = not searched and not any(v.strip() for v in (q, account_id, category, txn_type, flow, start_date,
+                                                                  end_date, min_amount, max_amount, desc, excluded))
+    if default_month:
+        start_date = date.today().replace(day=1).isoformat()
     f = _parsed_transaction_filters(q, account_id, category, txn_type, flow, start_date, end_date, min_amount, max_amount, desc,
                                     excluded)
     q, account_id_int = f["q"], f["account_id_int"]
@@ -344,16 +367,24 @@ def list_transactions(
     pager = None
     transactions: list = []
     total, txn_count = 0.0, 0
+    money_in = money_out = 0.0
+    month_totals: dict = {}
     with get_db() as conn:
         # Only query once a filter (or an explicit Search) is present; the
         # accounts and categories for the dropdowns are cheap and always loaded.
         # One page at a time (SqlPager): a long history no longer renders every row.
         if has_filter:
-            txn_count, total = conn.execute(
-                f"SELECT COUNT(*), COALESCE(SUM({total_expr}), 0) FROM transactions t "
+            txn_count, total, money_in, money_out = conn.execute(
+                f"SELECT COUNT(*), COALESCE(SUM({total_expr}), 0), COALESCE(SUM({_IN_SQL}), 0), "
+                f"COALESCE(SUM({_OUT_SQL}), 0) FROM transactions t "
                 f"JOIN accounts a ON a.id = t.account_id WHERE {where_sql}",
                 params,
             ).fetchone()
+            # each month's money in and out over the whole filter (the list's month headers)
+            month_totals = {r[0]: {"in": r[1], "out": r[2], "count": r[3]} for r in conn.execute(
+                f"SELECT substr(t.date, 1, 7), COALESCE(SUM({_IN_SQL}), 0), COALESCE(SUM({_OUT_SQL}), 0), COUNT(*) "
+                f"FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE {where_sql} "
+                f"GROUP BY substr(t.date, 1, 7)", params)}
             pager = SqlPager(request, "transactions", txn_count)
             transactions = conn.execute(
                 f"""
@@ -385,6 +416,9 @@ def list_transactions(
         "bulk_income_first": bool(transactions) and all(flow_of(t["account_type"], t["amount"]) == "in"
                                                         for t in transactions),
         "total": total, "txn_count": txn_count, "pager": pager,
+        "money_in": money_in, "money_out": money_out, "month_totals": month_totals, "default_month": default_month,
+        "this_month": (date.today().replace(day=1).isoformat(), ""),
+        "last_month": _last_month(),
         "q": q, "selected_account_id": account_id_int,
         "filter_category": category, "filter_txn_type": txn_type, "filter_flow": flow,
         "filter_start_date": start_date, "filter_end_date": end_date,
@@ -723,32 +757,9 @@ def bulk_action(
 
 @router.get("/transactions-accounts")
 def transactions_by_account(
-    request: Request,
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
-    """Transactions → Accounts tab (SPEC.md section 13): each live, unarchived account with its
-    latest live transaction and preferred upload method — which accounts are due a new statement.
-    Oldest first, accounts with no transactions at the top."""
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT a.id, a.name, a.type, a.bank_name, a.account_number_last4, a.preferred_upload_method, a.website_url,
-                   a.is_archived, a.deleted_at, a.expected_every_months, a.expected_day, a.expected_from,
-                   a.expected_set_at, a.payment_due_day, a.payment_due_set_at,
-                   (SELECT MAX(t.date) FROM transactions t
-                    WHERE t.account_id = a.id AND t.deleted_at IS NULL) AS latest_txn_date,
-                   (SELECT COUNT(*) FROM transactions t
-                    WHERE t.account_id = a.id AND t.deleted_at IS NULL) AS txn_count
-            FROM accounts a
-            WHERE a.user_id = ? AND a.deleted_at IS NULL AND a.is_archived = 0
-            ORDER BY latest_txn_date IS NOT NULL, latest_txn_date, a.name COLLATE NOCASE
-            """,
-            (acting.id,),
-        ).fetchall()
-        due = statement_due.statuses(conn, rows, current, acting)
-        payment_due = card_payments.column(conn, rows, current, acting)
-    return templates.TemplateResponse(request, "transactions_accounts.html", {
-        "user": acting, "accounts": rows, "due": due, "payment_due": payment_due, "acting_as_banner": _acting_banner(current, acting),
-        "acting_qs": _acting_qs(current, acting), "active_page": "transactions_accounts",
-    })
+    """The old Transactions → Accounts tab: merged into the one Accounts page."""
+    qs = _acting_qs(current, acting)
+    return RedirectResponse(url="accounts" + (f"?{qs}" if qs else ""), status_code=303)

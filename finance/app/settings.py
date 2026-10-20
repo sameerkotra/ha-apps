@@ -71,16 +71,16 @@ SETTINGS: dict[str, Setting] = {s.key: s for s in [
     Setting("feature_tolls", "Tolls", "bool", "0",
             "Toll road statements (PDF): upload them and analyze cost by car, tag and trip. Off hides them everywhere (nothing is deleted)."),
     Setting("statement_reminders", "Statement reminders", "bool", "1",
-            "Overdue statements: the phone reminders each person sets on Setup → Settings, the notices on Home and "
+            "Overdue statements: the phone reminders each person sets on Settings → My settings, the notices on Home and "
             "Upload, and the count on the Upload menu item. Off hides all of them; each account's expected date and "
             "each person's choices are kept."),
     Setting("card_payment_reminders", "Card payment reminders", "bool", "1",
-            "Credit cards with a payment due day (Setup → Accounts): the Payment due notices on Home and Upload, the "
-            "Payment due column and the phone reminders each person sets on Setup → Settings. Off hides all of them; "
+            "Credit cards with a payment due day (Accounts): the Payment due notices on Home and Upload, the "
+            "Payment due column and the phone reminders each person sets on Settings → My settings. Off hides all of them; "
             "each card's due day and each person's choices are kept."),
     Setting("subscription_alerts", "Subscription change alerts", "bool", "1",
             "Price changes and new subscriptions found in the recurring charges: the Subscription changes card on Home "
-            "and Recurring and the phone notifications each person sets on Setup → Settings. Off hides them and stops "
+            "and Recurring and the phone notifications each person sets on Settings → My settings. Off hides them and stops "
             "the notifications; dismissed changes and each person's choices are kept."),
     Setting("assistant_answers", "Answer the Household Assistant", "bool", "0",
             "Lets the Household Assistant app tell each person their own month — income, spending by category, their "
@@ -103,7 +103,7 @@ GROUPS: list[tuple[str, str, list[str]]] = [
      "the running total on Admin → AI usage. The prices are used for the cost on both.",
      ["show_ai_usage", "price_input_per_million", "price_output_per_million"]),
     ("Features", "Parts of the app that not everyone needs.", ["feature_utilities", "feature_tolls"]),
-    ("Statement reminders", "When an account's statement hasn't arrived by its expected date (Setup → Accounts), its "
+    ("Statement reminders", "When an account's statement hasn't arrived by its expected date (Accounts), its "
      "owner is reminded.", ["statement_reminders"]),
     ("Card payments and subscriptions", "Only an account's owner sees these and is notified, on the days they choose.",
      ["card_payment_reminders", "subscription_alerts"]),

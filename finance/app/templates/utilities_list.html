@@ -1,19 +1,13 @@
 {% extends "base.html" %}
-{% import "_nav_macros.html" as nav %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Utilities{% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
 {% if tab == "upload" %}
-{{ nav.upload_tabs("utility", acting_qs, request.state.features) }}
+{{ nav.page_header("Upload utility bill", tabs=nav.upload_tabs("utility", acting_qs, request.state.features)) }}
 {% include "_ai_missing.html" %}
-<h1>Upload</h1>
 {% else %}
-{{ nav.bills_tabs("utilities", acting_qs, request.state.features) }}
-<h1>Utilities</h1>
-<div class="subtabs">
-    <a href="utilities?tab=dashboard{% if acting_qs %}&{{ acting_qs }}{% endif %}" class="subtab active">Dashboard</a>
-    <a href="utility-comparison{% if acting_qs %}?{{ acting_qs }}{% endif %}" class="subtab">Compare</a>
-</div>
+{{ nav.page_header("Utilities", tabs=nav.bills_tabs("utilities", acting_qs, request.state.features)) }}
 {% endif %}
 
 {% if tab == "upload" %}
@@ -42,24 +36,20 @@
         <input type="checkbox" name="skip_confirmation" value="1">
         Skip the confirmation step
     </label>
-    <button type="submit" id="utility-upload-btn">Upload</button>
+    <button type="submit" id="utility-upload-btn" class="btn-primary">Upload</button>
 </form>
-<p class="hint">
-    Xcel Energy's monthly PDF commonly combines electric + gas on one
-    statement &mdash; that's expected, and becomes two separate bills
-    below once processed. Aurora Water's PDF is water-only. Pick the
-    provider that matches the PDF you're uploading &mdash; a mismatched
-    PDF (or one that isn't a bill at all) is rejected up front, before
-    it ever reaches the AI extraction step. <strong>Any other provider</strong>
-    (electric, gas or water): choose "Other provider" and type its name. The AI
-    reads it the same way, and every such bill waits for you to check it
-    against the PDF and Confirm (or Re-extract with notes).
-</p>
-<p class="hint">
-    Unless you skip it, each bill then waits for you to check its figures against the PDF and
-    <strong>Confirm</strong> (correcting anything first), or <strong>Re-extract</strong> it, telling the AI what was
-    wrong. The PDF is deleted once every bill from it is confirmed.
-</p>
+<details class="about how-it-works">
+    <summary>Which provider to pick, and what happens next</summary>
+    <p>Xcel Energy's monthly PDF commonly combines electric + gas on one statement &mdash; that's expected, and becomes two
+        separate bills below once processed. Aurora Water's PDF is water-only. Pick the provider that matches the PDF
+        you're uploading &mdash; a mismatched PDF (or one that isn't a bill at all) is rejected up front, before it ever
+        reaches the AI extraction step. <strong>Any other provider</strong> (electric, gas or water): choose "Other
+        provider" and type its name. The AI reads it the same way, and every such bill waits for you to check it against
+        the PDF and Confirm (or Re-extract with notes).</p>
+    <p>Unless you skip it, each bill then waits for you to check its figures against the PDF and <strong>Confirm</strong>
+        (correcting anything first), or <strong>Re-extract</strong> it, telling the AI what was wrong. The PDF is deleted
+        once every bill from it is confirmed.</p>
+</details>
 <div id="utility-upload-result"></div>
 <script src="static/pages/utility-upload.js?v={{ app_version }}" data-acting-qs='{{ (acting_qs or "") | tojson }}'></script>
 

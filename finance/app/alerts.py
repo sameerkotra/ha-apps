@@ -1,7 +1,7 @@
 """Card payment reminders and subscription change notifications (SPEC.md section 31).
 
 The same machinery as the overdue statement reminders (statement_due.py, section 27), run by its one background loop
-(`statement_due.loop` calls `run_check` here after its own): each person chooses their own on Setup → Settings
+(`statement_due.loop` calls `run_check` here after its own): each person chooses their own on Settings → My settings
 (notify_prefs; no row = No notifications), only an account's owner is notified, everything due for a person in one
 check is one notification, each one is sent once (payment_reminders / subscription_alerts, so a restart never
 repeats one), a failed send is retried for six hours, a notification never carries an account number, and a tap

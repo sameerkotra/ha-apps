@@ -549,7 +549,7 @@ def test_transactions_come_a_page_at_a_time_with_the_full_total(env):
                       "('tester', ?, ?, ?, ?)", [(a, f"2026-08-{1 + i % 28:02d}", -1.0, f"ROW {i}") for i in range(250)])
     page = env.get("transactions?searched=1").text
     assert page.count('class="bulk-select"') == 100
-    assert "250 transactions" in page and "-250.00" in page and "Page 1 of 3" in page
+    assert "250 transactions" in page and "-$250.00" in page and "Page 1 of 3" in page
     page3 = env.get("transactions?searched=1&page=3").text
     assert page3.count('class="bulk-select"') == 50
     assert env.get("transactions?searched=1&size=1000").text.count('class="bulk-select"') == 250

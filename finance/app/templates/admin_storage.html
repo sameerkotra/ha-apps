@@ -2,65 +2,28 @@
 {% block title %}Storage (admin){% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block content %}
-{% from "_query_macros.html" import storage_tabs %}
-{{ storage_tabs("storage", acting_qs) }}
-<h1>Storage</h1>
-<p class="hint">
-    Admin-only. Every file still sitting on disk across all users &mdash;
-    statement PDFs and utility bill PDFs not yet cleaned up, and any CSV import that outlived
-    its own request (normally empty; see the hint below that table).
-    Total: {{ "%.1f"|format(total_bytes / 1048576) }} MB.
-</p>
+{% import "_nav_macros.html" as nav with context %}
+{{ nav.page_header("Storage", tabs=nav.admin_tabs("storage", acting_qs)) }}
+<div class="summary-strip storage-strip">
+    <div class="kpi"><span class="kpi-label">Files on disk</span><span class="kpi-value">{{ "%.1f"|format(total_bytes / 1048576) }} MB</span></div>
+    <div class="kpi"><span class="kpi-label">Statement PDFs</span><span class="kpi-value">{{ pdf_rows|length }}</span></div>
+    <div class="kpi"><span class="kpi-label">Utility bill PDFs</span><span class="kpi-value">{{ utility_rows|length }}</span></div>
+    <div class="kpi"><span class="kpi-label">Toll statement PDFs</span><span class="kpi-value">{{ toll_rows|length }}</span></div>
+</div>
+<details class="about how-it-works"><summary>What's listed here</summary>
+    <p>Every file still sitting on disk across all users: statement, utility bill and toll PDFs not yet cleaned up, and any
+        CSV import that outlived its own request (normally none).</p></details>
 
 {% if purged is defined and purged is not none %}
 <p class="hint">Deleted {{ purged }} PDF{{ "s" if purged != 1 else "" }} just now.</p>
 {% endif %}
 {% if imported %}
-<p class="hint" style="color: var(--accent);">Database imported successfully. Restart the app now so every
+<p class="notice" role="status">Database imported successfully. Restart the app now so every
     background worker picks up the imported data.</p>
 {% endif %}
 {% if import_error %}
-<p class="hint" style="color: var(--danger);">Import failed: {{ import_error }}</p>
+<p class="alert" role="alert">Import failed: {{ import_error }}</p>
 {% endif %}
-
-<h2>Database</h2>
-<p class="hint">
-    A full, consistent snapshot of the entire SQLite database &mdash;
-    every user's accounts, transactions, statements and rules &mdash;
-    for a manual backup or to open with an external SQLite tool.
-    Generated fresh on each click; nothing is kept on the server after
-    the download finishes.
-</p>
-<div class="card">
-    <a href="admin-storage-download-db" class="btn-secondary">Download database (.db)</a>
-</div>
-
-<h2>Import database</h2>
-<p class="hint">
-    Restores a previously-downloaded .db backup &mdash; mainly for
-    after reinstalling this app (a fresh install has no data of its
-    own until you import one). <strong>This replaces every user's
-    entire database at once and can't be undone</strong> &mdash; there
-    is no per-account or partial import, and whatever is currently
-    stored is gone the moment this finishes. Restart the app right
-    after importing so every background worker picks up the new data
-    instead of whatever it already had open.
-</p>
-<div class="card">
-    {# Asked before sending (base.js's data-confirm), besides the required checkbox. #}
-    <form method="post" action="admin-storage-import-db" enctype="multipart/form-data"
-          data-confirm="Replace ALL data for every user with this backup? This can't be undone.">
-        <input type="hidden" name="confirm" value="yes">
-        <div style="display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start;">
-            <input type="file" name="db_file" accept=".db" required>
-            <label style="font-size: 0.85rem; color: var(--text-dim); display: flex; align-items: center; gap: 0.5rem;">
-                <input type="checkbox" required>
-                I understand this replaces all data for every user and can't be undone.
-            </label>
-            <button type="submit" class="btn-secondary">Import database (.db)</button>
-        </div>
-    </form>
-</div>
 
 <h2>Statement PDFs</h2>
 {% if pdf_rows %}
@@ -84,7 +47,7 @@
                 <td data-label="">
                     <form method="post" action="admin-storage-delete-pdf">
                         <input type="hidden" name="id" value="{{ r.id }}">
-                        <button type="submit" class="restart-btn">Delete PDF</button>
+                        <button type="submit" class="btn-danger">Delete PDF</button>
                     </form>
                 </td>
             </tr>
@@ -120,7 +83,7 @@
                 <td data-label="">
                     <form method="post" action="admin-storage-delete-utility-pdf">
                         <input type="hidden" name="id" value="{{ r.id }}">
-                        <button type="submit" class="restart-btn">Delete PDF</button>
+                        <button type="submit" class="btn-danger">Delete PDF</button>
                     </form>
                 </td>
             </tr>
@@ -156,7 +119,7 @@
                 <td data-label="">
                     <form method="post" action="admin-storage-delete-toll-pdf">
                         <input type="hidden" name="id" value="{{ r.id }}">
-                        <button type="submit" class="restart-btn">Delete PDF</button>
+                        <button type="submit" class="btn-danger">Delete PDF</button>
                     </form>
                 </td>
             </tr>
@@ -191,7 +154,7 @@
                 <td data-label="">
                     <form method="post" action="admin-storage-delete-csv-orphan">
                         <input type="hidden" name="path" value="{{ c.path }}">
-                        <button type="submit" class="restart-btn">Delete</button>
+                        <button type="submit" class="btn-danger">Delete</button>
                     </form>
                 </td>
             </tr>
@@ -202,4 +165,46 @@
 {% else %}
 <p class="empty-state">No orphaned CSV files.</p>
 {% endif %}
+<h2>Backup</h2>
+<p class="hint">
+    A full, consistent snapshot of the entire SQLite database &mdash;
+    every user's accounts, transactions, statements and rules &mdash;
+    for a manual backup or to open with an external SQLite tool.
+    Generated fresh on each click; nothing is kept on the server after
+    the download finishes.
+</p>
+<div class="card">
+    <a href="admin-storage-download-db" class="btn-secondary">Download database (.db)</a>
+</div>
+
+
+<section class="danger-zone">
+<h3>Import database</h3>
+<p class="hint">
+    Restores a previously-downloaded .db backup &mdash; mainly for
+    after reinstalling this app (a fresh install has no data of its
+    own until you import one). <strong>This replaces every user's
+    entire database at once and can't be undone</strong> &mdash; there
+    is no per-account or partial import, and whatever is currently
+    stored is gone the moment this finishes. Restart the app right
+    after importing so every background worker picks up the new data
+    instead of whatever it already had open.
+</p>
+<div>
+    {# Asked before sending (base.js's data-confirm), besides the required checkbox. #}
+    <form method="post" action="admin-storage-import-db" enctype="multipart/form-data"
+          data-confirm="Replace ALL data for every user with this backup? This can't be undone.">
+        <input type="hidden" name="confirm" value="yes">
+        <div style="display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start;">
+            <input type="file" name="db_file" accept=".db" required>
+            <label style="font-size: 0.85rem; color: var(--text-dim); display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" required>
+                I understand this replaces all data for every user and can't be undone.
+            </label>
+            <button type="submit" class="btn-danger-outline">Import database (.db)</button>
+        </div>
+    </form>
+</div>
+
+</section>
 {% endblock %}

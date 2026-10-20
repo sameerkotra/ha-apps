@@ -1,12 +1,11 @@
 {% extends "base.html" %}
-{% from "_query_macros.html" import storage_tabs %}
+{% import "_nav_macros.html" as nav with context %}
 {% block title %}Users (admin){% endblock %}
 {% block main_class %}main-wide{% endblock %}
 {% block head_extra %}<link rel="stylesheet" href="static/common/person-data.css?v={{ app_version }}">{% endblock %}
 {% block content %}
 {% set qs = "?" + acting_qs if acting_qs else "" %}
-{{ storage_tabs("users", acting_qs) }}
-<h1>Users</h1>
+{{ nav.page_header("Users", tabs=nav.admin_tabs("users", acting_qs)) }}
 <p class="hint">Everyone who has opened the app. Give a regular user shared access to someone else's data and they
     open straight into it, with full rights (upload, edit, confirm, delete) &mdash; so a household doesn't upload the
     same statements twice. They can still switch to their own data. Admins don't need this: they use the user switch.</p>
@@ -36,7 +35,7 @@
                     <li><code>{{ svc }}</code>
                         <form method="post" action="user-notify-remove{{ qs }}" class="inline-form">
                             <input type="hidden" name="user_id" value="{{ u.id }}"><input type="hidden" name="service" value="{{ svc }}">
-                            <button type="submit" class="btn-secondary q-danger">Remove</button>
+                            <button type="submit" class="btn-danger">Remove</button>
                         </form></li>
                     {% endfor %}
                 </ul>
@@ -61,7 +60,7 @@
                     <form method="post" action="user-access-remove{{ qs }}" class="inline-form"
                           data-confirm="{{ ("Stop " ~ u.name ~ " using " ~ g.owner_name ~ "’s data?") }}">
                         <input type="hidden" name="viewer" value="{{ u.id }}"><input type="hidden" name="owner" value="{{ g.owner_id }}">
-                        <button type="submit" class="btn-secondary q-danger">Remove</button>
+                        <button type="submit" class="btn-danger">Remove</button>
                     </form>
                 </li>
                 {% endfor %}
@@ -88,7 +87,7 @@
 {% endif %}
 </div>
 {% if notify_choices %}<datalist id="notify-choices">{% for n in notify_choices %}<option value="{{ n }}">{% endfor %}</datalist>{% endif %}
-<p class="hint">Notify: where an overdue statement's reminder goes (Setup &rarr; Settings &rarr; My reminders), besides
+<p class="hint">Notify: where an overdue statement's reminder goes (Settings &rarr; My settings &rarr; My reminders), besides
     every phone Home Assistant links to the person (Settings &rarr; People &rarr; Track device).</p>
 {% if orphans %}
 <h2>Access for users no longer listed</h2>
@@ -97,7 +96,7 @@
     <li><code>{{ g.viewer_id }}</code> uses {{ g.owner_name }}'s data
         <form method="post" action="user-access-remove{{ qs }}" class="inline-form">
             <input type="hidden" name="viewer" value="{{ g.viewer_id }}"><input type="hidden" name="owner" value="{{ g.owner_id }}">
-            <button type="submit" class="btn-secondary q-danger">Remove</button>
+            <button type="submit" class="btn-danger">Remove</button>
         </form></li>
     {% endfor %}
 </ul>

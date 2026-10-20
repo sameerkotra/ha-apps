@@ -4,7 +4,7 @@ Kept separate from the finance routes on purpose (utility bills never touch
 accounts or transactions); parsing runs on the shared job queue (app/jobs.py).
 """
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -33,7 +33,9 @@ from .. import notices
 from .. import ai_usage, jobs, settings, storage
 
 router = APIRouter(dependencies=[Depends(_features.required("utilities"))])
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_privacy"] = _ai_client.privacy
 templates.env.globals["ai_configured"] = _settings.ai_configured
@@ -306,6 +308,26 @@ BILL_SORT_COLUMNS = [
 ]
 
 
+def _dashboard_strip(grouped: dict) -> dict:
+    """The Utilities dashboard's top line: each type's latest bill with the change against the same month a year
+    earlier, and this year's cost so far (every type)."""
+    year = str(date.today().year)
+    latest = []
+    ytd = 0.0
+    for kind in ("electric", "gas", "water"):
+        bills = [b for b in grouped[kind] if b["cost"] is not None and b["period_start_date"]]
+        ytd += sum(b["cost"] for b in bills if (b["period_end_date"] or b["period_start_date"])[:4] == year)
+        if not bills:
+            continue
+        last = bills[0]
+        month = last["period_start_date"][:7]
+        year_ago = f"{int(month[:4]) - 1}{month[4:]}"
+        before = next((b for b in bills if b["period_start_date"][:7] == year_ago), None)
+        latest.append({"kind": kind, "bill": last, "month": month,
+                       "change": (last["cost"] - before["cost"]) if before else None})
+    return {"latest": latest, "ytd": ytd, "year": year}
+
+
 @router.get("/utilities")
 def utilities_page(
     request: Request,
@@ -347,6 +369,7 @@ def utilities_page(
         grouped[key].append(b)
 
     processing = any(b["status"] == "processing" for b in bills)
+    strip = _dashboard_strip(grouped) if tab == "dashboard" else None
 
     # Upload tab: the whole history as one server-sorted, paged table.
     bill_view = None
@@ -358,7 +381,7 @@ def utilities_page(
         bills = bill_view.rows
 
     context = {
-        "bill_view": bill_view, "bill_sort_columns": BILL_SORT_COLUMNS, "processing": processing,
+        "bill_view": bill_view, "bill_sort_columns": BILL_SORT_COLUMNS, "processing": processing, "strip": strip,
         "user": acting, "bills": bills, "grouped": grouped, "providers": _all_providers(acting.id),
         "upload_providers": PROVIDERS, "tab": tab,
         "filter_provider": provider, "filter_utility_type": utility_type,

@@ -28,7 +28,7 @@ def test_each_value_is_saved_and_shown(env, method):
     assert _method(env, acct) == method
     row = env.get("accounts").text.split(f"Acct {method}</a>")[1].split("</tr>")[0]
     assert row.split('data-label="Preferred upload">')[1].split("</td>")[0].strip() == LABELS[method]
-    tab = env.get("transactions-accounts").text.split(f"Acct {method}")[1].split("</tr>")[0]
+    tab = env.get("accounts").text.split(f"Acct {method}")[1].split("</tr>")[0]
     assert LABELS[method] in tab.split('data-label="Preferred upload">')[1].split("</td>")[0]
     detail = env.get(f"account?id={acct}").text
     assert f'<option value="{method}" selected' in detail

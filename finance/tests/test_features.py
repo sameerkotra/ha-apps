@@ -143,9 +143,8 @@ def test_accounts_show_latest_live_transaction_date(env):
     env.txn(a, "2026-01-05", -1.0, "Old")
     env.txn(a, "2026-03-20", -1.0, "New")
     env.txn(a, "2026-06-01", -1.0, "Gone", deleted_at="2026-06-02 00:00:00")
-    r = env.get("transactions-accounts").text
+    r = env.get("accounts").text
     assert "Latest transaction" in r and "2026-03-20" in r and "2026-06-01" not in r
-    assert "Latest transaction" not in env.get("accounts").text          # moved off Setup → Accounts
 
 
 # ---- PDF viewer (rounds 103, 106) -------------------------------------------------------------

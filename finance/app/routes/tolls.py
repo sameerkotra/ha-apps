@@ -43,7 +43,9 @@ from .. import notices
 from .dashboard import _MONTH_RE, _YEAR_RE, month_label, month_range, resolve_period, year_range
 
 router = APIRouter(dependencies=[Depends(_features.required("tolls"))])
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_privacy"] = _ai_client.privacy
 templates.env.globals["ai_configured"] = _settings.ai_configured

@@ -1,4 +1,18 @@
-// Admin → App settings: the AI address placeholder follows the provider (blank = that provider's standard address).
+// Admin → App settings: the AI address placeholder follows the provider (blank = that provider's standard address),
+// and the sticky Save bar says when something is changed but not saved yet.
+(function () {
+    var form = document.getElementById("settings-form"), note = document.getElementById("settings-unsaved");
+    if (form && note) {
+        var mark = function (e) {
+            if (e.target.closest && e.target.closest(".settings-test-row")) return;
+            note.hidden = false;
+            var field = e.target.closest && e.target.closest(".settings-field");
+            if (field) field.classList.add("is-changed");
+        };
+        form.addEventListener("input", mark);
+        form.addEventListener("change", mark);
+    }
+})();
 (function () {
     var provider = document.getElementById("set-ai_provider"), url = document.getElementById("set-ai_url");
     if (!provider || !url) return;

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.14.0
+
+- **A clearer menu.** Home (Overview, Compare) · Money (Transactions, Transfers, Recurring) · Upload (Statements, Utility bill, Toll statement, Review) · Bills · Reports (Saved, New, Check) · Accounts · Settings (My settings, Categories & rules, How the app sees you) · Admin. On a phone the bar holds Home, Money, Upload and Reports; More has the rest, including the theme.
+- **Back on a phone closes what's open first:** the PDF viewer, Re-extract, the recurring dialog, the More panel and ⋯ menus. Sorting, paging and changing a filter no longer pile up Back steps.
+- **One Accounts page** instead of two, with Transactions and Upload on every row; Archive and Delete moved to the account's page, which now starts with Upload and Transactions and lists its statements by year (a period opens its transactions).
+- **Review is easier to find:** a blue count on Upload and on the Review tab, and a "to review" card on Home. Review counts what's waiting, hides empty sections, says "All clear", and approves a flagged row in one tap (or Edit & confirm).
+- **Transactions opens on this month** with This month / Last month / Uncategorized chips, totals (in, out, net) above the list, month headings with subtotals, and Exclude, transfer and recurring in each row's ⋯. Choosing an account or category applies at once, less-used filters fold away, and your last search comes back when you return from the menu.
+- **Home** starts with Income, Spend, Net and To review, shows Income and Spend side by side with the change against the period before, and the AI privacy note is one line you can hide. Transfer matching moved to Transfers.
+- **Money looks the same everywhere:** $1,234.56 with the minus in front and negatives in red. CSV exports are unchanged.
+- **Distinct page titles** (Upload statements, Upload utility bill, Upload toll statement); the Upload menu item always opens Statements. **New report** now opens under Reports. Admin opens App settings, which keeps its Save button in view and marks unsaved changes.
+- **Tidier pages:** long explanations fold into "How this works", errors look like errors, one red style for delete buttons, sticky Confirm bars on statement, utility and toll review pages, import results with counts and "View imported transactions", Recurring's monthly and weekly total up front, Utilities' latest bills and year to date on top (empty types hidden, yearly subtotals), AI usage's this month and last month first, Storage's import in a danger zone, Recently deleted's counts with Restore and Purge side by side.
+- **Phones:** money lists are compact rows (date and description left, amount right), the Rules filters fold into one, and totals rows read properly.
+- **Fixed:** debug pages and "return to your own view" lost the person an admin was viewing as.
+
 ## 1.13.1
 
 - Shared code updated (back navigation and page states) ahead of the navigation changes in the next version; nothing visible changes yet.

@@ -123,11 +123,11 @@ def test_this_months_total_the_12_month_count_and_the_rules_count(env):
     env.insert("category_rules", user_id="tester", pattern="CAFE", match_type="substring", category="Dining")
     page = cats(env)
     dining = row(panel(page, "spending"), "Dining")
-    assert cell(dining, "This month") == "20.00"
+    assert cell(dining, "This month") == "$20.00"
     assert cell(dining, "Last 12 months") == "5"
     assert cell(dining, "Rules") == "7"                    # 6 built-in (UBER EATS, STARBUCKS, …) and theirs
     salary = row(panel(page, "income"), "Salary")
-    assert cell(salary, "This month") == "2500.00" and cell(salary, "Last 12 months") == "1"
+    assert cell(salary, "This month") == "$2,500.00" and cell(salary, "Last 12 months") == "1"
     assert cell(salary, "Rules") == "4"
 
 

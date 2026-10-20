@@ -9,7 +9,7 @@
     <h2 class="pdf-title">{{ doc.title }}</h2>
 
     {% if error %}
-    <p class="empty-state">{{ error }}</p>
+    <p class="alert" role="alert">{{ error }}</p>
     {% else %}
     <div class="pdf-toolbar">
         {% if summary %}

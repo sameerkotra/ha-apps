@@ -27,7 +27,7 @@ from fastapi.templating import Jinja2Templates
 from .. import ai_client as _ai_client
 from .. import card_payments, statement_due, subscriptions
 
-from ..auth import User, get_current_user, get_acting_user
+from ..auth import User, get_current_user, get_acting_user, review_count
 from ..categorize import INCOME_SQL, NEUTRAL_COLOUR, SPEND_AMOUNT_SQL, SPEND_SQL, colours as category_colours
 from ..db import get_db
 from ..version import APP_VERSION
@@ -35,7 +35,9 @@ from ..matching import InflowIndex, find_transfer_candidates
 from .accounts import _acting_banner, _acting_qs
 
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 templates.env.globals["ai_privacy"] = _ai_client.privacy
 
@@ -86,6 +88,21 @@ def resolve_period(period: str, today: date) -> tuple[str, str, str, str]:
     if period.startswith("y:") and _YEAR_RE.match(period[2:]):
         return period, *year_range(period[2:]), "in " + period[2:]
     return "month", *month_range(today.isoformat()[:7]), "this month"
+
+
+def previous_period(key: str, start: str, end: str) -> tuple[str, str, str] | None:
+    """(start, end, label) of the period before this one, for Home's "change vs previous" — None for All time."""
+    if not start:
+        return None
+    s = date.fromisoformat(start)
+    if key == "week":
+        p = s - timedelta(days=7)
+        return p.isoformat(), (p + timedelta(days=6)).isoformat(), "last week"
+    if key in ("year", "last_year") or key.startswith("y:"):
+        y = str(s.year - 1)
+        return *year_range(y), y
+    month = (s.replace(day=1) - timedelta(days=1)).isoformat()[:7]
+    return *month_range(month), month_label(month)
 
 
 def available_periods(conn, user_id: str) -> tuple[list[str], list[str]]:
@@ -175,10 +192,10 @@ def dashboard(
         ).fetchone()
         category_rows = conn.execute(
             f"""
-            SELECT t.category AS category, COALESCE(SUM({spend_amount_expr}), 0) AS total
+            SELECT COALESCE(t.category, 'Uncategorized') AS category, COALESCE(SUM({spend_amount_expr}), 0) AS total
             FROM transactions t JOIN accounts a ON a.id = t.account_id
             WHERE {counted_where} AND {spend_filter}
-            GROUP BY t.category ORDER BY total DESC
+            GROUP BY COALESCE(t.category, 'Uncategorized') ORDER BY total DESC
             """,
             params,
         ).fetchall()
@@ -202,6 +219,21 @@ def dashboard(
             """,
             params,
         ).fetchone()
+
+        # The same two totals for the period before, for "change vs previous" (none for All time)
+        previous = None
+        prev = previous_period(safe_period, drill_start_date, drill_end_date)
+        if prev:
+            pwhere = counted_where          # the same filters; only the two dates (params 1 and 2) change
+            pparams = list(params)
+            pparams[1], pparams[2] = prev[0], prev[1]
+            prev_spend = conn.execute(
+                f"SELECT COALESCE(SUM({spend_amount_expr}), 0) FROM transactions t JOIN accounts a ON a.id = t.account_id "
+                f"WHERE {pwhere} AND {spend_filter}", pparams).fetchone()[0]
+            prev_income = conn.execute(
+                f"SELECT COALESCE(SUM(t.amount), 0) FROM transactions t JOIN accounts a ON a.id = t.account_id "
+                f"WHERE {pwhere} AND {INCOME_SQL}", pparams).fetchone()[0]
+            previous = {"label": prev[2], "income": prev_income, "spend": prev_spend}
 
         # Unambiguous pairs were linked when the data changed (matching.relink),
         # so whatever still has a candidate is genuinely ambiguous and needs a
@@ -249,6 +281,8 @@ def dashboard(
             "drill_start_date": drill_start_date,
             "drill_end_date": drill_end_date,
             "unmatched_transfer_count": unmatched_transfer_count,
+            "previous": previous,
+            "review_count": review_count(acting.id),
             "just_matched": int(matched) if matched.isdigit() else None,
             "overdue": overdue, "due_next": "dashboard", "payments_due": payments_due,
             "sub_changes": sub_changes, "sub_next": "dashboard",

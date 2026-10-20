@@ -60,61 +60,50 @@
     </div>
     {% endif %}
     {% set feat = request.state.features if request.state.features is defined else {"utilities": true, "tolls": true} %}
-    {% set upload_page = "uploads" if active_page == "uploads" and request.url.path.endswith("/uploads")
-        else ("utilities?tab=upload" if active_page == "utilities" and tab == "upload" and request.url.path.endswith("/utilities")
-        else ("tolls?tab=upload" if active_page == "tolls" and tab == "upload" and request.url.path.endswith("/tolls") else "")) %}
-    <nav class="sidenav" data-upload-here='{{ upload_page | tojson }}' data-acting-qs='{{ acting_qs | default("") | tojson }}'
-         data-upload-pages='{{ (["uploads"] + (["utilities?tab=upload"] if feat.utilities else []) + (["tolls?tab=upload"] if feat.tolls else [])) | tojson }}'>
+    <nav class="sidenav" data-acting-qs='{{ acting_qs | default("") | tojson }}' data-acting-user='{{ (user.id if user and acting_qs else "") | tojson }}'>
         <div class="brand"><span class="brand-text">Finance</span></div>
         <button type="button" id="nav-collapse-toggle" class="nav-collapse-toggle" title="Collapse navigation" aria-label="Collapse navigation">
             <span aria-hidden="true">&#171;</span>
         </button>
         <!-- Scroll container separate from the fixed .sidenav (see the mobile
              media query in style.css). -->
-        {# Six sections (SPEC.md section 13); every page says which one it belongs to via active_page. #}
-        {% set section = {"dashboard": "home", "transactions": "transactions", "transfers": "transactions",
-                          "recurring": "transactions", "review": "upload", "transactions_accounts": "transactions", "uploads": "upload",
-                          "reports": "reports", "accounts": "setup", "categories": "setup", "my_settings": "setup",
+        {# The sections (SPEC.md section 13); every page says which one it belongs to via active_page.
+           Phones show Home, Money, Upload, Reports and More; the rest live in the More panel. #}
+        {% set section = {"dashboard": "home", "transactions": "money", "transfers": "money",
+                          "recurring": "money", "review": "upload", "uploads": "upload",
+                          "reports": "reports", "accounts": "accounts", "transactions_accounts": "accounts",
+                          "categories": "settings", "my_settings": "settings", "whoami": "settings",
                           "admin_storage": "admin", "recently_deleted": "admin", "ai_usage": "admin", "settings": "admin"}.get(active_page, "") %}
         {% if active_page in ("utilities", "tolls") %}{% set section = "upload" if tab == "upload" else "bills" %}{% endif %}
+        {% macro nav_link(href, key, title, icon, label, extra="") -%}
+        <a href="{{ href }}" class="nav-item {{ extra }} {{ 'active' if section == key }}"{% if section == key %} aria-current="page"{% endif %} title="{{ title }}">
+            <span class="nav-icon" aria-hidden="true">{{ icon }}</span>
+            <span class="nav-label">{{ label }}</span>{{ caller() if caller is defined else "" }}
+        </a>
+        {%- endmacro %}
         <div class="nav-items">
-        <a href="dashboard{{ qs }}" class="nav-item {{ 'active' if section == 'home' }}" title="Home">
-            <span class="nav-icon" aria-hidden="true">&#127968;</span>
-            <span class="nav-label">Home</span>
-        </a>
-        <a href="transactions{{ qs }}" class="nav-item {{ 'active' if section == 'transactions' }}" title="Transactions">
-            <span class="nav-icon" aria-hidden="true">&#128203;</span>
-            <span class="nav-label">Transactions</span>
-        </a>
-        <a href="uploads{{ qs }}" data-upload-nav class="nav-item {{ 'active' if section == 'upload' }}" title="Upload">
-            <span class="nav-icon" aria-hidden="true">&#128228;</span>
-            <span class="nav-label">Upload</span>
+        {{ nav_link("dashboard" ~ qs, "home", "Home", "🏠", "Home") }}
+        {{ nav_link("transactions" ~ qs, "money", "Money: transactions, transfers and recurring", "📋", "Money") }}
+        {% call nav_link("uploads" ~ qs, "upload", "Upload", "📤", "Upload") %}
             {% set overdue_n = request.state.statement_badge() if request.state.statement_badge is defined else 0 %}
+            {% set review_n = request.state.review_badge() if request.state.review_badge is defined else 0 %}
             {% if overdue_n %}<span class="nav-badge" title="{{ overdue_n }} statement{{ 's' if overdue_n != 1 }} overdue"
                 aria-label="{{ overdue_n }} overdue">{{ overdue_n }}</span>{% endif %}
-        </a>
+            {% if review_n %}<span class="nav-badge nav-badge-review{{ ' nav-badge-second' if overdue_n }}" title="{{ review_n }} waiting for review"
+                aria-label="{{ review_n }} to review">{{ review_n }}</span>{% endif %}
+        {% endcall %}
         {% if feat.utilities or feat.tolls %}
-        <a href="{{ 'utilities' if feat.utilities else 'tolls' }}?tab=dashboard{{ '&' + acting_qs if acting_qs else '' }}" class="nav-item {{ 'active' if section == 'bills' }}"
-           title="Bills: {{ 'utilities and tolls' if feat.utilities and feat.tolls else ('utilities' if feat.utilities else 'tolls') }}">
-            <span class="nav-icon" aria-hidden="true">&#129534;</span>
-            <span class="nav-label">Bills</span>
-        </a>
+        {{ nav_link(("utilities" if feat.utilities else "tolls") ~ "?tab=dashboard" ~ ("&" + acting_qs if acting_qs else ""), "bills",
+                    "Bills: " ~ ("utilities and tolls" if feat.utilities and feat.tolls else ("utilities" if feat.utilities else "tolls")),
+                    "🧾", "Bills", "nav-desktop-only") }}
         {% endif %}
-        <a href="reports{{ qs }}" class="nav-item {{ 'active' if section == 'reports' }}" title="Reports">
-            <span class="nav-icon" aria-hidden="true">&#128202;</span>
-            <span class="nav-label">Reports</span>
-        </a>
-        <a href="accounts{{ qs }}" class="nav-item nav-desktop-only {{ 'active' if section == 'setup' }}" title="Setup: accounts, categories and settings">
-            <span class="nav-icon" aria-hidden="true">&#9881;&#65039;</span>
-            <span class="nav-label">Setup</span>
-        </a>
+        {{ nav_link("reports" ~ qs, "reports", "Reports", "📊", "Reports") }}
+        {{ nav_link("accounts" ~ qs, "accounts", "Accounts", "🏦", "Accounts", "nav-desktop-only") }}
+        {{ nav_link("my-settings" ~ qs, "settings", "Settings: my settings, categories and rules", "⚙️", "Settings", "nav-desktop-only") }}
         {% if request.state.is_real_admin %}
-        <a href="admin-storage{{ qs }}" class="nav-item nav-desktop-only {{ 'active' if section == 'admin' }}" title="Admin: storage, query, users, recently deleted, AI usage, app settings">
-            <span class="nav-icon" aria-hidden="true">&#128272;</span>
-            <span class="nav-label">Admin</span>
-        </a>
+        {{ nav_link("settings" ~ qs, "admin", "Admin: app settings, users, storage, query, recently deleted, AI usage", "🔐", "Admin", "nav-desktop-only") }}
         {% endif %}
-        <button type="button" class="nav-item nav-mobile-only nav-more-btn {{ 'active' if section in ('setup', 'admin') }}"
+        <button type="button" class="nav-item nav-mobile-only nav-more-btn {{ 'active' if section in ('accounts', 'bills', 'settings', 'admin') }}"
                 aria-expanded="false" aria-controls="nav-more" title="More">
             <span class="nav-icon" aria-hidden="true">&#8943;</span>
             <span class="nav-label">More</span>
@@ -131,29 +120,33 @@
         {% endif %}
     </nav>
     {% if user %}
-    {# Phones: the bottom bar holds the five everyday sections; everything else lives here. #}
+    {# Phones: the bottom bar holds Home, Money, Upload and Reports; everything else lives here. #}
     <div id="nav-more" class="nav-more" hidden>
         <div class="nav-more-group">
-            <div class="panel-title">Setup</div>
-            <a href="accounts{{ qs }}">Accounts</a>
-            <a href="categories{{ qs }}">Categories</a>
-            <a href="my-settings{{ qs }}">Settings</a>
+            <a href="accounts{{ qs }}"{% if section == "accounts" %} aria-current="page"{% endif %}>Accounts</a>
+            {% if feat.utilities %}<a href="utilities?tab=dashboard{{ '&' + acting_qs if acting_qs else '' }}">Bills &middot; Utilities</a>{% endif %}
+            {% if feat.tolls %}<a href="tolls?tab=dashboard{{ '&' + acting_qs if acting_qs else '' }}">Bills &middot; Tolls</a>{% endif %}
+        </div>
+        <div class="nav-more-group">
+            <div class="panel-title">Settings</div>
+            <a href="my-settings{{ qs }}">My settings</a>
+            <a href="categories{{ qs }}">Categories &amp; rules</a>
         </div>
         {% if request.state.is_real_admin %}
         <div class="nav-more-group">
             <div class="panel-title">Admin</div>
+            <a href="settings{{ qs }}">App settings</a>
+            <a href="admin-storage?tab=users{{ '&' + acting_qs if acting_qs else '' }}">Users</a>
             <a href="admin-storage{{ qs }}">Storage</a>
             <a href="admin-storage?tab=query{{ '&' + acting_qs if acting_qs else '' }}">Query</a>
-            <a href="admin-storage?tab=users{{ '&' + acting_qs if acting_qs else '' }}">Users</a>
             <a href="recently-deleted{{ qs }}">Recently deleted</a>
             <a href="ai-usage{{ qs }}">AI usage</a>
-            <a href="settings{{ qs }}">App settings</a>
         </div>
         {% endif %}
         <div class="nav-more-group">
             <div class="panel-title">You</div>
             <a href="whoami{{ qs }}">{{ user.name }}{% if user.is_admin %} (admin){% endif %} &middot; how the app sees you</a>
-            <select class="theme-select" title="Theme" aria-label="Theme"></select>
+            <label class="nav-more-theme">Theme <select class="theme-select" title="Theme" aria-label="Theme"></select></label>
             <span class="nav-version">v{{ app_version }}</span>
         </div>
     </div>
@@ -169,13 +162,14 @@
             </div>
         {% endif %}
         {% if acting_as_banner %}
+            {% set here = without_as_user(request.url.path ~ ("?" ~ request.url.query if request.url.query else "")) if request.method == "GET" else "dashboard" %}
             <div class="acting-banner">
                 {% if request.state.is_real_admin %}
                 Viewing as <strong>{{ acting_as_banner }}</strong> —
-                <a href="accounts">return to your own view</a>
+                <a href="{{ here }}">return to your own view</a>
                 {% else %}
                 Using <strong>{{ acting_as_banner }}</strong>'s data (shared with you) —
-                <a href="accounts{{ request.state.own_data_qs }}">switch to your own data</a>
+                <a href="{{ here | with_qs(request.state.own_data_qs[1:]) }}">switch to your own data</a>
                 {% endif %}
             </div>
         {% endif %}
@@ -212,6 +206,7 @@
         </div>
     </div>
     {# The page's behaviour (no inline scripts: see the Content-Security-Policy in main.py). #}
+    <script src="static/common/backnav.js?v={{ app_version }}"></script>
     <script src="static/common/deeplink.js?v={{ app_version }}"></script>
     <script src="static/base.js?v={{ app_version }}"></script>
     <script src="static/common/ui.js?v={{ app_version }}" defer></script>

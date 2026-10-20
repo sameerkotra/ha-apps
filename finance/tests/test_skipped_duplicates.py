@@ -36,7 +36,7 @@ def test_repeated_line_is_kept_for_review_and_can_be_inserted(env, fake_vision):
         row = c.execute("SELECT statement_id, review_status FROM transactions WHERE description='COFFEE' "
                         "ORDER BY id DESC").fetchone()
         assert tuple(row) == (sid, "clean")
-    assert "Nothing skipped on this statement." in env.get(f"review?statement_id={sid}").text
+    assert 'id="skipped"' not in env.get(f"review?statement_id={sid}").text      # an empty section isn't shown
     # a second click does nothing
     env.post("skipped-duplicate-insert", data={"id": str(did)})
     assert _txns(env, "COFFEE") == 2
@@ -52,7 +52,7 @@ def test_on_file_match_and_dismiss(env, fake_vision):
     with env.db() as c:
         did = c.execute("SELECT id FROM skipped_duplicates WHERE statement_id = ?", (sid,)).fetchone()[0]
     env.post("skipped-duplicate-dismiss", data={"id": str(did)})
-    assert "GROCER" not in env.get("review").text.split('id="skipped"')[1]
+    assert "GROCER" not in (env.get("review").text.split('id="skipped"') + [""])[1]
     assert _txns(env, "GROCER") == 1
 
 
@@ -144,7 +144,7 @@ def test_bulk_keep_skipped(env):
     acct, ids = _three_skipped(env)
     env.post("skipped-duplicates-bulk", data={"action": "dismiss", "ids": [str(i) for i in ids]})
     assert set(_status(env).values()) == {"dismissed"}
-    assert "Nothing skipped as a possible duplicate." in env.get("review").text
+    assert 'id="skipped"' not in env.get("review").text and "All clear" in env.get("review").text
     assert _txns(env, "COFFEE 2026-08-01") == 1
 
 

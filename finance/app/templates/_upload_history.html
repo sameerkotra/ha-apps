@@ -18,42 +18,7 @@
 {%- endmacro %}
 
 <div id="upload-history-wrap">
-<section id="upload-waiting" class="waiting-section" aria-labelledby="waiting-title"{% if not waiting %} hidden{% endif %}>
-    {% if waiting %}
-    <h2 id="waiting-title">Waiting for you <span class="count-pill">{{ waiting | length + waiting_more }}</span></h2>
-    <ul class="waiting-list" id="waiting-list">
-        {% for r in waiting %}
-        {% set s = r.s %}
-        <li class="waiting-item waiting-{{ r.state }}" id="waiting-{{ s.id }}" data-statement-id="{{ s.id }}">
-            <span class="waiting-what">
-                <span class="type-badge source-{{ r.kind }}">{{ kind_label[r.kind] }}</span>
-                <span class="waiting-file">{{ r.file or "—" }}</span>
-                <span class="hint">{{ r.account }}{% if r.period %} &middot; {{ r.period }}{% endif %}</span>
-            </span>
-            {% if r.state == "awaiting" %}
-            <span class="status-badge status-pending_review">Awaiting confirmation</span>
-            <span class="waiting-actions">
-                {% if s.has_pdf %}<button type="button" class="btn-secondary pdf-open-btn" data-pdf-url="pdf-view?kind=statement&amp;id={{ s.id }}&amp;embed=1{{ amp }}">Open PDF</button>{% endif %}
-                <a href="statement-confirm?id={{ s.id }}{{ amp }}" class="btn-secondary waiting-confirm">Confirm</a>
-            </span>
-            {% elif r.state == "review" %}
-            <span class="status-badge status-pending_review">Needs review</span>
-            <span class="waiting-actions">
-                <a href="review?statement_id={{ s.id }}{{ amp }}" class="btn-secondary waiting-review">Review</a>
-            </span>
-            {% else %}
-            <span class="status-badge status-error" title="{{ s.error_message or '' }}">Failed</span>
-            <span class="waiting-actions">
-                {% if r.kind == "pdf" %}<button type="button" class="btn-secondary waiting-restart" data-url="statement-restart?id={{ s.id }}{{ amp }}">Restart</button>{% endif %}
-                <a href="statement-delete-confirm?id={{ s.id }}{{ amp }}" class="btn-secondary">Delete</a>
-            </span>
-            {% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    {% if waiting_more %}<p class="hint"><a href="uploads?h_status=waiting{{ amp }}#upload-history" data-history-link>and {{ waiting_more }} more</a></p>{% endif %}
-    {% endif %}
-</section>
+{% if not waiting_above %}{% include "_upload_waiting.html" %}{% endif %}
 
 <section id="upload-history" class="history-section" aria-labelledby="history-title">
     <h2 id="history-title">Upload history</h2>
@@ -92,8 +57,8 @@
                 <td data-label="Uploaded" class="nowrap" title="{{ c.imported_at }}">{{ (c.imported_at or "")[:10] }}</td>
                 <td data-label="Period">{{ r.period or "—" }}</td>
                 <td data-label="Transactions" class="count-cell">{{ c.row_count }} imported</td>
-                <td data-label="Money in" class="money-cell">{{ "%.2f"|format(r.money_in) if c.row_count else "—" }}</td>
-                <td data-label="Money out" class="money-cell">{{ "%.2f"|format(r.money_out) if c.row_count else "—" }}</td>
+                <td data-label="Money in" class="money-cell">{{ (r.money_in)|money if c.row_count else "—" }}</td>
+                <td data-label="Money out" class="money-cell">{{ (r.money_out)|money if c.row_count else "—" }}</td>
                 <td data-label="Status">
                     {% if c.fatal_error %}
                     <span class="status-badge status-error" title="{{ c.fatal_error }}">Failed</span>
@@ -103,7 +68,7 @@
                     <span class="status-badge status-pending_review">{% if c.duplicate_count %}{{ c.duplicate_count }} duplicate{{ "s" if c.duplicate_count != 1 else "" }}{% endif %}{% if c.skipped_status_count %}{% if c.duplicate_count %}, {% endif %}{{ c.skipped_status_count }} not posted/cleared{% endif %}{% if c.error_count %}{% if c.duplicate_count or c.skipped_status_count %}, {% endif %}{{ c.error_count }} error{{ "s" if c.error_count != 1 else "" }}{% endif %}</span>
                     {% endif %}
                 </td>
-                <td data-label="" class="actions-cell"><a href="csv-import-delete-confirm?id={{ c.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="restart-btn">Delete</a>{% if is_admin %} <a href="csv-import-debug?id={{ c.id }}" class="debug-link">debug</a>{% endif %}</td>
+                <td data-label="" class="actions-cell">{% if is_admin %}<a href="{{ ('csv-import-debug?id=' ~ c.id) | with_qs(acting_qs) }}" class="debug-link">debug</a> {% endif %}<a href="csv-import-delete-confirm?id={{ c.id }}{% if acting_qs %}&amp;{{ acting_qs }}{% endif %}" class="btn-danger">Delete</a></td>
             </tr>
             {% else %}
             {% set s = r.s %}

@@ -33,7 +33,9 @@ from .accounts import _acting_banner, _acting_qs
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+from ..template_filters import install as _install_filters
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_install_filters(templates.env)
 templates.env.globals["app_version"] = APP_VERSION
 
 
@@ -49,6 +51,7 @@ def list_transfers(
     link_error: str = "",
     link_side: str = "",
     link_id: str = "",
+    matched: str = "",
     current: User = Depends(get_current_user),
     acting: User = Depends(get_acting_user),
 ):
@@ -171,6 +174,7 @@ def list_transfers(
             "highlight_txn_id": highlight_txn_id,
             "dates_sent": not defaulted_to_this_month,
             "just_linked": just_linked,
+            "just_matched": int(matched) if matched.isdigit() else None,
             "link_error": link_error_text,
             "impersonation_qs_value": acting.id if acting.id != current.id else "",
             "acting_as_banner": _acting_banner(current, acting),
