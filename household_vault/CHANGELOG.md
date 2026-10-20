@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.2
+
+- **Picking a folder no longer reloads the sidebar.** Only the highlight moves, so a long list of vaults and folders stays where you scrolled it; when the sidebar does redraw (new counts, a folder opened or closed) it keeps its place too.
+
 ## 2.3.1
 
 - **Retry, empty-page and confirm buttons look right again.**

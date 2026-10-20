@@ -658,10 +658,25 @@ async function emergencyNotice() {
 function toggleNav() { state.navOpen = !state.navOpen; $("#shell").classList.toggle("nav-open", state.navOpen); }
 function closeNav() { if (state.navOpen) toggleNav(); }
 
+// active: true/false, or a function saying whether the item is the current view — kept on the button, so picking
+// another view only moves the highlight (markSidebar) instead of rebuilding the sidebar and losing its scroll.
 function navItem(icon, label, active, onclick, count, extra) {
-  return h("button", { class: "nav-item" + (active ? " active" : ""), type: "button", onclick, "aria-current": active ? "page" : null },
+  const on = typeof active === "function" ? active() : active;
+  const btn = h("button", { class: "nav-item" + (on ? " active" : ""), type: "button", onclick, "aria-current": on ? "page" : null },
     h("span", { class: "ico", "aria-hidden": "true" }, icon), h("span", { class: "nm" }, label),
     count !== undefined && count !== null ? h("span", { class: "count" }, String(count)) : null, extra || null);
+  if (typeof active === "function") btn._isActive = active;
+  return btn;
+}
+function markSidebar() {
+  const sb = $("#sidebar");
+  if (!sb || !sb.querySelector(".nav-item")) { renderSidebar(); return; }
+  sb.querySelectorAll(".nav-item").forEach((b) => {
+    if (!b._isActive) return;
+    const on = !!b._isActive();
+    b.classList.toggle("active", on);
+    if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
 }
 function isView(kind, vaultId, folderId, type) {
   if (state.page !== "vault") return false;
@@ -671,6 +686,8 @@ function isView(kind, vaultId, folderId, type) {
 function renderSidebar() {
   const sb = $("#sidebar");
   if (!sb) return;
+  // a rebuild (counts, a folder opened or closed) keeps the sidebar where it was scrolled to
+  const scrolled = [sb.scrollTop, (sb.querySelector(".side-scroll") || {}).scrollTop || 0];
   const theme = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
   const tagsHidden = state.expanded.__tags === undefined ? isPhone() : state.expanded.__tags === false;
   const vaultBlocks = state.vaults.map((v) => {
@@ -678,7 +695,7 @@ function renderSidebar() {
     const expanded = state.expanded[v.id] !== false;
     const head = h("div", { class: "vault-head" },
       v.open ? h("button", { class: "twisty", type: "button", "aria-label": expanded ? "Collapse" : "Expand", onclick: () => { state.expanded[v.id] = !expanded; renderSidebar(); } }, expanded ? "▾" : "▸") : h("span", { class: "twisty" }),
-      navItem(v.open ? vaultIcon(v) : "🔒", v.name, isView("folder", v.id, null), () => v.open ? setView({ kind: "folder", vaultId: v.id, folderId: null }) : openLockedVault(v),
+      navItem(v.open ? vaultIcon(v) : "🔒", v.name, () => isView("folder", v.id, null), () => v.open ? setView({ kind: "folder", vaultId: v.id, folderId: null }) : openLockedVault(v),
         v.open && f ? f.rootCount + f.folders.reduce((a, x) => a + x.count, 0) : null),
       h("button", { class: "icon-btn", type: "button", "aria-label": `${v.name} options`, onclick: (e) => vaultMenu(e.currentTarget, v) }, "⋯"));
     if (v.open) dropTarget(head, { vaultId: v.id, folderId: null, name: v.name });
@@ -691,7 +708,7 @@ function renderSidebar() {
         const hasKids = kids(fo.id).length > 0;
         const row = h("div", { class: "vault-head" },
           h("span", { class: "twisty" }, ""),
-          navItem(hasKids ? (collapsed(fo.id) ? "📁" : "📂") : "📁", fo.name, isView("folder", v.id, fo.id), () => setView({ kind: "folder", vaultId: v.id, folderId: fo.id }), fo.count || null),
+          navItem(hasKids ? (collapsed(fo.id) ? "📁" : "📂") : "📁", fo.name, () => isView("folder", v.id, fo.id), () => setView({ kind: "folder", vaultId: v.id, folderId: fo.id }), fo.count || null),
           canEdit(v) ? h("button", { class: "icon-btn", type: "button", "aria-label": `${fo.name} options`, onclick: (e) => folderMenu(e.currentTarget, v, fo) }, "⋯") : null);
         row.firstChild.textContent = hasKids ? (collapsed(fo.id) ? "▸" : "▾") : "";
         if (hasKids) { row.firstChild.classList.add("clickable"); row.firstChild.addEventListener("click", () => { state.expanded[v.id + ":" + fo.id] = collapsed(fo.id); renderSidebar(); }); }
@@ -710,7 +727,7 @@ function renderSidebar() {
     };
     walk(null, 1);
     if (f.trashCount || canEdit(v)) {
-      const t = h("div", { class: "vault-head trash-row" }, h("span", { class: "twisty" }), navItem("🗑", "Trash", isView("trash", v.id), () => setView({ kind: "trash", vaultId: v.id }), f.trashCount || null));
+      const t = h("div", { class: "vault-head trash-row" }, h("span", { class: "twisty" }), navItem("🗑", "Trash", () => isView("trash", v.id), () => setView({ kind: "trash", vaultId: v.id }), f.trashCount || null));
       pad(t, 1);
       if (canEdit(v)) dropTarget(t, { vaultId: v.id, trash: true, name: "Trash" });
       tree.appendChild(t);
@@ -720,12 +737,12 @@ function renderSidebar() {
   mount(sb,
     h("div", { class: "side-top" }, h("span", { "aria-hidden": "true" }, "🔐"), h("span", { class: "brand" }, "Household Vault")),
     h("div", { class: "side-scroll" },
-      navItem("🗂", "All items", isView("all"), () => setView({ kind: "all" })),
-      navItem("⭐", "Favourites", isView("fav"), () => setView({ kind: "fav" })),
-      navItem("🕘", "Recently used", isView("recent"), () => setView({ kind: "recent" })),
-      navItem("🗓", "Expiring", isView("expiring"), () => setView({ kind: "expiring" }), state.expiringCount || null),
-      navItem("🩺", "Password health", state.page === "health", () => showPage("health"), state.health && state.health.items.length ? state.health.items.length : null),
-      state.me.guestWifi ? navItem("📶", "Guest Wi-Fi", state.page === "guest", () => showPage("guest")) : null,
+      navItem("🗂", "All items", () => isView("all"), () => setView({ kind: "all" })),
+      navItem("⭐", "Favourites", () => isView("fav"), () => setView({ kind: "fav" })),
+      navItem("🕘", "Recently used", () => isView("recent"), () => setView({ kind: "recent" })),
+      navItem("🗓", "Expiring", () => isView("expiring"), () => setView({ kind: "expiring" }), state.expiringCount || null),
+      navItem("🩺", "Password health", () => state.page === "health", () => showPage("health"), state.health && state.health.items.length ? state.health.items.length : null),
+      state.me.guestWifi ? navItem("📶", "Guest Wi-Fi", () => state.page === "guest", () => showPage("guest")) : null,
       h("div", { class: "nav-sec" }, h("span", { class: "grow" }, "Vaults"),
         h("button", { class: "icon-btn", type: "button", title: "New shared vault", "aria-label": "New shared vault", onclick: newVaultDialog }, "＋")),
       vaultBlocks,
@@ -733,12 +750,15 @@ function renderSidebar() {
       state.tags && state.tags.length ? [
         h("div", { class: "nav-sec" }, h("span", { class: "grow" }, "Tags"),
           h("button", { class: "icon-btn twisty-btn", type: "button", "aria-expanded": tagsHidden ? "false" : "true", "aria-label": tagsHidden ? "Show tags" : "Hide tags", onclick: () => { state.expanded.__tags = tagsHidden; renderSidebar(); } }, tagsHidden ? "▸" : "▾")),
-        tagsHidden ? null : state.tags.slice(0, 30).map((t) => navItem("🏷", t.tag, state.page === "vault" && state.view.kind === "tag" && state.view.tag === t.tag, () => setView({ kind: "tag", tag: t.tag }), t.count))] : null),
+        tagsHidden ? null : state.tags.slice(0, 30).map((t) => navItem("🏷", t.tag, () => () => state.page === "vault" && state.view.kind === "tag" && state.view.tag === t.tag, () => setView({ kind: "tag", tag: t.tag }), t.count))] : null),
     h("div", { class: "side-foot" },
-      navItem("⚙️", "Settings", state.page === "settings", () => showPage("settings")),
-      state.me.isAdmin ? navItem("🛡", "Admin", state.page === "admin", () => showPage("admin")) : null,
-      navItem("👤", state.me.name, state.page === "whoami", () => showPage("whoami")),
+      navItem("⚙️", "Settings", () => state.page === "settings", () => showPage("settings")),
+      state.me.isAdmin ? navItem("🛡", "Admin", () => state.page === "admin", () => showPage("admin")) : null,
+      navItem("👤", state.me.name, () => state.page === "whoami", () => showPage("whoami")),
       theme));
+  sb.scrollTop = scrolled[0];
+  const sc = sb.querySelector(".side-scroll");
+  if (sc) sc.scrollTop = scrolled[1];
 }
 function pad(row, depth) { row.style.paddingLeft = (depth * 12) + "px"; }
 
@@ -766,7 +786,7 @@ async function setView(view, opts = {}) {
   closeNav();
   clearInterval(state.healthPoll);
   if (view.kind !== "search") { state.q = ""; const sb = $("#search"); if (sb) sb.value = ""; }
-  renderSidebar();
+  markSidebar();
   setHash(opts);
   await loadItems();
 }
@@ -2228,7 +2248,7 @@ async function showPage(page, anchor, opts = {}) {
   const tok = ++state.pageTok;
   closeNav();
   clearInterval(state.healthPoll); clearInterval(state.totpTimer); clearInterval(state.listTotpTimer);
-  renderSidebar();
+  markSidebar();
   setHash(opts);
   const c = $("#content");
   c.className = "page-host";

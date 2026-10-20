@@ -63,7 +63,7 @@ def confirm_master(conn, admin: dict, password: str | None, bootstrap_ok: bool =
     service.check_master_password(conn, admin["id"], ov, password or "", "That isn't your master password.")
 
 router = APIRouter(prefix="/api", tags=["admin"])
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 _last_sync = {"t": 0.0}
 
 

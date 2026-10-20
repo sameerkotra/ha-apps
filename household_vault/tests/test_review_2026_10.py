@@ -742,7 +742,7 @@ class Limits(ApiTestCase):
         self.ok(self.post("/api/strength", {"password": "x" * 900}))
 
     def test_static_files_with_a_version_are_cached(self):
-        r = self.client.get("/app.js?v=2.3.1", headers=headers(ADMIN))
+        r = self.client.get("/app.js?v=2.3.2", headers=headers(ADMIN))
         self.assertEqual(r.headers.get("cache-control"), "public, max-age=31536000, immutable")
         r = self.client.get("/", headers=headers(ADMIN))
         self.assertIn("no-store", r.headers.get("cache-control", ""))
