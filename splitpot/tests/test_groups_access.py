@@ -88,6 +88,29 @@ class MembersOnly(Linked):
         self.assertEqual(self.c.delete(f"/api/groups/{r.json()['id']}/members/a", headers=ALICE).status_code, 400)
 
 
+class GroupsListStanding(Linked):
+    """The Groups list says where the viewer stands in each group, and when each group last changed."""
+
+    def test_my_balance_and_last_activity(self):
+        self.expense(amount=30, paid_by="a")                      # Ann +20, Ben -10, Cat -10
+        trip = self.c.post("/api/groups", json={"name": "Trip", "memberIds": ["b", "c"]}, headers=ALICE).json()["id"]
+        by = lambda who: {g["id"]: g for g in self.c.get("/api/groups", headers=who).json()}
+        ann, ben, xav = by(ALICE), by(BEN), by(XAVIER)
+        self.assertEqual(ann[self.gid]["myBalance"], 20.0)
+        self.assertIsNone(ann[trip]["myBalance"])                  # Ann has no part in Trip
+        self.assertEqual(ben[self.gid]["myBalance"], -10.0)
+        self.assertEqual(ben[trip]["myBalance"], 0.0)              # a member, settled
+        self.assertIsNone(xav[self.gid]["myBalance"])
+        self.assertIsNone(by(hdr("u_nobody", "Nobody"))[self.gid]["myBalance"])   # linked to no one
+        r = self.c.post(f"/api/groups/{self.gid}/payments", headers=BEN, json={"fromUserId": "b", "toUserId": "a", "amount": 10})
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(by(BEN)[self.gid]["myBalance"], 0.0)
+        # the newest activity-log entry, else when it was created
+        ann = by(ALICE)
+        self.assertGreaterEqual(ann[self.gid]["lastActivity"], ann[trip]["createdAt"])
+        self.assertGreaterEqual(ann[trip]["lastActivity"], ann[trip]["createdAt"])
+
+
 class DefaultGroupIsYourOwn(Linked):
     def test_each_login_has_its_own_default(self):
         other = self.c.post("/api/groups", json={"name": "Trip", "memberIds": ["a", "b"]}, headers=ALICE).json()["id"]

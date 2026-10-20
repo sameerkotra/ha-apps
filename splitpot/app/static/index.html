@@ -4,11 +4,11 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Splitpot</title>
-<link rel="stylesheet" href="fonts/fonts.css?v=2.7.1" />
-<script src="common/theme-boot.js?v=2.7.1"></script>
-<link rel="stylesheet" href="common/themes.css?v=2.7.1" />
-<link rel="stylesheet" href="common/settings.css?v=2.7.1" />
-<link rel="stylesheet" href="style.css?v=2.7.1" />
+<link rel="stylesheet" href="fonts/fonts.css?v=2.8.0" />
+<script src="common/theme-boot.js?v=2.8.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=2.8.0" />
+<link rel="stylesheet" href="common/settings.css?v=2.8.0" />
+<link rel="stylesheet" href="style.css?v=2.8.0" />
 </head>
 <body>
   <div class="app">
@@ -40,6 +40,7 @@
             <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></svg>
             <span class="tab-label">Admin</span>
           </button>
+          <div class="nav-more-theme"><label for="theme-select-m">Theme</label><select id="theme-select-m" class="theme-select" aria-label="Theme"></select></div>
         </div>
         <button type="button" class="tab more-btn" id="moreBtn" title="More" aria-expanded="false" aria-controls="navMore">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
@@ -63,7 +64,7 @@
       <header class="topbar">
         <div class="topbar-right">
           <button type="button" id="whoamiBtn" class="btn ghost whoami-btn" title="How the app sees you" aria-label="How the app sees you">👤</button>
-          <select id="actingAs" title="Acting as" aria-label="Acting as"><option value="">—</option></select>
+          <select id="actingAs" title="Acting as: who is preselected as Paid by (admins)" aria-label="Acting as" hidden><option value="">—</option></select>
         </div>
       </header>
       <!-- First run (admin_users empty): shown on every page, to everyone -->
@@ -78,11 +79,6 @@
             </div></div>
           <p class="hint">Spending by group and by person, for the days and amounts you choose. Settle-up payments aren't spending, so they're left out.</p>
 
-          <h2 class="first">Overall balance</h2>
-          <p class="hint" style="margin-bottom:12px">As of today: each person's net position across every group — not a payment suggestion, since people in different groups may never have shared an expense.</p>
-          <div id="overallBalanceBox" class="balances-box"></div>
-
-          <h2>Spending</h2>
           <form id="summaryForm" class="search-form" autocomplete="off">
             <div class="field">
               <label for="sumPeriod">Period</label>
@@ -97,10 +93,11 @@
             </div>
             <div class="field"><label for="sumFrom">From</label><input type="date" id="sumFrom" required></div>
             <div class="field"><label for="sumTo">To</label><input type="date" id="sumTo" required></div>
-            <div class="field"><label for="sumMin">Amount from</label><input type="number" id="sumMin" min="0" step="0.01" placeholder="any"></div>
-            <div class="field"><label for="sumMax">Amount to</label><input type="number" id="sumMax" min="0" step="0.01" placeholder="any"></div>
-            <div class="field"><label for="sumPaidBy">Paid by</label><select id="sumPaidBy"></select></div>
-            <div class="field"><label for="sumGroup">Group</label><select id="sumGroup"></select></div>
+            <button type="button" id="sumMoreBtn" class="btn ghost more-filters-btn" aria-expanded="false" aria-controls="summaryForm">More filters</button>
+            <div class="field more-filter"><label for="sumMin">Amount from</label><input type="number" id="sumMin" min="0" step="0.01" inputmode="decimal" placeholder="any"></div>
+            <div class="field more-filter"><label for="sumMax">Amount to</label><input type="number" id="sumMax" min="0" step="0.01" inputmode="decimal" placeholder="any"></div>
+            <div class="field more-filter"><label for="sumPaidBy">Paid by</label><select id="sumPaidBy"></select></div>
+            <div class="field more-filter"><label for="sumGroup">Group</label><select id="sumGroup"></select></div>
             <div class="search-actions">
               <button type="submit" class="btn primary">Show</button>
               <button type="button" id="sumClear" class="btn ghost">Clear</button>
@@ -111,7 +108,7 @@
         </div>
       </section>
 
-      <!-- Activity: the activity log, searched (nothing loads until a search) -->
+      <!-- Activity: the activity log, newest first (the latest 50 load when it opens; a search narrows it) -->
       <section id="view-activity" class="view">
         <div class="ledger-panel">
           <div class="view-head"><h1>Summary</h1>
@@ -119,7 +116,7 @@
               <button type="button" class="split-btn" role="tab" aria-selected="false" data-sumview="spending">Spending</button>
               <button type="button" class="split-btn active" role="tab" aria-selected="true" data-sumview="activity">Activity</button>
             </div></div>
-          <p class="hint">The activity log: everything that happened in Splitpot — expenses, payments, edits, groups and settings. Search to see it.</p>
+          <p class="hint">The activity log: everything that happened in Splitpot — expenses, payments, edits, groups and settings — newest first. Search to narrow it.</p>
           <form id="activityForm" class="search-form" autocomplete="off">
             <div class="field"><label for="actActor">Added by</label><select id="actActor"></select></div>
             <div class="field"><label for="actGroup">Group</label><select id="actGroup"></select></div>
@@ -182,143 +179,110 @@
 
             <!-- Users -->
             <div id="admin-users" class="admin-panel" role="tabpanel" aria-labelledby="adminTab-users" hidden>
-              <p class="hint">
-                Everyone here comes straight from Home Assistant — set people up
-                under <strong>Settings → People</strong> in Home Assistant and
-                they'll show up here automatically. Disabling a user hides them
-                from every picker (Acting as, Paid by, group members) without
-                touching their history.
-              </p>
-              <p class="hint">
-                📱 Phone notifications (switched on in App settings) go to the phones Home Assistant links to each
-                person: <strong>Settings → People → (the person) → Track device</strong>, with the Home Assistant
-                Companion app. Add an extra notify service below only for something else (a speaker, a second
-                service). Each person can still turn notifications off under My settings.
-              </p>
+              <p class="hint users-intro">Everyone comes from Home Assistant (<strong>Settings → People</strong>); Disable hides someone from every picker without touching their history.</p>
+              <details class="about" id="usersAbout">
+                <summary>How phones link</summary>
+                <p class="hint">
+                  📱 Phone notifications (switched on in App settings) go to the phones Home Assistant links to each
+                  person: <strong>Settings → People → (the person) → Track device</strong>, with the Home Assistant
+                  Companion app. Add an extra notify service below only for something else (a speaker, a second
+                  service). Each person can still turn notifications off under My settings.
+                </p>
+              </details>
               <div id="usersList"></div>
               <div id="usersError" class="error"></div>
             </div>
 
             <!-- Storage -->
             <div id="admin-storage" class="admin-panel" role="tabpanel" aria-labelledby="adminTab-storage" hidden>
-              <h2 class="first">Download a backup</h2>
-              <p class="hint">Download a full, consistent backup of Splitpot's SQLite database — every group, expense, balance and App setting in one file — for a manual backup or to inspect with an external SQLite tool.</p>
-              <a href="api/admin/backup-db" class="btn ghost">Download database (.db)</a>
-
-              <h2>Restore from backup</h2>
-              <p class="hint" style="color:var(--rust)">⚠️ Restoring replaces every group, expense and user currently stored with the contents of the file you upload. There is no merge and no undo — use this only to recover onto a fresh install (e.g. after a reinstall or a lost /data volume), not as routine use.</p>
-              <div class="field-row restore-row">
-                <input id="restoreDbFile" type="file" accept=".db">
-                <button id="restoreDbBtn" class="btn ghost">Import database (.db)</button>
+              <div class="sp-card storage-card">
+                <h2 class="first">Download a backup</h2>
+                <p class="hint">Download a full, consistent backup of Splitpot's SQLite database — every group, expense, balance and App setting in one file — for a manual backup or to inspect with an external SQLite tool.</p>
+                <a href="api/admin/backup-db" class="btn ghost">Download database (.db)</a>
               </div>
-              <div id="restoreDbStatus" class="hint"></div>
+
+              <div class="danger-zone" id="restoreZone">
+                <h2>Restore from backup</h2>
+                <p class="hint">⚠️ Restoring replaces every group, expense and user currently stored with the contents of the file you upload. There is no merge and no undo — use this only to recover onto a fresh install (e.g. after a reinstall or a lost /data volume), not as routine use.</p>
+                <div class="field-row restore-row">
+                  <input id="restoreDbFile" type="file" accept=".db" aria-label="Backup file (.db)">
+                  <button type="button" id="restoreDbBtn" class="btn-danger-outline">Import database (.db)</button>
+                </div>
+                <div id="restoreDbStatus" class="hint"></div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- Groups list view -->
+      <!-- Groups list view (#/groups): where you stand overall, then each group with where you stand in it -->
       <section id="view-groups" class="view active">
         <div class="ledger-panel">
-          <h1>Groups</h1>
+          <div class="view-head"><h1>Groups</h1>
+            <button type="button" id="newGroupBtn" class="btn primary">+ New group</button></div>
           <p class="hint">Group people together — a trip, a household, a project.</p>
-          <form id="addGroupForm" class="stack-form">
-            <input type="text" id="newGroupName" placeholder="Group name, e.g. Cabin Trip" maxlength="80" required />
-            <div id="groupMemberPicker" class="chip-picker"></div>
-            <div id="groupError" class="error"></div>
-            <button type="submit" class="btn primary">Create group</button>
-          </form>
-          <ul id="groupsList" class="row-list"></ul>
+          <div id="myOverallStrip" class="summary-strip" hidden></div>
+          <details class="about overall-about" id="overallAbout">
+            <summary>Overall balance</summary>
+            <p class="hint">As of today: each person's net position across every group — not a payment suggestion, since people in different groups may never have shared an expense.</p>
+            <div id="overallBalanceBox" class="balances-box"></div>
+          </details>
+          <ul id="groupsList" class="row-list groups-list"></ul>
         </div>
       </section>
 
-      <!-- Single group view -->
+      <!-- Single group view (#/g/<id>) -->
       <section id="view-group" class="view">
-        <button class="back-link" id="backToGroups">← All groups</button>
+        <button type="button" class="back-link" id="backToGroups">← All groups</button>
         <div class="ledger-panel">
           <div class="group-head">
             <div class="group-head-row">
               <h1 id="groupTitle">—</h1>
               <div class="group-head-actions">
-                <button type="button" id="groupDefaultBtn" class="btn ghost default-toggle-btn" title="Set as my default group">☆ Set as my default</button>
-                <button type="button" id="groupEditBtn" class="btn ghost" title="Rename the group, add or take out members" hidden>✎ Name and members</button>
-                <a id="groupExportBtn" class="btn ghost" href="#" download title="Download every expense and payment in this group as a CSV file for a spreadsheet">⬇ Export CSV</a>
-                <button type="button" id="groupDeleteBtn" class="btn danger-text" title="Delete this group and everything in it (admins only)" hidden>Delete group</button>
+                <button type="button" id="groupDefaultBtn" class="btn ghost default-toggle-btn" title="Set as my default group">☆ Default</button>
+                <div class="menu-wrap">
+                  <button type="button" id="groupMenuBtn" class="btn ghost menu-btn" title="More for this group" aria-label="More for this group" aria-haspopup="menu" aria-expanded="false" aria-controls="groupMenu">⋯</button>
+                  <div id="groupMenu" class="pop-menu" role="menu" hidden>
+                    <button type="button" id="groupEditBtn" class="pop-item" role="menuitem" title="Rename the group, add or take out members" hidden>✎ Name and members</button>
+                    <a id="groupExportBtn" class="pop-item" role="menuitem" href="#" download title="Download every expense and payment in this group as a CSV file for a spreadsheet">⬇ Export CSV</a>
+                    <button type="button" id="groupDeleteBtn" class="pop-item danger" role="menuitem" title="Delete this group and everything in it (admins only)" hidden>Delete group</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div id="groupMembersList" class="member-strip"></div>
             <!-- the group's name and members (its members and admins) -->
             <div id="groupEditPanel" class="sp-card group-edit" hidden></div>
           </div>
+          <div id="groupLoadBox"></div>
 
-          <div class="two-col">
-            <div class="col">
-              <h2 id="expenseFormTitle">Add an expense</h2>
-              <form id="addExpenseForm" class="stack-form">
-                <input type="text" id="expDescription" placeholder="What was it for?" maxlength="80" required />
-                <div class="field-row">
-                  <div class="field">
-                    <label>Amount</label>
-                    <input type="number" id="expAmount" step="0.01" min="0.01" placeholder="0.00" required />
-                  </div>
-                  <div class="field">
-                    <label>Paid by</label>
-                    <select id="expPaidBy" required></select>
-                  </div>
-                  <div class="field">
-                    <label for="expDate">Date</label>
-                    <input type="date" id="expDate" required />
-                  </div>
-                </div>
-                <div class="field">
-                  <label>Split</label>
-                  <div class="split-toggle">
-                    <button type="button" class="split-btn active" data-split="equal">Equal</button>
-                    <button type="button" class="split-btn" data-split="custom">Custom</button>
-                  </div>
-                </div>
-                <div id="splitParticipants" class="chip-picker"></div>
-                <div id="customModeToggle" class="split-toggle sub-toggle" role="group" aria-label="Custom split by" hidden>
-                  <button type="button" class="split-btn active" data-custom-mode="amount">By amount</button>
-                  <button type="button" class="split-btn" data-custom-mode="percent">By percentage</button>
-                </div>
-                <div id="customSplitRows" class="custom-splits"></div>
-                <div id="customSplitSummary" class="split-summary" hidden>
-                  <span id="customSplitTotal" class="split-total" aria-live="polite"></span>
-                  <button type="button" id="splitRestBtn" class="btn ghost split-rest-btn">Split the rest evenly</button>
-                </div>
-                <div id="expenseError" class="error"></div>
-                <div class="form-actions">
-                  <button type="submit" id="expSubmitBtn" class="btn primary">Add expense</button>
-                  <button type="button" id="expCancelEditBtn" class="btn ghost" hidden>Cancel</button>
-                </div>
-              </form>
+          <div id="groupBody">
+            <h2>Balances</h2>
+            <div id="balancesBox" class="balances-box"></div>
+
+            <h2>Settle up</h2>
+            <div id="settleBox" class="balances-box"></div>
+
+            <div class="ledger-head">
+              <h2>Ledger</h2>
+              <label class="ledger-toggle" title="Under each entry, everyone's balance in the group just after it">
+                <input type="checkbox" id="showRunningBalances"> Show each person's balance
+              </label>
             </div>
-
-            <div class="col">
-              <h2>Balances</h2>
-              <div id="balancesBox" class="balances-box"></div>
+            <p class="hint ledger-hint">Tap an entry to change it.</p>
+            <ul id="expenseList" class="row-list ledger-list"></ul>
+            <!-- the ledger loads a page at a time (newest first) -->
+            <div id="ledgerMore" class="ledger-more" hidden>
+              <span id="ledgerCount" class="hint" aria-live="polite"></span>
+              <button type="button" id="ledgerMoreBtn" class="btn ghost">Load more</button>
             </div>
-          </div>
-
-          <div class="ledger-head">
-            <h2>Ledger</h2>
-            <label class="ledger-toggle" title="Under each entry, everyone's balance in the group just after it">
-              <input type="checkbox" id="showRunningBalances"> Show each person's balance
-            </label>
-          </div>
-          <ul id="expenseList" class="row-list ledger-list"></ul>
-          <!-- the ledger loads a page at a time (newest first) -->
-          <div id="ledgerMore" class="ledger-more" hidden>
-            <span id="ledgerCount" class="hint" aria-live="polite"></span>
-            <button type="button" id="ledgerMoreBtn" class="btn ghost">Load more</button>
           </div>
         </div>
       </section>
     </main>
   </div>
 
-  <!-- ＋ Add expense, on every page but the group page (which has the full form) and the settings pages -->
+  <!-- ＋ Add expense, on every page but the settings pages (on a group's page it starts in that group) -->
   <button type="button" id="quickAddBtn" class="quick-add-btn" title="Add an expense" aria-label="Add an expense">＋<span class="qa-label">Add expense</span></button>
   <div id="quickAddBackdrop" class="qa-backdrop" hidden>
     <div class="qa-box" role="dialog" aria-modal="true" aria-labelledby="qaTitle">
@@ -335,20 +299,82 @@
         <div id="qaError" class="error"></div>
         <div class="form-actions">
           <button type="submit" class="btn primary">Add expense</button>
-          <button type="button" id="qaMore" class="btn ghost" title="Open the group for a custom split">Custom split…</button>
+          <button type="button" id="qaMore" class="btn ghost" title="The full form: a custom split by amounts or percentages">Custom split…</button>
         </div>
       </form>
     </div>
   </div>
 
+  <!-- The full expense form (＋ → Custom split…, or tapping a ledger entry to change it) -->
+  <div id="expenseSheet" class="qa-backdrop" hidden>
+    <div class="qa-box" role="dialog" aria-modal="true" aria-labelledby="expenseFormTitle">
+      <div class="qa-head"><h2 id="expenseFormTitle">Add an expense</h2><button type="button" id="expSheetClose" class="btn ghost qa-close" aria-label="Close">✕</button></div>
+      <form id="addExpenseForm" class="stack-form" autocomplete="off">
+        <input type="text" id="expDescription" placeholder="What was it for?" maxlength="80" aria-label="What was it for?" required />
+        <div class="field-row">
+          <div class="field">
+            <label for="expAmount">Amount</label>
+            <input type="number" id="expAmount" step="0.01" min="0.01" inputmode="decimal" placeholder="0.00" required />
+          </div>
+          <div class="field">
+            <label for="expPaidBy">Paid by</label>
+            <select id="expPaidBy" required></select>
+          </div>
+          <div class="field">
+            <label for="expDate">Date</label>
+            <input type="date" id="expDate" required />
+          </div>
+        </div>
+        <div class="field">
+          <label>Split</label>
+          <div class="split-toggle">
+            <button type="button" class="split-btn active" data-split="equal">Equal</button>
+            <button type="button" class="split-btn" data-split="custom">Custom</button>
+          </div>
+        </div>
+        <div id="splitParticipants" class="chip-picker"></div>
+        <div id="customModeToggle" class="split-toggle sub-toggle" role="group" aria-label="Custom split by" hidden>
+          <button type="button" class="split-btn active" data-custom-mode="amount">By amount</button>
+          <button type="button" class="split-btn" data-custom-mode="percent">By percentage</button>
+        </div>
+        <div id="customSplitRows" class="custom-splits"></div>
+        <div id="customSplitSummary" class="split-summary" hidden>
+          <span id="customSplitTotal" class="split-total" aria-live="polite"></span>
+          <button type="button" id="splitRestBtn" class="btn ghost split-rest-btn">Split the rest evenly</button>
+        </div>
+        <div id="expenseError" class="error"></div>
+        <div class="form-actions">
+          <button type="submit" id="expSubmitBtn" class="btn primary">Add expense</button>
+          <button type="button" id="expCancelEditBtn" class="btn ghost">Cancel</button>
+          <button type="button" id="expDeleteBtn" class="btn danger-text form-actions-end" hidden>Delete expense</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- + New group -->
+  <div id="newGroupSheet" class="qa-backdrop" hidden>
+    <div class="qa-box" role="dialog" aria-modal="true" aria-labelledby="newGroupTitle">
+      <div class="qa-head"><h2 id="newGroupTitle">New group</h2><button type="button" id="newGroupClose" class="btn ghost qa-close" aria-label="Close">✕</button></div>
+      <form id="addGroupForm" class="stack-form" autocomplete="off">
+        <div class="field"><label for="newGroupName">Name</label>
+          <input type="text" id="newGroupName" placeholder="Group name, e.g. Cabin Trip" maxlength="80" required /></div>
+        <div class="field"><label>Who is in it</label><div id="groupMemberPicker" class="chip-picker"></div></div>
+        <div id="groupError" class="error"></div>
+        <div class="form-actions"><button type="submit" class="btn primary">Create group</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modalRoot"></div>
   <div id="toastRoot" class="toast-root" aria-live="polite"></div>
 
-  <script src="common/ui.js?v=2.7.1"></script>
-  <script src="common/settings.js?v=2.7.1"></script>
-  <script src="common/people.js?v=2.7.1"></script>
-  <script src="common/backnav.js?v=2.7.1"></script>
-  <script src="common/whoami.js?v=2.7.1"></script>
-  <script src="common/deeplink.js?v=2.7.1"></script>
-  <script src="app.js?v=2.7.1"></script>
+  <script src="common/ui.js?v=2.8.0"></script>
+  <script src="common/settings.js?v=2.8.0"></script>
+  <script src="common/people.js?v=2.8.0"></script>
+  <script src="common/backnav.js?v=2.8.0"></script>
+  <script src="common/whoami.js?v=2.8.0"></script>
+  <script src="common/deeplink.js?v=2.8.0"></script>
+  <script src="app.js?v=2.8.0"></script>
 </body>
 </html>

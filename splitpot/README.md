@@ -16,8 +16,8 @@ cloud service, no published port.
 - Groups for a household, a trip or a project, renamed and with members added or taken out later; each person can pick a group as their start page
 - Expenses split equally, by exact amounts or by percentages, always to the cent
 - Per-group balances with "who pays whom" suggestions, and recorded settle-up payments
-- Summary: the overall balance, and spending by group and person for any days, amounts, payer or group
-- Activity: the activity log, searched by who, group, days, amount or words
+- Groups list with where you stand in each group and overall; Summary: spending by group and person for any days, amounts, payer or group
+- Activity: the activity log by day, searched by who, group, days, amount or words
 - Optional Home Assistant sensors with each person's balance
 - People come from Home Assistant's own Persons; an Admin area for app
   settings, users and database backup/restore

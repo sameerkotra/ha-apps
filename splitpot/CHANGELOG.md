@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.8.0
+
+- **Groups shows where you stand**: each group says "you owe", "you're owed" or "settled", the busiest group comes
+  first, and a strip at the top adds it all up. **Overall balance** moved here from the Summary; **+ New group**
+  opens the create form.
+- **A group's page leads with Balances**, then **Settle up** (your own rows first), then the ledger under a header
+  per month with what was spent. **☆ Default** stays at the top; rename and members, Export CSV and Delete group
+  are under **⋯**.
+- **Tap a ledger entry to change it**; Delete is inside. **＋ Add expense** now works on a group's page too, and
+  **Custom split…** opens the full form there.
+- **Proper dialogs** for deleting, taking someone out, restoring a backup and recording a payment (with an amount
+  field) instead of the browser's pop-ups.
+- **Every page has its own address**, so a reload keeps your place, and Back closes an open sheet, menu or dialog
+  before leaving the page; **← All groups** goes back where you came from.
+- **Summary follows your filters** without pressing Show; on a phone Amount, Paid by and Group fold under **More
+  filters**; transactions are grouped by day. **Activity** opens with the latest 50 entries, by day.
+- **Tidier screens**: Acting as is for admins only, a spinner and **Retry** when a page can't load, Restore sits in
+  its own danger zone, a shorter Users intro, and the phone layout now starts at 760px wide with the theme under
+  **⋯ More**.
+
 ## 2.7.2
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

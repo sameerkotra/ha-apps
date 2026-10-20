@@ -52,7 +52,7 @@ open the app.
   Removing someone from Home Assistant doesn't delete anything: their past
   expenses, balances and group memberships stay, they just aren't offered for
   new ones.
-- **Acting as** (top right) starts as you: Splitpot finds the Person linked to
+- **Acting as** (top right, administrators only) starts as you: Splitpot finds the Person linked to
   your Home Assistant login. If it can't (for example the Person isn't linked
   to your user yet) it falls back to your display name, but only if exactly
   one enabled person has that name. You can switch Acting as to log
@@ -72,26 +72,33 @@ open the app.
 
 ## Groups
 
-- **Create a group** under **Groups**: give it a name (up to 80 characters)
-  and tick the people in it.
-- **✎ Name and members** (top of the group's page, for the group's members
-  and administrators): rename the group, add someone, or take someone out.
+- **Create a group** with **+ New group** at the top of **Groups**: give it a
+  name (up to 80 characters) and tick the people in it (you, to start with).
+- **✎ Name and members** (under **⋯** at the top of the group's page, for the
+  group's members and administrators): rename the group, add someone, or take someone out.
   Someone can be taken out only once their balance in that group is zero
   (record a settle-up payment first); their past expenses and payments stay.
   A group always keeps at least one member.
-- The **Groups** list shows each group's members and how many expenses and
-  settle-up payments it has.
-- **Default group**: click the star (☆) next to a group, or **☆ Set as my
-  default** on the group's page. Splitpot then opens straight into that group
+- The **Groups** list shows, for each group, where you stand in it ("you owe
+  $12.00", "you're owed $5.00", "settled"), its members and how many expenses
+  and settle-up payments it has — the group with the latest change first. The
+  strip at the top adds up what you owe and are owed over all your groups (it
+  needs your Home Assistant login linked to your Person). **Overall balance**
+  under it unfolds everyone's net position over all their groups ("is owed",
+  "owes", "settled up") — not a payment suggestion, because people in
+  different groups may never have shared an expense; use each group's Settle
+  up for that.
+- **Default group**: click the star (☆) next to a group, or **☆ Default** on
+  the group's page. Splitpot then opens straight into that group
   for you instead of the Groups list. Everyone chooses their own; clicking the
   star on your default clears it. A group that was the household's default
   before this became a personal choice stays the default for everyone who
   hasn't picked one.
-- **Delete group** (administrators only, top of the group's page) removes the
+- **Delete group** (administrators only, under **⋯** on the group's page) removes the
   group with all its expenses and payments, after a confirmation that says
   how many go with it. This can't be undone; the activity log keeps a record
   of it.
-- **⬇ Export CSV** (everyone, top of the group's page) downloads every
+- **⬇ Export CSV** (everyone, under **⋯** on the group's page) downloads every
   expense and settle-up payment in the group, oldest first, as a CSV file for
   a spreadsheet: date, type, description, amount, currency, who paid, how it
   was split, and one "<name> share" column per person. A description, name or
@@ -100,7 +107,8 @@ open the app.
 
 ## Expenses
 
-Open a group and use **Add an expense** on the left:
+Tap **＋ Add expense** (bottom right; on a group's page it starts in that
+group) for an equal split, or **Custom split…** in it for the full form:
 
 - **Description** (what it was for), **Amount**, **Paid by** (starts as the
   Acting as person when they're in the group) and **Date** (today by default;
@@ -121,15 +129,17 @@ Open a group and use **Add an expense** on the left:
     whoever's share was rounded down the most. 0% rows are left out. The
     ledger shows e.g. "split by percentage · Ann 60% ($30.00) · Ben 40%
     ($20.00)".
-- **Edit**: every ledger row has an **Edit** button. The form loads the
-  expense (a percentage split opens with its saved percentages); change
+- **Change an expense**: tap its row in the ledger. The full form opens with
+  the expense (a percentage split opens with its saved percentages); change
   anything, including switching between equal, amounts and percentages, and
   click **Save changes**, or **Cancel**. Balances update straight away. The
   activity log says exactly what changed (description, amount, who paid, the
   split and the date).
-- **Delete** (administrators only) removes an expense after a confirmation.
-- **The ledger** lists the group's expenses and payments, newest first, with
-  date, payer and how it was split. Each payer has their own colour (the name
+- **Delete expense** (administrators only, in that form) removes an expense
+  after a confirmation.
+- **The ledger** lists the group's expenses and payments, newest first, under
+  a header per month with what was spent that month (in the entries shown;
+  payments aren't spending), with date, payer and how it was split. Each payer has their own colour (the name
   and a coloured left edge on the row), so you can see at a glance who paid
   what. The Summary's transaction list uses the same colours.
 - **Show each person's balance** (above the ledger, off by default): under
@@ -151,16 +161,17 @@ activity log with who made it.
 
 ## Balances and settling up
 
-- **Balances** (right side of a group's page) shows each member's net
-  position in that group (who is owed, who owes) and the suggested transfers
-  that settle everything with as few payments as possible.
+- **Balances** (top of a group's page) shows each member's net position in
+  that group (who is owed, who owes) — yours first and highlighted. **Settle
+  up** under it lists the suggested transfers that settle everything with as
+  few payments as possible, the ones involving you first.
 - **Record payment** next to a suggested transfer asks how much was paid; the
   full amount is filled in, and you can change it for a partial payment. The
   payment appears in the ledger as "💸 Ann paid Ben · settle-up payment" and
   moves the balances as if that money had been paid back, so a full payment
   brings both people to zero.
-- **Edit** on a payment's ledger row changes who paid whom, the amount and the
-  date. Payments are not spending: they're left out of the Summary's totals
+- **Tap a payment** in the ledger to change who paid whom, the amount and the
+  date (administrators also get **Delete** there). Payments are not spending: they're left out of the Summary's totals
   and transaction list. An administrator can delete one to undo it.
 
 ## Finding your way
@@ -170,12 +181,15 @@ activity log with who made it.
   settings** and **Admin** (administrators) sit at the bottom of the sidebar; on
   a phone the bottom bar is Groups, Summary and **⋯ More**, which holds them.
 - Splitpot opens on the **Groups** list, or straight in your default group.
-- **＋ Add expense** (bottom right, on every page but a group's own page and
-  the settings pages) adds an expense to any group without opening it: pick
-  the group (the one you used last comes first), what for, the amount, who
-  paid (Acting as, when they're in it), the day, and who shares it equally
-  (everyone, untick to leave someone out). **Custom split…** opens the group
-  with what you typed, to split by amounts or percentages.
+  Every page has its own address (for example `#/g/<group>`, `#/summary`,
+  `#/admin/users`), so reloading keeps your place, and the phone's back gesture
+  closes what's open first, then steps back through the pages you opened.
+- **＋ Add expense** (bottom right, on every page but the settings pages) adds
+  an expense without opening the group: pick the group (on a group's page,
+  that one; otherwise the one you used last), what for, the amount, who paid
+  (Acting as, when they're in it), the day, and who shares it equally
+  (everyone, untick to leave someone out). **Custom split…** opens the full
+  form with what you typed, to split by amounts or percentages.
 
 ## Summary
 
@@ -183,21 +197,18 @@ Two views at the top: **Spending** (shown first) and **Activity**.
 
 **Spending**:
 
-- **Overall balance**, as of today: each person's net position summed over
-  all their groups ("is owed", "owes", "settled up"). This is not a payment
-  suggestion, because people in different groups may never have shared an
-  expense; use each group's Balances to settle up.
 - **Spending**: pick a **Period** — this month (shown when the page opens),
   last month, this week, last week, this year, or **Date range…** with your
   own From and To — and, if you like, an **Amount from / to**, who it was
-  **Paid by** and a **Group**, then **Show**. You see:
+  **Paid by** and a **Group** (under **More filters** on a phone). The figures
+  follow as you change them (**Show** runs it straight away). You see:
   - the total and how many expenses;
   - **By group**: each group's total and how many, as bars;
   - **By person**: what each person **paid** for these expenses (and how
     many), **their share** of them, and the difference (+ ahead, − behind) on
     these expenses alone;
-  - **Transactions**: the expenses themselves, newest first, with date, group
-    and payer (the newest 1,000 when there are more; the totals count all).
+  - **Transactions**: the expenses themselves, newest first, under a header
+    per day with that day's total, with group and payer (the newest 1,000 when there are more; the totals count all).
 - Days follow Home Assistant's time zone; weeks start on Monday. Settle-up
   payments aren't spending, so they're left out. **Clear** goes back to this
   month with no other filters.
@@ -205,8 +216,8 @@ Two views at the top: **Spending** (shown first) and **Activity**.
 **Activity** (the second view of the Summary) is the activity log: every change — groups created or renamed,
 members added or taken out, expenses added/edited/deleted, payments recorded
 or changed, users disabled or enabled, settings changed — with who did it and
-when. Nothing is shown until you **Search**, so it opens instantly however long
-the log is. Search by:
+when. It opens with the latest 50 entries, under a header per day; a search
+narrows them. Search by:
 
 - **Added by** — who made the change;
 - **Group**;
@@ -215,7 +226,7 @@ the log is. Search by:
   amount);
 - **Words** in the entry (e.g. a description).
 
-Leave everything empty and **Search** for the newest entries. Results come 50 at
+**Clear** goes back to the newest entries. Results come 50 at
 a time, newest first; **Load more** shows older ones. Entries older than a year
 are removed (App settings → Limits).
 

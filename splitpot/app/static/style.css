@@ -208,7 +208,8 @@ main { flex: 1; min-width: 0; padding: 36px 32px 64px; max-width: 880px; width: 
 .topbar-right { display: flex; gap: 8px; align-items: center; }
 .topbar-right select { width: auto; min-width: 150px; }
 
-.whoami-btn { padding: 8px 12px; line-height: 1; }
+/* 👤 "How the app sees you": only on a phone, where the sidebar's "Signed in as" isn't shown */
+.whoami-btn { padding: 8px 12px; line-height: 1; display: none; }
 
 /* "How the app sees you" rows */
 .kv { border-top: 1px solid var(--line); margin-bottom: 16px; max-width: 60ch; }
@@ -498,7 +499,7 @@ input:focus, select:focus, button:focus-visible {
 .event-message { color: var(--ink); }
 .event-time { font-size: 11px; color: var(--ink-soft); }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .brand-name { font-size: 19px; }
   .whoami { font-size: 12px; gap: 6px; }
   .whoami label { display: none; }
@@ -506,10 +507,10 @@ input:focus, select:focus, button:focus-visible {
 
   main { padding: 20px 16px 92px; }
   .topbar { padding: 0 0 14px; }
-  .topbar-right { width: 100%; }
+  .topbar-right { width: 100%; justify-content: flex-end; }
   .topbar-right select { flex: 1; width: auto; min-width: 0; }
   .kv-row { flex-wrap: wrap; }
-  .btn.whoami-btn { padding: 10px 14px; }
+  .btn.whoami-btn { padding: 10px 14px; display: inline-flex; }
   .field-row { flex-direction: column; }
 
   /* Nav becomes a fixed, icon-led bottom bar on mobile — the standard app
@@ -526,7 +527,7 @@ input:focus, select:focus, button:focus-visible {
     height: auto;
     flex-direction: row;
     align-items: stretch;
-    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    padding: 6px 8px calc(6px + var(--safe-bottom));
     border-right: none;
     border-top: 1px solid var(--line);
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.35);
@@ -549,7 +550,8 @@ input:focus, select:focus, button:focus-visible {
     flex: 1;
     flex-direction: column;
     justify-content: center;
-    font-size: 10.5px;
+    font-size: 0.75rem;
+    min-height: 44px;
     padding: 8px 2px;
     gap: 4px;
     border-radius: 8px;
@@ -614,7 +616,7 @@ input:focus, select:focus, button:focus-visible {
 .restore-row input[type="file"] { min-width: 0; max-width: 100%; color: var(--ink-soft); font-size: 13px; }
 .row-list .row-sub { overflow-wrap: anywhere; }
 .event-dot.settings_changed { background: var(--gold); }
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .restore-row { align-items: flex-start; }
 }
 
@@ -637,7 +639,7 @@ input:focus, select:focus, button:focus-visible {
 .split-total { font-variant-numeric: tabular-nums; color: var(--moss-dark); }
 .split-total.off { color: var(--rust); }
 .btn.split-rest-btn { padding: 5px 10px; font-size: 12.5px; }
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .split-toggle.sub-toggle .split-btn { padding: 9px 8px; }
   .btn.split-rest-btn { padding: 8px 12px; }
 }
@@ -665,14 +667,14 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .row-list .row-actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 .ledger-more { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 4px 0; }
 .ledger-more .hint { margin: 0; }
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .row-list li.payer-row { flex-wrap: wrap; }
   .row-list .row-actions { gap: 8px; margin-left: auto; }
   .ledger-more { flex-direction: column; align-items: stretch; text-align: center; }
 }
 
 /* My settings */
-.my-prefs { max-width: 640px; }
+.my-prefs { max-width: 760px; }
 .pref-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 6px 0; }
 .pref-label { font-weight: 500; }
 .my-prefs .field-help.warn { margin: 10px 0 0; }
@@ -681,7 +683,7 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .toast-root { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; width: max-content; max-width: calc(100vw - 32px); }
 .toast { background: var(--ink); color: var(--paper); padding: 10px 16px; border-radius: 8px; font-size: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); pointer-events: auto; overflow-wrap: anywhere; }
 .toast.error { background: var(--rust); color: #fff; }
-@media (max-width: 640px) { .toast-root { bottom: 84px; } }
+@media (max-width: 760px) { .toast-root { bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 12px); } }
 .my-prefs .pref-row .hint { margin: 2px 0 0; }
 
 /* The ledger's "Show each person's balance": everyone's balance just after each entry. */
@@ -695,7 +697,7 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .run-bal.zero { color: var(--ink-soft); }
 
 /* Phones: the names and amount on one line, Record payment on its own full-width line below, so nothing spills out. */
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .settle-row .settle-btn { flex: 1 0 100%; margin-left: 0; padding: 8px 10px; }
 }
 
@@ -723,7 +725,7 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .report-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .report-table .amt.positive { color: var(--moss-dark); }
 .report-table .amt.negative { color: var(--rust); }
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .search-form { grid-template-columns: 1fr 1fr; padding: 12px; }
   .search-form .field.wide, .search-actions { grid-column: 1 / -1; }
   .search-actions .btn { flex: 1; }
@@ -764,11 +766,11 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
 .qa-close { padding: 6px 10px; }
 .qa-person { cursor: pointer; }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .nav-groups { display: none; }
   .sidebar .tabs { flex: 1; }
   .tabs .more-btn { display: flex; }
-  .nav-more { display: none; position: fixed; right: 8px; bottom: calc(70px + env(safe-area-inset-bottom)); margin: 0;
+  .nav-more { display: none; position: fixed; right: 8px; bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 6px); margin: 0;
     flex-direction: column; gap: 2px; min-width: 190px; padding: 6px; background: var(--paper); border: 1px solid var(--line);
     border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .4); z-index: 60; }
   .tabs.more-open .nav-more { display: flex; }
@@ -776,9 +778,104 @@ a.btn.disabled { opacity: 0.5; pointer-events: none; }
   .view-head { align-items: stretch; }
   .view-switch { width: 100%; }
   .view-switch .split-btn { flex: 1; }
-  .quick-add-btn { right: 14px; bottom: calc(78px + env(safe-area-inset-bottom)); padding: 14px 16px; }
+  .quick-add-btn { right: 14px; bottom: calc(var(--bottombar-h) + var(--safe-bottom) + 14px); padding: 14px 16px; }
   .quick-add-btn .qa-label { display: none; }
   .qa-backdrop { padding: 12px; }
   main { padding-bottom: 150px; }
 }
 .view-head + .hint { margin-top: 10px; }
+
+/* ---------- 2.8: pages and layers ---------- */
+/* the phone's bottom bar is about this tall (fixed things sit above it) */
+@media (max-width: 760px) {
+  :root { --bottombar-h: 64px; }
+  .nav-more-theme { display: flex; }
+}
+.nav-more-theme { display: none; flex-direction: column; gap: 4px; padding: 8px 12px 6px; border-top: 1px solid var(--line); margin-top: 4px; font-size: 12px; color: var(--ink-soft); }
+.nav-more-theme select { width: 100%; }
+
+/* buttons common/ui.js makes (empty states, Retry, confirmations) in Splitpot's style */
+.btn.danger { background: var(--rust); color: var(--accent-contrast, var(--paper)); }
+.btn.danger:hover { filter: brightness(1.08); }
+.btn-ghost, .btn-primary { font: 600 14px var(--font-body); padding: 10px 18px; border-radius: 4px; cursor: pointer; }
+.btn-ghost { background: none; border: 1px solid var(--line-strong); color: var(--ink); }
+.btn-primary { background: var(--moss); border: 1px solid var(--moss); color: var(--paper); }
+.ui-empty .btn, .ui-error .btn-ghost { margin-top: 4px; }
+.is-loading { opacity: 0.55; transition: opacity 0.15s; }
+
+/* dialogs (common/ui.js openModal / confirmDialog), in #modalRoot */
+.modal-backdrop { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, .55); display: flex; align-items: flex-start;
+  justify-content: center; padding: 10vh 16px 16px; overflow-y: auto; }
+.modal { width: 100%; max-width: 440px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 20px 20px; box-shadow: 0 16px 48px rgba(0, 0, 0, .45); }
+.modal > h3 { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px;
+  font-family: var(--font-display); font-size: 19px; font-weight: 600; }
+.modal .icon-btn { background: none; border: 1px solid var(--line-strong); color: var(--ink); border-radius: 4px; padding: 6px 10px; cursor: pointer; font: inherit; }
+.modal p { line-height: 1.5; margin: 0 0 6px; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.modal .hint { margin-bottom: 4px; }
+.pay-form { max-width: none; }
+
+/* sheets: ＋ Add expense, the full expense form, + New group */
+.qa-box .stack-form { max-width: none; }
+#expenseSheet .qa-box { max-width: 600px; }
+.form-actions { flex-wrap: wrap; }
+.form-actions .form-actions-end { margin-left: auto; }
+
+/* ⋯ menus */
+.menu-wrap { position: relative; }
+.menu-btn { padding: 10px 14px; line-height: 1; min-width: 44px; }
+.pop-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 220px; display: flex; flex-direction: column;
+  gap: 2px; padding: 6px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(0, 0, 0, .4); }
+.pop-menu[hidden] { display: none; }
+.pop-item { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: none; border-radius: 8px; background: none;
+  color: var(--ink); font: 500 14px var(--font-body); text-align: left; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.pop-item:hover, .pop-item:focus-visible { background: var(--paper-dim); }
+.pop-item.danger { color: var(--rust); }
+a.pop-item.disabled { opacity: 0.5; pointer-events: none; }
+
+/* Groups: the strip, and where you stand in each group */
+#myOverallStrip { margin-bottom: 10px; }
+.overall-about { margin-bottom: 16px; }
+.overall-about .balances-box { margin-top: 8px; gap: 4px; }
+.groups-list li.group-row { padding-left: 0; }
+.groups-list .group-link { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.groups-list .group-link .row-main { flex: 1; min-width: 0; }
+.group-standing { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.group-standing.positive { color: var(--moss-dark); }
+.group-standing.negative { color: var(--rust); }
+.group-standing.zero { color: var(--ink-soft); font-weight: 500; }
+.row-list li.state-li { display: block; border: none; padding: 0; }
+
+/* a group's page: Balances, Settle up (yours first), the ledger by month */
+.balance-net-row.is-me { background: var(--paper-dim); border-radius: 4px; padding: 6px 8px; margin: 0 -8px; font-weight: 600; }
+.settle-row.is-me { outline: 1px solid var(--moss); }
+.me-tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--moss-dark);
+  border: 1px solid var(--moss-dark); border-radius: 20px; padding: 0 6px; margin-left: 6px; vertical-align: middle; }
+#settleBox { gap: 8px; }
+.ledger-hint { margin: -4px 0 8px; font-size: 13px; }
+.row-list li.ui-group-head, .event-list li.ui-group-head { display: flex; border: none; padding: 6px 4px; margin: 12px 0 0;
+  background: var(--paper); font-size: 0.78rem; gap: 12px; }
+.row-list li.ui-group-head:first-child, .event-list li.ui-group-head:first-child { border-top: none; margin-top: 0; }
+.row-list li.ui-group-head + li, .event-list li.ui-group-head + li { border-top: 1px solid var(--line); }
+.row-list li.tap-row { cursor: pointer; }
+.row-list li.tap-row:hover { background: var(--paper-dim); }
+.row-list li.tap-row:focus-visible { outline: 2px solid var(--moss); outline-offset: -2px; }
+.row-chev { color: var(--ink-soft); font-size: 18px; line-height: 1; }
+.payment-edit .row-actions { flex-wrap: wrap; }
+
+/* Summary: more filters fold away on a phone */
+.more-filters-btn { display: none; }
+@media (max-width: 760px) {
+  .more-filters-btn { display: inline-block; grid-column: 1 / -1; }
+  .search-form:not(.show-more) .more-filter { display: none; }
+  .group-standing { font-size: 12px; max-width: 42%; white-space: normal; }
+  .group-head-actions { flex-wrap: nowrap; }
+}
+
+/* Admin → Storage: Download, then the Restore danger zone */
+.storage-card { margin-bottom: 8px; }
+.storage-card .hint { margin-bottom: 14px; }
+.ledger-panel .danger-zone > h2 { margin: 0 0 8px; color: var(--danger, var(--rust)); }
+.danger-zone .hint { margin-bottom: 12px; }
+.users-intro { margin-bottom: 8px; }

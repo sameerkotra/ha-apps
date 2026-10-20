@@ -17,9 +17,16 @@ class LedgerUI(unittest.TestCase):
         calls = re.findall(r"\bexpenseRow\(", self.js)
         self.assertEqual(len(calls), 2, "expenseRow should be defined once and called only from ledgerRow")
         self.assertIn("const row = expenseRow(e);", self.js)
+        # Load more redraws the list (the month headers' totals take in the new rows) through ledgerItems
         load_more = self.js[self.js.index("async function loadMoreLedger"):]
         load_more = load_more[:load_more.index("\n}\n")]
-        self.assertIn("ledgerRow(e)", load_more)
+        self.assertIn("renderExpenseList()", load_more)
+        render = self.js[self.js.index("function renderExpenseList"):]
+        render = render[:render.index("\n}\n")]
+        self.assertIn("ledgerItems(g.expenses)", render)
+        items = self.js[self.js.index("function ledgerItems"):]
+        items = items[:items.index("\n}\n")]
+        self.assertIn("out.push(ledgerRow(e))", items)
 
     def test_running_balances_asked_for_only_while_ticked(self):
         # the server works the balances out only for balances=1; every ledger request goes through ledgerQuery
@@ -40,8 +47,8 @@ class LedgerUI(unittest.TestCase):
             body = self.js[self.js.index(name):]
             body = body[:body.index("\n}\n")]
             self.assertIn("if (state.currentGroupId !== id) return", body, name)
-        settle = self.js[self.js.index("$('#balancesBox').addEventListener"):]
-        settle = settle[:settle.index("\n});\n")]
+        settle = self.js[self.js.index("function recordPayment"):]
+        settle = settle[:settle.index("\n}\n")]
         self.assertIn("await changeGroup(", settle)
         self.assertNotIn("state.currentGroup = await", settle)
 
@@ -57,7 +64,7 @@ class LedgerUI(unittest.TestCase):
     def test_settle_row_wraps_on_phones(self):
         block = self.css[self.css.index(".settle-row {"):]
         self.assertIn("flex-wrap: wrap", block[:block.index("}")])
-        self.assertRegex(self.css, r"@media \(max-width: 640px\) \{\s*\.settle-row \.settle-btn \{ flex: 1 0 100%")
+        self.assertRegex(self.css, r"@media \(max-width: 760px\) \{\s*\.settle-row \.settle-btn \{ flex: 1 0 100%")
 
 
 if __name__ == "__main__":

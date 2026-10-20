@@ -558,6 +558,7 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_group_members_user ON group_members(user_id);
             CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_events_group ON events(group_id, created_at);   -- the Groups list's "last activity"
             """
         )
         # Older databases may lack columns added to the tables above (MIGRATIONS).
@@ -2119,19 +2120,48 @@ def clean_group_name(raw: str) -> str:
 
 @router.get("/groups")
 def list_groups(request: Request):
+    """Every group, with — for the signed-in person, when Home Assistant links their login to one — where they
+    stand in it (`myBalance`: + is owed, − owes; null when they have no part in it), and when it last changed
+    (`lastActivity`: its newest activity-log entry, else when it was created)."""
+    # who is viewing: the person linked to this login (as linked_user_id: by ha_user_id, else through Home
+    # Assistant's Person list — read before the database, it may ask Home Assistant), found in the users read below
+    login = (auth_core.identity(request).user_id or "").strip().lower()
+    entity = None
+    if login:
+        try:
+            entity = next((x["entity_id"] for x in cached_ha_persons()
+                           if (x.get("user_id") or "").strip().lower() == login), None)
+        except Exception:   # never let the Home Assistant lookup break the list
+            entity = None
     with get_conn() as conn:
-        groups = conn.execute("SELECT id, name, created_at FROM groups ORDER BY created_at").fetchall()
-        names = user_names(conn)
+        groups = conn.execute(
+            "SELECT id, name, created_at, (SELECT MAX(ev.created_at) FROM events ev WHERE ev.group_id = groups.id) AS last_event "
+            "FROM groups ORDER BY created_at").fetchall()
+        people = conn.execute("SELECT id, name, ha_user_id, ha_entity_id FROM users").fetchall()
+        names = {r["id"]: r["name"] for r in people}
+        me = next((r["id"] for r in people if login and (r["ha_user_id"] or "") == login), None) or \
+            next((r["id"] for r in people if entity and r["ha_entity_id"] == entity), None)
         members: dict = {}
         for r in conn.execute("SELECT group_id, user_id FROM group_members ORDER BY group_id, position"):
             members.setdefault(r["group_id"], []).append(r["user_id"])
-        counts = {r["group_id"]: (r["n"] - (r["p"] or 0), r["p"] or 0) for r in conn.execute(
-            "SELECT group_id, COUNT(*) AS n, SUM(split_type = 'payment') AS p FROM expenses GROUP BY group_id")}
+        # with each group's counts, the viewer's balance in it in whole cents (what they paid − their shares, like
+        # compute_overall_net); their shares come by the splits' primary key, so this stays one pass over expenses
+        counts, mine = {}, {}
+        for r in conn.execute(
+                "SELECT e.group_id, COUNT(*) AS n, SUM(e.split_type = 'payment') AS p, "
+                "SUM(CASE WHEN e.paid_by = ? THEN CAST(ROUND(e.amount * 100) AS INTEGER) ELSE 0 END) AS paid, "
+                "SUM((SELECT CAST(ROUND(s.amount * 100) AS INTEGER) FROM expense_splits s "
+                "     WHERE s.expense_id = e.id AND s.user_id = ?)) AS owes "
+                "FROM expenses e GROUP BY e.group_id", (me or "", me or "")):
+            counts[r["group_id"]] = (r["n"] - (r["p"] or 0), r["p"] or 0)
+            if me and (r["paid"] or r["owes"]):
+                mine[r["group_id"]] = (r["paid"] or 0) - (r["owes"] or 0)
         default = default_group_for(conn, viewer_of(request))
     out = []
     for g in groups:
         member_ids = members.get(g["id"], [])
         expense_count, payment_count = counts.get(g["id"], (0, 0))
+        involved = bool(me) and (me in member_ids or g["id"] in mine)
         out.append({
             "id": g["id"],
             "name": g["name"],
@@ -2141,6 +2171,8 @@ def list_groups(request: Request):
             "memberNames": [names.get(m, "Unknown") for m in member_ids],
             "expenseCount": expense_count,
             "paymentCount": payment_count,
+            "myBalance": round(mine.get(g["id"], 0) / 100, 2) if involved else None,
+            "lastActivity": max(g["last_event"] or "", g["created_at"] or ""),
         })
     return out
 

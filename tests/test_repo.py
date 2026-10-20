@@ -12,7 +12,7 @@ ADDONS = ("calorie_tracker", "family_tree", "household_chat", "household_todo", 
 VERSION = "2.0.0"
 # Apps released again since 2.0.0, at their own version.
 VERSIONS = {"calorie_tracker": "2.6.0", "family_tree": "2.7.0", "household_chat": "2.7.0", "household_todo": "2.8.0",
-            "household_vault": "2.3.0", "splitpot": "2.7.2"}
+            "household_vault": "2.3.0", "splitpot": "2.8.0"}
 # Finance Dashboard is published as it is, at its own version, with its own packaging tests
 # (finance/tests/test_packaging.py); only the repository-wide basics are checked here.
 FINANCE = "finance"
@@ -22,7 +22,7 @@ ARCADE = "household_arcade"
 ARCADE_VERSION = "1.14.0"
 # Receipt Price Intelligence: brought in line with the others at 1.0.0, at its own version.
 RECEIPTS = "receipt_price_intelligence"
-RECEIPTS_VERSION = "1.3.5"
+RECEIPTS_VERSION = "1.4.0"
 # Household Docs: the tenth app, built the same way, at its own version.
 DOCS = "household_docs"
 DOCS_VERSION = "1.7.2"
