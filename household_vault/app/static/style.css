@@ -91,6 +91,7 @@ button.chip { cursor: pointer; }
 .vault-head .nav-item { flex: 1; min-width: 0; font-weight: 600; }
 .folder-tree .nav-item { font-size: 0.92rem; }
 .twisty { width: 16px; border: 0; background: none; cursor: pointer; color: var(--text-dim); padding: 0; flex: none; }
+.twisty.clickable, button.twisty { cursor: pointer; }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .search-wrap { flex: 1; max-width: 640px; position: relative; }
@@ -298,3 +299,81 @@ body.dragging .vault-head { transition: background 0.1s; }
 /* ---------- guest Wi-Fi ---------- */
 .guest-card { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
 .guest-qr { width: min(260px, 70vw); height: auto; background: #fff; padding: 6px; border-radius: 10px; image-rendering: pixelated; }
+
+/* ---------- navigation and layout (UI review 2026-10) ---------- */
+.scrim { display: none; }
+.fab { display: none; }
+.phone-only, .page-back { display: none !important; }
+.list-title .count-in-title { color: var(--text-dim); font-weight: 400; }
+.sort-sel { width: auto; padding: 3px 6px; font-size: 0.82rem; flex: none; }
+.type-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.type-chips .chip { padding: 3px 10px; font-size: 0.8rem; white-space: nowrap; }
+.list .ui-group-head { margin: 0; padding: 4px 12px; border-bottom: 1px solid var(--border); }
+.item-row .when { white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+.row-totp { display: inline-flex; align-items: center; gap: 6px; }
+.row-totp .totp-code { font-size: 1.05rem; color: var(--text); }
+.copyable { cursor: pointer; border-radius: 4px; }
+.copyable:hover { background: var(--panel-hover); }
+.copyable:focus-visible { outline: 2px solid var(--focus); }
+button.chip.issue.action { cursor: pointer; font-size: 0.75rem; padding: 2px 8px; }
+/* the empty item pane on a computer */
+.dash { max-width: 680px; margin: 0 auto; }
+.dash .empty { padding: 14px 0 18px; }
+.dash .dash-tip { text-align: center; }
+button.kpi { cursor: pointer; text-align: left; font: inherit; color: inherit; }
+button.kpi:hover { background: var(--panel-hover); }
+.dash-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dash-card { padding: 12px 14px; }
+.dash-row { display: flex; gap: 10px; align-items: center; width: 100%; border: 0; background: none; text-align: left; padding: 6px 4px; border-radius: 7px; cursor: pointer; }
+.dash-row:hover { background: var(--panel-hover); }
+.dash-row .t, .dash-row .s { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-row .s { font-size: 0.8rem; color: var(--text-dim); }
+.dash-row .avatar { width: 28px; height: 28px; font-size: 0.75rem; }
+/* one combined notice */
+.notice-group { background: var(--accent-soft); border-bottom: 1px solid var(--accent); padding: 4px 14px; font-size: 0.9rem; }
+.notice-group.danger { background: var(--danger-soft); border-bottom-color: var(--danger); }
+.notice-group > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 8px; font-weight: 600; min-height: 32px; }
+.notice-group > summary::-webkit-details-marker { display: none; }
+.notice-group > summary::before { content: "▸"; transition: transform 0.15s; }
+.notice-group[open] > summary::before { transform: rotate(90deg); }
+.notice-group .notice-body { padding-bottom: 6px; }
+.notice-group .notice { margin: 6px 0; }
+/* item editor */
+fieldset.where { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px 0; margin: 8px 0 10px; }
+fieldset.where legend { font-size: 0.86rem; color: var(--text-dim); padding: 0 4px; }
+.modal .actions.sticky-actions { position: sticky; bottom: 0; background: var(--panel); border-top: 1px solid var(--border); padding: 10px 0 4px; z-index: 2; align-items: center; }
+.sticky-actions .error { min-height: 0; }
+/* unlock */
+.quick-first { margin: 10px 0 4px; }
+.quick-btn { width: 100%; padding: 11px 14px; font-size: 1rem; }
+.or-line { text-align: center; margin: 8px 0 2px; }
+.unlock-help { margin-top: 14px; }
+/* settings */
+.sec-index { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.sec-index .chip { padding: 4px 10px; font-size: 0.82rem; }
+.sec-title { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 22px 0 8px; }
+.settings-sec { scroll-margin-top: 8px; }
+.danger-zone .card { margin-bottom: 10px; }
+.card.compact { padding: 12px 16px; }
+.card.compact h3 { font-size: 0.95rem; margin-bottom: 4px; }
+/* guest Wi-Fi, full screen */
+.modal.qr-full { max-width: min(96vw, 720px); text-align: center; }
+.qr-big { width: min(86vw, 70vh, 640px); height: auto; background: #fff; padding: 12px; border-radius: 12px; image-rendering: pixelated; }
+@media (pointer: coarse) {
+  .twisty { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
+  .type-chips .chip, .sec-index .chip { min-height: 36px; }
+}
+@media (max-width: 820px) {
+  /* breakpoint kept at 820px (the existing drawer/two-pane switch), not the 760px standard */
+  .shell.nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 39; }
+  .twisty { min-width: 32px; min-height: 32px; display: inline-flex; align-items: center; justify-content: center; }
+  .hide-phone { display: none !important; }
+  .phone-only { display: inline-flex !important; }
+  .page-back { display: inline-flex !important; margin-bottom: 8px; }
+  .fab { display: inline-flex; align-items: center; justify-content: center; position: fixed; right: 16px; z-index: 30;
+    bottom: calc(18px + var(--bottombar-h) + var(--safe-bottom)); width: 56px; height: 56px; border-radius: 50%; border: 0;
+    background: var(--accent); color: var(--accent-contrast); font-size: 1.9rem; line-height: 1; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); cursor: pointer; }
+  .list-pane .list { padding-bottom: calc(80px + var(--safe-bottom)); }
+  .dash-lists { grid-template-columns: minmax(0, 1fr); }
+  .notice-group { padding: 4px 10px; }
+}

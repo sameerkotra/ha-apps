@@ -506,7 +506,8 @@ def trash_contents(d: kdbx.Database, vault: dict) -> dict:
     rb = d.recycle_bin()
     if rb is None:
         return {"items": [], "folders": []}
-    items = [summary(d, e, vault) for e in entries_in(d, rb, True)]
+    # deletedAt: when it went to the Trash (moving sets KeePass's LocationChanged), for "deleted 3 d ago"
+    items = [dict(summary(d, e, vault), deletedAt=e.findtext("Times/LocationChanged") or "") for e in entries_in(d, rb, True)]
     fol = [{"id": to_id(g.findtext("UUID")), "name": g.findtext("Name") or ""} for g in rb if g.tag == "Group"]
     return {"items": items, "folders": fol}
 

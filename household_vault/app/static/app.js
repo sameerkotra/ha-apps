@@ -15,6 +15,20 @@ function fmtWhen(iso) {
   if (isNaN(d)) return "";
   return d.toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
+// KeePass times → ms since 1970: KDBX 4 (base64 seconds) or KDBX 3 (ISO text)
+function kdbxMs(t) {
+  if (!t) return 0;
+  if (/^\d{4}-\d\d-\d\d/.test(t)) return Date.parse(t) || 0;
+  return Date.parse(kdbxTime(t)) || 0;
+}
+function agoText(ms) {
+  if (!ms) return "";
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  if (m < 60 * 24) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 1440)} d ago`;
+}
 function kdbxTime(b64) {
   // KeePass times: base64 of seconds since 0001-01-01
   try {
@@ -24,6 +38,7 @@ function kdbxTime(b64) {
     return new Date(ms).toISOString();
   } catch (e) { return ""; }
 }
+const ADMIN_TABS = [["people", "People"], ["settings", "App settings"], ["backup", "Backup"]];
 const MULTI_VIEWS = ["all", "fav", "recent", "type", "search", "expiring", "tag"];     // views across every open vault
 const ROLE_LABEL = { owner: "Owner", manager: "Manager", editor: "Can edit", viewer: "Can view" };
 const TYPE_ICON = { login: "🔑", note: "📝", card: "💳" };
@@ -58,8 +73,11 @@ const state = {
   detail: null, picked: new Set(), q: "", page: "vault", lastActivity: Date.now(), autoLock: 5, navOpen: false,
   totpTimer: null, idleTimer: null, hiddenAt: null, clipboardTimer: null,
   health: null, healthMap: new Map(), dragging: null, reminderDismissed: false, lastPicked: null, healthPoll: null,
+  adminTab: "people", lastVaultHash: "#/all", listTotpTimer: null, dash: null, notices: [], noticesOpen: false, pageTok: 0,
 };
 const FINE_POINTER = window.matchMedia && window.matchMedia("(pointer: fine)").matches;
+const PHONE_MQ = window.matchMedia ? window.matchMedia("(max-width: 820px)") : { matches: false };
+const isPhone = () => PHONE_MQ.matches;
 
 // ---------- API ----------
 class ApiError extends Error { constructor(msg, status, detail) { super(msg); this.status = status; this.detail = detail; } }
@@ -119,7 +137,7 @@ function toast(msg, opts = {}) {
 }
 function fail(e) { toast(e && e.message ? e.message : String(e), { error: true }); }
 function modalOptions(opts) {
-  return { modalClass: opts.wide ? "wide" : "", sticky: !!opts.sticky, onClose: opts.onClose, afterOpen: closeNav,
+  return { modalClass: opts.cls || (opts.wide ? "wide" : ""), sticky: !!opts.sticky, onClose: opts.onClose, afterOpen: closeNav,
     focus: opts.noFocus ? false : "first", focusSelector: "input:not([type=hidden]):not([disabled]):not([type=checkbox]), select, textarea" };
 }
 function openModal(title, content, opts = {}) { return UI.openModal(title, content, modalOptions(opts)); }
@@ -241,7 +259,11 @@ function lockLocal(reason) {
   if (state.clipboardHeld) clearClipboard();             // a copied password doesn't outlive the unlock
   state.token = null; state.vaults = []; state.folders = {}; state.items = []; state.detail = null; state.selected = null;
   state.picked = new Set(); state.q = ""; state.health = null; state.healthMap = new Map(); state.reminderDismissed = false;
-  stopIdleWatch(); clearInterval(state.totpTimer); clearInterval(state.healthPoll);
+  state.dash = null; state.notices = [];
+  stopIdleWatch(); clearInterval(state.totpTimer); clearInterval(state.healthPoll); clearInterval(state.listTotpTimer);
+  // Back on the lock screen leaves the app: the trail of in-app addresses starts again after unlocking
+  // (the address itself stays, so unlocking returns to the same view)
+  if (window.BackNav && BackNav._trail) BackNav._trail.clear();
   clear($("#modalRoot")); closeMenus();
   showUnlock(reason);
 }
@@ -340,24 +362,26 @@ function showUnlock(reason) {
   } }, field("Master password", pw.el), err, h("div", { class: "actions" }, btn));
   const quickBox = h("div");
   if (quickSupported()) api("api/quick-unlock/options").then((o) => {
-    if (o.available) mount(quickBox, h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: async (e) => {
+    // quick unlock, when set up on this device, is the main way in: its button comes first and is the primary one
+    if (o.available) { btn.className = "btn"; mount(quickBox, h("div", { class: "quick-first" }, h("button", { class: "btn primary quick-btn", type: "button", onclick: async (e) => {
       const b = e.currentTarget; b.disabled = true; err.textContent = "";
       try {
         const q = await quickUnlock(o);
         const r = await api("api/unlock", { method: "POST", body: { password: q.password, quickUnlockId: q.id } });
         await afterUnlock(r);
       } catch (x) { err.textContent = x.name === "NotAllowedError" ? "Cancelled — type your master password instead." : x.message; b.disabled = false; }
-    } }, "🔓 Unlock with fingerprint / face")));
+    } }, "🔓 Unlock with fingerprint / face"), h("p", { class: "hint or-line" }, "or type your master password"))); }
     else if (o.reason) mount(quickBox, h("p", { class: "hint" }, o.reason));
   }).catch(() => {});
   mount($("#app"), topBanners(), h("div", { class: "center" }, h("div", { class: "card" },
     h("div", { class: "brand-big" }, "🔐"), h("h1", null, "Household Vault"),
     h("p", { class: "hint" }, `Hi ${state.me.name}. Unlock to open your vaults.`),
     reason === "Locked." ? h("div", { class: "notice info" }, "Locked — unlock again to continue.") : null,
-    form, quickBox, adminLinks(),
+    quickBox, form, adminLinks(),
     state.me.guestWifi ? h("p", null, h("button", { class: "btn small", type: "button", onclick: () => showStandalone("guest") }, "📶 Guest Wi-Fi")) : null,
-    h("p", { class: "hint" }, "Forgot your master password? It can't be recovered — an admin can reset you (your Personal vault is wiped; shared vaults are kept)."),
-    experimentalNote())));
+    h("details", { class: "about unlock-help" }, h("summary", null, "Help"),
+      h("p", { class: "hint" }, "Forgot your master password? It can't be recovered — an admin can reset you (your Personal vault is wiped; shared vaults are kept)."),
+      experimentalNote()))));
   setTimeout(() => pw.input.focus(), 30);
 }
 
@@ -534,9 +558,11 @@ function canManage(v) { return v && ["owner", "manager"].includes(v.role); }
 
 async function showMain(report) {
   state.page = "vault";
+  state.notices = []; state.noticesOpen = false;
   await refreshVaults();
   const shell = h("div", { class: "shell", id: "shell" },
     h("aside", { class: "sidebar", id: "sidebar", "aria-label": "Vaults and folders" }),
+    h("div", { class: "scrim", "aria-hidden": "true", onclick: closeNav }),
     h("div", { class: "main" },
       topBanners(),
       h("div", { class: "topbar" },
@@ -551,19 +577,41 @@ async function showMain(report) {
   if (report && report.notices && report.notices.length) {
     const box = h("div", { class: "notice info" }, h("strong", null, "Since you last unlocked: "),
       h("ul", null, report.notices.map((n) => h("li", null, n.text))),
-      h("button", { class: "btn small", type: "button", onclick: () => clear($("#notices")) }, "OK"));
-    mount($("#notices"), box);
+      h("button", { class: "btn small", type: "button", onclick: () => dropNotice(box) }, "OK"));
+    addNotice(box);
     if (report.notices.some((n) => n.action === "backup_restored")) restoreNotes(box);
   }
   if (report && report.couldNotOpen && report.couldNotOpen.length)
     toast(`Couldn't open ${report.couldNotOpen.join(", ")} — its password changed. Open it with the new one.`, { ms: 7000 });
   const pending = state.vaults.filter((v) => v.passwordChangeSuggested && v.role === "owner");
-  if (pending.length) $("#notices").appendChild(h("div", { class: "notice" }, `Someone who knew the password of ${pending.map((v) => v.name).join(", ")} lost access — change it (vault ⋯ → Change vault password).`));
+  if (pending.length) addNotice(h("div", { class: "notice" }, `Someone who knew the password of ${pending.map((v) => v.name).join(", ")} lost access — change it (vault ⋯ → Change vault password).`));
   const rem = reminderNotice();
-  if (rem) $("#notices").appendChild(rem);
+  if (rem) addNotice(rem);
   emergencyNotice();
-  await setView(state.view.kind ? state.view : { kind: "all" });
+  // the address (#/…) is only followed once unlocked: the lock screen always comes first
+  if (routeOk(parseRoute(location.hash))) await applyRoute(location.hash);
+  else await setView({ kind: "all" }, { replace: true });
   refreshHealth();
+}
+// ---------- notices: one combined, dismissible box ("3 things need you ▸") ----------
+function addNotice(el, opts = {}) { state.notices.push({ el, danger: !!opts.danger }); renderNotices(); }
+function dropNotice(el) { state.notices = state.notices.filter((n) => n.el !== el); renderNotices(); }
+function renderNotices() {
+  const box = $("#notices");
+  if (!box) return;
+  const list = state.notices;
+  if (!list.length) { clear(box); return; }
+  const danger = list.some((n) => n.danger);
+  const det = h("details", { class: "notice-group" + (danger ? " danger" : ""), open: state.noticesOpen || danger || list.length === 1 },
+    h("summary", null, h("span", { class: "grow" }, list.length === 1 ? "1 thing needs you" : `${list.length} things need you`),
+      h("button", { class: "icon-btn tap44", type: "button", "aria-label": danger ? "Hide the others" : "Dismiss", title: "Dismiss", onclick: (e) => {
+        e.preventDefault();
+        state.notices = state.notices.filter((n) => n.danger);         // an emergency request stays until it's answered
+        renderNotices();
+      } }, "✕")),
+    h("div", { class: "notice-body" }, list.map((n) => n.el)));
+  det.addEventListener("toggle", () => { state.noticesOpen = det.open; });
+  mount(box, det);
 }
 function undoneList(undone) {
   return h("ul", null, undone.map((x) => h("li", null, `${x.action.replace("_", " ")} — ${x.person || ""} ${x.vault ? "(" + x.vault + ")" : ""}`)));
@@ -589,29 +637,28 @@ function reminderNotice() {
   if (!text) return null;
   const box = h("div", { class: "notice info row wrap" }, h("span", { class: "grow" }, "⬇ " + text),
     h("button", { class: "btn small primary", type: "button", onclick: () => showPage("settings", "download") }, "Download now"),
-    h("button", { class: "btn small ghost", type: "button", onclick: () => { state.reminderDismissed = true; box.remove(); } }, "Later"));
+    h("button", { class: "btn small ghost", type: "button", onclick: () => { state.reminderDismissed = true; dropNotice(box); } }, "Later"));
   return box;
 }
 async function emergencyNotice() {
   let r;
   try { r = await api("api/emergency"); } catch (e) { return; }
-  const box = $("#notices");
-  if (!box) return;
+  if (!$("#notices")) return;
   for (const c of r.mine.contacts.filter((x) => x.status === "requested")) {
     const n = h("div", { class: "notice danger row wrap" },
       h("span", { class: "grow" }, `🆘 ${c.name} asked for your emergency items. Unless you deny it, they get them on ${fmtWhen(c.releaseAt)}.`),
-      h("button", { class: "btn small danger", type: "button", onclick: async () => { try { await api(`api/emergency/contacts/${c.id}/deny`, { method: "POST" }); n.remove(); toast("Denied"); } catch (e) { fail(e); } } }, "Deny"),
+      h("button", { class: "btn small danger", type: "button", onclick: async () => { try { await api(`api/emergency/contacts/${c.id}/deny`, { method: "POST" }); dropNotice(n); toast("Denied"); } catch (e) { fail(e); } } }, "Deny"),
       h("button", { class: "btn small", type: "button", onclick: async () => {
         if (!await confirmDialog("Give access now", `Give ${c.name} your emergency items now, without waiting?`, "Give access")) return;
-        try { await api(`api/emergency/contacts/${c.id}/approve`, { method: "POST" }); n.remove(); toast("Access given"); } catch (e) { fail(e); } } }, "Approve now"));
-    box.appendChild(n);
+        try { await api(`api/emergency/contacts/${c.id}/approve`, { method: "POST" }); dropNotice(n); toast("Access given"); } catch (e) { fail(e); } } }, "Approve now"));
+    addNotice(n, { danger: true });
   }
 }
 function toggleNav() { state.navOpen = !state.navOpen; $("#shell").classList.toggle("nav-open", state.navOpen); }
 function closeNav() { if (state.navOpen) toggleNav(); }
 
 function navItem(icon, label, active, onclick, count, extra) {
-  return h("button", { class: "nav-item" + (active ? " active" : ""), type: "button", onclick },
+  return h("button", { class: "nav-item" + (active ? " active" : ""), type: "button", onclick, "aria-current": active ? "page" : null },
     h("span", { class: "ico", "aria-hidden": "true" }, icon), h("span", { class: "nm" }, label),
     count !== undefined && count !== null ? h("span", { class: "count" }, String(count)) : null, extra || null);
 }
@@ -624,6 +671,7 @@ function renderSidebar() {
   const sb = $("#sidebar");
   if (!sb) return;
   const theme = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
+  const tagsHidden = state.expanded.__tags === undefined ? isPhone() : state.expanded.__tags === false;
   const vaultBlocks = state.vaults.map((v) => {
     const f = state.folders[v.id];
     const expanded = state.expanded[v.id] !== false;
@@ -680,15 +728,11 @@ function renderSidebar() {
       h("div", { class: "nav-sec" }, h("span", { class: "grow" }, "Vaults"),
         h("button", { class: "icon-btn", type: "button", title: "New shared vault", "aria-label": "New shared vault", onclick: newVaultDialog }, "＋")),
       vaultBlocks,
+      // Tags: folded by default on phones (the drawer stays short); the types are filter chips above the list now
       state.tags && state.tags.length ? [
         h("div", { class: "nav-sec" }, h("span", { class: "grow" }, "Tags"),
-          h("button", { class: "icon-btn", type: "button", "aria-label": state.expanded.__tags === false ? "Show tags" : "Hide tags", onclick: () => { state.expanded.__tags = state.expanded.__tags === false; renderSidebar(); } }, state.expanded.__tags === false ? "▸" : "▾")),
-        state.expanded.__tags === false ? null : state.tags.slice(0, 30).map((t) => navItem("🏷", t.tag, state.page === "vault" && state.view.kind === "tag" && state.view.tag === t.tag, () => setView({ kind: "tag", tag: t.tag }), t.count))] : null,
-      h("div", { class: "nav-sec" }, "Types"),
-      navItem("🔑", "Logins", isView("type", undefined, undefined, "login"), () => setView({ kind: "type", type: "login" })),
-      navItem("⏱", "2FA codes", isView("type", undefined, undefined, "2fa"), () => setView({ kind: "type", type: "2fa" })),
-      navItem("📝", "Secure notes", isView("type", undefined, undefined, "note"), () => setView({ kind: "type", type: "note" })),
-      navItem("💳", "Cards", isView("type", undefined, undefined, "card"), () => setView({ kind: "type", type: "card" }))),
+          h("button", { class: "icon-btn twisty-btn", type: "button", "aria-expanded": tagsHidden ? "false" : "true", "aria-label": tagsHidden ? "Show tags" : "Hide tags", onclick: () => { state.expanded.__tags = tagsHidden; renderSidebar(); } }, tagsHidden ? "▸" : "▾")),
+        tagsHidden ? null : state.tags.slice(0, 30).map((t) => navItem("🏷", t.tag, state.page === "vault" && state.view.kind === "tag" && state.view.tag === t.tag, () => setView({ kind: "tag", tag: t.tag }), t.count))] : null),
     h("div", { class: "side-foot" },
       navItem("⚙️", "Settings", state.page === "settings", () => showPage("settings")),
       state.me.isAdmin ? navItem("🛡", "Admin", state.page === "admin", () => showPage("admin")) : null,
@@ -712,14 +756,41 @@ function viewTitle() {
   if (v.folderId) { const f = (state.folders[v.vaultId] || { folders: [] }).folders.find((x) => x.id === v.folderId); return f ? f.name : "Folder"; }
   return vault ? vault.name : "";
 }
-async function setView(view) {
+// opts.replace: a filter change (the type chips) — the address changes without a step for Back
+async function setView(view, opts = {}) {
   state.page = "vault";
   state.view = view;
   state.picked = new Set();
+  state.pageTok++;
   closeNav();
+  clearInterval(state.healthPoll);
   if (view.kind !== "search") { state.q = ""; const sb = $("#search"); if (sb) sb.value = ""; }
   renderSidebar();
+  setHash(opts);
   await loadItems();
+}
+// ---------- sorting (remembered per viewer in localStorage: just the choice, nothing from the vault) ----------
+const SORTS = [["name", "Name"], ["used", "Recently used"], ["modified", "Modified"]];
+const SORTABLE = ["all", "fav", "folder", "tag", "type"];
+function sortKey() { const k = UI.lsGet("vault.sort"); return SORTS.some(([x]) => x === k) ? k : "name"; }
+const byName = (a, b) => String(a.title || "").localeCompare(String(b.title || ""), undefined, { sensitivity: "base", numeric: true });
+async function sortItems() {
+  const v = state.view;
+  if (v.kind === "trash") { state.items.sort((a, b) => kdbxMs(b.deletedAt) - kdbxMs(a.deletedAt)); return; }
+  if (v.kind === "expiring") { state.items.sort((a, b) => String(a.expires || "").localeCompare(String(b.expires || ""))); return; }
+  if (!SORTABLE.includes(v.kind)) return;
+  const k = sortKey();
+  if (k === "modified") state.items.sort((a, b) => kdbxMs(b.modified) - kdbxMs(a.modified) || byName(a, b));
+  else if (k === "used") {
+    let order = new Map();
+    try { order = new Map((await api("api/items?recent=true", { background: true })).items.map((x, i) => [x.vaultId + ":" + x.id, i])); } catch (e) { /* by name then */ }
+    const at = (x) => { const i = order.get(x.vaultId + ":" + x.id); return i === undefined ? Infinity : i; };
+    state.items.sort((a, b) => (at(a) - at(b)) || byName(a, b));
+  } else state.items.sort(byName);
+}
+function redrawList() {
+  const old = document.querySelector("#content > .list-pane");
+  if (old) old.replaceWith(listPane()); else renderPanes();
 }
 async function loadItems() {
   const v = state.view;
@@ -738,15 +809,28 @@ async function loadItems() {
     if (v.scope === "folder" && v.folderId) p.set("folder", v.folderId);
     path = "api/search?" + p.toString();
   }
+  const c = $("#content");
+  if (c && c.classList.contains("page-host")) { c.className = "panes"; UI.loading(c); }
+  const tok = state.pageTok;
   try {
     const r = await api(path);
     state.items = r.items;
     state.lockedInSearch = r.lockedVaults || [];
     state.trashFolders = r.folders || [];
+    await sortItems();
   } catch (e) {
     if (e.status === 423) { state.items = []; }
-    else if (e.status !== 401) fail(e);
+    else if (e.status === 401) return;
+    else {
+      if (tok !== state.pageTok || state.page !== "vault") return;
+      state.items = [];
+      renderPanes();
+      const list = document.querySelector("#content .list");
+      if (list) mount(list, UI.errorBox(e, () => loadItems()));
+      return;
+    }
   }
+  if (tok !== state.pageTok || state.page !== "vault") return;     // moved on while loading
   renderPanes();
 }
 
@@ -754,7 +838,7 @@ function renderPanes() {
   const c = $("#content");
   if (!c) return;
   c.className = "panes" + (state.selected ? " show-detail" : "");
-  mount(c, listPane(), h("section", { class: "detail-pane", id: "detail", "aria-label": "Item" }, state.selected ? spinnerBox() : emptyDetail()));
+  mount(c, listPane(), h("section", { class: "detail-pane", id: "detail", "aria-label": "Item" }, state.selected ? UI.loading(null) : emptyDetail()));
   if (state.selected) showDetail(state.selected.vaultId, state.selected.id);
 }
 function isSelected(vaultId, id) { return !!(state.selected && state.selected.vaultId === vaultId && state.selected.id === id); }
@@ -768,15 +852,44 @@ function closeDetail() {
   const pane = $("#detail");
   if (pane) mount(pane, emptyDetail());
 }
-function spinnerBox() { return h("div", { class: "empty" }, "…"); }
+// The empty item pane on a computer: a small dashboard (on a phone the pane isn't shown without an item)
 function emptyDetail() {
-  return h("div", { class: "empty" }, h("div", { class: "brand-big" }, "🔐"), h("p", null, "Choose an item, or search with / or Ctrl+K."));
+  const box = h("div", { class: "dash" }, h("div", { class: "empty" }, h("div", { class: "brand-big" }, "🔐"), h("p", null, "Choose an item, or search with / or Ctrl+K.")));
+  if (!isPhone() && state.token) fillDash(box);
+  return box;
+}
+async function fillDash(box) {
+  let d = state.dash;
+  if (!d || Date.now() - d.at > 60000) {
+    try {
+      const [f, r] = await Promise.all([api("api/items?favourites=true", { background: true }), api("api/items?recent=true", { background: true })]);
+      d = state.dash = { at: Date.now(), fav: f.items, recent: r.items };
+    } catch (e) { return; }
+  }
+  if (!box.isConnected || !state.token) return;
+  const kpi = (label, n, onclick, cls) => h("button", { class: "kpi", type: "button", onclick },
+    h("span", { class: "kpi-label" }, label), h("span", { class: "kpi-value" + (cls ? " " + cls : "") }, n === null || n === undefined ? "–" : String(n)));
+  const health = state.health ? state.health.items.length : null;
+  const short = (title, list, more) => h("div", { class: "card dash-card" }, h("div", { class: "row" }, h("strong", { class: "grow" }, title),
+    list.length > 5 ? h("button", { class: "link-btn", type: "button", onclick: more }, "All") : null),
+    list.length ? list.slice(0, 5).map((it) => h("button", { class: "dash-row", type: "button", onclick: () => selectItem(it) }, avatar(it.title),
+      h("span", { class: "grow" }, h("span", { class: "t" }, it.title || "(no name)"), h("span", { class: "s" }, it.vaultName || "")))) : h("p", { class: "hint" }, "Nothing yet."));
+  mount(box,
+    h("div", { class: "summary-strip" },
+      kpi("⭐ Favourites", d.fav.length, () => setView({ kind: "fav" })),
+      kpi("🕘 Recently used", d.recent.length, () => setView({ kind: "recent" })),
+      kpi("🗓 Expiring soon", state.expiringCount, () => setView({ kind: "expiring" }), state.expiringCount ? "neg" : null),
+      kpi("🩺 Health issues", health, () => showPage("health"), health ? "neg" : null)),
+    h("div", { class: "dash-lists" }, short("Favourites", d.fav, () => setView({ kind: "fav" })), short("Recently used", d.recent, () => setView({ kind: "recent" }))),
+    h("p", { class: "hint dash-tip" }, "Choose an item, or search with / or Ctrl+K."));
 }
 function currentVault() { return state.view.vaultId ? vaultById(state.view.vaultId) : null; }
 
+const TYPE_CHIPS = [[null, "All"], ["login", "🔑 Logins"], ["2fa", "⏱ 2FA"], ["note", "📝 Notes"], ["card", "💳 Cards"]];
 function listPane() {
   const v = state.view;
   const vault = currentVault();
+  clearInterval(state.listTotpTimer);
   const crumbs = h("div", { class: "crumbs" });
   if ((v.kind === "folder") && vault) {
     const f = state.folders[vault.id] || { folders: [] };
@@ -787,17 +900,33 @@ function listPane() {
     for (const x of chain) { crumbs.appendChild(document.createTextNode("›")); crumbs.appendChild(h("button", { type: "button", onclick: () => setView({ kind: "folder", vaultId: vault.id, folderId: x.id }) }, x.name)); }
   }
   const editable = v.kind === "folder" ? canEdit(vault) : MULTI_VIEWS.includes(v.kind);
-  const newBtn = editable ? h("button", { class: "btn small primary", type: "button", onclick: (e) => newItemMenu(e.currentTarget) }, "+ New") : null;
-  const folderBtn = v.kind === "folder" && canEdit(vault) ? h("button", { class: "btn small", type: "button", onclick: () => newFolderDialog(vault, v.folderId) }, "+ Folder") : null;
-  const trashBtns = v.kind === "trash" && canEdit(vault) && state.items.length ? h("button", { class: "btn small danger", type: "button", onclick: async () => {
-    if (!await confirmDialog("Empty the Trash", "Delete everything in this vault's Trash for good? This can't be undone (older versions are kept for a while).", "Empty Trash", true)) return;
-    try { await api(`api/vaults/${vault.id}/trash/empty`, { method: "POST" }); await afterChange(); } catch (e) { fail(e); }
-  } }, "Empty Trash") : null;
+  // one primary action: + New (on a phone, the floating + below); a folder's own actions (+ Folder…) are under ⋯
+  const newBtn = editable ? h("button", { class: "btn small primary hide-phone", type: "button", onclick: (e) => newItemMenu(e.currentTarget) }, "+ New") : null;
+  const fab = editable ? h("button", { class: "fab", type: "button", "aria-label": "New item", title: "New item", onclick: (e) => newItemMenu(e.currentTarget) }, "+") : null;
+  let more = null;
+  if (v.kind === "folder" && vault && v.folderId && canEdit(vault))
+    more = h("button", { class: "icon-btn tap44", type: "button", "aria-label": "Folder options", onclick: (e) => folderMenu(e.currentTarget, vault, (state.folders[vault.id] || { folders: [] }).folders.find((x) => x.id === v.folderId)) }, "⋯");
+  else if (v.kind === "folder" && vault)
+    more = h("button", { class: "icon-btn tap44", type: "button", "aria-label": `${vault.name} options`, onclick: (e) => vaultMenu(e.currentTarget, vault) }, "⋯");
+  else if (v.kind === "trash" && canEdit(vault) && state.items.length)
+    more = h("button", { class: "icon-btn tap44", type: "button", "aria-label": "Trash options", onclick: (e) => menu(e.currentTarget, [{ label: "🗑 Empty Trash", danger: true, run: async () => {
+      if (!await confirmDialog("Empty the Trash", "Delete everything in this vault's Trash for good? This can't be undone (older versions are kept for a while).", "Empty Trash", true)) return;
+      try { await api(`api/vaults/${vault.id}/trash/empty`, { method: "POST" }); await afterChange(); } catch (e) { fail(e); }
+    } }]) }, "⋯");
+  const back = v.kind !== "all" ? h("button", { class: "icon-btn tap44 phone-only", type: "button", "aria-label": "Back", onclick: () => { if (!(window.BackNav && BackNav.back())) setView({ kind: "all" }); } }, "←") : null;
   let scope = null;
   if (v.kind === "search" && v.vaultId) {
     const chips = [["all", "All vaults"], ["vault", "This vault"]].concat(v.folderId ? [["folder", "This folder"]] : []);
     scope = h("div", { class: "row wrap" }, ...chips.map(([k, l]) => h("button", { class: "chip" + ((v.scope || "all") === k ? " on" : ""), type: "button", onclick: () => { state.view.scope = k; loadItems(); } }, l)));
   }
+  // the types: a filter on All items
+  const types = v.kind === "all" || v.kind === "type" ? h("div", { class: "type-chips", role: "group", "aria-label": "Show" },
+    TYPE_CHIPS.map(([t, l]) => { const on = t ? v.kind === "type" && v.type === t : v.kind === "all";
+      return h("button", { class: "chip" + (on ? " on" : ""), type: "button", "aria-pressed": on ? "true" : "false",
+        onclick: () => setView(t ? { kind: "type", type: t } : { kind: "all" }, { replace: true }) }, l); })) : null;
+  const sortSel = SORTABLE.includes(v.kind) ? h("select", { class: "sort-sel", "aria-label": "Sort by", onchange: async (e) => { UI.lsSet("vault.sort", e.target.value); await sortItems(); redrawList(); } },
+    SORTS.map(([k, l]) => h("option", { value: k }, l))) : null;
+  if (sortSel) sortSel.value = sortKey();
   const bulk = state.picked.size ? h("div", { class: "bulk" }, h("strong", null, `${state.picked.size} selected`),
     state.picked.size < state.items.length ? h("button", { class: "btn small ghost", type: "button", onclick: () => { state.items.forEach((x) => state.picked.add(x.vaultId + ":" + x.id)); renderPanes(); } }, `Select all ${state.items.length}`) : null,
     h("span", { class: "spacer" }),
@@ -805,7 +934,8 @@ function listPane() {
     h("button", { class: "btn small", type: "button", onclick: () => bulkMove(true) }, "Copy to…"),
     h("button", { class: "btn small danger", type: "button", onclick: bulkDelete }, "Delete"),
     h("button", { class: "btn small ghost", type: "button", onclick: () => { state.picked = new Set(); renderPanes(); } }, "✕")) : null;
-  const rows = state.items.map((it) => itemRow(it));
+  const totps = [];
+  const rows = groupedRows(v, totps);
   const trashFolders = v.kind === "trash" ? (state.trashFolders || []).map((f) => h("div", { class: "item-row" },
     h("span", { class: "avatar av7" }, "📁"), h("div", { class: "grow" }, h("div", { class: "t" }, f.name), h("div", { class: "s" }, "Folder")),
     canEdit(vault) ? h("button", { class: "btn small", type: "button", onclick: async () => { try { await api(`api/vaults/${vault.id}/restore/${f.id}`, { method: "POST" }); toast("Restored"); await afterChange(); } catch (e) { fail(e); } } }, "Restore") : null)) : [];
@@ -815,16 +945,82 @@ function listPane() {
   if (v.kind === "recent") emptyText = "Items you open appear here.";
   if (v.kind === "expiring") emptyText = "Nothing expires in the next 90 days. Give items an expiry date (cards, passports, insurance…) to be reminded.";
   if (v.kind === "trash") emptyText = "The Trash is empty.";
+  const emptyBox = editable && !["search", "fav", "recent", "expiring"].includes(v.kind)
+    ? UI.empty(emptyText, null, { label: "+ New item", class: "btn primary", onclick: (e) => newItemMenu(e.currentTarget) }) : UI.empty(null, emptyText);
   const locked = state.lockedInSearch && state.lockedInSearch.length && v.kind === "search" ?
     h("div", { class: "notice" }, `${state.lockedInSearch.join(", ")} ${state.lockedInSearch.length === 1 ? "is" : "are"} locked — open to search there.`) : null;
-  return h("section", { class: "list-pane", "aria-label": "Items" },
+  const pane = h("section", { class: "list-pane", "aria-label": "Items" },
     h("div", { class: "list-head" },
       crumbs.childNodes.length > 1 ? crumbs : null,
-      h("div", { class: "row" }, h("div", { class: "list-title grow" }, viewTitle()), folderBtn, newBtn, trashBtns,
-        v.kind === "folder" && v.folderId && canEdit(vault) ? h("button", { class: "icon-btn", type: "button", "aria-label": "Folder options", onclick: (e) => folderMenu(e.currentTarget, vault, (state.folders[vault.id] || { folders: [] }).folders.find((x) => x.id === v.folderId)) }, "⋯") : null),
-      scope),
+      h("div", { class: "row" }, back, h("div", { class: "list-title grow" }, viewTitle(), h("span", { class: "count-in-title" }, ` · ${state.items.length}`)), sortSel, newBtn, more),
+      types, scope),
     bulk, locked,
-    h("div", { class: "list", role: "list" }, trashFolders, rows.length || trashFolders.length ? rows : h("div", { class: "empty" }, emptyText)));
+    h("div", { class: "list", role: "list" }, trashFolders, rows.length || trashFolders.length ? rows : emptyBox),
+    fab);
+  if (totps.length) startListTotp(totps);
+  return pane;
+}
+// The rows, with headers: A–Z when sorted by name, Expired / Within 30 days / Later on Expiring
+function groupedRows(v, totps) {
+  const opts = { totps };
+  if (v.kind === "expiring") {
+    const out = [];
+    let last = null;
+    for (const it of state.items) {
+      const n = daysLeftOf(it.expires);
+      const g = n === null || n < 0 ? "Expired" : n <= 30 ? "Within 30 days" : "Later";
+      if (g !== last) { out.push(h("div", { class: "ui-group-head", role: "presentation" }, g)); last = g; }
+      out.push(itemRow(it, opts));
+    }
+    return out;
+  }
+  if (!SORTABLE.includes(v.kind) || sortKey() !== "name" || state.items.length < 8) return state.items.map((it) => itemRow(it, opts));
+  const out = [];
+  let last = null;
+  for (const it of state.items) {
+    const c = (String(it.title || "").trim()[0] || "#").toLocaleUpperCase();
+    const g = /\p{L}/u.test(c) ? c : "#";
+    if (g !== last) { out.push(h("div", { class: "ui-group-head", role: "presentation" }, g)); last = g; }
+    out.push(itemRow(it, opts));
+  }
+  return out;
+}
+// The 2FA view: each row shows its live code and countdown ring (fetched as background polls: not activity)
+function makeRing() {
+  const ringFg = svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--accent)", "stroke-width": 3, "stroke-dasharray": "56.5", "stroke-dashoffset": "0", transform: "rotate(-90 11 11)" });
+  const ring = svgEl("svg", { class: "ring", viewBox: "0 0 22 22", "aria-hidden": "true" }, svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--panel-hover)", "stroke-width": 3 }), ringFg);
+  return { ring, ringFg };
+}
+function rowTotp(it, totps) {
+  const code = h("span", { class: "totp-code mono" }, "··· ···");
+  const { ring, ringFg } = makeRing();
+  const entry = { it, code, ringFg, cur: null, remaining: 0, period: 30 };
+  if (totps.length < 60) totps.push(entry); else code.textContent = "open to see";
+  const copy = h("button", { class: "icon-btn tap44", type: "button", title: "Copy code", "aria-label": `Copy 2FA code of ${it.title}`, onclick: (e) => { e.stopPropagation(); if (entry.cur) copyText(entry.cur, "code"); } }, "📋");
+  return h("span", { class: "row-totp" }, code, ring, copy);
+}
+function startListTotp(entries) {
+  clearInterval(state.listTotpTimer);
+  const refresh = async (s) => {
+    if (s.busy) return;
+    s.busy = true;
+    try {
+      const r = await api(`api/vaults/${s.it.vaultId}/items/${s.it.id}/totp`, { background: true });
+      s.cur = r.code; s.remaining = r.remaining; s.period = r.period;
+      s.code.textContent = r.code.replace(/(\d{3})(\d+)/, "$1 $2");
+    } catch (e) { s.failed = true; s.code.textContent = "—"; }
+    finally { s.busy = false; }
+  };
+  entries.forEach(refresh);
+  state.listTotpTimer = setInterval(() => {
+    if (!state.token || !entries[0].code.isConnected) { clearInterval(state.listTotpTimer); return; }
+    for (const s of entries) {
+      if (s.failed || s.busy) continue;
+      s.remaining -= 1;
+      if (s.remaining <= 0) refresh(s);
+      s.ringFg.setAttribute("stroke-dashoffset", String(56.5 * (1 - Math.max(s.remaining, 0) / s.period)));
+    }
+  }, 1000);
 }
 function newItemMenu(anchor) {
   const v = state.view;
@@ -832,7 +1028,7 @@ function newItemMenu(anchor) {
   const keys = Object.keys(TEMPLATES);
   menu(anchor, (first ? [first, ...keys.filter((k) => k !== first)] : keys).map((k) => ({ label: `${TEMPLATES[k].icon} ${TEMPLATES[k].label}`, run: () => itemEditor(null, k) })));
 }
-function itemRow(it) {
+function itemRow(it, opts = {}) {
   const active = state.selected && state.selected.id === it.id && state.selected.vaultId === it.vaultId;
   const key = it.vaultId + ":" + it.id;
   const box = h("input", { type: "checkbox", class: "sel", "aria-label": `Select ${it.title}`, checked: state.picked.has(key) });
@@ -847,14 +1043,24 @@ function itemRow(it) {
   });
   box.addEventListener("change", () => { if (box.checked) state.picked.add(key); else state.picked.delete(key); renderPanes(); });
   const where = MULTI_VIEWS.includes(state.view.kind) ? [it.vaultName, ...it.folderPath].join(" › ") : null;
-  const sub = [it.type === "card" && it.cardLast4 ? "•••• " + it.cardLast4 : it.username || it.host, where].filter(Boolean).join(" · ");
+  const inTrashView = state.view.kind === "trash";
+  const sub = [it.type === "card" && it.cardLast4 ? "•••• " + it.cardLast4 : it.username || it.host, where,
+    inTrashView && it.deletedAt ? `deleted ${agoText(kdbxMs(it.deletedAt))}` : null].filter(Boolean).join(" · ");
+  const vault = vaultById(it.vaultId);
+  let tail = h("span", { class: "hint", "aria-hidden": "true" }, iconOf(it));
+  if (state.view.kind === "expiring") tail = h("span", { class: "hint when" }, fmtDay(it.expires));
+  else if (inTrashView && canEdit(vault)) tail = h("span", { class: "hint" }, h("button", { class: "btn small", type: "button", onclick: async (e) => {
+    e.stopPropagation();
+    try { await api(`api/vaults/${it.vaultId}/restore/${it.id}`, { method: "POST" }); toast("Restored"); if (isSelected(it.vaultId, it.id)) state.selected = null; await afterChange(); } catch (x) { fail(x); }
+  } }, "Restore"));
+  else if (state.view.kind === "type" && state.view.type === "2fa" && it.hasTotp && opts.totps) tail = h("span", { class: "hint" }, rowTotp(it, opts.totps));
   const issues = state.healthMap.get(key) || [];
   const row = h("div", { class: "item-row" + (active ? " active" : ""), role: "listitem", tabindex: "0", "data-key": key,
     onclick: () => selectItem(it), onkeydown: (e) => { if (e.key === "Enter") selectItem(it); } },
     box, avatar(it.title),
     h("div", { class: "grow" }, h("div", { class: "t" }, it.title || "(no name)", it.favourite ? " ⭐" : "", it.hasTotp ? " ⏱" : ""), sub ? h("div", { class: "s" }, sub) : null),
     issues.length || expiryChip(it.expires) ? h("span", { class: "badges" }, expiryChip(it.expires), issues.slice(0, 2).map((k) => issueChip(k))) : null,
-    h("span", { class: "hint", "aria-hidden": "true" }, iconOf(it)));
+    tail);
   if (FINE_POINTER && !it.inTrash && state.view.kind !== "trash") {
     row.setAttribute("draggable", "true");
     row.addEventListener("dragstart", (e) => {
@@ -876,6 +1082,7 @@ function selectItem(it) {
   showDetail(it.vaultId, it.id);
 }
 async function afterChange(keepSelection = true) {
+  state.dash = null;
   await refreshVaults();
   renderSidebar();
   if (!keepSelection) state.selected = null;
@@ -886,7 +1093,7 @@ const refreshHealthSoon = debounce(() => refreshHealth(), 1500);
 
 // ---------- search ----------
 function searchBox() {
-  const narrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
+  const narrow = isPhone();
   const input = h("input", { type: "search", id: "search", placeholder: narrow ? "Search" : "Search all vaults   ( / )", "aria-label": "Search", autocomplete: "off", spellcheck: "false" });
   input.value = state.q;
   const run = debounce(() => {
@@ -913,8 +1120,9 @@ document.addEventListener("keydown", (e) => {
   }
   if (!typing && (e.key === "ArrowDown" || e.key === "ArrowUp") && e.target.classList && e.target.classList.contains("item-row")) {
     e.preventDefault();
-    const sib = e.key === "ArrowDown" ? e.target.nextElementSibling : e.target.previousElementSibling;
-    if (sib && sib.classList.contains("item-row")) sib.focus();
+    let sib = e.target;                        // skipping the A–Z / Expiring headers
+    do { sib = e.key === "ArrowDown" ? sib.nextElementSibling : sib.previousElementSibling; } while (sib && !sib.classList.contains("item-row"));
+    if (sib) sib.focus();
   }
 });
 
@@ -924,28 +1132,38 @@ async function showDetail(vaultId, id) {
   clearInterval(state.totpTimer);
   let d;
   try { d = await api(`api/vaults/${vaultId}/items/${id}`); }
-  catch (e) { if (e.status === 404) { state.selected = null; mount(pane, emptyDetail()); } else fail(e); return; }
+  catch (e) {
+    if (!isSelected(vaultId, id) || !pane.isConnected) return;
+    if (e.status === 404) { state.selected = null; mount(pane, emptyDetail()); }
+    else if (e.status !== 401) mount(pane, h("button", { class: "icon-btn back-btn tap44", type: "button", "aria-label": "Back to list", onclick: closeDetail }, "←"),
+      UI.errorBox(e, () => { UI.loading(pane); showDetail(vaultId, id); }));
+    return;
+  }
   if (!isSelected(vaultId, id)) return;      // closed (or another item chosen) while loading
   state.detail = d;
   const inTrash = d.inTrash;
-  const secretRow = (label, fieldName, set, mono = true) => {
-    const val = h("span", { class: "v" + (mono ? " mono" : "") }, set ? "••••••••••" : h("span", { class: "hint" }, "—"));
+  // Tapping a value copies it (the same as 📋: a secret is fetched only then, and the clipboard is cleared later)
+  const secretRow = (label, fieldName, set, mono = true, mask = "••••••••••") => {
+    const copySecret = async () => {
+      try { const r = await api(`api/vaults/${vaultId}/items/${id}/secret?field=${encodeURIComponent(fieldName)}`); copyText(r.value, label.toLowerCase()); }
+      catch (e) { fail(e); }
+    };
+    const val = h("span", set ? { class: "v copyable" + (mono ? " mono" : ""), role: "button", tabindex: "0", title: "Tap to copy", "aria-label": `${label} (tap to copy)`,
+      onclick: copySecret, onkeydown: (e) => { if (e.key === "Enter") copySecret(); } } : { class: "v" }, set ? mask : h("span", { class: "hint" }, "—"));
     let shown = false;
-    const eye = h("button", { class: "icon-btn", type: "button", title: "Show", "aria-label": `Show ${label}`, onclick: async () => {
-      if (shown) { val.textContent = "••••••••••"; shown = false; return; }
+    const eye = h("button", { class: "icon-btn tap44", type: "button", title: "Show", "aria-label": `Show ${label}`, onclick: async () => {
+      if (shown) { val.textContent = mask; shown = false; return; }
       try { const r = await api(`api/vaults/${vaultId}/items/${id}/secret?field=${encodeURIComponent(fieldName)}`); val.textContent = r.value; shown = true; }
       catch (e) { fail(e); }
     } }, "👁");
-    const copy = h("button", { class: "icon-btn", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: async () => {
-      try { const r = await api(`api/vaults/${vaultId}/items/${id}/secret?field=${encodeURIComponent(fieldName)}`); copyText(r.value, label.toLowerCase()); }
-      catch (e) { fail(e); }
-    } }, "📋");
+    const copy = h("button", { class: "icon-btn tap44", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: copySecret }, "📋");
     return h("div", { class: "frow" }, h("span", { class: "k" }, label), val, set ? h("span", { class: "acts" }, eye, copy) : h("span"));
   };
   const plainRow = (label, value, opts = {}) => value ? h("div", { class: "frow" }, h("span", { class: "k" }, label),
-    opts.link ? h("a", { class: "v", href: safeUrl(value), target: "_blank", rel: "noopener noreferrer" }, value) : h("span", { class: "v" }, value),
-    h("span", { class: "acts" }, opts.link ? h("a", { class: "icon-btn", href: safeUrl(value), target: "_blank", rel: "noopener noreferrer", title: "Open site", "aria-label": "Open site" }, "↗") : null,
-      h("button", { class: "icon-btn", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: () => copyText(value, "plain") }, "📋"))) : null;
+    opts.link ? h("a", { class: "v", href: safeUrl(value), target: "_blank", rel: "noopener noreferrer" }, value)
+      : h("span", { class: "v copyable", role: "button", tabindex: "0", title: "Tap to copy", onclick: () => copyText(value, "plain"), onkeydown: (e) => { if (e.key === "Enter") copyText(value, "plain"); } }, value),
+    h("span", { class: "acts" }, opts.link ? h("a", { class: "icon-btn tap44", href: safeUrl(value), target: "_blank", rel: "noopener noreferrer", title: "Open site", "aria-label": "Open site" }, "↗") : null,
+      h("button", { class: "icon-btn tap44", type: "button", title: "Copy", "aria-label": `Copy ${label}`, onclick: () => copyText(value, "plain") }, "📋"))) : null;
   const rows = [];
   if (d.type === "login") {
     rows.push(plainRow("Username", d.username));
@@ -953,7 +1171,7 @@ async function showDetail(vaultId, id) {
     rows.push(plainRow("Website", d.url, { link: true }));
   } else if (d.type === "card") {
     rows.push(plainRow("Name on card", d.cardholder));
-    rows.push(secretRow("Number", "Number", d.card.number.set));
+    rows.push(secretRow("Number", "Number", d.card.number.set, true, d.cardLast4 ? "•••• " + d.cardLast4 : undefined));
     rows.push(plainRow("Expiry", d.expiry));
     rows.push(secretRow("CVV", "CVV", d.card.cvv.set));
     rows.push(secretRow("PIN", "PIN", d.card.pin.set));
@@ -970,10 +1188,10 @@ async function showDetail(vaultId, id) {
   }
   let totpBox = null;
   if (d.totp) {
-    const code = h("span", { class: "totp-code mono" }, "······");
-    const ringFg = svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--accent)", "stroke-width": 3, "stroke-dasharray": "56.5", "stroke-dashoffset": "0", transform: "rotate(-90 11 11)" });
-    const ring = svgEl("svg", { class: "ring", viewBox: "0 0 22 22", "aria-hidden": "true" }, svgEl("circle", { cx: 11, cy: 11, r: 9, fill: "none", stroke: "var(--panel-hover)", "stroke-width": 3 }), ringFg);
     let cur = null, remaining = 0, period = d.totp.period;
+    const code = h("span", { class: "totp-code mono copyable", role: "button", tabindex: "0", title: "Tap to copy", onclick: () => cur && copyText(cur, "code"),
+      onkeydown: (e) => { if (e.key === "Enter" && cur) copyText(cur, "code"); } }, "······");
+    const { ring, ringFg } = makeRing();
     const refresh = async () => {
       try { const r = await api(`api/vaults/${vaultId}/items/${id}/totp`, { background: true }); cur = r.code; remaining = r.remaining; period = r.period;
         code.textContent = cur.replace(/(\d{3})(\d+)/, "$1 $2"); } catch (e) { clearInterval(state.totpTimer); }
@@ -986,13 +1204,13 @@ async function showDetail(vaultId, id) {
       ringFg.setAttribute("stroke-dashoffset", String(56.5 * (1 - Math.max(remaining, 0) / period)));
     }, 1000);
     totpBox = h("div", { class: "frow" }, h("span", { class: "k" }, "2FA code"), h("span", { class: "v row" }, code, ring),
-      h("span", { class: "acts" }, h("button", { class: "icon-btn", type: "button", title: "Copy code", "aria-label": "Copy 2FA code", onclick: () => cur && copyText(cur, "code") }, "📋")));
+      h("span", { class: "acts" }, h("button", { class: "icon-btn tap44", type: "button", title: "Copy code", "aria-label": "Copy 2FA code", onclick: () => cur && copyText(cur, "code") }, "📋")));
   }
   const custom = d.fields.map((f) => f.protected ? secretRow(f.name, f.name, true) : plainRow(f.name, f.value));
   const vault = vaultById(vaultId);
   const editable = canEdit(vault) && d.canEdit;
   const actions = h("div", { class: "row wrap" },
-    h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back to list", onclick: closeDetail }, "←"),
+    h("button", { class: "icon-btn back-btn tap44", type: "button", "aria-label": "Back to list", onclick: closeDetail }, "←"),
     h("span", { class: "spacer" }),
     inTrash ? (editable ? h("button", { class: "btn small", type: "button", onclick: async () => { try { await api(`api/vaults/${vaultId}/restore/${id}`, { method: "POST" }); toast("Restored"); state.selected = null; await afterChange(); } catch (e) { fail(e); } } }, "Restore") : null)
       : (editable ? h("button", { class: "btn small primary", type: "button", onclick: () => itemEditor(d) }, "✎ Edit") : null),
@@ -1003,15 +1221,22 @@ async function showDetail(vaultId, id) {
       h("div", { class: "hint" }, [d.template && TEMPLATES[d.template] ? `${TEMPLATES[d.template].icon} ${TEMPLATES[d.template].label}` : null, [d.vaultName, ...d.folderPath].join(" › ")].filter(Boolean).join(" · ")))),
     inTrash ? h("div", { class: "notice" }, "This item is in the Trash.") : null,
     (state.healthMap.get(vaultId + ":" + id) || []).length ? h("div", { class: "row wrap meta" }, h("span", { class: "hint" }, "Password health:"),
-      (state.healthMap.get(vaultId + ":" + id) || []).map((k) => issueChip(k))) : null,
+      (state.healthMap.get(vaultId + ":" + id) || []).map((k) => healthAction(k, d, editable && !inTrash))) : null,
     h("div", { class: "fields" }, rows, totpBox, custom),
+    d.notes ? h("div", null, h("div", { class: "hint meta" }, "Notes"), h("div", { class: "notes-box" }, d.notes)) : null,
+    d.tags.length ? h("div", { class: "row wrap meta" }, d.tags.map((t) => h("span", { class: "chip" }, t))) : null,
     (d.sheet && d.sheet.include) || d.emergency || d.guestWifi ? h("div", { class: "row wrap meta" },
       d.sheet && d.sheet.include ? h("span", { class: "chip on" }, "🖨 On the household sheet") : null, d.sheet && d.sheet.wifi ? h("span", { class: "chip" }, "Wi-Fi QR code") : null,
       d.emergency ? h("span", { class: "chip on" }, "🆘 In emergency access") : null,
       d.guestWifi ? h("button", { class: "chip on", type: "button", onclick: () => showPage("guest") }, "📶 On the Guest Wi-Fi page") : null) : null,
-    d.tags.length ? h("div", { class: "row wrap meta" }, d.tags.map((t) => h("span", { class: "chip" }, t))) : null,
-    d.notes ? h("div", null, h("div", { class: "hint meta" }, "Notes"), h("div", { class: "notes-box" }, d.notes)) : null,
     h("div", { class: "meta" }, `Changed ${fmtWhen(kdbxTime(d.modified))}`, d.historyCount ? ` · ${d.historyCount} earlier version${d.historyCount > 1 ? "s" : ""}` : ""));
+}
+// A health chip with what to do about it: change the password (the editor opens with the generator), or add 2FA
+function healthAction(k, d, editable) {
+  if (!editable || d.type !== "login") return issueChip(k);
+  const label = k === "no2fa" ? "No 2FA: Add a code →" : `${ISSUE_LABEL[k][0].toUpperCase() + ISSUE_LABEL[k].slice(1)}: Change password →`;
+  return h("button", { class: "chip issue action " + k, type: "button", title: issueChip(k).title,
+    onclick: () => itemEditor(d, null, k === "no2fa" ? { focusTotp: true } : { generate: true }) }, label);
 }
 function svgEl(tag, attrs, ...kids) {
   const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -1069,7 +1294,7 @@ function folderOptions(vaultId, selected) {
   sel.value = selected || "";
   return sel;
 }
-function itemEditor(d, tplKey) {
+function itemEditor(d, tplKey, opts = {}) {
   const creating = !d;
   const v = state.view;
   let vaultId = d ? d.vaultId : (v.vaultId && canEdit(vaultById(v.vaultId)) ? v.vaultId : (editableVaults().find((x) => x.kind === "personal" && x.mine) || editableVaults()[0] || {}).id);
@@ -1246,15 +1471,19 @@ function itemEditor(d, tplKey) {
       } else err.textContent = x.message;
     }
   } },
-  h("div", { class: "form-row" }, field("Kind", kind), field("Vault", vaultSel)),
-  field("Name", title), folderBox, loginBox, cardBox, urlBox, expiryBox,
+  // Name first, then what this kind of item holds; where it lives near the end; Save always in reach
+  h("div", { class: "form-row name-row" }, field("Name", title), field("Kind", kind)),
+  loginBox, cardBox, urlBox, expiryBox,
+  h("div", { class: "nav-sec" }, "More fields"), extraBox, addField,
   field("Notes", notes), field("Tags", tags, "Separate with commas."),
   h("label", { class: "check" }, fav, "⭐ Favourite"),
-  h("div", { class: "nav-sec" }, "More fields"), extraBox, addField,
-  err, h("div", { class: "actions" }, h("button", { class: "btn", type: "button", onclick: () => m.close() }, "Cancel"), save));
+  h("fieldset", { class: "where" }, h("legend", null, "Where"), h("div", { class: "form-row" }, field("Vault", vaultSel), folderBox)),
+  h("div", { class: "actions sticky-actions" }, h("div", { class: "grow" }, err), h("button", { class: "btn", type: "button", onclick: () => m.close() }, "Cancel"), save));
   const m = openModal(creating ? `New ${TEMPLATES[kindOf].label}` : `Edit — ${d.title}`, form,
     { wide: true, onClose: () => { clearInterval(editTotp.timer); editTotp.timer = null; editTotp.loaded = null; totpIn.value = ""; } });
-  setTimeout(() => title.focus(), 40);
+  if (opts.generate && type.value === "login") setTimeout(() => gen.click(), 60);           // from a health chip
+  else if (opts.focusTotp && type.value === "login") setTimeout(() => { totpIn.scrollIntoView({ block: "center" }); totpIn.focus(); }, 60);
+  else setTimeout(() => title.focus(), 40);
 }
 function generatorDialog(use) {
   const kind = h("select", { "aria-label": "Kind" }, h("option", { value: "random" }, "Random characters"), h("option", { value: "passphrase" }, "Words (passphrase)"));
@@ -1712,13 +1941,22 @@ async function healthPage() {
         x.issues.includes("old") && x.ageDays ? `Changed ${Math.floor(x.ageDays / 365)} yr ${Math.floor((x.ageDays % 365) / 30)} mo ago` : null,
       ].filter(Boolean).join(" · "))),
     h("span", { class: "badges" }, x.issues.map((k) => issueChip(k))));
+  // breached first; with Reused picked, rows are grouped by the password they share (never shown)
+  const breachedFirst = (a, b) => (b.issues.includes("breached") - a.issues.includes("breached")) || ((b.breachCount || 0) - (a.breachCount || 0));
+  const listRows = (list) => {
+    if (filter !== "reused") return list.map(row);
+    const groups = new Map();
+    for (const x of list) { const g = x.reuseGroup || 0; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(x); }
+    let i = 0;
+    return [...groups.values()].map((g) => [h("div", { class: "ui-group-head", role: "presentation" }, `Same password · ${g.length} items`, h("span", { class: "ui-group-total" }, `#${++i}`)), g.map(row)]);
+  };
   const content = () => {
-    const list = filter ? r.items.filter((x) => x.issues.includes(filter)) : r.items;
+    const list = (filter ? r.items.filter((x) => x.issues.includes(filter)) : r.items).slice().sort(breachedFirst);
     tiles.querySelectorAll(".tile").forEach((t) => { const on = t.classList.contains(filter); t.classList.toggle("on", !!on); t.setAttribute("aria-pressed", on ? "true" : "false"); });
     return h("div", null,
       r.lockedVaults.length ? h("div", { class: "notice" }, `${r.lockedVaults.join(", ")} ${r.lockedVaults.length === 1 ? "is" : "are"} locked — open to include ${r.lockedVaults.length === 1 ? "it" : "them"}.`) : null,
       h("div", { class: "card flush" }, h("div", { class: "list-title pad" }, filter ? `${DESC[filter][1]} (${list.length})` : `Needs attention (${list.length})`),
-        list.length ? h("div", { class: "list", role: "list" }, list.map(row)) : h("div", { class: "empty" }, r.total ? "🎉 Nothing to fix here." : "No logins with passwords yet.")),
+        list.length ? h("div", { class: "list", role: "list" }, listRows(list)) : UI.empty(r.total ? "🎉 Nothing to fix here." : "No logins with passwords yet.")),
       filter ? h("p", { class: "hint" }, DESC[filter][2]) : null,
       h("p", { class: "hint" }, "Tip: search with is:weak, is:reused, is:old, is:breached or is:no2fa."));
   };
@@ -1726,9 +1964,10 @@ async function healthPage() {
   drawBreach();
   draw();
   if (r.breach.state === "running") poll();
+  breachCard.classList.add("compact");
   return h("div", null, h("h2", null, "Password health"),
     h("p", { class: "hint" }, `${r.total} login${r.total === 1 ? "" : "s"} with a password in the vaults you have open. Worked out in Home Assistant; nothing is sent anywhere unless you run the breach check.`),
-    tiles, breachCard, box);
+    tiles, box, breachCard);
 }
 function breachHint(input) {
   const out = h("div", { class: "hint" });
@@ -1796,7 +2035,9 @@ async function guestPage() {
       h("div", { class: "kv" }, h("span", { class: "k" }, "Network"), h("strong", null, g.ssid),
         h("span", { class: "k" }, "Password"), h("span", null, pw, " ", !hasText ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Show password", onclick: () => { shown = !shown; pw.textContent = shown ? g.password : "••••••••"; } }, "👁"),
           !hasText ? null : h("button", { class: "icon-btn", type: "button", "aria-label": "Copy password", onclick: () => copyText(g.password, "plain") }, "📋"))),
-      h("p", { class: "hint" }, "Point a phone's camera at the code to join. Only this app shows it — nothing is sent to Home Assistant.")));
+      h("p", { class: "hint" }, "Point a phone's camera at the code to join. Only this app shows it — nothing is sent to Home Assistant."),
+      h("button", { class: "btn", type: "button", onclick: () => openModal(`📶 ${g.ssid}`, h("div", { class: "qr-big-box" },
+        h("img", { src: g.picture, alt: `QR code to join ${g.ssid}`, class: "qr-big" }), h("p", { class: "hint" }, "Point a phone's camera at the code to join.")), { cls: "qr-full", noFocus: true }) }, "⛶ Show big")));
 }
 
 // ---------- household sheet (SPEC §12.3) ----------
@@ -1979,19 +2220,31 @@ function migrationDialog(r) {
 }
 
 // ---------- pages: settings, admin, whoami ----------
-async function showPage(page, anchor) {
+async function showPage(page, anchor, opts = {}) {
+  if (!state.token || !$("#shell")) return showStandalone(page);      // before unlocking (Admin before an admin is set up)
   state.page = page;
   state.selected = null;
+  const tok = ++state.pageTok;
   closeNav();
-  clearInterval(state.healthPoll);
+  clearInterval(state.healthPoll); clearInterval(state.totpTimer); clearInterval(state.listTotpTimer);
   renderSidebar();
+  setHash(opts);
   const c = $("#content");
   c.className = "page-host";
+  const body = h("div");
+  // on a phone: ← back to the vault view you came from (the same as the back gesture)
+  const back = h("button", { class: "btn small ghost page-back", type: "button", onclick: () => { if (!(window.BackNav && BackNav.back())) applyRoute(state.lastVaultHash || "#/all"); } }, "← Back");
+  mount(c, h("div", { class: "page" }, back, body));
+  UI.loading(body);
   let content;
   try {
     content = page === "settings" ? await settingsPage() : page === "admin" ? await adminPage() : page === "health" ? await healthPage() : page === "guest" ? await guestPage() : await whoamiPage();
-  } catch (e) { content = h("div", { class: "notice danger" }, e.message); }
-  mount(c, h("div", { class: "page" }, content));
+  } catch (e) {
+    if (tok === state.pageTok && body.isConnected && e.status !== 401) mount(body, UI.errorBox(e, () => showPage(page, anchor, { replace: true })));
+    return;
+  }
+  if (tok !== state.pageTok || !body.isConnected) return;         // somewhere else by now
+  mount(body, content);
   if (anchor) { const el = document.getElementById("sec-" + anchor); if (el) el.scrollIntoView(); }
 }
 async function settingsPage() {
@@ -2101,27 +2354,38 @@ async function settingsPage() {
     h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Import")));
   const emergencyCard = h("div", { class: "card", id: "sec-emergency" }, h("h3", null, "Emergency access"), h("p", { class: "hint" }, "…"));
   drawEmergency(emergencyCard);
-  return h("div", null, h("h2", null, "Settings"),
+  const SECTIONS = [["unlocking", "Unlocking"], ["alerts", "Alerts"], ["search", "Search & breach"], ["data", "Your data"], ["access", "Emergency access"]];
+  const sec = (id, ...kids) => h("section", { class: "settings-sec", id: "sec-" + id, "aria-labelledby": "sec-h-" + id },
+    h("h3", { class: "sec-title", id: "sec-h-" + id }, SECTIONS.find(([k]) => k === id)[1]), kids);
+  // an index of the sections (buttons: an <a href="#…"> would be taken as an in-app address)
+  const index = h("nav", { class: "sec-index", "aria-label": "Sections" }, SECTIONS.map(([k, l]) =>
+    h("button", { class: "chip", type: "button", onclick: () => { const el = document.getElementById("sec-" + k); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); } }, l)));
+  return h("div", null, h("h2", null, "Settings"), index,
+    sec("unlocking",
     (() => { const c = h("div", { class: "card", id: "sec-quick" }, h("h3", null, "Quick unlock")); drawQuickUnlock(c); return c; })(),
     h("div", { class: "card" }, h("h3", null, "Locking"),
       field("Lock after", lockSel, "Used on all your devices. The vault also locks when you reload the page."),
       field("When I switch to another tab or app", hideSel, "On a shared computer, “Lock at once” is safest. On a phone you may want a little time to paste a password."),
       h("button", { class: "btn", type: "button", onclick: async () => { try { await api("api/lock-everywhere", { method: "POST", noLock: true }); } catch (e) { /* ok */ } lockLocal(); } }, "Lock everywhere")),
-    notifyCard,
+    h("div", { class: "card" }, h("h3", null, "Master password"), changeForm),
+    h("div", { class: "card" }, h("h3", null, "Emergency Kit"), h("p", { class: "hint" }, "A printable sheet with how to reach your passwords if Home Assistant is down."),
+      h("button", { class: "btn", type: "button", onclick: () => showKit(false) }, "Emergency Kit…"))),
+    sec("alerts", notifyCard),
+    sec("search",
     h("div", { class: "card" }, h("h3", null, "Search"), h("label", { class: "check" }, notes, "Also search in notes")),
     h("div", { class: "card" }, h("h3", null, "Breach check"),
       h("label", { class: "check" }, breach, "Check my passwords against known data breaches (Have I Been Pwned)"),
       h("p", { class: "hint" }, me.breachAllowed ? "Only the first 5 characters of a password's SHA-1 hash are sent — never the password. Run it from Password health; new passwords are checked as you type them."
-        : "Off for this household — an admin can allow it in Admin → App settings (it needs internet).")),
-    h("div", { class: "card" }, h("h3", null, "Master password"), changeForm),
-    emergencyCard,
+        : "Off for this household — an admin can allow it in Admin → App settings (it needs internet)."))),
+    sec("data",
     h("div", { class: "card", id: "sec-download" }, h("h3", null, "Download all my passwords"), dlForm),
-    h("div", { class: "card" }, h("h3", null, "Import passwords"), importForm),
-    h("div", { class: "card" }, h("h3", null, "Import 2FA codes from an authenticator app"),
-      h("p", { class: "hint" }, "Move your codes out of Google Authenticator (or any app that exports a QR code): each account becomes a login with its code."),
-      h("button", { class: "btn", type: "button", onclick: () => scanDialog(null, { importMode: true }) }, "📷 Scan an export QR code")),
-    h("div", { class: "card" }, h("h3", null, "Emergency Kit"), h("p", { class: "hint" }, "A printable sheet with how to reach your passwords if Home Assistant is down."),
-      h("button", { class: "btn", type: "button", onclick: () => showKit(false) }, "Emergency Kit…")));
+    // importing adds a lot at once (and a CSV holds passwords unencrypted): apart from the routine download
+    h("div", { class: "danger-zone" }, h("h3", null, "Import"),
+      h("div", { class: "card" }, h("h3", null, "Import passwords"), importForm),
+      h("div", { class: "card" }, h("h3", null, "Import 2FA codes from an authenticator app"),
+        h("p", { class: "hint" }, "Move your codes out of Google Authenticator (or any app that exports a QR code): each account becomes a login with its code."),
+        h("button", { class: "btn", type: "button", onclick: () => scanDialog(null, { importMode: true }) }, "📷 Scan an export QR code")))),
+    sec("access", emergencyCard));
 }
 const EM_STATUS = { ready: "Can ask", requested: "Asked", denied: "Denied", granted: "Has access" };
 async function drawEmergency(card) {
@@ -2218,18 +2482,35 @@ async function adminPage() {
     afterSave: () => { toast("Saved"); return "Saved"; },
   }).catch(fail);
   const restoreFile = h("input", { type: "file", accept: ".zip", "aria-label": "Backup file" });
+  // three tabs (People, App settings, Backup), each its own address: #/admin/people …
+  const panels = {
+    people: h("div", { role: "tabpanel" }, peopleBox),
+    settings: h("div", { role: "tabpanel" }, settingsBox, personalCopiesCard(s.personalCopies)),
+    backup: h("div", { role: "tabpanel" }, backupCard()),
+  };
+  const tabBtns = ADMIN_TABS.map(([k, l]) => h("button", { class: "chip", type: "button", role: "tab", onclick: () => pick(k) }, l));
+  const pick = (k) => {
+    state.adminTab = k;
+    tabBtns.forEach((b, i) => { const on = ADMIN_TABS[i][0] === k; b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
+    for (const [kk, el] of Object.entries(panels)) el.hidden = kk !== k;
+    if (state.page === "admin") setHash({ replace: true });
+  };
+  pick(panels[state.adminTab] ? state.adminTab : "people");
   return h("div", null, h("h2", null, "Admin"),
     h("p", { class: "hint" }, "Admins manage who can use Household Vault. They can never open anyone's vaults. Setting someone up, resetting them, and backups ask for your master password again."),
     h("div", { class: "notice" }, h("strong", null, "Experimental. "), "Household Vault hasn't had an independent security review yet. Ask everyone to keep their own KeePass copy (Settings → Download all my passwords), and keep Home Assistant backups of this app."),
-    h("h3", { style: "margin:18px 0 8px" }, "People"), peopleBox,
-    h("h3", { style: "margin:18px 0 8px" }, "App settings"), settingsBox,
-    personalCopiesCard(s.personalCopies),
-    h("div", { class: "card" }, h("h3", null, "Backup and restore"),
+    h("div", { class: "tabs", role: "tablist" }, tabBtns),
+    panels.people, panels.settings, panels.backup);
+  function backupCard() {
+    return h("div", null, h("div", { class: "card" }, h("h3", null, "Backup"),
       h("p", { class: "hint" }, "The backup holds only encrypted vault files and settings — nobody can read passwords from it without the vaults' passwords."),
       h("button", { class: "btn", type: "button", onclick: async () => {
         const password = await askMaster("Download backup", "The backup holds every encrypted vault file and the app's database.");
         if (password === null) return;
-        try { const res = await api("api/admin-storage-download-db", { method: "POST", body: { password }, raw: true }); saveBlob(await res.blob(), filenameFrom(res) || "household-vault-backup.zip"); } catch (e) { fail(e); } } }, "⬇ Download backup"),
+        try { const res = await api("api/admin-storage-download-db", { method: "POST", body: { password }, raw: true }); saveBlob(await res.blob(), filenameFrom(res) || "household-vault-backup.zip"); } catch (e) { fail(e); } } }, "⬇ Download backup")),
+    h("div", { class: "danger-zone" }, h("h3", null, "Restore a backup"),
+      h("p", { class: "hint" }, "Replaces every vault and setting with the backup's. Everyone is locked."),
       h("div", { class: "row wrap" }, restoreFile, h("button", { class: "btn danger", type: "button", onclick: async () => {
         if (!restoreFile.files[0]) { toast("Choose a backup .zip first.", { error: true }); return; }
         if (!await confirmDialog("Restore backup", "Replace everything with this backup? Everyone is locked, and changes made after the backup are lost — including people removed and passwords changed since.", "Restore", true)) return;
@@ -2241,6 +2522,7 @@ async function adminPage() {
           h("div", { class: "actions" }, h("button", { class: "btn primary", type: "button", onclick: () => location.reload() }, "OK")))); }
         catch (e) { fail(e); }
       } }, "Restore…"))));
+  }
 }
 const NOTIFY_RE = /^notify\.[a-z0-9_]+$/;
 function setupDialog(x) {
@@ -2285,10 +2567,95 @@ async function whoamiPage() {
   })));
 }
 
+// ---------- addresses (#/all, #/v/<vault>/<folder>, #/settings …) ----------
+// Only view names and opaque vault / folder ids go into the address — and so into backnav.js's trail (in
+// sessionStorage): never an item, a title, a tag, a search or anything from inside a vault. A tag or a search
+// leaves the address as it was. While locked the address is ignored; it's followed once unlocked.
+const enc = encodeURIComponent;
+function hashOf() {
+  switch (state.page) {
+    case "settings": return "#/settings";
+    case "admin": return "#/admin/" + (state.adminTab || "people");
+    case "health": return "#/health";
+    case "guest": return "#/wifi";
+    case "whoami": return "#/me";
+  }
+  const v = state.view;
+  if (["all", "fav", "recent", "expiring"].includes(v.kind)) return "#/" + v.kind;
+  if (v.kind === "type") return "#/type/" + v.type;
+  if (v.kind === "folder") return "#/v/" + enc(v.vaultId) + (v.folderId ? "/" + enc(v.folderId) : "");
+  if (v.kind === "trash") return "#/trash/" + enc(v.vaultId);
+  return null;
+}
+function parseRoute(hash) {
+  const parts = String(hash || "").replace(/^#\/?/, "").split("/").map((p) => { try { return decodeURIComponent(p); } catch (e) { return ""; } });
+  const [a, b, c] = parts;
+  if (["all", "fav", "recent", "expiring"].includes(a)) return { view: { kind: a } };
+  if (a === "type" && ["login", "2fa", "note", "card"].includes(b)) return { view: { kind: "type", type: b } };
+  if (a === "v" && b) return { view: { kind: "folder", vaultId: b, folderId: c || null } };
+  if (a === "trash" && b) return { view: { kind: "trash", vaultId: b } };
+  if (a === "settings") return { page: "settings" };
+  if (a === "health") return { page: "health" };
+  if (a === "wifi") return { page: "guest" };
+  if (a === "me") return { page: "whoami" };
+  if (a === "admin") return { page: "admin", tab: ADMIN_TABS.some(([k]) => k === b) ? b : "people" };
+  return null;
+}
+function routeOk(r) {
+  if (!r || !state.me) return false;
+  if (r.page === "admin") return !!state.me.isAdmin;
+  if (r.page === "guest") return !!state.me.guestWifi;
+  if (r.page) return true;
+  const v = r.view;
+  if (v.kind === "folder" || v.kind === "trash") {
+    const vault = vaultById(v.vaultId);
+    if (!vault || !vault.open) return false;
+    if (v.folderId && !(state.folders[v.vaultId] || { folders: [] }).folders.some((x) => x.id === v.folderId)) return false;
+  }
+  return true;
+}
+async function applyRoute(hash) {
+  const r = parseRoute(hash);
+  if (!routeOk(r)) return setView({ kind: "all" }, { replace: true });
+  if (r.page) { if (r.tab) state.adminTab = r.tab; return showPage(r.page, null, { replace: true }); }
+  if (state.selected) closeDetail();
+  return setView(r.view, { replace: true });
+}
+let shownHash = null;
+// Put the current view in the address (without a history entry of its own: backnav.js keeps the trail)
+function setHash(opts = {}) {
+  const hash = hashOf();
+  if (!hash || !state.token || !$("#shell")) return;
+  if (state.page === "vault") state.lastVaultHash = hash;
+  if (location.hash === hash) { shownHash = hash; return; }
+  shownHash = hash;
+  if (!window.BackNav) { try { history.replaceState(history.state, "", hash); } catch (e) { /* ignore */ } return; }
+  if (opts.replace) BackNav.replace(hash); else BackNav.go(hash);
+}
+window.addEventListener("hashchange", () => {
+  if (location.hash === shownHash) return;
+  shownHash = location.hash;
+  if (state.token && $("#shell")) applyRoute(location.hash);
+});
+const isTabHash = (hash) => /^#\/(all|fav|recent|expiring|type|health|wifi|settings|me|admin)(\/|$)/.test(hash || "");
+// Back with nothing in the trail: a folder → its parent folder → the vault; the Trash → its vault;
+// Settings, Admin, Health… → the vault view you were on; everything else → All items
+function parentOf(hash) {
+  const r = parseRoute(hash);
+  if (!r) return null;
+  if (r.page) return state.lastVaultHash && state.lastVaultHash !== hash ? state.lastVaultHash : null;
+  const v = r.view;
+  if (v.kind === "folder" && v.folderId) {
+    const fo = (state.folders[v.vaultId] || { folders: [] }).folders.find((x) => x.id === v.folderId);
+    return "#/v/" + enc(v.vaultId) + (fo && fo.parentId ? "/" + enc(fo.parentId) : "");
+  }
+  if (v.kind === "trash") return "#/v/" + enc(v.vaultId);
+  return null;
+}
+
 // ---------- Back gesture in the Home Assistant app (backnav.js) ----------
 // The start page is "All items" (what showMain opens on). Before unlocking — the unlock screen, choosing a
 // master password, "no access" — the page on show counts as the start page, so Back never reveals anything.
-// Nothing goes into the address: backnav.js only adds a copy of the current (unchanged) URL.
 function atHome() {
   if (!state.token) return !document.querySelector("#app > .page.standalone");
   if (!$("#shell")) return true;                       // first unlock: choosing a password, the Emergency Kit
@@ -2319,7 +2686,7 @@ function closeLayer(layer) {
   else { const b = layer.querySelector(".modal h3 .icon-btn"); if (b) b.click(); }   // the dialog's own ✕ (runs its onClose)
 }
 
-boot().finally(() => { if (window.BackNav) BackNav.init({ atHome, goHome, openLayers, closeLayer }); });
+boot().finally(() => { if (window.BackNav) BackNav.init({ atHome, goHome, openLayers, closeLayer, isTab: isTabHash, parentOf }); });
 
 // ---------- one file per person in /data/copies (App setting "personal_copies", SPEC §12.10) ----------
 function personalCopyNote(pc) {

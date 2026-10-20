@@ -128,12 +128,15 @@ they're set up again. Household and shared vaults are kept.
 
 ## Folders and items
 
-- Folders live in each vault's tree in the sidebar: **+ Folder**, or a folder's
-  ⋯ for *New subfolder*, *Rename*, *Move into…*, *Delete*. A breadcrumb above
+- Folders live in each vault's tree in the sidebar: the vault's ⋯ → *New
+  folder*, or a folder's ⋯ (in the sidebar or next to the list's title) for
+  *New subfolder*, *Rename*, *Move into…*, *Delete*. A breadcrumb above
   the list shows where you are. Deleting a folder with items moves it to that
-  vault's **Trash**, where you can restore it. **Empty Trash** deletes for good.
+  vault's **Trash**, where each row says when it was deleted and has its own
+  **Restore**. **Empty Trash** (the Trash's ⋯) deletes for good.
   Folders show as groups in other KeePass apps, and imported files keep theirs.
-- **+ New** adds an item in the folder you're in. Pick what it is — a **login**,
+- **+ New** (on a phone, the round **+** at the bottom) adds an item in the
+  folder you're in. Pick what it is — a **login**,
   **payment card** or **secure note**, or a ready-made form: **Wi-Fi, bank
   account, insurance policy, vehicle, passport / ID, driving licence, software
   licence, utility account, membership**. Forms fill in the usual fields;
@@ -164,8 +167,15 @@ they're set up again. Household and shared vaults are kept.
   delete. Drag a folder onto another folder of the same vault to move it. On a
   phone use *Move to…*.
 - The sidebar has **⭐ Favourites**, **🕘 Recently used** (kept for you across
-  unlocks), **All items**, each vault's folders and Trash, **Tags** and type
-  filters (logins, 2FA, notes, cards).
+  unlocks), **All items**, each vault's folders and Trash, and **Tags** (folded
+  on a phone). Above **All items**, chips filter by type (logins, 2FA — showing
+  each code live — notes, cards). Lists can be sorted by name (with A–Z
+  headers), recently used or modified; the choice is remembered on this device.
+- Each view has its own address (`#/all`, `#/v/…` for a vault or folder,
+  `#/settings` …), so a reload keeps your place — after unlocking. Back steps up
+  from a folder to its parent. Addresses hold only view names and vault/folder
+  ids, never an item or anything inside one. Tapping a value in an item copies
+  it, like 📋.
 
 ## Search
 
@@ -355,13 +365,14 @@ They never contain a password. Turn security alerts or expiry reminders off in
 ## Your settings
 
 **Settings** (from the sidebar) holds your own choices, used on all your
-devices: **Quick unlock** devices; **Locking** (*Lock after*, *When I switch to
-another tab or app*, *Lock everywhere*); **Notifications** (security alerts,
-expiry reminders); **Search** (also search notes); **Breach check**; **Master
-password** (change it — you need the current one; your other devices are
-locked, and you're reminded to print a new Emergency Kit and download a new
-copy); **Emergency access**; **Download all my passwords**; **Import
-passwords**; **Import 2FA codes**; **Emergency Kit**. The theme (**Midnight**,
+devices, in sections (with an index at the top): **Unlocking** — **Quick
+unlock** devices, **Locking** (*Lock after*, *When I switch to another tab or
+app*, *Lock everywhere*), **Master password** (change it — you need the current
+one; your other devices are locked, and you're reminded to print a new
+Emergency Kit and download a new copy), **Emergency Kit**; **Alerts**
+(security alerts, expiry reminders); **Search & breach** (also search notes,
+breach check); **Your data** — **Download all my passwords**, and under
+*Import* **Import passwords** and **Import 2FA codes**; **Emergency access**. The theme (**Midnight**,
 **Slate**, **Daylight** or **Auto**, which follows your device's light or dark
 setting) is picked at the bottom of the sidebar; if you had picked Vault before,
 you now get Midnight.
@@ -388,9 +399,11 @@ admin's Home Assistant identity could come from any of them.
   forgotten master password; type their name to confirm), **Unblock** after too
   many wrong passwords, and **🔔** for their phones and extra notify services
   (with **Send a test**).
-- **App settings** (below).
-- **Personal copies**: who has a file and when it was last written.
-- **Backup and restore**: **Download backup** is one zip with the database, every
+Admin has three tabs: **People**, **App settings** and **Backup**.
+
+- **App settings** (below), with **Personal copies**: who has a file and when it
+  was last written.
+- **Backup**: **Download backup** is one zip with the database, every
   vault file and every personal copy — all encrypted. **Restore…** replaces
   everything, locks everyone and lists what it undid (people removed and
   passwords changed after the backup was taken) so you can redo it; each person

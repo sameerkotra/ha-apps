@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.3.0
+
+- **Every view has its own address.** A reload (after unlocking) keeps you in the same vault, folder, Settings or Admin tab, and Back from a sub-folder goes to its parent folder instead of All items. The address only names views and vaults/folders, never an item.
+- **Phone drawer**: tapping beside the menu closes it, Tags start folded, folder arrows are easier to hit, and the type filters (Logins, 2FA, Notes, Cards) are now chips above All items.
+- **Bigger copy buttons** on phones, and tapping a value copies it — the clipboard is still cleared afterwards.
+- **Lists**: the title shows how many items there are; sort by name (with A–Z headers), recently used or modified; the 2FA list shows each live code; Expiring is split into Expired, Within 30 days and Later; the Trash says when each item was deleted and has its own Restore.
+- **New item on phones** is a round + button; "+ Folder" and "Empty Trash" moved under ⋯ next to the list title.
+- **Items**: health chips say what to do ("Breached: Change password →" opens the editor with the generator), notes come right after the fields, and cards show their last 4 digits.
+- **Editor**: Name comes first, Vault and Folder are grouped under "Where", and Save stays in view.
+- **Unlocking**: when quick unlock is set up it's the main button; the forgotten-password note is under Help.
+- **On a computer**, the empty item pane shows favourites, recently used, what's expiring and health issues.
+- **Notices** after unlocking are one box ("3 things need you") that opens up and can be dismissed.
+- **Settings** is grouped (Unlocking, Alerts, Search & breach, Your data, Emergency access) with an index at the top; imports sit apart from the download.
+- **Admin** has tabs: People, App settings and Backup (restoring is in its own danger box).
+- **Password health** lists breached passwords first, groups reused ones by the password they share, and has a compact breach-check card below the list.
+- **Guest Wi-Fi**: **Show big** shows the QR code full screen.
+- **Loading and errors**: pages show a spinner while they load, and an item that fails to load offers Retry.
+
 ## 2.2.2
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.
