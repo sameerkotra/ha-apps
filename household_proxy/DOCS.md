@@ -11,18 +11,20 @@ only ever talks to Home Assistant, and the app fetches each page from the device
 1. Install the app, start it and open it from the sidebar (**Proxy**).
 2. Add your Home Assistant user name to `admin_users` on the app's Configuration tab, save and restart the
    app — until then every page shows "No admin yet" with the name to add.
-3. Open **🛡️ Admin → Sites** and add a site: a name, an icon and its address on your network
+3. Open **🛡️ Admin → Sites** (on a phone: your name, top right → **🛡️ Admin**) and add a site: a name, an icon and its address on your network
    (`http://192.168.1.10:9120`). Choose who may open it.
 4. Everyone else opens **Proxy** from the sidebar and sees a tile for each site they may open.
 
-**How the app sees you** (your name, top right) shows who the app thinks you are and why you are (or
-aren't) an admin.
+Your name, top right, opens a menu: **How the app sees you** (who the app thinks you are and why you are, or
+aren't, an admin), **Theme** and **🛡️ Admin**. On a phone, **Sites**, **Bookmarks** and **Monitor** sit in a bar at
+the bottom of the screen.
 
 ## Sites
 
 A tile for each site you may open. Select one to open it: the site fills the panel, with a slim bar on top —
 **← Sites**, its name, **↻** (reload), **🔗 Copy link** and **↗** (the same site in a new tab). A site can
-hide the bar (good for apps with their own navigation, like Komodo); a small **←** stays in the corner.
+hide the bar (good for apps with their own navigation, like Komodo); a small **←** stays in the corner — drag it
+anywhere out of the way, and it stays there for that site on that device.
 
 **Copy link** gives a link to the site through Home Assistant (`/<the app's page>/site/<short name>`). Use it
 for a dashboard button (a "navigate" action), a notification or a bookmark: it opens Home Assistant, then the
@@ -70,13 +72,14 @@ Click one to open it: on a computer it opens in a new tab; on a phone it opens i
 installed on an Android phone, the normal browser). Untick **Open in Chrome** at the bottom of the tab (phones only)
 to use your phone's normal browser instead — that's remembered on that phone.
 
-Anyone can add a bookmark; the person who added it, or an admin, can change (✎) or delete it, and admins can
-change the order (▲▼). Bookmarks are plain links: they don't go through the proxy, so a bookmark to a site on
+Anyone can add a bookmark; the person who added it, or an admin, can change or delete it (**⋯**), and admins can
+change the order (**↕ Reorder**, then ▲▼). Bookmarks are plain links: they don't go through the proxy, so a bookmark to a site on
 your network only works where that site can be reached. Don't put passwords in an address — everyone can see it.
 
 ## Admin → Sites
 
-Add, edit, delete and reorder the sites. For each site:
+Add, edit, delete and reorder the sites: select a site (or **⋯ → Edit**) to change or delete it, and **↕ Reorder**
+shows ▲▼ to change the order. For each site:
 
 - **Name**, **Icon** (an emoji) and **Short name** — the short name is part of its address (`…/s/komodo/`);
   lower-case letters, digits and `-`. Made from the name when left empty.
@@ -182,8 +185,8 @@ never shown on the Sites page. Its address can be a URL, a host name or address 
 ### The Monitor page
 
 **Monitor** (next to **Sites**) lists every checked site you may see — the same people who may open a site see its
-status. For each: its state and since when, the answer time, and the last 24 hours in half hours (green: up, red:
-down, amber: some of each). **🔔 / 🔕** mutes a site's alerts for you alone. Admins also get **Check now** (while a site is restarting or starting up, it shows the answer without counting
+status, with a count of sites up, down and paused at the top and the sites with a problem first. For each: its state and since when, the answer time, and the last 24 hours in half hours (green: up, red:
+down, amber: some of each). **🔔 / 🔕** mutes a site's alerts for you alone. Admins also get (on a site that's up, behind its **⋯**) **Check now** (while a site is restarting or starting up, it shows the answer without counting
 it), **🔌 Restart now** and **Try again** (for sites with auto-restart), **Pause…** (for 1 hour, 8 hours or until
 resumed — for maintenance; nothing is checked or restarted while paused), **Resume** and **History**: the incidents of the last 90 days (start, end, cause, restarts, outcome) and the uptime
 over 24 hours, 7 and 30 days. Tiles on the Sites page show a status dot for checked sites.
@@ -327,7 +330,7 @@ accepted. Restart the app after changing it.
 
 **Admin → Storage → Download a backup** saves the whole database. The values of the extra headers are left out
 of it (their names are kept); a restore keeps the values this install has for the sites that still exist.
-**Restore a backup** replaces every site and setting with the backup's.
+**Restore a backup** (in the red Restore box below it) replaces every site and setting with the backup's.
 
 ## Troubleshooting
 

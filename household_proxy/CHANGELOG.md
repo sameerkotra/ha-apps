@@ -2,6 +2,16 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.7.0
+
+- **A bottom bar on phones.** Sites, Bookmarks and Monitor sit at the bottom of the screen; the theme and Admin are in the menu under your name, top right.
+- **Admin shows where you are.** The Admin button stays highlighted in Admin, and the page has its own title; its tabs no longer add steps to Back.
+- **A clear note when the app can't tell who you are**, with a Retry button, instead of an empty page.
+- **The floating ← moves.** Drag it out of the way of a site; it stays where you put it for that site. The site bar's buttons are bigger on phones.
+- **Down sites stand out.** The Sites page says when a site is down, with a link to Monitor; Monitor counts sites up, down and paused and lists the ones with a problem first.
+- **Tidier lists.** Bookmarks and Admin → Sites show ▲▼ only after **↕ Reorder**; edit and delete are under **⋯**. On Monitor, actions for sites that are up are under **⋯**.
+- **Admins with no sites yet** get an **Add a site** button on the Sites page. **Restore a backup** now sits in its own red box under Admin → Storage.
+
 ## 0.6.7
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

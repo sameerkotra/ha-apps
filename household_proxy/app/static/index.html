@@ -2,45 +2,51 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Household Proxy</title>
-<script src="common/theme-boot.js?v=0.6.6"></script>
-<link rel="stylesheet" href="common/themes.css?v=0.6.6">
-<link rel="stylesheet" href="common/settings.css?v=0.6.6">
-<link rel="stylesheet" href="style.css?v=0.6.6">
+<script src="common/theme-boot.js?v=0.7.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=0.7.0">
+<link rel="stylesheet" href="common/settings.css?v=0.7.0">
+<link rel="stylesheet" href="style.css?v=0.7.0">
 </head>
 <body>
 <header class="topbar" id="topbar">
   <button type="button" id="homeBtn" class="brand" title="Sites"><span aria-hidden="true">🌐</span> Proxy</button>
   <nav class="topnav" id="topnav">
-    <button type="button" class="tab active" data-view="sites">Sites</button>
-    <button type="button" class="tab" data-view="bookmarks" id="bookmarksTab">Bookmarks</button>
-    <button type="button" class="tab" data-view="monitor" id="monitorTab" hidden>Monitor</button>
+    <button type="button" class="tab active" data-view="sites" aria-current="page"><span class="tab-icon" aria-hidden="true">🌐</span><span class="tab-label">Sites</span></button>
+    <button type="button" class="tab" data-view="bookmarks" id="bookmarksTab"><span class="tab-icon" aria-hidden="true">🔖</span><span class="tab-label">Bookmarks</span></button>
+    <button type="button" class="tab" data-view="monitor" id="monitorTab" hidden><span class="tab-icon" aria-hidden="true">📈</span><span class="tab-label">Monitor</span></button>
   </nav>
   <div class="topbar-right">
     <button type="button" id="adminBtn" class="btn-ghost" hidden>🛡️ Admin</button>
     <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
-    <button type="button" id="userBtn" class="btn-ghost" title="How the app sees you">—</button>
+    <button type="button" id="userBtn" class="btn-ghost user-btn" title="You, the theme and Admin" aria-haspopup="menu" aria-expanded="false"><span id="userName">—</span> <span aria-hidden="true">▾</span></button>
   </div>
 </header>
 <div id="noAdminBanner" class="banner" hidden></div>
 
 <main id="sitesView" class="column">
+  <div id="meError" hidden></div>
   <div id="offNote" class="note warn" hidden>An admin has turned you off in this app.</div>
+  <a id="downStrip" class="down-strip" href="#/monitor" hidden></a>
   <div id="tiles" class="tiles" aria-live="polite"></div>
-  <p id="noSites" class="note" hidden>No sites for you yet — ask an admin.</p>
+  <div id="noSites" hidden></div>
 </main>
 
 <main id="bookmarksView" class="column" hidden>
   <div class="row-between">
     <h2 class="view-title">Bookmarks</h2>
-    <button type="button" id="addBookmarkBtn" class="btn-primary">＋ Add a bookmark</button>
+    <span class="head-actions">
+      <button type="button" id="bmReorderBtn" class="btn-secondary" aria-pressed="false" hidden>↕ Reorder</button>
+      <button type="button" id="addBookmarkBtn" class="btn-primary">＋ Add a bookmark</button>
+    </span>
   </div>
-  <p class="hint">The household's links — everyone here sees them. On a phone they open in Chrome, on a computer in a
-    new tab. Anyone can add one; whoever added it (or an admin) can change it.</p>
+  <p class="hint one-line">The household's links — everyone here sees them.</p>
+  <details class="about"><summary>How they open, and who can change them</summary>
+    <p>On a phone they open in Chrome, on a computer in a new tab. Anyone can add one; whoever added it (or an admin)
+      can change it with ⋯, and admins set the order with ↕ Reorder.</p></details>
   <div id="bookmarkList" class="bookmark-list" aria-live="polite"></div>
-  <p id="noBookmarks" class="note" hidden>No bookmarks yet. Add the pages the household opens often — the school's
-    site, the bin calendar, a recipe.</p>
+  <div id="noBookmarks" hidden></div>
   <div class="bm-chrome" id="bmChromeRow" hidden>
     <label class="check"><input type="checkbox" id="bmChrome"> Open in Chrome on this phone</label>
     <p class="hint">Off: links open in your phone's normal browser.</p>
@@ -48,13 +54,14 @@
 </main>
 
 <main id="monitorView" class="column wide" hidden>
+  <div id="monitorSummary" class="summary-strip" hidden></div>
   <div id="monitorList" class="monitor-list" aria-live="polite"></div>
-  <p id="noChecks" class="note" hidden>No sites are checked yet. An admin can add checks in Admin → Sites.</p>
+  <div id="noChecks" hidden></div>
 </main>
 
 <main id="viewerView" class="viewer" hidden>
   <div id="viewerBar" class="viewer-bar">
-    <button type="button" id="backBtn" class="btn-ghost" title="Back to the sites">← Sites</button>
+    <button type="button" id="backBtn" class="btn-ghost" title="Back">← Sites</button>
     <span id="viewerTitle" class="viewer-title"></span>
     <span class="viewer-tools">
       <button type="button" id="reloadBtn" class="btn-ghost" title="Reload the site">↻</button>
@@ -62,14 +69,15 @@
       <button type="button" id="newTabBtn" class="btn-ghost" title="Open in a new tab">↗</button>
     </span>
   </div>
-  <button type="button" id="floatBack" class="float-back" title="Back to the sites" hidden>←</button>
+  <button type="button" id="floatBack" class="float-back" title="Back (drag to move it)" aria-label="Back" hidden>←</button>
   <iframe id="frame" class="frame" title="Site" referrerpolicy="same-origin"
           allow="clipboard-read; clipboard-write; fullscreen"></iframe>
 </main>
 
 <main id="adminView" class="column wide" hidden>
+  <div class="row-between admin-head"><h2 class="view-title">🛡️ Admin</h2></div>
   <nav class="tabs" id="adminTabs">
-    <button type="button" class="tab active" data-tab="sites">Sites</button>
+    <button type="button" class="tab active" data-tab="sites" aria-current="page">Sites</button>
     <button type="button" class="tab" data-tab="settings">App settings</button>
     <button type="button" class="tab" data-tab="people">People</button>
     <button type="button" class="tab" data-tab="storage">Storage</button>
@@ -83,19 +91,23 @@
       <p class="hint">A copy of the whole database: the sites, who may open them and the App settings. The values of
         the sites' extra headers (passwords, keys) are left out; a restore keeps this install's values.</p>
       <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
-      <p><label class="btn-secondary">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
+    </div>
+    <div class="danger-zone">
+      <h3>Restore</h3>
+      <p class="hint">Replaces every site and setting with the backup's. It asks first.</p>
+      <label class="btn-danger-outline">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label>
     </div>
   </section>
 </main>
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=0.6.6"></script>
-<script src="common/settings.js?v=0.6.6"></script>
-<script src="common/people.js?v=0.6.6"></script>
-<script src="common/backnav.js?v=0.6.6"></script>
-<script src="common/whoami.js?v=0.6.6"></script>
-<script src="common/deeplink.js?v=0.6.6"></script>
-<script src="app.js?v=0.6.6"></script>
+<script src="common/ui.js?v=0.7.0"></script>
+<script src="common/settings.js?v=0.7.0"></script>
+<script src="common/people.js?v=0.7.0"></script>
+<script src="common/backnav.js?v=0.7.0"></script>
+<script src="common/whoami.js?v=0.7.0"></script>
+<script src="common/deeplink.js?v=0.7.0"></script>
+<script src="app.js?v=0.7.0"></script>
 </body>
 </html>

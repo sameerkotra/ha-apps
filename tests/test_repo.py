@@ -31,13 +31,13 @@ ASSISTANT = "household_assistant"
 ASSISTANT_VERSION = "1.6.6"
 # Household Proxy: the thirteenth app, home-network sites opened inside Home Assistant (household_proxy/spec/SPEC.md).
 PROXY = "household_proxy"
-PROXY_VERSION = "0.6.7"
+PROXY_VERSION = "0.7.0"
 NEWER = ((ARCADE, ARCADE_VERSION), (RECEIPTS, RECEIPTS_VERSION), (DOCS, DOCS_VERSION),
          (ASSISTANT, ASSISTANT_VERSION), (PROXY, PROXY_VERSION))
 # Household AI: the twelfth app, the model server the AI apps can share (household_ai/spec/SPEC.md). Unlike the
 # others it has an admin-only panel and a declared (unpublished) port, so it has its own checks here.
 HOUSEHOLD_AI = "household_ai"
-HOUSEHOLD_AI_VERSION = "1.0.6"
+HOUSEHOLD_AI_VERSION = "1.1.0"
 # Paths that .gitignore keeps out of the repository.
 IGNORED_DIRS = {"Claude outputs", "__pycache__", ".git", ".venv", "venv", ".pytest_cache"}
 TEXT_EXT = {".py", ".js", ".css", ".html", ".md", ".yaml", ".yml", ".txt", ".json", ".sql", ".mermaid",

@@ -17,9 +17,78 @@
   const toast = (msg, error) => UI.toast(msg, { error: !!error });
   const openModal = (title, content, opts) => UI.openModal(title, content, Object.assign({ escape: "stack" }, opts || {}));
 
-  const state = { me: null, sites: [], view: "sites", site: null, adminTab: "sites", admin: null };
+  const state = { me: null, sites: [], sitesError: null, view: "sites", site: null, adminTab: "sites", admin: null,
+    reorderBm: false, reorderSites: false, addSitePending: false };
+  const isAdmin = () => !!(state.me && state.me.user.isAdmin);
+  const PROBLEM = new Set(["down", "needs_attention"]);
 
   HouseholdTheme.bindSelect($("#theme-select"));
+
+  function markCurrent(el, on) {
+    el.classList.toggle("active", on);
+    if (on) el.setAttribute("aria-current", "page"); else el.removeAttribute("aria-current");
+  }
+
+  // ---------- small menus (the ⋯ on a row, the name button's menu) ----------
+  // Each open menu is a layer for BackNav: the back gesture closes it first.
+  const menus = [];
+  function closeMenus() { menus.slice().forEach((m) => m.close()); }
+  function toggleMenu(anchor, items) {
+    const mine = menus.find((m) => m.anchor === anchor);
+    closeMenus();
+    if (mine) return null;
+    let closed = false;
+    const el = h("div", { class: "pop-menu", role: "menu" }, items.filter(Boolean).map((it) => it.el ? it.el :
+      h("button", { type: "button", role: "menuitem", class: "pop-item" + (it.danger ? " danger" : ""),
+        "aria-current": it.current ? "page" : null, disabled: !!it.disabled,
+        onclick: () => { close(); it.onclick(); } }, it.label)));
+    const onDown = (e) => { if (!el.contains(e.target) && !anchor.contains(e.target)) close(); };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); anchor.focus(); } };
+    const onResize = () => close();
+    function close() {
+      if (closed) return;
+      closed = true;
+      el.remove();
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", onResize);
+      anchor.setAttribute("aria-expanded", "false");
+      const i = menus.indexOf(handle);
+      if (i >= 0) menus.splice(i, 1);
+    }
+    const handle = { close, el, anchor };
+    menus.push(handle);
+    document.body.append(el);
+    const r = anchor.getBoundingClientRect();
+    const w = el.offsetWidth, ht = el.offsetHeight;
+    const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
+    const below = r.bottom + 4 + ht <= window.innerHeight - 8;
+    el.style.left = left + "px";
+    el.style.top = Math.max(8, below ? r.bottom + 4 : r.top - 4 - ht) + "px";
+    anchor.setAttribute("aria-expanded", "true");
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", onResize);
+    const first = el.querySelector("button:not([disabled]), select");
+    if (first) first.focus();
+    return handle;
+  }
+  function moreBtn(label, items) {
+    return h("button", { type: "button", class: "icon-btn more-btn", title: "More", "aria-label": label, "aria-haspopup": "menu",
+      "aria-expanded": "false", onclick: (e) => { e.stopPropagation(); toggleMenu(e.currentTarget, items()); } }, "⋯");
+  }
+
+  // the name button: Me, the theme and Admin (on a phone the theme and Admin live only here)
+  let menuTheme = null;
+  $("#userBtn").addEventListener("click", (e) => {
+    if (!menuTheme) menuTheme = HouseholdTheme.bindSelect(h("select", { class: "theme-select", "aria-label": "Theme" }));
+    toggleMenu(e.currentTarget, [
+      state.me ? { el: h("div", { class: "pop-head" }, state.me.user.name) } : null,
+      { label: "👤 How the app sees you", onclick: openWhoami },
+      { el: h("label", { class: "pop-item pop-theme" }, h("span", null, "🎨 Theme"), menuTheme) },
+      isAdmin() ? { label: "🛡️ Admin", current: state.view === "admin", onclick: () => go("#/admin") } : null,
+    ]);
+  });
 
   // ---------- views ----------
   function show(view) {
@@ -31,33 +100,70 @@
     $("#viewerView").hidden = view !== "viewer";
     $("#adminView").hidden = view !== "admin";
     $("#topbar").hidden = view === "viewer";
-    $$("#topnav .tab").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+    document.body.classList.toggle("in-viewer", view === "viewer");
+    $$("#topnav .tab").forEach((b) => markCurrent(b, b.dataset.view === view));
+    markCurrent($("#adminBtn"), view === "admin");
+    closeMenus();
     if (view !== "viewer") { const f = $("#frame"); if (f.getAttribute("src")) f.removeAttribute("src"); }
   }
 
   function go(hash) {
     if (window.BackNav) BackNav.go(hash); else location.hash = hash;
   }
+  function replace(hash) {
+    if (window.BackNav) BackNav.replace(hash); else location.replace(hash);
+  }
+  // an in-app ← : the previous page, else the parent, else the sites
+  function back() {
+    if (!(window.BackNav && BackNav.back())) go("#/");
+  }
 
   function route() {
     const r = location.hash.replace(/^#/, "") || "/";
     let m;
+    if (!state.me) { show("sites"); return; }              // not identified: the note on the sites page says why
     if ((m = /^\/site\/([a-z0-9-]{1,40})(\/.*)?$/.exec(r))) return openSite(m[1], m[2] || null);
     if ((m = /^\/monitor(?:\/([a-z0-9-]{1,40}))?$/.exec(r))) return openMonitor(m[1] || null);
     if (r === "/bookmarks") return openBookmarks();
-    if ((m = /^\/admin(?:\/([a-z]+))?$/.exec(r)) && state.me && state.me.user.isAdmin) return openAdmin(m[1] || state.adminTab);
+    if ((m = /^\/admin(?:\/([a-z]+))?$/.exec(r)) && isAdmin()) return openAdmin(m[1] || "sites");
     show("sites");
     renderTiles();
   }
 
   // ---------- launcher ----------
   async function loadSites() {
-    try { state.sites = (await api("api/sites")).sites; } catch (e) { toast(e.message, true); state.sites = []; }
+    try { state.sites = (await api("api/sites")).sites; state.sitesError = null; }
+    catch (e) { state.sitesError = e; state.sites = []; }
+  }
+
+  function addSiteFromLauncher() {
+    state.addSitePending = true;           // Admin → Sites opens the form once its list (and people) are loaded
+    go("#/admin");
   }
 
   function renderTiles() {
     const box = clear($("#tiles"));
-    $("#noSites").hidden = !!state.sites.length || !state.me || !state.me.user.enabled;
+    const empty = clear($("#noSites"));
+    const strip = $("#downStrip");
+    strip.hidden = true;
+    if (!state.me) { empty.hidden = true; return; }
+    if (state.sitesError) {
+      empty.hidden = false;
+      mount(empty, UI.errorBox(state.sitesError, async () => { UI.loading(empty); await loadSites(); renderTiles(); }));
+      return;
+    }
+    empty.hidden = !!state.sites.length || !state.me.user.enabled;
+    if (!empty.hidden) {
+      mount(empty, isAdmin()
+        ? UI.empty("No sites yet", "Add a web page on your home network to open it here.", { label: "＋ Add a site", onclick: addSiteFromLauncher })
+        : UI.empty("No sites for you yet", "An admin chooses who can open each site."));
+    }
+    const down = state.sites.filter((s) => PROBLEM.has(s.state));
+    if (down.length && !$("#monitorTab").hidden) {
+      strip.hidden = false;
+      strip.textContent = `⚠️ ${down.length} site${down.length > 1 ? "s" : ""} down → Monitor`;
+      strip.title = down.map((s) => s.name).join(", ");
+    }
     for (const s of state.sites) {
       box.append(h("a", { class: "tile", href: `#/site/${s.slug}`, title: s.name + (s.state ? ` — ${STATE_LABEL[s.state] || s.state}` : "") },
         s.state ? h("span", { class: `status-dot ${s.state}`, "aria-hidden": "true" }) : null,
@@ -94,8 +200,9 @@
     show("bookmarks");
     $("#bmChromeRow").hidden = !IS_PHONE;
     $("#bmChrome").checked = chromeOn();
+    if (!state.bookmarks) UI.loading($("#bookmarkList"));
     try { state.bookmarks = (await api("api/bookmarks")).bookmarks; }
-    catch (e) { mount(clear($("#bookmarkList")), h("p", { class: "error" }, e.message)); return; }
+    catch (e) { $("#noBookmarks").hidden = true; mount(clear($("#bookmarkList")), UI.errorBox(e, openBookmarks)); return; }
     renderBookmarks();
   }
 
@@ -103,7 +210,14 @@
 
   function renderBookmarks() {
     const list = state.bookmarks || [];
-    $("#noBookmarks").hidden = !!list.length;
+    const admin = isAdmin();                                    // the order is everyone's: admins set it
+    const rb = $("#bmReorderBtn");
+    rb.hidden = !admin || list.length < 2;
+    if (rb.hidden) state.reorderBm = false;
+    reorderLook(rb, state.reorderBm);
+    const empty = clear($("#noBookmarks"));
+    empty.hidden = !!list.length;
+    if (!list.length) mount(empty, UI.empty("No bookmarks yet", "Add the pages the household opens often — the school's site, the bin calendar, a recipe."));
     const box = clear($("#bookmarkList"));
     list.forEach((b, i) => {
       const link = bookmarkLink(b.url);
@@ -114,11 +228,13 @@
         try { state.bookmarks = (await api("api/bookmarks/reorder", { method: "POST", body: { ids } })).bookmarks; renderBookmarks(); }
         catch (e) { toast(e.message, true); openBookmarks(); }
       };
-      const admin = state.me && state.me.user.isAdmin;           // the order is everyone's: admins set it
+      const reorder = admin && state.reorderBm;
       const actions = h("div", { class: "bm-actions" },
-        admin ? h("button", { type: "button", class: "icon-btn", title: "Move up", "aria-label": `Move ${b.name} up`, disabled: i === 0, onclick: () => move(-1) }, "▲") : null,
-        admin ? h("button", { type: "button", class: "icon-btn", title: "Move down", "aria-label": `Move ${b.name} down`, disabled: i === list.length - 1, onclick: () => move(1) }, "▼") : null,
-        b.canEdit ? h("button", { type: "button", class: "icon-btn", title: "Edit", "aria-label": `Edit ${b.name}`, onclick: () => editBookmark(b) }, "✎") : null);
+        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move up", "aria-label": `Move ${b.name} up`, disabled: i === 0, onclick: () => move(-1) }, "▲") : null,
+        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move down", "aria-label": `Move ${b.name} down`, disabled: i === list.length - 1, onclick: () => move(1) }, "▼") : null,
+        !reorder && b.canEdit ? moreBtn(`More for ${b.name}`, () => [
+          { label: "✎ Edit…", onclick: () => editBookmark(b) },
+          { label: "🗑 Delete…", danger: true, onclick: () => deleteBookmark(b) }]) : null);
       box.append(h("div", { class: "bookmark" },
         h("a", { class: "bm-link", href: link.href, target: link.target || null, rel: "noopener noreferrer", title: b.url },
           h("span", { class: "bm-icon", "aria-hidden": "true" }, b.icon || "🔖"),
@@ -126,6 +242,20 @@
             h("span", { class: "bm-host dim small" }, hostOf(b.url) + (b.addedBy ? ` · added by ${b.addedBy}` : "")))),
         actions));
     });
+  }
+
+  // the ↕ Reorder switch (Bookmarks and Admin → Sites): ▲▼ only while it's on
+  function reorderLook(btn, on) {
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.classList.toggle("active", on);
+    btn.textContent = on ? "✓ Done" : "↕ Reorder";
+  }
+  $("#bmReorderBtn").addEventListener("click", () => { state.reorderBm = !state.reorderBm; renderBookmarks(); });
+
+  async function deleteBookmark(b, onError) {
+    if (!await UI.confirmDialog("Delete bookmark?", `Delete “${b.name}”?`, { okLabel: "Delete", okClass: "btn-primary danger" })) return false;
+    try { state.bookmarks = (await api(`api/bookmarks/${b.id}`, { method: "DELETE" })).bookmarks; renderBookmarks(); toast("Deleted"); return true; }
+    catch (x) { if (onError) onError(x); else toast(x.message, true); return false; }
   }
 
   function editBookmark(b) {
@@ -153,10 +283,8 @@
         state.bookmarks = r.bookmarks; renderBookmarks(); m.close(); toast(b ? "Saved" : "Bookmark added");
       } catch (x) { err.textContent = x.message; save.disabled = false; }
     });
-    if (del) del.addEventListener("click", async () => {
-      if (!await UI.confirmDialog("Delete bookmark?", `Delete “${b.name}”?`, { okLabel: "Delete", okClass: "btn-primary danger" })) return;
-      try { state.bookmarks = (await api(`api/bookmarks/${b.id}`, { method: "DELETE" })).bookmarks; renderBookmarks(); m.close(); toast("Deleted"); }
-      catch (x) { err.textContent = x.message; }
+    if (b) del.addEventListener("click", async () => {
+      if (await deleteBookmark(b, (x) => { err.textContent = x.message; })) m.close();
     });
   }
   $("#addBookmarkBtn").addEventListener("click", () => editBookmark(null));
@@ -179,6 +307,7 @@
     $("#viewerTitle").textContent = `${site.icon || "🌐"} ${site.name}`;
     $("#viewerBar").hidden = !site.showBar;
     $("#floatBack").hidden = !!site.showBar;
+    if (!site.showBar) placeFloatBack();
     const f = $("#frame");
     const src = siteSrc(site, path);
     if (f.getAttribute("src") !== src) f.setAttribute("src", src);
@@ -193,8 +322,53 @@
     return location.href.split("#")[0] + `#/site/${site.slug}`;
   }
 
-  $("#backBtn").addEventListener("click", () => go("#/"));
-  $("#floatBack").addEventListener("click", () => go("#/"));
+  $("#backBtn").addEventListener("click", back);
+
+  // The floating ← (sites without the bar): tap it to go back, drag it out of the site's way. Where it was dropped
+  // is remembered for each site on this device (as a share of the window, so it survives a turn of the phone).
+  const fb = $("#floatBack");
+  const fbKey = () => "proxy.floatBack:" + (state.site ? state.site.slug : "");
+  let fbDrag = null;
+  let fbNoClickUntil = 0;
+  function moveFloatBack(x, y) {
+    const w = fb.offsetWidth || 44, ht = fb.offsetHeight || 44;
+    fb.style.left = Math.max(4, Math.min(window.innerWidth - w - 4, x)) + "px";
+    fb.style.top = Math.max(4, Math.min(window.innerHeight - ht - 4, y)) + "px";
+    fb.style.bottom = "auto";
+  }
+  function placeFloatBack() {
+    let pos = null;
+    try { pos = JSON.parse(UI.lsGet(fbKey()) || "null"); } catch (e) { pos = null; }
+    if (pos && typeof pos.x === "number" && typeof pos.y === "number") moveFloatBack(pos.x * window.innerWidth, pos.y * window.innerHeight);
+    else { fb.style.left = ""; fb.style.top = ""; fb.style.bottom = ""; }
+  }
+  fb.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const r = fb.getBoundingClientRect();
+    fbDrag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, moved: false };
+    try { fb.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
+  });
+  fb.addEventListener("pointermove", (e) => {
+    if (!fbDrag || e.pointerId !== fbDrag.id) return;
+    if (!fbDrag.moved && Math.hypot(e.clientX - fbDrag.sx, e.clientY - fbDrag.sy) < 8) return;
+    fbDrag.moved = true;
+    fb.classList.add("dragging");
+    moveFloatBack(e.clientX - fbDrag.dx, e.clientY - fbDrag.dy);
+  });
+  function fbEnd(e) {
+    if (!fbDrag || e.pointerId !== fbDrag.id) return;
+    const moved = fbDrag.moved;
+    fbDrag = null;
+    fb.classList.remove("dragging");
+    if (!moved) return;
+    fbNoClickUntil = Date.now() + 400;                 // the click that ends a drag isn't a tap
+    const r = fb.getBoundingClientRect();
+    UI.lsSet(fbKey(), JSON.stringify({ x: r.left / window.innerWidth, y: r.top / window.innerHeight }));
+  }
+  fb.addEventListener("pointerup", fbEnd);
+  fb.addEventListener("pointercancel", fbEnd);
+  fb.addEventListener("click", () => { if (Date.now() < fbNoClickUntil) return; back(); });
+  window.addEventListener("resize", () => { if (state.view === "viewer" && !fb.hidden) placeFloatBack(); });
   $("#reloadBtn").addEventListener("click", () => {
     const f = $("#frame");
     // single-page app mode: the frame's own address is the site's path, not a proxied one — start again through it
@@ -229,6 +403,7 @@
   async function openMonitor(focus) {
     show("monitor");
     stopMonitor();
+    if (!$("#monitorList").firstChild) UI.loading($("#monitorList"));
     await renderMonitor(focus);
     monitorTimer = setInterval(() => { if (!document.hidden && !menuOpen()) renderMonitor(null); }, 15000);
   }
@@ -237,15 +412,51 @@
   // which a refresh would close under their finger.
   function menuOpen() {
     const el = document.activeElement;
-    return !!(el && el !== document.body && $("#monitorList").contains(el) && el.tagName === "SELECT");
+    return menus.length > 0 || !!(el && el !== document.body && $("#monitorList").contains(el) && el.tagName === "SELECT");
+  }
+
+  // problem sites first; the order within each state is the admin's
+  const RANK = { needs_attention: 0, down: 1, restarting: 2, waiting: 3, not_checked: 4, paused: 5, up: 6 };
+  const rank = (s) => (s.state in RANK ? RANK[s.state] : 4);
+
+  function renderSummary(sites) {
+    const box = clear($("#monitorSummary"));
+    box.hidden = !sites.length;
+    const count = (pred) => sites.filter(pred).length;
+    const groups = [
+      ["Up", count((s) => s.state === "up"), "pos", true],
+      ["Down", count((s) => PROBLEM.has(s.state)), "neg", true],
+      ["Restarting", count((s) => s.state === "restarting" || s.state === "waiting"), "", false],
+      ["Paused", count((s) => s.state === "paused"), "", false],
+      ["Not checked", count((s) => s.state === "not_checked"), "", false],
+    ];
+    box.setAttribute("aria-label", groups.filter((g) => g[1] || g[3]).map((g) => `${g[1]} ${g[0].toLowerCase()}`).join(" · "));
+    for (const [label, n, cls, always] of groups) {
+      if (!n && !always) continue;
+      box.append(h("div", { class: "kpi" }, h("span", { class: "kpi-label" }, label),
+        h("span", { class: "kpi-value" + (n && cls ? " " + cls : "") }, String(n))));
+    }
   }
 
   async function renderMonitor(focus) {
     let r;
-    try { r = await api("api/monitor"); } catch (e) { toast(e.message, true); return; }
+    try { r = await api("api/monitor"); }
+    catch (e) {
+      $("#monitorSummary").hidden = true;
+      $("#noChecks").hidden = true;
+      mount(clear($("#monitorList")), UI.errorBox(e, () => { UI.loading($("#monitorList")); renderMonitor(null); }));
+      return;
+    }
     const box = clear($("#monitorList"));
-    $("#noChecks").hidden = r.sites.length > 0;
-    for (const s of r.sites) box.append(monitorCard(s, r.isAdmin));
+    renderSummary(r.sites);
+    const empty = clear($("#noChecks"));
+    empty.hidden = r.sites.length > 0;
+    if (!r.sites.length) {
+      mount(empty, UI.empty("No sites are checked yet", r.isAdmin ? "Turn on a check in a site's form in Admin → Sites."
+        : "An admin can add checks in Admin → Sites.", r.isAdmin ? { label: "Open Admin → Sites", class: "btn-secondary", onclick: () => go("#/admin") } : null));
+    }
+    const sorted = r.sites.slice().sort((a, b) => rank(a) - rank(b));
+    for (const s of sorted) box.append(monitorCard(s, r.isAdmin));
     if (focus) {
       const el = box.querySelector(`[data-slug="${focus}"]`);
       if (el) { el.classList.add("focus"); el.scrollIntoView({ block: "center" }); }
@@ -269,7 +480,9 @@
     if (s.restarts) facts.push(`${s.restarts} restart${s.restarts > 1 ? "s" : ""}`);
     if (s.state === "paused") facts.push(s.pausedUntil ? `until ${when(s.pausedUntil)}` : "until resumed");
     if (s.blocked && s.state !== "needs_attention") facts.push(`not restarted: ${s.blocked}`);
-    const actions = isAdmin ? adminActions(s) : null;
+    // admins: the actions on sites that aren't up; on an up site they wait behind ⋯
+    const actions = isAdmin && s.state !== "up" ? adminActions(s) : null;
+    const more = isAdmin && s.state === "up" ? moreBtn(`Actions for ${s.name}`, () => upMenu(s)) : null;
     return h("div", { class: "card monitor-card", dataset: { slug: s.slug } },
       h("div", { class: "monitor-head" },
         h("span", { class: "site-icon", "aria-hidden": "true" }, s.favicon ? h("img", { src: s.favicon, alt: "", class: "fav" }) : s.icon),
@@ -277,35 +490,58 @@
           h("div", { class: "site-name" }, s.name, s.use === "monitor" ? h("span", { class: "dim small" }, "  monitor only") : null),
           h("div", { class: "small" }, h("span", { class: `badge ${s.state}` }, STATE_LABEL[s.state] || s.state),
             facts.length ? h("span", { class: "dim" }, "  " + facts.join(" · ")) : null)),
-        s.alerted ? mute : null),
+        s.alerted ? mute : null, more),
       strip, actions);
   }
 
-  function adminActions(s) {
+  function siteOps(s) {
     const act = async (path, body, msg) => {
       try { const r = await api(`api/admin/sites/${s.id}/${path}`, { method: "POST", body: body || {} });
         if (msg) toast(typeof msg === "function" ? msg(r) : msg); renderMonitor(null); }
       catch (e) { toast(e.message, true); }
     };
+    return {
+      check: () => act("check-now", null, (r) =>
+        (r.ok ? `Answered in ${r.ms} ms` : `No: ${r.error}`) + (r.recorded === false ? " (not counted: it is restarting or starting up)" : "")),
+      restart: async () => {
+        if (!await UI.confirmDialog(`Restart ${s.name}?`, "Its switch is turned off for a few seconds, then on again. " +
+          "Anything else on that plug loses power too.", { okLabel: "Restart", okClass: "btn-primary danger" })) return;
+        act("restart", null, "Restarting…");
+      },
+      retry: () => act("retry", null, "Trying again"),
+      pause: (hours) => act("pause", { hours }, "Paused"),
+      resume: () => act("resume", null, "Resumed"),
+      history: () => showHistory(s),
+    };
+  }
+
+  function upMenu(s) {
+    const o = siteOps(s);
+    return [
+      { label: "Check now", onclick: o.check },
+      s.canRestart ? { label: "🔌 Restart now", onclick: o.restart } : null,
+      { label: "⏸ Pause for 1 hour", onclick: () => o.pause(1) },
+      { label: "⏸ Pause for 8 hours", onclick: () => o.pause(8) },
+      { label: "⏸ Pause until resumed", onclick: () => o.pause(null) },
+      { label: "History", onclick: o.history },
+    ];
+  }
+
+  function adminActions(s) {
+    const o = siteOps(s);
     const pause = h("select", { class: "input small-select", title: "Pause checks and restarts" },
       h("option", { value: "" }, "Pause…"), h("option", { value: "1" }, "for 1 hour"), h("option", { value: "8" }, "for 8 hours"),
       h("option", { value: "forever" }, "until resumed"));
     pause.addEventListener("change", () => {
       if (!pause.value) return;
-      act("pause", { hours: pause.value === "forever" ? null : Number(pause.value) }, "Paused");
+      o.pause(pause.value === "forever" ? null : Number(pause.value));
     });
-    const restart = async () => {
-      if (!await UI.confirmDialog(`Restart ${s.name}?`, "Its switch is turned off for a few seconds, then on again. " +
-        "Anything else on that plug loses power too.", { okLabel: "Restart", okClass: "btn-primary danger" })) return;
-      act("restart", null, "Restarting…");
-    };
     return h("div", { class: "monitor-actions" },
-      h("button", { type: "button", class: "btn-secondary", onclick: () => act("check-now", null, (r) =>
-        (r.ok ? `Answered in ${r.ms} ms` : `No: ${r.error}`) + (r.recorded === false ? " (not counted: it is restarting or starting up)" : "")) }, "Check now"),
-      s.canRestart ? h("button", { type: "button", class: "btn-secondary", disabled: s.state === "restarting", onclick: restart }, "🔌 Restart now") : null,
-      s.state === "needs_attention" && s.canRestart ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("retry", null, "Trying again") }, "Try again") : null,
-      s.state === "paused" ? h("button", { type: "button", class: "btn-secondary", onclick: () => act("resume", null, "Resumed") }, "Resume") : pause,
-      h("button", { type: "button", class: "btn-ghost", onclick: () => showHistory(s) }, "History"));
+      h("button", { type: "button", class: "btn-secondary", onclick: o.check }, "Check now"),
+      s.canRestart ? h("button", { type: "button", class: "btn-secondary", disabled: s.state === "restarting", onclick: o.restart }, "🔌 Restart now") : null,
+      s.state === "needs_attention" && s.canRestart ? h("button", { type: "button", class: "btn-secondary", onclick: o.retry }, "Try again") : null,
+      s.state === "paused" ? h("button", { type: "button", class: "btn-secondary", onclick: o.resume }, "Resume") : pause,
+      h("button", { type: "button", class: "btn-ghost", onclick: o.history }, "History"));
   }
 
   async function showHistory(s) {
@@ -334,14 +570,14 @@
       mount(clear(body), HouseholdWhoami.panel(w, { appName: "Household Proxy", classes: { copy: "btn-ghost" } }));
     } catch (e) { mount(clear(body), h("p", { class: "error" }, e.message)); }
   }
-  $("#userBtn").addEventListener("click", openWhoami);
 
   // ---------- admin ----------
-  $("#adminBtn").addEventListener("click", () => go("#/admin/" + state.adminTab));
+  $("#adminBtn").addEventListener("click", () => go("#/admin"));
   $("#homeBtn").addEventListener("click", () => go("#/"));
   $$("#topnav .tab").forEach((b) => b.addEventListener("click", () => go(b.dataset.view === "sites" ? "#/" : `#/${b.dataset.view}`)));
   $("#homeBtn").addEventListener("click", stopMonitor);
-  $$("#adminTabs .tab").forEach((b) => b.addEventListener("click", () => go(`#/admin/${b.dataset.tab}`)));
+  // the admin's own tabs change the address without a step for Back (#/admin is its Sites tab)
+  $$("#adminTabs .tab").forEach((b) => b.addEventListener("click", () => replace(b.dataset.tab === "sites" ? "#/admin" : `#/admin/${b.dataset.tab}`)));
 
   const ADMIN_TABS = { sites: loadAdminSites, settings: loadSettings, people: loadPeople, storage: () => {} };
 
@@ -349,7 +585,7 @@
     if (!ADMIN_TABS[tab]) tab = "sites";
     state.adminTab = tab;
     show("admin");
-    $$("#adminTabs .tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+    $$("#adminTabs .tab").forEach((b) => markCurrent(b, b.dataset.tab === tab));
     for (const t of Object.keys(ADMIN_TABS)) $(`#tab-${t}`).hidden = t !== tab;
     ADMIN_TABS[tab]();
   }
@@ -357,17 +593,29 @@
   // Admin → Sites
   async function loadAdminSites() {
     const box = $("#tab-sites");
+    if (!box.firstChild) UI.loading(box);
     try { state.admin = await api("api/admin/sites"); }
-    catch (e) { mount(clear(box), h("p", { class: "error" }, e.message)); return; }
+    catch (e) { state.addSitePending = false; mount(clear(box), UI.errorBox(e, loadAdminSites)); return; }
+    renderAdminSites();
+    if (state.addSitePending) { state.addSitePending = false; editSite(null); }
+  }
+
+  function renderAdminSites() {
+    const box = $("#tab-sites");
+    const n = state.admin.sites.length;
+    if (n < 2) state.reorderSites = false;
     const list = h("div", { class: "site-list" });
     state.admin.sites.forEach((s, i) => list.append(siteRow(s, i)));
+    const reorderBtn = n > 1 ? h("button", { type: "button", class: "btn-secondary",
+      onclick: () => { state.reorderSites = !state.reorderSites; renderAdminSites(); } }) : null;
+    if (reorderBtn) reorderLook(reorderBtn, state.reorderSites);
     mount(clear(box),
       h("div", { class: "card" },
         h("div", { class: "row-between" }, h("h3", null, "Sites"),
-          h("button", { type: "button", class: "btn-primary", onclick: () => editSite(null) }, "＋ Add a site")),
-        h("p", { class: "hint" }, "Each site is a web page on your home network, opened inside Home Assistant. Only " +
-          "the sites listed here can be reached, and only by the people allowed on each."),
-        state.admin.sites.length ? list : h("p", { class: "dim" }, "No sites yet.")));
+          h("span", { class: "head-actions" }, reorderBtn,
+            h("button", { type: "button", class: "btn-primary", onclick: () => editSite(null) }, "＋ Add a site"))),
+        h("p", { class: "hint" }, "Web pages on your home network, opened inside Home Assistant — only these, and only by the people allowed on each."),
+        n ? list : UI.empty("No sites yet", "Add the first web page on your home network.")));
   }
 
   const ACCESS_LABEL = { admins: "Admins only", everyone: "Everyone", chosen: "Chosen people" };
@@ -381,15 +629,19 @@
       try { await api("api/admin/sites/reorder", { method: "POST", body: { ids } }); loadAdminSites(); loadSites(); }
       catch (e) { toast(e.message, true); }
     };
+    const reorder = state.reorderSites;
     return h("div", { class: "site-row" },
       h("span", { class: "site-icon", "aria-hidden": "true" }, s.icon),
-      h("div", { class: "site-main" },
+      h("button", { type: "button", class: "site-main row-open", title: `Edit ${s.name}`, onclick: () => editSite(s) },
         h("div", { class: "site-name" }, s.name, h("span", { class: "dim" }, `  /${s.slug}`)),
         h("div", { class: "dim small" }, `${s.target}${s.start_path !== "/" ? s.start_path : ""} · ${ACCESS_LABEL[s.access]}`)),
       h("div", { class: "site-actions" },
-        h("button", { type: "button", class: "icon-btn", title: "Move up", disabled: i === 0, onclick: () => move(-1) }, "▲"),
-        h("button", { type: "button", class: "icon-btn", title: "Move down", disabled: i === n - 1, onclick: () => move(1) }, "▼"),
-        h("button", { type: "button", class: "btn-secondary", onclick: () => editSite(s) }, "Edit")));
+        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move up", "aria-label": `Move ${s.name} up`, disabled: i === 0, onclick: () => move(-1) }, "▲") : null,
+        reorder ? h("button", { type: "button", class: "icon-btn", title: "Move down", "aria-label": `Move ${s.name} down`, disabled: i === n - 1, onclick: () => move(1) }, "▼") : null,
+        reorder ? null : moreBtn(`More for ${s.name}`, () => [
+          { label: "✎ Edit…", onclick: () => editSite(s) },
+          s.use !== "monitor" ? { label: "↗ Open the site", onclick: () => go(`#/site/${s.slug}`) } : null,
+          s.check && s.check.kind ? { label: "📈 On the Monitor page", onclick: () => go(`#/monitor/${s.slug}`) } : null])));
   }
 
   function field(label, control, hint) {
@@ -757,7 +1009,7 @@
   // ---------- start ----------
   async function loadMe() {
     state.me = await api("api/me");
-    $("#userBtn").textContent = state.me.user.name;
+    $("#userName").textContent = state.me.user.name;
     $("#adminBtn").hidden = !state.me.user.isAdmin;
     $("#offNote").hidden = state.me.user.enabled;
     $("#monitorTab").hidden = !(state.me.user.isAdmin || state.me.monitor);
@@ -765,9 +1017,41 @@
   }
 
   async function init() {
-    try { await loadMe(); } catch (e) { toast(e.message, true); return; }
+    const note = $("#meError");
+    try { await loadMe(); }
+    catch (e) {
+      // without a Home Assistant user nothing here works: say so where the sites would be, with a Retry
+      state.me = null;
+      show("sites");
+      renderTiles();
+      note.hidden = false;
+      mount(clear(note), h("div", { class: "note warn" }, h("h3", null, "Can't identify a Home Assistant user"),
+        h("p", null, "Open the app from its page in the Home Assistant sidebar."),
+        UI.errorBox(e, () => { UI.loading(note); init().then(startDeepLink); })));
+      return;
+    }
+    note.hidden = true;
+    clear(note);
+    if (!state.sites.length) UI.loading($("#tiles"));
     await loadSites();
     route();
+  }
+
+  let deepLinkStarted = false;
+  function startDeepLink() {
+    if (deepLinkStarted || !state.me || !window.HouseholdDeepLink) return;
+    deepLinkStarted = true;
+    HouseholdDeepLink.start(state.me.page, (r) => (/^\/(site|monitor)\/[a-z0-9-]{1,40}$/.test(r) ? r : null),
+      (r) => go("#" + r));
+  }
+
+  // Top-level tabs start a new Back trail; a deep link with no trail goes back to its parent page
+  const TAB_HASHES = new Set(["", "#", "#/", "#/bookmarks", "#/monitor", "#/admin"]);
+  function parentOf(hash) {
+    if (/^#\/site\//.test(hash)) return "#/";
+    if (/^#\/admin\/[a-z]+$/.test(hash)) return "#/admin";
+    if (/^#\/monitor\/./.test(hash)) return "#/monitor";
+    return null;
   }
 
   window.addEventListener("hashchange", route);
@@ -775,14 +1059,11 @@
     BackNav.init({
       atHome: () => state.view === "sites",
       goHome: () => { history.replaceState(history.state, "", "#/"); route(); },
-      openLayers: () => UI.dialogs(),
+      openLayers: () => [...UI.dialogs(), ...menus],
       closeLayer: (m) => m.close(),
+      isTab: (hash) => TAB_HASHES.has(hash),
+      parentOf,
     });
   }
-  init().then(() => {
-    if (window.HouseholdDeepLink) {
-      HouseholdDeepLink.start(state.me && state.me.page, (r) => (/^\/(site|monitor)\/[a-z0-9-]{1,40}$/.test(r) ? r : null),
-        (r) => go("#" + r));
-    }
-  });
+  init().then(startDeepLink);
 })();
