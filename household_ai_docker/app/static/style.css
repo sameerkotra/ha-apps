@@ -30,7 +30,8 @@ code { background: var(--panel-alt); padding: 0 4px; border-radius: 4px; }
 a { color: var(--accent); }
 
 .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  gap: 8px; padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  padding-top: max(8px, env(safe-area-inset-top)); background: var(--panel); border-bottom: 1px solid var(--border); }
 .topbar-right { display: flex; align-items: center; gap: 8px; }
 .brand { font-size: 1.05rem; font-weight: 600; color: var(--text); padding: 4px 0; }
 .theme-select { background: var(--panel-alt); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
@@ -53,9 +54,12 @@ button:disabled { opacity: 0.55; cursor: default; }
 
 .column { max-width: 1040px; margin: 0 auto; padding: 12px 16px 24px; }
 
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
-.tab { background: none; border: 0; padding: 8px 12px; color: var(--text-dim); cursor: pointer; font: inherit;
-  border-bottom: 2px solid transparent; }
+/* One row of tabs that scrolls sideways on a narrow screen (never wraps to 2–3 rows). */
+.tabs { display: flex; flex-wrap: nowrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px;
+  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { flex: none; white-space: nowrap; min-height: 44px; background: none; border: 0; padding: 8px 12px;
+  color: var(--text-dim); cursor: pointer; font: inherit; border-bottom: 2px solid transparent; }
 .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
 .card h3 { margin-top: 0; }
@@ -63,7 +67,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .card select, .card textarea { background: var(--panel-alt); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 6px 8px; font: inherit; max-width: 100%; }
 
-.toast-root { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 50; display: flex;
+.toast-root { position: fixed; bottom: calc(16px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); z-index: 50; display: flex;
   flex-direction: column; gap: 6px; }
 .toast { background: var(--panel-alt); border: 1px solid var(--border); padding: 8px 14px; border-radius: 8px; }
 .toast.error { border-color: var(--danger); color: var(--danger); }
@@ -87,15 +91,33 @@ table.grid th { color: var(--text-dim); font-weight: 600; font-size: 0.85rem; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .pull { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
 .pull progress { width: 180px; }
-.log summary { cursor: pointer; }
+.log summary, .card.fold > summary { cursor: pointer; }
+.card.fold > summary { font-weight: 600; font-size: 1.05rem; }
+.card.fold[open] > summary { margin-bottom: 8px; }
+.pill { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 0.9rem; font-weight: 600;
+  background: var(--panel-alt); color: var(--text); }
+.pill.state-ready { background: var(--ok-soft); color: var(--ok); }
+.pill.state-starting { background: var(--warn-soft); color: var(--warn); }
+.pill.state-stopped { background: var(--danger-soft); color: var(--danger); }
+.danger-zone .btn-danger-outline { display: inline-block; }
+table.grid + .ui-group-head { margin-top: 18px; }
 .log-lines { max-height: 360px; overflow: auto; background: var(--panel-alt); padding: 8px; border-radius: 6px;
   font-size: 0.78rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 code.copy { user-select: all; overflow-wrap: anywhere; }
 .btn-ghost.small { padding: 2px 8px; font-size: 0.85rem; }
 .note h3 { margin: 0 0 6px; }
 
-@media (max-width: 700px) {
-  .column { padding: 8px 10px 16px; }
+@media (max-width: 760px) {
+  .column { padding: 8px max(10px, env(safe-area-inset-right)) calc(16px + var(--safe-bottom)) max(10px, env(safe-area-inset-left)); }
   .kv-hint { padding-left: 0; }
   table.grid { display: block; overflow-x: auto; }
+  /* The Recommended table becomes one card per model. */
+  table.grid.stack { display: block; overflow: visible; }
+  table.grid.stack thead { display: none; }
+  table.grid.stack tbody, table.grid.stack tr, table.grid.stack td { display: block; }
+  table.grid.stack tr { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; }
+  table.grid.stack td { border: 0; padding: 2px 0; }
+  table.grid.stack td[data-label]::before { content: attr(data-label) ": "; color: var(--text-dim); }
+  table.grid.stack td[data-label] { display: inline-block; margin-right: 14px; }
+  table.grid.stack td.stack-action { padding-top: 6px; }
 }

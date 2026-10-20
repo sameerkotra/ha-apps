@@ -8,7 +8,7 @@ Receipt Price Intelligence, Docs, Calorie Tracker, Arcade) use it exactly as the
   open (no downloading or deleting models from outside), with a fair queue, the day/night schedule, limits, usage
   counts and optional access keys.
 - **Port 8080 — the settings page.** Everything the Home Assistant app's page has: status, models (download,
-  delete, *Keep loaded*), *Use it in other apps*, access keys, App settings, usage, backups. It is published on
+  delete, *Keep loaded*), *Use it* (in other apps), access keys, App settings, usage, backups. It is published on
   **this machine only** (`127.0.0.1:8080`) unless you set a password: see [The settings page](#the-settings-page).
 
 ## Start it
@@ -143,7 +143,7 @@ the Quadlet file) — or simply use one access key per app, which works either w
 
 ## Point the household apps at it
 
-In each app in Home Assistant: **Admin → App settings → AI** (the page's *Use it in other apps* tab shows the exact
+In each app in Home Assistant: **Admin → App settings → AI** (the page's *Use it* tab shows the exact
 values):
 
 | Field | Value |
@@ -223,7 +223,7 @@ are refused for a minute. The password travels in plain HTTP, like the access ke
 network, never forward port 8080 on your router, and put an HTTPS reverse proxy in front if you need more. The model
 server never sees the password. Only `/api/health` answers without it.
 
-On *Use it in other apps*, a page opened at `localhost` can't know the address Home Assistant reaches this machine by:
+On the *Use it* tab, a page opened at `localhost` can't know the address Home Assistant reaches this machine by:
 put the machine's IP address there.
 
 ## Hardening

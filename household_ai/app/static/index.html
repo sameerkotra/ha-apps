@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Household AI</title>
-<script src="common/theme-boot.js?v=1.0.5"></script>
-<link rel="stylesheet" href="common/themes.css?v=1.0.5">
-<link rel="stylesheet" href="common/settings.css?v=1.0.5">
-<link rel="stylesheet" href="style.css?v=1.0.5">
+<script src="common/theme-boot.js?v=1.1.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.1.0">
+<link rel="stylesheet" href="common/settings.css?v=1.1.0">
+<link rel="stylesheet" href="style.css?v=1.1.0">
 </head>
 <body>
 <header class="topbar">
@@ -21,10 +21,10 @@
 
 <main class="column">
   <div id="notAdmin" class="note warn" hidden></div>
-  <nav class="tabs" id="tabs" hidden>
-    <button type="button" class="tab active" data-tab="status">Status</button>
+  <nav class="tabs" id="tabs" aria-label="Sections" hidden>
+    <button type="button" class="tab active" data-tab="status" aria-current="page">Status</button>
     <button type="button" class="tab" data-tab="models">Models</button>
-    <button type="button" class="tab" data-tab="use">Use it in other apps</button>
+    <button type="button" class="tab" data-tab="use" title="Use it in other apps">Use it</button>
     <button type="button" class="tab" data-tab="keys">Access keys</button>
     <button type="button" class="tab" data-tab="settings">App settings</button>
     <button type="button" class="tab" data-tab="usage">Usage</button>
@@ -43,17 +43,21 @@
         usable key) and the usage counts. The models are not in it, and not in Home Assistant's backups either:
         after a restore, download them again on the Models tab.</p>
       <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
-      <p><label class="btn-secondary">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
+    </div>
+    <div class="danger-zone">
+      <h3>Restore</h3>
+      <p class="hint">Replaces the App settings, the access keys and the usage with the backup's.</p>
+      <p><label class="btn-danger-outline">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
     </div>
   </section>
 </main>
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=1.0.5"></script>
-<script src="common/settings.js?v=1.0.5"></script>
-<script src="common/backnav.js?v=1.0.5"></script>
-<script src="common/whoami.js?v=1.0.5"></script>
-<script src="app.js?v=1.0.5"></script>
+<script src="common/ui.js?v=1.1.0"></script>
+<script src="common/settings.js?v=1.1.0"></script>
+<script src="common/backnav.js?v=1.1.0"></script>
+<script src="common/whoami.js?v=1.1.0"></script>
+<script src="app.js?v=1.1.0"></script>
 </body>
 </html>

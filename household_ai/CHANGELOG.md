@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.0
+
+- **One row of tabs on phones**: the tabs scroll sideways instead of wrapping onto two or three rows, and *Use it in other apps* is now just **Use it**.
+- **The page remembers its tab**: each tab has its own address, so a reload stays on it and Back returns to the tab you came from, then to Status.
+- **Status at a glance**: a summary strip at the top shows the model server's state, the loaded model, the queue and free memory; *This machine* and *On my network* are folded below (opened by themselves when there is a warning).
+- **Status no longer jumps**: the 5-second refresh updates values in place, so the log keeps its scroll position and a selection, and open sections stay open.
+- **Downloads in progress at the top** of the Models tab; on phones the Recommended list shows one card per model.
+- **Usage per app first**, then day by day with each day's totals.
+- **Loading and errors**: every tab shows a spinner while it loads, and an error with **Retry** if it can't.
+- **Restore is set apart** on the Storage tab, away from Download a backup.
+
 ## 1.0.6
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

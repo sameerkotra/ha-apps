@@ -12,7 +12,7 @@ https://github.com/sameerkotra/ha-apps
    server **On**.
 3. On **Models**, download one model. `qwen2.5:3b` is a good first choice (1.9 GB to download, about 2.5 GB of
    memory). The page warns when a model needs more memory than the machine has free.
-4. On **Use it in other apps**, copy the values into each app's own **Admin → App settings → AI**, then use that
+4. On the **Use it** tab (Use it in other apps), copy the values into each app's own **Admin → App settings → AI**, then use that
    app's **Test connection**.
 
 ## Pointing an app at it
@@ -84,7 +84,7 @@ One model answers one request at a time. **App settings → Limits**:
 - **Queue length** (4): requests that may wait while one runs; each app may have at most 2 waiting. More are told
   to try again shortly (the apps retry by themselves). There is no limit on how long a request waits: an app that
   gives up has its request dropped.
-- **Answer first** (on **Use it in other apps**): apps whose waiting requests go ahead of the others; the assistant
+- **Answer first** (on the **Use it** tab): apps whose waiting requests go ahead of the others; the assistant
   by default. With access keys on, a key labelled *Household Assistant* (the app's name) counts as the assistant,
   and **Access keys → New key** can tick *Answer first* for any key.
 - Changing *Context length* or *Models loaded at once*, deleting a model, or restoring a backup with other server
@@ -106,7 +106,7 @@ The model server runs at a lower priority than Home Assistant, so the home stays
 - **On my network**: to use the model from other computers, enter a host port for 11434 on the app's **Network**
   tab in Home Assistant (empty = not published), **and turn on Require an access key**: while the port is published
   and keys are off, only apps inside Home Assistant are served — other computers get *only apps inside Home
-  Assistant may use it*. The Status tab shows whether the port is published. The connection is plain HTTP.
+  Assistant may use it*. The Status tab's **On my network** section shows whether the port is published. The connection is plain HTTP.
 - **Names**: the gateway answers only to this machine's names — the app's host name (as the page shows it), IP
   addresses, `localhost` and local names ending in `.local`, `.lan`, `.home.arpa` or `.internal`. A web page
   elsewhere that points its own name at your machine ("DNS rebinding") is refused. If a computer reaches the gateway
