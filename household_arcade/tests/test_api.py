@@ -22,7 +22,7 @@ class TestAccess(ApiBase):
         self.assertEqual(r.status_code, 403)
 
     def test_health_needs_no_user(self):
-        self.assertEqual(self.c.get("/api/health").json(), {"status": "ok", "version": "1.14.0"})
+        self.assertEqual(self.c.get("/api/health").json(), {"status": "ok", "version": "1.14.1"})
 
     def test_admin_routes_refuse_non_admins(self):
         for method, path in (("get", "/api/admin/settings"), ("get", "/api/admin/users"),
@@ -74,7 +74,7 @@ class TestMe(ApiBase):
         self.assertTrue(me["leaderboard"])
         self.assertIsNone(me["playTime"]["leftSeconds"])
         self.assertEqual(me["today"], "2026-09-21")
-        self.assertEqual(me["version"], "1.14.0")
+        self.assertEqual(me["version"], "1.14.1")
 
     def test_whoami_echoes_identity_and_counts_only(self):
         w = self.get("/api/whoami", KABIR).json()
@@ -190,7 +190,7 @@ class TestStaticShell(ApiBase):
         # the games' own files aren't on the page: each game's load when it is opened (games/manifest.js)
         order = ["common/backnav.js", "common/whoami.js", "games/kit.js", "games/sound.js", "games/registry.js", "games/manifest.js",
                  "search.js", "app.js", "play.js", "admin.js", "together.js"]
-        pos = [html.index(f'src="{name}?v=1.14.0"') for name in order]
+        pos = [html.index(f'src="{name}?v=1.14.1"') for name in order]
         self.assertEqual(pos, sorted(pos))
         self.assertNotIn("<script>", html)            # no inline script (CSP)
         self.assertNotIn("onclick=", html)

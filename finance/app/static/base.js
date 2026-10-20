@@ -114,17 +114,6 @@
         location.replace(a.href);
     });
 
-    // ---- A link to a place on this page (#id) just scrolls there (common/backnav.js would treat it as an address) ----
-    document.addEventListener("click", function (e) {
-        var a = e.target.closest && e.target.closest('a[href^="#"]');
-        if (!a || a.getAttribute("href").length < 2) return;
-        var target = document.getElementById(decodeURIComponent(a.getAttribute("href").slice(1)));
-        if (!target) return;
-        e.preventDefault();
-        if (target.tagName === "DETAILS") target.open = true;
-        target.scrollIntoView({behavior: "smooth", block: "start"});
-    }, true);
-
     // ---- Row ⋯ menus: one open at a time, closed by a click elsewhere ----
     document.addEventListener("click", function (e) {
         var inside = e.target.closest && e.target.closest("details.row-menu");

@@ -1367,8 +1367,11 @@ function parentRoute(hash) {
 /* The phone's bottom-bar tabs (and the start page): going to one starts a new back trail. */
 function isTabRoute(hash) { return ["", "#", "#/", "#/tree", "#/people", "#/upcoming", "#/photos", "#/more"].includes(String(hash || "")); }
 function parentLabel(hash) {
-  const p = parentRoute(hash);
-  if (!p) return "Tree";
+  // where ‹ really leads: the previous page of the back trail when it is one of ours, else the parent page
+  const prev = window.BackNav && BackNav.peek ? BackNav.peek() : null;
+  const prevName = prev && prev.startsWith("#") ? prev.replace(/^#\/?/, "").split("/")[0] : null;
+  const p = prevName !== null && (!prevName || ROUTE_TITLES[prevName] || prevName === "print") ? prev : parentRoute(hash);
+  if (!p || p === "#" || p === "#/") return "Tree";
   const [name, ...args] = p.replace(/^#\/?/, "").split("/");
   if (name === "settings" && !args.length) return "Settings";
   if (name === "admin") return "Admin";
@@ -2333,7 +2336,7 @@ let leafletReady = null, sanscriptReady = null;
 function loadSanscript() {
   if (window.Sanscript) return Promise.resolve(window.Sanscript);
   if (!sanscriptReady) sanscriptReady = new Promise((resolve, reject) => {
-    document.head.appendChild(h("script", { src: "vendor/sanscript/sanscript.js?v=2.7.0",
+    document.head.appendChild(h("script", { src: "vendor/sanscript/sanscript.js?v=2.7.1",
       onload: () => resolve(window.Sanscript), onerror: () => { sanscriptReady = null; reject(new Error("Couldn't load the transliteration helper.")); } }));
   });
   return sanscriptReady;
@@ -2342,8 +2345,8 @@ function loadLeaflet() {
   if (window.L) return Promise.resolve(window.L);
   if (!leafletReady) {
     leafletReady = new Promise((resolve, reject) => {
-      document.head.appendChild(h("link", { rel: "stylesheet", href: "vendor/leaflet/leaflet.css?v=2.7.0" }));
-      document.head.appendChild(h("script", { src: "vendor/leaflet/leaflet.js?v=2.7.0",
+      document.head.appendChild(h("link", { rel: "stylesheet", href: "vendor/leaflet/leaflet.css?v=2.7.1" }));
+      document.head.appendChild(h("script", { src: "vendor/leaflet/leaflet.js?v=2.7.1",
         onload: () => resolve(window.L), onerror: () => { leafletReady = null; reject(new Error("Couldn't load the map.")); } }));
     });
   }

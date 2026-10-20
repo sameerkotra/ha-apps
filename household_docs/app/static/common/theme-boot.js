@@ -1,4 +1,4 @@
-// Shared file: edit common/static/theme-boot.js and run tools/sync_common.py; don't edit this copy. sha256=dce578e7c4dd7784870ab3f1e31e0fc94b96edaad37d86e5c9d5bf631d83469f
+// Shared file: edit common/static/theme-boot.js and run tools/sync_common.py; don't edit this copy. sha256=8b7f1c498694eecc011b3df1881acd9eb747b94a8451f99e0d51166bdf508cab
 /* theme-boot.js — the page theme and the collapsed sidebar (shared: common/static/theme-boot.js).
  *
  * Load it in <head>, before the stylesheets, as an external file (the apps' Content-Security-Policy
@@ -16,7 +16,11 @@
  *
  *   HouseholdTheme.choice()             the saved choice (one of THEMES)
  *   HouseholdTheme.set(choice)          save it, apply it, update every bound <select>
- *   HouseholdTheme.bindSelect(select)   fill a <select> with OPTIONS, show the choice, save on change
+ *   HouseholdTheme.bindSelect(select)   fill a <select> with OPTIONS, show the choice, save on change. Menus are
+ *                                       held weakly and forgotten once they leave the page (a dialog closed), so
+ *                                       binding one per dialog opening doesn't pile up; binding the same menu
+ *                                       again is harmless
+ *   HouseholdTheme.unbindSelect(select) stop keeping that menu in step (optional)
  *   HouseholdTheme.onChange(fn)         fn(choice, resolved) after set()
  *   HouseholdTheme.sidebarCollapsed() / setSidebarCollapsed(bool)
  */
@@ -44,8 +48,26 @@
   }
 
   var current = normalize(lsGet("theme"));
-  var selects = [];
+  // Bound menus: weak references where the browser has them (a menu dropped with its dialog can be collected),
+  // and a menu that was on the page and has left it is forgotten at the next bind or set.
+  var selects = [];           // entries: { ref: WeakRef or { deref() }, seen: was connected once }
   var listeners = [];
+  var HAS_WEAKREF = typeof WeakRef === "function";
+  function makeRef(el) { return HAS_WEAKREF ? new WeakRef(el) : { deref: function () { return el; } }; }
+  // the live menus, pruning the gone ones; a menu not yet on the page (bound before it is inserted) is kept
+  function liveSelects() {
+    var out = [];
+    selects = selects.filter(function (e) {
+      var s = e.ref.deref();
+      if (!s || s.__householdThemeUnbound) return false;
+      if (s.isConnected === undefined) { out.push(s); return true; }
+      if (s.isConnected) { e.seen = true; out.push(s); return true; }
+      if (e.seen) return false;          // was on the page, now gone (its dialog closed / the page redrew)
+      out.push(s);
+      return true;
+    });
+    return out;
+  }
 
   function apply() { root.setAttribute("data-theme", resolve(current)); }
 
@@ -53,8 +75,7 @@
     current = normalize(choice);
     lsSet("theme", current);
     apply();
-    selects = selects.filter(function (s) { return s.isConnected; });   // forget pages that were redrawn
-    selects.forEach(function (s) { s.value = current; });
+    liveSelects().forEach(function (s) { s.value = current; });
     listeners.forEach(function (fn) { try { fn(current, resolve(current)); } catch (e) { /* a listener's own problem */ } });
   }
 
@@ -68,9 +89,19 @@
       select.appendChild(opt);
     });
     select.value = current;
-    select.addEventListener("change", function () { set(select.value); });
-    selects.push(select);
+    var known = liveSelects().indexOf(select) !== -1;
+    select.__householdThemeUnbound = false;
+    if (!select.__householdThemeBound) {
+      select.__householdThemeBound = true;
+      select.addEventListener("change", function () { if (!select.__householdThemeUnbound) set(select.value); });
+    }
+    if (!known) selects.push({ ref: makeRef(select), seen: !!select.isConnected });
     return select;
+  }
+  function unbindSelect(select) {
+    if (!select) return;
+    select.__householdThemeUnbound = true;
+    liveSelects();
   }
 
   function sidebarCollapsed() { return root.getAttribute("data-sidebar") === "collapsed"; }
@@ -95,6 +126,8 @@
     choice: function () { return current; },
     set: set,
     bindSelect: bindSelect,
+    unbindSelect: unbindSelect,
+    _boundCount: function () { return liveSelects().length; },   // for tests
     onChange: function (fn) { listeners.push(fn); },
     sidebarCollapsed: sidebarCollapsed,
     setSidebarCollapsed: setSidebarCollapsed,

@@ -66,6 +66,26 @@ class ThemeBoot(unittest.TestCase):
         self.assertEqual(r["attrs"]["data-theme"], "slate")
         self.assertEqual(r["store"]["theme"], "slate")
 
+    def test_bound_selects_are_released(self):
+        r = self.boot("slate", extra=r"""
+          const sel = () => ({ firstChild: null, kids: [], value: "", isConnected: false, listeners: 0,
+            removeChild(c) { this.kids.splice(this.kids.indexOf(c), 1); this.firstChild = this.kids[0] || null; },
+            appendChild(c) { this.kids.push(c); this.firstChild = this.kids[0]; }, addEventListener() { this.listeners++; } });
+          document.createElement = () => ({});
+          // one menu per dialog opening: shown, then the dialog closes
+          for (let k = 0; k < 50; k++) { const s = HouseholdTheme.bindSelect(sel()); s.isConnected = true; HouseholdTheme.set("slate"); s.isConnected = false; }
+          const afterDialogs = HouseholdTheme._boundCount();
+          const page = sel(); HouseholdTheme.bindSelect(page);           // bound before it is on the page: kept
+          HouseholdTheme.bindSelect(page);                                  // again: no second listener
+          const pending = HouseholdTheme._boundCount();
+          page.isConnected = true; HouseholdTheme.set("daylight");
+          const shown = page.value, options = page.kids.length;
+          HouseholdTheme.unbindSelect(page); HouseholdTheme.set("midnight");
+          globalThis.result = { afterDialogs, pending, shown, options, listeners: page.listeners, unbound: page.value, left: HouseholdTheme._boundCount() };
+        """ + "\nprocess.stdout.write(JSON.stringify(result)); process.exit(0);")
+        self.assertEqual(r, {"afterDialogs": 0, "pending": 1, "shown": "daylight", "options": 4, "listeners": 1,
+                             "unbound": "daylight", "left": 0})
+
     def test_sidebar_collapsed(self):
         stub = STUB % {"store": json.dumps({"sidebarCollapsed": "1"}), "light": "false"}
         r = run_node(stub + read("theme-boot.js") +
@@ -127,6 +147,36 @@ class UiHelpers(unittest.TestCase):
         """)
         self.assertEqual(r, {"l": ["ui-loading", "status", "|Loading…", 1], "e": ["ui-error", "alert", "Nope|Retry"],
                              "tries": 1, "em": ["ui-empty", "Nothing yet|Add one|Add", 1, 1]})
+
+    def test_button_classes_and_toast_action(self):
+        r = self.ui(r"""
+          const mk = (tag) => ({ tag, attrs: {}, listeners: {}, kids: [], dataset: {}, style: {}, className: "", firstChild: null, removed: false,
+            classList: { add() {} }, setAttribute(k, v) { this.attrs[k] = String(v); }, addEventListener(t, fn) { this.listeners[t] = fn; },
+            appendChild(c) { this.kids.push(c); this.firstChild = this.kids[0]; return c; }, remove() { this.removed = true; } });
+          globalThis.Node = function () {};
+          document.createElement = (t) => Object.setPrototypeOf(mk(t), Node.prototype);
+          document.createTextNode = (t) => Object.setPrototypeOf({ text: t }, Node.prototype);
+          const root = mk("div");
+          globalThis.setTimeout = () => 0;
+          const before = [UI.buttonClass("primary"), UI.buttonClass("ghost"), UI.buttonClass("danger"),
+            UI.errorBox("x", () => 1).kids[1].className, UI.empty("t", null, { label: "Go" }).kids[1].kids[0].className];
+          UI.buttonClasses = { primary: "btn primary", ghost: "btn ghost" };
+          const after = [UI.buttonClass("primary"), UI.buttonClass("danger"), UI.errorBox("x", () => 1).kids[1].className,
+            UI.empty("t", null, { label: "Go" }).kids[1].kids[0].className,
+            UI.empty("t", null, { label: "Go", class: "mine" }).kids[1].kids[0].className,
+            UI.errorBox("x", () => 1, { retryClass: "own", retryLabel: "Again" }).kids[1].className,
+            UI.errorBox("x", () => 1, { retryLabel: "Again" }).kids[1].kids[0].text];
+          let undone = 0;
+          const t = UI.toast("Deleted", { root, action: { label: "Undo", class: "link-btn", id: "u1", onclick: () => undone++ } });
+          const btn = t.kids[1];
+          btn.listeners.click({ stopPropagation() {} });
+          process.stdout.write(JSON.stringify({ before, after, action: [btn.tag, btn.className, btn.attrs.id, btn.kids[0].text], undone, closed: t.removed }));
+        """)
+        self.assertEqual(r["before"], ["btn-primary", "btn-ghost", "btn-danger", "btn-ghost", "btn-primary"])
+        self.assertEqual(r["after"], ["btn primary", "btn-danger", "btn ghost", "btn primary", "mine", "own", "Again"])
+        self.assertEqual(r["action"], ["button", "ui-toast-action link-btn", "u1", "Undo"])
+        self.assertEqual(r["undone"], 1)
+        self.assertTrue(r["closed"])
 
     def test_error_message(self):
         r = self.ui("process.stdout.write(JSON.stringify([UI.errorMessage('Nope', 400), "
@@ -293,6 +343,8 @@ function browser(startHash, store, page) {
   store = store || {};
   let idx = 0;
   const timers = [];
+  const docListeners = {};
+  const els = {};
   const location = {
     get href() { return entries[idx].href; },
     get hash() { const h = entries[idx].href; const i = h.indexOf("#"); return i < 0 ? "" : h.slice(i); },
@@ -318,7 +370,8 @@ function browser(startHash, store, page) {
     clearTimeout() {},
     MutationObserver: class { observe() {} },
     HashChangeEvent: class { constructor(type, o) { this.type = type; Object.assign(this, o || {}); } },
-    document: { body: {}, addEventListener() {} },
+    document: { body: {}, addEventListener(t, fn) { (docListeners[t] = docListeners[t] || []).push(fn); },
+                getElementById: (id) => els[id] || null },
     sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
   };
   win.window = win;
@@ -331,6 +384,15 @@ function browser(startHash, store, page) {
     /** What setting location.hash does: a new entry, then popstate and hashchange. */
     setHash(h) { const old = location.href; entries.splice(idx + 1); entries.push({ href: base + h, state: null }); idx++; fire("popstate"); fire("hashchange", { newURL: location.href, oldURL: old }); },
     on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+    pos: () => idx, els,
+    /** A left click on <a href=…> (attrs: other attributes); → whether the default was prevented. */
+    click(href, attrs) {
+      const a = { getAttribute: (k) => (k === "href" ? href : (attrs || {})[k] ?? null), hasAttribute: (k) => k in (attrs || {}), target: "" };
+      let prevented = false;
+      const ev = { button: 0, target: { closest: () => a }, get defaultPrevented() { return prevented; }, preventDefault() { prevented = true; } };
+      (docListeners.click || []).forEach((fn) => fn(ev));
+      return prevented;
+    },
   };
 }
 
@@ -440,6 +502,83 @@ function app(b, startTab, extra) {
           const w3 = N.back();
           process.stdout.write(JSON.stringify({ w1, h1, w2, h2, w3, closed: A.closed }));""")
         self.assertEqual(r, {"w1": True, "h1": "#/a", "w2": True, "h2": "#/home", "w3": False, "closed": 0})
+
+    def test_peek_clear_trail_and_keep_trail(self):
+        r = self.run_js(r"""
+          const b = browser("#/home"); const A = app(b, "home", { isTab: (h) => /^#\/[a-z]+$/.test(h) });
+          const N = b.win.BackNav;
+          const empty = N.peek();
+          N.go("#/dash"); N.go("#/dash/day/1"); b.run();
+          const p1 = N.peek();
+          N.go("#/goals", { keepTrail: true }); b.run();           // a link from one tab into another
+          const kept = N._trail.get(), p2 = N.peek();
+          b.history.back(); b.run(); const back = b.location.hash;
+          N.go("#/goals"); b.run(); const reset = N._trail.get();  // a plain tab change still starts a new trail
+          N.go("#/goals/x"); b.run(); N.clearTrail(); b.run();
+          process.stdout.write(JSON.stringify({ empty, p1, kept, p2, back, reset, cleared: N._trail.get(), p3: N.peek(),
+            saved: JSON.parse(b.store[N._trail.key]) }));""")
+        self.assertEqual(r, {"empty": None, "p1": "#/dash", "kept": ["#/dash", "#/dash/day/1"], "p2": "#/dash/day/1",
+                             "back": "#/dash/day/1", "reset": [], "cleared": [], "p3": None, "saved": []})
+
+    def test_link_with_keep_trail_and_in_page_anchors(self):
+        r = self.run_js(r"""
+          const b = browser("#/dash"); const A = app(b, "dash", { isTab: (h) => /^#\/[a-z]+$/.test(h) });
+          const N = b.win.BackNav;
+          const k1 = b.click("#/goals", { "data-keep-trail": "" }); b.run();
+          const kept = N._trail.get(), at = b.location.hash;
+          let scrolled = null;
+          b.els["flagged"] = { tagName: "DETAILS", open: false, scrollIntoView(o) { scrolled = o.block; } };
+          const k2 = b.click("#flagged"); b.run();
+          const anchor = [b.location.hash, b.els.flagged.open, scrolled, N._trail.get().length];
+          const k3 = b.click("#nothere"); b.run();                  // no such element: an address, as before
+          process.stdout.write(JSON.stringify({ k1, kept, at, k2, anchor, k3, last: b.location.hash }));""")
+        self.assertEqual(r, {"k1": True, "kept": ["#/dash"], "at": "#/goals", "k2": True,
+                             "anchor": ["#/goals", True, "start", 1], "k3": True, "last": "#nothere"})
+
+    def test_replace_empty_clears_the_hash(self):
+        r = self.run_js(r"""
+          const b = browser("#/chat/5"); const A = app(b, "chat");
+          const N = b.win.BackNav;
+          N.replace(""); b.run();
+          const one = [b.location.href, A.seen.slice(), N._trail.get()];
+          N.go("#/x", { replace: true, silent: true }); b.run();
+          process.stdout.write(JSON.stringify({ one, two: [b.location.hash, A.seen.length] }));""")
+        self.assertEqual(r, {"one": ["http://h/app/", [""], []], "two": ["#/x", 1]})
+
+    def test_parent_of_gets_the_page_url(self):
+        r = self.run_js(r"""
+          const b = browser("", {}, "review.html?id=7"); const seen = [];
+          const A = app(b, "review", { parentOf: (h, url) => { seen.push([h, url]); return "/app/index.html"; } });
+          b.history.back(); b.run();
+          process.stdout.write(JSON.stringify({ seen: seen.slice(0, 1), replaced: b.replaced }));""")
+        self.assertEqual(r, {"seen": [["", "/app/review.html?id=7"]], "replaced": ["/app/index.html"]})
+
+    def test_go_page_takes_the_guard_away_first(self):
+        r = self.run_js(r"""
+          const store = {};
+          const b = browser("#/home", store); const A = app(b, "home");
+          const N = b.win.BackNav;
+          N.go("#/a"); b.run();
+          const guarded = [b.pos(), !!b.history.state];
+          A.layers.push("dialog");                                   // even with a dialog open
+          N.goPage("/app/deals.html"); N.goPage("/app/other.html");  // a second call while leaving is ignored
+          const before = b.replaced.length;
+          b.run();
+          const first = { guarded, before, replaced: b.replaced, pos: b.pos(), closed: A.closed,
+                          trail: JSON.parse(store["backnav.trail:/app/"]) };
+          // the new page: its ← button (BackNav.back) with the guard in place leaves no entry behind either
+          const c = browser("", store, "deals.html"); const B = app(c, "deals");
+          const g = c.pos();
+          const went = c.win.BackNav.back(); c.run();
+          // and goPage({replace: true}) doesn't remember the page
+          const d = browser("", {}, "capture.html"); app(d, "capture");
+          d.win.BackNav.goPage("/app/review.html", { replace: true }); d.run();
+          process.stdout.write(JSON.stringify({ first, second: { g, went, replaced: c.replaced, pos: c.pos() },
+            third: [d.replaced, d.win.BackNav._trail.get()] }));""")
+        self.assertEqual(r["first"], {"guarded": [1, True], "before": 0, "replaced": ["/app/deals.html"], "pos": 0, "closed": 0,
+                                      "trail": ["#/home", "/app/#/a"]})
+        self.assertEqual(r["second"], {"g": 1, "went": True, "replaced": ["/app/#/a"], "pos": 0})
+        self.assertEqual(r["third"], [["/app/review.html"], []])
 
     def test_pages_of_a_multi_page_app(self):
         r = self.run_js(r"""

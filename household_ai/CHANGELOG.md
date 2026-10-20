@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Shared code updated (back navigation and page helpers); nothing visible changes.
+
 ## 1.1.0
 
 - **One row of tabs on phones**: the tabs scroll sideways instead of wrapping onto two or three rows, and *Use it in other apps* is now just **Use it**.

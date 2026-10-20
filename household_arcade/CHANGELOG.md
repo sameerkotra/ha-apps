@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.1
+
+- Shared code updated (back navigation and page helpers); nothing visible changes.
+
 ## 1.14.0
 
 - **A game isn't lost by leaving it**: the game's **‹**, the back gesture or another page now pause a game being played and ask — **Save & exit** or **End & exit** — instead of ending it at once. Pause also has **↻ Restart** and **? How to play** for every game; on a phone the ★ and the sound move into it, so the header keeps just ‹, the name, the time and pause.

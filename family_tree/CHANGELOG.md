@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.1
+
+- **The ‹ back link names the page you actually came from.**
+
 ## 2.7.0
 
 - **Simpler phone menu**: the bar at the bottom is now Tree, People, Upcoming, Photos and More. **More** groups everything else — Find, Tidy up (with how many duplicates and unsorted photos are waiting), Print & play, Tools (Export, History), You & settings (with the theme) and Admin. The Map is no longer listed twice; on a computer Export, History, Settings and Admin sit lower in the sidebar.

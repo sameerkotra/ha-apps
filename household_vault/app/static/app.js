@@ -6,6 +6,7 @@
 // ---------- DOM helpers (common/ui.js) ----------
 const { clear, mount, $, debounce, lsSet } = UI;
 const h = UI.makeH({ booleanProps: ["checked", "disabled", "hidden"] });   // as properties: 0 / "" mean off
+UI.buttonClasses = { primary: "btn primary", ghost: "btn ghost", danger: "btn danger" };   // the classes UI.empty / UI.errorBox / UI.confirmDialog give their buttons (this app's style.css)
 function initials(t) { const w = String(t || "?").trim().split(/\s+/); return ((w[0] || "?")[0] + ((w[1] || "")[0] || "")).toUpperCase(); }
 function colorOf(t) { let n = 0; for (const c of String(t || "")) n = (n * 31 + c.charCodeAt(0)) >>> 0; return "av" + (n % 8); }
 function avatar(title) { return h("span", { class: "avatar " + colorOf(title), "aria-hidden": "true" }, initials(title)); }
@@ -263,7 +264,7 @@ function lockLocal(reason) {
   stopIdleWatch(); clearInterval(state.totpTimer); clearInterval(state.healthPoll); clearInterval(state.listTotpTimer);
   // Back on the lock screen leaves the app: the trail of in-app addresses starts again after unlocking
   // (the address itself stays, so unlocking returns to the same view)
-  if (window.BackNav && BackNav._trail) BackNav._trail.clear();
+  if (window.BackNav && BackNav.clearTrail) BackNav.clearTrail();
   clear($("#modalRoot")); closeMenus();
   showUnlock(reason);
 }

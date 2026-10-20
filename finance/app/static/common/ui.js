@@ -1,4 +1,4 @@
-// Shared file: edit common/static/ui.js and run tools/sync_common.py; don't edit this copy. sha256=68df1ba7593db1a3fc57fb44edc387bbc8bc246f7c52c67798f86564263b4de5
+// Shared file: edit common/static/ui.js and run tools/sync_common.py; don't edit this copy. sha256=074be8cb8001486ff36aa25aa7a5d3dd7138b8275dc8b401602873502589ff24
 /* ui.js — small browser helpers every household app uses (shared: common/static/ui.js).
  *
  * One global, window.UI. Apps bind the names they use locally (const { h, $, clear } = UI; …) and wrap
@@ -35,10 +35,22 @@
  *     options.onResponse(res, opts)         called with every response (e.g. note activity)
  *     options.onError(err, res, opts)       called before an error is thrown (e.g. reload, lock)
  *
+ * Buttons
+ *   buttonClasses                           the classes of the buttons these helpers make (UI.empty's action,
+ *                                           UI.errorBox's Retry, UI.confirmDialog's OK / Cancel), by kind:
+ *                                           { primary: "btn-primary", ghost: "btn-ghost", danger: "btn-danger" }.
+ *                                           An app whose style.css names its buttons differently sets the kinds
+ *                                           it needs once, before drawing anything:
+ *                                             UI.buttonClasses = { primary: "btn primary", ghost: "btn ghost" };
+ *                                           (kinds left out keep the default). Each call can still override.
+ *   buttonClass(kind)                       → the class for "primary" / "ghost" / "danger" now
+ *
  * Toasts and dialogs
  *   toast(msg, opts)                        a toast in opts.root (default #toastRoot). opts: error, kind
  *                                           (extra class), ms (default 3000, error 6000), role, wrap (msg in a
- *                                           <span>), extra (a node appended), onclick. Returns the element.
+ *                                           <span>), extra (a node appended), onclick, action: { label, onclick,
+ *                                           class, id } (a button after the text, e.g. Undo: a click on it runs
+ *                                           onclick(event) and closes the toast). Returns the element.
  *   openModal(title, content, opts)         a dialog in opts.root (default #modalRoot); returns { close, el }.
  *     opts.modalClass / backdropClass       extra classes ("wide", "sheet", "dark", …)
  *     opts.sticky                           no closing by Escape or a click outside; no ✕
@@ -49,17 +61,22 @@
  *                                           opts.focusDelay ms, default 30), "close" (the ✕ at once), false
  *     opts.focusIf                          only focus when this is true
  *     opts.onOpen(close) / onClosed(close)  hooks (e.g. the app's back-button layers); onClose() as before
+ *                                           (an app whose CSS doesn't style .modal-backdrop gets the plain
+ *                                           look from themes.css: the class ui-modal-fallback is added when the
+ *                                           backdrop isn't position: fixed; no #modalRoot → <body>)
  *   dialogs()                               the open escape: "stack" dialogs ({ close, el }), oldest first
  *   confirmDialog(title, message, opts)     → Promise<boolean>; opts: okLabel ("OK"), cancelLabel ("Cancel"),
- *                                           okClass, cancelClass, focusOk, okFirst, modal (openModal options)
+ *                                           danger (OK gets the danger class), okClass, cancelClass (default:
+ *                                           buttonClasses), focusOk, okFirst, modal (openModal options)
  *
  * States and numbers (styled by themes.css)
  *   loading(box, text = "Loading…")         a spinner and text (.ui-loading, role=status) mounted into box (when
  *                                           given, replacing its content); returns the element
  *   empty(title, text, action)              an empty-state card (.ui-empty); action: { label, onclick, class }
- *                                           (a button, class default "btn-primary") or an element; returns it
- *   errorBox(err, retry)                    an error card (.ui-error, role=alert) with err's message (an Error or
- *                                           text) and, when retry is a function, a Retry button calling it
+ *                                           (a button, class default buttonClasses.primary) or an element
+ *   errorBox(err, retry, opts)              an error card (.ui-error, role=alert) with err's message (an Error or
+ *                                           text) and, when retry is a function, a Retry button calling it.
+ *                                           opts: retryLabel ("Retry"), retryClass (default buttonClasses.ghost)
  *   money(n, opts)                          1234.5 → "$1,234.50", -3 → "-$3.00". opts: symbol ("$"; "" for none),
  *                                           decimals (2), plus (true: "+" on positives), blank (for null/NaN, "")
  */
@@ -162,12 +179,25 @@
     };
   }
 
+  // ---------- buttons ----------
+  const BUTTONS = { primary: "btn-primary", ghost: "btn-ghost", danger: "btn-danger" };
+  function buttonClass(kind) {
+    const set = window.UI && window.UI.buttonClasses;
+    const v = set && typeof set === "object" ? set[kind] : null;
+    return typeof v === "string" && v ? v : BUTTONS[kind];
+  }
+
   // ---------- toasts ----------
   function toast(msg, opts = {}) {
     const root = rootOf(opts.root, "#toastRoot");
     const cls = "toast" + (opts.error ? " error" : "") + (opts.kind ? " " + opts.kind : "");
     const el = h("div", { class: cls, role: opts.role || null }, opts.wrap ? h("span", null, msg) : msg);
     if (opts.extra) el.appendChild(opts.extra);
+    const act = opts.action;
+    if (act && typeof act.label === "string") {
+      el.appendChild(h("button", { type: "button", id: act.id || null, class: "ui-toast-action" + (act.class ? " " + act.class : ""),
+        onclick: (e) => { if (e && e.stopPropagation) e.stopPropagation(); el.remove(); if (act.onclick) act.onclick(e); } }, act.label));
+    }
     if (opts.onclick) { el.classList.add("clickable"); el.addEventListener("click", () => { opts.onclick(); el.remove(); }); }
     root.appendChild(el);
     setTimeout(() => el.remove(), opts.ms || (opts.error ? 6000 : 3000));
@@ -179,7 +209,7 @@
   let stack = [];
   // One Escape handler for escape: "stack" dialogs, added before any app code runs.
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && stack.length) stack[stack.length - 1].close(); });
-  function rootOf(r, def) { return typeof r === "string" || !r ? $(r || def) : r; }
+  function rootOf(r, def) { return (typeof r === "string" || !r ? $(r || def) : r) || document.body; }
 
   function openModal(title, content, opts = {}) {
     const closeBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Close" }, "✕");
@@ -217,6 +247,10 @@
     closeBtn.addEventListener("click", close);
     if (opts.sticky) closeBtn.hidden = true;
     rootEl.appendChild(backdrop);
+    // an app without its own .modal-backdrop styles gets themes.css's plain ones (apps that style it: unchanged)
+    try {
+      if (typeof window.getComputedStyle === "function" && window.getComputedStyle(backdrop).position !== "fixed") backdrop.classList.add("ui-modal-fallback");
+    } catch (e) { /* no layout (tests) */ }
     if (opts.afterOpen) opts.afterOpen(handle);
     const focus = opts.focus === undefined ? "first" : opts.focus;
     if (focus === "close") closeBtn.focus();
@@ -234,8 +268,8 @@
     return new Promise((resolve) => {
       let done = false;
       const finish = (v) => { if (!done) { done = true; m.close(); resolve(v); } };
-      const cancel = h("button", { class: opts.cancelClass || "btn-ghost", type: "button", onclick: () => finish(false) }, opts.cancelLabel ?? "Cancel");
-      const ok = h("button", { class: opts.okClass || "btn-primary", type: "button", onclick: () => finish(true) }, opts.okLabel ?? "OK");
+      const cancel = h("button", { class: opts.cancelClass || buttonClass("ghost"), type: "button", onclick: () => finish(false) }, opts.cancelLabel ?? "Cancel");
+      const ok = h("button", { class: opts.okClass || buttonClass(opts.danger ? "danger" : "primary"), type: "button", onclick: () => finish(true) }, opts.okLabel ?? "OK");
       const modalOpts = Object.assign({}, opts.modal || {});
       const userClose = modalOpts.onClose;
       modalOpts.onClose = () => { if (!done) { done = true; resolve(false); } if (userClose) userClose(); };
@@ -254,18 +288,19 @@
   function empty(title, text, action) {
     let act = null;
     if (action && typeof action === "object" && typeof action.label === "string") {
-      act = h("button", { type: "button", class: action.class || "btn-primary", onclick: action.onclick || null }, action.label);
+      act = h("button", { type: "button", class: action.class || buttonClass("primary"), onclick: action.onclick || null }, action.label);
     } else if (action) act = action;
     return h("div", { class: "ui-empty" },
       title ? h("p", { class: "ui-empty-title" }, title) : null,
       text ? h("p", { class: "ui-empty-text" }, text) : null,
       act ? h("div", { class: "ui-empty-action" }, act) : null);
   }
-  function errorBox(err, retry) {
+  function errorBox(err, retry, opts = {}) {
     const msg = (err && err.message) || (typeof err === "string" && err) || "Something went wrong.";
     return h("div", { class: "ui-error", role: "alert" },
       h("p", { class: "ui-error-text" }, msg),
-      typeof retry === "function" ? h("button", { type: "button", class: "btn-ghost", onclick: () => retry() }, "Retry") : null);
+      typeof retry === "function" ? h("button", { type: "button", class: (opts && opts.retryClass) || buttonClass("ghost"), onclick: () => retry() },
+        (opts && opts.retryLabel) || "Retry") : null);
   }
   function money(n, opts = {}) {
     const v = typeof n === "string" ? Number(n) : n;
@@ -281,6 +316,7 @@
   }
 
   window.UI = {
+    buttonClasses: Object.assign({}, BUTTONS), buttonClass,
     h, makeH, $, $$, clear, mount, debounce, lsGet, lsSet, escapeHtml,
     errorMessage, makeApi, NETWORK_ERROR,
     toast, openModal, confirmDialog,

@@ -1,4 +1,4 @@
-/* Shared file: edit common/static/themes.css and run tools/sync_common.py; don't edit this copy. sha256=04a21927d1b017766a8f460def24deef3b866bb5ee5d434d81d4a1e208df3a44 */
+/* Shared file: edit common/static/themes.css and run tools/sync_common.py; don't edit this copy. sha256=d747b0353fe8099bf67a45be13803491de0d75952942778fdbdb0a48c76b77e6 */
 /* themes.css — the page themes every household app shares (shared: common/static/themes.css).
  *
  * Midnight (the default), Slate and Daylight; "Auto" is resolved by theme-boot.js to Midnight or
@@ -18,7 +18,12 @@
  *   .ui-loading > .ui-spinner + text, .ui-empty, .ui-error   (UI.loading / UI.empty / UI.errorBox)
  *   .summary-strip > .kpi > .kpi-label + .kpi-value           a responsive row of small figure tiles
  *   .ui-group-head [> .ui-group-total]                        a sticky date/month header, subtotal right
- *                                                             (not ".group-head": Todo and Splitpot use that)
+ *                                                             (not ".group-head": Todo and Splitpot use that);
+ *                                                             in a table: <tr class="ui-group-head"><th colspan=…>
+ *                                                             [<td class="ui-group-total">] (cells styled, row stays a row)
+ *   .ui-toast-action                                          UI.toast's action button (e.g. Undo), app classes win
+ *   .modal-backdrop.ui-modal-fallback > .modal                UI.openModal's plain look, only for apps whose CSS
+ *                                                             doesn't style .modal-backdrop (ui.js adds the class)
  *   .danger-zone (> h2/h3/.danger-zone-title), .btn-danger-outline   restore / import / delete actions
  *   details.about > summary                                   long intro text folded away
  *   .tap44, .touch-target                                     at least 44×44px on touch screens (opt-in: a
@@ -142,6 +147,38 @@
   font-size: 0.78rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em;
 }
 .ui-group-head .ui-group-total { margin-left: auto; font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0; }
+/* the same header as a table row: a <tr> can't be a flex box or sticky in every browser, so its cells are */
+tr.ui-group-head { display: table-row; position: static; padding: 0; margin: 0; background: none; }
+tr.ui-group-head > th, tr.ui-group-head > td {
+  position: sticky; top: 0; z-index: 2; padding: 10px 8px 6px; background: var(--bg); color: var(--text-dim); text-align: left;
+  font-size: 0.78rem; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border);
+}
+tr.ui-group-head > .ui-group-total { text-align: right; margin: 0; }
+
+:where(.ui-toast-action) {
+  margin-left: 12px; padding: 2px 6px; background: none; border: 0; border-radius: 6px;
+  color: var(--accent); font: inherit; font-weight: 650; cursor: pointer;
+}
+:where(.ui-toast-action):hover { text-decoration: underline; }
+
+/* UI.openModal in an app with no dialog styles of its own (ui.js adds .ui-modal-fallback only then) */
+.modal-backdrop.ui-modal-fallback {
+  position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  padding: 16px; box-sizing: border-box; background: rgba(0, 0, 0, 0.55);
+}
+.ui-modal-fallback > .modal {
+  width: 100%; max-width: 560px; max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box;
+  padding: 18px 20px; border-radius: 14px; background: var(--card); color: var(--text);
+  border: 1px solid var(--border); box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+.ui-modal-fallback > .modal.wide { max-width: 860px; }
+.ui-modal-fallback > .modal > h3 { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; font-size: 1.05rem; }
+.ui-modal-fallback > .modal > h3 > .icon-btn {
+  flex: none; min-width: 32px; min-height: 32px; background: none; border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-dim); font: inherit; cursor: pointer;
+}
+.ui-modal-fallback .actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+@media (max-width: 600px) { .modal-backdrop.ui-modal-fallback { padding: 10px; } .ui-modal-fallback > .modal { padding: 16px; } }
 
 .danger-zone { margin: 18px 0; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--danger); background: var(--card); }
 .danger-zone > h2, .danger-zone > h3, .danger-zone .danger-zone-title { margin: 0 0 8px; color: var(--danger); font-size: 1rem; }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.1
+
+- **Opening the You dialog again and again no longer builds up memory.**
+
 ## 1.7.0
 
 - **Admin tabs have their own address.** Each Admin tab (Apps, App settings, Quick answers, People, Usage, Storage) now has its own address, so a reload keeps you on it, and Admin has a title row with **← Ask** to go back.

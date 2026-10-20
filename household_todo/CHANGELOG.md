@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.8.1
+
+- Shared code updated (back navigation and page helpers); nothing visible changes.
+
 ## 2.8.0
 
 - **Back and reloads keep your place.** Every page has its own address — an open list, My week, Quick tasks, an Admin section — so a reload stays where you were, and Back returns to the page you came from.

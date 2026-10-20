@@ -65,7 +65,7 @@ class BodyLimits(ApiTestCase):
 
 class CacheRules(ApiTestCase):
     def test_versioned_assets_are_immutable_and_the_rest_is_not(self):
-        r = self.client.get("/app.js?v=2.6.2")
+        r = self.client.get("/app.js?v=2.7.1")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["cache-control"], "public, max-age=31536000, immutable")
         self.assertNotIn("immutable", self.client.get("/app.js").headers.get("cache-control", ""))

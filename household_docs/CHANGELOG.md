@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.1
+
+- **Undo after deleting a checklist item** is now a proper button in the message.
+
 ## 1.8.0
 
 - **Back and ← go where you came from.** The ← in a note, checklist or sheet goes back to the page you opened it from (a search, Recent, a chat link), or to its folder when there's nothing to go back to; a link straight to a folder goes back to the folder above it. Switching tabs, sorting or searching again no longer adds steps to Back.

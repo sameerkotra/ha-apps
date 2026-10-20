@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.1
+
+- **Retry, empty-page and confirm buttons look right again.**
+
 ## 2.7.0
 
 - **Back works inside the app**: Android's back gesture (and the browser's Back) closes the open menu, dialog or photo first, then goes back where you were — from a chat you opened with "Show in chat" back to Starred, Reminders, Calls or Files — then to the chat list. A call is never ended by Back.

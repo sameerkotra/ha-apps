@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.1
+
+- **Retry buttons are styled again**, and Back from Goals (opened with **Edit goals**) returns to the page you came from.
+
 ## 2.6.0
 
 - **Every page has a title and an address**: the page's name is at the top, a reload keeps your place, and Back goes to the page you came from. On a phone, **👤** opens How the app sees you, the theme and Admin.

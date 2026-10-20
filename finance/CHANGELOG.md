@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.2
+
+- Shared code updated (back navigation and page helpers); nothing visible changes.
+
 ## 1.14.1
 
 - **Income rules only for money in.** A rule that gives an Income category (Salary, Interest, your own income

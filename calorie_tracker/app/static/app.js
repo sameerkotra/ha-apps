@@ -29,6 +29,8 @@ function withUser(path) {
 // own frontend at the domain root instead of this app — which returns
 // its own unrelated 404. Stripping the leading slash makes every request
 // relative to the current page, which keeps it under the ingress prefix.
+// The classes UI.empty / UI.errorBox / UI.confirmDialog give their buttons (this app has no .btn-ghost).
+UI.buttonClasses = { primary: "btn-primary", ghost: "btn-secondary", danger: "btn-danger-outline" };
 // api(path, fetchOptions): the options go to fetch() as they are (callers JSON.stringify their own bodies).
 const api = UI.makeApi({
   init: (opts) => ({ headers: { "Content-Type": "application/json" }, ...opts }),
@@ -646,7 +648,7 @@ async function loadSummary() {
   const t = summary.totals, g = summary.goal;
   const n = summary.no_calories || 0;
   box.innerHTML = `
-    <div class="ds-head"><h3>Day Summary</h3><a href="#/goals" class="goals-link">Edit goals</a></div>
+    <div class="ds-head"><h3>Day Summary</h3><a href="#/goals" class="goals-link" data-keep-trail>Edit goals</a></div>
     ${dayBar("calories", "Calories", t.calories, g.calorie_goal, "kcal", "var(--accent)")}
     <div class="ds-macros">
       ${dayBar("protein", "Protein", t.protein, g.protein_goal, "g", "var(--protein)")}

@@ -31,7 +31,7 @@ SUPERVISOR_API = os.environ.get("SUPERVISOR_API", "http://supervisor").rstrip("/
 SUPERVISOR_CORE_API = os.environ.get("SUPERVISOR_CORE_API", f"{SUPERVISOR_API}/core/api")
 
 APP_TITLE = "Household AI"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 SLUG = "household_ai"
 
 # The model server: Ollama, a child process listening on loopback only (SPEC.md §3).

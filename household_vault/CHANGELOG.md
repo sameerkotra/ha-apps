@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.1
+
+- **Retry, empty-page and confirm buttons look right again.**
+
 ## 2.3.0
 
 - **Every view has its own address.** A reload (after unlocking) keeps you in the same vault, folder, Settings or Admin tab, and Back from a sub-folder goes to its parent folder instead of All items. The address only names views and vaults/folders, never an item.

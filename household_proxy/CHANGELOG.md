@@ -2,6 +2,10 @@
 
 All notable changes to Household Proxy. See the [repository](https://github.com/sameerkotra/ha-apps).
 
+## 0.7.1
+
+- Shared code updated (back navigation and page helpers); nothing visible changes.
+
 ## 0.7.0
 
 - **A bottom bar on phones.** Sites, Bookmarks and Monitor sit at the bottom of the screen; the theme and Admin are in the menu under your name, top right.

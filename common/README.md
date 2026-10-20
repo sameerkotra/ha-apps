@@ -87,7 +87,9 @@ In `<head>`, before the app's own stylesheet: `<script src="common/theme-boot.js
 `<link rel="stylesheet" href="common/themes.css?v=…">`. The app's style.css sets its accent (`--accent`,
 `--accent-dim`, `--accent-hover`, `--accent-contrast`, `--accent-soft`) and its own colours in three blocks,
 `:root, [data-theme="midnight"]`, `[data-theme="slate"]` and `[data-theme="daylight"]`, each setting the same
-variables. Theme menus: `HouseholdTheme.bindSelect(select)` (fills the options and keeps every menu in step).
+variables. Theme menus: `HouseholdTheme.bindSelect(select)` (fills the options and keeps every menu in step; menus
+are held weakly and forgotten once they have left the page, so one per dialog opening doesn't pile up;
+`HouseholdTheme.unbindSelect(select)` lets one go explicitly).
 `common/ui.js` loads before the app's scripts; its header lists every helper and option.
 
 ## Back navigation (backnav.js)
@@ -101,19 +103,43 @@ memory and sessionStorage (`backnav.trail:<app folder>`, at most 20, consecutive
 - `BackNav.go("#/x")` remembers the current address; `BackNav.go(h, {replace: true})` / `BackNav.replace(h)`
   doesn't — use it for filter, sort, search and in-page tab changes.
 - `isTab(hash)` → true for top-level tab addresses: going to one starts a new trail (Back retraces the tab, then home).
+- `BackNav.go(h, {keepTrail: true})` (or `<a href="#/x" data-keep-trail>`): to a tab address without starting a
+  new trail — a link from one tab into another (Calorie's "Edit goals"), so Back returns to it.
+- `BackNav.go(h, {silent: true})` changes the address without a hashchange event; `BackNav.replace("")` clears the
+  hash completely (the page's own URL, no trailing `#`).
 - `BackNav.back()` for an in-app ← button (previous → parent → home; dialogs are not closed first; → true if it moved).
-- `BackNav.goPage(url)` for apps with separate HTML pages (Receipt): remembers path + search + hash and does
-  `location.replace(url)`; Back to an entry on another page uses `location.replace`. A page that loads with a
-  non-empty trail arms the guard. Apps that pass none of the new options get previous-page Back as they are.
+- `BackNav.peek()` → the address Back would return to from the trail (null when empty), so a header can name the
+  real back target (Family Tree); `BackNav.clearTrail()` forgets the trail (Vault on lock).
+- `parentOf(hash, url)`: `url` is the page's full relative URL (path + search + hash), for apps with several pages.
+- `BackNav.goPage(url, {replace})` for apps with separate HTML pages (Receipt): remembers path + search + hash
+  (`replace: true` → doesn't), takes the guard entry away first (Back over it), then `location.replace(url)`, so
+  no page change leaves an entry in Home Assistant's history; Back to an entry on another page does the same. A
+  page that loads with a non-empty trail arms the guard. Apps that pass none of the new options get previous-page
+  Back as they are.
+- Links to a place on the page (`<a href="#some-id">`, not `#/…`) just scroll there (a `<details>` opens) without
+  changing the address; a `#x` link with no such element is navigation as before.
 
 ## Page states and shared CSS utilities
 
 ui.js: `UI.loading(box, text = "Loading…")`, `UI.empty(title, text, action)` (action `{label, onclick, class}` or an
-element), `UI.errorBox(err, retry)` (role=alert, a Retry button when `retry` is a function), `UI.money(n, {symbol:
-"$", decimals: 2, plus, blank})`. themes.css (after the themes; additive only): `--safe-bottom`, `--bottombar-h`;
+element), `UI.errorBox(err, retry, {retryLabel, retryClass})` (role=alert, a Retry button when `retry` is a
+function), `UI.money(n, {symbol: "$", decimals: 2, plus, blank})`, `UI.toast(text, {action: {label, onclick, class,
+id}})` (an Undo-style button; a click runs it and closes the toast).
+
+Button classes: `UI.empty`'s action, `UI.errorBox`'s Retry and `UI.confirmDialog`'s OK/Cancel (`{danger: true}` →
+the danger class) use `UI.buttonClasses` — default `{primary: "btn-primary", ghost: "btn-ghost", danger:
+"btn-danger"}`. An app whose CSS names its buttons differently sets it once after ui.js loads (kinds left out keep
+the default; each call can still pass its own class): Chat, Vault and Splitpot `"btn primary"` / `"btn ghost"` /
+`"btn danger"`; Receipt `"btn btn-primary"` / `"btn btn-ghost"` / `"btn btn-danger"`; Calorie ghost
+`"btn-secondary"`, danger `"btn-danger-outline"`. The others use the defaults.
+
+Dialogs: `UI.openModal` adds `ui-modal-fallback` to its backdrop when the app's CSS doesn't make `.modal-backdrop`
+`position: fixed`; themes.css then gives it a plain look (apps that style their dialogs are unchanged). With no
+`#modalRoot` / `#toastRoot` on the page the dialog or toast goes into `<body>`. themes.css (after the themes; additive only): `--safe-bottom`, `--bottombar-h`;
 `.ui-spinner`, `.ui-loading`, `.ui-empty`, `.ui-error`; `.summary-strip > .kpi > .kpi-label + .kpi-value`;
 `.ui-group-head` with `.ui-group-total` (sticky group header; not `.group-head`, which Todo and Splitpot use for
-other things); `.danger-zone`, `.btn-danger-outline`; `details.about > summary` (folded intro text); `.tap44` /
+other things; in a table use `<tr class="ui-group-head"><th colspan=…>…</th>[<td class="ui-group-total">]</tr>`: the
+row stays a table row and its cells get the look); `.ui-toast-action` (zero specificity: app classes win); `.danger-zone`, `.btn-danger-outline`; `details.about > summary` (folded intro text); `.tap44` /
 `.touch-target` (44×44px minimum on touch screens — opt-in, because a global `.icon-btn` rule would break the
 dense chip buttons in Family Tree, Arcade and Chat).
 

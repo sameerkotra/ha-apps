@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.8.1
+
+- **Retry, empty-page and confirm buttons look right again.**
+
 ## 2.8.0
 
 - **Groups shows where you stand**: each group says "you owe", "you're owed" or "settled", the busiest group comes

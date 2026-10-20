@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1
+
+- **Retry buttons are styled again**, and moving between pages never leaves a stray step for Back.
+
 ## 1.4.0
 
 - **A tidier phone menu**: the bottom bar is now List, Receipts, Prices, Trip and **More**; More holds Insights, Stores, Notify, Admin, **Me** and the theme (Me and the theme couldn't be reached on a phone before). On a computer the sidebar is unchanged.

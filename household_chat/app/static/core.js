@@ -5,6 +5,7 @@
 // ---------- DOM (common/ui.js) ----------
 const { clear, mount, $, debounce, lsGet, lsSet } = UI;
 const h = UI.makeH({ booleanProps: ["checked", "disabled", "hidden"] });   // as properties: 0 / "" mean off
+UI.buttonClasses = { primary: "btn primary", ghost: "btn ghost", danger: "btn danger" };   // the classes UI.empty / UI.errorBox / UI.confirmDialog give their buttons (this app's style.css)
 function initials(t) { const w = String(t || "?").replace(/\(.*\)/, "").trim().split(/\s+/); return ((w[0] || "?")[0] + ((w[1] || "")[0] || "")).toUpperCase(); }
 function colorOf(t) { let n = 0; for (const c of String(t || "")) n = (n * 31 + c.charCodeAt(0)) >>> 0; return "av" + (n % 8); }
 function fmtSize(n) {

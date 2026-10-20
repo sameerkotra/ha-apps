@@ -10,6 +10,8 @@
   // The app version the server baked into this page (data-app-version on this script's tag).
   const BAKED_VERSION = (document.currentScript && document.currentScript.dataset.appVersion) || '';
 
+  // The classes UI.empty / UI.errorBox / UI.confirmDialog give their buttons (every button here is .btn + a kind).
+  UI.buttonClasses = { primary: 'btn btn-primary', ghost: 'btn btn-ghost', danger: 'btn btn-danger' };
   // fetch wrapper (common/ui.js): JSON in and out; errors carry .status and the parsed body (.data).
   const api = UI.makeApi({
     url,
@@ -295,8 +297,8 @@
   // visited: a sub-page (a receipt, Scan, Upload, Backup, …) goes back to where it was opened from, a
   // section opened from the menu starts a new trail, and Back with nothing left goes to the page's parent
   // (PARENT), then to the List (the start page), then out of the app.
-  // When backnav has its extra history entry in place, it is taken away first and the page then opens in
-  // its place, so no page change ever adds an entry to Home Assistant's history.
+  // When backnav has its extra history entry in place, BackNav.goPage takes it away first and the page then
+  // opens in its place, so no page change ever adds an entry to Home Assistant's history.
   const MAIN_PAGES = new Set(SECTIONS.map((sec) => sec.href));
   const PARENT = { 'review.html': 'index.html', 'capture.html': 'index.html', 'import.html': 'index.html',
     'backup.html': 'admin.html', 'debug.html': 'admin.html' };
@@ -324,32 +326,9 @@
       }
       return;
     }
-    const B = window.BackNav;
-    const rel = u.pathname + u.search + u.hash;
-    const skip = !!(opts && opts.replace);
-    if (!B) { leaving = true; location.replace(target); return; }
-    const guarded = history.state && history.state.backnav && !document.querySelector('dialog[open]');
-    if (guarded && B._trail) {
-      const here = location.pathname + location.search + location.hash;
-      const trail = B._trail.get();
-      const next = isTab(target) ? [] : (skip || trail[trail.length - 1] === here ? trail : trail.concat(here)).slice(-20);
-      B._trail.clear();          // nothing for backnav to step back to while its entry is taken away
-      leaving = true;
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        try { sessionStorage.setItem(B._trail.key, JSON.stringify(next)); } catch (_) { /* private mode */ }
-        location.replace(target);
-      };
-      window.addEventListener('popstate', finish, { once: true });
-      history.back();
-      setTimeout(finish, 600);   // in case Back didn't reach us
-      return;
-    }
     leaving = true;
-    if (skip) location.replace(target);
-    else B.goPage(rel);
+    if (!window.BackNav) { location.replace(target); return; }
+    window.BackNav.goPage(u.pathname + u.search + u.hash, { replace: !!(opts && opts.replace) });
   }
   // An in-app ← button: the previous page of the trail, else the page's parent, else the List. With
   // backnav's extra entry in place this is the back gesture itself (the entry is used up, not left behind).

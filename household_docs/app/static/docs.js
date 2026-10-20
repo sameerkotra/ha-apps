@@ -935,10 +935,7 @@
       const idx = items.indexOf(it);
       const prev = idx > 0 ? items[idx - 1].key : null;
       send([{ op: "delete", key: it.key }]).then(() => {
-        const undo = h("button", { class: "link-btn toast-undo", type: "button", id: "undoDelete", onclick: (e) => {
-          e.stopPropagation();
-          const t = e.currentTarget.closest(".toast");
-          if (t) t.remove();
+        const undo = { label: "Undo", class: "link-btn toast-undo", id: "undoDelete", onclick: () => {   // the toast closes itself
           const op = { op: "add", text: it.text, indent: it.level ? 1 : 0 };
           if (prev && items.some((x) => x.key === prev)) op.after = prev; else op.first = true;
           send([op]).then(() => {
@@ -946,8 +943,8 @@
             const back = items.find((x, i) => x.text === it.text && !x.done && (op.first ? i === 0 : i > 0 && items[i - 1].key === prev));
             if (back) send([{ op: "tick", key: back.key }]);
           });
-        } }, "Undo");
-        toast(`Deleted “${it.text.length > 40 ? it.text.slice(0, 40) + "…" : it.text}”`, false, { ms: 7000, extra: undo });
+        } };
+        toast(`Deleted “${it.text.length > 40 ? it.text.slice(0, 40) + "…" : it.text}”`, false, { ms: 7000, action: undo });
       });
     }
     function editText(it, span) {

@@ -26,6 +26,7 @@ const LEDGER_PAGE = 20;
 const LEDGER_MAX = 500;   // the server's largest page
 
 const { $, $$ } = UI;
+UI.buttonClasses = { primary: 'btn primary', ghost: 'btn ghost', danger: 'btn danger' };   // the classes UI.empty / UI.errorBox / UI.confirmDialog give their buttons (this app's style.css)
 
 // api(path, fetchOptions): path is under api/ (e.g. '/groups'); the options go to fetch() as they are.
 const api = UI.makeApi({
