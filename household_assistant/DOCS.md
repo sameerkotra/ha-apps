@@ -225,14 +225,14 @@ answer (the integration's **Configure**); if the app says it is busy, it asks on
   from; add or remove them. **Asked but not answered quickly**: the questions it couldn't place, in their cleaned-up
   words and how often — never who asked — each with **Test** and **Add as a phrase**. **Words**: a word your household
   uses for a kind of question ("rota" → tasks) or another name for something ("thayir" → Curd); words from the
-  questions that weren't answered are suggested, with how many they'd answer. **How fast the apps answer**: each
-  app's calls, its typical and slow times, refusals and timeouts over the last 7 days. **Who asks**: how many
-  questions each person asked and how many had a quick answer — counts only, never what anyone asked — and the
-  household's most asked kinds of question. **Replay**: the last 100 quick answers read again with today's rules,
-  listing those now understood differently (as patterns, never with who asked). **Move to another install**:
-  download the phrases and words as a file, and import one.
-- **Usage**: questions, tool calls and tokens per day for the last 30 days — counts only, never who asked what.
-- **Storage**: backups (below).
+  questions that weren't answered are suggested, with how many they'd answer. **Replay**: the last 100 quick answers
+  read again with today's rules, listing those now understood differently (as patterns, never with who asked).
+- **Usage**: the last 30 days' totals, then questions, tool calls and tokens for each day with any — counts only,
+  never who asked what. **How fast the apps answer**: each app's calls, its typical and slow times, refusals and
+  timeouts over the last 7 days. **Who asks**: how many questions each person asked and how many had a quick
+  answer — counts only, never what anyone asked — and the household's most asked kinds of question.
+- **Storage**: backups (below); **Move to another install**: download the quick answers' phrases and words as a
+  file, and import one (it adds to the ones here). **Restore a backup** sits apart, at the bottom.
 
 ### Admin → People → Data
 

@@ -162,7 +162,9 @@ class PageInBrowser(InBrowser, Household):
             p.click("#briefingBtn")
             p.wait_for_selector(".briefing")
             self.assertTrue(p.is_checked("#brOn"))
-            p.click(".briefing .btn-secondary >> nth=0")
+            self.assertEqual(p.evaluate("[...document.querySelectorAll('.briefing .actions button')].map((b) => b.textContent)"),
+                             ["Save"])                                  # Save is the only footer action
+            p.click(".briefing .send-now >> nth=0")                     # Send a morning one now, in its own section
             self.until(p, "!document.querySelector('.briefing')")
             p.wait_for_selector(".turn .question")
             self.assertEqual(p.inner_text(".turn .question"), "Morning briefing")
@@ -211,7 +213,11 @@ class QuickPageInBrowser(InBrowser, QuickHousehold):
         p.wait_for_selector("#askInput")
         self.until(p, "!document.querySelector('#quickOnly').hidden")
         p.click("#adminBtn")
+        self.until(p, "location.hash === '#/admin/apps'")
+        self.assertEqual(p.get_attribute("#adminBtn", "aria-current"), "page")
         p.click("#adminTabs .tab[data-tab=quick]")
+        self.until(p, "location.hash === '#/admin/quick'")
+        self.assertEqual(p.get_attribute("#adminTabs .tab[data-tab=quick]", "aria-current"), "page")
         p.wait_for_selector("#tab-quick input[aria-label='A question to test']")
         p.fill("#tab-quick input[aria-label='A question to test']", "whats on the shoping list tmrw")
         p.click("#tab-quick .btn-secondary")
@@ -224,8 +230,7 @@ class QuickPageInBrowser(InBrowser, QuickHousehold):
         p.wait_for_selector("#tab-quick .quick-table td")
         self.assertIn("“how are we fixed”", p.inner_text("#tab-quick .quick-table"))
         heads = p.evaluate("[...document.querySelectorAll('#tab-quick h3')].map((x) => x.textContent)")
-        for head in ("Words", "How fast the apps answer", "Who asks", "Replay", "Move to another install"):
-            self.assertIn(head, heads)
+        self.assertEqual(heads, ["Asked but not answered quickly", "Test a question", "Phrases", "Words", "Replay"])
         p.click("#tab-quick button:has-text('Replay the last 100')")
         p.wait_for_selector("#tab-quick p:has-text('checked:')")
         p.fill("#tab-quick input[aria-label='The word']", "rota")
@@ -233,6 +238,21 @@ class QuickPageInBrowser(InBrowser, QuickHousehold):
         p.wait_for_selector("#tab-quick td:has-text('“rota”')")
         if os.environ.get("SHOT"):
             p.screenshot(path=os.environ["SHOT"].replace(".png", "-admin.png"), full_page=True)
+        # the apps' speeds and who asks are on Usage; moving the phrases and words is on Storage
+        p.click("#adminTabs .tab[data-tab=usage]")
+        p.wait_for_selector("#tab-usage .summary-strip")
+        heads = p.evaluate("[...document.querySelectorAll('#tab-usage h3')].map((x) => x.textContent)")
+        self.assertEqual(heads, ["Each day", "How fast the apps answer", "Who asks"])
+        p.click("#adminTabs .tab[data-tab=storage]")
+        p.wait_for_selector("#storageQuick h3:has-text('Move to another install')")
+        self.assertEqual(p.inner_text("#tab-storage .danger-zone h3"), "Restore a backup")
+        # a reload keeps the tab; ← Ask goes back to the ask page
+        p.reload()
+        p.wait_for_selector("#storageQuick h3")
+        self.assertFalse(p.is_visible("#askView"))
+        p.click("#adminBackBtn")
+        self.until(p, "!document.querySelector('#askView').hidden")
+        self.assertIsNone(p.get_attribute("#adminBtn", "aria-current"))
         self.assertEqual(errors, [])
 
 

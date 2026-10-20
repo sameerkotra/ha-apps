@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.7.0
+
+- **Admin tabs have their own address.** Each Admin tab (Apps, App settings, Quick answers, People, Usage, Storage) now has its own address, so a reload keeps you on it, and Admin has a title row with **← Ask** to go back.
+- **A tidier top bar on phones.** The theme moved into the dialog behind your name (now **You**: the theme, and how the app sees you); on a phone that button shows your initials.
+- **Suggestions always there.** A few suggested questions stay in one row under the ask box (it scrolls sideways), and your questions are grouped under Today, Yesterday and the date.
+- **Shorter answers.** Proposed changes come right after the answer; what was understood, how long it took, the sources and **What was shared** are now one line under it.
+- **Briefings dialog:** *Send a morning one now* and *Send an evening one now* sit in their own sections; Save is the only button at the bottom.
+- **Clear my questions set apart** from What can I ask? and Briefings, with bigger tap areas (it still asks first).
+- **Admin → Apps:** totals at the top (apps, active, tools); each app's tools fold away behind "n tools"; apps not heard from are listed last.
+- **Admin → Quick answers:** what wasn't answered quickly comes first. **How fast the apps answer** and **Who asks** moved to **Usage**; **Move to another install** moved to **Storage**.
+- **Admin → People:** a header row, and new people listed first. On a phone each person's row wraps instead of running off the screen.
+- **Admin → Usage:** totals at the top with thousands separators, only the days with questions, and a small bar for each day. Wide tables scroll sideways on a phone.
+- **Admin → Storage:** **Restore a backup** sits apart in its own red-bordered box, away from Download.
+- **Loading and errors:** Admin tabs show a spinner while they load and, if something fails, the problem with **Retry** instead of an empty page.
+- **Readability:** the New badge's text uses the theme's own contrast colour, and the page keeps clear of a phone's notch and home bar.
+
 ## 1.6.6
 
 - **Back goes to the page you came from.** The phone's back gesture (and the browser's Back) now steps back through the pages you opened in the app, instead of jumping straight to the start page; dialogs still close first, and Back on the start page still leaves the app.

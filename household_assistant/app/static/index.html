@@ -2,21 +2,21 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Household Assistant</title>
-<script src="common/theme-boot.js?v=1.6.5"></script>
-<link rel="stylesheet" href="common/themes.css?v=1.6.5">
-<link rel="stylesheet" href="common/settings.css?v=1.6.5">
-<link rel="stylesheet" href="common/person-data.css?v=1.6.5">
-<link rel="stylesheet" href="style.css?v=1.6.5">
+<script src="common/theme-boot.js?v=1.7.0"></script>
+<link rel="stylesheet" href="common/themes.css?v=1.7.0">
+<link rel="stylesheet" href="common/settings.css?v=1.7.0">
+<link rel="stylesheet" href="common/person-data.css?v=1.7.0">
+<link rel="stylesheet" href="style.css?v=1.7.0">
 </head>
 <body>
 <header class="topbar">
   <button type="button" id="homeBtn" class="brand" title="Ask"><span aria-hidden="true">💬</span> Assistant</button>
   <div class="topbar-right">
-    <button type="button" id="adminBtn" class="btn-ghost" hidden>🛡️ Admin</button>
-    <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme"></select>
-    <button type="button" id="userBtn" class="btn-ghost" title="How the app sees you">—</button>
+    <button type="button" id="adminBtn" class="btn-ghost" hidden><span aria-hidden="true">🛡️</span> Admin</button>
+    <button type="button" id="userBtn" class="btn-ghost user-btn" title="You: theme, and how the app sees you"
+      aria-haspopup="dialog"><span class="user-name">—</span><span class="user-initials" aria-hidden="true">—</span></button>
   </div>
 </header>
 <div id="noAdminBanner" class="banner" hidden></div>
@@ -31,18 +31,22 @@
     <button type="submit" id="askBtn" class="btn-primary">Ask</button>
   </form>
   <div id="quickOnly" class="dim quick-only" hidden>⚡ Quick answers only — the common questions, answered without AI.</div>
+  <div id="suggestions" class="suggestions" aria-label="Suggested questions"></div>
   <div class="ask-foot">
     <button type="button" id="whatBtn" class="link-btn">What can I ask?</button>
     <button type="button" id="briefingBtn" class="link-btn">🌅 Briefings</button>
-    <button type="button" id="clearBtn" class="link-btn">Clear my questions</button>
+    <button type="button" id="clearBtn" class="link-btn danger-link">Clear my questions</button>
   </div>
-  <div id="suggestions" class="suggestions"></div>
   <div id="conversation" class="conversation" aria-live="polite"></div>
 </main>
 
 <main id="adminView" class="column wide" hidden>
-  <nav class="tabs" id="adminTabs">
-    <button type="button" class="tab active" data-tab="apps">Apps</button>
+  <div class="view-head">
+    <button type="button" id="adminBackBtn" class="link-btn back-btn">← Ask</button>
+    <h2>Admin</h2>
+  </div>
+  <nav class="tabs" id="adminTabs" aria-label="Admin">
+    <button type="button" class="tab active" data-tab="apps" aria-current="page">Apps</button>
     <button type="button" class="tab" data-tab="settings">App settings</button>
     <button type="button" class="tab" data-tab="quick">Quick answers</button>
     <button type="button" class="tab" data-tab="people">People</button>
@@ -60,19 +64,25 @@
       <p class="hint">A copy of the whole database: everyone's questions and answers, the apps' tool lists and the App
         settings. The AI access key is left out; a restore keeps this install's key.</p>
       <p><a id="downloadDb" class="btn-secondary" href="api/admin-storage-download-db">Download a backup</a></p>
-      <p><label class="btn-secondary">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
+    </div>
+    <div id="storageQuick"></div>
+    <div class="danger-zone">
+      <h3>Restore a backup</h3>
+      <p class="hint">Replaces everyone's questions and answers, the tool lists and the App settings with the backup's.
+        This install keeps its own AI access key.</p>
+      <p><label class="btn-danger-outline">Restore a backup… <input type="file" id="importDb" accept=".db" hidden></label></p>
     </div>
   </section>
 </main>
 
 <div id="toastRoot" class="toast-root"></div>
 <div id="modalRoot"></div>
-<script src="common/ui.js?v=1.6.5"></script>
-<script src="common/person-data.js?v=1.6.5"></script>
-<script src="common/settings.js?v=1.6.5"></script>
-<script src="common/backnav.js?v=1.6.5"></script>
-<script src="common/whoami.js?v=1.6.5"></script>
-<script src="common/connected-apps.js?v=1.6.5"></script>
-<script src="app.js?v=1.6.5"></script>
+<script src="common/ui.js?v=1.7.0"></script>
+<script src="common/person-data.js?v=1.7.0"></script>
+<script src="common/settings.js?v=1.7.0"></script>
+<script src="common/backnav.js?v=1.7.0"></script>
+<script src="common/whoami.js?v=1.7.0"></script>
+<script src="common/connected-apps.js?v=1.7.0"></script>
+<script src="app.js?v=1.7.0"></script>
 </body>
 </html>
