@@ -62,18 +62,19 @@ function announcementBlock(m) {
   }
   return box;
 }
+// the open announcements go in the strip under the chat's header (chat.js: paintStrip)
 function renderAnnouncements() {
-  const bar = $("#annBar");
-  if (!bar || !state.detail) return;
-  const list = (state.detail.announcements || []).map((a) => state.msgs.find((x) => x.id === a.id) || a).filter((a) => a.announcement && !a.announcement.closed);
-  if (!list.length) { clear(bar); bar.className = ""; return; }
-  bar.className = "ann-bar";
-  mount(bar, list.map((a) => h("div", { class: "ann-row" },
+  if (!state.detail) return;
+  state.strip.ann = (state.detail.announcements || []).map((a) => state.msgs.find((x) => x.id === a.id) || a).filter((a) => a.announcement && !a.announcement.closed);
+  paintStrip();
+}
+function annRow(a) {
+  return h("div", { class: "strip-row ann" },
     h("button", { class: "pin-main", type: "button", onclick: () => jumpTo(a.id) }, h("span", null, "📢"), h("span", { class: "ellipsis grow" }, plainText(a.body) || "Announcement")),
     a.announcement.pending.includes(state.me.id) ? h("button", { class: "btn small primary", type: "button", onclick: async () => {
       const r = await msgAction(`api/messages/${a.id}/ack`, { method: "POST" });
       if (r) { const i = state.detail.announcements.findIndex((x) => x.id === r.id); if (i >= 0) state.detail.announcements[i] = r; renderAnnouncements(); }
-    } }, "Got it") : h("span", { class: "hint" }, `${a.announcement.acks.length}/${a.announcement.acks.length + a.announcement.pending.length}`))));
+    } }, "Got it") : h("span", { class: "hint" }, `${a.announcement.acks.length}/${a.announcement.acks.length + a.announcement.pending.length}`));
 }
 
 // ---------- send later ----------
@@ -106,42 +107,54 @@ function scheduleDialog() {
   field("Send at", at), err, h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Schedule"))));
 }
 async function renderScheduledBar() {
-  const bar = $("#schedBar");
-  if (!bar || !state.current) return;
+  if (!state.current || !$("#chatStrip")) return;
   const cid = state.current;
   let list = [];
   try { list = (await api(`api/me/scheduled?conversation=${cid}`)).scheduled; } catch (e) { return; }
   if (cid !== state.current) return;
-  if (!list.length) { clear(bar); bar.className = ""; return; }
-  bar.className = "sched-bar";
-  mount(bar, h("button", { class: "pin-main", type: "button", onclick: () => scheduledDialog(cid) },
-    h("span", null, "🕓"), h("span", { class: "grow ellipsis" }, `${list.length} scheduled — next ${fmtFull(list[0].sendAt)}`)));
+  state.strip.sched = list;
+  paintStrip();
 }
+// Scheduled messages: one read-only row each (when, chat, first line); tapping it (or Edit) opens the editor
 async function scheduledDialog(cid) {
   const body = h("div");
   let m;
   const load = async () => {
     let list;
-    try { list = (await api("api/me/scheduled" + (cid ? `?conversation=${cid}` : ""))).scheduled; } catch (e) { fail(e); return; }
-    if (!list.length) { mount(body, h("p", { class: "hint" }, "Nothing waiting to be sent. In a chat, ＋ → 🕓 Send later.")); return; }
+    UI.loading(body);
+    try { list = (await api("api/me/scheduled" + (cid ? `?conversation=${cid}` : ""))).scheduled; } catch (e) { mount(body, UI.errorBox(e, load)); return; }
+    if (!list.length) { mount(body, UI.empty("Nothing waiting to be sent", "In a chat, ＋ → 🕓 Send later, or hold ➤.")); return; }
     mount(body, h("div", { class: "result-list" }, list.map((s) => {
-      const at = h("input", { type: "datetime-local", value: localInputValue(new Date(s.sendAt)), "aria-label": "Send at" });
-      const txt = s.poll ? null : h("textarea", { rows: "2", "aria-label": "Message", maxlength: "8000" });
-      if (txt) txt.value = s.body;
-      return h("div", { class: "result card-ish" },
-        h("div", { class: "hint" }, `${s.conversationName}${s.announcement ? " · 📢 announcement" : ""}${s.expiresIn ? " · ⏱ " + durationLabel(s.expiresIn) : ""}`),
-        s.poll ? h("div", null, "📊 " + s.poll.question) : txt,
-        s.attachments.length ? h("div", { class: "hint" }, "📎 " + s.attachments.map((a) => a.name).join(", ")) : null,
-        h("div", { class: "row wrap" }, at,
-          h("button", { class: "btn small", type: "button", onclick: async () => {
-            try { await api(`api/scheduled/${s.id}`, { method: "PATCH", body: Object.assign({ sendAt: new Date(at.value).toISOString() }, txt ? { body: txt.value } : {}) }); toast("Saved"); load(); } catch (e) { fail(e); }
-          } }, "Save"),
-          h("button", { class: "btn small primary", type: "button", onclick: async () => { try { await api(`api/scheduled/${s.id}/send-now`, { method: "POST" }); toast("Sent"); load(); renderScheduledBar(); } catch (e) { fail(e); } } }, "Send now"),
-          h("button", { class: "btn small danger", type: "button", onclick: async () => { try { await api(`api/scheduled/${s.id}`, { method: "DELETE" }); load(); renderScheduledBar(); } catch (e) { fail(e); } } }, "Delete")));
+      const first = s.poll ? "📊 " + s.poll.question : (plainText(String(s.body || "").split("\n").find((l) => l.trim()) || "") || (s.attachments.length ? "📎 " + s.attachments.map((a) => a.name).join(", ") : ""));
+      return h("div", { class: "result sched-row" },
+        h("button", { class: "sched-open", type: "button", onclick: () => scheduledEditor(s, load) },
+          h("span", { class: "block" }, h("strong", null, "🕓 " + fmtFull(s.sendAt)),
+            h("span", { class: "hint" }, ` · ${s.conversationName}${s.announcement ? " · 📢" : ""}${s.expiresIn ? " · ⏱ " + durationLabel(s.expiresIn) : ""}${s.attachments.length && !s.poll ? " · 📎 " + s.attachments.length : ""}`)),
+          h("span", { class: "block ellipsis" }, first)),
+        h("button", { class: "btn small", type: "button", onclick: () => scheduledEditor(s, load) }, "Edit"));
     })));
   };
   m = openModal("Scheduled messages", body, { wide: true, noFocus: true, onClose: () => renderScheduledBar() });
+  void m;
   load();
+}
+function scheduledEditor(s, after) {
+  const at = h("input", { type: "datetime-local", value: localInputValue(new Date(s.sendAt)), "aria-label": "Send at" });
+  const txt = s.poll ? null : h("textarea", { rows: "4", "aria-label": "Message", maxlength: "8000" });
+  if (txt) txt.value = s.body;
+  const done = () => { m.close(); after(); renderScheduledBar(); };
+  const m = openModal("Scheduled message", h("form", { onsubmit: async (e) => {
+    e.preventDefault();
+    try { await api(`api/scheduled/${s.id}`, { method: "PATCH", body: Object.assign({ sendAt: new Date(at.value).toISOString() }, txt ? { body: txt.value } : {}) }); toast("Saved"); done(); } catch (x) { fail(x); }
+  } },
+  h("p", { class: "hint" }, `${s.conversationName}${s.announcement ? " · 📢 announcement" : ""}${s.expiresIn ? " · ⏱ " + durationLabel(s.expiresIn) : ""}`),
+  s.poll ? h("div", null, "📊 " + s.poll.question) : field("Message", txt),
+  s.attachments.length ? h("div", { class: "hint" }, "📎 " + s.attachments.map((a) => a.name).join(", ")) : null,
+  field("Send at", at),
+  h("div", { class: "actions" },
+    h("button", { class: "btn danger", type: "button", onclick: async () => { try { await api(`api/scheduled/${s.id}`, { method: "DELETE" }); done(); } catch (x) { fail(x); } } }, "Delete"),
+    h("button", { class: "btn", type: "button", onclick: async () => { try { await api(`api/scheduled/${s.id}/send-now`, { method: "POST" }); toast("Sent"); done(); } catch (x) { fail(x); } } }, "Send now"),
+    h("button", { class: "btn primary", type: "submit" }, "Save"))), { noFocus: true });
 }
 
 // ---------- drafts kept across devices ----------

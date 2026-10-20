@@ -8,10 +8,10 @@ It's built for a small household (around 4–6 people). Nobody can chat until an
 
 1. **Add the repository.** In Home Assistant go to **Settings → Apps → Install app**, open the **⋮** menu (top right) → **Repositories**, paste `https://github.com/sameerkotra/ha-apps`, press **Add** and close the dialog.
 2. **Install.** In **Settings → Apps → Install app**, find Household Chat and press **Install** (the first install builds the app and takes a few minutes), then **Start** it on the **Information** tab. Turn on **Show in sidebar** there too if you like.
-3. **Open Chat** in the sidebar. While no admin is set, every page shows a **"No admin yet"** banner with your Home Assistant **user name**. Open **How the app sees you** (from the banner, or the ⋯ menu) to see your user name and user id.
+3. **Open Chat** in the sidebar. While no admin is set, every page shows a **"No admin yet"** banner with your Home Assistant **user name**. Open **How the app sees you** (from the banner, or the **Me** menu — your name at the foot of the chat list) to see your user name and user id.
 4. **Make yourself an admin.** In the app's **Configuration** tab, add your user name (or user id — not your display name) under **Admin users**, **Save**, and restart the app (**Information** tab → **Restart**). The list is only read when the app starts. Upper and lower case don't matter.
 5. **Enable yourself.** Open Chat again and press **Enable me**.
-6. **Enable the others.** **⋯ → 🛡️ Admin → People** lists everyone with a Home Assistant login, and **nobody can chat until you enable them**. Enabling someone gives them their personal room (📌 My room) and adds them to the **Household** group (created with the first enabled person). Tick **Child** for children (see *Child accounts*).
+6. **Enable the others.** **Me → 🛡️ Admin → People** lists everyone with a Home Assistant login, and **nobody can chat until you enable them**. Enabling someone gives them their personal room (📌 My room) and adds them to the **Household** group (created with the first enabled person). Tick **Child** for children (see *Child accounts*).
 7. **Set up phones, home/away and photos in Home Assistant**, once per person, in **Settings → People → (the person)**:
    - **Allow person to login** links the person to their Home Assistant login. Their home/away state and their picture then show in the chat.
    - **Track device** picks their phone (with the Home Assistant Companion app). New messages are sent to that phone, with Reply buttons.
@@ -38,18 +38,18 @@ Nobody is ever made an admin automatically, not even the first person to open th
   - Joins, leaves, renames and ownership changes appear as small notes in the chat.
 - **The Household group** is made with the first enabled person, and everyone enabled joins it automatically. People can leave it.
 - **Descriptions**: groups and direct chats can have a description (up to 500 characters, with formatting), shown when you open the chat and in its info (👥 Group info / ℹ Info).
-- **The chat list** shows My room first, then chats you pinned (chat ⋯ → **Pin chat to the top**), then the newest activity, with unread counts, an @ badge when you're mentioned, and "Draft: …" when you have unsent text.
+- **The chat list** shows My room first, then chats you pinned (chat ⋯ → **Pin chat to the top**; they sit under a thin *Pinned* divider), then the newest activity, with unread counts, an @ badge when you're mentioned, and "Draft: …" when you have unsent text.
 - **When someone loses access** (an admin disables them), they leave every group, their messages stay (shown as "Name (no longer here)"), and direct chats with them become read-only. If they're enabled again, their direct chats, their room and the Household group come back; other groups have to add them again.
 
 ### Messages
 
 - **Sending**: Enter sends, Shift+Enter starts a new line (on a phone, use the send button).
-- **Formatting**: `*bold*`, `_italic_`, `~strike~`, `` `code` ``, ```` ```block``` ````, lists (`- ` or `1. `) and quotes (`> `). ＋ → Aa Formatting shows them. Links become clickable.
+- **Formatting**: `*bold*`, `_italic_`, `~strike~`, `` `code` ``, ```` ```block``` ````, lists (`- ` or `1. `) and quotes (`> `). **Aa Formatting help** at the foot of the composer's ＋ menu shows them. Links become clickable.
 - **@mentions**: type `@` and pick a name, or `@everyone` in a group (not for children). A mention counts only while the `@Name` is in the message.
 - **Message actions**: hover a message and press ⋯ (on a computer), or long-press it (on a phone):
   - ↩ reply, react with an emoji, 📋 copy text;
   - ✏ edit (for 15 minutes by default; shown as "edited") and 🗑 delete (leaves "message deleted" and deletes its files). You can delete your own messages; a group's owner and group admins can delete anyone's in that group;
-  - 📌 pin (up to 10 per chat; the newest pin shows in a bar under the chat's header, and ⋯ → Pinned messages lists them all);
+  - 📌 pin (up to 10 per chat; the newest pin shows in the strip under the chat's header, and ⋯ → Pinned messages lists them all);
   - ☆ star (private to you) and ⏰ remind me (private to you);
   - ↪ forward to one or more chats you're in, or ☑ select several messages to forward together (up to 20). Files are copied; polls are forwarded as text.
 - **Polls** (＋ → 📊 Poll): a question and 2–10 answers, one or several answers allowed, and an optional closing time. Results show live with who voted for what. The creator or a group admin can close a poll early. The creator is told when everyone has voted.
@@ -61,7 +61,7 @@ Nobody is ever made an admin automatically, not even the first person to open th
 - **Adding files**: ＋ → 📎 File or document, drag and drop, or paste. On a phone, ＋ → 📷 Photo or camera. Each file shows its upload progress with a cancel button; up to 10 files per message.
 - **Photos are made smaller** (2000 pixels on the longest side, as JPEG) and their location and other metadata are removed, unless you tick *Send photos at original size* (then the file is kept exactly as it was, location included). The Files view says "made smaller from …".
 - **Viewing**: photos open in a viewer (arrow keys or swipe for the next one), PDFs and text files open in the app, everything else downloads.
-- **Files view**: each chat's ⋯ → 📁 Files lists what was shared in it, filterable by photos, PDFs, voice and other files. ⋯ → 📁 My files lists what you've shared.
+- **Files view**: each chat's ⋯ → 📁 Files lists what was shared in it, filterable by photos, PDFs, voice and other files, under month headers. ⋯ → 📁 My files lists what you've shared (its ☆ Starred chip: files in messages you starred).
 - **Voice messages** (🎤, up to 5 minutes by default):
   - On a computer, click to start, then ➤ to send. On a phone, hold to record, release to send, and slide left to cancel.
   - Playback at 1×, 1.5× or 2×.
@@ -83,7 +83,7 @@ An admin turns calls on in **App settings → Voice calls** (off until then). Ca
 
 **Starting a call**
 
-- **📞** at the top of a chat calls; **📹** starts a video call. **⋯ → 📞 New call…** (also on the Calls page) lets you pick people instead — up to three others. One person: it's their direct chat. More: a group with exactly those people, made for you (named after them, 📞) if there isn't one, under the usual rules for making groups; the call's note goes there.
+- **📞** at the top of a chat calls; **📹** starts a video call. **＋ → 📞 New call…** (next to Direct message and New group, and on the Calls page) lets you pick people instead — up to three others. One person: it's their direct chat. More: a group with exactly those people, made for you (named after them, 📞) if there isn't one, under the usual rules for making groups; the call's note goes there.
 - In a **direct chat** it rings that person. In a **group** it rings everyone in the group, and whoever answers joins — **up to four people** in a call (a fifth is told it's full). The call goes on while two or more are in it; anyone can leave and the others carry on.
 - Not in My room, and not in a direct chat that's read-only. Children can call the people they can message.
 - **Busy**: one call at a time. Calling someone who's already on a call tells you so, and they see a missed call. In a group, someone already on a call isn't rung.
@@ -117,7 +117,7 @@ An admin turns calls on in **App settings → Voice calls** (off until then). Ca
 **Afterwards**
 
 - Each call leaves a note in the chat: "📞 Outgoing call · 4 min", "📹 Incoming video call · 12 min", "📞 Missed call", "📞 No answer", "📞 Declined", "📞 Group call · 12 min · you, Tarun, Leela", with **Call back**. A missed call counts as unread and is notified like a message, to the people who missed it.
-- **⋯ → 📞 Calls** lists your recent calls, missed ones on top, with **Call back** and a button to the chat.
+- **⋯ → 📞 Calls** lists your recent calls by day, with **Call back** and a button to the chat; the **Missed** chip shows only the missed ones.
 
 **Away from home**
 
@@ -158,7 +158,7 @@ At home nothing needs setting up: both phones must be on the home network. For c
 
 ### Send later and drafts
 
-- **Send later**: right-click or hold ➤, or use ＋ → 🕓 Send later, and pick a time (at least a minute ahead, at most a year). Waiting messages show in a 🕓 bar in the chat and under ⋯ → 🕓 Scheduled, where you can change the text or time, send now or delete. Only you see them. Files are uploaded straight away. If you're no longer in the chat when it's time, it isn't sent and you're told. Up to 20 per person; not in My room.
+- **Send later**: right-click or hold ➤, or use ＋ → 🕓 Send later, and pick a time (at least a minute ahead, at most a year). Waiting messages show in the strip under the chat's header and under ⋯ → 🕓 Scheduled; tap one (or Edit) to change the text or time, send it now or delete it. Only you see them. Files are uploaded straight away. If you're no longer in the chat when it's time, it isn't sent and you're told. Up to 20 per person; not in My room.
 - **Drafts follow you**: what you've typed but not sent is saved and appears on your other devices (text only).
 
 ### Child accounts
@@ -217,7 +217,7 @@ If the household also uses the **Household Assistant** app, you can ask it "Do I
 
 ## Admin
 
-Only people listed under **Admin users** in the app's **Configuration** tab are admins. Admin is under **⋯ → 🛡️ Admin**:
+Only people listed under **Admin users** in the app's **Configuration** tab are admins. Admin is under **Me → 🛡️ Admin** (your name at the foot of the chat list):
 
 - **People**: enable or disable people, tick Child, see each person's phones from Home Assistant (⚠ means Home Assistant has no notify action for that phone yet — open the Companion app on it once), 🔔 extras and test, 🏠 home/away and photo, and **Check Home Assistant again**.
 - **Chats**: every chat's name, kind, members, last activity, message count and storage used — never messages or file names of chats you aren't in. A group with no enabled members left can be deleted here (by typing its name).
@@ -276,7 +276,7 @@ The settings are in cards (Files, Chats and messages, Old messages, Notification
 
 ## Who can see what, and where data goes
 
-Everyone can read this in the app too: **⚙ Settings → 🔓 Who can see your messages**. Each chat's info, My room and the start page say it in one line and link there.
+Everyone can read this in the app too: **Me → ⚙ Settings → 🔓 Who can see your messages**. Each chat's info, My room and the start page say it in one line and link there.
 
 | Where | Who can read it |
 |---|---|
@@ -336,4 +336,4 @@ recorder:
 - **A call says "Couldn't connect"**: away from home it needs the address lookup and, on mobile data, a relay (App settings → Voice calls → Test calling says what's missing); and the microphone must be allowed. A call also ends if one side loses its connection to Home Assistant for a minute.
 - **The back gesture**: on Android (Home Assistant app or browser), Back closes an open menu or dialog first, then goes from a chat or page back to the chat list; only Back from the list leaves the app.
 - **"Open in Docs" does nothing, or Docs isn't in Connected apps**: Household Docs and Chat find each other when they start and every few hours; restart Household Docs, then look at Admin → App settings → Connected apps. Both apps must run inside Home Assistant (messages between apps are off outside it).
-- **Themes**: Settings → Look → Theme (Midnight, Slate, Daylight or Auto, which follows your device's light or dark setting). If you had picked Vault before, you now get Midnight.
+- **Themes**: Me → 🎨 Theme, or Settings → Look → Theme (Midnight, Slate, Daylight or Auto, which follows your device's light or dark setting). If you had picked Vault before, you now get Midnight.

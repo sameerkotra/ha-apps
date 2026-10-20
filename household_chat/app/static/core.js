@@ -82,40 +82,61 @@ function toast(msg, opts = {}) {
   UI.toast(msg, { error: opts.error, role: "status", onclick: opts.onclick, ms: opts.ms || (opts.error ? 5000 : 2600) });
 }
 function fail(e) { if (e && e.status === -1) return; toast(e && e.message ? e.message : String(e), { error: true }); }
-// ---------- the back button / back gesture ----------
-// Android's back gesture (and the browser's Back) should close what's open in the app — a menu, a
-// dialog, the open chat on a phone — before it leaves the app for Home Assistant. Everything open is a
-// "layer" (a function that closes it). While any layer is open there is exactly one extra history entry
-// (the guard); Back pops it, the top layer closes, and the guard is set again if more layers remain.
-// When the app itself closes the last layer, the guard is removed a moment later — unless something new
-// opened meanwhile (closing a dialog and opening a chat in one go).
-const layers = [];
-let backGuard = false, ignorePops = 0, dropTimer = null;
-function addLayer(close) {
-  layers.push(close);
-  clearTimeout(dropTimer);
-  if (!backGuard) { try { history.pushState({ hcBack: true }, ""); backGuard = true; } catch (e) { /* sandboxed */ } }
-  return close;
+// ---------- addresses and the back gesture (common/backnav.js) ----------
+// Every view has an address: "#/c/<chat id>" (with "/m/<message id>" to open it at a message), "#/starred",
+// "#/reminders", "#/calls", "#/files", "#/search/<words>", "#/settings", "#/admin/<tab>" and "#/me"; no address is
+// the chat list. Moving around goes through navigate(), and the hashchange listener (route(), main.js) draws the view.
+// BackNav makes Android's back gesture (and the browser's Back) close what's open first — a menu, a dialog, the
+// photo viewer, selecting messages — then go back to the previous address (e.g. Starred after "Show in chat"),
+// then to the chat list, and only then leave the app. A call is never ended by Back.
+let routeTask = null;       // what the last address change started (openChat() awaits it)
+let tabNav = false;         // the navigation under way starts a new trail (the chat list, the ⋯ and Me menus)
+let routing = false;        // BackNav and the hashchange listener are set up (the full app, not the admin-only view)
+function navigate(hash, opts = {}) {
+  routeTask = null;
+  if (!routing) { try { location.hash = hash; } catch (e) { /* ignore */ } return Promise.resolve(); }
+  tabNav = !!opts.tab;
+  try { if (opts.replace) BackNav.replace(hash); else BackNav.go(hash); } finally { tabNav = false; }
+  const t = routeTask;
+  routeTask = null;
+  return t || Promise.resolve();
 }
-function removeLayer(close) {
-  const i = layers.lastIndexOf(close);
-  if (i >= 0) layers.splice(i, 1);
-  if (layers.length || !backGuard) return;
-  clearTimeout(dropTimer);
-  dropTimer = setTimeout(() => { if (!layers.length && backGuard) { backGuard = false; ignorePops++; history.back(); } }, 300);
+// an in-app ← button: the previous address, else the chat list
+function goBack() { if (!(routing && BackNav.back())) showHome(); }
+function openLayers() {
+  const out = [...document.querySelectorAll("#modalRoot .modal-backdrop")];
+  const sel = $("#selectBar");
+  if (sel && !sel.hidden && state.selecting) out.push(sel);
+  out.push(...document.querySelectorAll(".menu"));
+  const call = $("#callScreen");
+  if (call) out.push(call);                    // the call screen is on top of everything else
+  return out;
 }
-window.addEventListener("popstate", () => {
-  if (ignorePops) { ignorePops--; return; }
-  backGuard = false;
-  const close = layers.pop();
-  if (close) close();
-  if (layers.length) addLayer(layers.pop());     // re-arm the guard for what's still open
-});
+function closeLayer(el) {
+  if (el.id === "callScreen") { closeCallScreenByBack(); return; }
+  if (el.id === "selectBar") { stopSelecting(); return; }
+  if (el.classList.contains("menu")) { dropMenu(el); return; }
+  if (el._close) el._close();
+  else el.remove();
+}
+function initNav() {
+  if (!window.BackNav || routing) return;
+  BackNav.init({
+    atHome: () => state.page === "chat" && !state.current,
+    goHome: () => showHome(),
+    openLayers, closeLayer,
+    isTab: () => tabNav,
+    parentOf: () => null,                      // every view's parent is the chat list
+  });
+  window.addEventListener("hashchange", route);
+  routing = true;
+}
 
 // Dialogs (common/ui.js): Escape closes only the top one, and each is a back-button layer.
 function modalOptions(opts) {
   return { modalClass: [opts.wide ? "wide" : "", opts.full ? "full" : ""].filter(Boolean).join(" "), backdropClass: opts.dark ? "dark" : "",
-    escape: "top", onOpen: addLayer, onClosed: removeLayer, onClose: opts.onClose,
+    escape: "top", onClose: opts.onClose,
+    afterOpen: (handle) => { const b = handle.el.parentNode; if (b) b._close = handle.close; },      // Back closes it
     focus: opts.noFocus ? false : "first", focusIf: FINE_POINTER,
     focusSelector: "input:not([type=hidden]):not([disabled]):not([type=checkbox]):not([type=radio]), select, textarea" };
 }
@@ -123,20 +144,19 @@ function openModal(title, content, opts = {}) { return UI.openModal(title, conte
 function confirmDialog(title, message, okLabel = "OK", danger = false) {
   return UI.confirmDialog(title, message, { okLabel, okClass: "btn " + (danger ? "danger" : "primary"), cancelClass: "btn", modal: modalOptions({}) });
 }
-function dropMenu(m) { m.remove(); if (m._layer) removeLayer(m._layer); }
+function dropMenu(m) { m.remove(); }
 function closeMenus() { document.querySelectorAll(".menu").forEach(dropMenu); }
 function menu(anchor, entries, at) {
   closeMenus();
   const m = h("div", { class: "menu", role: "menu" },
     ...entries.filter(Boolean).map((e) => e === "-" ? h("hr") :
-      e.row ? e.row :
+      e.row ? e.row : e.head ? h("div", { class: "menu-head", role: "presentation" }, e.head) :
         h("button", { type: "button", role: "menuitem", class: e.danger ? "danger" : "", onclick: () => { closeMenus(); e.run(); } }, e.label)));
   document.body.appendChild(m);
   const r = at ? { left: at.x, right: at.x, top: at.y, bottom: at.y } : anchor.getBoundingClientRect();
   const w = m.offsetWidth, hh = m.offsetHeight;
   m.style.left = Math.max(6, Math.min(window.innerWidth - w - 6, r.right - w)) + "px";
   m.style.top = (r.bottom + hh + 6 > window.innerHeight ? Math.max(6, r.top - hh - 4) : r.bottom + 4) + "px";
-  m._layer = addLayer(() => m.remove());
   setTimeout(() => document.addEventListener("click", function once(ev) { if (!m.contains(ev.target)) { dropMenu(m); document.removeEventListener("click", once); } }), 0);
   const onKey = (e) => { if (e.key === "Escape") { dropMenu(m); document.removeEventListener("keydown", onKey); } };
   document.addEventListener("keydown", onKey);
@@ -169,12 +189,14 @@ const state = {
   current: null,            // open chat id
   detail: null,             // its details (members …)
   msgs: [], moreBefore: false, reads: [], loadingOlder: false,
-  page: "chat",             // chat | starred | reminders | files | search | settings | admin | whoami
+  page: "chat",             // chat | starred | reminders | calls | files | search | settings | admin | whoami
   pageArg: null,
   replyTo: {}, editing: null, pending: {}, drafts: {}, sendOriginal: {}, expiresIn: {}, announce: {},
   typing: {},               // chat id → {user id: {name, until}}
   unreadMarker: null, newBelow: 0, sse: null, sseFails: 0, polling: null,
   adminTab: "people",
+  unreadOnly: false,        // the chat list shows only chats with unread messages
+  strip: { ann: [], pins: [], sched: [], note: false, pinAt: 0 }, stripOpen: false,
 };
 function convById(id) { return state.convs.find((c) => c.id === id); }
 function personById(id) { return state.people.find((p) => p.id === id); }

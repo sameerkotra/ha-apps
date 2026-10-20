@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.7.0
+
+- **Back works inside the app**: Android's back gesture (and the browser's Back) closes the open menu, dialog or photo first, then goes back where you were — from a chat you opened with "Show in chat" back to Starred, Reminders, Calls or Files — then to the chat list. A call is never ended by Back.
+- **Every chat and page has its own address**, so reloading the page keeps you where you were. Phone notifications still open their chat.
+- **New Me menu**: tap your name at the foot of the chat list for Settings, Theme, How the app sees you and Admin. ⋯ keeps My room, Starred, Reminders, Calls, My files and Scheduled; **New call** moved to ＋ next to Direct message and New group.
+- **Tidier chat header on phones**: just 📞 and ⋯; video call, shared folders, search and files are in ⋯. Header and composer buttons are bigger to tap.
+- **One strip under the chat's header**: announcements, the pinned message, scheduled messages and My room's note share it, with "+N" to see the rest. My room's note can be hidden.
+- **The keyboard no longer hides the newest messages** when it opens.
+- **A chat that can't load** shows the reason and a Retry button instead of an empty page.
+- **Chat list**: pinned chats sit under a thin "Pinned" divider, and with more than 8 chats an **Unread** chip shows only unread ones.
+- **Composer ＋** is in two groups, Attach (file, photo, poll) and Message options (disappear, announce, send later), with **Aa Formatting help** at the foot.
+- **Chat info**: quick buttons for notifications, files, pins and search at the top, then members and description; group settings are folded away, and leave/delete sit in a Danger zone.
+- **Pages**: Starred is grouped by chat (with a chat filter when long); Reminders are under Overdue, Today and Later with the last 10 done ones folded; Calls are listed once, by day, with a Missed chip; My files has a Starred chip and month headers; quiet hours save as soon as you set them.
+- **Admin**: switching tabs keeps the page and the tab is in the address; Storage starts with a summary (connected, used, free) and Restore is in its own Danger zone; the Chats table sorts by size, last activity, messages or name.
+- **Scheduled messages** are listed as short rows (time, chat, first line); tap one or Edit to change, send now or delete it.
+
 ## 2.6.6
 
 - Shared code updated (back navigation and page states) ahead of the navigation changes in the next version; nothing visible changes yet.

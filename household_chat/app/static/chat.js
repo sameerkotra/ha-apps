@@ -14,14 +14,17 @@ function renderShell() {
           h("button", { class: "icon-btn", type: "button", title: "More", "aria-label": "More", onclick: (e) => mainMenu(e.currentTarget) }, "⋯")),
         h("div", { class: "side-search" },
           h("input", { type: "search", id: "globalSearch", placeholder: "Search messages and files", "aria-label": "Search messages and files",
-            onkeydown: (e) => { if (e.key === "Enter" && e.target.value.trim()) showPage("search", e.target.value.trim()); } })),
+            onkeydown: (e) => { if (e.key === "Enter" && e.target.value.trim()) showPage("search", e.target.value.trim(), { tab: true }); } }),
+          h("button", { class: "chip filter-chip", id: "unreadChip", type: "button", hidden: true, "aria-pressed": "false", title: "Show only chats with unread messages",
+            onclick: () => { state.unreadOnly = !state.unreadOnly; renderConvList(); } }, "Unread")),
         h("div", { id: "filesBanner" }),
         h("div", { class: "conv-list", id: "convList", role: "list" }),
         h("div", { class: "side-foot" },
-          avatar(state.me.name, state.me.id, { small: true, noDot: true }),
-          h("span", { class: "grow ellipsis" }, state.me.name),
-          h("span", { class: "conn-dot", id: "connDot", title: "Live updates" }),
-          h("button", { class: "icon-btn", type: "button", title: "Settings", "aria-label": "Settings", onclick: () => showPage("settings") }, "⚙"))),
+          h("button", { class: "me-btn grow", type: "button", title: "Me", "aria-label": "Me: settings, theme, how the app sees you", "aria-haspopup": "menu", onclick: (e) => meMenu(e.currentTarget) },
+            avatar(state.me.name, state.me.id, { small: true, noDot: true }),
+            h("span", { class: "grow ellipsis" }, state.me.name),
+            h("span", { class: "me-caret", "aria-hidden": "true" }, "▾")),
+          h("span", { class: "conn-dot", id: "connDot", title: "Live updates" }))),
       h("main", { class: "main", id: "main" })));
   renderConvList();
   renderFilesBanner();
@@ -35,71 +38,99 @@ function renderFilesBanner() {
   mount(el, h("div", { class: "notice danger files-banner", role: "status" }, "📎 File storage isn't connected. Messages work, but files can't be sent or opened until it's back. ",
     state.me.isAdmin ? h("button", { class: "link-btn", type: "button", onclick: () => { state.adminTab = "storage"; showPage("admin"); } }, "See Storage") : null));
 }
-// On a phone the list and the open chat (or page) are one pane at a time; the chat is a layer, so the
-// back gesture returns to the list instead of leaving the app.
-const PHONE = window.matchMedia ? window.matchMedia("(max-width: 760px)") : { matches: false };
-let mainLayer = null;
+// On a phone the list and the open chat (or page) are one pane at a time (data-view); Back from a chat or a page
+// returns to the list (core.js: navigate / BackNav).
 function setView(v) {
   const s = $("#shell");
   if (s) s.setAttribute("data-view", v);
-  if (v === "main" && PHONE.matches && !mainLayer) mainLayer = addLayer(backFromHistory);
-  else if (v === "list" && mainLayer) { const l = mainLayer; mainLayer = null; removeLayer(l); }
 }
-function backToList() { saveDraft(); state.current = null; state.page = "chat"; renderConvList(); setView("list"); sendPresence(); }
-function backFromHistory() { mainLayer = null; backToList(); }
+// the start page: the chat list (on a computer with the welcome text beside it), no address
+function showHome() {
+  saveDraft();
+  state.current = null; state.page = "chat";
+  if (location.hash) { try { history.replaceState(history.state, "", location.pathname + location.search); } catch (e) { /* sandboxed */ } }
+  renderConvList();
+  renderEmptyMain();
+  sendPresence();
+  if (routing) BackNav.sync();
+}
+// ＋: new conversations and calls
 function newChatMenu(anchor) {
   menu(anchor, [
     { label: "💬 Direct message", run: () => newDirectDialog() },
     !isChild() && (state.me.app.whoCanCreateGroups === "everyone" || state.me.isAdmin) ? { label: "👥 New group", run: () => newGroupDialog() } : null,
+    callsOn() ? { label: "📞 New call…", run: () => newCallDialog() } : null,
   ]);
 }
+// ⋯: the content pages
 function mainMenu(anchor) {
   menu(anchor, [
-    { label: "📌 My room", run: () => openChat(state.me.personalRoomId) },
-    { label: "☆ Starred", run: () => showPage("starred") },
-    { label: "⏰ Reminders", run: () => showPage("reminders") },
-    callsOn() ? { label: "📞 Calls", run: () => showPage("calls") } : null,
-    callsOn() ? { label: "📞 New call…", run: () => newCallDialog() } : null,
+    { label: "📌 My room", run: () => openChat(state.me.personalRoomId, { tab: true }) },
+    { label: "☆ Starred", run: () => showPage("starred", null, { tab: true }) },
+    { label: "⏰ Reminders", run: () => showPage("reminders", null, { tab: true }) },
+    callsOn() ? { label: "📞 Calls", run: () => showPage("calls", null, { tab: true }) } : null,
+    { label: "📁 My files", run: () => showPage("files", null, { tab: true }) },
     { label: "🕓 Scheduled", run: () => scheduledDialog(null) },
-    { label: "📁 My files", run: () => showPage("files") },
-    "-",
-    { label: "⚙ Settings", run: () => showPage("settings") },
-    state.me.isAdmin ? { label: "🛡️ Admin", run: () => showPage("admin") } : null,
-    { label: "👤 How the app sees you", run: () => showPage("whoami") },
   ]);
+}
+// Me (your name at the foot of the list): settings, theme, the diagnostic page and Admin
+function meMenu(anchor) {
+  menu(anchor, [
+    { label: "⚙ Settings", run: () => showPage("settings", null, { tab: true }) },
+    { label: "🎨 Theme…", run: () => themeDialog() },
+    { label: "👤 How the app sees you", run: () => showPage("whoami", null, { tab: true }) },
+    state.me.isAdmin ? { label: "🛡️ Admin", run: () => showPage("admin", null, { tab: true }) } : null,
+  ]);
+}
+function themeDialog() {
+  openModal("Theme", field("Theme", HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" })), "Shared with the other household apps."));
 }
 
 // ---------- chat list ----------
 function renderConvList() {
   const box = $("#convList");
   if (!box) return;
-  const rows = state.convs.map((c) => {
-    const last = c.lastMessage;
-    const typing = typingText(c.id);
-    const draft = !typing && c.draft && c.draft.body && c.id !== state.current ? c.draft.body : null;
-    let preview = typing || (last ? (last.by && last.by !== state.me.id && c.kind === "group" ? `${last.author}: ` : last.by === state.me.id && c.kind !== "personal" ? "You: " : "") + last.preview : (c.kind === "personal" ? "Only you can see this in the app" : ""));
-    const sub = c.kind === "direct" && c.otherUserId ? (state.homeAway[c.otherUserId] || {}).label : null;
-    return h("button", {
-      class: "conv" + (c.id === state.current && state.page === "chat" ? " active" : "") + (c.unread ? " unread" : ""), type: "button", role: "listitem",
-      onclick: () => openChat(c.id), "aria-label": `${c.name}${c.unread ? `, ${c.unread} unread` : ""}`,
-    },
-      convIcon(c),
-      h("span", { class: "conv-main" },
-        h("span", { class: "conv-top" },
-          h("span", { class: "conv-name ellipsis" }, c.name),
-          c.pinned && c.kind !== "personal" ? h("span", { class: "hint", title: "Pinned" }, "📌") : null,
-          c.muted ? h("span", { class: "hint", title: "Muted" }, "🔕") : null,
-          c.disappearSeconds ? h("span", { class: "hint", title: "Disappearing messages: " + durationLabel(c.disappearSeconds) }, "⏱") : null,
-          h("span", { class: "conv-time" }, last ? fmtWhen(last.at) : "")),
-        sub ? h("span", { class: "conv-presence ellipsis" }, sub) : null,
-        h("span", { class: "conv-bottom" },
-          draft ? h("span", { class: "conv-preview ellipsis" }, h("span", { class: "draft-lbl" }, "Draft: "), plainText(draft))
-            : h("span", { class: "conv-preview ellipsis" + (typing ? " typing" : "") }, preview),
-          c.mentionUnread ? h("span", { class: "badge at", title: "Mentions you" }, "@") : null,
-          c.unread ? h("span", { class: "badge" + (c.muted ? " muted" : "") }, c.unread > 99 ? "99+" : String(c.unread)) : null)));
+  const many = state.convs.length > 8;
+  const chip = $("#unreadChip");
+  if (chip) { chip.hidden = !many; chip.classList.toggle("on", many && state.unreadOnly); chip.setAttribute("aria-pressed", String(many && state.unreadOnly)); }
+  const only = many && state.unreadOnly;
+  const shown = only ? state.convs.filter((c) => c.unread || c.mentionUnread || c.id === state.current) : state.convs;
+  const rows = [];
+  let pinnedHead = false, afterPinned = false;
+  shown.forEach((c) => {
+    const pinned = c.pinned && c.kind !== "personal";
+    if (pinned && !pinnedHead) { pinnedHead = true; rows.push(h("div", { class: "conv-divider", "aria-hidden": "true" }, "Pinned")); }
+    else if (!pinned && pinnedHead && !afterPinned && c.kind !== "personal") { afterPinned = true; rows.push(h("div", { class: "conv-divider line", "aria-hidden": "true" })); }
+    rows.push(convRow(c));
   });
+  if (only && !shown.length) rows.push(h("p", { class: "hint conv-none" }, "No unread chats. ", h("button", { class: "link-btn", type: "button", onclick: () => { state.unreadOnly = false; renderConvList(); } }, "Show all")));
   mount(box, rows);
   updateTitle();
+}
+function convRow(c) {
+  const last = c.lastMessage;
+  const typing = typingText(c.id);
+  const draft = !typing && c.draft && c.draft.body && c.id !== state.current ? c.draft.body : null;
+  let preview = typing || (last ? (last.by && last.by !== state.me.id && c.kind === "group" ? `${last.author}: ` : last.by === state.me.id && c.kind !== "personal" ? "You: " : "") + last.preview : (c.kind === "personal" ? "Only you can see this in the app" : ""));
+  const sub = c.kind === "direct" && c.otherUserId ? (state.homeAway[c.otherUserId] || {}).label : null;
+  const active = c.id === state.current && state.page === "chat";
+  return h("button", {
+    class: "conv" + (active ? " active" : "") + (c.unread ? " unread" : ""), type: "button", role: "listitem", "aria-current": active ? "true" : null,
+    onclick: () => openChat(c.id, { tab: true }), "aria-label": `${c.name}${c.unread ? `, ${c.unread} unread` : ""}`,
+  },
+    convIcon(c),
+    h("span", { class: "conv-main" },
+      h("span", { class: "conv-top" },
+        h("span", { class: "conv-name ellipsis" }, c.name),
+        c.muted ? h("span", { class: "hint", title: "Muted" }, "🔕") : null,
+        c.disappearSeconds ? h("span", { class: "hint", title: "Disappearing messages: " + durationLabel(c.disappearSeconds) }, "⏱") : null,
+        h("span", { class: "conv-time" }, last ? fmtWhen(last.at) : "")),
+      sub ? h("span", { class: "conv-presence ellipsis" }, sub) : null,
+      h("span", { class: "conv-bottom" },
+        draft ? h("span", { class: "conv-preview ellipsis" }, h("span", { class: "draft-lbl" }, "Draft: "), plainText(draft))
+          : h("span", { class: "conv-preview ellipsis" + (typing ? " typing" : "") }, preview),
+        c.mentionUnread ? h("span", { class: "badge at", title: "Mentions you" }, "@") : null,
+        c.unread ? h("span", { class: "badge" + (c.muted ? " muted" : "") }, c.unread > 99 ? "99+" : String(c.unread)) : null)));
 }
 function updateTitle() {
   const n = state.convs.filter((c) => !c.muted).reduce((a, c) => a + (c.unread ? 1 : 0), 0);
@@ -112,8 +143,7 @@ async function loadConvs() {
   state.homeAway = r.homeAway || {};
   renderConvList();
   if (state.current && !convById(state.current)) {
-    state.current = null;
-    if (state.page === "chat") renderEmptyMain();
+    if (state.page === "chat") showHome(); else state.current = null;
   }
 }
 async function loadPeople() {
@@ -130,7 +160,15 @@ function renderEmptyMain() {
       h("button", { class: "link-btn", type: "button", onclick: () => showPage("settings") }, "Who can see your messages"))));
   setView("list");
 }
-async function openChat(cid, opts = {}) {
+// Open a chat: its address ("#/c/<id>", "/m/<message>" to open it at a message); the route draws it (loadChat).
+// opts.tab: from the chat list or a menu (Back then goes to the list); opts.replace: without remembering where you were.
+function openChat(cid, opts = {}) {
+  if (!cid) return Promise.resolve();
+  const hash = "#/c/" + encodeURIComponent(cid) + (opts.around ? "/m/" + encodeURIComponent(opts.around) : "");
+  const same = state.page === "chat" && state.current === cid;
+  return navigate(hash, { tab: opts.tab, replace: opts.replace || same });
+}
+async function loadChat(cid, opts = {}) {
   if (!cid) return;
   saveDraft();
   state.page = "chat";
@@ -140,7 +178,7 @@ async function openChat(cid, opts = {}) {
   state.newBelow = 0;
   setView("main");
   renderConvList();
-  mount($("#main"), h("div", { class: "loading" }, "Loading…"));
+  UI.loading($("#main"));
   try {
     const [detail, page] = await Promise.all([api(`api/conversations/${cid}`), api(`api/conversations/${cid}/messages` + (opts.around ? `?around=${opts.around}` : ""))]);
     if (state.current !== cid) return;
@@ -159,37 +197,44 @@ async function openChat(cid, opts = {}) {
     sendPresence();
     markReadSoon();
   } catch (e) {
-    fail(e);
-    if (e.status === 404) { state.current = null; await loadConvs(); renderEmptyMain(); }
+    if (state.current !== cid) return;
+    if (e.status === 404) { fail(e); state.current = null; await loadConvs().catch(() => {}); showHome(); return; }
+    if (e.status === -1) return;
+    mount($("#main"), h("section", { class: "page" },
+      h("div", { class: "page-head" }, h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back", onclick: goBack }, "←"),
+        h("h2", null, (convById(cid) || {}).name || "Chat")),
+      h("div", { class: "page-body" }, UI.errorBox(e, () => loadChat(cid, opts)))));
   }
 }
 function renderChat() {
   const d = state.detail;
   const c = convById(d.id) || d;
   const header = h("div", { class: "chat-head" },
-    h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back", onclick: backToList }, "←"),
+    h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back", onclick: goBack }, "←"),
     convIcon(c),
     h("button", { class: "chat-title", type: "button", onclick: () => chatInfoDialog() },
       h("span", { class: "chat-name ellipsis" }, c.name),
       h("span", { class: "chat-sub ellipsis", id: "chatSub" }, chatSubline(c, d))),
-    c.disappearSeconds ? h("button", { class: "chip dis-chip", type: "button", title: "Disappearing messages", onclick: () => canSetDisappearing(c) ? disappearDialog() : null }, "⏱ " + durationLabel(c.disappearSeconds)) : null,
+    c.disappearSeconds ? h("button", { class: "chip dis-chip head-extra", type: "button", title: "Disappearing messages", onclick: () => canSetDisappearing(c) ? disappearDialog() : null }, "⏱ " + durationLabel(c.disappearSeconds)) : null,
     h("span", { class: "spacer" }),
     canCallIn(c) ? h("button", { class: "icon-btn", type: "button", title: "Call", "aria-label": "Call " + c.name, onclick: () => startCall(c, "audio") }, "📞") : null,
-    canCallIn(c) ? h("button", { class: "icon-btn", type: "button", title: "Video call", "aria-label": "Video call " + c.name, onclick: () => startCall(c, "video") }, "📹") : null,
-    d.folders && d.folders.length ? h("button", { class: "icon-btn", type: "button", title: "Shared folders", "aria-label": "Shared folders", onclick: (e) => foldersMenu(e.currentTarget) }, "📂") : null,
-    h("button", { class: "icon-btn", type: "button", title: "Search in chat", "aria-label": "Search in chat", onclick: () => searchInChatDialog() }, "🔍"),
-    h("button", { class: "icon-btn", type: "button", title: "Files", "aria-label": "Files", onclick: () => filesDialog(d.id, c.name) }, "📁"),
+    canCallIn(c) ? h("button", { class: "icon-btn head-extra", type: "button", title: "Video call", "aria-label": "Video call " + c.name, onclick: () => startCall(c, "video") }, "📹") : null,
+    d.folders && d.folders.length ? h("button", { class: "icon-btn head-extra", type: "button", title: "Shared folders", "aria-label": "Shared folders", onclick: (e) => foldersMenu(e.currentTarget) }, "📂") : null,
+    h("button", { class: "icon-btn head-extra", type: "button", title: "Search in chat", "aria-label": "Search in chat", onclick: () => searchInChatDialog() }, "🔍"),
+    h("button", { class: "icon-btn head-extra", type: "button", title: "Files", "aria-label": "Files", onclick: () => filesDialog(d.id, c.name) }, "📁"),
     h("button", { class: "icon-btn", type: "button", title: "More", "aria-label": "Chat menu", onclick: (e) => chatMenu(e.currentTarget) }, "⋯"));
   const list = h("div", { class: "msg-list", id: "msgList", role: "log", "aria-live": "polite", "aria-relevant": "additions" });
   list.addEventListener("scroll", onListScroll, { passive: true });
   const downBtn = h("button", { class: "to-bottom", id: "toBottom", type: "button", hidden: true, "aria-label": "Newest messages", onclick: () => { state.newBelow = 0; if (state.moreAfter) openChat(state.current); else scrollBottom(true); } }, "↓", h("span", { class: "count", id: "toBottomCount" }));
-  const note = c.kind === "personal" ? h("div", { class: "room-note" }, "📌 Only you can see this in the app — notes, links and documents for yourself. Like every chat, it isn't encrypted: whoever can get into the Home Assistant machine or its backups can read it.") : null;
+  // announcements, pins, scheduled messages and My room's note share one strip (paintStrip)
+  state.strip = { ann: [], pins: [], sched: [], note: c.kind === "personal" && !lsGet("hchat.roomNoteHidden"), pinAt: 0 };
   const readOnly = c.readOnly ? h("div", { class: "notice read-only" }, "They no longer have access to Household Chat, so this chat is read-only.") : null;
-  mount($("#main"), h("section", { class: "chat" }, header, h("div", { id: "annBar" }), h("div", { id: "pinBar" }), h("div", { id: "schedBar" }), note,
+  mount($("#main"), h("section", { class: "chat" }, header, h("div", { id: "chatStrip" }),
     h("div", { class: "msg-wrap" }, list, downBtn),
     h("div", { class: "typing-line", id: "typingLine" }),
     h("div", { class: "select-bar", id: "selectBar", hidden: true }),
     readOnly || composer(c)));
+  paintStrip();
   renderPinBar();
   renderMessages();
   renderTyping();
@@ -210,6 +255,7 @@ function chatMenu(anchor) {
   const mine = d.members.find((m) => m.id === state.me.id) || {};
   menu(anchor, [
     { label: c.kind === "group" ? "👥 Group info" : "ℹ Info", run: () => chatInfoDialog() },
+    canCallIn(c) ? { label: "📹 Video call", run: () => startCall(c, "video") } : null,
     { label: "📌 Pinned messages", run: () => pinsDialog() },
     { label: "📁 Files", run: () => filesDialog(d.id, c.name) },
     { label: "🔍 Search in chat", run: () => searchInChatDialog() },
@@ -228,7 +274,7 @@ function chatMenu(anchor) {
 
 // ---------- messages ----------
 function atBottom() { const l = $("#msgList"); return !l || l.scrollHeight - l.scrollTop - l.clientHeight < 80; }
-function scrollBottom(smooth) { const l = $("#msgList"); if (l) l.scrollTo({ top: l.scrollHeight, behavior: smooth ? "smooth" : "auto" }); updateToBottom(); }
+function scrollBottom(smooth) { const l = $("#msgList"); if (l) l.scrollTo({ top: l.scrollHeight, behavior: smooth ? "smooth" : "auto" }); wasAtBottom = true; updateToBottom(); }
 function scrollToMessage(id, flash, alignTop) {
   const el = document.getElementById("m" + id);
   if (!el) return false;
@@ -244,8 +290,14 @@ function updateToBottom() {
   const cnt = $("#toBottomCount");
   if (cnt) cnt.textContent = state.newBelow ? String(state.newBelow) : "";
 }
+// the newest messages stay in view when the keyboard opens (the page gets shorter) or the composer is tapped
+let wasAtBottom = true;
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", () => { if (wasAtBottom && $("#msgList")) scrollBottom(); });
+}
 async function onListScroll() {
   const l = $("#msgList");
+  wasAtBottom = atBottom();
   updateToBottom();
   if (atBottom()) { state.newBelow = 0; markReadSoon(); }
   if (l.scrollTop < 120 && state.moreBefore && !state.loadingOlder && state.msgs.length) {
@@ -511,27 +563,60 @@ function renderSelectBar() {
     h("button", { class: "btn primary", type: "button", disabled: !n, onclick: () => { const ids = [...state.selecting].sort((a, b) => a - b); stopSelecting(); forwardDialog(ids); } }, "↪ Forward"));
 }
 
-// ---------- pin bar ----------
+// ---------- the strip under the chat's header: announcements, pins, scheduled messages, My room's note ----------
+// One strip: the first item shows (an announcement waiting for you comes first), "+N ▾" opens the others.
 async function renderPinBar() {
-  const bar = $("#pinBar");
-  if (!bar || !state.current) return;
+  if (!state.current) return;
   const cid = state.current;
   let pins = [];
   try { pins = (await api(`api/conversations/${cid}/pins`)).messages; } catch (e) { return; }
   if (cid !== state.current) return;
   state.pins = pins;
-  if (!pins.length) { clear(bar); bar.className = ""; return; }
-  let i = 0;
-  const text = h("span", { class: "pin-text ellipsis" });
-  const paint = () => { const p = pins[i]; text.textContent = (p.kind === "poll" ? "📊 " + p.poll.question : p.kind === "card" ? (p.card ? (CARD_ICONS[p.card.type] || "📄") + " " + p.card.title : p.body) : plainText(p.body) || (p.attachments[0] ? "📎 " + p.attachments[0].name : "")) || "…"; };
-  paint();
-  bar.className = "pin-bar";
-  mount(bar,
-    h("button", { class: "pin-main", type: "button", title: "Go to the pinned message", onclick: () => { jumpTo(pins[i].id); if (pins.length > 1) { i = (i + 1) % pins.length; paint(); count.textContent = `${i + 1}/${pins.length}`; } } },
-      h("span", null, "📌"), text),
-    h("span", { class: "hint", id: "pinCount" }, pins.length > 1 ? `1/${pins.length}` : ""),
-    h("button", { class: "icon-btn", type: "button", title: "All pinned messages", "aria-label": "All pinned messages", onclick: () => pinsDialog() }, "☰"));
-  const count = $("#pinCount");
+  state.strip.pins = pins;
+  if (state.strip.pinAt >= pins.length) state.strip.pinAt = 0;
+  paintStrip();
+}
+function pinText(p) {
+  return (p.kind === "poll" ? "📊 " + p.poll.question : p.kind === "card" ? (p.card ? (CARD_ICONS[p.card.type] || "📄") + " " + p.card.title : p.body) : plainText(p.body) || (p.attachments[0] ? "📎 " + p.attachments[0].name : "")) || "…";
+}
+function stripRows() {
+  const st = state.strip;
+  const rows = [];
+  const ann = [...st.ann].sort((a, b) => b.announcement.pending.includes(state.me.id) - a.announcement.pending.includes(state.me.id));
+  for (const a of ann) rows.push(annRow(a));
+  if (st.pins.length) {
+    const pins = st.pins;
+    rows.push(h("div", { class: "strip-row pin" },
+      h("button", { class: "pin-main", type: "button", title: "Go to the pinned message", onclick: () => {
+        jumpTo(pins[st.pinAt].id);
+        if (pins.length > 1) { st.pinAt = (st.pinAt + 1) % pins.length; paintStrip(); }
+      } }, h("span", null, "📌"), h("span", { class: "pin-text ellipsis" }, pinText(pins[st.pinAt]))),
+      pins.length > 1 ? h("span", { class: "hint", id: "pinCount" }, `${st.pinAt + 1}/${pins.length}`) : null,
+      h("button", { class: "icon-btn", type: "button", title: "All pinned messages", "aria-label": "All pinned messages", onclick: () => pinsDialog() }, "☰")));
+  }
+  if (st.sched.length) {
+    rows.push(h("div", { class: "strip-row sched" }, h("button", { class: "pin-main", type: "button", onclick: () => scheduledDialog(state.current) },
+      h("span", null, "🕓"), h("span", { class: "grow ellipsis" }, `${st.sched.length} scheduled — next ${fmtFull(st.sched[0].sendAt)}`))));
+  }
+  if (st.note) {
+    rows.push(h("div", { class: "strip-row note" },
+      h("span", { class: "grow" }, "📌 Only you can see this in the app — notes, links and documents for yourself. It isn't encrypted. ",
+        h("button", { class: "link-btn", type: "button", onclick: () => showPage("settings") }, "Who can see what")),
+      h("button", { class: "icon-btn", type: "button", "aria-label": "Hide this note", title: "Hide this note", onclick: () => { lsSet("hchat.roomNoteHidden", "1"); st.note = false; paintStrip(); } }, "✕")));
+  }
+  return rows;
+}
+function paintStrip() {
+  const bar = $("#chatStrip");
+  if (!bar) return;
+  const rows = stripRows();
+  if (!rows.length) { clear(bar); bar.className = ""; return; }
+  const open = state.stripOpen && rows.length > 1;
+  bar.className = "chat-strip" + (open ? " open" : "");
+  mount(bar, h("div", { class: "strip-rows" }, open ? rows : rows[0]),
+    rows.length > 1 ? h("button", { class: "icon-btn strip-more", type: "button", "aria-expanded": String(open),
+      "aria-label": open ? "Show less" : `Show ${rows.length - 1} more`, title: open ? "Show less" : "Show the others",
+      onclick: () => { state.stripOpen = !open; paintStrip(); } }, open ? "▴" : `+${rows.length - 1} ▾`) : null);
 }
 
 // ---------- attachments ----------

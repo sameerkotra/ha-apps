@@ -1,8 +1,16 @@
 /* Pages outside a chat: starred, reminders, my files, search, settings, admin, whoami. */
 "use strict";
 
-async function showPage(page, arg) {
+// Open a page: its address (main.js: pageAddress); the route draws it (renderPage). opts.tab: from a menu (Back then
+// goes to the chat list). Going to the same page again (a refresh, another admin tab) doesn't add a step to Back.
+function showPage(page, arg, opts = {}) {
+  if (state.adminOnly) { if (page === "admin") return renderAdminTab(); return Promise.resolve(); }
+  return navigate(pageAddress(page, arg), { tab: opts.tab, replace: opts.replace || state.page === page });
+}
+const PAGE_TITLES = { starred: "☆ Starred", reminders: "⏰ Reminders", calls: "📞 Calls", files: "📁 My files", search: "🔍 Search", settings: "⚙ Settings", admin: "🛡️ Admin", whoami: "👤 How the app sees you" };
+async function renderPage(page, arg) {
   saveDraft();
+  if (page === "admin" && state.page === "admin" && $("#adminBody")) { state.pageArg = arg; return renderAdminTab(); }   // another tab, or a refresh
   state.page = page;
   state.pageArg = arg;
   if (page !== "search") { const gs = $("#globalSearch"); if (gs) gs.value = ""; }
@@ -11,70 +19,111 @@ async function showPage(page, arg) {
   sendPresence();
   setView("main");
   const main = $("#main");
-  mount(main, h("div", { class: "loading" }, "Loading…"));
-  const back = h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back", onclick: backToList }, "←");
-  const titles = { starred: "☆ Starred", reminders: "⏰ Reminders", calls: "📞 Calls", files: "📁 My files", search: "🔍 Search", settings: "⚙ Settings", admin: "🛡️ Admin", whoami: "👤 How the app sees you" };
+  const body = h("div", { class: "page-body" });
+  const back = h("button", { class: "icon-btn back-btn", type: "button", "aria-label": "Back", onclick: goBack }, "←");
+  mount(main, h("section", { class: "page" }, h("div", { class: "page-head" }, back, h("h2", null, PAGE_TITLES[page] + (page === "search" ? `: “${arg}”` : ""))), body));
+  UI.loading(body);
   let content;
   try {
     content = await ({ starred: starredPage, reminders: remindersPage, calls: callsPage, files: myFilesPage, search: searchPage, settings: settingsPage, admin: adminPage, whoami: whoamiPage }[page])(arg);
-  } catch (e) { content = h("p", { class: "error" }, e.message); }
-  if (state.page !== page) return;
-  mount(main, h("section", { class: "page" }, h("div", { class: "page-head" }, back, h("h2", null, titles[page] + (page === "search" ? `: “${arg}”` : ""))), h("div", { class: "page-body" }, content)));
+  } catch (e) { content = UI.errorBox(e, () => renderPage(page, arg)); }
+  if (state.page !== page || state.pageArg !== arg || !body.isConnected) return;
+  mount(body, content);
 }
 
+// Starred: grouped by chat (newest star first); a chat filter when there are more than 10
 async function starredPage() {
   const r = await api("api/me/starred");
-  if (!r.messages.length) return h("p", { class: "hint" }, "Star a message (⋯ → ☆ Star) to keep it here. Only you see your stars.");
+  if (!r.messages.length) return UI.empty("No starred messages", "Star a message (⋯ → ☆ Star) to keep it here. Only you see your stars.");
   const ctx = { myName: state.me.name };
-  return h("div", { class: "result-list" }, r.messages.map((m) => h("div", { class: "result card-ish" },
-    h("div", { class: "row" }, h("span", { class: "hint grow" }, `${m.conversationName} · ${m.userId === state.me.id ? "You" : m.author} · ${fmtFull(m.createdAt)}`),
+  const item = (m) => h("div", { class: "result card-ish" },
+    h("div", { class: "row" }, h("span", { class: "hint grow" }, `${m.userId === state.me.id ? "You" : m.author} · ${fmtFull(m.createdAt)}`),
       h("button", { class: "btn small", type: "button", onclick: () => openChatAt(m.conversationId, m.id) }, "Show in chat"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "Unstar", title: "Unstar", onclick: async () => { try { await api(`api/messages/${m.id}/star`, { method: "DELETE" }); showPage("starred"); } catch (e) { fail(e); } } }, "★")),
     m.kind === "poll" ? h("div", null, "📊 " + m.poll.question) : m.kind === "card" && m.card ? cardEl(m) : m.body ? renderText(m.body, ctx) : null,
-    m.attachments.length ? attachmentsEl(m) : null)));
+    m.attachments.length ? attachmentsEl(m) : null);
+  const groups = new Map();
+  for (const m of r.messages) { if (!groups.has(m.conversationId)) groups.set(m.conversationId, { name: m.conversationName, list: [] }); groups.get(m.conversationId).list.push(m); }
+  const list = h("div");
+  const draw = (only) => mount(list, [...groups].filter(([id]) => !only || id === only).map(([, g]) =>
+    [h("div", { class: "ui-group-head" }, g.name, h("span", { class: "ui-group-total" }, String(g.list.length))), h("div", { class: "result-list" }, g.list.map(item))]));
+  draw("");
+  const filter = r.messages.length > 10 && groups.size > 1 ? h("select", { class: "page-filter", "aria-label": "Chat", onchange: (e) => draw(e.target.value) },
+    h("option", { value: "" }, "All chats"), [...groups].map(([id, g]) => h("option", { value: id }, `${g.name} (${g.list.length})`))) : null;
+  return h("div", null, filter, list);
 }
 
+// one header per day over a list that is newest first (.ui-group-head)
+function byDay(items, when, row) {
+  const out = [];
+  let day = null, box = null;
+  for (const x of items) {
+    const d = fmtDay(when(x));
+    if (d !== day) { day = d; box = h("div", { class: "result-list" }); out.push(h("div", { class: "ui-group-head" }, d), box); }
+    box.appendChild(row(x));
+  }
+  return out;
+}
 async function callsPage() {
   const r = await api("api/me/calls");
-  const newBtn = h("div", { class: "row" }, h("span", { class: "grow" }), h("button", { class: "btn primary", type: "button", onclick: () => newCallDialog() }, "📞 New call…"));
-  if (!r.calls.length) return h("div", null, newBtn, h("p", { class: "hint" }, "Your calls will be listed here. Call someone with 📞 at the top of a chat, or pick people with New call."));
+  const newBtn = h("button", { class: "btn primary", type: "button", onclick: () => newCallDialog() }, "📞 New call…");
+  if (!r.calls.length) return UI.empty("No calls yet", "Call someone with 📞 at the top of a chat, or pick people with New call.", newBtn);
   const word = (x) => (x.kind === "video" ? "📹 " : "") + (x.group ? "Group · " : "") + (x.outcome === "answered"
     ? (x.myState === "left" ? (x.outgoing ? "Outgoing" : "Incoming") + (x.seconds == null ? "" : " · " + fmtDuration(x.seconds)) + (x.group && x.with.length ? " · with " + x.with.join(", ") : "") : "Missed")
     : x.missed ? "Missed" : x.outcome === "busy" ? "Busy" : x.outcome === "declined" ? (x.outgoing ? "Declined" : "You declined") : x.outcome === "missed" ? "No answer" : "Couldn't connect");
   const row = (x) => h("div", { class: "result card-ish call-row" + (x.missed ? " missed" : "") },
     x.group ? h("span", { class: "avatar group small " + colorOf(x.peerName), "aria-hidden": "true" }, "👥") : avatar(x.peerName, x.peerId, { small: true, noDot: true }),
     h("div", { class: "grow" }, h("div", null, h("strong", null, x.peerName)),
-      h("div", { class: "hint" }, (x.outgoing ? "↗ " : "↙ ") + word(x) + " · " + fmtFull(x.startedAt))),
+      h("div", { class: "hint" }, (x.outgoing ? "↗ " : "↙ ") + word(x) + " · " + fmtTime(x.startedAt))),
     x.canCallBack ? h("button", { class: "btn small", type: "button", onclick: () => { const c = convById(x.conversationId); if (c) startCall(c, x.kind); } }, (x.kind === "video" ? "📹" : "📞") + " Call back") : null,
     h("button", { class: "icon-btn", type: "button", title: "Open the chat", "aria-label": "Open the chat", onclick: () => x.messageId ? openChatAt(x.conversationId, x.messageId) : openChat(x.conversationId) }, "💬"));
-  const missed = r.calls.filter((x) => x.missed);
-  return h("div", null, newBtn,
-    missed.length ? h("div", { class: "lbl-sm" }, "Missed") : null, missed.length ? h("div", { class: "result-list" }, missed.map(row)) : null,
-    h("div", { class: "lbl-sm" }, "Recent"), h("div", { class: "result-list" }, r.calls.map(row)));
+  // every call once, by day; missed ones are a filter (a chip with their count), not listed twice
+  const missed = r.calls.filter((x) => x.missed).length;
+  let onlyMissed = false;
+  const list = h("div");
+  const chip = missed ? h("button", { class: "chip filter-chip", type: "button", "aria-pressed": "false", onclick: () => {
+    onlyMissed = !onlyMissed; chip.classList.toggle("on", onlyMissed); chip.setAttribute("aria-pressed", String(onlyMissed)); draw();
+  } }, `Missed · ${missed}`) : null;
+  const draw = () => mount(list, byDay(onlyMissed ? r.calls.filter((x) => x.missed) : r.calls, (x) => x.startedAt, row));
+  draw();
+  return h("div", null, h("div", { class: "row wrap page-tools" }, chip, h("span", { class: "grow" }), newBtn), list);
 }
+// Reminders: the open ones under Overdue / Today / Later; done ones folded (the last 10)
 async function remindersPage() {
   const r = await api("api/me/reminders");
-  if (!r.reminders.length) return h("p", { class: "hint" }, "Use ⋯ → ⏰ Remind me on any message. The reminder comes to you only.");
-  const open = r.reminders.filter((x) => !x.doneAt), done = r.reminders.filter((x) => x.doneAt);
+  if (!r.reminders.length) return UI.empty("No reminders", "Use ⋯ → ⏰ Remind me on any message. The reminder comes to you only.");
+  const open = r.reminders.filter((x) => !x.doneAt), done = r.reminders.filter((x) => x.doneAt).slice(0, 10);
   const row = (x) => h("div", { class: "result card-ish" + (x.doneAt ? " done" : "") },
     h("div", { class: "row" }, h("span", { class: "grow" }, h("strong", null, x.doneAt ? "Done " + fmtFull(x.doneAt) : "⏰ " + fmtFull(x.dueAt)),
       h("span", { class: "hint" }, ` · ${x.conversationName}${x.author ? " · " + x.author : ""}`)),
       h("button", { class: "btn small", type: "button", onclick: () => openChatAt(x.conversationId, x.messageId) }, "Show"),
       h("button", { class: "icon-btn", type: "button", "aria-label": "Delete reminder", onclick: async () => { try { await api(`api/me/reminders/${x.id}`, { method: "DELETE" }); showPage("reminders"); } catch (e) { fail(e); } } }, "✕")),
     h("div", { class: "ellipsis" }, x.text));
-  return h("div", null, open.length ? h("div", { class: "result-list" }, open.map(row)) : h("p", { class: "hint" }, "Nothing coming up."),
-    done.length ? h("div", { class: "lbl-sm" }, "Done") : null, done.length ? h("div", { class: "result-list" }, done.map(row)) : null);
+  const now = new Date();
+  const endOfToday = new Date(now); endOfToday.setHours(23, 59, 59, 999);
+  const when = (x) => { const d = toDate(x.dueAt); return !d ? "Later" : d < now ? "Overdue" : d <= endOfToday ? "Today" : "Later"; };
+  const sections = ["Overdue", "Today", "Later"].map((k) => [k, open.filter((x) => when(x) === k)]).filter(([, l]) => l.length);
+  return h("div", null,
+    sections.length ? sections.map(([k, l]) => [h("div", { class: "ui-group-head" + (k === "Overdue" ? " overdue" : "") }, k, h("span", { class: "ui-group-total" }, String(l.length))), h("div", { class: "result-list" }, l.map(row))])
+      : h("p", { class: "hint" }, "Nothing coming up."),
+    done.length ? h("details", { class: "done-fold" }, h("summary", null, `Done (last ${done.length})`), h("div", { class: "result-list" }, done.map(row))) : null);
 }
 
+// My files: the kind tabs with a "Starred" chip, under month headers
 async function myFilesPage() {
   const body = h("div");
   let type = "", starred = false;
-  const load = async () => { try { mount(body, filesView((await api(`api/me/files?type=${type}&starred=${starred}`)).files, true)); } catch (e) { fail(e); } };
-  const tabs = h("div", { class: "tabs" }, [["", "All"], ["images", "Photos"], ["pdfs", "PDFs"], ["voice", "Voice"], ["other", "Other"]].map(([v, l]) =>
-    h("button", { class: "tab" + (v === type ? " on" : ""), type: "button", onclick: (e) => { type = v; tabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("on")); e.currentTarget.classList.add("on"); load(); } }, l)));
-  const star = h("label", { class: "check" }, h("input", { type: "checkbox", onchange: (e) => { starred = e.target.checked; load(); } }), h("span", null, "Files in starred messages (from anyone)"));
+  const load = async () => {
+    UI.loading(body);
+    try { mount(body, filesView((await api(`api/me/files?type=${type}&starred=${starred}`)).files, true, null, { months: true })); }
+    catch (e) { mount(body, UI.errorBox(e, load)); }
+  };
+  const star = h("button", { class: "tab star-tab", type: "button", "aria-pressed": "false", title: "Files in starred messages (from anyone)", onclick: () => {
+    starred = !starred; star.classList.toggle("on", starred); star.setAttribute("aria-pressed", String(starred)); load();
+  } }, "☆ Starred");
+  const tabs = fileTypeTabs(() => type, (v) => { type = v; load(); }, star);
   load();
-  return h("div", null, h("p", { class: "hint" }, "Files you've shared, in chats you're still in."), tabs, star, body);
+  return h("div", null, h("p", { class: "hint" }, "Files you've shared, in chats you're still in. ☆ Starred: files in messages you starred, from anyone."), tabs, body);
 }
 
 async function searchPage(q) {
@@ -88,8 +137,10 @@ async function settingsPage() {
   const s = me.settings;
   const save = async (body) => { try { state.me = await api("api/me/settings", { method: "PUT", body }); toast("Saved"); } catch (e) { fail(e); showPage("settings"); } };
   const levels = [["all", "Every message"], ["direct_mentions", "Direct messages, mentions and replies to me"], ["off", "Nothing"]];
-  const qs = h("input", { type: "time", value: s.quietStart || "", "aria-label": "Quiet from" });
-  const qe = h("input", { type: "time", value: s.quietEnd || "", "aria-label": "Quiet until" });
+  // quiet hours save as soon as both times are set (like everything else here); Off clears them
+  const saveQuiet = () => { if (qs.value && qe.value) save({ quietStart: qs.value, quietEnd: qe.value }); };
+  const qs = h("input", { type: "time", value: s.quietStart || "", "aria-label": "Quiet from", onchange: () => saveQuiet() });
+  const qe = h("input", { type: "time", value: s.quietEnd || "", "aria-label": "Quiet until", onchange: () => saveQuiet() });
   const themeSel = HouseholdTheme.bindSelect(h("select", { "aria-label": "Theme" }));
   const overrides = state.convs.filter((c) => c.kind !== "personal" && (c.notify !== "default" || c.muted));
   return h("div", { class: "cards" },
@@ -102,11 +153,10 @@ async function settingsPage() {
         me.app.notificationReply ? "Phone notifications have Reply and Mark as read buttons." : null),
       h("div", { class: "lbl-sm" }, "Quiet hours"),
       h("div", { class: "row wrap" }, qs, h("span", null, "to"), qe,
-        h("button", { class: "btn small", type: "button", onclick: () => save({ quietStart: qs.value || null, quietEnd: qe.value || null }) }, "Save"),
         h("button", { class: "btn small ghost", type: "button", onclick: () => { qs.value = qe.value = ""; save({ quietStart: null, quietEnd: null }); } }, "Off")),
       h("p", { class: "hint" }, `Notifications wait until quiet hours end, then come as one summary. Home Assistant's time zone: ${me.timeZone}.`),
       overrides.length ? h("div", null, h("div", { class: "lbl-sm" }, "Chats with their own setting"),
-        overrides.map((c) => h("div", { class: "row" }, h("button", { class: "link-btn grow", type: "button", onclick: () => { openChat(c.id).then(() => chatNotifyDialog()); } }, c.name),
+        overrides.map((c) => h("div", { class: "row" }, h("button", { class: "link-btn grow", type: "button", onclick: () => { openChat(c.id).then(() => { if (state.current === c.id && state.detail) chatNotifyDialog(); }); } }, c.name),
           h("span", { class: "hint" }, c.muted ? "muted" : { all: "all messages", mentions: "mentions only", off: "off" }[c.notify])))) : null),
     h("div", { class: "card" }, h("h3", null, "You"),
       h("div", { class: "row" }, avatar(me.name, me.id, { big: true, noDot: true, photo: me.avatar }),
@@ -119,6 +169,9 @@ async function settingsPage() {
       me.app.assistant ? h("p", { class: "hint" }, "It can tell you which of your chats have unread messages and how many — never what anyone wrote.") : null),
     h("div", { class: "card" }, h("h3", null, "Look"), field("Theme", themeSel, "Shared with the other household apps.")),
     privacyCard(),
+    h("details", { class: "card about-card" }, h("summary", null, "👤 How the app sees you"),
+      h("p", { class: "hint" }, "Your user name and id as Home Assistant hands them to the app — for setting up admins and fixing access."),
+      h("a", { class: "btn small", href: "#/me" }, "Open")),
     h("p", { class: "hint" }, `Household Chat ${me.version}.`));
 }
 
@@ -133,13 +186,31 @@ function privacyCard() {
 }
 
 // ---------- admin ----------
+// The tabs stay; a tab (or a refresh) draws only its own part (#adminBody). The tab is in the address: #/admin/<tab>.
+const ADMIN_TAB_LABELS = [["people", "People"], ["chats", "Chats"], ["folders", "Shared folders"], ["settings", "App settings"], ["storage", "Storage"]];
 async function adminPage() {
-  const tabs = [["people", "People"], ["chats", "Chats"], ["folders", "Shared folders"], ["settings", "App settings"], ["storage", "Storage"]];
-  const body = h("div");
-  const tabBar = h("div", { class: "tabs" }, tabs.map(([v, l]) => h("button", { class: "tab" + (state.adminTab === v ? " on" : ""), type: "button", onclick: () => { state.adminTab = v; showPage("admin"); } }, l)));
-  const fn = { people: adminPeople, chats: adminChats, folders: adminFolders, settings: adminSettings, storage: adminStorage }[state.adminTab];
-  mount(body, await fn());
-  return h("div", null, tabBar, body);
+  const tabBar = h("div", { class: "tabs", id: "adminTabs", role: "tablist" }, ADMIN_TAB_LABELS.map(([v, l]) => h("button", { class: "tab", type: "button", "data-tab": v, onclick: () => {
+    state.adminTab = v;
+    if (state.adminOnly) renderAdminTab(); else navigate("#/admin/" + v, { replace: true });
+  } }, l)));
+  const wrap = h("div", null, tabBar, h("div", { id: "adminBody" }));
+  setTimeout(() => renderAdminTab(wrap), 0);
+  return wrap;
+}
+let adminDraw = 0;
+async function renderAdminTab(root) {
+  const scope = root || document;
+  const body = scope.querySelector("#adminBody");
+  if (!body) return;
+  const tab = ADMIN_TABS.includes(state.adminTab) ? state.adminTab : "people";
+  scope.querySelectorAll("#adminTabs .tab").forEach((t) => { const on = t.dataset.tab === tab; t.classList.toggle("on", on); if (on) t.setAttribute("aria-current", "page"); else t.removeAttribute("aria-current"); });
+  const n = ++adminDraw;
+  if (!body.firstChild) UI.loading(body);
+  let content;
+  try { content = await ({ people: adminPeople, chats: adminChats, folders: adminFolders, settings: adminSettings, storage: adminStorage }[tab])(); }
+  catch (e) { content = UI.errorBox(e, () => renderAdminTab()); }
+  if (n !== adminDraw || !body.isConnected) return;
+  mount(body, content);
 }
 // The shared people page (common/people.js) with this app's access (enable / disable), child accounts,
 // home/away and, in a dialog, phones and extra notify services.
@@ -201,19 +272,32 @@ async function presenceDialog(x) {
     h("div", { class: "actions" }, h("button", { class: "btn" + (x.presenceChosen ? "" : " primary"), type: "button", onclick: () => set(null) },
       "Automatic — the person linked to their login" + (x.person ? ` (${x.person})` : " (none yet)")))));
 }
+let adminChatsSort = "size";
 async function adminChats() {
   const r = await api("api/admin/conversations");
   const kindIcon = { group: "👥", direct: "💬", personal: "📌" };
-  return h("div", null,
-    h("div", { class: "notice info" }, "Admins can't read chats they aren't in. This page shows names, members, dates and sizes only."),
-    h("table", { class: "table stack" }, h("thead", null, h("tr", null, ["Chat", "Members", "Messages", "Files", "Last activity", ""].map((t) => h("th", null, t)))),
-      h("tbody", null, r.conversations.map((c) => h("tr", null,
+  const sorts = { size: ["Size", (a, b) => (b.bytes || 0) - (a.bytes || 0)], activity: ["Last activity", (a, b) => String(b.lastActivityAt || "").localeCompare(String(a.lastActivityAt || ""))],
+    messages: ["Messages", (a, b) => (b.messages || 0) - (a.messages || 0)], name: ["Name", (a, b) => a.name.localeCompare(b.name)] };
+  const table = h("div");
+  const draw = () => {
+    const rows = [...r.conversations].sort(sorts[adminChatsSort][1]);
+    const th = (label, key) => h("th", { "aria-sort": key && key === adminChatsSort ? (key === "name" ? "ascending" : "descending") : null },
+      key ? h("button", { class: "th-sort" + (key === adminChatsSort ? " on" : ""), type: "button", onclick: () => { adminChatsSort = key; sel.value = key; draw(); } }, label, key === adminChatsSort ? (key === "name" ? " ▲" : " ▼") : "") : label);
+    mount(table, h("table", { class: "table stack" }, h("thead", null, h("tr", null, th("Chat", "name"), th("Members"), th("Messages", "messages"), th("Files", "size"), th("Last activity", "activity"), th(""))),
+      h("tbody", null, rows.map((c) => h("tr", null,
         h("td", { "data-label": "Chat" }, kindIcon[c.kind] + " " + c.name + (c.household ? " (Household)" : "")),
         h("td", { "data-label": "Members" }, c.members ? c.members.join(", ") : "—"),
         h("td", { "data-label": "Messages" }, c.messages != null ? String(c.messages) : "—"),
         h("td", { "data-label": "Files" }, `${c.files} · ${fmtSize(c.bytes)}`),
         h("td", { "data-label": "Last activity" }, c.lastActivityAt ? fmtWhen(c.lastActivityAt) : "—"),
         h("td", { class: "cell-actions" }, c.canDelete ? h("button", { class: "btn small danger", type: "button", onclick: () => adminDeleteChat(c) }, "Delete…") : null))))));
+  };
+  const sel = h("select", { class: "page-filter", "aria-label": "Sort by", onchange: (e) => { adminChatsSort = e.target.value; draw(); } },
+    Object.entries(sorts).map(([k, [l]]) => h("option", { value: k, selected: k === adminChatsSort }, "Sort by " + l.toLowerCase())));
+  draw();
+  return h("div", null,
+    h("div", { class: "notice info" }, "Admins can't read chats they aren't in. This page shows names, members, dates and sizes only."),
+    h("div", { class: "row wrap page-tools" }, sel), table);
 }
 function adminDeleteChat(c) {
   const input = h("input", { type: "text", "aria-label": "Group name" });
@@ -374,7 +458,19 @@ async function adminStorage() {
       state.me = await api("api/me").catch(() => state.me); renderFilesBanner(); showPage("admin");
     } catch (e) { fail(e); }
   };
+  const restoreBtn = h("button", { class: "btn danger", type: "button", onclick: async () => {
+    const f = restoreFile.files[0];
+    if (!f) { toast("Choose a backup .zip first.", { error: true }); return; }
+    if (!await confirmDialog("Restore backup", "Replace every message with this backup? Messages sent after it was taken are lost. Files in the backup are put back.", "Restore", true)) return;
+    try { const r = await api("api/admin-storage-import-db", { method: "POST", rawBody: f }); toast(`Restored${r.files ? ` with ${r.files} files` : ""} — reloading`); setTimeout(() => location.reload(), 1200); } catch (e) { fail(e); }
+  } }, "Restore…");
+  const kpi = (label, value, cls) => h("div", { class: "kpi" }, h("div", { class: "kpi-label" }, label), h("div", { class: "kpi-value" + (cls ? " " + cls : "") }, value));
   return h("div", { class: "cards" },
+    // at a glance: connected? · used (of the limit) · free space
+    h("div", { class: "summary-strip" },
+      kpi("Chat files folder", st.online ? "Connected" : "Not connected", st.online ? "pos" : "neg"),
+      kpi(s.quotaGb ? `Used of ${s.quotaGb} GB` : "Used", fmtSize(s.filesBytes) + (quotaPct !== null ? ` (${quotaPct}%)` : ""), quotaPct !== null && quotaPct >= 80 ? "neg" : null),
+      kpi("Free on the disk", st.freeBytes !== null && st.freeBytes !== undefined ? fmtSize(st.freeBytes) : "—")),
     h("div", { class: "card" }, h("h3", null, "File storage"),
       h("div", { class: "kv" },
         h("span", { class: "k" }, "Folder"), h("span", null, h("code", { class: "path" }, st.path)),
@@ -403,16 +499,13 @@ async function adminStorage() {
       h("button", { class: "btn", type: "button", onclick: async () => { try { const r = await api("api/admin/storage/check", { method: "POST" }); toast(`${r.missing} missing · ${r.thumbsRemoved} old previews removed`); showPage("admin"); } catch (e) { fail(e); } } }, "Check files")),
     await storageCleanupCard(),
     retentionCard(s.retention),
-    h("div", { class: "card" }, h("h3", null, "Backup and restore"),
+    h("div", { class: "card" }, h("h3", null, "Backup"),
       h("div", { class: "notice" }, "A backup contains every message readable, and with files every shared file. Anyone who has it can read all chats — keep it safe."),
       h("label", { class: "check" }, inclFiles, h("span", null, "Include files (can be large)")),
-      h("button", { class: "btn", type: "button", onclick: async () => { try { toast("Preparing the backup…"); const res = await api(`api/admin-storage-download-db?includeFiles=${inclFiles.checked}`, { raw: true }); const cd = res.headers.get("content-disposition") || ""; const m = /filename="?([^";]+)"?/.exec(cd); saveBlob(await res.blob(), m ? m[1] : "household-chat-backup.zip"); } catch (e) { fail(e); } } }, "⬇ Download backup"),
-      h("div", { class: "row wrap" }, restoreFile, h("button", { class: "btn danger", type: "button", onclick: async () => {
-        const f = restoreFile.files[0];
-        if (!f) { toast("Choose a backup .zip first.", { error: true }); return; }
-        if (!await confirmDialog("Restore backup", "Replace every message with this backup? Messages sent after it was taken are lost. Files in the backup are put back.", "Restore", true)) return;
-        try { const r = await api("api/admin-storage-import-db", { method: "POST", rawBody: f }); toast(`Restored${r.files ? ` with ${r.files} files` : ""} — reloading`); setTimeout(() => location.reload(), 1200); } catch (e) { fail(e); }
-      } }, "Restore…"))));
+      h("button", { class: "btn", type: "button", onclick: async () => { try { toast("Preparing the backup…"); const res = await api(`api/admin-storage-download-db?includeFiles=${inclFiles.checked}`, { raw: true }); const cd = res.headers.get("content-disposition") || ""; const m = /filename="?([^";]+)"?/.exec(cd); saveBlob(await res.blob(), m ? m[1] : "household-chat-backup.zip"); } catch (e) { fail(e); } } }, "⬇ Download backup")),
+    h("div", { class: "danger-zone" }, h("h3", null, "Restore a backup"),
+      h("p", { class: "hint" }, "Replaces every message with the backup's; messages sent after it was taken are lost."),
+      h("div", { class: "row wrap" }, restoreFile, restoreBtn)));
 }
 
 // ---------- storage clean-up (§15.10) ----------
@@ -469,7 +562,9 @@ async function adminFolders() {
   const modeName = { ro: "Read-only", rw: "Read and write" };
   const addBtn = h("button", { class: "btn primary", type: "button", disabled: !r.chats.length, onclick: () => folderDialog(r.chats) }, "＋ Share a folder");
   return h("div", null,
-    h("p", { class: "hint" }, "Share an existing folder from Home Assistant's /share (for example Documents/House) into any chats — groups, direct chats or personal rooms, several at once — each read-only or read and write. Members browse it from the chat's 📂 button, and new files are announced in the chat (not in personal rooms). Admins don't need to be in the chat."),
+    h("p", { class: "hint" }, "Share a folder from Home Assistant's /share into chats."),
+    h("details", { class: "about" }, h("summary", null, "More about shared folders"),
+      h("p", null, "Pick an existing folder (for example Documents/House) and any chats — groups, direct chats or personal rooms, several at once — each read-only or read and write. Members browse it from the chat's 📂 button (in the chat's ⋯ menu on a phone), and new files are announced in the chat (not in personal rooms). Admins don't need to be in the chat.")),
     addBtn,
     r.folders.length ? h("div", { class: "shared-list" }, r.folders.map((f) => h("div", { class: "card shared-card" },
       h("div", { class: "shared-head" },
@@ -482,7 +577,7 @@ async function adminFolders() {
             try { await api(`api/admin/folders/${f.id}`, { method: "DELETE" }); showPage("admin"); } catch (x) { fail(x); }
           } }, "Stop sharing"))),
       h("div", { class: "shared-chats" }, f.chats.map((c) => h("span", { class: "chip" + (c.mode === "rw" ? " on" : "") }, `${c.name} · ${modeName[c.mode]}`))),
-      h("div", { class: "hint" }, f.announce ? "New files are announced in the chats." : "New files aren't announced.")))) : h("p", { class: "hint" }, "No folders shared yet."));
+      h("div", { class: "hint" }, f.announce ? "New files are announced in the chats." : "New files aren't announced.")))) : UI.empty("No folders shared yet", null));
 }
 // one dialog to share a new folder, or change an existing one's name, chats and access
 function folderDialog(chatsList, existing) {

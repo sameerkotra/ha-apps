@@ -31,16 +31,27 @@ function composer(c) {
     micBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); voiceHoldUp = false; startVoice({ x: e.clientX }); });
     micBtn.addEventListener("contextmenu", (e) => e.preventDefault());
   }
-  const attach = h("button", { class: "icon-btn", type: "button", "aria-label": "Add", title: "Add a file, photo or poll", onclick: (e) => menu(e.currentTarget, [
-    { label: "📎 File or document", run: () => fileIn.click() },
-    { label: "📷 Photo or camera", run: () => camIn.click() },
-    c.kind !== "personal" ? { label: "📊 Poll", run: () => pollDialog() } : null,
-    !isChild() ? { label: "⏱ Disappear after…", run: () => perMessageDisappearMenu(attach) } : null,
-    state.detail && state.detail.canAnnounce ? { label: state.announce[cid] ? "📢 Don't send as announcement" : "📢 Send as announcement", run: () => { state.announce[cid] = !state.announce[cid]; renderBanner(); } } : null,
-    c.kind !== "personal" ? { label: "🕓 Send later…", run: () => scheduleDialog() } : null,
-    { label: "Aa Formatting", run: () => openModal("Formatting", formattingHelp()) },
-    state.me && state.me.assistantPage ? { label: "💬 Ask the assistant", run: () => askAssistant(ta.value) } : null,
-  ]) }, "＋");
+  // ＋: Attach (file, photo, poll) and Message options (disappear, announce, send later); formatting help as a
+  // small "Aa" link at the foot
+  const attach = h("button", { class: "icon-btn", type: "button", "aria-label": "Add", title: "Add a file, photo or poll", onclick: (e) => {
+    const opts = [
+      !isChild() ? { label: "⏱ Disappear after…", run: () => perMessageDisappearMenu(attach) } : null,
+      state.detail && state.detail.canAnnounce ? { label: state.announce[cid] ? "📢 Don't send as announcement" : "📢 Send as announcement", run: () => { state.announce[cid] = !state.announce[cid]; renderBanner(); } } : null,
+      c.kind !== "personal" ? { label: "🕓 Send later…", run: () => scheduleDialog() } : null,
+    ].filter(Boolean);
+    menu(e.currentTarget, [
+      { head: "Attach" },
+      { label: "📎 File or document", run: () => fileIn.click() },
+      { label: "📷 Photo or camera", run: () => camIn.click() },
+      c.kind !== "personal" ? { label: "📊 Poll", run: () => pollDialog() } : null,
+      opts.length ? { head: "Message options" } : null,
+      ...opts,
+      state.me && state.me.assistantPage ? "-" : null,
+      state.me && state.me.assistantPage ? { label: "💬 Ask the assistant", run: () => askAssistant(ta.value) } : null,
+      { row: h("div", { class: "menu-foot" }, h("button", { class: "link-btn", type: "button", title: "Formatting: *bold*, _italic_, `code`…",
+        onclick: () => { closeMenus(); openModal("Formatting", formattingHelp()); } }, "Aa Formatting help")) },
+    ]);
+  } }, "＋");
   const emojiBtn = h("button", { class: "icon-btn", type: "button", "aria-label": "Emoji", title: "Emoji", onclick: (e) => emojiPicker(e.currentTarget, (em) => insertAtCaret(ta, em)) }, "😊");
   const row = h("div", { class: "composer-row", id: "composerRow" }, attach, ta, emojiBtn, micBtn, sendBtn, fileIn, camIn);
   const el = h("div", { class: "composer", id: "composer" },
@@ -58,6 +69,8 @@ function composer(c) {
       if (mine) { e.preventDefault(); startEdit(mine); }
     }
   });
+  // the keyboard opening mustn't hide the newest messages
+  ta.addEventListener("focus", () => { const was = atBottom(); if (was) setTimeout(() => { if (was) scrollBottom(); }, 300); });
   ta.addEventListener("paste", (e) => {
     const files = [...(e.clipboardData ? e.clipboardData.files : [])];
     if (files.length) { e.preventDefault(); addFiles(files); }

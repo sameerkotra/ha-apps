@@ -1,5 +1,5 @@
 name: "Household Chat"
-version: "2.6.6"
+version: "2.7.0"
 slug: household_chat
 description: >-
   Private chat and file sharing for your household, inside Home Assistant.

@@ -8,9 +8,11 @@ async function boot() {
   if (state.me.disabled) { renderDisabled(); return; }
   await Promise.all([loadPeople(), loadConvs().catch(fail)]);
   renderShell();
+  initNav();
   const last = lsGet("hchat.lastChat");
   if (openFromRoute()) { /* a notification's link opened a chat or the ringing screen (§15.14) */ }
-  else if (FINE_POINTER && last && convById(last)) openChat(last);
+  else if (parseRoute(location.hash).page !== "home") route();           // a reload keeps your place
+  else if (FINE_POINTER && last && convById(last)) openChat(last, { replace: true });
   else renderEmptyMain();
   connectLive();
   checkCurrentCall();            // a call ringing for me when the page opens (e.g. Answer on the phone)
@@ -28,6 +30,33 @@ function expireTyping() {
     for (const [uid, x] of Object.entries(t)) if (x.until < now) delete t[uid];
     if (!Object.keys(t).length) delete state.typing[cid];
   }
+}
+// ---------- addresses (core.js: navigate) ----------
+const PAGE_ADDR = { starred: "starred", reminders: "reminders", calls: "calls", files: "files", settings: "settings", me: "whoami" };
+const ADMIN_TABS = ["people", "chats", "folders", "settings", "storage"];
+function parseRoute(hash) {
+  const parts = String(hash || "").replace(/^#\/?/, "").split("/").filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch (e) { return x; } });
+  if (!parts.length) return { page: "home" };
+  if (parts[0] === "c" && parts[1]) return { page: "chat", id: parts[1], around: parts[2] === "m" && /^\d+$/.test(parts[3] || "") ? Number(parts[3]) : null };
+  if (parts[0] === "admin") return { page: "admin", tab: ADMIN_TABS.includes(parts[1]) ? parts[1] : null };
+  if (parts[0] === "search" && parts[1]) return { page: "search", arg: parts.slice(1).join("/") };
+  if (PAGE_ADDR[parts[0]]) return { page: PAGE_ADDR[parts[0]] };
+  return { page: "home" };
+}
+function pageAddress(page, arg) {
+  if (page === "admin") return "#/admin/" + state.adminTab;
+  if (page === "search") return "#/search/" + encodeURIComponent(arg || "");
+  if (page === "whoami") return "#/me";
+  return "#/" + page;
+}
+// the address changed (a link, Back, navigate): draw that view
+function route() {
+  const r = parseRoute(location.hash);
+  if (r.page === "admin" && !state.me.isAdmin) r.page = "home";
+  if (r.page === "home") { routeTask = Promise.resolve(showHome()); return; }
+  if (r.page === "chat") { routeTask = loadChat(r.id, r.around ? { around: r.around } : {}); return; }
+  if (r.page === "admin" && r.tab) state.adminTab = r.tab;
+  routeTask = renderPage(r.page, r.arg);
 }
 const rememberChat = debounce(() => { if (state.current) lsSet("hchat.lastChat", state.current); }, 500);
 
@@ -89,7 +118,7 @@ function connectLive() {
     const d = JSON.parse(e.data);
     refreshConvsSoon();
     if (d.id === state.current) {
-      if (d.removed) { state.current = null; if (!d.deleted) toast("You're no longer in that chat."); if (state.page === "chat") renderEmptyMain(); }
+      if (d.removed) { if (!d.deleted) toast("You're no longer in that chat."); if (state.page === "chat") showHome(); else state.current = null; }
       else api(`api/conversations/${d.id}`).then((x) => { if (state.current === d.id) { state.detail = x; refreshSubline(); } }).catch(() => {});
     }
   });

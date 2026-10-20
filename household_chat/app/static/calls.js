@@ -276,6 +276,9 @@ function focusTile(id) {
   renderTiles();
 }
 function closeCallScreen() { const el = $("#callScreen"); if (el) el.remove(); }
+// Back on the call screen: a call that's ringing or under way is never ended (or declined) by Back — only the
+// "Call ended" screen closes
+function closeCallScreenByBack() { if (!call && !incoming) closeCallScreen(); }
 // one tile per other person (and my own picture while the camera is on); a tile shows their video when it's
 // on, else their photo, with a level bar and what's known about them
 function renderTiles() {
@@ -694,7 +697,7 @@ function routeOf(path, page) {
 function parentPath() { try { return window.parent !== window ? window.parent.location.pathname : null; } catch (e) { return null; } }
 function followRoute(r) {
   if (!r) return false;
-  if (r.kind === "chat") { if (convById(r.id)) openChat(r.id); else toast("That chat isn't here any more."); }
+  if (r.kind === "chat") { if (convById(r.id)) openChat(r.id, { tab: true }); else toast("That chat isn't here any more."); }
   else checkCurrentCall();                  // a ringing call shows its screen; an ended one is gone
   // the address goes back to the bare page, so a reload doesn't open it again
   const page = state.me && state.me.page;

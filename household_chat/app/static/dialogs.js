@@ -73,7 +73,7 @@ async function chatInfoDialog() {
   const me = d.members.find((x) => x.id === state.me.id) || {};
   const manager = d.kind === "group" && ["owner", "admin"].includes(me.role);
   const body = h("div", { class: "info" });
-  let m;
+  let m, groupOpen = false;
   const redraw = async () => {
     try {
       state.detail = d = await api(`api/conversations/${cid}`); await loadConvs(); draw(); refreshSubline();
@@ -87,29 +87,28 @@ async function chatInfoDialog() {
     const mgr = d.kind === "group" && ["owner", "admin"].includes(me2.role);
     const descBox = h("div", { class: "desc" }, d.description ? renderText(d.description, { names: memberNames() }) : h("span", { class: "hint" }, d.kind === "personal" ? "Add a description for yourself." : "No description."));
     const canDesc = d.kind === "personal" || (d.kind === "direct" && !d.readOnly) || mgr;
+    // header → quick actions → members → description → group settings (admins, folded) → danger zone → privacy
+    const quick = (icon, label, run) => h("button", { class: "quick-act", type: "button", onclick: run }, h("span", { class: "quick-icon", "aria-hidden": "true" }, icon), h("span", null, label));
+    const conv = convById(cid) || d;
     const parts = [
       h("div", { class: "info-head" },
         convIcon(d, { big: true }),
         h("div", { class: "grow" }, h("div", { class: "info-name" }, d.name),
           h("div", { class: "hint" }, d.kind === "personal" ? "Only you can see this in the app." : d.kind === "direct" ? presenceLine(d.otherUserId) : `Group · created ${fmtFull(d.createdAt)}`))),
-      h("p", { class: "hint privacy-line" }, d.kind === "personal" ? "🔓 Not encrypted — whoever can get into the Home Assistant machine or its backups can read it. " : "🔓 Only its members can read it in the app, but it isn't encrypted — whoever can get into the Home Assistant machine or its backups can read it. ",
-        h("button", { class: "link-btn", type: "button", onclick: () => { if (m) m.close(); showPage("settings"); } }, "More")),
-      h("div", { class: "section" }, h("div", { class: "row" }, h("span", { class: "lbl-sm grow" }, "Description"),
-        canDesc ? h("button", { class: "btn small", type: "button", onclick: () => {
-          const ta = h("textarea", { maxlength: "500", rows: "4", "aria-label": "Description" }); ta.value = d.description || "";
-          const dm = openModal("Description", h("form", { onsubmit: async (e) => { e.preventDefault(); await patch({ description: ta.value }); dm.close(); } },
-            ta, h("p", { class: "hint" }, "Up to 500 characters; formatting works (Aa)."), h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Save"))));
-        } }, "Edit") : null), descBox),
+      h("div", { class: "quick-row" },
+        d.kind !== "personal" && state.current === cid ? quick(conv.muted ? "🔕" : "🔔", conv.muted ? "Muted" : "Notify", () => chatNotifyDialog()) : null,
+        quick("📁", "Files", () => filesDialog(cid, d.name)),
+        state.current === cid ? quick("📌", "Pinned", () => pinsDialog()) : null,
+        state.current === cid ? quick("🔍", "Search", () => searchInChatDialog()) : null),
     ];
+    const descPart = h("div", { class: "section" }, h("div", { class: "row" }, h("span", { class: "lbl-sm grow" }, "Description"),
+      canDesc ? h("button", { class: "btn small", type: "button", onclick: () => {
+        const ta = h("textarea", { maxlength: "500", rows: "4", "aria-label": "Description" }); ta.value = d.description || "";
+        const dm = openModal("Description", h("form", { onsubmit: async (e) => { e.preventDefault(); await patch({ description: ta.value }); dm.close(); } },
+          ta, h("p", { class: "hint" }, "Up to 500 characters; formatting works (Aa)."), h("div", { class: "actions" }, h("button", { class: "btn primary", type: "submit" }, "Save"))));
+      } }, "Edit") : null), descBox);
+    const danger = [];
     if (d.kind === "group") {
-      if (mgr) {
-        const nm = h("input", { type: "text", maxlength: "60", value: d.groupName || d.name, "aria-label": "Group name" });
-        const ic = h("input", { type: "text", maxlength: "8", value: d.icon || "", "aria-label": "Icon", class: "icon-input" });
-        parts.push(h("form", { class: "section", onsubmit: (e) => { e.preventDefault(); patch({ name: nm.value, icon: ic.value.trim() || null }); } },
-          h("div", { class: "form-row" }, field("Name", nm), field("Icon", ic)), h("button", { class: "btn small", type: "submit" }, "Save name and icon")));
-        parts.push(h("label", { class: "check" }, h("input", { type: "checkbox", checked: d.newMembersSeeHistory, onchange: (e) => patch({ newMembersSeeHistory: e.target.checked }) }),
-          h("span", null, "New members see earlier messages")));
-      }
       parts.push(h("div", { class: "section" }, h("div", { class: "row" }, h("span", { class: "lbl-sm grow" }, `${d.members.length} members`),
         mgr ? h("button", { class: "btn small", type: "button", onclick: () => addMembersDialog(d, redraw) }, "＋ Add people") : null),
         d.members.map((x) => {
@@ -126,14 +125,25 @@ async function chatInfoDialog() {
             roleLbl ? h("span", { class: "chip" }, roleLbl) : null,
             acts.length ? h("button", { class: "icon-btn", type: "button", "aria-label": "Actions for " + x.name, onclick: (e) => menu(e.currentTarget, acts) }, "⋯") : null);
         })));
-      parts.push(h("div", { class: "actions" },
-        h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); leaveGroup(d); } }, "Leave group"),
-        me2.role === "owner" ? h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); deleteGroupDialog(d); } }, "Delete group…") : null));
-    }
-    if (d.kind === "direct") {
-      parts.push(h("div", { class: "actions" },
-        h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); deleteDirectDialog(convById(cid) || d); } }, "🗑 Delete chat…")));
-    }
+      parts.push(descPart);
+      if (mgr) {
+        const nm = h("input", { type: "text", maxlength: "60", value: d.groupName || d.name, "aria-label": "Group name" });
+        const ic = h("input", { type: "text", maxlength: "8", value: d.icon || "", "aria-label": "Icon", class: "icon-input" });
+        parts.push(h("details", { class: "group-settings section", open: groupOpen || null, ontoggle: (e) => { groupOpen = e.currentTarget.open; } }, h("summary", null, "Group settings"),
+          h("form", { onsubmit: (e) => { e.preventDefault(); patch({ name: nm.value, icon: ic.value.trim() || null }); } },
+            h("div", { class: "form-row" }, field("Name", nm), field("Icon", ic)), h("button", { class: "btn small", type: "submit" }, "Save name and icon")),
+          h("label", { class: "check" }, h("input", { type: "checkbox", checked: d.newMembersSeeHistory, onchange: (e) => patch({ newMembersSeeHistory: e.target.checked }) }),
+            h("span", null, "New members see earlier messages")),
+          canSetDisappearing(conv) && state.current === cid ? h("button", { class: "btn small", type: "button", onclick: () => disappearDialog() },
+            "⏱ Disappearing messages" + (conv.disappearSeconds ? ": " + durationLabel(conv.disappearSeconds) : "")) : null));
+      }
+      danger.push(h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); leaveGroup(d); } }, "Leave group"));
+      if (me2.role === "owner") danger.push(h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); deleteGroupDialog(d); } }, "Delete group…"));
+    } else parts.push(descPart);
+    if (d.kind === "direct") danger.push(h("button", { class: "btn danger", type: "button", onclick: () => { m.close(); deleteDirectDialog(convById(cid) || d); } }, "🗑 Delete chat…"));
+    if (danger.length) parts.push(h("div", { class: "danger-zone" }, h("h3", null, "Danger zone"), h("div", { class: "row wrap" }, danger)));
+    parts.push(h("p", { class: "hint privacy-line" }, "🔓 Not encrypted. ",
+      h("button", { class: "link-btn", type: "button", onclick: () => { if (m) m.close(); showPage("settings"); } }, "Who can see this")));
     mount(body, parts);
   };
   draw();
@@ -155,7 +165,7 @@ async function addMembersDialog(d, after) {
 }
 async function leaveGroup(c) {
   if (!await confirmDialog("Leave group", `Leave ${c.name}? You won't see its messages or files any more.`, "Leave", true)) return;
-  try { await api(`api/conversations/${c.id}/leave`, { method: "POST" }); state.current = null; await loadConvs(); renderEmptyMain(); } catch (e) { fail(e); }
+  try { await api(`api/conversations/${c.id}/leave`, { method: "POST" }); await loadConvs(); showHome(); } catch (e) { fail(e); }
 }
 // A one-to-one chat: deleted for me only — the other person keeps theirs; it comes back (empty) if either writes again
 async function deleteDirectDialog(c) {
@@ -163,8 +173,8 @@ async function deleteDirectDialog(c) {
   if (!await confirmDialog("Delete chat", `Delete your chat with ${who}? Its messages and files disappear for you — ${who} still has theirs. If either of you writes again, the chat comes back with only the new messages. This can't be undone.`, "Delete chat", true)) return;
   try {
     const r = await api(`api/conversations/${c.id}/me`, { method: "DELETE" });
-    state.current = null; state.detail = null;
-    await loadConvs(); renderEmptyMain();
+    state.detail = null;
+    await loadConvs(); showHome();
     toast(r.deletedForEveryone ? "Chat deleted" : "Chat deleted for you");
   } catch (e) { fail(e); }
 }
@@ -174,7 +184,7 @@ function deleteGroupDialog(c) {
   const err = h("div", { class: "error" });
   const m = openModal("Delete group", h("form", { onsubmit: async (e) => {
     e.preventDefault();
-    try { await api(`api/conversations/${c.id}`, { method: "DELETE", body: { confirmName: input.value } }); m.close(); state.current = null; await loadConvs(); renderEmptyMain(); toast("Group deleted"); }
+    try { await api(`api/conversations/${c.id}`, { method: "DELETE", body: { confirmName: input.value } }); m.close(); await loadConvs(); showHome(); toast("Group deleted"); }
     catch (x) { err.textContent = x.message; }
   } }, h("div", { class: "notice danger" }, `This deletes ${name} for everyone: all its messages. Its files are moved to _deleted in /share and removed after 30 days.`),
   field(`Type “${name}” to confirm`, input), err, h("div", { class: "actions" }, h("button", { class: "btn danger", type: "submit" }, "Delete for everyone"))));
@@ -220,20 +230,41 @@ async function filesDialog(cid, title) {
   let type = "";
   const load = async () => {
     let files;
-    try { files = (await api(cid ? `api/conversations/${cid}/files?type=${type}` : `api/me/files?type=${type}`)).files; } catch (e) { fail(e); return; }
-    mount(body, filesView(files, !cid, () => m.close()));
+    UI.loading(body);
+    try { files = (await api(cid ? `api/conversations/${cid}/files?type=${type}` : `api/me/files?type=${type}`)).files; } catch (e) { mount(body, UI.errorBox(e, load)); return; }
+    mount(body, filesView(files, !cid, () => m.close(), { months: true }));
   };
-  const tabs = h("div", { class: "tabs" }, [["", "All"], ["images", "Photos"], ["pdfs", "PDFs"], ["voice", "Voice"], ["other", "Other"]].map(([v, l]) =>
-    h("button", { class: "tab" + (v === type ? " on" : ""), type: "button", onclick: (e) => { type = v; tabs.querySelectorAll(".tab").forEach((t) => t.classList.remove("on")); e.currentTarget.classList.add("on"); load(); } }, l)));
+  const tabs = fileTypeTabs(() => type, (v) => { type = v; load(); });
   const m = openModal("Files — " + title, h("div", null, tabs, body), { wide: true, noFocus: true });
   load();
 }
-function filesView(files, showChat, closeFn) {
-  if (!files.length) return h("p", { class: "hint" }, "No files here yet.");
+// the type filter of the Files views: All, Photos, PDFs, Voice, Other (extra: more buttons in the same row)
+function fileTypeTabs(get, set, extra) {
+  const tabs = h("div", { class: "tabs", role: "group", "aria-label": "Kind of file" });
+  const paint = () => tabs.querySelectorAll(".tab[data-type]").forEach((t) => { const on = t.dataset.type === get(); t.classList.toggle("on", on); if (on) t.setAttribute("aria-current", "true"); else t.removeAttribute("aria-current"); });
+  [["", "All"], ["images", "Photos"], ["pdfs", "PDFs"], ["voice", "Voice"], ["other", "Other"]].forEach(([v, l]) =>
+    tabs.appendChild(h("button", { class: "tab", type: "button", "data-type": v, onclick: () => { set(v); paint(); } }, l)));
+  if (extra) tabs.appendChild(extra);
+  paint();
+  return tabs;
+}
+function monthOf(iso) { const d = toDate(iso); return d ? d.toLocaleDateString(undefined, { month: "long", year: "numeric" }) : ""; }
+// opts.months: under month headers (the files come newest first)
+function filesView(files, showChat, closeFn, opts = {}) {
+  if (!files.length) return UI.empty("No files here yet", null);
+  const images = files.filter((f) => f.image && !f.missing);
+  if (opts.months) {
+    const groups = [];
+    for (const f of files) { const mo = monthOf(f.sentAt); const g = groups[groups.length - 1]; if (g && g.month === mo) g.files.push(f); else groups.push({ month: mo, files: [f] }); }
+    return h("div", null, groups.map((g) => [h("div", { class: "ui-group-head" }, g.month), fileBlock(g.files, images, showChat, closeFn)]));
+  }
+  return fileBlock(files, images, showChat, closeFn);
+}
+function fileBlock(files, allImages, showChat, closeFn) {
   const images = files.filter((f) => f.image && !f.missing);
   const others = files.filter((f) => !(f.image && !f.missing));
   return h("div", null,
-    images.length ? h("div", { class: "file-grid" }, images.map((f, k) => h("button", { class: "img-btn", type: "button", title: `${f.name} · ${f.sender} · ${fmtFull(f.sentAt)}`, onclick: () => viewer(images, k) },
+    images.length ? h("div", { class: "file-grid" }, images.map((f) => h("button", { class: "img-btn", type: "button", title: `${f.name} · ${f.sender} · ${fmtFull(f.sentAt)}`, onclick: () => viewer(allImages, allImages.indexOf(f)) },
       h("img", { src: `api/files/${f.id}/thumb`, alt: f.name, loading: "lazy" })))) : null,
     others.length ? h("div", { class: "file-rows" }, others.map((f) => h("div", { class: "file-chip" },
       h("span", { class: "file-icon" }, fileIcon(f)),
@@ -271,7 +302,7 @@ function snippetEl(s) {
   return out;
 }
 function searchResults(r, closeFn) {
-  if (!r.messages.length && !r.files.length) return h("p", { class: "hint" }, "Nothing found.");
+  if (!r.messages.length && !r.files.length) return UI.empty("Nothing found", "Try other words, or part of a file's name.");
   return h("div", null,
     r.messages.map((x) => h("button", { class: "result", type: "button", onclick: () => { if (closeFn) closeFn(); openChatAt(x.conversationId, x.id); } },
       h("span", { class: "hint block" }, `${x.conversationName} · ${x.author} · ${fmtFull(x.createdAt)}`), snippetEl(x.snippet))),
